@@ -18,13 +18,16 @@
 //
 //   TS_STREAM_ANDROID_SERIAL=<adb serial of the phone filming> \
 //   TS_STREAM_VIEWER_SERIAL=<adb serial of the phone watching> \
+//   TS_STREAM_PICTURE_PYTHON=<a Python with Pillow, to compare the picture> \
 //   [TS_STREAM_ANGLE=Backstop] [TS_STREAM_HOLD_SECONDS=45]
 //
 //   E2. The filming phone's start floor is set above its free space. Record
 //   Video → the angle's name → Record with this phone → record: the stream
 //   goes live with no take, the camera screen says "Streaming only", and the
 //   server's list says the phone keeps no recording. The viewer's phone plays
-//   the game. Stop, and the server is told of no recording.
+//   the game, and successive screenshots of its picture differ, so the picture
+//   is moving and not a held frame. Stop, and the server is told of no
+//   recording.
 //
 // `TS_STREAM_SCENARIO=setup`, on an iOS simulator, or an Android phone given by
 // `TS_STREAM_ANDROID_SERIAL`, with `TS_STREAM_GAME` a game today or later with
@@ -49,13 +52,15 @@
 //   panel says so too. End one, and both allow a new one.
 //
 // `TS_STREAM_SCENARIO=rows`, on an iOS simulator built with the DEBUG Swift
-// condition, whose synthetic camera films real takes, with `TS_STREAM_GAME` a
-// game with no cameras and the ingest running:
+// condition, whose synthetic camera films real takes, or an Android phone in a
+// debug build, with `TS_STREAM_GAME` a game with no cameras and the ingest
+// running:
 //
-//   TS_STREAM_IOS_UDID=<simulator> \
+//   TS_STREAM_IOS_UDID=<simulator>, or TS_STREAM_ANDROID_SERIAL=<phone> \
 //   TS_STREAM_MASK_PYTHON=<a Python with Pillow> \
 //   [TS_STREAM_ROWS_GAME=<a game with cameras of several kinds, for the shot>] \
-//   [TS_STREAM_STEPS=E4,E5,E6,E7]
+//   [TS_STREAM_STEPS=E4,E5,E6,E7,E12] (E13 and E15 on request)
+//   [TS_STREAM_RETRIES=1:8,2:5,5:5] (seconds between tries : cameras, for E15)
 //
 //   E4. Other camera's row reads "Using RTMP URL", opens its URL, and Revoke
 //   takes it away. GoPro's reads "Using GoPro".
@@ -70,10 +75,32 @@
 //   copy, and the copy goes. Delete asks, then takes the video, the row and the
 //   copy. A camera deleted over the API takes this phone's copy at its next
 //   read. A camera with no copy here offers neither, and Play plays it.
+//   E12. tools/streamTestPattern.js publishes H.264 to a new camera: the
+//   ingest refuses it, and the idle row says why.
+//   E13, on iOS with Mevo Studio missing: its row opens nothing else, and the
+//   RTMP sheet shows the camera it made.
+//   E15. A refused encoder keeps retrying: tools/streamTestPattern.js publishes
+//   H.264 for 3 s in a loop, with each gap of TS_STREAM_RETRIES between tries,
+//   at a different moment for each camera. Tap the row, Revoke, confirm: the
+//   sheet goes with no error, the camera leaves the list, and no list read or
+//   row drawn along the way says it published.
+//
+// `TS_STREAM_SCENARIO=links`, on an Android phone with GoPro Quik, Mevo and Mevo
+// Studio installed, with `TS_STREAM_GAME` a game with room for three cameras:
+//
+//   TS_STREAM_ANDROID_SERIAL=<adb serial of the phone>
+//
+//   E8. Each row makes its camera and lands in its app, read from the phone's
+//   recent tasks, and nothing of a key reaches this log. The camera's row then
+//   opens Stream using RTMP. With Mevo or Mevo Studio disabled the row opens its
+//   Play Store page, makes no camera and carries no key, and the recent tasks
+//   show that no browser came up. Each is enabled again whatever happens.
 import assert from 'node:assert/strict'
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
-import { mkdir, readFile } from 'node:fs/promises'
+import { createWriteStream } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -130,6 +157,7 @@ interface Listed {
   source?: string | null
   publishedAt?: string | null
   closesAt?: string | null
+  lastError?: string | null
   videoId?: string | null
   durationSec?: number | null
   playableVideoId?: string | null
@@ -156,11 +184,13 @@ const game = required('TS_STREAM_GAME')
 const angle = process.env.TS_STREAM_ANGLE ?? 'Backstop'
 const wanted = (
   process.env.TS_STREAM_STEPS ??
-  (scenario === 'rows' ? 'E4,E5,E6,E7' : 'E1,E3,E4,E11')
+  (scenario === 'rows' ? 'E4,E5,E6,E7,E12' : 'E1,E3,E4,E11')
 ).split(',')
 const holdSeconds = Number(process.env.TS_STREAM_HOLD_SECONDS ?? '45')
 const artifacts = process.env.TS_STREAM_ARTIFACT_DIR
 const APP = 'app.teamstation.app'
+/** Where the debug build's phone engine keeps its takes. */
+const ANDROID_TAKES = 'files/phoneStream'
 const START_FLOOR_PROPERTY = 'debug.ts.phone.start_floor'
 /** More than any phone on the bench holds, so Record finds it under the floor. */
 const OVER_ANY_PHONE = '9000000000000'
@@ -328,6 +358,52 @@ async function connect(): Promise<Daemon> {
   return await MaestroD.connect({ name: daemonName, spawn: true })
 }
 
+/**
+ * Fails on a held picture: a frozen tile gives identical pixels however long
+ * the wait, and a playing one does not, even of a still room. `top` is where
+ * the tile begins, and this reads a band of it clear of the player's badge.
+ */
+async function pictureMoves(serial: string, top: number): Promise<void> {
+  const python = required('TS_STREAM_PICTURE_PYTHON')
+  const dir = await mkdtemp(path.join(tmpdir(), 'ts-picture-'))
+  const script = `
+import sys
+from PIL import Image, ImageChops, ImageStat
+top, files = int(sys.argv[1]), sys.argv[2:]
+crops = []
+for file in files:
+    image = Image.open(file).convert('L')
+    w, h = image.size
+    crops.append(image.crop((w // 6, top + 110, w * 5 // 6, top + 400)))
+print(' '.join(
+    '%.3f' % ImageStat.Stat(ImageChops.difference(one, two)).mean[0]
+    for one, two in zip(crops, crops[1:])))
+`
+  const files: string[] = []
+  for (let shot = 0; shot < 5; ++shot) {
+    const file = path.join(dir, `tile${shot}.png`)
+    await new Promise<void>((resolve, reject) => {
+      const out = createWriteStream(file)
+      const screen = spawn('adb', ['-s', serial, 'exec-out', 'screencap', '-p'])
+      screen.stdout.pipe(out)
+      screen.on('error', reject)
+      out.on('finish', resolve)
+    })
+    files.push(file)
+    await sleep(3000)
+  }
+  const { stdout } = await run(python, ['-c', script, String(top), ...files])
+  await rm(dir, { recursive: true })
+  say(
+    `observed: the picture's change between shots, 0 to 255: ${stdout.trim()}`
+  )
+  const steps = stdout.trim().split(' ').map(Number)
+  assert(
+    steps.every(step => step > 0.05),
+    `the viewer's picture is moving: ${stdout.trim()}`
+  )
+}
+
 async function e2(): Promise<void> {
   const filming = required('TS_STREAM_ANDROID_SERIAL')
   const watching = required('TS_STREAM_VIEWER_SERIAL')
@@ -359,12 +435,12 @@ async function e2(): Promise<void> {
     await onPhone.signIn(filmerLink)
     await onPhone.openGame()
 
-    say('$ tapOn Record Video')
-    await phone.scrollUntilVisible({
-      element: { text: 'Record Video' },
-      centerElement: true
-    })
-    await phone.tapOn({ text: 'Record Video' })
+    say('$ tapOn record-video')
+    assert(
+      (await onPhone.find(node => node.id === 'record-video', 15000)) != null,
+      'Record Video shows'
+    )
+    await phone.tapOn({ id: 'record-video' })
     assert(
       (await onPhone.find(node => node.text === 'Name this camera angle')) !=
         null,
@@ -415,6 +491,8 @@ async function e2(): Promise<void> {
     }
     say(`$ adb shell input tap ${tile.x} ${tile.y}`)
     await adb(watching, 'shell', 'input', 'tap', String(tile.x), String(tile.y))
+    await sleep(8000)
+    await pictureMoves(watching, Math.round(tab.bounds.y + tab.bounds.height))
     say(`holding ${holdSeconds} s for the webcam`)
     await sleep(holdSeconds * 1000)
 
@@ -458,7 +536,7 @@ async function e2(): Promise<void> {
 
 const URL_LETTER_POINTS = 5.8
 
-/** Blacks out the stream key at the end of a URL on a screenshot. */
+/** Blacks out a URL's host and stream key on a screenshot. */
 async function maskKey(
   python: string,
   file: string,
@@ -466,7 +544,7 @@ async function maskKey(
   box: Bounds,
   screenWidth: number
 ): Promise<void> {
-  const key = url.lastIndexOf('/') + 1
+  const host = url.indexOf('//') + 2
   const script = `
 import sys
 from PIL import Image, ImageDraw
@@ -478,8 +556,8 @@ ImageDraw.Draw(image).rectangle(
 image.save(path)
 `
   // The field is wider than the URL, whose letters are proportional: this
-  // falls just short of the key at the sheet's size.
-  const start = box.x + key * URL_LETTER_POINTS
+  // falls just short of the host at the sheet's size, which may be a bench's.
+  const start = box.x + host * URL_LETTER_POINTS
   await run(python, [
     '-c',
     script,
@@ -613,11 +691,17 @@ async function setup(): Promise<void> {
 
   const ui = driving(m)
   const { nodes, find, byText, byId, gone, shot, tap, openGame, become } = ui
-  /** The largest box drawn: Android's root has no bounds of its own. */
-  const screen = async (): Promise<Bounds> =>
-    (await nodes())
+  /**
+   * The root; Android's has no bounds of its own, so the largest box there. A
+   * page's scrolled content can be taller than the screen on iOS.
+   */
+  const screen = async (): Promise<Bounds> => {
+    const [root, ...rest] = await nodes()
+    if (root.bounds != null && root.bounds.height > 0) return root.bounds
+    return rest
       .flatMap(node => (node.bounds == null ? [] : [node.bounds]))
       .reduce((one, two) => (two.height > one.height ? two : one))
+  }
   const sheetShare = async (id: string): Promise<number> => {
     const sheet = await find(byId(id))
     assert(sheet?.bounds != null, `${id} shows`)
@@ -673,6 +757,12 @@ async function setup(): Promise<void> {
       await become(email)
       say('$ openLink teamstation://notifications')
       await m.openLink({ link: 'teamstation://notifications' })
+      // On a phone it can sit below other reminders. `text` matches inside.
+      await m.scrollUntilVisible({
+        element: { text: 'asks to film' },
+        centerElement: true,
+        timeout: 20000
+      })
       const item = await find(
         node => node.text?.includes('asks to film') === true,
         20000
@@ -680,6 +770,19 @@ async function setup(): Promise<void> {
       assert(item != null, 'the request is in the bell inbox')
       await verify(`E1 inbox reads: ${String(item.text)}`)
       await shot('request-approve.png')
+      // The floating tab bar can lie over the buttons of a phone's last card.
+      if (androidSerial != null) {
+        const { width } = await screen()
+        const middle = Math.round(width / 2)
+        await m.swipe({
+          startX: middle,
+          startY: 1500,
+          endX: middle,
+          endY: 700,
+          duration: 300
+        })
+        await sleep(1000)
+      }
       await tap('notification-accept')
       for (const until = Date.now() + 15000; Date.now() < until;) {
         if ((await accessOf(viewerToken)).canFilm) break
@@ -790,6 +893,11 @@ async function setup(): Promise<void> {
         url,
         'the sheet shows the server’s URL'
       )
+      assert(
+        (await find(byText('Your camera must stream in HEVC (H.265).'))) !=
+          null,
+        'the sheet names the codec'
+      )
       const rtmpShare = await sheetShare('rtmp-url-sheet')
       assert(rtmpShare > 0.7 && rtmpShare < 0.8, `RTMP sheet ${rtmpShare}`)
       await tap('rtmp-copy')
@@ -811,7 +919,7 @@ async function setup(): Promise<void> {
       await tap('rtmp-done')
       assert(await gone(byId('rtmp-url-sheet')), 'Done closes the sheet')
       assert(
-        (await find(byText('Backstop'), 10000)) != null,
+        (await find(byId(`angle-row-${backstop.id}`), 10000)) != null,
         'the camera has its row'
       )
 
@@ -820,7 +928,21 @@ async function setup(): Promise<void> {
         (await find(byId('camera-source-sheet'))) != null,
         'the camera’s make'
       )
-      await tap('camera-source-gopro')
+      if (androidSerial == null) await tap('camera-source-gopro')
+      else {
+        // Android leaves this row for the store with no app, which E8 tests:
+        // here the camera is made as an app's link would make it.
+        await tap('sheet-cancel')
+        const made = await request(
+          'POST',
+          `/games/${game}/live-streams`,
+          { label: '1st', source: 'gopro' },
+          token
+        )
+        const { id } = (await made.json()) as { id: string }
+        assert((await find(byId(`angle-row-${id}`), 15000)) != null, 'its row')
+        await tap(`angle-row-${id}`)
+      }
       assert((await find(byId('rtmp-url'), 15000)) != null, 'GoPro’s URL')
       const gopro = (await myCameras(token)).find(row => row.label === '1st')
       assert.equal(gopro?.source, 'gopro', 'a camera with its source')
@@ -846,7 +968,10 @@ async function setup(): Promise<void> {
       assert((await find(byId('revoke-sheet'))) != null, 'it asks again')
       await tap('revoke-confirm')
       assert(await gone(byId('revoke-sheet')), 'the confirmation goes')
-      assert(await gone(byText('1st'), 12000), 'the row goes from the tab')
+      assert(
+        await gone(byId(`angle-row-${gopro.id}`), 12000),
+        'the row goes from the tab'
+      )
       assert(
         !(await myCameras(token)).some(row => row.id === gopro.id),
         'the camera is gone from the list'
@@ -998,9 +1123,9 @@ async function setup(): Promise<void> {
 }
 
 /** Publishes the test pattern to a URL, from the repository's own tool. */
-function publish(url: string, seconds: number): ChildProcess {
+function publish(url: string, seconds: number, codec = 'hevc'): ChildProcess {
   say(
-    `$ node tools/streamTestPattern.js --url <the camera's URL> --duration ${seconds} --codec hevc`
+    `$ node tools/streamTestPattern.js --url <the camera's URL> --duration ${seconds} --codec ${codec}`
   )
   return spawn(
     'node',
@@ -1011,10 +1136,39 @@ function publish(url: string, seconds: number): ChildProcess {
       '--duration',
       String(seconds),
       '--codec',
-      'hevc'
+      codec
     ],
     { stdio: 'ignore' }
   )
+}
+
+/** `publish` over and over, as an encoder left running does. */
+function retryForever(url: string, gapSeconds: number): ChildProcess {
+  const tool = path.join(__dirname, '../../../tools/streamTestPattern.js')
+  say(
+    `$ while :; do node tools/streamTestPattern.js --url <the camera's URL> --codec h264 --duration 3; sleep ${gapSeconds}; done`
+  )
+  return spawn(
+    'sh',
+    [
+      '-c',
+      `while :; do node "$0" --url "$1" --codec h264 --duration 3; sleep "$2"; done`,
+      tool,
+      url,
+      String(gapSeconds)
+    ],
+    { stdio: 'ignore', detached: true }
+  )
+}
+
+/** Stops a `retryForever` loop and the try it is on. */
+function stopRetrying(loop: ChildProcess): void {
+  if (loop.pid == null) return
+  try {
+    process.kill(-loop.pid, 'SIGKILL')
+  } catch {
+    // It has gone already.
+  }
 }
 
 /** As the row writes it. */
@@ -1024,7 +1178,16 @@ const durationText = (seconds: number): string => {
 }
 
 /** This phone's stored stream files, which is what a deleted take leaves. */
-async function phoneFiles(device: string): Promise<number> {
+async function phoneFiles(device: string, android: boolean): Promise<number> {
+  if (android) {
+    const listed = await adb(
+      device,
+      'shell',
+      `run-as ${APP} find ${ANDROID_TAKES} -type f -size +0 2>/dev/null`
+    ).catch(() => '')
+    return listed.split('\n').filter(line => /\.(mov|mp4|m4s)\s*$/.test(line))
+      .length
+  }
   const { stdout: container } = await run('xcrun', [
     'simctl',
     'get_app_container',
@@ -1053,10 +1216,16 @@ async function phoneFiles(device: string): Promise<number> {
 }
 
 async function rows(): Promise<void> {
-  const device = required('TS_STREAM_IOS_UDID')
+  const androidSerial = process.env.TS_STREAM_ANDROID_SERIAL
+  const android = androidSerial != null
+  const device = androidSerial ?? required('TS_STREAM_IOS_UDID')
   const rowsGame = process.env.TS_STREAM_ROWS_GAME
   const daemon = await connect()
-  const m = await daemon.attach({ device, platform: 'ios', appId: APP })
+  const m = await daemon.attach({
+    device,
+    platform: android ? 'android' : 'ios',
+    appId: APP
+  })
   if (artifacts != null) await mkdir(artifacts, { recursive: true })
   const ui = driving(m)
   const { find, byText, byId, gone, shot, tap, openGame, become } = ui
@@ -1065,14 +1234,27 @@ async function rows(): Promise<void> {
 
   /** A row's words: on iOS the row reads as one element. */
   const rowWords = async (id: string): Promise<string> => {
-    const row = flatten(await m.hierarchy()).find(
-      node => node.id === `angle-row-${id}`
+    const all = flatten(await m.hierarchy())
+    const row = all.find(node => node.id === `angle-row-${id}`)
+    if (row == null) return ''
+    const words = (nodes: Node[]): string =>
+      nodes.flatMap(node => (node.text == null ? [] : [node.text])).join(' · ')
+    if (!android) return words(flatten(row))
+    // Android may list the row's words beside it rather than under it.
+    const box = row.bounds
+    if (box == null) return words(flatten(row))
+    return words(
+      all.filter(({ bounds }) => {
+        if (bounds == null) return false
+        const middle = bounds.y + bounds.height / 2
+        return (
+          middle >= box.y &&
+          middle <= box.y + box.height &&
+          bounds.x >= box.x &&
+          bounds.x + bounds.width <= box.x + box.width
+        )
+      })
     )
-    return row == null
-      ? ''
-      : flatten(row)
-          .flatMap(node => (node.text == null ? [] : [node.text]))
-          .join(' · ')
   }
   const rowReads = async (
     id: string,
@@ -1082,6 +1264,7 @@ async function rows(): Promise<void> {
     let words = ''
     for (const until = Date.now() + wait; Date.now() < until;) {
       words = await rowWords(id)
+      if (words === '') await reach(`angle-row-${id}`)
       if (want.every(word => words.includes(word))) {
         say(`observed row: ${words}`)
         return words
@@ -1111,8 +1294,42 @@ async function rows(): Promise<void> {
     assert.equal(answer.status, 200, 'the URL was revealed')
     return ((await answer.json()) as { url: string }).url
   }
+  /** Android: brings an element clear of the pinned player and the tab bar. */
+  const reach = async (id: string): Promise<void> => {
+    if (!android) return
+    const bottom = Number(
+      /(\d+)$/.exec((await adb(device, 'shell', 'wm', 'size')).trim())?.[1]
+    )
+    for (let swipes = 0; swipes < 12; ++swipes) {
+      const box = (await find(byId(id), 1000))?.bounds
+      if (box != null && box.y > bottom * 0.42 && box.y < bottom * 0.82) return
+      const above = box != null && box.y <= bottom * 0.42
+      const up = !above && swipes < 6
+      say(`$ swipe ${up ? 'up' : 'down'}, to ${id}`)
+      await m.swipe({
+        startX: 540,
+        startY: Math.round(bottom * (up ? 0.7 : 0.4)),
+        endX: 540,
+        endY: Math.round(bottom * (up ? 0.4 : 0.7)),
+        duration: 400
+      })
+      await sleep(800)
+    }
+    throw new Error(`${id} cannot be brought into view`)
+  }
+  const reachRecord = async (): Promise<void> => {
+    if (android) {
+      await reach('record-video')
+      return
+    }
+    say('$ scrollUntilVisible record-video')
+    await m.scrollUntilVisible({
+      element: { id: 'record-video' },
+      centerElement: true
+    })
+  }
   const named = async (pill: string, row: string): Promise<void> => {
-    assert((await find(byId('record-video'), 15000)) != null, 'Record Video')
+    await reachRecord()
     await tap('record-video')
     assert((await find(byId('angle-name-prompt'))) != null, 'the name sheet')
     await tap(`angle-suggestion-${pill}`)
@@ -1120,6 +1337,7 @@ async function rows(): Promise<void> {
   }
   /** "…", End, and the second tap it asks for on the air. */
   const endFromMore = async (id: string): Promise<void> => {
+    await reach(`angle-more-${id}`)
     await tap(`angle-more-${id}`)
     assert((await find(byId('stream-action-end'))) != null, 'End is offered')
     await tap('stream-action-end')
@@ -1159,7 +1377,7 @@ async function rows(): Promise<void> {
       'the stream stopped'
     )
     await tap('camera-close')
-    assert((await find(byId('record-video'), 15000)) != null, 'back on the tab')
+    assert((await find(byText('Box score'), 15000)) != null, 'back on the tab')
     return (await cameraNamed(pill)).id
   }
   /** Ended rows are drawn below Record Video. */
@@ -1185,6 +1403,8 @@ async function rows(): Promise<void> {
       assert(shown?.text != null, 'the URL shows')
       await tap('rtmp-copy')
       assert((await find(byId('rtmp-copied'))) != null, 'Copied shows')
+      // Android's preview of a copy lies over the sheet's foot for a while.
+      if (android) await sleep(10000)
       await tap('rtmp-done')
       assert(await gone(byId('rtmp-url-sheet')), 'Done closes the sheet')
       const backstop = await cameraNamed('Backstop')
@@ -1201,19 +1421,38 @@ async function rows(): Promise<void> {
       await tap('rtmp-revoke')
       assert((await find(byId('revoke-sheet'))) != null, 'Revoke asks')
       await tap('revoke-confirm')
-      assert(await gone(byId(`angle-row-${backstop.id}`), 12000), 'row goes')
+      assert(await gone(byId('revoke-sheet')), 'the confirmation goes')
+      // A modal hides the rows beneath it from Android's hierarchy.
+      for (const until = Date.now() + 12000; Date.now() < until;) {
+        if ((await cameraWithId(backstop.id)) == null) break
+        await sleep(500)
+      }
       assert(
         (await cameraWithId(backstop.id)) == null,
         'the camera left the list'
       )
+      assert(await gone(byId(`angle-row-${backstop.id}`), 12000), 'row goes')
       say('observed: E4 Other camera’s row opened its URL, Revoke took it')
 
       await named('1st', 'use-external-camera')
       assert((await find(byId('camera-source-sheet'))) != null, 'the make')
-      await tap('camera-source-gopro')
-      assert((await find(byId('rtmp-url'), 15000)) != null, 'GoPro’s URL')
-      await tap('rtmp-done')
-      assert(await gone(byId('rtmp-url-sheet')), 'Done closes the sheet')
+      if (android) {
+        // Android leaves this row for the store with no app, which E8 tests:
+        // here the camera is made as an app's link would make it.
+        await tap('sheet-cancel')
+        const made = await request(
+          'POST',
+          `/games/${game}/live-streams`,
+          { label: '1st', source: 'gopro' },
+          token
+        )
+        assert.equal(made.status, 201, 'GoPro’s camera')
+      } else {
+        await tap('camera-source-gopro')
+        assert((await find(byId('rtmp-url'), 15000)) != null, 'GoPro’s URL')
+        await tap('rtmp-done')
+        assert(await gone(byId('rtmp-url-sheet')), 'Done closes the sheet')
+      }
       const gopro = await cameraNamed('1st')
       assert.equal(gopro.source, 'gopro', 'a camera with its source')
       await rowReads(gopro.id, ['1st', 'Using GoPro', 'Idle'])
@@ -1387,9 +1626,10 @@ async function rows(): Promise<void> {
         (await find(byId(`upload-row-${take.id}`), 10000)) != null,
         'this phone holds a copy'
       )
-      const filesWithCopy = await phoneFiles(device)
+      const filesWithCopy = await phoneFiles(device, android)
       await endFromMore(take.id)
       await rowReads(take.id, ['Ended'], 30000)
+      await reach(`angle-row-${take.id}`)
       await tap(`angle-row-${take.id}`)
       assert(
         (await find(byId('video-details-upload'), 10000)) != null,
@@ -1419,7 +1659,7 @@ async function rows(): Promise<void> {
       await tap('sheet-cancel')
       assert(await gone(byId('video-details-sheet')), 'the sheet closes')
       assert(await gone(byId(`upload-row-${take.id}`)), 'the upload row goes')
-      const filesAfter = await phoneFiles(device)
+      const filesAfter = await phoneFiles(device, android)
       say(`observed: phone stream files ${filesWithCopy} → ${filesAfter}`)
       assert(filesAfter < filesWithCopy, 'the copy left the phone')
       assert.equal(
@@ -1432,7 +1672,8 @@ async function rows(): Promise<void> {
       await endFromMore(second)
       const videoId = (await cameraWithId(second))?.videoId
       await rowReads(second, ['Ended'], 30000)
-      const beforeDelete = await phoneFiles(device)
+      const beforeDelete = await phoneFiles(device, android)
+      await reach(`angle-delete-${second}`)
       await tap(`angle-delete-${second}`)
       assert((await find(byId('delete-video-sheet'))) != null, 'Delete asks')
       assert(
@@ -1446,6 +1687,7 @@ async function rows(): Promise<void> {
       assert((await cameraWithId(second)) != null, 'asking changes nothing')
       await m.tapOn({ text: 'Cancel' })
       assert(await gone(byId('delete-video-sheet')), 'Cancel closes it')
+      await reach(`angle-delete-${second}`)
       await tap(`angle-delete-${second}`)
       assert((await find(byId('delete-video-sheet'))) != null, 'it asks again')
       for (const until = Date.now() + 40000; Date.now() < until;) {
@@ -1468,7 +1710,7 @@ async function rows(): Promise<void> {
         assert.equal(asked.status, 404, 'its video went too')
       }
       await sleep(3000)
-      const afterDelete = await phoneFiles(device)
+      const afterDelete = await phoneFiles(device, android)
       say(`observed: phone stream files ${beforeDelete} → ${afterDelete}`)
       assert(afterDelete < beforeDelete, 'and this phone’s copy')
 
@@ -1485,7 +1727,7 @@ async function rows(): Promise<void> {
         if ((await cameraWithId(third))?.state === 'ended') break
         await sleep(1000)
       }
-      const beforeRemote = await phoneFiles(device)
+      const beforeRemote = await phoneFiles(device, android)
       const discarded = await request(
         'POST',
         `/games/${game}/live-streams/${third}/discard`,
@@ -1495,13 +1737,14 @@ async function rows(): Promise<void> {
       assert.equal(discarded.status, 200, 'discarded from elsewhere')
       assert(await gone(byId(`angle-row-${third}`), 12000), 'the row goes')
       await sleep(3000)
-      const afterRemote = await phoneFiles(device)
+      const afterRemote = await phoneFiles(device, android)
       say(`observed: phone stream files ${beforeRemote} → ${afterRemote}`)
       assert(afterRemote < beforeRemote, 'the copy followed it')
 
       // A camera with no copy here offers nothing about one, and plays.
       const gopro = await cameraNamed('1st')
       assert(gopro.playableVideoId != null, 'E5’s camera has a video to play')
+      await reach(`angle-row-${gopro.id}`)
       await tap(`angle-row-${gopro.id}`)
       assert(
         (await find(byId('video-details-play'), 10000)) != null,
@@ -1512,6 +1755,126 @@ async function rows(): Promise<void> {
       await tap('video-details-play')
       assert(await gone(byId('video-details-sheet')), 'Play closes details')
       say('observed: E7 passed')
+    }
+
+    if (wanted.includes('E12')) {
+      const made = await request(
+        'POST',
+        `/games/${game}/live-streams`,
+        { label: 'Bullpen', source: 'rtmp' },
+        token
+      )
+      assert.equal(made.status, 201, 'a camera to refuse')
+      const camera = (await made.json()) as Listed & { url: string }
+      assert(
+        (await find(byId(`angle-row-${camera.id}`), 15000)) != null,
+        'its row'
+      )
+      const publisher = publish(camera.url, 25, 'h264')
+      running.push(publisher)
+      const words = await rowReads(
+        camera.id,
+        ['Bullpen', 'TeamStation takes HEVC', 'Idle'],
+        45000
+      )
+      publisher.kill('SIGINT')
+      say(`observed: E12 passed, the idle row says: ${words}`)
+    }
+
+    if (wanted.includes('E13')) {
+      await named('Backstop', 'use-external-camera')
+      assert((await find(byId('camera-source-sheet'))) != null, 'the make')
+      await tap('camera-source-mevoStudio')
+      assert(
+        (await find(byId('rtmp-url'), 15000)) != null,
+        'the URL shows here, with no browser in front of it'
+      )
+      const studio = await cameraNamed('Backstop')
+      assert.equal(studio.source, 'mevoStudio', 'a camera with its source')
+      await tap('rtmp-done')
+      say('observed: E13 passed, Mevo Studio missing opens the RTMP sheet')
+    }
+
+    if (wanted.includes('E15')) {
+      const plan = (process.env.TS_STREAM_RETRIES ?? '1:8,2:5,5:5')
+        .split(',')
+        .map(part => part.split(':').map(Number))
+      for (const [gap, cameras] of plan) {
+        let reads = 0
+        let drawn = 0
+        for (let attempt = 0; attempt < cameras; ++attempt) {
+          const made = await request(
+            'POST',
+            `/games/${game}/live-streams`,
+            { label: 'Bullpen', source: 'rtmp' },
+            token
+          )
+          assert.equal(made.status, 201, 'a camera to refuse')
+          const camera = (await made.json()) as Listed & { url: string }
+          assert(
+            (await find(byId(`angle-row-${camera.id}`), 15000)) != null,
+            'its row'
+          )
+          const loop = retryForever(camera.url, gap)
+          const watch = { on: true }
+          // At every list read of the run, it has never been published.
+          const watcher = (async () => {
+            while (watch.on) {
+              const row = await cameraWithId(camera.id)
+              if (row != null) {
+                reads += 1
+                assert.equal(row.publishedAt ?? null, null, 'never published')
+                assert.notEqual(row.state, 'publishing', 'never Live')
+              }
+              await sleep(100)
+            }
+          })()
+          try {
+            for (const until = Date.now() + 15000; Date.now() < until;) {
+              if ((await cameraWithId(camera.id))?.lastError != null) break
+              await sleep(100)
+            }
+            assert(
+              (await cameraWithId(camera.id))?.lastError != null,
+              'it has been refused'
+            )
+            // A different moment of the loop for each camera.
+            await sleep((attempt % 4) * 700)
+            const words = await rowWords(camera.id)
+            drawn += 1
+            assert(!words.includes('Live'), `the row reads “${words}”`)
+            await tap(`angle-row-${camera.id}`)
+            assert((await find(byId('rtmp-url'), 15000)) != null, 'its URL')
+            await tap('rtmp-revoke')
+            assert((await find(byId('revoke-sheet'))) != null, 'Revoke asks')
+            await tap('revoke-confirm')
+            assert(await gone(byId('revoke-sheet')), 'with no error')
+            assert(await gone(byId('rtmp-url-sheet')), 'back on the tab')
+            assert(
+              (await cameraWithId(camera.id)) == null,
+              'the camera left the list at once'
+            )
+            assert(
+              await gone(byId(`angle-row-${camera.id}`), 12000),
+              'row goes'
+            )
+            // The encoder is still there, and is turned away.
+            await sleep(gap * 1000 + 1500)
+            assert(
+              (await cameraWithId(camera.id)) == null,
+              'the next try brings nothing back'
+            )
+          } finally {
+            stopRetrying(loop)
+            watch.on = false
+            await watcher
+          }
+          say(`observed: E15 gap ${gap} s, camera ${attempt + 1} of ${cameras}`)
+        }
+        say(
+          `observed: E15 passed at a ${gap} s gap: ${cameras} of ${cameras} removed, ${reads} list reads and ${drawn} rows drawn, none Live`
+        )
+      }
     }
 
     if (rowsGame != null) {
@@ -1545,9 +1908,162 @@ async function rows(): Promise<void> {
   }
 }
 
+/** Leaves `dumpsys`'s lines fit for a log: no stream key, no host. */
+function masked(line: string): string {
+  return line
+    .replace(/ts_[A-Za-z0-9_-]+/g, 'ts_<key>')
+    .replace(/(publishHost(?:%3D|%253D|=))[^&%\s]+/g, '$1<host>')
+    .replace(/rtmps?(?::|%3A)(?:\/|%2F){2}[^/%\s]+/g, 'rtmp://<host>')
+}
+
+/** Who holds the screen, and what the newest tasks were opened with. */
+async function recents(serial: string): Promise<string[]> {
+  const out = await adb(serial, 'shell', 'dumpsys', 'activity', 'recents')
+  return out
+    .split('\n')
+    .filter(line => /^\s*(?:Recent #\d+:|intent=\{)/.test(line))
+    .slice(0, 6)
+    .map(line => masked(line.trim()))
+}
+
+async function foreground(serial: string): Promise<string> {
+  const out = await adb(serial, 'shell', 'dumpsys', 'activity', 'activities')
+  const match = /topResumedActivity=.*? ([\w.]+)\/(\S+)/.exec(out)
+  return match == null ? 'unknown' : `${match[1]}/${match[2]}`
+}
+
+async function links(): Promise<void> {
+  const serial = required('TS_STREAM_ANDROID_SERIAL')
+  const daemon = await connect()
+  const m = await daemon.attach({
+    device: serial,
+    platform: 'android',
+    appId: APP
+  })
+  const { find, byId, tap, openGame, become } = driving(m)
+  const token = await apiToken(email, (await askToSignIn(email)).code)
+  const toSources = async (pill: string): Promise<void> => {
+    say('$ scrollUntilVisible record-video')
+    await m.scrollUntilVisible({
+      element: { id: 'record-video' },
+      centerElement: true
+    })
+    await tap('record-video')
+    assert((await find(byId('angle-name-prompt'))) != null, 'the name sheet')
+    await tap(`angle-suggestion-${pill}`)
+    await tap('use-external-camera')
+    assert((await find(byId('camera-source-sheet'))) != null, 'the sources')
+  }
+  /** Taps a row, then answers the app that came up, once it has. */
+  const landed = async (row: string, app?: string): Promise<string> => {
+    await tap(row)
+    for (const until = Date.now() + 20000; Date.now() < until;) {
+      const top = await foreground(serial)
+      const away = top !== 'unknown' && !top.startsWith(APP)
+      if (app == null ? away : top.startsWith(`${app}/`)) return top
+      await sleep(500)
+    }
+    throw new Error(`${row} landed on ${await foreground(serial)}`)
+  }
+  const report = async (name: string, top: string): Promise<void> => {
+    say(`$ adb shell dumpsys activity recents (${name})`)
+    for (const line of await recents(serial)) say(line)
+    say(`observed: ${name} launched ${top}`)
+  }
+  const back = async (): Promise<void> => {
+    await m.launchApp({ appId: APP, stopApp: false })
+    await sleep(2000)
+    await openGame()
+  }
+
+  await m.launchApp({ appId: APP, stopApp: true })
+  await sleep(3000)
+  try {
+    await become(email)
+    await openGame()
+    for (const [row, app, pill, source] of [
+      ['camera-source-gopro', 'com.gopro.smarty', 'Home', 'gopro'],
+      ['camera-source-mevo', 'com.livestream.mevo', '1st', 'mevo'],
+      ['camera-source-mevoStudio', 'com.mevo.multicam', '3rd', 'mevoStudio']
+    ] as const) {
+      await toSources(pill)
+      await report(row, await landed(row, app))
+      const camera = (await myCameras(token)).find(one => one.label === pill)
+      assert.equal(camera?.source, source, 'made with its source')
+      await back()
+      assert(
+        (await find(byId(`angle-row-${camera.id}`), 15000)) != null,
+        'its row is on the tab'
+      )
+      await tap(`angle-row-${camera.id}`)
+      assert(
+        (await find(byId('rtmp-url'), 15000)) != null,
+        'its row has the URL'
+      )
+      await tap('rtmp-done')
+      say(`observed: the row of ${pill} opens Stream using RTMP`)
+    }
+    for (const [row, app, pill] of [
+      ['camera-source-mevo', 'com.livestream.mevo', 'Backstop'],
+      ['camera-source-mevoStudio', 'com.mevo.multicam', 'Backstop']
+    ] as const) {
+      say(`$ adb shell pm disable-user --user 0 ${app}`)
+      await adb(serial, 'shell', 'pm', 'disable-user', '--user', '0', app)
+      try {
+        await toSources(pill)
+        const before = (await myCameras(token)).length
+        // A running store takes the link into the task of its last page.
+        await adb(serial, 'shell', 'am', 'force-stop', 'com.android.vending')
+        const top = await landed(row)
+        await sleep(3000)
+        await report(`${row}, app disabled`, await foreground(serial))
+        assert(top.startsWith('com.android.vending/'), `the store: ${top}`)
+        const [newest, next] = await recents(serial)
+        assert(
+          newest.includes('com.android.vending') && !newest.includes('ts_'),
+          `the newest task is the store's, with no key: ${newest}`
+        )
+        const stack = await adb(
+          serial,
+          'shell',
+          'dumpsys',
+          'activity',
+          'activities'
+        )
+        assert(stack.includes(`details?id=${app}`), `the store is on ${app}`)
+        assert(
+          next.includes(`pkg=${APP}`),
+          `and the task before it is this app, so no browser came up: ${next}`
+        )
+        say('observed: the store holds the screen, and no browser opened')
+        assert.equal(
+          (await myCameras(token)).length,
+          before,
+          'no camera is made for a phone without the app'
+        )
+        await m.launchApp({ appId: APP, stopApp: false })
+        await sleep(1500)
+        assert(
+          (await find(byId('camera-source-sheet'))) != null,
+          'the sheet waits for the app'
+        )
+        await tap('sheet-cancel')
+      } finally {
+        say(`$ adb shell pm enable ${app}`)
+        await adb(serial, 'shell', 'pm', 'enable', app)
+      }
+      await back()
+    }
+    say('links passed')
+  } finally {
+    await m.detach()
+  }
+}
+
 const scenarios: Record<string, () => Promise<void>> = {
   setup,
-  rows
+  rows,
+  links
 }
 ;(scenarios[scenario] ?? e2)().catch((error: unknown) => {
   console.error(error)
