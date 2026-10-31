@@ -9,6 +9,9 @@
         <category android:name="android.intent.category.BROWSABLE" />
         <data android:scheme="https" />
       </intent>
+      <!-- The camera apps a stream's deep link goes to, or else the store. -->
+      <package android:name="com.gopro.smarty" />
+      <package android:name="com.livestream.mevo" />
     </queries>
 
     <uses-permission android:name="android.permission.INTERNET" />
