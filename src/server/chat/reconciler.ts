@@ -5,7 +5,7 @@ import { makeId } from '../../common/ids'
 import { asUserId } from '../../common/userId'
 import { onePerson } from '../admin/people'
 import type { ChangeFeed } from '../changeFeed/feed'
-import { type Database, isPoolTimeout } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
 import { survivors } from '../teams/teamStaff'
 import {
   audienceOf,
@@ -350,9 +350,10 @@ async function dmsWithPlayersOf(
 }
 
 /**
- * Reconciles everything a batch of marks reaches. Throws after trying them
- * all when any failed, so the caller can keep the marks. Connections running
- * out ends the attempt at once, since the rest would only wait for one too.
+ * Reconciles everything a batch of marks reaches, and answers what failed once
+ * all were tried, so one broken conversation costs the others nothing.
+ * Connections running out ends the attempt at once by throwing, since the rest
+ * would only wait for one too.
  */
 export async function processMarks(
   db: Kysely<Database>,
@@ -361,13 +362,13 @@ export async function processMarks(
   log: (message: string) => void = () => undefined
 ): Promise<Targets> {
   const targets = await targetsOf(db, marks)
-  let failed = 0
+  const failed: Targets = { scopes: [], dms: [] }
   for (const target of targets.scopes) {
     try {
       await reconcileScope(db, target.kind, target.scopeId, now)
     } catch (error) {
-      if (isPoolTimeout(error)) throw error
-      failed += 1
+      if (isConnectionUnavailable(error)) throw error
+      failed.scopes.push(target)
       log(`reconciling ${target.kind} ${target.scopeId}: ${String(error)}`)
     }
   }
@@ -375,13 +376,32 @@ export async function processMarks(
     try {
       await recheckDm(db, id, now)
     } catch (error) {
-      if (isPoolTimeout(error)) throw error
-      failed += 1
+      if (isConnectionUnavailable(error)) throw error
+      failed.dms.push(id)
       log(`re-checking DM ${id}: ${String(error)}`)
     }
   }
-  if (failed > 0) throw new Error(`${failed} conversation(s) failed`)
-  return targets
+  return failed
+}
+
+/** The marks that reach something in `failed`, read a mark at a time. */
+async function marksReaching<T extends DirtyMark>(
+  db: Kysely<Database>,
+  marks: T[],
+  failed: Targets
+): Promise<T[]> {
+  const scopes = new Set(failed.scopes.map(key))
+  const owed: T[] = []
+  for (const mark of marks) {
+    const reached = await targetsOf(db, [mark])
+    if (
+      reached.scopes.some(target => scopes.has(key(target))) ||
+      reached.dms.some(id => failed.dms.includes(id))
+    ) {
+      owed.push(mark)
+    }
+  }
+  return owed
 }
 
 /**
@@ -391,10 +411,12 @@ export async function processMarks(
  * while it drains are left for the next drain. A mark stays until what it
  * reaches is done, so nothing has to put it back when connections run out or
  * the process dies, and the next drain does the work again, which is harmless.
- * After a failure only the extra copies of a scope go (with no notify, so a
- * broken conversation is retried by the next notify or the sweep rather than in
- * a loop). Rows are told apart by `ctid`: nothing updates this table, and what
- * was read is still there to delete. Answers how many scopes were reconciled.
+ * When a conversation fails, one copy of each mark that reaches it stays and the
+ * rest go (with no notify, so it is retried by the next notify or the sweep
+ * rather than in a loop, and a conversation that always fails does not bring
+ * back the work of those that did not), and this throws. Rows are told apart by
+ * `ctid`: nothing updates this table, and what was read is still there to
+ * delete. Answers how many scopes were reconciled.
  */
 export async function drainDirty(
   db: Kysely<Database>,
@@ -415,18 +437,23 @@ export async function drainDirty(
       .where(sql<boolean>`ctid = any(${rows}::tid[])`)
       .execute()
   }
-  try {
-    await processMarks(db, marks, now, log)
-  } catch (error) {
-    if (!isPoolTimeout(error)) {
-      const kept = new Set(rowsOf(marks))
-      await forget(rowsOf(read).filter(row => !kept.has(row))).catch(
-        (failure: unknown) => {
-          log(`dropping repeated marks: ${String(failure)}`)
-        }
-      )
-    }
-    throw error
+  const failed = await processMarks(db, marks, now, log)
+  const failures = failed.scopes.length + failed.dms.length
+  if (failures > 0) {
+    const owed = await marksReaching(db, marks, failed).catch(
+      (error: unknown) => {
+        if (isConnectionUnavailable(error)) throw error
+        log(`finding the marks to keep: ${String(error)}`)
+        return marks
+      }
+    )
+    const kept = new Set(rowsOf(owed))
+    await forget(rowsOf(read).filter(row => !kept.has(row))).catch(
+      (failure: unknown) => {
+        log(`dropping marks: ${String(failure)}`)
+      }
+    )
+    throw new Error(`${failures} conversation(s) failed`)
   }
   await forget(rowsOf(read))
   return marks.length
@@ -449,26 +476,35 @@ export function distinctMarks<
  * The hourly pass: drains the marks, re-checks every DM, reconciles every
  * conversation, and creates any missing scope chat for every unmerged full
  * team, every season and every league. It is also what lets a player who
- * turns 13 in, on the first of the month after their birth month.
+ * turns 13 in, on the first of the month after their birth month. A
+ * conversation that fails is logged and the pass carries on, since membership
+ * decides who sees private messages. With no connection to be had it stops at
+ * once and throws, since the rest would only wait for one too, and whoever swept
+ * asks again.
  */
 export async function sweep(
   db: Kysely<Database>,
   now: Date,
   log: (message: string) => void = () => undefined
 ): Promise<void> {
-  await drainDirty(db, now, log)
+  try {
+    await drainDirty(db, now, log)
+  } catch (error) {
+    if (isConnectionUnavailable(error)) throw error
+    log(`sweep: draining marks: ${String(error)}`)
+  }
   const dms = await db
     .selectFrom('chat_conversations')
     .select(['id'])
     .where('kind', '=', 'dm')
     .orderBy('id')
     .execute()
-  const failures: string[] = []
   for (const dm of dms) {
     try {
       await recheckDm(db, dm.id, now)
     } catch (error) {
-      failures.push(`DM ${dm.id}: ${String(error)}`)
+      if (isConnectionUnavailable(error)) throw error
+      log(`sweep: DM ${dm.id}: ${String(error)}`)
     }
   }
   const scopes = new Map<string, ScopeTarget>()
@@ -503,10 +539,10 @@ export async function sweep(
     try {
       await reconcileScope(db, target.kind, target.scopeId, now)
     } catch (error) {
-      failures.push(`${target.kind} ${target.scopeId}: ${String(error)}`)
+      if (isConnectionUnavailable(error)) throw error
+      log(`sweep: ${target.kind} ${target.scopeId}: ${String(error)}`)
     }
   }
-  for (const failure of failures) log(`sweep: ${failure}`)
 }
 
 /** The marks that could change whether `userId` belongs in a conversation. */
@@ -614,7 +650,7 @@ export interface ChatReconcilerOptions {
   debounceMs?: number
   /** How often the sweep runs. */
   sweepMs?: number
-  /** How soon marks are drained again after connections ran out. */
+  /** How soon a drain or a sweep runs again after connections ran out. */
   retryMs?: number
   now?: () => Date
   log?: (message: string) => void
@@ -636,6 +672,8 @@ export class ChatReconciler {
   private debounce: ReturnType<typeof setTimeout> | undefined
   private readonly retryMs: number
   private retry: ReturnType<typeof setTimeout> | undefined
+  /** A sweep gave up for connections, so the retry sweeps, which drains too. */
+  private sweepOwed = false
   private readonly sweepTimer: ReturnType<typeof setInterval>
   /** Work runs one piece at a time, in order. */
   private queue: Promise<void> = Promise.resolve()
@@ -684,7 +722,7 @@ export class ChatReconciler {
   async sweep(): Promise<void> {
     await this.enqueue(async () => {
       await sweep(this.db, this.now(), this.log)
-    })
+    }, true)
   }
 
   /** A `chat_dirty` notify: drains once the debounce is up. */
@@ -705,7 +743,10 @@ export class ChatReconciler {
     await this.queue
   }
 
-  private async enqueue(work: () => Promise<void>): Promise<void> {
+  private async enqueue(
+    work: () => Promise<void>,
+    sweeping = false
+  ): Promise<void> {
     const next = this.queue.then(async () => {
       if (this.closed) return
       try {
@@ -713,18 +754,21 @@ export class ChatReconciler {
       } catch (error) {
         this.log(String(error))
         // Connections are short, not gone, and the marks are all still there.
-        if (isPoolTimeout(error)) this.askAgain()
+        if (isConnectionUnavailable(error)) this.askAgain(sweeping)
       }
     })
     this.queue = next
     await next
   }
 
-  private askAgain(): void {
+  private askAgain(sweeping: boolean): void {
+    this.sweepOwed ||= sweeping
     if (this.closed || this.retry != null) return
     this.retry = setTimeout(() => {
       this.retry = undefined
-      this.drain().catch(() => undefined)
+      const again = this.sweepOwed ? this.sweep() : this.drain()
+      this.sweepOwed = false
+      again.catch(() => undefined)
     }, this.retryMs)
   }
 }

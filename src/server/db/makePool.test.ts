@@ -13,7 +13,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { serverConfig } from '../serverConfig'
 import {
   type DatabaseRole,
-  isPoolTimeout,
+  isConnectionUnavailable,
   makeDatabase,
   makePool,
   poolSettings,
@@ -157,7 +157,7 @@ describe('a pool with a role', () => {
   })
 })
 
-describe('isPoolTimeout', () => {
+describe('isConnectionUnavailable', () => {
   const failureOf = async (attempt: Promise<unknown>): Promise<unknown> => {
     try {
       await attempt
@@ -174,7 +174,9 @@ describe('isPoolTimeout', () => {
       connectionTimeoutMillis: 50
     })
     const held = await pool.connect()
-    expect(isPoolTimeout(await failureOf(pool.query('select 1')))).equals(true)
+    expect(
+      isConnectionUnavailable(await failureOf(pool.query('select 1')))
+    ).equals(true)
     held.release()
     await pool.end()
   })
@@ -189,7 +191,9 @@ describe('isPoolTimeout', () => {
       connectionString: `postgres://127.0.0.1:${port}/none`,
       connectionTimeoutMillis: 50
     })
-    expect(isPoolTimeout(await failureOf(pool.query('select 1')))).equals(true)
+    expect(
+      isConnectionUnavailable(await failureOf(pool.query('select 1')))
+    ).equals(true)
     await pool.end()
     for (const socket of sockets) socket.destroy()
     silent.close()
@@ -202,27 +206,99 @@ describe('isPoolTimeout', () => {
       'client_login_timeout (server down)',
       'no more connections allowed (max_client_conn)',
       'no more connections allowed (max_user_connections)',
-      'server login has been failing, cached error: connect failed (server_login_retry)'
+      'server login has been failing, cached error: connect failed (server_login_retry)',
+      'pgbouncer cannot connect to server',
+      'server conn crashed?',
+      'pooler is shutting down'
     ])
-      expect(isPoolTimeout(new Error(message))).equals(true, message)
+      expect(isConnectionUnavailable(new Error(message))).equals(true, message)
     for (const message of [
       'query_timeout',
       'too many clients already',
       'server login failed: wrong password type'
     ])
-      expect(isPoolTimeout(new Error(message))).equals(false, message)
+      expect(isConnectionUnavailable(new Error(message))).equals(false, message)
+  })
+
+  it('knows a connection that dropped', () => {
+    for (const message of [
+      'Connection terminated unexpectedly',
+      'Client has encountered a connection error and is not queryable'
+    ])
+      expect(isConnectionUnavailable(new Error(message))).equals(true, message)
+  })
+
+  const coded = (code: string): Error =>
+    Object.assign(new Error('whatever it says'), { code })
+
+  it('knows a server that is full or stopping or starting, by SQLSTATE', () => {
+    for (const code of ['53300', '57P01', '57P02', '57P03'])
+      expect(isConnectionUnavailable(coded(code))).equals(true, code)
+  })
+
+  it('knows a socket whose other end is down or gone', () => {
+    for (const code of [
+      'EAI_AGAIN',
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'EPIPE',
+      'ETIMEDOUT'
+    ])
+      expect(isConnectionUnavailable(coded(code))).equals(true, code)
+  })
+
+  it('leaves as faults what asking again would not mend', () => {
+    for (const code of [
+      '42P01', // no such table
+      '57014', // cancelled by a statement timeout
+      '53100', // the disk is full
+      '53200', // out of memory
+      '28P01', // a wrong password
+      '3D000', // no such database
+      '08P01', // a protocol violation, when no pooler's words go with it
+      'ENOTFOUND',
+      'EACCES'
+    ])
+      expect(isConnectionUnavailable(coded(code))).equals(false, code)
+    for (const message of [
+      // What `pg` says to a query left behind by this process's own `end()`.
+      'Connection terminated',
+      'Client was closed and is not queryable',
+      'Cannot use a pool after calling end on the pool'
+    ])
+      expect(isConnectionUnavailable(new Error(message))).equals(false, message)
+  })
+
+  it('knows a connection the server ended, as it does in a restart', async () => {
+    const victim = new Client({ connectionString: testDatabaseUrl })
+    victim.on('error', () => undefined)
+    await victim.connect()
+    const { rows } = await victim.query<{ pid: number }>(
+      'select pg_backend_pid() as pid'
+    )
+    const failing = failureOf(victim.query('select pg_sleep(10)'))
+    const admin = new Client({ connectionString: testDatabaseUrl })
+    await admin.connect()
+    await admin.query('select pg_terminate_backend($1)', [rows[0].pid])
+    await admin.end()
+    expect(isConnectionUnavailable(await failing)).equals(true)
+    await victim.end().catch(() => undefined)
   })
 
   it('knows nothing else', async () => {
     const pool = new Pool({ connectionString: testDatabaseUrl })
     expect(
-      isPoolTimeout(await failureOf(pool.query('select from no_such_table')))
+      isConnectionUnavailable(
+        await failureOf(pool.query('select from no_such_table'))
+      )
     ).equals(false)
     await pool.end()
-    expect(isPoolTimeout('timeout exceeded when trying to connect')).equals(
-      false
-    )
-    expect(isPoolTimeout(undefined)).equals(false)
+    expect(
+      isConnectionUnavailable('timeout exceeded when trying to connect')
+    ).equals(false)
+    expect(isConnectionUnavailable(undefined)).equals(false)
   })
 })
 
@@ -293,7 +369,7 @@ async function waitFor(done: () => boolean): Promise<void> {
 }
 
 /** Needs a PgBouncer on the machine, and skips without one. */
-describe('isPoolTimeout against a real PgBouncer', function () {
+describe('isConnectionUnavailable against a real PgBouncer', function () {
   this.timeout(30000)
   const wait = async (ms: number): Promise<void> => {
     await new Promise(resolve => setTimeout(resolve, ms))
@@ -370,7 +446,7 @@ ignore_startup_parameters = extra_float_digits,options
     await wait(100)
     const error = await failure(pool.query('select 1'))
     expect(error.message).equals('query_wait_timeout')
-    expect(isPoolTimeout(error)).equals(true)
+    expect(isConnectionUnavailable(error)).equals(true)
     await holding.catch(() => undefined)
     await pool.end()
   })
@@ -390,9 +466,33 @@ ignore_startup_parameters = extra_float_digits,options
     expect(error.message).equals(
       'no more connections allowed (max_client_conn)'
     )
-    expect(isPoolTimeout(error)).equals(true)
+    expect(isConnectionUnavailable(error)).equals(true)
     await extra.end().catch(() => undefined)
     for (const client of clients) await client.end()
+  })
+
+  it('knows the pooler dying under a query, the query after it, and the client left behind', async () => {
+    const pool = new Pool({ connectionString: url, max: 2 })
+    pool.on('error', () => undefined)
+    const held = await pool.connect()
+    held.on('error', () => undefined)
+    const inFlight = failure(pool.query('select pg_sleep(10)'))
+    await wait(100)
+    bouncer?.kill('SIGKILL')
+    const dropped = await inFlight
+    expect(dropped.message).equals('Connection terminated unexpectedly')
+    expect(isConnectionUnavailable(dropped)).equals(true)
+    await wait(50)
+    const left = await failure(held.query('select 1'))
+    expect(left.message).equals(
+      'Client has encountered a connection error and is not queryable'
+    )
+    expect(isConnectionUnavailable(left)).equals(true)
+    held.release(true)
+    const refused = await failure(pool.query('select 1'))
+    expect((refused as Error & { code?: string }).code).equals('ECONNREFUSED')
+    expect(isConnectionUnavailable(refused)).equals(true)
+    await pool.end()
   })
 })
 
