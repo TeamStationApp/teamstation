@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import { ageOn } from '../../common/age'
-import { openArrivalsOf } from '../access'
+import { openAddsOf, openAddTeams, openArrivalsOf } from '../access'
 import type { ChatKind, Database } from '../db/database'
 import { rowsOfPeople, STAFF_ROLES, survivors } from '../teams/teamStaff'
 
@@ -237,9 +237,10 @@ async function teamMemberIds(
       ])
     )
     .execute()
-  // Neither somebody a team holds only by an open add, nor their guardians,
-  // until it can no longer be rejected: a player without their parents is no
-  // better in the team's chat than a parent without their child.
+  // Neither somebody an open add brought to the team, nor the guardians of
+  // anybody it holds so, until it can no longer be rejected: a player without
+  // their parents is no better in the team's chat than a parent without their
+  // child. Somebody on the team before the add stays in its chat.
   const open = await openArrivalsOf(db, teamIds)
   return [
     ...(await teamStaffIds(db, teamIds)),
@@ -269,7 +270,7 @@ export async function teamGuardianRows(
     .execute()
   // Not the guardians of somebody a team holds only by an open add: who they
   // are is not that team's to read until the add can no longer be rejected.
-  const open = await openArrivalsOf(db, teamIds)
+  const open = await openAddsOf(db, teamIds)
   const players = rows.filter(
     row => open.get(row.team_id)?.has(row.user_id) !== true
   )
@@ -313,6 +314,9 @@ async function playersAmong(
       rows.map(row => row.id)
     )
     .where('is_player', '=', true)
+    // A team holding them only by an open add does not make them a player:
+    // they are in no team's chat for it, and stay among its fans.
+    .where('team_id', 'not in', ['', ...(await openAddTeams(db, survivorIds))])
     .execute()
   const survivorOf = await survivors(
     db,

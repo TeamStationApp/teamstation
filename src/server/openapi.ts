@@ -4087,6 +4087,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                             guardianLinks: { type: 'integer' },
                             guardiansMissing: { type: 'integer' },
                             guardiansRefused: { type: 'integer' },
+                            rolesRefused: {
+                              type: 'boolean',
+                              description:
+                                'Staff was asked for, and the team holds this ' +
+                                'person only by an add their side may reject.'
+                            },
                             rolesAdded: {
                               type: 'array',
                               items: {
@@ -4119,6 +4125,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                           error: { type: 'integer' },
                           guardianLinks: { type: 'integer' },
                           guardiansRefused: { type: 'integer' },
+                          rolesRefused: { type: 'integer' },
                           staff: { type: 'integer' }
                         }
                       }

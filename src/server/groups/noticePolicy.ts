@@ -1019,6 +1019,7 @@ async function decideOnce(
     await resolve('declined')
     return
   }
+  const person = await personOf(trx, terms.userId)
   if (terms.mode === 'pool') {
     const game = await trx
       .selectFrom('games')
@@ -1027,26 +1028,21 @@ async function decideOnce(
       .forUpdate()
       .executeTakeFirst()
     if (game == null) throw notFound()
+    await lockPlayerAdds(trx, person.userId)
     const side = terms.side === 'home' ? game.home_team_id : game.away_team_id
     // Over, swapped, or the player in the game by now: it can never apply.
     const lapsed =
       game.status === 'final' ||
       game.status === 'cancelled' ||
       side !== terms.teamId ||
-      (await inGameAs(
-        trx,
-        game,
-        (await personOf(trx, terms.userId)).userIds
-      )) != null
+      (await inGameAs(trx, game, person.userIds)) != null
     if (lapsed) {
       await resolve('expired')
       return
     }
     // Between a pitch and its result: accept again once it is in.
     await guestGameOpen(trx, game)
-  }
-  const person = await personOf(trx, terms.userId)
-  await lockPlayerAdds(trx, person.userId)
+  } else await lockPlayerAdds(trx, person.userId)
   // Deleted since it was asked: a later add must not bring them back.
   await refuseDeleted(trx, person.userId)
   const applied = await applyPlayerAdd(trx, terms)

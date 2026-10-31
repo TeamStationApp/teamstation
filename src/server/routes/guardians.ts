@@ -10,10 +10,10 @@ import {
   adminScopes,
   canCoach,
   heldByOpenAdd,
+  mayEditName,
   roleScopes,
   visibleScopes
 } from '../access'
-import { onePerson } from '../admin/people'
 import { findUserByEmail } from '../auth/emails'
 import type { Database } from '../db/database'
 import { createInvite } from '../invites/invites'
@@ -86,12 +86,12 @@ export function guardianRoutes(
    * themselves, are not such a team's to read or change.
    */
   const heldFrom = async (
-    actor: { isAdmin: boolean },
+    actor: { userId: string; isAdmin: boolean },
     teamId: string,
     userId: string
   ): Promise<boolean> =>
-    !actor.isAdmin &&
-    (await heldByOpenAdd(db, teamId, (await onePerson(db, userId)).userIds))
+    (await heldByOpenAdd(db, teamId, [userId])) &&
+    !(await mayEditName(db, actor.userId, userId, actor))
 
   router.get(
     '/teams/:teamId/players/:userId/guardians',

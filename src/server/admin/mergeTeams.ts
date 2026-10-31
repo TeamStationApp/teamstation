@@ -1,6 +1,10 @@
 import { type Kysely, type RawBuilder, sql } from 'kysely'
 
 import {
+  placeholderSuffix,
+  placeholderTeamName
+} from '../../common/placeholderNames'
+import {
   mostRestrictive,
   type PlayerNamePrivacy
 } from '../../common/playerNamePrivacy'
@@ -196,6 +200,66 @@ async function refuseGamesBetween(
     )
 }
 
+/**
+ * A retired fixture's withdrawals onto the game that stays, each on the side
+ * of its team and under a placeholder nobody on that side holds there.
+ */
+async function carryWithdrawals(
+  trx: Kysely<Database>,
+  retiredGameId: string,
+  keptGameId: string
+): Promise<void> {
+  const rows = await trx
+    .selectFrom('game_withdrawn_players')
+    .selectAll()
+    .where('game_id', 'in', [retiredGameId, keptGameId])
+    .execute()
+  const carried = rows.filter(row => row.game_id === retiredGameId)
+  if (carried.length === 0) return
+  const games = await trx
+    .selectFrom('games')
+    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
+    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+    .select([
+      'games.id',
+      'games.home_team_id as homeTeamId',
+      'home.name as homeName',
+      'away.name as awayName'
+    ])
+    .where('games.id', 'in', [retiredGameId, keptGameId])
+    .execute()
+  const retired = games.find(game => game.id === retiredGameId)!
+  const kept = games.find(game => game.id === keptGameId)!
+  const flipped = retired.homeTeamId !== kept.homeTeamId
+  const used = new Set(
+    rows
+      .filter(row => row.game_id === keptGameId)
+      .map(row => `${row.side} ${row.label}`)
+  )
+  const taken = new Set(
+    rows.filter(row => row.game_id === keptGameId).map(row => row.user_id)
+  )
+  for (const row of carried) {
+    if (taken.has(row.user_id)) continue
+    const side =
+      flipped === (row.side === 'home') ? ('away' as const) : ('home' as const)
+    let label = row.label
+    if (used.has(`${side} ${label}`)) {
+      const prefix = placeholderTeamName(
+        side === 'home' ? kept.homeName : kept.awayName
+      )
+      let suffix = 0
+      do label = `${prefix} ${placeholderSuffix(suffix++)}`
+      while (used.has(`${side} ${label}`))
+    }
+    used.add(`${side} ${label}`)
+    await trx
+      .insertInto('game_withdrawn_players')
+      .values({ ...row, game_id: keptGameId, side, label })
+      .execute()
+  }
+}
+
 export async function mergeTeams(
   db: Kysely<Database>,
   input: MergeTeamsInput
@@ -304,7 +368,8 @@ export async function mergeTeams(
     // take them off their own team. As a player, it has nothing left to undo;
     // as anything else, it undoes the playing and leaves the row as it was,
     // and follows the row that stays. A row itself held by an open add is no
-    // such thing: the add on the row that stays still answers for them.
+    // such thing: both adds stand, on the row that stays, and the later of
+    // them answers for it as it would on one team.
     await sql`with recursive family(request_id, id) as (
         select id, terms->>'userId' from group_requests
           where kind = 'playerAdd' and status = 'applied'
@@ -318,24 +383,29 @@ export async function mergeTeams(
       ),
       held as (
         select distinct on (f.request_id) f.request_id,
-            m.id, m.is_player, m.jersey, m.positions
+            m.id, m.is_player, m.jersey, m.positions,
+            exists (
+              select 1 from group_requests open
+                where open.kind = 'playerAdd' and open.status = 'applied'
+                  and open.expires_at > now() and open.terms->>'mode' = 'roster'
+                  and open.terms->>'membershipId' = m.id
+            ) as open
           from family f
           join group_requests asked on asked.id = f.request_id
           join memberships m on m.user_id = f.id and m.team_id = case
             when asked.initiating_team_id = ${fromTeamId} then ${intoTeamId}
             else ${fromTeamId} end
-          where not exists (
-            select 1 from group_requests open
-              where open.kind = 'playerAdd' and open.status = 'applied'
-                and open.expires_at > now() and open.terms->>'mode' = 'roster'
-                and open.terms->>'membershipId' = m.id
-          )
           order by f.request_id, m.is_player desc
       )
       update group_requests r set
-        status = case when held.is_player then 'superseded' else r.status end,
-        resolved_at = case when held.is_player then now() else r.resolved_at end,
-        terms = case when held.is_player then r.terms
+        status = case when held.is_player and not held.open
+          then 'superseded' else r.status end,
+        resolved_at = case when held.is_player and not held.open
+          then now() else r.resolved_at end,
+        terms = case
+          when held.open and r.initiating_team_id = ${fromTeamId}
+            then r.terms || jsonb_build_object('membershipId', held.id)
+          when held.is_player or held.open then r.terms
           else (r.terms - 'createdMembership') || jsonb_build_object(
             'previous', jsonb_build_object(
               'jersey', held.jersey, 'positions', to_jsonb(held.positions)))
@@ -488,17 +558,7 @@ export async function mergeTeams(
         .where('status', '=', 'applied')
         .where('game_id', '=', fixture.retiredGameId)
         .execute()
-      await sql`insert into game_withdrawn_players
-          (game_id, user_id, side, request_id, label, withdrawn_at)
-        select kept.id, w.user_id,
-          case when retired.home_team_id = kept.home_team_id then w.side
-            when w.side = 'home' then 'away' else 'home' end,
-          w.request_id, w.label, w.withdrawn_at
-        from game_withdrawn_players w
-        join games retired on retired.id = w.game_id
-        join games kept on kept.id = ${fixture.keptGameId}
-        where w.game_id = ${fixture.retiredGameId}
-        on conflict (game_id, user_id) do nothing`.execute(trx)
+      await carryWithdrawals(trx, fixture.retiredGameId, fixture.keptGameId)
       await trx
         .updateTable('group_requests')
         .set({ game_id: fixture.keptGameId })

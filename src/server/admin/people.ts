@@ -390,7 +390,19 @@ async function moveAndClose(
       if (kept.positions.length === 0 && membership.positions.length > 0) {
         filled.positions = membership.positions
       }
-      if (!kept.is_player && membership.is_player) filled.is_player = true
+      if (!kept.is_player && membership.is_player) {
+        filled.is_player = true
+        // An add made them a player, on the row that goes: it stands on the
+        // row that stays, and a rejection undoes the playing alone.
+        await sql`update group_requests set terms = (terms - 'createdMembership')
+            || jsonb_build_object(
+              'membershipId', ${kept.id}::text,
+              'previous', jsonb_build_object(
+                'jersey', ${kept.jersey}::text,
+                'positions', to_jsonb(${kept.positions}::text[])))
+          where kind = 'playerAdd' and status = 'applied'
+            and terms->>'membershipId' = ${membership.id}`.execute(db)
+      }
       if (Object.keys(filled).length > 0) {
         await db
           .updateTable('memberships')

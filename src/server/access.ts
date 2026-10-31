@@ -1389,12 +1389,15 @@ async function openHolds(
     )
     .select([
       'group_requests.initiating_team_id as teamId',
+      'group_requests.sent_at as sentAt',
       'memberships.is_player as isPlayer',
       sql<string>`group_requests.terms->>'userId'`.as('userId'),
       sql<string | null>`group_requests.terms->>'membershipId'`.as(
         'membershipId'
       ),
-      sql<boolean>`(group_requests.terms->>'createdMembership')::boolean`.as(
+      sql<
+        boolean | null
+      >`(group_requests.terms->>'createdMembership')::boolean`.as(
         'createdMembership'
       )
     ])
@@ -1402,16 +1405,6 @@ async function openHolds(
     .where('group_requests.status', '=', 'applied')
     .where('group_requests.expires_at', '>', new Date())
     .where(sql<string>`group_requests.terms->>'mode'`, '=', 'roster')
-    .where(
-      sql<SqlBool>`not exists (
-        select 1 from group_requests later
-        where later.kind = 'playerAdd' and later.status = 'accepted'
-          and later.sent_at > group_requests.sent_at
-          and later.initiating_team_id = group_requests.initiating_team_id
-          and later.terms->>'mode' = 'roster'
-          and later.terms->>'userId' = group_requests.terms->>'userId'
-      )`
-    )
     .where(
       'teamIds' in scope
         ? sql.ref<string>('group_requests.initiating_team_id')
@@ -1427,11 +1420,43 @@ async function openHolds(
     db,
     standing.map(row => row.userId)
   )
-  return standing.map(row => ({
-    teamId: row.teamId!,
-    userIds: people.get(row.userId)?.userIds ?? [row.userId],
-    newcomer: row.createdMembership
-  }))
+  const accepted =
+    standing.length === 0
+      ? []
+      : await db
+          .selectFrom('group_requests')
+          .select([
+            'initiating_team_id as teamId',
+            'sent_at as sentAt',
+            sql<string>`terms->>'userId'`.as('userId')
+          ])
+          .where('kind', '=', 'playerAdd')
+          .where('status', '=', 'accepted')
+          .where(sql<string>`terms->>'mode'`, '=', 'roster')
+          .where(
+            'initiating_team_id',
+            'in',
+            standing.map(row => row.teamId!)
+          )
+          .execute()
+  return standing.flatMap(row => {
+    const userIds = people.get(row.userId)?.userIds ?? [row.userId]
+    const answered = accepted.some(
+      later =>
+        later.teamId === row.teamId &&
+        later.sentAt > row.sentAt &&
+        userIds.includes(later.userId)
+    )
+    return answered
+      ? []
+      : [
+          {
+            teamId: row.teamId!,
+            userIds,
+            newcomer: row.createdMembership === true
+          }
+        ]
+  })
 }
 
 /** The rows of the people each team holds only by an open add (`openHolds`). */

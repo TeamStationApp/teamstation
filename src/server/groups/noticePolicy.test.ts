@@ -2787,6 +2787,8 @@ describe('adds made with a notice', function () {
       }
     )
     expect(adults.status).equals(200)
+    expect(adults.body.results[0].rolesRefused).equals(true)
+    expect(adults.body.counts.rolesRefused).equals(1)
     expect(
       await db!
         .selectFrom('scope_roles')
@@ -2794,5 +2796,158 @@ describe('adds made with a notice', function () {
         .where('user_id', '=', ids['Held Staff'])
         .execute()
     ).deep.equals([])
+  })
+
+  it('keeps the parents of a held player out, though the child was on the team', async function () {
+    await person('Sat Child', { login: true })
+    await person('Sat Parent', { login: true })
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Sat Child'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    await db!
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: ids['Sat Parent'],
+        related_user_id: ids['Sat Child'],
+        kind: 'guardian',
+        can_manage: true
+      })
+      .execute()
+    await add('roster', 'Sat Child')
+    const members = await audienceOf(
+      db!,
+      'teamMembers',
+      TEAM.falcons,
+      new Date()
+    )
+    expect(members.has(ids['Sat Child'])).equals(true)
+    expect(members.has(ids['Sat Parent'])).equals(false)
+  })
+
+  it('moves a hold onto the row an account merge keeps, and undoes the playing alone', async function () {
+    await person('Merged Away', { login: true })
+    await person('Kept Member', { login: true })
+    const kept = makeId('membership')
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: kept,
+        user_id: ids['Kept Member'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: false,
+        jersey: '7'
+      })
+      .execute()
+    const added = await add('roster', 'Merged Away')
+    await closeInto(db!, ids['Merged Away'], ids['Kept Member'])
+    const terms = (await request(added.requestId!)).terms as PlayerAddTerms
+    expect(terms.membershipId).equals(kept)
+    expect(terms.createdMembership).equals(undefined)
+    expect(await openAdds(db!, TEAM.falcons)).includes(ids['Kept Member'])
+    expect(await rejoinedSince(db!, terms)).equals(false)
+    expect(await decide('Kept Member', added.requestId!, 'decline')).equals(
+      'declined'
+    )
+    expect(await membership('Kept Member', TEAM.falcons)).to.include({
+      is_player: false,
+      jersey: '7'
+    })
+  })
+
+  it('ends a hold on a later accept across an account merge', async function () {
+    await person('Closed Once', { login: true })
+    await person('Survived Once', { login: true })
+    await add('roster', 'Closed Once')
+    await closeInto(db!, ids['Closed Once'], ids['Survived Once'])
+    expect(await openAdds(db!, TEAM.falcons)).includes(ids['Survived Once'])
+    await db!
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_notice_accepted_merged',
+        kind: 'playerAdd',
+        sender_id: ids.coach,
+        sender_scope_type: 'team',
+        sender_scope_id: TEAM.falcons,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'roster',
+          teamId: TEAM.falcons,
+          userId: ids['Survived Once'],
+          jersey: null,
+          positions: [],
+          teamName: 'Ridgeview Falcons'
+        }),
+        status: 'accepted',
+        sent_at: new Date(Date.now() + 1000),
+        expires_at: new Date(Date.now() + DAY),
+        initiating_team_id: TEAM.falcons
+      })
+      .execute()
+    expect(await openAdds(db!, TEAM.falcons)).not.includes(ids['Survived Once'])
+  })
+
+  it('lets those the roster shows the family to read it by the route', async function () {
+    await person('Moved Across', { login: true, teamId: TEAM.owls })
+    await role(ids.coach, TEAM.owls, 'coach')
+    await add('roster', 'Moved Across')
+    const path = `/teams/${TEAM.falcons}/players/${ids['Moved Across']}/guardians`
+    expect((await call(TOKENS.coach, 'GET', path)).status).equals(200)
+    await db!
+      .deleteFrom('scope_roles')
+      .where('user_id', '=', ids.coach)
+      .where('scope_id', '=', TEAM.owls)
+      .execute()
+    expect((await call(TOKENS.coach, 'GET', path)).status).equals(404)
+  })
+
+  it('keeps a held player among the fans of a team', async function () {
+    await person('Fan Added', { login: true })
+    await db!
+      .insertInto('team_follows')
+      .values({ user_id: ids['Fan Added'], team_id: TEAM.herons })
+      .execute()
+    const fans = async (): Promise<Set<string>> =>
+      await audienceOf(db!, 'teamFans', TEAM.herons, new Date())
+    expect((await fans()).has(ids['Fan Added'])).equals(true)
+    const added = await add('roster', 'Fan Added')
+    expect((await fans()).has(ids['Fan Added'])).equals(true)
+    // Settled, a player of the Falcons is no fan.
+    await db!
+      .updateTable('group_requests')
+      .set({ sent_at: new Date(0), expires_at: new Date(1) })
+      .where('id', '=', added.requestId!)
+      .execute()
+    expect((await fans()).has(ids['Fan Added'])).equals(false)
+  })
+
+  it('gives a team its format back once a former pool guest plays for it', async function () {
+    await person('Once Pool', { login: true })
+    const gameId = await game()
+    await add('pool', 'Once Pool', { gameId, side: 'home' })
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Once Pool'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    await withFormat('full', async () => {
+      const roster = await teamRoster(db!, undefined, TEAM.falcons, true)
+      expect(
+        roster.find(row => row.userId === ids['Once Pool'])?.shortName
+      ).equals('Once Pool')
+    })
   })
 })

@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
+import type { PlayerAddTerms } from '../../common/notifications'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -15,6 +16,8 @@ import { openAdds } from '../access'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
+import { rejoinedSince, supersededPlayerAdd } from '../groups/noticePolicy'
+import type { StoredRequest } from '../groups/requests'
 /**
  * The real shape of the problem, in miniature.
  *
@@ -441,43 +444,60 @@ describe('merging two rows that are one team', function () {
     })
     // Both teams holding somebody only by an open add: neither row has them
     // for the other's add to give way to.
-    await addedHere('grq_merge_into_both', 'Held By Both', {
-      role: 'member',
-      isPlayer: true
-    })
-    const both = await db
-      .selectFrom('group_requests')
-      .select(sql<string>`terms->>'userId'`.as('userId'))
-      .where('id', '=', 'grq_merge_into_both')
-      .executeTakeFirstOrThrow()
-    const theirs = await db
-      .selectFrom('memberships')
-      .select('id')
-      .where('user_id', '=', both.userId)
-      .where('team_id', '=', houser)
-      .executeTakeFirstOrThrow()
-    await db
-      .insertInto('group_requests')
-      .values({
-        id: 'grq_merge_from_both',
-        kind: 'playerAdd',
-        sender_id: sender,
-        sender_scope_type: 'team',
-        sender_scope_id: houser,
-        terms: JSON.stringify({
+    const heldByBoth = async (
+      into: string,
+      from: string,
+      name: string,
+      fromLater: boolean
+    ): Promise<void> => {
+      await addedHere(into, name, { role: 'member', isPlayer: true })
+      const { userId } = await db!
+        .selectFrom('group_requests')
+        .select(sql<string>`terms->>'userId'`.as('userId'))
+        .where('id', '=', into)
+        .executeTakeFirstOrThrow()
+      const theirs = await db!
+        .selectFrom('memberships')
+        .select('id')
+        .where('user_id', '=', userId)
+        .where('team_id', '=', houser)
+        .executeTakeFirstOrThrow()
+      const sentAt = new Date(Date.now() + (fromLater ? 1000 : -1000))
+      await db!
+        .insertInto('group_requests')
+        .values({
+          id: from,
           kind: 'playerAdd',
-          mode: 'roster',
-          teamId: houser,
-          userId: both.userId,
-          membershipId: theirs.id,
-          createdMembership: true
-        }),
-        status: 'applied',
-        sent_at: new Date(),
-        expires_at: new Date(Date.now() + 86400000),
-        initiating_team_id: houser
-      })
-      .execute()
+          sender_id: sender,
+          sender_scope_type: 'team',
+          sender_scope_id: houser,
+          terms: JSON.stringify({
+            kind: 'playerAdd',
+            mode: 'roster',
+            teamId: houser,
+            userId,
+            membershipId: theirs.id,
+            createdMembership: true
+          }),
+          status: 'applied',
+          sent_at: sentAt,
+          expires_at: new Date(Date.now() + 86400000),
+          initiating_team_id: houser
+        })
+        .execute()
+    }
+    await heldByBoth(
+      'grq_merge_into_first',
+      'grq_merge_from_later',
+      'Held By Both',
+      true
+    )
+    await heldByBoth(
+      'grq_merge_into_later',
+      'grq_merge_from_first',
+      'Held By Both Again',
+      false
+    )
     // A withdrawal on the game that goes, for a side of the game that stays.
     await db
       .insertInto('group_requests')
@@ -496,13 +516,22 @@ describe('merging two rows that are one team', function () {
       .execute()
     await db
       .insertInto('game_withdrawn_players')
-      .values({
-        game_id: filmedGame,
-        user_id: sender,
-        side: 'home',
-        request_id: 'grq_merge_withdrawn',
-        label: 'Houser Player 1'
-      })
+      .values([
+        {
+          game_id: filmedGame,
+          user_id: sender,
+          side: 'home',
+          request_id: 'grq_merge_withdrawn',
+          label: 'Houser Player 1'
+        },
+        {
+          game_id: scoredGame,
+          user_id: survivor,
+          side: 'away',
+          request_id: 'grq_merge_withdrawn',
+          label: 'Houser Player 1'
+        }
+      ])
       .execute()
     const notices = await listenScreenScopes(db)
     const mark = notices.mark()
@@ -515,12 +544,10 @@ describe('merging two rows that are one team', function () {
     expect(
       await db
         .selectFrom('game_withdrawn_players')
-        .select(['game_id', 'user_id', 'label'])
+        .select(['game_id', 'user_id'])
         .where('user_id', '=', sender)
         .execute()
-    ).deep.equals([
-      { game_id: scoredGame, user_id: sender, label: 'Houser Player 1' }
-    ])
+    ).deep.equals([{ game_id: scoredGame, user_id: sender }])
     const coach = await db
       .selectFrom('group_requests')
       .select(['status', 'terms'])
@@ -549,9 +576,33 @@ describe('merging two rows that are one team', function () {
         .where('id', '=', id)
         .executeTakeFirstOrThrow()
     expect((await here('grq_merge_into_player')).status).equals('superseded')
-    expect((await here('grq_merge_into_both')).status).equals('applied')
-    expect((await here('grq_merge_from_both')).status).equals('applied')
-    expect(await openAdds(db, hawks)).includes(both.userId)
+    // Both stand, on the row that stays, and exactly the later one answers.
+    for (const [later, earlier] of [
+      ['grq_merge_from_later', 'grq_merge_into_first'],
+      ['grq_merge_into_later', 'grq_merge_from_first']
+    ]) {
+      const stored = async (id: string): Promise<StoredRequest> =>
+        await db!
+          .selectFrom('group_requests')
+          .selectAll()
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      const newest = await stored(later)
+      const terms = newest.terms as PlayerAddTerms
+      expect(newest.status).equals('applied')
+      expect((await stored(earlier)).status).equals('applied')
+      expect(await supersededPlayerAdd(db, newest)).equals(false)
+      expect(await rejoinedSince(db, terms)).equals(false)
+      expect(await supersededPlayerAdd(db, await stored(earlier))).equals(true)
+      expect(await openAdds(db, hawks)).includes(terms.userId)
+    }
+    // The label its side already holds on the game that stays is not reused.
+    const labels = await db
+      .selectFrom('game_withdrawn_players')
+      .select(['user_id', 'label'])
+      .where('game_id', '=', scoredGame)
+      .execute()
+    expect(new Set(labels.map(row => row.label)).size).equals(labels.length)
     const keptCoach = await here('grq_merge_into_coach')
     expect(keptCoach.status).equals('applied')
     expect(keptCoach.terms).not.has.property('createdMembership')

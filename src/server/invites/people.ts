@@ -701,14 +701,6 @@ export async function rolesAt(
   return ROLES.filter(role => rows.some(row => row.role === role))
 }
 
-/**
- * Makes somebody's roles on this one level exactly these.
- *
- * A role they keep keeps its row, and so who granted it and when. The rest
- * are taken away and the new ones added, in one transaction, so a reader
- * never sees half of a change. `authority` is whose say it needs (an
- * administrator's unless the caller says otherwise).
- */
 /** A role keeps them on the team through a rejection, name and addresses too. */
 const HELD_ROLE =
   'They can be given a role once their side can no longer reject this add'
@@ -725,6 +717,14 @@ async function isSiteAdmin(
   return user?.is_admin === true
 }
 
+/**
+ * Makes somebody's roles on this one level exactly these.
+ *
+ * A role they keep keeps its row, and so who granted it and when. The rest
+ * are taken away and the new ones added, in one transaction, so a reader
+ * never sees half of a change. `authority` is whose say it needs (an
+ * administrator's unless the caller says otherwise).
+ */
 export async function setScopeRoles(
   db: Kysely<Database>,
   scopeType: InviteScopeType,

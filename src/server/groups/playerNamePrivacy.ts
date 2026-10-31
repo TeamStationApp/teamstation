@@ -240,14 +240,43 @@ export async function lentPlayers(
       ])
     )
     .execute()
+  if (pool.length === 0) return lent
   const current = await survivors(
     db,
     pool.map(row => row.userId)
   )
-  for (const row of pool) {
-    const userId = current.get(row.userId) ?? row.userId
-    lent.add(`${row.home} ${userId}`)
-    lent.add(`${row.away} ${userId}`)
+  const guested = new Set(
+    pool.flatMap(row => {
+      const userId = current.get(row.userId) ?? row.userId
+      return [`${row.home} ${userId}`, `${row.away} ${userId}`]
+    })
+  )
+  // Once they play for the team, its format is theirs like anybody's.
+  const candidates = pairs.filter(pair =>
+    guested.has(`${pair.teamId} ${pair.userId}`)
+  )
+  const own =
+    candidates.length === 0
+      ? []
+      : await db
+          .selectFrom('memberships')
+          .select(['team_id', 'user_id'])
+          .where('is_player', '=', true)
+          .where(
+            'team_id',
+            'in',
+            candidates.map(pair => pair.teamId)
+          )
+          .where(
+            'user_id',
+            'in',
+            candidates.map(pair => pair.userId)
+          )
+          .execute()
+  const players = new Set(own.map(row => `${row.team_id} ${row.user_id}`))
+  for (const pair of candidates) {
+    const key = `${pair.teamId} ${pair.userId}`
+    if (!players.has(key)) lent.add(key)
   }
   return lent
 }

@@ -109,6 +109,8 @@ export interface TeamAdultGains {
   guardiansRefused: number
   /** Roles this row added on the team. */
   rolesAdded: Role[]
+  /** Staff it asked for and was not given: the team holds them by an open add. */
+  rolesRefused?: true
 }
 
 export type TeamAdultResult =
@@ -150,6 +152,8 @@ export interface TeamAdultsCounts {
   guardianLinks: number
   /** Guardian links this call refused, as each row's `guardiansRefused`. */
   guardiansRefused: number
+  /** Rows refused staff, as each row's `rolesRefused`. */
+  rolesRefused: number
   /** Adults who gained at least one role in this call. */
   staff: number
 }

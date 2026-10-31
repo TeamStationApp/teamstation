@@ -76,6 +76,7 @@ export async function addAdults(
       error: 0,
       guardianLinks: 0,
       guardiansRefused: 0,
+      rolesRefused: 0,
       staff: 0
     }
     const links: GuardianLinking = {
@@ -89,6 +90,7 @@ export async function addAdults(
       counts[result.result] += 1
       counts.guardianLinks += result.guardianLinks
       counts.guardiansRefused += result.guardiansRefused
+      if (result.rolesRefused === true) counts.rolesRefused += 1
       if (result.rolesAdded.length > 0) counts.staff += 1
     }
     return { results, counts }
@@ -201,10 +203,13 @@ async function addAdult(
     ? { made: 0, missing: 0, refused: 0 }
     : await linkGuardian(trx, teamId, userId, row.guardianOf, linking)
   // A role keeps a held player on the team through a rejection.
-  const rolesAdded =
+  const rolesRefused =
     row.staff &&
     !deleted &&
-    (caller.isAdmin || !(await heldByOpenAdd(trx, teamId, [userId])))
+    !caller.isAdmin &&
+    (await heldByOpenAdd(trx, teamId, [userId]))
+  const rolesAdded =
+    row.staff && !deleted && !rolesRefused
       ? await addStaffRoles(trx, teamId, userId, caller.userId)
       : []
 
@@ -222,6 +227,7 @@ async function addAdult(
     guardiansMissing: links.missing,
     guardiansRefused: links.refused,
     rolesAdded,
+    ...(rolesRefused ? { rolesRefused: true as const } : {}),
     ...(emailHeldElsewhere ? { emailHeldElsewhere: true as const } : {}),
     ...(emailNotAttached ? { emailNotAttached: true as const } : {}),
     ...(externalIdNotAttached ? { externalIdNotAttached: true as const } : {})
