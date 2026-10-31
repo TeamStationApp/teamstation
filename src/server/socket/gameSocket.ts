@@ -29,7 +29,7 @@ import { sessionToken } from '../auth/tokens'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { PostgresFeed } from '../changeFeed/postgresFeed'
 import { mayPost, type PostingStanding } from '../chat/messages'
-import type { Database } from '../db/database'
+import { type Database, isPoolTimeout } from '../db/database'
 import {
   ChatFanout,
   type ChatFanoutOptions,
@@ -216,6 +216,23 @@ interface Connection {
   typedAt: number
 }
 
+/** Each frame's bytes, for as long as somebody still holds the frame. */
+const encodedFrames = new WeakMap<GameSocketReply, Buffer>()
+
+/**
+ * A frame as it goes out, made once however many sockets hear it. One delivery
+ * carries a game's whole list of plays to everybody watching it, and encoding
+ * that again for each of them holds the worker up for seconds.
+ */
+function encodedFrame(frame: GameSocketReply): Buffer {
+  let encoded = encodedFrames.get(frame)
+  if (encoded == null) {
+    encoded = Buffer.from(JSON.stringify(frame))
+    encodedFrames.set(frame, encoded)
+  }
+  return encoded
+}
+
 /**
  * Which of these subscribers may see the game, on the delivery's connection: a
  * read of their credentials and a set of reads of their scopes, however many
@@ -318,6 +335,23 @@ export function attachGameSocket(
       spreadTimers
     )
   }
+  // Notices went unheard or unsent: each screen subscribes again and reads, at
+  // its own moment. A frame still to come covers whatever is missed before it.
+  const resyncScreens = (targets: Connection[]): void => {
+    const due = targets.filter(
+      connection => connection.screen != null && !connection.screenResyncDue
+    )
+    for (const connection of due) connection.screenResyncDue = true
+    spread(
+      due,
+      resyncSpreadMs,
+      connection => {
+        connection.screenResyncDue = false
+        if (connection.screen != null) reply(connection, { type: 'resync' })
+      },
+      spreadTimers
+    )
+  }
   const fanout = new GameFanout({
     ...options.fanout,
     db,
@@ -337,22 +371,8 @@ export function attachGameSocket(
     deliver: async payload => {
       await announce(payload)
     },
-    // Notices went unheard: every screen subscribes again and reads, at its
-    // own moment. A frame still to come covers whatever is missed before it.
     onResync: () => {
-      const due = [...connections].filter(
-        connection => connection.screen != null && !connection.screenResyncDue
-      )
-      for (const connection of due) connection.screenResyncDue = true
-      spread(
-        due,
-        resyncSpreadMs,
-        connection => {
-          connection.screenResyncDue = false
-          if (connection.screen != null) reply(connection, { type: 'resync' })
-        },
-        spreadTimers
-      )
+      resyncScreens([...connections])
     }
   })
   const chat = new ChatFanout({ ...options.chat, db, feed, resyncSpreadMs })
@@ -407,7 +427,7 @@ export function attachGameSocket(
 
   const reply = (connection: Connection, frame: GameSocketReply): void => {
     if (connection.ws.readyState !== connection.ws.OPEN) return
-    connection.ws.send(JSON.stringify(frame))
+    connection.ws.send(encodedFrame(frame), { binary: false })
   }
   const refuse = (
     connection: Connection,
@@ -687,6 +707,7 @@ export function attachGameSocket(
         return teamId != null || seasonId != null
       })
     )
+    const unread: Connection[] = []
     await Promise.all(
       holding.map(async connection => {
         const screen = connection.screen!
@@ -718,10 +739,16 @@ export function attachGameSocket(
           )
             tell(connection, screen)
         } catch (error: unknown) {
-          log(`game socket: telling ${screen.scope}: ${String(error)}`)
+          if (isPoolTimeout(error)) unread.push(connection)
+          else log(`game socket: telling ${screen.scope}: ${String(error)}`)
         }
       })
     )
+    if (unread.length === 0) return
+    log(
+      `game socket: resyncing ${unread.length} screen(s): no database connection in time`
+    )
+    resyncScreens(unread)
   }
 
   /**

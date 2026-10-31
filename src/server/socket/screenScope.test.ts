@@ -576,7 +576,9 @@ describe('screen scopes on the game socket', function () {
       deliver: async () => {
         throw new Error('no socket')
       },
-      onResync: () => undefined,
+      onResync: () => {
+        lines.push('resync')
+      },
       log: line => {
         lines.push(line)
       }
@@ -588,6 +590,51 @@ describe('screen scopes on the game socket', function () {
       if (Date.now() > deadline) throw new Error(JSON.stringify(lines))
       await wait(5)
     }
+    expect(lines).not.includes('resync')
     await failingDelivery.close()
+  })
+
+  it('treats a delivery with no connection in time as a gap, until it closes', async function () {
+    const lines: string[] = []
+    let release = (): void => undefined
+    const feed = new PostgresFeed({
+      databaseUrl: scratchUrl,
+      log: () => undefined
+    })
+    const starved = new ScreenScopeListener({
+      feed,
+      coalesceMs: 5,
+      deliver: async payload => {
+        if (payload.revision === '5')
+          await new Promise<void>(resolve => {
+            release = resolve
+          })
+        throw new Error('timeout exceeded when trying to connect')
+      },
+      onResync: () => {
+        lines.push('resync')
+      },
+      log: line => {
+        lines.push(line)
+      }
+    })
+    await starved.listening
+    starved.notified(JSON.stringify({ revision: '4', gameId: seen }))
+    const deadline = Date.now() + 3000
+    while (!lines.includes('resync')) {
+      if (Date.now() > deadline) throw new Error(JSON.stringify(lines))
+      await wait(5)
+    }
+    expect(lines).length(2)
+    expect(lines[0]).contains('no database connection in time')
+
+    // One still reading when the listener closes has nobody left to tell.
+    starved.notified(JSON.stringify({ revision: '5', gameId: seen }))
+    await wait(50)
+    await starved.close()
+    release()
+    await wait(10)
+    expect(lines).length(2)
+    await feed.close()
   })
 })

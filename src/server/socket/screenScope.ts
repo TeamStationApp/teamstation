@@ -1,6 +1,7 @@
 import { asObject, asOptional, asString } from 'cleaners'
 
 import type { ChangeFeed } from '../changeFeed/feed'
+import { isPoolTimeout } from '../db/database'
 import {
   SCREEN_SCOPES_CHANNEL,
   type ScreenScopeIds,
@@ -27,8 +28,9 @@ export interface ScreenScopeListenerOptions {
   /** Passes one notice, after its window, to the sockets it concerns. */
   deliver: (payload: ScreenScopePayload) => Promise<void>
   /**
-   * The feed has returned after a gap: notices in between were
-   * never heard, so every screen scope subscribes again and reads.
+   * The feed has returned after a gap, or a notice found no database
+   * connection in time: notices were never heard or never passed on, so every
+   * screen scope subscribes again and reads.
    */
   onResync: () => void
   /** Notices about the same ids within this long are sent once. */
@@ -53,6 +55,7 @@ export class ScreenScopeListener {
   /** Settles once the channel is first in place, or that attempt has failed. */
   readonly listening: Promise<void>
   private readonly deliver: (payload: ScreenScopePayload) => Promise<void>
+  private readonly onResync: () => void
   private readonly coalesceMs: number
   private readonly log: (message: string) => void
   private readonly held = new Map<string, Held>()
@@ -61,6 +64,7 @@ export class ScreenScopeListener {
 
   constructor(options: ScreenScopeListenerOptions) {
     this.deliver = options.deliver
+    this.onResync = options.onResync
     this.coalesceMs = options.coalesceMs ?? 250
     this.log =
       options.log ??
@@ -72,7 +76,7 @@ export class ScreenScopeListener {
         this.notified(text)
       },
       onListening: first => {
-        if (!first) options.onResync()
+        if (!first) this.onResync()
       }
     })
     this.listening = subscription.listening
@@ -101,7 +105,17 @@ export class ScreenScopeListener {
       timer: setTimeout(() => {
         this.held.delete(key)
         this.deliver(held.payload).catch((error: unknown) => {
-          this.log(`sending ${JSON.stringify(held.payload)}: ${String(error)}`)
+          if (!isPoolTimeout(error)) {
+            this.log(
+              `sending ${JSON.stringify(held.payload)}: ${String(error)}`
+            )
+            return
+          }
+          if (this.closed) return
+          this.log(
+            `resyncing screens for ${JSON.stringify(held.payload)}: no database connection in time`
+          )
+          this.onResync()
         })
       }, this.coalesceMs)
     }
