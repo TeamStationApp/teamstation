@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util'
 
 import { conflict } from '../../common/errors'
+import type { ScoringAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/apply'
 import { recordOf, replayPlays } from '../../common/scoring/gumbo'
 import { validateRoster } from '../../common/scoring/lineup'
@@ -39,12 +40,20 @@ export function assertAuthoredRosters(
         'A saved setup cannot introduce duplicate lineup placements'
       )
   }
-  replayPlays(next, context, undefined, (state, action) => {
-    if (
-      action.type !== 'lineup' ||
-      oldActions.some(old => isDeepStrictEqual(old, action))
+  const isNew = (action: ScoringAction): boolean =>
+    action.type === 'lineup' &&
+    !oldActions.some(old => isDeepStrictEqual(old, action))
+  // The replay below is only where a new lineup action is tried. A post with
+  // none, as a pitch is, has nothing to try, and in a long game a replay is
+  // most of what the post costs.
+  if (
+    ![...next.plays, next.currentPlay].some(
+      play => recordOf(play, context.teams)?.actions.some(isNew) === true
     )
-      return
+  )
+    return
+  replayPlays(next, context, undefined, (state, action) => {
+    if (!isNew(action)) return
     const problem = applyAction(state, action).problems[0]
     if (problem != null) throw conflict(problem.message)
   })

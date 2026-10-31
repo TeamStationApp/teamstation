@@ -47,6 +47,16 @@ export function asSessionId(raw: unknown): number {
   return id
 }
 
+/**
+ * `asEither(asNull, cleaner)` that does not throw and catch for every value
+ * that is not null. A record's setup and every play opened hold dozens of
+ * them, and the exceptions were a third of what a save cost in a long game.
+ */
+const asNullable =
+  <T>(cleaner: Cleaner<T>): Cleaner<T | null> =>
+  raw =>
+    raw === null ? null : cleaner(raw)
+
 const asPoint = asObject({ x: asNumber, z: asNumber })
 export type Point = ReturnType<typeof asPoint>
 
@@ -163,7 +173,7 @@ const asPlayEvent = exactly(
 
 const asDefense = asObject(
   Object.fromEntries(
-    POSITIONS.map(position => [position, asEither(asNull, asSessionId)])
+    POSITIONS.map(position => [position, asNullable(asSessionId)])
   ) as Record<Position, Cleaner<number | null>>
 )
 /** Each side's batting order and fielders at one moment of the game. */
@@ -223,7 +233,7 @@ export const asGamePlay = asObject({
         runner: asPlayerRef,
         movementReason: asString,
         /** The pitcher this runner is charged to (`earnedRuns.ts`). */
-        responsiblePitcher: asOptional(asEither(asNull, asPlayerRef)),
+        responsiblePitcher: asOptional(asNullable(asPlayerRef)),
         /** A run that is earned to the responsible pitcher. */
         earned: asOptional(asBoolean),
         /** A run that is unearned to the team, reconstructed over the whole half. */
@@ -545,8 +555,52 @@ export interface GameState {
   }
 }
 
+/**
+ * A copy of plain data, exactly what a trip through JSON makes of it, without
+ * writing and parsing the text: a replay copies its game for every action.
+ * What plain data does not hold (a `toJSON`, a class, a `__proto__` key, or
+ * nothing JSON can write at all) goes through JSON itself.
+ */
 export function copyState<T>(value: T): T {
+  if (typeof value === 'string' || typeof value === 'boolean') return value
+  // JSON writes -0 as 0, and what is not finite as null.
+  if (typeof value === 'number')
+    return (value === 0 ? 0 : Number.isFinite(value) ? value : null) as T
+  if (value === null) return value
+  if (typeof value === 'object' && !('toJSON' in value)) {
+    if (Array.isArray(value)) return copyList(value) as T
+    if (Object.getPrototypeOf(value) === Object.prototype) {
+      const copy = copyRecord(value as Record<string, unknown>)
+      if (copy != null) return copy as T
+    }
+  }
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+/** Whether JSON writes this value, when it stands in an object or a list. */
+function hasJson(item: unknown): boolean {
+  const kind = typeof item
+  return kind !== 'undefined' && kind !== 'function' && kind !== 'symbol'
+}
+
+function copyList(list: unknown[]): unknown[] {
+  const out = new Array<unknown>(list.length)
+  for (let i = 0; i < list.length; i++)
+    out[i] = hasJson(list[i]) ? copyState(list[i]) : null
+  return out
+}
+
+/** Null for a `__proto__` key, which assigning it here would not copy. */
+function copyRecord(
+  record: Record<string, unknown>
+): Record<string, unknown> | null {
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(record)) {
+    if (key === '__proto__') return null
+    const item = record[key]
+    if (hasJson(item)) out[key] = copyState(item)
+  }
+  return out
 }
 
 /**
@@ -624,7 +678,7 @@ const playerShape = {
   nameFormat: asOptional(asPlayerNamePrivacy),
   jersey: asString,
   bats: asLiteral('left', 'right', 'switch'),
-  throws: asEither(asNull, asLiteral('left', 'right')),
+  throws: asNullable(asLiteral('left', 'right')),
   positions: asArray(asString),
   local: asBoolean
 }
@@ -632,7 +686,7 @@ const asPlayer = asObject(playerShape)
 const { nameFormat: _readOnly, ...legacyPlayerShape } = playerShape
 const asLegacyPlayer = asObject({
   ...legacyPlayerShape,
-  userId: asEither(asNull, asNumber)
+  userId: asNullable(asNumber)
 })
 const asIdentities = asObject({
   sourceToSession: asObject(asNumber),
@@ -697,7 +751,7 @@ export function setupOf(state: GameState): GameSetup {
 }
 
 const asTeam = asObject({
-  logoUrl: asOptional(asEither(asNull, asString)),
+  logoUrl: asOptional(asNullable(asString)),
   id: asString,
   name: asString
 })
@@ -713,7 +767,7 @@ const asMovement = asObject({
   decision: asLiteral('pending', 'safe', 'out'),
   resolved: asOptional(asBoolean)
 })
-const asRef = asEither(asNull, asPlayerRef)
+const asRef = asNullable(asPlayerRef)
 const asCharge = asObject({ pitcher: asRef, reachedOnError: asBoolean })
 const asErrorlessOuts = asObject({
   team: asNumber,
@@ -785,7 +839,7 @@ export const asGameState: Cleaner<GameState> = exactly(
       boxscore: asObject({ teams: asObject({ away: asSide, home: asSide }) }),
       plays: asObject({
         allPlays: asArray(asGamePlay),
-        currentPlay: asEither(asNull, asGamePlay)
+        currentPlay: asNullable(asGamePlay)
       })
     }),
     pending: asEither(
@@ -801,7 +855,7 @@ export const asGameState: Cleaner<GameState> = exactly(
         fielder: asOptional(asSessionId),
         ballHolder: asOptional(asSessionId),
         originalRunnerRecordCount: asNumber,
-        originalBases: asArray(asEither(asNull, asSessionId)),
+        originalBases: asArray(asNullable(asSessionId)),
         originalRuns: asNumber,
         originalOuts: asNumber,
         movements: asArray(asMovement),

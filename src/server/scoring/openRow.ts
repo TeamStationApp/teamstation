@@ -8,6 +8,7 @@ import { UnresolvedAccount } from '../admin/people'
 import type { Database } from '../db/database'
 import {
   booksOver,
+  type GamePlayerRow,
   gamePlayers,
   type GameScope,
   type NameBook,
@@ -38,6 +39,8 @@ export interface ScoringReadOptions {
    * named over (`scopeOf`), as every surface of the game names them.
    */
   gameId?: string
+  /** The game's `event_players`, by a caller that has read them already. */
+  players?: readonly GamePlayerRow[]
   /**
    * The names go to a speech model as well as the public: narration. Each
    * format is taken down to its spoken form (`spokenFormat`).
@@ -137,6 +140,38 @@ function playersOf(stored: StoredGame, teams: ReadonlySet<string>): number[] {
   return [...ids]
 }
 
+/** The survivor of each scoring id a game holds. */
+async function resolvedIdsOf(
+  db: Kysely<Database>,
+  stored: StoredGame
+): Promise<ReadonlyMap<number, number>> {
+  return await resolveGumboIds(db, scoringIdsIn(stored)).catch(
+    (error: unknown) => {
+      if (error instanceof UnresolvedAccount)
+        throw conflict(
+          'The scoring history refers to an account that cannot be resolved'
+        )
+      throw error
+    }
+  )
+}
+
+function allThemselves(resolved: ReadonlyMap<number, number>): boolean {
+  return [...resolved].every(([id, survivor]) => id === survivor)
+}
+
+/**
+ * Whether a game names an account since merged into another, so that reading
+ * it resolves any id. With none, its named read holds the same people as its
+ * stored form, only with their names filled in.
+ */
+export async function namesMergedAccounts(
+  db: Kysely<Database>,
+  stored: StoredGame
+): Promise<boolean> {
+  return !allThemselves(await resolvedIdsOf(db, stored))
+}
+
 /**
  * A game as its reader is answered, the book it was named from, and the
  * scope of ids as stored the book was made over (`scopeOf`): merged
@@ -150,16 +185,8 @@ export async function namedScoringGame<T extends StoredGame>(
   stored: T,
   options: ScoringReadOptions = {}
 ): Promise<{ game: T; names: NameBook; scope: GameScope }> {
-  const resolved = await resolveGumboIds(db, scoringIdsIn(stored)).catch(
-    (error: unknown) => {
-      if (error instanceof UnresolvedAccount)
-        throw conflict(
-          'The scoring history refers to an account that cannot be resolved'
-        )
-      throw error
-    }
-  )
-  const projected = [...resolved].every(([id, survivor]) => id === survivor)
+  const resolved = await resolvedIdsOf(db, stored)
+  const projected = allThemselves(resolved)
     ? stored
     : projectScoringGame(stored, id => {
         const survivor = resolved.get(id)
@@ -167,9 +194,10 @@ export async function namedScoringGame<T extends StoredGame>(
         return survivor
       })
   const players =
-    options.gameId == null
+    options.players ??
+    (options.gameId == null
       ? []
-      : ((await gamePlayers(db, [options.gameId])).get(options.gameId) ?? [])
+      : ((await gamePlayers(db, [options.gameId])).get(options.gameId) ?? []))
   // General scoring reads also feed public scoreboards. Disambiguate against
   // everyone in the game without adding private name parts to the projection.
   // Ids as stored and their survivors' read as the same accounts.

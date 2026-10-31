@@ -31,9 +31,10 @@ import { contextOf } from '../scoring/replayContext'
 import { assertAuthoredRosters } from '../scoring/rosterWrites'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
+import { gamePlayers } from '../users/nameBook'
 import { atBatOf, postedAtBat } from './atBatInProgress'
 import { pregameFold } from './currentPlay'
-import { reconcileEventTags } from './eventTags'
+import { repairEventTags } from './eventTags'
 import {
   type PlaySource,
   type PlayWrite,
@@ -265,7 +266,9 @@ export async function postGamePlays(
         play => storedRecordOf(play) != null
       )
     ) {
-      const projected = await resolveScoringGame(trx, next, { gameId })
+      // Nothing is written yet, so both reads name over the same players.
+      const players = (await gamePlayers(trx, [gameId])).get(gameId) ?? []
+      const projected = await resolveScoringGame(trx, next, { gameId, players })
       await assertStoredScoringRoles(
         trx,
         { id: gameId, ...game },
@@ -274,7 +277,7 @@ export async function postGamePlays(
       )
       const context = (await contextOf(trx, gameId, game, projected))!
       assertAuthoredRosters(
-        await resolveScoringGame(trx, previous, { gameId }),
+        await resolveScoringGame(trx, previous, { gameId, players }),
         projected,
         context
       )
@@ -390,7 +393,11 @@ export async function postGamePlays(
     } else {
       await replaceGameEvents(trx, write)
     }
-    const stored = await readPlays(trx, gameId)
+    // A live post writes the plays it names and no other, and this one holds
+    // the game's row: the rest stand as they were read.
+    const stored = live
+      ? await playsAfterLivePost(trx, gameId, priorRows, plays, body.remove)
+      : await readPlays(trx, gameId)
     const documents = stored.map(documentOf)
     const posted = scoresOf(stored)
     const decision = live
@@ -468,8 +475,10 @@ export async function postGamePlays(
       })
       .where('id', '=', gameId)
       .execute()
-    await reconcileEventTags(trx, gameId)
-    const taggedStored = await readPlays(trx, gameId)
+    // This post holds the game's row, so unless the repair writes them, its
+    // plays are the ones just read.
+    const { rewrotePlays } = await repairEventTags(trx, gameId, stored)
+    const taggedStored = rewrotePlays ? await readPlays(trx, gameId) : stored
     const taggedGame = await trx
       .selectFrom('games')
       .select(['currentPlay', 'pregame'])
@@ -654,6 +663,34 @@ export async function readPlays(
     .where('gameId', '=', gameId)
     .orderBy('atBatIndex')
     .execute()
+}
+
+/**
+ * A game's stored plays after a live post, reading again only those it wrote:
+ * in a long game the rest are most of what the post would otherwise read, and
+ * the documents kept need nothing worked out from them again.
+ */
+async function playsAfterLivePost(
+  db: Trx,
+  gameId: string,
+  prior: StoredPlay[],
+  written: PlayWrite[],
+  removed: readonly number[] = []
+): Promise<StoredPlay[]> {
+  const indexes = written.map(play => play.gumbo.about.atBatIndex)
+  const gone = new Set([...indexes, ...removed])
+  const rewritten =
+    indexes.length === 0
+      ? []
+      : await db
+          .selectFrom('events')
+          .select(PLAY_COLUMNS)
+          .where('gameId', '=', gameId)
+          .where('atBatIndex', 'in', indexes)
+          .execute()
+  return [...prior.filter(row => !gone.has(row.atBatIndex)), ...rewritten].sort(
+    (a, b) => a.atBatIndex - b.atBatIndex
+  )
 }
 
 /**

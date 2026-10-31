@@ -23,9 +23,12 @@ export async function contextOf(
   parts?: ContextParts
 ): Promise<SessionContext | null> {
   const sides = teamsOfRow(game)
-  const first = [...stored.plays, stored.currentPlay]
-    .map(play => recordOf(play, sides))
-    .find(record => record != null)
+  // The first record is all it needs: nothing later is read here.
+  let first: ReturnType<typeof recordOf> = null
+  for (const play of [...stored.plays, stored.currentPlay]) {
+    first = recordOf(play, sides)
+    if (first != null) break
+  }
   if (first == null) return null
   const { teams, fenceDistanceFt } =
     parts ?? (await contextParts(db, gameId, game))
