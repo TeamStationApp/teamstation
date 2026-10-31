@@ -10,7 +10,9 @@ import express from 'express'
 
 import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
+import { type BackgroundJobs, startBackgroundJobs } from './backgroundJobs'
 import { versionOf } from './buildVersion'
+import type { ChangeFeed } from './changeFeed/feed'
 import { makeChangeFeed } from './changeFeed/makeChangeFeed'
 import { type FeedRelay, startFeedRelay } from './changeFeed/relay'
 import { spaceObjectStore, startChatPurge } from './chat/attachments'
@@ -374,31 +376,68 @@ async function stopRelay(relay: FeedRelay | undefined): Promise<void> {
   })
 }
 
+/** What runs on the node with `backgroundJobs`, on either way of starting. */
+function jobsOn(
+  db: ReturnType<typeof makeDatabase>,
+  feed: () => ChangeFeed
+): BackgroundJobs<StatsBuilderHandle> {
+  return {
+    reopenInterrupted: () => {
+      reopenInterrupted(db)
+    },
+    startPurge: () => {
+      startPurge(db)
+    },
+    startChatAttachmentPurge: () => {
+      startChatAttachmentPurge(db)
+    },
+    startChatReconciler: () => {
+      startChatReconciler(db, feed())
+    },
+    startStatsBuilder: () =>
+      startStatsBuilder({
+        enabled: serverConfig.statsBuilder,
+        supervise: () =>
+          superviseStatsBuilder({
+            fork: (modulePath, args, options) =>
+              fork(modulePath, args, options) as SupervisedChild,
+            log: message => {
+              console.log(message)
+            },
+            clock: () => new Date()
+          }),
+        log: message => {
+          console.log(message)
+        }
+      })
+  }
+}
+
+/** Starts `jobs`, if this node runs them. Answers what to stop on the way down. */
+function startJobs(
+  jobs: BackgroundJobs<StatsBuilderHandle>
+): StatsBuilderHandle {
+  return startBackgroundJobs(
+    serverConfig.backgroundJobs,
+    jobs,
+    { stop: async () => undefined },
+    message => {
+      console.log(message)
+    }
+  )
+}
+
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
   const primaryDb = makeDatabase(requestDatabaseUrl(serverConfig), {
     role: 'primary'
   })
-  reopenInterrupted(primaryDb)
-  startPurge(primaryDb)
-  startKeySweep(primaryDb)
-  startChatAttachmentPurge(primaryDb)
-  startChatReconciler(primaryDb, makeChangeFeed(serverConfig, logFeed))
   const relay = startRelayIfNeeded()
-  const builder = startStatsBuilder({
-    enabled: serverConfig.statsBuilder,
-    supervise: () =>
-      superviseStatsBuilder({
-        fork: (modulePath, args, options) =>
-          fork(modulePath, args, options) as SupervisedChild,
-        log: message => {
-          console.log(message)
-        },
-        clock: () => new Date()
-      }),
-    log: message => {
-      console.log(message)
+  const builder = startJobs({
+    ...jobsOn(primaryDb, () => makeChangeFeed(serverConfig, logFeed)),
+    startKeySweep: () => {
+      startKeySweep(primaryDb)
     }
   })
   const exitWithBuilder = exitAfterBuilder(builder, code => {
@@ -806,25 +845,7 @@ function runWorker(): void {
   let relay: FeedRelay | undefined
   if (cluster.isPrimary) {
     relay = startRelayIfNeeded()
-    reopenInterrupted(db)
-    startPurge(db)
-    startChatAttachmentPurge(db)
-    startChatReconciler(db, feed)
-    builder = startStatsBuilder({
-      enabled: serverConfig.statsBuilder,
-      supervise: () =>
-        superviseStatsBuilder({
-          fork: (modulePath, args, options) =>
-            fork(modulePath, args, options) as SupervisedChild,
-          log: message => {
-            console.log(message)
-          },
-          clock: () => new Date()
-        }),
-      log: message => {
-        console.log(message)
-      }
-    })
+    builder = startJobs(jobsOn(db, () => feed))
   }
 
   let closing = false

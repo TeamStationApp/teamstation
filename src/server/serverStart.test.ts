@@ -68,7 +68,8 @@ describe('the server process', function () {
   /** Starts it with `workers`, waits for every worker, then hands it over. */
   async function start(
     workers: number,
-    run: (base: string) => Promise<void>
+    run: (base: string) => Promise<void>,
+    settings: Record<string, unknown> = {}
   ): Promise<number | null> {
     const port = await freePort()
     const home = join(dir, `workers-${workers}`)
@@ -99,7 +100,8 @@ describe('the server process', function () {
                 pathStyle: true
               }
             }
-          : {})
+          : {}),
+        ...settings
       })
     )
     const server: ChildProcess = spawn(
@@ -150,6 +152,64 @@ describe('the server process', function () {
         expect(unknown.status).equals(404)
       })
       expect(code).equals(0)
+    })
+
+    it(`runs background jobs only where the flag is on, with ${workers === 1 ? 'one process' : 'a primary and two workers'}`, async function () {
+      const scratch = new Pool({ connectionString: scratchUrl })
+      try {
+        const marks = async (): Promise<number> => {
+          const { rows } = await scratch.query<{ count: string }>(
+            'select count(*) from chat_dirty'
+          )
+          return Number(rows[0].count)
+        }
+        const builders = async (): Promise<number> => {
+          const { rows } = await scratch.query<{ count: string }>(
+            `select count(*) from pg_stat_activity
+             where datname = $1 and application_name = 'teamstation-statsBuilder'`,
+            [name]
+          )
+          return Number(rows[0].count)
+        }
+        const waitFor = async (
+          ready: () => Promise<boolean>
+        ): Promise<void> => {
+          const deadline = Date.now() + 30000
+          while (!(await ready())) {
+            if (Date.now() > deadline) throw new Error('it never happened')
+            await new Promise(resolve => setTimeout(resolve, 100))
+          }
+        }
+
+        // A mark left for whoever drains on start.
+        await scratch.query(
+          "insert into chat_dirty (scope_type, scope_id) values ('team', 'tm_jobs')"
+        )
+        const off = await start(
+          workers,
+          async base => {
+            const health = await fetch(`${base}/api/v1/health`)
+            expect(health.status).equals(200)
+            await new Promise(resolve => setTimeout(resolve, 2000))
+            expect(await marks()).equals(1)
+            expect(await builders()).equals(0)
+          },
+          { backgroundJobs: false, statsBuilder: true }
+        )
+        expect(off).equals(0)
+
+        const on = await start(
+          workers,
+          async () => {
+            await waitFor(async () => (await marks()) === 0)
+            await waitFor(async () => (await builders()) > 0)
+          },
+          { statsBuilder: true }
+        )
+        expect(on).equals(0)
+      } finally {
+        await scratch.end()
+      }
     })
   }
 })

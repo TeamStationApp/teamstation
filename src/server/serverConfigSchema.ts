@@ -45,6 +45,21 @@ export const asServerConfig = asObject({
    */
   statsBuilder: asOptional(asBoolean, true),
 
+  /**
+   * Whether this node's primary runs the purges, the key sweep, the reopening
+   * of interrupted uploads, the chat reconciler and the stats builder (which
+   * `statsBuilder` then still governs). True on exactly one node, false on the
+   * others. The relay is not among them: each API primary is a candidate.
+   *
+   * These act on the disk of the node they run on, so a second API node needs
+   * ownership first. A Director upload's parts are on the node that received
+   * it, and reopening has no owner filter: a node with this off leaves its own
+   * interrupted uploads `assembling`, and the jobs node's restart could reopen
+   * another node's. Chat attachment and replaced-recording purges have the same
+   * limit.
+   */
+  backgroundJobs: asOptional(asBoolean, true),
+
   /** Postgres for TeamStation's own data. */
   databaseUrl: asOptional(
     asString,
