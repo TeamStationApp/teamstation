@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/prefer-nullish-coalescing -- Browser callbacks are serialized without compiler helpers. */
 import assert from 'node:assert/strict'
 import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -55,6 +54,12 @@ async function main(): Promise<void> {
     await page
       .waitForNetworkIdle({ idleTime: 150, timeout: 10000 })
       .catch(() => undefined)
+    // A screen or a pill page still sliding out is in the page too, and a
+    // selector can find its copy of a row just before it goes.
+    await page.waitForSelector(
+      '[data-scene-role="outgoing"], [data-page-role="outgoing"]',
+      { hidden: true, timeout: 5000 }
+    )
   }
   try {
     await note(

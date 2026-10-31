@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Platform, Text, useWindowDimensions, View } from 'react-native'
 
 import { Screen } from '../components'
+import { useSceneShown } from '../components/sceneShown'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { ChatArrivalHost } from './ChatArrivalHost'
@@ -88,19 +89,27 @@ function WorkspaceContent(
     [navigation]
   )
   const theme = useTheme()
+  const shown = useSceneShown()
   const windowWidth = useWindowDimensions().width
   const [usableWidth, setUsableWidth] = useState(windowWidth)
   const wide = usableWidth >= CHAT_WIDE_WIDTH
   const [remembered, setRemembered] = useState(props.state.selectedId)
   const [readingSession, setReadingSession] = useState(0)
-  const selected = props.conversationId ?? remembered
+  const messagesVisible = wide || props.conversationId != null
+  // Narrow, a chat is a scene of its own over this list: only one this
+  // workspace itself showed stays here, hidden. A copy of another's would
+  // write its own empty draft over that scene's.
+  const [shownHere, setShownHere] = useState(props.conversationId)
+  const selected = props.conversationId ?? (wide ? remembered : shownHere)
+  useEffect(() => {
+    if (messagesVisible) setShownHere(selected)
+  }, [messagesVisible, selected])
   useEffect(() => {
     if (props.conversationId == null) return
     props.state.selectedId = props.conversationId
     setRemembered(props.conversationId)
     setReadingSession(value => value + 1)
   }, [props.conversationId, props.state])
-  const messagesVisible = wide || props.conversationId != null
   const listVisible = wide || props.conversationId == null
   const draft =
     selected == null
@@ -222,7 +231,9 @@ function WorkspaceContent(
               userId={props.userId}
               embedded
               paneHeader={wide}
-              active={messagesVisible}
+              // Covered beneath another screen (its info, its members) it is
+              // not on show: it marks nothing read until Back shows it.
+              active={messagesVisible && shown}
               readingSession={readingSession}
               draft={draft}
               draftOwner={draftOwner}

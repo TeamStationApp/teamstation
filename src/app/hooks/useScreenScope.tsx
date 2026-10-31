@@ -18,6 +18,7 @@ import {
   ScreenScopeGate,
   type ScreenScopeSocket
 } from '../../common/screenScope'
+import { useSceneShown } from '../components/sceneShown'
 
 /** One scope as a string, so two of them compare as values. */
 export function screenScopeKey(scope: ScreenScope): string {
@@ -107,12 +108,33 @@ export class SharedScreenScope implements ScreenScopeSocket {
   }
 }
 
-interface ScreenScopeValue {
+export interface ScreenScopeValue {
   socket?: ScreenScopeSocket
   scope?: ScreenScope
 }
 
 const ScreenScopeContext = createContext<ScreenScopeValue>({})
+
+/** The scope a screen's loads read through, as the provider above gives it. */
+export function useScreenScopeContext(): ScreenScopeValue {
+  return useContext(ScreenScopeContext)
+}
+
+/**
+ * Gives a subtree a scope other than the one above: the stack navigator
+ * freezes it for a screen on its way out, and withholds it from a screen
+ * drawn beneath a drag, whose subscribe would take the socket from the top.
+ */
+export function ScreenScopeValueProvider(props: {
+  value: ScreenScopeValue
+  children?: React.ReactNode
+}): React.ReactElement {
+  return (
+    <ScreenScopeContext.Provider value={props.value}>
+      {props.children}
+    </ScreenScopeContext.Provider>
+  )
+}
 
 export interface ScreenScopeProviderProps {
   /** None for a signed-out visitor: nothing is acknowledged. */
@@ -206,6 +228,8 @@ export function useScreenScope(
   latest.current = load
   const latestPaint = useRef(paint)
   latestPaint.current = paint
+  const shownNow = useRef(true)
+  shownNow.current = useSceneShown()
   const gate = useMemo(
     () =>
       new ScreenScopeGate({
@@ -214,11 +238,11 @@ export function useScreenScope(
         },
         socket,
         client: collectingOf(client),
-        ...(passGameNotices
-          ? {
-              passes: (notice: { gameId?: string }) => notice.gameId != null
-            }
-          : {})
+        // Covered, a screen reads nothing a notice names: it reads as it is
+        // shown again, and the top may take no scope of its own to supersede
+        // this one.
+        passes: (notice: { gameId?: string }) =>
+          !shownNow.current || (passGameNotices && notice.gameId != null)
       }),
     [socket, client, passGameNotices]
   )

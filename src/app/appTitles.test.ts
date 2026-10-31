@@ -30,7 +30,8 @@ describe('app titles', function () {
   })
 
   it('shows the mark on a tab, and not on a pushed screen', function () {
-    expect(source).contains('showMark={top == null}')
+    // The mark belongs to the screen drawing the header: a tab's root.
+    expect(source).contains('showMark={chromeFrame == null}')
     // Off unless a screen asks, so a new screen inherits no chrome.
     expect(header).contains('showMark = false')
   })
@@ -72,23 +73,34 @@ describe('app titles', function () {
     expect(game).contains(
       '<CardBand part={pinned.cardBand}>{scoreboard}</CardBand>'
     )
+    // Upright, the same card and pill bands as the other sections draw them
+    // in, which let go inside a pill page sliding out (`useActiveRef`).
+    const watchHead = readFileSync(
+      join(__dirname, 'screens', 'GameWatchHead.tsx'),
+      'utf8'
+    )
+    expect(watchHead).contains('<CardBand part={pinned.cardBand}')
+    // The pills have their own measured band, after the card's band.
+    expect(watchHead.indexOf('<CardBand part={pinned.cardBand}>')).lessThan(
+      watchHead.indexOf('<PillBand part={pinned.pillBand}')
+    )
     for (const layout of [
       'GameWatchLayout.tsx',
       'GameWatchLayout.native.tsx'
     ]) {
       const source = readFileSync(join(__dirname, 'screens', layout), 'utf8')
-      expect(source).match(
-        /ref=\{pinned\.cardBand\.ref\}[\s\S]*?onLayout=\{pinned\.cardBand\.handleLayout\}[\s\S]*?\{short \? null : head\}/
-      )
-      // The pills have their own measured band, after the card's band.
-      expect(source.indexOf('{short ? null : head}')).lessThan(
-        source.indexOf('ref={pinned.pillBand.ref}')
-      )
+      // Upright and held sideways alike.
+      expect(source).contains('<GameWatchHead')
+      expect(source).not.contains('pinned.cardBand.ref')
     }
   })
 
-  it('keeps the pane keyed, so a breakpoint cannot remount the player', function () {
-    expect(source).contains('key="pane"')
+  it('keeps the scenes keyed, so a breakpoint cannot remount the player', function () {
+    const navigator = readFileSync(
+      join(__dirname, 'navigation/StackNavigator.tsx'),
+      'utf8'
+    )
+    expect(navigator).matches(/key=\{`\$\{scene\.key\}~/)
     expect(source).contains('key="nav"')
   })
 

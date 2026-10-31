@@ -603,6 +603,20 @@ describe('the chat gate', function () {
     await until('inside', () => text().includes('inside'))
   })
 
+  it('shows the screen at once over an engine that has started', async function () {
+    // A chat pushed over the chat list: the engine is ready, and the start
+    // the gate runs again has not answered.
+    const engine = Object.assign(new FakeEngine(), { status: 'ready' as const })
+    engine.start = async () => await new Promise<never>(() => undefined)
+    await render(
+      <ChatGate engine={engine} client={unusedClient} userId={userIdOfGumbo(1)}>
+        <span>inside</span>
+      </ChatGate>
+    )
+    expect(text()).includes('inside')
+    expect(text()).not.includes('Loading')
+  })
+
   it('offers another try when chat will not start', async function () {
     const engine = new FakeEngine()
     engine.startAs = 'fail'

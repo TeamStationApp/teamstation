@@ -24,6 +24,7 @@ import { ChoiceSheet } from '../components/ChoiceSheet'
 import { Emblem } from '../components/Emblem'
 import { TimePicker } from '../components/EventScheduleFields'
 import { PillTabs } from '../components/PillTabs'
+import { useSceneShown } from '../components/sceneShown'
 import { StickySectionLayout } from '../components/StickySectionLayout'
 import { TickerText } from '../components/TickerText'
 import { useTitleHandoff } from '../components/useTitleHandoff'
@@ -280,7 +281,13 @@ export function UmpireScheduleScreen({
   const finish = useRef(noteEditor.finish)
   finish.current = noteEditor.finish
   const beforeLeave = useCallback(async () => await finish.current(), [])
-  useEffect(() => onBeforeLeave?.(beforeLeave), [onBeforeLeave, beforeLeave])
+  // Only while on show: kept beneath a team opened from it, it gates no move
+  // made up there.
+  const shown = useSceneShown()
+  useEffect(
+    () => (shown ? onBeforeLeave?.(beforeLeave) : undefined),
+    [onBeforeLeave, beforeLeave, shown]
+  )
   const first = initialUmpireGame(games, Date.now())
   const positions = (schedule?.types ?? []).flatMap(t => {
     const held = games.flatMap(g => g.positions).filter(p => p.typeId === t.id)

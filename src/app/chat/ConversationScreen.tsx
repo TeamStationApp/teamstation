@@ -1720,7 +1720,7 @@ export function ConversationScreen(
       opening = true
       tries += 1
       engine
-        .open(conversationId)
+        .open(conversationId, visit)
         .then(next => {
           opened = true
           if (live) {
@@ -1785,7 +1785,7 @@ export function ConversationScreen(
         foregroundHistory.current = undefined
       clearInterval(timer)
       unsubscribe()
-      engine.close(conversationId)
+      engine.close(conversationId, visit)
     }
   }, [engine, conversationId, userId, props.active, draftOwner])
 
@@ -3119,7 +3119,8 @@ export function ConversationScreen(
               }}
               text={text}
               onText={onText}
-              enabled={view.composer === 'enabled' && props.active !== false}
+              enabled={view.composer === 'enabled'}
+              asleep={props.active === false}
               sending={sending}
               preparing={preparing > 0}
               context={

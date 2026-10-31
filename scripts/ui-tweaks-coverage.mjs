@@ -81,7 +81,8 @@ if (!serverOnly) {
       '--grep',
       process.env.TS_UI_TWEAKS_GREP ??
         'roster|Roster|scoring sheet|player entry|placeholder|the coach|coach game|the Coach Game pill|automatic and explicit sections|title event creation and event detail editing|game page|game screen|game hero|game sections|game tabs|game watch|game card|relationship list|shared relationship Leave row|confirmed season participation departure|group settings identity|the league page|the season screen|settings people flows|creation and organization interface behavior|settings cleanup shared presentation|calendar, five-minute|timezone city selection|ScheduleRow|team presentation|minimal public team|team schedule|schedule event creation entry|season time|season page|group link|discovery|membership|Membership|warning|Warning|poster|Poster|sign.in|login|Login|event Info|event RSVP|schedule RSVP|recording|streaming screen|actual app|actual App|the app at launch|team route frames|Search tab|non-member|member’s game Videos|team card’s right|expanded statistics|the games feed|direct action app completion|applyCoverCrop|Coach Game|Score Game|the game Record button|Home Add and Create|the home screen|GameHeroCard|game actions|actual game scoring entry|the box score|player’s settings form' +
-          '|entity chat|the person profile|Team roles on Settings|umpire|Umpire|TickerText|native season layout|TextWidthButton|text-width|card content spacing|pill label clearance'
+          '|entity chat|the person profile|Team roles on Settings|umpire|Umpire|TickerText|native season layout|TextWidthButton|text-width|card content spacing|pill label clearance' +
+          '|stack navigator|scene slot|stack transitions|history motion|predictive back|tab pages|pinned content in pill pages|a player’s|a league’s People tab|native event section and picture pinning|browser event pane in pill pages|native pinned schedule anchoring|chat overlays and Back|reading animated values now|the chat gate|Tess in the app|team settings browser history|chat UI follow-up covered|the stream panel|the pinned head in a browser|management.test.tsx|the Walk-up tab|the Field Manager|the person profile|the Score Game screen|an opened chat video|the Auto-Scheduler setup'
     ],
     { NODE_V8_COVERAGE: temp },
     true
@@ -97,6 +98,7 @@ run(
     '--exit',
     ...(process.env.TS_UI_TWEAKS_NODE_TESTS?.split(',') ?? [
       'src/app/chat/engine/dmTitle.test.ts',
+      'src/app/chat/ChatVideo.native.test.ts',
       'src/common/seasonTimeFrames.test.ts',
       'src/common/playerSettings.test.ts',
       'src/common/api.test.ts',
@@ -105,6 +107,10 @@ run(
       'src/common/umpireGameDetail.test.ts',
       'src/common/scoring/rosterCommands.test.ts',
       'src/app/navigation/routes.test.ts',
+      'src/app/navigation/stackScene.test.ts',
+      'src/app/navigation/historyMotion.test.ts',
+      'src/app/navigation/history.test.ts',
+      'src/server/tess/sitemap.test.ts',
       'src/app/scoring/createDictatedPlayers.test.ts',
       'src/app/scoring/dictatedRoster.test.ts',
       'src/server/events/eventInfo.test.ts',

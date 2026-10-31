@@ -4,6 +4,7 @@ import { Switch, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import type { UmpireSettings } from '../../common/umpires'
 import { ListCard, ListRow, SectionHeader } from '../components'
+import { useSceneReveals } from '../components/sceneShown'
 import { useTheme } from '../theme/ThemeContext'
 import { UmpireError, useUmpireWork } from './shared'
 export type UmpireSettingsDestination =
@@ -28,6 +29,9 @@ export function UmpireSettingsCard({
   const [hasLevels, setHasLevels] = useState(false)
   const [settings, setSettings] = useState<UmpireSettings>()
   const { error, busy, run, live } = useUmpireWork(league)
+  // Levels and types, added on the screens pushed over this one, enable the
+  // season requirements below.
+  const reveals = useSceneReveals()
   useEffect(() => {
     run(async () => {
       const [value, levels, types] = await Promise.all([
@@ -40,7 +44,7 @@ export function UmpireSettingsCard({
         setHasLevels(levels.length > 0 && types.length > 0)
       }
     })
-  }, [client, league, live, run])
+  }, [client, league, live, run, reveals])
   const update = (value: Partial<UmpireSettings>): void => {
     run(async () => {
       const next = await client.setUmpireSettings(league, value)

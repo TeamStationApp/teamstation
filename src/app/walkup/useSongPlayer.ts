@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { WalkUpProvider } from '../../common/walkUpSong'
+import { useSceneShown } from '../components/sceneShown'
 import { WALK_UP_FADE, type WalkUpMusic } from './walkUpMusicTypes'
 
 /** A clip to play, and the key a screen knows it by (a row, a button). */
@@ -82,6 +83,13 @@ export function useSongPlayer(
     },
     [music, set]
   )
+
+  // A screen pushed over this one (the song picker over the DJ's list) leaves
+  // no Stop on show.
+  const shown = useSceneShown()
+  useEffect(() => {
+    if (!shown && playingRef.current != null) stop()
+  }, [shown, stop])
 
   const play = useCallback(
     (clip: ClipRequest) => {

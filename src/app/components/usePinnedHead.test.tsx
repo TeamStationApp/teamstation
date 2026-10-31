@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
-import React, { act } from 'react'
+import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import type { PinnedHead } from './pinnedHead'
@@ -34,15 +34,36 @@ interface HarnessProps {
   tab: string
   ready: boolean
   anchorOnRow: boolean
+  /** Its page drawn after it slides in, as `TabPages` keeps one. */
+  late?: boolean
 }
 
 let head: PinnedHead | undefined
+let drawPage: (() => void) | undefined
 const calls: string[] = []
 const named = (name: string): HTMLElement =>
   document.querySelector<HTMLElement>(`[data-name="${name}"]`)!
 
+const ref = (value: unknown): React.Ref<HTMLDivElement> =>
+  value as React.Ref<HTMLDivElement>
+
+/** A spinner, until its own commit draws the page: the screen's does not. */
+function LatePage(props: { head: PinnedHead }): React.ReactElement {
+  const [drawn, setDrawn] = useState(false)
+  drawPage = () => {
+    setDrawn(true)
+  }
+  return drawn ? (
+    <div data-name="content" ref={ref(props.head.content.ref)}>
+      <div data-name="row" ref={ref(props.head.nextRow.ref)} />
+    </div>
+  ) : (
+    <div data-name="spinner" />
+  )
+}
+
 function Harness(props: HarnessProps): React.ReactElement {
-  const { tab, ready, anchorOnRow } = props
+  const { tab, ready, anchorOnRow, late = false } = props
   head = usePinnedHead({
     headerHeight: HEADER,
     ready,
@@ -54,8 +75,6 @@ function Harness(props: HarnessProps): React.ReactElement {
       calls.push(`scroll card=${named('card').style.top}`)
     }
   })
-  const ref = (value: unknown): React.Ref<HTMLDivElement> =>
-    value as React.Ref<HTMLDivElement>
   return (
     <div
       data-name="scroller"
@@ -67,9 +86,13 @@ function Harness(props: HarnessProps): React.ReactElement {
       <div data-name="column">
         <div data-name="card" ref={ref(head.cardBand.ref)} />
         <div data-name="pills" ref={ref(head.pillBand.ref)} />
-        <div key={tab} data-name="content" ref={ref(head.content.ref)}>
-          {anchorOnRow && <div data-name="row" ref={ref(head.nextRow.ref)} />}
-        </div>
+        {late ? (
+          <LatePage key={tab} head={head} />
+        ) : (
+          <div key={tab} data-name="content" ref={ref(head.content.ref)}>
+            {anchorOnRow && <div data-name="row" ref={ref(head.nextRow.ref)} />}
+          </div>
+        )}
         <div data-name="spacer" ref={ref(head.spacer.ref)} />
       </div>
     </div>
@@ -293,6 +316,53 @@ describe('the pinned head in a browser', function () {
     expect(named('scroller').scrollTop).equals(
       LAYOUT.row.top - LAYOUT.content.top
     )
+  })
+
+  it('opens a kept schedule at its next game once it is drawn, pinned pills staying pinned', async function () {
+    const watchers: Array<() => void> = []
+    const observed = new Set<Element>()
+    const globals = globalThis as { ResizeObserver?: unknown }
+    const before = globals.ResizeObserver
+    globals.ResizeObserver = class {
+      constructor(callback: () => void) {
+        watchers.push(callback)
+      }
+
+      observe(node: Element): void {
+        observed.add(node)
+      }
+
+      unobserve(node: Element): void {
+        observed.delete(node)
+      }
+
+      disconnect(): void {
+        observed.clear()
+      }
+    }
+    try {
+      await mount()
+      await setScroll(PIN_AT + 300)
+      expect(named('pills').style.top).equals(`${HEADER}px`)
+      props = { ...props, late: true }
+      await select('schedule', true)
+      // A spinner: the tab stands at its top, with the pills where they were.
+      expect(named('scroller').scrollTop).equals(PIN_AT)
+      expect(named('pills').style.top).equals(`${HEADER}px`)
+      // Landed: the page draws itself, and the screen does not commit.
+      await act(async () => {
+        drawPage!()
+      })
+      expect(observed.has(named('content'))).equals(true)
+      await act(async () => {
+        for (const watcher of watchers) watcher()
+      })
+      const rowOffset = LAYOUT.row.top - LAYOUT.content.top
+      expect(named('scroller').scrollTop).equals(PIN_AT + rowOffset)
+      expect(named('pills').style.top).equals(`${HEADER}px`)
+    } finally {
+      globals.ResizeObserver = before
+    }
   })
 
   it('reads where the pills pin again when the card changes height', async function () {

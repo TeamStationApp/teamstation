@@ -20,6 +20,8 @@ export interface ComposerProps {
   onText: (text: string, change?: ComposerChange) => void
   /** Off while history is locked: the composer shows, but takes nothing. */
   enabled: boolean
+  /** Not on show, sliding off or covered: it takes nothing, and looks as it was. */
+  asleep?: boolean
   sending: boolean
   preparing?: boolean
   /** "Replying to <name>" with its snippet, or the edit being made. */
@@ -85,10 +87,11 @@ export function Composer(props: ComposerProps): React.ReactElement {
     attachments
   })
   const canAttach = enabled && !sending && props.preparing !== true
+  const takes = enabled && props.asleep !== true
   useEffect(
     () =>
       registerFocus?.(caret => {
-        if (!latest.current.enabled) return
+        if (!latest.current.enabled || latest.current.asleep === true) return
         const field = input.current
         // Android keeps a field focused after Back hides its keyboard, and
         // focusing it again shows nothing; refocusing brings the keyboard back.
@@ -104,11 +107,11 @@ export function Composer(props: ComposerProps): React.ReactElement {
   )
   useLayoutEffect(() => {
     const caret = pendingCaret.current
-    if (caret == null || !enabled) return
+    if (caret == null || !takes) return
     pendingCaret.current = undefined
     selection.current = caret
     setComposerSelection(input.current, caret)
-  }, [text, enabled, caretRevision])
+  }, [text, takes, caretRevision])
   useEffect(
     () =>
       bindComposerKeys(input.current, () => {
@@ -300,7 +303,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
             selection.current = { start: edit.afterEnd, end: edit.afterEnd }
             onText(next, change)
           }}
-          editable={enabled}
+          editable={takes}
           multiline
           placeholder={
             enabled ? lstrings.chat_composer : lstrings.chat_composer_locked

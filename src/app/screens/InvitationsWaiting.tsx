@@ -4,6 +4,7 @@ import { Text, View } from 'react-native'
 import type { ManagePage, TeamStationClient } from '../../common/api'
 import { Button, DangerText, Emblem, SectionHeader } from '../components'
 import { ActionList, ActionRow } from '../components/ActionRow'
+import { useSceneReveals } from '../components/sceneShown'
 import { useConfirmedAction } from '../components/useConfirmedAction'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -43,6 +44,8 @@ export function InvitationsWaiting({
     beginWrite()
     keys.current.clear()
   }, [client, scopeKind, scopeId, beginWrite])
+  // People added on the screen pushed over this one, whichever way it left.
+  const reveals = useSceneReveals()
   useEffect(() => {
     const current = begin()
     client.managePage(scopeKind, scopeId).then(
@@ -56,7 +59,7 @@ export function InvitationsWaiting({
         if (current()) setError('People could not load. Try again.')
       }
     )
-  }, [client, scopeKind, scopeId, revision, begin])
+  }, [client, scopeKind, scopeId, revision, reveals, begin])
   const refresh = (): void => {
     setRevision(value => value + 1)
     onChanged?.()

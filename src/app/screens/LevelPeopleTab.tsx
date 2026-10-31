@@ -4,6 +4,7 @@ import { Text } from 'react-native'
 import type { LevelPeople, TeamStationClient } from '../../common/api'
 import { Card } from '../components'
 import { PeopleList } from '../components/PeopleList'
+import { useSceneReveals } from '../components/sceneShown'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -33,12 +34,17 @@ export function LevelPeopleTab(props: LevelPeopleTabProps): React.ReactElement {
   const [answer, setAnswer] = useState<LevelPeople | undefined>()
   const [error, setError] = useState<string | undefined>()
 
+  // A role, a player's settings or a removal, on a screen pushed over this.
+  const reveals = useSceneReveals()
   useEffect(() => {
     let live = true
     client
       .levelPeople(kind, id)
       .then(found => {
-        if (live) setAnswer(found)
+        if (live) {
+          setAnswer(found)
+          setError(undefined)
+        }
       })
       .catch((caught: unknown) => {
         if (live)
@@ -49,7 +55,7 @@ export function LevelPeopleTab(props: LevelPeopleTabProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, id, kind])
+  }, [client, id, kind, reveals])
 
   if (answer == null)
     return (

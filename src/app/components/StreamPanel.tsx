@@ -11,6 +11,7 @@ import { usePublishingReport } from '../player/useVideoListRefresh'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { Card } from './Card'
+import { useSceneShown } from './sceneShown'
 import { SectionHeader } from './SectionHeader'
 import {
   asksTwice,
@@ -239,28 +240,39 @@ export function StreamPanel(
    * Three seconds while video is arriving, fifteen while one is only waiting,
    * and not at all once every window has shut and nothing can change. A game
    * screen left open on a clubhouse television should not ask a thousand
-   * questions an hour.
+   * questions an hour. Nor one covered by a screen opened from it: that asks
+   * nothing, and asks once again when it is shown.
    */
+  const shown = useSceneShown()
+  const hidden = useRef(false)
   useEffect(() => {
-    if (!anyPublishing && !anyWaiting) return
-    if (allClosed && !anyPublishing) return
+    if (!shown) {
+      hidden.current = true
+      return
+    }
+    const revealed = hidden.current
+    hidden.current = false
     let cancelled = false
-    const timer = setInterval(
-      () => {
-        client
-          .liveStreams(gameId)
-          .then(next => {
-            if (!cancelled && next.gameId === gameId) setStreams(next)
-          })
-          .catch(() => undefined)
-      },
-      anyPublishing ? 3000 : 15000
-    )
+    const ask = (): void => {
+      client
+        .liveStreams(gameId)
+        .then(next => {
+          if (!cancelled && next.gameId === gameId) setStreams(next)
+        })
+        .catch(() => undefined)
+    }
+    // Asked whatever it last showed: a camera may have started meanwhile.
+    if (revealed) ask()
+    const quiet =
+      (!anyPublishing && !anyWaiting) || (allClosed && !anyPublishing)
+    const timer = quiet
+      ? undefined
+      : setInterval(ask, anyPublishing ? 3000 : 15000)
     return () => {
       cancelled = true
       clearInterval(timer)
     }
-  }, [client, gameId, anyPublishing, anyWaiting, allClosed])
+  }, [client, gameId, anyPublishing, anyWaiting, allClosed, shown])
 
   useEffect(() => {
     if (copied == null) return

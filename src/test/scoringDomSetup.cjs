@@ -136,8 +136,11 @@ globalThis.HTMLElement.prototype.scrollBy ??= function (options) {
   this.scrollTop += options?.top ?? 0
   this.scrollLeft += options?.left ?? 0
 }
+// The test page prefers reduced motion, so a screen suite sees one screen at
+// a time rather than two mid-slide; a suite about motion stubs
+// `AccessibilityInfo` for itself.
 window.matchMedia = query => ({
-  matches: false,
+  matches: query === '(prefers-reduced-motion: reduce)',
   media: query,
   addListener() {},
   removeListener() {},

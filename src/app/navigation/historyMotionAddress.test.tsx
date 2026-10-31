@@ -1,0 +1,341 @@
+/* eslint-disable @typescript-eslint/unbound-method -- Restored after each case. */
+import { expect } from 'chai'
+import { afterEach, describe, it } from 'mocha'
+import React, { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { BackHandler, Linking, Platform } from 'react-native'
+
+import { type HistoryMove, takeHistoryMove } from './historyMotion'
+import type { Route } from './routes'
+import * as web from './useAddressBar'
+import * as native from './useAddressBar.native'
+
+let root: Root | undefined
+let host: HTMLDivElement
+const originalOS = Platform.OS
+const originalBack = BackHandler.addEventListener
+const originalLink = Linking.addEventListener
+
+async function mount(hook: () => void): Promise<void> {
+  function Harness(): null {
+    hook()
+    return null
+  }
+  host = document.createElement('div')
+  document.body.append(host)
+  root = createRoot(host)
+  await act(async () => {
+    root!.render(<Harness />)
+  })
+}
+
+async function popped(go: () => void): Promise<void> {
+  await act(async () => {
+    const done = new Promise(resolve => {
+      window.addEventListener('popstate', resolve, { once: true })
+    })
+    go()
+    await done
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+}
+
+/** A navigation guard a test set: released even if the test timed out. */
+let releaseGuard: (() => void) | undefined
+
+describe('history motion', function () {
+  afterEach(async () => {
+    releaseGuard?.()
+    releaseGuard = undefined
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    host?.remove()
+    takeHistoryMove()
+    Object.defineProperty(Platform, 'OS', {
+      value: originalOS,
+      configurable: true
+    })
+    BackHandler.addEventListener = originalBack
+    Linking.addEventListener = originalLink
+  })
+
+  describe('history motion on the web (U3)', function () {
+    it('notes Back and Forward before the route handler runs', async function () {
+      const seen: Array<HistoryMove | undefined> = []
+      await mount(() => {
+        web.useBrowserBack(() => {
+          seen.push(takeHistoryMove())
+        })
+      })
+      web.showRoute({ name: 'team', teamId: 't1' })
+      web.showRoute({ name: 'player', userId: '7' })
+      await popped(() => {
+        window.history.back()
+      })
+      expect(seen.at(-1)).deep.equals({ direction: 'back', drawn: false })
+      await popped(() => {
+        window.history.forward()
+      })
+      expect(seen.at(-1)).deep.equals({ direction: 'forward', drawn: false })
+    })
+
+    it('notes no move onto an entry another script wrote', async function () {
+      const seen: Array<HistoryMove | undefined> = []
+      await mount(() => {
+        web.useBrowserBack(() => {
+          seen.push(takeHistoryMove())
+        })
+      })
+      web.showRoute({ name: 'team', teamId: 't1' })
+      // Two entries without this app's index, as a hash change leaves.
+      window.history.pushState(null, '', '/teams/t1#roster')
+      window.history.pushState(null, '', '/teams/t1#stats')
+      await popped(() => {
+        window.history.back()
+      })
+      expect(seen.at(-1)).deep.equals({ direction: 'none', drawn: false })
+    })
+
+    it('notes no move onto an entry at the index it is already at', async function () {
+      const seen: Array<HistoryMove | undefined> = []
+      await mount(() => {
+        web.useBrowserBack(() => {
+          seen.push(takeHistoryMove())
+        })
+      })
+      web.showRoute({ name: 'team', teamId: 't1' })
+      const index: unknown = window.history.state?.tsRouteIndex
+      // A copy of the same step, at the same index.
+      window.history.pushState({ tsRouteIndex: index }, '', '/teams/t1')
+      await popped(() => {
+        window.history.back()
+      })
+      expect(seen.at(-1)).deep.equals({ direction: 'none', drawn: false })
+    })
+
+    it('notes a move the browser already drew', async function () {
+      const seen: Array<HistoryMove | undefined> = []
+      await mount(() => {
+        web.useBrowserBack(() => {
+          seen.push(takeHistoryMove())
+        })
+      })
+      await act(async () => {
+        const event = new window.PopStateEvent('popstate', {
+          state: window.history.state
+        })
+        Object.defineProperty(event, 'hasUAVisualTransition', { value: true })
+        window.dispatchEvent(event)
+      })
+      expect(seen.at(-1)?.drawn).equals(true)
+    })
+
+    it('notes nothing for a refused guarded pop and back for an accepted one', async function () {
+      const routes: Route[] = []
+      const noted: Array<HistoryMove | undefined> = []
+      let answer: (accepted: boolean) => void = () => undefined
+      await mount(() => {
+        web.useBrowserBack(route => {
+          routes.push(route)
+          noted.push(takeHistoryMove())
+        })
+      })
+      web.showRoute({ name: 'game', gameId: 'g1' })
+      web.showRoute({ name: 'scoreGame', gameId: 'g1' })
+      // Counted from here: the guard's own restore can land before a
+      // listener added after the step that caused it, and waiting for the
+      // next one would then wait for ever on a busy machine.
+      let pops = 0
+      const counted = (): void => {
+        pops++
+      }
+      window.addEventListener('popstate', counted)
+      const until = async (count: number): Promise<void> => {
+        await act(async () => {
+          await new Promise<void>(resolve => {
+            const check = (): void => {
+              if (pops >= count) resolve()
+              else setTimeout(check, 5)
+            }
+            check()
+          })
+          await new Promise(resolve => setTimeout(resolve, 0))
+        })
+      }
+      releaseGuard = web.setNavigationGuard(
+        async () =>
+          await new Promise<boolean>(resolve => {
+            answer = resolve
+          }),
+        { name: 'scoreOptions', gameId: 'g1' }
+      )
+      try {
+        // Back, then the guard restores the entry while it asks.
+        window.history.back()
+        await until(2)
+        await act(async () => {
+          answer(false)
+          await new Promise(resolve => setTimeout(resolve, 0))
+        })
+        expect(routes).deep.equals([])
+        expect(takeHistoryMove()).equals(undefined)
+        window.history.back()
+        await until(4)
+        await act(async () => {
+          answer(true)
+          await new Promise(resolve => setTimeout(resolve, 0))
+        })
+        await until(5)
+        expect(routes.at(-1)).deep.equals({
+          name: 'scoreOptions',
+          gameId: 'g1'
+        })
+        expect(noted.at(-1)).deep.equals({ direction: 'back', drawn: false })
+      } finally {
+        window.removeEventListener('popstate', counted)
+      }
+    })
+
+    it('never says where Back would land', function () {
+      expect(web.previousRoute()).equals(undefined)
+    })
+  })
+
+  describe('history motion on a phone (U3)', function () {
+    it('notes Android Back as back and a link as no move', async function () {
+      Object.defineProperty(Platform, 'OS', {
+        value: 'android',
+        configurable: true
+      })
+      let back: (() => boolean | null | undefined) | undefined
+      let link: ((event: { url: string }) => void) | undefined
+      BackHandler.addEventListener = (_event, handler) => {
+        back = () => handler({ type: 'hardwareBackPress', timeStamp: 0 })
+        return { remove: () => undefined }
+      }
+      Linking.addEventListener = (
+        _event: string,
+        handler: (event: { url: string }) => void
+      ) => {
+        link = handler
+        return { remove: () => undefined }
+      }
+      const seen: Array<HistoryMove | undefined> = []
+      native.seedRoute(null)
+      native.showRoute({ name: 'team', teamId: 't1' })
+      await mount(() => {
+        native.useBrowserBack((_route, handled) => {
+          seen.push(takeHistoryMove())
+          handled?.(true)
+        })
+      })
+      await act(async () => {
+        expect(back?.()).equals(true)
+      })
+      expect(seen.at(-1)).deep.equals({ direction: 'back', drawn: false })
+      await act(async () => {
+        link?.({ url: 'https://teamstation.app/teams/t2' })
+      })
+      expect(seen.at(-1)).deep.equals({ direction: 'none', drawn: false })
+    })
+
+    it('says a Back is still being delivered, and swallows another until it lands', async function () {
+      Object.defineProperty(Platform, 'OS', {
+        value: 'android',
+        configurable: true
+      })
+      let back: (() => boolean | null | undefined) | undefined
+      BackHandler.addEventListener = (_event, handler) => {
+        back = () => handler({ type: 'hardwareBackPress', timeStamp: 0 })
+        return { remove: () => undefined }
+      }
+      Linking.addEventListener = () => ({ remove: () => undefined })
+      let land: ((accepted: boolean) => void) | undefined
+      let delivered = 0
+      native.seedRoute(null)
+      native.showRoute({ name: 'team', teamId: 't1' })
+      native.showRoute({ name: 'team', teamId: 't1', tab: 'stats' })
+      await mount(() => {
+        native.useBrowserBack((_route, handled) => {
+          delivered++
+          // Held on a leave check.
+          land = handled
+        })
+      })
+      expect(native.deliveringRoute()).equals(false)
+      await act(async () => {
+        expect(back?.()).equals(true)
+      })
+      // The drag back's pop asks this, and does nothing meanwhile.
+      expect(native.deliveringRoute()).equals(true)
+      await act(async () => {
+        expect(back?.()).equals(true)
+      })
+      expect(delivered).equals(1)
+      await act(async () => {
+        land?.(true)
+      })
+      expect(native.deliveringRoute()).equals(false)
+      expect(web.deliveringRoute()).equals(false)
+    })
+
+    it('lets go of a delivery its shell dropped once it subscribes again', async function () {
+      Object.defineProperty(Platform, 'OS', {
+        value: 'android',
+        configurable: true
+      })
+      let back: (() => boolean | null | undefined) | undefined
+      BackHandler.addEventListener = (_event, handler) => {
+        back = () => handler({ type: 'hardwareBackPress', timeStamp: 0 })
+        return { remove: () => undefined }
+      }
+      Linking.addEventListener = () => ({ remove: () => undefined })
+      native.seedRoute(null)
+      native.showRoute({ name: 'team', teamId: 't1' })
+      native.showRoute({ name: 'team', teamId: 't1', tab: 'stats' })
+      native.showRoute({ name: 'team', teamId: 't1', tab: 'videos' })
+      const delivered: string[] = []
+      // The first shell never answers its delivery (its change was dropped).
+      await mount(() => {
+        native.useBrowserBack(() => {
+          delivered.push('dropped')
+        })
+      })
+      await act(async () => {
+        back?.()
+      })
+      expect(native.deliveringRoute()).equals(true)
+      // A new route handler subscribes again: Back is answered once more.
+      await act(async () => {
+        root?.unmount()
+      })
+      host?.remove()
+      await mount(() => {
+        native.useBrowserBack((_route, handled) => {
+          delivered.push('answered')
+          handled?.(true)
+        })
+      })
+      expect(native.deliveringRoute()).equals(false)
+      await act(async () => {
+        expect(back?.()).equals(true)
+      })
+      expect(delivered).deep.equals(['dropped', 'answered'])
+    })
+
+    it('says where Back would land without going', function () {
+      native.seedRoute(null)
+      expect(native.previousRoute()).equals(undefined)
+      native.showRoute({ name: 'team', teamId: 't1' })
+      native.showRoute({ name: 'team', teamId: 't1', tab: 'stats' })
+      expect(native.previousRoute()).deep.equals({ name: 'team', teamId: 't1' })
+      expect(native.currentRoute()).deep.equals({
+        name: 'team',
+        teamId: 't1',
+        tab: 'stats'
+      })
+    })
+  })
+})

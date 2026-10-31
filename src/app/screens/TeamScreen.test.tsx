@@ -342,6 +342,25 @@ describe('TeamScreen for a fan', function () {
     expect(opened).deep.equals(['cnv_fans'])
   })
 
+  it('shows its chats while the team is still loading', async function () {
+    const { client } = fakeClient({
+      teamGames: async () => await new Promise(() => undefined)
+    })
+    await render(
+      <TeamScreen
+        client={client}
+        nonMemberView
+        team={{ ...hawks, access: 'fan', following: true, onTeam: false }}
+        initialTab="chats"
+        onOpenGame={() => undefined}
+        chats={[{ id: 'cnv_fans', title: 'Hawks Fans', label: 'Fans' }]}
+        onOpenChat={() => undefined}
+      />
+    )
+    expect(text()).contains('Loading…')
+    expect(control('Open Fans')).not.equals(undefined)
+  })
+
   it('turns Following back into Follow and follows the same group again', async function () {
     const { client, calls } = fakeClient()
     await render(
