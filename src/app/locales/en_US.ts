@@ -1045,6 +1045,7 @@ export const enUs = {
   stream_rtmp_title: 'Stream using RTMP',
   stream_rtmp_use_url: 'Use the URL below and enter it into your camera.',
   stream_rtmp_key_blank: 'If your app requests a stream key, leave it blank.',
+  stream_rtmp_hevc: 'Your camera must stream in HEVC (H.265).',
   stream_rtmp_return:
     'You may now return to the app and stream to the RTMP URL at any time.',
   stream_rtmp_copied: 'Copied',

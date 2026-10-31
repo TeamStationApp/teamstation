@@ -1348,6 +1348,7 @@ describe('setting up a camera on a phone', function () {
         })
         fake.mine = [made]
         return made
+      expect(text()).contains('Your camera must stream in HEVC (H.265).')
       }
     }
 

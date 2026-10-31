@@ -131,6 +131,7 @@ export function RtmpUrlSheet(props: RtmpUrlSheetProps): React.ReactElement {
         </Text>
       )}
       <Text style={styles.note}>{lstrings.stream_rtmp_key_blank}</Text>
+      <Text style={styles.note}>{lstrings.stream_rtmp_hevc}</Text>
       <Text style={styles.note}>{lstrings.stream_rtmp_return}</Text>
       <View style={styles.actions}>
         {stream != null && (
