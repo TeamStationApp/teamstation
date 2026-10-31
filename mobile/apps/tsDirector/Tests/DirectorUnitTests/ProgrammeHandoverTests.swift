@@ -324,11 +324,13 @@ struct ProgrammeHandoverTests {
     for _ in 0 ..< 100 where model.router.activePipelines.count < 2 { try await Task.sleep(for: .milliseconds(50)) }
     let pipelines = model.router.activePipelines
     try #require(pipelines.count >= 2)
-    model.router.selectProgram(sourceIndex: pipelines[0].sourceIndex)
     try await Task.sleep(for: .seconds(1.5))
-    pipelines[1].beginScrubbing()
+    // The app puts its own choice of camera on program as it settles.
+    let onAir = try #require(model.router.currentProgramSource)
+    let other = try #require(pipelines.first { $0.sourceIndex != onAir })
+    other.beginScrubbing()
     let handovers = model.router.handoverCount
-    model.cutSourceLive(sourceIndex: pipelines[1].sourceIndex)
+    model.cutSourceLive(sourceIndex: other.sourceIndex)
     #expect(model.router.handoverCount == handovers + 1)
   }
 
