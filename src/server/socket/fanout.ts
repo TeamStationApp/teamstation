@@ -1,5 +1,4 @@
 import type { Kysely } from 'kysely'
-import { Client } from 'pg'
 
 import { systemCancelled } from '../../common/gameApprovals'
 import type { GameChange } from '../../common/gameSocket'
@@ -7,6 +6,7 @@ import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { teamsOfRow } from '../../common/teamLists'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import type { GameScope } from '../access'
+import type { ChangeFeed } from '../changeFeed/feed'
 import { atomic } from '../db/atomic'
 import { type Database, isPoolTimeout } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
@@ -53,26 +53,24 @@ export type SongReader = (
 
 export interface GameFanoutOptions {
   db: Kysely<Database>
-  /** Where the `LISTEN` connection goes: the same database as `db`. */
-  databaseUrl: string
+  /** The process's feed, on the same database as `db`. */
+  feed: ChangeFeed
   /** Identical notifies within this long are sent once. */
   coalesceMs?: number
-  /** How long to wait before listening again after the connection is lost. */
-  retryMs?: number
   readSong?: SongReader
   now?: () => Date
   log?: (message: string) => void
   /**
-   * The `LISTEN` connection was lost, so changes may have gone unheard.
+   * The feed has returned after a gap, so changes may have gone unheard.
    * Whoever holds the sockets closes them, and their clients resync.
    */
-  onLost?: () => void
+  onResync?: () => void
 }
 
 /**
  * One worker's end of `game_changes`.
  *
- * It holds one `LISTEN` connection for the worker, and knows which games its
+ * It hears the worker's feed, and knows which games its
  * sockets are subscribed to and each game's teams. On a notify it finds the
  * subscriptions the payload concerns — that game, or for a team's change
  * every subscribed game the team plays in — and if there are any, reads the
@@ -83,31 +81,23 @@ export interface GameFanoutOptions {
  * change.
  */
 export class GameFanout {
-  /** Settles once the first `LISTEN` is in place, or has failed. */
+  /** Settles once the channel is first in place, or that attempt has failed. */
   readonly listening: Promise<void>
   private readonly db: Kysely<Database>
-  private readonly databaseUrl: string
   private readonly coalesceMs: number
-  private readonly retryMs: number
   private readonly readSong: SongReader
   private readonly now: () => Date
   private readonly log: (message: string) => void
-  private readonly onLost: (() => void) | undefined
+  private readonly stopListening: () => void
   private readonly watched = new Map<string, Watched>()
   private readonly waiting = new Map<string, ReturnType<typeof setTimeout>>()
   /** Each game's last delivery under way (`inTurn`). */
   private readonly turns = new Map<string, Promise<void>>()
-  private client: Client | undefined
-  /** Lost connections still hanging up, which close() waits for too. */
-  private readonly hangingUp = new Set<Promise<void>>()
-  private retry: ReturnType<typeof setTimeout> | undefined
   private closed = false
 
   constructor(options: GameFanoutOptions) {
     this.db = options.db
-    this.databaseUrl = options.databaseUrl
     this.coalesceMs = options.coalesceMs ?? 100
-    this.retryMs = options.retryMs ?? 1000
     this.readSong = options.readSong ?? readWalkUpSong
     this.now = options.now ?? (() => new Date())
     this.log =
@@ -115,8 +105,16 @@ export class GameFanout {
       (message => {
         console.error(`game socket: ${message}`)
       })
-    this.onLost = options.onLost
-    this.listening = this.listen()
+    const subscription = options.feed.subscribe(GAME_CHANGES_CHANNEL, {
+      onPayload: payload => {
+        this.notified(payload)
+      },
+      onListening: first => {
+        if (!first) options.onResync?.()
+      }
+    })
+    this.listening = subscription.listening
+    this.stopListening = subscription.stop
   }
 
   /** Subscribes one socket to one game. Twice is once. */
@@ -143,28 +141,13 @@ export class GameFanout {
 
   async close(): Promise<void> {
     this.closed = true
-    clearTimeout(this.retry)
+    this.stopListening()
     for (const timer of this.waiting.values()) clearTimeout(timer)
     this.waiting.clear()
     this.watched.clear()
-    const client = this.client
-    this.client = undefined
-    if (client != null) this.hangUp(client)
-    await Promise.all([...this.hangingUp])
   }
 
-  /** Ends a connection, remembered until it has. */
-  private hangUp(client: Client): void {
-    const ending: Promise<void> = client
-      .end()
-      .catch(() => undefined)
-      .finally(() => {
-        this.hangingUp.delete(ending)
-      })
-    this.hangingUp.add(ending)
-  }
-
-  /** A notify, as the `LISTEN` connection hands it over. */
+  /** A notify, as the feed hands it over. */
   notified(payload: string | undefined): void {
     if (payload == null || this.closed) return
     if (this.waiting.has(payload)) return
@@ -374,41 +357,5 @@ export class GameFanout {
       message.data.currentPlay =
         playForWire(await held.fold(), teamsOfRow(game)) ?? null
     for (const subscriber of held.recipients) subscriber.send(message)
-  }
-
-  private async listen(): Promise<void> {
-    if (this.closed) return
-    const client = new Client({ connectionString: this.databaseUrl })
-    this.client = client
-    client.on('notification', message => {
-      if (this.client === client) this.notified(message.payload)
-    })
-    client.on('error', error => {
-      this.lost(client, String(error))
-    })
-    client.on('end', () => {
-      this.lost(client, 'the connection ended')
-    })
-    try {
-      await client.connect()
-      await client.query(`listen ${GAME_CHANGES_CHANNEL}`)
-    } catch (error) {
-      this.lost(client, String(error))
-    }
-  }
-
-  /**
-   * The `LISTEN` connection failed or went. Whatever was notified meanwhile
-   * was never heard, so the sockets are told, and it listens again.
-   */
-  private lost(client: Client, why: string): void {
-    if (this.client !== client || this.closed) return
-    this.client = undefined
-    this.log(`lost the ${GAME_CHANGES_CHANNEL} listener: ${why}`)
-    this.hangUp(client)
-    this.onLost?.()
-    this.retry = setTimeout(() => {
-      this.listen().catch(() => undefined)
-    }, this.retryMs)
   }
 }

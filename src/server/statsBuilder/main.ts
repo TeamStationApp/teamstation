@@ -1,6 +1,8 @@
 import { captureException, flush } from '@sentry/node'
-import { Client } from 'pg'
 
+import type { ChangeFeed } from '../changeFeed/feed'
+import { makeChangeFeed } from '../changeFeed/makeChangeFeed'
+import { PostgresFeed } from '../changeFeed/postgresFeed'
 import { makeDatabase } from '../db/database'
 import {
   requestDatabaseUrl,
@@ -17,8 +19,13 @@ import {
 const MAX_TIMER_MS = 60_000
 
 export interface RunStatsBuilderOptions {
-  /** Where the `LISTEN` connection goes: the database's own address. */
+  /** The database's own address. */
   databaseUrl: string
+  /**
+   * The process's feed, which the builder closes when it stops. A
+   * `PostgresFeed` on `databaseUrl` unless given.
+   */
+  feed?: ChangeFeed
   /** Where its queries go. The same address unless a pooler is in front. */
   requestUrl?: string
   clock?: Clock
@@ -47,13 +54,14 @@ export interface StatsBuilderHandle {
   stop: (signal?: NodeJS.Signals) => Promise<void>
   /** Most recent timer delay in ms; null before the first schedule. */
   lastTimerMs: () => number | null
-  /** Test access to the LISTEN client. */
-  listenClient: () => Client
+  /** The feed it hears pokes on. */
+  feed: ChangeFeed
 }
 
 /**
- * Open the database, LISTEN for pokes, drain on start and on every notify,
- * and schedule retries from `retry_at`.
+ * Open the database, hear pokes on the feed, drain on start, on every notify
+ * and whenever the feed returns after a gap, and schedule retries from
+ * `retry_at`.
  */
 export async function runStatsBuilder(
   options: RunStatsBuilderOptions
@@ -65,9 +73,12 @@ export async function runStatsBuilder(
   const db = makeDatabase(options.requestUrl ?? options.databaseUrl, {
     role: 'statsBuilder'
   })
-  const listen = new Client({ connectionString: options.databaseUrl })
-  await listen.connect()
-  await listen.query('listen game_stats')
+  const feed =
+    options.feed ??
+    new PostgresFeed({
+      databaseUrl: options.databaseUrl,
+      log: logFeed
+    })
 
   let draining = false
   let pokedDuringDrain = false
@@ -92,7 +103,7 @@ export async function runStatsBuilder(
     stopped = true
     clearTimer()
     process.exitCode = 1
-    listen.end().catch(() => undefined)
+    feed.close().catch(() => undefined)
     db.destroy().catch(() => undefined)
     // The failure is caught here, so Sentry's own handlers never see it.
     report(error)
@@ -147,14 +158,19 @@ export async function runStatsBuilder(
     if (!stopped) await scheduleTimer()
   }
 
-  listen.on('notification', () => {
+  const poke = (): void => {
     runDrain().catch((error: unknown) => {
       failHard('drain error', error)
     })
+  }
+  // The first drain is below, once the channel is in place.
+  const subscription = feed.subscribe('game_stats', {
+    onPayload: poke,
+    onListening: first => {
+      if (!first) poke()
+    }
   })
-  listen.on('error', error => {
-    failHard('listen error', error)
-  })
+  await subscription.listening
 
   const stop = async (signal: NodeJS.Signals = 'SIGTERM'): Promise<void> => {
     if (stopping != null) {
@@ -171,7 +187,7 @@ export async function runStatsBuilder(
         await new Promise(resolve => setTimeout(resolve, 10))
       }
       try {
-        await listen.end()
+        await feed.close()
       } finally {
         await db.destroy()
         await options.onStopped?.()
@@ -201,7 +217,17 @@ export async function runStatsBuilder(
   bus.on('SIGTERM', onTerm)
   bus.on('SIGINT', onInt)
 
-  await runDrain()
+  try {
+    await runDrain()
+  } catch (error) {
+    // Nothing will run on: leave nothing open behind the failure.
+    stopped = true
+    bus.off('SIGTERM', onTerm)
+    bus.off('SIGINT', onInt)
+    await feed.close()
+    await db.destroy()
+    throw error
+  }
 
   return {
     stop: async signal => {
@@ -210,8 +236,12 @@ export async function runStatsBuilder(
       await stop(signal)
     },
     lastTimerMs: () => lastTimerMs,
-    listenClient: () => listen
+    feed
   }
+}
+
+function logFeed(message: string): void {
+  console.error(`stats builder: change feed: ${message}`)
 }
 
 export async function runMain(
@@ -221,6 +251,7 @@ export async function runMain(
   return await runStatsBuilder({
     databaseUrl: config.databaseUrl,
     requestUrl: requestDatabaseUrl(config),
+    feed: makeChangeFeed(config, logFeed),
     onStopped
   })
 }

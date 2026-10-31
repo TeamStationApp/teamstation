@@ -1,11 +1,11 @@
-import type { Kysely } from 'kysely'
-import { Client } from 'pg'
+import { type Kysely, sql } from 'kysely'
 
 import { compareUserIds } from '../../common/chatCrypto/userId'
 import { makeId } from '../../common/ids'
 import { asUserId } from '../../common/userId'
 import { onePerson } from '../admin/people'
-import type { Database } from '../db/database'
+import type { ChangeFeed } from '../changeFeed/feed'
+import { type Database, isPoolTimeout } from '../db/database'
 import { survivors } from '../teams/teamStaff'
 import {
   audienceOf,
@@ -53,9 +53,9 @@ import {
  * empty. A DM is never diffed with an audience; it is re-checked
  * (`recheckDm`).
  *
- * `ChatReconciler` listens on `serverConfig.databaseUrl` (never a pool),
- * debounces 1 s, drains every mark on each (re-)listen, listens again 1 s
- * after losing the connection, and sweeps hourly: it drains, re-checks every
+ * `ChatReconciler` hears `chat_dirty` on the process's feed, debounces 1 s,
+ * drains every mark whenever the feed is first in place or returns, and
+ * sweeps hourly: it drains, re-checks every
  * DM, reconciles every conversation, and creates any missing scope chat.
  */
 
@@ -351,7 +351,8 @@ async function dmsWithPlayersOf(
 
 /**
  * Reconciles everything a batch of marks reaches. Throws after trying them
- * all when any failed, so the caller can put the marks back.
+ * all when any failed, so the caller can keep the marks. Connections running
+ * out ends the attempt at once, since the rest would only wait for one too.
  */
 export async function processMarks(
   db: Kysely<Database>,
@@ -365,6 +366,7 @@ export async function processMarks(
     try {
       await reconcileScope(db, target.kind, target.scopeId, now)
     } catch (error) {
+      if (isPoolTimeout(error)) throw error
       failed += 1
       log(`reconciling ${target.kind} ${target.scopeId}: ${String(error)}`)
     }
@@ -373,6 +375,7 @@ export async function processMarks(
     try {
       await recheckDm(db, id, now)
     } catch (error) {
+      if (isPoolTimeout(error)) throw error
       failed += 1
       log(`re-checking DM ${id}: ${String(error)}`)
     }
@@ -382,31 +385,50 @@ export async function processMarks(
 }
 
 /**
- * Takes every mark there is and reconciles what they reach. The queue is
- * append-only (088chatDirtyQueue), so a scope marked many times while the
- * reconciler was behind is coalesced here and read once. Marks appended
- * while it drains are left for the next drain. On a failure the marks go
- * back, once each (without a notify, so a broken conversation is retried by
- * the next notify or the sweep rather than in a loop). Answers how many
- * scopes were taken.
+ * Reconciles what every mark there is reaches, then removes those marks. The
+ * queue is append-only (088chatDirtyQueue), so a scope marked many times while
+ * the reconciler was behind is coalesced here and read once, and marks appended
+ * while it drains are left for the next drain. A mark stays until what it
+ * reaches is done, so nothing has to put it back when connections run out or
+ * the process dies, and the next drain does the work again, which is harmless.
+ * After a failure only the extra copies of a scope go (with no notify, so a
+ * broken conversation is retried by the next notify or the sweep rather than in
+ * a loop). Rows are told apart by `ctid`: nothing updates this table, and what
+ * was read is still there to delete. Answers how many scopes were reconciled.
  */
 export async function drainDirty(
   db: Kysely<Database>,
   now: Date,
   log: (message: string) => void = () => undefined
 ): Promise<number> {
-  const taken = await db
-    .deleteFrom('chat_dirty')
-    .returning(['scope_type', 'scope_id'])
+  const read = await db
+    .selectFrom('chat_dirty')
+    .select(['scope_type', 'scope_id', sql<string>`ctid::text`.as('row')])
     .execute()
-  const marks = distinctMarks(taken)
+  const marks = distinctMarks(read)
   if (marks.length === 0) return 0
+  const rowsOf = (rows: Array<{ row: string }>): string[] =>
+    rows.map(({ row }) => row)
+  const forget = async (rows: string[]): Promise<void> => {
+    await db
+      .deleteFrom('chat_dirty')
+      .where(sql<boolean>`ctid = any(${rows}::tid[])`)
+      .execute()
+  }
   try {
     await processMarks(db, marks, now, log)
   } catch (error) {
-    await db.insertInto('chat_dirty').values(marks).execute()
+    if (!isPoolTimeout(error)) {
+      const kept = new Set(rowsOf(marks))
+      await forget(rowsOf(read).filter(row => !kept.has(row))).catch(
+        (failure: unknown) => {
+          log(`dropping repeated marks: ${String(failure)}`)
+        }
+      )
+    }
     throw error
   }
+  await forget(rowsOf(read))
   return marks.length
 }
 
@@ -586,34 +608,34 @@ export async function memberNow(
 
 export interface ChatReconcilerOptions {
   db: Kysely<Database>
-  /** Where the `LISTEN` connection goes: a direct connection, never a pool. */
-  databaseUrl: string
+  /** The process's feed, on the same database as `db`. */
+  feed: ChangeFeed
   /** Notifies within this long are drained once. */
   debounceMs?: number
-  /** How long to wait before listening again after the connection is lost. */
-  retryMs?: number
   /** How often the sweep runs. */
   sweepMs?: number
+  /** How soon marks are drained again after connections ran out. */
+  retryMs?: number
   now?: () => Date
   log?: (message: string) => void
 }
 
 export const CHAT_DIRTY_CHANNEL = 'chat_dirty'
 
-/** The primary's reconciler: `LISTEN chat_dirty`, drains, and the sweep. */
+const POOL_RETRY_MS = 5000
+
+/** The primary's reconciler: hears `chat_dirty`, drains, and the sweep. */
 export class ChatReconciler {
-  /** Settles once the first `LISTEN` is in place and its drain has run. */
+  /** Settles once the channel is first in place, or that attempt has failed, and any drain has run. */
   readonly listening: Promise<void>
   private readonly db: Kysely<Database>
-  private readonly databaseUrl: string
   private readonly debounceMs: number
-  private readonly retryMs: number
   private readonly now: () => Date
   private readonly log: (message: string) => void
-  private client: Client | undefined
-  private readonly hangingUp = new Set<Promise<void>>()
-  private retry: ReturnType<typeof setTimeout> | undefined
+  private readonly stopListening: () => void
   private debounce: ReturnType<typeof setTimeout> | undefined
+  private readonly retryMs: number
+  private retry: ReturnType<typeof setTimeout> | undefined
   private readonly sweepTimer: ReturnType<typeof setInterval>
   /** Work runs one piece at a time, in order. */
   private queue: Promise<void> = Promise.resolve()
@@ -621,9 +643,8 @@ export class ChatReconciler {
 
   constructor(options: ChatReconcilerOptions) {
     this.db = options.db
-    this.databaseUrl = options.databaseUrl
     this.debounceMs = options.debounceMs ?? 1000
-    this.retryMs = options.retryMs ?? 1000
+    this.retryMs = options.retryMs ?? POOL_RETRY_MS
     this.now = options.now ?? (() => new Date())
     this.log =
       options.log ??
@@ -637,7 +658,19 @@ export class ChatReconciler {
       options.sweepMs ?? 60 * 60 * 1000
     )
     this.sweepTimer.unref?.()
-    this.listening = this.listen()
+    const subscription = options.feed.subscribe(CHAT_DIRTY_CHANNEL, {
+      onPayload: () => {
+        this.notified()
+      },
+      // Whatever was marked while nobody listened.
+      onListening: () => {
+        this.drain().catch(() => undefined)
+      }
+    })
+    this.stopListening = subscription.stop
+    this.listening = subscription.listening.then(async () => {
+      await this.queue
+    })
   }
 
   /** Takes and reconciles every mark there is now. */
@@ -665,14 +698,11 @@ export class ChatReconciler {
 
   async close(): Promise<void> {
     this.closed = true
-    clearTimeout(this.retry)
+    this.stopListening()
     clearTimeout(this.debounce)
+    clearTimeout(this.retry)
     clearInterval(this.sweepTimer)
-    const client = this.client
-    this.client = undefined
-    if (client != null) this.hangUp(client)
     await this.queue
-    await Promise.all([...this.hangingUp])
   }
 
   private async enqueue(work: () => Promise<void>): Promise<void> {
@@ -682,53 +712,19 @@ export class ChatReconciler {
         await work()
       } catch (error) {
         this.log(String(error))
+        // Connections are short, not gone, and the marks are all still there.
+        if (isPoolTimeout(error)) this.askAgain()
       }
     })
     this.queue = next
     await next
   }
 
-  private hangUp(client: Client): void {
-    const ending: Promise<void> = client
-      .end()
-      .catch(() => undefined)
-      .finally(() => {
-        this.hangingUp.delete(ending)
-      })
-    this.hangingUp.add(ending)
-  }
-
-  private async listen(): Promise<void> {
-    if (this.closed) return
-    const client = new Client({ connectionString: this.databaseUrl })
-    this.client = client
-    client.on('notification', () => {
-      if (this.client === client) this.notified()
-    })
-    client.on('error', error => {
-      this.lost(client, String(error))
-    })
-    client.on('end', () => {
-      this.lost(client, 'the connection ended')
-    })
-    try {
-      await client.connect()
-      await client.query(`listen ${CHAT_DIRTY_CHANNEL}`)
-    } catch (error) {
-      this.lost(client, String(error))
-      return
-    }
-    // Whatever was marked while nobody listened.
-    await this.drain()
-  }
-
-  private lost(client: Client, why: string): void {
-    if (this.client !== client || this.closed) return
-    this.client = undefined
-    this.log(`lost the ${CHAT_DIRTY_CHANNEL} listener: ${why}`)
-    this.hangUp(client)
+  private askAgain(): void {
+    if (this.closed || this.retry != null) return
     this.retry = setTimeout(() => {
-      this.listen().catch(() => undefined)
+      this.retry = undefined
+      this.drain().catch(() => undefined)
     }, this.retryMs)
   }
 }
@@ -736,7 +732,7 @@ export class ChatReconciler {
 /** Starts the reconciler where `src/server/index.ts` starts the purge. */
 export function startChatReconciler(
   db: Kysely<Database>,
-  databaseUrl: string
+  feed: ChangeFeed
 ): ChatReconciler {
-  return new ChatReconciler({ db, databaseUrl })
+  return new ChatReconciler({ db, feed })
 }
