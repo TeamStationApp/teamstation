@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
 import { copyFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { networkInterfaces } from 'node:os'
 import path from 'node:path'
 
 import { attach } from '../../../test/maestroD'
@@ -24,8 +23,8 @@ import { attach } from '../../../test/maestroD'
  *     node -r sucrase/register mobile/apps/tsDirector/e2e/programmeCut.e2e.ts
  *
  * CUT_MAX_HELD_MS is the longest the outgoing picture may stay on at a cut
- * (default 50), and CUT_MAX_RAPID_HOLD_MS the longest any picture may stay on
- * in `rapid` (default 100, what a healthy camera's own delivery can repeat).
+ * (default 50), and CUT_MAX_HOLD_MS the longest any picture may stay on in
+ * `cuts` and `rapid` (default 100, what a healthy camera's own delivery can repeat).
  * E2E_ARTIFACT_DIR keeps the run's files. CUT_SCENARIO=slow runs only the slow
  * cuts, for a quick regular check. CUT_REPORTED_AGE=0,300 has the second camera
  * report its pictures 300 ms older than they are, as a phone's clock can, so
@@ -38,7 +37,9 @@ const require_ = createRequire(__filename)
 const ROOT = path.resolve(__dirname, '..')
 const APP_ID = 'app.teamstation.director'
 const { get, resolveHost } = require_(path.join(ROOT, 'scripts/deviceTarget.js'))
-const { analyse, readPictures } = require_(path.join(ROOT, 'scripts/programmeCutFrames.js'))
+const { analyse, readPictures, readTimes } = require_(path.join(ROOT, 'scripts/programmeCutFrames.js'))
+const { lanAddress } = require_(path.join(ROOT, 'scripts/markedRtspCameras.js'))
+const { newestProgram } = require_(path.join(ROOT, 'scripts/verifyProgram.js'))
 
 const device = process.env.DIRECTOR_DEVICE_UDID
 const daemon = process.env.MAESTRO_D ?? 'programme-cut'
@@ -46,7 +47,7 @@ const maxHeldMs = Number(process.env.CUT_MAX_HELD_MS ?? 50)
 const scenario = process.env.CUT_SCENARIO ?? 'full'
 const artifactDir =
   process.env.E2E_ARTIFACT_DIR ?? path.join(ROOT, 'artifacts', 'programme-cut')
-const maxRapidHoldMs = Number(process.env.CUT_MAX_RAPID_HOLD_MS ?? 100)
+const maxHoldMs = Number(process.env.CUT_MAX_HOLD_MS ?? 100)
 const takes: Take[] = scenario === 'slow' ? ['cuts'] : ['cuts', 'replays', 'rapid']
 const SINK_PORT = 19351
 const SETTLE_SECONDS = 12
@@ -57,17 +58,6 @@ const MEMORY_CAP_MB = 1200
 
 const wait = async (seconds: number): Promise<void> =>
   await new Promise(resolve => setTimeout(resolve, seconds * 1000))
-
-function lanAddress(): string {
-  for (const addresses of Object.values(networkInterfaces())) {
-    for (const address of addresses ?? []) {
-      if (address.family === 'IPv4' && !address.internal && address.address.startsWith('10.')) {
-        return address.address
-      }
-    }
-  }
-  throw new Error('no LAN IPv4 address')
-}
 
 async function untilLine(child: ChildProcess, line: string, seconds: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -143,7 +133,7 @@ function newestMaster(): string {
     { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
   )
   const names = listing.match(/program-\d{8}-\d{6}(-\d+)?\.mp4/g) ?? []
-  const newest = names.sort().at(-1)
+  const newest: string | undefined = newestProgram(names)
   assert.ok(newest != null, 'no programme master on the iPad')
   return newest
 }
@@ -190,7 +180,7 @@ function commandedCuts(run: Step[], first: number): number {
 }
 
 async function read(file: string): Promise<Report> {
-  const report: Report = analyse(await readPictures(file))
+  const report: Report = analyse(await readPictures(file), { times: readTimes(file) })
   writeFileSync(`${file}.cuts.json`, `${JSON.stringify(report, null, 2)}\n`)
   return report
 }
@@ -210,7 +200,7 @@ function judge(name: string, take: Take, report: Report, commanded: number): str
   if (take === 'rapid') {
     // One camera plays on through the chain and hands over to the last, and a camera whose pictures
     // come due early may go on air on the way: judged on the whole take, not on how many cuts it saw.
-    if (report.longestHoldMs > maxRapidHoldMs) problems.push(`${name}: a picture held ${report.longestHoldMs} ms, over ${maxRapidHoldMs}`)
+    if (report.longestHoldMs > maxHoldMs) problems.push(`${name}: a picture held ${report.longestHoldMs} ms, over ${maxHoldMs}`)
     if (jumps.length > 0) problems.push(`${name}: ${jumps.length} jumps within a camera`)
     if (cuts.length === 0) problems.push(`${name}: the chain never handed over to the last camera`)
     if (cuts.length > 0 && cuts[cuts.length - 1].to === cuts[0].from) problems.push(`${name}: ended on the camera it started on`)
@@ -219,6 +209,7 @@ function judge(name: string, take: Take, report: Report, commanded: number): str
   }
   if (cuts.length !== commanded) problems.push(`${name}: ${cuts.length} cuts, ${commanded} commanded`)
   if (report.unread > MAX_UNREAD) problems.push(`${name}: ${report.unread} pictures read no camera`)
+  if (take === 'cuts' && report.longestHoldMs > maxHoldMs) problems.push(`${name}: a picture held ${report.longestHoldMs} ms, over ${maxHoldMs}`)
   // The replays take has one cut away from a replay, which holds by design and is reported above.
   const allowed = take === 'replays' ? 1 : 0
   const over = held.filter(ms => ms > maxHeldMs)
@@ -253,6 +244,7 @@ async function main(): Promise<void> {
 
   await untilLine(cameras, 'ready', 300)
   const m = await attach({ daemon, device, appId: APP_ID, artifactDir })
+  let host: string | undefined
   try {
     await m.launchApp({
       appId: APP_ID,
@@ -262,7 +254,9 @@ async function main(): Promise<void> {
         sourceProfile: 'rtsp',
         rtspScan: false,
         rtspHosts: `${lan}:18554;${lan}:18555`,
-        streamURL: `rtmp://${lan}:${SINK_PORT}/live/cut`
+        streamURL: `rtmp://${lan}:${SINK_PORT}/live/cut`,
+        programFrameRate: 60,
+        streamFrameRate: 60
       }
     })
     await wait(8)
@@ -271,7 +265,7 @@ async function main(): Promise<void> {
     // By its LAN address: resolving the device's name costs seconds, and a cut's timing is the point.
     const name: string = await resolveHost(true)
     const addresses: string[] = JSON.parse(await get(name, '/dump-state')).localAddresses
-    const host = addresses.find(address => /^(10|192\.168)\./.test(address)) ?? name
+    host = addresses.find(address => /^(10|192\.168)\./.test(address)) ?? name
     const send = async (target: string): Promise<void> => {
       console.log(`$ curl -s 'http://<ipad>:8765${target}'   # ${new Date().toISOString()}`)
       console.log(await get(host, target))
@@ -327,13 +321,17 @@ async function main(): Promise<void> {
       }
       await wait(3)
       const after = JSON.parse(await get(host, '/dump-state'))
-      console.log('counters', JSON.stringify({
+      const counters = {
         late: after.programmeLatePictures - before.programmeLatePictures,
         skipped: after.programmeSkippedPictures - before.programmeSkippedPictures,
         composerDropped: after.programmeComposeDropped - before.programmeComposeDropped,
         composeMisses: after.programmeComposeMisses - before.programmeComposeMisses,
         missedTicks: after.programmeMissedTicks - before.programmeMissedTicks
-      }))
+      }
+      console.log('counters', JSON.stringify(counters))
+      if (counters.composerDropped > 0 || counters.composeMisses > 0) {
+        problems.push(`${take}: the composer dropped ${counters.composerDropped} and missed ${counters.composeMisses}`)
+      }
       await send('/stream?on=false')
       await send('/record?on=false')
       await wait(8)
@@ -352,16 +350,18 @@ async function main(): Promise<void> {
       )
     }
     clearInterval(sampling)
-    if (process.env.CUT_DELAY_MS != null) await send('/display-latency-cap?ms=1000')
     console.log(`memory peak ${peak.mb} MB`)
     if (peak.mb >= MEMORY_CAP_MB) problems.push(`memory peak ${peak.mb} MB, cap ${MEMORY_CAP_MB}`)
     if (process.env.CUT_DELAY_MS != null) {
-      console.log('long delay, reported only:', problems)
+      console.log('reported only, at this delay:', problems)
     } else {
       assert.deepEqual(problems, [])
+      console.log('programme cuts OK')
     }
-    console.log('programme cuts OK')
   } finally {
+    if (host != null && process.env.CUT_DELAY_MS != null) {
+      await get(host, '/display-latency-cap?ms=1000').catch(() => undefined)
+    }
     await m.stopApp({ appId: APP_ID }).catch(() => undefined)
     await m.detach().catch(() => undefined)
     stop()

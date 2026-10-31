@@ -10,7 +10,7 @@
 //
 // Pictures come from scripts/markedRtspCameras.js, or tsNdiCameras, which reads as camera 0.
 
-const { spawn } = require('node:child_process')
+const { execFileSync, spawn } = require('node:child_process')
 const fs = require('node:fs')
 const { CAMERA_SHIFT, FRAME_BITS } = require('./markedRtspCameras')
 
@@ -59,6 +59,15 @@ function readPictures(file) {
   })
 }
 
+/// Each picture's time in seconds, in display order: a stall on the clock can be a gap in the
+/// timestamps rather than repeats of a picture.
+function readTimes(file) {
+  const output = execFileSync('ffprobe', [
+    '-v', 'error', '-select_streams', 'v', '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', file
+  ], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  return output.split('\n').map(line => parseFloat(line)).filter(Number.isFinite).sort((a, b) => a - b)
+}
+
 function same(left, right) {
   return left != null && right != null && left.camera === right.camera && left.frame === right.frame
 }
@@ -91,8 +100,11 @@ function pictureRuns(pictures) {
 /// What each seam did. `heldTicks` is how long the outgoing camera's last picture stayed on; the
 /// segments between seams, and how many are shorter than `flashTicks`, say whether anything showed
 /// that should not have.
-function analyse(pictures, { fps = 60, wrap = 3600, flashTicks = 3 } = {}) {
+function analyse(pictures, { fps = 60, wrap = 3600, flashTicks = 3, times = null } = {}) {
   const { runs, unread } = pictureRuns(pictures)
+  const timed = times != null && times.length === pictures.length
+  const at = tick => timed ? times[tick] - times[0] : tick / fps
+  const heldMs = (run, nextStart) => (at(nextStart) - at(run.start)) * 1000
   const seams = []
   for (let index = 1; index < runs.length; index += 1) {
     const before = runs[index - 1]
@@ -104,10 +116,10 @@ function analyse(pictures, { fps = 60, wrap = 3600, flashTicks = 3 } = {}) {
       kind: cameraChange ? 'cut' : 'jump',
       from: before.picture.camera,
       to: after.picture.camera,
-      at: after.start / fps,
+      at: at(after.start),
       tick: after.start,
       heldTicks: before.ticks,
-      heldMs: before.ticks * 1000 / fps
+      heldMs: heldMs(before, after.start)
     })
   }
   const segments = []
@@ -129,7 +141,7 @@ function analyse(pictures, { fps = 60, wrap = 3600, flashTicks = 3 } = {}) {
       .map((segment, index) => ({ ...segment, beforeReplay: seams[index]?.kind === 'jump', index }))
       .filter(segment => segment.index > 0 && segment.ticks < flashTicks),
     worstHeldMs: seams.reduce((most, seam) => Math.max(most, seam.heldMs), 0),
-    longestHoldMs: runs.reduce((most, run) => Math.max(most, run.ticks), 0) * 1000 / fps,
+    longestHoldMs: runs.slice(0, -1).reduce((most, run, index) => Math.max(most, heldMs(run, runs[index + 1].start)), 0),
     longestHoldElsewhereTicks: longestElsewhere
   }
 }
@@ -140,7 +152,7 @@ async function main() {
     const index = process.argv.indexOf(name)
     return index >= 0 ? process.argv[index + 1] : fallback
   }
-  const report = analyse(await readPictures(file), { fps: Number(option('--fps', '60')) })
+  const report = analyse(await readPictures(file), { fps: Number(option('--fps', '60')), times: readTimes(file) })
   const output = option('--json')
   if (output) fs.writeFileSync(output, `${JSON.stringify(report, null, 2)}\n`)
   for (const seam of report.seams) {
@@ -156,4 +168,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { analyse, decodeRow, pictureRuns, readPictures }
+module.exports = { analyse, decodeRow, pictureRuns, readPictures, readTimes }

@@ -6,7 +6,7 @@ const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { analyse, decodeRow, pictureRuns, readPictures } = require('./programmeCutFrames')
+const { analyse, decodeRow, pictureRuns, readPictures, readTimes } = require('./programmeCutFrames')
 
 const WIDTH = 16 * 25
 
@@ -74,6 +74,15 @@ describe('analyse', () => {
     assert.equal(report.flashes[0].camera, 2)
   })
 
+  it('measures a hold by the pictures\' times when it has them', () => {
+    const pictures = [...run(1, 0, 3), ...run(2, 500, 3)]
+    const times = [0, 1 / 60, 0.5, 0.5 + 1 / 60, 0.5 + 2 / 60, 0.5 + 3 / 60]
+    const report = analyse(pictures, { times })
+    assert.equal(report.longestHoldMs, (0.5 - 1 / 60) * 1000)
+    assert.equal(report.seams[0].heldTicks, 1)
+    assert.ok(Math.abs(report.seams[0].at - 0.5 - 1 / 60) < 1e-9)
+  })
+
   it('marks the moment of live picture before a replay', () => {
     const report = analyse([...run(1, 0, 60), ...run(2, 500, 2), ...run(2, 100, 60)])
     assert.equal(report.flashes.length, 1)
@@ -120,6 +129,7 @@ describe('a video', () => {
       const file = clip(directory)
       const pictures = await readPictures(file)
       assert.equal(pictures.length, 60)
+      assert.equal(readTimes(file).length, 60)
       assert.deepEqual(pictures[0], { camera: 1, frame: 10 })
       assert.deepEqual(pictures[59], { camera: 2, frame: 500 })
 

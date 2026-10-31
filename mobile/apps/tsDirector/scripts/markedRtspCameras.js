@@ -22,7 +22,7 @@ const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { createCameraServer, LoopSource, senderReport } = require('./rtspLoopServer')
+const { countSent, createCameraServer, LoopSource, sendSenderReports } = require('./rtspLoopServer')
 
 const CLIP_SECONDS = 60
 const FRAME_BITS = 16
@@ -37,7 +37,7 @@ function option(name, fallback) {
 function lanAddress() {
   for (const addresses of Object.values(os.networkInterfaces())) {
     for (const address of addresses ?? []) {
-      if (address.family === 'IPv4' && !address.internal && address.address.startsWith('10.')) return address.address
+      if (address.family === 'IPv4' && !address.internal && /^(10|192\.168)\./.test(address.address)) return address.address
     }
   }
   throw new Error('no LAN IPv4 address; pass --host')
@@ -125,21 +125,6 @@ function sdpFor(camera, host, sets) {
   ].join('\r\n')
 }
 
-/// Reports the RTP timestamp going out now as this moment, less `reportedAgeMs`.
-function sendReports(source, reportedAgeMs, sent) {
-  const wallMs = Date.now() - reportedAgeMs
-  source.emit('rtp', {
-    channel: 1,
-    keyframe: false,
-    packet: senderReport({ ssrc: source.videoSsrc, wallMs, rtpTimestamp: source.videoTs, ...sent.video })
-  })
-  source.emit('rtp', {
-    channel: 3,
-    keyframe: false,
-    packet: senderReport({ ssrc: source.audioSsrc, wallMs, rtpTimestamp: source.audioTs, ...sent.audio })
-  })
-}
-
 async function main() {
   const host = option('--host', lanAddress())
   const basePort = Number(option('--port', '18554'))
@@ -175,15 +160,15 @@ async function main() {
       listenHost: '0.0.0.0'
     })
     await server.listen()
-    const sent = { video: { packets: 0, octets: 0 }, audio: { packets: 0, octets: 0 } }
-    source.on('rtp', ({ channel, packet }) => {
-      const stream = channel === 0 ? sent.video : channel === 2 ? sent.audio : null
-      if (!stream) return
-      stream.packets += 1
-      stream.octets += Math.max(0, packet.length - 12)
-    })
+    const sent = countSent(source)
     source.start()
-    const reports = setInterval(() => sendReports(source, reportedAges[camera - 1] || 0, sent), REPORT_MILLISECONDS)
+    // The RTP timestamps going out now, as this moment less the camera's reported age.
+    const reports = setInterval(() => sendSenderReports(source, {
+      wallMs: Date.now() - (reportedAges[camera - 1] || 0),
+      videoTimestamp: source.videoTs,
+      audioTimestamp: source.audioTs,
+      sent
+    }), REPORT_MILLISECONDS)
     running.push({ server, source, reports })
     process.stdout.write(`camera ${camera} rtsp://${host}:${port}/live/mainstream\n`)
   }
@@ -207,4 +192,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { CAMERA_SHIFT, FRAME_BITS }
+module.exports = { CAMERA_SHIFT, FRAME_BITS, lanAddress }
