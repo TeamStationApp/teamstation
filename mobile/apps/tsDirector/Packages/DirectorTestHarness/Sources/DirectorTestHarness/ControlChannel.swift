@@ -130,20 +130,23 @@ public enum ControlChannel {
       guard let actionID = query["action"] else { return nil }
       return .bindRemote(action: actionID, controls: Self.csv(query["controls"]))
     case "probe-encoders", "probeencoders":
+      let number = { (name: String, fallback: Int) -> Int in query[name].flatMap { Int($0) } ?? fallback }
       return .probeEncoders(
-        maximum: query["max"].flatMap { Int($0) } ?? 8,
-        framesPerSession: query["frames"].flatMap { Int($0) } ?? 1,
-        width: query["width"].flatMap { Int($0) } ?? 1920,
-        height: query["height"].flatMap { Int($0) } ?? 1080,
-        fps: query["fps"].flatMap { Int($0) } ?? 30
+        maximum: number("max", 8),
+        framesPerSession: number("frames", 1),
+        width: number("width", 1920),
+        height: number("height", 1080),
+        fps: number("fps", 30)
       )
     case "probe-throughput", "probethroughput":
+      let number = { (name: String, fallback: Int) -> Int in query[name].flatMap { Int($0) } ?? fallback }
+      let seconds: Double = query["seconds"].flatMap { Double($0) } ?? 20
       return .probeThroughput(
-        sessions: query["sessions"].flatMap { Int($0) } ?? 4,
-        seconds: query["seconds"].flatMap { Double($0) } ?? 20,
-        height: query["height"].flatMap { Int($0) } ?? 1080,
+        sessions: number("sessions", 4),
+        seconds: seconds,
+        height: number("height", 1080),
         hevc: LaunchConfiguration.boolean(query["hevc"]) ?? false,
-        fps: query["fps"].flatMap { Int($0) } ?? 30
+        fps: number("fps", 30)
       )
     case "probe-writer", "probewriter":
       return .probeWriter(options: query)
