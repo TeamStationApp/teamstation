@@ -22,6 +22,11 @@ export interface PhoneStreamCapabilities {
   supported: boolean
   /** What TeamStation lists this phone as beside its angles, "" when unsupported. */
   deviceModel: string
+  /**
+   * Whether Record would keep a recording now, rather than only streaming:
+   * false under the engine's start floor. Read at Record, not kept.
+   */
+  canRecordLocally: boolean
 }
 
 /** What the engine's redial needs to ask for this device's stream again. */
@@ -148,9 +153,9 @@ export interface InterruptedSession {
 
 /**
  * A call the engine refused, by the engine's code: `notReady`,
- * `uploadInProgress`, `insufficientStorage`, `recordingFailed`,
- * `noRecording`, `stillRecording`, `permission`, `cameraUnavailable`, or
- * `unsupported` in a build without the module.
+ * `uploadInProgress`, `recordingFailed`, `noRecording`, `stillRecording`,
+ * `permission`, `cameraUnavailable`, or `unsupported` in a build without the
+ * module.
  */
 export class PhoneStreamError extends Error {
   readonly code: string
@@ -471,12 +476,21 @@ export function makePhoneStream(
 
   return {
     capabilities: async () => {
-      if (module == null) return { supported: false, deviceModel: '' }
+      const none = {
+        supported: false,
+        deviceModel: '',
+        canRecordLocally: false
+      }
+      if (module == null) return none
       try {
         const answer = await module.capabilities()
-        return { supported: answer.supported, deviceModel: answer.deviceModel }
+        return {
+          supported: answer.supported,
+          deviceModel: answer.deviceModel,
+          canRecordLocally: answer.canRecordLocally
+        }
       } catch {
-        return { supported: false, deviceModel: '' }
+        return none
       }
     },
     open: async (angleName, options = {}) => {

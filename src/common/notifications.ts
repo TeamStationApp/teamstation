@@ -135,6 +135,13 @@ export interface RelationshipInvitation {
 export const RECORDING_UPLOAD = 'recordingUpload'
 
 /**
+ * The notification source type of a warning that a phone's unuploaded copy of
+ * one camera angle reaches its 30-day limit in 3 days. One per stream, to the
+ * stream's owner only.
+ */
+export const LOCAL_COPY_EXPIRING = 'localCopyExpiring'
+
+/**
  * The Auto-Scheduler's notices: claims on a venue, a game's field warnings
  * and the league's schedule. Each lights the bell until it is opened, and
  * names what it opens.

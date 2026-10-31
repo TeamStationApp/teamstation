@@ -54,7 +54,8 @@ import java.util.concurrent.CopyOnWriteArrayList
  *   running with the screen off. After a kill or a crash, reopening the streaming screen for the same
  *   stream within the hour ([resumeInterrupted]) continues the take as its next part, timed from its
  *   first picture, and the stream redials.
- * - A take finishes its part cleanly when free space falls under 500 MB, and the stream goes on.
+ * - A take finishes its part cleanly when free space falls under 2 GB, and the stream goes on. Record
+ *   under 10 GB free starts only the stream.
  * - [uploadRecording] exports the take's programme (copied when unbroken, placed by wall clock across
  *   parts) and sends it with [UploadService], keeping the upload id on the take so a killed upload
  *   resumes; [resumePendingUploads] restarts every such upload not already running here. The export
@@ -278,7 +279,15 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         isOpen = true
         onRadarThread { radar.start(scope) { emit(PhoneStreamEvent.Radar(it)) } }
         startStatusLoop()
-        runCatching { environment.retention.sweep(catalog, environment.storage, now, protecting = uploads.keys.toSet()) }
+        sweepTakes()
+    }
+
+    /** Runs the retention sweep, sparing the take on the air and every upload still running, except [landed], whose upload has just finished. */
+    private fun sweepTakes(landed: Long? = null) {
+        val protecting = uploads.keys.toMutableSet()
+        protecting -= setOfNotNull(landed)
+        take?.recordingID?.let { protecting += it }
+        runCatching { environment.retention.sweep(catalog, environment.storage, environment.clock.now(), protecting) }
     }
 
     /** Ends the capture and the programme, stopping a recording first; a part being finished is finished first. */
@@ -378,7 +387,13 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
 
     // MARK: - Recording and streaming
 
-    /** Starts the recording and the stream from the same programme tick. */
+    /** Whether Record would keep a recording here now, rather than only streaming. */
+    fun canRecordLocally(): Boolean = environment.storageRules.canStart(environment.freeDiskBytes())
+
+    /**
+     * Starts the recording and the stream from the same programme tick. Under the start floor only the
+     * stream starts: no part is opened, and a take the stream already has no longer covers all of it.
+     */
     suspend fun startRecording(
         rtmpUrl: String,
         liveStreamId: String,
@@ -394,18 +409,41 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         if (existing != null && (existing.hasPendingUpload || uploads.containsKey(existing.recordingID))) {
             throw PhoneStreamException(PhoneStreamError.UPLOAD_IN_PROGRESS)
         }
-        if (!environment.storageRules.canStart(environment.freeDiskBytes())) {
-            fail(PhoneStreamError.INSUFFICIENT_STORAGE)
-            throw PhoneStreamException(PhoneStreamError.INSUFFICIENT_STORAGE)
-        }
         // A take another stream left open when the app stopped is over: it ends where it got to.
         val live = catalog.live()
         if (live != null && live.liveStreamId != liveStreamId) closeInterruptedTake()
         this.angleName = angleName
         lastError = null
+        val recordingID = if (canRecordLocally()) {
+            openPart(existing, liveStreamId, gameId, angleName)
+        } else {
+            lastError = PhoneStreamError.RECORDING_STOPPED_LOW_STORAGE
+            null
+        }
+        catalog.setLive(PhoneCatalog.LiveContext(liveStreamId, gameId, angleName))
+        take = StreamTake(liveStreamId, gameId, angleName, request, recordingID ?: existing?.recordingID, firstURL = rtmpUrl, cachedURL = rtmpUrl)
+        if (recordingID == null && existing != null) {
+            if (existing.endedAt == null) catalog.closeAtLastAnchor(existing.recordingID)
+            catalog.markStoppedForLowStorage(existing.recordingID)
+            catalog.markPublishedOutsideParts(existing.recordingID)
+            outsidePartsMarked = existing.recordingID
+        }
+        recordingTakeID = recordingID
+        encoderRecoveries = 0
+        liveStartWanted = true
+        followServerClock()
+        beginLiveSession(recordingID)
+        streamController.start(StreamSessionController.DialReason.START)
+        startStorageLoop()
+        environment.foreground.recordingStarted(angleName)
+        publishStatus()
+    }
+
+    /** Opens the next part of [existing], or a new take of the stream. Answers the take. */
+    private fun openPart(existing: PhoneRecording?, liveStreamId: String, gameId: String, angleName: String): Long {
         val now = environment.clock.now()
         val settings = PhoneStreamProfile.recordingSettings
-        val recordingID = try {
+        return try {
             val id = if (existing != null) {
                 catalog.reopen(existing.recordingID)
                 val resumed = LiveSessionResume.Take(existing.recordingID, existing.startedAt, null, index.nextProgramPart(existing.recordingID))
@@ -428,17 +466,6 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
             fail(PhoneStreamError.RECORDING_FAILED)
             throw PhoneStreamException(PhoneStreamError.RECORDING_FAILED, error.message ?: "recordingFailed")
         }
-        catalog.setLive(PhoneCatalog.LiveContext(liveStreamId, gameId, angleName))
-        take = StreamTake(liveStreamId, gameId, angleName, request, recordingID, firstURL = rtmpUrl, cachedURL = rtmpUrl)
-        recordingTakeID = recordingID
-        encoderRecoveries = 0
-        liveStartWanted = true
-        followServerClock()
-        beginLiveSession(recordingID)
-        streamController.start(StreamSessionController.DialReason.START)
-        startStorageLoop()
-        environment.foreground.recordingStarted(angleName)
-        publishStatus()
     }
 
     /**
@@ -653,7 +680,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                 label = held.angleName,
                 deviceId = held.request.deviceId,
                 deviceModel = held.request.deviceModel,
-                heldStreamId = held.liveStreamId
+                heldStreamId = held.liveStreamId,
+                recordsLocally = held.recordingID != null
             )
             val url = answer.url ?: throw LiveStreamClient.Error.Server(200, "no stream address")
             held.cachedURL = url
@@ -684,7 +712,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     /**
      * Continues the interrupted take as its next part, timed from its first picture, and redials its
      * stream with the stream held. False when there is nothing to continue; a take away longer than
-     * the hour is closed where it got to.
+     * the hour is closed where it got to. Between the two floors the take goes on: only `mustStop`
+     * ends a recording that has started.
      */
     suspend fun resumeInterrupted(request: PhoneStreamRequest): Boolean = onEngine {
         awaitFinishing()
@@ -712,7 +741,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                 // Nothing to record from yet: the take goes on as its next part once the camera is back.
                 recordingSession.adopt(resumed)
                 pausedTakeID = resumed.recordingID
-            } else if (environment.storageRules.canStart(environment.freeDiskBytes())) {
+            } else if (!environment.storageRules.mustStop(environment.freeDiskBytes())) {
                 val now = environment.clock.now()
                 try {
                     recordingSession.resume(resumed, now, PhoneStreamProfile.recordingSettings)
@@ -732,6 +761,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                 catalog.markStoppedForLowStorage(resumed.recordingID)
                 lastError = PhoneStreamError.RECORDING_STOPPED_LOW_STORAGE
             }
+        } else if (!canRecordLocally()) {
+            lastError = PhoneStreamError.RECORDING_STOPPED_LOW_STORAGE
         }
         beginLiveSession(recordingTakeID)
         liveStartWanted = true
@@ -1131,6 +1162,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         )
         catalog.markUploaded(id, videoId, environment.clock.now())
         output.parentFile?.deleteRecursively()
+        sweepTakes(landed = id)
         report(PhoneUploadProgress(liveStreamId, PhoneUploadProgress.State.UPLOADED, fraction = 1.0, videoId = videoId), id)
         return videoId
     }

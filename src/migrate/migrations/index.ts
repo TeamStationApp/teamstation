@@ -110,6 +110,7 @@ import { migration096RosterCandidateNames } from './096rosterCandidateNames'
 import { migration097NoticeRequests } from './097noticeRequests'
 import { migration098StreamManagement } from './098streamManagement'
 import { migration099VideographerRequests } from './099videographerRequests'
+import { migration100LocalCopyRemoved } from './100localCopyRemoved'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -223,5 +224,6 @@ export const migrations: Migration[] = [
   migration096RosterCandidateNames,
   migration097NoticeRequests,
   migration098StreamManagement,
-  migration099VideographerRequests
+  migration099VideographerRequests,
+  migration100LocalCopyRemoved
 ]

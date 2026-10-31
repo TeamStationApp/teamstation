@@ -37,6 +37,8 @@ import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import {
+  localCopyWarningDescription,
+  recordLocalCopyWarnings,
   recordRecordingReminder,
   reminderDescription
 } from '../notifications/recordingReminders'
@@ -811,6 +813,45 @@ describe('phones and Directors asking for their streams by device', function () 
       expect(await recordRecordingReminder(db, made.body.id)).equals(false)
     })
 
+    it('takes removed, which settles the reminder and reads as none', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      const path = `/games/${gameId}/live-streams/${made.body.id}`
+      await call('PATCH', path, OWNER, { localRecording: 'recorded' })
+      const removed = await call('PATCH', path, OWNER, {
+        localRecording: 'removed'
+      })
+      expect(removed.status).equals(200)
+      expect(removed.body.localRecording).equals('none')
+      expect((await stream(made.body.id)).localRecording).equals('removed')
+      const reminder = await db
+        .selectFrom('notification_receipts')
+        .innerJoin(
+          'notification_events',
+          'notification_events.id',
+          'notification_receipts.event_id'
+        )
+        .select('notification_receipts.dismissed_at as dismissedAt')
+        .where('notification_events.source_id', '=', made.body.id)
+        .where('notification_events.source_type', '=', 'recordingUpload')
+        .executeTakeFirstOrThrow()
+      expect(reminder.dismissedAt).not.equals(null)
+
+      const listed = await call('GET', `/games/${gameId}/live-streams`, OWNER)
+      expect(listed.body.mine[0].localRecording).equals('none')
+      // An uploaded copy stays uploaded, whatever a phone goes on to say.
+      await db
+        .updateTable('live_streams')
+        .set({ local_recording: 'uploaded' })
+        .where('id', '=', made.body.id)
+        .execute()
+      expect(
+        (await call('PATCH', path, OWNER, { localRecording: 'removed' })).status
+      ).equals(200)
+      expect((await stream(made.body.id)).localRecording).equals('uploaded')
+    })
+
     it('marks a stream made without recordsLocally as keeping its recording', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()
@@ -1532,6 +1573,37 @@ describe('phones and Directors asking for their streams by device', function () 
       )
     })
 
+    it('settles the copy warning with the reminder when the upload lands', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const home = await ask(gameId, phone('Home Plate'))
+      await aired(home.body.id, 0, 600)
+      await recorded(gameId, home.body.id)
+      await end(gameId, home.body.id)
+      await db
+        .updateTable('live_streams')
+        .set({ ended_at: new Date(Date.now() - 27.5 * 24 * 60 * 60 * 1000) })
+        .where('id', '=', home.body.id)
+        .execute()
+      await recordLocalCopyWarnings(db)
+      const waiting = async (): Promise<string[]> =>
+        ((await call('GET', '/me/notifications', OWNER)).body.items as Body[])
+          .filter(item => item.liveStreamId === home.body.id)
+          .map(item => String(item.type))
+          .sort()
+      expect(await waiting()).deep.equals([
+        'localCopyExpiring',
+        'recordingUpload'
+      ])
+      const upload = await uploadVideo(gameId, 0, 600)
+      await replaceLiveRecording(db, gameId, upload, {
+        liveStreamId: home.body.id,
+        wholeStream: true
+      })
+      expect((await stream(home.body.id)).localRecording).equals('uploaded')
+      expect(await waiting()).deep.equals([])
+    })
+
     it('replaces an ended angle that a new take has since followed, and clears its reminder', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()
@@ -1993,6 +2065,146 @@ describe('phones and Directors asking for their streams by device', function () 
     it('says the angle alone when the device gave no model', function () {
       expect(reminderDescription('Home Plate', null)).equals(
         'Home Plate — provide a higher-quality copy for future viewing.'
+      )
+    })
+  })
+
+  describe('S7b the warning that a copy is expiring', function () {
+    const DAY = 24 * 60 * 60 * 1000
+    /** A recorded camera that ended `days` ago, owned by OTHER. */
+    const endedDaysAgo = async (
+      gameId: string,
+      label: string,
+      days: number,
+      device = IPHONE
+    ): Promise<string> => {
+      const made = await ask(gameId, phone(label, device), OTHER)
+      expect(made.status).equals(201)
+      const marked = await call(
+        'PATCH',
+        `/games/${gameId}/live-streams/${made.body.id}`,
+        OTHER,
+        { localRecording: 'recorded' }
+      )
+      expect(marked.status).equals(200)
+      const endedAt = new Date(Date.now() - days * DAY)
+      await db!
+        .updateTable('live_streams')
+        .set({ state: 'ended', ended_at: endedAt, closes_at: endedAt })
+        .where('id', '=', made.body.id)
+        .execute()
+      return made.body.id
+    }
+    const warned = async (gameId: string): Promise<string[]> =>
+      (
+        await db!
+          .selectFrom('notification_events')
+          .innerJoin(
+            'live_streams',
+            'live_streams.id',
+            'notification_events.source_id'
+          )
+          .select('live_streams.id as id')
+          .where('notification_events.source_type', '=', 'localCopyExpiring')
+          .where('live_streams.game_id', '=', gameId)
+          .execute()
+      ).map(row => row.id)
+
+    it('fires once per stream from 27 days up to 28, and reaches the bell', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const before = await endedDaysAgo(gameId, 'Early', 26.9, IPHONE)
+      const due = await endedDaysAgo(gameId, 'Home Plate', 27, IPHONE)
+      const late = await endedDaysAgo(gameId, 'Backstop', 27.9, IPHONE)
+      const past = await endedDaysAgo(gameId, 'Too Old', 28, IPHONE)
+      const older = await endedDaysAgo(gameId, 'Long Gone', 31, IPHONE)
+
+      const now = new Date(Date.now() + 1000)
+      await recordLocalCopyWarnings(db, now)
+      expect((await warned(gameId)).sort()).deep.equals([due, late].sort())
+      expect(await warned(gameId)).not.includes(before)
+      expect(await warned(gameId)).not.includes(past)
+      expect(await warned(gameId)).not.includes(older)
+      // The hourly run says nothing twice.
+      expect(await recordLocalCopyWarnings(db, now)).equals(0)
+
+      const pending = await call('GET', '/me/notifications', OTHER)
+      const items = (pending.body.items as Body[]).filter(
+        item => item.type === 'localCopyExpiring'
+      )
+      const warning = items.find(item => item.liveStreamId === due)!
+      expect(warning.title).equals("This phone's copy is expiring")
+      expect(warning.description).equals(
+        "Home Plate on iPhone 13 Pro, Ridge Demo at Harbor Demo — this phone's copy will be deleted in 3 days. Upload it to keep it."
+      )
+      expect(warning.status).equals('pending')
+      expect(warning.canAct).equals(true)
+      expect(warning.gameId).equals(gameId)
+      expect(pending.body.hasPending).equals(true)
+      expect(
+        (await call('GET', '/me/notifications/summary', OTHER)).body.hasPending
+      ).equals(true)
+
+      // Only its owner has it.
+      expect(
+        (
+          (await call('GET', '/me/notifications', OWNER)).body.items as Body[]
+        ).filter(item => item.liveStreamId === due)
+      ).deep.equals([])
+    })
+
+    it('leaves alone an uploaded, a removed, a discarded and an unrecorded camera', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const uploaded = await endedDaysAgo(gameId, 'Uploaded', 27.5, IPHONE)
+      await db
+        .updateTable('live_streams')
+        .set({ local_recording: 'uploaded' })
+        .where('id', '=', uploaded)
+        .execute()
+      const removed = await endedDaysAgo(gameId, 'Removed', 27.5, IPHONE)
+      await call('PATCH', `/games/${gameId}/live-streams/${removed}`, OTHER, {
+        localRecording: 'removed'
+      })
+      const discarded = await endedDaysAgo(gameId, 'Discarded', 27.5, IPHONE)
+      await db
+        .updateTable('live_streams')
+        .set({ discarded_at: new Date() })
+        .where('id', '=', discarded)
+        .execute()
+      const elsewhere = await endedDaysAgo(gameId, 'Elsewhere', 27.5, IPHONE)
+      await db
+        .updateTable('live_streams')
+        .set({ records_locally: false })
+        .where('id', '=', elsewhere)
+        .execute()
+      await recordLocalCopyWarnings(db)
+      expect(await warned(gameId)).deep.equals([])
+    })
+
+    it('settles when the phone says the copy has gone', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const due = await endedDaysAgo(gameId, 'Home Plate', 27.5, IPHONE)
+      await recordLocalCopyWarnings(db)
+      const listed = async (): Promise<Body[]> =>
+        (
+          (await call('GET', '/me/notifications', OTHER)).body.items as Body[]
+        ).filter(item => item.liveStreamId === due)
+      expect(
+        (await listed()).map(item => String(item.type)).sort()
+      ).deep.equals(['localCopyExpiring', 'recordingUpload'])
+      await call('PATCH', `/games/${gameId}/live-streams/${due}`, OTHER, {
+        localRecording: 'removed'
+      })
+      expect(await listed()).deep.equals([])
+    })
+
+    it('says the angle and game alone when the device gave no model', function () {
+      expect(
+        localCopyWarningDescription('Home Plate', null, 'Owls at Hawks')
+      ).equals(
+        "Home Plate, Owls at Hawks — this phone's copy will be deleted in 3 days. Upload it to keep it."
       )
     })
   })

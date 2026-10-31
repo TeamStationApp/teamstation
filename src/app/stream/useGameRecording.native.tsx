@@ -105,7 +105,7 @@ export function useGameRecording(
     const stream = await client.addLiveStream(gameId, name, {
       deviceId: id,
       deviceModel: capabilities.deviceModel,
-      recordsLocally: true,
+      recordsLocally: capabilities.canRecordLocally,
       ...(held == null ? {} : { heldStreamId: held.id })
     })
     if (!current(attempt)) throw new Error(lstrings.common_retry)

@@ -135,6 +135,7 @@ class PhoneStreamEnvironment(
                     )
                 },
                 freeDiskBytes = storage::freeBytes,
+                storageRules = launchStorageRules(),
                 makePathMonitor = { ConnectivityNetworkMonitor(app) },
                 deviceStatus = SystemDeviceStatus(app),
                 makeRadar = { PhoneRadar.system(app) },

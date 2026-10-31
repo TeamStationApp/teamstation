@@ -17,7 +17,11 @@ import app.teamstation.streamcore.phonestream.PhoneZoomScale
  */
 object PhoneStreamMaps {
     fun capabilities(capabilities: PhoneCapabilities): Map<String, Any?> =
-        mapOf("supported" to capabilities.supported, "deviceModel" to capabilities.deviceModel)
+        mapOf(
+            "supported" to capabilities.supported,
+            "deviceModel" to capabilities.deviceModel,
+            "canRecordLocally" to capabilities.canRecordLocally
+        )
 
     fun status(status: PhoneStreamStatus): Map<String, Any?> =
         present(
