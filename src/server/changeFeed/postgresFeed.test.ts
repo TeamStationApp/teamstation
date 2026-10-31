@@ -321,8 +321,13 @@ describe('the Postgres change feed', function () {
 
   it('is what a process gets from its config', async function () {
     const lines: string[] = []
-    const feed = makeChangeFeed({ databaseUrl: scratchUrl }, line =>
-      lines.push(line)
+    const feed = makeChangeFeed(
+      {
+        databaseUrl: scratchUrl,
+        changeFeed: 'postgres',
+        redis: { url: 'redis://127.0.0.1:1', prefix: '', caFile: '' }
+      },
+      line => lines.push(line)
     )
     expect(feed).instanceOf(PostgresFeed)
     await feed.subscribe('feed_probe', hearer()).listening

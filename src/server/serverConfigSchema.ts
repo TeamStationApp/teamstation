@@ -4,7 +4,8 @@ import {
   asNumber,
   asObject,
   asOptional,
-  asString
+  asString,
+  asValue
 } from 'cleaners'
 
 import { asHttpsUrl } from '../common/distribution'
@@ -56,6 +57,13 @@ export const asServerConfig = asObject({
    * without a pooler connects directly. `LISTEN` and migrations never use it.
    */
   databasePoolUrl: asOptional(asString, ''),
+
+  /**
+   * How a process hears the server's notices. `postgres` holds a direct
+   * connection in every process. `valkey` holds one, in one elected API
+   * primary, which republishes to Valkey for the rest.
+   */
+  changeFeed: asOptional(asValue('postgres', 'valkey'), 'postgres'),
 
   /** How many connections each kind of process keeps in its pool. */
   databasePoolSizes: asOptional(

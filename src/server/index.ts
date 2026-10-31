@@ -12,6 +12,7 @@ import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
 import { makeChangeFeed } from './changeFeed/makeChangeFeed'
+import { type FeedRelay, startFeedRelay } from './changeFeed/relay'
 import { spaceObjectStore, startChatPurge } from './chat/attachments'
 import { startChatReconciler } from './chat/reconciler'
 import { makeDatabase } from './db/database'
@@ -359,6 +360,20 @@ function logFeed(message: string): void {
   console.error(`change feed: ${message}`)
 }
 
+/** Each API primary is a candidate to carry Postgres's notices to Valkey. */
+function startRelayIfNeeded(): FeedRelay | undefined {
+  return serverConfig.changeFeed === 'valkey'
+    ? startFeedRelay(serverConfig, logFeed)
+    : undefined
+}
+
+/** Leaves the role at once, rather than a standby waiting out the key. */
+async function stopRelay(relay: FeedRelay | undefined): Promise<void> {
+  await relay?.stop().catch((error: unknown) => {
+    console.error(`change feed: the relay's stop failed: ${String(error)}`)
+  })
+}
+
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
@@ -370,6 +385,7 @@ function runPrimary(workerCount: number): void {
   startKeySweep(primaryDb)
   startChatAttachmentPurge(primaryDb)
   startChatReconciler(primaryDb, makeChangeFeed(serverConfig, logFeed))
+  const relay = startRelayIfNeeded()
   const builder = startStatsBuilder({
     enabled: serverConfig.statsBuilder,
     supervise: () =>
@@ -429,6 +445,7 @@ function runPrimary(workerCount: number): void {
   const stop = (signal: string): void => {
     if (stopping) return
     stopping = true
+    stopRelay(relay).catch(() => undefined)
     builder.stop(signal).catch((error: unknown) => {
       console.error('stats builder: stop failed', error)
     })
@@ -786,7 +803,9 @@ function runWorker(): void {
   let builder: StatsBuilderHandle = {
     stop: async () => undefined
   }
+  let relay: FeedRelay | undefined
   if (cluster.isPrimary) {
+    relay = startRelayIfNeeded()
     reopenInterrupted(db)
     startPurge(db)
     startChatAttachmentPurge(db)
@@ -824,6 +843,7 @@ function runWorker(): void {
       destroyDatabase: async () => {
         await stopAnalytics()
         await stopLogging()
+        await stopRelay(relay)
         await feed.close()
         await db.destroy()
       },

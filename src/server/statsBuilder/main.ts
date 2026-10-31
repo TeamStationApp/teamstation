@@ -245,7 +245,10 @@ function logFeed(message: string): void {
 }
 
 export async function runMain(
-  config: Pick<ServerConfig, 'databaseUrl' | 'databasePoolUrl'> = serverConfig,
+  config: Pick<
+    ServerConfig,
+    'databaseUrl' | 'databasePoolUrl' | 'changeFeed' | 'redis'
+  > = serverConfig,
   onStopped?: () => Promise<void>
 ): Promise<StatsBuilderHandle> {
   return await runStatsBuilder({

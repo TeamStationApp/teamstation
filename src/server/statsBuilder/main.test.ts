@@ -374,7 +374,11 @@ describe('statsBuilder main', function () {
       databaseUrl: string
       databasePoolUrl: string
     }): Promise<string[]> => {
-      const handle = await runMain(config)
+      const handle = await runMain({
+        ...config,
+        changeFeed: 'postgres',
+        redis: { url: 'redis://127.0.0.1:1', prefix: '', caFile: '' }
+      })
       const { rows } = await sql<{ name: string; query: string }>`
         select application_name as name, query from pg_stat_activity
         where datname = ${scratchName}
