@@ -27,6 +27,7 @@ import { answerOnce, idempotentCallOf } from '../db/syncIdempotency'
 import { atBatOf } from '../events/atBatInProgress'
 import { pregameFold } from '../events/currentPlay'
 import {
+  eventTagsNeedRepair,
   reconcileEventTags,
   tagChoices,
   writeEventTag
@@ -308,27 +309,20 @@ export function eventRoutes(
       const gameId = pathParam(req.params.gameId)
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
       let teams: readonly string[] = []
-      const result = await db.transaction().execute(async trx => {
-        const locked = await trx
-          .selectFrom('games')
-          .select('id')
-          .where('id', '=', gameId)
-          .forUpdate()
-          .executeTakeFirst()
-        if (locked == null) throw notFound()
-        // Read committed, after the lock: a live post that commits while
-        // this holds the game waits, and takes a revision newer than this.
-        res.setHeader(REVISION_HEADER, await readSyncClock(trx))
-        await reconcileEventTags(trx, gameId)
-        // Players' halves for whoever may save their lineups.
-        return await storedGameRead(trx, gameId, async game => {
-          teams = lineupTeams(
-            await roleScopes(trx, actor.userId, actor.isAdmin),
-            game
-          )
-          return teams
-        })
-      })
+      const { revision, result } = await readGameUnlocked(
+        db,
+        gameId,
+        async trx =>
+          // Players' halves for whoever may save their lineups.
+          await storedGameRead(trx, gameId, async game => {
+            teams = lineupTeams(
+              await roleScopes(trx, actor.userId, actor.isAdmin),
+              game
+            )
+            return teams
+          })
+      )
+      res.setHeader(REVISION_HEADER, revision)
       // A game with nothing stored has no setup to hold anyone's halves, and
       // whoever may dictate still needs their first names.
       // Dictation's, so nothing Tess, who does not dictate, is told.
@@ -536,6 +530,65 @@ async function storedGameRead(
     fold: await pregameFold(db, gameId, game, resolved),
     teams
   }
+}
+
+/**
+ * Reads a game without taking its row, so readers wait on neither each other
+ * nor a post: one read-only `REPEATABLE READ` transaction, whose first
+ * statement reads the clock. A post bumps the clock last and holds it until
+ * it commits, so the clock and the post's rows show together: the rows the
+ * read answers are exactly those of its revision, and a post it did not see
+ * took a newer one. That needs the snapshot and no session state, so it holds
+ * through a transaction-mode pooler.
+ *
+ * A write that left event tags unreconciled is the one case that takes the
+ * game row: the read lets its snapshot go, repairs under the lock in a
+ * transaction of its own, and reads afresh. Should a further write leave them
+ * unreconciled again meanwhile, it reads under the lock after one more repair,
+ * in `READ COMMITTED`: a post to this game waits, and takes a revision newer
+ * than the one read here.
+ */
+async function readGameUnlocked<T>(
+  db: Kysely<Database>,
+  gameId: string,
+  read: (trx: Kysely<Database>) => Promise<T>
+): Promise<{ revision: string; result: T }> {
+  const lockGame = async (trx: Kysely<Database>): Promise<void> => {
+    const locked = await trx
+      .selectFrom('games')
+      .select('id')
+      .where('id', '=', gameId)
+      .forUpdate()
+      .executeTakeFirst()
+    if (locked == null) throw notFound()
+  }
+  const snapshot = async (): Promise<{
+    revision: string
+    result: T
+  } | null> =>
+    await db
+      .transaction()
+      .setIsolationLevel('repeatable read')
+      .setAccessMode('read only')
+      .execute(async trx => {
+        const revision = await readSyncClock(trx)
+        if (await eventTagsNeedRepair(trx, gameId)) return null
+        return { revision, result: await read(trx) }
+      })
+  const first = await snapshot()
+  if (first != null) return first
+  await db.transaction().execute(async trx => {
+    await lockGame(trx)
+    await reconcileEventTags(trx, gameId)
+  })
+  const second = await snapshot()
+  if (second != null) return second
+  return await db.transaction().execute(async trx => {
+    await lockGame(trx)
+    const revision = await readSyncClock(trx)
+    await reconcileEventTags(trx, gameId)
+    return { revision, result: await read(trx) }
+  })
 }
 
 /** A read's answer, its at-bat folded. */

@@ -14,11 +14,28 @@ import {
 } from '../../common/eventTags'
 import type { Database } from '../db/database'
 
-/** Caller holds the game row lock, shared by scoring and tag writes. */
-export async function reconcileEventTags(
+/** What `reconcileEventTags` would change, worked out from reads alone. */
+interface EventTagRepair {
+  /** Assignments whose target no longer exists. */
+  stale: string[]
+  /** Assignments whose target has moved, with where it is now. */
+  moved: Array<{
+    targetId: string
+    atBatIndex: number
+    eventIndex: number | null
+  }>
+  /** Plays whose stored document differs from its reconciled one. */
+  plays: Array<{ id: string; gumbo: TagDocument }>
+  /** The at-bat in progress, when its stored document differs. */
+  currentPlay: TagDocument | undefined
+  /** Every document as reconciled, the at-bat in progress last. */
+  documents: TagDocument[]
+}
+
+async function planEventTagRepair(
   db: Kysely<Database>,
   gameId: string
-): Promise<TagDocument[]> {
+): Promise<EventTagRepair> {
   const rows = await db
     .selectFrom('events')
     .select(['id', 'gumbo'])
@@ -29,17 +46,18 @@ export async function reconcileEventTags(
     .selectFrom('games')
     .select('currentPlay')
     .where('id', '=', gameId)
-    .executeTakeFirstOrThrow()
+    .executeTakeFirst()
+  if (game == null) throw notFound()
   const registry = new TagIdentityRegistry()
-  const documents = rows.map(row => row.gumbo as TagDocument)
+  const stored = rows.map(row => row.gumbo as TagDocument)
   const current = game.currentPlay as TagDocument | null
-  for (const play of [...documents, current])
+  for (const play of [...stored, current])
     if (play != null) {
       const metadata = tagMetadata(play)
       if (metadata.play != null || metadata.events.length > 0)
         registry.restore(play)
     }
-  const decorated = documents.map(play =>
+  const decorated = stored.map(play =>
     play.about.atBatIndex === current?.about.atBatIndex
       ? { ...play, tagTargets: { version: 1, play: null, events: [] } }
       : registry.decorate(play, true)
@@ -53,51 +71,94 @@ export async function reconcileEventTags(
   const ids = targets.map(target => target.id)
   if (new Set(ids).size !== ids.length)
     throw badRequest('Event tag identities must be unique within a game')
-  let prune = db.deleteFrom('event_tags').where('game_id', '=', gameId)
-  if (ids.length > 0) prune = prune.where('target_id', 'not in', ids)
-  await prune.execute()
   const assignments = await db
     .selectFrom('event_tags')
     .select(['target_id', 'tag', 'at_bat_index', 'event_index'])
     .where('game_id', '=', gameId)
     .execute()
   const locations = new Map(targets.map(target => [target.id, target]))
+  const stale: string[] = []
+  const moved: EventTagRepair['moved'] = []
+  const tags = new Map<string, string>()
   for (const assignment of assignments) {
-    const target = locations.get(assignment.target_id)!
+    const target = locations.get(assignment.target_id)
+    if (target == null) {
+      stale.push(assignment.target_id)
+      continue
+    }
+    tags.set(assignment.target_id, assignment.tag)
     if (
       assignment.at_bat_index !== target.atBatIndex ||
       assignment.event_index !== target.eventIndex
     )
-      await db
-        .updateTable('event_tags')
-        .set({
-          at_bat_index: target.atBatIndex,
-          event_index: target.eventIndex
-        })
-        .where('game_id', '=', gameId)
-        .where('target_id', '=', target.id)
-        .execute()
+      moved.push({
+        targetId: target.id,
+        atBatIndex: target.atBatIndex,
+        eventIndex: target.eventIndex
+      })
   }
-  const tags = new Map(assignments.map(row => [row.target_id, row.tag]))
-  const result = decorated.map(play => withTargetTags(play, tags))
-  for (let at = 0; at < rows.length; at++)
-    if (!isDeepStrictEqual(rows[at].gumbo, result[at]))
-      await db
-        .updateTable('events')
-        .set({ gumbo: result[at] })
-        .where('id', '=', rows[at].id)
-        .execute()
+  const documents = decorated.map(play => withTargetTags(play, tags))
+  const plays = rows.flatMap((row, at) =>
+    isDeepStrictEqual(row.gumbo, documents[at])
+      ? []
+      : [{ id: row.id, gumbo: documents[at] }]
+  )
+  let currentPlay: TagDocument | undefined
   if (decoratedCurrent != null) {
     const next = withTargetTags(decoratedCurrent, tags)
-    if (!isDeepStrictEqual(current, next))
-      await db
-        .updateTable('games')
-        .set({ currentPlay: next })
-        .where('id', '=', gameId)
-        .execute()
-    result.push(next)
+    if (!isDeepStrictEqual(current, next)) currentPlay = next
+    documents.push(next)
   }
-  return result
+  return { stale, moved, plays, currentPlay, documents }
+}
+
+/**
+ * Whether `reconcileEventTags` would write anything. It only reads, so it
+ * needs no lock: a reader asks this of its snapshot and takes the game row
+ * only when there is something to repair. The identities it decorates with
+ * along the way are thrown away; the repair makes its own, under the lock.
+ */
+export async function eventTagsNeedRepair(
+  db: Kysely<Database>,
+  gameId: string
+): Promise<boolean> {
+  const repair = await planEventTagRepair(db, gameId)
+  return (
+    repair.stale.length > 0 ||
+    repair.moved.length > 0 ||
+    repair.plays.length > 0 ||
+    repair.currentPlay !== undefined
+  )
+}
+
+/** Caller holds the game row lock, shared by scoring and tag writes. */
+export async function reconcileEventTags(
+  db: Kysely<Database>,
+  gameId: string
+): Promise<TagDocument[]> {
+  const repair = await planEventTagRepair(db, gameId)
+  if (repair.stale.length > 0)
+    await db
+      .deleteFrom('event_tags')
+      .where('game_id', '=', gameId)
+      .where('target_id', 'in', repair.stale)
+      .execute()
+  for (const { targetId, atBatIndex, eventIndex } of repair.moved)
+    await db
+      .updateTable('event_tags')
+      .set({ at_bat_index: atBatIndex, event_index: eventIndex })
+      .where('game_id', '=', gameId)
+      .where('target_id', '=', targetId)
+      .execute()
+  for (const { id, gumbo } of repair.plays)
+    await db.updateTable('events').set({ gumbo }).where('id', '=', id).execute()
+  if (repair.currentPlay !== undefined)
+    await db
+      .updateTable('games')
+      .set({ currentPlay: repair.currentPlay })
+      .where('id', '=', gameId)
+      .execute()
+  return repair.documents
 }
 
 export async function tagChoices(
