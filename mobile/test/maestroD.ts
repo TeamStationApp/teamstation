@@ -30,6 +30,8 @@ export interface MaestroDevice {
   extendedWaitUntil: (value: unknown) => Promise<unknown>
   scrollUntilVisible: (value: unknown) => Promise<unknown>
   swipe: (value: unknown) => Promise<unknown>
+  pressKey: (value: unknown) => Promise<unknown>
+  setOrientation: (value: unknown) => Promise<unknown>
   copyTextFrom: (value: unknown) => Promise<{ data?: unknown }>
   screenshot: () => Promise<Buffer>
   hierarchy: () => Promise<HierarchyNode>
