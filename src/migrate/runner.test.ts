@@ -9,6 +9,7 @@ import {
   migrateDown,
   migrateUp,
   type Migration,
+  migrationPoolConfig,
   rewriteJson,
   STEP_BATCH
 } from './runner'
@@ -23,6 +24,41 @@ import { dropScratchDatabase, testDatabaseUrl } from './testDatabase'
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_test_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+
+describe('the migration session', function () {
+  this.timeout(60000)
+  const limited = `teamstation_test_limit_${Date.now()}`
+  const limitedUrl = adminUrl.replace(/\/[^/]*$/, `/${limited}`)
+  let admin: Pool
+
+  before(async function () {
+    admin = new Pool({ connectionString: adminUrl })
+    await admin.query(`create database ${limited}`)
+    await admin.query(
+      `alter database ${limited} set idle_in_transaction_session_timeout = '60s'`
+    )
+  })
+
+  after(async function () {
+    await dropScratchDatabase(admin, limited)
+    await admin.end()
+  })
+
+  const limitIn = async (pool: Pool): Promise<string> => {
+    const { rows } = await pool.query<{ limit: string }>(
+      `select current_setting('idle_in_transaction_session_timeout') as limit`
+    )
+    await pool.end()
+    return rows[0].limit
+  }
+
+  it('has the idle-in-transaction limit off, where any other session has it on', async function () {
+    expect(await limitIn(new Pool({ connectionString: limitedUrl }))).equals(
+      '1min'
+    )
+    expect(await limitIn(new Pool(migrationPoolConfig(limitedUrl)))).equals('0')
+  })
+})
 
 describe('migrations', function () {
   this.timeout(60000)
