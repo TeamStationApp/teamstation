@@ -16,7 +16,7 @@ import { openAddsOf } from '../access'
 import type { Database } from '../db/database'
 import { isWithdrawnKey } from '../games/withdrawn'
 import { followMerges } from '../teams/followMerges'
-import { rowsOfPeople, survivors } from '../teams/teamStaff'
+import { survivors } from '../teams/teamStaff'
 import { isSpoken } from '../users/readerNames'
 
 /**
@@ -222,24 +222,24 @@ export async function lentPlayers(
   for (const pair of pairs)
     if (open.get(pair.teamId)?.has(pair.userId) === true)
       lent.add(`${pair.teamId} ${pair.userId}`)
-  const rows = await rowsOfPeople(
-    db,
-    pairs.map(pair => pair.userId)
-  )
-  const pool =
-    rows.length === 0
-      ? []
-      : await db
-          .selectFrom('game_guest_details')
-          .innerJoin('games', 'games.id', 'game_guest_details.game_id')
-          .select([
-            'game_guest_details.user_id as userId',
-            'games.home_team_id as home',
-            'games.away_team_id as away'
-          ])
-          .where('game_guest_details.pool', '=', true)
-          .where('game_guest_details.user_id', 'in', rows)
-          .execute()
+  // By the teams: this runs on every look at a board, and there are few.
+  const teamIds = [...new Set(pairs.map(pair => pair.teamId))]
+  const pool = await db
+    .selectFrom('game_guest_details')
+    .innerJoin('games', 'games.id', 'game_guest_details.game_id')
+    .select([
+      'game_guest_details.user_id as userId',
+      'games.home_team_id as home',
+      'games.away_team_id as away'
+    ])
+    .where('game_guest_details.pool', '=', true)
+    .where(eb =>
+      eb.or([
+        eb('games.home_team_id', 'in', teamIds),
+        eb('games.away_team_id', 'in', teamIds)
+      ])
+    )
+    .execute()
   const current = await survivors(
     db,
     pool.map(row => row.userId)
