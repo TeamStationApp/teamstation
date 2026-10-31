@@ -8,8 +8,8 @@ import {
   forgetScoreboardSettings,
   replayPitchSec,
   replaySettings,
-  scoreboardSettings,
   scoreboardOverlayFor,
+  scoreboardSettings,
   speedHoldMs
 } from './nodeSettings'
 import { forgetSettings, highlightSettings } from './settings'
