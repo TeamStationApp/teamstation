@@ -71,7 +71,7 @@ async function main(): Promise<void> {
     await session.m.waitForAnimationToEnd()
     await writeFile(join(out, 'camera-name.png'), await session.m.screenshot())
     await session.m.tapOn({ text: 'Home', role: 'button' })
-    await session.m.tapOn({ text: 'Start', role: 'button' })
+    await session.m.tapOn({ text: 'Record with this phone', role: 'button' })
     await contains(session.page, 'Recording camera: Home')
     await contains(session.page, 'Automatic start requested')
     await writeFile(join(out, 'recording.png'), await session.m.screenshot())

@@ -1869,7 +1869,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ? undefined
       : (game.videos.find(item => item.id === video.id) ?? video)
   const isLive = showVideoLivePill(playing, game, clockNow)
-  const notice = video == null ? lstrings.game_no_video : undefined
+  // A phone says "No videos" in the camera area under the tabs, which also
+  // holds the way to film the game. There is no player for it to sit beside.
+  const noVideoHere = video == null && Platform.OS !== 'web'
+  const notice =
+    video == null && !noVideoHere ? lstrings.game_no_video : undefined
+  const playVideo = (id: string): void => {
+    const item = game.videos.find(one => one.id === id)
+    if (item != null) switchAngle(item)
+  }
   // The game's board over the picture, at the wall time of the frame on
   // screen, where the node's single-camera setting puts it on the picture:
   // the box less any black bars.
@@ -1887,7 +1895,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         }
   const player = (
     <View style={styles.playerBlock}>
-      {notice != null ? (
+      {noVideoHere ? null : notice != null ? (
         <View
           testID="gameVideoNotice"
           style={[styles.videoNotice, { width: layout.videoWidth }]}
@@ -2037,8 +2045,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 else setAnglesUnavailable(true)
                 return
               }
-              const item = game.videos.find(one => one.id === id)
-              if (item != null) switchAngle(item)
+              playVideo(id)
             }}
             accessibilityLabel="Camera angles"
           />
@@ -2324,21 +2331,23 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               footer={
                 <>
                   {/*
-                    Under the highlights, and only for the people who run the
-                    team: everybody else is answered `404` and sees nothing
-                    here at all. A browser lists stream URLs; a phone records
-                    with its own camera.
+                    Under the highlights. A browser lists stream URLs for the
+                    people who run the team, and is answered `404` for anybody
+                    else. A phone sets up and watches over the game's cameras,
+                    and is where a game with no video says so.
                   */}
                   <StreamFooter
                     client={client}
                     gameId={gameId}
                     onPublishing={setPublishing}
+                    hasVideo={video != null}
+                    onPlay={playVideo}
                   />
                 </>
               }
               layout={layout}
               short={short}
-              sideBySide={sideBySide}
+              sideBySide={sideBySide && !noVideoHere}
               headerHeight={headerHeight}
               tabsHeight={tabsHeight}
               height={height}
