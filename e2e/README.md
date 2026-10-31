@@ -75,3 +75,19 @@ npm run e2e -- scorecard
 API faults come from a proxy between the front server and the API. `ctx.stack.adopt(origin)` puts the same proxy in front of a server a scenario started, and returns the origin to use, so its 5xx are seen too. Sign-in stays up by default, so a fault reaches the screens a scenario checks. A scenario whose fixture must carry a fault reads `ctx.fault`.
 
 Once a category leaves `pendingCategories` in `legacy.json`, `validate` fails unless its specs name every fault, or `EXCUSED` in the catalogue says why one cannot reach it. A fault that survives is a blind spot: add a checkpoint, or record the reason.
+
+## Fixtures, accounts and mail
+
+A scenario never shares data with another. `ctx.fixture(name)` seeds a world under its own nonce, and the manifest it returns, with its passwords, stays in the scenario's memory. `baseline`'s accounts, `admin` and `member`, exist on an isolated stack and on the tester seat. A branch seat has none, so a scenario needing them reports `blocked` there. Worlds live in `src/server/dev/fixtures/`.
+
+```sh
+npm run fixtures -- <world> --json --mailbox <mailbox>
+```
+
+The script refuses unless `serverConfig.testSettings` is true, which production never sets. `baseline` also refuses a database holding any address but a `+` address on the mailbox, which an empty database satisfies and a copy of production cannot.
+
+- `ctx.signIn(role)` uses the surface's real password form, and sends no mail. It fails unless the person ends up signed in.
+- `ctx.address(label)` returns a fresh `+` address on the test mailbox. Lint rejects any other address in a test, unless it is on `example.test` in a spec marked `sendsNoMail: true`.
+- `ctx.mail(address, from)` waits up to three minutes for what the app really sent, with one targeted, time-bounded search at a time. Nothing it reads goes to the run directory.
+
+`test.rateLimitScale` in `system_settings` multiplies every rate limit except a paid provider's, read only where `testSettings` is true. `baseline` sets it to 100, so ordinary scenarios never hit a limit.

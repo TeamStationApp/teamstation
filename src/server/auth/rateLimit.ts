@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 import { rateLimited } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import type { Database } from '../db/database'
+import { serverConfig } from '../serverConfig'
 
 /**
  * How often one address, or one client, may attempt something.
@@ -21,6 +22,8 @@ export interface LimitRule {
   /** How many attempts the window allows. */
   limit: number
   windowSec: number
+  /** A paid provider's budget, which no test setting may loosen. */
+  fixed?: boolean
 }
 
 /**
@@ -45,6 +48,27 @@ export function clientIp(req: Request): string | null {
 }
 
 /**
+ * The test setting that raises or lowers every limit, read afresh each time so it
+ * changes with no restart. Only a seat holding invented data reads it at all.
+ */
+async function rateLimitScale(db: Kysely<Database>): Promise<number> {
+  if (!serverConfig.testSettings) return 1
+  const row = await db
+    .selectFrom('system_settings')
+    .select('value')
+    .where('key', '=', 'test.rateLimitScale')
+    .executeTakeFirst()
+  const value = row?.value
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : 1
+}
+
+function scaled(limit: number, scale: number): number {
+  return Math.max(1, Math.ceil(limit * scale))
+}
+
+/**
  * Throws when any rule is already used up, and says how long to wait.
  *
  * Checking is separate from recording because the two are not always wanted
@@ -56,7 +80,9 @@ export async function checkLimits(
   rules: LimitRule[]
 ): Promise<void> {
   const now = Date.now()
+  const scale = await rateLimitScale(db)
   for (const rule of rules) {
+    const limit = rule.fixed === true ? rule.limit : scaled(rule.limit, scale)
     const since = new Date(now - rule.windowSec * 1000)
     const rows = await db
       .selectFrom('rate_events')
@@ -65,10 +91,10 @@ export async function checkLimits(
       .where('key', '=', rule.key)
       .where('at', '>=', since)
       .orderBy('at', 'asc')
-      .limit(rule.limit)
+      .limit(limit)
       .execute()
 
-    if (rows.length < rule.limit) continue
+    if (rows.length < limit) continue
 
     // The window frees up when its oldest attempt falls out of it.
     const oldest = new Date(rows[0].at).getTime()

@@ -1,5 +1,6 @@
 import type { BrowserPage, Emulation } from './browserCdp'
 import type { CheckpointSpec } from './checkpoint'
+import type { FixtureAccount, FixtureManifest } from './fixtures'
 import type { ServerError } from './invariants'
 
 /** The contract every end-to-end and integration test declares. */
@@ -59,6 +60,16 @@ export interface E2eContext {
     size: { width: number; height: number },
     emulation?: Emulation
   ) => Promise<WebSession>
+  /** The device attached or opened last. */
+  lastDevice: () => any
+  /** Seeds a world for this scenario alone, under its own nonce. */
+  fixture: (name: string) => Promise<FixtureManifest>
+  /** Signs a role in through the surface's real password form. */
+  signIn: (role: string, on?: any) => Promise<FixtureAccount>
+  /** A fresh `+` address on the test mailbox, for anything that sends mail. */
+  address: (label: string) => string
+  /** Waits for what the app really sent to an address. Nothing is kept on disk. */
+  mail: (address: string, from: string) => Promise<ReceivedMail>
   /** Attaches the device in `role` through maestro-d, for the run to detach. */
   attach: (role: string, options: Record<string, unknown>) => Promise<any>
   /** Lets checkpoints look at a device a rig attached for itself. */
@@ -68,6 +79,12 @@ export interface E2eContext {
    * last, or at `on`.
    */
   checkpoint: (id: string, spec: CheckpointSpec, on?: any) => Promise<void>
+}
+
+export interface ReceivedMail {
+  subject: string
+  /** Reads the whole message, which is in memory only. */
+  body: () => string
 }
 
 export interface WatchedDevice {
@@ -85,6 +102,10 @@ export interface StackHandle {
    * origin to reach it through, so its errors are seen and faults can reach it.
    */
   adopt: (origin: string) => Promise<string>
+  /** Where this target's `baseline` manifest is, if it has one. */
+  baselineManifest?: string
+  /** Seeds a world on this target. */
+  seedWorld?: (name: string) => Promise<FixtureManifest>
   /** The API's 5xx since a time, or undefined when nothing can see them. */
   serverErrors: (since: number) => Promise<ServerError[] | undefined>
 }
@@ -116,6 +137,8 @@ export interface E2eSpec {
   guards: string[]
   faults: string[]
   manual: boolean
+  /** Marks a scenario that sends no mail, so it may use `example.test` addresses. */
+  sendsNoMail?: boolean
   quarantine?: Quarantine
   scenarios: Record<string, Scenario>
 }

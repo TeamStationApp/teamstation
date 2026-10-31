@@ -18,7 +18,8 @@ export async function limitGoogleLookup(
         scope: details ? 'city.details' : 'city.autocomplete',
         key: String(userId),
         limit: details ? 30 : 120,
-        windowSec: 60
+        windowSec: 60,
+        fixed: true
       }
     ]
     await checkLimits(trx, rules)

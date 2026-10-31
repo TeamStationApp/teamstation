@@ -17,6 +17,8 @@ export interface LocalSettings {
   seatCommand?: string
   goldenStore?: string
   mailbox?: string
+  /** Where the tester seat's `baseline` manifest is, mode 0600, on this machine. */
+  seatManifest?: string
   gogEnvFile?: string
   maestroClientRoot?: string
   maestroBin?: string
