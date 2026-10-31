@@ -11,6 +11,12 @@ import type { SeededAccount, TokensFile } from './fixture'
  * so another client's statements would count too, which is why these run alone.
  */
 
+/** Where the view is read, and which database's statements to count. */
+export interface StatementSource {
+  db: LoadDatabase
+  database: string
+}
+
 export interface ProbeResult {
   account: string
   probe: string
@@ -20,24 +26,25 @@ export interface ProbeResult {
   error?: string
 }
 
-async function statementTotals(
-  db: LoadDatabase
-): Promise<{ calls: number; rows: number }> {
+async function statementTotals({
+  db,
+  database
+}: StatementSource): Promise<{ calls: number; rows: number }> {
   const { rows } = await sql<{ calls: string | null; rows: string | null }>`
     select sum(calls) as calls, sum(rows) as rows from pg_stat_statements
-    where dbid = (select oid from pg_database where datname = current_database())
+    where dbid = (select oid from pg_database where datname = ${database})
       and query not like '%pg_stat_statements%'
   `.execute(db)
   return { calls: Number(rows[0].calls ?? 0), rows: Number(rows[0].rows ?? 0) }
 }
 
 export async function measure(
-  db: LoadDatabase,
+  stats: StatementSource,
   account: string,
   probe: string,
   work: () => Promise<unknown>
 ): Promise<ProbeResult> {
-  const before = await statementTotals(db)
+  const before = await statementTotals(stats)
   const started = performance.now()
   let error: string | undefined
   try {
@@ -46,7 +53,7 @@ export async function measure(
     error = (caught as Error).message
   }
   const ms = performance.now() - started
-  const after = await statementTotals(db)
+  const after = await statementTotals(stats)
   return {
     account,
     probe,
@@ -98,7 +105,7 @@ export async function socketSubscribe(
 
 /** The screens an account opens, as one probe each. */
 export async function probeAccount(
-  db: LoadDatabase,
+  stats: StatementSource,
   server: string,
   account: SeededAccount,
   tokens: Pick<TokensFile, 'games'>
@@ -109,7 +116,7 @@ export async function probeAccount(
     name: string,
     work: () => Promise<unknown>
   ): Promise<void> => {
-    results.push(await measure(db, account.label, name, work))
+    results.push(await measure(stats, account.label, name, work))
   }
   const read = async (path: string, route: string): Promise<void> => {
     await probe(`GET ${route}`, async () => {
@@ -132,7 +139,7 @@ export async function probeAccount(
 
 /** Scores one pitch in the long game, which replays all of it. */
 export async function probeLongGame(
-  db: LoadDatabase,
+  stats: StatementSource,
   server: string,
   tokens: Pick<TokensFile, 'accounts' | 'games'>
 ): Promise<ProbeResult> {
@@ -145,7 +152,7 @@ export async function probeLongGame(
   try {
     await keeper.open()
     return await measure(
-      db,
+      stats,
       scorer.label,
       'score one pitch in the long game',
       async () => {
@@ -159,14 +166,14 @@ export async function probeLongGame(
 
 /** Every worst-case account in turn, then the long game. */
 export async function runProbes(
-  db: LoadDatabase,
+  stats: StatementSource,
   server: string,
   tokens: TokensFile
 ): Promise<ProbeResult[]> {
   const results: ProbeResult[] = []
   for (const account of tokens.accounts.filter(row => row.kind === 'worstCase'))
-    results.push(...(await probeAccount(db, server, account, tokens)))
-  results.push(await probeLongGame(db, server, tokens))
+    results.push(...(await probeAccount(stats, server, account, tokens)))
+  results.push(await probeLongGame(stats, server, tokens))
   return results
 }
 

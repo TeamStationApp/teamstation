@@ -7,6 +7,7 @@ import {
   measure,
   probeLongGame,
   renderProbes,
+  type StatementSource,
   runProbes,
   socketSubscribe
 } from './probe'
@@ -25,6 +26,7 @@ describe('the probes', function () {
   let scratch: Scratch
   let server: TestServer
   let tokens: TokensFile
+  let stats: StatementSource
 
   before(async function () {
     scratch = await openScratch('probes')
@@ -34,6 +36,7 @@ describe('the probes', function () {
       overrides: TEST_AMOUNTS
     })
     await fakeStatementsView(scratch)
+    stats = { db: scratch.db, database: scratch.name }
     server = await startTestServer(scratch)
   })
   after(async function () {
@@ -43,7 +46,7 @@ describe('the probes', function () {
 
   it('reports statements, time and rows of what each thing cost', async function () {
     const pool = new Pool({ connectionString: scratch.url })
-    const result = await measure(scratch.db, 'someone', 'a read', async () => {
+    const result = await measure(stats, 'someone', 'a read', async () => {
       await pool.query(
         `update pg_stat_statements set calls = calls + 7, rows = rows + 3`
       )
@@ -56,7 +59,7 @@ describe('the probes', function () {
   })
 
   it('reports a failed step rather than a figure that looks fine', async function () {
-    const result = await measure(scratch.db, 'someone', 'a read', async () => {
+    const result = await measure(stats, 'someone', 'a read', async () => {
       throw new Error('refused')
     })
     expect(result.error).equals('refused')
@@ -64,7 +67,7 @@ describe('the probes', function () {
   })
 
   it('walks every worst-case account, and the long game', async function () {
-    const results = await runProbes(scratch.db, server.base, tokens)
+    const results = await runProbes(stats, server.base, tokens)
     const worst = tokens.accounts.filter(row => row.kind === 'worstCase')
     expect(new Set(results.map(row => row.account)).size).equals(
       worst.length + 1
@@ -81,7 +84,7 @@ describe('the probes', function () {
 
   it('fails without a scorekeeper for the long game', async function () {
     let message = ''
-    await probeLongGame(scratch.db, server.base, {
+    await probeLongGame(stats, server.base, {
       accounts: [],
       games: tokens.games
     }).catch((error: Error) => {

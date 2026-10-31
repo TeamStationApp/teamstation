@@ -20,6 +20,13 @@ import { batterActions, contextOf, randomFrom } from './scoredGames'
  * the rig can drive any server, including one that has none of this code.
  */
 
+/**
+ * A frame's type from its first bytes: the server writes it first. A rig with
+ * thousands of sockets must not spend its event loop reading what it only
+ * counts, or its own queue reads as the server's delivery lag.
+ */
+const FRAME_TYPE = /^\{"type":"([a-zA-Z]+)"/
+
 /** The rig's tally. Anything that goes wrong is counted here by kind. */
 export class Tally implements Measurements {
   postMs: number[] = []
@@ -30,6 +37,9 @@ export class Tally implements Measurements {
   socketOpensBySecond: Record<number, number> = {}
   socketsOpened = 0
   streamsStarted = 0
+  postAt: number[] = []
+  frameSeconds: number[] = []
+  private lastFrameSecond = 0
   private readonly posted = new Map<string, number>()
   private readonly startedAt = Date.now()
 
@@ -42,6 +52,11 @@ export class Tally implements Measurements {
     const code = (error as { cause?: { code?: string } }).cause?.code
     if (code === 'ECONNREFUSED' || code === 'ENOTFOUND')
       this.fail('unreachable')
+    else if (
+      error instanceof HttpError &&
+      error.body.toLowerCase().includes('too many clients')
+    )
+      this.fail('too-many-clients')
     else if (error instanceof HttpError) this.fail(`http-${error.status}`)
     else this.fail(code ?? (error as Error).name ?? 'error')
   }
@@ -54,6 +69,11 @@ export class Tally implements Measurements {
     this.framesDelivered += 1
     const sent = this.posted.get(gameId)
     if (sent != null) this.deliveryLagMs.push(performance.now() - sent)
+    const second = Math.floor(Date.now() / 1000)
+    if (second !== this.lastFrameSecond) {
+      this.lastFrameSecond = second
+      this.frameSeconds.push(second)
+    }
   }
 
   noteSocketOpen(): void {
@@ -151,7 +171,9 @@ export class SocketViewer implements Actor {
   start(): void {
     const url = `${this.server.replace(/^http/, 'ws')}${this.path}`
     const ws = new WebSocket(url, {
-      headers: { authorization: `Bearer ${this.account.token}` }
+      headers: { authorization: `Bearer ${this.account.token}` },
+      // A frame is counted and not read, so nothing checks what is in it.
+      skipUTF8Validation: true
     })
     this.ws = ws
     ws.on('open', () => {
@@ -169,7 +191,7 @@ export class SocketViewer implements Actor {
       }
     })
     ws.on('message', data => {
-      this.onFrame(String(data))
+      this.onFrame(data as Buffer)
     })
     ws.on('error', (error: Error & { code?: string }) => {
       const status = /Unexpected server response: (\d+)/.exec(error.message)
@@ -191,10 +213,19 @@ export class SocketViewer implements Actor {
     })
   }
 
-  private onFrame(text: string): void {
-    let frame: { type?: string; code?: string; gameId?: string }
+  private onFrame(data: Buffer): void {
+    const type = FRAME_TYPE.exec(data.toString('latin1', 0, 32))?.[1]
+    if (type === 'change' || type === 'changed')
+      this.tally.noteFrame(this.gameId)
+    else if (type === 'resync') this.tally.fail('socket-resync')
+    else if (type == null || type === 'error') this.onUnusualFrame(data)
+  }
+
+  /** The whole of a frame, only for one that has something to say. */
+  private onUnusualFrame(data: Buffer): void {
+    let frame: { type?: string; code?: string }
     try {
-      frame = JSON.parse(text) as typeof frame
+      frame = JSON.parse(data.toString()) as typeof frame
     } catch {
       this.tally.fail('socket-malformed')
       return
@@ -271,6 +302,7 @@ export function httpStore(
         throw error
       }
       tally.postMs.push(performance.now() - started)
+      tally.postAt.push(Date.now())
       return stored(answer)
     }
   }

@@ -152,8 +152,13 @@ export function sequentialScans(
 }
 
 export interface SamplerOptions {
-  /** A direct connection, already connected. */
+  /** A direct connection to the database under test, already connected. */
   client: Pick<Client, 'query'>
+  /**
+   * A connection to where `pg_stat_statements` is, if not the same database.
+   * The view covers the whole cluster, so it may be read from any of them.
+   */
+  statsClient?: Pick<Client, 'query'>
   intervalMs?: number
   /** The pooler's address as Postgres sees it, to class backends by. */
   poolerAddress?: string
@@ -172,18 +177,28 @@ export class Sampler {
   private statementsAfter: StatementRow[] = []
   private tablesBefore: TableRow[] = []
   private tablesAfter: TableRow[] = []
+  /** The database under test, whose statements these are. */
+  private database = ''
 
   constructor(private readonly options: SamplerOptions) {}
 
+  private get stats(): Pick<Client, 'query'> {
+    return this.options.statsClient ?? this.options.client
+  }
+
   async start(): Promise<void> {
     const { client, requireStatements } = this.options
-    const found = await client.query(
+    const named = await client.query<{ name: string }>(
+      `select current_database() as name`
+    )
+    this.database = named.rows[0].name
+    const found = await this.stats.query(
       `select 1 from pg_extension where extname = 'pg_stat_statements'`
     )
     this.hasStatements = found.rows.length > 0
     if (requireStatements === true && !this.hasStatements)
       throw new Error(
-        '--require-statements: this database has no pg_stat_statements extension'
+        '--require-statements: the statistics database has no pg_stat_statements extension'
       )
     this.statementsBefore = await this.readStatements()
     this.tablesBefore = await this.readTables()
@@ -255,14 +270,15 @@ export class Sampler {
 
   private async statementTotals(): Promise<Sample['statements']> {
     if (!this.hasStatements) return null
-    const { rows } = await this.options.client.query<{
+    const { rows } = await this.stats.query<{
       calls: string | null
       total: string | null
     }>(
       `select sum(calls) as calls, sum(total_exec_time) as total
        from pg_stat_statements
-       where dbid = (select oid from pg_database where datname = current_database())
-         and ${NOT_OWN}`
+       where dbid = (select oid from pg_database where datname = $1)
+         and ${NOT_OWN}`,
+      [this.database]
     )
     return {
       calls: Number(rows[0].calls ?? 0),
@@ -272,11 +288,12 @@ export class Sampler {
 
   private async readStatements(): Promise<StatementRow[]> {
     if (!this.hasStatements) return []
-    const { rows } = await this.options.client.query<StatementRow>(
+    const { rows } = await this.stats.query<StatementRow>(
       `select queryid::text, query, calls, total_exec_time, rows
        from pg_stat_statements
-       where dbid = (select oid from pg_database where datname = current_database())
-         and ${NOT_OWN}`
+       where dbid = (select oid from pg_database where datname = $1)
+         and ${NOT_OWN}`,
+      [this.database]
     )
     return rows
   }

@@ -1,4 +1,5 @@
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { monitorEventLoopDelay } from 'node:perf_hooks'
 import { parseArgs } from 'node:util'
 
 import { sql } from 'kysely'
@@ -21,7 +22,7 @@ import {
   openLoadDatabase,
   requireLoadDatabase
 } from './database'
-import { runEvent, startEventSchedule } from './events'
+import { type EventResult, runEvent, startEventSchedule } from './events'
 import {
   accountsForShard,
   cleanupRun,
@@ -35,9 +36,11 @@ import {
 } from './fixture'
 import { renderProbes, runProbes } from './probe'
 import {
+  assertThresholds,
   buildReport,
   type ReportData,
   renderReport,
+  type RigLoad,
   writeReport
 } from './report'
 import { Sampler } from './sampler'
@@ -46,14 +49,17 @@ import { Sampler } from './sampler'
  * The load rig's command line. It seeds, drives, probes or cleans up, whichever
  * its flags name, and drives any server over HTTP.
  *
- *   npm run start.dbLoad -- --database <url> --scale small --tokens tokens.json
+ *   npm run start.dbLoad -- --database <url> --scale small --tokens tokens.json [--credentials credentials.json]
  *   npm run start.dbLoad -- --server <url> --database <url> --tokens tokens.json \
- *     --users 500 --games 5 --pitch-seconds 15 --rest-rate 50 --minutes 3 --report load.log
+ *     --users 500 --games 5 --pitch-seconds 15 --rest-rate 50 --minutes 3 --report load.log \
+ *     [--assert --pool-limit 97 --server-log api1.log]
  *   npm run start.dbLoad -- --database <url> --tokens tokens.json --event teamMerge
  *   npm run start.dbLoad -- --server <url> --database <url> --tokens tokens.json --probe
  *   npm run start.dbLoad -- --database <url> --tokens tokens.json --cleanup
  *
- * Every mode refuses a database not marked for load testing.
+ * Every mode refuses a database not marked for load testing. `--stats-database`
+ * is where `pg_stat_statements` is installed, when that is not `--database`: it
+ * is only read, and only for the statements of `--database`.
  */
 
 export interface Io {
@@ -63,6 +69,7 @@ export interface Io {
 const OPTIONS = {
   server: { type: 'string', multiple: true },
   database: { type: 'string' },
+  'stats-database': { type: 'string' },
   scale: { type: 'string' },
   accounts: { type: 'string' },
   crowded: { type: 'string' },
@@ -70,6 +77,7 @@ const OPTIONS = {
   users: { type: 'string' },
   shard: { type: 'string' },
   tokens: { type: 'string' },
+  credentials: { type: 'string' },
   games: { type: 'string' },
   'pitch-seconds': { type: 'string' },
   'rest-rate': { type: 'string' },
@@ -83,7 +91,10 @@ const OPTIONS = {
   cleanup: { type: 'boolean' },
   event: { type: 'string' },
   'event-schedule': { type: 'boolean' },
-  probe: { type: 'boolean' }
+  probe: { type: 'boolean' },
+  assert: { type: 'boolean' },
+  'pool-limit': { type: 'string' },
+  'server-log': { type: 'string', multiple: true }
 } as const
 
 type Values = ReturnType<
@@ -110,6 +121,7 @@ function count(
 export interface RunOptions {
   servers: string[]
   databaseUrl: string
+  statsDatabaseUrl?: string
   tokensPath: string
   users: number
   shard?: { index: number; count: number }
@@ -148,12 +160,26 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
   await client.connect()
   // A lost connection is reported by the read that needed it.
   client.on('error', () => undefined)
+  const statsClient =
+    options.statsDatabaseUrl == null
+      ? undefined
+      : new Client({
+          connectionString: options.statsDatabaseUrl,
+          application_name: 'dbload-sampler'
+        })
+  await statsClient?.connect()
+  statsClient?.on('error', () => undefined)
   let db: LoadDatabase | undefined
   const tally = new Tally()
   const actors: Actor[] = []
   const startedAt = Date.now()
+  const loopDelay = monitorEventLoopDelay({ resolution: 20 })
+  loopDelay.enable()
+  const cpuAtStart = process.cpuUsage()
+  let events: EventResult[] = []
   const sampler = new Sampler({
     client,
+    statsClient,
     poolerAddress: options.poolerAddress,
     requireStatements: options.requireStatements,
     onError: () => {
@@ -236,15 +262,23 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
       await new Promise(done => {
         setTimeout(done, options.minutes * 60_000)
       })
-      await schedule?.stop()
+      events = (await schedule?.stop()) ?? []
     }
   } finally {
     await Promise.all(actors.map(async actor => await actor.stop()))
     await sampler.stop().catch(() => undefined)
     await db?.destroy()
+    await statsClient?.end()
     await client.end()
+    loopDelay.disable()
   }
-  return finish(options, tally, sampler, startedAt)
+  const cpu = process.cpuUsage(cpuAtStart)
+  return finish(options, tally, sampler, startedAt, events, {
+    cpuPercent:
+      ((cpu.user + cpu.system) / 1000 / Math.max(1, Date.now() - startedAt)) *
+      100,
+    loopDelayP95Ms: loopDelay.percentile(95) / 1e6
+  })
 }
 
 async function startScorekeepers(
@@ -282,7 +316,9 @@ function finish(
   options: RunOptions,
   tally: Tally,
   sampler: Sampler,
-  startedAt: number
+  startedAt: number,
+  events: EventResult[],
+  rig: RigLoad
 ): ReportData {
   const data = buildReport({
     title: `${options.users} users, ${options.games} games, ${options.servers.length} server(s)`,
@@ -292,7 +328,9 @@ function finish(
     samples: sampler.samples,
     statements: sampler.statements(),
     sequentialScans: sampler.sequentialScans(),
-    hasStatements: sampler.hasStatements
+    hasStatements: sampler.hasStatements,
+    events,
+    rig
   })
   options.log(renderReport(data))
   if (options.reportPath != null) writeReport(options.reportPath, data)
@@ -303,6 +341,7 @@ function finish(
 export async function runMain(argv: string[], io: Io): Promise<number> {
   const { values } = parseArgs({ args: argv, options: OPTIONS, strict: true })
   const databaseUrl = required(values.database, '--database')
+  const statsDatabaseUrl = values['stats-database'] ?? databaseUrl
 
   if (values.scale != null) return await seed(values, databaseUrl, io)
   const tokensPath = required(values.tokens, '--tokens')
@@ -339,6 +378,10 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
 
   if (values.probe === true) {
     const db = openLoadDatabase(databaseUrl, { max: 2 })
+    const statsDb =
+      statsDatabaseUrl === databaseUrl
+        ? db
+        : openLoadDatabase(statsDatabaseUrl, { max: 1 })
     try {
       await requireLoadDatabase(
         async text =>
@@ -346,12 +389,20 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
             .raw<{ comment: string | null; name: string }>(text)
             .execute(db)
       )
-      const results = await runProbes(db, servers[0], readTokens(tokensPath))
+      const { rows } = await sql<{
+        name: string
+      }>`select current_database() as name`.execute(db)
+      const results = await runProbes(
+        { db: statsDb, database: rows[0].name },
+        servers[0],
+        readTokens(tokensPath)
+      )
       const text = renderProbes(results)
       io.log(text)
       if (values.report != null) writeFileSync(values.report, text)
       return results.some(row => row.error != null) ? 1 : 0
     } finally {
+      if (statsDb !== db) await statsDb.destroy()
       await db.destroy()
     }
   }
@@ -359,6 +410,7 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
   const data = await runLoad({
     servers,
     databaseUrl,
+    statsDatabaseUrl: values['stats-database'],
     tokensPath,
     users: count(values.users, '--users'),
     shard: values.shard == null ? undefined : parseShard(values.shard),
@@ -375,8 +427,30 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
     eventSchedule: values['event-schedule'] === true,
     log: io.log
   })
+  if (values.assert === true) {
+    const missed = assertThresholds(data, {
+      poolLimit:
+        values['pool-limit'] == null
+          ? undefined
+          : count(values['pool-limit'], '--pool-limit'),
+      tooManyClients: countTooManyClients(values['server-log'] ?? [])
+    })
+    for (const line of missed) io.log(`MISSED ${line}`)
+    io.log(missed.length === 0 ? 'every threshold met' : 'thresholds missed')
+    if (missed.length > 0) return 1
+  }
   // Nothing measured, or nothing connected, is a failed run and not a quiet one.
   return data.socketsOpened === 0 && data.posts === 0 ? 1 : 0
+}
+
+/** How many times the servers' logs say Postgres turned a connection away. */
+function countTooManyClients(paths: string[]): number {
+  return paths.reduce(
+    (sum, path) =>
+      sum +
+      (readFileSync(path, 'utf8').match(/too many clients/gi)?.length ?? 0),
+    0
+  )
 }
 
 async function seed(
@@ -402,6 +476,7 @@ async function seed(
       overrides,
       streams: count(values.streams, '--streams', 0),
       tokensPath: required(values.tokens, '--tokens'),
+      credentialsPath: values.credentials,
       log: io.log
     })
     const shapes = await describeShapes(db, runId, tokens)
