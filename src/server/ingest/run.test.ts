@@ -42,6 +42,7 @@ interface Fake {
   /** What happened, in order, during a stop. */
   order: string[]
   databases: string[]
+  roles: Array<string | undefined>
   signals: Map<IngestSignal, () => void>
   bound: { value: boolean }
 }
@@ -64,14 +65,16 @@ function fake(
     destroyed: 0,
     order: [],
     databases: [],
+    roles: [],
     signals: new Map(),
     bound: { value: true },
     deps: undefined as unknown as IngestDeps
   }
   f.deps = {
     config,
-    makeDatabase: url => {
+    makeDatabase: (url, poolOptions) => {
       f.databases.push(url)
+      f.roles.push(poolOptions.role)
       return {
         destroy: async () => {
           f.order.push('destroy')
@@ -141,6 +144,28 @@ describe('the ingest process', function () {
     it('keeps 0, which picks a free port', function () {
       expect(ingestHealthPort(configWith())).equals(0)
     })
+  })
+
+  it('opens its pool as the ingest role, at the pool address when there is one', async function () {
+    const direct = fake(
+      configWith({ databaseUrl: 'postgres://db.example.test/x' })
+    )
+    const stopDirect = await runIngest(direct.deps)
+    expect(direct.databases).deep.equals(['postgres://db.example.test/x'])
+    expect(direct.roles).deep.equals(['ingest'])
+    stopDirect?.stop('SIGTERM')
+    await untilExited(direct)
+
+    const pooled = fake(
+      configWith({
+        databaseUrl: 'postgres://db.example.test/x',
+        databasePoolUrl: 'postgres://pool.example.test/pool'
+      })
+    )
+    const stopPooled = await runIngest(pooled.deps)
+    expect(pooled.databases).deep.equals(['postgres://pool.example.test/pool'])
+    stopPooled?.stop('SIGTERM')
+    await untilExited(pooled)
   })
 
   it('exits 0 and starts nothing when live is switched off', async function () {

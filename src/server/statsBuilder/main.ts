@@ -2,7 +2,11 @@ import { captureException, flush } from '@sentry/node'
 import { Client } from 'pg'
 
 import { makeDatabase } from '../db/database'
-import { serverConfig } from '../serverConfig'
+import {
+  requestDatabaseUrl,
+  type ServerConfig,
+  serverConfig
+} from '../serverConfig'
 import {
   type AfterReadHook,
   type Clock,
@@ -13,7 +17,10 @@ import {
 const MAX_TIMER_MS = 60_000
 
 export interface RunStatsBuilderOptions {
+  /** Where the `LISTEN` connection goes: the database's own address. */
   databaseUrl: string
+  /** Where its queries go. The same address unless a pooler is in front. */
+  requestUrl?: string
   clock?: Clock
   /** When set, used instead of wiring process signals (tests). */
   signals?: NodeJS.EventEmitter
@@ -55,7 +62,9 @@ export async function runStatsBuilder(
   const report = options.report ?? reportFailure
   const setTimer = options.setTimeout ?? setTimeout
   const clearTimerFn = options.clearTimeout ?? clearTimeout
-  const db = makeDatabase(options.databaseUrl)
+  const db = makeDatabase(options.requestUrl ?? options.databaseUrl, {
+    role: 'statsBuilder'
+  })
   const listen = new Client({ connectionString: options.databaseUrl })
   await listen.connect()
   await listen.query('listen game_stats')
@@ -206,8 +215,12 @@ export async function runStatsBuilder(
 }
 
 export async function runMain(
-  databaseUrl: string = serverConfig.databaseUrl,
+  config: Pick<ServerConfig, 'databaseUrl' | 'databasePoolUrl'> = serverConfig,
   onStopped?: () => Promise<void>
 ): Promise<StatsBuilderHandle> {
-  return await runStatsBuilder({ databaseUrl, onStopped })
+  return await runStatsBuilder({
+    databaseUrl: config.databaseUrl,
+    requestUrl: requestDatabaseUrl(config),
+    onStopped
+  })
 }

@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import type { Kysely } from 'kysely'
+import { Kysely, PostgresDialect } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
 
@@ -40,12 +40,19 @@ async function until(ready: () => boolean, what: string): Promise<void> {
 /** A subscriber that keeps what it is sent. */
 function subscriber(sees = true): {
   sent: GameChange[]
+  resynced: { count: number }
   send: (message: GameChange) => void
   maySee: (game: GameScope) => Promise<boolean>
+  resync: () => void
 } {
   const sent: GameChange[] = []
+  const resynced = { count: 0 }
   return {
     sent,
+    resynced,
+    resync: () => {
+      resynced.count++
+    },
     send: message => {
       sent.push(message)
     },
@@ -380,7 +387,8 @@ describe('the game socket fan-out (U15)', function () {
           asked.push(String(asked.length))
           if (asked.length === 1) await held
           return true
-        }
+        },
+        resync: () => undefined
       })
       const first = one.deliver(JSON.stringify({ game: today, kind: 'plays' }))
       await until(() => asked.length === 1, 'the first delivery')
@@ -395,6 +403,131 @@ describe('the game socket fan-out (U15)', function () {
     } finally {
       await one.close()
     }
+  })
+
+  describe('with no connection to be had in time', function () {
+    const poolTimeout = 'timeout exceeded when trying to connect'
+    /** A database whose one connection is taken, so a checkout times out. */
+    const starved = async (): Promise<{
+      db: Kysely<Database>
+      free: () => Promise<void>
+    }> => {
+      const pool = new Pool({
+        connectionString: scratchUrl,
+        max: 1,
+        connectionTimeoutMillis: 50
+      })
+      const held = await pool.connect()
+      const starvedDb = new Kysely<Database>({
+        dialect: new PostgresDialect({ pool })
+      })
+      return {
+        db: starvedDb,
+        free: async () => {
+          held.release()
+          await starvedDb.destroy()
+        }
+      }
+    }
+
+    it('resyncs the game’s subscribers, and only that game’s', async function () {
+      const { db: starvedDb, free } = await starved()
+      const one = fanout({ db: starvedDb })
+      await one.listening
+      const onToday = subscriber()
+      const onLater = subscriber()
+      one.watch(today, scopeOf(team, rival), onToday)
+      one.watch(later, scopeOf(rival, team), onLater)
+      await one.deliver(JSON.stringify({ game: today, kind: 'plays' }))
+      expect(onToday.sent).deep.equals([])
+      expect(onToday.resynced.count).equals(1)
+      expect(onLater.resynced.count).equals(0)
+      expect(logs.some(line => line.startsWith(`resyncing ${today}`))).equals(
+        true
+      )
+      await one.close()
+      await free()
+    })
+
+    it('resyncs every game of the team, whose song it could not read', async function () {
+      const one = fanout({
+        readSong: async () => {
+          throw new Error(poolTimeout)
+        }
+      })
+      await one.listening
+      const onToday = subscriber()
+      const onElsewhere = subscriber()
+      one.watch(today, scopeOf(team, rival), onToday)
+      one.watch(elsewhere, scopeOf(other, rival), onElsewhere)
+      await one.deliver(
+        JSON.stringify({
+          team,
+          userId: userIdOfGumbo(first.userId),
+          kind: 'walkUpSong'
+        })
+      )
+      expect(onToday.resynced.count).equals(1)
+      expect(onElsewhere.resynced.count).equals(0)
+      await one.close()
+    })
+
+    it('carries on with the team’s other games', async function () {
+      let reads = 0
+      // A method of the real database, on the real database.
+      const flaky = new Proxy(db!, {
+        get(target, name) {
+          if (name === 'transaction' && reads++ === 0)
+            throw new Error(poolTimeout)
+          const value = Reflect.get(target, name, target) as unknown
+          return typeof value === 'function' ? value.bind(target) : value
+        }
+      })
+      const two = fanout({ db: flaky })
+      const onToday = subscriber()
+      const onLater = subscriber()
+      two.watch(today, scopeOf(team, rival), onToday)
+      two.watch(later, scopeOf(rival, team), onLater)
+      await two.listening
+      await two.deliver(
+        JSON.stringify({
+          team,
+          userId: userIdOfGumbo(first.userId),
+          kind: 'walkUpSong'
+        })
+      )
+      expect(onToday.resynced.count).equals(1)
+      expect(onToday.sent).deep.equals([])
+      expect(onLater.resynced.count).equals(0)
+      expect(onLater.sent).to.have.length(1)
+      await two.close()
+    })
+
+    it('still throws any other failure, resyncing nobody', async function () {
+      const one = fanout({
+        readSong: async () => {
+          throw new Error('something else')
+        }
+      })
+      await one.listening
+      const onToday = subscriber()
+      one.watch(today, scopeOf(team, rival), onToday)
+      let failure: unknown
+      await one
+        .deliver(
+          JSON.stringify({
+            team,
+            userId: userIdOfGumbo(first.userId),
+            kind: 'walkUpSong'
+          })
+        )
+        .catch((error: unknown) => {
+          failure = error
+        })
+      expect(String(failure)).contains('something else')
+      expect(onToday.resynced.count).equals(0)
+      await one.close()
+    })
   })
 
   it('sends two players’ songs, to every game of the team, whenever it is', async function () {

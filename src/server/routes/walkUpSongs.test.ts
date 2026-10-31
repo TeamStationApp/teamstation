@@ -147,6 +147,7 @@ describe('walk-up songs', function () {
     sent: GameChange[]
     send: (message: GameChange) => void
     maySee: () => Promise<boolean>
+    resync: () => void
   } => {
     const sent: GameChange[] = []
     return {
@@ -154,7 +155,8 @@ describe('walk-up songs', function () {
       send: message => {
         sent.push(message)
       },
-      maySee: async () => true
+      maySee: async () => true,
+      resync: () => undefined
     }
   }
   const scopeOf = (home: string, away: string): GameScope => ({

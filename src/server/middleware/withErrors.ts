@@ -7,8 +7,10 @@ import {
   HttpError,
   notFound,
   toApiError,
-  tooLarge
+  tooLarge,
+  unavailable
 } from '../../common/errors'
+import { isPoolTimeout } from '../db/database'
 
 /** Writes the one error shape, and nothing else, to a response. */
 export function sendError(res: Response, error: unknown): void {
@@ -53,6 +55,19 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
   // rather than as a 500 that hides which end to fix.
   if (isTooLarge(error)) {
     sendError(res, tooLarge('That request body is too large'))
+    return
+  }
+  // Out of database connections for the moment: nothing is wrong with the
+  // request, so it is told to come back, and crash reporting hears of this
+  // from the pool, once, not from each request.
+  if (isPoolTimeout(error)) {
+    console.error(`${req.method} ${req.path}: ${String(error)}`)
+    if (res.headersSent) {
+      next(error)
+      return
+    }
+    res.set('Retry-After', '1')
+    sendError(res, unavailable('The server is busy; try again'))
     return
   }
   if (!(error instanceof HttpError)) {
