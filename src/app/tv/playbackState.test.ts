@@ -147,6 +147,29 @@ describe('TV native playback clock contracts', () => {
     expect(missing.move(10)).equals(null)
     expect(missing.end(0)).equals(true)
   })
+  it('skips exhausted cameras after a successor fails and reports no continuing source', () => {
+    const clock = new PlaybackClock()
+    for (let i = 0; i < 3; i++) {
+      clock.register(i, timeline(), () => undefined)
+      clock.load(i, i === 0 ? 20 : 60)
+    }
+    clock.start()
+    expect(clock.end(0)).equals(false)
+    expect(clock.master).equals(1)
+    expect(clock.fail(1)).equals(false)
+    expect(clock.master).equals(2)
+    clock.settled(2)
+    clock.progress(2, 0)
+    expect(clock.progress(2, 21)).equals(121000)
+    expect(clock.fail(2)).equals(true)
+    const pending = new PlaybackClock()
+    pending.register(0, timeline(), () => undefined)
+    pending.register(1, timeline(), () => undefined)
+    expect(pending.fail(0)).equals(false)
+    pending.load(1, 60)
+    expect(pending.master).equals(1)
+    expect(pending.fail(0)).equals(false)
+  })
   it('hands off the master during a forward seek before its end callback', () => {
     const clock = new PlaybackClock()
     for (let i = 0; i < 2; i++) {

@@ -548,10 +548,10 @@ export function TvPlayer({
                 }
               }}
               onError={() => {
-                clock.current.fail(index)
+                const unavailable = clock.current.fail(index)
                 loaded(index, 0)
                 setFailures(previous => [...new Set([...previous, index])])
-                if (clock.current.ports.every(p => p.failed))
+                if (unavailable)
                   setError('The cameras could not play. Try again.')
               }}
             />

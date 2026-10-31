@@ -40,6 +40,8 @@ export class PlaybackClock {
     port.loaded = true
     port.duration = duration > 0 ? duration : Infinity
     if (this.wall !== null) this.seekPort(port, this.wall)
+    if (!this.available(this.master) && this.available(index))
+      this.master = index
   }
 
   start(wall = commonStart(this.ports.map(p => p.timeline))): void {
@@ -137,12 +139,17 @@ export class PlaybackClock {
     return this.wall
   }
 
-  fail(index: number): void {
+  /** A failed master must never hand the clock back to an exhausted camera. */
+  fail(index: number): boolean {
     this.ports[index].failed = true
-    if (index === this.master) {
-      const next = this.ports.findIndex(p => !p.failed)
-      if (next >= 0) this.master = next
+    if (index !== this.master) return false
+    const next = this.ports.findIndex((p, i) => p.loaded && this.available(i))
+    if (next >= 0) {
+      this.master = next
+      return false
     }
+    // A pending native load may still supply the clock; load will select it.
+    return this.ports.every(p => p.loaded || p.failed)
   }
 
   available(index: number): boolean {
