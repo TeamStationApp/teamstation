@@ -405,5 +405,5 @@ export const SERVER_CODE_FILES = new Set([
   'server/venues/ownership.js',
   'server/venues/venueNotices.js',
   'server/venues/venues.js',
-  'server/venues/venuesOpenApi.js',
+  'server/venues/venuesOpenApi.js'
 ])
