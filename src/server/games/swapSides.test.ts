@@ -330,6 +330,45 @@ describe('swapping a game’s home and away teams', function () {
     expect(told).include.members([TEAMS.away.id, TEAMS.home.id])
   })
 
+  it('carries a withdrawn line to its team’s new side', async function () {
+    await newGame('gam_withdrawn')
+    await db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_withdrawn',
+        kind: 'playerAdd',
+        sender_id: userIdOfGumbo(1),
+        sender_scope_type: 'team',
+        sender_scope_id: TEAMS.home.id,
+        terms: JSON.stringify({ kind: 'playerAdd' }),
+        status: 'declined',
+        sent_at: new Date(),
+        expires_at: new Date(Date.now() + 86400000),
+        initiating_team_id: TEAMS.home.id
+      })
+      .execute()
+    await db
+      .insertInto('game_withdrawn_players')
+      .values({
+        game_id: 'gam_withdrawn',
+        user_id: userIdOfGumbo(1),
+        side: 'home',
+        request_id: 'grq_withdrawn',
+        label: 'Home Player 1'
+      })
+      .execute()
+    await swap('gam_withdrawn')
+    expect(
+      (
+        await db
+          .selectFrom('game_withdrawn_players')
+          .select('side')
+          .where('game_id', '=', 'gam_withdrawn')
+          .executeTakeFirstOrThrow()
+      ).side
+    ).equals('away')
+  })
+
   it('carries saved lineups, guests and absences to their teams’ new sides', async function () {
     await prepared('gam_saved')
     const before = await row('gam_saved')
