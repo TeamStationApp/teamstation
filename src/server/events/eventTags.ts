@@ -32,16 +32,25 @@ interface EventTagRepair {
   documents: TagDocument[]
 }
 
+/** A game's plays in index order, as a repair is worked out from them. */
+interface TaggedRow {
+  id: string
+  gumbo: unknown
+}
+
 async function planEventTagRepair(
   db: Kysely<Database>,
-  gameId: string
+  gameId: string,
+  held?: readonly TaggedRow[]
 ): Promise<EventTagRepair> {
-  const rows = await db
-    .selectFrom('events')
-    .select(['id', 'gumbo'])
-    .where('gameId', '=', gameId)
-    .orderBy('atBatIndex')
-    .execute()
+  const rows =
+    held ??
+    (await db
+      .selectFrom('events')
+      .select(['id', 'gumbo'])
+      .where('gameId', '=', gameId)
+      .orderBy('atBatIndex')
+      .execute())
   const game = await db
     .selectFrom('games')
     .select('currentPlay')
@@ -117,12 +126,14 @@ async function planEventTagRepair(
  * needs no lock: a reader asks this of its snapshot and takes the game row
  * only when there is something to repair. The identities it decorates with
  * along the way are thrown away; the repair makes its own, under the lock.
+ * A caller that has the game's plays in index order passes them as `held`.
  */
 export async function eventTagsNeedRepair(
   db: Kysely<Database>,
-  gameId: string
+  gameId: string,
+  held?: readonly TaggedRow[]
 ): Promise<boolean> {
-  const repair = await planEventTagRepair(db, gameId)
+  const repair = await planEventTagRepair(db, gameId, held)
   return (
     repair.stale.length > 0 ||
     repair.moved.length > 0 ||
@@ -136,7 +147,20 @@ export async function reconcileEventTags(
   db: Kysely<Database>,
   gameId: string
 ): Promise<TagDocument[]> {
-  const repair = await planEventTagRepair(db, gameId)
+  return (await repairEventTags(db, gameId)).documents
+}
+
+/**
+ * `reconcileEventTags` for a caller that has just read the game's plays under
+ * the lock (`held`): it works from those, and says whether it rewrote any, so
+ * the caller need not read them again.
+ */
+export async function repairEventTags(
+  db: Kysely<Database>,
+  gameId: string,
+  held?: readonly TaggedRow[]
+): Promise<{ documents: TagDocument[]; rewrotePlays: boolean }> {
+  const repair = await planEventTagRepair(db, gameId, held)
   if (repair.stale.length > 0)
     await db
       .deleteFrom('event_tags')
@@ -158,7 +182,7 @@ export async function reconcileEventTags(
       .set({ currentPlay: repair.currentPlay })
       .where('id', '=', gameId)
       .execute()
-  return repair.documents
+  return { documents: repair.documents, rewrotePlays: repair.plays.length > 0 }
 }
 
 export async function tagChoices(
