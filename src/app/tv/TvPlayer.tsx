@@ -441,21 +441,8 @@ export function TvPlayer({
       dispatch({ type: 'progress', wall: next })
   }
   const seek = (seconds: number): void => {
-    const held = clock.current
-    if (held.wall === null) return
-    const port = held.ports[held.master]
-    const at = Math.max(
-      0,
-      Math.min(
-        Number.isFinite(port.duration)
-          ? Math.max(0, port.duration - 0.1)
-          : Infinity,
-        port.position + seconds
-      )
-    )
-    const next = wallAt(port.timeline.anchors, at * 1000)
+    const next = clock.current.move(seconds)
     if (next !== null) {
-      held.seek(next)
       setWall(next)
       dispatch({ type: 'seek' })
     }
@@ -464,7 +451,10 @@ export function TvPlayer({
   const line = boardAt(stats.line?.steps ?? [], wall)?.line
   const box = boardAt(stats.boxes, wall)?.box
   const audio =
-    state.full ?? state.visible.find(i => !failures.includes(i)) ?? 0
+    (state.full !== null && clock.current.available(state.full)
+      ? state.full
+      : state.visible.find(i => clock.current.available(i))) ??
+    clock.current.master
   const overlay =
     state.side !== null || state.box !== 'closed' || error !== null
   return (
@@ -549,7 +539,10 @@ export function TvPlayer({
                 )
               }}
               onEnd={() => {
-                if (index === clock.current.master) {
+                const complete = clock.current.end(index)
+                setWall(clock.current.wall)
+                setReadySequence(n => n + 1)
+                if (complete) {
                   dispatch({ type: 'ended' })
                   open('highlights')
                 }

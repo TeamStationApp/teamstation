@@ -216,6 +216,40 @@ describe('TV game playback entry', () => {
     await press('−10 seconds')
     expect(videos.map(video => video.currentTime)).deep.equals([30, 30, 30, 30])
   })
+  it('continues the game and transfers audio when the first recording ends', async () => {
+    count = 2
+    await render()
+    const videos = [...document.querySelectorAll('video')]
+    await act(async () => {
+      videos.forEach((video, index) => {
+        Object.defineProperty(video, 'duration', {
+          configurable: true,
+          value: index === 0 ? 20 : 60
+        })
+        video.dispatchEvent(
+          new window.Event('durationchange', { bubbles: true })
+        )
+      })
+      await pause()
+    })
+    await press('Close panel')
+    await act(async () => {
+      videos[0].dispatchEvent(new window.Event('ended', { bubbles: true }))
+      await pause()
+    })
+    expect(document.querySelector('[aria-label="Pause"]')).not.equals(null)
+    expect(videos[0].muted).equals(true)
+    expect(videos[1].muted).equals(false)
+    await press('+10 seconds')
+    expect(videos[1].currentTime).equals(30)
+    await act(async () => {
+      videos[1].dispatchEvent(new window.Event('ended', { bubbles: true }))
+      await pause()
+    })
+    await press('Close panel')
+    await press('Play')
+    expect(videos[1].currentTime).equals(0)
+  })
   it('plays available cameras when another URL fails or is still preparing', async () => {
     mixed = true
     await render()
