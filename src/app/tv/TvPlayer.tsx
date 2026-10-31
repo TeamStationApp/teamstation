@@ -35,6 +35,7 @@ import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { ScoreboardBoard } from '../scoreboard/ScoreboardBoard'
+import { NativeGradient } from './NativePresentation'
 import { PlaybackClock } from './playbackClock'
 import {
   angleLayout,
@@ -450,6 +451,11 @@ export function TvPlayer({
   const board = boardAt(stats.board?.steps ?? [], wall)?.state
   const line = boardAt(stats.line?.steps ?? [], wall)?.line
   const box = boardAt(stats.boxes, wall)?.box
+  const BoxScroll = renderedBox === 'expanded' ? TvTextScrollView : ScrollView
+  const wideScore =
+    line != null &&
+    Math.max(line.away.innings.length, line.home.innings.length) > 18
+  const ScoreScroll = wideScore ? TvTextScrollView : ScrollView
   const audio =
     (state.full !== null && clock.current.available(state.full)
       ? state.full
@@ -782,7 +788,7 @@ export function TvPlayer({
         style={[
           styles.box,
           {
-            height: renderedBox === 'expanded' ? '33%' : '20%',
+            height: renderedBox === 'expanded' || wideScore ? '33%' : '20%',
             opacity: boxMotion,
             transform: [
               {
@@ -801,64 +807,96 @@ export function TvPlayer({
           focusable={state.box !== 'closed'}
           style={{ flex: 1, display: state.box === 'closed' ? 'none' : 'flex' }}
         >
-          <TvTextScrollView>
-            <View style={styles.boxHeader}>
-              <Text style={styles.heading}>Box score</Text>
-              {renderedBox !== 'expanded' && (
+          {wideScore && renderedBox !== 'expanded' && (
+            <TvButton
+              label="Team and player statistics"
+              onPress={() => {
+                dispatch({ type: 'box' })
+              }}
+            />
+          )}
+          <BoxScroll>
+            {(line === undefined || line === null) &&
+              renderedBox !== 'expanded' && (
                 <TvButton
                   label="Team and player statistics"
-                  preferred={state.box === 'compact'}
                   onPress={() => {
                     dispatch({ type: 'box' })
                   }}
                 />
               )}
-              <TvButton label="Close panel" onPress={back} />
-            </View>
             {line === undefined || line === null ? (
               <Text style={styles.copy}>
                 Statistics unavailable at this point in the video.
               </Text>
             ) : (
               <>
-                <StatRow
-                  name="Team"
-                  values={[
-                    ...Array.from(
-                      {
-                        length: Math.max(
+                <ScoreScroll
+                  testID="tv-line-score"
+                  horizontal
+                  contentContainerStyle={{ flexGrow: 1 }}
+                >
+                  <View
+                    style={{
+                      flex: 1,
+                      minWidth:
+                        360 +
+                        (Math.max(
                           line.away.innings.length,
                           line.home.innings.length
-                        )
-                      },
-                      (_, i) => i + 1
-                    ),
-                    'R',
-                    'H',
-                    'E'
-                  ]}
-                  heading
-                />
-                {(['away', 'home'] as const).map(side => (
-                  <StatRow
-                    key={side}
-                    name={stats.line?.teams[side] ?? side}
-                    values={[
-                      ...Array.from(
-                        {
-                          length: Math.max(
-                            line.away.innings.length,
-                            line.home.innings.length
-                          )
-                        },
-                        (_, i) => line[side].innings[i] ?? '–'
-                      ),
-                      line[side].r,
-                      line[side].h ?? '–',
-                      line[side].e ?? '–'
-                    ]}
-                  />
-                ))}
+                        ) +
+                          3) *
+                          64
+                    }}
+                  >
+                    <StatRow
+                      name="Team"
+                      onPress={
+                        wideScore
+                          ? undefined
+                          : () => {
+                              dispatch({ type: 'box' })
+                            }
+                      }
+                      values={[
+                        ...Array.from(
+                          {
+                            length: Math.max(
+                              line.away.innings.length,
+                              line.home.innings.length
+                            )
+                          },
+                          (_, i) => i + 1
+                        ),
+                        'R',
+                        'H',
+                        'E'
+                      ]}
+                      heading
+                    />
+                    {(['away', 'home'] as const).map(side => (
+                      <StatRow
+                        key={side}
+                        singleLine
+                        name={stats.line?.teams[side] ?? side}
+                        values={[
+                          ...Array.from(
+                            {
+                              length: Math.max(
+                                line.away.innings.length,
+                                line.home.innings.length
+                              )
+                            },
+                            (_, i) => line[side].innings[i] ?? '–'
+                          ),
+                          line[side].r,
+                          line[side].h ?? '–',
+                          line[side].e ?? '–'
+                        ]}
+                      />
+                    ))}
+                  </View>
+                </ScoreScroll>
               </>
             )}
             {renderedBox !== 'expanded' ? null : box === undefined ||
@@ -874,57 +912,63 @@ export function TvPlayer({
                     {box.from.half}).
                   </Text>
                 )}
-                {(['away', 'home'] as const).map(side => (
-                  <View key={side} style={styles.statsTeam}>
-                    <Text style={styles.heading}>{box[side].name}</Text>
-                    <Text style={styles.copy}>
-                      Runs {box[side].runs} Hits {box[side].hits} Errors{' '}
-                      {box[side].errors}
-                    </Text>
-                    <StatRow
-                      name="Batting"
-                      values={['AB', 'R', 'H', 'RBI', 'BB', 'K']}
-                      heading
-                    />
-                    {box[side].batting.map(player => (
+                <View style={styles.statsColumns}>
+                  {(['away', 'home'] as const).map(side => (
+                    <View
+                      key={side}
+                      testID={`tv-stats-${side}`}
+                      style={styles.statsTeam}
+                    >
+                      <Text style={styles.statsHeading}>{box[side].name}</Text>
+                      <Text style={styles.statText}>
+                        Runs {box[side].runs} Hits {box[side].hits} Errors{' '}
+                        {box[side].errors}
+                      </Text>
                       <StatRow
-                        key={player.id}
-                        name={player.name}
-                        values={[
-                          player.ab,
-                          player.r,
-                          player.h,
-                          player.rbi,
-                          player.bb,
-                          player.k
-                        ]}
+                        name="Batting"
+                        values={['AB', 'R', 'H', 'RBI', 'BB', 'K']}
+                        heading
                       />
-                    ))}
-                    <StatRow
-                      name="Pitching"
-                      values={['IP', 'H', 'R', 'ER', 'BB', 'K', 'PC']}
-                      heading
-                    />
-                    {box[side].pitching.map(player => (
+                      {box[side].batting.map(player => (
+                        <StatRow
+                          key={player.id}
+                          name={player.name}
+                          values={[
+                            player.ab,
+                            player.r,
+                            player.h,
+                            player.rbi,
+                            player.bb,
+                            player.k
+                          ]}
+                        />
+                      ))}
                       <StatRow
-                        key={player.id}
-                        name={player.name}
-                        values={[
-                          player.ip,
-                          player.h,
-                          player.r,
-                          player.er,
-                          player.bb,
-                          player.k,
-                          player.pc
-                        ]}
+                        name="Pitching"
+                        values={['IP', 'H', 'R', 'ER', 'BB', 'K', 'PC']}
+                        heading
                       />
-                    ))}
-                  </View>
-                ))}
+                      {box[side].pitching.map(player => (
+                        <StatRow
+                          key={player.id}
+                          name={player.name}
+                          values={[
+                            player.ip,
+                            player.h,
+                            player.r,
+                            player.er,
+                            player.bb,
+                            player.k,
+                            player.pc
+                          ]}
+                        />
+                      ))}
+                    </View>
+                  ))}
+                </View>
               </>
             )}
-          </TvTextScrollView>
+          </BoxScroll>
         </TvFocusGuide>
       </Animated.View>
       {error !== null && (
@@ -946,24 +990,49 @@ export function TvPlayer({
 function StatRow({
   name,
   values,
-  heading = false
+  heading = false,
+  singleLine = false,
+  onPress
 }: {
   name: string
   values: Array<string | number>
   heading?: boolean
+  singleLine?: boolean
+  onPress?: () => void
 }): React.ReactElement {
   return (
     <View style={styles.statRow}>
-      <Text
-        numberOfLines={1}
-        style={[heading ? styles.small : styles.copy, styles.statName]}
-      >
-        {name}
-      </Text>
+      {onPress === undefined ? (
+        <Text
+          numberOfLines={singleLine ? 1 : 2}
+          style={[
+            heading ? styles.statLabel : styles.statText,
+            styles.statName
+          ]}
+        >
+          {name}
+        </Text>
+      ) : (
+        <Pressable
+          testID="Team and player statistics"
+          accessibilityRole="button"
+          accessibilityLabel="Team and player statistics"
+          onPress={onPress}
+          style={styles.statName}
+        >
+          <Text style={styles.statLabel}>{name} ⌃</Text>
+        </Pressable>
+      )}
       {values.map((value, index) => (
         <Text
           key={index}
-          style={[heading ? styles.small : styles.copy, styles.statCell]}
+          testID={
+            heading && name === 'Team' ? `tv-score-column-${value}` : undefined
+          }
+          style={[
+            heading ? styles.statLabel : styles.statText,
+            styles.statCell
+          ]}
         >
           {value}
         </Text>
@@ -979,6 +1048,14 @@ function PanelGradient({
 }): React.ReactElement {
   const id = useId().replace(/[^A-Za-z0-9]/g, '')
   const [size, setSize] = useState({ width: 0, height: 0 })
+  if (NativeGradient !== null)
+    return (
+      <NativeGradient
+        direction={direction}
+        pointerEvents="none"
+        style={StyleSheet.absoluteFill}
+      />
+    )
   return (
     <View
       pointerEvents="none"
@@ -1001,8 +1078,16 @@ function PanelGradient({
             x2={direction === 'left' ? '1' : '0'}
             y2="0"
           >
-            <Stop offset="0" stopColor="#101010" stopOpacity={0.98} />
-            <Stop offset="0.8" stopColor="#101010" stopOpacity={0.9} />
+            <Stop
+              offset="0"
+              stopColor="#101010"
+              stopOpacity={direction === 'bottom' ? 0.65 : 0.98}
+            />
+            <Stop
+              offset={direction === 'bottom' ? '0.5' : '0.8'}
+              stopColor="#101010"
+              stopOpacity={direction === 'bottom' ? 0.325 : 0.9}
+            />
             <Stop offset="1" stopColor="#101010" stopOpacity={0} />
           </LinearGradient>
         </Defs>
@@ -1013,14 +1098,19 @@ function PanelGradient({
 }
 const styles = StyleSheet.create({
   statRow: { flexDirection: 'row', paddingVertical: 3, alignItems: 'center' },
-  statName: { width: 360 },
-  statCell: { flex: 1, maxWidth: 90, minWidth: 32, textAlign: 'center' },
-  hidden: { display: 'none' },
-  boxHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between'
+  statName: { width: 300, paddingRight: 20 },
+  statCell: { flex: 1, minWidth: 48, textAlign: 'center' },
+  statText: {
+    color: '#fff',
+    fontSize: 44,
+    textShadowColor: '#0009',
+    textShadowRadius: 3,
+    textShadowOffset: { width: 0, height: 1 }
   },
+  statLabel: { color: '#fff', fontSize: 39, fontWeight: '600' },
+  statsHeading: { color: '#fff', fontSize: 52, fontWeight: '700' },
+  statsColumns: { flexDirection: 'row', gap: 48 },
+  hidden: { display: 'none' },
   scene: {
     flex: 1,
     width: '100%',
@@ -1070,9 +1160,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    paddingBottom: 20,
-    paddingTop: 32,
-    paddingHorizontal: 64,
+    paddingBottom: 8,
+    paddingTop: 16,
+    paddingHorizontal: 40,
     zIndex: 4
   },
   angleOption: {
@@ -1093,7 +1183,7 @@ const styles = StyleSheet.create({
   selected: { borderColor: '#fff', backgroundColor: '#5559' },
   preview: { width: 120, height: 68, borderRadius: 6 },
   clipText: { flex: 1 },
-  statsTeam: { gap: 12, paddingVertical: 24 },
+  statsTeam: { flex: 1, gap: 16, paddingVertical: 24 },
   unavailable: {
     position: 'absolute',
     left: 0,
