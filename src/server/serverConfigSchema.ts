@@ -51,6 +51,24 @@ export const asServerConfig = asObject({
   ),
 
   /**
+   * A transaction-mode connection pooler in front of the same database, which
+   * request traffic goes through. Empty means `databaseUrl`, so a deployment
+   * without a pooler connects directly. `LISTEN` and migrations never use it.
+   */
+  databasePoolUrl: asOptional(asString, ''),
+
+  /** How many connections each kind of process keeps in its pool. */
+  databasePoolSizes: asOptional(
+    asObject({
+      worker: asOptional(asNumber, 10),
+      primary: asOptional(asNumber, 3),
+      statsBuilder: asOptional(asNumber, 3),
+      ingest: asOptional(asNumber, 3)
+    }),
+    () => ({ worker: 10, primary: 3, statsBuilder: 3, ingest: 3 })
+  ),
+
+  /**
    * PeerTube's database, read-only, used only by the importer. Empty when
    * there is nothing to import.
    */

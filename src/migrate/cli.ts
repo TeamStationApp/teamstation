@@ -2,11 +2,11 @@ import { Pool } from 'pg'
 
 import { serverConfig } from '../server/serverConfig'
 import { migrations } from './migrations'
-import { migrateDown, migrateUp } from './runner'
+import { migrateDown, migrateUp, migrationPoolConfig } from './runner'
 
 async function main(): Promise<void> {
   const [command = 'up', countText] = process.argv.slice(2)
-  const pool = new Pool({ connectionString: serverConfig.databaseUrl })
+  const pool = new Pool(migrationPoolConfig(serverConfig.databaseUrl))
   // What a migration reports of its backfill (`raise notice`).
   pool.on('connect', client => {
     client.on('notice', notice => {
