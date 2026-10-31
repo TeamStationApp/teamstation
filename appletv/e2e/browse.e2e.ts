@@ -78,6 +78,11 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.pressKey({ key: 'DPAD_RIGHT' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.assertVisible({
+      text: '.*Preview: (3[0-9]|4[0-9]) seconds',
+      timeout: 15000
+    })
     await writeFile(
       path.join(artifacts, 'focus-after.png'),
       await tv.screenshot()
