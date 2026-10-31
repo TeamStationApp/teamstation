@@ -31,6 +31,7 @@ import {
 } from '../test/autoSchedulerFixture'
 import { interceptGoogleMaps } from '../test/googleMapsIntercept'
 import { googlePlacesStub } from '../test/googlePlacesStub'
+import { mapFrameOf, waitInMapFrame } from '../test/mapFrameProbe'
 import {
   absent,
   type BrowserSession,
@@ -337,17 +338,13 @@ async function e2(run: Run): Promise<void> {
   await uploadPhoto(admin, 'Add photo', photo)
   await contains(admin.page, 'Photo saved.')
   // Drag the pin: the Google stub's marker, let go inside its frame.
-  const frame = admin.page
-    .frames()
-    .find(candidate => candidate.url() === 'about:srcdoc')
-  expect(frame, 'the pin map frame').not.equals(undefined)
-  await frame!.waitForFunction(
-    () =>
-      document.querySelector('[data-lat][data-draggable="true"]') !== null &&
-      typeof (window as any).__dragPin === 'function',
-    { timeout: 15000 }
+  const frame = await mapFrameOf(admin.page)
+  await waitInMapFrame(
+    admin.page,
+    `document.querySelector('[data-lat][data-draggable="true"]')!==null&&typeof window.__dragPin==='function'`,
+    15000
   )
-  await frame!.evaluate(() => {
+  await frame.evaluate(() => {
     ;(window as any).__dragPin(40.0213, -75.2214)
   })
   await contains(admin.page, 'Pin saved.')

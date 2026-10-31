@@ -18,6 +18,7 @@ export function eventMapDocument(location: EventLocation): string {
     #error{position:absolute;left:12px;top:12px;background:white;padding:8px;z-index:1000;font:14px sans-serif;display:none}
   </style></head><body><div id="map" aria-label="Event location map"></div><div id="error" role="alert">Map tiles could not load. You can still open directions. <button id="retry-map-tiles" type="button">Retry map tiles</button></div><script>${sdk.js}</script><script>
     const config=${config};
+    if(window.parent!==window)document.head.appendChild(Object.assign(document.createElement('base'),{target:'_blank'}));
     const map=L.map('map',{scrollWheelZoom:false}).setView([config.latitude,config.longitude],15);
     const tiles=L.tileLayer(config.tileUrl,{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
     const failedTiles=new Set();

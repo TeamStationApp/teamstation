@@ -4,6 +4,7 @@ import React from 'react'
 
 import { markerProps, nativeMapProps } from '../../test/eventNativeMapStub'
 import { mount, press, settle, text, unmount } from '../../test/gameFormDom'
+import { mapDocumentOf } from '../../test/mapFrameDom'
 import { PinMap } from './PinMap'
 import { PinMap as AndroidPinMap } from './PinMap.android'
 import { PinMap as IosPinMap } from './PinMap.native'
@@ -44,7 +45,7 @@ describe('the pin map', () => {
     const frame = document.querySelector<HTMLIFrameElement>(
       'iframe[data-testid="pin-map"]'
     )!
-    const html = frame.getAttribute('srcdoc')!
+    const html = mapDocumentOf(frame)
     expect(html).includes('Field location map')
     expect(html).includes('https://maps.googleapis.com/maps/api/js?')
     expect(html).includes('"editable":true')
@@ -71,9 +72,9 @@ describe('the pin map', () => {
     await mount(
       <PinMap settings={{ ...settings, googleMapsApiKey: undefined }} />
     )
-    const html = document
-      .querySelector('iframe[data-testid="pin-map"]')!
-      .getAttribute('srcdoc')!
+    const html = mapDocumentOf(
+      document.querySelector('iframe[data-testid="pin-map"]')
+    )
     expect(html).includes('The map couldn’t load')
     expect(html).includes('40.02000, -75.22000')
     expect(html).includes('>Retry</button>')

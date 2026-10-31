@@ -4,11 +4,18 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
+import type { Browser as MapBrowser } from 'puppeteer'
+
 import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
 import { SESSION_COOKIE } from '../../server/auth/tokens'
 import { serverConfig } from '../../server/serverConfig'
 import { groupFixture } from '../../test/groupFixtures'
+import {
+  connectToProfile,
+  inMapFrame,
+  waitInMapFrame
+} from '../../test/mapFrameProbe'
 
 async function main(): Promise<void> {
   const artifacts = resolve(process.env.EVENT_INFO_ARTIFACTS!)
@@ -21,6 +28,9 @@ async function main(): Promise<void> {
   execFileSync(bin, ['ps'], { stdio: 'inherit' })
   const name = process.env.MAESTRO_D ?? 'event-info-tweaks'
   const device = 'event-info-tweaks-chromium'
+  const profile = resolve('coverage/eventInfo', `${name}-chromium-profile`)
+  mkdirSync(profile, { recursive: true })
+  let mapBrowser: MapBrowser | undefined
   const f = await groupFixture(resolve('dist'))
   const daemon = await MaestroD.connect({ name, bin })
   try {
@@ -83,7 +93,8 @@ async function main(): Promise<void> {
       url: f.h.origin,
       extra: {
         browser: 'chromium',
-        windowSize: process.env.EVENT_INFO_VIEWPORT ?? '390x844'
+        windowSize: process.env.EVENT_INFO_VIEWPORT ?? '390x844',
+        userDataDir: profile
       }
     })
     await m.openBrowser({ url: f.h.origin })
@@ -444,12 +455,16 @@ async function main(): Promise<void> {
       await m.openBrowser({
         url: f.h.origin + '/games/gam_upcoming?section=info'
       })
-      await wait(
-        `document.querySelector('[data-testid="event-location-map"]')?.contentWindow?.eventMapCenter!=null`
-      )
+      mapBrowser = await connectToProfile(profile)
+      const mapPage = (await mapBrowser.pages()).find(page =>
+        page.url().startsWith(f.h.origin)
+      )!
+      assert(mapPage != null)
+      await waitInMapFrame(mapPage, 'window.eventMapCenter!=null')
       assert(
-        await evaluate<boolean>(
-          `document.querySelector('[data-testid="event-location-map"]').contentWindow.eventMap instanceof document.querySelector('[data-testid="event-location-map"]').contentWindow.google.maps.Map`
+        await inMapFrame<boolean>(
+          mapPage,
+          'window.eventMap instanceof window.google.maps.Map'
         )
       )
       await m.evalBrowserScript({
@@ -467,8 +482,9 @@ async function main(): Promise<void> {
         },
         duration: 800
       })
-      await wait(
-        `Math.abs(document.querySelector('[data-testid="event-location-map"]').contentWindow.eventMapCenter.longitude-12)>.0001`
+      await waitInMapFrame(
+        mapPage,
+        'Math.abs(window.eventMapCenter.longitude-12)>.0001'
       )
       writeFileSync(join(artifacts, 'google-map.png'), await m.screenshot())
       console.log(
@@ -476,6 +492,7 @@ async function main(): Promise<void> {
       )
     }
   } finally {
+    await mapBrowser?.disconnect()
     await daemon.detach(device).catch(() => undefined)
     await daemon.shutdown()
     daemon.close()

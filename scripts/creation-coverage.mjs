@@ -109,6 +109,7 @@ const paths = [...globSync('src/server/groups/**/*.ts')]
     'src/app/components/EventVenueFields.tsx',
     'src/app/components/googleMapDocument.ts',
     'src/app/components/EventMap.tsx',
+    'src/app/components/MapFrame.tsx',
     'src/app/components/EventMap.native.tsx',
     'src/app/components/EventMap.android.tsx',
     'src/app/components/Button.tsx',
@@ -162,6 +163,7 @@ const paths = [...globSync('src/server/groups/**/*.ts')]
     'src/app/components/CreationCard.tsx'
   ])
 const uiSuites = [
+  'src/app/components/MapFrame.test.tsx',
   'src/app/components/EventVenueFields.test.tsx',
   'src/app/components/EventMap.native.test.tsx',
   'src/app/components/EventMap.android.test.tsx',

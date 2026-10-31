@@ -1,29 +1,30 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 
 import type { EventLocation } from '../../common/eventInfo'
 import { eventMapDocument } from './eventMapDocument'
 import { googleMapDocument } from './googleMapDocument'
+import { MapFrame } from './MapFrame'
 
 export function EventMap({
   location
 }: {
   location: EventLocation
 }): React.ReactElement {
+  const html = useMemo(
+    () =>
+      location.googleMapsApiKey == null || location.googleMapsApiKey === ''
+        ? eventMapDocument(location)
+        : googleMapDocument(location),
+    [location]
+  )
   return (
-    <iframe
-      data-testid="event-location-map"
+    <MapFrame
+      html={html}
       title="Event location map"
-      srcDoc={
-        location.googleMapsApiKey == null || location.googleMapsApiKey === ''
-          ? eventMapDocument(location)
-          : googleMapDocument(location)
-      }
-      style={{
-        display: 'block',
-        border: 0,
-        width: '100%',
-        height: 260,
-        borderRadius: 16
+      testID="event-location-map"
+      point={{
+        latitude: location.latitude ?? 0,
+        longitude: location.longitude ?? 0
       }}
     />
   )
