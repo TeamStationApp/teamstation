@@ -748,6 +748,8 @@ public final class TileRouter: @unchecked Sendable {
     defer { lock.unlock() }
     return programGeneration
   }
+  /// Handovers started. For tests.
+  private(set) var handoverCount: UInt64 = 0
   /// The camera on air while a cut waits for the new one. For tests.
   var outgoingSourceID: SourceID? {
     lock.lock()
@@ -1209,6 +1211,7 @@ public final class TileRouter: @unchecked Sendable {
        let onAir = pipelines.values.first(where: { $0.sourceID == shown.sourceID }),
        onAir.hasProgramSink, onAir.currentState == .live {
       outgoing = Handover(sourceID: shown.sourceID, run: leaving, deadline: 0)
+      handoverCount &+= 1
     }
     outgoing?.deadline = clock.now.seconds + programPictures.delaySeconds + ProgrammePictureQueue<ProgramPicture>.spareSeconds
     programPictures.dropRuns(keeping: outgoing?.run)

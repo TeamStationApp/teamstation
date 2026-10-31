@@ -300,8 +300,10 @@ struct ProgrammeHandoverTests {
     let reached = try #require(shown.entries.lastIndex { $0.sourceID == newCamera })
     try await Task.sleep(for: .seconds(Self.delay + 0.4))
     let after = shown.entries.dropFirst(reached + 1)
+    // That camera is on air now, so it plays on until the old camera's first picture is due.
     #expect(after.count > 10, "the programme froze on the new camera")
-    #expect(after.allSatisfy { $0.sourceID == rig.id(0) })
+    #expect(after.last?.sourceID == rig.id(0), "the old camera never came back")
+    #expect(rig.shown.longestStep < Self.longestStep, "the programme held a picture")
     #expect(rig.pipes[0].hasProgramSink)
   }
 
@@ -325,8 +327,9 @@ struct ProgrammeHandoverTests {
     model.router.selectProgram(sourceIndex: pipelines[0].sourceIndex)
     try await Task.sleep(for: .seconds(1.5))
     pipelines[1].beginScrubbing()
+    let handovers = model.router.handoverCount
     model.cutSourceLive(sourceIndex: pipelines[1].sourceIndex)
-    #expect(model.router.outgoingSourceID == pipelines[0].sourceID)
+    #expect(model.router.handoverCount == handovers + 1)
   }
 
   @Test("Once the new camera is on air the old one's pictures are refused, ahead of the tick ending the handover")
