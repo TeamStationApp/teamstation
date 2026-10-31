@@ -23,6 +23,17 @@ import { promisify } from 'node:util'
 import { expect } from 'chai'
 import type { Frame } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  type BrowserSession,
+  browserSession,
+  contains,
+  fill,
+  log,
+  maestro,
+  show,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import { eventLocalFields, zoneName } from '../common/eventTime'
 import type { SchedulePreview } from '../common/schedulePreviews'
 import type { ScheduleSetup } from '../common/seasonScheduling'
@@ -48,17 +59,6 @@ import {
   googlePlacesStub,
   MORE_PARKS
 } from '../test/googlePlacesStub'
-import {
-  type BrowserSession,
-  browserSession,
-  contains,
-  fill,
-  log,
-  maestro,
-  show,
-  tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 const WIDTH = 402
 const HEIGHT = 874

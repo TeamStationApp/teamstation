@@ -2,9 +2,9 @@ import { writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createInterface } from 'node:readline'
 
-import { attachGameSocket } from '../server/socket/gameSocket'
-import { quietStreamFixture } from './quietStreamFixture'
-import { databaseUrlOf } from './screenScopeNotices'
+import { attachGameSocket } from '../../src/server/socket/gameSocket'
+import { quietStreamFixture } from '../../src/test/quietStreamFixture'
+import { databaseUrlOf } from '../../src/test/screenScopeNotices'
 
 async function main(): Promise<void> {
   const publicOrigin = process.env.QUIET_STREAM_ORIGIN

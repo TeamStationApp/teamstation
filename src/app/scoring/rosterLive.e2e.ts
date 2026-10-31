@@ -9,13 +9,13 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import type { Page } from 'puppeteer'
 
-import type { LineupFixture } from '../../server/dev/lineupFixture'
-import { signInTestAccount } from '../../test/passwordFixtures'
 import {
   type BrowserSession,
   browserSession,
   maestro
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
+import type { LineupFixture } from '../../server/dev/lineupFixture'
+import { signInTestAccount } from '../../test/passwordFixtures'
 
 /**
  * Two scorekeepers on one game, each in maestro-d's Chromium at an iPhone's

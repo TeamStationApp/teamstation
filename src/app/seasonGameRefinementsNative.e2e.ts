@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
-import { log, maestro } from '../test/refinementsMaestro.e2e'
+import { log, maestro } from '../../e2e/rigs/refinementsMaestro'
 
 interface Node {
   type?: string

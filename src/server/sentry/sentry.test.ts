@@ -259,7 +259,10 @@ describe('server errors reach Sentry', function () {
         flush: async () => true
       }),
       beforeSend: event => {
-        events.push(event)
+        // Another suite's background work can outlive its database while this one
+        // is listening. That is not an error this suite raised.
+        const message = event.exception?.values?.[0]?.value
+        if (message !== 'driver has already been destroyed') events.push(event)
         return null
       }
     })

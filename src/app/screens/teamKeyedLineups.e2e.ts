@@ -5,9 +5,7 @@ import { join } from 'node:path'
 import { after, before, describe, it } from 'mocha'
 import pg from 'pg'
 
-import type { ScoringAction } from '../../common/scoring/actions'
-import type { LineupFixture } from '../../server/dev/lineupFixture'
-import { browserSession, maestro } from '../../test/refinementsMaestro.e2e'
+import { browserSession, maestro } from '../../../e2e/rigs/refinementsMaestro'
 import {
   API,
   APP,
@@ -27,7 +25,9 @@ import {
   tokenOf,
   WIDTH,
   writeArtifactsTo
-} from '../../test/scoringBrowser.e2e'
+} from '../../../e2e/rigs/scoringBrowser'
+import type { ScoringAction } from '../../common/scoring/actions'
+import type { LineupFixture } from '../../server/dev/lineupFixture'
 
 /**
  * Team-keyed lineups, end to end, against the real local stack — the API

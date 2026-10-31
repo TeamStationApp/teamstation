@@ -49,7 +49,7 @@ import {
   say,
   sleep,
   type StreamRow
-} from './phoneStreamRig.e2e'
+} from '../../../e2e/rigs/phoneStreamRig'
 
 const run = promisify(execFile)
 const CENTER = 'Center Field'

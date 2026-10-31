@@ -4,7 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { log, maestro } from '../../test/refinementsMaestro.e2e'
+import { log, maestro } from '../../../e2e/rigs/refinementsMaestro'
 
 /**
  * Pushed screens, the scoring cover, drags back and pill pages on a real phone,

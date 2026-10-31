@@ -5,14 +5,14 @@ import { expect } from 'chai'
 import { build } from 'esbuild'
 import { describe, it } from 'mocha'
 
-import { TeamStationClient } from '../common/api'
-import { userIdOfGumbo } from '../common/userId'
-import { signInTestAccount } from '../test/passwordFixtures'
 import {
   type BrowserSession,
   capture,
   fill
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
+import { signInTestAccount } from '../test/passwordFixtures'
 import { withUserIdsBrowser } from '../test/userIdsBrowser'
 import { userIdsBrowserCoverage } from '../test/userIdsBrowserCoverage'
 

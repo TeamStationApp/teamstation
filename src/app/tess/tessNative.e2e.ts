@@ -4,8 +4,11 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
-import { maestro, type MaestroHandle } from '../../test/refinementsMaestro.e2e'
-import type { TessNativeManifest } from '../../test/tessNativeFixture.e2e'
+import type { TessNativeManifest } from '../../../e2e/fixtures/tessNativeFixture'
+import {
+  maestro,
+  type MaestroHandle
+} from '../../../e2e/rigs/refinementsMaestro'
 
 /**
  * Tess in the phone app, driven by maestro-d against the fixture

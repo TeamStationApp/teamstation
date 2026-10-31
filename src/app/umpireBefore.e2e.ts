@@ -1,12 +1,12 @@
 import { mkdir } from 'node:fs/promises'
 
-import { groupFixture } from '../test/groupFixtures'
 import {
   browserSession,
   capture,
   contains,
   maestro
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { groupFixture } from '../test/groupFixtures'
 
 async function main(): Promise<void> {
   const artifacts = process.env.TS_UMPIRE_ARTIFACTS

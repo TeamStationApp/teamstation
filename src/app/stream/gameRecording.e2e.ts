@@ -9,7 +9,7 @@ import {
   browserSession,
   contains,
   maestro
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
 
 async function main(): Promise<void> {
   const out = resolve(process.env.TS_ARTIFACTS_DIR ?? 'artifacts/gameRecording')

@@ -3,8 +3,8 @@ import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-import type { BrowserSession } from './refinementsMaestro.e2e'
-import { browserSession, log, maestro } from './refinementsMaestro.e2e'
+import type { BrowserSession } from '../../e2e/rigs/refinementsMaestro'
+import { browserSession, log, maestro } from '../../e2e/rigs/refinementsMaestro'
 
 const LOCK = join(tmpdir(), 'teamstation-user-ids-browser.lock')
 const SEAT = 'https://develop7.teamstation.app'

@@ -5,17 +5,17 @@ import { join, resolve } from 'node:path'
 
 import type { Page } from 'puppeteer'
 
-import { TeamStationClient } from '../common/api'
-import { userIdOfGumbo } from '../common/userId'
-import { SESSION_COOKIE } from '../server/auth/tokens'
-import { groupFixture } from '../test/groupFixtures'
-import { insertFixtureUsers } from '../test/insertFixtureUsers'
 import {
   browserSession,
   contains,
   fill,
   maestro
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
+import { SESSION_COOKIE } from '../server/auth/tokens'
+import { groupFixture } from '../test/groupFixtures'
+import { insertFixtureUsers } from '../test/insertFixtureUsers'
 import { seedSettingsCleanup3 } from '../test/settingsCleanup3Fixture'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS

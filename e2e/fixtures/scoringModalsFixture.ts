@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { extname } from 'node:path'
 
-import type { StoredGame } from '../../common/scoring/session'
-import { userIdOfGumbo } from '../../common/userId'
-import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
-import { POSITIONS } from './scoringTypes'
+import { POSITIONS } from '../../src/app/scoring/scoringTypes'
+import type { StoredGame } from '../../src/common/scoring/session'
+import { userIdOfGumbo } from '../../src/common/userId'
+import { rosterEntryFromBody } from '../../src/test/mintedRosterEntry'
 
 interface FixturePlayer {
   userId: string

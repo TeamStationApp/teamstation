@@ -12,9 +12,10 @@ import puppeteer, {
 } from 'puppeteer'
 import { WebSocket } from 'ws'
 
-import { NO_OVERRIDES, SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
-import { makeDatabase } from '../../server/db/database'
-import { override, scoreboardSocketUrl } from '../../test/scoreboardPublish.e2e'
+import {
+  override,
+  scoreboardSocketUrl
+} from '../../../e2e/rigs/scoreboardPublish'
 import {
   OTHER_EMAIL,
   RUNNER_EMAIL,
@@ -22,7 +23,9 @@ import {
   seedScoreboardGames,
   TEAM_NAME,
   VISITORS_NAME
-} from '../../test/seedScoreboardGames.e2e'
+} from '../../../e2e/rigs/seedScoreboardGames'
+import { NO_OVERRIDES, SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
+import { makeDatabase } from '../../server/db/database'
 
 /**
  * The scoreboard pages in a real browser, against a running API and web app:

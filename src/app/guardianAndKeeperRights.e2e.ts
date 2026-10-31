@@ -25,6 +25,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import type { BrowserSession } from '../../e2e/rigs/refinementsMaestro'
 import { makeId } from '../common/ids'
 import { userIdOfGumbo } from '../common/userId'
 import { createSession } from '../server/auth/sessions'
@@ -32,7 +33,6 @@ import { posterSecond } from '../server/media/posters'
 import { stillKey } from '../server/media/stills'
 import { type GuardianFixture, guardianFixture } from '../test/guardianFixture'
 import { insertFixtureUsers } from '../test/insertFixtureUsers'
-import type { BrowserSession } from '../test/refinementsMaestro.e2e'
 
 /** The viewport every screenshot is taken at, the same as the befores. */
 const WIDTH = 390
@@ -384,7 +384,7 @@ async function roster(run: Run): Promise<void> {
 
   const admin = await run.signIn('roster-admin', people.admin)
   await admin.m.openBrowser({ url: `${f.h.origin}/teams/${f.teamA}?tab=team` })
-  const { contains } = await import('../test/refinementsMaestro.e2e')
+  const { contains } = await import('../../e2e/rigs/refinementsMaestro')
   await contains(admin.page, 'FOLLOWERS')
 
   // No `??` or `?.` inside a callback the browser runs: Sucrase compiles
@@ -585,7 +585,7 @@ async function roster(run: Run): Promise<void> {
 async function people(run: Run): Promise<void> {
   const { f } = run
   const { people } = f
-  const { contains } = await import('../test/refinementsMaestro.e2e')
+  const { contains } = await import('../../e2e/rigs/refinementsMaestro')
   const [, ben, cody] = f.players
   // Ben can sign in; Cody cannot.
   await f.h.db
@@ -869,7 +869,7 @@ async function player(run: Run): Promise<void> {
   const { people } = f
   const [avery] = f.players
   const db = f.h.db
-  const { contains } = await import('../test/refinementsMaestro.e2e')
+  const { contains } = await import('../../e2e/rigs/refinementsMaestro')
 
   // A season on each of Alfonso's teams, so the Teams tab has an order to
   // show: Demo Regular is this year's, Demo Playoffs (the Comets') next
@@ -1165,7 +1165,8 @@ async function guardian(run: Run): Promise<void> {
   const { people } = f
   const db = f.h.db
   const [avery, ben, cody, drew, eli] = f.players
-  const { contains, fill, tap } = await import('../test/refinementsMaestro.e2e')
+  const { contains, fill, tap } =
+    await import('../../e2e/rigs/refinementsMaestro')
   const summarize = (route: string, body: any): unknown => {
     if (route === '/teams')
       return (body as any[]).map(team => ({ id: team.id, name: team.name }))
@@ -1697,7 +1698,8 @@ async function follower(run: Run): Promise<void> {
   const { f } = run
   const { people } = f
   const [game] = f.games
-  const { contains, fill, tap } = await import('../test/refinementsMaestro.e2e')
+  const { contains, fill, tap } =
+    await import('../../e2e/rigs/refinementsMaestro')
   const membersOnly = 'You need to be a member of one of the teams to see this.'
   const videosMembersOnly =
     "You need to be a member of one of the teams to watch this game's videos."
@@ -2121,7 +2123,7 @@ async function home(run: Run): Promise<void> {
   const { people } = f
   const [avery] = f.players
   const db = f.h.db
-  const { contains } = await import('../test/refinementsMaestro.e2e')
+  const { contains } = await import('../../e2e/rigs/refinementsMaestro')
 
   // A Comets game Alfonso played, so the team stays on his page after he
   // leaves it, and a stat line on each team for the career to add up.
@@ -2427,7 +2429,7 @@ async function runStage(
     },
     browser: async device => {
       if (web == null) throw new Error('Run `node src/build.mjs` first')
-      const maestroD = await import('../test/refinementsMaestro.e2e')
+      const maestroD = await import('../../e2e/rigs/refinementsMaestro')
       if (daemon == null) {
         const daemonName = process.env.MAESTRO_D
         if (daemonName == null)
@@ -2447,7 +2449,7 @@ async function runStage(
     },
     signIn: async (device, user) => {
       const { contains, fill, tap } =
-        await import('../test/refinementsMaestro.e2e')
+        await import('../../e2e/rigs/refinementsMaestro')
       const email = f.emails[user]
       if (email == null) throw new Error(`User ${user} has no sign-in address`)
       const session = await run.browser(device)
@@ -2468,7 +2470,7 @@ async function runStage(
       return session
     },
     shot: async (session, name, options = {}) => {
-      const { capture } = await import('../test/refinementsMaestro.e2e')
+      const { capture } = await import('../../e2e/rigs/refinementsMaestro')
       await settle(session)
       if (options.fit === true) {
         // The page scrolls inside the app, not the window: the tallest
@@ -2583,7 +2585,7 @@ async function pressRole(
  * then never returns, timeout or not.
  */
 async function scrollTap(session: BrowserSession, text: string): Promise<void> {
-  const { tap } = await import('../test/refinementsMaestro.e2e')
+  const { tap } = await import('../../e2e/rigs/refinementsMaestro')
   await session.page.evaluate(text => {
     const button = [...document.querySelectorAll('[role="button"]')].find(
       node => node.textContent === text

@@ -16,6 +16,7 @@ import { expect } from 'chai'
 import { ESLint } from 'eslint'
 import { describe, it } from 'mocha'
 
+import { e2eErrors } from '../../scripts/typecheckE2e.mjs'
 import { applyEmulation, clockScript } from './browserCdp'
 import { main } from './cli'
 import { goesToApi, startFront } from './front'
@@ -1068,6 +1069,25 @@ describe('the isolated stack', function () {
     }
     expect(failed).equals(true)
     expect(request).to.be.a('function')
+  })
+})
+
+describe('the e2e typecheck', function () {
+  it('answers for e2e/ only, keeping each error’s explanation', function () {
+    const output = [
+      "src/server/live/splitter.ts(1,2): error TS2322: Type 'number' is not 'Timeout'.",
+      '  more about the server',
+      'e2e/rigs/a.ts(3,4): error TS2345: Argument is wrong.',
+      '  more about the rig',
+      'src/app/x.ts(5,6): error TS1: Other.',
+      'e2e/tests/b.e2e.ts(7,8): error TS2: Another.'
+    ].join('\n')
+    expect(e2eErrors(output)).deep.equals([
+      'e2e/rigs/a.ts(3,4): error TS2345: Argument is wrong.\n  more about the rig',
+      'e2e/tests/b.e2e.ts(7,8): error TS2: Another.'
+    ])
+    expect(e2eErrors('')).deep.equals([])
+    expect(e2eErrors('Found 1 error.\n  stray')).deep.equals([])
   })
 })
 

@@ -4,14 +4,14 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import type { Page } from 'puppeteer'
 
-import type { TeamStationClient } from '../common/api'
-import type { GroupFixture } from './groupFixtures'
+import type { TeamStationClient } from '../../src/common/api'
+import type { GroupFixture } from '../../src/test/groupFixtures'
 import {
   capture,
   contains,
   type MaestroHandle,
   tap
-} from './refinementsMaestro.e2e'
+} from './refinementsMaestro'
 
 export async function exerciseUmpireNotes(
   f: GroupFixture,

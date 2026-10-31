@@ -6,23 +6,23 @@ import { join, resolve } from 'node:path'
 
 import express from 'express'
 
-import { asGameDetail, TeamStationClient } from '../common/api'
-import { userIdOfGumbo } from '../common/userId'
-import { SESSION_COOKIE } from '../server/auth/tokens'
-import { googlePlaces } from '../server/location/googlePlaces'
-import { googlePlacesStub } from '../test/googlePlacesStub'
-import { groupFixture } from '../test/groupFixtures'
+import { freezeBrowserClock } from '../../e2e/rigs/creationBrowserActions'
 import {
   browserSession,
   contains,
   fill,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { asGameDetail, TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
+import { SESSION_COOKIE } from '../server/auth/tokens'
+import { googlePlaces } from '../server/location/googlePlaces'
+import { googlePlacesStub } from '../test/googlePlacesStub'
+import { groupFixture } from '../test/groupFixtures'
 import { seedSettingsCleanup3 } from '../test/settingsCleanup3Fixture'
 import { teamScheduleAnswer } from '../test/teamScheduleFixture'
 import { teamTint } from './components/teamTile'
-import { freezeBrowserClock } from './creationBrowserActions.e2e'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null) throw new Error('Supply TS_CREATION_ARTIFACTS')
