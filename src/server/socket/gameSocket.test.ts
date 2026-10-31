@@ -5,7 +5,7 @@ import { PassThrough } from 'node:stream'
 
 import { expect } from 'chai'
 import express from 'express'
-import type { Kysely } from 'kysely'
+import { Kysely, PostgresDialect } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 import WebSocket from 'ws'
@@ -511,6 +511,84 @@ describe('the game socket (U14)', function () {
       ).equals(404)
     })
 
+    it('tells an upgrade starved at sign-in to come back, and only that one', async function () {
+      const feed: ChangeFeed = {
+        subscribe: () => ({
+          listening: Promise.resolve(),
+          stop: () => undefined
+        }),
+        publishEphemeral: async () => undefined,
+        close: async () => undefined
+      }
+      /** A socket server signing in on this pool, and how it refuses `VIEWER`. */
+      const refusal = async (
+        pool: Pool
+      ): Promise<{ status?: number; retryAfter?: string | string[] }> => {
+        const plain = createServer()
+        const starved = new Kysely<Database>({
+          dialect: new PostgresDialect({ pool })
+        })
+        const handle = attachGameSocket(plain, starved, scratchUrl, {
+          feed,
+          stopSignals: null,
+          fanout: { log: () => undefined }
+        })
+        await new Promise<void>(resolve =>
+          plain.listen(0, '127.0.0.1', resolve)
+        )
+        const { port } = plain.address() as AddressInfo
+        try {
+          return await new Promise((resolve, reject) => {
+            const ws = new WebSocket(`ws://127.0.0.1:${port}/socket`, {
+              headers: { authorization: `Bearer ${VIEWER}` }
+            })
+            ws.on('unexpected-response', (_req, res) => {
+              resolve({
+                status: res.statusCode,
+                retryAfter: res.headers['retry-after']
+              })
+              ws.terminate()
+            })
+            ws.on('open', () => {
+              reject(new Error('The upgrade was accepted'))
+            })
+            ws.on('error', () => undefined)
+          })
+        } finally {
+          await handle.close()
+          await new Promise(resolve => plain.close(resolve))
+        }
+      }
+
+      const small = new Pool({
+        connectionString: scratchUrl,
+        max: 1,
+        connectionTimeoutMillis: 50
+      })
+      const held = await small.connect()
+      try {
+        expect(await refusal(small)).deep.equals({
+          status: 503,
+          retryAfter: '1'
+        })
+      } finally {
+        held.release()
+        await small.end()
+      }
+
+      const absent = new Pool({
+        connectionString: scratchUrl.replace(scratchName, `${scratchName}_no`)
+      })
+      try {
+        expect(await refusal(absent)).deep.equals({
+          status: 500,
+          retryAfter: undefined
+        })
+      } finally {
+        await absent.end()
+      }
+    })
+
     it('declines a scoreboard path without writing a response', function () {
       const raw = new PassThrough()
       const req = {
@@ -846,6 +924,37 @@ describe('the game socket (U14)', function () {
   })
 
   describe('delivery', function () {
+    it('encodes a change once for all who hear it', async function () {
+      const listeners = [await listen(VIEWER), await listen(OTHER)]
+      for (const listener of listeners) await subscribed(listener, scored)
+      const marks = listeners.map(listener => listener.frames.length)
+      const stringify = JSON.stringify
+      let changes = 0
+      JSON.stringify = ((value: unknown, ...rest: []) => {
+        if ((value as { type?: string } | null)?.type === 'change') changes += 1
+        return stringify(value, ...rest)
+      }) as typeof JSON.stringify
+      try {
+        await db!.transaction().execute(async trx => {
+          await notifyGameChange(trx, { game: scored, kind: 'game' })
+        })
+        const heard = await Promise.all(
+          listeners.map(
+            async (listener, index) =>
+              await listener.next(
+                frame => frame.type === 'change' && frame.kind === 'game',
+                marks[index]
+              )
+          )
+        )
+        expect(heard[0]).deep.equals(heard[1])
+      } finally {
+        JSON.stringify = stringify
+      }
+      expect(changes).equals(1)
+      for (const listener of listeners) listener.ws.terminate()
+    })
+
     it('delivers plays and game for a post, and lineups only when they change', async function () {
       const listener = await listen(VIEWER)
       const quiet = await listen(OTHER)
@@ -1140,6 +1249,135 @@ describe('the game socket (U14)', function () {
       feedHandlers.game_changes?.onPayload(payload)
       expect(await watcher.closed).equals(1012)
       expect(Date.now() - startedAt).below(SPREAD_MS + 150)
+    })
+
+    describe('a screen notice with no connection in time', function () {
+      let screenHandlers: FeedHandlers | undefined
+      let pool: Pool
+      let starving: Kysely<Database>
+      let handle: GameSocketHandle
+      let other: Server
+      let parentUrl = ''
+      const lines: string[] = []
+
+      before(async function () {
+        // One connection, which requests use until a test takes it for itself.
+        pool = new Pool({
+          connectionString: scratchUrl,
+          max: 1,
+          connectionTimeoutMillis: 50
+        })
+        starving = new Kysely<Database>({
+          dialect: new PostgresDialect({ pool })
+        })
+        other = createServer()
+        handle = attachGameSocket(other, starving, scratchUrl, {
+          feed: {
+            subscribe: (channel, handlers) => {
+              if (channel === 'screen_scopes') screenHandlers = handlers
+              return { listening: Promise.resolve(), stop: () => undefined }
+            },
+            publishEphemeral: async () => undefined,
+            close: async () => undefined
+          },
+          stopSignals: null,
+          resyncSpreadMs: SPREAD_MS,
+          recheckMs: 0,
+          screenScopes: {
+            coalesceMs: 5,
+            log: line => {
+              lines.push(line)
+            }
+          },
+          log: line => {
+            lines.push(line)
+          }
+        })
+        await new Promise<void>(resolve => {
+          other.listen(0, '127.0.0.1', resolve)
+        })
+        parentUrl = socketUrl
+        socketUrl = `ws://127.0.0.1:${(other.address() as AddressInfo).port}/socket`
+      })
+
+      after(async function () {
+        socketUrl = parentUrl
+        await handle.close()
+        await new Promise(resolve => other.close(resolve))
+        await starving.destroy()
+      })
+
+      const onScreen = async (
+        frame: Record<string, unknown>
+      ): Promise<Listener> => {
+        const listener = await listen(VIEWER)
+        const id = makeId('event')
+        listener.send({ type: 'subscribe', id, ...frame })
+        await listener.next(reply => 'id' in reply && reply.id === id)
+        return listener
+      }
+      const isResync = (frame: GameSocketReply): boolean =>
+        frame.type === 'resync'
+
+      /** Sends a notice with the pool's one connection taken. */
+      const starved = async (
+        notice: Record<string, unknown>,
+        during: () => Promise<void>
+      ): Promise<void> => {
+        const taken = await pool.connect()
+        try {
+          lines.length = 0
+          screenHandlers?.onPayload(JSON.stringify(notice))
+          await during()
+        } finally {
+          taken.release()
+        }
+      }
+
+      it('sends every screen one resync when the game cannot be read', async function () {
+        const screens = [
+          await onScreen({ scope: 'home' }),
+          await onScreen({ scope: 'schedule' })
+        ]
+        const noScreen = await listen(VIEWER)
+        const marks = screens.map(screen => screen.frames.length)
+        const startedAt = Date.now()
+        await starved({ revision: '5', gameId: scored }, async () => {
+          for (const [index, screen] of screens.entries())
+            await screen.next(isResync, marks[index])
+          expect(Date.now() - startedAt).below(SPREAD_MS + 500)
+          await wait(SPREAD_MS + 50)
+        })
+        for (const [index, screen] of screens.entries()) {
+          const heard = screen.frames.slice(marks[index])
+          expect(heard.filter(isResync)).to.have.length(1)
+          expect(heard.some(frame => frame.type === 'changed')).equals(false)
+          expect(screen.ws.readyState).equals(WebSocket.OPEN)
+          screen.ws.terminate()
+        }
+        expect(noScreen.frames.some(isResync)).equals(false)
+        expect(
+          lines.some(line => line.includes('no database connection in time'))
+        ).equals(true)
+        noScreen.ws.terminate()
+      })
+
+      it('sends a resync only to the screens whose scopes could not be read', async function () {
+        const concerned = await onScreen({ scope: 'home' })
+        const elsewhere = await onScreen({ scope: 'event', gameId: scored })
+        const marks = [concerned.frames.length, elsewhere.frames.length]
+        await starved({ revision: '6', teamId: homeTeam }, async () => {
+          await concerned.next(isResync, marks[0])
+          await wait(SPREAD_MS + 50)
+        })
+        expect(
+          concerned.frames.slice(marks[0]).filter(isResync)
+        ).to.have.length(1)
+        expect(elsewhere.frames.slice(marks[1]).some(isResync)).equals(false)
+        expect(lines.some(line => line.includes('1 screen(s)'))).equals(true)
+        concerned.ws.terminate()
+        elsewhere.ws.terminate()
+      })
     })
 
     it('lets go of what is still to come when it closes', async function () {

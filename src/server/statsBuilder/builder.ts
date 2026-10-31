@@ -2,7 +2,7 @@ import { type Kysely, sql } from 'kysely'
 
 import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
-import type { Database } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
 import { expandedGameStatLines } from '../stats/expandedStats'
 import type { ChargedPlay } from '../stats/gumboStats'
 import { type PlateAppearance, rowsOf } from '../stats/plateAppearances'
@@ -266,6 +266,9 @@ export async function buildNext(
     return outcome
   } catch (error) {
     if (picked.gameId == null) throw error
+    // No connection says nothing about the game: it stays owed, with no attempt
+    // counted, and whoever drains asks again.
+    if (isConnectionUnavailable(error)) throw error
     console.error(`stats builder: game ${picked.gameId} failed`, error)
     const message = error instanceof Error ? error.message : String(error)
     await markFailed(db, picked.gameId, picked.gen, message, clock)
