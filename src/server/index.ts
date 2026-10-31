@@ -11,6 +11,7 @@ import express from 'express'
 import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
+import { makeChangeFeed } from './changeFeed/makeChangeFeed'
 import { spaceObjectStore, startChatPurge } from './chat/attachments'
 import { startChatReconciler } from './chat/reconciler'
 import { makeDatabase } from './db/database'
@@ -353,6 +354,11 @@ function startChatAttachmentPurge(db: ReturnType<typeof makeDatabase>): void {
   startChatPurge(db, { space: serverConfig.space, uploadsDir: uploadsDir() })
 }
 
+/** Why a process's feed lost its connection, and the like, for its log. */
+function logFeed(message: string): void {
+  console.error(`change feed: ${message}`)
+}
+
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
@@ -363,7 +369,7 @@ function runPrimary(workerCount: number): void {
   startPurge(primaryDb)
   startKeySweep(primaryDb)
   startChatAttachmentPurge(primaryDb)
-  startChatReconciler(primaryDb, serverConfig.databaseUrl)
+  startChatReconciler(primaryDb, makeChangeFeed(serverConfig, logFeed))
   const builder = startStatsBuilder({
     enabled: serverConfig.statsBuilder,
     supervise: () =>
@@ -744,7 +750,9 @@ function runWorker(): void {
   )
   // One upgrade listener. Node delivers an upgrade to every listener on the
   // same socket, so each socket takes only the paths it owns.
+  const feed = makeChangeFeed(serverConfig, logFeed)
   const gameSocket = attachGameSocket(server, db, serverConfig.databaseUrl, {
+    feed,
     listenForUpgrades: false
   })
   const closeScoreboard = attachScoreboard(server, scoreboard.hub, {
@@ -782,7 +790,7 @@ function runWorker(): void {
     reopenInterrupted(db)
     startPurge(db)
     startChatAttachmentPurge(db)
-    startChatReconciler(db, serverConfig.databaseUrl)
+    startChatReconciler(db, feed)
     builder = startStatsBuilder({
       enabled: serverConfig.statsBuilder,
       supervise: () =>
@@ -816,6 +824,7 @@ function runWorker(): void {
       destroyDatabase: async () => {
         await stopAnalytics()
         await stopLogging()
+        await feed.close()
         await db.destroy()
       },
       cutConnectionsMs: WORKER_CUT_CONNECTIONS_MS,

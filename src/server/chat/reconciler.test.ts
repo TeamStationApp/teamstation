@@ -12,6 +12,7 @@ import {
   dropScratchDatabase,
   testDatabaseUrl
 } from '../../migrate/testDatabase'
+import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
 import { type Database, makeDatabase } from '../db/database'
 import { type ChatFixture, openChatFixture } from './chatTestFixture'
 import { createDm } from './dms'
@@ -705,9 +706,13 @@ describe('the chat reconciler (U5)', function () {
         league_id: fixture.seed.leagueId
       })
       .execute()
+    const feed = new PostgresFeed({
+      databaseUrl: fixture.url,
+      log: line => lines.push(line)
+    })
     const reconciler = new ChatReconciler({
       db,
-      databaseUrl: fixture.url,
+      feed,
       debounceMs: 20,
       now: () => fixture.now,
       log: line => lines.push(line)
@@ -741,7 +746,8 @@ describe('the chat reconciler (U5)', function () {
       const pool = new Pool({ connectionString: fixture.url })
       await pool.query(
         `select pg_terminate_backend(pid) from pg_stat_activity
-         where datname = current_database() and query ilike 'listen chat_dirty%'`
+         where datname = current_database() and application_name = $1`,
+        [FEED_APPLICATION_NAME]
       )
       await pool.end()
       await wait(100)
@@ -761,13 +767,12 @@ describe('the chat reconciler (U5)', function () {
       }
       expect(await members(announcements.id)).includes('J8')
       expect(Date.now() - cutAt).to.be.greaterThan(700)
-      expect(lines.some(line => line.includes('lost the chat_dirty'))).equals(
-        true
-      )
+      expect(lines.some(line => line.includes('lost the feed'))).equals(true)
       await reconciler.sweep()
       reconciler.notified()
     } finally {
       await reconciler.close()
+      await feed.close()
     }
     reconciler.notified()
     await reconciler.drain()

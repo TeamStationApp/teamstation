@@ -23,6 +23,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
+import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
 import { type Database, makeDatabase } from '../db/database'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
@@ -408,7 +409,6 @@ describe('the game socket (U14)', function () {
       stopSignals: signals,
       fanout: {
         coalesceMs: 20,
-        retryMs: 50,
         log: () => undefined,
         readSong: async (reader, teamId, userId) => {
           if (songsTimeOut)
@@ -968,15 +968,34 @@ describe('the game socket (U14)', function () {
   })
 
   describe('losing the listener', function () {
-    it('closes every socket with 1012 so its client reconnects and resyncs', async function () {
+    const feedConnections = async (): Promise<number> =>
+      (
+        await adminPool!.query(
+          `select pid from pg_stat_activity
+           where datname = $1 and application_name = $2`,
+          [scratchName, FEED_APPLICATION_NAME]
+        )
+      ).rows.length
+
+    it('closes each socket watching a game with 1012 once the feed returns, so its client reconnects and resyncs', async function () {
       const listener = await listen(VIEWER)
+      const watchingNothing = await listen(VIEWER)
       await subscribed(listener, scored)
+      // Every channel the worker hears shares the one connection.
+      expect(await feedConnections()).equals(1)
+      const cutAt = Date.now()
       await adminPool!.query(
         `select pg_terminate_backend(pid) from pg_stat_activity
-         where datname = $1 and query ilike 'listen %'`,
-        [scratchName]
+         where datname = $1 and application_name = $2`,
+        [scratchName, FEED_APPLICATION_NAME]
       )
+      await wait(200)
+      expect(listener.ws.readyState).equals(WebSocket.OPEN)
       expect(await listener.closed).equals(1012)
+      expect(Date.now() - cutAt).greaterThan(700)
+      expect(await feedConnections()).equals(1)
+      expect(watchingNothing.ws.readyState).equals(WebSocket.OPEN)
+      watchingNothing.ws.terminate()
       // It listens again, and a new socket hears the next change.
       await wait(200)
       const again = await listen(VIEWER)
@@ -1033,6 +1052,37 @@ describe('the game socket (U14)', function () {
       await handle.fanout.listening
       await handle.close()
       expect(process.listenerCount('SIGTERM')).equals(before)
+    })
+
+    it('leaves open a feed it was given', async function () {
+      const plain = createServer()
+      const feed = new PostgresFeed({
+        databaseUrl: scratchUrl,
+        log: () => undefined
+      })
+      const handle = attachGameSocket(
+        plain,
+        db!,
+        'postgres://unused.example.test/none',
+        {
+          feed,
+          stopSignals: null
+        }
+      )
+      expect(handle.feed).equals(feed)
+      await handle.fanout.listening
+      await handle.close()
+      const heard: Array<string | undefined> = []
+      const { listening } = feed.subscribe('feed_probe', {
+        onPayload: payload => {
+          heard.push(payload)
+        }
+      })
+      await listening
+      await feed.publishEphemeral('feed_probe', 'still open', db!)
+      for (let i = 0; i < 100 && heard.length === 0; i++) await wait(20)
+      expect(heard).deep.equals(['still open'])
+      await feed.close()
     })
   })
 })

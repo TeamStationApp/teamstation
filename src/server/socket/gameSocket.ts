@@ -20,6 +20,8 @@ import {
 } from '../access'
 import { type Actor, actorForToken, keyAllows } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
+import type { ChangeFeed } from '../changeFeed/feed'
+import { PostgresFeed } from '../changeFeed/postgresFeed'
 import { mayPost, type PostingStanding } from '../chat/messages'
 import type { Database } from '../db/database'
 import {
@@ -60,12 +62,17 @@ export interface GameSocketOptions {
    * for none.
    */
   stopSignals?: NodeJS.EventEmitter | null
-  fanout?: Omit<GameFanoutOptions, 'db' | 'databaseUrl' | 'onLost'>
+  /**
+   * The process's feed, which stays open when the socket closes. Without it
+   * the socket builds and owns a `PostgresFeed` on its `databaseUrl`.
+   */
+  feed?: ChangeFeed
+  fanout?: Omit<GameFanoutOptions, 'db' | 'feed' | 'onResync'>
   screenScopes?: Omit<
     ScreenScopeListenerOptions,
-    'databaseUrl' | 'deliver' | 'onResync'
+    'feed' | 'deliver' | 'onResync'
   >
-  chat?: Omit<ChatFanoutOptions, 'db' | 'databaseUrl'>
+  chat?: Omit<ChatFanoutOptions, 'db' | 'feed'>
   /**
    * Wraps each typing hint's check, which `check` runs. For tests, to make
    * it fail; the check itself unless given.
@@ -93,6 +100,7 @@ export interface GameSocketOptions {
 }
 
 export interface GameSocketHandle {
+  feed: ChangeFeed
   fanout: GameFanout
   screenScopes: ScreenScopeListener
   chat: ChatFanout
@@ -229,19 +237,29 @@ export function attachGameSocket(
     noServer: true,
     maxPayload: MAX_FRAME_BYTES
   })
+  const feed =
+    options.feed ??
+    new PostgresFeed({
+      databaseUrl,
+      log: message => {
+        log(`change feed: ${message}`)
+      }
+    })
   const fanout = new GameFanout({
     ...options.fanout,
     db,
-    databaseUrl,
-    // Changes went unheard: every client reconnects and reads again.
-    onLost: () => {
+    feed,
+    // Changes went unheard: each client watching a game reconnects and reads
+    // again. A socket watching none has its screen's and chat's own resync.
+    onResync: () => {
       for (const connection of connections)
-        connection.ws.close(1012, 'Changes may have been missed')
+        if (connection.games.size > 0)
+          connection.ws.close(1012, 'Changes may have been missed')
     }
   })
   const screenScopes = new ScreenScopeListener({
     ...options.screenScopes,
-    databaseUrl,
+    feed,
     deliver: async payload => {
       await announce(payload)
     },
@@ -251,7 +269,7 @@ export function attachGameSocket(
         if (connection.screen != null) reply(connection, { type: 'resync' })
     }
   })
-  const chat = new ChatFanout({ ...options.chat, db, databaseUrl })
+  const chat = new ChatFanout({ ...options.chat, db, feed })
 
   const scopesOf = async (connection: Connection): Promise<VisibleScopes> => {
     if (connection.scopes != null && clock() - connection.scopesAt < recheckMs)
@@ -876,6 +894,7 @@ export function attachGameSocket(
       await fanout.close()
       await screenScopes.close()
       await chat.close()
+      if (options.feed == null) await feed.close()
       await new Promise<void>(resolve => {
         wss.close(() => {
           resolve()
@@ -888,6 +907,7 @@ export function attachGameSocket(
   stopSignals?.on('SIGINT', stop)
 
   return {
+    feed,
     fanout,
     screenScopes,
     chat,

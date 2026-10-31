@@ -1,10 +1,10 @@
 import type { Kysely } from 'kysely'
-import { Client } from 'pg'
 
 import { compareUserIds } from '../../common/chatCrypto/userId'
 import { makeId } from '../../common/ids'
 import { asUserId } from '../../common/userId'
 import { onePerson } from '../admin/people'
+import type { ChangeFeed } from '../changeFeed/feed'
 import type { Database } from '../db/database'
 import { survivors } from '../teams/teamStaff'
 import {
@@ -53,9 +53,9 @@ import {
  * empty. A DM is never diffed with an audience; it is re-checked
  * (`recheckDm`).
  *
- * `ChatReconciler` listens on `serverConfig.databaseUrl` (never a pool),
- * debounces 1 s, drains every mark on each (re-)listen, listens again 1 s
- * after losing the connection, and sweeps hourly: it drains, re-checks every
+ * `ChatReconciler` hears `chat_dirty` on the process's feed, debounces 1 s,
+ * drains every mark whenever the feed is first in place or returns, and
+ * sweeps hourly: it drains, re-checks every
  * DM, reconciles every conversation, and creates any missing scope chat.
  */
 
@@ -586,12 +586,10 @@ export async function memberNow(
 
 export interface ChatReconcilerOptions {
   db: Kysely<Database>
-  /** Where the `LISTEN` connection goes: a direct connection, never a pool. */
-  databaseUrl: string
+  /** The process's feed, on the same database as `db`. */
+  feed: ChangeFeed
   /** Notifies within this long are drained once. */
   debounceMs?: number
-  /** How long to wait before listening again after the connection is lost. */
-  retryMs?: number
   /** How often the sweep runs. */
   sweepMs?: number
   now?: () => Date
@@ -600,19 +598,15 @@ export interface ChatReconcilerOptions {
 
 export const CHAT_DIRTY_CHANNEL = 'chat_dirty'
 
-/** The primary's reconciler: `LISTEN chat_dirty`, drains, and the sweep. */
+/** The primary's reconciler: hears `chat_dirty`, drains, and the sweep. */
 export class ChatReconciler {
-  /** Settles once the first `LISTEN` is in place and its drain has run. */
+  /** Settles once the channel is first in place, or that attempt has failed, and any drain has run. */
   readonly listening: Promise<void>
   private readonly db: Kysely<Database>
-  private readonly databaseUrl: string
   private readonly debounceMs: number
-  private readonly retryMs: number
   private readonly now: () => Date
   private readonly log: (message: string) => void
-  private client: Client | undefined
-  private readonly hangingUp = new Set<Promise<void>>()
-  private retry: ReturnType<typeof setTimeout> | undefined
+  private readonly stopListening: () => void
   private debounce: ReturnType<typeof setTimeout> | undefined
   private readonly sweepTimer: ReturnType<typeof setInterval>
   /** Work runs one piece at a time, in order. */
@@ -621,9 +615,7 @@ export class ChatReconciler {
 
   constructor(options: ChatReconcilerOptions) {
     this.db = options.db
-    this.databaseUrl = options.databaseUrl
     this.debounceMs = options.debounceMs ?? 1000
-    this.retryMs = options.retryMs ?? 1000
     this.now = options.now ?? (() => new Date())
     this.log =
       options.log ??
@@ -637,7 +629,19 @@ export class ChatReconciler {
       options.sweepMs ?? 60 * 60 * 1000
     )
     this.sweepTimer.unref?.()
-    this.listening = this.listen()
+    const subscription = options.feed.subscribe(CHAT_DIRTY_CHANNEL, {
+      onPayload: () => {
+        this.notified()
+      },
+      // Whatever was marked while nobody listened.
+      onListening: () => {
+        this.drain().catch(() => undefined)
+      }
+    })
+    this.stopListening = subscription.stop
+    this.listening = subscription.listening.then(async () => {
+      await this.queue
+    })
   }
 
   /** Takes and reconciles every mark there is now. */
@@ -665,14 +669,10 @@ export class ChatReconciler {
 
   async close(): Promise<void> {
     this.closed = true
-    clearTimeout(this.retry)
+    this.stopListening()
     clearTimeout(this.debounce)
     clearInterval(this.sweepTimer)
-    const client = this.client
-    this.client = undefined
-    if (client != null) this.hangUp(client)
     await this.queue
-    await Promise.all([...this.hangingUp])
   }
 
   private async enqueue(work: () => Promise<void>): Promise<void> {
@@ -687,56 +687,12 @@ export class ChatReconciler {
     this.queue = next
     await next
   }
-
-  private hangUp(client: Client): void {
-    const ending: Promise<void> = client
-      .end()
-      .catch(() => undefined)
-      .finally(() => {
-        this.hangingUp.delete(ending)
-      })
-    this.hangingUp.add(ending)
-  }
-
-  private async listen(): Promise<void> {
-    if (this.closed) return
-    const client = new Client({ connectionString: this.databaseUrl })
-    this.client = client
-    client.on('notification', () => {
-      if (this.client === client) this.notified()
-    })
-    client.on('error', error => {
-      this.lost(client, String(error))
-    })
-    client.on('end', () => {
-      this.lost(client, 'the connection ended')
-    })
-    try {
-      await client.connect()
-      await client.query(`listen ${CHAT_DIRTY_CHANNEL}`)
-    } catch (error) {
-      this.lost(client, String(error))
-      return
-    }
-    // Whatever was marked while nobody listened.
-    await this.drain()
-  }
-
-  private lost(client: Client, why: string): void {
-    if (this.client !== client || this.closed) return
-    this.client = undefined
-    this.log(`lost the ${CHAT_DIRTY_CHANNEL} listener: ${why}`)
-    this.hangUp(client)
-    this.retry = setTimeout(() => {
-      this.listen().catch(() => undefined)
-    }, this.retryMs)
-  }
 }
 
 /** Starts the reconciler where `src/server/index.ts` starts the purge. */
 export function startChatReconciler(
   db: Kysely<Database>,
-  databaseUrl: string
+  feed: ChangeFeed
 ): ChatReconciler {
-  return new ChatReconciler({ db, databaseUrl })
+  return new ChatReconciler({ db, feed })
 }
