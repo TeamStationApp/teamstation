@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 import { conflict } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { type Role, type RoleFlag, ROLES } from '../../common/roles'
-import { openAdds } from '../access'
+import { openAddsOf } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -448,11 +448,7 @@ export async function peopleInScope(
   // Somebody here only through open adds shows as the add gave them: a short
   // name, and no addresses, until their side can no longer reject it.
   if (!viewer.isAdmin) {
-    const open = new Map(
-      await Promise.all(
-        teamIds.map(async id => [id, await openAdds(db, id)] as const)
-      )
-    )
+    const open = await openAddsOf(db, teamIds)
     const held = [...people.values()].filter(
       each =>
         each.teams.length > 0 &&

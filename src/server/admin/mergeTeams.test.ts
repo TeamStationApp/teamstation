@@ -372,6 +372,72 @@ describe('merging two rows that are one team', function () {
         initiating_team_id: houser
       })
       .execute()
+    // The other way: adds by the team that stays of somebody the team that
+    // goes had, as a player and as nothing but a coach.
+    const addedHere = async (
+      id: string,
+      name: string,
+      leaving: { role: 'member' | 'owner'; isPlayer: boolean }
+    ): Promise<string> => {
+      const userId = await insertUser(db!, {
+        display_name: name,
+        password_hash: null,
+        login_enabled: false,
+        is_admin: false
+      })
+      const membershipId = makeId('membership')
+      await db!
+        .insertInto('memberships')
+        .values([
+          {
+            id: membershipId,
+            user_id: userId,
+            team_id: hawks,
+            role: 'member',
+            is_player: true
+          },
+          {
+            id: makeId('membership'),
+            user_id: userId,
+            team_id: houser,
+            role: leaving.role,
+            is_player: leaving.isPlayer,
+            jersey: '4'
+          }
+        ])
+        .execute()
+      await db!
+        .insertInto('group_requests')
+        .values({
+          id,
+          kind: 'playerAdd',
+          sender_id: sender,
+          sender_scope_type: 'team',
+          sender_scope_id: hawks,
+          terms: JSON.stringify({
+            kind: 'playerAdd',
+            mode: 'roster',
+            teamId: hawks,
+            userId,
+            membershipId,
+            createdMembership: true
+          }),
+          status: 'applied',
+          sent_at: new Date(),
+          expires_at: new Date(Date.now() + 86400000),
+          initiating_team_id: hawks
+        })
+        .execute()
+      return membershipId
+    }
+    await addedHere('grq_merge_into_player', 'Player Both', {
+      role: 'member',
+      isPlayer: true
+    })
+    const staying = await addedHere('grq_merge_into_coach', 'Coach Leaving', {
+      role: 'owner',
+      isPlayer: false
+    })
     const notices = await listenScreenScopes(db)
     const mark = notices.mark()
     const report = await mergeTeams(db, {
@@ -388,6 +454,33 @@ describe('merging two rows that are one team', function () {
     expect(coach.status).equals('applied')
     expect(coach.terms).not.has.property('createdMembership')
     expect(coach.terms).has.property('previous').that.includes({ jersey: '9' })
+    // The add now stands on the row that stayed.
+    expect((coach.terms as { membershipId: string }).membershipId).equals(
+      (
+        await db
+          .selectFrom('memberships')
+          .select('id')
+          .where('team_id', '=', hawks)
+          .where('user_id', '=', survivor)
+          .executeTakeFirstOrThrow()
+      ).id
+    )
+    const here = async (
+      id: string
+    ): Promise<{ status: string; terms: unknown }> =>
+      await db!
+        .selectFrom('group_requests')
+        .select(['status', 'terms'])
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+    expect((await here('grq_merge_into_player')).status).equals('superseded')
+    const keptCoach = await here('grq_merge_into_coach')
+    expect(keptCoach.status).equals('applied')
+    expect(keptCoach.terms).not.has.property('createdMembership')
+    expect(keptCoach.terms)
+      .has.property('previous')
+      .that.includes({ jersey: '4' })
+    expect(keptCoach.terms).to.include({ membershipId: staying })
     const add = await db
       .selectFrom('group_requests')
       .select(['initiating_team_id', 'sender_scope_id', 'game_id', 'terms'])

@@ -97,6 +97,8 @@ export interface PlayerAddTerms {
   side?: 'away' | 'home'
   jersey: string | null
   positions: string[]
+  /** The row the add landed on: gone or no player's, the add no longer stands. */
+  membershipId?: string
   /** Whether the add made the membership, so a rejection removes it whole. */
   createdMembership?: boolean
   /** The jersey and positions a membership held before the add, to restore. */

@@ -92,6 +92,7 @@ export interface RuleBreak {
 export class DmFacts {
   private readonly rows = new Map<string, UserRow | null>()
   private readonly teams = new Map<string, string[]>()
+  private readonly settled = new Map<string, string[]>()
   private readonly seasons = new Map<string, string[]>()
   private readonly staff = new Map<string, Set<string>>()
   private readonly kin = new Map<
@@ -170,13 +171,13 @@ export class DmFacts {
    * player.
    */
   async settledTeams(userId: string): Promise<string[]> {
+    const known = this.settled.get(userId)
+    if (known != null) return known
     const teams = await this.playerTeams(userId)
-    if (teams.length === 0) return teams
-    const held = await openAddTeams(
-      this.db,
-      await rowsOfPeople(this.db, [userId])
-    )
-    return teams.filter(team => !held.includes(team))
+    const held = teams.length === 0 ? [] : await openAddTeams(this.db, [userId])
+    const settled = teams.filter(team => !held.includes(team))
+    this.settled.set(userId, settled)
+    return settled
   }
 
   async isPlayer(userId: string): Promise<boolean> {

@@ -16,8 +16,15 @@ import { newSetup } from '../../common/scoring/lineup'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
-import { mayEditName, mayManagePlayer } from '../access'
-import { MERGE_LOCK } from '../admin/people'
+import {
+  mayEditName,
+  mayManagePlayer,
+  openAdds,
+  openAddsOf,
+  openAddTeams,
+  settledTeams
+} from '../access'
+import { closeInto, MERGE_LOCK } from '../admin/people'
 import { hashToken } from '../auth/tokens'
 import { audienceOf, teamGuardianRows } from '../chat/audiences'
 import { DmFacts } from '../chat/dms'
@@ -58,6 +65,7 @@ import {
   playerAddApprovers,
   playerAddPolicy,
   recordPlayerAdd,
+  rejoinedSince,
   supersededPlayerAdd
 } from './noticePolicy'
 import { guardianInviteAs } from './requests'
@@ -1477,6 +1485,130 @@ describe('adds made with a notice', function () {
     // With the newer add undone, the older one is the latest again: its own
     // games are his to take off his record too.
     expect(await card(first.requestId!)).to.include({ canReject: true })
+  })
+
+  it('ends a hold with the row it landed on, and a rejection of anybody back another way', async function () {
+    await person('Back Again', { login: true })
+    const added = await add('roster', 'Back Again')
+    const backAgain = ids['Back Again']
+    const stored = await request(added.requestId!)
+    const row = (stored.terms as PlayerAddTerms).membershipId!
+    expect(row).to.be.a('string')
+    expect(await openAdds(db!, TEAM.falcons)).includes(backAgain)
+    expect((await openAddsOf(db!, [TEAM.falcons])).get(TEAM.falcons)).includes(
+      backAgain
+    )
+    expect(await settledTeams(db!, [backAgain])).deep.equals([])
+    // A coach takes them off the team: nothing holds them, and with no row
+    // the rejection may still take the add's games off their record.
+    await db!.deleteFrom('memberships').where('id', '=', row).execute()
+    expect(await openAdds(db!, TEAM.falcons)).not.includes(backAgain)
+    expect(await rejoinedSince(db!, stored.terms as PlayerAddTerms)).equals(
+      false
+    )
+    // Back by an invitation, on a row the add never made: not held, and a
+    // rejection is refused and leaves the row.
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: backAgain,
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    expect(await openAdds(db!, TEAM.falcons)).not.includes(backAgain)
+    expect(await settledTeams(db!, [backAgain])).deep.equals([TEAM.falcons])
+    let refused: unknown
+    try {
+      await decide('Back Again', added.requestId!, 'decline')
+    } catch (error) {
+      refused = error
+    }
+    expect(String((refused as Error)?.message)).includes(
+      'on the team another way'
+    )
+    expect(await membership('Back Again', TEAM.falcons)).to.include({
+      is_player: true
+    })
+  })
+
+  it('still rejects an add whose person is off the team, games and all', async function () {
+    await person('Gone Off', { login: true })
+    const added = await add('roster', 'Gone Off')
+    const stored = await request(added.requestId!)
+    await db!
+      .deleteFrom('memberships')
+      .where('id', '=', (stored.terms as PlayerAddTerms).membershipId!)
+      .execute()
+    expect(await decide('Gone Off', added.requestId!, 'decline')).equals(
+      'declined'
+    )
+  })
+
+  it('holds somebody the team had in another role, once a player by the add', async function () {
+    await person('Team Parent', { login: true })
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Team Parent'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    const added = await add('roster', 'Team Parent')
+    const stored = await request(added.requestId!)
+    expect((stored.terms as PlayerAddTerms).createdMembership).equals(false)
+    expect(await openAdds(db!, TEAM.falcons)).includes(ids['Team Parent'])
+  })
+
+  it('finds a hold by every row of somebody merged since', async function () {
+    await person('Merged After', { login: true })
+    await person('Kept After', { login: true })
+    const added = await add('roster', 'Merged After')
+    const stored = await request(added.requestId!)
+    await closeInto(db!, ids['Merged After'], ids['Kept After'])
+    const open = await openAdds(db!, TEAM.falcons)
+    expect(open).includes(ids['Kept After'])
+    expect(await openAddTeams(db!, [ids['Kept After']])).deep.equals([
+      TEAM.falcons
+    ])
+    expect(await rejoinedSince(db!, stored.terms as PlayerAddTerms)).equals(
+      false
+    )
+  })
+
+  it('leaves the row a merged account already held when its add is rejected', async function () {
+    await person('Duplicate', { login: true })
+    await person('Long Player', { login: true })
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Long Player'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    const added = await add('roster', 'Duplicate')
+    await closeInto(db!, ids.Duplicate, ids['Long Player'])
+    expect(await openAdds(db!, TEAM.falcons)).not.includes(ids['Long Player'])
+    let refused: unknown
+    try {
+      await decide('Long Player', added.requestId!, 'decline')
+    } catch (error) {
+      refused = error
+    }
+    expect(String((refused as Error)?.message)).includes(
+      'on the team another way'
+    )
+    expect(await membership('Long Player', TEAM.falcons)).to.include({
+      is_player: true
+    })
   })
 
   it('waits behind a merge holding the parent graph, rather than deadlock with it', async function () {

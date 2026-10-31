@@ -299,14 +299,16 @@ export async function mergeTeams(
     await keepPrivacy(trx, intoTeamId, stricter)
     // A player add is the team's: its rejection undoes it there, and the
     // team's next add reads what became of the last.
-    // Unless the team that stays had the person anyway, on any row of theirs:
-    // the add made nothing there, and rejecting it must not take them off
-    // their own team. As a player, it has nothing left to undo; as anything
-    // else, it undoes the playing and leaves the row as it was.
+    // Unless the other team had the person anyway, on any row of theirs, in
+    // either direction: the add made nothing there, and rejecting it must not
+    // take them off their own team. As a player, it has nothing left to undo;
+    // as anything else, it undoes the playing and leaves the row as it was,
+    // and follows the row that stays.
     await sql`with recursive family(request_id, id) as (
         select id, terms->>'userId' from group_requests
           where kind = 'playerAdd' and status = 'applied'
-            and initiating_team_id = ${fromTeamId} and terms->>'mode' = 'roster'
+            and initiating_team_id in (${fromTeamId}, ${intoTeamId})
+            and terms->>'mode' = 'roster'
         union
         select f.request_id, related.id from family f
           join users u on u.id = f.id
@@ -315,9 +317,12 @@ export async function mergeTeams(
       ),
       held as (
         select distinct on (f.request_id) f.request_id,
-            m.is_player, m.jersey, m.positions
+            m.id, m.is_player, m.jersey, m.positions
           from family f
-          join memberships m on m.user_id = f.id and m.team_id = ${intoTeamId}
+          join group_requests asked on asked.id = f.request_id
+          join memberships m on m.user_id = f.id and m.team_id = case
+            when asked.initiating_team_id = ${fromTeamId} then ${intoTeamId}
+            else ${fromTeamId} end
           order by f.request_id, m.is_player desc
       )
       update group_requests r set
@@ -327,6 +332,9 @@ export async function mergeTeams(
           else (r.terms - 'createdMembership') || jsonb_build_object(
             'previous', jsonb_build_object(
               'jersey', held.jersey, 'positions', to_jsonb(held.positions)))
+            || case when r.initiating_team_id = ${fromTeamId}
+              then jsonb_build_object('membershipId', held.id)
+              else '{}'::jsonb end
           end
       from held where held.request_id = r.id`.execute(trx)
     await sql`update group_requests set

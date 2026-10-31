@@ -157,11 +157,12 @@ export async function applyPlayerAdd(
       .where('user_id', 'in', person.userIds)
       .orderBy(sql`user_id = ${person.userId}`, 'desc')
       .executeTakeFirst()
+    const membershipId = membership?.id ?? makeId('membership')
     if (membership == null)
       await trx
         .insertInto('memberships')
         .values({
-          id: makeId('membership'),
+          id: membershipId,
           user_id: person.userId,
           team_id: terms.teamId,
           role: 'member',
@@ -185,6 +186,7 @@ export async function applyPlayerAdd(
     noteScopeChange(trx, { teamId: terms.teamId, userId: person.userId })
     return {
       ...terms,
+      membershipId,
       createdMembership: membership == null,
       ...(membership == null
         ? {}
@@ -573,6 +575,28 @@ async function playedGames(
  * Undoing by team and person would undo that later add with this one's
  * terms, so only the latest add can be rejected.
  */
+/**
+ * Whether a roster add's person is on the team by a row it did not land on:
+ * they came back another way, or a merge folded theirs into one already there.
+ * A rejection must not take that row. Off the team altogether, it still may
+ * take the add's games off their record.
+ */
+export async function rejoinedSince(
+  db: Db,
+  terms: PlayerAddTerms
+): Promise<boolean> {
+  if (terms.mode !== 'roster' || terms.membershipId == null) return false
+  const person = await personOf(db, terms.userId)
+  const row = await db
+    .selectFrom('memberships')
+    .select('id')
+    .where('team_id', '=', terms.teamId)
+    .where('user_id', 'in', person.userIds)
+    .where('id', '!=', terms.membershipId)
+    .executeTakeFirst()
+  return row != null
+}
+
 export async function supersededPlayerAdd(
   db: Db,
   request: StoredRequest
@@ -933,6 +957,8 @@ async function decideOnce(
       throw conflict(
         'They were added again since. Reject the newer notice instead.'
       )
+    if (await rejoinedSince(trx, terms))
+      throw conflict('They are on the team another way now.')
     const games = await undoPlayerAdd(trx, request, terms)
     await resolve('declined')
     await noticeRemoval(trx, actor, request, terms, games, clock)

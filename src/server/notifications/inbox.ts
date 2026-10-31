@@ -5,13 +5,18 @@ import type { GroupRef } from '../../common/groupCreation'
 import {
   isSchedulingNews,
   type Notification,
+  type PlayerAddTerms,
   RECORDING_UPLOAD
 } from '../../common/notifications'
 import type { Role } from '../../common/roles'
 import { adminScopes, guardedRows, roleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database, NotificationEventsTable } from '../db/database'
-import { mayAnswerPlayerAdd, supersededPlayerAdd } from '../groups/noticePolicy'
+import {
+  mayAnswerPlayerAdd,
+  rejoinedSince,
+  supersededPlayerAdd
+} from '../groups/noticePolicy'
 import {
   approvesSide,
   type Clock,
@@ -368,7 +373,8 @@ export async function notificationFor(
     notice &&
     eligible &&
     request.expires_at.getTime() > clock.now().getTime() &&
-    !(await supersededPlayerAdd(db, request))
+    !(await supersededPlayerAdd(db, request)) &&
+    !(await rejoinedSince(db, request.terms as PlayerAddTerms))
   const row: Listed = {
     // An applied add its approver may still reject, until they dismiss it:
     // news like a request waiting on them, without anything to accept.

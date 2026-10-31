@@ -4,7 +4,7 @@ import { conflict } from '../../common/errors'
 import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import type { StoredGame } from '../../common/scoring/session'
 import { withNames } from '../../common/scoring/storedNames'
-import { openAdds } from '../access'
+import { openAddsOf } from '../access'
 import { UnresolvedAccount } from '../admin/people'
 import type { Database } from '../db/database'
 import {
@@ -128,9 +128,9 @@ async function withoutBorrowed(
   teams: ReadonlySet<string>
 ): Promise<number[]> {
   if (ids.length === 0) return ids
-  const held = (
-    await Promise.all([...teams].map(async team => await openAdds(db, team)))
-  ).flatMap(open => [...open])
+  const held = [...(await openAddsOf(db, [...teams])).values()].flatMap(
+    open => [...open]
+  )
   const [pool, withdrawn] =
     gameId == null
       ? [[], []]

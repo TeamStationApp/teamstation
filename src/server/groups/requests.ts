@@ -21,6 +21,7 @@ import {
   guardsPlayer,
   openAddTeams,
   roleScopes,
+  settledTeams,
   teamsPlayedOnNow,
   visibleScopes
 } from '../access'
@@ -307,10 +308,7 @@ async function coachesPlayer(
 ): Promise<boolean> {
   // Not a team holding them only by an open add: their guardian is the side
   // that add answers to.
-  const held = new Set(await openAddTeams(db, player.userIds))
-  const plays = (await teamsPlayedOnNow(db, player.userIds)).filter(
-    teamId => !held.has(teamId)
-  )
+  const plays = await settledTeams(db, player.userIds)
   if (plays.length === 0) return false
   const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
   if (plays.some(teamId => canCoach(scopes, teamId))) return true

@@ -1,7 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import { ageOn } from '../../common/age'
-import { openAdds } from '../access'
+import { openAddsOf } from '../access'
 import type { ChatKind, Database } from '../db/database'
 import { rowsOfPeople, STAFF_ROLES, survivors } from '../teams/teamStaff'
 
@@ -248,18 +248,6 @@ async function teamMemberIds(
       .map(row => row.user_id),
     ...(await teamGuardianRows(db, teamIds))
   ]
-}
-
-/** Each team's open adds (`openAdds`). */
-async function openAddsOf(
-  db: Kysely<Database>,
-  teamIds: string[]
-): Promise<Map<string, Set<string>>> {
-  return new Map(
-    await Promise.all(
-      teamIds.map(async id => [id, await openAdds(db, id)] as const)
-    )
-  )
 }
 
 /**

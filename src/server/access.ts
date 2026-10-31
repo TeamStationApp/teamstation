@@ -283,16 +283,10 @@ export async function mayManagePlayer(
   const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
   if (teamId != null) return canManageRoster(scopes, teamId)
   const player = await onePerson(db, playerUserId)
-  const plays = await teamsPlayedOnNow(db, player.userIds)
   // A team holding them only by an open add manages what is the team's, by
   // the route with its id: not what is the person's.
-  for (const team of plays)
-    if (
-      canManageRoster(scopes, team) &&
-      !(await heldByOpenAdd(db, team, player.userIds))
-    )
-      return true
-  return false
+  const plays = await settledTeams(db, player.userIds)
+  return plays.some(team => canManageRoster(scopes, team))
 }
 
 /**
@@ -1358,52 +1352,125 @@ export async function mayEditName(
     .where('is_player', '=', true)
     .where('team_id', 'in', [...staffOf])
     .execute()
-  for (const row of plays)
-    if (!(await heldByOpenAdd(db, row.team_id, player.userIds))) return true
-  return false
+  const held = await openAddTeams(db, player.userIds)
+  return plays.some(row => !held.includes(row.team_id))
+}
+
+/** One add a team still holds a person by, with every row of that person. */
+interface OpenHold {
+  teamId: string
+  userIds: string[]
 }
 
 /**
- * The people a team holds only through an add its player's side may still
- * reject. Until then their name and hands are not the team's to read whole or
- * to write: a rejection undoes the add, and could not undo that.
+ * The holds in force: a roster add inside the window its player's side may
+ * reject it in, while the row it landed on stands as a player's. Removing them
+ * ends it, and so does a merge that took the row away. Until then their name,
+ * hands and family are not the team's: a rejection undoes the add, and could
+ * not undo those. An add made before rows were recorded has none to check, and
+ * counts. `userIds` are what a merge since left of the person, so a read by
+ * row and a read by the id stored both find them.
  */
+async function openHolds(
+  db: Kysely<Database>,
+  scope: { teamIds: readonly string[] } | { userIds: readonly string[] }
+): Promise<OpenHold[]> {
+  const asked = 'teamIds' in scope ? scope.teamIds : scope.userIds
+  if (asked.length === 0) return []
+  const rows = await db
+    .selectFrom('group_requests')
+    .leftJoin('memberships', join =>
+      join.on(
+        sql<SqlBool>`memberships.id = group_requests.terms->>'membershipId'`
+      )
+    )
+    .select([
+      'group_requests.initiating_team_id as teamId',
+      'memberships.is_player as isPlayer',
+      sql<string>`group_requests.terms->>'userId'`.as('userId'),
+      sql<string | null>`group_requests.terms->>'membershipId'`.as(
+        'membershipId'
+      )
+    ])
+    .where('group_requests.kind', '=', 'playerAdd')
+    .where('group_requests.status', '=', 'applied')
+    .where('group_requests.expires_at', '>', new Date())
+    .where(sql<string>`group_requests.terms->>'mode'`, '=', 'roster')
+    .where(
+      'teamIds' in scope
+        ? sql.ref<string>('group_requests.initiating_team_id')
+        : sql<string>`group_requests.terms->>'userId'`,
+      'in',
+      [...asked]
+    )
+    .execute()
+  const standing = rows.filter(
+    row => row.membershipId == null || row.isPlayer === true
+  )
+  const people = await peopleOf(
+    db,
+    standing.map(row => row.userId)
+  )
+  return standing.map(row => ({
+    teamId: row.teamId!,
+    userIds: people.get(row.userId)?.userIds ?? [row.userId]
+  }))
+}
+
+/** The rows of the people each team holds only by an open add (`openHolds`). */
+export async function openAddsOf(
+  db: Kysely<Database>,
+  teamIds: readonly string[]
+): Promise<Map<string, Set<string>>> {
+  const held = new Map(teamIds.map(id => [id, new Set<string>()]))
+  for (const hold of await openHolds(db, { teamIds }))
+    for (const id of hold.userIds) held.get(hold.teamId)?.add(id)
+  return held
+}
+
+/** The rows of the people a team holds only by an open add (`openHolds`). */
 export async function openAdds(
   db: Kysely<Database>,
   teamId: string
 ): Promise<Set<string>> {
-  const rows = await db
-    .selectFrom('group_requests')
-    .select(sql<string>`terms->>'userId'`.as('userId'))
-    .where('kind', '=', 'playerAdd')
-    .where('status', '=', 'applied')
-    .where('expires_at', '>', new Date())
-    .where('initiating_team_id', '=', teamId)
-    .where(sql<string>`terms->>'mode'`, '=', 'roster')
-    .where(sql<string>`terms->>'createdMembership'`, '=', 'true')
-    .execute()
-  return new Set(rows.map(row => row.userId))
+  return (await openAddsOf(db, [teamId])).get(teamId)!
 }
 
-/** The teams holding a person only by an open add (`openAdds`). */
+/** The teams holding a person only by an open add (`openHolds`). */
 export async function openAddTeams(
   db: Kysely<Database>,
   userIds: readonly string[]
 ): Promise<string[]> {
-  const held: string[] = []
-  for (const team of await teamsPlayedOnNow(db, userIds))
-    if (await heldByOpenAdd(db, team, userIds)) held.push(team)
-  return held
+  const people = await peopleOf(db, userIds)
+  const holds = await openHolds(db, {
+    userIds: [...people.values()].flatMap(person => person.userIds)
+  })
+  return [...new Set(holds.map(hold => hold.teamId))]
 }
 
-/** Whether any of a person's rows is held only by an open add (`openAdds`). */
+/** Whether a team holds a person only by an open add (`openHolds`). */
 export async function heldByOpenAdd(
   db: Kysely<Database>,
   teamId: string,
   userIds: readonly string[]
 ): Promise<boolean> {
-  const open = await openAdds(db, teamId)
-  return userIds.some(id => open.has(id))
+  return (await openAddTeams(db, userIds)).includes(teamId)
+}
+
+/**
+ * The teams a person plays on that stand to them as theirs: `teamsPlayedOnNow`
+ * less those holding them only by an open add. What a right over the person
+ * themself reads, so a new one is safe without knowing about adds.
+ */
+export async function settledTeams(
+  db: Kysely<Database>,
+  userIds: readonly string[]
+): Promise<string[]> {
+  const [plays, held] = await Promise.all([
+    teamsPlayedOnNow(db, userIds),
+    openAddTeams(db, userIds)
+  ])
+  return plays.filter(team => !held.includes(team))
 }
 
 /** Legacy team-follow listing, separate from private team visibility. */
