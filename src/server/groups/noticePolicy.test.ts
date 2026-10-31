@@ -13,6 +13,7 @@ import { makeId } from '../../common/ids'
 import type { PlayerAddTerms } from '../../common/notifications'
 import { placeholderTeamName } from '../../common/placeholderNames'
 import { newSetup } from '../../common/scoring/lineup'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -3593,6 +3594,11 @@ describe('adds made with a notice', function () {
       .executeTakeFirstOrThrow()
     const [guest] = (await gameAvailability(db!, row)).guestPlayers.home
     expect(guest.userId).not.equals(ids['Hidden Guest'])
+    // Not made from the gumbo id: before the cutover that is the account.
+    expect(guest.userId).not.equals(userIdOfGumbo(gumbo['Hidden Guest']))
+    expect(
+      (await gameAvailability(db!, row)).guestPlayers.home[0].userId
+    ).equals(guest.userId)
     expect(guest.bats).equals(null)
     expect(guest.throws).equals(null)
     expect(guest.gumboId).equals(gumbo['Hidden Guest'])
@@ -3678,5 +3684,65 @@ describe('adds made with a notice', function () {
     await person('Bo Li', { teamId: 'tem_noticeGuardedFar' })
     expect(await search('Bo Li')).includes(ids['Bo Li'])
     expect(await search('Bo')).not.includes(ids['Bo Li'])
+  })
+
+  it('names a family member who rejects as family, not a coach', async function () {
+    await person('Family Child', {})
+    await person('Family Aunt', { login: true })
+    await db!
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: ids['Family Aunt'],
+        related_user_id: ids['Family Child'],
+        kind: 'family',
+        can_manage: true
+      })
+      .execute()
+    const added = await add('roster', 'Family Child')
+    await decide('Family Aunt', added.requestId!, 'decline')
+    const event = await db!
+      .selectFrom('notification_events')
+      .select('metadata')
+      .where('source_type', '=', 'playerAddRejected')
+      .where(sql<string>`metadata->>'userId'`, '=', ids['Family Child'])
+      .executeTakeFirstOrThrow()
+    expect(event.metadata).to.include({ remover: 'guardian' })
+  })
+
+  it('lets an import bring back a player of its own with nobody to ask', async function () {
+    await db!
+      .insertInto('external_ids')
+      .values({
+        id: makeId('externalId'),
+        entity_type: 'user',
+        entity_id: await person('Own Import'),
+        system: 'otherLeague',
+        kind: 'player',
+        external_id: 'own-import'
+      })
+      .execute()
+    const posted = await call(
+      TOKENS.coach,
+      'POST',
+      `/teams/${TEAM.falcons}/players`,
+      {
+        players: [
+          {
+            firstName: 'Own',
+            lastName: 'Import',
+            externalId: {
+              system: 'otherLeague',
+              kind: 'player',
+              id: 'own-import'
+            }
+          }
+        ]
+      }
+    )
+    expect(posted.body.results[0].result).equals('joined')
+    expect(await membership('Own Import', TEAM.falcons)).to.include({
+      is_player: true
+    })
   })
 })

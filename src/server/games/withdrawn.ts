@@ -1,5 +1,8 @@
+import { createHash } from 'node:crypto'
+
 import type { Kysely } from 'kysely'
 
+import { type UserId, userIdOfValue } from '../../common/userId'
 import type { Database } from '../db/database'
 
 /**
@@ -23,6 +26,20 @@ export function isWithdrawnKey(id: string | null | undefined): boolean {
 /** A person's id as an answer may carry it: none for a withdrawn line. */
 export function publicUserId(id: string): string | null {
   return isWithdrawnKey(id) ? null : id
+}
+
+/**
+ * The id a withdrawn guest answers in place of their account: one a game's
+ * lists can key on, the same on every read, and nobody's. Not made from the
+ * gumbo id, which is the account's own for those from before the cutover.
+ */
+export function withdrawnUserId(gameId: string, gumboId: number): UserId {
+  const digest = createHash('sha256')
+    .update(`${WITHDRAWN_PREFIX}${gameId}:${gumboId}`)
+    .digest()
+  return userIdOfValue(
+    BigInt(`0x${digest.subarray(0, 15).toString('hex')}`) + 1n
+  )
 }
 
 /**

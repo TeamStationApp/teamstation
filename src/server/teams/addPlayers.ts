@@ -12,14 +12,18 @@ import type {
   TeamPlayersResponse
 } from '../../common/teamMembers'
 import { asUserId } from '../../common/userId'
-import { heldByOpenAdd } from '../access'
+import { heldByOpenAdd, teamsPlayedOnNow } from '../access'
 import { lockPlayerEdits, survivorsOf } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { externalIdLockKey, recordExternalId } from '../db/externalIds'
-import { playerAddKey } from '../groups/noticePolicy'
+import {
+  personOf,
+  playerAddApprovers,
+  playerAddKey
+} from '../groups/noticePolicy'
 import { realClock } from '../groups/requests'
 import { noteScopeChange } from '../socket/syncRevision'
 import { isDeleted } from '../users/deleted'
@@ -284,6 +288,17 @@ async function joinByPolicy(
     error: { code: 'conflict', message }
   })
   if (await isDeleted(trx, userId)) return refused('That account was deleted')
+  // Nobody's: no side to ask, and no team of theirs to hold them from. The
+  // caller knows them by an id only an import of theirs could have written.
+  const { userIds } = await personOf(trx, userId)
+  if (
+    (await playerAddApprovers(trx, userId, teamId)).userIds.length === 0 &&
+    (await teamsPlayedOnNow(trx, userIds)).length === 0
+  ) {
+    await importHands(trx, userId, row)
+    await makePlayer(trx, teamId, userId, row.jersey)
+    return { index, result: 'joined', userId }
+  }
   // A place on the team keeps its jersey, unless it had none.
   const place = await trx
     .selectFrom('memberships')

@@ -3865,7 +3865,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'cannot see gets 404. A person an external id already names, ' +
             'and who is not on the team, joins as any existing player does: ' +
             'at once with a notice their side may reject, or their row ' +
-            'answers a `conflict` when their side must accept first.\n\n' +
+            'answers a `conflict` when their side must accept first, or ' +
+            'when they play for another team and nobody can answer for ' +
+            'them. Somebody with no team and nobody to ask simply joins.\n\n' +
             '**A row:** `firstName` and `lastName` (trimmed, at most 100 ' +
             'characters, either may be empty), `jersey` (at most 3 ' +
             'characters), `bats` (`left`, `right` or `switch`), `throws` ' +

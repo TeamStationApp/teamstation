@@ -7,13 +7,13 @@ import { recordOf } from '../../common/scoring/gumbo'
 import type { Side } from '../../common/scoring/state'
 import { teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered, type Unrostered } from '../../common/unroster'
-import { userIdOfGumbo } from '../../common/userId'
 import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
 import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
 import { resolveGumboIds } from '../scoring/gumboIds'
 import { teamRoster } from '../teams/teamRoster'
 import { withdrawnLabels } from '../users/nameBook'
+import { withdrawnUserId } from './withdrawn'
 
 export interface GameAvailability {
   guests: Guests
@@ -126,7 +126,7 @@ export async function gameAvailability(
       guestPlayers[side].push(
         asRosterEntry({
           // A withdrawn line carries no account: scoring reads it by gumbo id.
-          userId: label == null ? user.id : userIdOfGumbo(id),
+          userId: label == null ? user.id : withdrawnUserId(game.id, id),
           gumboId: id,
           shortName: label ?? names.get(user.id)!,
           // A placeholder is no name to format.

@@ -39,6 +39,7 @@ import {
   NO_DEFAULT_LINEUP,
   placeholderSidesOf
 } from '../../common/scoring/lineupHistory'
+import { onBothSides } from '../../common/scoring/rosterAvailability'
 import { awaitingResult } from '../../common/scoring/rules'
 import {
   type EventStore,
@@ -585,11 +586,19 @@ async function saveSide(
         (await contextOf(trx, gameId, game, stored)) ??
         (await startingContext(trx, gameId, game, sees))
       const availability = await gameAvailability(trx, { id: gameId, ...game })
+      // Somebody on both rosters plays for neither until a coach picks, as a
+      // new game's setup leaves them, so no save has to name them.
+      const contested = onBothSides(
+        availability.roster,
+        availability.guestPlayers,
+        availability.unrostered
+      )
       return {
         stored,
         context,
         guests: availability.guests[body.side].filter(
           id =>
+            !contested.has(id) &&
             !availability.roster[body.side].some(
               row => row.isPlayer && row.gumboId === id
             )
@@ -597,6 +606,7 @@ async function saveSide(
         roster: availability.roster[body.side].filter(
           person =>
             person.isPlayer &&
+            !contested.has(asGumboId(person.gumboId)) &&
             !availability.unrostered[body.side].includes(
               asGumboId(person.gumboId)
             )

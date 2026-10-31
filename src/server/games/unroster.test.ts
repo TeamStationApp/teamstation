@@ -648,4 +648,61 @@ describe('atomic game availability', function () {
         .execute()
     }
   })
+  it('reconciles a game whose only stored play is a lineup change', async () => {
+    const id = 'gam_only_a_change'
+    await db
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: 'team-home',
+        away_team_id: 'team-away',
+        start_at: new Date()
+      })
+      .execute()
+    const initial = fixture()
+    await db
+      .updateTable('games')
+      .set({
+        currentPlay: currentDocumentOf(
+          initial,
+          initial.liveData.plays.currentPlay,
+          { setupBefore: setupOf(initial), actions: [] }
+        )
+      })
+      .where('id', '=', id)
+      .execute()
+    await db
+      .insertInto('events')
+      .values({
+        id: makeId('event'),
+        gameId: id,
+        startTime: new Date(),
+        battingTeamId: 'team-away',
+        gumbo: {
+          about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+          result: { eventType: 'defensive_switch' }
+        }
+      })
+      .execute()
+    await db
+      .updateTable('memberships')
+      .set({ is_player: false })
+      .where('user_id', '=', userIdOfGumbo(2))
+      .where('team_id', '=', 'team-away')
+      .execute()
+    try {
+      await atomic(db, async trx => {
+        await reconcileUnbegunLineup(trx, id)
+      })
+      const away = (await open(id)).state.liveData.boxscore.teams.away
+      expect(away.players).not.includes(2)
+    } finally {
+      await db
+        .updateTable('memberships')
+        .set({ is_player: true })
+        .where('user_id', '=', userIdOfGumbo(2))
+        .where('team_id', '=', 'team-away')
+        .execute()
+    }
+  })
 })

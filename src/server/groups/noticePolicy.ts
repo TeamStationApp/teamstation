@@ -1,4 +1,4 @@
-import { type Kysely, sql, type SqlBool, type Transaction } from 'kysely'
+import { type Kysely, sql, type Transaction } from 'kysely'
 
 import { conflict, forbidden, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
@@ -9,16 +9,15 @@ import {
   placeholderTeamName
 } from '../../common/placeholderNames'
 import { recordOf } from '../../common/scoring/gumbo'
-import { SUBSTITUTION_TYPES } from '../../common/scoring/lineupHistory'
 import { listsByTeam, teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered } from '../../common/unroster'
-import { guardiansWhoCanAct, openAddTeams } from '../access'
+import { guardiansOf, guardiansWhoCanAct, openAddTeams } from '../access'
 import { onePerson, UnresolvedAccount } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { guestGameOpen, inGameAs } from '../games/guestChecks'
-import { hasScoringEventsSql } from '../games/scoringActivity'
+import { hasScoringEventsSql, isRealPlaySql } from '../games/scoringActivity'
 import { reconcileUnbegunLineup } from '../games/unroster'
 import {
   type PlayerRemovedMetadata,
@@ -408,21 +407,13 @@ async function gameStarted(trx: Db, game: { id: string }): Promise<boolean> {
   return row?.begun === true
 }
 
-/**
- * A stored play with a result of its own: an intentional walk begins no game
- * by `gameStarted`'s reading, and is on the record all the same, with the
- * game's lineup past reconciling. A lineup change stored ahead of a first
- * pitch is neither.
- */
-const isRealPlay = sql<SqlBool>`events.gumbo->'result'->>'eventType'
-  not in (${sql.join(SUBSTITUTION_TYPES.map(type => sql.lit(type)))})`
-
+/** Whether a game has a stored play of its own (`isRealPlaySql`). */
 async function hasStoredPlay(trx: Db, game: { id: string }): Promise<boolean> {
   const row = await trx
     .selectFrom('events')
     .select('id')
     .where('gameId', '=', game.id)
-    .where(isRealPlay)
+    .where(isRealPlaySql)
     .executeTakeFirst()
   return row != null
 }
@@ -588,7 +579,7 @@ async function playedGames(
             .selectFrom('events')
             .select('events.id')
             .whereRef('events.gameId', '=', 'games.id')
-            .where(isRealPlay)
+            .where(isRealPlaySql)
         )
       ])
     )
@@ -915,14 +906,9 @@ async function removerOf(
 ): Promise<PlayerRemover> {
   const person = await personOf(trx, terms.userId)
   if (person.userIds.includes(actor.userId)) return 'self'
-  const guardian = await trx
-    .selectFrom('user_links')
-    .select('id')
-    .where('user_id', '=', actor.userId)
-    .where('related_user_id', 'in', person.userIds)
-    .where('kind', '=', 'guardian')
-    .executeTakeFirst()
-  return guardian != null ? 'guardian' : 'coach'
+  const actorRows = (await personOf(trx, actor.userId)).userIds
+  const guardians = await guardiansOf(trx, person.userIds)
+  return guardians.some(id => actorRows.includes(id)) ? 'guardian' : 'coach'
 }
 
 /**

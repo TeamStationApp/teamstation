@@ -971,7 +971,8 @@ describe("saving a side's lineup (U8)", function () {
     keeper: makeId('game'),
     shown: makeId('game'),
     availability: makeId('game'),
-    generation: makeId('game')
+    generation: makeId('game'),
+    contested: makeId('game')
   }
   const TEAMS = {
     away: { id: away, name: 'Visitors' },
@@ -1885,6 +1886,55 @@ describe("saving a side's lineup (U8)", function () {
         .updateTable('teams')
         .set({ default_lineup: null })
         .where('id', 'in', [away, home])
+        .execute()
+    }
+  })
+
+  it('lets either coach save with somebody on both rosters, who plays for neither', async function () {
+    const both = userIdOfGumbo(awayPlayers[8].userId)
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: both,
+        team_id: home,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    try {
+      for (const [side, token] of [
+        ['home', COACH],
+        ['away', AWAY_COACH]
+      ] as const) {
+        const opened = await ScoringSession.open(
+          {
+            load: async () => ({ plays: [], currentPlay: null }),
+            save: async () => {
+              throw new Error('Not saved here')
+            }
+          },
+          games.contested,
+          await startingContext(
+            db!,
+            games.contested,
+            { home_team_id: home, away_team_id: away },
+            () => true
+          ),
+          { requireCurrentSetup: true }
+        )
+        const body = bodyOf(opened.state, side)
+        expect(body.players.map(player => player.gumboId)).not.includes(
+          awayPlayers[8].userId
+        )
+        const saved = await save(games.contested, token, body)
+        expect(saved.status, JSON.stringify(saved.body)).equals(200)
+      }
+    } finally {
+      await db!
+        .deleteFrom('memberships')
+        .where('user_id', '=', both)
+        .where('team_id', '=', home)
         .execute()
     }
   })

@@ -41,7 +41,7 @@ import { contextOf } from '../scoring/replayContext'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { gameAvailability } from './rosterAvailability'
-import { hasScoringEventsSql } from './scoringActivity'
+import { hasScoringEventsSql, isRealPlay } from './scoringActivity'
 
 /** A switch and its lineup change commit together, serialized with scoring writes. */
 export async function setRostered(
@@ -230,10 +230,11 @@ export async function reconcileUnbegunLineup(
     .select(hasScoringEventsSql.as('begun'))
     .where('id', '=', gameId)
     .executeTakeFirstOrThrow()
-  if (begun || (await readPlays(trx, gameId)).length > 0) return
+  const rows = await readPlays(trx, gameId)
+  if (begun || rows.some(row => isRealPlay(row.gumbo))) return
   const stored = await resolveScoringGame(trx, {
-    plays: [],
-    currentPlay: atBatOf(game, false) as CurrentPlay | null
+    plays: rows.map(row => row.gumbo as GumboPlay),
+    currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
   })
   if (
     stored.currentPlay?.teamStation != null &&
