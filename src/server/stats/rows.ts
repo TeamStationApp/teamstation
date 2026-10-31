@@ -207,13 +207,20 @@ export async function statRows(
   // A person whose part in a game was withdrawn: the game keeps the line,
   // under the placeholder name and a key of its own, and their own record
   // (asked by `userId` or `userIds`) leaves it out.
+  const gone = await withdrawnPlayers(
+    db,
+    rows.map(row => row.gameId)
+  )
+  // As they were rejected, and as they are now: they may have merged since.
+  const current = await survivorsOf(
+    db,
+    gone.map(row => row.userId)
+  )
   const withdrawn = new Map(
-    (
-      await withdrawnPlayers(
-        db,
-        rows.map(row => row.gameId)
-      )
-    ).map(row => [`${row.gameId} ${row.userId}`, row])
+    gone.flatMap(row => [
+      [`${row.gameId} ${row.userId}`, row],
+      [`${row.gameId} ${current.get(row.userId)}`, row]
+    ])
   )
   const own = filter.userId != null || filter.userIds != null
   return rows.flatMap(row => {
@@ -223,17 +230,17 @@ export async function statRows(
       withdrawn.get(`${row.gameId} ${row.userId}`)
     // Only the line for the team the add was to: a part they played for the
     // other team in the same game stays theirs.
-    const gone = held?.teamId === row.teamId ? held : undefined
-    if (gone != null) {
+    const line = held?.teamId === row.teamId ? held : undefined
+    if (line != null) {
       if (own) return []
       return [
         {
           ...row,
           extra: row.extra == null ? null : asStatExtras(row.extra),
-          userId: withdrawnKey(gone.requestId, row.gameId),
-          firstName: gone.label,
+          userId: withdrawnKey(line.requestId, row.gameId),
+          firstName: line.label,
           lastName: '',
-          displayName: gone.label
+          displayName: line.label
         }
       ]
     }

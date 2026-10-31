@@ -402,9 +402,10 @@ describe('name books', function () {
     expect([...first.values()]).deep.equals(['Jordan P', 'Jordan P'])
     // Both games' documents in one read.
     expect(plays()).equals(1)
-    // Again: the stamps, the names and the formats, no document.
+    // Again: the stamps, the names, the formats and who was withdrawn, no
+    // document.
     expect(await page()).deep.equals(first)
-    expect(queries).has.length(3)
+    expect(queries).has.length(4)
     expect(plays()).equals(0)
     // One game tagged since: only its scope is read again, and a player its
     // tag names joins it.

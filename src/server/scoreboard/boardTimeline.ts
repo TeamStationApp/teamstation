@@ -326,7 +326,7 @@ async function checkedVersion(
     version:
       scope == null
         ? undefined
-        : versionOf(parts.base, await scopeDigest(db, scope))
+        : versionOf(parts.base, await scopeDigest(db, scope, gameId))
   }
 }
 
@@ -347,7 +347,7 @@ export async function timelineVersion(
     checked.version ??
     versionOf(
       checked.base,
-      await scopeDigest(db, await scopeUnder(db, gameId, checked.stamp))
+      await scopeDigest(db, await scopeUnder(db, gameId, checked.stamp), gameId)
     )
   )
 }
