@@ -1,7 +1,13 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { Router } from 'express'
+import { asPostEventsBody } from '../../src/common/gumboPlay'
+import { ScoringSession } from '../../src/common/scoring/session'
+import { postGamePlays } from '../../src/server/events/postPlays'
+import { insertFixtureUsers } from '../../src/test/insertFixtureUsers'
+import { AWAY_PLAYERS, HOME_PLAYERS, MemoryStore, replayActions, replaySetup } from '../../src/test/replayGameFixture'
 import { makeId } from '../../src/common/ids'
 import { userIdOfGumbo } from '../../src/common/userId'
 import type { MediaContext } from '../../src/server/media/mediaContext'
@@ -9,6 +15,9 @@ import { verifyMediaPath } from '../../src/server/media/mediaTokens'
 import { eventListRoutes } from '../../src/server/routes/eventList'
 import { followRoutes } from '../../src/server/routes/follows'
 import { mediaRoutes } from '../../src/server/routes/media'
+import { scoreboardRoutes } from '../../src/server/routes/scoreboard'
+import { eventRoutes } from '../../src/server/routes/events'
+import type { ScoreboardStore } from '../../src/server/scoreboard/scoreboardStore'
 import { userRoutes } from '../../src/server/routes/users'
 import {
   accountHarness,
@@ -16,27 +25,39 @@ import {
 } from '../../src/test/accountHarness'
 
 /** Synthetic identities and media only; a real database and authorization routes. */
-export async function tvFixture(): Promise<AccountHarness> {
+export async function tvFixture(options: { scored?: boolean; webRoot?: string } = {}): Promise<AccountHarness & { tvMedia: { fail: boolean; live: boolean } }> {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'tv-fixture-'))
+  const hls = path.join(directory, 'clock')
+  const source = process.env.TV_PROBE_FILE
+  if (source !== undefined) {
+    await mkdir(hls)
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', path.resolve(source), '-c', 'copy', '-hls_time', '4', '-hls_segment_type', 'fmp4', '-hls_playlist_type', 'vod', path.join(hls, 'master.m3u8')])
+  }
+  const tvMedia = { fail: false, live: false }
   const mediaRouter = Router()
   let media!: MediaContext
   const h = await accountHarness(
-    undefined,
+    options.webRoot,
     (app, fixture) => {
       media = fixture.media
       media.mediaRoot = directory
       app.get('/api/v1/videos/:videoId/stills/:filename', (_req, res) => {
         res.sendFile(path.resolve('src/test/fixtures/still.jpg'))
       })
-      app.get('/media/{*path}', (req, res) => {
+      app.get('/media/{*path}', async (req, res) => {
+        if (tvMedia.fail) { res.status(503).end(); return }
         const checked = verifyMediaPath(media.mediaSecret, req.path)
         if (!checked.ok) {
           res.status(403).end()
           return
         }
-        res.sendFile(
-          path.join(directory, checked.media.dir, checked.media.rest)
-        )
+        const file = path.join(directory, checked.media.dir, checked.media.rest)
+        if (tvMedia.live && file.endsWith('.m3u8')) {
+          const manifest = await readFile(file, 'utf8')
+          res.type('application/vnd.apple.mpegurl').send(manifest.replace(/#EXT-X-ENDLIST\s*/g, '').replace(/#EXT-X-PLAYLIST-TYPE:VOD\s*/g, ''))
+          return
+        }
+        res.sendFile(file)
       })
       app.use('/api/v1', mediaRouter)
     },
@@ -45,6 +66,9 @@ export async function tvFixture(): Promise<AccountHarness> {
       app.use('/api/v1', eventListRoutes(db, media))
       app.use('/api/v1', userRoutes(db, media.space))
       app.use('/api/v1', followRoutes(db, media))
+      app.use('/api/v1', eventRoutes(db))
+      const noStore = new Proxy({}, { get: () => { throw new Error('Only historical scoreboard endpoints are available') } }) as ScoreboardStore
+      app.use('/api/v1', scoreboardRoutes(db, noStore))
     }
   )
   media.publicUrl = h.origin
@@ -106,17 +130,11 @@ export async function tvFixture(): Promise<AccountHarness> {
         const id = `vid_tv_${i}_${angle}`
         const videoDirectory = path.join(directory, 'work/videos', id)
         await mkdir(videoDirectory, { recursive: true })
-        // Browsing does not need media bytes. Playback journeys provide the local clock clip.
-        const source = process.env.TV_PROBE_FILE
-        if (source !== undefined)
-          await symlink(
-            path.resolve(source),
-            path.join(videoDirectory, 'video.mp4')
-          )
-        await writeFile(
-          path.join(videoDirectory, 'master.m3u8'),
-          '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:60\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:60,\nvideo.mp4\n#EXT-X-ENDLIST\n'
-        )
+        if (source !== undefined) {
+          for (const file of await readdir(hls)) await symlink(path.join(hls, file), path.join(videoDirectory, file))
+        } else {
+          await writeFile(path.join(videoDirectory, 'master.m3u8'), '#EXTM3U\n#EXT-X-ENDLIST\n')
+        }
         await h.db
           .insertInto('videos')
           .values({
@@ -169,6 +187,25 @@ export async function tvFixture(): Promise<AccountHarness> {
           })
           .execute()
     }
+    if (options.scored === true) {
+      await insertFixtureUsers(h.db, [...AWAY_PLAYERS, ...HOME_PLAYERS].map(player => ({ id: player.gumboId, display_name: `${player.first} ${player.last}`, first_name: player.first, last_name: player.last, login_enabled: false })))
+      await h.db.deleteFrom('events').where('gameId', '=', 'gam_tv_0').execute()
+      await h.db.updateTable('games').set({ status: 'inProgress' }).where('id', '=', 'gam_tv_0').execute()
+      const store = new MemoryStore()
+      const setup = replaySetup()
+      for (const player of Object.values(setup.players)) player.teamId = player.teamId === 'tem_replayHawks' ? 'tem_opponent' : 'tem_account'
+      let time = Date.UTC(2026, 9, 30, 18)
+      const session = await ScoringSession.open(store, 'gam_tv_0', { gamePk: 'gam_tv_0', teams: { home: { id: 'tem_account', name: 'Demo Hawks' }, away: { id: 'tem_opponent', name: 'Demo Visitors' } }, setup }, {
+        now: () => new Date(time += 200), setTimer: () => null, clearTimer: () => undefined
+      })
+      for (const action of replayActions(setup)) {
+        const applied = session.apply(action)
+        if (applied.problems.length > 0) throw new Error(applied.problems[0].message)
+      }
+      await session.flush()
+      const stored = store.storedForms()
+      await postGamePlays(h.db, 'gam_tv_0', asPostEventsBody({ plays: stored.plays, currentPlay: stored.currentPlay, mode: 'live', source: { system: 'teamstation' } }))
+    }
   } catch (error) {
     await h.close()
     await rm(directory, { recursive: true, force: true })
@@ -182,5 +219,5 @@ export async function tvFixture(): Promise<AccountHarness> {
       await rm(directory, { recursive: true, force: true })
     }
   }
-  return h
+  return Object.assign(h, { tvMedia })
 }

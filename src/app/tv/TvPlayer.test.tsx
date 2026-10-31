@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
+import { timelineFor } from './playbackTimeline'
 import { TvPlayer } from './TvPlayer'
 
 const game = asVideoGame({
@@ -29,6 +30,7 @@ let root: Root | undefined
 let count = 4
 let fail = false
 let pending = false
+let live = false
 let closed = false
 const client = {
   game: async () => {
@@ -39,13 +41,31 @@ const client = {
           id: String(i),
           title: `Angle ${i}`,
           numCameras: 1,
-          status: 'ready'
+          status: live ? 'live' : 'ready'
         })),
         { id: 'mosaic', title: 'Mosaic', numCameras: 4, status: 'ready' },
         { id: 'processing', numCameras: 1, status: 'processing' }
       ]
     }
   },
+  wallTimeline: async () => timelineFor('2026-10-01T00:00:00Z'),
+  scoreboardTimeline: async () => ({ steps: [], version: 'fixture' }),
+  lineScore: async () => ({
+    steps: [],
+    version: 'fixture',
+    teams: { home: 'Hosts', away: 'Visitors' }
+  }),
+  gameEvents: async () => ({ plays: [], currentPlay: null }),
+  tvHighlights: async () => [
+    {
+      eventId: 'clip',
+      title: 'Home run',
+      startOffsetSec: 5,
+      playOffsetSec: 6,
+      endOffsetSec: 8,
+      stillUrl: 'https://example.test/still.jpg'
+    }
+  ],
   playback: async (id: string) => ({
     url: pending ? null : `https://example.test/${id}.mp4`
   })
@@ -87,6 +107,7 @@ afterEach(async () => {
   count = 4
   fail = false
   pending = false
+  live = false
   closed = false
 })
 describe('TV game playback entry', () => {
@@ -100,6 +121,92 @@ describe('TV game playback entry', () => {
     expect(closed).equals(false)
     await press('Back to games')
     expect(closed).equals(true)
+  })
+  it('toggles persistent surfaces, transfers audio, seeks highlights and reopens their list while playback continues', async () => {
+    await render()
+    const videos = [...document.querySelectorAll('video')]
+    await act(async () => {
+      for (const video of videos) {
+        Object.defineProperty(video, 'duration', {
+          value: 60,
+          configurable: true
+        })
+        video.dispatchEvent(
+          new window.Event('durationchange', { bubbles: true })
+        )
+      }
+      await pause()
+    })
+    expect(
+      document.querySelector('[data-testid="tv-cameras-panel"]')
+    ).not.equals(null)
+    await press('Toggle Angle 0')
+    expect([...document.querySelectorAll('video')]).deep.equals(videos)
+    expect(videos[0].muted).equals(true)
+    expect(videos[1].muted).equals(false)
+    await press('Toggle Angle 0')
+    await press('Close panel')
+    await press('Highlights')
+    await press('Home run')
+    expect(
+      document.querySelector('[data-testid="tv-highlights-panel"]')
+    ).equals(null)
+    expect(videos.map(v => v.currentTime)).deep.equals([5, 5, 5, 5])
+    await act(async () => {
+      videos[0].dispatchEvent(new window.Event('timeupdate', { bubbles: true }))
+      await pause()
+    })
+    await act(async () => {
+      videos[0].currentTime = 9
+      videos[0].dispatchEvent(new window.Event('timeupdate', { bubbles: true }))
+      await pause()
+    })
+    expect(
+      document.querySelector('[data-testid="tv-highlights-panel"]')
+    ).not.equals(null)
+    expect(videos[0].currentTime).equals(9)
+    await press('Close panel')
+    await press('Box score')
+    expect(document.body.textContent).contains(
+      'Statistics unavailable at this point'
+    )
+    await press('Team and player statistics')
+    expect(document.body.textContent).contains('Player statistics unavailable')
+    await press('Close panel')
+    await press('Pause')
+    await press('Play')
+    await press('−10 seconds')
+    expect(videos[0].currentTime).equals(0)
+    await press('+10 seconds')
+    expect(videos[0].currentTime).equals(10)
+    await press('Back to games')
+    expect(closed).equals(true)
+  })
+  it('keeps the native live opening position instead of seeking to the first pitch', async () => {
+    live = true
+    await render()
+    const videos = [...document.querySelectorAll('video')]
+    await act(async () => {
+      for (const video of videos) {
+        Object.defineProperty(video, 'duration', {
+          configurable: true,
+          value: 60
+        })
+        video.currentTime = 40
+        video.dispatchEvent(
+          new window.Event('durationchange', { bubbles: true })
+        )
+      }
+      await pause()
+    })
+    expect(videos.map(video => video.currentTime)).deep.equals([40, 40, 40, 40])
+    await act(async () => {
+      videos[0].dispatchEvent(new window.Event('timeupdate', { bubbles: true }))
+      await pause()
+    })
+    await press('Close panel')
+    await press('−10 seconds')
+    expect(videos.map(video => video.currentTime)).deep.equals([30, 30, 30, 30])
   })
   it('recovers unavailable and pending sources and handles a single camera', async () => {
     fail = true
@@ -127,6 +234,6 @@ describe('TV game playback entry', () => {
       video.dispatchEvent(new window.Event('error', { bubbles: true }))
       await pause()
     })
-    expect(document.body.textContent).contains('camera could not play')
+    expect(document.body.textContent).contains('cameras could not play')
   })
 })

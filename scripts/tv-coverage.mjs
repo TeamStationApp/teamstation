@@ -48,7 +48,8 @@ const changedPaths = [
 ]
 const nativePaths = [
   'appletv/ios/TeamStationTV/AppDelegate.swift',
-  'appletv/ios/TeamStationTV/TVSession.m'
+  'appletv/ios/TeamStationTV/TVSession.m',
+  'appletv/ios/TeamStationTV/TVRemote.m'
 ].filter(path => changedPaths.includes(path))
 const paths = [
   ...new Set([...git(['diff', '--name-only', base]).split('\n'), ...untracked])

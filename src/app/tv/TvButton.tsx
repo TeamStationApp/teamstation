@@ -1,21 +1,24 @@
 import React, { useState } from 'react'
-import { Pressable, Text } from 'react-native'
+import { Pressable, Text, type View } from 'react-native'
 export function TvButton({
   label,
   onPress,
   testID,
   preferred = false,
-  onFocus
+  onFocus,
+  buttonRef
 }: {
   label: string
   onPress: () => void
   testID?: string
   preferred?: boolean
   onFocus?: () => void
+  buttonRef?: React.Ref<React.ComponentRef<typeof View>>
 }): React.ReactElement {
   const [focused, setFocused] = useState(false)
   return (
     <Pressable
+      ref={buttonRef}
       testID={testID}
       accessibilityRole="button"
       accessibilityLabel={label}

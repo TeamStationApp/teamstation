@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
-import { accountHarness } from '../../src/test/accountHarness'
+import { tvFixture } from './fixture'
 
 async function main(): Promise<void> {
   const {
@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   const { MaestroD } = createRequire(path.join(clientRoot, 'package.json'))(
     './dist/cjs/index.js'
   )
-  const h = await accountHarness(path.resolve('dist'))
+  const h = await tvFixture({ webRoot: path.resolve('dist') })
   const daemon = await MaestroD.connect({ name: 'appleTvNative' })
   const tv = await daemon.attach({ device, platform: 'ios' })
   const browserDaemon = await MaestroD.connect({ name: 'appleTvExperience' })
@@ -71,8 +71,10 @@ async function main(): Promise<void> {
     await tv.stopApp({ appId: 'app.teamstation.tv' })
     await tv.launchApp(launch)
     await tv.assertVisible({ text: 'Welcome, Babe Ruth', timeout: 30000 })
-    await tv.pressKey({ key: 'DPAD_DOWN' })
-    await tv.tapOn({ text: 'Sign out' })
+    await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.pressKey({ key: 'DPAD_UP' })
+    await tv.pressKey({ key: 'DPAD_RIGHT' })
+    await tv.tapOn({ id: 'Sign out' })
     await tv.assertVisible({
       text: 'Your games. On the big screen.',
       timeout: 15000
