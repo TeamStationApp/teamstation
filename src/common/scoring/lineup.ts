@@ -1204,7 +1204,9 @@ export function addPlayer(
   jersey = ''
 ): number {
   const id = asGumboId(playerId)
-  if (state.gameData.players[id] != null)
+  // An entry no side lists is what a roster left behind, and gives way.
+  const { away, home } = state.liveData.boxscore.teams
+  if (away.players.includes(id) || home.players.includes(id))
     throw new Error('Player already exists in game')
   if (!state.meta.tagOrder.includes(id)) state.meta.tagOrder.push(id)
   state.gameData.players[id] = {

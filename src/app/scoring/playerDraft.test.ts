@@ -111,6 +111,24 @@ describe('local player entry', function () {
     })
     expect(draft.positions).not.equals(player.positions)
   })
+  it('takes over an entry no side lists, and no other', function () {
+    const session = scoringSession(gameFixture)
+    const team = session.liveData.boxscore.teams.away
+    const stale = 7777
+    session.gameData.players[stale] = {
+      ...session.gameData.players[team.players[0]],
+      id: stale,
+      jersey: '1'
+    }
+    const draft = { ...emptyPlayerDraft(), firstName: 'Back', jersey: '2' }
+    addPlayerDraft(session, 'away', draft, stale)
+    expect(team.players).includes(stale)
+    expect(session.gameData.players[stale].jersey).equals('2')
+    expect(() => addPlayerDraft(session, 'home', draft, stale)).throws(
+      'already exists'
+    )
+  })
+
   it('validates names and jersey without mutating a draft on failure', function () {
     const session = scoringSession(gameFixture)
     const before = JSON.stringify(session)

@@ -3745,4 +3745,50 @@ describe('adds made with a notice', function () {
       is_player: true
     })
   })
+
+  it('refuses an import of somebody nobody answers for who is on the other side', async function () {
+    await person('Guest Elsewhere')
+    await db!
+      .insertInto('external_ids')
+      .values({
+        id: makeId('externalId'),
+        entity_type: 'user',
+        entity_id: ids['Guest Elsewhere'],
+        system: 'otherLeague',
+        kind: 'player',
+        external_id: 'guest-elsewhere'
+      })
+      .execute()
+    const gameId = await game()
+    await db!
+      .updateTable('games')
+      .set({
+        guests: JSON.stringify({
+          [TEAM.herons]: [gumbo['Guest Elsewhere']],
+          [TEAM.falcons]: []
+        })
+      })
+      .where('id', '=', gameId)
+      .execute()
+    const posted = await call(
+      TOKENS.coach,
+      'POST',
+      `/teams/${TEAM.falcons}/players`,
+      {
+        players: [
+          {
+            firstName: 'Guest',
+            lastName: 'Elsewhere',
+            externalId: {
+              system: 'otherLeague',
+              kind: 'player',
+              id: 'guest-elsewhere'
+            }
+          }
+        ]
+      }
+    )
+    expect(posted.body.results[0].result).equals('error')
+    expect(await membership('Guest Elsewhere', TEAM.falcons)).equals(undefined)
+  })
 })

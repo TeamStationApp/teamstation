@@ -2,6 +2,7 @@ import type { Kysely, Transaction } from 'kysely'
 
 import { HttpError } from '../../common/errors'
 import { makeId } from '../../common/ids'
+import type { PlayerAddTerms } from '../../common/notifications'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import type {
   TeamMemberError,
@@ -22,7 +23,8 @@ import { externalIdLockKey, recordExternalId } from '../db/externalIds'
 import {
   personOf,
   playerAddApprovers,
-  playerAddKey
+  playerAddKey,
+  refuseOtherSide
 } from '../groups/noticePolicy'
 import { realClock } from '../groups/requests'
 import { noteScopeChange } from '../socket/syncRevision'
@@ -288,17 +290,6 @@ async function joinByPolicy(
     error: { code: 'conflict', message }
   })
   if (await isDeleted(trx, userId)) return refused('That account was deleted')
-  // Nobody's: no side to ask, and no team of theirs to hold them from. The
-  // caller knows them by an id only an import of theirs could have written.
-  const { userIds } = await personOf(trx, userId)
-  if (
-    (await playerAddApprovers(trx, userId, teamId)).userIds.length === 0 &&
-    (await teamsPlayedOnNow(trx, userIds)).length === 0
-  ) {
-    await importHands(trx, userId, row)
-    await makePlayer(trx, teamId, userId, row.jersey)
-    return { index, result: 'joined', userId }
-  }
   // A place on the team keeps its jersey, unless it had none.
   const place = await trx
     .selectFrom('memberships')
@@ -306,21 +297,29 @@ async function joinByPolicy(
     .where('team_id', '=', teamId)
     .where('user_id', '=', userId)
     .executeTakeFirst()
+  const terms: PlayerAddTerms = {
+    kind: 'playerAdd',
+    mode: 'roster',
+    userId,
+    teamId,
+    jersey: place?.jersey ?? row.jersey,
+    positions: [],
+    teamName: await teamName(trx, teamId)
+  }
   try {
-    const added = await addByPolicy(
-      trx,
-      actor,
-      {
-        kind: 'playerAdd',
-        mode: 'roster',
-        userId,
-        teamId,
-        jersey: place?.jersey ?? row.jersey,
-        positions: [],
-        teamName: await teamName(trx, teamId)
-      },
-      realClock
-    )
+    // Nobody's: no side to ask, and no team of theirs to hold them from.
+    // Anybody presenting their external id gets them, as an import always did.
+    const { userIds } = await personOf(trx, userId)
+    if (
+      (await playerAddApprovers(trx, userId, teamId)).userIds.length === 0 &&
+      (await teamsPlayedOnNow(trx, userIds)).length === 0
+    ) {
+      await refuseOtherSide(trx, userIds, terms)
+      await importHands(trx, userId, row)
+      await makePlayer(trx, teamId, userId, row.jersey)
+      return { index, result: 'joined', userId }
+    }
+    const added = await addByPolicy(trx, actor, terms, realClock)
     if (added.kind === 'pending')
       return refused('Their side must accept this add first')
     // With nobody to tell, no add is open, and they are the team's own.

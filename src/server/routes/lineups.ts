@@ -39,7 +39,10 @@ import {
   NO_DEFAULT_LINEUP,
   placeholderSidesOf
 } from '../../common/scoring/lineupHistory'
-import { onBothSides } from '../../common/scoring/rosterAvailability'
+import {
+  appearedIn,
+  onBothSides
+} from '../../common/scoring/rosterAvailability'
 import { awaitingResult } from '../../common/scoring/rules'
 import {
   type EventStore,
@@ -854,12 +857,29 @@ function sideActions(
     liveData: { boxscore: { teams: setup.sides } },
     meta: { tagOrder: setup.tagOrder }
   }
+  const teamId = state.gameData.teams[side].id
+  const appeared = appearedIn(state)
+  // Somebody the other side's setup still names, and who has not played for
+  // it, is only a saved setup: this side fields them now.
+  const takeOver = (id: number, name: string): void => {
+    const existing = setup.players[id]
+    if (existing == null || existing.teamId === teamId) return
+    if (appeared.has(id))
+      throw badRequest(`${name} is already on the other team`)
+    const other = setup.sides[side === 'away' ? 'home' : 'away']
+    other.players = other.players.filter(held => held !== id)
+    other.battingOrder = other.battingOrder.filter(held => held !== id)
+    other.battingIndex = 0
+    for (const position of POSITIONS)
+      if (other.defense[position] === id) other.defense[position] = null
+  }
   const ids: number[] = []
   for (const player of body.players) {
     if (player.gumboId == null)
       throw badRequest('Create the player before saving the lineup')
     let known = team.players.find(id => id === player.gumboId)
-    if (known == null && guests.includes(player.gumboId))
+    if (known == null && guests.includes(player.gumboId)) {
+      takeOver(player.gumboId, player.fullName)
       known = addPlayer(
         draft,
         side,
@@ -867,6 +887,7 @@ function sideActions(
         player.fullName,
         player.jersey
       )
+    }
     // A guest's name is his account's: a save never renames him, so a stale
     // copy held by an open session or an older build cannot undo a
     // correction (`PUT /games/:gameId/guest-players/:userId` makes one).
@@ -878,20 +899,22 @@ function sideActions(
         throw badRequest(`${player.fullName} is not on this team's roster`)
       const id = asGumboId(entry.gumboId)
       if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
-      const existing = setup.players[id]
-      if (existing != null && existing.teamId !== state.gameData.teams[side].id)
-        throw badRequest(`${player.fullName} is already on the other team`)
+      takeOver(id, player.fullName)
       // Use current roster data, never caller-provided identity/name details.
-      setup.players[id] = existing ?? {
-        id,
-        teamId: state.gameData.teams[side].id,
-        fullName: entry.shortName,
-        jersey: entry.jersey ?? '',
-        bats: entry.bats ?? 'right',
-        throws: entry.throws ?? null,
-        positions: [...entry.positions],
-        local: false
-      }
+      const existing = setup.players[id]
+      setup.players[id] =
+        existing?.teamId === teamId
+          ? existing
+          : {
+              id,
+              teamId,
+              fullName: entry.shortName,
+              jersey: entry.jersey ?? '',
+              bats: entry.bats ?? 'right',
+              throws: entry.throws ?? null,
+              positions: [...entry.positions],
+              local: false
+            }
       known = id
     }
     const id = known
