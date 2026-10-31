@@ -527,9 +527,9 @@ async function main(): Promise<void> {
     await tap({ text: 'Upload' })
     say('$ assertVisible Box score')
     assert((await find(byText('Box score'), 20000)) != null, 'the game opened')
-    say('$ assertVisible Record video')
+    say('$ assertVisible Record Video')
     assert(
-      (await find(byText('Record video'), 10000)) != null,
+      (await find(byText('Record Video'), 10000)) != null,
       'on its Videos tab, where Upload Recording is'
     )
     pass('3 Upload opens the game on its Videos tab')

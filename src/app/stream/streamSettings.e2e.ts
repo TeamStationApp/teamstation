@@ -29,7 +29,7 @@
 // streams on the game named either angle are removed first, so the rename is
 // not refused by an earlier run's camera.
 //
-//   1. Record video → the angle's name → Start; turned upright, the camera
+//   1. Record Video → the angle's name → Record with this phone; turned upright, the camera
 //      stays landscape. Record → "Broadcasting", and the live HLS carries the
 //      microphone (volumedetect).
 //   2. The gear: a screenshot in landscape (two columns). Turned upright, the
@@ -424,7 +424,7 @@ async function main(): Promise<void> {
       // swipe below it instead (the hierarchy holds only what is on screen).
       const below = async (): Promise<boolean> => {
         // Off screen, or reaching down to where the floating tab bar starts.
-        const bounds = (await find(byText('Record video'), 1000))?.bounds
+        const bounds = (await find(byText('Record Video'), 1000))?.bounds
         const screen = (await m.hierarchy()).bounds?.height ?? 2400
         return bounds == null || bounds.y + bounds.height > screen * 0.88
       }
@@ -438,15 +438,15 @@ async function main(): Promise<void> {
         await sleep(800)
       }
     } else {
-      say('$ scrollUntilVisible Record video')
+      say('$ scrollUntilVisible Record Video')
       await m.scrollUntilVisible({
-        element: { text: 'Record video' },
+        element: { text: 'Record Video' },
         centerElement: true
       })
     }
-    say('$ tapOn Record video')
+    say('$ tapOn Record Video')
     const recordVideo = android
-      ? await find(byText('Record video'), 3000)
+      ? await find(byText('Record Video'), 3000)
       : undefined
     if (recordVideo?.bounds != null) {
       // In the middle: the watch tab leaves room under its last row for the
@@ -456,16 +456,16 @@ async function main(): Promise<void> {
         point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`
       })
     } else {
-      await m.tapOn({ text: 'Record video' })
+      await m.tapOn({ text: 'Record Video' })
     }
     assert(
       (await find(byText('Name this camera angle'))) != null,
-      'Record video asks for the angle’s name'
+      'Record Video asks for the angle’s name'
     )
     say(`$ inputText ${angle}`)
     await m.inputText({ text: angle })
-    say('$ tapOn Start')
-    await m.tapOn({ text: 'Start' })
+    say('$ tapOn Record with this phone')
+    await m.tapOn({ text: 'Record with this phone' })
     assert(
       (await find(byId('broadcast-button'), 20000)) != null,
       'the streaming screen opened'
@@ -685,10 +685,10 @@ async function main(): Promise<void> {
     say('$ tapOn camera-close')
     await m.tapOn({ id: 'camera-close' })
     assert(
-      // Android lists only what is on the screen, and Record video may be below it.
+      // Android lists only what is on the screen, and Record Video may be below it.
       (await find(
         node =>
-          node.text === 'Record video' ||
+          node.text === 'Record Video' ||
           (android && node.text === 'Box score'),
         10000
       )) != null,
