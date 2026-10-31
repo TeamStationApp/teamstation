@@ -12,8 +12,15 @@ import type {
   GameSummary,
   ListCounts,
   Page as ListPage,
-  SeasonGame
+  SeasonGame,
+  UmpireSchedulePage
 } from '../common/api'
+import type {
+  UmpireGameRow,
+  UmpireLeaderboard,
+  UmpireSchedule
+} from '../common/umpireSchedule'
+import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { startLongLists } from './longListsFixture.e2e'
 import { longListsSupport } from './longListsSeed'
@@ -93,6 +100,8 @@ const MOST_ROWS_AT_ONCE = 60
 const ROWS_PAST_THE_NEXT = 14
 /** The section title and its space, from the pills to a pill's first row. */
 const MOST_BELOW_PILLS = 110
+/** The plate's position in the umpire table. */
+const SLOT = 'uty_plate:1'
 
 /** One of a milestone's steps, empty until that milestone. */
 function later(step: string): void {
@@ -223,8 +232,11 @@ async function main(): Promise<void> {
   const publicReads: URL[] = []
   const inboxReads: URL[] = []
   const highlightReads: URL[] = []
+  const scheduleReads: URL[] = []
   page.on('request', request => {
     const url = new URL(request.url())
+    if (url.pathname.endsWith(`/leagues/${seeded.leagueId}/umpire-schedule`))
+      scheduleReads.push(url)
     if (url.pathname.endsWith(`/players/${seeded.playerId}/highlights`))
       highlightReads.push(url)
     if (url.searchParams.get('public') === '1') publicReads.push(url)
@@ -263,6 +275,49 @@ async function main(): Promise<void> {
       .slice(at + ROWS_PAST_THE_NEXT)
       .find(game => game.playerRsvps != null)!
   }
+  /** The umpire table's opening, as the server says. */
+  const umpireOpening = async (): Promise<UmpireSchedulePage> => {
+    const answer = await f.h.request(
+      'GET',
+      `/leagues/${seeded.leagueId}/umpire-schedule?view=schedule&paged=1&around=next`,
+      undefined,
+      101
+    )
+    return (await answer.json()) as UmpireSchedulePage
+  }
+  /** A row of the table as the server holds it, wherever it is. */
+  const umpireRow = async (id: string): Promise<UmpireGameRow | undefined> => {
+    const answer = await f.h.request(
+      'GET',
+      `/leagues/${seeded.leagueId}/umpire-schedule?view=schedule`,
+      undefined,
+      101
+    )
+    const { games } = (await answer.json()) as UmpireSchedule
+    return games.find(game => game.id === id)
+  }
+  /** The viewer's row of those scheduled, as the Leaderboard reads it. */
+  const scheduledRow = async (): Promise<
+    UmpireLeaderboard['scheduled'][number] | undefined
+  > => {
+    const answer = await f.h.request(
+      'GET',
+      `/leagues/${seeded.leagueId}/umpire-leaderboard`,
+      undefined,
+      101
+    )
+    const { scheduled } = (await answer.json()) as UmpireLeaderboard
+    return scheduled.find(row => row.userId === userIdOfGumbo(101))
+  }
+  /** What the Leaderboard pill says of those scheduled. */
+  const boardSays = async (): Promise<string> =>
+    await page.$eval('[data-testid="umpire-table"]', table => {
+      const text = table.textContent!
+      return text.slice(
+        text.search(/scheduled and completed games/i),
+        text.search(/team credits/i)
+      )
+    })
   /** The season's counts, as the server says. */
   const seasonCounts = async (): Promise<ListCounts> => {
     const answer = await f.h.request(
@@ -1336,6 +1391,28 @@ async function main(): Promise<void> {
       await page.removeScriptToEvaluateOnNewDocument(identifier)
     },
     E12: async () => {
+      const ROW = '[data-testid^="umpire-game-"]'
+      const rowCss = (id: string): string => `[data-testid="umpire-game-${id}"]`
+      const umpireReads = (): URL[] =>
+        scheduleReads.filter(url => url.searchParams.has('cursor'))
+      if (before) {
+        await open(`/umpires/${seeded.leagueId}`, 'Umpire')
+        await page.waitForSelector('[data-testid="umpire-table"]', {
+          timeout: 20000
+        })
+        await settle('Demo Owls')
+        await pause(900)
+        await shot('umpire-table')
+        return
+      }
+      const opening = await umpireOpening()
+      const anchor = opening.anchorId!
+      assert.equal(anchor, seeded.nextGameId, "E12: the rule's game")
+      assert.ok(
+        opening.prevCursor != null,
+        'E12: rows are older than the first'
+      )
+      scheduleReads.length = 0
       await open(`/umpires/${seeded.leagueId}`, 'Umpire')
       await page.waitForSelector('[data-testid="umpire-table"]', {
         timeout: 20000
@@ -1343,8 +1420,314 @@ async function main(): Promise<void> {
       await settle('Demo Owls')
       await pause(900)
       await shot('umpire-table')
-      later("M9: opens on the rule's game; columns stay as pages arrive")
-      later('M9: a note stays typed; sign-up past the first page; Leaderboard')
+
+      const stackBottom = async (): Promise<number> =>
+        await page.$eval(
+          '[data-testid="umpire-sticky-stack"]',
+          node => node.getBoundingClientRect().bottom
+        )
+      const rows = async (): Promise<Array<{ id: string; top: number }>> =>
+        await page.$$eval(ROW, nodes =>
+          nodes
+            .map(node => ({
+              id: node.getAttribute('data-testid')!,
+              top: node.getBoundingClientRect().top
+            }))
+            .sort((a, b) => a.top - b.top)
+        )
+      const topOf = async (id: string): Promise<number> =>
+        await page.$eval(rowCss(id), node => node.getBoundingClientRect().top)
+      const below = (await topOf(anchor)) - (await stackBottom())
+      assert.ok(
+        Math.abs(below) <= 2,
+        `E12: the rule's game is ${below} from the sticky header`
+      )
+      assert.ok(
+        (await rows()).length < MOST_ROWS_AT_ONCE,
+        'E12: rows mount near the screen'
+      )
+      assert.deepEqual(umpireReads(), [], 'E12: nothing more is read yet')
+      await log(support, 'longLists-web.log', `E12: opens on ${anchor}`)
+
+      /** Each heading, with where the cells under it start and how wide. */
+      const columns = async (): Promise<
+        Array<{ text: string; width: number }>
+      > =>
+        await page.$eval(
+          '[data-testid="umpire-table-header-scroll"]',
+          scroller =>
+            [
+              ...scroller.querySelector('[data-testid="umpire-table-header"]')!
+                .children
+            ].map(cell => ({
+              text: cell.textContent!,
+              width: cell.getBoundingClientRect().width
+            }))
+        )
+      /** Every drawn row's cells stand under the headings. */
+      const aligned = async (step: string): Promise<void> => {
+        const off = await page.evaluate(ROW_CSS => {
+          const lefts = (node: Element): number[] =>
+            [...node.children].map(cell => cell.getBoundingClientRect().left)
+          const heading = lefts(
+            document.querySelector('[data-testid="umpire-table-header"]')!
+          )
+          return [...document.querySelectorAll(ROW_CSS)].flatMap(row =>
+            lefts(row).flatMap((left, at) =>
+              Math.abs(left - heading[at]) > 1
+                ? [`${row.getAttribute('data-testid')} ${at}: ${left}`]
+                : []
+            )
+          )
+        }, ROW)
+        assert.deepEqual(off, [], `E12: ${step}: columns are aligned`)
+      }
+      const headed = await columns()
+      assert.ok(
+        headed.some(column => column.text.includes('Optional')),
+        'E12: the optional column says so'
+      )
+      await aligned('opening')
+
+      // A wheel at a time, up past the rows the first page holds.
+      await page.mouse.move(PHONE.width / 2, PHONE.height / 2)
+      for (let wheel = 0; wheel < 120 && umpireReads().length === 0; wheel++) {
+        await page.mouse.wheel({ deltaY: -500 })
+        await pause(50)
+      }
+      assert.ok(umpireReads().length > 0, 'E12: older rows are read')
+      assert.ok(
+        umpireReads()[0].searchParams.get('cursor') === opening.prevCursor,
+        'E12: from the first page up'
+      )
+      // Still in motion: the older page has not landed.
+      const stack = await stackBottom()
+      const reader = (await rows()).find(({ top }) => top >= stack)!
+      const offset = await scroll('here')
+      await pause(1200)
+      const landed = (await scroll('here')) - offset
+      const held = await topOf(reader.id.replace('umpire-game-', ''))
+      assert.ok(
+        landed > 1000,
+        `E12: older rows landed above, ${landed} of them`
+      )
+      assert.ok(
+        Math.abs(held - reader.top) <= 2,
+        `E12: the reader's row stood at ${reader.top}, and stands at ${held}`
+      )
+      assert.deepEqual(await columns(), headed, 'E12: columns as rows arrive')
+      await aligned('older rows')
+      await log(
+        support,
+        'longLists-web.log',
+        `E12: ${umpireReads().length} older reads; ${landed} of rows landed above; the reader's row ${reader.top} then ${held}`
+      )
+
+      // Down past the first page's end, which reads on.
+      scheduleReads.length = 0
+      await scrollToRow(page, rowCss(seeded.umpireSignupGameId))
+      await page
+        .waitForNetworkIdle({ idleTime: 250, timeout: 5000 })
+        .catch(() => undefined)
+      await pause(400)
+      assert.ok(umpireReads().length > 0, 'E12: later rows are read')
+      assert.deepEqual(await columns(), headed, 'E12: columns going down')
+      await aligned('later rows')
+
+      // Sideways: the header goes with the rows.
+      const body = '[data-testid="umpire-table-body-scroll"]'
+      const header = '[data-testid="umpire-table-header-scroll"]'
+      const sideways = await page.$eval(body, node => {
+        node.scrollLeft = 300
+        return node.scrollLeft
+      })
+      assert.equal(sideways, 300, 'E12: the table scrolls sideways')
+      await pause(300)
+      assert.equal(
+        await page.$eval(header, node => node.scrollLeft),
+        sideways,
+        'E12: the header follows'
+      )
+      await aligned('sideways')
+      const wide = await page.$eval(body, node => ({
+        client: node.clientWidth,
+        content: node.scrollWidth
+      }))
+      assert.equal(
+        wide.content,
+        Math.round(headed.reduce((sum, { width }) => sum + width, 0)),
+        'E12: the list is as wide as its columns'
+      )
+      await page.$eval(body, node => {
+        node.scrollLeft = node.scrollWidth
+      })
+      await pause(300)
+      await aligned('at the right')
+
+      // A note typed and scrolled away from: the scroll takes the keyboard's
+      // focus, which saves it, and the row shows it wherever it has been.
+      const signupGame = seeded.umpireSignupGameId
+      const noteType = 'unt_long_uniform'
+      const noteCell = `[data-testid="umpire-note-${signupGame}-${noteType}"]`
+      const noteInput = `[data-testid="umpire-note-input-${signupGame}-${noteType}"]`
+      const noteText = async (): Promise<string | null | undefined> =>
+        await page.$eval(noteCell, node => node.textContent)
+      await page.waitForSelector(noteCell, { timeout: 10000 })
+      await tapCss(noteCell)
+      await page.waitForSelector(noteInput, { timeout: 10000 })
+      await page.keyboard.type('Demo stripes')
+      await scroll(0)
+      await pause(800)
+      await scrollToRow(page, noteCell)
+      await pause(400)
+      assert.equal(await noteText(), 'Demo stripes', 'E12: the note shows')
+      assert.equal(
+        (await umpireRow(signupGame))?.umpireNotes[noteType],
+        'Demo stripes',
+        'E12: the server holds the note'
+      )
+
+      // One that cannot be saved stays open, with its text, wherever the
+      // page goes, however far its row is from the rows drawn.
+      let refusing = true
+      const refuseNotes = (request: HTTPRequest): void => {
+        ;(refusing && request.url().includes('/umpire-notes/')
+          ? request.respond({
+              status: 503,
+              contentType: 'application/json',
+              body: '{"code":"unavailable","message":"Refused"}'
+            })
+          : request.continue()
+        ).catch(() => undefined)
+      }
+      page.on('request', refuseNotes)
+      await page.setRequestInterception(true)
+      try {
+        await tapCss(noteCell)
+        await page.waitForSelector(noteInput, { timeout: 10000 })
+        await page.keyboard.type('Demo plaid')
+        await scroll(0)
+        await contains(page, 'Refused')
+        await pause(600)
+        await scroll(0)
+        await pause(800)
+        const typedNote = async (): Promise<string> =>
+          await page.$eval(noteInput, node => (node as HTMLInputElement).value)
+        assert.equal(await typedNote(), 'Demo plaid', 'E12: the text stays')
+        const away = await page.$eval(
+          noteInput,
+          node => node.getBoundingClientRect().top
+        )
+        assert.ok(away > PHONE.height, `E12: its row is at ${away}, far away`)
+        await shotOf('umpire-note-open')
+        refusing = false
+        await scrollToRow(page, noteInput)
+        await pause(600)
+        assert.equal(await typedNote(), 'Demo plaid', 'E12: and on returning')
+        await page.focus(noteInput)
+        await page.keyboard.press('Enter')
+        await page.keyboard.press('Escape')
+        await page.waitForSelector(noteCell, { timeout: 10000 })
+        await page.waitForFunction(
+          (css: string) =>
+            document.querySelector(css)!.textContent === 'Demo plaid',
+          { timeout: 10000 },
+          noteCell
+        )
+      } finally {
+        page.off('request', refuseNotes)
+        await page.setRequestInterception(false)
+      }
+      assert.equal(
+        (await umpireRow(signupGame))?.umpireNotes[noteType],
+        'Demo plaid',
+        'E12: the server holds the saved note'
+      )
+      await log(support, 'longLists-web.log', 'E12: the typed note stayed')
+
+      // A sign-up past the first page, which leaves the page where it is.
+      await page.$eval(body, node => {
+        node.scrollLeft = 0
+      })
+      await pause(300)
+      const leaderboard =
+        '[aria-label="Umpire pages"] [aria-label="Leaderboard"]'
+      const schedulePill = '[aria-label="Umpire pages"] [aria-label="Schedule"]'
+      const rankedBefore = (await scheduledRow())?.count ?? 0
+      const signup = `${rowCss(signupGame)} [aria-label^="Sign Up, Plate"]`
+      await scrollToRow(page, signup)
+      await pause(300)
+      const signupTop = await topOf(signupGame)
+      const signupOffset = await scroll('here')
+      const readsBefore = scheduleReads.length
+      await tapCss(signup)
+      await m.tapOn({ text: 'Confirm', timeout: 15000 })
+      const assigned = `${rowCss(signupGame)} [aria-label$=", ${SLOT}"]`
+      await page.waitForSelector(assigned, { timeout: 10000 })
+      await page
+        .waitForNetworkIdle({ idleTime: 250, timeout: 5000 })
+        .catch(() => undefined)
+      await pause(300)
+      assert.equal(
+        await page.$('[aria-label="Close"]'),
+        null,
+        'E12: sheet shut'
+      )
+      assert.equal(await scroll('here'), signupOffset, 'E12: the page stays')
+      assert.ok(
+        Math.abs((await topOf(signupGame)) - signupTop) <= 2,
+        'E12: the row stays'
+      )
+      assert.ok(
+        scheduleReads.length - readsBefore >= 2,
+        'E12: the held pages are read again'
+      )
+      const ranked = await scheduledRow()
+      assert.equal(ranked?.count, rankedBefore + 1, 'E12: one more')
+      await tapCss(leaderboard)
+      await pause(600)
+      const saying = `${ranked.name}${ranked.count}`
+      assert.ok(
+        (await boardSays()).includes(saying),
+        `E12: the Leaderboard says ${saying}`
+      )
+      await shotOf('umpire-leaderboard')
+      await tapCss(schedulePill)
+      await pause(800)
+      await scrollToRow(page, assigned)
+      await pause(300)
+      assert.deepEqual(await columns(), headed, 'E12: columns on returning')
+      await aligned('returned')
+
+      // And taken off again, which leaves the page where it is too.
+      const removeTop = await topOf(signupGame)
+      const removeOffset = await scroll('here')
+      await tapCss(assigned)
+      await m.tapOn({ text: 'Remove assignment', timeout: 15000 })
+      await page.waitForSelector(signup, { timeout: 10000 })
+      await page
+        .waitForNetworkIdle({ idleTime: 250, timeout: 5000 })
+        .catch(() => undefined)
+      await pause(300)
+      assert.equal(await scroll('here'), removeOffset, 'E12: the page stays')
+      assert.ok(
+        Math.abs((await topOf(signupGame)) - removeTop) <= 2,
+        'E12: the row stays'
+      )
+      assert.equal(
+        (await scheduledRow())?.count ?? 0,
+        rankedBefore,
+        'E12: one fewer'
+      )
+      await tapCss(leaderboard)
+      await pause(600)
+      assert.ok(
+        !(await boardSays()).includes(saying),
+        'E12: the Leaderboard follows'
+      )
+      await tapCss(schedulePill)
+      await pause(400)
+      await log(support, 'longLists-web.log', 'E12: signed up and removed')
     }
   }
 

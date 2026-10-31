@@ -63,6 +63,8 @@ export function useUmpireNoteEditor({
   finish: () => Promise<boolean>
   discard: () => boolean
   error: string
+  /** The game whose row has the editor open. */
+  editing: string | undefined
 } {
   const s = useUmpireStyles()
   const [edit, setEdit] = useState<Edit>()
@@ -184,6 +186,7 @@ export function useUmpireNoteEditor({
     finish,
     discard,
     error,
+    editing: edit?.game,
     cell: (game, type) => {
       const label = `${type.name}, ${game.home} vs ${game.away}, ${game.date}`
       if (edit?.game === game.id && edit.type === type.id && editable)

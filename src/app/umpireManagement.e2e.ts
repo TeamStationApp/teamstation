@@ -655,7 +655,9 @@ async function main(): Promise<void> {
               const row = document.querySelector(
                 '[data-testid="umpire-game-gam_umpire_g1"]'
               )!
-              const viewport = row.parentElement!.parentElement!.parentElement!
+              const viewport = document.querySelector(
+                '[data-testid="umpire-table-body-scroll"]'
+              )!
               return (
                 Math.abs(
                   row.children[0].getBoundingClientRect().width -
@@ -671,8 +673,12 @@ async function main(): Promise<void> {
               const row = document.querySelector(
                 '[data-testid="umpire-game-gam_umpire_g1"]'
               )!
-              const header = row.previousElementSibling!
-              const viewport = row.parentElement!.parentElement!.parentElement!
+              const header = document.querySelector(
+                '[data-testid="umpire-table-header"]'
+              )!
+              const viewport = document.querySelector(
+                '[data-testid="umpire-table-body-scroll"]'
+              )!
               const funnel = document.querySelector(
                 '[aria-label="Schedule filters"]'
               )!
