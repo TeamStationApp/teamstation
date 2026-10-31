@@ -170,13 +170,30 @@ export function scoringIdsIn(stored: {
   currentPlay: unknown
 }): number[] {
   const ids = new Set<number>()
-  const collect = (id: number): number => {
+  for (const document of [...stored.plays, stored.currentPlay])
+    for (const id of idsOfDocument(document)) ids.add(id)
+  return [...ids]
+}
+
+/**
+ * Each document's scoring identities, worked out once. A post asks for those
+ * of the same documents several times over, and walking a play's record for
+ * them cost more than anything else in reading its names.
+ */
+const documentIds = new WeakMap<object, readonly number[]>()
+
+function idsOfDocument(document: unknown): readonly number[] {
+  if (document == null || typeof document !== 'object') return []
+  const known = documentIds.get(document)
+  if (known != null) return known
+  const ids = new Set<number>()
+  mapDocument(document, id => {
     ids.add(id)
     return id
-  }
-  for (const document of [...stored.plays, stored.currentPlay])
-    mapDocument(document, collect)
-  return [...ids]
+  })
+  const found = [...ids]
+  documentIds.set(document, found)
+  return found
 }
 
 /** The team each player of a game's setups appears for, the latest setup last. */

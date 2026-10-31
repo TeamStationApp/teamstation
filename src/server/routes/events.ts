@@ -38,7 +38,8 @@ import {
   playJson,
   playsDigest,
   postGamePlays,
-  readPlays
+  readPlays,
+  type StoredPlay
 } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
 import { storedLineupsDigest } from '../events/teamLineups'
@@ -312,15 +313,20 @@ export function eventRoutes(
       const { revision, result } = await readGameUnlocked(
         db,
         gameId,
-        async trx =>
+        async (trx, plays) =>
           // Players' halves for whoever may save their lineups.
-          await storedGameRead(trx, gameId, async game => {
-            teams = lineupTeams(
-              await roleScopes(trx, actor.userId, actor.isAdmin),
-              game
-            )
-            return teams
-          })
+          await storedGameRead(
+            trx,
+            gameId,
+            async game => {
+              teams = lineupTeams(
+                await roleScopes(trx, actor.userId, actor.isAdmin),
+                game
+              )
+              return teams
+            },
+            plays
+          )
       )
       res.setHeader(REVISION_HEADER, revision)
       // A game with nothing stored has no setup to hold anyone's halves, and
@@ -475,13 +481,14 @@ async function storedGameRead(
   halves: (game: {
     home_team_id: string
     away_team_id: string
-  }) => Promise<readonly string[]>
+  }) => Promise<readonly string[]>,
+  held?: StoredPlay[]
 ): Promise<{
   answer: StoredGameAnswer
   fold: () => Promise<unknown>
   teams: ReturnType<typeof teamsOfRow>
 }> {
-  const stored = await readPlays(db, gameId)
+  const stored = held ?? (await readPlays(db, gameId))
   const game = await db
     .selectFrom('games')
     .select([
@@ -551,7 +558,7 @@ async function storedGameRead(
 async function readGameUnlocked<T>(
   db: Kysely<Database>,
   gameId: string,
-  read: (trx: Kysely<Database>) => Promise<T>
+  read: (trx: Kysely<Database>, plays: StoredPlay[]) => Promise<T>
 ): Promise<{ revision: string; result: T }> {
   const lockGame = async (trx: Kysely<Database>): Promise<void> => {
     const locked = await trx
@@ -572,8 +579,10 @@ async function readGameUnlocked<T>(
       .setAccessMode('read only')
       .execute(async trx => {
         const revision = await readSyncClock(trx)
-        if (await eventTagsNeedRepair(trx, gameId)) return null
-        return { revision, result: await read(trx) }
+        // One read of a long game's documents, for both: one snapshot.
+        const plays = await readPlays(trx, gameId)
+        if (await eventTagsNeedRepair(trx, gameId, plays)) return null
+        return { revision, result: await read(trx, plays) }
       })
   const first = await snapshot()
   if (first != null) return first
@@ -587,7 +596,7 @@ async function readGameUnlocked<T>(
     await lockGame(trx)
     const revision = await readSyncClock(trx)
     await reconcileEventTags(trx, gameId)
-    return { revision, result: await read(trx) }
+    return { revision, result: await read(trx, await readPlays(trx, gameId)) }
   })
 }
 

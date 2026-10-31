@@ -29,7 +29,7 @@ import { teamsOfRow } from '../../common/teamLists'
 import type { Database } from '../db/database'
 import { fenceDistanceFor } from '../games/fenceDistance'
 import { resolveGumboIds } from '../scoring/gumboIds'
-import { resolveScoringGame } from '../scoring/openRow'
+import { namesMergedAccounts, resolveScoringGame } from '../scoring/openRow'
 import { teamNames } from '../users/nameBook'
 import { atBatOf } from './atBatInProgress'
 import { readPlays } from './postPlays'
@@ -378,11 +378,19 @@ export async function keepLineups(
   now: Date
 ): Promise<{ lineups_digest: string; lineup_started_at?: Date | null }> {
   const context = await lineupContext(trx, game)
-  const read: GameLineups = readLineups(
-    await resolveScoringGame(trx, stored, { gameId: game.id }),
-    context
-  )
-  const digest = digestOf(readLineups(stored, context))
+  const storedForm = readLineups(stored, context)
+  const digest = digestOf(storedForm)
+  // A game whose lineups are kept already asks of this read only whether it
+  // replays and whether it has begun. A name decides neither, so unless an id
+  // is resolved the stored form's replay answers both, and a post in a long
+  // game does not pay for the same replay twice.
+  const read: GameLineups =
+    game.lineup_started_at != null && !(await namesMergedAccounts(trx, stored))
+      ? storedForm
+      : readLineups(
+          await resolveScoringGame(trx, stored, { gameId: game.id }),
+          context
+        )
   if (read.problem != null) {
     console.warn(
       `game ${game.id}: its lineups could not be read, so its teams' default lineups are left as they are: ${read.problem}`

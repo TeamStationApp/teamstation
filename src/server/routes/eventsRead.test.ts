@@ -2,7 +2,7 @@ import type { AddressInfo } from 'node:net'
 
 import { expect } from 'chai'
 import express from 'express'
-import { type Kysely, sql } from 'kysely'
+import { Kysely, PostgresDialect, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
@@ -357,6 +357,46 @@ describe('reading a game without taking its row', function () {
     const before = await versions()
     await read(id)
     expect(await versions()).deep.equals(before)
+  })
+
+  it('reads a game’s plays once, for the tag check and the answer both', async function () {
+    const id = await newGame('gam_read_once')
+    expect((await post(id, [play(0), play(1)])).status).equals(200)
+    const statements: string[] = []
+    const pool = new Pool({ connectionString: scratchUrl })
+    const logged = new Kysely<Database>({
+      dialect: new PostgresDialect({ pool }),
+      log: event => {
+        if (event.level === 'query') statements.push(event.query.sql)
+      }
+    })
+    const app = express()
+    app.use(withActor(logged))
+    app.use('/api/v1', eventRoutes(logged))
+    app.use(errorHandler)
+    const counted = app.listen(0, '127.0.0.1')
+    await new Promise<void>(resolve => counted.once('listening', resolve))
+    try {
+      const { port } = counted.address() as AddressInfo
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/v1/games/${id}/events`,
+        { headers: { authorization: `Bearer ${TOKEN}` } }
+      )
+      const body = (await response.json()) as Omit<Read, 'status' | 'revision'>
+      expect(response.status).equals(200)
+      expect(body.plays).length(2)
+      const reads = statements.filter(
+        text => text.includes('from "events"') && text.includes('"gumbo"')
+      )
+      expect(reads).length(1)
+      // The same answer as a read through the ordinary path.
+      const ordinary = await read(id)
+      expect(body.playsDigest).equals(ordinary.playsDigest)
+      expect(body.plays).deep.equals(ordinary.plays)
+    } finally {
+      counted.close()
+      await logged.destroy()
+    }
   })
 
   it('says a missing game is not found', async function () {
