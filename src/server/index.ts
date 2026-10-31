@@ -20,7 +20,7 @@ import { attachDictation } from './dictation/route'
 import { dictationScopes } from './dictation/scopes'
 import { finishDiscards } from './director/discard'
 import { purgeReplacedRecordings } from './director/purge'
-import { reopenInterruptedUploads } from './director/uploads'
+import { reopenInterruptedUploadsSoon } from './director/uploads'
 import { deliverAccountMail } from './email/accountMail'
 import {
   type AddedNotice,
@@ -109,6 +109,7 @@ import {
   eventControlIssuerOf,
   primaryHost,
   publicUrl,
+  requestDatabaseUrl,
   serverConfig,
   tessSettings
 } from './serverConfig'
@@ -266,13 +267,7 @@ function liveRouteOptions(): LiveRouteOptions {
  * and an upload interrupted there stayed `assembling` for ever.
  */
 function reopenInterrupted(db: ReturnType<typeof makeDatabase>): void {
-  reopenInterruptedUploads(db)
-    .then((count: number) => {
-      if (count > 0) console.log(`reopened ${count} interrupted upload(s)`)
-    })
-    .catch((error: unknown) => {
-      console.error(`reopening interrupted uploads: ${String(error)}`)
-    })
+  reopenInterruptedUploadsSoon(db)
 }
 
 /** How often replaced recordings whose month is up are looked for. */
@@ -410,7 +405,9 @@ function startChatAttachmentPurge(db: ReturnType<typeof makeDatabase>): void {
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
-  const primaryDb = makeDatabase(serverConfig.databaseUrl)
+  const primaryDb = makeDatabase(requestDatabaseUrl(serverConfig), {
+    role: 'primary'
+  })
   reopenInterrupted(primaryDb)
   startPurge(primaryDb)
   startDiscardSweep(primaryDb)
@@ -516,7 +513,7 @@ function runPrimary(workerCount: number): void {
 }
 
 function runWorker(): void {
-  const db = makeDatabase(serverConfig.databaseUrl)
+  const db = makeDatabase(requestDatabaseUrl(serverConfig), { role: 'worker' })
   const mediaSecret = resolveMediaSecret()
   const mediaContext: MediaContext = {
     ffmpegPath: serverConfig.ffmpegPath,

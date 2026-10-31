@@ -8,7 +8,7 @@ import { teamsOfRow } from '../../common/teamLists'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import type { GameScope } from '../access'
 import { atomic } from '../db/atomic'
-import type { Database } from '../db/database'
+import { type Database, isPoolTimeout } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
 import { pregameFold } from '../events/currentPlay'
 import { playJson, playsDigest, readPlays } from '../events/postPlays'
@@ -27,6 +27,15 @@ export interface FanoutSubscriber {
   send: (message: GameChange) => void
   /** Check current rights using this delivery's connection, before each send. */
   maySee: (game: GameScope, db: Kysely<Database>) => Promise<boolean>
+  /** A change could not be sent, so this socket's client reads again. */
+  resync: () => void
+}
+
+/** A walk-up song change, read once for all of the team's games. */
+interface FanoutSong {
+  teamId: string
+  userId: string
+  song: WalkUpSong | null
 }
 
 /** A game this worker has subscribers for; scope refreshes before delivery. */
@@ -69,7 +78,9 @@ export interface GameFanoutOptions {
  * every subscribed game the team plays in — and if there are any, reads the
  * data once and sends it to each subscriber who may still see the game.
  * Notifies with the same payload within `coalesceMs` are sent once, with the
- * data as it stands at the end of that window.
+ * data as it stands at the end of that window. A delivery that cannot get a
+ * connection in time resyncs the game's subscribers instead of losing the
+ * change.
  */
 export class GameFanout {
   /** Settles once the first `LISTEN` is in place, or has failed. */
@@ -184,18 +195,44 @@ export class GameFanout {
           : []
         : [...this.watched.keys()]
     if (games.length === 0) return
-    const song =
-      'team' in change
-        ? {
-            teamId: change.team,
-            userId: change.userId,
-            song: await this.readSong(this.db, change.team, change.userId)
-          }
-        : undefined
+    let song: FanoutSong | undefined
+    if ('team' in change) {
+      try {
+        song = {
+          teamId: change.team,
+          userId: change.userId,
+          song: await this.readSong(this.db, change.team, change.userId)
+        }
+      } catch (error) {
+        if (!isPoolTimeout(error)) throw error
+        for (const gameId of games) {
+          const scope = this.watched.get(gameId)?.scope
+          if (
+            scope?.homeTeamId === change.team ||
+            scope?.awayTeamId === change.team
+          )
+            this.resync(gameId)
+        }
+        return
+      }
+    }
     for (const gameId of games)
       await this.inTurn(gameId, async () => {
-        await this.deliverGame(gameId, change, song)
+        try {
+          await this.deliverGame(gameId, change, song)
+        } catch (error) {
+          if (!isPoolTimeout(error)) throw error
+          this.resync(gameId)
+        }
       })
+  }
+
+  /** A game's change went unsent: its subscribers read the game again. */
+  private resync(gameId: string): void {
+    const watched = this.watched.get(gameId)
+    if (watched == null) return
+    this.log(`resyncing ${gameId}: no database connection in time`)
+    for (const subscriber of [...watched.subscribers]) subscriber.resync()
   }
 
   /**
@@ -222,8 +259,7 @@ export class GameFanout {
   private async deliverGame(
     gameId: string,
     change: GameChangePayload,
-    song:
-      { teamId: string; userId: string; song: WalkUpSong | null } | undefined
+    song: FanoutSong | undefined
   ): Promise<void> {
     const held = await atomic(this.db, async trx => {
       // Hold the current matchup while reading and authorizing its private
