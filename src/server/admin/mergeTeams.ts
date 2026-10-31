@@ -8,13 +8,17 @@ import { settledTeams } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
-import { retargetGameTeams } from '../games/retargetTeams'
+import {
+  holdingEventChildren,
+  rebuildEventChildren
+} from '../events/eventChildren'
+import { recordNamesTeam, retargetGameTeams } from '../games/retargetTeams'
 import { requireDirectAdmin } from '../groups/adminGuard'
 import { freeLabel, namesOnSide } from '../groups/noticePolicy'
 import { teamFormats } from '../groups/playerNamePrivacy'
 import { mergeParents } from '../groups/teamMerge'
 import { noteScopeChange } from '../socket/syncRevision'
-import { requestGameStats } from '../statsBuilder/request'
+import { requestGamesStats } from '../statsBuilder/request'
 import { refreshFieldWarnings } from '../venues/fieldWarnings'
 import { onePerson } from './people'
 
@@ -463,14 +467,35 @@ export async function mergeTeams(
       )
       .execute()
 
+    // Games, plays and the plays' children each have their own turn below.
     for (const [table, column] of references) {
-      if (table === 'games') continue
+      if (table === 'games' || table === 'events' || table === 'event_players')
+        continue
       await trx
         .updateTable(table as 'games')
         .set(Object.fromEntries([[column, intoTeamId]]) as never)
         .where(column as 'home_team_id', '=', fromTeamId)
         .execute()
     }
+    // A play whose record will not be rewritten moves now, with its children
+    // rebuilt below; one whose record will is left for that rewrite, so each
+    // play's children are built once, under the merged game.
+    const movedIds = movedGames.map(game => game.id)
+    const moved = await holdingEventChildren(
+      trx,
+      async () =>
+        await sql<{ id: string }>`
+          update events set "battingTeamId" = ${intoTeamId}
+          where id in (
+            select e.id from events e
+            cross join lateral (select e.gumbo->'teamStation' offset 0) as one(record)
+            where e."battingTeamId" = ${fromTeamId}
+              and not (e."gameId" = any(${movedIds}::text[])
+                and ${recordNamesTeam(fromTeamId, sql.ref('one.record'))})
+          )
+          returning id
+        `.execute(trx)
+    )
     // Update opponents and withdrawal identity in one statement so the
     // withdrawal remains attributed to an opponent throughout the merge.
     await sql`update games set
@@ -480,12 +505,25 @@ export async function mergeTeams(
       where home_team_id = ${fromTeamId} or away_team_id = ${fromTeamId}`.execute(
       trx
     )
-    await retargetGameTeams(
+    // After the games: a play's pitcher is on the team its game has opposite the
+    // batting team, which can only be told once the game names the kept team.
+    await rebuildEventChildren(
       trx,
-      movedGames.map(game => game.id),
-      fromTeamId,
-      intoTeamId
+      moved.rows.map(play => play.id)
     )
+    // A game about to be folded into its fixture's kept game needs no rewrite.
+    const retired = new Set(fixtures.map(fixture => fixture.retiredGameId))
+    const surviving = movedIds.filter(id => !retired.has(id))
+    await retargetGameTeams(trx, surviving, fromTeamId, intoTeamId, {
+      rebuildChildren: true
+    })
+    // After the rebuilds, which write no old team: what is left is rows no
+    // record speaks for.
+    await trx
+      .updateTable('event_players')
+      .set({ team_id: intoTeamId })
+      .where('team_id', '=', fromTeamId)
+      .execute()
     if (
       (
         await trx
@@ -676,17 +714,7 @@ export async function mergeTeams(
 
     // A merge changes a game's teams, so the team_id on its stat rows must be
     // rebuilt. Retired fixture games are gone; poke every survivor we moved.
-    const retired = new Set(fixtures.map(fixture => fixture.retiredGameId))
-    for (const game of movedGames) {
-      if (retired.has(game.id)) continue
-      const still = await trx
-        .selectFrom('games')
-        .select('id')
-        .where('id', '=', game.id)
-        .executeTakeFirst()
-      if (still == null) continue
-      await requestGameStats(trx, game.id)
-    }
+    await requestGamesStats(trx, surviving)
     noteScopeChange(trx, { teamId: fromTeamId })
     noteScopeChange(trx, { teamId: intoTeamId })
     for (const game of movedGames) noteScopeChange(trx, { gameId: game.id })
@@ -752,6 +780,12 @@ async function planFixtures(
     groups.set(key, list)
   }
 
+  const duplicated = [...groups.values()].flatMap(list =>
+    list.length < 2 ? [] : list.map(game => game.id)
+  )
+  const videosOf = await videoCounts(db, duplicated)
+  const externalIdsOf = await externalIdCounts(db, duplicated)
+
   const fixtures: MergedFixture[] = []
   for (const list of groups.values()) {
     if (list.length < 2) continue
@@ -784,8 +818,8 @@ async function planFixtures(
         retiredGameId: retired.id,
         retiredEvents: retired.events,
         orientationDiffers: kept.originalHome !== retired.originalHome,
-        videosMoved: await countOf(db, retired.id),
-        externalIdsMoved: await countExternalIds(db, retired.id)
+        videosMoved: videosOf.get(retired.id) ?? 0,
+        externalIdsMoved: externalIdsOf.get(retired.id) ?? 0
       })
     }
   }
@@ -794,26 +828,39 @@ async function planFixtures(
   return fixtures
 }
 
-async function countOf(db: Kysely<Database>, gameId: string): Promise<number> {
-  const row = await db
+async function videoCounts(
+  db: Kysely<Database>,
+  gameIds: string[]
+): Promise<Map<string, number>> {
+  if (gameIds.length === 0) return new Map()
+  const rows = await db
     .selectFrom('videos')
-    .select(expression => [expression.fn.countAll<string>().as('n')])
-    .where('game_id', '=', gameId)
-    .executeTakeFirst()
-  return Number(row?.n ?? 0)
+    .select(expression => [
+      'game_id as id',
+      expression.fn.countAll<string>().as('n')
+    ])
+    .where('game_id', 'in', gameIds)
+    .groupBy('game_id')
+    .execute()
+  return new Map(rows.map(row => [row.id ?? '', Number(row.n)]))
 }
 
-async function countExternalIds(
+async function externalIdCounts(
   db: Kysely<Database>,
-  gameId: string
-): Promise<number> {
-  const row = await db
+  gameIds: string[]
+): Promise<Map<string, number>> {
+  if (gameIds.length === 0) return new Map()
+  const rows = await db
     .selectFrom('external_ids')
-    .select(expression => [expression.fn.countAll<string>().as('n')])
+    .select(expression => [
+      'entity_id as id',
+      expression.fn.countAll<string>().as('n')
+    ])
     .where('entity_type', '=', 'game')
-    .where('entity_id', '=', gameId)
-    .executeTakeFirst()
-  return Number(row?.n ?? 0)
+    .where('entity_id', 'in', gameIds)
+    .groupBy('entity_id')
+    .execute()
+  return new Map(rows.map(row => [row.id, Number(row.n)]))
 }
 
 /**
