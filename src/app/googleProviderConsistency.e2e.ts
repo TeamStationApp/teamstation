@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/prefer-optional-chain -- Serialized browser callbacks cannot capture Sucrase's generated helpers. */
 import assert from 'node:assert/strict'
 import {
   appendFileSync,
@@ -15,6 +14,7 @@ import { googlePlaces } from '../server/location/googlePlaces'
 import { serverConfig } from '../server/serverConfig'
 import { googlePlacesStub } from '../test/googlePlacesStub'
 import { groupFixture } from '../test/groupFixtures'
+import { inMapFrame, waitInMapFrame } from '../test/mapFrameProbe'
 import {
   browserSession,
   fill,
@@ -25,6 +25,9 @@ import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 type MapMode =
   'success' | 'authentication' | 'network' | 'initialization' | 'timeout'
+
+/** The map's longitude, from inside its frame, on Google's map or Leaflet's. */
+const MAP_LONGITUDE = `(()=>{const center=window.eventMap.getCenter();return typeof center.lng==='function'?center.lng():center.lng})()`
 
 /** Controlled external SDK, not an application response or a substitute UI path. */
 function sdk(mode: MapMode): string {
@@ -154,28 +157,16 @@ async function main(): Promise<void> {
   async function mapProvider(
     expected: 'google' | 'openstreetmap'
   ): Promise<void> {
-    await page.waitForFunction(
-      expected => {
-        const frame = document.querySelector<HTMLIFrameElement>(
-          '[data-testid="event-location-map"]'
-        )
-        if (frame == null || frame.contentDocument == null) return false
-        return expected === 'google'
-          ? frame.contentDocument.querySelector('[data-google-provider]') !=
-              null
-          : frame.contentDocument.querySelector('.leaflet-container') != null
-      },
-      { timeout: 25000 },
-      expected
+    await waitInMapFrame(
+      page,
+      `document.querySelector('${
+        expected === 'google' ? '[data-google-provider]' : '.leaflet-container'
+      }')!=null`,
+      25000
     )
   }
   async function pan(): Promise<void> {
-    const before = await page.evaluate(() => {
-      const map = (document.querySelector('iframe')!.contentWindow as any)
-        .eventMap
-      const center = map.getCenter()
-      return typeof center.lng === 'function' ? center.lng() : center.lng
-    })
+    const before = await inMapFrame<number>(page, MAP_LONGITUDE)
     const rect = await page.$eval(
       '[data-testid="event-location-map"]',
       node => {
@@ -193,19 +184,7 @@ async function main(): Promise<void> {
       holdDuration: 100,
       duration: 500
     })
-    await page.waitForFunction(
-      before => {
-        const map = (document.querySelector('iframe')!.contentWindow as any)
-          .eventMap
-        const center = map.getCenter()
-        return (
-          (typeof center.lng === 'function' ? center.lng() : center.lng) !==
-          before
-        )
-      },
-      { timeout: 5000 },
-      before
-    )
+    await waitInMapFrame(page, `${MAP_LONGITUDE}!==${before}`, 5000)
   }
   async function directions(): Promise<void> {
     await page.evaluate(() => {
@@ -262,23 +241,10 @@ async function main(): Promise<void> {
       await shot(`support/google-providers/${name}-failure.png`)
       console.log(
         'Map diagnostic',
-        await page.evaluate(() => {
-          const frame = document.querySelector<HTMLIFrameElement>(
-            '[data-testid="event-location-map"]'
-          )
-          const win = frame == null ? undefined : (frame.contentWindow as any)
-          return {
-            frame: frame != null,
-            google: win != null && win.google != null,
-            map: win != null && win.eventMap != null,
-            leaflet: win != null && win.L != null,
-            controlled:
-              frame != null &&
-              frame.contentDocument != null &&
-              frame.contentDocument.querySelector('[data-google-provider]') !=
-                null
-          }
-        })
+        await inMapFrame(
+          page,
+          `({google:window.google!=null,map:window.eventMap!=null,leaflet:window.L!=null,controlled:document.querySelector('[data-google-provider]')!=null})`
+        ).catch(() => 'no map frame')
       )
       throw error
     } finally {

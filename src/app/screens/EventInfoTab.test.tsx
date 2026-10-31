@@ -7,6 +7,7 @@ import { TeamStationClient } from '../../common/api'
 import { asEventInfo, type EventInfo } from '../../common/eventInfo'
 import type { UmpireGameBlock } from '../../common/umpireSchedule'
 import { userIdOfGumbo } from '../../common/userId'
+import { mapDocumentOf } from '../../test/mapFrameDom'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { EventInfoTab } from './EventInfoTab'
 import type { RsvpEvent } from './EventRsvpModal'
@@ -509,9 +510,7 @@ describe('event Info location and family controls', () => {
       tileUrl: 'https://example.test/{z}/{x}/{y}'
     })
     await click('Retry map')
-    expect(document.querySelector('iframe')?.getAttribute('srcdoc')).includes(
-      'L.map'
-    )
+    expect(mapDocumentOf(document.querySelector('iframe'))).includes('L.map')
     expect(document.body.textContent).not.includes('8:00 PM')
   })
   it('leaves editing in Settings and places the map after the family cards', async () => {
@@ -536,6 +535,19 @@ describe('event Info location and family controls', () => {
         window.Node.DOCUMENT_POSITION_FOLLOWING
     ).not.equals(0)
   })
+  it('draws Google’s map on the web when the server supplies a key', async () => {
+    const client = clientFor({ ...initial(), address: '1 Demo Way' })
+    client.eventLocation = async () => ({
+      latitude: 34,
+      longitude: 12,
+      tileUrl: 'https://example.test/{z}/{x}/{y}',
+      googleMapsApiKey: 'placeholder-key'
+    })
+    await render(client)
+    const html = mapDocumentOf(document.querySelector('iframe'))
+    expect(html).includes('initEventMap')
+    expect(html).includes('placeholder-key')
+  })
   it('keeps the location view available when a server supplies an empty map key', async () => {
     const client = clientFor({ ...initial(), address: '1 Demo Way' })
     client.eventLocation = async () => ({
@@ -545,9 +557,7 @@ describe('event Info location and family controls', () => {
       googleMapsApiKey: ''
     })
     await render(client)
-    expect(document.querySelector('iframe')?.getAttribute('srcdoc')).includes(
-      'L.map'
-    )
+    expect(mapDocumentOf(document.querySelector('iframe'))).includes('L.map')
     expect(document.body.textContent).includes('1 Demo Way')
   })
   it('keeps the visitor location view free of private attendance and RSVP controls', async () => {

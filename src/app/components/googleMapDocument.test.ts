@@ -20,11 +20,14 @@ interface DocumentRuntime {
   idle: () => void
   ready: () => void
   cleared: () => number
+  armed: () => number
   maps: () => number
 }
 
 describe('Google Maps browser document', () => {
-  function runtime(): DocumentRuntime {
+  function runtime(
+    observed?: (see: (entries: unknown[]) => void) => void
+  ): DocumentRuntime {
     const html = googleMapDocument({
       latitude: 34,
       longitude: 12,
@@ -36,13 +39,23 @@ describe('Google Maps browser document', () => {
     let idle: () => void = () => undefined
     let ready: () => void = () => undefined
     let cleared = 0
+    let armed = 0
     let maps = 0
     const script: { onerror?: () => void } = {}
     const window: {
       gm_authFailure?: () => void
       initEventMap?: () => Promise<void>
       eventMapCenter?: unknown
+      IntersectionObserver?: unknown
     } = {}
+    if (observed != null)
+      window.IntersectionObserver = class {
+        constructor(see: (entries: unknown[]) => void) {
+          observed!(see)
+        }
+
+        observe(): void {}
+      }
     const context = {
       window,
       URLSearchParams,
@@ -51,10 +64,12 @@ describe('Google Maps browser document', () => {
         close: () => undefined,
         write: (html: string) => writes.push(html),
         getElementById: () => ({}),
+        addEventListener: () => undefined,
         createElement: () => script,
         head: { appendChild: () => undefined }
       },
       setTimeout: (fn: () => void) => {
+        armed++
         deadline = fn
         return 1
       },
@@ -105,9 +120,35 @@ describe('Google Maps browser document', () => {
         ready()
       },
       cleared: () => cleared,
+      armed: () => armed,
       maps: () => maps
     }
   }
+  it('runs its deadline only while the map is on screen', () => {
+    let see: (entries: unknown[]) => void = () => undefined
+    const r = runtime(given => {
+      see = given
+    })
+    expect(r.armed()).equals(0)
+    see([{ isIntersecting: true }])
+    expect(r.armed()).equals(1)
+    see([{ isIntersecting: false }])
+    expect(r.cleared()).equals(1)
+    see([{ isIntersecting: true }])
+    expect(r.armed()).equals(2)
+  })
+
+  it('never starts its deadline for a map that drew before it came on screen', async () => {
+    let see: (entries: unknown[]) => void = () => undefined
+    const r = runtime(given => {
+      see = given
+    })
+    await r.window.initEventMap!()
+    r.ready()
+    see([{ isIntersecting: true }])
+    expect(r.armed()).equals(0)
+  })
+
   it('loads Google and clears its deadline only once the map becomes ready', async () => {
     const r = runtime()
     await r.window.initEventMap!()

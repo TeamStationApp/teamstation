@@ -205,6 +205,12 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       )
     })
 
+    it('serves the map frame as a page of its own, with no policy', function () {
+      const page = readFileSync(join(once, 'mapFrame.html'), 'utf8')
+      expect(page).equals(readFileSync('src/app/web/mapFrame.html', 'utf8'))
+      expect(page).not.contains('Content-Security-Policy')
+    })
+
     it('ships one chat crypto module, named by its hash, that the bundle checks', function () {
       const modules = readdirSync(once).filter(name =>
         /^chat-crypto-.*\.wasm$/.test(name)

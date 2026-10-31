@@ -1,7 +1,13 @@
 import type { EventLocation } from '../../common/eventInfo'
 import { eventMapDocument } from './eventMapDocument'
+import { WHILE_ON_SCREEN } from './pinMapDocument'
 
-/** The browser-restricted display key is fetched from the selected event's server. */
+/**
+ * The display key is fetched from the selected event's server. On the web the
+ * map loads from an opaque origin, which sends no `Referer`, so this key cannot
+ * carry an HTTP-referrer restriction; the `<meta name="referrer">` here acts
+ * only in a WebView.
+ */
 export function googleMapDocument(location: EventLocation): string {
   if (location.googleMapsApiKey == null || location.googleMapsApiKey === '')
     throw new Error('Google Maps is not configured.')
@@ -28,10 +34,11 @@ export function googleMapDocument(location: EventLocation): string {
   </style></head><body><div id="map" aria-label="Event location map"></div><script>
     (()=>{
     const config=${config};
-    let failed=false;
+    ${WHILE_ON_SCREEN}
+    let failed=false;let drawn=false;let timeout;
     const fail=()=>{if(failed)return;failed=true;clearTimeout(timeout);document.open();document.write(${fallback});document.close()};
     window.gm_authFailure=fail;
-    const timeout=setTimeout(fail,15000);
+    whileOnScreen(document.getElementById('map'),()=>{if(!failed&&!drawn)timeout=setTimeout(fail,15000)},()=>{clearTimeout(timeout)});
     window.initEventMap=async()=>{try{
       if(failed)return;
       const {Map}=await google.maps.importLibrary('maps');
@@ -41,7 +48,7 @@ export function googleMapDocument(location: EventLocation): string {
       const map=new Map(document.getElementById('map'),{center,zoom:15,mapId:'DEMO_MAP_ID',gestureHandling:'greedy',streetViewControl:false,mapTypeControl:false});
       new AdvancedMarkerElement({map,position:center,title:'Event location'});
       window.eventMap=map;
-      map.addListener('tilesloaded',()=>{if(!failed)clearTimeout(timeout)});
+      map.addListener('tilesloaded',()=>{drawn=true;if(!failed)clearTimeout(timeout)});
       map.addListener('idle',()=>{if(failed)return;const point=map.getCenter();window.eventMapCenter={latitude:point.lat(),longitude:point.lng()}});
     }catch{fail()}};
     const load=()=>{const script=document.createElement('script');script.src='https://maps.googleapis.com/maps/api/js?'+new URLSearchParams({key:config.key,loading:'async',callback:'initEventMap',v:'quarterly'});script.async=true;script.onerror=fail;document.head.appendChild(script)};

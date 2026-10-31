@@ -48,6 +48,7 @@ const minimum = unitOnly ? 90 : 95
 const tsSuites = [
   // M1: the venue registry, availability and ownership.
   'src/migrate/migrations/077venues.test.ts',
+  'src/app/web/mapFrame.test.ts',
   'src/common/fieldAvailability.test.ts',
   'src/common/calendarDates.test.ts',
   'src/common/eventSchedule.test.ts',
@@ -112,6 +113,7 @@ const appSuites = [
   'src/app/screens/VenueScreen.test.tsx',
   'src/app/screens/FieldScreen.test.tsx',
   'src/app/components/PinMap.test.tsx',
+  'src/app/components/MapFrame.test.tsx',
   'src/app/components/WeeklyHoursEditor.test.tsx',
   'src/app/platform/currentPosition.native.test.tsx',
   // M4: the game form's Field row and the Info tab's warnings.

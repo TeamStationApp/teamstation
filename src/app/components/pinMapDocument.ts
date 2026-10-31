@@ -24,6 +24,9 @@ export interface PinMoved {
   longitude: number
 }
 
+/** How long a web map's frame has to start before the panel replaces it. */
+export const MAP_FRAME_READY_MS = 10000
+
 /** What the map shows when it cannot load. */
 export const PIN_MAP_FAILED = 'The map couldn’t load'
 
@@ -73,6 +76,16 @@ function checked(settings: PinMapSettings): void {
     throw new Error('The place could not be located.')
 }
 
+/**
+ * A map's script runs `start` while `element` can be rendered, and `stop` when
+ * it no longer can. The sandboxed web frame is of another origin, and neither
+ * it off screen nor any page in a hidden tab is rendered, so such a map draws
+ * no tiles, and a timer that ran meanwhile would call a healthy map failed. A
+ * document with no frame around it, as in a WebView, is neither, so its timer
+ * simply starts.
+ */
+export const WHILE_ON_SCREEN = `const whileOnScreen=(element,start,stop)=>{if(window.IntersectionObserver==null||window.parent===window){start();return}let seen=false;let running=false;const update=()=>{const on=seen&&document.visibilityState!=='hidden';if(on===running)return;running=on;if(on)start();else stop()};document.addEventListener('visibilitychange',update);new window.IntersectionObserver(entries=>{seen=entries[entries.length-1].isIntersecting;update()}).observe(element)};`
+
 /** Text for the markup, with nothing that could close a tag or a string. */
 const escaped = (text: string): string =>
   text.replace(/[&<>"']/g, character => `&#${character.charCodeAt(0)};`)
@@ -83,8 +96,8 @@ const escaped = (text: string): string =>
  * to a WebView that holds it.
  *
  * A missing key, Google's `gm_authFailure`, a script that fails to load, or
- * no tiles within `timeoutMs` shows a panel instead: "The map couldn’t load",
- * the coordinates, and Retry, which loads the document again.
+ * no tiles within `timeoutMs` on screen shows a panel instead: "The map couldn’t load",
+ * the coordinates, and Retry, which asks the page around it for a new frame.
  */
 export function pinMapDocument(
   settings: PinMapSettings,
@@ -109,12 +122,13 @@ export function pinMapDocument(
     (()=>{
     const config=${config};
     const post=(lat,lng)=>{const message={type:'teamstation:pinMoved',latitude:lat,longitude:lng};if(window.ReactNativeWebView!=null)window.ReactNativeWebView.postMessage(JSON.stringify(message));else if(window.parent!==window)window.parent.postMessage(message,'*')};
-    let failed=false;let timeout;
+    ${WHILE_ON_SCREEN}
+    let failed=false;let drawn=false;let timeout;
     const fail=()=>{if(failed)return;failed=true;clearTimeout(timeout);document.getElementById('map').hidden=true;document.getElementById('failed').hidden=false;window.pinMapFailed=true};
-    document.getElementById('retry').addEventListener('click',()=>{location.reload()});
+    document.getElementById('retry').addEventListener('click',()=>{window.parent.postMessage({type:'teamstation:mapRetry'},'*')});
     if(config.key===''){fail();return}
     window.gm_authFailure=fail;
-    timeout=setTimeout(fail,config.timeoutMs);
+    whileOnScreen(document.getElementById('map'),()=>{if(!failed&&!drawn)timeout=setTimeout(fail,config.timeoutMs)},()=>{clearTimeout(timeout)});
     window.initPinMap=async()=>{try{
       if(failed)return;
       const {Map}=await google.maps.importLibrary('maps');
@@ -125,7 +139,7 @@ export function pinMapDocument(
       const marker=new AdvancedMarkerElement({map,position:center,title:'Field location',gmpDraggable:config.editable});
       marker.addListener('dragend',()=>{const point=marker.position;post(typeof point.lat==='function'?point.lat():point.lat,typeof point.lng==='function'?point.lng():point.lng)});
       window.pinMap=map;window.pinMarker=marker;
-      map.addListener('tilesloaded',()=>{clearTimeout(timeout)});
+      map.addListener('tilesloaded',()=>{drawn=true;clearTimeout(timeout)});
     }catch{fail()}};
     const script=document.createElement('script');script.src='https://maps.googleapis.com/maps/api/js?'+new URLSearchParams({key:config.key,loading:'async',callback:'initPinMap',v:'quarterly'});script.async=true;script.onerror=fail;document.head.appendChild(script);
     })();

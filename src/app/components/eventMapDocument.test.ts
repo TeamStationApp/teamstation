@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { expect } from 'chai'
+import { JSDOM } from 'jsdom'
 import { describe, it } from 'mocha'
 
 import sdk from '../assets/leafletRuntime.json'
@@ -24,6 +25,31 @@ describe('bundled event mapping SDK', () => {
       .and.includes('tileerror')
     expect(html).includes('window.eventMapCenter')
   })
+  it('opens links in a tab of their own when framed, so a link never replaces the map', () => {
+    const load = (framed: boolean): string | undefined => {
+      const dom = new JSDOM(
+        eventMapDocument({
+          latitude: 34,
+          longitude: 12,
+          tileUrl: 'https://example.test/{z}/{x}/{y}.png'
+        }),
+        {
+          runScripts: 'dangerously',
+          pretendToBeVisual: true,
+          beforeParse: window => {
+            if (framed)
+              Object.defineProperty(window, 'parent', { value: { framed } })
+          }
+        }
+      )
+      const target = dom.window.document.querySelector('base')?.target
+      dom.window.close()
+      return target
+    }
+    expect(load(true)).equals('_blank')
+    expect(load(false)).equals(undefined)
+  })
+
   it('rejects missing/invalid coordinates and escapes settings from HTML/script context', () => {
     for (const latitude of [null, Infinity, 91])
       expect(() =>
