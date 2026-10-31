@@ -201,6 +201,13 @@ export const asServerConfig = asObject({
   primaryUrlOverride: asOptional(asString, ''),
 
   /**
+   * True only on a seat or stack that holds invented data: it lets fixtures run and
+   * `test.rateLimitScale` apply. Production never sets it, so production neither
+   * reads that setting nor pays for the query.
+   */
+  testSettings: asOptional(asBoolean, false),
+
+  /**
    * Where this server reports crashes and unhandled errors: a Sentry DSN, and
    * the environment its events are filed under.
    *

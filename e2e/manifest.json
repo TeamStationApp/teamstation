@@ -1,6 +1,213 @@
 {
   "scenarios": [
     {
+      "id": "account/rate-limits/password#refused-at-the-limit",
+      "title": "Too many wrong passwords are refused at the limit, and reset restores it",
+      "kind": "e2e",
+      "covers": [
+        "src/server/auth/rateLimit.ts",
+        "src/server/routes/auth.ts"
+      ],
+      "stack": "seat",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web",
+        "reverse-proxy"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "account/rate-limits/password",
+      "file": "e2e/tests/account/rate-limits/password.e2e.ts"
+    },
+    {
+      "id": "account/sign-in/password#baseline-account",
+      "title": "A person signs in with a password on each surface, and sees only their own team",
+      "kind": "e2e",
+      "covers": [
+        "src/server/routes/auth.ts",
+        "src/server/auth/passwords.ts",
+        "src/app/screens/LoginScreen.tsx"
+      ],
+      "stack": "seat",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "account/sign-in/password",
+      "file": "e2e/tests/account/sign-in/password.e2e.ts"
+    },
+    {
+      "id": "account/sign-in/password#own-team-only",
+      "title": "A person signs in with a password on each surface, and sees only their own team",
+      "kind": "e2e",
+      "covers": [
+        "src/server/routes/auth.ts",
+        "src/server/auth/passwords.ts",
+        "src/app/screens/LoginScreen.tsx"
+      ],
+      "stack": "seat",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "account/sign-in/password",
+      "file": "e2e/tests/account/sign-in/password.e2e.ts"
+    },
+    {
+      "id": "account/sign-in/password#wrong-password-refused",
+      "title": "A person signs in with a password on each surface, and sees only their own team",
+      "kind": "e2e",
+      "covers": [
+        "src/server/routes/auth.ts",
+        "src/server/auth/passwords.ts",
+        "src/app/screens/LoginScreen.tsx"
+      ],
+      "stack": "seat",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "account/sign-in/password",
+      "file": "e2e/tests/account/sign-in/password.e2e.ts"
+    },
+    {
       "id": "app-shell/lists/list-screens#box-score-desktop",
       "title": "List screens lay out their thumbnails, rows, filters and stream address",
       "kind": "e2e",
@@ -31,6 +238,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -79,6 +287,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -127,6 +336,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -175,6 +385,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -223,6 +434,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -271,6 +483,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -319,6 +532,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -367,6 +581,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -415,6 +630,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -463,6 +679,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -511,6 +728,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -559,6 +777,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -607,6 +826,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
@@ -655,6 +875,7 @@
         "blank-screen"
       ],
       "manual": false,
+      "sendsNoMail": true,
       "quarantine": {
         "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
         "since": "2026-10-30",
