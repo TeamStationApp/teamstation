@@ -60,6 +60,9 @@ export interface Theme {
   buttonTextColor: string
   /** The Score action on a game's hero. */
   scoreActionColor: string
+  /** The blue pill of the Videos tab's camera setup. */
+  streamActionColor: string
+  streamActionTextColor: string
   djActionColor: string
 
   // Inputs
