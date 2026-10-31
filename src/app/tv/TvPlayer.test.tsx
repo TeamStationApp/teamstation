@@ -216,6 +216,48 @@ describe('TV game playback entry', () => {
     await key('unknown')
     expect(document.querySelector('video')!.paused).equals(true)
   })
+  it('restores the selected camera and boundary tracking after collapsing fullscreen', async () => {
+    await render()
+    await press('Close panel')
+    const angle = document.querySelector<HTMLElement>(
+      '[data-testid="tv-angle-1"]'
+    )!
+    let restored = 0
+    Object.assign(angle, {
+      requestTVFocus() {
+        restored++
+        angle.focus()
+      }
+    })
+    await act(async () => {
+      angle.focus()
+      await pause()
+    })
+    await press('Camera Angle 1')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    })
+    restored = 0
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Back to cameras"]')!
+        .focus()
+      remoteBack?.()
+      await pause()
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    })
+    expect(restored).equals(1)
+    expect(document.activeElement).equals(angle)
+    await act(async () => {
+      emitTvDirection('right')
+      await pause()
+    })
+    expect(
+      document.querySelector('[data-testid="tv-highlights-panel"]')
+    ).not.equals(null)
+  })
   it('keeps extra innings scrollable and its statistics control reachable within the bottom third', async () => {
     wide = true
     await render()

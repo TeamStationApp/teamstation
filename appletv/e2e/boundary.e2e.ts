@@ -69,6 +69,17 @@ async function main(): Promise<void> {
     await tv.assertNotVisible({ id: 'tv-box-panel', timeout: 15000 })
     await tv.assertNotVisible({ id: 'tv-cameras-panel', timeout: 15000 })
     await shot('four-angles')
+    // A nonfirst camera must regain focus after its full-screen round trip.
+    await key('DPAD_RIGHT')
+    await key('DPAD_CENTER')
+    await tv.assertVisible({ text: 'Back to cameras' })
+    await key('BACK')
+    await shot('fullscreen-return')
+    await key('DPAD_LEFT')
+    await tv.assertNotVisible({ id: 'tv-cameras-panel' })
+    await key('DPAD_LEFT')
+    await tv.assertVisible({ id: 'tv-cameras-panel' })
+    await key('BACK')
     const findBoard = (node: any): any =>
       node.id === 'scoreboard-overlay'
         ? node

@@ -266,10 +266,14 @@ export function TvPlayer({
     }
   }, [client, request, retry])
   const previousOverlay = useRef(false)
+  const previousFull = useRef<number | null>(null)
   useEffect(() => {
     const overlay =
       state.side !== null || state.box !== 'closed' || error !== null
-    const restore = previousOverlay.current && !overlay
+    const restore =
+      !overlay &&
+      (previousOverlay.current || previousFull.current !== state.full)
+    previousFull.current = state.full
     previousOverlay.current = overlay
     if (!restore) return
     const timer = setTimeout(() => {
@@ -295,7 +299,7 @@ export function TvPlayer({
     return () => {
       clearTimeout(timer)
     }
-  }, [state.side, state.box, error])
+  }, [state.side, state.box, state.full, error])
   const sources = useMemo(
     () => angles?.map(angle => ({ uri: angle.uri })) ?? [],
     [angles]
