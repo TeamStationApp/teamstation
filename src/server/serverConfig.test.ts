@@ -136,6 +136,13 @@ describe('the database addresses', function () {
     expect(config.databaseUrl).equals('postgres://db.example.test/x')
   })
 
+  it('runs background jobs unless a node says otherwise', function () {
+    expect(asServerConfig({}).backgroundJobs).equals(true)
+    expect(asServerConfig({ backgroundJobs: false }).backgroundJobs).equals(
+      false
+    )
+  })
+
   it('sizes each role, with defaults for what is left out', function () {
     expect(asServerConfig({}).databasePoolSizes).deep.equals({
       worker: 10,
