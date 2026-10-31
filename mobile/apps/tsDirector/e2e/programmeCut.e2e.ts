@@ -288,9 +288,8 @@ async function main(): Promise<void> {
     assert.equal(slots.length, 2, `two cameras live, got tiles ${slots.join(', ')}`)
     const [first, second] = slots
     await send(`/program?source=${first}`)
-    if (process.env.CUT_DELAY_MS != null) {
-      await send(`/display-latency-cap?ms=${process.env.CUT_DELAY_MS}`)
-    }
+    // Saved by the app, so a run never inherits another's.
+    await send(`/display-latency-cap?ms=${process.env.CUT_DELAY_MS ?? 1000}`)
 
     const peak = { mb: 0 }
     const sample = (): void => {
