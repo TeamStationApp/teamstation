@@ -33,7 +33,6 @@ export function TvBackdrop(): React.ReactElement {
 export function TvBrand(): React.ReactElement {
   return (
     <View style={{ alignItems: 'center', gap: 16 }}>
-      <TsMark size={2.5} />
       <View
         style={{
           width: 180,
@@ -67,6 +66,20 @@ export function TvBrand(): React.ReactElement {
             strokeLinecap="round"
           />
         </Svg>
+        <View
+          testID="tv-brand-screen"
+          style={{
+            position: 'absolute',
+            left: 68,
+            top: 30,
+            width: 44,
+            height: 44,
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
+          <TsMark size={2.5} />
+        </View>
       </View>
       <Text style={{ color: '#fff', fontSize: 30, fontWeight: '700' }}>
         TeamStation TV

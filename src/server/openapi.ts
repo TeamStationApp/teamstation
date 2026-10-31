@@ -3304,7 +3304,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', default: '' },
               description:
-                'With hasVideo: case-insensitive public name substring; omitted: all.'
+                'With hasVideo: case-insensitive public name substring; omitted: all. Results add optional videoSeason {name, leagueName}, null without a season, from the latest accessible recorded game.'
             },
             {
               name: 'limit',
@@ -6234,7 +6234,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', maxLength: 100, default: '' },
               description:
-                'With hasVideo: case-insensitive public name substring (omitted: all); never private names. With forTeam: every word must start a first, last or display name, ignoring case and accents.'
+                'With hasVideo: results add optional recentVideoTeams [{id,name}], up to two teams from actual participation in accessible recordings, newest first; case-insensitive public name substring (omitted: all); never private names. With forTeam: every word must start a first, last or display name, ignoring case and accents.'
             },
             {
               name: 'limit',
