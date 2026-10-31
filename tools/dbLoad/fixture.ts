@@ -756,8 +756,8 @@ async function seedGroups(seeder: Seeder): Promise<Groups> {
 
 /**
  * The live games, each with a scorekeeper. The first is the crowded game. The
- * second is the long one: a game every play record version replays in, already
- * far into extra innings, with relievers and corrections on its record.
+ * last, which few watch, is the long one: a game every play record version
+ * replays in, far into extra innings, with relievers and corrections on record.
  */
 async function seedLiveGames(seeder: Seeder, groups: Groups): Promise<void> {
   const { amounts } = seeder
@@ -786,7 +786,7 @@ async function seedLiveGames(seeder: Seeder, groups: Groups): Promise<void> {
     )
     await seeder.grant(scorekeeper.userId, 'team', sides.home.id, 'scorekeeper')
     seeder.games.push({ id, sides, seasonId, scorekeeper: scorekeeper.label })
-    if (i === 1) {
+    if (i === amounts.liveGames - 1) {
       const written = await scriptedGame(id, sides, {
         innings: amounts.longGameInnings,
         final: false,
@@ -1295,7 +1295,7 @@ async function placeWorstPeople(seeder: Seeder): Promise<void> {
     .sort((a, b) => (a.label < b.label ? -1 : 1))
   for (const [i, account] of worst.entries()) {
     const gameIndex =
-      i < seeder.amounts.crowdedWorstCaseViewers ? 0 : 1 % seeder.games.length
+      i < seeder.amounts.crowdedWorstCaseViewers ? 0 : seeder.games.length - 1
     const teamId = seeder.games[gameIndex].sides.home.id
     await joinScope(seeder.db, 'team', teamId, account.userId)
     account.teamId = teamId
@@ -1724,7 +1724,7 @@ export async function describeShapes(
     })
   )
 
-  const longId = games.get(`live${pad(1)}`) ?? ''
+  const longId = tokens.games[tokens.games.length - 1]?.id ?? ''
   const longPlays = await db
     .selectFrom('events')
     .select(['gumbo', 'inning'])
@@ -1907,18 +1907,24 @@ export function verifyShapes(shapes: Shapes, amounts: Amounts): void {
   if (wrong.length > 0) throw new Error(`Shapes differ: ${wrong.join('; ')}`)
 }
 
-/** Which accounts this process connects: its slice of the first `users`. */
+/**
+ * Which accounts this process connects: its slice of the first `users` of those
+ * who watch one of the first `games`, since a viewer may only see their own.
+ */
 export function accountsForShard(
   tokens: TokensFile,
   users: number,
-  shard: { index: number; count: number } = { index: 0, count: 1 }
+  shard: { index: number; count: number } = { index: 0, count: 1 },
+  games = tokens.games.length
 ): SeededAccount[] {
   const connectable = tokens.accounts.filter(
-    account => account.kind === 'viewer' || account.kind === 'worstCase'
+    account =>
+      (account.kind === 'viewer' || account.kind === 'worstCase') &&
+      (account.gameIndex ?? 0) < games
   )
   if (users > connectable.length)
     throw new Error(
-      `--users ${users} is above the ${connectable.length} accounts seeded for run ${tokens.runId}`
+      `--users ${users} is above the ${connectable.length} accounts seeded for ${games} game(s) of run ${tokens.runId}`
     )
   return connectable
     .slice(0, users)

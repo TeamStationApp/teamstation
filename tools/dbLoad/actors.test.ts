@@ -3,8 +3,10 @@ import { spawn } from 'node:child_process'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import type { GameState } from '../../src/common/scoring/state'
 import {
   CAMERAS_PER_PERSON,
+  finishBatter,
   HttpError,
   mintStream,
   paced,
@@ -211,7 +213,7 @@ describe('the actors', function () {
 
     it('score on in the long game, which holds every record version', async function () {
       const tally = new Tally()
-      const game = tokens.games[1]
+      const game = tokens.games[tokens.games.length - 1]
       const keeper = new Scorekeeper(
         server.base,
         account(game.scorekeeper),
@@ -224,6 +226,34 @@ describe('the actors', function () {
       keeper.stop()
       expect(tally.errors).deep.equals({})
       expect(tally.postMs.length).at.least(2)
+    })
+
+    it('walks out a batter a previous run left at the plate', async function () {
+      const tally = new Tally()
+      const game = tokens.games[3]
+      const scorer = account(game.scorekeeper)
+      const first = new Scorekeeper(server.base, scorer, game, tally, 1000)
+      await first.open()
+      const inner = first as unknown as { queue: unknown[] }
+      inner.queue = [{ type: 'pitch', call: 'B' }]
+      await first.pitch()
+      first.stop()
+      const next = new Scorekeeper(server.base, scorer, game, tally, 1000)
+      await next.open()
+      for (let i = 0; i < 6; i++) await next.pitch()
+      next.stop()
+      expect(tally.errors).deep.equals({})
+    })
+
+    it('knows what ends a batter at any count', function () {
+      const stateAt = (balls: number, strikes: number): GameState =>
+        ({
+          liveData: { plays: { currentPlay: { count: { balls, strikes } } } }
+        }) as unknown as GameState
+      expect(finishBatter(stateAt(0, 0))).deep.equals([])
+      expect(finishBatter(stateAt(4, 0)).length).equals(1)
+      expect(finishBatter(stateAt(0, 3)).length).equals(1)
+      expect(finishBatter(stateAt(1, 2)).length).equals(4)
     })
 
     it('counts a scorer who cannot score, and cannot pitch before opening', async function () {
@@ -275,7 +305,7 @@ describe('the actors', function () {
 
     it('counts a problem with the scoring itself, and starts the batter over', async function () {
       const tally = new Tally()
-      const game = tokens.games[4]
+      const game = tokens.games[1]
       const keeper = new Scorekeeper(
         server.base,
         account(game.scorekeeper),
@@ -434,10 +464,16 @@ describe('the actors', function () {
           cause: { code: 'ECONNREFUSED' }
         })
       )
+      tally.failure(
+        Object.assign(new TypeError('fetch failed'), {
+          cause: { code: 'ECONNRESET' }
+        })
+      )
       expect(tally.errors).deep.equals({
         'http-503': 2,
         TypeError: 1,
-        unreachable: 1
+        unreachable: 1,
+        ECONNRESET: 1
       })
     })
 

@@ -136,7 +136,7 @@ export async function probeLongGame(
   server: string,
   tokens: Pick<TokensFile, 'accounts' | 'games'>
 ): Promise<ProbeResult> {
-  const game = tokens.games[1]
+  const game = tokens.games[tokens.games.length - 1]
   const scorer = tokens.accounts.find(
     account => account.label === game.scorekeeper
   )

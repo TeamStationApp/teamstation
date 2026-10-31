@@ -53,6 +53,8 @@ describe('the command line', function () {
         'small',
         '--accounts',
         '30',
+        '--crowded',
+        '10',
         '--run-id',
         'cli',
         '--tokens',

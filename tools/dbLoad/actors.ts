@@ -10,6 +10,7 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../src/common/scoring/session'
+import type { GameState } from '../../src/common/scoring/state'
 import type { SeededAccount, SeededGame, TokensFile } from './fixture'
 import type { Measurements } from './report'
 import { batterActions, contextOf, randomFrom } from './scoredGames'
@@ -39,14 +40,10 @@ export class Tally implements Measurements {
   /** Counts a failure by what it was: a status, a refused connection. */
   failure(error: unknown): void {
     const code = (error as { cause?: { code?: string } }).cause?.code
-    if (
-      code === 'ECONNREFUSED' ||
-      code === 'ECONNRESET' ||
-      code === 'ENOTFOUND'
-    )
+    if (code === 'ECONNREFUSED' || code === 'ENOTFOUND')
       this.fail('unreachable')
     else if (error instanceof HttpError) this.fail(`http-${error.status}`)
-    else this.fail((error as Error).name ?? 'error')
+    else this.fail(code ?? (error as Error).name ?? 'error')
   }
 
   notePost(gameId: string): void {
@@ -280,6 +277,26 @@ export function httpStore(
 }
 
 /**
+ * What ends a batter a previous run left at the plate: his turn is walked out,
+ * since the script he was on has gone with that run.
+ */
+export function finishBatter(state: GameState): ScoringAction[] {
+  const count = state.liveData.plays.currentPlay?.count
+  const balls = count?.balls ?? 0
+  const strikes = count?.strikes ?? 0
+  if (balls === 0 && strikes === 0) return []
+  const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+  if (balls >= 4 || strikes >= 3) return [close]
+  return [
+    ...Array.from({ length: 4 - balls }, (): ScoringAction => ({
+      type: 'pitch',
+      call: 'B'
+    })),
+    close
+  ]
+}
+
+/**
  * Scores one game a pitch at a time through the scoring screen's own session.
  * A batter's actions are taken up to and including a pitch, then saved, which
  * is one post and one delivery, as a scorer's tap is.
@@ -314,6 +331,7 @@ export class Scorekeeper implements Actor {
         clearTimer: () => undefined
       }
     )
+    this.queue = finishBatter(this.session.state)
   }
 
   /** Scores one pitch, whatever else that batter's turn needs, and saves it. */

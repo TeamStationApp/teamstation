@@ -199,7 +199,8 @@ describe('the sampler', function () {
     const client = {
       query: async (text: string) => {
         if (failing) throw new Error('connection lost')
-        if (text.includes('pg_extension')) return { rows: [{ '?column?': 1 }] }
+        if (text.includes('from pg_extension'))
+          return { rows: [{ '?column?': 1 }] }
         if (text.includes('sum(calls)'))
           return { rows: [{ calls: String(calls), total: '12.5' }] }
         if (text.includes('from pg_stat_statements')) {

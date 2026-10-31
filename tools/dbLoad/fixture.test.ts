@@ -227,7 +227,15 @@ describe('the fixture', function () {
       row => row.kind === 'viewer' || row.kind === 'worstCase'
     ).length
     expect(() => accountsForShard(tokens, connectable + 1)).throws(
-      `--users ${connectable + 1} is above the ${connectable} accounts seeded for run first`
+      `--users ${connectable + 1} is above the ${connectable} accounts seeded for 5 game(s) of run first`
+    )
+  })
+
+  it('connects only those who can see the games in the run', function () {
+    const crowd = accountsForShard(tokens, 5, undefined, 1)
+    expect(crowd.every(row => row.gameIndex === 0)).equals(true)
+    expect(() => accountsForShard(tokens, 40, undefined, 1)).throws(
+      'seeded for 1 game(s)'
     )
   })
 

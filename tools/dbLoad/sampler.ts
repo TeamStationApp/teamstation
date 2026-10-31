@@ -1,7 +1,10 @@
 import type { Client } from 'pg'
 
-/** A mark on this tool's own statements, for leaving them out of its figures. */
-const OWN = '/* dbload-sampler */'
+/**
+ * Leaves this tool's own reads out of its figures. By what they read, since
+ * `pg_stat_statements` keeps neither a statement's comment nor its literals.
+ */
+const NOT_OWN = `query !~ 'pg_stat_(statements|activity|user_tables)|pg_extension'`
 
 /** Backends of one kind at a moment. */
 export interface BackendCount {
@@ -175,7 +178,7 @@ export class Sampler {
   async start(): Promise<void> {
     const { client, requireStatements } = this.options
     const found = await client.query(
-      `${OWN} select 1 from pg_extension where extname = 'pg_stat_statements'`
+      `select 1 from pg_extension where extname = 'pg_stat_statements'`
     )
     this.hasStatements = found.rows.length > 0
     if (requireStatements === true && !this.hasStatements)
@@ -222,7 +225,7 @@ export class Sampler {
   private async read(): Promise<Sample> {
     const { client, poolerAddress } = this.options
     const activity = await client.query<ActivityRow>(
-      `${OWN} select application_name, state, host(client_addr) as client_addr, count(*)
+      `select application_name, state, host(client_addr) as client_addr, count(*)
        from pg_stat_activity
        where datname = current_database() and backend_type = 'client backend'
          and pid <> pg_backend_pid()
@@ -233,7 +236,7 @@ export class Sampler {
       object_waiters: string
       oldest: string | null
     }>(
-      `${OWN} select
+      `select
          count(*) filter (where wait_event_type = 'Lock') as waiters,
          count(*) filter (where wait_event_type = 'Lock' and wait_event = 'object') as object_waiters,
          extract(epoch from max(now() - xact_start)) as oldest
@@ -256,10 +259,10 @@ export class Sampler {
       calls: string | null
       total: string | null
     }>(
-      `${OWN} select sum(calls) as calls, sum(total_exec_time) as total
+      `select sum(calls) as calls, sum(total_exec_time) as total
        from pg_stat_statements
        where dbid = (select oid from pg_database where datname = current_database())
-         and query not like '%dbload-sampler%'`
+         and ${NOT_OWN}`
     )
     return {
       calls: Number(rows[0].calls ?? 0),
@@ -270,17 +273,17 @@ export class Sampler {
   private async readStatements(): Promise<StatementRow[]> {
     if (!this.hasStatements) return []
     const { rows } = await this.options.client.query<StatementRow>(
-      `${OWN} select queryid::text, query, calls, total_exec_time, rows
+      `select queryid::text, query, calls, total_exec_time, rows
        from pg_stat_statements
        where dbid = (select oid from pg_database where datname = current_database())
-         and query not like '%dbload-sampler%'`
+         and ${NOT_OWN}`
     )
     return rows
   }
 
   private async readTables(): Promise<TableRow[]> {
     const { rows } = await this.options.client.query<TableRow>(
-      `${OWN} select relname, seq_scan, n_live_tup from pg_stat_user_tables`
+      `select relname, seq_scan, n_live_tup from pg_stat_user_tables`
     )
     return rows
   }

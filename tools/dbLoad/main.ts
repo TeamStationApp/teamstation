@@ -64,6 +64,7 @@ const OPTIONS = {
   database: { type: 'string' },
   scale: { type: 'string' },
   accounts: { type: 'string' },
+  crowded: { type: 'string' },
   'run-id': { type: 'string' },
   users: { type: 'string' },
   shard: { type: 'string' },
@@ -128,11 +129,16 @@ export interface RunOptions {
 /** Drives the run, then reports whatever it saw, even if every actor failed. */
 export async function runLoad(options: RunOptions): Promise<ReportData> {
   const tokens = readTokens(options.tokensPath)
-  const accounts = accountsForShard(tokens, options.users, options.shard)
   if (options.games > tokens.games.length)
     throw new Error(
       `--games ${options.games} is above the ${tokens.games.length} live games seeded for run ${tokens.runId}`
     )
+  const accounts = accountsForShard(
+    tokens,
+    options.users,
+    options.shard,
+    options.games
+  )
   const games = tokens.games.slice(0, options.games)
   const client = new Client({
     connectionString: options.databaseUrl,
@@ -164,7 +170,7 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
       actors.push(...scorers)
 
       const viewers = accounts.map((account, index) => {
-        const game = games[(account.gameIndex ?? 0) % games.length]
+        const game = games[account.gameIndex ?? 0]
         return new SocketViewer(
           serverFor(options.servers, index),
           account,
@@ -381,10 +387,14 @@ async function seed(
   const db = openLoadDatabase(databaseUrl)
   try {
     const runId = values['run-id'] ?? newRunId()
-    const overrides =
-      values.accounts == null
+    const overrides = {
+      ...(values.accounts == null
         ? {}
-        : { accounts: count(values.accounts, '--accounts') }
+        : { accounts: count(values.accounts, '--accounts') }),
+      ...(values.crowded == null
+        ? {}
+        : { crowdedViewers: count(values.crowded, '--crowded') })
+    }
     const scale = values.scale as string
     const tokens = await seedFixture(db, {
       runId,
