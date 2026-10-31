@@ -9,5 +9,6 @@
   "maestroHome": "/Users/dev/.maestro-d",
   "secretsFile": "/Users/dev/.keys/e2e-secrets.json",
   "judgeBudgetUsd": 1,
-  "sweepRef": "origin/master"
+  "sweepRef": "origin/master",
+  "ledger": "/Users/dev/.config/teamstation-e2e/ledger.jsonl"
 }

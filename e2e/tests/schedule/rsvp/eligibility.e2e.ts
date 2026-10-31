@@ -14,7 +14,7 @@ async function rosterRemoval(ctx: E2eContext): Promise<void> {
   if (ctx.stack.webDir == null)
     throw new Error('This scenario needs a web build')
   const f = await guardianFixture(ctx.stack.webDir)
-  ctx.stack.adopt(f.h.origin)
+  const origin = await ctx.stack.adopt(f.h.origin)
   const m = await ctx.attach('browser', {
     platform: 'ios',
     appId: 'com.apple.mobilesafari',
@@ -67,7 +67,7 @@ async function rosterRemoval(ctx: E2eContext): Promise<void> {
     )!.name
     const path = `/games/${game.id}?tab=info`
     await m.openLink({
-      link: f.h.origin + '/sign-in?next=' + encodeURIComponent(path)
+      link: origin + '/sign-in?next=' + encodeURIComponent(path)
     })
     await m.assertVisible({ text: 'Sign in to TeamStation', timeout: 20000 })
     await m.waitForAnimationToEnd()
@@ -75,8 +75,9 @@ async function rosterRemoval(ctx: E2eContext): Promise<void> {
     await m.inputText({ text: f.emails[user] })
     await m.pressKey({ key: 'ENTER' })
     await m.assertVisible({ text: 'Sign-in code', timeout: 10000 })
-    const link = f.h.links.get(f.emails[user])!
-    await m.openLink({ link: f.h.origin + new URL(link).pathname })
+    const link = f.h.links.get(f.emails[user])
+    if (link == null) throw new Error('No sign-in link was sent')
+    await m.openLink({ link: origin + new URL(link).pathname })
     await m.assertVisible({ text: 'RSVP', timeout: 20000 })
     await m.waitForAnimationToEnd()
     await ctx.checkpoint('rsvp-card', { expect: [{ text: 'RSVP' }] })
@@ -105,7 +106,7 @@ async function rosterRemoval(ctx: E2eContext): Promise<void> {
       user
     )
     expect(rejected.status).equals(403)
-    await m.openLink({ link: f.h.origin + path })
+    await m.openLink({ link: origin + path })
     await m.assertVisible({ text: 'RSVP', timeout: 20000 })
     await m.tapOn({ text: 'RSVP' })
     await m.assertVisible({ text: ownName })

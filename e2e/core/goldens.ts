@@ -190,6 +190,9 @@ export function acceptGolden(options: AcceptOptions): {
       `The run is from ${result.ref} and this checkout is at ${options.headRef}`
     )
   }
+  if (result.fault != null) {
+    throw new Error(`The run injected ${result.fault}: it cannot make a golden`)
+  }
   const target = result.target
   const onFixtures =
     target?.kind === 'isolated' ||
