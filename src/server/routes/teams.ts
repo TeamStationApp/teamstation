@@ -11,6 +11,7 @@ import {
 import type { PlayerRsvpCounts } from '../../common/eventInfo'
 import { scoreboardOpen } from '../../common/scoreboard'
 import { inningsPitched } from '../../common/statExtras'
+import { asUserId } from '../../common/userId'
 import {
   adminScopes,
   canKeepSongs,
@@ -769,6 +770,16 @@ export function teamRoutes(
     withAsync(async (req, res) => {
       const videoId = pathParam(req.params.videoId)
       const personalized = req.query.personalized !== undefined
+      let participant: string | undefined
+      if (req.query.participant !== undefined) {
+        if (!personalized)
+          throw badRequest('participant requires personalized=1')
+        try {
+          participant = asUserId(req.query.participant)
+        } catch {
+          throw badRequest('participant must be a user id')
+        }
+      }
       if (personalized && req.query.personalized !== '1')
         throw badRequest('personalized must be 1')
 
@@ -806,10 +817,10 @@ export function teamRoutes(
           )
         )
           throw notFound()
-        const users = [
-          actor.userId,
-          ...(await guardedPlayers(db, actor.userId))
-        ]
+        const users =
+          participant === undefined
+            ? [actor.userId, ...(await guardedPlayers(db, actor.userId))]
+            : [participant]
         const aliases = (
           await Promise.all(
             users.map(async id => (await onePerson(db, id)).userIds)
@@ -890,7 +901,10 @@ export function teamRoutes(
         // How many plays were left out because nobody could be named on them.
         // An empty list can then say which kind of empty it is.
         droppedCount: computed.dropped,
-        highlights: withStills
+        highlights:
+          participant === undefined
+            ? withStills
+            : withStills.filter(clip => clip.preferred === true)
       })
 
       // Answered first, then the frames are cut. The plan has ingest pre-warm

@@ -14,7 +14,9 @@ import { tsDark } from '../theme/tsDark'
 import { PlaybackProbe } from './PlaybackProbe'
 import { TvSessionController, type TvSessionStore } from './session'
 import { TvBackdrop, TvBrand } from './TvBrand'
+import { TvBrowser, type TvPlayRequest } from './TvBrowser'
 import { TvButton } from './TvButton'
+import { TvPlayer } from './TvPlayer'
 
 export function TvQr({ value }: { value: string }): React.ReactElement {
   const qr = useMemo(() => {
@@ -62,6 +64,7 @@ export function TvApp({
   )
   const state = useSyncExternalStore(controller.subscribe, controller.snapshot)
   const [now, setNow] = useState(Date.now())
+  const [playing, setPlaying] = useState<TvPlayRequest | null>(null)
   useEffect(() => {
     if (__DEV__ && probeUrls != null && probeUrls !== '') return
     controller.boot().catch(() => undefined)
@@ -81,7 +84,7 @@ export function TvApp({
   }, [state.phase])
   return (
     <ScopedThemeProvider theme={tsDark}>
-      <View style={styles.scene}>
+      <View style={[styles.scene, state.phase === 'ready' && styles.browsing]}>
         <TvBackdrop />
         {__DEV__ && probeUrls != null && probeUrls !== '' ? (
           <PlaybackProbe urls={probeUrls.split('|')} />
@@ -115,18 +118,29 @@ export function TvApp({
             </View>
           </View>
         ) : state.phase === 'ready' ? (
-          <View style={styles.column}>
-            <TvBrand />
-            <Text style={styles.title}>
-              Welcome, {state.session?.user.displayName}
-            </Text>
-            <TvButton
-              label="Sign out"
-              onPress={() => {
-                controller.signOut().catch(() => undefined)
-              }}
-            />
-          </View>
+          <>
+            <View style={[styles.browser, playing !== null && styles.hidden]}>
+              <TvBrowser
+                client={client}
+                visible={playing === null}
+                viewerName={state.session?.user.displayName ?? ''}
+                onPlay={setPlaying}
+                onSignOut={() => {
+                  setPlaying(null)
+                  controller.signOut().catch(() => undefined)
+                }}
+              />
+            </View>
+            {playing !== null && (
+              <TvPlayer
+                client={client}
+                request={playing}
+                onClose={() => {
+                  setPlaying(null)
+                }}
+              />
+            )}
+          </>
         ) : (
           <View style={styles.column}>
             <TvBrand />
@@ -148,6 +162,9 @@ export function TvApp({
   )
 }
 const styles = StyleSheet.create({
+  browsing: { padding: 0 },
+  browser: { flex: 1, width: '100%' },
+  hidden: { display: 'none' },
   scene: {
     flex: 1,
     backgroundColor: '#000',

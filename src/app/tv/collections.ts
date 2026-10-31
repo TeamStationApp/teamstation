@@ -72,7 +72,10 @@ export async function loadTvCollection(
       games
         .slice(0, 4)
         .map(async game =>
-          topClips(game, await client.tvHighlights(game.latestVideoId))
+          topClips(
+            game,
+            await client.tvHighlights(game.latestVideoId, filter.participant)
+          )
         )
     )
   ).flat()

@@ -381,6 +381,23 @@ describe('TV video collections', function () {
         c => c.eventId === 'evt_clip_2'
       )?.preferred
     ).equals(false)
+    expect(
+      (await client.tvHighlights('vid_tv_0', userIdOfGumbo(103))).map(
+        clip => clip.eventId
+      )
+    ).deep.equals(['evt_clip_2'])
+    expect(
+      (await h.request('GET', '/videos/vid_tv_0/highlights?participant=bad'))
+        .status
+    ).equals(400)
+    expect(
+      (
+        await h.request(
+          'GET',
+          '/videos/vid_tv_0/highlights?personalized=1&participant=bad'
+        )
+      ).status
+    ).equals(400)
     const ordinary = await (
       await h.request('GET', '/videos/vid_tv_0/highlights', undefined, null)
     ).json()

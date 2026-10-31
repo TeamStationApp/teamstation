@@ -3,11 +3,15 @@ import { Pressable, Text } from 'react-native'
 export function TvButton({
   label,
   onPress,
-  testID
+  testID,
+  preferred = false,
+  onFocus
 }: {
   label: string
   onPress: () => void
   testID?: string
+  preferred?: boolean
+  onFocus?: () => void
 }): React.ReactElement {
   const [focused, setFocused] = useState(false)
   return (
@@ -15,9 +19,11 @@ export function TvButton({
       testID={testID}
       accessibilityRole="button"
       accessibilityLabel={label}
+      {...{ hasTVPreferredFocus: preferred }}
       onPress={onPress}
       onFocus={() => {
         setFocused(true)
+        onFocus?.()
       }}
       onBlur={() => {
         setFocused(false)

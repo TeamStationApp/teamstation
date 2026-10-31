@@ -5682,6 +5682,13 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'Omitted: public preview behavior. 1 requires signed-in playback access (404 otherwise) and adds preferred, true when the viewer or a guarded player is credited, including assists.'
             },
             {
+              name: 'participant',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                'With personalized=1: return only highlights crediting this player, including assists and historical merged identities. Omitted: all highlights with viewer/family preference.'
+            },
+            {
               name: 'videoId',
               in: 'path',
               required: true,

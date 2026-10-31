@@ -6,7 +6,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { AppRegistry, NativeModules } from 'react-native'
 
-import { asSession, TeamStationClient } from '../../common/api'
+import { asSession, asVideoGame, TeamStationClient } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { TvApp } from './TvApp'
 
@@ -116,6 +116,56 @@ describe('TV app presentation', () => {
     NativeModules.TVSession.load = async () => null
     await press('Retry')
     expect(document.body.textContent).contains('ABCD–EFGH')
+  })
+  it('opens a browsed game and returns to the mounted home screen', async () => {
+    setup(JSON.stringify({ origin: 'https://example.test/api/v1', session }))
+    const methods = {
+      videoGames: TeamStationClient.prototype.videoGames,
+      videoTeams: TeamStationClient.prototype.videoTeams,
+      myFollows: TeamStationClient.prototype.myFollows,
+      tvHighlights: TeamStationClient.prototype.tvHighlights,
+      game: TeamStationClient.prototype.game
+    }
+    const game = asVideoGame({
+      id: 'game',
+      homeTeamId: 'home',
+      awayTeamId: 'away',
+      homeTeamName: 'Hosts',
+      awayTeamName: 'Visitors',
+      homeTeamExternal: false,
+      awayTeamExternal: false,
+      seasonId: null,
+      startAt: null,
+      venue: null,
+      status: 'final',
+      homeScore: null,
+      awayScore: null,
+      ingestStatus: 'ok',
+      videoCount: 1,
+      latestVideoId: 'video',
+      latestVideoAt: '2026-10-01T00:00:00Z'
+    })
+    TeamStationClient.prototype.videoGames = async () => [game]
+    TeamStationClient.prototype.videoTeams = async () => []
+    TeamStationClient.prototype.myFollows = async () => []
+    TeamStationClient.prototype.tvHighlights = async () => []
+    TeamStationClient.prototype.game = async () => {
+      throw new Error('Fixture unavailable')
+    }
+    try {
+      await render()
+      const home = document.querySelector('[data-testid="tv-page-home"]')
+      await press('▶ Watch Game')
+      expect(document.body.textContent).contains('Fixture unavailable')
+      await press('Back to games')
+      expect(document.querySelector('[data-testid="tv-page-home"]')).equals(
+        home
+      )
+      await press('Sign out')
+      expect(document.body.textContent).contains('ABCD–EFGH')
+    } finally {
+      Object.assign(TeamStationClient.prototype, methods)
+    }
   })
   it('keeps all player elements mounted through probe visibility and sizing changes', async () => {
     setup()

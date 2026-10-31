@@ -4686,11 +4686,14 @@ export class TeamStationClient {
     )
   }
 
-  async tvHighlights(videoId: string): Promise<TvHighlight[]> {
+  async tvHighlights(
+    videoId: string,
+    participant?: string
+  ): Promise<TvHighlight[]> {
     return (
       await this.request(
         'GET',
-        `/videos/${encodeURIComponent(videoId)}/highlights?personalized=1`,
+        `/videos/${encodeURIComponent(videoId)}/highlights?personalized=1${participant === undefined ? '' : `&participant=${encodeURIComponent(participant)}`}`,
         asTvHighlights
       )
     ).highlights
