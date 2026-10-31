@@ -229,6 +229,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/observability/query.js',
   'server/observability/routes.js',
   'server/observability/service.js',
+  'server/openAdds.js',
   'server/openapi.js',
   'server/people/guardians.js',
   'server/replay/narrationAudio.js',
