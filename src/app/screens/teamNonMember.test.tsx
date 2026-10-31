@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
@@ -617,5 +618,20 @@ describe('a member’s game Videos tab', function () {
     // Nothing recorded, so no highlights to list, nor a heading over none.
     expect(text()).not.includes('Highlights')
     expect(asked).deep.equals([])
+  })
+
+  it('leaves saying so to the camera area on a phone, with no notice or player box', async function () {
+    const platform = Platform as { OS: string }
+    const previous = platform.OS
+    try {
+      platform.OS = 'ios'
+      await page([])
+      noPlayerBox()
+      expect(document.querySelector('[data-testid="gameVideoNotice"]')).equals(
+        null
+      )
+    } finally {
+      platform.OS = previous
+    }
   })
 })

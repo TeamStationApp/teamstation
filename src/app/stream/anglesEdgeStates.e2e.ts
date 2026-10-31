@@ -15,13 +15,13 @@
 // The local server runs without mail, so it logs each sign-in link; the app
 // is signed in through its own `teamstation://signin/` link.
 //
-//   1. A game with no cameras: Cameras holds Record video and nothing else
+//   1. A game with no cameras: the empty state, holding Record Video
 //      (angles-empty.png).
 //   2. A second device of the same account (a `POST …/live-streams` posing as
 //      device B) makes "Second Base".
-//   3. Record video with "Second Base": the 409 shows in the prompt
+//   3. Record Video with "Second Base": the 409 shows in the prompt
 //      (angle-duplicate-409.png). Cancel.
-//   4. Record video with "Home Plate" → Start, then Close.
+//   4. Record Video with "Home Plate" → Record with this phone, then Close.
 //   5. This phone's "Home Plate" row opens the camera again on the same
 //      stream: the game still has one Home Plate, with the same id. Close.
 //   6. Signed in as somebody who may not film: no Cameras. Back as the
@@ -53,7 +53,9 @@ interface Driver {
     target: { text: string } | { id: string } | { point: string }
   ) => Promise<unknown>
   inputText: (options: { text: string }) => Promise<unknown>
-  assertNotVisible: (options: { text: string }) => Promise<unknown>
+  assertNotVisible: (
+    options: { text: string } | { id: string }
+  ) => Promise<unknown>
   scrollUntilVisible: (options: {
     element: { text: string } | { id: string }
     centerElement?: boolean
@@ -269,21 +271,21 @@ async function main(): Promise<void> {
     await sleep(1500)
   }
   const recordVideo = async (name: string): Promise<void> => {
-    say('$ scrollUntilVisible Record video')
+    say('$ scrollUntilVisible Record Video')
     await m.scrollUntilVisible({
-      element: { text: 'Record video' },
+      element: { text: 'Record Video' },
       centerElement: true
     })
-    say('$ tapOn Record video')
-    await m.tapOn({ text: 'Record video' })
+    say('$ tapOn Record Video')
+    await m.tapOn({ text: 'Record Video' })
     assert(
       (await find(byText('Name this camera angle'))) != null,
-      'Record video asks for the angle’s name'
+      'Record Video asks for the angle’s name'
     )
     say(`$ inputText ${name}`)
     await m.inputText({ text: name })
-    say('$ tapOn Start')
-    await m.tapOn({ text: 'Start' })
+    say('$ tapOn Record with this phone')
+    await m.tapOn({ text: 'Record with this phone' })
   }
   const closeCamera = async (): Promise<void> => {
     assert(
@@ -294,7 +296,7 @@ async function main(): Promise<void> {
     say('$ tapOn camera-close')
     await m.tapOn({ id: 'camera-close' })
     assert(
-      (await find(byText('Record video'), 15000)) != null,
+      (await find(byText('Record Video'), 15000)) != null,
       'Close goes back to the game'
     )
   }
@@ -315,14 +317,14 @@ async function main(): Promise<void> {
       'the game starts with no cameras'
     )
 
-    // 1. Nothing but Record video.
+    // 1. Nothing but Record Video.
     await openGame()
-    say('$ scrollUntilVisible Record video')
+    say('$ scrollUntilVisible Record Video')
     await m.scrollUntilVisible({
-      element: { text: 'Record video' },
+      element: { text: 'Record Video' },
       centerElement: true
     })
-    assert((await find(byText('CAMERAS'), 5000)) != null, 'Cameras shows')
+    assert((await find(byText('No videos'), 5000)) != null, 'the empty state')
     const rows = (await nodes()).filter(
       node =>
         node.id?.startsWith('angle-row-') === true ||
@@ -330,7 +332,7 @@ async function main(): Promise<void> {
     )
     assert.deepEqual(rows, [], 'no camera rows')
     await shot('angles-empty.png')
-    results.push('1 a game with no cameras: Cameras holds only Record video')
+    results.push('1 a game with no cameras: the empty state, with Record Video')
 
     // 2. Device B, the same account, makes "Second Base".
     say(
@@ -361,14 +363,14 @@ async function main(): Promise<void> {
     say('$ tapOn Cancel')
     await m.tapOn({ text: 'Cancel' })
     await sleep(1500)
-    results.push(`3 Record video “${TAKEN}”: “${refusal.text ?? ''}”`)
+    results.push(`3 Record Video “${TAKEN}”: “${refusal.text ?? ''}”`)
 
     // 4. "Home Plate", then Close.
     await recordVideo(ANGLE)
     await closeCamera()
     const home = (await cameras(token)).mine.find(row => row.label === ANGLE)
     assert(home != null, 'the phone has a Home Plate camera')
-    results.push(`4 Record video “${ANGLE}” made stream ${home.id}`)
+    results.push(`4 Record Video “${ANGLE}” made stream ${home.id}`)
 
     // 5. Its row opens the camera again, on the same stream.
     const row = await find(byId(`angle-row-${home.id}`), 15000)
@@ -397,8 +399,9 @@ async function main(): Promise<void> {
       .catch(() => undefined)
     say('$ assertNotVisible CAMERAS')
     await m.assertNotVisible({ text: 'CAMERAS' })
-    say('$ assertNotVisible Record video')
-    await m.assertNotVisible({ text: 'Record video' })
+    // By id: the empty state's question holds the same words, in lower case.
+    say('$ assertNotVisible record-video')
+    await m.assertNotVisible({ id: 'record-video' })
     await signOut()
     await signIn(email)
     results.push(`6 ${viewerEmail}: no Cameras; signed back in as ${email}`)
