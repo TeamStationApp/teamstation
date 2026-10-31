@@ -267,7 +267,8 @@ export function expectedPlaceholders(
       games: 0,
       batting: null,
       pitching: null,
-      options: { seasons: [], teams: [], years: [] }
+      options: { seasons: [], teams: [], years: [] },
+      splits: { by: 'team', batting: [], pitching: [] }
     }
     expected.api[`/players/${id}/plays`] = []
     if (expected.apiInventory != null) {

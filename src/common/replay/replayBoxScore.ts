@@ -248,6 +248,69 @@ export function replayBoxScore(
   return { away: side('away'), home: side('home'), from }
 }
 
+/** A side's batting added up, for the line under its batters. */
+export interface ReplayBattingTotals {
+  ab: number
+  r: number
+  h: number
+  rbi: number
+  bb: number
+  k: number
+}
+
+/** A side's pitching added up, its innings counted as outs. */
+export interface ReplayPitchingTotals {
+  outs: number
+  ip: string
+  h: number
+  r: number
+  er: number
+  bb: number
+  k: number
+  pc: number
+}
+
+/**
+ * The totals line under a side's batters: each column the sum of the lines
+ * above it, a batter yet to bat adding his noughts.
+ */
+export function battingTotals(
+  lines: readonly ReplayBattingLine[]
+): ReplayBattingTotals {
+  const sum = (field: keyof ReplayBattingTotals): number =>
+    lines.reduce((total, line) => total + line[field], 0)
+  return {
+    ab: sum('ab'),
+    r: sum('r'),
+    h: sum('h'),
+    rbi: sum('rbi'),
+    bb: sum('bb'),
+    k: sum('k')
+  }
+}
+
+/**
+ * The totals line under a side's pitchers. Innings are added as outs and
+ * written the usual way, so one and a third and one and two thirds are `3.0`.
+ */
+export function pitchingTotals(
+  lines: readonly ReplayPitchingLine[]
+): ReplayPitchingTotals {
+  const sum = (field: Exclude<keyof ReplayPitchingTotals, 'ip'>): number =>
+    lines.reduce((total, line) => total + line[field], 0)
+  const outs = sum('outs')
+  return {
+    outs,
+    ip: inningsPitched(outs),
+    h: sum('h'),
+    r: sum('r'),
+    er: sum('er'),
+    bb: sum('bb'),
+    k: sum('k'),
+    pc: sum('pc')
+  }
+}
+
 /** Where a timeline's own scoring begins, when earlier plays were imported. */
 export function scoredFrom(
   start: GameState,

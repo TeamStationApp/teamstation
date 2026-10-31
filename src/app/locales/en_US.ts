@@ -175,6 +175,7 @@ export const enUs = {
     'You need to be a member of one of these teams to see individual player stats.',
   /** Under a coach's empty line score, before the game has a line score. */
   box_score_not_started: 'The game has not started',
+  box_score_totals: 'Totals',
 
   // Four angles at once
   angles_open: 'All angles',
@@ -253,6 +254,9 @@ export const enUs = {
   player_batting: 'Batting',
   player_pitching: 'Pitching',
   player_no_batting: 'This player has never batted in a game we hold.',
+  player_stats_total: 'Total',
+  player_stats_team: 'Team',
+  player_stats_game: 'Game',
   player_no_pitching: 'This player has never pitched in a game we hold.',
   player_filter: 'Filter',
   player_filter_empty: 'No games under this filter.',

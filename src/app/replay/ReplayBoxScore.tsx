@@ -1,11 +1,20 @@
 import React from 'react'
-import { ScrollView, Text, View } from 'react-native'
+import {
+  Pressable,
+  ScrollView,
+  Text,
+  useWindowDimensions,
+  View
+} from 'react-native'
 
-import type {
-  ReplayBoxScore as Box,
-  ReplaySide
+import {
+  battingTotals,
+  pitchingTotals,
+  type ReplayBoxScore as Box,
+  type ReplaySide
 } from '../../common/replay/replayBoxScore'
 import { ordinal } from '../../common/scoring/lineup'
+import { scaledSize } from '../components/FrozenNameTable'
 import { scoringSurface as surface } from '../theme/scoringSurface'
 import { useTheme } from '../theme/ThemeContext'
 
@@ -13,9 +22,13 @@ export interface ReplayBoxScoreProps {
   box: Box
   /** Room left clear under the last row, for the pause button. */
   bottomInset?: number
+  /** Who may be opened, by their id on these lines; anybody else is text. */
+  players?: ReadonlyMap<number, string>
+  onOpenPlayer?: (userId: string, name: string) => void
 }
 
 const NAME = 112
+const LINE_ROW = 22
 const COLUMN = 30
 
 /**
@@ -26,6 +39,8 @@ const COLUMN = 30
 export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
   const { box } = props
   const theme = useTheme()
+  const { fontScale } = useWindowDimensions()
+  const figures = React.useRef<React.ComponentRef<typeof ScrollView>>(null)
   const text = (
     value: string | number,
     options: { width?: number; strong?: boolean; color?: string } = {}
@@ -47,9 +62,20 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
     </Text>
   )
   const innings = Math.max(box.away.innings.length, box.home.innings.length)
+  // Every row one fixed height in both halves, which is what keeps a name level
+  // with its figures whatever its text measures.
+  const lineCell = {
+    height: scaledSize(LINE_ROW, fontScale),
+    justifyContent: 'center'
+  } as const
+  const lineHead = {
+    ...lineCell,
+    borderBottomWidth: 1,
+    borderBottomColor: surface.divider,
+    paddingBottom: 3
+  }
   const lineRow = (side: ReplaySide): React.ReactElement => (
-    <View style={{ flexDirection: 'row', paddingVertical: 3 }}>
-      {text(side.name, { width: NAME, strong: true })}
+    <View style={[lineCell, { flexDirection: 'row', alignItems: 'center' }]}>
       {Array.from({ length: innings }, (_, i) => (
         <React.Fragment key={i}>
           {text(side.innings[i] == null ? '' : String(side.innings[i]))}
@@ -96,7 +122,7 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
   const row = (
     key: string,
     current: boolean,
-    cells: React.ReactElement[]
+    cells: React.ReactNode[]
   ): React.ReactElement => (
     <View
       key={key}
@@ -114,50 +140,109 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
       ))}
     </View>
   )
-  const team = (side: ReplaySide): React.ReactElement => (
-    <View key={side.name}>
-      {heading(`${side.name} batting`, 'Batter', [
-        'AB',
-        'R',
-        'H',
-        'RBI',
-        'BB',
-        'K'
-      ])}
-      {side.batting.map(line =>
-        row(`b${line.id}`, line.current, [
-          text(`${line.sub ? '  ' : ''}${line.name}`, { width: NAME }),
-          text(line.ab),
-          text(line.r),
-          text(line.h),
-          text(line.rbi),
-          text(line.bb),
-          text(line.k)
-        ])
-      )}
-      {heading(`${side.name} pitching`, 'Pitcher', [
-        'IP',
-        'H',
-        'R',
-        'ER',
-        'BB',
-        'K',
-        'PC'
-      ])}
-      {side.pitching.map(line =>
-        row(`p${line.id}`, line.current, [
-          text(line.name, { width: NAME }),
-          text(line.ip),
-          text(line.h),
-          text(line.r),
-          text(line.er),
-          text(line.bb),
-          text(line.k),
-          text(line.pc)
-        ])
-      )}
-    </View>
-  )
+  /** A line's name, which opens them when this reader may. */
+  const nameCell = (
+    id: number,
+    name: string,
+    shown = name
+  ): React.ReactNode => {
+    const userId = props.players?.get(id)
+    const cell = text(shown, { width: NAME })
+    const { onOpenPlayer } = props
+    if (userId == null || onOpenPlayer == null) return cell
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${name}`}
+        onPress={() => {
+          onOpenPlayer(userId, name)
+        }}
+        // A taller target than its row, overhanging both sides.
+        style={{ minHeight: 44, marginVertical: -11, justifyContent: 'center' }}
+      >
+        {cell}
+      </Pressable>
+    )
+  }
+  /**
+   * A table's last line: its columns added up, under a name that is nobody,
+   * so it is never the batter or the pitcher on screen.
+   */
+  const totalsRow = (
+    key: string,
+    cells: Array<string | number>
+  ): React.ReactElement =>
+    row(key, false, [
+      text('Totals', { width: NAME, strong: true }),
+      ...cells.map(cell => text(cell, { strong: true }))
+    ])
+  const team = (side: ReplaySide): React.ReactElement => {
+    const hitting = battingTotals(side.batting)
+    const throwing = pitchingTotals(side.pitching)
+    return (
+      <View key={side.name}>
+        {heading(`${side.name} batting`, 'Batter', [
+          'AB',
+          'R',
+          'H',
+          'RBI',
+          'BB',
+          'K'
+        ])}
+        {side.batting.map(line =>
+          row(`b${line.id}`, line.current, [
+            nameCell(line.id, line.name, `${line.sub ? '  ' : ''}${line.name}`),
+            text(line.ab),
+            text(line.r),
+            text(line.h),
+            text(line.rbi),
+            text(line.bb),
+            text(line.k)
+          ])
+        )}
+        {side.batting.length > 0 &&
+          totalsRow(`b-totals-${side.name}`, [
+            hitting.ab,
+            hitting.r,
+            hitting.h,
+            hitting.rbi,
+            hitting.bb,
+            hitting.k
+          ])}
+        {heading(`${side.name} pitching`, 'Pitcher', [
+          'IP',
+          'H',
+          'R',
+          'ER',
+          'BB',
+          'K',
+          'PC'
+        ])}
+        {side.pitching.map(line =>
+          row(`p${line.id}`, line.current, [
+            nameCell(line.id, line.name),
+            text(line.ip),
+            text(line.h),
+            text(line.r),
+            text(line.er),
+            text(line.bb),
+            text(line.k),
+            text(line.pc)
+          ])
+        )}
+        {side.pitching.length > 0 &&
+          totalsRow(`p-totals-${side.name}`, [
+            throwing.ip,
+            throwing.h,
+            throwing.r,
+            throwing.er,
+            throwing.bb,
+            throwing.k,
+            throwing.pc
+          ])}
+      </View>
+    )
+  }
   return (
     <ScrollView
       testID="replay-box-score"
@@ -185,33 +270,55 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
       )}
       {/*
         The line score and the tables, each as wide as its widest row and
-        centred. A long game's line score can outgrow a phone; the tables
-        stay centred under it all the same.
+        centred. A long game's line score outgrows the side deck from five
+        innings and a phone held upright from six: its team names stay where
+        they are while the innings and R/H/E scroll beside them, rather than
+        the runs being cut off.
       */}
       <View
         testID="replay-box-score-line"
-        style={{ alignSelf: 'center', maxWidth: '100%' }}
+        style={{ alignSelf: 'center', maxWidth: '100%', flexDirection: 'row' }}
       >
-        <View
-          style={{
-            flexDirection: 'row',
-            borderBottomWidth: 1,
-            borderBottomColor: surface.divider,
-            paddingBottom: 3
-          }}
-        >
-          {text('', { width: NAME })}
-          {Array.from({ length: innings }, (_, i) => (
-            <React.Fragment key={i}>
-              {text(i + 1, { color: surface.accent })}
-            </React.Fragment>
+        <View>
+          <View style={lineHead} />
+          {(
+            [
+              ['away', box.away],
+              ['home', box.home]
+            ] as const
+          ).map(([key, side]) => (
+            <View key={key} style={lineCell}>
+              {text(side.name, { width: NAME, strong: true })}
+            </View>
           ))}
-          {text('R', { color: surface.accent })}
-          {text('H', { color: surface.accent })}
-          {text('E', { color: surface.accent })}
         </View>
-        {lineRow(box.away)}
-        {lineRow(box.home)}
+        <ScrollView
+          testID="replay-box-score-line-figures"
+          ref={figures}
+          horizontal
+          // The inning being played and R, H and E, not the first innings.
+          onContentSizeChange={() => {
+            figures.current?.scrollToEnd({ animated: false })
+          }}
+          style={{ flexShrink: 1 }}
+        >
+          <View>
+            <View
+              style={[lineHead, { flexDirection: 'row', alignItems: 'center' }]}
+            >
+              {Array.from({ length: innings }, (_, i) => (
+                <React.Fragment key={i}>
+                  {text(i + 1, { color: surface.accent })}
+                </React.Fragment>
+              ))}
+              {text('R', { color: surface.accent })}
+              {text('H', { color: surface.accent })}
+              {text('E', { color: surface.accent })}
+            </View>
+            {lineRow(box.away)}
+            {lineRow(box.home)}
+          </View>
+        </ScrollView>
       </View>
       <View
         testID="replay-box-score-column"

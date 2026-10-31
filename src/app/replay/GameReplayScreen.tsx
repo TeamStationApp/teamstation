@@ -14,7 +14,11 @@ import {
   View
 } from 'react-native'
 
-import { type GameDetail, parseStoredGame } from '../../common/api'
+import {
+  type BoxScore,
+  type GameDetail,
+  parseStoredGame
+} from '../../common/api'
 import type { GameSocketListener } from '../../common/gameSocket'
 import { replayBoxScore, scoredFrom } from '../../common/replay/replayBoxScore'
 import { namesOf } from '../../common/replay/replayNames'
@@ -80,6 +84,8 @@ export interface ReplaySocket {
 export interface ReplayClient extends NarrationClient {
   game: (gameId: string) => Promise<GameDetail>
   gameEvents: (gameId: string) => Promise<StoredGame>
+  /** Who on this game the reader may open; a replay plays on without it. */
+  boxScore?: (gameId: string) => Promise<BoxScore>
   /** Says, among other things, whether the server has an announcer. */
   health: () => Promise<{ narration?: boolean; replayPitchSec?: number }>
 }
@@ -88,6 +94,8 @@ export interface GameReplayScreenProps {
   client: ReplayClient
   gameId: string
   onExit: () => void
+  /** A name in the box score, opened: a line the reader may open. */
+  onOpenPlayer?: (userId: string, name: string) => void
   /** The game has nothing to replay: show the game instead. */
   onNotReplayable: () => void
   /** The app's one game socket, which a live replay follows. */
@@ -187,6 +195,19 @@ export function replayLayout(
  * below the catcher, the box score below that, Exit and the speaker at the
  * top left, rewind at the bottom left and pause at the bottom right.
  */
+/**
+ * The lines a reader may open, by their scoring id: the box score's own answer,
+ * so a replay offers exactly the names the box score does.
+ */
+export function openablePlayers(box: BoxScore): Map<number, string> {
+  const players = new Map<number, string>()
+  for (const line of [...box.batting, ...box.pitching]) {
+    if (line.userId == null || !line.openable) continue
+    for (const id of line.gumboIds) players.set(id, line.userId)
+  }
+  return players
+}
+
 export function GameReplayScreen(
   props: GameReplayScreenProps
 ): React.ReactElement {
@@ -250,6 +271,7 @@ export function GameReplayScreen(
           socket={props.socket}
           pollMs={props.pollMs ?? POLL_MS}
           onExit={props.onExit}
+          onOpenPlayer={props.onOpenPlayer}
           clock={props.clock ?? Date.now}
         />
       )}
@@ -269,8 +291,24 @@ function ReplayView(props: {
   /** The node's pitch delay, for whatever plays at replay pace. */
   pitchSlotMs: number
   onExit: () => void
+  onOpenPlayer?: (userId: string, name: string) => void
   clock: () => number
 }): React.ReactElement {
+  const [openable, setOpenable] = useState<ReadonlyMap<number, string>>()
+  const { client: boxClient, onOpenPlayer } = props
+  const gameId = props.game.id
+  useEffect(() => {
+    if (onOpenPlayer == null) return
+    let live = true
+    Promise.resolve(boxClient.boxScore?.(gameId))
+      .then(box => {
+        if (live && box != null) setOpenable(openablePlayers(box))
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [boxClient, gameId, onOpenPlayer])
   const [state, dispatch] = useReducer(replayReducer, undefined, () =>
     startReplay(
       props.mode,
@@ -690,13 +728,21 @@ function ReplayView(props: {
               bottom: 0
             }}
           >
-            <ReplayBoxScore box={box} />
+            <ReplayBoxScore
+              box={box}
+              players={openable}
+              onOpenPlayer={onOpenPlayer}
+            />
           </View>
         )}
       </View>
       {layout.side && (
         <View style={[{ width: SIDE_DECK_WIDTH }, surfaceStyle.safe]}>
-          <ReplayBoxScore box={box} />
+          <ReplayBoxScore
+            box={box}
+            players={openable}
+            onOpenPlayer={onOpenPlayer}
+          />
         </View>
       )}
       <View

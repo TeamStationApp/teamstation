@@ -969,11 +969,20 @@ export function teamRoutes(
         rows.map(row => row.userId).filter(id => !isWithdrawnKey(id))
       )
 
+      // Who each line is in the game's plays, so a replay can open its names.
+      const gumboIds = new Map<string, number[]>()
+      for (const row of rows) {
+        const ids = gumboIds.get(row.userId) ?? []
+        if (!ids.includes(row.gumboId)) ids.push(row.gumboId)
+        gumboIds.set(row.userId, ids)
+      }
+
       const pitching = (
         await pitchingOrder(db, gameId, pitchingLines(rows))
       ).map(line => ({
         ...line,
         userId: publicUserId(line.userId),
+        gumboIds: gumboIds.get(line.userId) ?? [],
         openable: opens.has(line.userId),
         shortName: names.get(line.userId) ?? 'Unknown',
         ip: inningsPitched(line.outs),
@@ -993,6 +1002,7 @@ export function teamRoutes(
         batting: lines.map(line => ({
           ...line,
           userId: publicUserId(line.userId),
+          gumboIds: gumboIds.get(line.userId) ?? [],
           openable: opens.has(line.userId),
           shortName: names.get(line.userId) ?? 'Unknown',
           rates: battingRates(line),

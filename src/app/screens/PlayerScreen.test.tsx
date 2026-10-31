@@ -4,11 +4,15 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import {
+  asBattingRow,
   asChatConversation,
   asPersonProfile,
+  asPitchingRow,
   asPlayerDetail,
   asRosterEntry,
+  type BattingRow,
   type MyRoles,
+  type PitchingRow,
   type PlayerHighlights,
   type PlayerStats,
   type PlayerTeam,
@@ -19,6 +23,7 @@ import type {
   PersonSettings,
   PlayerSettings
 } from '../../common/playerSettings'
+import type { StatSplit } from '../../common/playerStatSplits'
 import type { Role } from '../../common/roles'
 import { userIdOfGumbo } from '../../common/userId'
 import { App } from '../App'
@@ -2038,5 +2043,188 @@ describe('a player’s Team roles on Settings', function () {
     expect(selectedTab()).equals('Settings')
     expect(guardian).deep.equals([])
     expect(text()).not.includes('TEAM ROLES')
+  })
+})
+
+describe('a player’s stats tables', function () {
+  const batting = (ab: number, h: number): BattingRow =>
+    asBattingRow({
+      userId: userIdOfGumbo(7),
+      teamId: null,
+      pa: ab + 1,
+      ab,
+      h,
+      singles: h,
+      doubles: 0,
+      triples: 0,
+      hr: 0,
+      bb: 1,
+      k: 1,
+      hbp: 0,
+      rbi: 1,
+      pik: 3,
+      rates: { avg: ab === 0 ? undefined : h / ab }
+    })
+  const pitching = (outs: number): PitchingRow =>
+    asPitchingRow({
+      userId: userIdOfGumbo(7),
+      teamId: null,
+      ip: `${Math.floor(outs / 3)}.${outs % 3}`,
+      outs,
+      bf: outs + 2,
+      h: 1,
+      hr: 0,
+      hbp: 0,
+      r: 1,
+      bb: 1,
+      k: 2,
+      rates: { baa: 0.25 }
+    })
+  const split = (fields: Partial<StatSplit>): StatSplit => ({
+    teamId: 't1',
+    teamName: 'Hawks',
+    seasonName: 'Spring 2026',
+    gameId: null,
+    startAt: '2026-05-23T18:00:00.000Z',
+    opponentName: null,
+    home: null,
+    ...fields
+  })
+
+  async function showStats(answer: PlayerStats): Promise<void> {
+    await render(
+      <PlayerScreen
+        client={Object.assign(playerClient(), {
+          playerStats: async () => answer
+        })}
+        userId={userIdOfGumbo(7)}
+        initialTab="stats"
+        initialFilter={{}}
+      />
+    )
+  }
+
+  /** The names column and the figures beside it, of the `index`th table. */
+  function table(index: number): { names: string[]; figures: string[] } {
+    const columns = document.querySelectorAll<HTMLElement>(
+      '[data-testid="frozen-names"]'
+    )
+    const column = columns[index]
+    const scroller = column.parentElement!.querySelector(
+      ':scope > [data-testid="frozen-figures"]'
+    )!
+    return {
+      names: [...column.children].map(row => row.textContent ?? ''),
+      figures: [...scroller.firstElementChild!.firstElementChild!.children].map(
+        row => row.textContent ?? ''
+      )
+    }
+  }
+
+  it('draws a career as a row per team in the server’s order, the total last, names beside the scroll', async function () {
+    await showStats({
+      ...stats,
+      batting: batting(9, 4),
+      pitching: pitching(13),
+      splits: {
+        by: 'team',
+        batting: [
+          { split: split({}), line: batting(5, 3) },
+          {
+            split: split({ teamId: 'tem_other', teamName: 'Ravens' }),
+            line: batting(4, 1)
+          }
+        ],
+        pitching: [
+          {
+            split: split({ teamId: 'tem_old', seasonName: 'Fall 2025' }),
+            line: pitching(13)
+          }
+        ]
+      }
+    })
+    const battingTable = table(0)
+    // Told apart across the page: another Hawks team is in the pitching.
+    expect(battingTable.names).deep.equals([
+      'Team',
+      'Hawks · Spring 2026',
+      'Ravens',
+      'Total'
+    ])
+    expect(battingTable.figures[0].startsWith('PAABHAVG')).equals(true)
+    expect(battingTable.figures[1].startsWith('653.600')).equals(true)
+    expect(battingTable.figures[3].startsWith('1094.444')).equals(true)
+    expect(table(1).names).deep.equals(['Team', 'Hawks · Fall 2025', 'Total'])
+    // No block of labelled numbers any more.
+    expect(text()).not.includes('OBP.')
+    const name = [...document.querySelectorAll<HTMLElement>('*')].find(
+      node => node.textContent === 'Ravens' && node.children.length === 0
+    )!
+    expect(name.closest('[data-testid="frozen-figures"]')).equals(null)
+  })
+
+  it('draws a narrowed page as a row per game, vs at home and @ away', async function () {
+    await showStats({
+      ...stats,
+      filter: { seasonId: 's1', teamId: null, year: null },
+      batting: batting(7, 2),
+      pitching: null,
+      splits: {
+        by: 'game',
+        batting: [
+          {
+            split: split({
+              gameId: 'g2',
+              opponentName: 'Owls',
+              home: true,
+              startAt: '2026-05-23T18:00:00.000Z'
+            }),
+            line: batting(4, 1)
+          },
+          {
+            split: split({
+              gameId: 'g1',
+              opponentName: 'Valley Pines 12U',
+              home: false,
+              startAt: '2026-05-16T18:00:00.000Z'
+            }),
+            line: batting(3, 1)
+          }
+        ],
+        pitching: []
+      }
+    })
+    const { names } = table(0)
+    expect(names[0]).equals('Game')
+    expect(names[1]).matches(/^May 2[234] vs Owls$/)
+    expect(names[2]).matches(/^May 1[567] @ Valley Pines 12U$/)
+    expect(names[3]).equals('Total')
+    // A long label wraps to two lines rather than losing its opponent.
+    const long = [...document.querySelectorAll<HTMLElement>('*')].find(
+      node =>
+        node.children.length === 0 &&
+        (node.textContent ?? '').endsWith('@ Valley Pines 12U')
+    )!
+    expect(getComputedStyle(long).webkitLineClamp).equals('2')
+  })
+
+  it('keeps each empty copy, and draws only the total from a server with no rows', async function () {
+    await showStats({ ...stats, batting: batting(3, 1), pitching: null })
+    expect(table(0).names).deep.equals(['Team', 'Total'])
+    await act(async () => {
+      root?.unmount()
+    })
+    await showStats({ ...stats, batting: null, pitching: pitching(3) })
+    expect(text()).includes('This player has never batted in a game we hold.')
+    expect(table(0).names).deep.equals(['Team', 'Total'])
+    await act(async () => {
+      root?.unmount()
+    })
+    await showStats({
+      ...stats,
+      filter: { seasonId: 's1', teamId: null, year: null },
+      games: 0
+    })
+    expect(document.querySelector('[data-testid="frozen-names"]')).equals(null)
   })
 })

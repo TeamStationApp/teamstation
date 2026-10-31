@@ -31,7 +31,6 @@ import {
   SettingsGear,
   type StatFilter,
   StatFilterModal,
-  StatGrid,
   useHeaderHandoff,
   usePinnedHandoff,
   usePinnedTabs
@@ -44,9 +43,9 @@ import { battingLine, exactDateTime } from './format'
 import { GuardianInvite, GuardianRequest } from './PlayerGuardians'
 import { PlayerRemoveFromTeam } from './PlayerRemoveFromTeam'
 import { PlayerSettingsTab } from './PlayerSettingsTab'
+import { PlayerStatsTable } from './PlayerStatsTable'
 import { PlayerTeamRoles } from './PlayerTeamRoles'
 import { PlayerTeamsTab } from './PlayerTeamsTab'
-import { battingColumns, pitchingColumns, playerStats } from './statColumns'
 
 export interface PlayerScreenProps {
   client: TeamStationClient
@@ -883,10 +882,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
             {stats?.batting != null && (
               <Card>
                 <Text style={styles.cardTitle}>{lstrings.player_batting}</Text>
-                <StatGrid
-                  stats={playerStats(stats.batting, battingColumns)}
-                  columns={4}
-                />
+                <PlayerStatsTable stats={stats} kind="batting" />
               </Card>
             )}
 
@@ -905,10 +901,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
             {stats?.pitching != null && (
               <Card>
                 <Text style={styles.cardTitle}>{lstrings.player_pitching}</Text>
-                <StatGrid
-                  stats={playerStats(stats.pitching, pitchingColumns)}
-                  columns={4}
-                />
+                <PlayerStatsTable stats={stats} kind="pitching" />
               </Card>
             )}
           </View>

@@ -4,7 +4,9 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import {
+  asBattingRow,
   asGameSummary,
+  asPitchingRow,
   asRosterEntry,
   type ScheduleEntry,
   type StaffEntry,
@@ -411,6 +413,137 @@ describe('TeamScreen for the team’s own people', function () {
         root?.unmount()
       })
     }
+  })
+})
+
+describe('TeamScreen batting and pitching tables', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+
+  it('keeps the names outside the sideways scroll and the figures in it', async function () {
+    const line = {
+      userId: userIdOfGumbo(31),
+      shortName: 'Mookie B',
+      teamId: hawks.id,
+      pa: 4,
+      ab: 3,
+      h: 2,
+      singles: 2,
+      doubles: 0,
+      triples: 0,
+      hr: 0,
+      bb: 1,
+      k: 0,
+      hbp: 0,
+      rbi: 1,
+      rates: { avg: 0.667 }
+    }
+    const { client } = fakeClient({
+      teamStats: async () => [asBattingRow(line)],
+      teamPitchingStats: async () => [
+        asPitchingRow({
+          ...line,
+          shortName: 'Tyler G',
+          ip: '2.0',
+          outs: 6,
+          bf: 8,
+          r: 1,
+          rates: {}
+        })
+      ]
+    })
+    await render(
+      <TeamScreen
+        client={client}
+        team={{ ...hawks, access: 'member' as const, onTeam: true }}
+        initialTab="stats"
+        onOpenGame={() => undefined}
+      />
+    )
+    const leaves = [...document.querySelectorAll<HTMLElement>('*')].filter(
+      node => node.children.length === 0
+    )
+    for (const [name, last] of [
+      ['Mookie B', 'PIK'],
+      ['Tyler G', 'BAA']
+    ]) {
+      const cell = leaves.find(node => node.textContent === name)!
+      expect(cell, name).not.equals(undefined)
+      const column = cell.closest('[data-testid="frozen-names"]')
+      expect(column, `${name} frozen`).not.equals(null)
+      const figures = column!.parentElement!.querySelector(
+        ':scope > [data-testid="frozen-figures"]'
+      )!
+      expect(figures.contains(cell)).equals(false)
+      expect(
+        [...figures.querySelectorAll('*')].some(
+          node => node.textContent === last && node.children.length === 0
+        ),
+        `${last} scrolls`
+      ).equals(true)
+      expect(getComputedStyle(cell).position).not.equals('sticky')
+    }
+    // With nothing to open a player, a name is text, not a disabled control.
+    for (const names of document.querySelectorAll(
+      '[data-testid="frozen-names"]'
+    )) {
+      expect(names.querySelector('[aria-disabled]')).equals(null)
+      expect(names.querySelector('[role="button"]')).equals(null)
+    }
+  })
+})
+
+describe('TeamScreen’s stat tables for a member', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+
+  it('opens a player from their name, with the team', async function () {
+    const line = {
+      userId: userIdOfGumbo(31),
+      shortName: 'Mookie B',
+      teamId: hawks.id,
+      pa: 4,
+      ab: 3,
+      h: 2,
+      singles: 2,
+      doubles: 0,
+      triples: 0,
+      hr: 0,
+      bb: 1,
+      k: 0,
+      hbp: 0,
+      rbi: 1,
+      rates: { avg: 0.667 }
+    }
+    const { client } = fakeClient({
+      teamStats: async () => [asBattingRow(line)]
+    })
+    const opened: unknown[] = []
+    await render(
+      <TeamScreen
+        client={client}
+        team={hawks}
+        initialTab="stats"
+        onOpenGame={() => undefined}
+        onOpenPlayer={(userId, name, from) => opened.push([userId, name, from])}
+      />
+    )
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Open Mookie B"]')!
+        .click()
+    })
+    expect(opened).deep.equals([
+      [line.userId, 'Mookie B', { teamId: hawks.id }]
+    ])
   })
 })
 

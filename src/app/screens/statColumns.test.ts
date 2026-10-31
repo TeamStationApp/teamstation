@@ -6,9 +6,20 @@ import { userIdOfGumbo } from '../../common/userId'
 import {
   battingColumns,
   pitchingColumns,
-  playerStats,
+  type StatColumn,
   statColumnWidths
 } from './statColumns'
+
+/** Each column's label and its figure for `row`, as a table cell draws it. */
+function formatted<T>(
+  row: T,
+  columns: Array<StatColumn<T>>
+): Array<{ label: string; value: string }> {
+  return columns.map(column => ({
+    label: column.label,
+    value: column.value(row)
+  }))
+}
 
 export const battingFixture = asBattingRow({
   userId: userIdOfGumbo(101),
@@ -71,7 +82,7 @@ describe('expanded statistics columns', function () {
       'PA AB H AVG OBP OPS SLG 1B 2B 3B HR RBI R BB SO HBP SAC SF ROE FC SB SB% CS PIK'
     )
     expect(
-      playerStats(battingFixture, battingColumns).map(c => c.value)
+      formatted(battingFixture, battingColumns).map(c => c.value)
     ).deep.equals([
       '8',
       '6',
@@ -104,7 +115,7 @@ describe('expanded statistics columns', function () {
       'IP GP GS BF #P W L SV SVO BS SV% H R ER BB SO K-L HBP ERA WHIP LOB BK PIK CS SB SB% WP BAA'
     )
     expect(
-      playerStats(pitchingFixture, pitchingColumns).map(c => c.value)
+      formatted(pitchingFixture, pitchingColumns).map(c => c.value)
     ).deep.equals([
       '5.2',
       '2',
@@ -137,14 +148,14 @@ describe('expanded statistics columns', function () {
     ])
   })
   it('distinguishes missing detail and denominators from recorded zero', function () {
-    const batting = playerStats(
+    const batting = formatted(
       asBattingRow({ ...battingFixture, roe: null, rates: {} }),
       battingColumns
     )
     expect(batting.find(c => c.label === 'AVG')?.value).equals('—')
     expect(batting.find(c => c.label === 'ROE')?.value).equals('—')
     expect(batting.find(c => c.label === 'SB%')?.value).equals('—')
-    const pitching = playerStats(
+    const pitching = formatted(
       asPitchingRow({ ...pitchingFixture, pitches: null, rates: {} }),
       pitchingColumns
     )

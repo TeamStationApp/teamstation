@@ -24,6 +24,7 @@ import {
   pitchingLines,
   pitchingRates
 } from '../stats'
+import { playerSplits } from '../stats/playerSplits'
 import { playerFilterOf, statRows } from '../stats/rows'
 import { seasonParticipants } from '../stats/seasonTeams'
 
@@ -107,6 +108,13 @@ export function statsRoutes(
 
       const [batting] = battingLines(chosen)
       const [pitching] = pitchingLines(chosen)
+      // The rows the totals are the sum of: a team each for a career, a game
+      // each once the page is narrowed to a season, a team or a year.
+      const splits = await playerSplits(
+        db,
+        chosen,
+        seasonId == null && teamId == null && year == null ? 'team' : 'game'
+      )
 
       const seasons = new Map<string, { name: string; year: number | null }>()
       const teams = new Map<string, string>()
@@ -160,7 +168,12 @@ export function statsRoutes(
             .map(([id, name]) => ({ teamId: id, name }))
             .sort((a, b) => a.name.localeCompare(b.name)),
           years: [...years].sort((a, b) => b - a)
-        }
+        },
+        // Last, after everything the page cannot do without: a reader that
+        // cuts a long answer short, as Tess's does, loses rows from the end of
+        // this, the pitching before the batting's oldest, and keeps the totals
+        // and the filter.
+        splits
       })
     })
   )

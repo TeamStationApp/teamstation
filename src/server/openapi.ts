@@ -5588,7 +5588,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'under a placeholder name) has `standsFor`, the gumbo id of the ' +
             'batter it stands in for in this game, so a batting order that ' +
             'still names him shows the line instead; every other line has ' +
-            '`standsFor` null. Anybody signed in ' +
+            '`standsFor` null. `gumboIds` are the ids a line goes by in the ' +
+            "game's plays. Anybody signed in " +
             'who is a member of neither team is answered 403 `membersOnly`.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
@@ -5715,7 +5716,14 @@ export function openApiDocument(version: string): OpenApiDocument {
             'the seasons, teams and years there are to choose from, which is ' +
             'what the filter on the page offers. `rates.era` is earned runs ' +
             "per game, a game being the season's or league's ERA innings " +
-            '(six unless set), and is absent for a pitcher with no outs.',
+            '(six unless set), and is absent for a pitcher with no outs. ' +
+            '`splits`, last in the answer, holds the rows the totals are ' +
+            'the sum of: `by` `team` for a career, one row per team; `by` ' +
+            '`game` under a season, team or year, one row per game with its ' +
+            'opponent and side. Each of `splits.batting` and ' +
+            '`splits.pitching` lists only rows with that kind of line, ' +
+            'newest first, each `{ split, line }`, its rates worked out the ' +
+            'same way as the totals.',
           security: [{ bearer: [] }],
           parameters: [
             userIdParam,

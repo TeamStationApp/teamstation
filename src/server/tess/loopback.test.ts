@@ -41,6 +41,31 @@ describe("Tess's loopback to the API", function () {
       app.get('/api/v1/__long', (_req, res) => {
         res.send('x'.repeat(MAX_RESULT_CHARS + 10))
       })
+      // A player's stats answer for a long season, in the route's key order:
+      // the totals and the filter, then the split rows last.
+      app.get('/api/v1/__playerStats', (_req, res) => {
+        res.json({
+          userId: 'usr_1',
+          filter: { seasonId: 'sea_1', teamId: null, year: null },
+          games: 400,
+          batting: { ab: 1200, h: 400 },
+          pitching: { outs: 900, er: 120 },
+          options: { seasons: [{ seasonId: 'sea_1', name: 'Spring' }] },
+          splits: {
+            by: 'game',
+            batting: Array.from({ length: 400 }, (_, game) => ({
+              split: { gameId: `gam_${game}`, opponentName: 'Ravens' },
+              line: { ab: 3, h: 1, note: 'x'.repeat(200) }
+            })),
+            pitching: [
+              {
+                split: { gameId: 'gam_0', opponentName: 'Ravens' },
+                line: { outs: 3, er: 0 }
+              }
+            ]
+          }
+        })
+      })
       app.get('/api/v1/__hang', () => {
         // Never answers.
       })
@@ -126,6 +151,18 @@ describe("Tess's loopback to the API", function () {
     expect(answer.truncated).equals(true)
     expect(answer.body.startsWith('x'.repeat(MAX_RESULT_CHARS))).equals(true)
     expect(answer.body).includes(`Cut at ${MAX_RESULT_CHARS}`)
+  })
+
+  it('keeps a player’s totals and filter whole when it cuts a long season of split rows', async () => {
+    const answer = await apiCall(h.origin, {}, 'GET', '/__playerStats')
+    expect(answer.truncated).equals(true)
+    const head = answer.body.slice(0, answer.body.indexOf('"splits"'))
+    expect(head).includes('"batting":{"ab":1200,"h":400}')
+    expect(head).includes('"pitching":{"outs":900,"er":120}')
+    expect(head).includes('"options":{"seasons":[{"seasonId":"sea_1"')
+    expect(answer.body).includes(`Cut at ${MAX_RESULT_CHARS}`)
+    // A cut inside the batting rows takes every pitching row with it.
+    expect(answer.body.slice(head.length)).not.includes('"outs":3')
   })
 
   it('answers status 0 when the API does not answer in time', async () => {

@@ -148,12 +148,20 @@ describe('expanded statistics screens', function () {
     const header = cells.find(n => n.textContent === 'PA')!
     const value = cells.find(n => n.textContent === '12345')!
     const second = header.nextElementSibling as HTMLElement
-    const name = header.previousElementSibling as HTMLElement
-    expect(parseFloat(getComputedStyle(name).minWidth)).equals(112)
+    // The Player heading and the names sit in the column beside the
+    // sideways scroll; the figures and their headings scroll inside it.
+    const heading = cells.find(n => n.textContent === 'Player')!
+    const names = heading.closest('[data-testid="frozen-names"]')
+    const figures = header.closest('[data-testid="frozen-figures"]')
+    expect(names, 'names column').not.equals(null)
+    expect(figures, 'figures').not.equals(null)
+    expect(figures!.contains(heading)).equals(false)
+    expect(figures!.contains(value)).equals(true)
+    expect(header.previousElementSibling).equals(null)
     expect(getComputedStyle(header).width).equals(getComputedStyle(value).width)
     expect(getComputedStyle(header).paddingLeft).equals('0px')
     expect(getComputedStyle(value).paddingLeft).equals('0px')
-    expect(parseFloat(getComputedStyle(second).paddingLeft)).at.most(6)
+    expect(parseFloat(getComputedStyle(second).paddingLeft)).at.most(8)
     expect(getComputedStyle(header.parentElement!).columnGap).not.equals('4px')
     expect(getComputedStyle(value).whiteSpace).equals('nowrap')
   })

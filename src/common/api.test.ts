@@ -7,6 +7,7 @@ import {
   asHighlight,
   asManagePage,
   asPlayerHighlight,
+  asPlayerStats,
   asSaveLineupsBody,
   asScopeGrant,
   asStandingsRow,
@@ -48,6 +49,73 @@ function stubFetch(
   }
   return { fetch: fake as unknown as typeof fetch, calls }
 }
+
+describe('a player’s stats answer', function () {
+  const answer = {
+    userId: userIdOfGumbo(7),
+    filter: { seasonId: null, teamId: null, year: null },
+    games: 1,
+    batting: null,
+    pitching: null,
+    options: { seasons: [], teams: [], years: [] }
+  }
+  const split = {
+    teamId: 'tea_1',
+    teamName: 'Hawks',
+    seasonName: 'Spring 2026',
+    gameId: null,
+    startAt: '2026-05-16T18:00:00.000Z',
+    opponentName: null,
+    home: null
+  }
+
+  it('reads the split rows beside the totals', function () {
+    const stats = asPlayerStats({
+      ...answer,
+      splits: {
+        by: 'team',
+        batting: [
+          {
+            split,
+            line: {
+              userId: userIdOfGumbo(7),
+              teamId: 'tea_1',
+              pa: 4,
+              ab: 3,
+              h: 2,
+              singles: 2,
+              doubles: 0,
+              triples: 0,
+              hr: 0,
+              bb: 1,
+              k: 0,
+              hbp: 0,
+              rbi: 1,
+              rates: { avg: 0.667 }
+            }
+          }
+        ],
+        pitching: []
+      }
+    })
+    expect(stats.splits?.by).equals('team')
+    expect(stats.splits?.batting[0].split).deep.equals(split)
+    expect(stats.splits?.batting[0].line.rates.avg).equals(0.667)
+  })
+
+  it('reads an answer from a server that sends no split rows', function () {
+    expect(asPlayerStats(answer).splits).equals(undefined)
+  })
+
+  it('refuses a split by anything but a team or a game', function () {
+    expect(() =>
+      asPlayerStats({
+        ...answer,
+        splits: { by: 'season', batting: [], pitching: [] }
+      })
+    ).throws()
+  })
+})
 
 describe('api client', function () {
   it('carries canonical identities in account, player and role mutations', async () => {

@@ -39,9 +39,7 @@ import {
   useHeaderHandoff,
   usePaneWidth,
   usePinnedHandoff,
-  usePinnedTabs,
-  webStyle,
-  WideTable
+  usePinnedTabs
 } from '../components'
 import { AddEventCard } from '../components/AddEventCard'
 import { FollowButton } from '../components/FollowButton'
@@ -51,6 +49,7 @@ import {
   peopleSubtitle
 } from '../components/PeopleList'
 import { flagLabel } from '../components/roleLabels'
+import { StatisticsTable } from '../components/StatisticsTable'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -65,13 +64,7 @@ import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
 import { MembershipAccess } from './MembershipAccess'
 import { PublicTeamContent } from './PublicTeamContent'
 import { hasScheduleRsvpLine, ScheduleRsvpControl } from './ScheduleRsvpControl'
-import {
-  battingColumns,
-  pitchingColumns,
-  STAT_COLUMN_GAP_REM,
-  type StatColumn,
-  statColumnWidths
-} from './statColumns'
+import { battingColumns, pitchingColumns } from './statColumns'
 import { chronological, gamesFor, nextGameIndex } from './whenFilter'
 
 export interface TeamScreenProps {
@@ -365,6 +358,16 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     anchorOnRow: tab === 'schedule' && next >= 0
   })
 
+  // As on the roster: a non-member is answered `404` on a player's page.
+  const openStatsPlayer =
+    nonMemberView || onOpenPlayer == null
+      ? undefined
+      : (row: { userId: string; shortName?: string }): void => {
+          onOpenPlayer(row.userId, row.shortName ?? 'Unknown', {
+            teamId: team.id
+          })
+        }
+
   return (
     <Screen {...pinned.screen}>
       <CardBand part={pinned.cardBand}>
@@ -586,7 +589,11 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                     <Empty text="No plays have been ingested for this team yet." />
                   ) : (
                     <Card flush>
-                      <StatsTable rows={batting} columns={battingColumns} />
+                      <StatisticsTable
+                        rows={batting}
+                        columns={battingColumns}
+                        onOpen={openStatsPlayer}
+                      />
                     </Card>
                   )}
                   {pitching.length > 0 && (
@@ -596,7 +603,11 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                         note={`${pitching.length} players`}
                       />
                       <Card flush>
-                        <StatsTable rows={pitching} columns={pitchingColumns} />
+                        <StatisticsTable
+                          rows={pitching}
+                          columns={pitchingColumns}
+                          onOpen={openStatsPlayer}
+                        />
                       </Card>
                     </>
                   )}
@@ -799,63 +810,6 @@ function ScheduleCard(props: {
   )
 }
 
-/** Header and body share compact widths, including any unusually large value. */
-function StatsTable<
-  T extends { userId: string | null; shortName?: string }
->(props: { rows: T[]; columns: Array<StatColumn<T>> }): React.ReactElement {
-  const { rows, columns } = props
-  const theme = useTheme()
-  const styles = getStyles(theme)
-  const { fontScale } = useWindowDimensions()
-  const widths = statColumnWidths(columns, rows, 0.875, 0.6875, 0.05, fontScale)
-  const cellSize = (index: number): { width: number; paddingLeft: number } => {
-    const gap = index === 0 ? 0 : STAT_COLUMN_GAP_REM
-    return {
-      width: theme.rem(widths[index] + gap),
-      paddingLeft: theme.rem(gap)
-    }
-  }
-  return (
-    <WideTable>
-      <View>
-        <View style={[styles.tableRow, styles.tableHead]}>
-          <Text style={[styles.cellName, styles.cellHead, styles.cellNameHead]}>
-            Player
-          </Text>
-          {columns.map((column, index) => (
-            <Text
-              key={column.label}
-              style={[styles.cell, styles.cellHead, cellSize(index)]}
-              numberOfLines={1}
-            >
-              {column.label}
-            </Text>
-          ))}
-        </View>
-        {rows.map((row, index) => (
-          <View
-            key={row.userId ?? `withdrawn-${index}`}
-            style={styles.tableRow}
-          >
-            <Text style={styles.cellName} numberOfLines={1}>
-              {row.shortName ?? 'Unknown'}
-            </Text>
-            {columns.map((column, index) => (
-              <Text
-                key={column.label}
-                style={[styles.cell, cellSize(index)]}
-                numberOfLines={1}
-              >
-                {column.value(row)}
-              </Text>
-            ))}
-          </View>
-        ))}
-      </View>
-    </WideTable>
-  )
-}
-
 function Empty(props: { text: string }): React.ReactElement {
   const styles = getStyles(useTheme())
   return (
@@ -986,50 +940,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   divider: {
     height: 1,
     backgroundColor: theme.defaultBorderColor
-  },
-  tableRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: theme.rem(theme.spaceMdRem),
-    paddingVertical: theme.rem(theme.spaceSmRem)
-  },
-  tableHead: {
-    backgroundColor: theme.containerBackgroundColor
-  },
-  cellHead: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.6875),
-    fontWeight: '700',
-    letterSpacing: theme.rem(0.05),
-    color: theme.secondaryTextColor
-  },
-  /** The pinned name cell in the head row, which sits on the head's tint. */
-  cellNameHead: {
-    backgroundColor: theme.containerBackgroundColor
-  },
-  cellName: {
-    // Wide enough for a name first, then greedy for what a wide window has
-    // left over, and never shrinking below the two. Pinned as well, so a row
-    // scrolled to its last column is still somebody's — `sticky` is a position
-    // React Native has no name for, and this app renders to the DOM.
-    flexBasis: theme.rem(7),
-    minWidth: theme.rem(7),
-    flexGrow: 1,
-    flexShrink: 0,
-    ...webStyle({ position: 'sticky', left: 0, zIndex: 1 }),
-    backgroundColor: theme.cardBackgroundColor,
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(0.875),
-    color: theme.primaryTextColor
-  },
-  cell: {
-    fontVariant: ['tabular-nums'],
-    flexShrink: 0,
-    textAlign: 'right',
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.875),
-    fontWeight: '600',
-    color: theme.primaryTextColor
   },
   muted: {
     fontFamily: theme.regularTextFont,

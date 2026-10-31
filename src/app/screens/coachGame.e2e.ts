@@ -656,8 +656,32 @@ describe('Coach Game', function () {
     )
     inOrder(hosts, HOSTS)
     inOrder(visitors, VISITORS)
-    expect(hosts).includes('Nimmo00000000–')
-    expect(visitors).includes('Alvarez00000000–')
+    // A row reads across the names column and the figures beside it: the
+    // empty lines of those yet to bat are noughts with no average, and each
+    // side's batting and pitching end with their totals.
+    const rows = (await coach.page.$eval(
+      '[data-testid="Roster box score"]',
+      root =>
+        Array.prototype.map.call(
+          root.querySelectorAll('[data-testid="frozen-names"]'),
+          (column: Element) => {
+            const figures =
+              column.nextElementSibling!.firstElementChild!.firstElementChild!
+            return Array.prototype.map.call(
+              column.children,
+              (name: Element, index: number) =>
+                String(name.textContent) +
+                String(figures.children[index].textContent)
+            )
+          }
+        )
+    )) as string[][]
+    const lines = rows.flat()
+    expect(lines).includes('Nimmo00000000–')
+    expect(lines).includes('Alvarez00000000–')
+    // The line score, then each side's batting and pitching.
+    for (const table of rows.slice(1))
+      expect(table.at(-1)!.startsWith('Totals'), table[1]).equals(true)
     for (const benched of ['Soto', 'Harper', 'Freeman'])
       expect(hosts, benched).not.includes(benched)
     await coach.shot('coach-boxscore.png')
