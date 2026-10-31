@@ -1,3 +1,4 @@
+import { videoSearchDetails } from '../events/videoSearchDetails'
 import { Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
@@ -135,6 +136,10 @@ export function teamRoutes(
       if (hasVideoFilter(req.query)) {
         const filter = videoCollectionFilter(req.query)
         const games = await accessibleVideoGames(db, actor, filter)
+        const details = await videoSearchDetails(
+          db,
+          games.map(game => game.gameId)
+        )
         const ids = [
           ...new Set(games.flatMap(game => [game.homeTeamId, game.awayTeamId]))
         ]
@@ -167,6 +172,7 @@ export function teamRoutes(
             .slice(filter.offset, filter.offset + filter.limit)
             .map(team => ({
               ...team,
+              videoSeason: details.teams.get(team.id) ?? null,
               logoUrl: imageUrl(media.space, team.logoPath),
               record: null
             }))

@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   const { MaestroD } = createRequire(path.join(clientRoot, 'package.json'))(
     './dist/cjs/index.js'
   )
-  const daemon = await MaestroD.connect({ name: 'appleTvNative' })
+  const daemon = await MaestroD.connect({ name: process.env.MAESTRO_D ?? 'appleTvNative' })
   const tv = await daemon.attach({ device, platform: 'ios' })
   async function clocks(): Promise<number[]> {
     const texts: string[] = []

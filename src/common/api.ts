@@ -217,6 +217,9 @@ const asAbsentOr =
     raw === undefined ? undefined : cleaner(raw)
 
 export const asTeamSummary = asObject({
+  videoSeason: asOptional(
+    asNullable(asObject({ name: asString, leagueName: asNullable(asString) }))
+  ),
   id: asString,
   name: asString,
   shortName: asNullable(asString),
@@ -265,9 +268,11 @@ export const asTeamSummary = asObject({
 type TeamSummaryFromList = ReturnType<typeof asTeamSummary>
 export type TeamSummary = Omit<
   TeamSummaryFromList,
-  'access' | 'following' | 'onTeam'
+  'access' | 'following' | 'onTeam' | 'videoSeason'
 > &
-  Partial<Pick<TeamSummaryFromList, 'access' | 'following' | 'onTeam'>>
+  Partial<
+    Pick<TeamSummaryFromList, 'access' | 'following' | 'onTeam' | 'videoSeason'>
+  >
 
 /** A team somebody may follow, from `GET /teams/search` or `/me/follows`. */
 export const asFollowableTeam = asObject({
@@ -1739,7 +1744,10 @@ export function asExistingPlayerAnswer(raw: unknown): ExistingPlayerAnswer {
 }
 
 /** A person another service knows, and which of the asked ids are theirs. */
-export const asUserMatch = asObject({
+const cleanUserMatch = asObject({
+  recentVideoTeams: asOptional(
+    asArray(asObject({ id: asString, name: asString }))
+  ),
   userId: asUserId,
   gumboId: asOptional(asNullable(asGumboId), null),
   externalIds: asArray(asString),
@@ -1748,7 +1756,18 @@ export const asUserMatch = asObject({
   /** Their picture, signed and short-lived; null when they have none. */
   avatarUrl: asOptional(asNullable(asString), null)
 })
-export type UserMatch = ReturnType<typeof asUserMatch>
+/** Preserve the response shape for callers which did not request video details. */
+export const asUserMatch = (
+  raw: unknown
+): ReturnType<typeof cleanUserMatch> => {
+  const match = cleanUserMatch(raw)
+  if (match.recentVideoTeams === undefined) delete match.recentVideoTeams
+  return match
+}
+export type UserMatch = Omit<
+  ReturnType<typeof asUserMatch>,
+  'recentVideoTeams'
+> & { recentVideoTeams?: Array<{ id: string; name: string }> }
 
 /**
  * A live stream's own state, as the ingest last reported it.

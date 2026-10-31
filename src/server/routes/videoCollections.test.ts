@@ -123,6 +123,62 @@ describe('TV video collections', function () {
       })
       .execute()
   })
+  it('describes only recorded teams, newest first, and the latest accessible season', async () => {
+    await h.db
+      .insertInto('leagues')
+      .values({ id: 'lea_video', name: 'Demo League' })
+      .execute()
+    await h.db
+      .insertInto('seasons')
+      .values({
+        id: 'sea_video',
+        name: 'Autumn',
+        year: 2026,
+        starts_on: '2026-09-01',
+        ends_on: '2026-11-01',
+        league_id: 'lea_video'
+      })
+      .execute()
+    await h.db
+      .updateTable('games')
+      .set({ season_id: 'sea_video' })
+      .where('id', '=', 'gam_tv_01')
+      .execute()
+    await h.db
+      .insertInto('game_player_stats')
+      .values({
+        id: 'stat_tv_recent',
+        game_id: 'gam_tv_01',
+        gumbo_id: 102,
+        team_id: 'tem_visitors',
+        pa: 1
+      })
+      .execute()
+    const teams = await client.videoTeams()
+    expect(teams.find(t => t.id === 'tem_account')?.videoSeason).deep.equals({
+      name: 'Autumn',
+      leagueName: 'Demo League'
+    })
+    const players = await client.videoPlayers()
+    expect(
+      players.find(p => p.userId === userIdOfGumbo(102))?.recentVideoTeams
+    ).deep.equals([
+      { id: 'tem_visitors', name: 'Demo Comets' },
+      { id: 'tem_account', name: 'Demo Hawks' }
+    ])
+    expect(players.some(p => p.userId === userIdOfGumbo(103))).equals(false)
+    const empty = await client.videoTeams({ team: 'tem_private' })
+    expect(empty).deep.equals([])
+    await h.db
+      .deleteFrom('game_player_stats')
+      .where('id', '=', 'stat_tv_recent')
+      .execute()
+    await h.db
+      .updateTable('games')
+      .set({ season_id: null })
+      .where('id', '=', 'gam_tv_01')
+      .execute()
+  })
   after(async () => {
     await h?.close()
   })

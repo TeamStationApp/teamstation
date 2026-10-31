@@ -100,6 +100,8 @@ export async function tvFixture(options: { scored?: boolean; webRoot?: string } 
         .values({ user_id: userIdOfGumbo(101), team_id: teamId })
         .execute()
     }
+    await h.db.insertInto('leagues').values({ id: 'lea_tv', name: 'Demo League' }).execute()
+    await h.db.insertInto('seasons').values({ id: 'sea_tv', name: 'Autumn', year: 2026, starts_on: '2026-09-01', ends_on: '2026-11-01', league_id: 'lea_tv' }).execute()
     for (let i = 0; i < 29; i++) {
       const gameId = `gam_tv_${i}`
       const start = new Date(Date.UTC(2026, i < 15 ? 9 : 8, 30 - (i % 15), 18))
@@ -108,6 +110,7 @@ export async function tvFixture(options: { scored?: boolean; webRoot?: string } 
         .insertInto('games')
         .values({
           id: gameId,
+          season_id: 'sea_tv',
           home_team_id: teamId,
           away_team_id: 'tem_opponent',
           start_at: start,

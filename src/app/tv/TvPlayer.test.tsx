@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
+import { BackHandler } from 'react-native'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
@@ -27,6 +28,8 @@ const game = asVideoGame({
   latestVideoAt: '2026-10-01T00:00:00Z'
 })
 let root: Root | undefined
+let remoteBack: (() => boolean | null | undefined) | undefined
+const originalBack = BackHandler.addEventListener
 let count = 4
 let fail = false
 let pending = false
@@ -81,6 +84,15 @@ const pause = async (): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, 20))
 }
 async function render(): Promise<void> {
+  BackHandler.addEventListener = (_event, handler) => {
+    remoteBack = () =>
+      handler({ type: 'hardwareBackPress', timeStamp: Date.now() })
+    return {
+      remove() {
+        remoteBack = undefined
+      }
+    }
+  }
   const host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
@@ -98,6 +110,13 @@ async function render(): Promise<void> {
   })
 }
 async function press(label: string): Promise<void> {
+  if (label === 'Close panel') {
+    await act(async () => {
+      remoteBack?.()
+      await pause()
+    })
+    return
+  }
   const target = document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
   expect(target, label).not.equals(null)
   await act(async () => {
@@ -110,6 +129,7 @@ afterEach(async () => {
     root?.unmount()
   })
   document.body.innerHTML = ''
+  BackHandler.addEventListener = originalBack
   root = undefined
   count = 4
   mixed = false
