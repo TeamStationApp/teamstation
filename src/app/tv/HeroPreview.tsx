@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { AppState, Platform, StyleSheet } from 'react-native'
-import Video from 'react-native-video'
+import { AppState } from 'react-native'
+import { MidpointPreview } from './MidpointPreview'
 
 import type { TeamStationClient, VideoSummary } from '../../common/api'
 
@@ -21,16 +21,27 @@ export function previewCandidates(videos: VideoSummary[]): VideoSummary[] {
 export function HeroPreview({
   client,
   gameId,
-  active
+  active,
+  muted = false,
+  videoId,
+  onPosition
 }: {
   client: TeamStationClient
   gameId: string
   active: boolean
+  muted?: boolean
+  videoId?: string
+  onPosition?: (seconds: number) => void
 }): React.ReactElement | null {
   const [foreground, setForeground] = useState(
     AppState.currentState === 'active'
   )
-  const [source, setSource] = useState<{ uri: string; id: string } | null>(null)
+  const [source, setSource] = useState<{
+    uri: string
+    id: string
+    live: boolean
+    owner: string
+  } | null>(null)
   const [failed, setFailed] = useState<string[]>([])
   useEffect(() => {
     const listener = AppState.addEventListener('change', state => {
@@ -49,14 +60,21 @@ export function HeroPreview({
     if (!active || !foreground) return
     const load = async (): Promise<void> => {
       const game = await client.game(gameId)
-      for (const video of previewCandidates(game.videos)) {
+      for (const video of previewCandidates(game.videos).filter(
+        v => videoId === undefined || v.id === videoId
+      )) {
         if (!current) return
         if (failed.includes(video.id)) continue
         try {
           const playback = await client.playback(video.id)
           if (!current) return
           if (playback.url !== null) {
-            setSource({ uri: playback.url, id: video.id })
+            setSource({
+              uri: playback.url,
+              id: video.id,
+              live: video.status === 'live',
+              owner: `${gameId}:${videoId ?? ''}`
+            })
             return
           }
         } catch {
@@ -70,21 +88,22 @@ export function HeroPreview({
     return () => {
       current = false
     }
-  }, [client, gameId, active, foreground, failed])
-  if (!active || !foreground || source === null) return null
+  }, [client, gameId, videoId, active, foreground, failed])
+  if (
+    !active ||
+    !foreground ||
+    source === null ||
+    source.owner !== `${gameId}:${videoId ?? ''}`
+  )
+    return null
   return (
-    <Video
-      key={source.id}
-      testID="tv-hero-video"
-      source={{ uri: source.uri }}
-      style={StyleSheet.absoluteFill}
-      resizeMode="cover"
-      volume={Platform.OS === 'web' ? 60 : 0.6}
-      muted={false}
-      repeat
-      controls={false}
-      playInBackground={false}
-      playWhenInactive={false}
+    <MidpointPreview
+      key={`${source.id}:${source.uri}`}
+      testID={muted ? 'tv-tile-video' : 'tv-hero-video'}
+      uri={source.uri}
+      live={source.live}
+      muted={muted}
+      onPosition={onPosition}
       onError={() => {
         setFailed(ids => [...ids, source.id])
       }}

@@ -7,6 +7,10 @@
 @interface TVPosterView : UIImageView
 @property(nonatomic, copy) NSString *uri;
 @property(nonatomic, strong) NSURLSessionDataTask *task;
+@property(nonatomic, strong) UIView *previewSurface;
+@property(nonatomic, strong) UIView *previewSheen;
+@property(nonatomic) BOOL previewFocused;
+- (void)updatePreviewFocus;
 - (void)updateMotion;
 @end
 @implementation TVPosterView
@@ -16,12 +20,61 @@
     self.clipsToBounds = NO;
     self.layer.cornerRadius = 12;
     self.backgroundColor = [UIColor colorWithWhite:0.18 alpha:1];
+    self.previewSurface = [UIView new];
+    self.previewSurface.userInteractionEnabled = NO;
+    self.previewSurface.clipsToBounds = YES;
+    self.previewSurface.layer.cornerRadius = 12;
+    self.previewSheen = [UIView new];
+    self.previewSheen.userInteractionEnabled = NO;
+    CAGradientLayer *light = [CAGradientLayer layer];
+    light.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.16].CGColor, (id)UIColor.clearColor.CGColor];
+    light.startPoint = CGPointMake(0,0); light.endPoint = CGPointMake(1,1);
+    [self.previewSheen.layer addSublayer:light];
+    [self addSubview:self.previewSurface];
     [self updateMotion];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateMotion) name:UIAccessibilityReduceMotionStatusDidChangeNotification object:nil];
   }
   return self;
 }
-- (void)updateMotion { self.adjustsImageWhenAncestorFocused = !UIAccessibilityIsReduceMotionEnabled(); }
+- (void)updateMotion {
+  self.adjustsImageWhenAncestorFocused = !UIAccessibilityIsReduceMotionEnabled();
+  [self updatePreviewFocus];
+}
+- (void)layoutSubviews {
+  [super layoutSubviews];
+  [self bringSubviewToFront:self.previewSurface];
+  self.previewSurface.bounds = self.bounds;
+  self.previewSurface.center = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
+  self.previewSheen.frame = self.previewSurface.bounds;
+  self.previewSheen.layer.sublayers.firstObject.frame = self.previewSheen.bounds;
+}
+- (void)didUpdateReactSubviews {
+  [self bringSubviewToFront:self.previewSurface];
+  for (UIView *child in self.reactSubviews) [self.previewSurface addSubview:child];
+  [self.previewSurface addSubview:self.previewSheen];
+  self.previewSurface.hidden = self.reactSubviews.count == 0;
+  [self updatePreviewFocus];
+}
+- (void)updatePreviewFocus {
+  BOOL raised = self.previewFocused && !UIAccessibilityIsReduceMotionEnabled();
+  self.previewSurface.transform = raised ? CGAffineTransformMakeScale(1.1,1.1) : CGAffineTransformIdentity;
+  self.previewSheen.alpha = raised ? 1 : 0;
+  for (UIMotionEffect *effect in self.previewSurface.motionEffects) [self.previewSurface removeMotionEffect:effect];
+  if (raised) {
+    UIInterpolatingMotionEffect *x = [[UIInterpolatingMotionEffect alloc] initWithKeyPath:@"center.x" type:UIInterpolatingMotionEffectTypeTiltAlongHorizontalAxis];
+    x.minimumRelativeValue = @(-8); x.maximumRelativeValue = @8;
+    UIInterpolatingMotionEffect *y = [[UIInterpolatingMotionEffect alloc] initWithKeyPath:@"center.y" type:UIInterpolatingMotionEffectTypeTiltAlongVerticalAxis];
+    y.minimumRelativeValue = @(-8); y.maximumRelativeValue = @8;
+    [self.previewSurface addMotionEffect:x]; [self.previewSurface addMotionEffect:y];
+  }
+}
+- (void)setPreviewFocused:(BOOL)previewFocused {
+  if (_previewFocused == previewFocused) return;
+  _previewFocused = previewFocused;
+  [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.2
+                        delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                   animations:^{ [self updatePreviewFocus]; } completion:nil];
+}
 - (void)setUri:(NSString *)uri {
   if ([_uri isEqualToString:uri]) return;
   _uri = [uri copy];
@@ -46,6 +99,7 @@
 RCT_EXPORT_MODULE(TVPoster)
 - (UIView *)view { return [TVPosterView new]; }
 RCT_EXPORT_VIEW_PROPERTY(uri, NSString)
+RCT_EXPORT_VIEW_PROPERTY(previewFocused, BOOL)
 @end
 
 @interface TVSearchCell : UICollectionViewCell
