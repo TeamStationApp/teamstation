@@ -3188,4 +3188,153 @@ describe('adds made with a notice', function () {
       )
     ).equals(false)
   })
+
+  it('imports somebody who exists as any add: a notice, or a row that waits', async function () {
+    const external = async (name: string, id: string): Promise<void> => {
+      await db!
+        .insertInto('external_ids')
+        .values({
+          id: makeId('externalId'),
+          entity_type: 'user',
+          entity_id: ids[name],
+          system: 'otherLeague',
+          kind: 'player',
+          external_id: id
+        })
+        .execute()
+    }
+    const row = (id: string): object => ({
+      firstName: 'Some',
+      lastName: 'Body',
+      bats: 'left',
+      throws: 'left',
+      externalId: { system: 'otherLeague', kind: 'player', id }
+    })
+    const path = `/teams/${TEAM.falcons}/players`
+    // With a tie: on the team at once, held, and their side told.
+    await person('Tied Import', { login: true, teamId: TEAM.owls })
+    await external('Tied Import', 'tied-import')
+    const tied = await call(TOKENS.coach, 'POST', path, {
+      players: [row('tied-import')]
+    })
+    expect(tied.body.results[0].result).equals('joined')
+    expect(await openAdds(db!, TEAM.falcons)).includes(ids['Tied Import'])
+    // With none: nothing changes until their side says so.
+    await db!
+      .insertInto('teams')
+      .values({ id: 'tem_noticeFar', name: 'Far Gulls' })
+      .execute()
+    await person('Far Import', { login: true, teamId: 'tem_noticeFar' })
+    await external('Far Import', 'far-import')
+    const far = await call(TOKENS.coach, 'POST', path, {
+      players: [row('far-import')]
+    })
+    expect(far.body.results[0].result).equals('error')
+    expect(far.body.results[0].error.message).includes('must accept')
+    expect(await membership('Far Import', TEAM.falcons)).equals(undefined)
+    expect(
+      (
+        await db!
+          .selectFrom('users')
+          .select('throws')
+          .where('id', '=', ids['Far Import'])
+          .executeTakeFirstOrThrow()
+      ).throws
+    ).not.equals('left')
+  })
+
+  it('takes no place on the team an add did not make, across an account merge', async function () {
+    await person('Long Member', { login: true })
+    await person('Added Copy', { login: true })
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Long Member'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: false,
+        jersey: '7'
+      })
+      .execute()
+    const added = await add('roster', 'Added Copy')
+    await closeInto(db!, ids['Long Member'], ids['Added Copy'])
+    const terms = (await request(added.requestId!)).terms as PlayerAddTerms
+    expect(terms.createdMembership).equals(undefined)
+    expect(terms.previous).to.include({ jersey: '7' })
+    expect(await decide('Added Copy', added.requestId!, 'decline')).equals(
+      'declined'
+    )
+    expect(await membership('Added Copy', TEAM.falcons)).to.include({
+      is_player: false,
+      jersey: '7'
+    })
+  })
+
+  it('keeps the older place when a later add on a duplicate folds into it', async function () {
+    await person('Old Place', { login: true })
+    await person('New Copy', { login: true })
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Old Place'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: false,
+        jersey: '4'
+      })
+      .execute()
+    await add('roster', 'Old Place')
+    now = new Date(now.getTime() + 1000)
+    const later = await add('roster', 'New Copy')
+    await closeInto(db!, ids['New Copy'], ids['Old Place'])
+    expect(await decide('Old Place', later.requestId!, 'decline')).equals(
+      'declined'
+    )
+    expect(await membership('Old Place', TEAM.falcons)).to.include({
+      is_player: false,
+      jersey: '4'
+    })
+  })
+
+  it('withdraws the add’s games from somebody back as anything but a player', async function () {
+    await person('Back Member', { login: true })
+    const added = await add('roster', 'Back Member')
+    const stored = await request(added.requestId!)
+    const played = await game({
+      startedAt: new Date(now.getTime() - 3_600_000)
+    })
+    await line(played, 'Back Member', TEAM.falcons)
+    await db!
+      .deleteFrom('memberships')
+      .where('id', '=', (stored.terms as PlayerAddTerms).membershipId!)
+      .execute()
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Back Member'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    expect(await rejoinedSince(db!, stored.terms as PlayerAddTerms)).equals(
+      false
+    )
+    expect(await decide('Back Member', added.requestId!, 'decline')).equals(
+      'declined'
+    )
+    expect(
+      await db!
+        .selectFrom('game_withdrawn_players')
+        .select('user_id')
+        .where('game_id', '=', played)
+        .execute()
+    ).has.length(1)
+    expect(await membership('Back Member', TEAM.falcons)).to.include({
+      is_player: false
+    })
+  })
 })

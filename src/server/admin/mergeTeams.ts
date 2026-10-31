@@ -382,29 +382,31 @@ export async function mergeTeams(
       ),
       held as (
         select distinct on (f.request_id) f.request_id,
-            m.id, m.is_player, m.jersey, m.positions,
-            exists (
-              select 1 from group_requests open
-                where open.kind = 'playerAdd' and open.status = 'applied'
-                  and open.expires_at > now() and open.terms->>'mode' = 'roster'
-                  and open.terms->>'membershipId' = m.id
-            ) as open
+            m.id, m.is_player, m.jersey, m.positions, o.terms as open_terms
           from family f
           join group_requests asked on asked.id = f.request_id
           join memberships m on m.user_id = f.id and m.team_id = case
             when asked.initiating_team_id = ${fromTeamId} then ${intoTeamId}
             else ${fromTeamId} end
+          left join group_requests o on o.kind = 'playerAdd'
+            and o.status = 'applied' and o.expires_at > now()
+            and o.terms->>'mode' = 'roster' and o.terms->>'membershipId' = m.id
           order by f.request_id, m.is_player desc
       )
       update group_requests r set
-        status = case when held.is_player and not held.open
+        status = case when held.is_player and held.open_terms is null
           then 'superseded' else r.status end,
-        resolved_at = case when held.is_player and not held.open
+        resolved_at = case when held.is_player and held.open_terms is null
           then now() else r.resolved_at end,
         terms = case
-          when held.open and r.initiating_team_id = ${fromTeamId}
-            then r.terms || jsonb_build_object('membershipId', held.id)
-          when held.is_player or held.open then r.terms
+          when held.open_terms is not null then
+            case when held.open_terms->>'createdMembership' = 'true' then r.terms
+              else (r.terms - 'createdMembership') || jsonb_build_object(
+                'previous', held.open_terms->'previous') end
+            || case when r.initiating_team_id = ${fromTeamId}
+              then jsonb_build_object('membershipId', held.id)
+              else '{}'::jsonb end
+          when held.is_player then r.terms
           else (r.terms - 'createdMembership') || jsonb_build_object(
             'previous', jsonb_build_object(
               'jersey', held.jersey, 'positions', to_jsonb(held.positions)))

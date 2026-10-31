@@ -661,15 +661,17 @@ export function freeLabel(teamName: string, used: ReadonlySet<string>): string {
  * together without this, the second meets the first's row or asks twice, and
  * two teams each pass the other side's check. Taken after any game row.
  */
+export const playerAddKey = (userId: string): string => `playerAdd:${userId}`
+
 export async function lockPlayerAdds(trx: Db, userId: string): Promise<void> {
-  await lockKeys(trx as Transaction<Database>, [`playerAdd:${userId}`])
+  await lockKeys(trx as Transaction<Database>, [playerAddKey(userId)])
 }
 
 /**
- * Whether a roster add's person is on the team by a row it did not land on:
- * they came back another way, or a merge folded theirs into one already there.
- * A rejection must not take that row. Off the team altogether, it still may
- * take the add's games off their record.
+ * Whether a roster add's person plays for the team by a row it did not land
+ * on: they came back another way, or a merge folded theirs into one already
+ * there. A rejection must not take that row. Off the roster, it still takes
+ * the add's games off their record, and leaves any other place on the team.
  */
 export async function rejoinedSince(
   db: Db,
@@ -683,6 +685,7 @@ export async function rejoinedSince(
     .where('team_id', '=', terms.teamId)
     .where('user_id', 'in', person.userIds)
     .where('id', '!=', terms.membershipId)
+    .where('is_player', '=', true)
     .executeTakeFirst()
   return row != null
 }
@@ -811,6 +814,9 @@ export async function undoPlayerAdd(
         .deleteFrom('memberships')
         .where('team_id', '=', terms.teamId)
         .where('user_id', 'in', person.userIds)
+        .$if(terms.membershipId != null, query =>
+          query.where('id', '=', terms.membershipId!)
+        )
         .execute()
     else
       await trx
@@ -827,6 +833,9 @@ export async function undoPlayerAdd(
         })
         .where('team_id', '=', terms.teamId)
         .where('user_id', 'in', person.userIds)
+        .$if(terms.membershipId != null, query =>
+          query.where('id', '=', terms.membershipId!)
+        )
         .execute()
     await trx
       .updateTable('teams')

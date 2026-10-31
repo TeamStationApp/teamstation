@@ -76,7 +76,7 @@ export function teamMemberRoutes(
       await mustManage(actor, teamId)
       const body = cleanBody(asTeamPlayersBody, req.body)
 
-      const answer = await addPlayers(db, teamId, body.players)
+      const answer = await addPlayers(db, actor, teamId, body.players)
       setAudit(res.locals, {
         entityType: 'team',
         entityId: teamId,

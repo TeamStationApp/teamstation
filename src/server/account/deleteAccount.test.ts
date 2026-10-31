@@ -896,6 +896,7 @@ describe('deleting an account', function () {
     // back no hands, address, family link or role.
     await addPlayers(
       h.db,
+      { userId: nodeAdmin, isAdmin: true, scopes: [] },
       'tem_account',
       asTeamPlayersBody({
         players: [{ externalId: goneId, bats: 'left', throws: 'left' }]

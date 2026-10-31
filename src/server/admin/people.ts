@@ -1,7 +1,8 @@
-import { type Kysely, sql, type Transaction } from 'kysely'
+import { type Kysely, type RawBuilder, sql, type Transaction } from 'kysely'
 
 import { conflict } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
+import type { PlayerAddTerms } from '../../common/notifications'
 import { signOutEverywhere } from '../auth/sessions'
 import { mergeChats } from '../chat/dms'
 import { lockKeys } from '../db/advisoryLocks'
@@ -367,34 +368,49 @@ async function foldOpenAdds(
   going: MergedRow,
   kept: MergedRow
 ): Promise<void> {
-  const onRow = async (id: string): Promise<boolean> =>
-    (await db
+  const addOn = async (id: string): Promise<{ terms: unknown } | undefined> =>
+    await db
       .selectFrom('group_requests')
-      .select('id')
+      .select('terms')
       .where('kind', '=', 'playerAdd')
       .where('status', '=', 'applied')
       .where('expires_at', '>', new Date())
       .where(sql<string>`terms->>'membershipId'`, '=', id)
-      .executeTakeFirst()) != null
-  const [addOnGoing, addOnKept] = [await onRow(going.id), await onRow(kept.id)]
-  if (going.is_player && !addOnGoing && addOnKept)
+      .executeTakeFirst()
+  const addOnGoing = await addOn(going.id)
+  const addOnKept = await addOn(kept.id)
+  const onGoing = sql`kind = 'playerAdd' and status = 'applied'
+    and terms->>'membershipId' = ${going.id}`
+  const previousOf = (row: MergedRow): RawBuilder<unknown> =>
+    sql`jsonb_build_object(
+      'jersey', ${row.jersey}::text,
+      'positions', to_jsonb(${row.positions}::text[]))`
+  if (going.is_player && addOnGoing == null && addOnKept != null)
     await sql`update group_requests set status = 'superseded', resolved_at = now()
       where kind = 'playerAdd' and status = 'applied'
         and terms->>'membershipId' = ${kept.id}`.execute(db)
-  else if (addOnGoing && addOnKept)
-    await sql`update group_requests
-      set terms = terms || jsonb_build_object('membershipId', ${kept.id}::text)
-      where kind = 'playerAdd' and status = 'applied'
-        and terms->>'membershipId' = ${going.id}`.execute(db)
-  else if (going.is_player && !kept.is_player)
+  else if (addOnGoing != null && addOnKept != null) {
+    // The row that stays predates the add on it: it predates this one too.
+    const earlier = addOnKept.terms as PlayerAddTerms
+    await sql`update group_requests set terms = ${
+      earlier.createdMembership === true
+        ? sql`terms`
+        : sql`(terms - 'createdMembership')
+            || jsonb_build_object('previous', ${JSON.stringify(earlier.previous ?? null)}::jsonb)`
+    } || jsonb_build_object('membershipId', ${kept.id}::text)
+      where ${onGoing}`.execute(db)
+  } else if (going.is_player && !kept.is_player)
     await sql`update group_requests set terms = (terms - 'createdMembership')
         || jsonb_build_object(
-          'membershipId', ${kept.id}::text,
-          'previous', jsonb_build_object(
-            'jersey', ${kept.jersey}::text,
-            'positions', to_jsonb(${kept.positions}::text[])))
+          'membershipId', ${kept.id}::text, 'previous', ${previousOf(kept)})
+      where ${onGoing}`.execute(db)
+  else if (!going.is_player && addOnKept != null)
+    // A place on the team from before the add: no rejection may take it.
+    await sql`update group_requests set terms = (terms - 'createdMembership')
+        || jsonb_build_object('previous', ${previousOf(going)})
       where kind = 'playerAdd' and status = 'applied'
-        and terms->>'membershipId' = ${going.id}`.execute(db)
+        and terms->>'membershipId' = ${kept.id}
+        and terms->>'createdMembership' = 'true'`.execute(db)
 }
 
 /** The merge itself, once `closeInto` has the lock and has ruled out a loop. */

@@ -3862,8 +3862,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             '**Who may call:** an administrator of the team (set on the ' +
             'team, its season or its league, or its owner or manager) or a ' +
             'site administrator. Anyone else gets 403; a team the caller ' +
-            'cannot see gets 404. A person an external id already names is ' +
-            'added to the team wherever else they are.\n\n' +
+            'cannot see gets 404. A person an external id already names, ' +
+            'and who is not on the team, joins as any existing player does: ' +
+            'at once with a notice their side may reject, or their row ' +
+            'answers a `conflict` when their side must accept first.\n\n' +
             '**A row:** `firstName` and `lastName` (trimmed, at most 100 ' +
             'characters, either may be empty), `jersey` (at most 3 ' +
             'characters), `bats` (`left`, `right` or `switch`), `throws` ' +
@@ -3878,9 +3880,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'a `member` with the jersey, and an existing one keeps its jersey ' +
             'unless it had none. Each of `bats` and `throws` sent replaces ' +
             'an imported one and is never written over a coach\u2019s; a ' +
-            'hand not sent is left as it is. An id held by something that ' +
-            "is not a user is that row's `conflict`; the other rows still " +
-            'apply.\n\n' +
+            'hand not sent is left as it is, and no hand is written for ' +
+            'somebody the team holds by an add their side may reject. An id ' +
+            "held by something that is not a user is that row's `conflict`; " +
+            'the other rows still apply.\n\n' +
             '**Answers:** `result` is `created` (a new user), `joined` (an ' +
             'existing user newly a player here), `unchanged` (already a ' +
             'player here) or `error`, with the `userId`.',

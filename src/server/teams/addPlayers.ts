@@ -1,5 +1,6 @@
 import type { Kysely, Transaction } from 'kysely'
 
+import { HttpError } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import type {
@@ -13,13 +14,16 @@ import type {
 import { asUserId } from '../../common/userId'
 import { heldByOpenAdd } from '../access'
 import { lockPlayerEdits, survivorsOf } from '../admin/people'
+import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { externalIdLockKey, recordExternalId } from '../db/externalIds'
-import { playerAddPolicy } from '../groups/noticePolicy'
+import { playerAddKey } from '../groups/noticePolicy'
+import { realClock } from '../groups/requests'
 import { noteScopeChange } from '../socket/syncRevision'
 import { insertUser } from '../users/insertUser'
+import { addByPolicy, teamName } from './addExistingPlayer'
 
 /** Who holds an external id, as far as a person's row is concerned. */
 export type ExternalIdHolder =
@@ -161,6 +165,7 @@ async function insertRosterUser(
  */
 export async function addPlayers(
   db: Kysely<Database>,
+  actor: Actor,
   teamId: string,
   rows: TeamPlayerRow[]
 ): Promise<TeamPlayersResponse> {
@@ -180,6 +185,8 @@ export async function addPlayers(
       const holder = await externalIdHolder(trx, row.externalId)
       if (holder.held && 'userId' in holder) accounts.add(holder.userId)
     }
+    // Before the accounts, as a roster add takes them.
+    await lockKeys(trx, [...accounts].sort().map(playerAddKey))
     if (accounts.size > 0)
       await trx
         .selectFrom('users')
@@ -196,7 +203,7 @@ export async function addPlayers(
       error: 0
     }
     for (const [index, row] of rows.entries()) {
-      const result = await addPlayer(trx, teamId, row, index)
+      const result = await addPlayer(trx, actor, teamId, row, index)
       results.push(result)
       counts[result.result] += 1
     }
@@ -206,6 +213,7 @@ export async function addPlayers(
 
 async function addPlayer(
   trx: Transaction<Database>,
+  actor: Actor,
   teamId: string,
   row: TeamPlayerRow,
   index: number
@@ -227,19 +235,8 @@ async function addPlayer(
   let created = false
   if (holder.held && 'userId' in holder) {
     userId = holder.userId
-    // An import is no answer to a rejection: the next add waits for their side.
-    if (
-      !(await playsFor(trx, teamId, userId)) &&
-      (await playerAddPolicy(trx, userId, teamId)) === 'approval'
-    )
-      return {
-        index,
-        result: 'error',
-        error: {
-          code: 'conflict',
-          message: 'Their side rejected this team: add them from the roster'
-        }
-      }
+    if (!(await playsFor(trx, teamId, userId)))
+      return await joinByPolicy(trx, actor, teamId, userId, row, index)
     // Their hands are their own while their side may reject an add.
     if (!(await heldByOpenAdd(trx, teamId, [userId])))
       await importHands(trx, userId, row)
@@ -264,6 +261,57 @@ async function addPlayer(
     index,
     result: created ? 'created' : joined ? 'joined' : 'unchanged',
     userId
+  }
+}
+
+/**
+ * Somebody who exists and is not on the team joins as any existing player
+ * does (`addByPolicy`): at once with a notice their side may reject, or not
+ * until their side accepts, which a row answers as an error.
+ */
+async function joinByPolicy(
+  trx: Transaction<Database>,
+  actor: Actor,
+  teamId: string,
+  userId: string,
+  row: TeamPlayerRow,
+  index: number
+): Promise<TeamPlayerResult> {
+  const refused = (message: string): TeamPlayerResult => ({
+    index,
+    result: 'error',
+    error: { code: 'conflict', message }
+  })
+  // A place on the team keeps its jersey, unless it had none.
+  const place = await trx
+    .selectFrom('memberships')
+    .select('jersey')
+    .where('team_id', '=', teamId)
+    .where('user_id', '=', userId)
+    .executeTakeFirst()
+  try {
+    const added = await addByPolicy(
+      trx,
+      actor,
+      {
+        kind: 'playerAdd',
+        mode: 'roster',
+        userId,
+        teamId,
+        jersey: place?.jersey ?? row.jersey,
+        positions: [],
+        teamName: await teamName(trx, teamId)
+      },
+      realClock
+    )
+    if (added.kind === 'pending')
+      return refused('Their side must accept this add first')
+    // With nobody to tell, no add is open, and they are the team's own.
+    if (added.requestId == null) await importHands(trx, userId, row)
+    return { index, result: 'joined', userId }
+  } catch (error) {
+    if (error instanceof HttpError) return refused(error.message)
+    throw error
   }
 }
 
