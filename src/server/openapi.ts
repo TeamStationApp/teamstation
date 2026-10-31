@@ -9109,7 +9109,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             "`{ type: 'reset' }`, which clears every override and TS " +
             "Watcher's stored state, so the board shows the game's own " +
             'scoring. An unreadable message is answered with ' +
-            '`{ error }` and the socket stays open. **Who may call:** a site ' +
+            '`{ error }` and the socket stays open; one the server had no ' +
+            'database connection to check is answered with `{ error, retry: ' +
+            'true }`, was not stored, and may be sent again. **Who may call:** a site ' +
             'admin or an admin of either team; anybody else gets 404, or ' +
             'close 4403 on the socket. Socket close codes: 4401 not signed ' +
             'in, 4403 may not override this game, 4404 no such game or its ' +
@@ -9165,7 +9167,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`ScoreState` JSON object, merged into what Watcher has sent ' +
             'before. Team names are ignored: they come from the game. An ' +
             'unreadable message is answered with `{ error }` and the socket ' +
-            'stays open. **Who may call:** a site admin or an admin of ' +
+            'stays open; one the server had no database connection to check ' +
+            'is answered with `{ error, retry: true }`, was not stored, and ' +
+            'may be sent again. **Who may call:** a site admin or an admin of ' +
             'either team, by bearer token or session cookie. Close codes: ' +
             '4401 not signed in, 4403 may not publish this game, 4404 no ' +
             'such game or its scoreboard is closed, 1011 the store is ' +
