@@ -286,7 +286,7 @@ export function TvPlayer({
               : current.current.visible[0])
         ]
       if (
-        node !== null &&
+        node != null &&
         'requestTVFocus' in node &&
         typeof node.requestTVFocus === 'function'
       )
@@ -368,6 +368,10 @@ export function TvPlayer({
   }, [renderedSide])
   useEffect(() => {
     if (state.box !== 'closed') setRenderedBox(state.box)
+    if (state.box === 'compact') {
+      statsOffset.current = 0
+      statsScroll.current?.scrollTo({ y: 0, animated: false })
+    }
     const animation = Animated.timing(boxMotion, {
       toValue: state.box === 'closed' ? 0 : 1,
       duration: 220,

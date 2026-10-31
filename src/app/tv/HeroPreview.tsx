@@ -89,11 +89,7 @@ export function HeroPreview({
       current = false
     }
   }, [client, gameId, videoId, active, foreground, failed])
-  if (
-    !active ||
-    !foreground ||
-    source?.owner !== `${gameId}:${videoId ?? ''}`
-  )
+  if (!active || !foreground || source?.owner !== `${gameId}:${videoId ?? ''}`)
     return null
   return (
     <MidpointPreview
