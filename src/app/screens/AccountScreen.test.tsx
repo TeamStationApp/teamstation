@@ -726,6 +726,17 @@ describe('Account settings screen', () => {
     await press('Sign out')
     expect(tokens).deep.equals([undefined])
   })
+  it('opens TeamStation TV from Account and restores the account route on Back', async () => {
+    const f = fixture()
+    globalThis.fetch = f.fetcher
+    showRoute(parseRoute('/account'), true)
+    await render(<App initialToken="test-session" onToken={() => undefined} />)
+    await press('TeamStation TV')
+    expect(window.location.pathname).equals('/account/tv')
+    expect(text()).includes('Enter the eight letters')
+    await press('Back')
+    expect(window.location.pathname).equals('/account')
+  })
   it('opens Create API key at its own address, above Account, and makes a key that Account then lists', async () => {
     const f = fixture()
     globalThis.fetch = f.fetcher

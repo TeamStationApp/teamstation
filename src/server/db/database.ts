@@ -1557,6 +1557,7 @@ export interface Database {
   user_api_keys: UserApiKeysTable
   plate_appearances: PlateAppearancesTable
   game_play_archives: GamePlayArchivesTable
+  tv_login_requests: TvLoginRequestsTable
   auth_sessions: AuthSessionsTable
   chat_attachments: ChatAttachmentsTable
   chat_conversations: ChatConversationsTable
@@ -1664,4 +1665,18 @@ export function makePool(
   // own listener has already logged. Unheard, the repeat would be fatal too.
   pool.on('error', () => undefined)
   return pool
+}
+
+export interface TvLoginRequestsTable {
+  id: string
+  code_hash: string
+  qr_hash: string
+  secret_hash: string
+  platform: 'Apple TV' | 'Google TV'
+  location: string | null
+  user_id: string | null
+  approved_at: Timestamp | null
+  consumed_at: Timestamp | null
+  expires_at: Timestamp
+  created_at: Generated<Timestamp>
 }
