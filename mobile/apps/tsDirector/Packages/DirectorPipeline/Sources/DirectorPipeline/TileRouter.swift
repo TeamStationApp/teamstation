@@ -669,6 +669,15 @@ public final class TileRouter: @unchecked Sendable {
     let buffer: CVPixelBuffer
     /// When the picture on air was captured; nil for a replay.
     let captureWall: WallClock?
+    let sourceID: SourceID
+    /// Its run in the programme's queue: `programGeneration` when it was handed over.
+    let run: UInt64
+  }
+  /// The camera on air while a cut to another camera waits for its first picture to come due.
+  private struct Handover {
+    let sourceID: SourceID
+    let run: UInt64
+    var deadline: Double
   }
   /// Composited pictures of the camera on air, each taken on the tick its capture time plus the
   /// live delay D comes due: the same moment its sound plays. See `ProgrammePictureQueue`.
@@ -685,6 +694,54 @@ public final class TileRouter: @unchecked Sendable {
   private var streamedCapture = ProgrammeHeldPictureWall()
   /// Programme pictures left out because the compositor could not make one.
   private var composeMisses: UInt64 = 0
+  /// A cut holds no picture: the camera on air keeps handing its pictures to the programme until the
+  /// new camera's first is on air. It keeps its sink for that long, and a cut back to it finds its
+  /// run unbroken. Set only while both cameras are live: the compositor's overlays follow the camera
+  /// on program, so a replay's or a scrub's pictures must not be composed across a cut.
+  private var outgoing: Handover?
+  /// Held across a change of which cameras have sinks, so a handover ending cannot take the sink
+  /// from a camera a cut has just put back on program. Taken before `lock`.
+  private let programmeSinkLock = NSLock()
+  /// The last run issued; `programGeneration` is the current one, and a cancelled handover returns
+  /// it to an earlier run.
+  private var lastRun: UInt64 = 0
+  /// The run the last keyframe was asked for.
+  private var keyframedRun: UInt64?
+  private var keyframeRequests: UInt64 = 0
+  private var lastShownSequence: UInt64?
+  private var shownObserver: ((SourceID) -> Void)?
+  /// The camera of each new picture going on air, on the programme clock. For tests.
+  var onProgrammeShown: ((SourceID) -> Void)? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return shownObserver
+    }
+    set {
+      lock.lock()
+      shownObserver = newValue
+      lock.unlock()
+    }
+  }
+  /// How many keyframes a new run on air has asked of the stream. For tests.
+  var programmeKeyframeRequests: UInt64 {
+    lock.lock()
+    defer { lock.unlock() }
+    return keyframeRequests
+  }
+  /// The current run. For tests.
+  var outgoingRunForTest: UInt64 {
+    lock.lock()
+    defer { lock.unlock() }
+    return programGeneration
+  }
+  /// The camera on air while a cut waits for the new one. For tests.
+  var outgoingSourceID: SourceID? {
+    lock.lock()
+    defer { lock.unlock() }
+    return outgoing?.sourceID
+  }
+
   /// Composes the camera on air's pictures on a queue of its own; see `ProgrammeComposer`.
   private let composer: ProgrammeComposer
   /// How the composer reaches the router, which does not exist yet when the composer is made.
@@ -806,16 +863,28 @@ public final class TileRouter: @unchecked Sendable {
     lock.lock()
     // The compositor's output is the programme's picture source; see `ProgrammePictureSource`.
     guard let (tick, due) = programmeClock.tick(at: now, wallNow: wallNow, from: &programPictures) else {
+      let finished = finishedHandoverLocked(wallNow: wallNow)
       lock.unlock()
+      if let finished { endHandover(finished) }
       return
     }
     tickLatenessMax = max(tickLatenessMax, tick.lateness)
     missedTicks &+= UInt64(max(0, tick.ticksMissed))
+    let finished = finishedHandoverLocked(wallNow: wallNow)
     guard let entry = due else {
       lock.unlock()
+      if let finished { endHandover(finished) }
       return
     }
     let picture = entry.picture
+    // The keyframe falls on the new camera's first picture, not on the button.
+    let wantsKeyframe = keyframedRun != picture.run
+    if wantsKeyframe {
+      keyframedRun = picture.run
+      keyframeRequests &+= 1
+    }
+    let shown = lastShownSequence != entry.sequence ? shownObserver : nil
+    lastShownSequence = entry.sequence
     let streamRate = programmeClock.streamRate
     let recordingRate = programmeClock.recordingRate
     var recordingCapture: WallClock?
@@ -827,6 +896,10 @@ public final class TileRouter: @unchecked Sendable {
       streamCapture = streamedCapture.capture(sequence: entry.sequence, capture: picture.captureWall, at: wallNow)
     }
     lock.unlock()
+
+    shown?(picture.sourceID)
+    if wantsKeyframe { programStreamer.requestKeyframe() }
+    if let finished { endHandover(finished) }
 
     if let frame = tick.recordingFrame, programEncoder.running {
       // The recording is written on an exact grid, so frames a late timer skipped are written as
@@ -862,6 +935,39 @@ public final class TileRouter: @unchecked Sendable {
         captureWall: streamCapture
       )
     }
+  }
+
+  /// The handover this tick ends: the new camera is on air, it has sent nothing in time, or the
+  /// camera on program has left live. `lock` held.
+  private func finishedHandoverLocked(wallNow: Double) -> Handover? {
+    guard let outgoing else { return nil }
+    let onProgram = programSource.flatMap { pipelines[$0] }
+    let over = programPictures.onAirRun == programGeneration
+      || wallNow >= outgoing.deadline
+      || onProgram?.currentState != .live
+    return over ? outgoing : nil
+  }
+
+  /// Takes the sink from the camera a handover has finished with, unless a cut has put it back on
+  /// program or moved the handover on since the tick decided.
+  private func endHandover(_ handover: Handover) {
+    programmeSinkLock.lock()
+    defer { programmeSinkLock.unlock() }
+    lock.lock()
+    guard outgoing?.run == handover.run else {
+      lock.unlock()
+      return
+    }
+    outgoing = nil
+    let pipeline = pipelines.values.first { $0.sourceID == handover.sourceID }
+    let isOnProgram = handover.sourceID == programSourceID
+    lock.unlock()
+    if let pipeline, !isOnProgram { detach(pipeline) }
+  }
+
+  private func detach(_ pipeline: SourcePipeline) {
+    pipeline.onProgramDiscontinuity = nil
+    pipeline.setProgramSink(nil)
   }
 
   public var activePipelines: [SourcePipeline] {
@@ -944,7 +1050,9 @@ public final class TileRouter: @unchecked Sendable {
     pipelines.removeAll()
     programSource = nil
     programSourceID = nil
-    programGeneration &+= 1
+    lastRun &+= 1
+    programGeneration = lastRun
+    outgoing = nil
     lock.unlock()
     for pipeline in existing {
       waveformMonitor.remove(source: pipeline.sourceID)
@@ -990,6 +1098,7 @@ public final class TileRouter: @unchecked Sendable {
     let pipeline = pipelines.removeValue(forKey: sourceIndex)
     let wasProgram = programSource == sourceIndex
     if wasProgram { programSource = nil }
+    if outgoing?.sourceID == pipeline?.sourceID { outgoing = nil }
     let remaining = pipelines.values.sorted { $0.sourceIndex < $1.sourceIndex }
     lock.unlock()
     if let pipeline {
@@ -1019,21 +1128,18 @@ public final class TileRouter: @unchecked Sendable {
   /// The exactly-one-program invariant lives here rather than in the view, so it holds even
   /// when program is changed over the control channel.
   public func selectProgram(sourceIndex: Int?) {
+    programmeSinkLock.lock()
+    defer { programmeSinkLock.unlock() }
     lock.lock()
-    let previous = programSource
     programSource = sourceIndex
     let all = pipelines
     // A new camera on air, not the same one moved to another slot.
-    let onAir = sourceIndex.flatMap { pipelines[$0] }?.sourceID
-    if onAir != programSourceID {
-      programSourceID = onAir
-      programGeneration &+= 1
+    let onAir = sourceIndex.flatMap { pipelines[$0] }
+    if onAir?.sourceID != programSourceID {
+      cutLocked(to: onAir)
     }
     let generation = programGeneration
-    // The old camera's pictures still waiting for their moment are not wanted after a cut. Cleared
-    // with the generation bump, before the new camera's sink exists, so its first picture cannot be
-    // cleared with them; the generation keeps any later picture of the old camera out.
-    if previous != sourceIndex { programPictures.removeQueued() }
+    let keeping = outgoing?.sourceID
     lock.unlock()
 
     // Audio is no longer tied to whichever tile is on program — it comes from every source the
@@ -1055,13 +1161,9 @@ public final class TileRouter: @unchecked Sendable {
             generation: generation
           ))
         }
-      } else {
-        pipeline.onProgramDiscontinuity = nil
-        pipeline.setProgramSink(nil)
+      } else if pipeline.sourceID != keeping {
+        detach(pipeline)
       }
-    }
-    if previous != sourceIndex {
-      programStreamer.requestKeyframe()
     }
     telemetry.mutate { snapshot in
       snapshot.programSource = sourceIndex
@@ -1069,6 +1171,34 @@ public final class TileRouter: @unchecked Sendable {
         snapshot.tiles[index].isProgram = snapshot.tiles[index].index == sourceIndex
       }
     }
+  }
+
+  /// The change of camera in `selectProgram`, `lock` held. Clears the queue with the run's change,
+  /// before the new camera's sink exists, so its first picture cannot be cleared with it.
+  private func cutLocked(to camera: SourcePipeline?) {
+    let leaving = programGeneration
+    programSourceID = camera?.sourceID
+    if let handover = outgoing, handover.sourceID == camera?.sourceID {
+      // Back to the camera on air before anything replaced it: its pictures never stopped.
+      programGeneration = handover.run
+      outgoing = nil
+      programPictures.dropRuns(keeping: handover.run)
+      return
+    }
+    lastRun &+= 1
+    programGeneration = lastRun
+    guard camera?.currentState == .live else {
+      outgoing = nil
+      programPictures.dropRuns(keeping: nil)
+      return
+    }
+    if outgoing == nil, let shown = programPictures.current?.picture, shown.run == leaving,
+       let onAir = pipelines.values.first(where: { $0.sourceID == shown.sourceID }),
+       onAir.hasProgramSink, onAir.currentState == .live {
+      outgoing = Handover(sourceID: shown.sourceID, run: leaving, deadline: 0)
+    }
+    outgoing?.deadline = clock.now.seconds + programPictures.delaySeconds + ProgrammePictureQueue<ProgramPicture>.spareSeconds
+    programPictures.dropRuns(keeping: outgoing?.run)
   }
 
   /// Points the named sources at the programme mix. Every live pipeline still taps PCM so the
@@ -1228,7 +1358,7 @@ public final class TileRouter: @unchecked Sendable {
 
   /// Whether `job` was handed over by the camera on air since it last went on air. A picture from a
   /// camera that has been cut away from is not composed, and one already composed is not shown.
-  private func isCurrentProgramme(_ job: ProgrammeComposer.Job) -> Bool {
+  func isCurrentProgramme(_ job: ProgrammeComposer.Job) -> Bool {
     lock.lock()
     defer { lock.unlock() }
     return isCurrentProgrammeLocked(job)
@@ -1249,7 +1379,11 @@ public final class TileRouter: @unchecked Sendable {
 
   /// `isCurrentProgramme` with `lock` already held.
   private func isCurrentProgrammeLocked(_ job: ProgrammeComposer.Job) -> Bool {
-    job.generation == programGeneration && programSource.flatMap { pipelines[$0] }?.sourceID == job.sourceID
+    if job.generation == programGeneration, programSource.flatMap({ pipelines[$0] })?.sourceID == job.sourceID {
+      return true
+    }
+    // A live picture of the camera on air during a handover; a replay begun on it stays off the air.
+    return job.dueHost == nil && job.generation == outgoing?.run && job.sourceID == outgoing?.sourceID
   }
 
   private func countComposeMiss() {
@@ -1274,7 +1408,8 @@ public final class TileRouter: @unchecked Sendable {
   /// picture of a camera cut away from that was already composing never reaches the programme's
   /// queue after the cut cleared it, even after a cut away and back. The preview tile is enqueued
   /// after the lock: a cut landing in that gap can leave that one picture on the preview until the
-  /// new camera's first replaces it a frame later. Nothing records the preview.
+  /// new camera's first replaces it a frame later. Nothing records the preview. The camera a cut is
+  /// leaving reaches only the queue: the preview changes on the button.
   private func deliverProgramme(_ job: ProgrammeComposer.Job, composed: CVPixelBuffer) {
     // A replay picture's moment, moved from the host clock onto the wall clock the tick runs on.
     let due = job.dueHost.map { clock.now.seconds - (CMClockGetTime(CMClockGetHostTimeClock()).seconds - $0) }
@@ -1284,12 +1419,15 @@ public final class TileRouter: @unchecked Sendable {
       return
     }
     programPictures.add(
-      ProgramPicture(buffer: composed, captureWall: job.captureWall),
+      ProgramPicture(buffer: composed, captureWall: job.captureWall, sourceID: job.sourceID, run: job.generation),
       capture: job.captureWall?.seconds,
-      due: due
+      due: due,
+      run: job.generation
     )
+    let isCurrent = job.generation == programGeneration
     let observer = deliveryObserver
     lock.unlock()
+    guard isCurrent else { return }
     programRenderer.enqueue(pixelBuffer: composed, presentationTime: job.presentationTime)
     observer?(job.sourceID, composed)
   }

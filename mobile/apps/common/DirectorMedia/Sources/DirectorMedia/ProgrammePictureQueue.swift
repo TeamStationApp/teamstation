@@ -103,13 +103,8 @@ public struct ProgrammePictureQueue<Picture> {
     if queued.count > 1_000 { queued.removeFirst(queued.count - 1_000) }
   }
 
-  /// A cut: pictures from the camera that was on air are no longer wanted. The one on air stays
-  /// until the new camera's first picture is due.
-  public mutating func removeQueued() {
-    queued.removeAll()
-  }
-
-  /// Everything queued goes but the pictures of `run`. The picture on air stays.
+  /// A cut: everything queued goes but the pictures of `run`, the camera on air's when it plays on
+  /// until the new camera's first picture is due. The picture on air stays.
   public mutating func dropRuns(keeping run: UInt64?) {
     queued.removeAll { $0.run != run }
   }

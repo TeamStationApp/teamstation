@@ -141,7 +141,7 @@ struct ProgrammePicturePlacementTests {
     #expect(queue.pick(at: 100.21, period: 1 / 60)?.picture == -1)
     // A cut drops what was waiting; what is on air stays.
     queue.add(100.5, capture: 100.5)
-    queue.removeQueued()
+    queue.dropRuns(keeping: nil)
     #expect(queue.count == 0)
     #expect(queue.pick(at: 101.5, period: 1 / 60)?.picture == -1)
     queue.setDelay(seconds: 0.2)

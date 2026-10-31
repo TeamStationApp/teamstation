@@ -273,6 +273,31 @@ struct ProgrammeComposerTests {
     #expect(composer.statistics().dropped == 0, "a cut is not a loss")
   }
 
+  @Test("During a handover both cameras are composed, oldest handed over first, and a third is passed over")
+  func handoverComposesBothCameras() throws {
+    let log = Log()
+    let composer = makeComposer(log: log) { buffer, completion in
+      log.park(buffer, completion)
+      return true
+    }
+    let buffer = try picture()
+    let third = SourceID("camera-c")
+    composer.submit(job(buffer, from: Self.cameraA, index: 0))
+    #expect(waitFor { log.parkedCount == 1 })
+    composer.submit(job(buffer, from: Self.cameraB, index: 1))
+    composer.submit(job(buffer, from: Self.cameraA, index: 2))
+    composer.submit(job(buffer, from: third, index: 3))
+    composer.submit(job(buffer, from: Self.cameraB, index: 4))
+    for delivered in 1 ... 4 {
+      log.releaseParked()
+      if delivered < 4 { #expect(waitFor { log.deliveries.count == delivered && log.parkedCount == 1 }) }
+    }
+    #expect(composer.waitUntilIdle())
+    #expect(log.deliveries.map(\.sourceID) == [Self.cameraA, Self.cameraB, Self.cameraA, Self.cameraB])
+    #expect(composer.skipped == 1)
+    #expect(composer.statistics().dropped == 0)
+  }
+
   @Test("A waiting picture is judged at its delivery: the test delay and the compose's own cost ahead")
   func judgedAtDelivery() throws {
     let log = Log()
