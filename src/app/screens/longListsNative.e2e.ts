@@ -1183,11 +1183,27 @@ async function main(): Promise<void> {
       await m.tapOn({ id: noteId, timeout: 15000 })
       await m.inputText({ text: 'Demo stripes' })
       await pause(600)
-      await scrollDown(4)
+      // Above the keyboard: a drag that starts on it does not reach the page.
+      for (let swipe = 0; swipe < 4; swipe++)
+        await m.swipe({ start: '50%, 55%', end: '50%, 30%', duration: 300 })
+      await settled()
+      assert.ok(
+        byId(await all(), `umpire-note-input-${gameId}-unt_long_uniform`) ==
+          null,
+        'E12: the drag took the keyboard and closed the editor'
+      )
       // The open editor's field has its own id, so go by the row.
       await scrollTo(`${ROW}${gameId}`, true)
-      await visible('Demo stripes')
-      await note('E12: the typed note stayed')
+      // A saved cell's words are not in the tree, so the read of them is ours
+      // and the words are in the shot.
+      assert.ok(
+        (await phoneNetwork()).some(path =>
+          path.endsWith(`/games/${gameId}/umpire-notes/unt_long_uniform`)
+        ),
+        'E12: the drag saved the note'
+      )
+      await shot(`${platform}-umpire-note-saved.png`)
+      await note('E12: the typed note saved')
 
       // A sign-up on that row, which leaves the page where it is.
       for (let swipe = 0; swipe < 12; swipe++) {
@@ -1218,11 +1234,7 @@ async function main(): Promise<void> {
         assert.notEqual(swipe, 11, 'E12: no Sign Up on the row')
       }
       await tapHighest('Leaderboard')
-      if (!(await shown('SCHEDULED AND COMPLETED GAMES', 5000))) {
-        await note('E12: the Leaderboard pill took a second press')
-        await tapHighest('Leaderboard')
-        await visible('SCHEDULED AND COMPLETED GAMES')
-      }
+      await visible('SCHEDULED AND COMPLETED GAMES')
       await shot(`${platform}-umpire-leaderboard.png`)
       await tapHighest('Schedule')
       await scrollTo(`${ROW}${gameId}`)
