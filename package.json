@@ -190,6 +190,7 @@
     "react-native-keyboard-controller": "1.22.8"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
     "@babel/core": "^7.29.7",
     "@babel/plugin-syntax-jsx": "^7.29.7",
     "@babel/plugin-syntax-typescript": "^7.29.7",
