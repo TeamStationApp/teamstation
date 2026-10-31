@@ -29,7 +29,7 @@ const NativePoster = nativeTvPresentation
   : null
 export const NativeGradient = nativeTvPresentation
   ? requireNativeComponent<
-      ViewProps & { direction: 'left' | 'right' | 'bottom' }
+      ViewProps & { direction: 'left' | 'right' | 'bottom'; maxOpacity: number }
     >('TVGradient')
   : null
 export function TvPoster({ uri }: { uri: string }): React.ReactElement {

@@ -184,6 +184,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 @end
 @interface TVGradientView : UIView
 @property(nonatomic, copy) NSString *direction;
+@property(nonatomic) CGFloat maxOpacity;
 @end
 @interface TVPresentationTests : XCTestCase @end
 @implementation TVPresentationTests
@@ -198,12 +199,15 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 }
 - (void)testGradientTracksPanelBounds {
   TVGradientView *view = (TVGradientView *)[[NSClassFromString(@"TVGradientManager") new] view];
-  view.frame = CGRectMake(0,0,1920,216); view.direction = @"bottom";
+  view.frame = CGRectMake(0,0,1920,216); view.direction = @"bottom"; view.maxOpacity = 0.1;
   CAGradientLayer *layer = (CAGradientLayer *)view.layer;
-  XCTAssertEqualObjects(layer.locations,(@[@0,@0.5,@1]));
-  XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[0]),0.65,0.001);
-  XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[1]),0.325,0.001);
-  XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[2]),0,0.001);
+  XCTAssertEqualObjects(layer.locations,(@[@0,@1]));
+  XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[0]),0.1,0.001);
+  XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[1]),0,0.001);
+  view.maxOpacity = 0.15;
+  XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[0]),0.15,0.001);
+  view.maxOpacity = -1; XCTAssertEqual(view.maxOpacity,0);
+  view.maxOpacity = 2; XCTAssertEqual(view.maxOpacity,1);
   XCTAssertTrue(CGPointEqualToPoint(layer.startPoint,CGPointMake(0,1)));
   view.frame = CGRectMake(0,0,1920,356); XCTAssertEqual(layer.bounds.size.height,356);
   view.direction = @"right"; XCTAssertEqual(layer.startPoint.x,1); XCTAssertEqual(layer.endPoint.x,0);

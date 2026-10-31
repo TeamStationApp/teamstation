@@ -1,4 +1,4 @@
-import { tileRects } from '../player/multiCam/layout'
+import { tvLayout } from './tvLayout'
 
 export type SidePanel = 'cameras' | 'highlights' | null
 export interface PlaybackState {
@@ -144,12 +144,8 @@ export function angleLayout(
   const expanded =
     state.full === index ||
     (state.full === null && state.visible.length === 1 && slot === 0)
-  const rect = tileRects({
-    width: 1600,
-    height: 900,
-    count: state.visible.length,
-    zoomed: state.full === null ? null : state.visible.indexOf(state.full)
-  })[slot] ?? { x: 0, y: 0, w: 800, h: 450 }
+  const rect = tvLayout(state, { width: 1600, height: 900 }, null, false, true)
+    .tiles[slot] ?? { x: 0, y: 0, w: 800, h: 450 }
   return {
     left: rect.x / 16,
     top: rect.y / 9,
@@ -158,18 +154,4 @@ export function angleLayout(
     opacity: slot < 0 ? 0 : 1,
     zIndex: expanded ? 2 : 1
   }
-}
-
-/** Absolute touch-pad coordinates, normalized to 0..1, with y growing downward. */
-export function edgeSwipe(
-  start: { x: number; y: number },
-  end: { x: number; y: number }
-): 'cameras' | 'highlights' | 'box' | null {
-  const dx = end.x - start.x
-  const dy = end.y - start.y
-  if (Math.abs(dx) > Math.abs(dy)) {
-    if (start.x <= 0.2 && dx >= 0.3) return 'cameras'
-    if (start.x >= 0.8 && dx <= -0.3) return 'highlights'
-  } else if (start.y >= 0.8 && dy <= -0.3) return 'box'
-  return null
 }

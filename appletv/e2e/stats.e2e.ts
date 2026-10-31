@@ -83,7 +83,6 @@ async function main(): Promise<void> {
     await tv.assertNotVisible({ id: 'tv-box-panel', timeout: 15000 })
     await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.pressKey({ key: 'DPAD_DOWN' })
-    await tv.tapOn({ id: 'Box score' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
     await tv.assertVisible({ text: 'Demo Mountain Valley Visitors' })
     const column = (node: any): any =>
@@ -96,8 +95,8 @@ async function main(): Promise<void> {
         before.x + before.width > 1880,
         'last inning starts clipped by viewport'
       )
-      await tv.pressKey({ key: 'DPAD_DOWN' })
-      await tv.pressKey({ key: 'DPAD_DOWN' })
+      await tv.pressKey({ key: 'DPAD_RIGHT' })
+      await tv.pressKey({ key: 'DPAD_RIGHT' })
       await tv.pressKey({ key: 'DPAD_RIGHT' })
       await tv.waitForAnimationToEnd({ timeout: 3000 })
       const after = column(await tv.hierarchy()).bounds

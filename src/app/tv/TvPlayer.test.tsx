@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { BackHandler } from 'react-native'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
+import { emitTvDirection } from '../../test/tvRemoteRuntime'
 import { timelineFor } from './playbackTimeline'
 import { TvPlayer } from './TvPlayer'
 
@@ -151,6 +152,112 @@ afterEach(async () => {
   closed = false
 })
 describe('TV game playback entry', () => {
+  it('opens panels only after boundary moves, dismisses outward and expands then scrolls stats', async () => {
+    await render()
+    const focus = async (index: number): Promise<void> => {
+      await act(async () => {
+        document
+          .querySelector<HTMLElement>(`[data-testid="tv-angle-${index}"]`)!
+          .focus()
+        await pause()
+      })
+    }
+    const key = async (direction: string, action = 0): Promise<void> => {
+      await act(async () => {
+        emitTvDirection(direction, action)
+        await pause()
+      })
+    }
+    await focus(0)
+    await key('right')
+    expect(
+      document.querySelector('[data-testid="tv-highlights-panel"]')
+    ).equals(null)
+    await focus(1)
+    await key('right')
+    expect(
+      document.querySelector('[data-testid="tv-highlights-panel"]')
+    ).equals(null)
+    await key('right', 1)
+    expect(
+      document.querySelector('[data-testid="tv-highlights-panel"]')
+    ).equals(null)
+    await key('swipeRight')
+    expect(
+      document.querySelector('[data-testid="tv-highlights-panel"]')
+    ).not.equals(null)
+    await key('right')
+    expect(
+      document.querySelector('[data-testid="tv-highlights-panel"]')
+    ).equals(null)
+    await focus(0)
+    await key('left')
+    await key('left')
+    expect(
+      document.querySelector('[data-testid="tv-cameras-panel"]')
+    ).not.equals(null)
+    await key('down')
+    await key('left')
+    expect(document.querySelector('[data-testid="tv-cameras-panel"]')).equals(
+      null
+    )
+    await focus(2)
+    await key('down')
+    await key('down')
+    expect(document.querySelector('[data-testid="tv-box-panel"]')).not.equals(
+      null
+    )
+    await key('down')
+    await key('down')
+    await key('up')
+    await key('right')
+    await key('left')
+    await key('playPause')
+    await key('unknown')
+    expect(document.querySelector('video')!.paused).equals(true)
+  })
+  it('restores the selected camera and boundary tracking after collapsing fullscreen', async () => {
+    await render()
+    await press('Close panel')
+    const angle = document.querySelector<HTMLElement>(
+      '[data-testid="tv-angle-1"]'
+    )!
+    let restored = 0
+    Object.assign(angle, {
+      requestTVFocus() {
+        restored++
+        angle.focus()
+      }
+    })
+    await act(async () => {
+      angle.focus()
+      await pause()
+    })
+    await press('Camera Angle 1')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    })
+    restored = 0
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Back to cameras"]')!
+        .focus()
+      remoteBack?.()
+      await pause()
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    })
+    expect(restored).equals(1)
+    expect(document.activeElement).equals(angle)
+    await act(async () => {
+      emitTvDirection('right')
+      await pause()
+    })
+    expect(
+      document.querySelector('[data-testid="tv-highlights-panel"]')
+    ).not.equals(null)
+  })
   it('keeps extra innings scrollable and its statistics control reachable within the bottom third', async () => {
     wide = true
     await render()
@@ -170,7 +277,7 @@ describe('TV game playback entry', () => {
     const panel = document.querySelector<HTMLElement>(
       '[data-testid="tv-box-panel"]'
     )!
-    expect(panel.style.height).equals('33%')
+    expect(panel.style.height).equals('25%')
     expect(
       document.querySelector('[data-testid="tv-score-column-25"]')
     ).not.equals(null)

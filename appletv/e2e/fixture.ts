@@ -25,6 +25,7 @@ import { eventListRoutes } from '../../src/server/routes/eventList'
 import { eventRoutes } from '../../src/server/routes/events'
 import { followRoutes } from '../../src/server/routes/follows'
 import { mediaRoutes } from '../../src/server/routes/media'
+import { nodeAdministrationRoutes } from '../../src/server/routes/nodeAdministration'
 import { scoreboardRoutes } from '../../src/server/routes/scoreboard'
 import { userRoutes } from '../../src/server/routes/users'
 import type { ScoreboardStore } from '../../src/server/scoreboard/scoreboardStore'
@@ -156,6 +157,7 @@ export async function tvFixture(
     },
     '127.0.0.1',
     (app, { db, media }) => {
+      app.use('/api/v1', nodeAdministrationRoutes(db, media.space))
       app.use('/api/v1', eventListRoutes(db, media))
       app.use('/api/v1', userRoutes(db, media.space))
       app.use('/api/v1', followRoutes(db, media))

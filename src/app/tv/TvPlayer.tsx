@@ -10,15 +10,13 @@ import React, {
 import {
   Animated,
   BackHandler,
-  findNodeHandle,
   Image,
-  NativeEventEmitter,
-  NativeModules,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View
 } from 'react-native'
 import { Defs, LinearGradient, Rect, Stop, Svg } from 'react-native-svg'
@@ -31,23 +29,24 @@ import type {
   TvHighlight,
   VideoSummary
 } from '../../common/api'
+import type { ScoreboardOverlay } from '../../common/nodeSettings'
 import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
-import { ScoreboardBoard } from '../scoreboard/ScoreboardBoard'
+import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
+import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
 import { NativeGradient } from './NativePresentation'
 import { PlaybackClock } from './playbackClock'
 import {
-  angleLayout,
-  edgeSwipe,
   initialPlayback,
   playbackReducer,
   type SidePanel
 } from './playbackState'
 import { type BoxStep, boxTimeline, timelineFor } from './playbackTimeline'
-import { tvControl, tvEvents, TvFocusGuide, TvTextScrollView } from './remote'
+import { tvControl, tvEvents, TvFocusGuide } from './remote'
 import type { TvPlayRequest } from './TvBrowser'
 import { TvButton } from './TvButton'
+import { angleNeighbor, type Direction, tvLayout } from './tvLayout'
 
 interface Angle {
   video: VideoSummary
@@ -73,19 +72,71 @@ export function TvPlayer({
   const [angles, setAngles] = useState<Angle[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
-  const [downTarget, setDownTarget] = useState<number | undefined>()
-  const transportNode = useRef<React.ComponentRef<typeof View> | null>(null)
-  const transportRef = useCallback(
-    (node: React.ComponentRef<typeof View> | null): void => {
-      transportNode.current = node
-      setDownTarget(
-        node === null || Platform.OS === 'web'
-          ? undefined
-          : (findNodeHandle(node) ?? undefined)
+  const screen = useWindowDimensions()
+  const [boardSize, setBoardSize] = useState<{ width: number; height: number }>(
+    SCOREBOARD_BOARD_SIZE
+  )
+  const measureBoard = useCallback(
+    (size: { width: number; height: number }): void => {
+      setBoardSize(old =>
+        old.width === size.width && old.height === size.height ? old : size
       )
     },
     []
   )
+  const angleNodes = useRef<Array<React.ComponentRef<typeof View> | null>>([])
+  const focusedAngle = useRef<number | null>(0)
+  const lastAngle = useRef(0)
+  const handledFocus = useRef(0)
+  const transportNode = useRef<React.ComponentRef<typeof View> | null>(null)
+  const transportRef = useCallback(
+    (node: React.ComponentRef<typeof View> | null): void => {
+      transportNode.current = node
+    },
+    []
+  )
+  const requestFocus = (
+    node: React.ComponentRef<typeof View> | null | undefined
+  ): void => {
+    if (
+      node != null &&
+      'requestTVFocus' in node &&
+      typeof node.requestTVFocus === 'function'
+    )
+      node.requestTVFocus()
+  }
+  const statsScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
+  const statsOffset = useRef(0)
+  const statsExtent = useRef({ content: 0, viewport: 0 })
+  const scoreScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
+  const scoreOffset = useRef(0)
+  const scoreExtent = useRef({ content: 0, viewport: 0 })
+  const [placement, setPlacement] = useState<ScoreboardOverlay | null>(null)
+  useEffect(() => {
+    let active = true
+    let pending = false
+    setPlacement(null)
+    const refresh = async (): Promise<void> => {
+      if (pending) return
+      pending = true
+      try {
+        const value = await client.scoreboardOverlay(request.game.id)
+        if (active) setPlacement(value)
+      } catch {
+        /* Retain the last authorized placement during transient failures. */
+      } finally {
+        pending = false
+      }
+    }
+    refresh().catch(() => undefined)
+    const timer = setInterval(() => {
+      refresh().catch(() => undefined)
+    }, 5000)
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [client, request.game.id])
   const [focus, setFocus] = useState<number | null>(null)
   const [clips, setClips] = useState<TvHighlight[]>([])
   const [clipError, setClipError] = useState(false)
@@ -100,7 +151,6 @@ export function TvPlayer({
   const clock = useRef(new PlaybackClock())
   const ready = useRef(false)
   const generation = useRef(0)
-  const consumedPan = useRef(false)
   const [readySequence, setReadySequence] = useState(0)
   const pendingClip = useRef(request.clip)
   const highlightScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
@@ -112,10 +162,8 @@ export function TvPlayer({
   const boxMotion = useRef(new Animated.Value(0)).current
   useEffect(() => {
     tvControl?.enableTVMenuKey()
-    tvControl?.enableTVPanGesture()
     return () => {
       tvControl?.disableTVMenuKey()
-      tvControl?.disableTVPanGesture()
     }
   }, [])
   useEffect(() => {
@@ -218,16 +266,31 @@ export function TvPlayer({
     }
   }, [client, request, retry])
   const previousOverlay = useRef(false)
+  const previousFull = useRef<number | null>(null)
   useEffect(() => {
     const overlay =
       state.side !== null || state.box !== 'closed' || error !== null
-    const restore = previousOverlay.current && !overlay
+    const restore =
+      !overlay &&
+      (previousOverlay.current || previousFull.current !== state.full)
+    previousFull.current = state.full
     previousOverlay.current = overlay
     if (!restore) return
     const timer = setTimeout(() => {
-      const node = transportNode.current
+      handledFocus.current =
+        current.current.full ??
+        (current.current.visible.includes(lastAngle.current)
+          ? lastAngle.current
+          : current.current.visible[0])
+      const node =
+        angleNodes.current[
+          current.current.full ??
+            (current.current.visible.includes(lastAngle.current)
+              ? lastAngle.current
+              : current.current.visible[0])
+        ]
       if (
-        node !== null &&
+        node != null &&
         'requestTVFocus' in node &&
         typeof node.requestTVFocus === 'function'
       )
@@ -236,7 +299,7 @@ export function TvPlayer({
     return () => {
       clearTimeout(timer)
     }
-  }, [state.side, state.box, error])
+  }, [state.side, state.box, state.full, error])
   const sources = useMemo(
     () => angles?.map(angle => ({ uri: angle.uri })) ?? [],
     [angles]
@@ -309,10 +372,14 @@ export function TvPlayer({
   }, [renderedSide])
   useEffect(() => {
     if (state.box !== 'closed') setRenderedBox(state.box)
+    if (state.box === 'compact') {
+      statsOffset.current = 0
+      statsScroll.current?.scrollTo({ y: 0, animated: false })
+    }
     const animation = Animated.timing(boxMotion, {
       toValue: state.box === 'closed' ? 0 : 1,
       duration: 220,
-      useNativeDriver: true
+      useNativeDriver: false
     })
     animation.start()
     return () => {
@@ -321,40 +388,80 @@ export function TvPlayer({
   }, [state.box, boxMotion])
   useEffect(() => {
     const subscription = tvEvents?.addListener(event => {
-      if (event.eventKeyAction === 1) return
-      if (event.eventType === 'playPause') togglePlayback()
-      if (current.current.side === 'cameras') dispatch({ type: 'activity' })
-      if (event.eventType === 'pan' && event.body?.state === 'Began')
-        consumedPan.current = false
-      if (event.eventType === 'pan' && event.body?.state === 'Ended') {
-        if (consumedPan.current) {
-          consumedPan.current = false
-          return
+      // UIKit tap recognizers emit only the completed (up) event.
+      if (
+        Platform.OS === 'ios'
+          ? event.eventKeyAction === 0
+          : event.eventKeyAction === 1
+      )
+        return
+      if (event.eventType === 'playPause') {
+        togglePlayback()
+        return
+      }
+      const direction = event.eventType.replace(/^swipe/, '').toLowerCase()
+      if (!['left', 'right', 'up', 'down'].includes(direction)) return
+      const held = current.current
+      if (held.side !== null) {
+        if (held.side === 'cameras') dispatch({ type: 'activity' })
+        if (
+          (held.side === 'cameras' && direction === 'left') ||
+          (held.side === 'highlights' && direction === 'right')
+        )
+          dispatch({ type: 'dismiss' })
+        return
+      }
+      if (held.box !== 'closed') {
+        if (direction === 'left' || direction === 'right') {
+          scoreOffset.current = Math.max(
+            0,
+            Math.min(
+              scoreExtent.current.content - scoreExtent.current.viewport,
+              scoreOffset.current +
+                ((direction === 'right' ? 1 : -1) *
+                  scoreExtent.current.viewport) /
+                  2
+            )
+          )
+          scoreScroll.current?.scrollTo({
+            x: scoreOffset.current,
+            animated: true
+          })
         }
-        if (current.current.side === 'cameras' && event.body.x < -100)
-          dispatch({ type: 'dismiss' })
-        if (current.current.side === 'highlights' && event.body.x > 100)
-          dispatch({ type: 'dismiss' })
-        if (current.current.box !== 'closed' && event.body.y < -100)
+        if (direction === 'down' && held.box !== 'expanded')
           dispatch({ type: 'box' })
+        else if (direction === 'down' || direction === 'up') {
+          statsOffset.current = Math.max(
+            0,
+            Math.min(
+              statsExtent.current.content - statsExtent.current.viewport,
+              statsOffset.current + (direction === 'down' ? 100 : -100)
+            )
+          )
+          statsScroll.current?.scrollTo({
+            y: statsOffset.current,
+            animated: true
+          })
+        }
+        return
       }
-    })
-    const adapter = NativeModules.TVRemote
-    const emitter =
-      adapter === undefined ? null : new NativeEventEmitter(adapter)
-    const edge = emitter?.addListener('tvEdgeSwipe', raw => {
-      const event = raw as {
-        start: { x: number; y: number }
-        end: { x: number; y: number }
+      const index = focusedAngle.current
+      if (index === null) return
+      if (index !== handledFocus.current) {
+        handledFocus.current = index
+        return
       }
-      const panel = edgeSwipe(event.start, event.end)
-      if (panel !== null) consumedPan.current = true
-      if (panel === 'box') dispatch({ type: 'box' })
-      else if (panel !== null) open(panel)
+      const neighbor = angleNeighbor(held, index, direction as Direction)
+      if (neighbor !== null) return
+      if (direction === 'left') open('cameras')
+      else if (direction === 'right') open('highlights')
+      else if (direction === 'down') {
+        statsOffset.current = 0
+        dispatch({ type: 'box' })
+      } else requestFocus(transportNode.current)
     })
     return () => {
       subscription?.remove()
-      edge?.remove()
     }
   }, [open])
   const chooseClip = (clip: TvHighlight, sourceIndex = 0): void => {
@@ -451,11 +558,38 @@ export function TvPlayer({
   const board = boardAt(stats.board?.steps ?? [], wall)?.state
   const line = boardAt(stats.line?.steps ?? [], wall)?.line
   const box = boardAt(stats.boxes, wall)?.box
-  const BoxScroll = renderedBox === 'expanded' ? TvTextScrollView : ScrollView
-  const wideScore =
-    line != null &&
-    Math.max(line.away.innings.length, line.home.innings.length) > 18
-  const ScoreScroll = wideScore ? TvTextScrollView : ScrollView
+  const layout = tvLayout(
+    state,
+    screen,
+    placement,
+    board != null,
+    stats.line !== null,
+    boardSize
+  )
+  const staticScore =
+    state.full === null &&
+    (state.visible.length === 2 || state.visible.length === 3)
+  const innings = Math.max(
+    6,
+    line?.away.innings.length ?? 0,
+    line?.home.innings.length ?? 0
+  )
+  const scoreWidth = Math.min(
+    screen.width - 80,
+    360 + (Math.min(9, innings) + 3) * 64
+  )
+  const boxGrowth = useRef(new Animated.Value(0)).current
+  useEffect(() => {
+    const animation = Animated.timing(boxGrowth, {
+      toValue: state.box === 'expanded' ? 1 : 0,
+      duration: 280,
+      useNativeDriver: false
+    })
+    animation.start()
+    return () => {
+      animation.stop()
+    }
+  }, [state.box, boxGrowth])
   const audio =
     (state.full !== null && clock.current.available(state.full)
       ? state.full
@@ -465,120 +599,168 @@ export function TvPlayer({
     state.side !== null || state.box !== 'closed' || error !== null
   return (
     <View testID="tv-player" style={styles.scene}>
-      {angles?.map((angle, index) => {
-        const layout = angleLayout(index, state)
-        const available = clock.current.available(index)
-        return (
-          <Pressable
-            key={angle.video.id}
-            testID={`tv-angle-${index}`}
-            accessibilityRole="button"
-            accessibilityLabel={`Camera ${angle.video.title}`}
-            accessibilityValue={{
-              text: `${clock.current.ports[index]?.position.toFixed(1)} seconds`
-            }}
-            focusable={
-              !overlay &&
-              state.visible.includes(index) &&
-              (state.full === null || state.full === index)
-            }
-            {...{
-              nextFocusDown:
-                state.full !== null ||
-                state.visible.length <= 2 ||
-                state.visible.indexOf(index) >= 2
-                  ? downTarget
-                  : undefined,
-              hasTVPreferredFocus:
-                !overlay && (state.full ?? state.visible[0]) === index
-            }}
-            onFocus={() => {
-              setFocus(index)
-            }}
-            onBlur={() => {
-              setFocus(null)
-            }}
-            onPress={() => {
-              dispatch({ type: 'enlarge', index })
-            }}
-            style={{
-              position: 'absolute',
-              left: `${layout.left}%`,
-              top: `${layout.top}%`,
-              width: `${layout.width}%`,
-              height: `${layout.height}%`,
-              opacity: layout.opacity,
-              zIndex: layout.zIndex,
-              borderWidth: focus === index ? 4 : 0,
-              borderColor: '#fff'
-            }}
-          >
-            <Video
-              ref={ref => {
-                refs.current[index] = ref
+      <TvFocusGuide
+        style={StyleSheet.absoluteFill}
+        {...{ trapFocusLeft: true, trapFocusRight: true, trapFocusDown: true }}
+      >
+        {angles?.map((angle, index) => {
+          const rect = layout.tiles[state.visible.indexOf(index)] ?? {
+            x: 0,
+            y: 0,
+            w: screen.width / 2,
+            h: screen.height / 2
+          }
+          const available = clock.current.available(index)
+          return (
+            <View
+              key={angle.video.id}
+              style={{
+                position: 'absolute',
+                left: rect.x,
+                top: rect.y,
+                width: rect.w,
+                height: rect.h,
+                opacity: state.visible.includes(index) ? 1 : 0,
+                zIndex: state.full === index ? 2 : 1
               }}
-              source={sources[index]}
-              style={StyleSheet.absoluteFill}
-              muted={index !== audio}
-              paused={
-                readySequence === 0 ||
-                state.paused ||
-                (buffering.includes(clock.current.master) &&
-                  index !== clock.current.master)
-              }
-              resizeMode="contain"
-              progressUpdateInterval={250}
-              onLoad={event => {
-                loaded(index, event.duration)
-              }}
-              onSeek={() => {
-                clock.current.settled(index)
-              }}
-              onProgress={event => {
-                progress(index, event.currentTime)
-              }}
-              onBuffer={event => {
-                setBuffering(previous =>
-                  event.isBuffering
-                    ? [...new Set([...previous, index])]
-                    : previous.filter(i => i !== index)
-                )
-              }}
-              onEnd={() => {
-                const complete = clock.current.end(index)
-                setWall(clock.current.wall)
-                setReadySequence(n => n + 1)
-                if (complete) {
-                  dispatch({ type: 'ended' })
-                  open('highlights')
+            >
+              <Pressable
+                ref={node => {
+                  angleNodes.current[index] = node
+                }}
+                testID={`tv-angle-${index}`}
+                accessibilityRole="button"
+                accessibilityLabel={`Camera ${angle.video.title}`}
+                accessibilityValue={{
+                  text: `${clock.current.ports[index]?.position.toFixed(1)} seconds`
+                }}
+                focusable={
+                  !overlay &&
+                  state.visible.includes(index) &&
+                  (state.full === null || state.full === index)
                 }
-              }}
-              onError={() => {
-                const unavailable = clock.current.fail(index)
-                loaded(index, 0)
-                setFailures(previous => [...new Set([...previous, index])])
-                if (unavailable)
-                  setError('The cameras could not play. Try again.')
-              }}
-            />
-            {(!available || failures.includes(index)) && (
-              <View style={styles.unavailable}>
-                <Text style={styles.copy}>
-                  {angle.video.title}: video unavailable at this moment
-                </Text>
-              </View>
-            )}
-          </Pressable>
-        )
-      })}
+                {...{
+                  hasTVPreferredFocus:
+                    !overlay && (state.full ?? state.visible[0]) === index
+                }}
+                onFocus={() => {
+                  lastAngle.current = index
+                  focusedAngle.current = index
+                  setFocus(index)
+                }}
+                onBlur={() => {
+                  if (focusedAngle.current === index)
+                    focusedAngle.current = null
+                  setFocus(null)
+                }}
+                onPress={() => {
+                  dispatch({ type: 'enlarge', index })
+                }}
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  borderWidth: focus === index ? 4 : 0,
+                  borderColor: '#fff'
+                }}
+              >
+                <Video
+                  ref={ref => {
+                    refs.current[index] = ref
+                  }}
+                  source={sources[index]}
+                  style={StyleSheet.absoluteFill}
+                  muted={index !== audio}
+                  paused={
+                    readySequence === 0 ||
+                    state.paused ||
+                    (buffering.includes(clock.current.master) &&
+                      index !== clock.current.master)
+                  }
+                  resizeMode="contain"
+                  progressUpdateInterval={250}
+                  onLoad={event => {
+                    loaded(index, event.duration)
+                  }}
+                  onSeek={() => {
+                    clock.current.settled(index)
+                  }}
+                  onProgress={event => {
+                    progress(index, event.currentTime)
+                  }}
+                  onBuffer={event => {
+                    setBuffering(previous =>
+                      event.isBuffering
+                        ? [...new Set([...previous, index])]
+                        : previous.filter(i => i !== index)
+                    )
+                  }}
+                  onEnd={() => {
+                    const complete = clock.current.end(index)
+                    setWall(clock.current.wall)
+                    setReadySequence(n => n + 1)
+                    if (complete) {
+                      dispatch({ type: 'ended' })
+                      open('highlights')
+                    }
+                  }}
+                  onError={() => {
+                    const unavailable = clock.current.fail(index)
+                    loaded(index, 0)
+                    setFailures(previous => [...new Set([...previous, index])])
+                    if (unavailable)
+                      setError('The cameras could not play. Try again.')
+                  }}
+                />
+                {(!available || failures.includes(index)) && (
+                  <View style={styles.unavailable}>
+                    <Text style={styles.copy}>
+                      {angle.video.title}: video unavailable at this moment
+                    </Text>
+                  </View>
+                )}
+              </Pressable>
+            </View>
+          )
+        })}
+      </TvFocusGuide>
       {angles === null && error === null && (
         <Text style={styles.copy}>Opening game…</Text>
       )}
-      {board !== undefined && board !== null && (
-        <View style={styles.scoreboard} testID="tv-scoreboard">
-          <ScoreboardBoard
-            state={board}
-            minWidth={SCOREBOARD_BOARD_SIZE.width}
+      {board != null && placement?.show === true && (
+        <View
+          pointerEvents="none"
+          testID="tv-scoreboard"
+          style={[StyleSheet.absoluteFill, { zIndex: 4 }]}
+        >
+          <PlacedScoreboard
+            step={boardAt(stats.board?.steps ?? [], wall) ?? null}
+            onNaturalSize={measureBoard}
+            place={natural =>
+              tvLayout(
+                state,
+                screen,
+                placement,
+                true,
+                stats.line !== null,
+                natural
+              ).board
+            }
+          />
+        </View>
+      )}
+      {staticScore && layout.box !== null && stats.line !== null && (
+        <View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, { zIndex: 4 }]}
+        >
+          <LineScoreBox
+            rect={layout.box}
+            line={line ?? null}
+            teams={stats.line.teams}
+            at={wall}
           />
         </View>
       )}
@@ -788,7 +970,10 @@ export function TvPlayer({
         style={[
           styles.box,
           {
-            height: renderedBox === 'expanded' || wideScore ? '33%' : '20%',
+            height: boxGrowth.interpolate({
+              inputRange: [0, 1],
+              outputRange: ['25%', '33%']
+            }),
             opacity: boxMotion,
             transform: [
               {
@@ -801,106 +986,125 @@ export function TvPlayer({
           }
         ]}
       >
-        <PanelGradient direction="bottom" />
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              opacity: boxGrowth.interpolate({
+                inputRange: [0, 1],
+                outputRange: [2 / 3, 1]
+              })
+            }
+          ]}
+        >
+          <PanelGradient direction="bottom" maxOpacity={0.15} />
+        </Animated.View>
         <TvFocusGuide
           autoFocus
           focusable={state.box !== 'closed'}
           style={{ flex: 1, display: state.box === 'closed' ? 'none' : 'flex' }}
         >
-          {wideScore && renderedBox !== 'expanded' && (
-            <TvButton
-              label="Team and player statistics"
-              onPress={() => {
-                dispatch({ type: 'box' })
-              }}
-            />
-          )}
-          <BoxScroll>
-            {(line === undefined || line === null) &&
-              renderedBox !== 'expanded' && (
-                <TvButton
-                  label="Team and player statistics"
-                  onPress={() => {
-                    dispatch({ type: 'box' })
-                  }}
-                />
-              )}
-            {line === undefined || line === null ? (
-              <Text style={styles.copy}>
-                Statistics unavailable at this point in the video.
-              </Text>
-            ) : (
+          <ScrollView
+            ref={statsScroll}
+            onContentSizeChange={(_width, height) => {
+              statsExtent.current.content = height
+            }}
+            onLayout={event => {
+              statsExtent.current.viewport = event.nativeEvent.layout.height
+            }}
+            onScroll={event => {
+              statsOffset.current = event.nativeEvent.contentOffset.y
+            }}
+            scrollEventThrottle={16}
+          >
+            {!staticScore && (
               <>
-                <ScoreScroll
-                  testID="tv-line-score"
-                  horizontal
-                  contentContainerStyle={{ flexGrow: 1 }}
-                >
-                  <View
-                    style={{
-                      flex: 1,
-                      minWidth:
-                        360 +
-                        (Math.max(
-                          line.away.innings.length,
-                          line.home.innings.length
-                        ) +
-                          3) *
-                          64
-                    }}
-                  >
-                    <StatRow
-                      name="Team"
-                      onPress={
-                        wideScore
-                          ? undefined
-                          : () => {
-                              dispatch({ type: 'box' })
-                            }
-                      }
-                      values={[
-                        ...Array.from(
-                          {
-                            length: Math.max(
-                              line.away.innings.length,
-                              line.home.innings.length
-                            )
-                          },
-                          (_, i) => i + 1
-                        ),
-                        'R',
-                        'H',
-                        'E'
-                      ]}
-                      heading
+                {(line === undefined || line === null) &&
+                  renderedBox !== 'expanded' && (
+                    <TvButton
+                      label="Team and player statistics"
+                      onPress={() => {
+                        dispatch({ type: 'box' })
+                      }}
                     />
-                    {(['away', 'home'] as const).map(side => (
-                      <StatRow
-                        key={side}
-                        singleLine
-                        name={stats.line?.teams[side] ?? side}
-                        values={[
-                          ...Array.from(
-                            {
-                              length: Math.max(
-                                line.away.innings.length,
-                                line.home.innings.length
-                              )
-                            },
-                            (_, i) => line[side].innings[i] ?? '–'
-                          ),
-                          line[side].r,
-                          line[side].h ?? '–',
-                          line[side].e ?? '–'
-                        ]}
-                      />
-                    ))}
-                  </View>
-                </ScoreScroll>
+                  )}
+                {line === undefined || line === null ? (
+                  <Text style={styles.copy}>
+                    Statistics unavailable at this point in the video.
+                  </Text>
+                ) : (
+                  <>
+                    <ScrollView
+                      ref={scoreScroll}
+                      onContentSizeChange={width => {
+                        scoreExtent.current.content = width
+                      }}
+                      onLayout={event => {
+                        scoreExtent.current.viewport =
+                          event.nativeEvent.layout.width
+                      }}
+                      onScroll={event => {
+                        scoreOffset.current = event.nativeEvent.contentOffset.x
+                      }}
+                      scrollEventThrottle={16}
+                      testID="tv-line-score"
+                      horizontal
+                      style={{ width: scoreWidth, alignSelf: 'center' }}
+                      contentContainerStyle={{
+                        width: 360 + (innings + 3) * 64
+                      }}
+                    >
+                      <View
+                        style={{
+                          flex: 1,
+                          minWidth: 360 + (innings + 3) * 64
+                        }}
+                      >
+                        <StatRow
+                          name="Team"
+                          onPress={() => {
+                            dispatch({ type: 'box' })
+                          }}
+                          values={[
+                            ...Array.from(
+                              {
+                                length: innings
+                              },
+                              (_, i) => i + 1
+                            ),
+                            'R',
+                            'H',
+                            'E'
+                          ]}
+                          heading
+                        />
+                        {(['away', 'home'] as const).map(side => (
+                          <StatRow
+                            key={side}
+                            singleLine
+                            name={stats.line?.teams[side] ?? side}
+                            values={[
+                              ...Array.from(
+                                {
+                                  length: innings
+                                },
+                                (_, i) => line[side].innings[i] ?? '–'
+                              ),
+                              line[side].r,
+                              line[side].h ?? '–',
+                              line[side].e ?? '–'
+                            ]}
+                          />
+                        ))}
+                      </View>
+                    </ScrollView>
+                  </>
+                )}
               </>
             )}
-            {renderedBox !== 'expanded' ? null : box === undefined ||
-              box === null ? (
+            {!staticScore && renderedBox !== 'expanded' ? null : box ===
+                undefined || box === null ? (
               <Text style={styles.copy}>
                 Player statistics unavailable at this point in the video.
               </Text>
@@ -968,7 +1172,7 @@ export function TvPlayer({
                 </View>
               </>
             )}
-          </BoxScroll>
+          </ScrollView>
         </TvFocusGuide>
       </Animated.View>
       {error !== null && (
@@ -1042,8 +1246,10 @@ function StatRow({
 }
 
 function PanelGradient({
-  direction
+  direction,
+  maxOpacity = 0.1
 }: {
+  maxOpacity?: number
   direction: 'left' | 'right' | 'bottom'
 }): React.ReactElement {
   const id = useId().replace(/[^A-Za-z0-9]/g, '')
@@ -1052,6 +1258,7 @@ function PanelGradient({
     return (
       <NativeGradient
         direction={direction}
+        maxOpacity={maxOpacity}
         pointerEvents="none"
         style={StyleSheet.absoluteFill}
       />
@@ -1078,17 +1285,8 @@ function PanelGradient({
             x2={direction === 'left' ? '1' : '0'}
             y2="0"
           >
-            <Stop
-              offset="0"
-              stopColor="#101010"
-              stopOpacity={direction === 'bottom' ? 0.65 : 0.98}
-            />
-            <Stop
-              offset={direction === 'bottom' ? '0.5' : '0.8'}
-              stopColor="#101010"
-              stopOpacity={direction === 'bottom' ? 0.325 : 0.9}
-            />
-            <Stop offset="1" stopColor="#101010" stopOpacity={0} />
+            <Stop offset="0" stopColor="#000" stopOpacity={maxOpacity} />
+            <Stop offset="1" stopColor="#000" stopOpacity={0} />
           </LinearGradient>
         </Defs>
         <Rect width="100%" height="100%" fill={`url(#${id})`} />
