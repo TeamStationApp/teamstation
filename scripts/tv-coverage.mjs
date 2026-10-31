@@ -105,6 +105,7 @@ run(
     '60000',
     '--exit',
     'src/server/routes/tvLogin.test.ts',
+    'src/server/serverStart.test.ts',
     'src/server/routes/videoCollections.test.ts',
     'src/server/routes/teams.test.ts',
     'src/server/routes/users.test.ts',
