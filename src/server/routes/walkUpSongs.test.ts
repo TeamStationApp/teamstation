@@ -20,6 +20,7 @@ import {
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { GameScope } from '../access'
+import { PostgresFeed } from '../changeFeed/postgresFeed'
 import type { Database, ScopeRolesTable } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { withAudit } from '../middleware/withAudit'
@@ -89,6 +90,7 @@ describe('walk-up songs', function () {
   let db: Kysely<Database>
   let server: Server | undefined
   let fanout: GameFanout | undefined
+  let feed: PostgresFeed | undefined
   let base = ''
 
   const leagueId = makeId('league')
@@ -356,6 +358,7 @@ describe('walk-up songs', function () {
 
   after(async function () {
     await fanout?.close()
+    await feed?.close()
     await new Promise<void>(resolve => {
       if (server == null) resolve()
       else
@@ -604,9 +607,13 @@ describe('walk-up songs', function () {
   })
 
   it('announces a change to every game of the team, final or weeks away', async function () {
+    feed = new PostgresFeed({
+      databaseUrl: scratchUrl,
+      log: () => undefined
+    })
     fanout = new GameFanout({
       db,
-      databaseUrl: scratchUrl,
+      feed,
       log: () => undefined
     })
     await fanout.listening

@@ -9,6 +9,7 @@ import { HttpError } from '../../common/errors'
 import { userIdOfValue } from '../../common/userId'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { closeInto } from '../admin/people'
+import { PostgresFeed } from '../changeFeed/postgresFeed'
 import {
   blockedSenderIds,
   blockingRecipientIds,
@@ -415,6 +416,10 @@ describe('personal chat blocking', function () {
         return args.result
       }
     })
+    const feed = new PostgresFeed({
+      databaseUrl: testDatabaseUrl.replace(/\/[^/]*$/, '/' + name),
+      log: () => undefined
+    })
     const fanout = new ChatFanout({
       db: countingDb,
       readMembers: async () =>
@@ -422,7 +427,7 @@ describe('personal chat blocking', function () {
           ...['Hc', 'Hs', 'N'].map(key => f.id(key)),
           ...Array.from({ length: 100 }, (_, i) => `fixture-extra-${i}`)
         ]),
-      databaseUrl: testDatabaseUrl.replace(/\/[^/]*$/, '/' + name)
+      feed
     })
     const received = new Map<string, unknown[]>()
     for (const key of ['Hc', 'Hs', 'N']) {
@@ -454,6 +459,7 @@ describe('personal chat blocking', function () {
       await block(false)
     } finally {
       await fanout.close()
+      await feed.close()
     }
   })
   it('purges open encrypted history, quote snippets, reactions and pins, then restores on unblock', async () => {

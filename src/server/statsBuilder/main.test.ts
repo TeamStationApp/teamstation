@@ -13,6 +13,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { until } from '../../test/scoreboardKit'
+import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
@@ -245,22 +246,27 @@ describe('statsBuilder main', function () {
         ).status
       ).equals('built')
 
-      // Listen client error with an injected signal bus (no process.exit):
-      // the failure is reported before the builder gives up.
+      // A drain error with an injected signal bus (no process.exit): the
+      // failure is reported before the builder gives up.
       const reported: unknown[] = []
+      let clockFails = false
       handle = await runStatsBuilder({
         databaseUrl: scratchUrl,
-        clock: () => new Date(clockNow),
+        clock: () => {
+          if (clockFails) throw new Error('drain boom')
+          return new Date(clockNow)
+        },
         signals,
         report: async error => {
           reported.push(error)
         }
       })
-      handle.listenClient().emit('error', new Error('listen boom'))
-      await new Promise(resolve => setTimeout(resolve, 50))
+      clockFails = true
+      await requestGameStats(db, gameId)
+      await until('the report', () => reported.length > 0, 2000)
       expect(process.exitCode).equals(1)
       expect(reported.map(error => (error as Error).message)).deep.equals([
-        'listen boom'
+        'drain boom'
       ])
       process.exitCode = 0
       handle = undefined
@@ -268,6 +274,97 @@ describe('statsBuilder main', function () {
       console.log = originalLog
       if (handle != null) await handle.stop('SIGTERM')
     }
+  })
+
+  it('drains when the feed returns after a loss, and keeps running', async function () {
+    const originalLog = console.log
+    console.log = () => undefined
+    const lines: string[] = []
+    const reported: unknown[] = []
+    const exitCode = process.exitCode
+    const feed = new PostgresFeed({
+      databaseUrl: scratchUrl,
+      retryMs: 300,
+      log: line => lines.push(line)
+    })
+    const handle = await runStatsBuilder({
+      databaseUrl: scratchUrl,
+      feed,
+      signals: new EventEmitter(),
+      report: async error => {
+        reported.push(error)
+      }
+    })
+    try {
+      expect(handle.feed).equals(feed)
+      const gameId = makeId('game')
+      const statusOf = async (): Promise<string | undefined> =>
+        (
+          await db
+            .selectFrom('game_stats_state')
+            .select('status')
+            .where('game_id', '=', gameId)
+            .executeTakeFirst()
+        )?.status
+      await sql`
+        select pg_terminate_backend(pid) from pg_stat_activity
+        where datname = ${scratchName}
+          and application_name = ${FEED_APPLICATION_NAME}`.execute(db)
+      await until(
+        'the loss',
+        () => lines.some(line => line.includes('lost the feed')),
+        2000
+      )
+      // Asked for while nobody hears: only the return can find it.
+      await db
+        .insertInto('games')
+        .values({
+          id: gameId,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        })
+        .execute()
+      await replaceGameEvents(db, {
+        gameId,
+        homeTeamId: home,
+        awayTeamId: away,
+        plays: [{ gumbo: play(), source: 'manual' }]
+      })
+      expect(await statusOf()).not.equals('built')
+      for (const deadline = Date.now() + 5000; Date.now() < deadline;) {
+        if ((await statusOf()) === 'built') break
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
+      expect(await statusOf()).equals('built')
+      expect(reported).deep.equals([])
+      expect(process.exitCode).equals(exitCode)
+    } finally {
+      await handle.stop('SIGTERM')
+      console.log = originalLog
+    }
+  })
+
+  it('fails to start on a database it cannot reach, leaving nothing open', async function () {
+    const signals = new EventEmitter()
+    const lines: string[] = []
+    const missing = adminUrl.replace(/\/[^/]*$/, `/${scratchName}_missing`)
+    const failure = await runStatsBuilder({
+      databaseUrl: missing,
+      feed: new PostgresFeed({
+        databaseUrl: missing,
+        log: line => lines.push(line)
+      }),
+      signals
+    }).then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    expect(String(failure)).includes('does not exist')
+    expect(lines.length).equals(1)
+    expect(signals.listenerCount('SIGTERM')).equals(0)
+    await new Promise(resolve => setTimeout(resolve, 1200))
+    expect(lines.length).equals(1)
   })
 
   it('queries through the request address as its role, and listens on the database', async function () {
@@ -284,19 +381,19 @@ describe('statsBuilder main', function () {
           and application_name <> ''
           and pid <> pg_backend_pid()`.execute(db)
       await handle.stop('SIGTERM')
-      return rows.map(row => row.name)
+      return rows.map(row => row.name).sort()
     }
     try {
       expect(
         await namesOn({ databaseUrl: scratchUrl, databasePoolUrl: '' })
-      ).deep.equals(['teamstation-statsBuilder'])
+      ).deep.equals([FEED_APPLICATION_NAME, 'teamstation-statsBuilder'])
       // The name a URL carries beats the role's, so it shows which URL it is.
       expect(
         await namesOn({
           databaseUrl: scratchUrl,
           databasePoolUrl: `${scratchUrl}?application_name=thePool`
         })
-      ).deep.equals(['thePool'])
+      ).deep.equals([FEED_APPLICATION_NAME, 'thePool'])
     } finally {
       console.log = originalLog
     }
