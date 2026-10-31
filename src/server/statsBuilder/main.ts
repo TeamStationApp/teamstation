@@ -3,7 +3,11 @@ import { captureException, flush } from '@sentry/node'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { makeChangeFeed } from '../changeFeed/makeChangeFeed'
 import { PostgresFeed } from '../changeFeed/postgresFeed'
-import { isPoolTimeout, makeDatabase } from '../db/database'
+import {
+  isConnectionUnavailable,
+  isDatabaseOutOfReach,
+  makeDatabase
+} from '../db/database'
 import {
   requestDatabaseUrl,
   type ServerConfig,
@@ -88,6 +92,8 @@ export async function runStatsBuilder(
   let timer: ReturnType<typeof setTimeout> | null = null
   let stopping: Promise<void> | null = null
   let stopped = false
+  /** The first drain is over, however it went. */
+  let started = false
   /** Only the latest scheduleTimer may arm a timeout. */
   let scheduleGen = 0
   /** Last delay passed to setTimeout; tests read this. */
@@ -167,7 +173,9 @@ export async function runStatsBuilder(
     } catch (error) {
       // Connections are short, not gone: a new process would find the same.
       // What is owed stays owed, so a later attempt finds it.
-      if (!isPoolTimeout(error)) throw error
+      if (!isConnectionUnavailable(error)) throw error
+      // A database never reached is for the supervisor to see, not to wait on.
+      if (!started && isDatabaseOutOfReach(error)) throw error
       console.error(`stats builder: asking again: ${String(error)}`)
       scheduleGen += 1
       clearTimer()
@@ -236,6 +244,7 @@ export async function runStatsBuilder(
 
   try {
     await runDrain()
+    started = true
   } catch (error) {
     // Nothing will run on: leave nothing open behind the failure.
     stopped = true

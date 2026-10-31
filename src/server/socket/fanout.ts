@@ -8,7 +8,7 @@ import type { WalkUpSong } from '../../common/walkUpSong'
 import type { GameScope } from '../access'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { atomic } from '../db/atomic'
-import { type Database, isPoolTimeout } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
 import { pregameFold } from '../events/currentPlay'
 import { playJson, playsDigest, readPlays } from '../events/postPlays'
@@ -205,7 +205,7 @@ export class GameFanout {
           song: await this.readSong(this.db, change.team, change.userId)
         }
       } catch (error) {
-        if (!isPoolTimeout(error)) throw error
+        if (!isConnectionUnavailable(error)) throw error
         for (const gameId of games) {
           const scope = this.watched.get(gameId)?.scope
           if (
@@ -222,7 +222,7 @@ export class GameFanout {
         try {
           await this.deliverGame(gameId, change, song)
         } catch (error) {
-          if (!isPoolTimeout(error)) throw error
+          if (!isConnectionUnavailable(error)) throw error
           this.resync(gameId)
         }
       })

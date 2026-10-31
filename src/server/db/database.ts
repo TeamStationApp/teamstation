@@ -1723,30 +1723,92 @@ export function poolSettings(
   }
 }
 
+/** What `pg` says when a pool gives up on a connection or one drops under it. */
+const CONNECTION_FAILURES = [
+  'timeout exceeded when trying to connect',
+  'Connection terminated due to connection timeout',
+  'Connection terminated unexpectedly',
+  'Client has encountered a connection error and is not queryable'
+]
+
 /**
  * What PgBouncer says, as a FATAL to its client, when it gives up waiting for
- * a server connection or has no room for another client.
+ * a server connection, has no room for another client, cannot reach the server
+ * or is going away. It sends all of these and more as SQLSTATE 08P01, which is
+ * also a protocol violation, so the words are what tell them apart. Not among
+ * them: `server login failed`, which is a configuration that will not mend.
  */
+const POOLER_OUT_OF_REACH = [
+  'server login has been failing',
+  'pgbouncer cannot connect to server',
+  'server conn crashed?',
+  'pooler is shutting down'
+]
 const POOLER_REFUSALS = [
   'query_wait_timeout',
   'client_login_timeout',
   'no more connections allowed',
-  'server login has been failing'
+  ...POOLER_OUT_OF_REACH
 ]
 
 /**
- * Whether an error is a pool giving up on a connection: while waiting for a
- * free one or while opening one, here or in the pooler in front of the
- * database. The database may be fine; this process just could not reach it in
- * time, so whoever asked can ask again.
+ * What Postgres says when it is out of connections (53300) or is stopping or
+ * starting (57P01, 57P02, 57P03), by SQLSTATE: its words depend on the case.
  */
-export function isPoolTimeout(error: unknown): boolean {
+const SERVER_OUT_OF_REACH = new Set(['57P01', '57P02', '57P03'])
+const SERVER_REFUSALS = new Set(['53300', ...SERVER_OUT_OF_REACH])
+
+/**
+ * What the socket says, which `pg` passes on as it is, when the other end is
+ * down or goes away, a route to it is flapping, or DNS could not answer for now
+ * (EAI_AGAIN). Not a name that does not resolve (ENOTFOUND): that is a wrong
+ * address far more often than a brief failure.
+ */
+const SOCKET_FAILURES = new Set([
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'EPIPE',
+  'ETIMEDOUT'
+])
+
+/**
+ * Whether an error says no database connection was to be had, rather than
+ * anything about what was asked: a pool or pooler giving up, a pooler or server
+ * that is restarting or full, or a connection lost on the way. Nothing here
+ * says the statement ran or not, only that asking again is the right answer, so
+ * whoever asked can ask again. A failed query, a closed pool and a refused login
+ * are none of these: those are faults, and stay reported as faults.
+ */
+export function isConnectionUnavailable(error: unknown): boolean {
   if (!(error instanceof Error)) return false
   const { message } = error
+  const { code } = error as { code?: unknown }
   return (
-    message === 'timeout exceeded when trying to connect' ||
-    message === 'Connection terminated due to connection timeout' ||
-    POOLER_REFUSALS.some(refusal => message.startsWith(refusal))
+    CONNECTION_FAILURES.includes(message) ||
+    POOLER_REFUSALS.some(refusal => message.startsWith(refusal)) ||
+    (typeof code === 'string' &&
+      (SERVER_REFUSALS.has(code) || SOCKET_FAILURES.has(code)))
+  )
+}
+
+/**
+ * Whether an error says the database itself could not be reached, rather than
+ * that connections to it are short: its socket failed, it is stopping or
+ * starting, or the pooler in front of it cannot reach it either. A process that
+ * has run can wait that out, but one that has not yet reached the database may
+ * be pointed at the wrong place, and should fail where its supervisor sees it.
+ */
+export function isDatabaseOutOfReach(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const { message } = error
+  const { code } = error as { code?: unknown }
+  return (
+    POOLER_OUT_OF_REACH.some(refusal => message.startsWith(refusal)) ||
+    (typeof code === 'string' &&
+      (SERVER_OUT_OF_REACH.has(code) || SOCKET_FAILURES.has(code)))
   )
 }
 

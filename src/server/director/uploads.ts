@@ -5,7 +5,7 @@ import { pipeline } from 'node:stream/promises'
 
 import type { Kysely } from 'kysely'
 
-import { type Database, isPoolTimeout } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
 
 /**
  * A recording arriving from TS Director, in parts.
@@ -381,7 +381,7 @@ export function reopenInterruptedUploadsSoon(
     })
     .catch((error: unknown) => {
       console.error(`reopening interrupted uploads: ${String(error)}`)
-      if (!isPoolTimeout(error)) return
+      if (!isConnectionUnavailable(error)) return
       const retry = setTimeout(() => {
         reopenInterruptedUploadsSoon(db, retryMs)
       }, retryMs)
