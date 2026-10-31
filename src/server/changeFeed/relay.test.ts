@@ -1,3 +1,9 @@
+import { execFile } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
@@ -24,6 +30,8 @@ import {
   startFeedRelay
 } from './relay'
 import { feedControlKey, feedLeaderKey, ValkeyFeed } from './valkeyFeed'
+
+const run = promisify(execFile)
 
 const FAST: FeedRelayOptions = {
   pollMs: 20,
@@ -425,6 +433,33 @@ describe('the feed relay', function () {
       expect(printed.join('\n')).matches(
         /round trip \d+ ms; leader 42@probe\.example\.test/
       )
+      await stopAll()
+    })
+
+    it('runs as a command, reading the config where it stands', async function () {
+      const prefix = testPrefix()
+      relayOf(prefix, '42@probe.example.test')
+      await until(async () => (await backends()) === 1, 'a leader')
+      await wait(50)
+      const dir = mkdtempSync(join(tmpdir(), 'feed-probe-'))
+      try {
+        writeFileSync(
+          join(dir, 'serverConfig.json'),
+          JSON.stringify(configOf(prefix))
+        )
+        const { stdout } = await run(
+          process.execPath,
+          [
+            '-r',
+            require.resolve('sucrase/register'),
+            join(__dirname, 'probeCli.ts')
+          ],
+          { cwd: dir }
+        )
+        expect(stdout).matches(/round trip \d+ ms; leader 42@probe/)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
       await stopAll()
     })
 
