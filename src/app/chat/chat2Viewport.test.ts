@@ -112,9 +112,12 @@ describe('chat browser keyboard and focus handoff', function () {
   const originalHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight')
   const originalWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth')
   let stop: (() => void) | undefined
+  let editor: HTMLTextAreaElement | undefined
   afterEach(function () {
     stop?.()
     stop = undefined
+    editor?.remove()
+    editor = undefined
     if (original == null) Reflect.deleteProperty(window, 'visualViewport')
     else Object.defineProperty(window, 'visualViewport', original)
     if (originalHeight != null)
@@ -139,6 +142,9 @@ describe('chat browser keyboard and focus handoff', function () {
     const updates: Array<{ bottom: number; keyboardOpen: boolean }> = []
     stop = watchVisualViewport(value => updates.push(value))
     expect(updates.at(-1)?.keyboardOpen).equals(false)
+    editor = document.createElement('textarea')
+    document.body.append(editor)
+    editor.focus()
     viewport.height -= 250
     viewport.offsetTop = 10
     viewport.dispatchEvent(new window.Event('resize'))
@@ -193,6 +199,9 @@ describe('chat browser keyboard and focus handoff', function () {
     viewport.dispatchEvent(new window.Event('scroll'))
     expect(updates.at(-1)?.keyboardOpen).equals(false)
     // A keyboard while zoomed still leaves the screen short.
+    editor = document.createElement('textarea')
+    document.body.append(editor)
+    editor.focus()
     viewport.height -= 250 / 1.5
     viewport.dispatchEvent(new window.Event('resize'))
     expect(updates.at(-1)).deep.equals({

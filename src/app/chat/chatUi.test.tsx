@@ -11,6 +11,7 @@ import type {
 import type { AttachmentRef } from '../../common/chatContent'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { AttachmentView } from './AttachmentView'
 import { chatStartFailure } from './chatCoreLog'
@@ -208,7 +209,8 @@ async function longPress(words: string): Promise<void> {
 }
 
 /** A safety number: 60 digits. */
-const SAFETY = '1234567890'.repeat(6)
+const SAFETY =
+  'help layer drink return length country village brisk grief demise hint road sing helmet wheat minor'
 
 /** A key client the gate never reaches, since the engine says ready. */
 const unusedClient: ChatKeysClient = Object.create(null)
@@ -418,15 +420,15 @@ const attachment = (over: Partial<AttachmentRef> = {}): AttachmentRef => ({
 })
 
 describe('the chat list', function () {
-  it('shows only the season name while retaining the audience label', async function () {
+  it('shows the season before its league while retaining the audience label', async function () {
     const engine = new FakeEngine()
     engine.list = [
       chat({
         id: 'season',
         kind: 'seasonStaff',
         scope: { type: 'season', id: 'sea_spring' },
-        title: 'Demo League Spring Staff',
-        scopeName: 'Demo League Spring',
+        title: 'Spring - Demo League Staff',
+        scopeName: 'Spring - Demo League',
         avatarName: 'Spring'
       })
     ]
@@ -438,11 +440,10 @@ describe('the chat list', function () {
         onNewMessage={() => {}}
       />
     )
-    await until('the season row', () => button('Spring') != null)
-    expect(text()).contains('Spring')
+    await until('the season row', () => button('Spring - Demo League') != null)
+    expect(text()).contains('Spring - Demo League')
     expect(text()).contains('Season Staff')
-    expect(text()).not.contains('Demo League')
-    await press('Spring')
+    await press('Spring - Demo League')
     expect(opened).deep.equals(['season'])
   })
 
@@ -1227,9 +1228,9 @@ describe('a conversation', function () {
     expect(words).contains('Former member')
     expect(words).contains('what was said')
     expect(words).contains('edited')
-    expect(words).contains('sent before Former member’s safety number changed')
+    expect(words).contains('sent before Former member’s safety words changed')
     expect(words).contains('Blair B is typing…')
-    expect(words).contains('Drew D’s safety number changed')
+    expect(words).contains('Drew D’s safety words changed')
     expect(words).contains(
       'Drew D reset their chat keys and asks for this chat’s history.'
     )
@@ -1661,6 +1662,8 @@ describe('starting a direct message', function () {
     await typeInto('Name', 'Fra')
     await until('the search', () => !text().includes('Pat P'))
     await press('Pick Frankie F')
+    expect((labelled('Name') as HTMLInputElement).value).equals('')
+    expect(document.activeElement).equals(labelled('Name'))
     await press('Remove Frankie F')
     await press('Pick Frankie F')
     await press('Start conversation')
@@ -1669,6 +1672,62 @@ describe('starting a direct message', function () {
     expect(engine.calls).includes('refresh')
     await typeInto('Name', 'zzz')
     await until('nobody', () => text().includes('Nobody matches.'))
+  })
+
+  it('debounces searches and never publishes an older response or error', async function () {
+    const dms = new FakeDms()
+    dms.people = [{ ...dms.people[0], shortName: 'Lou Gehrig' }]
+    const waiting = new Map<
+      string,
+      {
+        resolve: (people: ChatPerson[]) => void
+        reject: (error: Error) => void
+      }
+    >()
+    dms.dmCandidates = async (query = '') => {
+      dms.calls.push(query)
+      if (query === '') return dms.people
+      return await new Promise((resolve, reject) =>
+        waiting.set(query, { resolve, reject })
+      )
+    }
+    await render(
+      <NewDmScreen
+        client={dms}
+        engine={new FakeEngine()}
+        onCreated={() => {}}
+      />
+    )
+    await until('initial people', () => text().includes('Lou Gehrig'))
+    await typeInto('Name', 'Lou')
+    expect(document.querySelector('[role="progressbar"]')).not.equals(null)
+    expect(text()).not.includes('Lou Gehrig')
+    await settle(300)
+    expect(dms.calls).deep.equals([''])
+    await typeInto('Name', 'Ted')
+    await settle(300)
+    expect(dms.calls).deep.equals([''])
+    await until('debounced request', () => waiting.has('Ted'))
+    expect(dms.calls).deep.equals(['', 'Ted'])
+    await typeInto('Name', 'Ted ')
+    await act(async () => {
+      waiting.get('Ted')!.resolve(dms.people)
+    })
+    expect(text()).not.includes('Lou Gehrig')
+    await until('new generation', () => dms.calls.length === 3)
+    await typeInto('Name', 'Hank')
+    await act(async () => {
+      waiting.get('Ted')!.reject(new Error('old request'))
+    })
+    expect(text()).not.includes(lstrings.chat_new_failed)
+    await until('latest request', () => waiting.has('Hank'))
+    await act(async () => {
+      waiting.get('Hank')!.reject(new Error('request failed'))
+    })
+    expect(text()).includes(lstrings.chat_new_failed)
+    expect(document.querySelector('[role="progressbar"]')).equals(null)
+    await typeInto('Name', '')
+    await until('recovered', () => text().includes('Lou Gehrig'))
   })
 
   it('opens Include another adult on adultRequired and starts again with them', async function () {
@@ -1798,8 +1857,8 @@ describe('members, approvals and safety numbers', function () {
         conversationTitle: 'Hawks Members',
         userId: userIdOfGumbo(9),
         name: 'Drew D',
-        oldSafetyNumber: '1'.repeat(60),
-        newSafetyNumber: '2'.repeat(60)
+        oldSafetyNumber: Array(16).fill('abandon').join(' '),
+        newSafetyNumber: Array(16).fill('ability').join(' ')
       },
       {
         requestId: 8,
@@ -1808,7 +1867,7 @@ describe('members, approvals and safety numbers', function () {
         userId: userIdOfGumbo(9),
         name: 'Drew D',
         oldSafetyNumber: undefined,
-        newSafetyNumber: '3'.repeat(60)
+        newSafetyNumber: Array(16).fill('able').join(' ')
       },
       // The person's own reset is never put to them.
       {
@@ -1817,8 +1876,8 @@ describe('members, approvals and safety numbers', function () {
         conversationTitle: 'Hawks Members',
         userId: userIdOfGumbo(1),
         name: 'Blair B',
-        oldSafetyNumber: '4'.repeat(60),
-        newSafetyNumber: '5'.repeat(60)
+        oldSafetyNumber: Array(16).fill('about').join(' '),
+        newSafetyNumber: Array(16).fill('above').join(' ')
       }
     ]
     await render(
@@ -1839,13 +1898,13 @@ describe('members, approvals and safety numbers', function () {
     const words = text()
     expect(words).contains('Coach · Guardian')
     expect(words).contains('Moderator')
-    expect(words).contains('Drew D’s safety number changed')
+    expect(words).contains('Drew D’s safety words changed')
     expect(words).contains('Blair B (You)')
-    expect(words).contains('11111 11111')
-    expect(words).contains('22222 22222')
-    expect(words).not.contains('33333')
+    expect(words).contains('abandonabandon')
+    expect(words).contains('abilityability')
+    expect(words).not.contains('ableable')
     expect(words).not.contains('Blair B reset')
-    expect(words).not.contains('44444')
+    expect(words).not.contains('aboutabout')
     expect(button('Leave this conversation')).equals(undefined)
     await press('Approve Drew D')
     await until(
@@ -1861,14 +1920,12 @@ describe('members, approvals and safety numbers', function () {
         )!
         .click()
     })
-    await until('the digits', () =>
-      text().includes('Safety number with Hank C')
-    )
-    const grid = labelled('Safety number with Hank C')
-    expect(grid?.children.length).equals(12)
+    await until('the digits', () => text().includes('Safety words with Hank C'))
+    const grid = labelled('Safety words with Hank C')
+    expect(grid?.children.length).equals(16)
     expect(
       [...(grid?.children ?? [])].every(cell =>
-        /^\d{5}$/.test(cell.textContent ?? '')
+        /^[a-z]+$/.test(cell.textContent ?? '')
       )
     ).equals(true)
     await press('Done')
@@ -1896,7 +1953,7 @@ describe('members, approvals and safety numbers', function () {
         userId: userIdOfGumbo(9),
         name: undefined,
         oldSafetyNumber: undefined,
-        newSafetyNumber: '2'.repeat(60)
+        newSafetyNumber: Array(16).fill('ability').join(' ')
       }
     ]
     let left = 0
@@ -1944,7 +2001,7 @@ describe('members, approvals and safety numbers', function () {
     )
   })
 
-  it('shows 60 digits in 12 groups of five, or says why not', async function () {
+  it('shows sixteen words in four columns, or says why not', async function () {
     const engine = new FakeEngine()
     let done = 0
     await render(
@@ -1955,12 +2012,12 @@ describe('members, approvals and safety numbers', function () {
         onDone={() => (done += 1)}
       />
     )
-    await until('the digits', () => text().includes('12345'))
-    const grid = labelled('Safety number with Blair B')
+    await until('the digits', () => text().includes('help'))
+    const grid = labelled('Safety words with Blair B')
     const groups = [...(grid?.children ?? [])].map(cell => cell.textContent)
-    expect(groups).length(12)
-    expect(groups.join('')).equals(SAFETY)
-    expect(text()).contains('Compare these 60 digits with Blair B')
+    expect(groups).length(16)
+    expect(groups.join(' ')).equals(SAFETY)
+    expect(text()).contains('Compare these 16 words with Blair B')
     await press('Done')
     expect(done).equals(1)
     await act(async () => {

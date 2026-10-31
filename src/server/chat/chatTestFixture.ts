@@ -111,6 +111,7 @@ export async function openChatFixture(
   options: {
     now?: Date
     reconcile?: boolean
+    leagueName?: string
     /** The Space attachments go to (none by default); deletes reach it too. */
     space?: SpaceSettings
   } = {}
@@ -141,6 +142,13 @@ export async function openChatFixture(
     }
     const start = options.now ?? new Date('2027-04-10T12:00:00Z')
     const seed = await chatSeed(db, { password: 'pw', now: start })
+    if (options.leagueName != null) {
+      await db
+        .updateTable('leagues')
+        .set({ name: options.leagueName })
+        .where('id', '=', seed.leagueId)
+        .execute()
+    }
 
     const tokens = new Map<string, string>()
     const keys = new Map<string, string>()

@@ -37,6 +37,11 @@ import {
 } from '../chat/chatTestFixture'
 import { CHALLENGE_LIFETIME_MS, LINK_LIFETIME_MS } from '../chat/keys'
 import type { Database } from '../db/database'
+import {
+  dismissNotification,
+  inbox,
+  notificationDetail
+} from '../notifications/inbox'
 
 /**
  * U6 through the routes, with the real crypto of `common/chatCrypto` on the
@@ -75,7 +80,9 @@ describe('chat devices, identities and keys (U6)', function () {
   let sessionCount = 0
 
   before(async function () {
-    const opened = await openChatFixture('keys')
+    const opened = await openChatFixture('keys', {
+      leagueName: 'Harbor League'
+    })
     if (opened == null) {
       this.skip()
       return
@@ -579,7 +586,10 @@ describe('chat devices, identities and keys (U6)', function () {
       const ha = await enrolled('Ha')
       const staff = await chatId('Ha', 'Hawks Staff')
       const members = await chatId('Ha', 'Hawks Members')
-      const announcements = await chatId('Ha', 'QPLL Spring 2027 Announcements')
+      const announcements = await chatId(
+        'Ha',
+        'Spring 2027 - Harbor League Announcements'
+      )
       await epochOne(staff, ha.keys)
       await epochOne(announcements, ha.keys)
       // Hs is in all three; only the two with an epoch have anything to grant.
@@ -737,6 +747,102 @@ describe('chat devices, identities and keys (U6)', function () {
   })
 
   describe('linking', function () {
+    it('keeps inbox and link decisions authoritative, deduplicated and race safe', async function () {
+      await fixture.person('TedWilliams')
+      const owner = 'TedWilliams'
+      const { keys } = await enrolled(owner)
+      const actor = (await actorForToken(db, fixture.tokenOf(owner)))!
+      const clock = { now: () => fixture.now }
+      for (const first of ['decline', 'approve', 'race'] as const) {
+        const who = await session(owner)
+        const fresh = await register(who, 'Test browser')
+        const link = ok(await call(who, 'POST', '/chat/links'), 201)
+        expect(ok(await call(who, 'POST', '/chat/links'), 201).id).equals(
+          link.id
+        )
+        const pending = await inbox(db, actor, {}, clock)
+        const notice = pending.items.find(row => row.requestId === link.id)!
+        expect(notice.type).equals('chatDeviceApproval')
+        expect(notice.status).equals('pending')
+        expect(pending.hasPending).equals(true)
+        expect(notice.description).includes('Test browser (web)')
+        expect(
+          (await notificationDetail(db, actor, notice.id, clock)).canAct
+        ).equals(true)
+        let dismissed = false
+        try {
+          await dismissNotification(db, actor, notice.id, clock)
+          dismissed = true
+        } catch {}
+        expect(dismissed).equals(false)
+        refused(
+          await call(who, 'POST', `/chat/links/${link.id}/decline`, {}),
+          403,
+          'notHolder'
+        )
+        const other = (await actorForToken(db, fixture.tokenOf('B')))!
+        expect(
+          (await inbox(db, other, {}, clock)).items.some(
+            row => row.id === notice.id
+          )
+        ).equals(false)
+        const approve = async (): Promise<Answer> =>
+          await call(
+            owner,
+            'POST',
+            `/chat/links/${link.id}/approve`,
+            approval(keys, link.id, fresh)
+          )
+        const decline = async (): Promise<Answer> =>
+          await call(owner, 'POST', `/chat/links/${link.id}/decline`, {})
+        if (first === 'approve') {
+          ok(await approve())
+          refused(await decline(), 409, 'linkApproved')
+          expect(ok(await approve()).approved).equals(true)
+        } else if (first === 'decline') {
+          expect(ok(await decline()).declined).equals(true)
+          expect(ok(await decline()).declined).equals(true)
+          refused(await approve(), 409, 'linkDeclined')
+        } else {
+          const answers = await Promise.all([approve(), decline()])
+          expect(
+            answers.map(row => row.status).sort((a, b) => a - b)
+          ).deep.equals([200, 409])
+        }
+        const result = ok(await call(who, 'GET', `/chat/links/${link.id}`))
+        expect(result.approved !== result.declined).equals(true)
+        const done = await notificationDetail(db, actor, notice.id, clock)
+        expect(done.status).equals(
+          result.approved === true ? 'accepted' : 'declined'
+        )
+        expect(done.canAct).equals(false)
+        expect((await inbox(db, actor, {}, clock)).hasPending).equals(false)
+        expect(
+          (await inbox(db, actor, { history: true }, clock)).items.some(
+            row => row.id === notice.id
+          )
+        ).equals(true)
+        expect(ok(await call(owner, 'GET', '/chat/links'))).deep.equals([])
+        const device = await db
+          .selectFrom('chat_devices')
+          .select('revoked_at')
+          .where('id', '=', fresh.id)
+          .executeTakeFirstOrThrow()
+        expect(device.revoked_at).equals(null)
+      }
+      const who = await session(owner)
+      await register(who, 'Expired browser')
+      const link = ok(await call(who, 'POST', '/chat/links'), 201)
+      const future = {
+        now: () => new Date(fixture.now.getTime() + LINK_LIFETIME_MS + 1)
+      }
+      const notice = (
+        await inbox(db, actor, { history: true }, future)
+      ).items.find(row => row.requestId === link.id)!
+      expect(notice.status).equals('expired')
+      expect(notice.canAct).equals(false)
+    })
+
     it('links a device through a linked one, with every generation boxed', async function () {
       const { device, keys } = await enrolled('A')
       ok(await call('A', 'POST', '/chat/puk', nextPuk(keys, [device])), 201)
@@ -817,16 +923,16 @@ describe('chat devices, identities and keys (U6)', function () {
       await settle()
       expect(notes).deep.include({ u: keys.userId, k: 'link' })
       expect(notes).deep.include({ u: keys.userId, k: 'devices' })
-      refused(
-        await call(
-          'A',
-          'POST',
-          `/chat/links/${link.id}/approve`,
-          approval(keys, link.id, fresh)
-        ),
-        409,
-        'linkApproved'
-      )
+      expect(
+        ok(
+          await call(
+            'A',
+            'POST',
+            `/chat/links/${link.id}/approve`,
+            approval(keys, link.id, fresh)
+          )
+        ).box
+      ).equals(approved.box)
       expect(ok(await call('A', 'GET', '/chat/links'))).deep.equals([])
 
       // The new device installs the identity and both generations.
@@ -1147,7 +1253,7 @@ describe('chat devices, identities and keys (U6)', function () {
       const { device, keys } = await enrolled('L')
       const second = await linked('L', keys, device)
       const pending = await register(await session('L'))
-      const org = await chatId('L', 'QPLL Org')
+      const org = await chatId('L', 'Harbor League Org')
       await clearRotation()
 
       // A pending device may revoke only itself.
@@ -1289,6 +1395,7 @@ describe('chat devices, identities and keys (U6)', function () {
 
       const who = await session('Hc')
       const hand = await register(who, 'Phone in hand')
+      const pending = ok(await call(who, 'POST', '/chat/links'), 201)
       const fresh = newIdentity('Hc', hand)
       notes = []
       const reset = ok(
@@ -1319,6 +1426,42 @@ describe('chat devices, identities and keys (U6)', function () {
       const mine = ok(await call(who, 'GET', '/chat/me/keys'))
       expect(mine).to.include({ deviceId: hand.id, linked: true })
       expect(mine.identity.publicKey).equals(b(fresh.keys.identity.publicKey))
+      expect(ok(await call(who, 'GET', '/chat/links'))).deep.equals([])
+      expect(ok(await call(who, 'GET', `/chat/links/${pending.id}`))).includes({
+        approved: false,
+        declined: false,
+        expired: true
+      })
+      refused(
+        await call(who, 'POST', `/chat/links/${pending.id}/decline`, {}),
+        409,
+        'linkExpired'
+      )
+      refused(
+        await call(
+          who,
+          'POST',
+          `/chat/links/${pending.id}/approve`,
+          approval(fresh.keys, pending.id, hand)
+        ),
+        409,
+        'linkExpired'
+      )
+      const actor = (await actorForToken(db, fixture.tokenOf(who)))!
+      const clock = { now: () => fixture.now }
+      const afterReset = await inbox(db, actor, {}, clock)
+      expect(afterReset.hasPending).equals(false)
+      expect(afterReset.items.some(row => row.requestId === pending.id)).equals(
+        false
+      )
+      const history = await inbox(db, actor, { history: true }, clock)
+      const notice = history.items.find(row => row.requestId === pending.id)!
+      expect(notice).includes({ status: 'expired', canAct: false })
+      expect(await notificationDetail(db, actor, notice.id, clock)).includes({
+        status: 'expired',
+        canAct: false
+      })
+      expect(history.items.some(row => row.status === 'accepted')).equals(true)
 
       // Every other device is revoked and its session ended.
       for (const gone of [device, second]) {

@@ -14,7 +14,7 @@
  * API as the iPhone's person, who sends a message from the iPhone; B reads
  * it on Android and reacts, and the iPhone sees the reaction. Then each opens the DM's
  * members and the safety number with the other, and the two must be the
- * same 60 digits. The phones' screenshots go to `<run dir>/shots`, with the
+ * same 16 words. The phones' screenshots go to `<run dir>/shots`, with the
  * two side by side in `cross-dm.png` (ffmpeg).
  */
 import assert from 'node:assert/strict'
@@ -43,6 +43,7 @@ interface Daemon {
   close: () => Promise<unknown>
 }
 interface HierarchyNode {
+  id?: string
   text?: string
   children?: HierarchyNode[]
 }
@@ -95,31 +96,29 @@ async function dmOf(
   return body.id
 }
 
-/**
- * The texts on a phone's screen, from the hierarchy's leaves only: iOS also
- * reports a container with its child's text, which would read every group
- * of digits twice.
- */
-async function phoneText(m: Device): Promise<string[]> {
-  const leaves = (node: HierarchyNode): HierarchyNode[] =>
-    node.children == null || node.children.length === 0
-      ? [node]
-      : node.children.flatMap(leaves)
-  return leaves(await m.hierarchy())
-    .map(node => node.text ?? '')
-    .filter(text => text !== '')
-}
-
-/** The 60 digits a phone's safety number screen shows, in order. */
-async function safetyDigits(m: Device, name: string): Promise<string> {
-  await m.tapOn({ text: `Safety number with ${name}` })
-  await m.assertVisible({ text: `Safety number with ${name}`, timeout: 30000 })
+/** All sixteen indexed safety words, in their displayed order. */
+async function safetyWords(m: Device, name: string): Promise<string> {
+  await m.tapOn({ text: `Safety words with ${name},.*` })
+  await m.assertVisible({ text: `Safety words with ${name}`, timeout: 30000 })
   for (let attempt = 0; attempt < 20; attempt++) {
-    const groups = (await phoneText(m)).filter(text => /^\d{5}$/.test(text))
-    if (groups.length >= 12) return groups.slice(0, 12).join('')
+    const flatten = (node: HierarchyNode): HierarchyNode[] => [
+      node,
+      ...(node.children ?? []).flatMap(flatten)
+    ]
+    const groups = flatten(await m.hierarchy())
+      .filter(node => /^chat-safety-group-\d+$/.test(node.id ?? ''))
+      .sort((a, b) => Number(a.id!.slice(18)) - Number(b.id!.slice(18)))
+    if (groups.length === 16) {
+      assert.deepEqual(
+        groups.map(node => node.id),
+        Array.from({ length: 16 }, (_, i) => `chat-safety-group-${i}`)
+      )
+      assert(groups.every(node => /^[a-z]+$/.test(node.text ?? '')))
+      return groups.map(node => node.text).join(' ')
+    }
     await new Promise(resolve => setTimeout(resolve, 500))
   }
-  throw new Error(`No safety number with ${name} on the phone`)
+  throw new Error(`No safety words with ${name} on the phone`)
 }
 
 async function main(): Promise<void> {
@@ -179,14 +178,14 @@ async function main(): Promise<void> {
 
     await iphone.openLink({ link: `teamstation://chat/${dm}/members` })
     await android.openLink({ link: `teamstation://chat/${dm}/members` })
-    const onIphone = await safetyDigits(iphone, b.shortName)
-    const onAndroid = await safetyDigits(android, n.shortName)
+    const onIphone = await safetyWords(iphone, b.shortName)
+    const onAndroid = await safetyWords(android, n.shortName)
     await iphone.takeScreenshot({ path: join(shots, 'cross-safety-ios') })
     await android.takeScreenshot({ path: join(shots, 'cross-safety-android') })
-    console.log(`Safety number on the iPhone: ${onIphone}`)
-    console.log(`Safety number on Android:    ${onAndroid}`)
-    assert.equal(onIphone.length, 60, 'Not 60 digits on the iPhone')
-    assert.equal(onAndroid, onIphone, 'The safety numbers differ')
+    console.log(`Safety words on the iPhone: ${onIphone}`)
+    console.log(`Safety words on Android:    ${onAndroid}`)
+    assert.equal(onIphone.split(' ').length, 16, 'Not 16 words on the iPhone')
+    assert.equal(onAndroid, onIphone, 'The safety words differ')
 
     for (const [left, right, out] of [
       ['cross-dm-ios', 'cross-dm-android', 'cross-dm'],

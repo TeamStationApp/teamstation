@@ -563,10 +563,13 @@ export const asChatLink = asObject({
   expiresAt: asString,
   approved: asBoolean,
   expired: asBoolean,
+  declined: asOptional(asBoolean),
   approvedByDeviceId: asNullable(asString),
   box: asNullable(asString)
 })
-export type ChatLink = ReturnType<typeof asChatLink>
+export type ChatLink = Omit<ReturnType<typeof asChatLink>, 'declined'> & {
+  declined?: boolean
+}
 
 /** An open link request as the user's linked devices see it. */
 export const asChatPendingLink = asObject({
@@ -5620,6 +5623,16 @@ export class TeamStationClient {
       `/chat/links/${encodeURIComponent(linkId)}/approve`,
       asChatLink,
       approval
+    )
+  }
+
+  /** Declines only this request; a concurrent approval cannot be revoked. */
+  async declineChatLink(linkId: string): Promise<ChatLink> {
+    return await this.request(
+      'POST',
+      `/chat/links/${encodeURIComponent(linkId)}/decline`,
+      asChatLink,
+      {}
     )
   }
 

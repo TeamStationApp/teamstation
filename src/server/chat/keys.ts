@@ -11,6 +11,7 @@ import {
   unauthorized
 } from '../../common/errors'
 import { makeId } from '../../common/ids'
+import { CHAT_DEVICE_APPROVAL } from '../../common/notifications'
 import type { Actor } from '../auth/sessions'
 import type { ChatDevicesTable, Database } from '../db/database'
 import {
@@ -127,6 +128,7 @@ export interface ChatLinkView {
   expiresAt: string
   approved: boolean
   expired: boolean
+  declined: boolean
   approvedByDeviceId: string | null
   /** The identity private key, HPKE-wrapped (`link`) to the new device. */
   box: string | null
@@ -792,6 +794,16 @@ export async function resetIdentity(
       .orderBy('id')
       .execute()
     await revokeDevices(trx, others, now)
+    // Every undecided request belonged to the old identity, including one
+    // from the device doing the reset. Earlier decisions remain history.
+    await trx
+      .updateTable('chat_links')
+      .set({ expires_at: now })
+      .where('user_id', '=', caller.userId)
+      .where('box', 'is', null)
+      .where('declined_at', 'is', null)
+      .where('expires_at', '>', now)
+      .execute()
     await trx
       .updateTable('chat_grant_requests')
       .set({ superseded_at: now })
@@ -1111,6 +1123,7 @@ function linkView(
     new_device_id: string
     approved_by_device_id: string | null
     box: Uint8Array | null
+    declined_at: Date | null
     created_at: Date
     expires_at: Date
   },
@@ -1123,7 +1136,11 @@ function linkView(
     createdAt: iso(row.created_at),
     expiresAt: iso(row.expires_at),
     approved,
-    expired: !approved && new Date(row.expires_at).getTime() <= now.getTime(),
+    declined: row.declined_at != null,
+    expired:
+      !approved &&
+      row.declined_at == null &&
+      new Date(row.expires_at).getTime() <= now.getTime(),
     approvedByDeviceId: row.approved_by_device_id,
     box: row.box == null ? null : b64(row.box)
   }
@@ -1160,6 +1177,16 @@ export async function createLink(
         reason: 'noLinkedDevice'
       })
     }
+    const pending = await trx
+      .selectFrom('chat_links')
+      .selectAll()
+      .where('new_device_id', '=', device.id)
+      .where('box', 'is', null)
+      .where('declined_at', 'is', null)
+      .where('expires_at', '>', now)
+      .orderBy('created_at')
+      .executeTakeFirst()
+    if (pending != null) return linkView(pending, now)
     const row = await trx
       .insertInto('chat_links')
       .values({
@@ -1171,6 +1198,22 @@ export async function createLink(
       })
       .returningAll()
       .executeTakeFirstOrThrow()
+    await trx
+      .insertInto('notification_events')
+      .values({
+        id: makeId('audit'),
+        source_type: CHAT_DEVICE_APPROVAL,
+        source_id: row.id,
+        revision: 1,
+        actor_id: caller.userId,
+        metadata: {
+          title: 'Approve chat device',
+          description: `${device.name} (${device.platform}) asks to read your chats.`
+        },
+        recorded_recipients: [caller.userId],
+        created_at: now
+      })
+      .execute()
     await notifyChatUser(trx, caller.userId, 'link')
     return linkView(row, now)
   })
@@ -1196,6 +1239,7 @@ export async function pendingLinks(
     ])
     .where('chat_links.user_id', '=', caller.userId)
     .where('chat_links.box', 'is', null)
+    .where('chat_links.declined_at', 'is', null)
     .where('chat_links.expires_at', '>', now)
     .where('chat_devices.revoked_at', 'is', null)
     .orderBy('chat_links.created_at')
@@ -1255,9 +1299,10 @@ export async function approveLink(
     if (link == null) throw notFound()
     const { device, keys } = await requireHolder(trx, caller)
     if (link.box != null) {
-      throw conflict('This link was already approved', {
-        reason: 'linkApproved'
-      })
+      return linkView(link, now)
+    }
+    if (link.declined_at != null) {
+      throw conflict('This link was declined', { reason: 'linkDeclined' })
     }
     if (new Date(link.expires_at).getTime() <= now.getTime()) {
       throw conflict('This link expired; ask again from the new device', {
@@ -1318,5 +1363,47 @@ export async function approveLink(
       .where('id', '=', link.id)
       .executeTakeFirstOrThrow()
     return linkView(approved, now)
+  })
+}
+
+/** First decision wins under the same user lock as approval and revocation. */
+export async function declineLink(
+  db: Kysely<Database>,
+  caller: ChatCaller,
+  linkId: string,
+  now: Date
+): Promise<ChatLinkView> {
+  return await inTransaction(db, async trx => {
+    await lockUser(trx, caller.userId)
+    await requireHolder(trx, caller)
+    const link = await trx
+      .selectFrom('chat_links')
+      .selectAll()
+      .where('id', '=', linkId)
+      .where('user_id', '=', caller.userId)
+      .executeTakeFirst()
+    if (link == null) throw notFound()
+    if (link.box != null)
+      throw conflict('This link was already approved', {
+        reason: 'linkApproved'
+      })
+    if (link.declined_at != null) return linkView(link, now)
+    if (new Date(link.expires_at).getTime() <= now.getTime())
+      throw conflict('This link expired', { reason: 'linkExpired' })
+    const device = await trx
+      .selectFrom('chat_devices')
+      .select('revoked_at')
+      .where('id', '=', link.new_device_id)
+      .executeTakeFirstOrThrow()
+    if (device.revoked_at != null)
+      throw refuse('deviceRevoked', 'The new device was removed from chat')
+    const declined = await trx
+      .updateTable('chat_links')
+      .set({ declined_at: now })
+      .where('id', '=', linkId)
+      .returningAll()
+      .executeTakeFirstOrThrow()
+    await notifyChatUser(trx, caller.userId, 'link')
+    return linkView(declined, now)
   })
 }

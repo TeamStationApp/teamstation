@@ -268,13 +268,9 @@ export function placeholderSize(
   }
 }
 
-/** The 60 digits of a safety number as 12 groups of five. */
-export function safetyGroups(digits: string): string[] {
-  const groups: string[] = []
-  for (let at = 0; at < digits.length; at += 5) {
-    groups.push(digits.slice(at, at + 5))
-  }
-  return groups
+/** The sixteen comparison words, ready for the four-column grid. */
+export function safetyGroups(words: string): string[] {
+  return words.trim().split(/\s+/).filter(Boolean)
 }
 
 /** How far a message is dragged to the right before it is replied to. */

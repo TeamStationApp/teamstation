@@ -10,6 +10,7 @@ import {
   approveLink,
   chatCaller,
   createLink,
+  declineLink,
   devicesOf,
   enrol,
   identityById,
@@ -309,6 +310,21 @@ export function chatKeyRoutes(
         entityType: 'chatLink',
         entityId: id,
         after: { approvedByDeviceId: link.approvedByDeviceId }
+      })
+      res.json(link)
+    })
+  )
+
+  router.post(
+    '/chat/links/:linkId/decline',
+    requireActor,
+    withAsync(async (req, res) => {
+      const id = pathParam(req.params.linkId)
+      const link = await declineLink(db, chatCaller(req.actor), id, clock())
+      setAudit(res.locals, {
+        entityType: 'chatLink',
+        entityId: id,
+        after: { declined: link.declined }
       })
       res.json(link)
     })
