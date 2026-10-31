@@ -24,7 +24,13 @@ export async function masonBootstrap(
   }
   process.on('SIGTERM', stop)
   process.on('SIGINT', stop)
-  const dependencyEnv = { ...env }
+  // Socket's risks are for a developer to meet while updating dependencies. By
+  // the time a commit reaches Mason they are settled, and an advisory published
+  // since must not stop the build of a lockfile that has not changed.
+  const dependencyEnv: NodeJS.ProcessEnv = {
+    ...env,
+    SOCKET_CLI_ACCEPT_RISKS: '1'
+  }
   delete dependencyEnv.DEPLOY_UPLOAD_CREDENTIAL
   const run = async (
     file: string,

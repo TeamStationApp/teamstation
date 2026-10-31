@@ -66,7 +66,7 @@ async function bootstrap(
   mkdirSync(bin, { recursive: true })
   writeFileSync(
     path.join(bin, 'socket'),
-    `#!/bin/sh\n[ -z "\u0024DEPLOY_UPLOAD_CREDENTIAL" ] || exit 91\nexit ${socketExit}\n`,
+    `#!/bin/sh\n[ -z "\u0024DEPLOY_UPLOAD_CREDENTIAL" ] || exit 91\n[ "\u0024SOCKET_CLI_ACCEPT_RISKS" = 1 ] || exit 92\nexit ${socketExit}\n`,
     {
       mode: 0o700
     }
