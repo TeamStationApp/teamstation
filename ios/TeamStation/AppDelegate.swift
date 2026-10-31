@@ -26,54 +26,40 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     // Before any modal exists. A camera modal that reports portrait would
     // otherwise meet an app mask that still allows it.
     CameraGeometry.installModalLock()
-
-    window = UIWindow(frame: UIScreen.main.bounds)
-
-    factory.startReactNative(
-      withModuleName: "TeamStation",
-      in: window,
-      launchOptions: launchOptions
-    )
+    StatusBarAppearance.install()
 
     return true
   }
 
   /**
-   * A link handed to the app while it is running.
+   * Puts the app's window in `scene`. True the first time, when this starts
+   * React Native; false when iOS has connected a new scene to a running app.
    *
-   * Without this the address is dropped on the floor: `Linking.getInitialURL`
-   * still answers, because a cold launch carries the address in its launch
-   * options, but nothing ever reaches the `url` listener — so an invitation
-   * or a sign-in link tapped while the app is open does nothing at all, and
-   * does it silently. The template does not include this and the failure is
-   * invisible until somebody follows a link.
+   * There is one window for the life of the process, moved to whichever scene
+   * is connected, because things stay pinned to it: the React root,
+   * `SystemVolume`'s hidden slider, Reanimated's measuring view. It stays here
+   * rather than on the scene delegate because Reanimated, blob-util and
+   * `RCTHaptics` all read `UIApplication.delegate.window`.
    */
-  func application(
-    _ app: UIApplication,
-    open url: URL,
-    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+  func attach(
+    to scene: UIWindowScene,
+    launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    RCTLinkingManager.application(app, open: url, options: options)
-  }
-
-  /**
-   * And a link followed from outside the app — a mail client, a message.
-   *
-   * These arrive as a user activity rather than as an `openURL`, which is how
-   * an ordinary `https://app.teamstation.app/...` address reaches an installed app
-   * rather than the browser. It needs `apple-app-site-association` served from
-   * the site before iOS will route one here, but the app's half is this.
-   */
-  func application(
-    _ application: UIApplication,
-    continue userActivity: NSUserActivity,
-    restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void
-  ) -> Bool {
-    RCTLinkingManager.application(
-      application,
-      continue: userActivity,
-      restorationHandler: restorationHandler
+    if let window {
+      window.windowScene = scene
+      window.makeKeyAndVisible()
+      // No view hears `didMoveToWindow` for this: its window has not changed.
+      NotificationCenter.default.post(name: .tsWindowSceneChanged, object: window)
+      return false
+    }
+    let window = UIWindow(windowScene: scene)
+    self.window = window
+    reactNativeFactory?.startReactNative(
+      withModuleName: "TeamStation",
+      in: window,
+      launchOptions: launchOptions
     )
+    return true
   }
 
   /**
@@ -89,6 +75,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
   ) -> UIInterfaceOrientationMask {
     CameraGeometry.applicationMask
   }
+}
+
+extension Notification.Name {
+  /// The app's window has moved to a newly connected scene.
+  static let tsWindowSceneChanged = Notification.Name("TSWindowSceneChanged")
 }
 
 class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
@@ -179,35 +170,19 @@ enum CameraGeometry {
 
   /// Keeps a camera modal from answering portrait while the camera is up.
   static func installModalLock() {
-    enum Storage {
-      static var blocks: [Any] = []
-    }
     let selector = NSSelectorFromString("supportedInterfaceOrientations")
-    for name in ["RCTFabricModalHostViewController", "RCTModalHostViewController"] {
-      guard let cls: AnyClass = NSClassFromString(name),
-            let method = instanceMethod(cls, selector) else { continue }
-      let original = method_getImplementation(method)
-      typealias Getter = @convention(c) (AnyObject, Selector) -> UInt
-      let getter = unsafeBitCast(original, to: Getter.self)
-      let landscape = UIInterfaceOrientationMask.landscape.rawValue
-      let block: @convention(block) (AnyObject) -> UInt = { obj in
-        if CameraGeometry.mode == .landscape { return landscape }
-        return getter(obj, selector)
+    if let cls = reactNativeClass("RCTFabricModalHostViewController") {
+      replaceMethod(cls, selector) { original in
+        typealias Getter = @convention(c) (AnyObject, Selector) -> UInt
+        let getter = unsafeBitCast(original, to: Getter.self)
+        let landscape = UIInterfaceOrientationMask.landscape.rawValue
+        let block: @convention(block) (AnyObject) -> UInt = { obj in
+          if CameraGeometry.mode == .landscape { return landscape }
+          return getter(obj, selector)
+        }
+        return block
       }
-      Storage.blocks.append(block)
-      method_setImplementation(method, imp_implementationWithBlock(block))
     }
-  }
-
-  /// A method implemented on `cls` itself, never one inherited from UIViewController.
-  private static func instanceMethod(_ cls: AnyClass, _ selector: Selector) -> Method? {
-    var count: UInt32 = 0
-    guard let list = class_copyMethodList(cls, &count) else { return nil }
-    defer { free(list) }
-    for index in 0..<Int(count) where method_getName(list[index]) == selector {
-      return list[index]
-    }
-    return nil
   }
 
   @MainActor
@@ -216,16 +191,125 @@ enum CameraGeometry {
     let target = mask
     let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
     for scene in scenes where scene.session.role != .windowExternalDisplayNonInteractive {
-      refresh(scene.windows.first?.rootViewController)
+      for controller in presentationChain(of: scene) {
+        controller.setNeedsUpdateOfSupportedInterfaceOrientations()
+      }
       scene.requestGeometryUpdate(.iOS(interfaceOrientations: target)) { _ in }
+    }
+  }
+}
+
+/// Replaces the method `cls` itself implements, never one inherited from UIViewController.
+/// `block` is given the original implementation and returns the replacement. These are React
+/// Native's private names, so a miss after an upgrade stops a Debug launch rather than leaving
+/// the behaviour quietly gone.
+private func replaceMethod(_ cls: AnyClass, _ selector: Selector, with block: (IMP) -> Any) {
+  var count: UInt32 = 0
+  let list = class_copyMethodList(cls, &count)
+  defer { free(list) }
+  for index in 0..<Int(count) {
+    guard let method = list?[index], method_getName(method) == selector else { continue }
+    method_setImplementation(method, imp_implementationWithBlock(block(method_getImplementation(method))))
+    return
+  }
+  assertionFailure("\(cls) no longer implements \(selector)")
+}
+
+/// A class of React Native's that `replaceMethod` is about to patch.
+private func reactNativeClass(_ name: String) -> AnyClass? {
+  let cls: AnyClass? = NSClassFromString(name)
+  assert(cls != nil, "React Native no longer has \(name)")
+  return cls
+}
+
+/// The scene's root controller and everything presented over it.
+@MainActor
+private func presentationChain(of scene: UIWindowScene) -> [UIViewController] {
+  guard let root = scene.windows.first?.rootViewController else { return [] }
+  return Array(sequence(first: root) { $0.presentedViewController })
+}
+
+/**
+ * What React Native's `StatusBar` has asked for.
+ *
+ * Under the scene lifecycle UIKit ignores `UIApplication`'s status bar setters,
+ * which are the only thing `RCTStatusBarManager` calls, and asks view controllers
+ * instead. So `Info.plist` makes appearance controller-based, which the manager
+ * refuses, and `install` routes its two setters here. The root controller answers
+ * from this, and so do React Native's modals, which would otherwise read back the
+ * scene's own value and never change it.
+ */
+enum StatusBarAppearance {
+  nonisolated(unsafe) static var hidden = false
+  nonisolated(unsafe) static var style: UIStatusBarStyle = .default
+  nonisolated(unsafe) static var animation: UIStatusBarAnimation = .none
+
+  static func install() {
+    if let manager = reactNativeClass("RCTStatusBarManager") {
+      let setHidden: @convention(block) (AnyObject, Bool, NSString?) -> Void = { _, hidden, name in
+        DispatchQueue.main.async {
+          self.hidden = hidden
+          animation = animation(named: name as String?)
+          refresh(animated: animation != .none)
+        }
+      }
+      let setStyle: @convention(block) (AnyObject, NSString?, Bool) -> Void = { _, name, animated in
+        DispatchQueue.main.async {
+          style = style(named: name as String?)
+          refresh(animated: animated)
+        }
+      }
+      replaceMethod(manager, NSSelectorFromString("setHidden:withAnimation:")) { _ in setHidden }
+      replaceMethod(manager, NSSelectorFromString("setStyle:animated:")) { _ in setStyle }
+    }
+
+    if let cls = reactNativeClass("RCTFabricModalHostViewController") {
+      let prefersHidden: @convention(block) (AnyObject) -> Bool = { _ in hidden }
+      let preferredStyle: @convention(block) (AnyObject) -> Int = { _ in style.rawValue }
+      let preferredAnimation: @convention(block) (AnyObject) -> Int = { _ in animation.rawValue }
+      replaceMethod(cls, NSSelectorFromString("prefersStatusBarHidden")) { _ in prefersHidden }
+      replaceMethod(cls, NSSelectorFromString("preferredStatusBarStyle")) { _ in preferredStyle }
+      // Inherited, so added rather than replaced.
+      class_addMethod(
+        cls,
+        NSSelectorFromString("preferredStatusBarUpdateAnimation"),
+        imp_implementationWithBlock(preferredAnimation),
+        "q@:"
+      )
+    }
+  }
+
+  /// The values of React Native's `StatusBarStyle`.
+  private static func style(named name: String?) -> UIStatusBarStyle {
+    switch name {
+    case "light-content": return .lightContent
+    case "dark-content": return .darkContent
+    default: return .default
+    }
+  }
+
+  /// The values of React Native's `StatusBarAnimation`.
+  private static func animation(named name: String?) -> UIStatusBarAnimation {
+    switch name {
+    case "fade": return .fade
+    case "slide": return .slide
+    default: return .none
     }
   }
 
   @MainActor
-  private static func refresh(_ controller: UIViewController?) {
-    guard let controller else { return }
-    controller.setNeedsUpdateOfSupportedInterfaceOrientations()
-    refresh(controller.presentedViewController)
+  private static func refresh(animated: Bool) {
+    let update = {
+      let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+      for controller in scenes.flatMap(presentationChain) {
+        controller.setNeedsStatusBarAppearanceUpdate()
+      }
+    }
+    if animated {
+      UIView.animate(withDuration: 0.25, animations: update)
+    } else {
+      update()
+    }
   }
 }
 
@@ -250,5 +334,17 @@ public final class TSCameraGeometry: NSObject {
 class PortraitRootViewController: UIViewController {
   override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
     CameraGeometry.mask
+  }
+
+  override var prefersStatusBarHidden: Bool {
+    StatusBarAppearance.hidden
+  }
+
+  override var preferredStatusBarStyle: UIStatusBarStyle {
+    StatusBarAppearance.style
+  }
+
+  override var preferredStatusBarUpdateAnimation: UIStatusBarAnimation {
+    StatusBarAppearance.animation
   }
 }
