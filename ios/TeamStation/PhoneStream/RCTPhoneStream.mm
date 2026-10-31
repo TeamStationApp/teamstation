@@ -53,6 +53,7 @@ typedef void (^TSPhoneStreamReply)(id _Nullable value, NSString *_Nullable code,
 - (void)resumePendingUploads:(NSString *)apiBase token:(NSString *)token reply:(TSPhoneStreamReply)reply;
 - (void)cancelUpload:(NSString *)liveStreamId reply:(TSPhoneStreamReply)reply;
 - (void)deleteRecording:(NSString *)liveStreamId reply:(TSPhoneStreamReply)reply;
+- (void)openInApp:(NSString *)url reply:(TSPhoneStreamReply)reply;
 @end
 
 NS_ASSUME_NONNULL_END
@@ -284,6 +285,21 @@ static NSDictionary *requestDictionary(JS::NativePhoneStream::NativePhoneStreamR
                  reject:(RCTPromiseRejectBlock)reject
 {
   [_bridge deleteRecording:liveStreamId reply:settle(resolve, reject)];
+}
+
+- (void)appInstalled:(NSString *)packageName
+             resolve:(RCTPromiseResolveBlock)resolve
+              reject:(RCTPromiseRejectBlock)reject
+{
+  resolve(@YES);
+}
+
+- (void)openInApp:(NSString *)url
+      packageName:(NSString *)packageName
+          resolve:(RCTPromiseResolveBlock)resolve
+           reject:(RCTPromiseRejectBlock)reject
+{
+  [_bridge openInApp:url reply:settle(resolve, reject)];
 }
 
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:

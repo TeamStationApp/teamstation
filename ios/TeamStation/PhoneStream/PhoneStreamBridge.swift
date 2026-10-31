@@ -361,6 +361,20 @@ final class TSPhoneStreamBridge: NSObject {
     }
   }
 
+  /// Opens a universal link in its app, and answers false with the app missing: nothing opens,
+  /// and no browser sees the stream key the link carries.
+  @objc func openInApp(_ url: String, reply: @escaping PhoneStreamReply) {
+    guard let link = URL(string: url) else {
+      reply(false, nil, nil)
+      return
+    }
+    DispatchQueue.main.async {
+      UIApplication.shared.open(link, options: [.universalLinksOnly: true]) { opened in
+        reply(opened, nil, nil)
+      }
+    }
+  }
+
   // MARK: - Running on the engine
 
   private static func run(_ reply: @escaping PhoneStreamReply, _ work: @escaping @MainActor (PhoneStreamEngine) throws -> Any?) {

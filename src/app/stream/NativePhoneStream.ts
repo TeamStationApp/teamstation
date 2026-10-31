@@ -184,6 +184,14 @@ export interface Spec extends TurboModule {
   ) => Promise<CodegenTypes.Int32>
   cancelUpload: (liveStreamId: string) => Promise<void>
   deleteRecording: (liveStreamId: string) => Promise<void>
+
+  /** Whether Android has this app, enabled. iOS cannot ask, and answers true. */
+  appInstalled: (packageName: string) => Promise<boolean>
+  /**
+   * Opens a link in its app and nowhere else, answering whether it did: in the
+   * named package on Android, and as a universal link on iOS.
+   */
+  openInApp: (url: string, packageName: string) => Promise<boolean>
 }
 
 /** Null in a build without the module, which then offers no Record video. */
