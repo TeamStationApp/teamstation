@@ -25,6 +25,12 @@ import { JSDOM } from 'jsdom'
 import puppeteer, { type Browser, type CDPSession, TargetType } from 'puppeteer'
 
 import {
+  decodeRaster,
+  pngFromJpeg,
+  type Raster,
+  roundHalfEven
+} from '../../src/test/rasterImage'
+import {
   Chat2Blocked,
   type Chat2Fixture,
   type Chat2Surface,
@@ -35,13 +41,7 @@ import {
   privateJson,
   redact,
   sourceBinding
-} from './chat2Fixture.e2e'
-import {
-  decodeRaster,
-  pngFromJpeg,
-  type Raster,
-  roundHalfEven
-} from './rasterImage'
+} from '../fixtures/chat2Fixture'
 
 type Args = Record<string, unknown>
 export interface Chat2Device {

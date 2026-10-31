@@ -4,15 +4,15 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
-import { type GroupFixture, groupFixture } from '../test/groupFixtures'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   fill,
   frameText,
   freezeBrowserClock,
   press,
   text
-} from './creationBrowserActions.e2e'
+} from '../../e2e/rigs/creationBrowserActions'
+import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null)

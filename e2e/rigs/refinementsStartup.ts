@@ -9,14 +9,14 @@ import path from 'node:path'
 
 import { Pool } from 'pg'
 
-import { asSeasonStats, asStandingsRow } from '../common/api'
-import { userIdOfGumbo } from '../common/userId'
-import { migrations } from '../migrate/migrations'
-import { migrateUp } from '../migrate/runner'
-import { testDatabaseUrl } from '../migrate/testDatabase'
-import { createSession } from '../server/auth/sessions'
-import { makeDatabase } from '../server/db/database'
-import { insertFixtureUsers } from './insertFixtureUsers'
+import { asSeasonStats, asStandingsRow } from '../../src/common/api'
+import { userIdOfGumbo } from '../../src/common/userId'
+import { migrations } from '../../src/migrate/migrations'
+import { migrateUp } from '../../src/migrate/runner'
+import { testDatabaseUrl } from '../../src/migrate/testDatabase'
+import { createSession } from '../../src/server/auth/sessions'
+import { makeDatabase } from '../../src/server/db/database'
+import { insertFixtureUsers } from '../../src/test/insertFixtureUsers'
 
 /** Real entry-point smoke: isolated configuration, database, Redis and object endpoint. */
 async function availablePort(): Promise<number> {
@@ -271,7 +271,7 @@ async function startupSmoke(): Promise<void> {
       [
         '-r',
         require.resolve('sucrase/register'),
-        path.resolve(__dirname, '../server/index.ts')
+        path.resolve(__dirname, '../../src/server/index.ts')
       ],
       {
         cwd: support,

@@ -7,10 +7,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import pg from 'pg'
 
-import { HttpError } from '../../common/errors'
-import { setupOf } from '../../common/scoring/state'
-import type { LineupFixture } from '../../server/dev/lineupFixture'
-import { browserSession, maestro } from '../../test/refinementsMaestro.e2e'
+import { browserSession, maestro } from '../../../e2e/rigs/refinementsMaestro'
 import {
   API,
   APP,
@@ -36,7 +33,10 @@ import {
   UNREAD,
   WIDTH,
   writeArtifactsTo
-} from '../../test/scoringBrowser.e2e'
+} from '../../../e2e/rigs/scoringBrowser'
+import { HttpError } from '../../common/errors'
+import { setupOf } from '../../common/scoring/state'
+import type { LineupFixture } from '../../server/dev/lineupFixture'
 
 /**
  * Home and away swapped before the first pitch, end to end, against the real

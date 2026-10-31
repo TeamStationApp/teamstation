@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline'
 
 import express from 'express'
 
-import { type TessFixture, tessFixture } from './tessFixture'
+import { type TessFixture, tessFixture } from '../../src/test/tessFixture'
 
 /**
  * Tess's fixture for a phone, a tablet simulator or an emulator: the same
@@ -15,7 +15,7 @@ import { type TessFixture, tessFixture } from './tessFixture'
  * every run.
  *
  *   TS_TESS_NATIVE_HOST=<this Mac's address> TS_TESS_NATIVE_PORT=19480 \
- *     node -r sucrase/register src/test/tessNativeFixture.e2e.ts
+ *     node -r sucrase/register e2e/fixtures/tessNativeFixture.ts
  *
  * The fixed port passes bytes straight through to the fixture's own, so the
  * API and the dictation socket both work through it. It writes the

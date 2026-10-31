@@ -3,11 +3,11 @@ import { describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import { rosterEditFixture } from '../../e2e/fixtures/scoringRosterEditFixture'
 import { TeamStationClient } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
 import { App } from './App'
 import { currentRoute, showRoute } from './navigation/useAddressBar'
-import { rosterEditFixture } from './scoring/scoringRosterEdit.e2e.fixture'
 import { ServerScoringSource } from './scoring/scoringSource'
 
 const settle = async (): Promise<void> => {

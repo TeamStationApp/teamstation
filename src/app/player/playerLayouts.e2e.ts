@@ -1,11 +1,6 @@
 import { expect } from 'chai'
 import { after, describe, it } from 'mocha'
 
-import { type LineScoreStep, TeamStationClient } from '../../common/api'
-import type { BoardLine } from '../../common/scoring/boardLineTypes'
-import { lstrings } from '../locales/strings'
-import type { Rect } from './multiCam/layout'
-import { GAP, playerLayout } from './multiCam/playerLayout'
 import {
   API,
   finish,
@@ -19,7 +14,12 @@ import {
   signedIn,
   type WebSession,
   webSession
-} from './playerLayoutsRig.e2e'
+} from '../../../e2e/rigs/playerLayoutsRig'
+import { type LineScoreStep, TeamStationClient } from '../../common/api'
+import type { BoardLine } from '../../common/scoring/boardLineTypes'
+import { lstrings } from '../locales/strings'
+import type { Rect } from './multiCam/layout'
+import { GAP, playerLayout } from './multiCam/playerLayout'
 import { currentInning } from './scoreboardOverlay/lineScoreLayout'
 
 const PORTRAIT: [number, number] = [402, 874]

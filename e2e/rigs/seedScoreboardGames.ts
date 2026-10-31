@@ -1,16 +1,16 @@
 import type { Kysely } from 'kysely'
 
-import { makeId } from '../common/ids'
-import { userIdOfGumbo } from '../common/userId'
-import { addEmail, findUserByEmail } from '../server/auth/emails'
-import { type Database, makeDatabase } from '../server/db/database'
-import { mintUserId } from './historicalUserIds'
-import { insertFixtureUsers } from './insertFixtureUsers'
+import { makeId } from '../../src/common/ids'
+import { userIdOfGumbo } from '../../src/common/userId'
+import { addEmail, findUserByEmail } from '../../src/server/auth/emails'
+import { type Database, makeDatabase } from '../../src/server/db/database'
+import { mintUserId } from '../../src/test/historicalUserIds'
+import { insertFixtureUsers } from '../../src/test/insertFixtureUsers'
 
 /**
  * The games one group of scoreboard end-to-end scenarios runs against.
  *
- *   node -r sucrase/register src/test/seedScoreboardGames.e2e.ts <databaseUrl>
+ *   node -r sucrase/register e2e/rigs/seedScoreboardGames.ts <databaseUrl>
  *
  * Ensures two non-admin accounts: `scoreboard-e2e@teamstation.local`, who
  * owns the team Scoreboard E2E, and `scoreboard-e2e-other@teamstation.local`,
@@ -204,7 +204,7 @@ async function main(): Promise<void> {
   const databaseUrl = process.argv[2]
   if (databaseUrl == null) {
     throw new Error(
-      'Usage: node -r sucrase/register src/test/seedScoreboardGames.e2e.ts <databaseUrl>'
+      'Usage: node -r sucrase/register e2e/rigs/seedScoreboardGames.ts <databaseUrl>'
     )
   }
   const db = makeDatabase(databaseUrl)

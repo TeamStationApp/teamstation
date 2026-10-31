@@ -253,6 +253,7 @@ function suites(): string[] {
 describe('chat row lookups in the end-to-end suites', function () {
   it('scan the suites under e2e/', function () {
     expect(suites()).includes('e2e/tests/app-shell/lists/list-screens.e2e.ts')
+    expect(suites()).includes('e2e/rigs/chat2Maestro.ts')
   })
 
   it('never match a scope chat row by its whole title', function () {

@@ -22,7 +22,7 @@ import { join } from 'node:path'
 
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
-import { recordBrowserCoverage } from '../browserCoverage.e2e'
+import { recordBrowserCoverage } from './browserCoverage'
 
 export const APP = process.env.TS_PLAYER_APP ?? 'http://127.0.0.1:8091'
 export const API = `${APP}/api/v1`
@@ -122,7 +122,7 @@ export async function signedIn(): Promise<string> {
   } catch {
     // None kept yet, or it is no longer good: sign in.
   }
-  const { signInTestAccount } = await import('../../test/passwordFixtures')
+  const { signInTestAccount } = await import('../../src/test/passwordFixtures')
   token = await signInTestAccount(API, f.admin)
   writeFileSync(kept, JSON.stringify({ email: f.admin.email, token }), {
     mode: 0o600

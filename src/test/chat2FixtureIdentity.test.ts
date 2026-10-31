@@ -16,7 +16,6 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import ts from 'typescript'
 
-import { userIdOfGumbo, userIdOfValue } from '../common/userId'
 import {
   asIdentityCompatibility,
   CHAT2_APPLICATION_TEST_FILES,
@@ -26,7 +25,8 @@ import {
   requireAfterArchive,
   sourceBinding,
   verifyChat2HarnessSource
-} from './chat2Fixture.e2e'
+} from '../../e2e/fixtures/chat2Fixture'
+import { userIdOfGumbo, userIdOfValue } from '../common/userId'
 
 describe('identity compatibility driver descriptor', () => {
   const old = userIdOfGumbo(42)
@@ -74,7 +74,7 @@ describe('identity compatibility driver descriptor', () => {
 
 describe('committed chat harness and application provenance', () => {
   const directories: string[] = []
-  const harnessPath = 'src/test/chat2Maestro.e2e.ts'
+  const harnessPath = 'e2e/rigs/chat2Maestro.ts'
   afterEach(() => {
     for (const directory of directories.splice(0))
       rmSync(directory, { recursive: true, force: true })
@@ -272,7 +272,7 @@ describe('committed chat harness and application provenance', () => {
     'src/app/index.tsx',
     'src/server/chat/titles.ts',
     'src/test/legacyChatKeyRecord.json',
-    'src/app/scoring/scoringModals.e2e.preview.tsx',
+    'src/app/scoring/scoringModals.preview.tsx',
     'scripts/chat-e2e-reset.sh',
     'scripts/e2e/scoreboardLog/e5Browser.ts'
   ])
@@ -322,8 +322,10 @@ describe('committed chat harness and application provenance', () => {
   it('names the harness by test paths, keeping its six named files', () => {
     for (const path of [
       'src/app/chat/chat2.e2e.ts',
-      'src/test/chat2Maestro.e2e.ts',
-      'src/test/chat2Fixture.e2e.ts',
+      'e2e/rigs/chat2Maestro.ts',
+      'e2e/fixtures/chat2Fixture.ts',
+      'e2e/core/run.ts',
+      'e2e/tests/chat/any.e2e.ts',
       'src/app/chat/chat2Actions.test.ts',
       'src/test/chat2FixtureIdentity.test.ts',
       'src/app/chat/engine/dmTitle.test.ts',
@@ -337,7 +339,7 @@ describe('committed chat harness and application provenance', () => {
       'src/app/chat/e2e.ts',
       'src/app/chat/chat.e2e.ts.orig',
       'src/app/chat/chat.testing.ts',
-      'src/app/scoring/scoringRosterEdit.e2e.fixture.ts',
+      'src/app/scoring/scoringRosterEdit.fixture.ts',
       'src/apptest/x.ts',
       'scripts/socket.e2e/x.ts',
       'scripts/chat-socket-listen.mjs',

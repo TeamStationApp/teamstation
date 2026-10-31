@@ -3,13 +3,8 @@ import { dirname, join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
-import { asLocality } from '../common/locality'
-import { userIdOfGumbo } from '../common/userId'
-import { SESSION_COOKIE } from '../server/auth/tokens'
-import { googlePlaces } from '../server/location/googlePlaces'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import { accountTestPicture } from '../test/accountHarness'
-import { googlePlacesStub } from '../test/googlePlacesStub'
-import { groupFixture } from '../test/groupFixtures'
 import {
   browserSession,
   capture,
@@ -17,8 +12,13 @@ import {
   fill,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { asLocality } from '../common/locality'
+import { userIdOfGumbo } from '../common/userId'
+import { SESSION_COOKIE } from '../server/auth/tokens'
+import { googlePlaces } from '../server/location/googlePlaces'
+import { googlePlacesStub } from '../test/googlePlacesStub'
+import { groupFixture } from '../test/groupFixtures'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null) throw new Error('Set TS_CREATION_ARTIFACTS')

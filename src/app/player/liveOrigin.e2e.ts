@@ -14,15 +14,15 @@ import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
+import { createLiveHarness } from '../../../e2e/rigs/liveHarness'
+import type { OriginRequest } from '../../../e2e/rigs/liveOriginRequests'
 import { createEmailCode } from '../../server/auth/emailCodes'
 import { startFakeSpace } from '../../server/dev/fakeSpace'
 import { presignGetUrl } from '../../server/media/presign'
 import { listSpaceObjects } from '../../server/media/spacesVideo'
 import { signInTestAccount } from '../../test/passwordFixtures'
 import { scratchDatabase } from '../../test/scoreboardKit'
-import { createLiveHarness } from './liveHarness.e2e'
 import { originPhone } from './liveOriginPhone.e2e'
-import type { OriginRequest } from './liveOriginRequests.e2e'
 
 /**
  * Two API processes with separate media roots, one ingest, and a real HTTP

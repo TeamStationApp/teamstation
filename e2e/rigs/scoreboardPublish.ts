@@ -9,13 +9,13 @@ import {
   type ScoreboardState,
   type ScoreboardUpdate,
   withoutTeamNames
-} from '../common/scoreboard'
+} from '../../src/common/scoreboard'
 
 /**
  * Node clients for a scoreboard's publish and dashboard sockets, as TS
  * Watcher and the override dashboard use them.
  *
- *   node -r sucrase/register src/test/scoreboardPublish.e2e.ts \
+ *   node -r sucrase/register e2e/rigs/scoreboardPublish.ts \
  *     <host> <gameId> <token> '<json>'
  *
  * publishes one partial and prints what happened. `host` is the server's
@@ -265,7 +265,7 @@ async function main(): Promise<void> {
   const [host, gameId, token, json] = process.argv.slice(2)
   if (host == null || gameId == null || token == null || json == null) {
     throw new Error(
-      "Usage: node -r sucrase/register src/test/scoreboardPublish.e2e.ts <host> <gameId> <token> '<json>'"
+      "Usage: node -r sucrase/register e2e/rigs/scoreboardPublish.ts <host> <gameId> <token> '<json>'"
     )
   }
   const outcome = await publish(

@@ -3,6 +3,14 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import {
+  absent,
+  browserSession,
+  capture,
+  contains,
+  maestro,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import type { PlayerNamePrivacy } from '../common/playerNamePrivacy'
 import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
@@ -16,14 +24,6 @@ import {
   STRANGER,
   TEAMMATE
 } from '../test/playerNamePrivacyFixture'
-import {
-  absent,
-  browserSession,
-  capture,
-  contains,
-  maestro,
-  tap
-} from '../test/refinementsMaestro.e2e'
 import {
   dropPrefix,
   quiet,

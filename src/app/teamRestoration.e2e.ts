@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   absent,
   type BrowserSession,
@@ -14,9 +15,8 @@ import {
   log,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
 import { refinementsFixture } from '../test/seasonGameRefinementsFixture'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 /** Finished follow-up, with genuine HTTP routes and isolated synthetic data. */
 async function main(): Promise<void> {

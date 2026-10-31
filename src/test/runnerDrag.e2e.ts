@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import express from 'express'
 
-import { maestro, type MaestroHandle } from './refinementsMaestro.e2e'
+import { maestro, type MaestroHandle } from '../../e2e/rigs/refinementsMaestro'
 
 /** Exercise real touch capture in WebKit while defender editing becomes locked. */
 async function main(): Promise<void> {

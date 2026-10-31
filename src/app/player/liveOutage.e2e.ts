@@ -16,10 +16,10 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import pg from 'pg'
 
+import { createLiveHarness } from '../../../e2e/rigs/liveHarness'
 import { TeamStationClient } from '../../common/api'
 import { serverConfig } from '../../server/serverConfig'
 import { signInTestAccount } from '../../test/passwordFixtures'
-import { createLiveHarness } from './liveHarness.e2e'
 
 /**
  * E20: live viewers ride through a publisher's outage. Real server, real RTMP

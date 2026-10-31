@@ -1,10 +1,6 @@
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
-import type { BoardStep } from '../../../common/api'
-import { wallAt } from '../../../common/wallTimeline'
-import { lstrings } from '../../locales/strings'
-import { boardAt } from './boardAt'
 import {
   angleTiles,
   api,
@@ -36,7 +32,11 @@ import {
   until,
   type VideoTimeline,
   videoTimeline
-} from './overlayRig.e2e'
+} from '../../../../e2e/rigs/overlayRig'
+import type { BoardStep } from '../../../common/api'
+import { wallAt } from '../../../common/wallTimeline'
+import { lstrings } from '../../locales/strings'
+import { boardAt } from './boardAt'
 
 /**
  * E9: the phone's layout of the board, in a browser at a phone's size (no

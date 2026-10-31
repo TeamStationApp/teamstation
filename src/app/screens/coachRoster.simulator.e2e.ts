@@ -4,10 +4,10 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { capture, maestro } from '../../../e2e/rigs/refinementsMaestro'
 import { userIdOfGumbo } from '../../common/userId'
 import { dictatingHealth } from '../../test/dictationFakes'
 import { guardianFixture } from '../../test/guardianFixture'
-import { capture, maestro } from '../../test/refinementsMaestro.e2e'
 
 /** Real player-settings routes and persistence in Safari on a simulator only. */
 async function main(): Promise<void> {

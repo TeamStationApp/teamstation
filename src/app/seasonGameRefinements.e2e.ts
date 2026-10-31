@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline'
 import { expect } from 'chai'
 import { sql } from 'kysely'
 
-import { gameVersion, materialGame } from '../server/schedule/gameApprovals'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   absent,
   type BrowserSession,
@@ -19,9 +19,9 @@ import {
   maestro,
   show,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { gameVersion, materialGame } from '../server/schedule/gameApprovals'
 import { refinementsFixture } from '../test/seasonGameRefinementsFixture'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 async function main(): Promise<void> {
   const artifacts = process.env.TS_REFINEMENTS_ARTIFACTS

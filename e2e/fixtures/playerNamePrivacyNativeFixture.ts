@@ -5,14 +5,19 @@ import { createInterface } from 'node:readline'
 
 import express from 'express'
 
-import type { Turn } from '../server/dictation/interpreter'
-import { attachDictation } from '../server/dictation/route'
-import { dictationScopes } from '../server/dictation/scopes'
-import { dictatingHealth } from './dictationFakes'
-import type { GroupFixture } from './groupFixtures'
-import { groupFixture } from './groupFixtures'
-import { seedPrivacyGame } from './playerNamePrivacyFixture'
-import { quiet, requireRedis, testPrefix, testStore } from './scoreboardKit'
+import type { Turn } from '../../src/server/dictation/interpreter'
+import { attachDictation } from '../../src/server/dictation/route'
+import { dictationScopes } from '../../src/server/dictation/scopes'
+import { dictatingHealth } from '../../src/test/dictationFakes'
+import type { GroupFixture } from '../../src/test/groupFixtures'
+import { groupFixture } from '../../src/test/groupFixtures'
+import { seedPrivacyGame } from '../../src/test/playerNamePrivacyFixture'
+import {
+  quiet,
+  requireRedis,
+  testPrefix,
+  testStore
+} from '../../src/test/scoreboardKit'
 
 /**
  * The privacy fixture for a phone: the browser pass's people and game, bound
@@ -23,7 +28,7 @@ import { quiet, requireRedis, testPrefix, testStore } from './scoreboardKit'
  *
  *   TS_PRIVACY_NATIVE_HOST=<this Mac> TS_PRIVACY_NATIVE_PORT=19470 \
  *     TS_PRIVACY_NATIVE_MANIFEST=<private file> \
- *     node -r sucrase/register src/test/playerNamePrivacyNativeFixture.e2e.ts
+ *     node -r sucrase/register e2e/fixtures/playerNamePrivacyNativeFixture.ts
  *
  * Sign-in codes come from the control endpoint, which listens on this Mac
  * only, and are never printed. Interrupt it to stop.

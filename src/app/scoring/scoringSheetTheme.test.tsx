@@ -4,6 +4,7 @@ import React, { act, createRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Text, type TextInput } from 'react-native'
 
+import { modalRendererFixture } from '../../../e2e/fixtures/scoringModalsPreview'
 import {
   changeTheme,
   getTheme,
@@ -14,7 +15,6 @@ import {
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
 import type { Theme } from '../theme/types'
-import { modalRendererFixture } from './scoringModals.e2e.preview'
 import { ScoringPill } from './ScoringPill'
 import { ScoringButton, ScoringSheet } from './ScoringSheet'
 import { scoringSheetTheme } from './scoringSheetTheme'

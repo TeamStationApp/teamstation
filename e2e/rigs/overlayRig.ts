@@ -8,21 +8,24 @@ import { expect } from 'chai'
 import pg from 'pg'
 import WebSocket from 'ws'
 
-import { type BoardStep, TeamStationClient } from '../../../common/api'
+import { boardAt } from '../../src/app/player/scoreboardOverlay/boardAt'
+import {
+  startingSetup,
+  teamsOf
+} from '../../src/app/scoring/developmentSession'
+import { type BoardStep, TeamStationClient } from '../../src/common/api'
 import {
   type DashboardOverrides,
   NO_OVERRIDES
-} from '../../../common/scoreboard'
-import { ScoringSession } from '../../../common/scoring/session'
+} from '../../src/common/scoreboard'
+import { ScoringSession } from '../../src/common/scoring/session'
 import {
   type WallAnchor,
   wallAt,
   type WallTimeline
-} from '../../../common/wallTimeline'
-import { serverConfig } from '../../../server/serverConfig'
-import { signInTestAccount } from '../../../test/passwordFixtures'
-import { startingSetup, teamsOf } from '../../scoring/developmentSession'
-import { boardAt } from './boardAt'
+} from '../../src/common/wallTimeline'
+import { serverConfig } from '../../src/server/serverConfig'
+import { signInTestAccount } from '../../src/test/passwordFixtures'
 
 /**
  * What the board's browser scenarios share (E8 in `overlay.e2e.ts`, E9 in

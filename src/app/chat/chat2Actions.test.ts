@@ -13,7 +13,6 @@ import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 import { transform } from 'sucrase'
 
-import { userIdOfGumbo } from '../../common/userId'
 import {
   asIdentityCompatibility,
   CHAT2_SCENARIOS,
@@ -21,7 +20,7 @@ import {
   type Chat2Message,
   fixtureClient,
   fixtureControl
-} from '../../test/chat2Fixture.e2e'
+} from '../../../e2e/fixtures/chat2Fixture'
 import {
   androidCaptureImeState,
   androidClosedCaptureGeometry,
@@ -40,7 +39,8 @@ import {
   type PublicNode,
   readAndroidComposerKeyboard,
   readIosComposerKeyboard
-} from '../../test/chat2Maestro.e2e'
+} from '../../../e2e/rigs/chat2Maestro'
+import { userIdOfGumbo } from '../../common/userId'
 import { encodePng } from '../../test/rasterImage'
 import { backdropOf } from '../components/glassBackdrop'
 import type { GlassViewProps } from '../components/glassViewProps'

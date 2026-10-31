@@ -4,6 +4,13 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  frameText,
+  freezeBrowserClock,
+  press,
+  text
+} from '../../e2e/rigs/creationBrowserActions'
 import { asParentActions } from '../common/groupLinks'
 import { makeId } from '../common/ids'
 import { userIdOfGumbo } from '../common/userId'
@@ -16,13 +23,6 @@ import {
   groupFixture
 } from '../test/groupFixtures'
 import { insertFixtureUsers } from '../test/insertFixtureUsers'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
-import {
-  frameText,
-  freezeBrowserClock,
-  press,
-  text
-} from './creationBrowserActions.e2e'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null)

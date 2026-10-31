@@ -2,14 +2,20 @@ import React, { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
-import { asGameDetail } from '../../common/api'
-import { completeMotions } from '../../test/scoringHelpers'
-import { scoringSession } from '../../test/scoringSession'
-import { ThemeProvider, useTheme } from '../theme/ThemeContext'
-import { ErrorCreditSheet } from './ErrorCreditSheet'
-import { RunnerControls } from './RunnerControls'
-import { initialScoringState, scoringReducer } from './scoringMachine'
-import type { ScoringEvent, ScoringState } from './scoringTypes'
+import { ErrorCreditSheet } from '../../src/app/scoring/ErrorCreditSheet'
+import { RunnerControls } from '../../src/app/scoring/RunnerControls'
+import {
+  initialScoringState,
+  scoringReducer
+} from '../../src/app/scoring/scoringMachine'
+import type {
+  ScoringEvent,
+  ScoringState
+} from '../../src/app/scoring/scoringTypes'
+import { ThemeProvider, useTheme } from '../../src/app/theme/ThemeContext'
+import { asGameDetail } from '../../src/common/api'
+import { completeMotions } from '../../src/test/scoringHelpers'
+import { scoringSession } from '../../src/test/scoringSession'
 
 /** Controlled renderer fixtures supplement gestures blocked on the base branch. */
 export function modalRendererFixture(kind: string): ScoringState {
