@@ -95,8 +95,8 @@ async function main(): Promise<void> {
         before.x + before.width > 1880,
         'last inning starts clipped by viewport'
       )
-      await tv.pressKey({ key: 'DPAD_DOWN' })
-      await tv.pressKey({ key: 'DPAD_DOWN' })
+      await tv.pressKey({ key: 'DPAD_RIGHT' })
+      await tv.pressKey({ key: 'DPAD_RIGHT' })
       await tv.pressKey({ key: 'DPAD_RIGHT' })
       await tv.waitForAnimationToEnd({ timeout: 3000 })
       const after = column(await tv.hierarchy()).bounds

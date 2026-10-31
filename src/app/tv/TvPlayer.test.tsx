@@ -210,6 +210,8 @@ describe('TV game playback entry', () => {
     await key('down')
     await key('down')
     await key('up')
+    await key('right')
+    await key('left')
     await key('playPause')
     await key('unknown')
     expect(document.querySelector('video')!.paused).equals(true)

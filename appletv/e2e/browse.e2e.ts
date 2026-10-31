@@ -29,6 +29,11 @@ async function main(): Promise<void> {
   })
   const tv = await daemon.attach({ device, platform: 'ios' })
   let recording: ReturnType<typeof spawn> | undefined
+  const waitForHero = async (): Promise<void> => {
+    await tv.assertVisible({ id: 'tv-hero-video', timeout: 15000 })
+    // Wait for the loaded midpoint frame, rather than capturing its poster.
+    await new Promise(resolve => setTimeout(resolve, 2500))
+  }
   try {
     await mkdir(artifacts, { recursive: true })
     await tv.launchApp({
@@ -58,7 +63,7 @@ async function main(): Promise<void> {
       204
     )
     await tv.assertVisible({ text: 'Recent Games', timeout: 30000 })
-    await tv.assertVisible({ id: 'tv-hero-video', timeout: 15000 })
+    await waitForHero()
     recording = spawn(
       'xcrun',
       [
@@ -106,6 +111,7 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.pressKey({ key: 'DPAD_CENTER' })
     await tv.assertVisible({ text: 'October 2026', timeout: 15000 })
+    await waitForHero()
     await writeFile(
       path.join(artifacts, 'team-after.png'),
       await tv.screenshot()
@@ -137,6 +143,7 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.pressKey({ key: 'DPAD_CENTER' })
     await tv.assertVisible({ text: 'Recent Games', timeout: 15000 })
+    await waitForHero()
     await writeFile(
       path.join(artifacts, 'player-after.png'),
       await tv.screenshot()
