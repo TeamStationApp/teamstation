@@ -1157,6 +1157,18 @@ const nodeSettingsSchema = {
             }
           }
         },
+        tvLandscape: {
+          type: 'object',
+          description:
+            'Four-angle TV placement. Omitted updates preserve the stored value.',
+          additionalProperties: false,
+          required: ['x', 'y', 'height'],
+          properties: {
+            x: { type: 'number', minimum: 0, exclusiveMaximum: 1 },
+            y: { type: 'number', minimum: 0, exclusiveMaximum: 1 },
+            height: { type: 'number', exclusiveMinimum: 0, maximum: 1 }
+          }
+        },
         portraitHeight: {
           type: 'number',
           exclusiveMinimum: 0,
@@ -5334,6 +5346,30 @@ export function openApiDocument(version: string): OpenApiDocument {
                       },
                       landscape: {
                         type: 'object',
+                        additionalProperties: false,
+                        required: ['x', 'y', 'height'],
+                        properties: {
+                          x: {
+                            type: 'number',
+                            minimum: 0,
+                            exclusiveMaximum: 1
+                          },
+                          y: {
+                            type: 'number',
+                            minimum: 0,
+                            exclusiveMaximum: 1
+                          },
+                          height: {
+                            type: 'number',
+                            exclusiveMinimum: 0,
+                            maximum: 1
+                          }
+                        }
+                      },
+                      tvLandscape: {
+                        type: 'object',
+                        description:
+                          'TV-only four-angle placement; older responses use the default.',
                         additionalProperties: false,
                         required: ['x', 'y', 'height'],
                         properties: {
