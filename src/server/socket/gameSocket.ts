@@ -761,7 +761,8 @@ export function attachGameSocket(
         conversationId,
         async () => await mayPost(db, conversationId, userId, new Date(now))
       )
-      if (standing === 'poster') await notifyTyping(db, conversationId, userId)
+      if (standing === 'poster')
+        await notifyTyping(feed, db, conversationId, userId)
     } catch (error: unknown) {
       log(`chat socket: typing in ${conversationId}: ${String(error)}`)
       refuseTyping('internal', 'The server could not pass that on; try again')

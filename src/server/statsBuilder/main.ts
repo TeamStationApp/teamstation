@@ -3,7 +3,7 @@ import { captureException, flush } from '@sentry/node'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { makeChangeFeed } from '../changeFeed/makeChangeFeed'
 import { PostgresFeed } from '../changeFeed/postgresFeed'
-import { makeDatabase } from '../db/database'
+import { isPoolTimeout, makeDatabase } from '../db/database'
 import {
   requestDatabaseUrl,
   type ServerConfig,
@@ -17,6 +17,9 @@ import {
 } from './builder'
 
 const MAX_TIMER_MS = 60_000
+
+/** How soon a drain that found no connection in time asks again. */
+const POOL_RETRY_MS = 5000
 
 export interface RunStatsBuilderOptions {
   /** The database's own address. */
@@ -128,6 +131,10 @@ export async function runStatsBuilder(
     if (next != null) {
       waitMs = Math.min(MAX_TIMER_MS, Math.max(0, next.getTime() - now))
     }
+    armTimer(waitMs)
+  }
+
+  const armTimer = (waitMs: number): void => {
     lastTimerMs = waitMs
     timer = setTimer(() => {
       runDrain().catch((error: unknown) => {
@@ -147,15 +154,25 @@ export async function runStatsBuilder(
     }
     draining = true
     try {
-      do {
-        pokedDuringDrain = false
-        await drain(db, clock, options.afterRead, () => stopped)
-        // eslint-disable-next-line no-unmodified-loop-condition -- stop() sets it while drain() is awaited
-      } while (pokedDuringDrain && !stopped)
-    } finally {
-      draining = false
+      try {
+        do {
+          pokedDuringDrain = false
+          await drain(db, clock, options.afterRead, () => stopped)
+          // eslint-disable-next-line no-unmodified-loop-condition -- stop() sets it while drain() is awaited
+        } while (pokedDuringDrain && !stopped)
+      } finally {
+        draining = false
+      }
+      if (!stopped) await scheduleTimer()
+    } catch (error) {
+      // Connections are short, not gone: a new process would find the same.
+      // What is owed stays owed, so a later attempt finds it.
+      if (!isPoolTimeout(error)) throw error
+      console.error(`stats builder: asking again: ${String(error)}`)
+      scheduleGen += 1
+      clearTimer()
+      if (!stopped) armTimer(POOL_RETRY_MS)
     }
-    if (!stopped) await scheduleTimer()
   }
 
   const poke = (): void => {
@@ -245,7 +262,10 @@ function logFeed(message: string): void {
 }
 
 export async function runMain(
-  config: Pick<ServerConfig, 'databaseUrl' | 'databasePoolUrl'> = serverConfig,
+  config: Pick<
+    ServerConfig,
+    'databaseUrl' | 'databasePoolUrl' | 'changeFeed' | 'redis'
+  > = serverConfig,
   onStopped?: () => Promise<void>
 ): Promise<StatsBuilderHandle> {
   return await runStatsBuilder({

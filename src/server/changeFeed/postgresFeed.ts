@@ -8,6 +8,7 @@ import type {
   FeedHandlers,
   FeedSubscription
 } from './feed'
+import { FeedSubscribers } from './feedSubscribers'
 
 /** How a feed's connection shows in `pg_stat_activity`. */
 export const FEED_APPLICATION_NAME = 'teamstation-feed'
@@ -18,22 +19,6 @@ export interface PostgresFeedOptions {
   /** How long to wait before connecting again after the connection is lost. */
   retryMs?: number
   log: (message: string) => void
-}
-
-/** One handler on one channel. */
-interface Subscriber {
-  handlers: FeedHandlers
-  /** Waiting to hear that its channel is in place. */
-  owed: boolean
-  /** Its channel went unheard since it last heard that. */
-  gap: boolean
-  settle: () => void
-}
-
-interface ChannelState {
-  /** A `LISTEN` holds on the present connection. */
-  inPlace: boolean
-  subscribers: Set<Subscriber>
 }
 
 /**
@@ -50,7 +35,7 @@ export class PostgresFeed implements ChangeFeed {
   private readonly databaseUrl: string
   private readonly retryMs: number
   private readonly log: (message: string) => void
-  private readonly channels = new Map<FeedChannel, ChannelState>()
+  private readonly subscribers: FeedSubscribers
   private client: Client | undefined
   /** `client` has connected, so a new channel can listen on it at once. */
   private connected = false
@@ -65,43 +50,20 @@ export class PostgresFeed implements ChangeFeed {
     this.databaseUrl = options.databaseUrl
     this.retryMs = options.retryMs ?? 1000
     this.log = options.log
+    this.subscribers = new FeedSubscribers(options.log)
   }
 
   subscribe(channel: FeedChannel, handlers: FeedHandlers): FeedSubscription {
-    let settle: () => void = () => undefined
-    const listening = new Promise<void>(resolve => {
-      settle = resolve
-    })
-    if (this.closed) {
-      settle()
-      return { listening, stop: () => undefined }
-    }
-    const subscriber: Subscriber = { handlers, owed: true, gap: false, settle }
-    let state = this.channels.get(channel)
-    if (state == null) {
-      state = { inPlace: false, subscribers: new Set() }
-      this.channels.set(channel, state)
-      if (this.client != null && this.connected)
-        this.place(this.client, channel, state)
-    }
-    const joined = state
-    joined.subscribers.add(subscriber)
-    if (joined.inPlace) {
-      // After the caller has its subscription, as when it has to wait.
-      queueMicrotask(() => {
-        this.tell(subscriber)
-      })
-    } else if (this.client == null && this.retry == null) {
+    const { subscription, added, inPlace } = this.subscribers.add(
+      channel,
+      handlers
+    )
+    if (this.closed) return subscription
+    if (added && this.client != null && this.connected)
+      this.place(this.client, channel)
+    if (!inPlace && this.client == null && this.retry == null)
       this.connect().catch(() => undefined)
-    }
-    return {
-      listening,
-      stop: () => {
-        joined.subscribers.delete(subscriber)
-        subscriber.owed = false
-        settle()
-      }
-    }
+    return subscription
   }
 
   async publishEphemeral(
@@ -115,9 +77,7 @@ export class PostgresFeed implements ChangeFeed {
   async close(): Promise<void> {
     this.closed = true
     clearTimeout(this.retry)
-    for (const state of this.channels.values())
-      for (const subscriber of state.subscribers) subscriber.settle()
-    this.channels.clear()
+    this.subscribers.close()
     const client = this.client
     this.client = undefined
     if (client != null) this.hangUp(client)
@@ -132,7 +92,10 @@ export class PostgresFeed implements ChangeFeed {
     this.client = client
     client.on('notification', message => {
       if (this.client === client)
-        this.notified(message.channel as FeedChannel, message.payload)
+        this.subscribers.notified(
+          message.channel as FeedChannel,
+          message.payload
+        )
     })
     client.on('error', error => {
       this.lost(client, String(error))
@@ -148,19 +111,14 @@ export class PostgresFeed implements ChangeFeed {
     }
     if (this.client !== client) return
     this.connected = true
-    for (const [channel, state] of this.channels)
-      this.place(client, channel, state)
+    for (const channel of this.subscribers.known()) this.place(client, channel)
   }
 
   /**
    * Listens on one channel, after any before it, and tells its handlers once
    * that holds.
    */
-  private place(
-    client: Client,
-    channel: FeedChannel,
-    state: ChannelState
-  ): void {
+  private place(client: Client, channel: FeedChannel): void {
     this.placing = this.placing.then(async () => {
       if (this.client !== client) return
       try {
@@ -170,36 +128,8 @@ export class PostgresFeed implements ChangeFeed {
         return
       }
       if (this.client !== client) return
-      state.inPlace = true
-      for (const subscriber of [...state.subscribers]) this.tell(subscriber)
+      this.subscribers.placed(channel)
     })
-  }
-
-  private tell(subscriber: Subscriber): void {
-    if (!subscriber.owed) return
-    subscriber.owed = false
-    const first = !subscriber.gap
-    subscriber.gap = false
-    this.safely(() => subscriber.handlers.onListening?.(first))
-    subscriber.settle()
-  }
-
-  private notified(channel: FeedChannel, payload: string | undefined): void {
-    const state = this.channels.get(channel)
-    if (state == null) return
-    for (const subscriber of [...state.subscribers])
-      this.safely(() => {
-        subscriber.handlers.onPayload(payload)
-      })
-  }
-
-  /** One handler's failure is neither the feed's nor the other handlers'. */
-  private safely(act: () => void): void {
-    try {
-      act()
-    } catch (error) {
-      this.log(`a handler failed: ${String(error)}`)
-    }
   }
 
   /**
@@ -212,14 +142,7 @@ export class PostgresFeed implements ChangeFeed {
     this.connected = false
     this.log(`lost the feed connection: ${why}`)
     this.hangUp(client)
-    for (const state of this.channels.values()) {
-      state.inPlace = false
-      for (const subscriber of state.subscribers) {
-        subscriber.owed = true
-        subscriber.gap = true
-        subscriber.settle()
-      }
-    }
+    this.subscribers.lost()
     this.retry = setTimeout(() => {
       this.retry = undefined
       this.connect().catch(() => undefined)
