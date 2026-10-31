@@ -350,14 +350,14 @@ async function main(): Promise<void> {
     await m.openLink({ link: `teamstation://games/${game}?tab=watch` })
     await sleep(2500)
     const row = await reveal(
-      async () => await find(node => node.text === 'Record video', 600),
-      'Record video'
+      async () => await find(node => node.text === 'Record Video', 600),
+      'Record Video'
     )
-    await tapPoint(row, 'Record video')
+    await tapPoint(row, 'Record Video')
     assert(
       (await find(node => node.text === 'Name this camera angle', 15000)) !=
         null,
-      'Record video asks for the angle’s name'
+      'Record Video asks for the angle’s name'
     )
   }
   const tapCameraRow = async (label: string, id?: string): Promise<void> => {
@@ -473,7 +473,7 @@ async function main(): Promise<void> {
     `field reads Home (${fieldText === 'Home' ? 'Home' : 'a Home label is visible'})`
   )
   note('tapOn Start')
-  await m.tapOn({ text: 'Start' })
+  await m.tapOn({ text: 'Record with this phone' })
   assert(
     (await find(node => node.id === 'broadcast-button', 20000)) != null,
     'the streaming screen opened'

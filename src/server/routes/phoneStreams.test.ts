@@ -2895,7 +2895,11 @@ describe('phones and Directors asking for their streams by device', function () 
     it('answers canAdd and gameCanAdd as the room left, counting active cameras', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()
-      expect(await list(gameId)).includes({ canAdd: 4, gameCanAdd: 6 })
+      expect(await list(gameId)).includes({
+        canAdd: 4,
+        gameCanAdd: 6,
+        maxGameCameras: 6
+      })
       const made = await fullGame(gameId)
       expect(await list(gameId)).includes({ canAdd: 0, gameCanAdd: 0 })
       expect(await list(gameId, OTHER)).includes({ canAdd: 0, gameCanAdd: 0 })

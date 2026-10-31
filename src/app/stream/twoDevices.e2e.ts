@@ -11,9 +11,9 @@
 //   [TS_STREAM_CHROME=<a Chrome that decodes HEVC, for puppeteer>]
 //     node -r sucrase/register src/app/stream/twoDevices.e2e.ts
 //
-//   1. The iPhone: Record video "Home Plate", on the air.
+//   1. The iPhone: Record Video "Home Plate", on the air.
 //   2. The Pixel: its list reads "Home Plate" · "iPhone 13 Pro" · "Live";
-//      then Record video "First Base", on the air. With no Pixel, a stand-in
+//      then Record Video "First Base", on the air. With no Pixel, a stand-in
 //      device B (`curl` as the same account, `deviceModel` "Pixel 10",
 //      `recordsLocally`) makes "First Base" and ffmpeg publishes to it.
 //   3. Director streams as "Center Field": started by hand on the iPad,

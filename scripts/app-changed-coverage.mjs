@@ -6,8 +6,13 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
+import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+const { nativeExcludes } = createRequire(import.meta.url)(
+  './app-native-excludes.cjs'
+)
 
 // Line coverage of the app files this branch changes. The gate reads
 // `git diff origin/master...HEAD`, so it runs after the milestone is committed.
@@ -15,14 +20,22 @@ const temp = resolve('coverage/uiFixes/tmp')
 rmSync(resolve('coverage/uiFixes'), { recursive: true, force: true })
 mkdirSync(temp, { recursive: true })
 
-const build = spawnSync('node', ['scripts/build-scoring-tests.mjs'], {
-  stdio: 'inherit'
-})
-if (build.status !== 0) process.exit(build.status ?? 1)
+for (const step of [
+  ['scripts/chatCryptoBuild.mjs', 'node', 'wasm'],
+  ['scripts/build-scoring-tests.mjs']
+]) {
+  const build = spawnSync('node', step, { stdio: 'inherit' })
+  if (build.status !== 0) process.exit(build.status ?? 1)
+}
 
 const test = spawnSync(
   'node_modules/.bin/mocha',
   [
+    // Counting every line slows the suite, and mocha would idle for ever on
+    // the handles a server test leaves open.
+    '--timeout',
+    '60000',
+    '--exit',
     '-r',
     'sucrase/register',
     '-r',
@@ -86,8 +99,7 @@ const check = spawnSync(
     '.tsx',
     // A native twin runs on a phone, never under jsdom, and its specs run
     // in the native bundles (`npm run test.playerNative`), not this one.
-    '--exclude',
-    '**/*.native.tsx',
+    ...nativeExcludes().flatMap(glob => ['--exclude', glob]),
     '--exclude',
     '**/*.native.ts',
     '--exclude',
@@ -112,6 +124,11 @@ const check = spawnSync(
     'src/app/scoring/NativeCueSounds.ts',
     '--exclude',
     'src/app/components/glassViewProps.ts',
+    // The footers' shared props and the theme's shape: types only.
+    '--exclude',
+    'src/app/stream/streamFooterProps.ts',
+    '--exclude',
+    'src/app/theme/types.ts',
     // Tess's client shapes, which every importer takes as `import type`.
     '--exclude',
     'src/app/tess/tessTypes.ts',

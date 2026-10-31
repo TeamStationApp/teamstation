@@ -5,7 +5,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { KeyboardAvoidingView, Modal, Platform, ScrollView } from 'react-native'
 
 import { ThemeProvider } from '../theme/ThemeContext'
-import { AngleNamePrompt, KEYBOARD_RETRY_MS } from './AngleNamePrompt'
+import {
+  AngleNamePrompt,
+  type AngleNamePromptProps,
+  angleSuggestions,
+  KEYBOARD_RETRY_MS
+} from './AngleNamePrompt'
+import { SHEET_HEIGHT } from './SheetModal'
 
 let root: Root | undefined
 
@@ -34,14 +40,19 @@ function drawn(): Fiber[] {
   return all
 }
 
-async function open(): Promise<void> {
+async function open(props: Partial<AngleNamePromptProps> = {}): Promise<void> {
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <AngleNamePrompt visible onCancel={() => {}} onStart={async () => {}} />
+        <AngleNamePrompt
+          visible
+          onCancel={() => {}}
+          onStart={async () => {}}
+          {...props}
+        />
       </ThemeProvider>
     )
     await new Promise(resolve => setTimeout(resolve, 15))
@@ -61,7 +72,7 @@ describe('the angle name prompt', function () {
     await shut()
   })
 
-  it('rises above the keyboard with Cancel and Start inside what rises, and a tap while the keyboard is up reaches them', async function () {
+  it('rises above the keyboard with its rows inside what rises, and a tap while the keyboard is up reaches them', async function () {
     await open()
     const fibers = drawn()
     const avoiding = fibers.find(one => one.type === KeyboardAvoidingView)
@@ -72,15 +83,68 @@ describe('the angle name prompt', function () {
         one.memoizedProps?.testID === 'angle-name-prompt'
     )
     expect(scroll?.memoizedProps?.keyboardShouldPersistTaps).equals('handled')
-    // The sheet, and so both buttons, are drawn inside the avoiding view.
+    // The sheet, and so both rows, are drawn inside the avoiding view.
     let up: Fiber | null = scroll ?? null
     while (up != null && up !== avoiding) up = up.return
     expect(up, 'the sheet sits inside the avoiding view').equals(avoiding)
     const sheet = document.querySelector('[data-testid="angle-name-prompt"]')!
     const labels = Array.from(sheet.querySelectorAll('[role="button"]')).map(
-      one => one.textContent
+      one => one.getAttribute('aria-label') ?? one.textContent
     )
-    expect(labels).to.include.members(['Cancel', 'Start'])
+    expect(labels).to.include.members([
+      'Cancel',
+      'Record with this phone',
+      'Use external camera'
+    ])
+  })
+
+  it('takes three quarters of the screen, and slides up', async function () {
+    const page = document.documentElement
+    const windowOf = (height: number): void => {
+      Object.defineProperty(page, 'clientHeight', {
+        configurable: true,
+        value: height
+      })
+      window.dispatchEvent(new window.Event('resize'))
+    }
+    try {
+      windowOf(1000)
+      await open()
+      const fibers = drawn()
+      expect(
+        fibers.find(one => one.type === Modal)?.memoizedProps?.animationType
+      ).equals('slide')
+      const sized = fibers.flatMap(one => {
+        const style = one.memoizedProps?.style
+        return Array.isArray(style)
+          ? style.filter(part => part?.height === 1000 * SHEET_HEIGHT)
+          : []
+      })
+      expect(sized, 'a sheet that tall').not.deep.equals([])
+    } finally {
+      windowOf(0)
+    }
+  })
+
+  it('leaves out each row that does not apply', async function () {
+    const rows = (): string =>
+      document.querySelector('[data-testid="angle-name-prompt"]')!
+        .textContent ?? ''
+    await open({ phoneOnly: true })
+    expect(rows()).contains('Record with this phone')
+    expect(rows()).not.contains('Use external camera')
+    await shut()
+    await open({ canRecord: false })
+    expect(rows()).not.contains('Record with this phone')
+    expect(rows()).contains('Use external camera')
+  })
+
+  it('offers Backstop where the field shows it can be typed', async function () {
+    await open()
+    expect(document.querySelector('input')?.placeholder).equals(
+      'i.e., Home, 1st, 3rd, Backstop'
+    )
+    expect(angleSuggestions()).deep.equals(['Home', '1st', '3rd', 'Backstop'])
   })
 
   it('raises the keyboard once the modal is on screen on Android, and with autoFocus elsewhere', async function () {

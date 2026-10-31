@@ -1039,6 +1039,7 @@ async function listFor(
     canAdd: Math.min(MAX_CAMERAS - activeMine.length, gameCanAdd),
     maxCameras: MAX_CAMERAS,
     gameCanAdd,
+    maxGameCameras: MAX_GAME_CAMERAS,
     discarded: discarded.map(row => row.id)
   })
 }

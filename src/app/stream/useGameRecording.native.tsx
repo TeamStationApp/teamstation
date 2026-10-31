@@ -202,6 +202,7 @@ export function useGameRecording(
         <AngleNamePrompt
           key={promptKey}
           visible={prompt != null}
+          phoneOnly
           onCancel={cancel}
           onStart={start}
           onDismiss={() => {

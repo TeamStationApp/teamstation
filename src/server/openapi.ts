@@ -8801,7 +8801,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'when visible, otherwise the upload that replaced it) and that ' +
             'video\u2019s `durationSec`. `canAdd` is the ' +
             'smaller of the room left under my limit and the game\u2019s, ' +
-            'counting active cameras; `gameCanAdd` is the game\u2019s alone; ' +
+            'counting active cameras; `gameCanAdd` is the game\u2019s alone, ' +
+            'and `maxGameCameras` its limit; ' +
             '`discarded` lists the ids of cameras I deleted.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],

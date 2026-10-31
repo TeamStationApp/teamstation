@@ -1020,7 +1020,8 @@ describe('api client', function () {
       baseUrl: 'http://x/api/v1',
       fetch: older.fetch
     }).liveStreams('gam 1')
-    expect(listed.gameCanAdd).equals(6)
+    expect(listed.gameCanAdd).equals(undefined)
+    expect(listed.maxGameCameras).equals(undefined)
     expect(listed.discarded).deep.equals([])
 
     // 204 in production; a stub Response cannot carry a body with it.

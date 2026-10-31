@@ -156,6 +156,7 @@ class FakeServer {
   others: LiveStream[]
   maxCameras = 4
   gameCanAdd = 6
+  maxGameCameras = 6
   /** Answered to the next request, whatever it is, instead of the list. */
   failNext: { status: number; body: string } | undefined
   /** Answered to the next reveal, so the list itself can still load. */
@@ -211,6 +212,7 @@ class FakeServer {
       canAdd: Math.min(this.maxCameras - this.mine.length, this.gameCanAdd),
       maxCameras: this.maxCameras,
       gameCanAdd: this.gameCanAdd,
+      maxGameCameras: this.maxGameCameras,
       discarded: []
     }
   }
@@ -577,8 +579,9 @@ describe('the stream panel', function () {
   it('says a game is full, whether or not any of its cameras are mine', async function () {
     const server = new FakeServer([], [])
     server.gameCanAdd = 0
+    server.maxGameCameras = 8
     await mount(server)
-    const fullGame = 'This game already has 6 cameras. End one to add another.'
+    const fullGame = 'This game already has 8 cameras. End one to add another.'
     expect(text()).includes(fullGame)
     expect(text()).not.includes('That is all 4')
     expect(buttonsNamed('Create a stream URL')).has.lengthOf(0)

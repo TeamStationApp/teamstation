@@ -133,7 +133,7 @@ async function mount(fake: ReturnType<typeof fixture>): Promise<void> {
 async function press(label: string): Promise<void> {
   const button = [
     ...document.querySelectorAll<HTMLElement>('button,[role="button"]')
-  ].find(node => node.textContent === label)
+  ].find(node => node.textContent?.replace(/chevron_right$/, '') === label)
   expect(button, label).not.equals(undefined)
   await act(async () => {
     button!.click()
@@ -160,8 +160,10 @@ describe('recording from the game hero', () => {
     await mount(fake)
     await press('Record')
     expect(prompt()).not.equals(null)
+    // The hero records with this phone: no external camera here.
+    expect(document.body.textContent).not.contains('Use external camera')
     await press('Home')
-    await press('Start')
+    await press('Record with this phone')
     expect(fake.calls).deep.equals([
       {
         name: 'Home',
@@ -186,7 +188,7 @@ describe('recording from the game hero', () => {
     await mount(fake)
     await press('Record')
     await press('Home')
-    await press('Start')
+    await press('Record with this phone')
     expect(fake.calls[0].options?.recordsLocally).equals(false)
   })
 
@@ -206,7 +208,7 @@ describe('recording from the game hero', () => {
     await mount(fake)
     await press('Record')
     await press('Home')
-    await press('Start')
+    await press('Record with this phone')
     expect(opened).equals(undefined)
     await act(async () => {
       for (const node of document.body.querySelectorAll('div'))
@@ -294,7 +296,7 @@ describe('recording from the game hero', () => {
     await mount(fake)
     await press('Record')
     await press('Home')
-    await press('Start')
+    await press('Record with this phone')
     await press('Cancel')
     await act(async () => {
       finish(held)

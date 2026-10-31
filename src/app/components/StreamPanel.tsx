@@ -6,6 +6,7 @@ import type {
   LiveStream,
   TeamStationClient
 } from '../../common/api'
+import { lstrings, sprintf } from '../locales/strings'
 import { copyToClipboard } from '../platform/clipboard'
 import { usePublishingReport } from '../player/useVideoListRefresh'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -506,11 +507,11 @@ export function StreamPanel(
 
       {streams?.gameCanAdd === 0 && (
         <Text style={styles.muted}>
-          This game already has 6 cameras. End one to add another.
+          {sprintf(lstrings.stream_limit_game, streams.maxGameCameras)}
         </Text>
       )}
       {streams != null &&
-        streams.gameCanAdd > 0 &&
+        streams.gameCanAdd !== 0 &&
         streams.mine.length > 0 &&
         streams.canAdd === 0 && (
           <Text style={styles.muted}>

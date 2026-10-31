@@ -1,19 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Platform, Pressable, Text, View } from 'react-native'
+import { AppState, Platform, Pressable, Text, View } from 'react-native'
 
 import type {
+  CameraSource,
   GameLiveStreams,
   LiveStream,
+  StreamAccess,
   TeamStationClient
 } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import { observeUpload } from '../../common/observability/upload'
-import { Button } from '../components/Button'
 import { SectionHeader } from '../components/SectionHeader'
 import { streamActionsFor } from '../components/streamActions'
 import { lstrings, sprintf } from '../locales/strings'
 import { usePublishingReport } from '../player/useVideoListRefresh'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { AngleNamePrompt } from './AngleNamePrompt'
+import { CameraSourceSheet } from './CameraSourceSheet'
 import { deviceId as installId } from './deviceId'
 import {
   type PhoneRecording,
@@ -24,11 +27,16 @@ import {
   useRecordingsOf
 } from './phoneStream'
 import { RecordingUploadRow, uploadRowState } from './RecordingUploadRow'
+import { RevokeSheet } from './RevokeSheet'
+import { type RtmpTarget, RtmpUrlSheet } from './RtmpUrlSheet'
 import { StreamActionSheet } from './StreamActionSheet'
+import { StreamEmptyState } from './StreamEmptyState'
 import {
   StreamingScreen,
   type StreamingSession
 } from './StreamingScreen.native'
+import { StreamPill } from './StreamPill'
+import type { AppStateLike } from './useResumePendingUploads'
 
 /** How often the game's cameras are read again while the panel is up. */
 export const ANGLES_POLL_MS = 5000
@@ -46,7 +54,14 @@ export interface CameraAnglesPanelProps {
   copy?: (text: string) => void
   /** The videos this game's cameras are publishing to, each time that changes. */
   onPublishing?: (videoIds: string[]) => void
+  /** Whether the game has a video to play. Without one the tab says so here. */
+  hasVideo: boolean
+  /** The app's state; a test hands in its own. */
+  appState?: AppStateLike
 }
+
+/** The setup sheet up, or the next once iOS has taken the last away. */
+type SetupStep = 'name' | 'source' | 'rtmp' | 'revoke'
 
 interface OpenCamera {
   session: StreamingSession
@@ -92,21 +107,26 @@ function isUploading(
 }
 
 /**
- * The phone's "Cameras" on a game's Videos tab.
+ * The phone's camera area on a game's Videos tab.
  *
+ * - "No videos", while the game has no video and no camera (`StreamEmptyState`).
  * - A row for every camera on the game, the caller's and other people's: its
  *   angle, the device filming it, and whether it is live. This phone's own
  *   rows open the camera again; a camera the caller may manage has a "…" with
  *   the web panel's actions.
  * - A row for every take on this phone that TeamStation does not have yet,
  *   with Upload Recording.
- * - Record video, which asks for a camera angle's name, gets this phone's
- *   stream for it from the server and opens the camera.
+ * - Record Video, which steps through setup: the angle's name, then this
+ *   phone's camera or an external one (its make, then its RTMP URL). Disabled
+ *   with the reason beside it at either limit on cameras.
  *
- * Only the people who may film the game see it: anybody else is answered
- * `404` for the game's cameras and sees nothing, as with the web's panel. A
- * phone that cannot record shows the cameras, without Record video, and
- * nothing at all while there are none.
+ * It asks `streamAccess` first, and only somebody who may film reads the
+ * cameras: anybody else is answered `404` for them. It asks again each time the
+ * cameras are read, so a filming role taken away takes Record Video with it. A
+ * person who has asked to film is asked for at the same pace, and nothing else
+ * is read for them, so their approval brings Record Video up. Anybody else is
+ * asked for only when the app comes back to the front. Leaving the game takes
+ * the panel away, so coming back to it asks afresh.
  */
 export function CameraAnglesPanel(
   props: CameraAnglesPanelProps
@@ -117,11 +137,16 @@ export function CameraAnglesPanel(
     phone = phoneStream,
     deviceId = installId,
     Screen = StreamingScreen,
-    copy
+    copy,
+    hasVideo,
+    appState = AppState
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
-  const [allowed, setAllowed] = useState(false)
+  /** Undefined until it answers; null when it could not. */
+  const [access, setAccess] = useState<StreamAccess | null | undefined>(
+    undefined
+  )
   const [streams, setStreams] = useState<GameLiveStreams | undefined>(undefined)
   const [myId, setMyId] = useState<string | undefined>(undefined)
   const [capabilities, setCapabilities] = useState<
@@ -136,30 +161,60 @@ export function CameraAnglesPanel(
   const [sheet, setSheet] = useState<
     { stream: LiveStream; mine: boolean } | undefined
   >(undefined)
-  const [prompting, setPrompting] = useState(false)
+  const [step, setStep] = useState<SetupStep | undefined>(undefined)
+  /** The step that waits for iOS to finish taking the last sheet away. */
+  const [nextStep, setNextStep] = useState<SetupStep | undefined>(undefined)
   /** Bumped each time the prompt opens, so it opens empty. */
   const [promptKey, setPromptKey] = useState(0)
+  /** The angle's name, carried from the prompt to the camera's make. */
+  const [angleName, setAngleName] = useState('')
+  const [rtmp, setRtmp] = useState<RtmpTarget | undefined>(undefined)
+  /** Bumped each time the RTMP sheet opens, so it asks afresh. */
+  const [rtmpKey, setRtmpKey] = useState(0)
+  const [revoking, setRevoking] = useState<LiveStream | undefined>(undefined)
   /** The camera to open once the prompt has gone. */
   const [pending, setPending] = useState<OpenCamera | undefined>(undefined)
   const [open, setOpen] = useState<OpenCamera | undefined>(undefined)
   const live = useRef(true)
   const askDeviceId = useRef(deviceId)
   askDeviceId.current = deviceId
+  /** The last read of `streamAccess` asked for: an older answer is passed over. */
+  const accessRead = useRef(0)
+  /** That read failed for some reason other than the game being out of reach. */
+  const [accessUnread, setAccessUnread] = useState(false)
 
   usePublishingReport(streams, props.onPublishing)
 
   const reload = useCallback(async (): Promise<void> => {
     const next = await client.liveStreams(gameId)
-    if (!live.current) return
-    setStreams(next)
-    setAllowed(true)
+    if (live.current) setStreams(next)
   }, [client, gameId])
+
+  const readAccess = useCallback((): void => {
+    accessRead.current += 1
+    const read = accessRead.current
+    client.streamAccess(gameId).then(
+      found => {
+        if (!live.current || read !== accessRead.current) return
+        setAccess(found)
+        setAccessUnread(false)
+        if (found.canFilm) reload().catch(() => undefined)
+      },
+      (error: unknown) => {
+        if (!live.current || read !== accessRead.current) return
+        // A weak signal at the field says nothing of what somebody may do, so
+        // only a first read that fails, or a game they can no longer see, takes
+        // their actions away.
+        const unseen = error instanceof HttpError && error.code === 'notFound'
+        setAccess(current => (current === undefined || unseen ? null : current))
+        setAccessUnread(!unseen)
+      }
+    )
+  }, [client, gameId, reload])
 
   useEffect(() => {
     live.current = true
-    reload().catch(() => {
-      if (live.current) setAllowed(false)
-    })
+    readAccess()
     phone.capabilities().then(
       found => {
         if (live.current) setCapabilities(found)
@@ -175,21 +230,45 @@ export function CameraAnglesPanel(
     return () => {
       live.current = false
     }
-  }, [phone, reload])
+  }, [client, gameId, phone, readAccess])
 
-  // Every five seconds while the panel is up: the cameras, and this phone's
-  // takes, so a camera another phone starts appears and a finished upload's
-  // row goes.
   useEffect(() => {
-    if (!allowed) return
+    const subscription = appState.addEventListener('change', state => {
+      if (state === 'active' && client.token != null) readAccess()
+    })
+    return () => {
+      subscription.remove()
+    }
+  }, [appState, client, readAccess])
+
+  // Whatever is under way goes on when a filming role is taken away: taking the
+  // panel down would take a running camera, or a sheet in use, with it. The
+  // next thing they ask of the server says why not.
+  const canFilm =
+    access?.canFilm === true ||
+    open != null ||
+    pending != null ||
+    step != null ||
+    nextStep != null ||
+    sheet != null
+  // Every five seconds while the panel is up: what this person may do, and for
+  // somebody who films, the cameras and this phone's takes, so a camera another
+  // phone starts appears and a finished upload's row goes. A first read that
+  // failed is read again too, as nothing else brings the camera area back.
+  const polls =
+    canFilm ||
+    access?.requested === true ||
+    (access === null && accessUnread && client.token != null)
+  useEffect(() => {
+    if (!polls) return
     const timer = setInterval(() => {
-      reload().catch(() => undefined)
-      refresh()
+      readAccess()
+      if (canFilm) refresh()
     }, ANGLES_POLL_MS)
     return () => {
       clearInterval(timer)
     }
-  }, [allowed, refresh, reload])
+  }, [polls, canFilm, readAccess, refresh])
 
   useEffect(
     () =>
@@ -203,10 +282,10 @@ export function CameraAnglesPanel(
   // iOS presents one modal at a time: the camera waits for the prompt to
   // finish leaving (`onDismiss`). Elsewhere it opens at once.
   useEffect(() => {
-    if (prompting || pending == null || Platform.OS === 'ios') return
+    if (step === 'name' || pending == null || Platform.OS === 'ios') return
     setOpen(pending)
     setPending(undefined)
-  }, [pending, prompting])
+  }, [pending, step])
 
   const angles = anglesOf(streams)
   const takes = recordings.filter(
@@ -216,8 +295,9 @@ export function CameraAnglesPanel(
       recording.liveStreamId !== open?.session.streamId
   )
   const supported = capabilities?.supported === true
-  if (!allowed) return null
-  if (!supported && angles.length === 0 && takes.length === 0) return null
+  if (access === undefined || (canFilm && streams == null)) return null
+  const empty = !hasVideo && (!canFilm || angles.length + takes.length === 0)
+  if (!empty && !canFilm) return null
 
   const deviceModel = capabilities?.deviceModel ?? ''
   const uploading = (recording: PhoneRecording): boolean =>
@@ -278,9 +358,43 @@ export function CameraAnglesPanel(
     }
   }
 
+  /** The next sheet, or none. iOS waits for this one to leave (`sheetGone`). */
+  const goTo = (next: SetupStep | undefined): void => {
+    if (Platform.OS === 'ios' && step != null) {
+      setStep(undefined)
+      setNextStep(next)
+    } else setStep(next)
+  }
+
+  const sheetGone = (): void => {
+    if (nextStep != null) {
+      setStep(nextStep)
+      setNextStep(undefined)
+    }
+    if (pending == null) return
+    setOpen(pending)
+    setPending(undefined)
+  }
+
+  const record = (): void => {
+    setMessage(undefined)
+    setPromptKey(key => key + 1)
+    goTo('name')
+  }
+
   const start = async (name: string): Promise<void> => {
     setPending(await request(name))
-    setPrompting(false)
+    goTo(undefined)
+  }
+
+  const openRtmp = (target: RtmpTarget): void => {
+    setRtmp(target)
+    setRtmpKey(key => key + 1)
+    goTo('rtmp')
+  }
+
+  const chooseSource = (source: CameraSource): void => {
+    openRtmp({ name: angleName, source })
   }
 
   const reopen = (stream: LiveStream): void => {
@@ -347,134 +461,208 @@ export function CameraAnglesPanel(
     phone.cancelUpload(id).then(refresh, refresh)
   }
 
+  const limit =
+    streams?.gameCanAdd === 0
+      ? sprintf(lstrings.stream_limit_game, streams.maxGameCameras)
+      : streams?.canAdd === 0
+        ? sprintf(lstrings.stream_limit_person, streams.maxCameras)
+        : undefined
+  /** The camera to revoke as the list last gave it, which says if it went live. */
+  const revokeTarget =
+    angles.find(angle => angle.stream.id === revoking?.id)?.stream ?? revoking
+
   return (
     <View style={styles.section}>
-      <SectionHeader title={lstrings.stream_cameras_title} />
-      {angles.map(({ stream, mine }) => {
-        const own = mine && myId != null && stream.deviceId === myId
-        const state = angleState(stream)
-        const detail = [stream.deviceModel, mine ? null : stream.ownerName]
-          .filter(part => part != null && part !== '')
-          .join(' · ')
-        const take = recordings.find(one => one.liveStreamId === stream.id)
-        const elsewhere =
-          mine &&
-          myId != null &&
-          stream.deviceId !== myId &&
-          stream.localRecording === 'recorded' &&
-          stream.deviceModel != null
-        return (
-          <View key={stream.id} style={styles.angle}>
-            <Pressable
-              style={styles.angleBody}
-              disabled={!own}
-              accessibilityRole={own ? 'button' : undefined}
-              testID={`angle-row-${stream.id}`}
-              onPress={() => {
-                if (take != null && uploading(take)) {
-                  setMessage(
-                    sprintf(lstrings.stream_error_uploading, stream.label)
-                  )
-                  return
-                }
-                reopen(stream)
-              }}
-            >
-              <View style={styles.angleText}>
-                <Text style={styles.angleName}>{stream.label}</Text>
-                {detail !== '' && <Text style={styles.detail}>{detail}</Text>}
-                {elsewhere && (
-                  <Text style={styles.detail}>
-                    {sprintf(
-                      lstrings.stream_angle_not_uploaded,
-                      stream.deviceModel ?? ''
-                    )}
-                  </Text>
-                )}
-              </View>
-              <View
-                style={[styles.chip, state === 'live' && styles.liveChip]}
-                testID={`angle-state-${stream.id}`}
-              >
-                <Text
-                  style={[
-                    styles.chipText,
-                    state === 'live' && styles.liveChipText
-                  ]}
+      {empty ? (
+        <StreamEmptyState
+          client={client}
+          access={access}
+          onRecord={record}
+          onRequested={() => {
+            // A read already on its way predates the request.
+            accessRead.current += 1
+            setAccess(current =>
+              current == null ? current : { ...current, requested: true }
+            )
+          }}
+        />
+      ) : (
+        <>
+          <SectionHeader title={lstrings.stream_cameras_title} />
+          {angles.map(({ stream, mine }) => {
+            const own = mine && myId != null && stream.deviceId === myId
+            const state = angleState(stream)
+            const detail = [stream.deviceModel, mine ? null : stream.ownerName]
+              .filter(part => part != null && part !== '')
+              .join(' · ')
+            const take = recordings.find(one => one.liveStreamId === stream.id)
+            const elsewhere =
+              mine &&
+              myId != null &&
+              stream.deviceId !== myId &&
+              stream.localRecording === 'recorded' &&
+              stream.deviceModel != null
+            return (
+              <View key={stream.id} style={styles.angle}>
+                <Pressable
+                  style={styles.angleBody}
+                  disabled={!own}
+                  accessibilityRole={own ? 'button' : undefined}
+                  testID={`angle-row-${stream.id}`}
+                  onPress={() => {
+                    if (take != null && uploading(take)) {
+                      setMessage(
+                        sprintf(lstrings.stream_error_uploading, stream.label)
+                      )
+                      return
+                    }
+                    reopen(stream)
+                  }}
                 >
-                  {state === 'live'
-                    ? lstrings.stream_angle_live
-                    : state === 'ended'
-                      ? lstrings.stream_angle_ended
-                      : lstrings.stream_angle_idle}
-                </Text>
-              </View>
-            </Pressable>
-            {streamActionsFor(stream, mine).length > 0 && (
-              <Pressable
-                style={styles.more}
-                accessibilityRole="button"
-                accessibilityLabel={sprintf(
-                  lstrings.stream_angle_more,
-                  stream.label
+                  <View style={styles.angleText}>
+                    <Text style={styles.angleName}>{stream.label}</Text>
+                    {detail !== '' && (
+                      <Text style={styles.detail}>{detail}</Text>
+                    )}
+                    {elsewhere && (
+                      <Text style={styles.detail}>
+                        {sprintf(
+                          lstrings.stream_angle_not_uploaded,
+                          stream.deviceModel ?? ''
+                        )}
+                      </Text>
+                    )}
+                  </View>
+                  <View
+                    style={[styles.chip, state === 'live' && styles.liveChip]}
+                    testID={`angle-state-${stream.id}`}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        state === 'live' && styles.liveChipText
+                      ]}
+                    >
+                      {state === 'live'
+                        ? lstrings.stream_angle_live
+                        : state === 'ended'
+                          ? lstrings.stream_angle_ended
+                          : lstrings.stream_angle_idle}
+                    </Text>
+                  </View>
+                </Pressable>
+                {streamActionsFor(stream, mine).length > 0 && (
+                  <Pressable
+                    style={styles.more}
+                    accessibilityRole="button"
+                    accessibilityLabel={sprintf(
+                      lstrings.stream_angle_more,
+                      stream.label
+                    )}
+                    testID={`angle-more-${stream.id}`}
+                    onPress={() => {
+                      setMessage(undefined)
+                      setSheet({ stream, mine })
+                    }}
+                  >
+                    <Text style={styles.moreText}>…</Text>
+                  </Pressable>
                 )}
-                testID={`angle-more-${stream.id}`}
-                onPress={() => {
-                  setMessage(undefined)
-                  setSheet({ stream, mine })
-                }}
-              >
-                <Text style={styles.moreText}>…</Text>
-              </Pressable>
-            )}
-          </View>
-        )
-      })}
-      {takes.map(recording => (
-        <RecordingUploadRow
-          key={recording.liveStreamId}
-          recording={recording}
-          name={nameOf(recording)}
-          state={uploadRowState(
-            recording,
-            progress[recording.liveStreamId],
-            Object.hasOwn(cancelled, recording.liveStreamId)
+              </View>
+            )
+          })}
+          {takes.map(recording => (
+            <RecordingUploadRow
+              key={recording.liveStreamId}
+              recording={recording}
+              name={nameOf(recording)}
+              state={uploadRowState(
+                recording,
+                progress[recording.liveStreamId],
+                Object.hasOwn(cancelled, recording.liveStreamId)
+              )}
+              onUpload={() => {
+                upload(recording)
+              }}
+              onCancel={() => {
+                cancel(recording)
+              }}
+            />
+          ))}
+          <StreamPill
+            label={lstrings.stream_record_video}
+            disabled={limit != null}
+            testID="record-video"
+            onPress={record}
+          />
+          {limit != null && (
+            <Text style={styles.limit} testID="record-video-limit">
+              {limit}
+            </Text>
           )}
-          onUpload={() => {
-            upload(recording)
-          }}
-          onCancel={() => {
-            cancel(recording)
-          }}
-        />
-      ))}
-      {supported && (
-        <Button
-          label={lstrings.stream_record_video}
-          icon="videocam"
-          kind="secondary"
-          testID="record-video"
-          onPress={() => {
-            setMessage(undefined)
-            setPromptKey(key => key + 1)
-            setPrompting(true)
-          }}
-        />
+        </>
       )}
       {message != null && <Text style={styles.message}>{message}</Text>}
       <AngleNamePrompt
         key={promptKey}
-        visible={prompting}
+        visible={step === 'name'}
+        canRecord={supported}
         onCancel={() => {
-          setPrompting(false)
+          goTo(undefined)
         }}
         onStart={start}
-        onDismiss={() => {
-          if (pending == null) return
-          setOpen(pending)
-          setPending(undefined)
+        onExternal={name => {
+          setAngleName(name)
+          goTo('source')
         }}
+        onDismiss={sheetGone}
       />
+      <CameraSourceSheet
+        visible={step === 'source'}
+        onChoose={chooseSource}
+        onClose={() => {
+          goTo(undefined)
+        }}
+        onDismiss={sheetGone}
+      />
+      {rtmp != null && (
+        <RtmpUrlSheet
+          key={rtmpKey}
+          visible={step === 'rtmp'}
+          client={client}
+          gameId={gameId}
+          target={rtmp}
+          copy={copy}
+          onClose={() => {
+            goTo(undefined)
+            reload().catch(() => undefined)
+          }}
+          onCreated={() => {
+            reload().catch(() => undefined)
+          }}
+          onRevoke={stream => {
+            setRevoking(stream)
+            goTo('revoke')
+          }}
+          onDismiss={sheetGone}
+        />
+      )}
+      {revoking != null && revokeTarget != null && (
+        <RevokeSheet
+          visible={step === 'revoke'}
+          client={client}
+          gameId={gameId}
+          stream={revokeTarget}
+          onCancel={() => {
+            openRtmp({ stream: revoking })
+          }}
+          onRevoked={() => {
+            goTo(undefined)
+            reload().catch(() => undefined)
+          }}
+          onDismiss={sheetGone}
+        />
+      )}
       {sheet != null && (
         <StreamActionSheet
           client={client}
@@ -569,6 +757,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1.25),
     fontWeight: '700',
     color: theme.primaryTextColor
+  },
+  limit: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.875),
+    color: theme.secondaryTextColor,
+    textAlign: 'center'
   },
   message: {
     fontFamily: theme.regularTextFont,

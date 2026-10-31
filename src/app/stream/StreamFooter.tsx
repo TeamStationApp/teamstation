@@ -1,14 +1,9 @@
 import React from 'react'
 
-import type { TeamStationClient } from '../../common/api'
 import { StreamPanel } from '../components/StreamPanel'
+import type { StreamFooterProps } from './streamFooterProps'
 
-export interface StreamFooterProps {
-  client: TeamStationClient
-  gameId: string
-  /** The videos this game's cameras are publishing to, each time that changes. */
-  onPublishing?: (videoIds: string[]) => void
-}
+export type { StreamFooterProps }
 
 /**
  * What the Videos tab ends with for the people who run the team. In a

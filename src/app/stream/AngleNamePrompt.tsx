@@ -1,20 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
+  ActivityIndicator,
   Keyboard,
-  KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
-  ScrollView,
   Text,
   type TextInput,
   View
 } from 'react-native'
 
-import { Button } from '../components/Button'
+import { ListCard } from '../components/ListCard'
+import { ListRow } from '../components/ListRow'
+import { StreamGlyph } from '../components/StreamGlyph'
 import { TextField } from '../components/TextField'
 import { lstrings, sprintf } from '../locales/strings'
+import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { SheetModal } from './SheetModal'
 
 /** The server's limit on a camera name, counted after trimming. */
 export const ANGLE_NAME_MAX = 80
@@ -23,7 +25,7 @@ const SEPARATOR = ' — '
 
 /**
  * What is wrong with a typed name by the server's label rules, or null when
- * it may be sent. An empty name is not wrong, only not ready: Start waits.
+ * it may be sent. An empty name is not wrong, only not ready: the rows wait.
  */
 export function angleNameProblem(raw: string): string | null {
   const trimmed = raw.trim()
@@ -46,7 +48,7 @@ export function angleSuggestions(): string[] {
     lstrings.stream_prompt_suggestion_home,
     lstrings.stream_prompt_suggestion_first,
     lstrings.stream_prompt_suggestion_third,
-    lstrings.stream_prompt_suggestion_dugout
+    lstrings.stream_prompt_suggestion_backstop
   ]
 }
 
@@ -61,27 +63,40 @@ export interface AngleNamePromptProps {
   visible: boolean
   onCancel: () => void
   /**
-   * Asks the server for this phone's stream under the name. A rejection is
-   * shown under the field, as the server worded it: "You already have a
-   * camera called Home Plate on this game".
+   * Record with this phone: asks the server for this phone's stream under the
+   * name. A rejection is shown under the field, as the server worded it: "You
+   * already have a camera called Home Plate on this game".
    */
   onStart: (name: string) => Promise<void>
+  /** Use external camera, with the name. */
+  onExternal?: (name: string) => void
+  /** A phone that cannot record has no "Record with this phone". */
+  canRecord?: boolean
+  /** Only this phone: no "Use external camera". */
+  phoneOnly?: boolean
   /** Once the prompt has gone from the screen (iOS), so another modal may open. */
   onDismiss?: () => void
 }
 
 /**
- * "Name this camera angle": what Record video asks before it opens the
- * camera. The name is how the game's viewers tell this angle from the others.
- * The field opens the keyboard at once, so the prompt rises above it, Cancel
- * and Start whole, the way `PickerDialog` does; and when the window left over
- * is too short for all of it, it scrolls, and a tap on a button while the
- * keyboard is up reaches the button.
+ * The sheet Record Video slides up: a name for the angle, how the game's
+ * viewers tell it from the others, then this phone or an external camera. The
+ * field opens the keyboard at once, so the sheet rises above it with its rows
+ * whole; when the window left over is too short for all of it, it scrolls, and
+ * a tap on a row while the keyboard is up reaches the row.
  */
 export function AngleNamePrompt(
   props: AngleNamePromptProps
 ): React.ReactElement {
-  const { visible, onCancel, onStart, onDismiss } = props
+  const {
+    visible,
+    onCancel,
+    onStart,
+    onExternal,
+    canRecord = true,
+    phoneOnly = false,
+    onDismiss
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const [name, setName] = useState('')
@@ -132,147 +147,107 @@ export function AngleNamePrompt(
   }
 
   return (
-    <Modal
-      transparent
-      animationType="fade"
+    <SheetModal
       visible={visible}
-      onRequestClose={onCancel}
+      title={lstrings.stream_prompt_title}
+      cancelLabel={lstrings.stream_prompt_cancel}
+      onClose={onCancel}
       onDismiss={onDismiss}
       onShow={() => {
         if (focusOnShow) raiseKeyboard(KEYBOARD_RETRIES)
       }}
+      testID="angle-name-prompt"
     >
-      <KeyboardAvoidingView
-        style={styles.scrim}
-        // Android draws the modal's window edge to edge, and that window does
-        // not shrink for the keyboard, so the view shrinks itself (`height`),
-        // as `PickerDialog` does; iOS pads by the keyboard's height.
-        behavior={
-          Platform.OS === 'ios'
-            ? 'padding'
-            : Platform.OS === 'android'
-              ? 'height'
-              : undefined
-        }
-      >
-        <Pressable
-          style={styles.behind}
-          onPress={onCancel}
-          accessibilityRole="button"
-          accessibilityLabel={lstrings.stream_prompt_cancel}
-        />
-        <ScrollView
-          style={styles.sheet}
-          contentContainerStyle={styles.sheetContent}
-          keyboardShouldPersistTaps="handled"
-          testID="angle-name-prompt"
-        >
-          <Text style={styles.title}>{lstrings.stream_prompt_title}</Text>
-          <TextField
-            label={lstrings.stream_prompt_label}
-            value={name}
-            onChangeText={text => {
-              setName(text)
+      <TextField
+        label={lstrings.stream_prompt_label}
+        value={name}
+        onChangeText={text => {
+          setName(text)
+          setRefused(undefined)
+        }}
+        placeholder={lstrings.stream_prompt_placeholder}
+        inputRef={field}
+        autoFocus={!focusOnShow}
+        autoCapitalize="words"
+        // A phone may be held sideways already, ready to film.
+        disableFullscreenUI
+        error={problem ?? refused}
+      />
+      <View style={styles.suggestions}>
+        {angleSuggestions().map(label => (
+          <Pressable
+            key={label}
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            testID={`angle-suggestion-${label}`}
+            hitSlop={6}
+            style={styles.suggestion}
+            onPress={() => {
+              setName(label)
               setRefused(undefined)
             }}
-            placeholder={lstrings.stream_prompt_placeholder}
-            inputRef={field}
-            autoFocus={!focusOnShow}
-            autoCapitalize="words"
-            // A phone may be held sideways already, ready to film.
-            disableFullscreenUI
-            error={problem ?? refused}
-            onSubmitEditing={start}
+          >
+            <Text style={styles.suggestionText}>{label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <ListCard>
+        {canRecord && (
+          <ListRow
+            testID="record-with-phone"
+            leading={
+              <StreamGlyph
+                name="sidewaysPhone"
+                color={theme.primaryTextColor}
+              />
+            }
+            title={lstrings.stream_prompt_phone}
+            disabled={toSend == null || busy}
+            muted={toSend == null}
+            end={busy ? <ActivityIndicator /> : undefined}
+            onPress={start}
           />
-          <View style={styles.suggestions}>
-            {angleSuggestions().map(label => (
-              <Pressable
-                key={label}
-                accessibilityRole="button"
-                accessibilityLabel={label}
-                testID={`angle-suggestion-${label}`}
-                style={styles.suggestion}
-                onPress={() => {
-                  setName(label)
-                  setRefused(undefined)
-                }}
-              >
-                <Text style={styles.suggestionText}>{label}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <View style={styles.buttons}>
-            <Button
-              label={lstrings.stream_prompt_cancel}
-              kind="text"
-              onPress={onCancel}
-            />
-            <Button
-              label={lstrings.stream_prompt_start}
-              disabled={toSend == null}
-              busy={busy}
-              onPress={start}
-            />
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </Modal>
+        )}
+        {!phoneOnly && (
+          <ListRow
+            testID="use-external-camera"
+            leading={
+              <StreamGlyph name="filmCamera" color={theme.primaryTextColor} />
+            }
+            title={lstrings.stream_prompt_external}
+            disabled={toSend == null || busy}
+            muted={toSend == null}
+            onPress={() => {
+              if (toSend == null) return
+              Keyboard.dismiss()
+              onExternal?.(toSend)
+            }}
+          />
+        )}
+      </ListCard>
+    </SheetModal>
   )
 }
 
+const SUGGESTION_HEIGHT_REM = 2
+
 const getStyles = cacheStyles((theme: Theme) => ({
-  scrim: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.overlayBackgroundColor,
-    padding: theme.rem(theme.spaceMdRem)
-  },
-  behind: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0
-  },
-  sheet: {
-    flexGrow: 0,
-    width: '100%',
-    maxWidth: theme.rem(24),
-    borderRadius: theme.rem(theme.radiusRem),
-    backgroundColor: theme.cardBackgroundColor
-  },
-  sheetContent: {
-    padding: theme.rem(theme.spaceMdRem),
-    gap: theme.rem(theme.spaceMdRem)
-  },
-  title: {
-    color: theme.primaryTextColor,
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1.125),
-    fontWeight: '600'
-  },
   suggestions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: theme.rem(theme.spaceSmRem)
   },
   suggestion: {
-    paddingHorizontal: theme.rem(0.75),
-    paddingVertical: theme.rem(0.375),
-    borderRadius: theme.rem(1),
-    backgroundColor: theme.inactiveBackgroundColor
+    height: theme.rem(SUGGESTION_HEIGHT_REM),
+    justifyContent: 'center',
+    paddingHorizontal: pillPadding(theme.rem(SUGGESTION_HEIGHT_REM)),
+    borderRadius: theme.rem(SUGGESTION_HEIGHT_REM) / 2,
+    backgroundColor: theme.secondaryButtonColor
   },
   suggestionText: {
-    color: theme.primaryTextColor,
+    color: theme.secondaryButtonTextColor,
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.875),
     fontWeight: '600'
-  },
-  buttons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    gap: theme.rem(theme.spaceSmRem)
   }
 }))

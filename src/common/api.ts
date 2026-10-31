@@ -1976,7 +1976,9 @@ export const asGameLiveStreams = asObject({
   canAdd: asNumber,
   maxCameras: asNumber,
   /** How many more cameras the game has room for, whoever adds them. */
-  gameCanAdd: asOptional(asNumber, 6),
+  gameCanAdd: asOptional(asNumber),
+  /** How many cameras a game may have active at once, whoever holds them. */
+  maxGameCameras: asOptional(asNumber),
   /** The stream ids this person deleted, so a phone can drop their copies. */
   discarded: asOptional(asArray(asString), [])
 })
