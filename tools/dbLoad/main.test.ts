@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -115,6 +115,33 @@ describe('the command line', function () {
     expect(data.connections.peak).above(0)
     expect(data.streamsStarted).equals(1)
     expect(text).not.contains('socket-close-4403')
+  })
+
+  it('holds a run to the thresholds when asked, counting the servers logs', async function () {
+    const log = join(dir, 'api.log')
+    writeFileSync(log, 'error: sorry, too many clients already\nfine\n')
+    const code = await run(
+      ...flags(),
+      '--server',
+      server.base,
+      '--users',
+      '4',
+      '--shard',
+      '1/2',
+      '--minutes',
+      '0.01',
+      '--assert',
+      '--pool-limit',
+      '10',
+      '--server-log',
+      log
+    )
+    expect(code).equals(1)
+    const text = lines.join('\n')
+    expect(text).contains('MISSED too many clients: seen 1 times')
+    expect(text).contains('MISSED p95 POST: no data')
+    expect(text).contains('thresholds missed')
+    expect(text).matches(/rig: CPU \d+% of one core/)
   })
 
   it('leaves the scoring to the first of two rigs, and classes the pooler', async function () {
@@ -240,6 +267,47 @@ describe('the command line', function () {
     const pool = new Pool({ connectionString: scratch.url })
     await pool.query('drop table pg_stat_statements')
     await pool.end()
+  })
+
+  it('reads statements from --stats-database, where the database under test has none', async function () {
+    const stats = await openScratch('mainstats')
+    try {
+      await fakeStatementsView(stats)
+      const pool = new Pool({ connectionString: stats.url })
+      await pool.query(
+        `update pg_stat_statements set
+           dbid = (select oid from pg_database where datname = $1), calls = 5`,
+        [scratch.name]
+      )
+      await pool.end()
+      const report = join(dir, 'stats.log')
+      const code = await run(
+        ...flags(),
+        '--stats-database',
+        stats.url,
+        '--server',
+        server.base,
+        '--probe',
+        '--report',
+        report
+      )
+      expect(code).equals(1)
+      expect(readFileSync(report, 'utf8')).contains('socket subscribe')
+      expect(
+        await refusal(
+          ...flags(),
+          '--stats-database',
+          stats.url,
+          '--server',
+          server.base,
+          '--users',
+          '1',
+          '--require-statements'
+        )
+      ).contains('no pg_stat_statements')
+    } finally {
+      await stats.drop()
+    }
   })
 
   it('cleans up by the run the tokens name', async function () {

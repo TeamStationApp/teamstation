@@ -256,4 +256,68 @@ describe('the sampler', function () {
     expect(sampler.statements()[0].calls).equals(50)
     expect(sampler.sequentialScans()).deep.equals([])
   })
+
+  it('reads statements from the stats connection, counting the database under test', async function () {
+    const onMain: string[] = []
+    const onStats: Array<{ text: string; values?: unknown[] }> = []
+    const client = {
+      query: async (text: string) => {
+        onMain.push(text)
+        if (text.includes('current_database() as name'))
+          return { rows: [{ name: 'under_test' }] }
+        if (text.includes('pg_stat_user_tables')) return { rows: [] }
+        if (text.includes('group by')) return { rows: [] }
+        return { rows: [{ waiters: '0', object_waiters: '0', oldest: null }] }
+      }
+    } as unknown as Pick<Client, 'query'>
+    const statsClient = {
+      query: async (text: string, values?: unknown[]) => {
+        onStats.push({ text, values })
+        if (text.includes('from pg_extension'))
+          return { rows: [{ '?column?': 1 }] }
+        if (text.includes('sum(calls)'))
+          return { rows: [{ calls: '7', total: '3' }] }
+        return { rows: [] }
+      }
+    } as unknown as Pick<Client, 'query'>
+    const sampler = new Sampler({
+      client,
+      statsClient,
+      requireStatements: true
+    })
+    await sampler.start()
+    await sampler.stop()
+    expect(sampler.hasStatements).equals(true)
+    expect(sampler.samples[0].statements).deep.equals({ calls: 7, totalMs: 3 })
+    expect(
+      onMain.filter(text => /pg_stat_statements|pg_extension/.test(text))
+    ).deep.equals([])
+    const reads = onStats.filter(row =>
+      row.text.includes('from pg_stat_statements')
+    )
+    expect(reads.length).at.least(3)
+    for (const read of reads) {
+      expect(read.values).deep.equals(['under_test'])
+      expect(read.text).not.contains('current_database')
+    }
+    expect(onStats.some(row => row.text.includes('pg_stat_activity'))).equals(
+      false
+    )
+  })
+
+  it('fails when the stats connection has no extension', async function () {
+    const client = {
+      query: async () => ({ rows: [{ name: 'under_test' }] })
+    } as unknown as Pick<Client, 'query'>
+    const statsClient = {
+      query: async () => ({ rows: [] })
+    } as unknown as Pick<Client, 'query'>
+    let message = ''
+    await new Sampler({ client, statsClient, requireStatements: true })
+      .start()
+      .catch((error: Error) => {
+        message = error.message
+      })
+    expect(message).contains('no pg_stat_statements')
+  })
 })

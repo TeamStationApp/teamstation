@@ -2,9 +2,11 @@
  * How much the fixture seeds at each scale. Every amount the seed uses is here,
  * so another scale is one more entry of this table and nothing else.
  *
- * The population is a tenth of a stress run's. Depths and the numbers of rows
- * that make a shape expensive stay as they are, since a person merged twice
- * is not the shape being tested; the sizes are what a local run cannot afford.
+ * `full` is a stress run: what each shape costs at the heaviest case judged
+ * realistic, at most doubled. `small` is a tenth of its population, for a local
+ * run. Depths and the numbers of rows that make a shape expensive stay as they
+ * are, since a person merged twice is not the shape being tested; the sizes are
+ * what a local run cannot afford.
  */
 export interface Amounts {
   /** Accounts with a session, which the rig connects as viewers. */
@@ -54,6 +56,44 @@ export interface Amounts {
 }
 
 export const SCALES = {
+  full: {
+    accounts: 5000,
+    videographers: 5,
+    leagues: 2,
+    seasons: 6,
+    teams: 100,
+    liveGames: 50,
+    writtenFinishedGames: 10,
+    finishedGames: 500,
+    historyGames: 8000,
+    historyInnings: 9,
+    dmShare: 0.1,
+    messagesPerDm: 2,
+
+    mergedRows: 24,
+    chainDepth: 10,
+    guardianChildren: 8,
+    guardianChildDepth: 5,
+    roleTeams: 80,
+    roleSeasons: 30,
+    roleLeagues: 6,
+    largeLeagueSeasons: 20,
+    largeLeagueTeams: 300,
+    duplicateTeams: 24,
+    teamChainDepth: 4,
+    longTeamGames: 600,
+    longGameInnings: 24,
+    crowdedViewers: 600,
+    crowdedWorstCaseViewers: 20,
+    largeChatMembers: 600,
+    largeChatMessages: 10000,
+    manyChats: 60,
+    manySessions: 20,
+
+    // A probe of each before and after, and two of each over a half-hour run.
+    consumableCopies: 4,
+    chatAddPeople: 50
+  },
   small: {
     accounts: 500,
     videographers: 5,
