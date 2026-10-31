@@ -10,7 +10,7 @@ import {
   tooLarge,
   unavailable
 } from '../../common/errors'
-import { isPoolTimeout } from '../db/database'
+import { isConnectionUnavailable } from '../db/database'
 
 /** Writes the one error shape, and nothing else, to a response. */
 export function sendError(res: Response, error: unknown): void {
@@ -37,6 +37,28 @@ export const notFoundHandler: RequestHandler = (req, res) => {
   sendError(res, notFound())
 }
 
+/** How often crash reporting hears that requests are finding no connection. */
+const UNAVAILABLE_REPORT_MS = 5 * 60_000
+
+/** `report`, at most once in `everyMs`. */
+export function sparingly(
+  report: (error: unknown) => void,
+  everyMs: number,
+  now: () => number = Date.now
+): (error: unknown) => void {
+  let reportedAt = Number.NEGATIVE_INFINITY
+  return error => {
+    const at = now()
+    if (at - reportedAt < everyMs) return
+    reportedAt = at
+    report(error)
+  }
+}
+
+const reportUnavailable = sparingly(error => {
+  captureException(error)
+}, UNAVAILABLE_REPORT_MS)
+
 /**
  * The last middleware. An `HttpError` is reported as itself; anything else is
  * logged in full and reported as a bare `internal`, because the text of an
@@ -57,11 +79,13 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
     sendError(res, tooLarge('That request body is too large'))
     return
   }
-  // Out of database connections for the moment: nothing is wrong with the
-  // request, so it is told to come back, and crash reporting hears of this
-  // from the pool, once, not from each request.
-  if (isPoolTimeout(error)) {
+  // No database connection for the moment: nothing is wrong with the request,
+  // so it is told to come back. The pool reports its own shortage, but nothing
+  // else reports a pooler that went away, so crash reporting hears of these
+  // here too, at a slow rate rather than from each request.
+  if (isConnectionUnavailable(error)) {
     console.error(`${req.method} ${req.path}: ${String(error)}`)
+    reportUnavailable(error)
     if (res.headersSent) {
       next(error)
       return

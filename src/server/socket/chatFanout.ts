@@ -6,7 +6,7 @@ import type { ChatSocketFrame } from '../../common/gameSocket'
 import { asUserId } from '../../common/userId'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { CHAT_CHANGES_CHANNEL } from '../chat/membershipLog'
-import { type Database, isPoolTimeout } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
 import { spread } from './spread'
 
 /**
@@ -223,7 +223,7 @@ export class ChatFanout {
     try {
       members = await this.membersOf(change.c)
     } catch (error) {
-      if (!isPoolTimeout(error)) throw error
+      if (!isConnectionUnavailable(error)) throw error
       // A typing hint is over by the time anyone could hear it: nothing to
       // read again.
       if (change.k !== 'typing') this.oweResync(change.c)
@@ -269,7 +269,7 @@ export class ChatFanout {
     try {
       members = await this.membersOf(conversationId)
     } catch (error) {
-      if (!isPoolTimeout(error)) throw error
+      if (!isConnectionUnavailable(error)) throw error
       this.oweResync(conversationId)
       return
     }

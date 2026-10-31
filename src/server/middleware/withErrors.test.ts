@@ -6,7 +6,26 @@ import express from 'express'
 import { after, before, describe, it } from 'mocha'
 
 import { forbidden } from '../../common/errors'
-import { errorHandler } from './withErrors'
+import { errorHandler, sparingly } from './withErrors'
+
+describe('sparingly', function () {
+  it('reports the first at once, then none until the time has passed', function () {
+    let clock = 1000
+    const reported: unknown[] = []
+    const report = sparingly(
+      error => reported.push(error),
+      100,
+      () => clock
+    )
+    report('first')
+    clock += 99
+    report('second')
+    expect(reported).deep.equals(['first'])
+    clock += 1
+    report('third')
+    expect(reported).deep.equals(['first', 'third'])
+  })
+})
 
 describe('errorHandler', function () {
   let server: Server
@@ -15,6 +34,13 @@ describe('errorHandler', function () {
     waiting: new Error('timeout exceeded when trying to connect'),
     opening: new Error('Connection terminated due to connection timeout'),
     pooler: new Error('query_wait_timeout'),
+    lost: new Error('Connection terminated unexpectedly'),
+    refused: Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:1'), {
+      code: 'ECONNREFUSED'
+    }),
+    full: Object.assign(new Error('sorry, too many clients already'), {
+      code: '53300'
+    }),
     other: new Error('relation "secrets" does not exist'),
     planned: forbidden('No')
   }
@@ -41,8 +67,15 @@ describe('errorHandler', function () {
     await new Promise(resolve => server.close(resolve))
   })
 
-  for (const kind of ['waiting', 'opening', 'pooler'])
-    it(`answers 503 with Retry-After for a pool timeout (${kind})`, async function () {
+  for (const kind of [
+    'waiting',
+    'opening',
+    'pooler',
+    'lost',
+    'refused',
+    'full'
+  ])
+    it(`answers 503 with Retry-After when no connection is to be had (${kind})`, async function () {
       const response = await fetch(`${base}/fail/${kind}`)
       expect(response.status).equals(503)
       expect(response.headers.get('retry-after')).equals('1')

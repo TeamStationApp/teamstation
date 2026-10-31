@@ -60,6 +60,8 @@ describe('authorizing a delivery in one set of reads', function () {
   let socketUrl = ''
   let now = 1_000_000
   const statements: string[] = []
+  /** While set, every statement's answer waits for it. */
+  let holdAnswers: Promise<void> | undefined
   const said = handFeed()
   const open: WebSocket[] = []
 
@@ -173,6 +175,15 @@ describe('authorizing a delivery in one set of reads', function () {
       dialect: new PostgresDialect({
         pool: new Pool({ connectionString: scratch.url, max: 4 })
       }),
+      plugins: [
+        {
+          transformQuery: ({ node }) => node,
+          transformResult: async ({ result }) => {
+            await holdAnswers
+            return result
+          }
+        }
+      ],
       log: event => {
         statements.push(event.query.sql)
       }
@@ -464,6 +475,38 @@ describe('authorizing a delivery in one set of reads', function () {
       expect(told(elsewhere.frames)).equals(false)
       mine.ws.terminate()
       elsewhere.ws.terminate()
+    })
+
+    it('tells the rest when a socket closes or drops its screen during the read of the game', async function () {
+      const staying = await connect(members[5].token)
+      const leaving = await connect(members[6].token)
+      const closing = await connect(members[7].token)
+      for (const each of [staying, leaving, closing])
+        await each.ask({ type: 'subscribe', scope: 'home' }, 'home')
+      now += 120_000
+      statements.length = 0
+      let release = (): void => undefined
+      holdAnswers = new Promise(resolve => {
+        release = resolve
+      })
+      try {
+        said.say('screen_scopes', { gameId: game, revision: revisionNext() })
+        await until(
+          () => statements.some(sql => sql.includes('"games"')),
+          'the read of the game'
+        )
+        await leaving.ask({ type: 'unsubscribe', scope: 'home' }, 'gone')
+        closing.ws.terminate()
+        await closing.closed
+        await new Promise(resolve => setTimeout(resolve, 50))
+      } finally {
+        holdAnswers = undefined
+        release()
+      }
+      await until(() => told(staying.frames), 'the socket still holding')
+      expect(told(leaving.frames)).equals(false)
+      staying.ws.terminate()
+      leaving.ws.terminate()
     })
 
     it('tells a home screen nothing of a game nobody has', async function () {

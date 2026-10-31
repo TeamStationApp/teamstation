@@ -458,6 +458,135 @@ describe('statsBuilder main', function () {
     expect(lines.length).equals(1)
   })
 
+  it('fails to start on a database nothing answers for, leaving nothing open', async function () {
+    const closed = createServer()
+    await new Promise<void>(resolve => {
+      closed.listen(0, '127.0.0.1', resolve)
+    })
+    const { port } = closed.address() as { port: number }
+    await new Promise(resolve => closed.close(resolve))
+    const absent = `postgres://127.0.0.1:${port}/${scratchName}?sslmode=disable`
+    const originalError = console.error
+    console.error = () => undefined
+    const signals = new EventEmitter()
+    const lines: string[] = []
+    try {
+      const failure = await runStatsBuilder({
+        databaseUrl: absent,
+        feed: new PostgresFeed({
+          databaseUrl: absent,
+          log: line => lines.push(line)
+        }),
+        signals
+      }).then(
+        () => undefined,
+        (error: unknown) => error
+      )
+      expect((failure as { code?: unknown }).code).equals('ECONNREFUSED')
+      expect(signals.listenerCount('SIGTERM')).equals(0)
+      const heard = lines.length
+      await new Promise(resolve => setTimeout(resolve, 1200))
+      expect(lines.length).equals(heard)
+    } finally {
+      console.error = originalError
+    }
+  })
+
+  it('asks again when the database goes away after starting', async function () {
+    const originalLog = console.log
+    const originalError = console.error
+    console.log = () => undefined
+    const complaints: string[] = []
+    console.error = (...args: unknown[]) => {
+      complaints.push(args.map(String).join(' '))
+    }
+    const reported: unknown[] = []
+    const exitCode = process.exitCode
+    const target = new URL(adminUrl)
+    const sockets = new Set<Socket>()
+    const door = createServer(inbound => {
+      const outbound = connect(Number(target.port), target.hostname)
+      for (const socket of [inbound, outbound]) {
+        socket.on('error', () => undefined)
+        sockets.add(socket)
+      }
+      inbound.pipe(outbound)
+      outbound.pipe(inbound)
+    })
+    await new Promise<void>(resolve => {
+      door.listen(0, '127.0.0.1', resolve)
+    })
+    const { port } = door.address() as { port: number }
+    const gameId = makeId('game')
+    await db
+      .insertInto('games')
+      .values({
+        id: gameId,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const delays: number[] = []
+    const handle = await runStatsBuilder({
+      databaseUrl: scratchUrl,
+      requestUrl: `postgres://127.0.0.1:${port}/${scratchName}?sslmode=disable`,
+      signals: new EventEmitter(),
+      setTimeout: ((work: () => void, ms: number) => {
+        delays.push(ms)
+        return setTimeout(work, Math.min(ms, 50))
+      }) as typeof setTimeout,
+      report: async error => {
+        reported.push(error)
+      }
+    })
+    try {
+      // Now nothing answers at that address: every attempt is refused.
+      await new Promise<void>(resolve => {
+        door.close(() => {
+          resolve()
+        })
+        for (const socket of sockets) socket.destroy()
+      })
+      await until(
+        'a refused attempt',
+        async () => complaints.join('\n').includes('asking again'),
+        20000
+      )
+      expect(delays).includes(5000)
+      await replaceGameEvents(db, {
+        gameId,
+        homeTeamId: home,
+        awayTeamId: away,
+        plays: [{ gumbo: play(), source: 'manual' }]
+      })
+      // It answers again at the same address, and what is owed gets built.
+      await new Promise<void>(resolve => {
+        door.listen(port, '127.0.0.1', resolve)
+      })
+      await until(
+        'the build',
+        async () =>
+          (
+            await db
+              .selectFrom('game_stats_state')
+              .select('status')
+              .where('game_id', '=', gameId)
+              .executeTakeFirst()
+          )?.status === 'built',
+        20000
+      )
+      expect(reported).deep.equals([])
+      expect(process.exitCode).equals(exitCode)
+    } finally {
+      await handle.stop('SIGTERM')
+      for (const socket of sockets) socket.destroy()
+      door.close()
+      console.log = originalLog
+      console.error = originalError
+    }
+  })
+
   it('queries through the request address as its role, and listens on the database', async function () {
     const originalLog = console.log
     console.log = () => undefined

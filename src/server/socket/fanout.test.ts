@@ -1,3 +1,10 @@
+import {
+  type AddressInfo,
+  connect as connectTo,
+  createServer,
+  type Socket
+} from 'node:net'
+
 import { expect } from 'chai'
 import { Kysely, PostgresDialect } from 'kysely'
 import { after, before, describe, it } from 'mocha'
@@ -537,6 +544,55 @@ describe('the game socket fan-out (U15)', function () {
       expect(onLater.resynced.count).equals(0)
       expect(onLater.sent).to.have.length(1)
       await two.close()
+    })
+
+    it('resyncs a game whose delivery loses the pooler, and one after it has gone', async function () {
+      // Stands between the fanout and the database, as a pooler does.
+      const target = new URL(scratchUrl)
+      const sockets = new Set<Socket>()
+      const pooler = createServer(near => {
+        const far = connectTo(Number(target.port), target.hostname)
+        for (const socket of [near, far]) {
+          sockets.add(socket)
+          socket.on('error', () => undefined)
+        }
+        near.pipe(far).pipe(near)
+      })
+      await new Promise<void>(resolve => {
+        pooler.listen(0, '127.0.0.1', resolve)
+      })
+      const proxied = new URL(scratchUrl)
+      proxied.hostname = '127.0.0.1'
+      proxied.port = String((pooler.address() as AddressInfo).port)
+      const pool = new Pool({ connectionString: proxied.toString() })
+      pool.on('connect', client => {
+        client.on('error', () => undefined)
+      })
+      pool.on('error', () => undefined)
+      const proxiedDb = new Kysely<Database>({
+        dialect: new PostgresDialect({ pool })
+      })
+      const one = fanout({
+        db: proxiedDb,
+        authorize: async subscribers => {
+          // The pooler dies with the game's transaction open and in hand.
+          for (const socket of sockets) socket.destroy()
+          pooler.close()
+          await new Promise(resolve => setTimeout(resolve, 50))
+          return subscribers.map(() => true)
+        }
+      })
+      await one.listening
+      const onToday = subscriber()
+      one.watch(today, scopeOf(team, rival), onToday)
+      await one.deliver(JSON.stringify({ game: today, kind: 'game' }))
+      expect(onToday.resynced.count).equals(1)
+      expect(onToday.sent).deep.equals([])
+      // Nothing listens now, so the next one cannot even connect.
+      await one.deliver(JSON.stringify({ game: today, kind: 'game' }))
+      expect(onToday.resynced.count).equals(2)
+      await one.close()
+      await proxiedDb.destroy()
     })
 
     it('still throws any other failure, resyncing nobody', async function () {

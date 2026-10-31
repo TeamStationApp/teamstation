@@ -33,7 +33,7 @@ import {
   keyAllows
 } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
-import { type Database, isPoolTimeout } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
 import { mayRunGame } from '../director/runGames'
 import { refreshRadarSpeeds } from '../events/radarSpeeds'
 import { speedHoldMs as nodeSpeedHoldMs } from '../nodeSettings'
@@ -289,7 +289,7 @@ export function makeScoreboardHub(
       try {
         await authorizeCurrent(room, member)
       } catch (error) {
-        if (!isPoolTimeout(error)) throw error
+        if (!isConnectionUnavailable(error)) throw error
         unasked.add(member)
         starved(room, error)
       }
@@ -445,7 +445,7 @@ export function makeScoreboardHub(
       // A dashboard that could not be asked was not sent what it was owed.
       if (owing) await catchUp(room)
     } catch (error) {
-      if (!isPoolTimeout(error)) throw error
+      if (!isConnectionUnavailable(error)) throw error
       starved(room, error)
     }
   }
@@ -698,7 +698,7 @@ export function makeScoreboardHub(
           )
       }
     } catch (error) {
-      if (isPoolTimeout(error)) throw error
+      if (isConnectionUnavailable(error)) throw error
       log(`scoreboard ${room.gameId}: authorization: ${describe(error)}`)
       for (const member of members)
         shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
@@ -743,7 +743,7 @@ export function makeScoreboardHub(
       }
       return true
     } catch (error) {
-      if (isPoolTimeout(error)) throw error
+      if (isConnectionUnavailable(error)) throw error
       log(`scoreboard ${room.gameId}: authorization: ${describe(error)}`)
       shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
       return false
@@ -766,7 +766,7 @@ export function makeScoreboardHub(
     try {
       allowed = await authorizeCurrent(room, member)
     } catch (error) {
-      if (!isPoolTimeout(error)) throw error
+      if (!isConnectionUnavailable(error)) throw error
       starved(room, error)
       refuse('The server is busy; send that again', true)
       return

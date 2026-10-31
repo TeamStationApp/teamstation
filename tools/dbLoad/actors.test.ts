@@ -11,6 +11,7 @@ import {
   mintStream,
   paced,
   Publishers,
+  requireServerHost,
   reachable,
   readsFor,
   request,
@@ -164,6 +165,47 @@ describe('the actors', function () {
         message = error.message
       })
       expect(message).contains('--streams 21 is above the 20')
+    })
+
+    it('start no pattern for a stream URL on another host, and say whose', async function () {
+      const started: string[] = []
+      // The server's own name is 127.0.0.1, and the rig knows it as localhost.
+      const publishers = new Publishers(
+        [server.base.replace('127.0.0.1', 'localhost')],
+        { ...tokens, accounts: [account('videographer00002')] },
+        new Tally(),
+        1,
+        5,
+        url => {
+          started.push(url)
+          throw new Error('not reached')
+        }
+      )
+      let message = ''
+      await publishers.start().catch((error: Error) => {
+        message = error.message
+      })
+      expect(started).deep.equals([])
+      expect(publishers.minted).deep.equals([])
+      expect(message).contains('stream URL for 127.0.0.1')
+      expect(message).contains('--server host (localhost)')
+      expect(message).contains('primaryUrlOverride')
+      expect(message).not.contains('ts_')
+    })
+
+    it('take a stream URL on any of the server hosts, in any case', function () {
+      const servers = [
+        'http://Node1.example.test:9100',
+        'https://node2.example.test'
+      ]
+      requireServerHost('rtmp://NODE2.example.test:1936/live/ts_key', servers)
+      requireServerHost('rtmp://node1.example.test/live/ts_key', servers)
+      expect(() => {
+        requireServerHost('rtmp://production.example.test/live/ts_key', servers)
+      }).throws('stream URL for production.example.test')
+      expect(() => {
+        requireServerHost('not a url', servers)
+      }).throws('stream URL for something unreadable')
     })
 
     it('push the repository test pattern', async function () {
