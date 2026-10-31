@@ -11,7 +11,7 @@ describe('TV browsing layout', () => {
       timezone: 'America/Los_Angeles'
     }
     expect(monthOf(game)).equals('September 2026')
-    expect(gameDate(game)).contains('Sep 30, 2026')
+    expect(gameDate(game)).equals('September 30 at 6 pm')
     expect(gameDate({ ...game, timezone: 'unknown' })).contains('UTC')
     expect(monthOf({ ...game, timezone: 'unknown' })).equals('October 2026')
     for (const startAt of [null, 'invalid']) {

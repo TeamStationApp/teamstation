@@ -14,9 +14,9 @@ import type { Database } from '../db/database'
 import {
   accessibleVideoGames,
   hasVideoFilter,
-  participantsInGames,
   videoCollectionFilter
 } from '../events/videoCollections'
+import { videoSearchDetails } from '../events/videoSearchDetails'
 import { publicNames } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -70,10 +70,12 @@ export function userRoutes(
       if (hasVideoFilter(req.query)) {
         const filter = videoCollectionFilter(req.query)
         const games = await accessibleVideoGames(db, actor, filter)
-        const ids = await participantsInGames(
+        const details = await videoSearchDetails(
           db,
-          games.map(game => game.gameId)
+          games.map(game => game.gameId),
+          true
         )
+        const ids = [...details.players.keys()]
         const people = await describe(
           db,
           space,
@@ -81,6 +83,10 @@ export function userRoutes(
         )
         res.json(
           people
+            .map(person => ({
+              ...person,
+              recentVideoTeams: details.players.get(person.userId) ?? []
+            }))
             .filter(person =>
               person.shortName.toLowerCase().includes(filter.q.toLowerCase())
             )

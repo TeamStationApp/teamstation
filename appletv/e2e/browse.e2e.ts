@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+
 import { tvFixture } from './fixture'
 
 async function main(): Promise<void> {
@@ -22,8 +24,11 @@ async function main(): Promise<void> {
     './dist/cjs/index.js'
   )
   const h = await tvFixture()
-  const daemon = await MaestroD.connect({ name: 'appleTvNative' })
+  const daemon = await MaestroD.connect({
+    name: process.env.MAESTRO_D ?? 'appleTvNative'
+  })
   const tv = await daemon.attach({ device, platform: 'ios' })
+  let recording: ReturnType<typeof spawn> | undefined
   try {
     await mkdir(artifacts, { recursive: true })
     await tv.launchApp({
@@ -39,6 +44,10 @@ async function main(): Promise<void> {
       timeout: 60000
     })
     await tv.tapOn({ text: 'Dismiss', optional: true, timeout: 1000 })
+    await writeFile(
+      path.join(artifacts, 'login-after.png'),
+      await tv.screenshot()
+    )
     const findCode = (node: any): string | undefined =>
       /[A-Z]{4}[–-][A-Z]{4}/.exec(String(node.text ?? ''))?.[0] ??
       node.children?.map(findCode).find(Boolean)
@@ -49,25 +58,53 @@ async function main(): Promise<void> {
       204
     )
     await tv.assertVisible({ text: 'Recent Games', timeout: 30000 })
-    await writeFile(path.join(artifacts, 'tv-home.png'), await tv.screenshot())
+    await tv.assertVisible({ id: 'tv-hero-video', timeout: 15000 })
+    recording = spawn(
+      'xcrun',
+      [
+        'simctl',
+        'io',
+        device,
+        'recordVideo',
+        '--force',
+        path.join(artifacts, 'preview-focus.mp4')
+      ],
+      { stdio: 'ignore' }
+    )
+    await writeFile(
+      path.join(artifacts, 'home-after.png'),
+      await tv.screenshot()
+    )
+    await tv.pressKey({ key: 'DPAD_DOWN' })
+    await tv.pressKey({ key: 'DPAD_RIGHT' })
+    await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await writeFile(
+      path.join(artifacts, 'focus-after.png'),
+      await tv.screenshot()
+    )
+    await tv.pressKey({ key: 'DPAD_LEFT' })
+    await tv.pressKey({ key: 'DPAD_UP' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
     await tv.pressKey({ key: 'DPAD_UP' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
     await tv.tapOn({ id: 'tv-search' })
+    await tv.assertVisible({ id: 'tv-native-search-field', timeout: 10000 })
     await tv.inputText({ text: 'Demo' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
-    await tv.pressKey({ key: 'BACK' })
-    await tv.assertNotVisible({ text: 'done', timeout: 10000 })
     await tv.assertVisible({ id: 'tv-search-results', timeout: 15000 })
     await tv.assertVisible({ text: 'Demo Comets', timeout: 15000 })
     await tv.assertNotVisible({ text: 'Searching…', timeout: 15000 })
     await writeFile(
-      path.join(artifacts, 'tv-search.png'),
+      path.join(artifacts, 'search-after.png'),
       await tv.screenshot()
     )
-    await tv.tapOn({ text: 'Demo Comets' })
+    await tv.pressKey({ key: 'DPAD_DOWN' })
+    await tv.pressKey({ key: 'DPAD_CENTER' })
     await tv.assertVisible({ text: 'October 2026', timeout: 15000 })
-    await writeFile(path.join(artifacts, 'tv-team.png'), await tv.screenshot())
+    await writeFile(
+      path.join(artifacts, 'team-after.png'),
+      await tv.screenshot()
+    )
     for (let row = 0; row < 4; row++) {
       await tv.pressKey({ key: 'DPAD_DOWN' })
       await tv.waitForAnimationToEnd({ timeout: 1500 })
@@ -75,7 +112,10 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'DPAD_RIGHT' })
     await tv.pressKey({ key: 'DPAD_LEFT' })
     await tv.assertVisible({ text: 'September 2026' })
-    await writeFile(path.join(artifacts, 'tv-team-month-scroll.png'), await tv.screenshot())
+    await writeFile(
+      path.join(artifacts, 'tv-team-month-scroll.png'),
+      await tv.screenshot()
+    )
     await tv.pressKey({ key: 'BACK' })
     await tv.assertVisible({ id: 'tv-page-home' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
@@ -85,13 +125,15 @@ async function main(): Promise<void> {
     await tv.tapOn({ id: 'tv-search' })
     await tv.inputText({ text: 'Babe' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
-    await tv.pressKey({ key: 'BACK' })
-    await tv.assertNotVisible({ text: 'done', timeout: 10000 })
-    await tv.assertVisible({ text: 'Babe R', timeout: 15000 })
-    await tv.tapOn({ text: 'Babe R' })
+    await tv.assertVisible({ id: 'tv-search-results', timeout: 15000 })
+    await tv.assertNotVisible({ text: 'Searching…', timeout: 15000 })
+    await tv.assertVisible({ id: 'player:.*', timeout: 15000 })
+    await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.pressKey({ key: 'DPAD_DOWN' })
+    await tv.pressKey({ key: 'DPAD_CENTER' })
     await tv.assertVisible({ text: 'Recent Games', timeout: 15000 })
     await writeFile(
-      path.join(artifacts, 'tv-player-page.png'),
+      path.join(artifacts, 'player-after.png'),
       await tv.screenshot()
     )
     await tv.pressKey({ key: 'DPAD_DOWN' })
@@ -100,6 +142,27 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'BACK' })
     await tv.assertVisible({ id: 'tv-page-home' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.tapOn({ id: 'tv-search' })
+    await tv.inputText({ text: 'zzzzzz' })
+    await tv.assertVisible({
+      text: 'No accessible teams or players found.',
+      timeout: 15000
+    })
+    await tv.pressKey({ key: 'BACK' })
+    await tv.assertVisible({ id: 'tv-page-home', timeout: 10000 })
+    h.tvMedia.searchFail = true
+    await tv.tapOn({ id: 'tv-search' })
+    await tv.inputText({ text: 'Demo' })
+    await tv.assertVisible({
+      text: 'Search is unavailable. Try again.',
+      timeout: 15000
+    })
+    h.tvMedia.searchFail = false
+    await tv.pressKey({ key: 'DPAD_DOWN' })
+    await tv.pressKey({ key: 'DPAD_CENTER' })
+    await tv.assertVisible({ id: 'team:tem_comets', timeout: 15000 })
+    await tv.pressKey({ key: 'BACK' })
+    await tv.assertVisible({ id: 'tv-page-home', timeout: 10000 })
     console.log(
       'PASS native TV home, remote directions, authorized team/player search, monthly team page, filtered player page and Back navigation'
     )
@@ -111,6 +174,14 @@ async function main(): Promise<void> {
     await writeFile('/private/tmp/tv-browse-failure.png', await tv.screenshot())
     throw error
   } finally {
+    if (recording?.exitCode === null) {
+      recording.kill('SIGINT')
+      await new Promise<void>(resolve =>
+        recording!.once('exit', () => {
+          resolve()
+        })
+      )
+    }
     await tv.stopApp({ appId: 'app.teamstation.tv' })
     await h.close()
   }

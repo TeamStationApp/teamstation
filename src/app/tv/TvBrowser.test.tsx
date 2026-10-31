@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { BackHandler } from 'react-native'
 
 import {
   asTeamSummary,
@@ -13,6 +14,8 @@ import {
 import { TvBrowser, type TvPlayRequest } from './TvBrowser'
 
 let root: Root | undefined
+let remoteBack: (() => boolean | null | undefined) | undefined
+const originalBack = BackHandler.addEventListener.bind(BackHandler)
 const games = Array.from({ length: 55 }, (_, i) =>
   asVideoGame({
     id: `game-${i}`,
@@ -97,6 +100,15 @@ const pause = async (ms = 20): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
 async function render(): Promise<void> {
+  BackHandler.addEventListener = (_event, handler) => {
+    remoteBack = () =>
+      handler({ type: 'hardwareBackPress', timeStamp: Date.now() })
+    return {
+      remove() {
+        remoteBack = undefined
+      }
+    }
+  }
   const host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
@@ -138,12 +150,20 @@ async function search(query: string): Promise<void> {
   })
 }
 async function button(label: string): Promise<void> {
+  if (label === 'Back' || label === 'Close search') {
+    await act(async () => {
+      remoteBack?.()
+      await pause()
+    })
+    return
+  }
   await click(`[role="button"][aria-label="${label}"]`)
 }
 afterEach(async () => {
   await act(async () => {
     root?.unmount()
   })
+  BackHandler.addEventListener = originalBack
   root = undefined
   document.body.innerHTML = ''
   played.length = 0

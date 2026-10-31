@@ -5,20 +5,28 @@ export function gameDate(
 ): string {
   if (game.startAt === null || !Number.isFinite(Date.parse(game.startAt)))
     return 'Date to be announced'
+  const format = (timeZone: string): string => {
+    const date = new Date(game.startAt!)
+    const day = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      month: 'long',
+      day: 'numeric'
+    }).format(date)
+    const time = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    })
+      .format(date)
+      .replace(':00', '')
+      .toLowerCase()
+    return `${day} at ${time}`
+  }
   try {
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: game.timezone,
-      dateStyle: 'medium',
-      timeStyle: 'short'
-    }).format(new Date(game.startAt))
+    return format(game.timezone)
   } catch {
-    return (
-      new Intl.DateTimeFormat('en-US', {
-        timeZone: 'UTC',
-        dateStyle: 'medium',
-        timeStyle: 'short'
-      }).format(new Date(game.startAt)) + ' UTC'
-    )
+    return format('UTC') + ' UTC'
   }
 }
 export function monthOf(game: Pick<VideoGame, 'startAt' | 'timezone'>): string {
