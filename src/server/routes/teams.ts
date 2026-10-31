@@ -11,6 +11,7 @@ import {
 import type { PlayerRsvpCounts } from '../../common/eventInfo'
 import { scoreboardOpen } from '../../common/scoreboard'
 import { inningsPitched } from '../../common/statExtras'
+import { asUserId } from '../../common/userId'
 import {
   adminScopes,
   canKeepSongs,
@@ -20,6 +21,7 @@ import {
   canSeeGame,
   canSeeTeam,
   givenRolesOnTeams,
+  guardedPlayers,
   isHeadCoach,
   nonMemberTeam,
   openablePeople,
@@ -27,12 +29,18 @@ import {
   type VisibleScopes,
   visibleScopes
 } from '../access'
+import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
 import { creditsForHighlight } from '../events/credits'
 import { teamEventDetail } from '../events/eventInfo'
 import { teamPlayerRsvps } from '../events/playerRsvps'
+import {
+  accessibleVideoGames,
+  hasVideoFilter,
+  videoCollectionFilter
+} from '../events/videoCollections'
 import { whyEmpty } from '../events/whyEmpty'
 import { resolvedFenceDistance } from '../games/fenceDistance'
 import { gameIsLive } from '../games/gameLive'
@@ -124,6 +132,47 @@ export function teamRoutes(
     withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
+      if (hasVideoFilter(req.query)) {
+        const filter = videoCollectionFilter(req.query)
+        const games = await accessibleVideoGames(db, actor, filter)
+        const ids = [
+          ...new Set(games.flatMap(game => [game.homeTeamId, game.awayTeamId]))
+        ]
+        const teams =
+          ids.length === 0
+            ? []
+            : await db
+                .selectFrom('teams')
+                .select([
+                  'id',
+                  'name',
+                  'short_name as shortName',
+                  'logo_path as logoPath',
+                  'kind'
+                ])
+                .where('id', 'in', ids)
+                .where('merged_into', 'is', null)
+                .execute()
+        res.json(
+          teams
+            .filter(team =>
+              team.name.toLowerCase().includes(filter.q.toLowerCase())
+            )
+            .sort(
+              (a, b) =>
+                [a.name.localeCompare(b.name), a.id.localeCompare(b.id)].find(
+                  order => order !== 0
+                ) ?? 0
+            )
+            .slice(filter.offset, filter.offset + filter.limit)
+            .map(team => ({
+              ...team,
+              logoUrl: imageUrl(media.space, team.logoPath),
+              record: null
+            }))
+        )
+        return
+      }
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
 
       const externalIds = externalIdsAsked(req.query.externalId)
@@ -720,6 +769,19 @@ export function teamRoutes(
     '/videos/:videoId/highlights',
     withAsync(async (req, res) => {
       const videoId = pathParam(req.params.videoId)
+      const personalized = req.query.personalized !== undefined
+      let participant: string | undefined
+      if (req.query.participant !== undefined) {
+        if (!personalized)
+          throw badRequest('participant requires personalized=1')
+        try {
+          participant = asUserId(req.query.participant)
+        } catch {
+          throw badRequest('participant must be a user id')
+        }
+      }
+      if (personalized && req.query.personalized !== '1')
+        throw badRequest('personalized must be 1')
 
       const video = await db
         .selectFrom('videos')
@@ -732,7 +794,10 @@ export function teamRoutes(
           'videos.sync_offset_sec as syncOffsetSec',
           'videos.duration_sec as durationSec',
           'videos.hidden as hidden',
-          'games.ingest_status as ingestStatus'
+          'games.ingest_status as ingestStatus',
+          'games.home_team_id as homeTeamId',
+          'games.away_team_id as awayTeamId',
+          'games.season_id as seasonId'
         ])
         .where('videos.id', '=', videoId)
         .executeTakeFirst()
@@ -741,6 +806,33 @@ export function teamRoutes(
       // the video they seek into is for members. A video that is not there,
       // or hidden, is 404, as it is for playback.
       if (video == null || video.hidden) throw notFound()
+      const preferredIds = new Set<number>()
+      if (personalized) {
+        const actor = req.actor
+        if (actor == null) throw unauthorized()
+        if (
+          !canSeeGame(
+            await visibleScopes(db, actor.userId, actor.isAdmin),
+            video
+          )
+        )
+          throw notFound()
+        const users =
+          participant === undefined
+            ? [actor.userId, ...(await guardedPlayers(db, actor.userId))]
+            : [participant]
+        const aliases = (
+          await Promise.all(
+            users.map(async id => (await onePerson(db, id)).userIds)
+          )
+        ).flat()
+        const ids = await db
+          .selectFrom('gumbo_ids')
+          .select('gumbo_id')
+          .where('user_id', 'in', aliases)
+          .execute()
+        for (const row of ids) preferredIds.add(row.gumbo_id)
+      }
 
       // A game whose plays did not add up is not offered as highlights until a
       // manager has accepted it: a wrong seek is worse than none.
@@ -787,6 +879,20 @@ export function teamRoutes(
       const now = Date.now()
       const withStills = highlights.map(highlight => ({
         ...highlight,
+        ...(personalized
+          ? {
+              preferred: (credits.get(highlight.eventId) ?? []).some(
+                credit =>
+                  (credit.creditUserId != null &&
+                    preferredIds.has(credit.creditUserId)) ||
+                  credit.assists.some(
+                    assist =>
+                      assist.creditUserId != null &&
+                      preferredIds.has(assist.creditUserId)
+                  )
+              )
+            }
+          : {}),
         stillUrl: stillUrl(media, videoId, highlight.playOffsetSec, now)
       }))
 
@@ -795,7 +901,10 @@ export function teamRoutes(
         // How many plays were left out because nobody could be named on them.
         // An empty list can then say which kind of empty it is.
         droppedCount: computed.dropped,
-        highlights: withStills
+        highlights:
+          participant === undefined
+            ? withStills
+            : withStills.filter(clip => clip.preferred === true)
       })
 
       // Answered first, then the frames are cut. The plan has ingest pre-warm

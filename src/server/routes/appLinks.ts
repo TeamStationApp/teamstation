@@ -44,14 +44,26 @@ export function appLinkRoutes(options: AppLinkRouteOptions): Router {
   }
 
   router.get('/.well-known/apple-app-site-association', (req, res, next) => {
-    const apple = appFor(req)?.apple
+    const app = appFor(req)
+    const apple = app?.apple
     if (apple == null) {
       next()
       return
     }
     sendJson(res, {
       applinks: {
-        details: [{ appIDs: apple.appIds, components: [{ '/': '/signin/*' }] }]
+        details: [
+          {
+            appIDs: apple.appIds,
+            components: [
+              { '/': '/signin/*' },
+              ...(app?.tvLogin === true ||
+              app?.origin === 'https://app.teamstation.app'
+                ? [{ '/': '/tv-login' }]
+                : [])
+            ]
+          }
+        ]
       }
     })
   })
@@ -72,6 +84,14 @@ export function appLinkRoutes(options: AppLinkRouteOptions): Router {
         }
       }
     ])
+  })
+
+  router.get('/tv-login', (_req, res, next) => {
+    // The app shell renders confirmation. Link previews must neither spend
+    // the credential nor forward it as a referrer or cache a private page.
+    res.set('cache-control', 'no-store')
+    res.set('referrer-policy', 'no-referrer')
+    next()
   })
 
   router.get('/signin/:token', (req, res, next) => {

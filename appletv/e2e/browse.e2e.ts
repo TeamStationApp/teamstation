@@ -1,0 +1,121 @@
+import assert from 'node:assert/strict'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import path from 'node:path'
+import { tvFixture } from './fixture'
+
+async function main(): Promise<void> {
+  const {
+    TV_SIMULATOR_UDID: device,
+    TV_ARTIFACTS: artifacts,
+    MAESTRO_D_CLIENT_ROOT: clientRoot,
+    TV_METRO_URL: metro
+  } = process.env
+  assert(
+    device !== undefined &&
+      artifacts !== undefined &&
+      clientRoot !== undefined &&
+      metro !== undefined,
+    'Set simulator, artifacts, client root and Metro URL'
+  )
+  const { MaestroD } = createRequire(path.join(clientRoot, 'package.json'))(
+    './dist/cjs/index.js'
+  )
+  const h = await tvFixture()
+  const daemon = await MaestroD.connect({ name: 'appleTvNative' })
+  const tv = await daemon.attach({ device, platform: 'ios' })
+  try {
+    await mkdir(artifacts, { recursive: true })
+    await tv.launchApp({
+      appId: 'app.teamstation.tv',
+      stopApp: true,
+      environment: {
+        TV_API_BASE_URL: h.origin + '/api/v1',
+        TV_METRO_URL: metro
+      }
+    })
+    await tv.assertVisible({
+      text: 'Your games. On the big screen.',
+      timeout: 60000
+    })
+    await tv.tapOn({ text: 'Dismiss', optional: true, timeout: 1000 })
+    const findCode = (node: any): string | undefined =>
+      /[A-Z]{4}[–-][A-Z]{4}/.exec(String(node.text ?? ''))?.[0] ??
+      node.children?.map(findCode).find(Boolean)
+    const code = findCode(await tv.hierarchy())
+    assert(code !== undefined)
+    assert.equal(
+      (await h.request('POST', '/auth/tv/approve', { code })).status,
+      204
+    )
+    await tv.assertVisible({ text: 'Recent Games', timeout: 30000 })
+    await writeFile(path.join(artifacts, 'tv-home.png'), await tv.screenshot())
+    await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.pressKey({ key: 'DPAD_UP' })
+    await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.tapOn({ id: 'tv-search' })
+    await tv.inputText({ text: 'Demo' })
+    await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.pressKey({ key: 'BACK' })
+    await tv.assertNotVisible({ text: 'done', timeout: 10000 })
+    await tv.assertVisible({ id: 'tv-search-results', timeout: 15000 })
+    await tv.assertVisible({ text: 'Demo Comets', timeout: 15000 })
+    await tv.assertNotVisible({ text: 'Searching…', timeout: 15000 })
+    await writeFile(
+      path.join(artifacts, 'tv-search.png'),
+      await tv.screenshot()
+    )
+    await tv.tapOn({ text: 'Demo Comets' })
+    await tv.assertVisible({ text: 'October 2026', timeout: 15000 })
+    await writeFile(path.join(artifacts, 'tv-team.png'), await tv.screenshot())
+    for (let row = 0; row < 4; row++) {
+      await tv.pressKey({ key: 'DPAD_DOWN' })
+      await tv.waitForAnimationToEnd({ timeout: 1500 })
+    }
+    await tv.pressKey({ key: 'DPAD_RIGHT' })
+    await tv.pressKey({ key: 'DPAD_LEFT' })
+    await tv.assertVisible({ text: 'September 2026' })
+    await writeFile(path.join(artifacts, 'tv-team-month-scroll.png'), await tv.screenshot())
+    await tv.pressKey({ key: 'BACK' })
+    await tv.assertVisible({ id: 'tv-page-home' })
+    await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.pressKey({ key: 'DPAD_UP' })
+    await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.tapOn({ id: 'tv-search' })
+    await tv.inputText({ text: 'Babe' })
+    await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.pressKey({ key: 'BACK' })
+    await tv.assertNotVisible({ text: 'done', timeout: 10000 })
+    await tv.assertVisible({ text: 'Babe R', timeout: 15000 })
+    await tv.tapOn({ text: 'Babe R' })
+    await tv.assertVisible({ text: 'Recent Games', timeout: 15000 })
+    await writeFile(
+      path.join(artifacts, 'tv-player-page.png'),
+      await tv.screenshot()
+    )
+    await tv.pressKey({ key: 'DPAD_DOWN' })
+    await tv.pressKey({ key: 'DPAD_RIGHT' })
+    await tv.pressKey({ key: 'DPAD_LEFT' })
+    await tv.pressKey({ key: 'BACK' })
+    await tv.assertVisible({ id: 'tv-page-home' })
+    await tv.waitForAnimationToEnd({ timeout: 3000 })
+    console.log(
+      'PASS native TV home, remote directions, authorized team/player search, monthly team page, filtered player page and Back navigation'
+    )
+  } catch (error) {
+    await writeFile(
+      '/private/tmp/tv-browse-hierarchy.json',
+      JSON.stringify(await tv.hierarchy(), null, 2)
+    )
+    await writeFile('/private/tmp/tv-browse-failure.png', await tv.screenshot())
+    throw error
+  } finally {
+    await tv.stopApp({ appId: 'app.teamstation.tv' })
+    await h.close()
+  }
+}
+main().catch((error: unknown) => {
+  console.error(error)
+  process.exitCode = 1
+})
