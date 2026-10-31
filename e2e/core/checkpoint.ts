@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { goldenKey, readGoldenManifest } from './goldens'
 import {
   checkInvariants,
@@ -5,6 +7,7 @@ import {
   type InvariantReport,
   type ServerError
 } from './invariants'
+import type { Budget, Judge, MismatchNote } from './judge'
 import type { LocalSettings } from './settings'
 import type { Surface } from './spec'
 import { compareGolden, type GoldenOptions, type VisualVerdict } from './visual'
@@ -23,9 +26,21 @@ export interface CheckpointSpec {
   /** Reads stored state back; throws when what was shown was not saved. */
   readBack?: () => Promise<void>
   golden?: GoldenOptions
+  /** A plain-words statement about what no golden can pin, for the AI judge. */
+  ask?: string
 }
 
 export type LayerVerdict = 'pass' | 'fail' | 'not-run'
+
+/** What the judge said. Only a judge at the bar can fail a test. */
+export interface AskRecord {
+  question: string
+  basis: 'INFERRED'
+  verdict: 'pass' | 'fail' | 'needs-review'
+  detail: string
+  model?: string
+  costUsd: number
+}
 
 /** What one checkpoint found. Measured layers say so; AI's judgement never does. */
 export interface CheckpointRecord {
@@ -35,7 +50,17 @@ export interface CheckpointRecord {
   expect: LayerVerdict
   readBack: LayerVerdict
   visual?: VisualVerdict
+  /** Advisory only: never changes the visual verdict. */
+  annotation?: MismatchNote
+  ask?: AskRecord
   failure?: string
+}
+
+/** The judge a run may use. Absent when no key is configured. */
+export interface JudgeRuntime {
+  judge: Judge | undefined
+  budget: Budget
+  authoritative: boolean
 }
 
 /** The device a checkpoint looks at, with what its checks need to know about it. */
@@ -55,6 +80,7 @@ export interface CheckpointEnvironment {
   serverErrors: () => Promise<ServerError[] | undefined>
   alone: boolean
   worldIds: () => string[]
+  judges?: JudgeRuntime
 }
 
 export class Checkpoints {
@@ -143,17 +169,86 @@ export class Checkpoints {
       })
       if (record.visual.verdict === 'fail') {
         record.failure = record.visual.detail ?? 'the screen moved'
+        await this.annotate(record)
       }
     }
+
+    if (spec.ask != null) {
+      record.ask = await this.askJudge(spec.ask, outcome.frame)
+      if (record.ask.verdict === 'fail') {
+        record.failure ??= record.ask.detail
+      }
+    }
+  }
+
+  /** What a mismatch looks like, for the reader. It cannot change the verdict. */
+  private async annotate(record: CheckpointRecord): Promise<void> {
+    const runtime = this.env.judges
+    const diffPath = record.visual?.diffPath
+    if (runtime?.judge == null || diffPath == null) return
+    try {
+      record.annotation = await runtime.judge.annotate(
+        readFileSync(diffPath),
+        runtime.budget
+      )
+    } catch (error) {
+      console.error(`No annotation: ${String(error)}`)
+    }
+  }
+
+  private async askJudge(
+    question: string,
+    frame: Uint8Array
+  ): Promise<AskRecord> {
+    const runtime = this.env.judges
+    const review = (detail: string): AskRecord => ({
+      question,
+      basis: 'INFERRED',
+      verdict: 'needs-review',
+      detail,
+      costUsd: 0
+    })
+    if (runtime?.judge == null) return review('no judge is configured')
+    let answer
+    try {
+      answer = await runtime.judge.ask(
+        question,
+        { kind: 'image', png: frame },
+        runtime.budget
+      )
+    } catch (error) {
+      return review(`the judge failed: ${String(error)}`)
+    }
+    if (answer == null) return review('the AI budget is spent')
+    const made = {
+      question,
+      basis: 'INFERRED' as const,
+      detail: answer.observed,
+      model: answer.model,
+      costUsd: answer.costUsd
+    }
+    if (answer.verdict === 'unsure') {
+      return { ...made, verdict: 'needs-review' }
+    }
+    if (answer.verdict === 'fail' && !runtime.authoritative) {
+      return {
+        ...made,
+        verdict: 'needs-review',
+        detail: `${answer.observed} (this judge has not reached the bar)`
+      }
+    }
+    return { ...made, verdict: answer.verdict }
   }
 }
 
 /** A run's status from its checkpoints, once its scenario finished without throwing. */
 export function statusFromCheckpoints(records: CheckpointRecord[]): {
-  status: 'passed' | 'failed' | 'unbaselined'
+  status: 'passed' | 'failed' | 'unbaselined' | 'needs-review'
   reason?: string
 } {
-  const moved = records.filter(row => row.visual?.verdict === 'fail')
+  const moved = records.filter(
+    row => row.visual?.verdict === 'fail' || row.ask?.verdict === 'fail'
+  )
   if (moved.length > 0) {
     return {
       status: 'failed',
@@ -161,6 +256,15 @@ export function statusFromCheckpoints(records: CheckpointRecord[]): {
         .map(
           row => `Checkpoint "${row.id}": ${row.failure ?? 'golden mismatch'}`
         )
+        .join('; ')
+    }
+  }
+  const unsure = records.filter(row => row.ask?.verdict === 'needs-review')
+  if (unsure.length > 0) {
+    return {
+      status: 'needs-review',
+      reason: unsure
+        .map(row => `Checkpoint "${row.id}": ${row.ask?.detail ?? ''}`)
         .join('; ')
     }
   }

@@ -1135,6 +1135,73 @@ describe('the command line', function () {
     }
   })
 
+  it('names what the judge commands want, and blocks without a corpus or key', async function () {
+    const failure = async (argv: string[]): Promise<unknown> => {
+      try {
+        await main(argv)
+      } catch (error) {
+        return error
+      }
+      return undefined
+    }
+    const root = tempRoot()
+    const settings = join(root, 'local.json')
+    const env = { ...process.env }
+    for (const name of ['GIT_DIR', 'GIT_INDEX_FILE', 'GIT_WORK_TREE']) {
+      env[name] = undefined
+    }
+    const origin = join(root, 'teamstation-e2e-goldens.git')
+    execFileSync('git', ['init', '-q', '--bare', '-b', 'master', origin], {
+      env
+    })
+    const store = join(root, 'store')
+    execFileSync('git', ['clone', '-q', origin, store], {
+      env,
+      stdio: 'ignore'
+    })
+    for (const [name, value] of [
+      ['user.name', 'Pat Neshek'],
+      ['user.email', 'pat@example.test']
+    ]) {
+      execFileSync('git', ['config', name, value], { cwd: store, env })
+    }
+    writeFileSync(settings, JSON.stringify({ goldenStore: store }))
+    const saved = process.env.E2E_LOCAL_SETTINGS
+    process.env.E2E_LOCAL_SETTINGS = settings
+    try {
+      const message = async (argv: string[]): Promise<string> =>
+        ((await failure(argv)) as Error).message
+      expect(await message(['judge-eval'])).includes('--judge haiku')
+      const empty = await failure(['judge-eval', '--judge', 'haiku'])
+      expect(empty).instanceOf(BlockedError)
+      expect((empty as Error).message).includes('corpus is empty')
+      expect(await message(['judge-corpus'])).includes('add or add-log')
+      expect(await message(['judge-corpus', 'add'])).includes(
+        '--false-question'
+      )
+      expect(await message(['judge-corpus', 'add-log'])).includes('--expected')
+
+      const log = join(root, 'failed.log')
+      writeFileSync(log, 'token=abc12345 the run failed')
+      const added = await quietly([
+        'judge-corpus',
+        'add-log',
+        log,
+        '--question',
+        'Did the run fail?',
+        '--expected',
+        'fail'
+      ])
+      expect(added.out).includes('"added": 1')
+      const noKey = await failure(['judge-eval', '--judge', 'haiku'])
+      expect(noKey).instanceOf(BlockedError)
+      expect((noKey as Error).message).includes('anthropic')
+    } finally {
+      if (saved == null) delete process.env.E2E_LOCAL_SETTINGS
+      else process.env.E2E_LOCAL_SETTINGS = saved
+    }
+  })
+
   it('runs a scenario and returns its exit code', async function () {
     const blocked = await quietly([
       'run',
