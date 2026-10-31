@@ -26,6 +26,10 @@ import {
   type Lineup,
   type LineupPerson
 } from '../../common/scoring/lineupHistory'
+import {
+  appearedIn,
+  reconcileRoster
+} from '../../common/scoring/rosterAvailability'
 import { ScoringSession } from '../../common/scoring/session'
 import {
   shownWithDefault,
@@ -50,6 +54,7 @@ import { type Database, makeDatabase } from '../db/database'
 import { atBatInProgress } from '../events/atBatInProgress'
 import { postGamePlays, readPlays, RESET_SINCE_READ } from '../events/postPlays'
 import { createGuestPlayer } from '../games/guestPlayers'
+import { gameAvailability } from '../games/rosterAvailability'
 import { jsonBody } from '../jsonBody'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
@@ -976,7 +981,8 @@ describe("saving a side's lineup (U8)", function () {
     movedRoster: makeId('game'),
     movedGuest: makeId('game'),
     backAsGuest: makeId('game'),
-    bothHeld: makeId('game')
+    bothHeld: makeId('game'),
+    batted: makeId('game')
   }
   const TEAMS = {
     away: { id: away, name: 'Visitors' },
@@ -1969,6 +1975,72 @@ describe("saving a side's lineup (U8)", function () {
       expect(hosts.players.map(player => player.gumboId)).not.includes(mover())
       const theirs = await save(games.bothHeld, COACH, hosts)
       expect(theirs.status, JSON.stringify(theirs.body)).equals(200)
+    })
+
+    it('leaves somebody who batted with their team, on the body the app builds', async function () {
+      const state = await score(games.batted, [{ type: 'pitch', call: 'B' }])
+      const batter = state.liveData.plays.currentPlay!.matchup.batter.id
+      const moved = userIdOfGumbo(batter)
+      await db!
+        .deleteFrom('memberships')
+        .where('user_id', '=', moved)
+        .where('team_id', '=', away)
+        .execute()
+      await db!
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: moved,
+          team_id: home,
+          role: 'member',
+          is_player: true
+        })
+        .execute()
+      try {
+        const row = await db!
+          .selectFrom('games')
+          .selectAll()
+          .where('id', '=', games.batted)
+          .executeTakeFirstOrThrow()
+        const available = await gameAvailability(db!, row)
+        const reconciled = reconcileRoster(
+          setupOf(state),
+          state.gameData.teams,
+          available.roster,
+          available.guestPlayers,
+          available.unrostered,
+          appearedIn(state)
+        )
+        const hosts = bodyOf(
+          {
+            ...state,
+            gameData: { ...state.gameData, players: reconciled.players },
+            liveData: {
+              ...state.liveData,
+              boxscore: { teams: reconciled.sides }
+            }
+          },
+          'home'
+        )
+        expect(hosts.players.map(player => player.gumboId)).not.includes(batter)
+        const saved = await save(games.batted, COACH, hosts)
+        expect(saved.status, JSON.stringify(saved.body)).equals(200)
+      } finally {
+        await db!
+          .deleteFrom('memberships')
+          .where('user_id', '=', moved)
+          .execute()
+        await db!
+          .insertInto('memberships')
+          .values({
+            id: makeId('membership'),
+            user_id: moved,
+            team_id: away,
+            role: 'member',
+            is_player: true
+          })
+          .execute()
+      }
     })
 
     it('lets the team they joined save them', async function () {

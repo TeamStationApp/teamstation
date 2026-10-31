@@ -423,19 +423,16 @@ function fromDocuments(start: GameState, plays: GumboPlay[]): GameState {
       },
       count: { balls: 0, strikes: 0, outs },
       matchup: {
-        // Who appeared, though the rest of this play is not ours to know.
-        batter: {
-          id: sessionId(state, doc?.matchup?.batter) ?? 0,
-          fullName: ''
-        },
-        pitcher: {
-          id: sessionId(state, doc?.matchup?.pitcher) ?? 0,
-          fullName: ''
-        },
+        batter: { id: 0, fullName: '' },
+        pitcher: { id: 0, fullName: '' },
         batSide: { code: 'R' }
       },
       runners: [],
       playEvents: [],
+      // Who appeared, for nothing that counts a line: this play is not ours.
+      appeared: [doc?.matchup?.batter, doc?.matchup?.pitcher].flatMap(
+        raw => sessionId(state, raw) ?? []
+      ),
       source: {
         system: 'teamstation',
         teamstation: { version: 'estimated-v1', outcome: '' }

@@ -705,4 +705,64 @@ describe('atomic game availability', function () {
         .execute()
     }
   })
+  it('leaves somebody who played with their team when a game under way changes', async () => {
+    const id = 'gam_under_way_both'
+    const pitched = score(fixture(), { type: 'pitch', call: 'B' })
+    const pitcher = pitched.liveData.plays.currentPlay!.matchup.pitcher.id
+    await db
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: 'team-home',
+        away_team_id: 'team-away',
+        start_at: new Date(),
+        unrostered: JSON.stringify({ 'team-away': [pitcher], 'team-home': [] }),
+        currentPlay: currentDocumentOf(
+          pitched,
+          pitched.liveData.plays.currentPlay,
+          {
+            setupBefore: setupOf(fixture()),
+            actions: [{ type: 'pitch', call: 'B' }]
+          }
+        )
+      })
+      .execute()
+    // Their coach runs both teams, as somebody on both rosters often has.
+    const grant = makeId('scopeRole')
+    await db
+      .insertInto('scope_roles')
+      .values({
+        id: grant,
+        user_id: actor.userId,
+        scope_type: 'team',
+        scope_id: 'team-home',
+        role: 'coach'
+      })
+      .execute()
+    const membership = makeId('membership')
+    await db
+      .insertInto('memberships')
+      .values({
+        id: membership,
+        user_id: userIdOfGumbo(pitcher),
+        team_id: 'team-away',
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    try {
+      await setRostered(db, actor, id, {
+        side: 'home',
+        userId: userIdOfGumbo(pitcher),
+        rostered: false
+      })
+      await toggle(id, pitcher, true)
+      expect((await open(id)).state.gameData.players[pitcher].teamId).equals(
+        'team-home'
+      )
+    } finally {
+      await db.deleteFrom('memberships').where('id', '=', membership).execute()
+      await db.deleteFrom('scope_roles').where('id', '=', grant).execute()
+    }
+  })
 })

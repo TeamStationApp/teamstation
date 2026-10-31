@@ -4929,7 +4929,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'player: 201 with their entry and `notice` (`requestId`, and `told`: guardians, ' +
             'player or coaches) when their side was told, or ' +
             '202 `{ pending: { requestId } }` when their side must accept first. Any other key ' +
-            'beside `userId` is 400; a player already on either team or a guest of either side is 409.',
+            'beside `userId` is 400; a player already on either team, a guest of either side, or ' +
+            'somebody who has played for the other team in this game is 409.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {

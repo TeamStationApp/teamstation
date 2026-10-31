@@ -527,6 +527,7 @@ async function playedGames(
             .select('events.id')
             .whereRef('events.gameId', '=', 'games.id')
             .where('events.battingTeamId', '=', terms.teamId)
+            .where(isRealPlaySql)
             .where(
               sql<string>`events.gumbo->'matchup'->'batter'->>'id'`,
               'in',
@@ -540,6 +541,7 @@ async function playedGames(
             .innerJoin('events', 'events.id', 'event_players.event_id')
             .select('event_players.id')
             .whereRef('events.gameId', '=', 'games.id')
+            .where(isRealPlaySql)
             .where(
               'event_players.gumbo_id',
               'in',
@@ -1092,7 +1094,7 @@ async function decideOnce(
       game.status === 'cancelled' ||
       side !== terms.teamId ||
       (await inGameAs(trx, game, person.userIds)) != null ||
-      (await playedForOther(trx, game.id, person.userIds, terms.teamId))
+      (await playedForOther(trx, game, person.userIds, terms.teamId))
     if (lapsed) {
       await resolve('expired')
       return

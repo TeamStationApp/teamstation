@@ -22,7 +22,13 @@ import { isRecord } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
 import { type Role, ROLES } from '../../common/roles'
 import { asFieldSize } from '../../common/venues'
-import { canSeeGame, canSeeTeam, openAddsOf, visibleScopes } from '../access'
+import {
+  canSeeGame,
+  canSeeTeam,
+  mayEditName,
+  openAddsOf,
+  visibleScopes
+} from '../access'
 import { type OnePerson, onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
@@ -273,18 +279,22 @@ async function eventPeople(
     .select(['user_id', 'is_player', 'team_id'])
     .where('team_id', 'in', event.teamIds)
     .execute()
-  // Not the guardians of somebody every team here holds only by an open add.
-  const open = await openAddsOf(db, event.teamIds)
-  const settled = new Set<string>()
+  // Not the guardians of somebody this team holds only by an open add, for a
+  // reader the add keeps out: this list is one team's, as its roster is.
+  const open = await openAddsOf(db, [event.teamId])
+  const held = new Set<string>()
   for (const member of eventMembers)
     if (
-      member.is_player &&
-      open.get(member.team_id)?.has(member.user_id) !== true
+      member.team_id === event.teamId &&
+      open.get(member.team_id)?.has(member.user_id) === true
     )
-      settled.add((await identity(member.user_id)).userId)
+      held.add((await identity(member.user_id)).userId)
   const playerAliases = new Set<string>()
   for (const player of activePlayers)
-    if (settled.has(player.id))
+    if (
+      !held.has(player.id) ||
+      (await mayEditName(db, actor.userId, player.id, actor))
+    )
       for (const alias of (await identity(player.id)).userIds)
         playerAliases.add(alias)
   const guardianLinks =

@@ -307,7 +307,7 @@ export async function addExistingGuest(
     await lockPlayerAdds(trx, person.userId)
     await guestAlreadyInGame(trx, game, person.userIds)
     // Before anybody is told: somebody stays with the team they played for.
-    if (await playedForOther(trx, gameId, person.userIds, teamId))
+    if (await playedForOther(trx, game, person.userIds, teamId))
       throw conflict('This player already played for the other team')
     const result = await addByPolicy(
       trx,

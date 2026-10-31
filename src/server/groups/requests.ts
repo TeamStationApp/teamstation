@@ -523,8 +523,10 @@ async function authorizeGuardian(
         'Only a guardian of the player can invite a guardian without a team'
       )
   } else {
+    // A team holding them only by an open add opens no right over them.
     const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-    if (!plays.some(teamId => canSeeTeam(scopes, teamId))) throw notFound()
+    const settled = await settledTeams(db, player.userIds)
+    if (!settled.some(teamId => canSeeTeam(scopes, teamId))) throw notFound()
   }
   return { ...terms, playerUserId: player.userId }
 }

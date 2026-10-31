@@ -2353,15 +2353,32 @@ describe('adds made with a notice', function () {
       .execute()
     await add('roster', 'Event Held')
     const gameId = await game()
-    const info = await readEventInfo(
-      db!,
-      { userId: ids['Site Admin'], isAdmin: true, scopes: [] },
-      gameId,
-      { space: undefined } as unknown as MediaContext
+    const list = async (
+      actor: { userId: string; isAdmin: boolean },
+      teamId: string
+    ): Promise<string[]> =>
+      (
+        await readEventInfo(
+          db!,
+          { ...actor, scopes: [] },
+          gameId,
+          { space: undefined } as unknown as MediaContext,
+          teamId
+        )
+      ).attendees.map(row => row.userId)
+    // On the team they are settled on, their parents are listed.
+    const herons = await list(
+      { userId: ids['Site Admin'], isAdmin: true },
+      TEAM.herons
     )
-    const attendees = info.attendees.map(row => row.userId)
-    expect(attendees).includes(ids[parent])
-    expect(attendees).not.includes(ids['Held Parent Two'])
+    expect(herons).includes(ids[parent])
+    // On the team holding them, not for a reader the hold keeps out.
+    const falcons = await list(
+      { userId: ids.coach, isAdmin: false },
+      TEAM.falcons
+    )
+    expect(falcons).not.includes(ids[parent])
+    expect(falcons).not.includes(ids['Held Parent Two'])
   })
 
   it('opens no chat for a held player until the add settles, by the routes', async function () {
@@ -3862,5 +3879,57 @@ describe('adds made with a notice', function () {
     release()
     await holding
     expect(await rejected).equals('declined')
+  })
+
+  it('opens no guardian request by a team holding them only by an open add', async function () {
+    await person('Held Self Asked', { login: true })
+    const added = await add('roster', 'Held Self Asked')
+    const asked = {
+      kind: 'guardian' as const,
+      playerUserId: ids['Held Self Asked'],
+      guardian: { userId: ids['Falcon Fan'] }
+    }
+    const ask = async (): Promise<number> =>
+      (
+        await call(TOKENS.falcon, 'POST', '/relationship-requests', {
+          ...asked,
+          idempotencyKey: makeId('invite')
+        })
+      ).status
+    expect(await ask()).equals(404)
+    await db!
+      .updateTable('group_requests')
+      .set({ sent_at: new Date(0), expires_at: new Date(1) })
+      .where('id', '=', added.requestId!)
+      .execute()
+    expect(await ask()).equals(201)
+  })
+
+  it('counts no stored lineup change as a game a rejected player played', async function () {
+    await person('Named In A Change', { login: true })
+    const added = await add('roster', 'Named In A Change')
+    const gameId = await game()
+    await db!
+      .insertInto('events')
+      .values({
+        id: makeId('event'),
+        gameId,
+        startTime: now,
+        battingTeamId: TEAM.falcons,
+        gumbo: {
+          about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+          result: { eventType: 'defensive_switch' },
+          matchup: { batter: { id: gumbo['Named In A Change'] } }
+        }
+      })
+      .execute()
+    await decide('Named In A Change', added.requestId!, 'decline')
+    expect(
+      await db!
+        .selectFrom('game_withdrawn_players')
+        .select('user_id')
+        .where('game_id', '=', gameId)
+        .execute()
+    ).deep.equals([])
   })
 })

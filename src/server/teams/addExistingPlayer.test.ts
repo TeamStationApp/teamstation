@@ -17,6 +17,7 @@ import { hashToken } from '../auth/tokens'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
+import { playedForOther } from '../games/guestChecks'
 import { gameAvailability } from '../games/rosterAvailability'
 import { refuseOtherSide } from '../groups/noticePolicy'
 import { jsonBody } from '../jsonBody'
@@ -528,6 +529,78 @@ describe('adding a player who already exists', function () {
     expect(asked.status).equals(409)
     expect(JSON.stringify(asked.body)).includes('played for the other team')
     await db!.deleteFrom('events').where('id', '=', eventId).execute()
+  })
+
+  it('counts a fielder, and who batted or pitched in the at-bat under way, as played', async function () {
+    for (const name of ['Herons Fielder', 'Herons Batter', 'Herons Pitcher'])
+      await person(name, TEAM.owls)
+    const game = (
+      currentPlay: object | null
+    ): Parameters<typeof playedForOther>[1] => ({
+      id: GAME,
+      currentPlay,
+      home_team_id: TEAM.falcons,
+      away_team_id: TEAM.herons
+    })
+    const played = async (
+      name: string,
+      currentPlay: object | null
+    ): Promise<boolean> =>
+      await atomic(
+        db!,
+        async trx =>
+          await playedForOther(
+            trx,
+            game(currentPlay),
+            [ids[name]],
+            TEAM.falcons
+          )
+      )
+    const matchup = {
+      batter: { id: gumbo['Herons Batter'] },
+      pitcher: { id: gumbo['Herons Pitcher'] }
+    }
+    const pitched = [{ isPitch: true }]
+    // The Herons are away, so they bat in the top and field in the bottom.
+    const batting = {
+      about: { halfInning: 'top' },
+      matchup,
+      playEvents: pitched
+    }
+    const fielding = { ...batting, about: { halfInning: 'bottom' } }
+    expect(await played('Herons Batter', batting)).equals(true)
+    expect(await played('Herons Pitcher', fielding)).equals(true)
+    // Each only for the side they did it for.
+    expect(await played('Herons Pitcher', batting)).equals(false)
+    expect(await played('Herons Batter', fielding)).equals(false)
+    // An at-bat with no pitch yet is nobody's appearance.
+    expect(
+      await played('Herons Batter', { ...batting, playEvents: [] })
+    ).equals(false)
+    expect(await played('Herons Batter', null)).equals(false)
+
+    const eventId = makeId('event')
+    await db!
+      .insertInto('events')
+      .values({
+        id: eventId,
+        gameId: GAME,
+        startTime: new Date(),
+        battingTeamId: TEAM.falcons,
+        gumbo: {
+          about: { atBatIndex: 0, inning: 1, halfInning: 'bottom' },
+          result: { eventType: 'single' },
+          lineups: {
+            began: { away: { defense: { RF: gumbo['Herons Fielder'] } } }
+          }
+        }
+      })
+      .execute()
+    try {
+      expect(await played('Herons Fielder', null)).equals(true)
+    } finally {
+      await db!.deleteFrom('events').where('id', '=', eventId).execute()
+    }
   })
 
   it('answers two adds of one person at once as one add', async function () {

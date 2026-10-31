@@ -76,23 +76,71 @@ export async function inGameAs(
     : null
 }
 
-/** Whether a stored play of this game has them for another team. */
+/**
+ * Whether they have appeared for another team in this game, as `appearedIn`
+ * reads it: at the plate, on the mound, on base or in the field, in a stored
+ * play or the at-bat under way once it has a pitch.
+ */
 export async function playedForOther(
   trx: Trx,
-  gameId: string,
+  game: Pick<
+    Selectable<GamesTable>,
+    'id' | 'currentPlay' | 'home_team_id' | 'away_team_id'
+  >,
   userIds: string[],
   teamId: string
 ): Promise<boolean> {
-  const row = await trx
+  const stored = await trx
     .selectFrom('event_players')
     .innerJoin('events', 'events.id', 'event_players.event_id')
     .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'event_players.gumbo_id')
     .select('event_players.id')
-    .where('events.gameId', '=', gameId)
+    .where('events.gameId', '=', game.id)
     .where('gumbo_ids.user_id', 'in', userIds)
     .where('event_players.team_id', '!=', teamId)
     .executeTakeFirst()
-  return row != null
+  if (stored != null) return true
+  const gumbos = new Set(
+    (
+      await trx
+        .selectFrom('gumbo_ids')
+        .select('gumbo_id')
+        .where('user_id', 'in', userIds)
+        .execute()
+    ).map(row => row.gumbo_id)
+  )
+  const other = game.home_team_id === teamId ? 'away' : 'home'
+  const fieldsFor = (play: AppearedPlay): boolean =>
+    (play.about?.halfInning === 'top' ? 'home' : 'away') === other
+  const plays = await trx
+    .selectFrom('events')
+    .select('gumbo')
+    .where('gameId', '=', game.id)
+    .execute()
+  const fielded = (play: AppearedPlay): boolean =>
+    fieldsFor(play) &&
+    Object.values(play.lineups?.began?.[other]?.defense ?? {}).some(
+      id => id != null && gumbos.has(id)
+    )
+  if (plays.some(row => fielded(row.gumbo as AppearedPlay))) return true
+  const current = game.currentPlay as AppearedPlay | null
+  if (current == null || (current.playEvents ?? []).length === 0) return false
+  const at = fieldsFor(current)
+    ? current.matchup?.pitcher?.id
+    : current.matchup?.batter?.id
+  return fielded(current) || (at != null && gumbos.has(at))
+}
+
+/** What `playedForOther` reads of a stored or current play. */
+interface AppearedPlay {
+  about?: { halfInning?: string }
+  matchup?: { batter?: { id?: number }; pitcher?: { id?: number } }
+  playEvents?: unknown[]
+  lineups?: {
+    began?: Partial<
+      Record<'away' | 'home', { defense?: Record<string, number | null> }>
+    >
+  }
 }
 
 /** Refuses a guest who is in the game already. */

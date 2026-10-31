@@ -62,13 +62,13 @@ export function appearedIn(state: GameState): Set<number> {
     currentPlay == null || currentPlay.playEvents.length === 0
       ? allPlays
       : [...allPlays, currentPlay]
-  // A play scored elsewhere may name nobody: its stand-in reads 0.
   return new Set(
     begun.flatMap(play => {
       const fielding = play.about.halfInning === 'top' ? 'home' : 'away'
       return [
         play.matchup.batter.id,
         play.matchup.pitcher.id,
+        ...(play.appeared ?? []),
         ...play.runners.map(runner => runner.details.runner.id),
         ...Object.values(play.lineups?.began[fielding].defense ?? {}).flatMap(
           id => id ?? []

@@ -23,14 +23,13 @@ export const hasScoringEventsSql = scoringActivitySql(
  * the game's lineup past reconciling. A lineup change stored ahead of a first
  * pitch is neither.
  */
-export const isRealPlaySql = sql<SqlBool>`events.gumbo->'result'->>'eventType'
-  not in (${sql.join(SUBSTITUTION_TYPES.map(type => sql.lit(type)))})`
+export const isRealPlaySql = sql<SqlBool>`coalesce(
+    events.gumbo->'result'->>'eventType', ''
+  ) not in (${sql.join(SUBSTITUTION_TYPES.map(type => sql.lit(type)))})`
 
 /** `isRealPlaySql`, of a play already read. */
 export function isRealPlay(gumbo: unknown): boolean {
   const type = (gumbo as { result?: { eventType?: string } } | null)?.result
     ?.eventType
-  return (
-    type != null && !(SUBSTITUTION_TYPES as readonly string[]).includes(type)
-  )
+  return !(SUBSTITUTION_TYPES as readonly unknown[]).includes(type)
 }
