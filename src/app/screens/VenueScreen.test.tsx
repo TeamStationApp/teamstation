@@ -8,6 +8,7 @@ import {
   fill,
   mount,
   press,
+  rowTextColor,
   settle,
   text,
   unmount
@@ -21,6 +22,8 @@ import {
   venueDetail,
   venueField
 } from '../../test/venueDom'
+import { ScopedThemeProvider } from '../theme/ThemeContext'
+import { tsDark } from '../theme/tsDark'
 import { approvalLabel, sizesLabel, VenueScreen } from './VenueScreen'
 
 type Calls = Record<string, unknown[][]>
@@ -85,6 +88,22 @@ const owner = (canEdit = true): VenueDetail['rights'] => ({
 })
 
 describe('the venue screen', () => {
+  it('keeps its field rows readable on a dark shared card', async () => {
+    const venue = venueDetail({ fields: [venueField()], rights: owner() })
+    await mount(
+      <ScopedThemeProvider theme={tsDark}>
+        <VenueScreen
+          client={fakeClient(venue).client}
+          venueId="ven_demo"
+          onOpenField={() => undefined}
+          onClaimed={() => undefined}
+        />
+      </ScopedThemeProvider>
+    )
+    await settle()
+    expect(rowTextColor(venueField().name)).equals('rgb(31, 36, 24)')
+    expect(rowTextColor('Delete')).equals('rgb(186, 26, 26)')
+  })
   afterEach(unmount)
 
   it('reads plainly: approval dates and size lists', () => {

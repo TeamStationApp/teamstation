@@ -39,6 +39,8 @@ export interface ButtonProps {
   style?: StyleProp<ViewStyle>
   /** Allows a bounded label to shrink without changing other buttons. */
   labelStyle?: StyleProp<TextStyle>
+  /** Grows to wrap a long label inside its column, keeping the minimum height. */
+  wrapLabel?: boolean
   /** For a device test that must tell this button from text that reads the same. */
   testID?: string
 }
@@ -75,6 +77,7 @@ export function Button(props: ButtonProps): React.ReactElement {
     icon,
     style,
     labelStyle,
+    wrapLabel = false,
     testID
   } = props
   const theme = useTheme()
@@ -106,6 +109,7 @@ export function Button(props: ButtonProps): React.ReactElement {
           borderRadius: 18,
           paddingHorizontal: pillPadding(36)
         },
+        wrapLabel && styles.wrapping,
         style
       ]}
     >
@@ -123,13 +127,14 @@ export function Button(props: ButtonProps): React.ReactElement {
             />
           )}
           <Text
-            numberOfLines={1}
+            numberOfLines={wrapLabel ? undefined : 1}
             style={[
               styles.label,
               styles[`${kind}Label`],
               compact && { fontSize: 14 },
               small && styles.smallLabel,
               textColor != null && { color: textColor },
+              wrapLabel && styles.wrappingLabel,
               labelStyle
             ]}
           >
@@ -178,6 +183,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   block: {
     alignSelf: 'stretch'
+  },
+  wrapping: {
+    height: 'auto',
+    maxWidth: '100%'
+  },
+  wrappingLabel: {
+    flexShrink: 1
   },
   inert: {
     opacity: 0.5

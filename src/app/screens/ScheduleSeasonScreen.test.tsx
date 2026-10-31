@@ -8,7 +8,14 @@ import type {
   ScheduleSetup,
   SetupSeason
 } from '../../common/seasonScheduling'
-import { mount, press, settle, text, unmount } from '../../test/gameFormDom'
+import {
+  mount,
+  press,
+  rowTextColor,
+  settle,
+  text,
+  unmount
+} from '../../test/gameFormDom'
 import {
   chooseCalendarDate,
   chooseDateRange,
@@ -16,6 +23,8 @@ import {
   tapLabel,
   tapText
 } from '../../test/venueDom'
+import { ScopedThemeProvider } from '../theme/ThemeContext'
+import { tsDark } from '../theme/tsDark'
 import { ScheduleSeasonScreen } from './ScheduleSeasonScreen'
 
 const SEASON: SetupSeason = {
@@ -143,6 +152,25 @@ describe('a season of the next schedule', () => {
   after(() => {
     if (zone == null) delete process.env.TZ
     else process.env.TZ = zone
+  })
+
+  it('keeps its period rows readable on a dark shared card', async () => {
+    await mount(
+      <ScopedThemeProvider theme={tsDark}>
+        <ScheduleSeasonScreen
+          client={
+            fakeClient({
+              ...SEASON,
+              settings: { ...SEASON.settings, windows: PERIODS }
+            }).client
+          }
+          leagueId="lea_a"
+          seasonId="sea_a"
+        />
+      </ScopedThemeProvider>
+    )
+    await settle(50)
+    expect(rowTextColor('Starts')).equals('rgb(31, 36, 24)')
   })
 
   it('loads after a failure, and says when the season has left the league', async () => {

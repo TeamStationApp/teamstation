@@ -89,3 +89,17 @@ export async function fill(label: string, value: string): Promise<void> {
 export function text(): string {
   return document.body.textContent ?? ''
 }
+
+/** The row text reading exactly `label`. */
+export function rowLeaf(label: string): HTMLElement {
+  return [
+    ...document.querySelectorAll<HTMLElement>(
+      '[data-testid="relationship-action-row"] *'
+    )
+  ].find(node => node.children.length === 0 && node.textContent === label)!
+}
+
+/** The colour of the row text reading exactly `label`. */
+export function rowTextColor(label: string): string {
+  return getComputedStyle(rowLeaf(label)).color
+}
