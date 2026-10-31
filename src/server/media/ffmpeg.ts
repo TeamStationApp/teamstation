@@ -12,15 +12,15 @@ const run = promisify(execFile)
  * The server never transcodes. Everything here copies streams and rewrites the
  * container, so the picture that reaches a viewer is the one the camera made.
  *
- * The build is pinned because these flags are version-sensitive: FFmpeg 9.0.1
+ * The build is pinned because these flags are version-sensitive: FFmpeg 9.0.2
  * is the one whose HEVC-in-fMP4 output was tested here, and an older build
  * writes a different `hvcC` and a different playlist.
  */
 export interface FfmpegBuild {
   path: string
-  /** Exactly what the build reports, e.g. `n9.0.1-30-g9258bacca5-20260915`. */
+  /** Exactly what the build reports, e.g. `n9.0.2-39-g7adfbe40dc-20261030`. */
   version: string
-  /** The upstream release inside it, e.g. `9.0.1`. */
+  /** The upstream release inside it, e.g. `9.0.2`. */
   release: string
 }
 
@@ -36,8 +36,8 @@ export async function probeFfmpeg(path: string): Promise<FfmpegBuild> {
 /**
  * The upstream release inside a build's version string.
  *
- * A distribution reports `9.0.1`, while the pinned static build reports
- * `n9.0.1-30-g9258bacca5-20260915`: the same FFmpeg, plus the commits since
+ * A distribution reports `9.0.2`, while the pinned static build reports
+ * `n9.0.2-39-g7adfbe40dc-20261030`: the same FFmpeg, plus the commits since
  * the tag and the build date. The integrity pin is the sha256 in
  * `ffmpeg.json`; this is what decides whether the *release* is the one the
  * contract suite was written against.

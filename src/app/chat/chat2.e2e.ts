@@ -6,7 +6,6 @@
  * assert behavior; E12 validates fresh per-surface functional receipts.
  */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -54,6 +53,11 @@ import {
   saveCapture,
   until
 } from '../../test/chat2Maestro.e2e'
+import {
+  decodeRaster,
+  type Raster,
+  roundHalfEven
+} from '../../test/rasterImage'
 import { type MessageView, reactionKey } from './engine/apply'
 
 type Peer = Awaited<ReturnType<typeof fixturePeer>>
@@ -965,72 +969,159 @@ export function compareIosComposerFrames(input: {
   current: string
   composer: NonNullable<PublicNode['bounds']>
   viewport: { width: number; height: number }
-  timeout: number
 }): Json {
-  const result = spawnSync(
-    process.env.CHAT2_PYTHON ?? 'python3',
-    [
-      '-c',
-      `import sys,json,math
-from PIL import Image,ImageChops
-p=json.loads(sys.argv[1])
-a=Image.open(p['previous']); a.load()
-b=Image.open(p['current']); b.load()
-assert a.format==b.format=='PNG', 'Actual raw PNG frames required'
-assert a.size==b.size, 'Unchanged native raster required'
-v=p['viewport']; c=p['composer']
-assert all(math.isfinite(n) for n in [v['width'],v['height'],*c.values()])
-assert v['width']>0 and v['height']>0 and c['width']>0 and c['height']>0
-assert c['x']>=0 and c['y']>=0 and c['x']+c['width']<=v['width'] and c['y']+c['height']<=v['height']
-sx=a.width/v['width']; sy=a.height/v['height']
-# A whole-number scale, within one raster pixel per axis: an iPhone 15's raw
-# frame is 1178 px wide for its 393-point (3x) screen.
-k=round(sy)
-assert k>=1 and abs(a.width-v['width']*k)<=1 and abs(a.height-v['height']*k)<=1, 'Actual uniform native raster scale required'
-aa=a.convert('RGBA'); bb=b.convert('RGBA')
-diff=ImageChops.difference(aa,bb)
-boxes=[band.getbbox() for band in diff.split()]
-boxes=[box for box in boxes if box is not None]
-box=None if not boxes else [min(x[0] for x in boxes),min(x[1] for x in boxes),max(x[2] for x in boxes),max(x[3] for x in boxes)]
-editable=[math.ceil(c['x']*sx),math.ceil(c['y']*sy),math.floor((c['x']+c['width'])*sx),math.floor((c['y']+c['height'])*sy)]
-# Two native units plus one raster pixel allow only caret edge rounding/antialiasing.
-limit=math.ceil(2*sx)+1
-mask=diff.split()[0]
-for band in diff.split()[1:]: mask=ImageChops.lighter(mask,band)
-changed=mask.point(lambda value:255 if value else 0).histogram()[255]
-out={'accepted':box is None,'reason':'identical decoded pixels' if box is None else 'non-caret whole-frame change','width':a.width,'height':a.height,'scale':sx,'editableRasterBounds':editable,'maximumStripeWidthPixels':limit,'caretRgb':[66,107,242],'maximumChannelRounding':3,'diffBounds':box,'changedPixels':changed,'invalidCaretPixels':0,'strongBluePixels':0}
-if box is not None and editable[0]<=box[0]<box[2]<=editable[2] and editable[1]<=box[1]<box[3]<=editable[3] and box[2]-box[0]<=limit:
- rows=set()
- for y in range(box[1],box[3]):
-  for x in range(box[0],box[2]):
-   p0=aa.getpixel((x,y)); p1=bb.getpixel((x,y))
-   if p0==p1: continue
-   rows.add(y)
-   strong=any(q[2]>=200 and q[2]-q[0]>=80 and q[2]-q[1]>=60 for q in [p0,p1])
-   def toward_blue(start,end):
-    # Observed scene caret RGB; a blink may blend over dark glyph ink as well as the field.
-    vector=[target-value for target,value in zip([66,107,242],start)]
-    delta=[end[i]-start[i] for i in range(3)]
-    norm=sum(value*value for value in vector)
-    if norm==0: return False
-    opacity=sum(delta[i]*vector[i] for i in range(3))/norm
-    return 0<opacity<=1.02 and max(abs(delta[i]-opacity*vector[i]) for i in range(3))<=3
-   opacity=toward_blue(p0[:3],p1[:3]) or toward_blue(p1[:3],p0[:3])
-   if not (p0[3]==p1[3] and opacity): out['invalidCaretPixels']+=1
-   if strong: out['strongBluePixels']+=1
- out['accepted']=out['invalidCaretPixels']==0 and out['strongBluePixels']>0 and len(rows)==box[3]-box[1]
- if out['accepted']: out['reason']='blue editable caret-sized stripe only'
-print(json.dumps(out))`,
-      JSON.stringify(input)
-    ],
-    { encoding: 'utf8', timeout: Math.max(1, Math.min(10000, input.timeout)) }
+  try {
+    return compareComposerRasters(
+      decodeRaster(readFileSync(input.previous)),
+      decodeRaster(readFileSync(input.current)),
+      input.composer,
+      input.viewport
+    )
+  } catch (error) {
+    throw new Error(
+      'Read-only whole-frame comparison failed: ' +
+        (error instanceof Error ? error.message : String(error))
+    )
+  }
+}
+
+/** Observed scene caret RGB; a blink may blend over dark glyph ink as well as the field. */
+const CARET_RGB = [66, 107, 242]
+
+function blendsTowardCaret(start: Uint8Array, end: Uint8Array): boolean {
+  const vector = CARET_RGB.map((target, index) => target - start[index])
+  const delta = CARET_RGB.map((_, index) => end[index] - start[index])
+  const norm = vector.reduce((sum, value) => sum + value * value, 0)
+  if (norm === 0) return false
+  const opacity =
+    delta.reduce((sum, value, index) => sum + value * vector[index], 0) / norm
+  return (
+    opacity > 0 &&
+    opacity <= 1.02 &&
+    Math.max(
+      ...delta.map((value, index) => Math.abs(value - opacity * vector[index]))
+    ) <= 3
+  )
+}
+
+function compareComposerRasters(
+  a: Raster,
+  b: Raster,
+  composer: NonNullable<PublicNode['bounds']>,
+  viewport: { width: number; height: number }
+): Json {
+  assert(
+    a.format === 'PNG' && b.format === 'PNG',
+    'Actual raw PNG frames required'
   )
   assert(
-    result.status === 0,
-    'Read-only whole-frame comparison failed: ' +
-      (result.error?.message ?? result.stderr)
+    a.width === b.width && a.height === b.height,
+    'Unchanged native raster required'
   )
-  return JSON.parse(result.stdout) as Json
+  const { x, y, width, height } = composer
+  assert(
+    [viewport.width, viewport.height, ...Object.values(composer)].every(
+      Number.isFinite
+    )
+  )
+  assert(viewport.width > 0 && viewport.height > 0 && width > 0 && height > 0)
+  assert(
+    x >= 0 &&
+      y >= 0 &&
+      x + width <= viewport.width &&
+      y + height <= viewport.height
+  )
+  const scaleX = a.width / viewport.width
+  const scaleY = a.height / viewport.height
+  // A whole-number scale, within one raster pixel per axis: an iPhone 15's raw
+  // frame is 1178 px wide for its 393-point (3x) screen.
+  const scale = roundHalfEven(scaleY)
+  assert(
+    scale >= 1 &&
+      Math.abs(a.width - viewport.width * scale) <= 1 &&
+      Math.abs(a.height - viewport.height * scale) <= 1,
+    'Actual uniform native raster scale required'
+  )
+  const pixelAt = (raster: Raster, column: number, row: number): Uint8Array =>
+    raster.data.subarray(
+      (row * raster.width + column) * 4,
+      (row * raster.width + column) * 4 + 4
+    )
+  let left = a.width
+  let top = a.height
+  let right = 0
+  let bottom = 0
+  let changedPixels = 0
+  for (let row = 0; row < a.height; row++) {
+    for (let column = 0; column < a.width; column++) {
+      if (
+        Buffer.compare(pixelAt(a, column, row), pixelAt(b, column, row)) === 0
+      )
+        continue
+      changedPixels++
+      left = Math.min(left, column)
+      top = Math.min(top, row)
+      right = Math.max(right, column + 1)
+      bottom = Math.max(bottom, row + 1)
+    }
+  }
+  const box = changedPixels === 0 ? null : [left, top, right, bottom]
+  const editable = [
+    Math.ceil(x * scaleX),
+    Math.ceil(y * scaleY),
+    Math.floor((x + width) * scaleX),
+    Math.floor((y + height) * scaleY)
+  ]
+  // Two native units plus one raster pixel allow only caret edge rounding/antialiasing.
+  const limit = Math.ceil(2 * scaleX) + 1
+  const out = {
+    accepted: box == null,
+    reason:
+      box == null ? 'identical decoded pixels' : 'non-caret whole-frame change',
+    width: a.width,
+    height: a.height,
+    scale: scaleX,
+    editableRasterBounds: editable,
+    maximumStripeWidthPixels: limit,
+    caretRgb: CARET_RGB,
+    maximumChannelRounding: 3,
+    diffBounds: box,
+    changedPixels,
+    invalidCaretPixels: 0,
+    strongBluePixels: 0
+  }
+  if (
+    box != null &&
+    editable[0] <= left &&
+    right <= editable[2] &&
+    editable[1] <= top &&
+    bottom <= editable[3] &&
+    right - left <= limit
+  ) {
+    const rows = new Set<number>()
+    for (let row = top; row < bottom; row++) {
+      for (let column = left; column < right; column++) {
+        const before = pixelAt(a, column, row)
+        const after = pixelAt(b, column, row)
+        if (Buffer.compare(before, after) === 0) continue
+        rows.add(row)
+        const strong = [before, after].some(
+          ([red, green, blue]) =>
+            blue >= 200 && blue - red >= 80 && blue - green >= 60
+        )
+        const blended =
+          blendsTowardCaret(before, after) || blendsTowardCaret(after, before)
+        if (before[3] !== after[3] || !blended) out.invalidCaretPixels++
+        if (strong) out.strongBluePixels++
+      }
+    }
+    out.accepted =
+      out.invalidCaretPixels === 0 &&
+      out.strongBluePixels > 0 &&
+      rows.size === bottom - top
+    if (out.accepted) out.reason = 'blue editable caret-sized stripe only'
+  }
+  return out
 }
 
 export async function observeComposerCaptureReady(
@@ -1333,8 +1424,7 @@ export async function observeComposerCaptureReady(
                   previous: previous.path,
                   current: path,
                   composer: geometry.composer,
-                  viewport,
-                  timeout: remaining()
+                  viewport
                 })
                 accepted = (recorded.comparison as Json).accepted === true
               }

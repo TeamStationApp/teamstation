@@ -1,4 +1,4 @@
-import { type ChildProcess, spawnSync } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -41,6 +41,7 @@ import {
   readAndroidComposerKeyboard,
   readIosComposerKeyboard
 } from '../../test/chat2Maestro.e2e'
+import { encodePng } from '../../test/rasterImage'
 import { backdropOf } from '../components/glassBackdrop'
 import type { GlassViewProps } from '../components/glassViewProps'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -585,23 +586,19 @@ function composerPng(
   rectangles: Array<{ box: number[]; color: number[] }> = [],
   scale = 1
 ): Buffer {
-  const result = spawnSync(
-    process.env.CHAT2_PYTHON ?? 'python3',
-    [
-      '-c',
-      `import sys,json
-from PIL import Image,ImageDraw
-p=json.loads(sys.argv[1]); s=p['scale']
-im=Image.new('RGBA',(400*s,800*s),(250,250,250,255)); draw=ImageDraw.Draw(im)
-for shape in p['rectangles']:
- x,y,w,h=shape['box']; draw.rectangle((x*s,y*s,(x+w)*s-1,(y+h)*s-1),fill=tuple(shape['color']))
-im.save(sys.stdout.buffer,format='PNG')`,
-      JSON.stringify({ rectangles, scale })
-    ],
-    { timeout: 10000 }
-  )
-  expect(result.status, String(result.stderr)).equals(0)
-  return result.stdout
+  const width = 400 * scale
+  const height = 800 * scale
+  const pixels = new Uint8Array(width * height * 4)
+  for (let at = 0; at < pixels.length; at += 4)
+    pixels.set([250, 250, 250, 255], at)
+  for (const { box, color } of rectangles) {
+    const [x, y, w, h] = box
+    const fill = color.length === 3 ? [...color, 255] : color
+    for (let row = y * scale; row < Math.min((y + h) * scale, height); row++)
+      for (let column = x * scale; column < (x + w) * scale; column++)
+        if (column < width) pixels.set(fill, (row * width + column) * 4)
+  }
+  return encodePng(width, height, pixels)
 }
 function selectedHierarchy(): { nodes: CaptureNode[] } {
   const preview = { x: 20, y: 180, width: 240, height: 80 }
@@ -888,8 +885,7 @@ describe('chat native capture readiness transport', function () {
       previous,
       current,
       composer,
-      viewport,
-      timeout: 10000
+      viewport
     })
     expect(readFileSync(previous).equals(before)).equals(true)
     expect(readFileSync(current).equals(after)).equals(true)
@@ -3705,20 +3701,21 @@ describe('chat native adapter compatibility', function () {
       screenHeight: 400
     })
     actual.captureImage = async path => {
-      const made = spawnSync(
-        process.env.CHAT2_PYTHON ?? 'python3',
-        [
-          '-c',
-          'from PIL import Image,ImageDraw; import sys; im=Image.new("RGB",(100,200)); d=ImageDraw.Draw(im); ' +
-            (mode === 'valid'
-              ? 'd.rectangle((5,60,11,74),fill=(20,220,30)); d.rectangle((12,60,19,74),fill=(220,20,210)); '
-              : '') +
-            'im.save(sys.argv[1])',
-          path
-        ],
-        { encoding: 'utf8', timeout: 10000 }
-      )
-      expect(made.status, made.stderr).equals(0)
+      const pixels = new Uint8Array(100 * 200 * 4)
+      for (let at = 3; at < pixels.length; at += 4) pixels[at] = 255
+      const paint = (
+        [left, top, right, bottom]: number[],
+        color: number[]
+      ): void => {
+        for (let row = top; row <= bottom; row++)
+          for (let column = left; column <= right; column++)
+            pixels.set(color, (row * 100 + column) * 4)
+      }
+      if (mode === 'valid') {
+        paint([5, 60, 11, 74], [20, 220, 30])
+        paint([12, 60, 19, 74], [220, 20, 210])
+      }
+      writeFileSync(path, encodePng(100, 200, pixels))
       return { rawPath: path, width: 100, height: 200 }
     }
     return actual
@@ -7241,13 +7238,7 @@ describe('positive Android IME observations', function () {
               stderr: ''
             }
           }
-          expect(args[0]).equals('-c')
-          return {
-            status: 0,
-            signal: null,
-            stdout: '{"width":1,"height":1,"mode":"RGBA"}',
-            stderr: ''
-          }
+          throw new Error('Unexpected process: ' + args.join(' '))
         }
         Object.assign(actual, {
           scenario: 'capture',

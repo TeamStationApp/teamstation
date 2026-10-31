@@ -195,8 +195,8 @@ describe('reading what ffprobe says about a recording', function () {
 
 describe('finding ffprobe', function () {
   it('is the one beside the ffmpeg this server is pinned to', function () {
-    expect(ffprobeBeside('/var/app/ffmpeg-9.0.1/bin/ffmpeg')).equals(
-      '/var/app/ffmpeg-9.0.1/bin/ffprobe'
+    expect(ffprobeBeside('/var/app/ffmpeg-9.0.2/bin/ffmpeg')).equals(
+      '/var/app/ffmpeg-9.0.2/bin/ffprobe'
     )
   })
 

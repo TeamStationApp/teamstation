@@ -78,7 +78,7 @@ export const asServerConfig = asObject({
 
   /** The pinned build. The FFmpeg contract tests refuse to run on another. */
   ffmpegPath: asOptional(asString, '/opt/homebrew/bin/ffmpeg'),
-  ffmpegVersion: asOptional(asString, '9.0.1'),
+  ffmpegVersion: asOptional(asString, '9.0.2'),
 
   /** DigitalOcean Space holding finished HLS. */
   space: asOptional(

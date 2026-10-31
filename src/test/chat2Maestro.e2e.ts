@@ -36,6 +36,12 @@ import {
   redact,
   sourceBinding
 } from './chat2Fixture.e2e'
+import {
+  decodeRaster,
+  pngFromJpeg,
+  type Raster,
+  roundHalfEven
+} from './rasterImage'
 
 type Args = Record<string, unknown>
 export interface Chat2Device {
@@ -1689,6 +1695,51 @@ function lockTree(path: string): void {
 const PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 /** android.view.KeyEvent.KEYCODE_PASTE */
 const ANDROID_KEYCODE_PASTE = 279
+/** The share of a box's pixels in each synthetic photo marker colour. */
+function observeMarkerColors(
+  image: Raster,
+  box: { x: number; y: number; width: number; height: number },
+  screenWidth: number,
+  screenHeight: number
+): Args {
+  const x = roundHalfEven((box.x * image.width) / screenWidth)
+  const y = roundHalfEven((box.y * image.height) / screenHeight)
+  const width = roundHalfEven((box.width * image.width) / screenWidth)
+  const height = roundHalfEven((box.height * image.height) / screenHeight)
+  assert(
+    x >= 0 &&
+      y >= 0 &&
+      width > 0 &&
+      height > 0 &&
+      x + width <= image.width &&
+      y + height <= image.height,
+    'Observed photo crop must fit actual raster'
+  )
+  const pixelCount = width * height
+  assert(pixelCount > 20, 'Observed photo crop is too small to judge')
+  let magentaPixels = 0
+  let greenPixels = 0
+  for (let row = y; row < y + height; row++) {
+    for (let column = x; column < x + width; column++) {
+      const at = (row * image.width + column) * 4
+      const [red, green, blue] = image.data.subarray(at, at + 3)
+      if (red > 170 && green < 110 && blue > 140) magentaPixels++
+      if (green > 170 && red < 110 && blue < 130) greenPixels++
+    }
+  }
+  const magentaFraction = magentaPixels / pixelCount
+  const greenFraction = greenPixels / pixelCount
+  return {
+    raster: { width: image.width, height: image.height },
+    crop: { x, y, width, height },
+    pixelCount,
+    magentaFraction,
+    greenFraction,
+    actualRenderedSyntheticMarker:
+      magentaFraction > 0.08 && greenFraction > 0.08
+  }
+}
+
 /** The Android RPC backend can return JPEG even when its API promises PNG. */
 export function saveCapture(bytes: Uint8Array, destination: string): Args {
   const raw = Buffer.from(bytes)
@@ -1703,26 +1754,17 @@ export function saveCapture(bytes: Uint8Array, destination: string): Args {
       raw[0] === 255 && raw[1] === 216 && raw[2] === 255,
       'Unknown screenshot codec; do not mislabel it PNG'
     )
-    const python = process.env.CHAT2_PYTHON ?? 'python3'
-    const script = [
-      'import sys,json,hashlib',
-      'from PIL import Image',
-      'im=Image.open(sys.argv[1]); im.load(); before=im.tobytes(); mode=im.mode; size=im.size',
-      'im.save(sys.argv[2],format="PNG")',
-      'out=Image.open(sys.argv[2]); out.load()',
-      'assert out.mode==mode and out.size==size and out.tobytes()==before',
-      'print(json.dumps({"decodedPixelsEqual":True,"decodedPixelSha256":hashlib.sha256(before).hexdigest()}))'
-    ].join('\n')
-    const result = spawnSync(python, ['-c', script, rawPath, destination], {
-      encoding: 'utf8',
-      timeout: 10000
-    })
-    if (result.status !== 0)
+    try {
+      const { png, ...proof } = pngFromJpeg(raw)
+      writeFileSync(destination, png, { mode: 0o600, flag: 'wx' })
+      conversion = proof
+    } catch (error) {
       throw new Chat2Blocked(
-        'JPEG driver capture requires CHAT2_PYTHON with Pillow; raw bytes retained'
+        'JPEG driver capture did not convert: ' +
+          (error instanceof Error ? error.message : String(error)) +
+          '; raw bytes retained'
       )
-    chmodSync(destination, 0o600)
-    conversion = JSON.parse(result.stdout) as Args
+    }
   }
   const png = readFileSync(destination)
   assert(
@@ -2540,42 +2582,12 @@ export class Chat2UI {
         [width, height].every(value => Number.isFinite(value) && value > 0),
         'Actual screenshot coordinate space required'
       )
-      const result = spawnSync(
-        process.env.CHAT2_PYTHON ?? 'python3',
-        [
-          '-c',
-          [
-            'import sys,json',
-            'from PIL import Image',
-            'im=Image.open(sys.argv[1]).convert("RGB"); b=json.loads(sys.argv[2]); sw=float(sys.argv[3]); sh=float(sys.argv[4])',
-            'x=round(b["x"]*im.width/sw); y=round(b["y"]*im.height/sh); w=round(b["width"]*im.width/sw); h=round(b["height"]*im.height/sh)',
-            'assert x>=0 and y>=0 and w>0 and h>0 and x+w<=im.width and y+h<=im.height, "Observed photo crop must fit actual raster"',
-            'pixels=list(im.crop((x,y,x+w,y+h)).getdata()); assert len(pixels)>20',
-            'magenta=sum(r>170 and g<110 and blue>140 for r,g,blue in pixels)/len(pixels)',
-            'green=sum(g>170 and r<110 and blue<130 for r,g,blue in pixels)/len(pixels)',
-            'print(json.dumps({"raster":{"width":im.width,"height":im.height},"crop":{"x":x,"y":y,"width":w,"height":h},"pixelCount":len(pixels),"magentaFraction":magenta,"greenFraction":green,"actualRenderedSyntheticMarker":magenta>0.08 and green>0.08}))'
-          ].join('\n'),
-          path,
-          JSON.stringify(box),
-          String(width),
-          String(height)
-        ],
-        { encoding: 'utf8', timeout: 10000 }
+      const proof = observeMarkerColors(
+        decodeRaster(readFileSync(path)),
+        box,
+        width,
+        height
       )
-      observation.pixelObserver = {
-        status: result.status,
-        signal: result.signal,
-        error: result.error?.message,
-        stdout: result.stdout,
-        stderr: result.stderr
-      }
-      privateJson(evidencePath, observation)
-      assert.equal(
-        result.status,
-        0,
-        'Synthetic rendered photo pixel observation failed'
-      )
-      const proof = JSON.parse(result.stdout) as Args
       observation.pixelResult = proof
       privateJson(evidencePath, observation)
       assert(
@@ -4397,35 +4409,19 @@ export class Chat2UI {
         }
         sample.image = image
         assert(png || jpeg, 'Actual raw Android PNG/JPEG required')
-        const decoded = spawnSync(
-          process.env.CHAT2_PYTHON ?? 'python3',
-          [
-            '-c',
-            'from PIL import Image; import sys,json; im=Image.open(sys.argv[1]); im.load(); print(json.dumps({"width":im.width,"height":im.height,"mode":im.mode}))',
-            path
-          ],
-          {
-            encoding: 'utf8',
-            timeout: Math.min(10000, remaining()),
-            maxBuffer: 65536
+        let raster: { width: number; height: number; mode: string }
+        try {
+          const { width, height, mode } = decodeRaster(bytes)
+          raster = { width, height, mode }
+          image.validation = { decoded: true }
+        } catch (error) {
+          image.validation = {
+            decoded: false,
+            error: error instanceof Error ? error.message : String(error)
           }
-        )
-        image.validation = {
-          exitCode: decoded.status,
-          signal: decoded.signal,
-          output: decoded.stdout,
-          error: decoded.error?.message
-        }
-        assert(
-          decoded.status === 0 &&
-            decoded.signal == null &&
-            decoded.error == null,
-          'Actual raw Android frame must decode within deadline'
-        )
-        const raster = JSON.parse(decoded.stdout) as {
-          width: number
-          height: number
-          mode: string
+          throw new Error(
+            'Actual raw Android frame must decode within deadline'
+          )
         }
         assert(
           Number.isFinite(raster.width) &&
