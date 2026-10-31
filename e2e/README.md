@@ -28,3 +28,21 @@ the shape. `legacy.json` lists tests not yet moved here.
 - Importing a spec has no side effects: load server code inside the scenario.
 - A scenario sets up its own state and depends on no other scenario.
 - Drive the UI through maestro-d. `ctx.browser`'s `page` is for reading, never acting.
+
+## Checkpoints and goldens
+
+`ctx.checkpoint(id, { expect, readBack, golden })` states what must be true of the screen. It looks at the device attached or opened last, or at `on`. Layers run in order, and `result.json` records each one's verdict:
+
+1. Invariants, with no opt-out: error text, an empty hierarchy, a blank frame, browser console errors, the app leaving the foreground, and API 5xx. A check the surface cannot make records `not-available`, never a pass.
+2. `expect`, maestro-d selectors that must be on screen, or not with `absent: true`, and `readBack`, which throws when what was shown was not saved. `readJson` and `eventually` in `core/readback.ts` help.
+3. `golden`, compared by maestro-d against the image pinned in `goldens/manifest.json`. `mask` leaves elements out. Above the default 0.1%, `maxDifferingPercent` needs a `reason`, and lint rejects anything above 1%.
+
+The first two stop the scenario. A golden mismatch fails the run at the end, so one run shows every screen that moved. A missing golden exits 4, `unbaselined`, and nothing creates one:
+
+```sh
+npm run e2e -- golden accept <run-dir> --checkpoint <id>   # from a run on fixture data at this commit
+npm run e2e -- golden sync                                 # fetch master and every master.* of the store
+npm run e2e -- golden rotate                               # retire history; dated branches keep old goldens
+```
+
+`accept` pushes the PNG to the private store named by `goldenStore` and updates `goldens/manifest.json` in the working tree, which is what you commit. Review a golden change as that manifest diff, with the before and after in the handoff.

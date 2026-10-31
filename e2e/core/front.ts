@@ -1,7 +1,14 @@
 import { createReadStream, existsSync, statSync } from 'node:fs'
-import { createServer, request as httpRequest, type Server } from 'node:http'
+import {
+  createServer,
+  type IncomingMessage,
+  request as httpRequest,
+  type Server
+} from 'node:http'
 import { connect } from 'node:net'
 import { extname, join, normalize } from 'node:path'
+
+import type { ServerError } from './invariants'
 
 /** The paths Caddy sends to the API on a seat. Everything else is the page. */
 export const API_PATHS = [
@@ -39,8 +46,17 @@ export async function startFront(options: {
   apiPort: number
   host: string
   port: number
-}): Promise<{ server: Server; url: string }> {
+}): Promise<{ server: Server; url: string; errors: ServerError[] }> {
   const { webDir, apiPort, host, port } = options
+  const errors: ServerError[] = []
+  const record = (req: IncomingMessage, status: number): void => {
+    errors.push({
+      at: Date.now(),
+      method: req.method ?? 'GET',
+      path: req.url ?? '/',
+      status
+    })
+  }
   const server = createServer((req, res) => {
     const path = new URL(req.url ?? '/', 'http://front').pathname
     if (goesToApi(path)) {
@@ -57,11 +73,14 @@ export async function startFront(options: {
           }
         },
         reply => {
-          res.writeHead(reply.statusCode ?? 502, reply.headers)
+          const status = reply.statusCode ?? 502
+          if (status >= 500) record(req, status)
+          res.writeHead(status, reply.headers)
           reply.pipe(res)
         }
       )
       upstream.on('error', () => {
+        record(req, 502)
         res.writeHead(502)
         res.end()
       })
@@ -110,5 +129,5 @@ export async function startFront(options: {
     server.listen(port, host, resolve)
   })
   const address = server.address() as { port: number }
-  return { server, url: `http://${host}:${address.port}` }
+  return { server, url: `http://${host}:${address.port}`, errors }
 }
