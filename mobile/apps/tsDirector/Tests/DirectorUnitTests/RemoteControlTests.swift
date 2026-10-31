@@ -264,6 +264,18 @@ struct ControlChannelSourceTests {
     #expect(tile == .selectProgram(source: 1))
   }
 
+  @Test("The probe routes read their query and fall back to their defaults")
+  func probeRoutes() {
+    #expect(ControlChannel.command(from: URL(string: "tsdirector://test/probe-encoders")!)
+      == .probeEncoders(maximum: 8, framesPerSession: 1, width: 1920, height: 1080, fps: 30))
+    #expect(ControlChannel.command(from: URL(string: "tsdirector://test/probe-encoders?max=2&frames=3&width=1280&height=720&fps=60")!)
+      == .probeEncoders(maximum: 2, framesPerSession: 3, width: 1280, height: 720, fps: 60))
+    #expect(ControlChannel.command(from: URL(string: "tsdirector://test/probe-throughput")!)
+      == .probeThroughput(sessions: 4, seconds: 20, height: 1080, hevc: false, fps: 30))
+    #expect(ControlChannel.command(from: URL(string: "tsdirector://test/probe-throughput?sessions=2&seconds=5.5&height=720&hevc=true&fps=60")!)
+      == .probeThroughput(sessions: 2, seconds: 5.5, height: 720, hevc: true, fps: 60))
+  }
+
   @Test("Parses remote chord and bind commands")
   func remoteCommands() {
     let bind = ControlChannel.command(
