@@ -11,6 +11,7 @@ import {
 } from '../access'
 import { onePerson, survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
+import { videoSearchDetails } from '../events/videoSearchDetails'
 import {
   accessibleVideoGames,
   hasVideoFilter,
@@ -70,6 +71,10 @@ export function userRoutes(
       if (hasVideoFilter(req.query)) {
         const filter = videoCollectionFilter(req.query)
         const games = await accessibleVideoGames(db, actor, filter)
+        const details = await videoSearchDetails(
+          db,
+          games.map(game => game.gameId)
+        )
         const ids = await participantsInGames(
           db,
           games.map(game => game.gameId)
@@ -81,6 +86,10 @@ export function userRoutes(
         )
         res.json(
           people
+            .map(person => ({
+              ...person,
+              recentVideoTeams: details.players.get(person.userId) ?? []
+            }))
             .filter(person =>
               person.shortName.toLowerCase().includes(filter.q.toLowerCase())
             )

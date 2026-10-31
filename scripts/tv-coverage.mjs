@@ -49,7 +49,8 @@ const changedPaths = [
 const nativePaths = [
   'appletv/ios/TeamStationTV/AppDelegate.swift',
   'appletv/ios/TeamStationTV/TVSession.m',
-  'appletv/ios/TeamStationTV/TVRemote.m'
+  'appletv/ios/TeamStationTV/TVRemote.m',
+  'appletv/ios/TeamStationTV/TVPresentation.m'
 ].filter(path => changedPaths.includes(path))
 const paths = [
   ...new Set([...git(['diff', '--name-only', base]).split('\n'), ...untracked])
@@ -115,6 +116,7 @@ run(
     'src/server/routes/highlightRoutes.test.ts',
     'src/app/tv/*.test.ts',
     'src/test/tvBuildConfig.test.ts',
+    'src/test/tvNativePresentation.test.ts',
     'src/server/auth/tvLocation.test.ts',
     'src/app/navigation/*.test.ts',
     'src/server/routes/signup.test.ts',

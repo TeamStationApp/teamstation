@@ -11,6 +11,13 @@ import type {
 import { fourAcross, gameDate, monthSections } from './browseLayout'
 import { loadTvCollection, type TvClip, type TvCollection } from './collections'
 import { tvControl } from './remote'
+import { HeroPreview } from './HeroPreview'
+import {
+  NativeSearch,
+  nativeTvPresentation,
+  TvPoster,
+  type TvSearchItem
+} from './NativePresentation'
 import { TvButton } from './TvButton'
 
 const {
@@ -110,7 +117,11 @@ function Tile({
       testID={id}
       accessibilityRole="button"
       accessibilityLabel={`${title}${detail === undefined ? '' : `, ${detail}`}`}
-      {...{ hasTVPreferredFocus: preferred }}
+      {...{
+        hasTVPreferredFocus: preferred,
+        // UIImageView owns lift, parallax and Reduce Motion without a second scale.
+        tvParallaxProperties: { enabled: false }
+      }}
       onFocus={() => {
         setFocused(true)
         onFocus(id)
@@ -125,11 +136,7 @@ function Tile({
         {image === null ? (
           <Text style={styles.placeholder}>▶</Text>
         ) : (
-          <Image
-            source={{ uri: image }}
-            style={StyleSheet.absoluteFill}
-            resizeMode="cover"
-          />
+          <TvPoster uri={image} />
         )}
       </View>
       <Text numberOfLines={1} style={styles.tileTitle}>
@@ -158,6 +165,7 @@ export function TvBrowser({
   visible?: boolean
 }): React.ReactElement {
   const [pages, setPages] = useState<TvPage[]>([{ kind: 'home' }])
+  const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState(false)
   const [results, setResults] = useState<{
@@ -169,27 +177,34 @@ export function TvBrowser({
   const active = pages.length - 1
   const open = (page: TvPage): void => {
     setQuery('')
+    setSearchOpen(false)
     setPages(current => [...current, page])
   }
   const back = useCallback((): void => {
-    if (query !== '') setQuery('')
-    else
+    if (searchOpen || query !== '') {
+      setSearchOpen(false)
+      setQuery('')
+    } else
       setPages(current => (current.length > 1 ? current.slice(0, -1) : current))
-  }, [query])
+  }, [query, searchOpen])
   useEffect(() => {
-    if (editing) {
+    if (editing || searchOpen) {
       tvControl?.disableTVMenuKey()
       return
     }
     if (!visible || (query === '' && pages.length === 1)) return
     tvControl?.enableTVMenuKey()
     return () => tvControl?.disableTVMenuKey()
-  }, [visible, query, pages.length, editing])
+  }, [visible, query, pages.length, editing, searchOpen])
   useEffect(() => {
     const subscription = BackHandler.addEventListener(
       'hardwareBackPress',
       () => {
-        if (visible && !editing && (query !== '' || pages.length > 1)) {
+        if (
+          visible &&
+          !editing &&
+          (searchOpen || query !== '' || pages.length > 1)
+        ) {
           back()
           return true
         }
@@ -199,7 +214,7 @@ export function TvBrowser({
     return () => {
       subscription.remove()
     }
-  }, [back, query, pages.length, visible, editing])
+  }, [back, query, pages.length, visible, editing, searchOpen])
   useEffect(() => {
     let current = true
     setResults(null)
@@ -222,110 +237,147 @@ export function TvBrowser({
       clearTimeout(timer)
     }
   }, [client, query, retry])
+  const searchItems: TvSearchItem[] =
+    results === null
+      ? []
+      : [
+          ...results.teams.map(team => ({
+            id: `team:${team.id}`,
+            title: team.name,
+            image: team.logoUrl,
+            detail: [team.videoSeason?.name, team.videoSeason?.leagueName]
+              .filter(Boolean)
+              .join(' · ')
+          })),
+          ...results.players.map(player => ({
+            id: `player:${player.userId}`,
+            title: player.shortName ?? 'Player',
+            image: player.avatarUrl,
+            detail: (player.recentVideoTeams ?? [])
+              .map(team => team.name)
+              .join(' · ')
+          }))
+        ]
+  const selectResult = (id: string): void => {
+    if (id === 'retry') {
+      setRetry(n => n + 1)
+      return
+    }
+    const team = results?.teams.find(team => `team:${team.id}` === id)
+    const player = results?.players.find(
+      player => `player:${player.userId}` === id
+    )
+    if (team !== undefined) open({ kind: 'team', team })
+    else if (player !== undefined) open({ kind: 'player', player })
+  }
+  const searchStatus =
+    searchError ??
+    (query.trim() === ''
+      ? 'Search teams or players'
+      : results === null
+        ? 'Searching…'
+        : searchItems.length === 0
+          ? 'No accessible teams or players found.'
+          : '')
   return (
     <View style={styles.scene}>
       <FocusGuide key={active} autoFocus style={styles.toolbar}>
-        {active > 0 ? (
-          <TvButton label="Back" onPress={back} />
-        ) : (
-          <Text style={styles.brand}>TeamStation TV</Text>
-        )}
+        <Text style={styles.brand}>TeamStation TV</Text>
         <Text style={styles.welcome}>Welcome, {viewerName}</Text>
-        <TextInput
-          testID="tv-search"
-          accessibilityLabel="Search teams or players"
-          placeholder="Search teams or players"
-          placeholderTextColor="#bbb"
-          value={query}
-          onChangeText={setQuery}
-          onFocus={() => {
-            setEditing(true)
-          }}
-          onBlur={() => {
-            setEditing(false)
-          }}
-          autoCorrect={false}
-          style={styles.search}
-        />
+        {nativeTvPresentation ? (
+          <Pressable
+            testID="tv-search"
+            accessibilityRole="button"
+            accessibilityLabel="Search teams or players"
+            onPress={() => setSearchOpen(true)}
+            style={styles.search}
+          >
+            <Text style={styles.copy}>⌕ Search teams or players</Text>
+          </Pressable>
+        ) : (
+          <TextInput
+            testID="tv-search"
+            accessibilityLabel="Search teams or players"
+            placeholder="Search teams or players"
+            placeholderTextColor="#bbb"
+            value={query}
+            onChangeText={setQuery}
+            onFocus={() => setEditing(true)}
+            onBlur={() => setEditing(false)}
+            autoCorrect={false}
+            style={styles.search}
+          />
+        )}
         <TvButton label="Sign out" onPress={onSignOut} />
       </FocusGuide>
+      {searchOpen && visible && NativeSearch !== null && (
+        <NativeSearch
+          style={StyleSheet.absoluteFill}
+          items={
+            searchError === null
+              ? searchItems
+              : [
+                  {
+                    id: 'retry',
+                    title: 'Retry search',
+                    detail: '',
+                    image: null
+                  }
+                ]
+          }
+          status={searchStatus}
+          onQuery={event => setQuery(event.nativeEvent.query)}
+          onSelect={event => selectResult(event.nativeEvent.id)}
+          onDismiss={() => {
+            setSearchOpen(false)
+            setQuery('')
+          }}
+        />
+      )}
       {pages.map((page, index) => (
         <View
           key={`${index}-${pageKey(page)}`}
           style={[
             styles.page,
-            (index !== active || query.trim() !== '') && styles.hidden
+            (index !== active || query.trim() !== '' || searchOpen) &&
+              styles.hidden
           ]}
         >
           <BrowsePage
             client={client}
             page={page}
-            active={visible && index === active && query === ''}
+            active={visible && index === active && query === '' && !searchOpen}
             onOpen={open}
             onPlay={onPlay}
           />
         </View>
       ))}
-      {query.trim() !== '' && (
+      {!nativeTvPresentation && query.trim() !== '' && (
         <ScrollView
           testID="tv-search-results"
           style={styles.searchResults}
           contentContainerStyle={styles.searchContent}
         >
-          <Text style={styles.heading}>Search</Text>
-          <TvButton
-            label="Close search"
-            onPress={() => {
-              setQuery('')
-            }}
-          />
-          {searchError !== null ? (
-            <>
-              <Text style={styles.copy}>{searchError}</Text>
-              <TvButton
-                label="Retry search"
-                onPress={() => {
-                  setRetry(n => n + 1)
-                }}
-              />
-            </>
-          ) : results === null ? (
-            <Text style={styles.copy}>Searching…</Text>
-          ) : (
-            <>
-              {results.teams.length === 0 && results.players.length === 0 && (
-                <Text style={styles.copy}>
-                  No accessible teams or players found.
-                </Text>
-              )}
-              {results.teams.length > 0 && (
-                <Text style={styles.heading}>Teams</Text>
-              )}
-              {results.teams.map(team => (
-                <SearchRow
-                  key={team.id}
-                  label={team.name}
-                  image={team.logoUrl}
-                  onPress={() => {
-                    open({ kind: 'team', team })
-                  }}
-                />
-              ))}
-              {results.players.length > 0 && (
-                <Text style={styles.heading}>Players</Text>
-              )}
-              {results.players.map(player => (
-                <SearchRow
-                  key={player.userId}
-                  label={player.shortName ?? 'Player'}
-                  image={player.avatarUrl}
-                  onPress={() => {
-                    open({ kind: 'player', player })
-                  }}
-                />
-              ))}
-            </>
+          {searchStatus !== '' && (
+            <Text style={styles.copy}>{searchStatus}</Text>
           )}
+          {searchError !== null && (
+            <TvButton
+              label="Retry search"
+              onPress={() => setRetry(n => n + 1)}
+            />
+          )}
+          <View style={styles.searchGrid}>
+            {searchItems.map(item => (
+              <SearchRow
+                key={item.id}
+                label={item.title}
+                detail={item.detail}
+                image={item.image}
+                onPress={() => selectResult(item.id)}
+              />
+            ))}
+          </View>
         </ScrollView>
       )}
     </View>
@@ -333,10 +385,12 @@ export function TvBrowser({
 }
 function SearchRow({
   label,
+  detail,
   image,
   onPress
 }: {
   label: string
+  detail: string
   image: string | null
   onPress: () => void
 }): React.ReactElement {
@@ -359,10 +413,16 @@ function SearchRow({
           <Image source={{ uri: image }} style={styles.identity} />
         )}
       </View>
-      <Text numberOfLines={1} style={styles.heading}>
-        {label}
-      </Text>
-      <Text style={styles.copy}>›</Text>
+      <View style={{ flex: 1 }}>
+        <Text numberOfLines={2} style={styles.heading}>
+          {label}
+        </Text>
+        {detail !== '' && (
+          <Text numberOfLines={2} style={styles.copy}>
+            {detail}
+          </Text>
+        )}
+      </View>
     </Pressable>
   )
 }
@@ -384,6 +444,7 @@ function BrowsePage({
   const [collection, setCollection] = useState<TvCollection | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
+  const [heroVisible, setHeroVisible] = useState(true)
   const [more, setMore] = useState(false)
   const [focus, setFocus] = useState('')
   const [restoringFocus, setRestoringFocus] = useState(active)
@@ -491,6 +552,13 @@ function BrowsePage({
             source={{ uri: hero.posterUrl }}
             style={StyleSheet.absoluteFill}
             resizeMode="cover"
+          />
+        )}
+        {hero !== null && (
+          <HeroPreview
+            client={client}
+            gameId={hero.id}
+            active={active && heroVisible}
           />
         )}
         <TvScrim />
@@ -680,6 +748,12 @@ function BrowsePage({
       testID={`tv-page-${pageKey(page)}`}
       style={styles.page}
       contentContainerStyle={styles.pageContent}
+      onScroll={event =>
+        setHeroVisible(
+          event.nativeEvent.contentOffset.y < (page.kind === 'home' ? 550 : 380)
+        )
+      }
+      scrollEventThrottle={100}
       stickyHeaderIndices={sticky}
     >
       {children}
@@ -719,7 +793,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 24,
-    backgroundColor: '#252525'
+    backgroundColor: '#454545'
   },
   brand: { fontSize: 31, color: '#fff', fontWeight: '700' },
   welcome: { color: '#ddd', fontSize: 18, flex: 1 },
@@ -738,7 +812,7 @@ const styles = StyleSheet.create({
   hero: { height: 550, justifyContent: 'center' },
   entityHero: { height: 400 },
   heroDetails: { paddingHorizontal: 76, width: 1050, gap: 18 },
-  title: { fontSize: 48, color: '#fff', fontWeight: '700', flexShrink: 1 },
+  title: { fontSize: 70, color: '#fff', fontWeight: '700', flexShrink: 1 },
   matchup: { flexDirection: 'row', alignItems: 'center', gap: 24 },
   homeName: { flex: 1, alignItems: 'flex-start', gap: 16 },
   awayName: { flex: 1, alignItems: 'flex-end', gap: 16 },
@@ -749,7 +823,7 @@ const styles = StyleSheet.create({
   copy: { fontSize: 25, color: '#eee' },
   heading: { fontSize: 32, color: '#fff', fontWeight: '700' },
   row: { marginBottom: 38, paddingLeft: 76, gap: 18 },
-  horizontal: { gap: 24, paddingRight: 76, paddingTop: 8, paddingBottom: 8 },
+  horizontal: { gap: 24, paddingRight: 76, paddingTop: 24, paddingBottom: 24 },
   tile: {
     borderWidth: 3,
     borderColor: 'transparent',
@@ -760,18 +834,21 @@ const styles = StyleSheet.create({
   tileFocus: {
     borderColor: '#fff',
     backgroundColor: '#5d506d',
-    transform: [{ scale: 1.025 }]
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 }
   },
   thumbnail: {
     backgroundColor: '#292e2c',
     borderRadius: 12,
-    overflow: 'hidden',
+    overflow: 'visible',
     alignItems: 'center',
     justifyContent: 'center'
   },
   placeholder: { fontSize: 54, color: '#818b84' },
-  tileTitle: { fontSize: 24, color: '#fff' },
-  tileDetail: { fontSize: 21, color: '#eee' },
+  tileTitle: { fontSize: 32, color: '#fff' },
+  tileDetail: { fontSize: 28, color: '#eee' },
   gridRow: {
     flexDirection: 'row',
     gap: 24,
@@ -795,7 +872,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#292929'
   },
   searchContent: { padding: 76, gap: 20 },
+  searchGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 24 },
   result: {
+    width: '31.8%',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 24,
