@@ -9,5 +9,9 @@
     "rootDir": ".",
     "lib": ["es2023", "dom"]
   },
-  "include": ["scripts/stampWallClockSei.ts", "scripts/e2e/**/*.ts"]
+  "include": [
+    "scripts/stampWallClockSei.ts",
+    "scripts/e2e/**/*.ts",
+    "tools/dbLoad/**/*.ts"
+  ]
 }
