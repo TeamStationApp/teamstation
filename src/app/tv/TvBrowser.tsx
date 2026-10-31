@@ -12,8 +12,8 @@ import { fourAcross, gameDate, monthSections } from './browseLayout'
 import { loadTvCollection, type TvClip, type TvCollection } from './collections'
 import { HeroPreview } from './HeroPreview'
 import {
-  NativeSearch,
   NativeGradient,
+  NativeSearch,
   nativeTvPresentation,
   TvPoster,
   type TvSearchItem

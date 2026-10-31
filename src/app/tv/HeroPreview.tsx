@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { AppState } from 'react-native'
-import { MidpointPreview } from './MidpointPreview'
 
 import type { TeamStationClient, VideoSummary } from '../../common/api'
+import { MidpointPreview } from './MidpointPreview'
 
 export function previewCandidates(videos: VideoSummary[]): VideoSummary[] {
   const rank = (video: VideoSummary): number =>
@@ -92,8 +92,7 @@ export function HeroPreview({
   if (
     !active ||
     !foreground ||
-    source === null ||
-    source.owner !== `${gameId}:${videoId ?? ''}`
+    source?.owner !== `${gameId}:${videoId ?? ''}`
   )
     return null
   return (

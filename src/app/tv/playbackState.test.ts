@@ -1,7 +1,6 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { angleNeighbor, tvLayout } from './tvLayout'
 import { defaultScoreboardSettings } from '../../common/nodeSettings'
 import { PlaybackClock } from './playbackClock'
 import {
@@ -10,6 +9,7 @@ import {
   playbackReducer as reduce
 } from './playbackState'
 import { commonStart, targetTime, timelineFor } from './playbackTimeline'
+import { angleNeighbor, tvLayout } from './tvLayout'
 
 const timeline = (offset = 0): ReturnType<typeof timelineFor> =>
   timelineFor(new Date(100000 + offset).toISOString())

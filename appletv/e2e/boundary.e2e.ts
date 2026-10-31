@@ -13,7 +13,12 @@ async function main(): Promise<void> {
     MAESTRO_D_CLIENT_ROOT: clientRoot,
     TV_METRO_URL: metro
   } = process.env
-  assert(device && artifacts && clientRoot && metro)
+  assert(
+    device !== undefined &&
+      artifacts !== undefined &&
+      clientRoot !== undefined &&
+      metro !== undefined
+  )
   const { MaestroD } = createRequire(path.join(clientRoot, 'package.json'))(
     './dist/cjs/index.js'
   )
@@ -53,7 +58,7 @@ async function main(): Promise<void> {
       /[A-Z]{4}[–-][A-Z]{4}/.exec(String(node.text ?? ''))?.[0] ??
       node.children?.map(findCode).find(Boolean)
     const code = findCode(await tv.hierarchy())
-    assert(code)
+    assert(code !== undefined)
     assert.equal(
       (await h.request('POST', '/auth/tv/approve', { code })).status,
       204
@@ -140,7 +145,7 @@ async function main(): Promise<void> {
     await h.close()
   }
 }
-main().catch(error => {
+main().catch((error: unknown) => {
   console.error(error)
   process.exitCode = 1
 })
