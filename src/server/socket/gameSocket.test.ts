@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { createServer, type IncomingMessage } from 'node:http'
+import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { PassThrough } from 'node:stream'
 
@@ -23,6 +23,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
+import type { ChangeFeed, FeedChannel, FeedHandlers } from '../changeFeed/feed'
 import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
 import { type Database, makeDatabase } from '../db/database'
 import { jsonBody } from '../jsonBody'
@@ -407,6 +408,7 @@ describe('the game socket (U14)', function () {
       recheckMs: 60_000,
       clock: () => now,
       stopSignals: signals,
+      resyncSpreadMs: 0,
       fanout: {
         coalesceMs: 20,
         log: () => undefined,
@@ -1022,6 +1024,148 @@ describe('the game socket (U14)', function () {
       } finally {
         songsTimeOut = false
       }
+    })
+  })
+
+  describe('a resync spread over a window', function () {
+    const SPREAD_MS = 400
+    let feedHandlers: Partial<Record<FeedChannel, FeedHandlers>> = {}
+    let spreading: GameSocketHandle | undefined
+    let plain: Server | undefined
+    let mainUrl = ''
+
+    /** Its feed is in the test's hands, so a gap is one call away. */
+    before(async function () {
+      const feed: ChangeFeed = {
+        subscribe: (channel, handlers) => {
+          feedHandlers[channel] = handlers
+          return { listening: Promise.resolve(), stop: () => undefined }
+        },
+        publishEphemeral: async () => undefined,
+        close: async () => undefined
+      }
+      plain = createServer()
+      spreading = attachGameSocket(plain, db!, scratchUrl, {
+        feed,
+        stopSignals: null,
+        resyncSpreadMs: SPREAD_MS,
+        fanout: {
+          coalesceMs: 5,
+          log: () => undefined,
+          readSong: async () => {
+            throw new Error('timeout exceeded when trying to connect')
+          }
+        }
+      })
+      const listening = plain
+      await new Promise<void>(resolve =>
+        listening.listen(0, '127.0.0.1', resolve)
+      )
+      mainUrl = socketUrl
+      socketUrl = `ws://127.0.0.1:${(plain.address() as AddressInfo).port}/socket`
+    })
+
+    after(async function () {
+      socketUrl = mainUrl
+      await spreading?.close()
+      await new Promise(resolve => plain?.close(resolve))
+      feedHandlers = {}
+    })
+
+    const gap = (channel: FeedChannel): void => {
+      feedHandlers[channel]?.onListening?.(false)
+    }
+
+    it('closes a watcher later, within the window, and leaves alone one that left, stopped watching or came after', async function () {
+      const watcher = await listen(VIEWER)
+      const leaver = await listen(VIEWER)
+      const stopper = await listen(VIEWER)
+      const idle = await listen(VIEWER)
+      for (const listener of [watcher, leaver, stopper])
+        await subscribed(listener, scored)
+      const startedAt = Date.now()
+      gap('game_changes')
+      // Twice is one close for each.
+      gap('game_changes')
+      expect(watcher.ws.readyState).equals(WebSocket.OPEN)
+      leaver.ws.terminate()
+      const asked = makeId('event')
+      stopper.send({ type: 'unsubscribe', gameId: scored, id: asked })
+      await stopper.next(frame => 'id' in frame && frame.id === asked)
+      const later = await listen(VIEWER)
+      await subscribed(later, scored)
+      expect(await watcher.closed).equals(1012)
+      expect(Date.now() - startedAt).below(SPREAD_MS + 150)
+      await wait(SPREAD_MS + 50)
+      for (const listener of [stopper, idle, later])
+        expect(listener.ws.readyState).equals(WebSocket.OPEN)
+      for (const listener of [stopper, idle, later]) listener.ws.terminate()
+    })
+
+    it('sends each screen one resync, later, within the window', async function () {
+      const screen = await listen(VIEWER)
+      const leaver = await listen(VIEWER)
+      const noScreen = await listen(VIEWER)
+      for (const listener of [screen, leaver]) {
+        const id = makeId('event')
+        listener.send({ type: 'subscribe', scope: 'home', id })
+        await listener.next(frame => 'id' in frame && frame.id === id)
+      }
+      const from = screen.frames.length
+      const isResync = (frame: GameSocketReply): boolean =>
+        frame.type === 'resync'
+      gap('screen_scopes')
+      gap('screen_scopes')
+      expect(screen.frames.slice(from).some(isResync)).equals(false)
+      leaver.ws.terminate()
+      await wait(SPREAD_MS + 100)
+      expect(screen.frames.slice(from).filter(isResync)).to.have.length(1)
+      expect(noScreen.frames.some(isResync)).equals(false)
+      expect(screen.ws.readyState).equals(WebSocket.OPEN)
+      screen.ws.terminate()
+      noScreen.ws.terminate()
+    })
+
+    it('spreads the close a delivery with no connection owes, once for many', async function () {
+      const watcher = await listen(VIEWER)
+      await subscribed(watcher, scored)
+      const payload = JSON.stringify({
+        team: homeTeam,
+        kind: 'walkUpSong',
+        userId: userIdOfGumbo(mint().userId)
+      })
+      const startedAt = Date.now()
+      feedHandlers.game_changes?.onPayload(payload)
+      await wait(20)
+      feedHandlers.game_changes?.onPayload(payload)
+      expect(await watcher.closed).equals(1012)
+      expect(Date.now() - startedAt).below(SPREAD_MS + 150)
+    })
+
+    it('lets go of what is still to come when it closes', async function () {
+      const other = createServer()
+      const handle = attachGameSocket(other, db!, scratchUrl, {
+        feed: {
+          subscribe: (channel, handlers) => {
+            feedHandlers[channel] = handlers
+            return { listening: Promise.resolve(), stop: () => undefined }
+          },
+          publishEphemeral: async () => undefined,
+          close: async () => undefined
+        },
+        stopSignals: null,
+        resyncSpreadMs: 60_000
+      })
+      await new Promise<void>(resolve => other.listen(0, '127.0.0.1', resolve))
+      const url = socketUrl
+      socketUrl = `ws://127.0.0.1:${(other.address() as AddressInfo).port}/socket`
+      const watcher = await listen(VIEWER)
+      socketUrl = url
+      await subscribed(watcher, scored)
+      gap('game_changes')
+      await handle.close()
+      expect(await watcher.closed).equals(1001)
+      await new Promise(resolve => other.close(resolve))
     })
   })
 

@@ -15,7 +15,8 @@ async function main(databaseUrl: string): Promise<void> {
   const db = makeDatabase(databaseUrl)
   const server = createServer()
   const socket = attachGameSocket(server, db, databaseUrl, {
-    stopSignals: null
+    stopSignals: null,
+    resyncSpreadMs: 0
   })
   await socket.chat.listening
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

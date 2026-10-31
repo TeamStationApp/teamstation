@@ -39,6 +39,7 @@ import {
   ScreenScopeListener,
   type ScreenScopeListenerOptions
 } from './screenScope'
+import { RESYNC_SPREAD_MS, spread } from './spread'
 import { readSyncClock, type ScreenScopePayload } from './syncRevision'
 
 /** The one path the socket answers on. */
@@ -67,12 +68,18 @@ export interface GameSocketOptions {
    * the socket builds and owns a `PostgresFeed` on its `databaseUrl`.
    */
   feed?: ChangeFeed
+  /**
+   * The window a resync's 1012 closes and `resync` frames are spread over, so
+   * thousands of clients do not read again at the same instant.
+   * `RESYNC_SPREAD_MS` unless given; 0 acts at once.
+   */
+  resyncSpreadMs?: number
   fanout?: Omit<GameFanoutOptions, 'db' | 'feed' | 'onResync'>
   screenScopes?: Omit<
     ScreenScopeListenerOptions,
     'feed' | 'deliver' | 'onResync'
   >
-  chat?: Omit<ChatFanoutOptions, 'db' | 'feed'>
+  chat?: Omit<ChatFanoutOptions, 'db' | 'feed' | 'resyncSpreadMs'>
   /**
    * Wraps each typing hint's check, which `check` runs. For tests, to make
    * it fail; the check itself unless given.
@@ -191,6 +198,10 @@ interface Connection {
   subscriber: FanoutSubscriber
   /** The visible screen's scope, once registered. */
   screen: HeldScreen | undefined
+  /** A spread 1012 close is still to come. */
+  closeDue: boolean
+  /** A spread `resync` frame for the screen is still to come. */
+  screenResyncDue: boolean
   /** The last scope request still being handled; the next waits on it. */
   screenTurn: Promise<void>
   /** Set for a signed-in session: what hears its person's chat hints. */
@@ -232,6 +243,9 @@ export function attachGameSocket(
     options.checkGame ?? (async (_gameId, check) => await check())
   const checkTyping =
     options.checkTyping ?? (async (_conversationId, check) => await check())
+  const resyncSpreadMs = options.resyncSpreadMs ?? RESYNC_SPREAD_MS
+  /** A resync's closes and frames still to come. */
+  const spreadTimers = new Set<ReturnType<typeof setTimeout>>()
   const connections = new Set<Connection>()
   const wss = new WebSocketServer({
     noServer: true,
@@ -245,16 +259,32 @@ export function attachGameSocket(
         log(`change feed: ${message}`)
       }
     })
+  // Changes went unheard: each client watching a game reconnects and reads
+  // again, at its own moment. One already due goes once. A socket that stopped
+  // watching meanwhile, or left, has nothing to read again.
+  const closeToResync = (targets: Connection[]): void => {
+    const due = targets.filter(connection => !connection.closeDue)
+    for (const connection of due) connection.closeDue = true
+    spread(
+      due,
+      resyncSpreadMs,
+      connection => {
+        connection.closeDue = false
+        if (connection.games.size > 0)
+          connection.ws.close(1012, 'Changes may have been missed')
+      },
+      spreadTimers
+    )
+  }
   const fanout = new GameFanout({
     ...options.fanout,
     db,
     feed,
-    // Changes went unheard: each client watching a game reconnects and reads
-    // again. A socket watching none has its screen's and chat's own resync.
+    // A socket watching no game has its screen's and chat's own resync.
     onResync: () => {
-      for (const connection of connections)
-        if (connection.games.size > 0)
-          connection.ws.close(1012, 'Changes may have been missed')
+      closeToResync(
+        [...connections].filter(connection => connection.games.size > 0)
+      )
     }
   })
   const screenScopes = new ScreenScopeListener({
@@ -263,13 +293,25 @@ export function attachGameSocket(
     deliver: async payload => {
       await announce(payload)
     },
-    // Notices went unheard: every screen subscribes again and reads.
+    // Notices went unheard: every screen subscribes again and reads, at its
+    // own moment. A frame still to come covers whatever is missed before it.
     onResync: () => {
-      for (const connection of connections)
-        if (connection.screen != null) reply(connection, { type: 'resync' })
+      const due = [...connections].filter(
+        connection => connection.screen != null && !connection.screenResyncDue
+      )
+      for (const connection of due) connection.screenResyncDue = true
+      spread(
+        due,
+        resyncSpreadMs,
+        connection => {
+          connection.screenResyncDue = false
+          if (connection.screen != null) reply(connection, { type: 'resync' })
+        },
+        spreadTimers
+      )
     }
   })
-  const chat = new ChatFanout({ ...options.chat, db, feed })
+  const chat = new ChatFanout({ ...options.chat, db, feed, resyncSpreadMs })
 
   const scopesOf = async (connection: Connection): Promise<VisibleScopes> => {
     if (connection.scopes != null && clock() - connection.scopesAt < recheckMs)
@@ -751,6 +793,8 @@ export function attachGameSocket(
       reading: undefined,
       screen: undefined,
       screenTurn: Promise.resolve(),
+      closeDue: false,
+      screenResyncDue: false,
       subscriber: {
         send: message => {
           reply(connection, message)
@@ -777,7 +821,7 @@ export function attachGameSocket(
           }
         },
         resync: () => {
-          ws.close(1012, 'Changes may have been missed')
+          closeToResync([connection])
         }
       },
       chat: undefined,
@@ -889,6 +933,8 @@ export function attachGameSocket(
       server.off('upgrade', upgrade)
       stopSignals?.off('SIGTERM', stop)
       stopSignals?.off('SIGINT', stop)
+      for (const timer of spreadTimers) clearTimeout(timer)
+      spreadTimers.clear()
       for (const connection of connections)
         connection.ws.close(1001, 'The server is restarting')
       await fanout.close()
