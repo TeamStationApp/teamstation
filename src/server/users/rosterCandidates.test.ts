@@ -594,8 +594,8 @@ describe('roster candidates', function () {
     ).deep.equals([])
   })
 
-  it('counts the letters of one word toward a stranger, not of all of them', async function () {
-    for (const q of ['j j j', 'a a a', 'ra mo si'])
+  it('counts no word that starts another toward a stranger', async function () {
+    for (const q of ['j j j', 'a a a', 'ab a'])
       expect(
         names((await ask(COACH, { forTeam: team.falcons, q })).body).filter(
           name => name.startsWith('Jos')

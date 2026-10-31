@@ -68,7 +68,7 @@ import {
   gameNamesDigest,
   modelNames
 } from '../users/nameBook'
-import { hasTie } from '../users/rosterCandidates'
+import { hasTie, rosterCandidates } from '../users/rosterCandidates'
 import {
   applyPlayerAdd,
   decidePlayerAdd,
@@ -3503,5 +3503,180 @@ describe('adds made with a notice', function () {
     queries = 0
     await inbox_(watched, actor)
     expect(queries).equals(before)
+  })
+
+  it('ends a waiting ask when a known add of the same person lands', async function () {
+    await person('Asked Twice', { login: true })
+    const asked = await atomic(db!, async trx => {
+      const terms: PlayerAddTerms = {
+        kind: 'playerAdd',
+        mode: 'roster',
+        userId: ids['Asked Twice'],
+        teamId: TEAM.falcons,
+        jersey: '7',
+        positions: [],
+        teamName: 'Ridgeview Falcons'
+      }
+      const id = await recordPlayerAdd(
+        trx,
+        { userId: ids.coach, isAdmin: false, scopes: [] },
+        terms,
+        'pending',
+        clock
+      )
+      await addByPolicy(
+        trx,
+        { userId: ids['Site Admin'], isAdmin: true, scopes: [] },
+        { ...terms, jersey: '12' },
+        clock
+      )
+      return id
+    })
+    expect((await request(asked!)).status).equals('superseded')
+    expect(await membership('Asked Twice', TEAM.falcons)).to.include({
+      is_player: true,
+      jersey: '12'
+    })
+  })
+
+  it('lapses an ask of somebody on the roster by the time it is accepted', async function () {
+    await person('Asked Late', { login: true })
+    const asked = await atomic(
+      db!,
+      async trx =>
+        await recordPlayerAdd(
+          trx,
+          { userId: ids.coach, isAdmin: false, scopes: [] },
+          {
+            kind: 'playerAdd',
+            mode: 'roster',
+            userId: ids['Asked Late'],
+            teamId: TEAM.falcons,
+            jersey: '7',
+            positions: [],
+            teamName: 'Ridgeview Falcons'
+          },
+          'pending',
+          clock
+        )
+    )
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Asked Late'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: true,
+        jersey: '12'
+      })
+      .execute()
+    expect(await decide('Asked Late', asked!, 'accept')).equals('expired')
+    expect(await membership('Asked Late', TEAM.falcons)).to.include({
+      jersey: '12'
+    })
+  })
+
+  it('answers a withdrawn guest with no account and no hands', async function () {
+    await person('Hidden Guest', { login: true })
+    const gameId = await game({
+      startedAt: new Date(now.getTime() - 3_600_000),
+      current: true
+    })
+    const added = await add('pool', 'Hidden Guest', { gameId, side: 'home' })
+    await line(gameId, 'Hidden Guest', TEAM.falcons)
+    await decide('Hidden Guest', added.requestId!, 'decline')
+    const row = await db!
+      .selectFrom('games')
+      .selectAll()
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    const [guest] = (await gameAvailability(db!, row)).guestPlayers.home
+    expect(guest.userId).not.equals(ids['Hidden Guest'])
+    expect(guest.bats).equals(null)
+    expect(guest.throws).equals(null)
+    expect(guest.gumboId).equals(gumbo['Hidden Guest'])
+  })
+
+  it('takes a pool guest out of a game with only a stored lineup change', async function () {
+    await person('Setup Guest', { login: true })
+    const gameId = await game()
+    const added = await add('pool', 'Setup Guest', { gameId, side: 'home' })
+    await db!
+      .insertInto('events')
+      .values({
+        id: makeId('event'),
+        gameId,
+        startTime: now,
+        battingTeamId: TEAM.herons,
+        gumbo: {
+          about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+          result: { eventType: 'defensive_switch' }
+        }
+      })
+      .execute()
+    await decide('Setup Guest', added.requestId!, 'decline')
+    expect(
+      await db!
+        .selectFrom('game_withdrawn_players')
+        .select('user_id')
+        .where('game_id', '=', gameId)
+        .execute()
+    ).deep.equals([])
+    expect(
+      await db!
+        .selectFrom('game_guest_details')
+        .select('user_id')
+        .where('game_id', '=', gameId)
+        .execute()
+    ).deep.equals([])
+  })
+
+  it('clears what an add put on a row kept for a role', async function () {
+    await person('Role Keeper', { login: true })
+    await role(ids['Role Keeper'], TEAM.falcons, 'coach')
+    const added = await add('roster', 'Role Keeper', {
+      jersey: '12',
+      positions: ['C']
+    })
+    await decide('Role Keeper', added.requestId!, 'decline')
+    const row = await membership('Role Keeper', TEAM.falcons)
+    expect(row).to.include({ is_player: false, jersey: null })
+    expect(row.positions).deep.equals([])
+  })
+
+  it('lists a guarded child after a merge of the child, nearest first', async function () {
+    await db!
+      .insertInto('teams')
+      .values({ id: 'tem_noticeGuardedFar', name: 'Far Plovers' })
+      .execute()
+    await person('Guarded Old', { teamId: 'tem_noticeGuardedFar' })
+    await person('Guarded New', {})
+    await person('Guarded Coach', { login: true })
+    await role(ids['Guarded Coach'], TEAM.falcons, 'admin')
+    await db!
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: ids['Guarded Coach'],
+        related_user_id: ids['Guarded Old'],
+        kind: 'guardian',
+        can_manage: true
+      })
+      .execute()
+    await closeInto(db!, ids['Guarded Old'], ids['Guarded New'])
+    const search = async (q: string): Promise<string[]> =>
+      (
+        await rosterCandidates(
+          db!,
+          { userId: ids['Guarded Coach'], isAdmin: false, scopes: [] },
+          { teamId: TEAM.falcons, q, limit: 30 }
+        )
+      ).map(row => row.userId)
+    expect(await search('')).includes(ids['Guarded New'])
+    // A stranger whose names are all short is found by typing them whole.
+    await person('Bo Li', { teamId: 'tem_noticeGuardedFar' })
+    expect(await search('Bo Li')).includes(ids['Bo Li'])
+    expect(await search('Bo')).not.includes(ids['Bo Li'])
   })
 })

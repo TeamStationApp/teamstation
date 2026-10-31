@@ -7,6 +7,7 @@ import { recordOf } from '../../common/scoring/gumbo'
 import type { Side } from '../../common/scoring/state'
 import { teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered, type Unrostered } from '../../common/unroster'
+import { userIdOfGumbo } from '../../common/userId'
 import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
 import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
@@ -121,23 +122,23 @@ export async function gameAvailability(
       const detail =
         details.find(row => row.gumbo_id === id) ??
         details.find(row => row.gumbo_id === original)
+      const label = withdrawn.get(id) ?? withdrawn.get(original)
       guestPlayers[side].push(
         asRosterEntry({
-          userId: user.id,
+          // A withdrawn line carries no account: scoring reads it by gumbo id.
+          userId: label == null ? user.id : userIdOfGumbo(id),
           gumboId: id,
-          shortName:
-            withdrawn.get(id) ?? withdrawn.get(original) ?? names.get(user.id)!,
+          shortName: label ?? names.get(user.id)!,
           // A placeholder is no name to format.
           nameFormat:
-            withdrawn.has(id) ||
-            withdrawn.has(original) ||
+            label != null ||
             formats.get(user.id) === DEFAULT_PLAYER_NAME_PRIVACY
               ? undefined
               : formats.get(user.id),
           jersey: detail?.jersey ?? held?.jersey ?? null,
           positions: detail?.positions ?? held?.positions ?? [],
-          bats: user.bats,
-          throws: user.throws,
+          bats: label == null ? user.bats : null,
+          throws: label == null ? user.throws : null,
           isPlayer: true,
           ...(detail?.pool === true ? { pool: true } : {}),
           role: 'player',

@@ -176,6 +176,22 @@ export async function addByPolicy(
     if (!known) throw forbidden('Nobody can approve adding this player')
   }
   const applied = await applyPlayerAdd(trx, terms, terms.mode === 'roster')
+  // An ask of the same add still waiting is answered by this one: neither
+  // reply to it could mean what its side would take it to.
+  await trx
+    .updateTable('group_requests')
+    .set({ status: 'superseded', resolved_at: clock.now() })
+    .where('kind', '=', 'playerAdd')
+    .where('status', '=', 'pending')
+    .where('initiating_team_id', '=', terms.teamId)
+    .where(
+      sql<string>`terms->>'userId'`,
+      'in',
+      (await personOf(trx, terms.userId)).userIds
+    )
+    .where(sql<boolean>`terms->>'mode' = ${terms.mode}`)
+    .where(sql<boolean>`coalesce(terms->>'gameId', '') = ${terms.gameId ?? ''}`)
+    .execute()
   const requestId = await recordPlayerAdd(trx, actor, applied, 'applied', clock)
   const told =
     requestId == null

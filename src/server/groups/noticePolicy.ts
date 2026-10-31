@@ -1,4 +1,4 @@
-import { type Kysely, sql, type Transaction } from 'kysely'
+import { type Kysely, sql, type SqlBool, type Transaction } from 'kysely'
 
 import { conflict, forbidden, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
@@ -9,6 +9,7 @@ import {
   placeholderTeamName
 } from '../../common/placeholderNames'
 import { recordOf } from '../../common/scoring/gumbo'
+import { SUBSTITUTION_TYPES } from '../../common/scoring/lineupHistory'
 import { listsByTeam, teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered } from '../../common/unroster'
 import { guardiansWhoCanAct, openAddTeams } from '../access'
@@ -408,15 +409,20 @@ async function gameStarted(trx: Db, game: { id: string }): Promise<boolean> {
 }
 
 /**
- * Whether a game has a stored play: an intentional walk begins no game by
- * `gameStarted`'s reading, and is on the record all the same, with the game's
- * lineup past reconciling.
+ * A stored play with a result of its own: an intentional walk begins no game
+ * by `gameStarted`'s reading, and is on the record all the same, with the
+ * game's lineup past reconciling. A lineup change stored ahead of a first
+ * pitch is neither.
  */
+const isRealPlay = sql<SqlBool>`events.gumbo->'result'->>'eventType'
+  not in (${sql.join(SUBSTITUTION_TYPES.map(type => sql.lit(type)))})`
+
 async function hasStoredPlay(trx: Db, game: { id: string }): Promise<boolean> {
   const row = await trx
     .selectFrom('events')
     .select('id')
     .where('gameId', '=', game.id)
+    .where(isRealPlay)
     .executeTakeFirst()
   return row != null
 }
@@ -582,6 +588,7 @@ async function playedGames(
             .selectFrom('events')
             .select('events.id')
             .whereRef('events.gameId', '=', 'games.id')
+            .where(isRealPlay)
         )
       ])
     )
@@ -828,13 +835,16 @@ export async function undoPlayerAdd(
         .updateTable('memberships')
         .set({
           is_player: false,
-          // As it was before the add.
-          ...(terms.previous == null
-            ? {}
-            : {
-                jersey: terms.previous.jersey,
-                positions: terms.previous.positions
-              })
+          // As it was before the add: a row it made, kept for a role, had
+          // no jersey before it.
+          ...(terms.createdMembership === true
+            ? { jersey: null, positions: [] }
+            : terms.previous == null
+              ? {}
+              : {
+                  jersey: terms.previous.jersey,
+                  positions: terms.previous.positions
+                })
         })
         .where('team_id', '=', terms.teamId)
         .where('user_id', 'in', person.userIds)
@@ -1077,7 +1087,22 @@ async function decideOnce(
     }
     // Between a pitch and its result: accept again once it is in.
     await guestGameOpen(trx, game)
-  } else await lockPlayerAdds(trx, person.userId)
+  } else {
+    await lockPlayerAdds(trx, person.userId)
+    // On the roster by now: nothing is left to accept, and an accept would
+    // read as saying yes to an add it never saw.
+    const playing = await trx
+      .selectFrom('memberships')
+      .select('id')
+      .where('team_id', '=', terms.teamId)
+      .where('user_id', 'in', person.userIds)
+      .where('is_player', '=', true)
+      .executeTakeFirst()
+    if (playing != null) {
+      await resolve('expired')
+      return
+    }
+  }
   // Deleted since it was asked: a later add must not bring them back.
   await refuseDeleted(trx, person.userId)
   const applied = await applyPlayerAdd(trx, terms)

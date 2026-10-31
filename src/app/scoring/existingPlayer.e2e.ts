@@ -398,7 +398,7 @@ describe('adding an existing player from Set Team Rosters', function () {
     await tap('Choose Mookie B')
     await tap('Add to Roster')
     await browser.assertVisible({
-      text: ".*needs approval first.*",
+      text: '.*needs approval first.*',
       timeout: 15000
     })
     await shot('web-approval-needed')

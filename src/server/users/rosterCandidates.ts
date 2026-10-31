@@ -8,6 +8,7 @@ import {
   canManageRoster,
   canScore,
   canSeeTeam,
+  guardedRows,
   nonMemberTeam,
   openAddTeams,
   roleScopes,
@@ -327,11 +328,20 @@ export async function rosterCandidates(
           ),
           sql` and `
         )
-  // Strangers are listed only once three letters or digits of one word are
-  // typed: each word matches alone, so `j j j` is one letter, not three.
-  const strangers = words.some(
-    word => word.replace(/[^\p{L}\p{N}]/gu, '').length >= OTHER_TIER_QUERY
-  )
+  // Strangers are listed only once three letters or digits are typed. A word
+  // that starts another counts for nothing, as each matches alone: `j j j` is
+  // one letter, and `ab a` two, while `Bo Li` is a name typed whole.
+  const letters = [
+    ...new Set(
+      words.map(word => word.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase())
+    )
+  ]
+  const strangers =
+    letters
+      .filter(
+        word => !letters.some(other => other !== word && other.startsWith(word))
+      )
+      .join('').length >= OTHER_TIER_QUERY
   const rows = await sql<CandidateRow>`
     with recursive
     team_seasons as (
@@ -347,9 +357,7 @@ export async function rosterCandidates(
         where user_id = ${actor.userId} and scope_type = 'team'
     ),
     guarded as (
-      select related_user_id as user_id from user_links
-        where user_id in (${sql.join((await onePerson(db, actor.userId)).userIds)})
-          and kind in ('guardian', 'family')
+      select unnest(${await guardedRows(db, actor.userId)}::text[]) as user_id
     ),
     named as (select u.id from users u where ${matches}),
     named_origins as (
