@@ -11,6 +11,16 @@ export type FeedChannel =
   | 'game_stats'
   | 'feed_probe'
 
+/** The same, for what has to hear them all. */
+export const FEED_CHANNELS: readonly FeedChannel[] = [
+  'game_changes',
+  'screen_scopes',
+  'chat_changes',
+  'chat_dirty',
+  'game_stats',
+  'feed_probe'
+]
+
 export interface FeedHandlers {
   onPayload: (payload: string | undefined) => void
   /** The channel is in place. `first` is false after a gap, when notices may have gone unheard. */

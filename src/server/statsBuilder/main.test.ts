@@ -1,3 +1,5 @@
+import { connect, createServer, type Socket } from 'node:net'
+
 import { expect } from 'chai'
 import { EventEmitter } from 'events'
 import { Kysely, PostgresDialect, sql } from 'kysely'
@@ -23,6 +25,17 @@ import { requestGameStats } from './request'
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_stats_main_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+/**
+ * The scratch database through a stand-in on `port`, as the test database's own
+ * user: a URL with no user would sign in as whoever runs the tests.
+ */
+const throughPort = (port: number): string => {
+  const url = new URL(scratchUrl)
+  url.hostname = '127.0.0.1'
+  url.port = String(port)
+  url.searchParams.set('sslmode', 'disable')
+  return url.toString()
+}
 
 describe('statsBuilder main', function () {
   this.timeout(60000)
@@ -345,6 +358,95 @@ describe('statsBuilder main', function () {
     }
   })
 
+  it('asks again when no connection comes in time, rather than exiting', async function () {
+    const originalLog = console.log
+    const originalError = console.error
+    console.log = () => undefined
+    const complaints: string[] = []
+    console.error = (...args: unknown[]) => {
+      complaints.push(args.map(String).join(' '))
+    }
+    const reported: unknown[] = []
+    const exitCode = process.exitCode
+    const delays: number[] = []
+    // Takes every connection and answers none until the test lets it through.
+    const target = new URL(adminUrl)
+    let through = false
+    const sockets: Socket[] = []
+    const door = createServer(inbound => {
+      inbound.on('error', () => undefined)
+      sockets.push(inbound)
+      if (!through) return
+      const outbound = connect(Number(target.port), target.hostname)
+      outbound.on('error', () => undefined)
+      sockets.push(outbound)
+      inbound.pipe(outbound)
+      outbound.pipe(inbound)
+    })
+    await new Promise<void>(resolve => {
+      door.listen(0, '127.0.0.1', resolve)
+    })
+    const address = door.address() as { port: number }
+    const gameId = makeId('game')
+    await db
+      .insertInto('games')
+      .values({
+        id: gameId,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    await replaceGameEvents(db, {
+      gameId,
+      homeTeamId: home,
+      awayTeamId: away,
+      plays: [{ gumbo: play(), source: 'manual' }]
+    })
+    const statusOf = async (): Promise<string | undefined> =>
+      (
+        await db
+          .selectFrom('game_stats_state')
+          .select('status')
+          .where('game_id', '=', gameId)
+          .executeTakeFirst()
+      )?.status
+    const handle = await runStatsBuilder({
+      databaseUrl: scratchUrl,
+      requestUrl: throughPort(address.port),
+      signals: new EventEmitter(),
+      setTimeout: ((work: () => void, ms: number) => {
+        delays.push(ms)
+        return setTimeout(work, Math.min(ms, 50))
+      }) as typeof setTimeout,
+      report: async error => {
+        reported.push(error)
+      }
+    })
+    try {
+      // It came up with no connection, and stands ready to try again.
+      expect(handle.lastTimerMs()).equals(5000)
+      expect(delays).deep.equals([5000])
+      expect(complaints.join('\n')).includes('asking again')
+      expect(await statusOf()).not.equals('built')
+      through = true
+      for (const socket of sockets) socket.destroy()
+      await until(
+        'the build',
+        async () => (await statusOf()) === 'built',
+        20000
+      )
+      expect(reported).deep.equals([])
+      expect(process.exitCode).equals(exitCode)
+    } finally {
+      await handle.stop('SIGTERM')
+      for (const socket of sockets) socket.destroy()
+      door.close()
+      console.log = originalLog
+      console.error = originalError
+    }
+  })
+
   it('fails to start on a database it cannot reach, leaving nothing open', async function () {
     const signals = new EventEmitter()
     const lines: string[] = []
@@ -374,7 +476,11 @@ describe('statsBuilder main', function () {
       databaseUrl: string
       databasePoolUrl: string
     }): Promise<string[]> => {
-      const handle = await runMain(config)
+      const handle = await runMain({
+        ...config,
+        changeFeed: 'postgres',
+        redis: { url: 'redis://127.0.0.1:1', prefix: '', caFile: '' }
+      })
       const { rows } = await sql<{ name: string; query: string }>`
         select application_name as name, query from pg_stat_activity
         where datname = ${scratchName}

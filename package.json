@@ -57,6 +57,7 @@
     "fix": "eslint . --fix",
     "import-archive": "node -r sucrase/register src/server/dev/importArchiveCameras.ts",
     "import-invites": "node -r sucrase/register src/server/dev/importInvites.ts",
+    "feedProbe": "node -r sucrase/register src/server/changeFeed/probeCli.ts",
     "import-video": "node -r sucrase/register src/server/dev/importVideoFile.ts",
     "ios": "react-native run-ios",
     "lint": "node --max-old-space-size=8192 node_modules/eslint/bin/eslint.js .",
