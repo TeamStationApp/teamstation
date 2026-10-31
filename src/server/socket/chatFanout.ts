@@ -1,5 +1,5 @@
 import { asEither, asNumber, asObject, asOptional, asString } from 'cleaners'
-import { type Kysely, sql } from 'kysely'
+import type { Kysely } from 'kysely'
 
 import { asLiteral } from '../../common/asLiteral'
 import type { ChatSocketFrame } from '../../common/gameSocket'
@@ -75,15 +75,16 @@ export const readMembers: MemberReader = async (db, conversationId) =>
 
 /**
  * Relays a typist's hint to the conversation's other members, on every
- * worker, without storing anything: the notify is all there is.
+ * worker, without storing anything: the notice is all there is.
  */
 export async function notifyTyping(
+  feed: ChangeFeed,
   db: Kysely<Database>,
   conversationId: string,
   userId: string
 ): Promise<void> {
   const payload = JSON.stringify({ c: conversationId, k: 'typing', u: userId })
-  await sql`select pg_notify(${CHAT_CHANGES_CHANNEL}, ${payload})`.execute(db)
+  await feed.publishEphemeral(CHAT_CHANGES_CHANNEL, payload, db)
 }
 
 /**
