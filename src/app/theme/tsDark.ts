@@ -90,6 +90,8 @@ export const tsDark: Theme = {
   clearIconColor: palette.white,
   buttonTextColor: palette.tsBeige,
   scoreActionColor: palette.scoreBlue,
+  streamActionColor: palette.scoreBlue,
+  streamActionTextColor: palette.white,
   djActionColor: palette.djPurple,
 
   inputBackgroundColor: palette.white,

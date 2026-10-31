@@ -205,14 +205,14 @@ async function main(): Promise<void> {
     await m.openLink({ link: `teamstation://games/${game}?tab=watch` })
     await sleep(3000)
     await m.scrollUntilVisible({
-      element: { text: 'Record video' },
+      element: { text: 'Record Video' },
       centerElement: true
     })
-    say('$ tapOn Record video')
-    await m.tapOn({ text: 'Record video' })
+    say('$ tapOn Record Video')
+    await m.tapOn({ text: 'Record Video' })
     await m.inputText({ text: angle })
-    say('$ tapOn Start')
-    await m.tapOn({ text: 'Start' })
+    say('$ tapOn Record with this phone')
+    await m.tapOn({ text: 'Record with this phone' })
     assert(
       (await find(byId('settings-button'), 20000)) != null,
       'the streaming screen opened'
