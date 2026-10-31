@@ -502,7 +502,8 @@ describe('merging two rows that are one team', function () {
       'Held By Both Again',
       false
     )
-    // A withdrawal on the game that goes, for a side of the game that stays.
+    // A withdrawal on the game that goes, whose sides are the other way round
+    // from the game that stays, for a side already holding that placeholder.
     await db
       .insertInto('group_requests')
       .values({
@@ -531,7 +532,7 @@ describe('merging two rows that are one team', function () {
         {
           game_id: scoredGame,
           user_id: survivor,
-          side: 'away',
+          side: 'home',
           request_id: 'grq_merge_withdrawn',
           label: 'Houser Player 1'
         }
