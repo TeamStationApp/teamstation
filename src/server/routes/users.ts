@@ -11,13 +11,13 @@ import {
 } from '../access'
 import { onePerson, survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
-import { videoSearchDetails } from '../events/videoSearchDetails'
 import {
   accessibleVideoGames,
   hasVideoFilter,
   participantsInGames,
   videoCollectionFilter
 } from '../events/videoCollections'
+import { videoSearchDetails } from '../events/videoSearchDetails'
 import { publicNames } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'

@@ -1,8 +1,8 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
-import { BackHandler } from 'react-native'
 import { createRoot, type Root } from 'react-dom/client'
+import { BackHandler } from 'react-native'
 
 import {
   asTeamSummary,
@@ -15,7 +15,7 @@ import { TvBrowser, type TvPlayRequest } from './TvBrowser'
 
 let root: Root | undefined
 let remoteBack: (() => boolean | null | undefined) | undefined
-const originalBack = BackHandler.addEventListener
+const originalBack = BackHandler.addEventListener.bind(BackHandler)
 const games = Array.from({ length: 55 }, (_, i) =>
   asVideoGame({
     id: `game-${i}`,

@@ -33,10 +33,12 @@ export function HeroPreview({
   const [source, setSource] = useState<{ uri: string; id: string } | null>(null)
   const [failed, setFailed] = useState<string[]>([])
   useEffect(() => {
-    const listener = AppState.addEventListener('change', state =>
+    const listener = AppState.addEventListener('change', state => {
       setForeground(state === 'active')
-    )
-    return () => listener.remove()
+    })
+    return () => {
+      listener.remove()
+    }
   }, [])
   useEffect(() => {
     setFailed([])
@@ -62,7 +64,7 @@ export function HeroPreview({
         }
       }
     }
-    void load().catch(() => {
+    load().catch(() => {
       /* The poster stays visible. */
     })
     return () => {
@@ -83,7 +85,9 @@ export function HeroPreview({
       controls={false}
       playInBackground={false}
       playWhenInactive={false}
-      onError={() => setFailed(ids => [...ids, source.id])}
+      onError={() => {
+        setFailed(ids => [...ids, source.id])
+      }}
     />
   )
 }

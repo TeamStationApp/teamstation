@@ -20,9 +20,13 @@ async function main(): Promise<void> {
     './dist/cjs/index.js'
   )
   const h = await tvFixture({ webRoot: path.resolve('dist') })
-  const daemon = await MaestroD.connect({ name: process.env.MAESTRO_D ?? 'appleTvNative' })
+  const daemon = await MaestroD.connect({
+    name: process.env.MAESTRO_D ?? 'appleTvNative'
+  })
   const tv = await daemon.attach({ device, platform: 'ios' })
-  const browserDaemon = await MaestroD.connect({ name: process.env.MAESTRO_D_WEB ?? 'appleTvExperience' })
+  const browserDaemon = await MaestroD.connect({
+    name: process.env.MAESTRO_D_WEB ?? 'appleTvExperience'
+  })
   const browser = await browserDaemon.attach({
     device: 'tvApprovalWeb',
     platform: 'web',

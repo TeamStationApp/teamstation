@@ -1,8 +1,8 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
-import { BackHandler } from 'react-native'
 import { createRoot, type Root } from 'react-dom/client'
+import { BackHandler } from 'react-native'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
 import { timelineFor } from './playbackTimeline'
@@ -29,7 +29,8 @@ const game = asVideoGame({
 })
 let root: Root | undefined
 let remoteBack: (() => boolean | null | undefined) | undefined
-const originalBack = BackHandler.addEventListener
+const originalBack = BackHandler.addEventListener.bind(BackHandler)
+let wide = false
 let count = 4
 let fail = false
 let pending = false
@@ -55,7 +56,17 @@ const client = {
   wallTimeline: async () => timelineFor('2026-10-01T00:00:00Z'),
   scoreboardTimeline: async () => ({ steps: [], version: 'fixture' }),
   lineScore: async () => ({
-    steps: [],
+    steps: wide
+      ? [
+          {
+            at: 0,
+            line: {
+              away: { innings: Array(25).fill(0), r: 7, h: 9, e: 0 },
+              home: { innings: Array(25).fill(0), r: 8, h: 10, e: 1 }
+            }
+          }
+        ]
+      : [],
     version: 'fixture',
     teams: { home: 'Hosts', away: 'Visitors' }
   }),
@@ -132,6 +143,7 @@ afterEach(async () => {
   BackHandler.addEventListener = originalBack
   root = undefined
   count = 4
+  wide = false
   mixed = false
   fail = false
   pending = false
@@ -139,6 +151,35 @@ afterEach(async () => {
   closed = false
 })
 describe('TV game playback entry', () => {
+  it('keeps extra innings scrollable and its statistics control reachable within the bottom third', async () => {
+    wide = true
+    await render()
+    const video = document.querySelector('video')!
+    await act(async () => {
+      Object.defineProperty(video, 'duration', {
+        configurable: true,
+        value: 60
+      })
+      video.dispatchEvent(new window.Event('durationchange', { bubbles: true }))
+      video.currentTime = 1
+      video.dispatchEvent(new window.Event('timeupdate', { bubbles: true }))
+      await pause()
+    })
+    await press('Close panel')
+    await press('Box score')
+    const panel = document.querySelector<HTMLElement>(
+      '[data-testid="tv-box-panel"]'
+    )!
+    expect(panel.style.height).equals('33%')
+    expect(
+      document.querySelector('[data-testid="tv-score-column-25"]')
+    ).not.equals(null)
+    await press('Team and player statistics')
+    expect(document.body.textContent).contains('Player statistics unavailable')
+    await press('Close panel')
+    expect(document.querySelector('[data-testid="tv-box-panel"]')).equals(null)
+  })
+
   it('opens four authorized single-camera sources and enlarges the same player without remounting', async () => {
     await render()
     const videos = [...document.querySelectorAll('video')]

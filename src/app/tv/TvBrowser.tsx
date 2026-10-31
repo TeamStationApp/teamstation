@@ -10,7 +10,6 @@ import type {
 } from '../../common/api'
 import { fourAcross, gameDate, monthSections } from './browseLayout'
 import { loadTvCollection, type TvClip, type TvCollection } from './collections'
-import { tvControl } from './remote'
 import { HeroPreview } from './HeroPreview'
 import {
   NativeSearch,
@@ -18,6 +17,7 @@ import {
   TvPoster,
   type TvSearchItem
 } from './NativePresentation'
+import { tvControl } from './remote'
 import { TvButton } from './TvButton'
 
 const {
@@ -289,7 +289,9 @@ export function TvBrowser({
             testID="tv-search"
             accessibilityRole="button"
             accessibilityLabel="Search teams or players"
-            onPress={() => setSearchOpen(true)}
+            onPress={() => {
+              setSearchOpen(true)
+            }}
             style={styles.search}
           >
             <Text style={styles.copy}>⌕ Search teams or players</Text>
@@ -302,8 +304,12 @@ export function TvBrowser({
             placeholderTextColor="#bbb"
             value={query}
             onChangeText={setQuery}
-            onFocus={() => setEditing(true)}
-            onBlur={() => setEditing(false)}
+            onFocus={() => {
+              setEditing(true)
+            }}
+            onBlur={() => {
+              setEditing(false)
+            }}
             autoCorrect={false}
             style={styles.search}
           />
@@ -326,8 +332,12 @@ export function TvBrowser({
                 ]
           }
           status={searchStatus}
-          onQuery={event => setQuery(event.nativeEvent.query)}
-          onSelect={event => selectResult(event.nativeEvent.id)}
+          onQuery={event => {
+            setQuery(event.nativeEvent.query)
+          }}
+          onSelect={event => {
+            selectResult(event.nativeEvent.id)
+          }}
           onDismiss={() => {
             setSearchOpen(false)
             setQuery('')
@@ -364,7 +374,9 @@ export function TvBrowser({
           {searchError !== null && (
             <TvButton
               label="Retry search"
-              onPress={() => setRetry(n => n + 1)}
+              onPress={() => {
+                setRetry(n => n + 1)
+              }}
             />
           )}
           <View style={styles.searchGrid}>
@@ -374,7 +386,9 @@ export function TvBrowser({
                 label={item.title}
                 detail={item.detail}
                 image={item.image}
-                onPress={() => selectResult(item.id)}
+                onPress={() => {
+                  selectResult(item.id)
+                }}
               />
             ))}
           </View>
@@ -748,11 +762,11 @@ function BrowsePage({
       testID={`tv-page-${pageKey(page)}`}
       style={styles.page}
       contentContainerStyle={styles.pageContent}
-      onScroll={event =>
+      onScroll={event => {
         setHeroVisible(
           event.nativeEvent.contentOffset.y < (page.kind === 'home' ? 550 : 380)
         )
-      }
+      }}
       scrollEventThrottle={100}
       stickyHeaderIndices={sticky}
     >

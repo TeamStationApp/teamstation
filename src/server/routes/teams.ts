@@ -1,4 +1,3 @@
-import { videoSearchDetails } from '../events/videoSearchDetails'
 import { Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
@@ -42,6 +41,7 @@ import {
   hasVideoFilter,
   videoCollectionFilter
 } from '../events/videoCollections'
+import { videoSearchDetails } from '../events/videoSearchDetails'
 import { whyEmpty } from '../events/whyEmpty'
 import { resolvedFenceDistance } from '../games/fenceDistance'
 import { gameIsLive } from '../games/gameLive'

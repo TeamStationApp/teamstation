@@ -138,12 +138,16 @@ RCT_EXPORT_VIEW_PROPERTY(uri, NSString)
 @property(nonatomic, copy) void (^closeSearch)(void);
 @end
 @implementation TVSearchContainer
+- (void)viewDidDisappear:(BOOL)animated {
+  [super viewDidDisappear:animated];
+  if ((self.isBeingDismissed || self.presentingViewController == nil) && self.closeSearch) self.closeSearch();
+}
 - (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
   for (UIPress *press in presses) if (press.type == UIPressTypeMenu) { if (self.closeSearch) self.closeSearch(); return; }
   [super pressesEnded:presses withEvent:event];
 }
 @end
-@interface TVSearchView : UIView <UISearchResultsUpdating, UIAdaptivePresentationControllerDelegate>
+@interface TVSearchView : UIView <UISearchResultsUpdating, UISearchControllerDelegate, UIAdaptivePresentationControllerDelegate>
 @property(nonatomic, copy) NSArray *items;
 @property(nonatomic, copy) NSString *status;
 @property(nonatomic, copy) RCTDirectEventBlock onQuery;
@@ -152,6 +156,7 @@ RCT_EXPORT_VIEW_PROPERTY(uri, NSString)
 @property(nonatomic, strong) TVSearchResults *results;
 @property(nonatomic, strong) UISearchController *search;
 @property(nonatomic, strong) TVSearchContainer *container;
+@property(nonatomic) BOOL closing;
 - (void)closeSearch;
 @end
 @implementation TVSearchView
@@ -160,6 +165,7 @@ RCT_EXPORT_VIEW_PROPERTY(uri, NSString)
     self.results = [TVSearchResults new];
     self.search = [[UISearchController alloc] initWithSearchResultsController:self.results];
     self.search.searchResultsUpdater = self;
+    self.search.delegate = self;
     self.search.searchBar.placeholder = @"Search teams or players";
     self.search.searchBar.accessibilityIdentifier = @"tv-native-search-field";
     self.search.obscuresBackgroundDuringPresentation = NO;
@@ -179,6 +185,7 @@ RCT_EXPORT_VIEW_PROPERTY(uri, NSString)
   if (!self.window || self.container.presentingViewController) return;
   UIViewController *parent = self.reactViewController ?: self.window.rootViewController;
   if (parent && !parent.presentedViewController) {
+    self.closing = NO;
     [parent presentViewController:self.container animated:NO completion:^{ self.search.active = YES; [self.search.searchBar becomeFirstResponder]; }];
     self.container.presentationController.delegate = self;
   }
@@ -198,11 +205,15 @@ RCT_EXPORT_VIEW_PROPERTY(uri, NSString)
   if (self.onQuery) self.onQuery(@{@"query": searchController.searchBar.text ?: @""});
 }
 - (void)closeSearch {
+  if (self.closing) return;
+  self.closing = YES;
   [self.search.searchBar resignFirstResponder];
   [self.container.presentingViewController dismissViewControllerAnimated:NO completion:nil];
   if (self.onDismiss) self.onDismiss(@{});
 }
-- (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController { if (self.onDismiss) self.onDismiss(@{}); }
+// UIKit can consume Menu before the container sees it. Always notify React.
+- (void)didDismissSearchController:(UISearchController *)searchController { [self closeSearch]; }
+- (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController { [self closeSearch]; }
 @end
 @interface TVSearchManager : RCTViewManager @end
 @implementation TVSearchManager

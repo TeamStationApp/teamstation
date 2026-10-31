@@ -1,7 +1,8 @@
+import path from 'node:path'
+
 import { expect } from 'chai'
 import { buildSync } from 'esbuild'
 import { describe, it } from 'mocha'
-import path from 'node:path'
 
 /** Exercise the JS/native prop boundary; UIKit itself is covered by XCTest. */
 describe('TV native presentation bridge', () => {

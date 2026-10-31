@@ -138,7 +138,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 @interface TVSearchContainer : UISearchContainerViewController
 @property(nonatomic, copy) void (^closeSearch)(void);
 @end
-@interface TVSearchView : UIView <UISearchResultsUpdating, UIAdaptivePresentationControllerDelegate>
+@interface TVSearchView : UIView <UISearchResultsUpdating, UISearchControllerDelegate, UIAdaptivePresentationControllerDelegate>
 @property(nonatomic, copy) NSArray *items;
 @property(nonatomic, copy) NSString *status;
 @property(nonatomic, copy) void (^onQuery)(NSDictionary *);
@@ -178,6 +178,15 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 @end
 @interface TVPresentationTests : XCTestCase @end
 @implementation TVPresentationTests
+- (void)testSystemSearchDismissalNotifiesReactOnce {
+  TVSearchView *view = [TVSearchView new];
+  __block NSInteger count = 0;
+  view.onDismiss = ^(NSDictionary *event) { count++; };
+  [view didDismissSearchController:view.search];
+  [view closeSearch];
+  [view presentationControllerDidDismiss:nil];
+  XCTAssertEqual(count,1);
+}
 - (void)testGradientTracksPanelBounds {
   TVGradientView *view = (TVGradientView *)[[NSClassFromString(@"TVGradientManager") new] view];
   view.frame = CGRectMake(0,0,1920,216); view.direction = @"bottom";
@@ -237,6 +246,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
   view.onQuery = ^(NSDictionary *event) { query = event[@"query"]; };
   view.onSelect = ^(NSDictionary *event) { selection = event[@"id"]; };
   view.onDismiss = ^(NSDictionary *event) { dismissals++; };
+  XCTAssertEqual(view.search.delegate,view);
   view.search.searchBar.text = @"Demo"; [view updateSearchResultsForSearchController:view.search]; XCTAssertEqualObjects(query,@"Demo");
   view.search.searchBar.text = nil; [view updateSearchResultsForSearchController:view.search]; XCTAssertEqualObjects(query,@"");
   view.status = @"Searching…";
@@ -257,7 +267,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
   view.items = @[]; view.status = @"No accessible teams or players found."; XCTAssertEqualObjects(results.message.text,view.status);
   view.items = @[@{@"id":@"retry",@"title":@"Retry search",@"detail":@"",@"image":NSNull.null}];
   [results collectionView:results.collectionView didSelectItemAtIndexPath:index]; XCTAssertEqualObjects(selection,@"retry");
-  [view closeSearch]; view.container.closeSearch(); [view presentationControllerDidDismiss:nil]; XCTAssertEqual(dismissals,4);
+  [view closeSearch]; view.container.closeSearch(); [view presentationControllerDidDismiss:nil]; XCTAssertEqual(dismissals,1);
   [view didMoveToWindow];
   view.onQuery = nil; [view updateSearchResultsForSearchController:view.search];
   view.onSelect = nil; view.results.selection(@"stale"); view.onDismiss = nil; [view closeSearch];

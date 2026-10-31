@@ -452,6 +452,10 @@ export function TvPlayer({
   const line = boardAt(stats.line?.steps ?? [], wall)?.line
   const box = boardAt(stats.boxes, wall)?.box
   const BoxScroll = renderedBox === 'expanded' ? TvTextScrollView : ScrollView
+  const wideScore =
+    line != null &&
+    Math.max(line.away.innings.length, line.home.innings.length) > 18
+  const ScoreScroll = wideScore ? TvTextScrollView : ScrollView
   const audio =
     (state.full !== null && clock.current.available(state.full)
       ? state.full
@@ -784,7 +788,7 @@ export function TvPlayer({
         style={[
           styles.box,
           {
-            height: renderedBox === 'expanded' ? '33%' : '20%',
+            height: renderedBox === 'expanded' || wideScore ? '33%' : '20%',
             opacity: boxMotion,
             transform: [
               {
@@ -803,12 +807,22 @@ export function TvPlayer({
           focusable={state.box !== 'closed'}
           style={{ flex: 1, display: state.box === 'closed' ? 'none' : 'flex' }}
         >
+          {wideScore && renderedBox !== 'expanded' && (
+            <TvButton
+              label="Team and player statistics"
+              onPress={() => {
+                dispatch({ type: 'box' })
+              }}
+            />
+          )}
           <BoxScroll>
             {(line === undefined || line === null) &&
               renderedBox !== 'expanded' && (
                 <TvButton
                   label="Team and player statistics"
-                  onPress={() => dispatch({ type: 'box' })}
+                  onPress={() => {
+                    dispatch({ type: 'box' })
+                  }}
                 />
               )}
             {line === undefined || line === null ? (
@@ -817,7 +831,11 @@ export function TvPlayer({
               </Text>
             ) : (
               <>
-                <ScrollView horizontal contentContainerStyle={{ flexGrow: 1 }}>
+                <ScoreScroll
+                  testID="tv-line-score"
+                  horizontal
+                  contentContainerStyle={{ flexGrow: 1 }}
+                >
                   <View
                     style={{
                       flex: 1,
@@ -833,7 +851,13 @@ export function TvPlayer({
                   >
                     <StatRow
                       name="Team"
-                      onPress={() => dispatch({ type: 'box' })}
+                      onPress={
+                        wideScore
+                          ? undefined
+                          : () => {
+                              dispatch({ type: 'box' })
+                            }
+                      }
                       values={[
                         ...Array.from(
                           {
@@ -871,7 +895,7 @@ export function TvPlayer({
                       />
                     ))}
                   </View>
-                </ScrollView>
+                </ScoreScroll>
               </>
             )}
             {renderedBox !== 'expanded' ? null : box === undefined ||
@@ -999,6 +1023,9 @@ function StatRow({
       {values.map((value, index) => (
         <Text
           key={index}
+          testID={
+            heading && name === 'Team' ? `tv-score-column-${value}` : undefined
+          }
           style={[
             heading ? styles.statLabel : styles.statText,
             styles.statCell
@@ -1068,7 +1095,7 @@ function PanelGradient({
 }
 const styles = StyleSheet.create({
   statRow: { flexDirection: 'row', paddingVertical: 3, alignItems: 'center' },
-  statName: { flex: 3.4, paddingRight: 20 },
+  statName: { width: 300, paddingRight: 20 },
   statCell: { flex: 1, minWidth: 48, textAlign: 'center' },
   statText: {
     color: '#fff',

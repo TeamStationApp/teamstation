@@ -2,11 +2,16 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { asVideoSummary, type TeamStationClient } from '../../common/api'
+
+import {
+  asVideoSummary,
+  type TeamStationClient,
+  type VideoSummary
+} from '../../common/api'
 import { HeroPreview, previewCandidates } from './HeroPreview'
 
 let root: Root | undefined
-const video = (id: string, title = id, status = 'ready') =>
+const video = (id: string, title = id, status = 'ready'): VideoSummary =>
   asVideoSummary({
     id,
     title,
@@ -19,7 +24,9 @@ const video = (id: string, title = id, status = 'ready') =>
     height: 360,
     codecs: null
   })
-const tick = async () => await new Promise(resolve => setTimeout(resolve, 25))
+const tick = async (): Promise<void> => {
+  await new Promise(resolve => setTimeout(resolve, 25))
+}
 afterEach(async () => {
   await act(async () => root?.unmount())
   document.body.innerHTML = ''
@@ -101,12 +108,12 @@ describe('TV hero preview', () => {
     expect(document.querySelector('video')).equals(null)
   })
   it('ignores a URL resolved after leaving and preserves the poster on discovery failure', async () => {
-    let resolve!: (value: { url: string }) => void
+    let finish!: (value: { url: string }) => void
     const client = {
       game: async () => ({ videos: [video('a')] }),
       playback: async () =>
-        await new Promise(r => {
-          resolve = r
+        await new Promise(resolve => {
+          finish = resolve
         })
     } as unknown as TeamStationClient
     const host = document.createElement('div')
@@ -122,7 +129,7 @@ describe('TV hero preview', () => {
       await tick()
     })
     await act(async () => {
-      resolve({ url: 'https://example.test/late.mp4' })
+      finish({ url: 'https://example.test/late.mp4' })
       await tick()
     })
     expect(document.querySelector('video')).equals(null)

@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+
 import { tvFixture } from './fixture'
 
 async function main(): Promise<void> {
@@ -141,6 +142,27 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'BACK' })
     await tv.assertVisible({ id: 'tv-page-home' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
+    await tv.tapOn({ id: 'tv-search' })
+    await tv.inputText({ text: 'zzzzzz' })
+    await tv.assertVisible({
+      text: 'No accessible teams or players found.',
+      timeout: 15000
+    })
+    await tv.pressKey({ key: 'BACK' })
+    await tv.assertVisible({ id: 'tv-page-home', timeout: 10000 })
+    h.tvMedia.searchFail = true
+    await tv.tapOn({ id: 'tv-search' })
+    await tv.inputText({ text: 'Demo' })
+    await tv.assertVisible({
+      text: 'Search is unavailable. Try again.',
+      timeout: 15000
+    })
+    h.tvMedia.searchFail = false
+    await tv.pressKey({ key: 'DPAD_DOWN' })
+    await tv.pressKey({ key: 'DPAD_CENTER' })
+    await tv.assertVisible({ id: 'team:tem_comets', timeout: 15000 })
+    await tv.pressKey({ key: 'BACK' })
+    await tv.assertVisible({ id: 'tv-page-home', timeout: 10000 })
     console.log(
       'PASS native TV home, remote directions, authorized team/player search, monthly team page, filtered player page and Back navigation'
     )
@@ -152,10 +174,12 @@ async function main(): Promise<void> {
     await writeFile('/private/tmp/tv-browse-failure.png', await tv.screenshot())
     throw error
   } finally {
-    if (recording !== undefined && recording.exitCode === null) {
+    if (recording?.exitCode === null) {
       recording.kill('SIGINT')
       await new Promise<void>(resolve =>
-        recording!.once('exit', () => resolve())
+        recording!.once('exit', () => {
+          resolve()
+        })
       )
     }
     await tv.stopApp({ appId: 'app.teamstation.tv' })
