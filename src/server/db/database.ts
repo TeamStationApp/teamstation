@@ -1,12 +1,14 @@
+import type * as Sentry from '@sentry/node'
 import {
   type ColumnType,
   type Generated,
   Kysely,
   PostgresDialect
 } from 'kysely'
-import { Pool } from 'pg'
+import { Pool, type PoolConfig } from 'pg'
 
 import type { Role } from '../../common/roles'
+import type * as Config from '../serverConfig'
 import { attachInt8Parser } from './int8'
 
 /** `timestamptz`: read as a Date, written as a Date or an ISO string. */
@@ -1629,11 +1631,95 @@ export interface Database {
   director_uploads: DirectorUploadsTable
 }
 
-export function makeDatabase(connectionString: string): Kysely<Database> {
+/** The kinds of long-running process, each with its own size of pool. */
+export type DatabaseRole = 'worker' | 'primary' | 'statsBuilder' | 'ingest'
+
+export interface PoolOptions {
+  role?: DatabaseRole
+}
+
+/** How long a request waits for a connection before it is told to try again. */
+const CHECKOUT_TIMEOUT_MS = 5000
+/** How often a pool is looked at for waiters. */
+const STARVATION_SAMPLE_MS = 1000
+const STARVATION_LOG_MS = 30_000
+const STARVATION_REPORT_MS = 5 * 60_000
+
+export function makeDatabase(
+  connectionString: string,
+  options: PoolOptions = {}
+): Kysely<Database> {
   attachInt8Parser()
   return new Kysely<Database>({
-    dialect: new PostgresDialect({ pool: makePool(connectionString) })
+    dialect: new PostgresDialect({
+      pool: makePool(connectionString, undefined, options)
+    })
   })
+}
+
+/**
+ * What a pool is opened with. A long-running process names its role, which
+ * sets its size, tells `pg_stat_activity` whose the connection is, and limits
+ * how long a checkout may wait. Without one, as in a script or a test, a pool
+ * waits as long as it takes, and the server's configuration is not read at
+ * all: a command that handles a configuration that will not load imports this
+ * file before it finds out.
+ */
+export function poolSettings(
+  role: DatabaseRole | undefined,
+  sizes?: Record<DatabaseRole, number>
+): PoolConfig {
+  if (role == null) return { max: 10 }
+  const size = (sizes ??
+    (require('../serverConfig') as typeof Config).serverConfig
+      .databasePoolSizes)[role]
+  return {
+    max: size,
+    application_name: `teamstation-${role}`,
+    connectionTimeoutMillis: CHECKOUT_TIMEOUT_MS
+  }
+}
+
+/**
+ * Whether an error is a pool giving up on a connection, while waiting for a
+ * free one or while opening one. The database may be fine; this process just
+ * could not reach it in time, so whoever asked can ask again.
+ */
+export function isPoolTimeout(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message === 'timeout exceeded when trying to connect' ||
+      error.message === 'Connection terminated due to connection timeout')
+  )
+}
+
+/**
+ * The check `makePool` runs on a role's pool: while requests wait for a
+ * connection, say so in the log and at a slower rate in crash reporting.
+ */
+export function starvationCheck(
+  pool: Pick<Pool, 'totalCount' | 'idleCount' | 'waitingCount'>,
+  role: DatabaseRole,
+  log: (message: string) => void,
+  report: (message: string) => void,
+  now: () => number = Date.now
+): () => void {
+  let loggedAt = Number.NEGATIVE_INFINITY
+  let reportedAt = Number.NEGATIVE_INFINITY
+  return () => {
+    if (pool.waitingCount === 0) return
+    const at = now()
+    if (at - loggedAt >= STARVATION_LOG_MS) {
+      loggedAt = at
+      log(
+        `database: ${role} pool starved: total ${pool.totalCount}, idle ${pool.idleCount}, waiting ${pool.waitingCount}`
+      )
+    }
+    if (at - reportedAt >= STARVATION_REPORT_MS) {
+      reportedAt = at
+      report(`database: ${role} pool starved`)
+    }
+  }
 }
 
 /**
@@ -1652,9 +1738,11 @@ export function makePool(
   connectionString: string,
   log: (message: string) => void = message => {
     console.error(message)
-  }
+  },
+  options: PoolOptions = {}
 ): Pool {
-  const pool = new Pool({ connectionString, max: 10 })
+  const { role } = options
+  const pool = new Pool({ connectionString, ...poolSettings(role) })
   pool.on('connect', client => {
     client.on('error', (error: Error) => {
       log(`database: connection lost: ${error.message}`)
@@ -1663,5 +1751,18 @@ export function makePool(
   // The pool repeats an idle connection's error here, which the connection's
   // own listener has already logged. Unheard, the repeat would be fatal too.
   pool.on('error', () => undefined)
+  if (role != null) {
+    // Sentry is loaded here rather than above, so that the scripts that open
+    // a pool with no role do not load it.
+    const { captureMessage } = require('@sentry/node') as typeof Sentry
+    const check = starvationCheck(pool, role, log, message =>
+      captureMessage(message, 'warning')
+    )
+    const sampling = setInterval(() => {
+      if (pool.ended) clearInterval(sampling)
+      else check()
+    }, STARVATION_SAMPLE_MS)
+    sampling.unref()
+  }
   return pool
 }

@@ -1,6 +1,19 @@
 import { isDeepStrictEqual } from 'node:util'
 
-import type { Pool, PoolClient } from 'pg'
+import type { Pool, PoolClient, PoolConfig } from 'pg'
+
+/**
+ * The pool a migration runs on, on the database's own address. A migration can
+ * sit idle in its transaction between long steps, so it is exempt from any
+ * idle-in-transaction limit on the role. The limit is lifted through `options`
+ * because `pg` leaves a numeric 0 out of its startup parameters.
+ */
+export function migrationPoolConfig(connectionString: string): PoolConfig {
+  return {
+    connectionString,
+    options: '-c idle_in_transaction_session_timeout=0'
+  }
+}
 
 export interface Migration {
   /** Sorts the migrations, and identifies an applied one. Never rename it. */

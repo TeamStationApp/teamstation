@@ -107,6 +107,7 @@ import {
   eventControlIssuerOf,
   primaryHost,
   publicUrl,
+  requestDatabaseUrl,
   serverConfig,
   tessSettings
 } from './serverConfig'
@@ -355,7 +356,9 @@ function startChatAttachmentPurge(db: ReturnType<typeof makeDatabase>): void {
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
-  const primaryDb = makeDatabase(serverConfig.databaseUrl)
+  const primaryDb = makeDatabase(requestDatabaseUrl(serverConfig), {
+    role: 'primary'
+  })
   reopenInterrupted(primaryDb)
   startPurge(primaryDb)
   startKeySweep(primaryDb)
@@ -459,7 +462,7 @@ function runPrimary(workerCount: number): void {
 }
 
 function runWorker(): void {
-  const db = makeDatabase(serverConfig.databaseUrl)
+  const db = makeDatabase(requestDatabaseUrl(serverConfig), { role: 'worker' })
   const mediaSecret = resolveMediaSecret()
   const mediaContext: MediaContext = {
     ffmpegPath: serverConfig.ffmpegPath,

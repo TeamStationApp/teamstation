@@ -16,7 +16,7 @@ import { until } from '../../test/scoreboardKit'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
-import { runStatsBuilder } from './main'
+import { runMain, runStatsBuilder } from './main'
 import { requestGameStats } from './request'
 
 const adminUrl = testDatabaseUrl
@@ -267,6 +267,38 @@ describe('statsBuilder main', function () {
     } finally {
       console.log = originalLog
       if (handle != null) await handle.stop('SIGTERM')
+    }
+  })
+
+  it('queries through the request address as its role, and listens on the database', async function () {
+    const originalLog = console.log
+    console.log = () => undefined
+    const namesOn = async (config: {
+      databaseUrl: string
+      databasePoolUrl: string
+    }): Promise<string[]> => {
+      const handle = await runMain(config)
+      const { rows } = await sql<{ name: string; query: string }>`
+        select application_name as name, query from pg_stat_activity
+        where datname = ${scratchName}
+          and application_name <> ''
+          and pid <> pg_backend_pid()`.execute(db)
+      await handle.stop('SIGTERM')
+      return rows.map(row => row.name)
+    }
+    try {
+      expect(
+        await namesOn({ databaseUrl: scratchUrl, databasePoolUrl: '' })
+      ).deep.equals(['teamstation-statsBuilder'])
+      // The name a URL carries beats the role's, so it shows which URL it is.
+      expect(
+        await namesOn({
+          databaseUrl: scratchUrl,
+          databasePoolUrl: `${scratchUrl}?application_name=thePool`
+        })
+      ).deep.equals(['thePool'])
+    } finally {
+      console.log = originalLog
     }
   })
 })

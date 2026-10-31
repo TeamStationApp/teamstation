@@ -2,9 +2,9 @@ import { createServer, type Server } from 'node:http'
 
 import type { Kysely } from 'kysely'
 
-import type { Database } from '../db/database'
+import type { Database, PoolOptions } from '../db/database'
 import type { LiveControllerOptions } from '../live/controller'
-import type { ServerConfig } from '../serverConfig'
+import { requestDatabaseUrl, type ServerConfig } from '../serverConfig'
 
 /**
  * The live ingest, as a process of its own.
@@ -26,7 +26,7 @@ export type IngestSignal = 'SIGTERM' | 'SIGINT'
 
 export interface IngestDeps {
   config: ServerConfig
-  makeDatabase: (url: string) => Kysely<Database>
+  makeDatabase: (url: string, options: PoolOptions) => Kysely<Database>
   startLiveController: (options: LiveControllerOptions) => Promise<boolean>
   stopLiveController: () => void
   /** What the stopped controller still has in hand, before the pool goes. */
@@ -70,7 +70,7 @@ export async function runIngest(
     return undefined
   }
 
-  const db = deps.makeDatabase(config.databaseUrl)
+  const db = deps.makeDatabase(requestDatabaseUrl(config), { role: 'ingest' })
   const started = await deps.startLiveController({
     db,
     live: config.live,

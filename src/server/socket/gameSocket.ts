@@ -757,6 +757,9 @@ export function attachGameSocket(
           } catch {
             return false
           }
+        },
+        resync: () => {
+          ws.close(1012, 'Changes may have been missed')
         }
       },
       chat: undefined,

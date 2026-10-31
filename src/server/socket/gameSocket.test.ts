@@ -28,6 +28,8 @@ import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { eventRoutes } from '../routes/events'
+import { readWalkUpSong } from '../routes/walkUpSongs'
+import { notifyGameChange } from './gameChanges'
 import {
   attachGameSocket,
   type GameSocketHandle,
@@ -76,6 +78,7 @@ describe('the game socket (U14)', function () {
   const failing = new Set<string>()
   const logged: string[] = []
   const listeners: Listener[] = []
+  let songsTimeOut = false
 
   const taken = new Set<number>()
   const mint = (): { userId: number; legacyId: string } => {
@@ -403,7 +406,16 @@ describe('the game socket (U14)', function () {
       recheckMs: 60_000,
       clock: () => now,
       stopSignals: signals,
-      fanout: { coalesceMs: 20, retryMs: 50, log: () => undefined },
+      fanout: {
+        coalesceMs: 20,
+        retryMs: 50,
+        log: () => undefined,
+        readSong: async (reader, teamId, userId) => {
+          if (songsTimeOut)
+            throw new Error('timeout exceeded when trying to connect')
+          return await readWalkUpSong(reader, teamId, userId)
+        }
+      },
       log: message => {
         logged.push(message)
       },
@@ -973,6 +985,24 @@ describe('the game socket (U14)', function () {
       await apply(ball)
       await settled(again, from)
       again.ws.terminate()
+    })
+  })
+
+  describe('a delivery with no connection to be had in time', function () {
+    it('closes the game’s sockets with 1012 so their clients reconnect and resync', async function () {
+      const listener = await listen(VIEWER)
+      await subscribed(listener, scored)
+      songsTimeOut = true
+      try {
+        await notifyGameChange(db!, {
+          team: homeTeam,
+          kind: 'walkUpSong',
+          userId: userIdOfGumbo(mint().userId)
+        })
+        expect(await listener.closed).equals(1012)
+      } finally {
+        songsTimeOut = false
+      }
     })
   })
 

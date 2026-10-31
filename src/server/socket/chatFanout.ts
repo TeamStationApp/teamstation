@@ -6,7 +6,7 @@ import { asLiteral } from '../../common/asLiteral'
 import type { ChatSocketFrame } from '../../common/gameSocket'
 import { asUserId } from '../../common/userId'
 import { CHAT_CHANGES_CHANNEL } from '../chat/membershipLog'
-import type { Database } from '../db/database'
+import { type Database, isPoolTimeout } from '../db/database'
 
 /**
  * What every chat writer notifies on `chat_changes`, inside its
@@ -101,6 +101,11 @@ export async function notifyTyping(
  * Like `GameFanout`, a lost `LISTEN` connection is listened again after
  * `retryMs`. Hints sent meanwhile were never heard, so every chat socket on
  * the worker is told to `resync`.
+ *
+ * A hint whose member set cannot be read for want of a connection cannot be
+ * sent, and who to tell is exactly what could not be read. So the read is
+ * tried again every `retryMs`, once per conversation, and when it succeeds
+ * that conversation's members are told to `resync`.
  */
 export class ChatFanout {
   /** Settles once the first `LISTEN` is in place, or has failed. */
@@ -116,6 +121,8 @@ export class ChatFanout {
   private readonly subscribers = new Map<string, Set<ChatSubscriber>>()
   /** Member sets by conversation, oldest first. */
   private readonly members = new Map<string, Promise<Set<string>>>()
+  /** Conversations whose members are owed a `resync`, with its next try. */
+  private readonly owed = new Map<string, ReturnType<typeof setTimeout>>()
   private client: Client | undefined
   private readonly hangingUp = new Set<Promise<void>>()
   private retry: ReturnType<typeof setTimeout> | undefined
@@ -169,6 +176,8 @@ export class ChatFanout {
   async close(): Promise<void> {
     this.closed = true
     clearTimeout(this.retry)
+    for (const timer of this.owed.values()) clearTimeout(timer)
+    this.owed.clear()
     this.subscribers.clear()
     this.members.clear()
     const client = this.client
@@ -201,7 +210,16 @@ export class ChatFanout {
     if (change.k === 'members') this.members.delete(change.c)
     // Nobody here to tell: the set is not read at all.
     if (this.subscribers.size === 0) return
-    const members = await this.membersOf(change.c)
+    let members: Set<string>
+    try {
+      members = await this.membersOf(change.c)
+    } catch (error) {
+      if (!isPoolTimeout(error)) throw error
+      // A typing hint is over by the time anyone could hear it: nothing to
+      // read again.
+      if (change.k !== 'typing') this.oweResync(change.c)
+      return
+    }
     if (change.k === 'typing') {
       const frame: ChatSocketFrame = {
         type: 'chatTyping',
@@ -220,6 +238,33 @@ export class ChatFanout {
       at: this.now().toISOString()
     }
     for (const userId of members) this.sendTo(userId, frame)
+  }
+
+  /** Tries again shortly to tell a conversation's members to read again. */
+  private oweResync(conversationId: string): void {
+    if (this.closed || this.owed.has(conversationId)) return
+    this.log(`owing ${conversationId} a resync: no database connection in time`)
+    this.owed.set(
+      conversationId,
+      setTimeout(() => {
+        this.owed.delete(conversationId)
+        this.payResync(conversationId).catch((error: unknown) => {
+          this.log(`resyncing ${conversationId}: ${String(error)}`)
+        })
+      }, this.retryMs)
+    )
+  }
+
+  private async payResync(conversationId: string): Promise<void> {
+    let members: Set<string>
+    try {
+      members = await this.membersOf(conversationId)
+    } catch (error) {
+      if (!isPoolTimeout(error)) throw error
+      this.oweResync(conversationId)
+      return
+    }
+    for (const userId of members) this.sendTo(userId, { type: 'resync' })
   }
 
   private sendTo(userId: string, frame: ChatSocketFrame): void {

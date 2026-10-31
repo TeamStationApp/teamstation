@@ -703,6 +703,135 @@ describe('chat on the socket (U9)', function () {
       expect(lines.length).equals(counted)
     })
 
+    describe('with no connection to be had in time', function () {
+      const poolTimeout = new Error('timeout exceeded when trying to connect')
+      /** A fan-out whose reads fail until `recover` is called. */
+      const starved = (
+        failure: Error = poolTimeout
+      ): {
+        fanout: ChatFanout
+        lines: string[]
+        calls: () => number
+        recover: () => void
+      } => {
+        let failing = true
+        let calls = 0
+        const lines: string[] = []
+        const fanout = new ChatFanout({
+          db,
+          databaseUrl: fixture.url,
+          retryMs: 20,
+          log: line => lines.push(line),
+          readMembers: async (reader, conversationId) => {
+            calls++
+            if (failing) throw failure
+            return await readMembers(reader, conversationId)
+          }
+        })
+        return {
+          fanout,
+          lines,
+          calls: () => calls,
+          recover: () => {
+            failing = false
+          }
+        }
+      }
+
+      it('tells the conversation’s members to resync once it can read them, and nobody else', async function () {
+        const f = starved()
+        await f.fanout.listening
+        const coach = subscriber(fixture.id('Hc'))
+        const stranger = subscriber('someone-not-in-it')
+        f.fanout.add(coach)
+        f.fanout.add(stranger)
+        await f.fanout.deliver(
+          JSON.stringify({ c: members, k: 'message', seq: 1 })
+        )
+        // A second hint while one is owed adds no second resync.
+        await f.fanout.deliver(
+          JSON.stringify({ c: members, k: 'message', seq: 2 })
+        )
+        expect(coach.sent).deep.equals([])
+        expect(f.lines.filter(line => line.includes('owing'))).to.have.length(1)
+        // Still failing: it goes on trying.
+        const before = f.calls()
+        for (let i = 0; i < 100 && f.calls() < before + 2; i++) await wait(10)
+        expect(f.calls()).greaterThanOrEqual(before + 2)
+        f.recover()
+        for (let i = 0; i < 100 && coach.sent.length === 0; i++) await wait(10)
+        expect(coach.sent).deep.equals([{ type: 'resync' }])
+        expect(stranger.sent).deep.equals([])
+        await f.fanout.close()
+      })
+
+      it('owes nothing for a typing hint', async function () {
+        const f = starved()
+        await f.fanout.listening
+        const coach = subscriber(fixture.id('Hc'))
+        f.fanout.add(coach)
+        await f.fanout.deliver(
+          JSON.stringify({ c: members, k: 'typing', u: fixture.id('Hc') })
+        )
+        f.recover()
+        await wait(60)
+        expect(coach.sent).deep.equals([])
+        await f.fanout.close()
+      })
+
+      it('stops owing when closed', async function () {
+        const f = starved()
+        await f.fanout.listening
+        f.fanout.add(subscriber(fixture.id('Hc')))
+        await f.fanout.deliver(JSON.stringify({ c: members, k: 'read' }))
+        await f.fanout.close()
+        const counted = f.calls()
+        await wait(60)
+        expect(f.calls()).equals(counted)
+      })
+
+      it('still throws any other failure, owing nothing', async function () {
+        const f = starved(new Error('database away'))
+        await f.fanout.listening
+        const coach = subscriber(fixture.id('Hc'))
+        f.fanout.add(coach)
+        let failure: unknown
+        await f.fanout
+          .deliver(JSON.stringify({ c: members, k: 'read' }))
+          .catch((error: unknown) => {
+            failure = error
+          })
+        expect(String(failure)).contains('database away')
+        expect(f.lines.filter(line => line.includes('owing'))).deep.equals([])
+        await f.fanout.close()
+      })
+
+      it('logs a failure of another kind while paying, and stops', async function () {
+        let reads = 0
+        const lines: string[] = []
+        const fanout = new ChatFanout({
+          db,
+          databaseUrl: fixture.url,
+          retryMs: 20,
+          log: line => lines.push(line),
+          readMembers: async () => {
+            reads++
+            throw reads === 1 ? poolTimeout : new Error('database away')
+          }
+        })
+        await fanout.listening
+        fanout.add(subscriber(fixture.id('Hc')))
+        await fanout.deliver(JSON.stringify({ c: members, k: 'read' }))
+        await wait(100)
+        expect(reads).equals(2)
+        expect(lines.some(line => line.includes('database away'))).equals(true)
+        const counted = reads
+        await wait(60)
+        expect(reads).equals(counted)
+        await fanout.close()
+      })
+    })
+
     it('logs to the console unless told otherwise', async function () {
       const fanout = new ChatFanout({ db, databaseUrl: fixture.url })
       await fanout.listening
