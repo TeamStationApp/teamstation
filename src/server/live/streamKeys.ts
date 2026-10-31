@@ -110,7 +110,7 @@ export interface LiveStreamRow {
   /** What that device is, in words. */
   deviceModel: string | null
   /** How far the phone's own recording of it has got. */
-  localRecording: 'none' | 'recorded' | 'uploaded'
+  localRecording: 'none' | 'recorded' | 'uploaded' | 'removed'
   /** Only the phone's own upload replaces its live copy. */
   recordsLocally: boolean
   /** The legacy Director claim route has returned it. */

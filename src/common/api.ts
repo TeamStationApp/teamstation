@@ -4763,12 +4763,13 @@ export class TeamStationClient {
 
   /**
    * Renames one of my cameras, or says this phone holds its recording
-   * (`localRecording: 'recorded'`), which starts the upload reminder.
+   * (`localRecording: 'recorded'`), which starts the upload reminder, or no
+   * longer does (`'removed'`), which settles it.
    */
   async updateLiveStream(
     gameId: string,
     streamId: string,
-    change: { label?: string; localRecording?: 'recorded' }
+    change: { label?: string; localRecording?: 'recorded' | 'removed' }
   ): Promise<LiveStream> {
     return await this.request(
       'PATCH',

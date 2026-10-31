@@ -48,7 +48,8 @@ type Mine = Record<string, string[] | 'refused'>
 
 const client = (
   token: string | undefined,
-  mine: Mine = {}
+  mine: Mine = {},
+  discarded: string[] = []
 ): TeamStationClient & { listed: string[] } => {
   const listed: string[] = []
   return {
@@ -63,6 +64,7 @@ const client = (
         gameId,
         mine: ids.map(id => ({ id })),
         others: [],
+        discarded,
         canAdd: 4,
         maxCameras: 4
       } as unknown as GameLiveStreams
@@ -116,7 +118,11 @@ function cutOff(
   }
 }
 
-const SUPPORTED = { supported: true, deviceModel: 'iPhone 13 Pro' }
+const SUPPORTED = {
+  supported: true,
+  deviceModel: 'iPhone 13 Pro',
+  canRecordLocally: true
+}
 
 describe('resuming recording uploads', function () {
   afterEach(async function () {
@@ -224,8 +230,8 @@ describe('resuming recording uploads', function () {
       ['liv_uploaded', API, 'token-0000', 'liv_uploaded upload'],
       ['liv_elsewhere', API, 'token-0000', 'liv_elsewhere upload']
     ])
-    // Every take on the other game was opened, so its cameras are not asked.
-    expect(signedIn.listed).deep.equals([GAME])
+    // A pending take's game is read too: its camera may have been deleted.
+    expect([...signedIn.listed].sort()).deep.equals([GAME, OTHER_GAME])
   })
 
   it('tells the server about a take whose report failed after its last part', async function () {
@@ -284,8 +290,7 @@ describe('resuming recording uploads', function () {
     })
     const once = [[GAME, 'liv_unreported', { localRecording: 'recorded' }]]
     expect(reported).deep.equals(once)
-    // A take whose upload the server opened is not asked about.
-    expect(listed).deep.equals([GAME])
+    expect([...listed].sort()).deep.equals([GAME, OTHER_GAME])
     await appState.turn('active')
     expect(reported).deep.equals([...once, ...once])
   })
@@ -375,7 +380,11 @@ describe('resuming recording uploads', function () {
     })
 
     const unsupported = fakePhoneStreamModule({
-      capabilities: { supported: false, deviceModel: '' },
+      capabilities: {
+        supported: false,
+        deviceModel: '',
+        canRecordLocally: false
+      },
       recordings: [cutOff('liv_mine')]
     })
     await mount({
@@ -399,6 +408,48 @@ describe('resuming recording uploads', function () {
     })
   })
 
+  it('deletes a take whose camera was deleted, and resumes the others', async function () {
+    const native = fakePhoneStreamModule({
+      capabilities: SUPPORTED,
+      recordings: [
+        cutOff('liv_gone', { uploadId: 'dup_00000000000000000001' }),
+        cutOff('liv_goneUnopened', { uploadId: undefined }),
+        cutOff('liv_mine', { uploadId: 'dup_00000000000000000002' })
+      ]
+    })
+    await mount({
+      client: client('token-0000', { [GAME]: ['liv_mine'] }, [
+        'liv_gone',
+        'liv_goneUnopened'
+      ]),
+      signedInAs: 7,
+      phone: makePhoneStream(native),
+      appState: fakeAppState()
+    })
+    expect(
+      native.calls
+        .filter(call => call.name === 'deleteRecording')
+        .map(call => call.args)
+    ).deep.equals([['liv_gone'], ['liv_goneUnopened']])
+    expect(resumed(native)).deep.equals([
+      ['liv_mine', API, 'token-0000', 'liv_mine upload']
+    ])
+  })
+
+  it('resumes an opened take when the camera list cannot be read', async function () {
+    const native = fakePhoneStreamModule({
+      capabilities: SUPPORTED,
+      recordings: [cutOff('liv_mine', { uploadId: 'dup_00000000000000000001' })]
+    })
+    await mount({
+      client: client('token-0000', { [GAME]: 'refused' }),
+      signedInAs: 7,
+      phone: makePhoneStream(native),
+      appState: fakeAppState()
+    })
+    expect(resumed(native)).length(1)
+  })
+
   it('stays quiet when the engine refuses', async function () {
     const native = fakePhoneStreamModule({
       capabilities: SUPPORTED,
@@ -412,6 +463,21 @@ describe('resuming recording uploads', function () {
       appState: fakeAppState()
     })
     expect(resumed(native)).length(1)
+    const undeletable = fakePhoneStreamModule({
+      capabilities: SUPPORTED,
+      recordings: [cutOff('liv_gone')]
+    })
+    undeletable.failures.deleteRecording = { code: 'uploadInProgress' }
+    await act(async () => {
+      root?.unmount()
+    })
+    await mount({
+      client: client('token-0000', { [GAME]: [] }, ['liv_gone']),
+      signedInAs: 7,
+      phone: makePhoneStream(undeletable),
+      appState: fakeAppState()
+    })
+    expect(resumed(undeletable)).deep.equals([])
     const listing = fakePhoneStreamModule({ capabilities: SUPPORTED })
     listing.failures.recordings = { code: 'badRequest' }
     await act(async () => {

@@ -805,7 +805,7 @@ export interface LiveStreamsTable {
   /** What that device is, in words: `iPhone 13 Pro`, `iPad Pro`. */
   device_model: string | null
   /** The phone's own recording: `none`, `recorded`, or `uploaded`. */
-  local_recording: Generated<'none' | 'recorded' | 'uploaded'>
+  local_recording: Generated<'none' | 'recorded' | 'uploaded' | 'removed'>
   /** Only the phone's own upload replaces this stream's live copy. */
   records_locally: Generated<boolean>
   /** The legacy Director claim route has returned this stream. */

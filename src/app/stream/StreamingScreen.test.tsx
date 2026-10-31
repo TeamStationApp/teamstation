@@ -10,7 +10,8 @@ import { ThemeProvider } from '../theme/ThemeContext'
 import {
   type FakePhoneStreamModule,
   fakePhoneStreamModule,
-  RADAR_EVENT
+  RADAR_EVENT,
+  RECORDING
 } from './fakePhoneStreamModule'
 import type { NativePhoneStreamStatus } from './NativePhoneStream'
 import { SLIDE_TRAVEL } from './overlay/SlideToStop'
@@ -74,6 +75,7 @@ async function mount(
   const native = fakePhoneStreamModule({
     zoomScale: SCALE,
     radarState: { ...RADAR_EVENT, devices: [] },
+    recordings: [{ ...RECORDING, liveStreamId: SESSION.streamId }],
     ...answers
   })
   const harness: Harness = {
@@ -424,7 +426,7 @@ describe('the streaming screen', function () {
   it('says so when the camera cannot be opened', async function () {
     const answers = { zoomScale: SCALE }
     const refused = fakePhoneStreamModule(answers)
-    refused.failures.open = { code: 'insufficientStorage' }
+    refused.failures.open = { code: 'permission' }
     const host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -445,8 +447,8 @@ describe('the streaming screen', function () {
       )
       await delay(20)
     })
-    expect(byTestId('stream-problem')?.textContent).equals(
-      'There is not enough free space on this phone to record.'
+    expect(byTestId('stream-problem')?.textContent).contains(
+      'camera and the microphone'
     )
     // A token-less client sends an empty one.
     await press('broadcast-button')
@@ -661,7 +663,7 @@ describe('the streaming screen', function () {
       zoomScale: SCALE,
       interruptedSession: interrupted
     })
-    again.failures.resumeInterrupted = { code: 'insufficientStorage' }
+    again.failures.resumeInterrupted = { code: 'permission' }
     const host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -682,9 +684,54 @@ describe('the streaming screen', function () {
       )
       await delay(20)
     })
-    expect(byTestId('stream-problem')?.textContent).equals(
-      'There is not enough free space on this phone to record.'
+    expect(byTestId('stream-problem')?.textContent).contains(
+      'camera and the microphone'
     )
+  })
+
+  it('on a streaming-only start, shows the notice and tells the server nothing at Stop', async function () {
+    // Another stream's take on this phone is not this stream's.
+    const h = await mount(SESSION, {
+      recordings: [{ ...RECORDING, liveStreamId: 'liv_other' }]
+    })
+    await emit(h.native, {})
+    expect(byTestId('streaming-only')).equals(null)
+    await emit(h.native, {
+      phase: 'live',
+      isRecording: false,
+      error: 'recordingStoppedLowStorage'
+    })
+    expect(byTestId('streaming-only')?.textContent).equals(
+      'Streaming only: not enough free space to record'
+    )
+    await press('broadcast-button')
+    await slide(SLIDE_TRAVEL)
+    expect(calls(h.native, 'stopRecording')).has.length(1)
+    await emit(h.native, { error: 'recordingStoppedLowStorage' })
+    // Off the air, an old error is no notice.
+    expect(byTestId('streaming-only')).equals(null)
+    expect(h.patches).deep.equals([])
+  })
+
+  it('tells the server at Stop when the phone holds a take of this stream', async function () {
+    const h = await mount()
+    await emit(h.native, { phase: 'live', isRecording: false })
+    await press('broadcast-button')
+    await slide(SLIDE_TRAVEL)
+    await emit(h.native, {})
+    expect(h.patches).deep.equals([
+      { streamId: SESSION.streamId, change: { localRecording: 'recorded' } }
+    ])
+  })
+
+  it('leaves the report for later when the takes cannot be read', async function () {
+    const h = await mount()
+    h.native.failures.recordings = { code: 'notReady' }
+    await emit(h.native, { phase: 'live', isRecording: false })
+    await press('broadcast-button')
+    await slide(SLIDE_TRAVEL)
+    await emit(h.native, {})
+    expect(h.patches).deep.equals([])
   })
 
   it('says the camera is unavailable while the engine reports it lost, and offers no Record', async function () {
@@ -721,9 +768,6 @@ describe('the streaming screen', function () {
     expect(describeRefusal(new PhoneStreamError('permission'), 'A')).contains(
       'camera and the microphone'
     )
-    expect(
-      describeRefusal(new PhoneStreamError('insufficientStorage'), 'A')
-    ).equals('There is not enough free space on this phone to record.')
     expect(
       describeRefusal(new PhoneStreamError('uploadInProgress'), 'First Base')
     ).equals('First Base is still uploading')
