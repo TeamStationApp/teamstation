@@ -22,6 +22,7 @@ import {
   angleSuggestions
 } from './AngleNamePrompt'
 import { CameraAnglesPanel } from './CameraAnglesPanel.native'
+import type { CameraLinks } from './cameraDeepLinks'
 import {
   type FakePhoneStreamModule,
   fakePhoneStreamModule,
@@ -217,6 +218,34 @@ function FakeScreen(props: StreamingScreenProps): React.ReactElement {
   )
 }
 
+/** Stands in for the system's links: no camera app is here, unless a test says. */
+interface FakeLinks extends CameraLinks {
+  installed: string[]
+  /** Answers a link, or throws, as a test says. */
+  answer: (url: string) => Promise<void>
+  fired: string[]
+}
+
+function fakeLinks(installed: string[] = []): FakeLinks {
+  const links: FakeLinks = {
+    installed,
+    fired: [],
+    answer: async () => {},
+    canOpenURL: async url => links.installed.includes(url),
+    openURL: async url => {
+      links.fired.push(url)
+      await links.answer(url)
+    },
+    appInstalled: async () => false,
+    openInApp: async url => {
+      links.fired.push(url)
+      await links.answer(url)
+      return true
+    }
+  }
+  return links
+}
+
 async function mount(
   fake: FakeClient,
   capabilities: unknown = {
@@ -227,7 +256,9 @@ async function mount(
   native: FakePhoneStreamModule = fakePhoneStreamModule({ capabilities }),
   copied: string[] = [],
   hasVideo = true,
-  appState?: AppStateLike
+  links: FakeLinks = fakeLinks(),
+  appState?: AppStateLike,
+  launchLimitMs?: number
 ): Promise<void> {
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -242,9 +273,11 @@ async function mount(
           deviceId={async () => DEVICE_ID}
           Screen={FakeScreen as never}
           copy={text => copied.push(text)}
+          links={links}
           hasVideo={hasVideo}
           onPlay={id => played.push(id)}
           appState={appState}
+          launchLimitMs={launchLimitMs}
         />
       </ThemeProvider>
     )
@@ -1366,7 +1399,7 @@ describe('what somebody may do changing while the panel is up', function () {
     }),
     appState?: AppStateLike
   ): Promise<void> {
-    await mount(fake, CAN_RECORD, native, [], false, appState)
+    await mount(fake, CAN_RECORD, native, [], false, fakeLinks(), appState)
   }
 
   it('reads a failed first answer again until one comes, and brings the camera area back', async function () {
@@ -1685,9 +1718,7 @@ describe('setting up a camera on a phone', function () {
   })
 
   for (const [row, source] of [
-    ['GoPro', 'gopro'],
-    ['Mevo', 'mevo'],
-    ['Mevo Studio', 'mevoStudio'],
+    ['GoPro, with its app missing', 'gopro'],
     ['Other camera', 'rtmp']
   ] as const) {
     it(`makes the camera with its source as ${row} opens the RTMP sheet, and not before`, async function () {
@@ -1709,11 +1740,400 @@ describe('setting up a camera on a phone', function () {
       expect(text()).contains(
         'If your app requests a stream key, leave it blank.'
       )
+      expect(text()).contains('Your camera must stream in HEVC (H.265).')
       expect(text()).contains(
         'You may now return to the app and stream to the RTMP URL at any time.'
       )
     })
   }
+
+  describe('a camera with its own app', function () {
+    afterEach(function () {
+      ;(Platform as { OS: string }).OS = 'web'
+    })
+
+    const listed = (fake: FakeClient): void => {
+      fake.next = async () => {
+        const made = stream({
+          deviceId: undefined,
+          deviceModel: undefined,
+          label: 'Backstop',
+          source: 'mevo',
+          url: RTMP_URL
+        })
+        fake.mine = [made]
+        return made
+      }
+    }
+
+    async function mountWith(
+      fake: FakeClient,
+      links: FakeLinks
+    ): Promise<void> {
+      await mount(
+        fake,
+        CAN_RECORD,
+        fakePhoneStreamModule({ capabilities: CAN_RECORD }),
+        [],
+        true,
+        links
+      )
+    }
+
+    it('makes the camera, fires its link and leaves it on the tab', async function () {
+      ;(Platform as { OS: string }).OS = 'android'
+      const fake = fakeClient()
+      listed(fake)
+      const links = fakeLinks(['mevostream://configure'])
+      await mountWith(fake, links)
+      await toSources()
+      expect(fake.added, 'nothing made yet').deep.equals([])
+      await pressId('camera-source-mevo')
+      await settle()
+      expect(fake.added).deep.equals([
+        { gameId: 'gam_1', label: 'Backstop', device: { source: 'mevo' } }
+      ])
+      expect(links.fired).to.have.length(1)
+      expect(links.fired[0]).contains('mevostream://configure/?publishHost=')
+      expect(links.fired[0]).contains('encoder=hevc')
+      expect(byTestId('camera-source-sheet')).equals(null)
+      expect(byTestId('rtmp-url-sheet')).equals(null)
+      expect(text()).contains('Using Mevo')
+    })
+
+    it('opens the RTMP sheet from the row a link made', async function () {
+      const fake = fakeClient()
+      listed(fake)
+      await mountWith(fake, fakeLinks(['mevostream://configure']))
+      await toSources()
+      await pressId('camera-source-mevo')
+      await settle()
+      await pressId(`angle-row-${stream().id}`)
+      await settle()
+      expect(byTestId('rtmp-url')?.textContent).equals(RTMP_URL)
+      expect(fake.added).to.have.length(1)
+    })
+
+    it('hands Mevo Studio’s link to its app where no package can be asked about', async function () {
+      const fake = fakeClient()
+      listed(fake)
+      const links = fakeLinks()
+      await mountWith(fake, links)
+      await toSources()
+      await pressId('camera-source-mevoStudio')
+      expect(links.fired[0]).contains('https://multicam.mevo.com?link=')
+      expect(fake.added[0].device).deep.equals({ source: 'mevoStudio' })
+    })
+
+    it('stays on the sheet with Android’s store page up, and makes no camera', async function () {
+      ;(Platform as { OS: string }).OS = 'android'
+      const fake = fakeClient()
+      listed(fake)
+      const links = fakeLinks()
+      await mountWith(fake, links)
+      await toSources()
+      await pressId('camera-source-gopro')
+      await settle()
+      expect(links.fired).deep.equals([
+        'https://play.google.com/store/apps/details?id=com.gopro.smarty'
+      ])
+      expect(fake.added).deep.equals([])
+      expect(byTestId('camera-source-sheet')).not.equals(null)
+      links.installed.push('goprocontrol://com.gopro.smarty/home')
+      await pressId('camera-source-gopro')
+      expect(fake.added, 'tapped again once installed').to.have.length(1)
+    })
+
+    it('says under the rows why a camera was refused, and fires nothing', async function () {
+      const fake = fakeClient()
+      fake.next = async () => {
+        throw new HttpError('conflict', 'This game already has 6 cameras.')
+      }
+      const links = fakeLinks(['mevostream://configure'])
+      await mountWith(fake, links)
+      await toSources()
+      await pressId('camera-source-mevo')
+      expect(byTestId('camera-source-error')?.textContent).equals(
+        'This game already has 6 cameras.'
+      )
+      expect(byTestId('camera-source-sheet')).not.equals(null)
+      expect(links.fired).deep.equals([])
+      await pressId('camera-source-rtmp')
+      await settle()
+      await pressId('rtmp-done')
+      await settle()
+      await toSources()
+      expect(
+        byTestId('camera-source-error'),
+        'a new attempt starts clean'
+      ).equals(null)
+    })
+
+    it('says something for a refusal that is no error', async function () {
+      const fake = fakeClient()
+      fake.next = async () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- What a stranger's code may throw.
+        throw 'refused'
+      }
+      await mountWith(fake, fakeLinks(['mevostream://configure']))
+      await toSources()
+      await pressId('camera-source-mevo')
+      expect(byTestId('camera-source-error')).not.equals(null)
+    })
+
+    it('makes one camera from two quick taps', async function () {
+      const fake = fakeClient()
+      let finish = (): void => {}
+      fake.next = async () => {
+        await new Promise<void>(resolve => {
+          finish = resolve
+        })
+        return stream({ url: RTMP_URL })
+      }
+      await mountWith(fake, fakeLinks(['mevostream://configure']))
+      await toSources()
+      await pressId('camera-source-mevo')
+      await pressId('camera-source-mevo')
+      expect(fake.added).to.have.length(1)
+      await act(async () => {
+        finish()
+        await delay(20)
+      })
+    })
+
+    describe('while its camera is being made', function () {
+      /** A camera the server holds until `finish` lets it go. */
+      const heldCamera = (fake: FakeClient): (() => void) => {
+        let finish = (): void => {}
+        fake.next = async () => {
+          await new Promise<void>(resolve => {
+            finish = resolve
+          })
+          const made = stream({
+            deviceId: undefined,
+            deviceModel: undefined,
+            label: 'Backstop',
+            source: 'mevo',
+            url: RTMP_URL
+          })
+          fake.mine = [made]
+          return made
+        }
+        return () => {
+          finish()
+        }
+      }
+      const sourceSheet = (): boolean =>
+        byTestId('camera-source-sheet') != null &&
+        text().includes('Stream with your camera')
+      const release = async (finish: () => void): Promise<void> => {
+        await act(async () => {
+          finish()
+          await delay(20)
+        })
+        await settle()
+      }
+
+      for (const os of ['android', 'ios']) {
+        it(`holds the sheet against Cancel, the backdrop and Android’s back, until the app opens, on ${os}`, async function () {
+          ;(Platform as { OS: string }).OS = os
+          const fake = fakeClient()
+          const finish = heldCamera(fake)
+          const links = fakeLinks(['mevostream://configure'])
+          links.openInApp = async url => {
+            links.fired.push(url)
+            return true
+          }
+          await mountWith(fake, links)
+          await toSources()
+          await settle()
+          await pressId('camera-source-mevo')
+          expect(fake.added).to.have.length(1)
+
+          await pressId('sheet-cancel')
+          await press(
+            document.querySelector<HTMLElement>(
+              '[role="button"][aria-label="Cancel"]'
+            )!
+          )
+          await settle()
+          expect(sourceSheet(), 'still up').equals(true)
+          expect(links.fired, 'nothing yet').deep.equals([])
+          // Another row does nothing either, Other camera included.
+          await pressId('camera-source-rtmp')
+          await pressId('camera-source-gopro')
+          expect(fake.added).to.have.length(1)
+          expect(byTestId('rtmp-url')).equals(null)
+
+          await release(finish)
+          expect(links.fired).to.have.length(1)
+          expect(fake.added).to.have.length(1)
+          expect(sourceSheet(), 'gone with the app').equals(false)
+        })
+
+        it(`shows the URL of a camera whose link would not open, on ${os}`, async function () {
+          ;(Platform as { OS: string }).OS = os
+          const fake = fakeClient()
+          const finish = heldCamera(fake)
+          const links = fakeLinks(['mevostream://configure'])
+          const refuse = async (): Promise<boolean> => {
+            throw new Error('No activity')
+          }
+          links.openURL = async () => {
+            await refuse()
+          }
+          links.openInApp = refuse
+          await mountWith(fake, links)
+          await toSources()
+          await settle()
+          await pressId('camera-source-mevo')
+          await release(finish)
+          expect(byTestId('rtmp-url')?.textContent).equals(RTMP_URL)
+        })
+      }
+
+      it('lets go when nothing answers in time, opening nothing however late the answer', async function () {
+        ;(Platform as { OS: string }).OS = 'android'
+        const fake = fakeClient()
+        const finish = heldCamera(fake)
+        const links = fakeLinks(['mevostream://configure'])
+        await mount(
+          fake,
+          CAN_RECORD,
+          fakePhoneStreamModule({ capabilities: CAN_RECORD }),
+          [],
+          true,
+          links,
+          undefined,
+          40
+        )
+        await toSources()
+        await pressId('camera-source-mevo')
+        await act(async () => {
+          await delay(60)
+        })
+        expect(byTestId('camera-source-error')?.textContent).contains(
+          'took too long'
+        )
+        expect(sourceSheet()).equals(true)
+
+        await release(finish)
+        expect(
+          links.fired,
+          'no app over a sheet that said it failed'
+        ).deep.equals([])
+        expect(byTestId('rtmp-url')).equals(null)
+
+        await pressId('sheet-cancel')
+        await settle()
+        expect(sourceSheet(), 'Cancel answers again').equals(false)
+      })
+
+      it('lets go of a system that never answers about the app', async function () {
+        ;(Platform as { OS: string }).OS = 'android'
+        const fake = fakeClient()
+        const links = fakeLinks()
+        let answer = (_found: boolean): void => {}
+        links.canOpenURL = async () =>
+          await new Promise<boolean>(resolve => {
+            answer = resolve
+          })
+        await mount(
+          fake,
+          CAN_RECORD,
+          fakePhoneStreamModule({ capabilities: CAN_RECORD }),
+          [],
+          true,
+          links,
+          undefined,
+          40
+        )
+        await toSources()
+        await pressId('camera-source-mevo')
+        await act(async () => {
+          await delay(60)
+        })
+        expect(byTestId('camera-source-error')).not.equals(null)
+
+        await act(async () => {
+          answer(true)
+          await delay(20)
+        })
+        expect(fake.added, 'nothing made after that').deep.equals([])
+        expect(links.fired).deep.equals([])
+      })
+
+      it('opens nothing when the panel goes first', async function () {
+        ;(Platform as { OS: string }).OS = 'android'
+        const fake = fakeClient()
+        const finish = heldCamera(fake)
+        const links = fakeLinks(['mevostream://configure'])
+        await mountWith(fake, links)
+        await toSources()
+        await pressId('camera-source-mevo')
+        await act(async () => {
+          root?.unmount()
+        })
+        root = undefined
+        await act(async () => {
+          finish()
+          await delay(20)
+        })
+        expect(links.fired).deep.equals([])
+      })
+
+      it('says nothing when the panel goes and a refusal arrives after', async function () {
+        ;(Platform as { OS: string }).OS = 'android'
+        const fake = fakeClient()
+        let refuse = (_error: Error): void => {}
+        fake.next = async () =>
+          await new Promise<LiveStream>((_resolve, reject) => {
+            refuse = reject
+          })
+        const links = fakeLinks(['mevostream://configure'])
+        await mountWith(fake, links)
+        await toSources()
+        await pressId('camera-source-mevo')
+        await act(async () => {
+          root?.unmount()
+        })
+        root = undefined
+        await act(async () => {
+          refuse(new Error('No'))
+          await delay(10)
+        })
+        expect(links.fired).deep.equals([])
+      })
+    })
+
+    it('shows the URL of a camera whose link would not open', async function () {
+      const fake = fakeClient()
+      listed(fake)
+      const links = fakeLinks(['mevostream://configure'])
+      links.answer = async () => {
+        throw new Error('No activity')
+      }
+      await mountWith(fake, links)
+      await toSources()
+      await pressId('camera-source-mevo')
+      await settle()
+      expect(byTestId('rtmp-url')?.textContent).equals(RTMP_URL)
+      expect(fake.added, 'the camera is not made again').to.have.length(1)
+    })
+
+    it('leaves a missing app to the RTMP sheet on iOS', async function () {
+      ;(Platform as { OS: string }).OS = 'ios'
+      const fake = fakeClient()
+      listed(fake)
+      await mountWith(fake, fakeLinks())
+      await toSources()
+      await settle()
+      await pressId('camera-source-gopro')
+      await settle()
+      expect(byTestId('rtmp-url')?.textContent).equals(RTMP_URL)
+      expect(fake.added[0].device).deep.equals({ source: 'gopro' })
+    })
+  })
 
   it('asks once, and leaves the camera listed after Done', async function () {
     const fake = fakeClient()
@@ -1747,6 +2167,44 @@ describe('setting up a camera on a phone', function () {
     expect(fake.revealed).deep.equals([stream().id])
     expect(byTestId('rtmp-url')?.textContent).equals(RTMP_URL)
   })
+
+  for (const os of ['android', 'ios']) {
+    it(`makes one camera however often Other camera is tapped as its sheet leaves, on ${os}`, async function () {
+      const real = Platform.OS
+      Object.defineProperty(Platform, 'OS', { value: os, configurable: true })
+      try {
+        const fake = fakeClient()
+        let made = 0
+        fake.next = async () => {
+          made += 1
+          return stream({
+            deviceId: undefined,
+            deviceModel: undefined,
+            label: 'Backstop',
+            url: RTMP_URL
+          })
+        }
+        await mountEmpty(fake)
+        await pressId('record-video')
+        await settle()
+        await pressId('angle-suggestion-Backstop')
+        await press(button('Use external camera'))
+        await settle()
+        const row = byTestId('camera-source-rtmp')!
+        await press(row)
+        await press(row)
+        await press(row)
+        await settle()
+        expect(made).equals(1)
+        expect(text()).contains('Stream using RTMP')
+      } finally {
+        Object.defineProperty(Platform, 'OS', {
+          value: real,
+          configurable: true
+        })
+      }
+    })
+  }
 
   it('says why a camera was refused, with no Revoke', async function () {
     const fake = fakeClient()

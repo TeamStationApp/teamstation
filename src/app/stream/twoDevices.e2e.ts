@@ -264,7 +264,7 @@ async function main(): Promise<void> {
       pixelLines.push(
         await rowReads(pixel, home, [
           HOME,
-          'Streaming with iPhone 13 Pro',
+          `Streaming with ${home.deviceModel ?? '?'}`,
           'Live'
         ])
       )
@@ -331,7 +331,7 @@ async function main(): Promise<void> {
     // A real Pixel names itself with its maker (Build.MANUFACTURER before
     // Build.MODEL); the stand-in device B says only "Pixel 10".
     const models = new Map([
-      [HOME, 'iPhone 13 Pro'],
+      [HOME, home.deviceModel ?? '?'],
       [FIRST, pixel == null ? 'Pixel 10' : 'Google Pixel 10'],
       [CENTER, 'iPad Pro']
     ])
@@ -409,6 +409,8 @@ async function main(): Promise<void> {
     )
     assert.deepEqual(pills, [HOME, FIRST, CENTER], 'a live video per angle')
     results.push(`5 the game has a live video for ${pills.join(', ')}`)
+    // A camera just on the air has no segment for a browser to start from.
+    await sleep(45000)
     results.push(await webMultiCam(token, [HOME, FIRST, CENTER]))
 
     // The Videos tab, framed as videos-tab-native-before.png. The game's

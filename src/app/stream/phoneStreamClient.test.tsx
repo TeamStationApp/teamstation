@@ -133,6 +133,8 @@ describe('the phone stream bridge', function () {
     ).equals(2)
     await stream.cancelUpload('lst_00000000000000000001')
     await stream.deleteRecording('lst_00000000000000000001')
+    await stream.appInstalled('com.example.camera')
+    await stream.openInApp('https://example.test/link', 'com.example.camera')
     await stream.close()
     expect(native.calls).deep.equals([
       { name: 'open', args: ['Home Plate', true, []] },
@@ -173,6 +175,11 @@ describe('the phone stream bridge', function () {
       { name: 'resumePendingUploads', args: [REQUEST.apiBase, REQUEST.token] },
       { name: 'cancelUpload', args: ['lst_00000000000000000001'] },
       { name: 'deleteRecording', args: ['lst_00000000000000000001'] },
+      { name: 'appInstalled', args: ['com.example.camera'] },
+      {
+        name: 'openInApp',
+        args: ['https://example.test/link', 'com.example.camera']
+      },
       { name: 'close', args: [] }
     ])
   })

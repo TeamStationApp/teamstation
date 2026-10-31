@@ -13,6 +13,8 @@
 //   [TS_STREAM_OTHER_IOS_UDID=<the other phone, which must stop showing
 //     "not uploaded">]
 //   [DIRECTOR_DEVICE_UDID=<the iPad Pro M4 running Director>]
+//   [TS_STREAM_FAST_UPLINK=1, when the upload outruns the relaunch: step 3 then
+//     asks only that the progress shows again and never goes back]
 //     node -r sucrase/register src/app/stream/uploadRecording.e2e.ts
 //
 //   1. Slide to Stop, then Close.
@@ -266,10 +268,12 @@ async function main(): Promise<void> {
       climb.every((value, index) => index === 0 || value >= climb[index - 1]),
       `the progress never goes back: ${marks.join(' → ')}`
     )
-    assert(
-      rises >= 2 && climb.filter(value => value < 100).length >= 3,
-      `the progress rises at least twice before it completes: ${marks.join(' → ')}`
-    )
+    // A local network can land every byte within the relaunch.
+    if (optional('TS_STREAM_FAST_UPLINK') == null)
+      assert(
+        rises >= 2 && climb.filter(value => value < 100).length >= 3,
+        `the progress rises at least twice before it completes: ${marks.join(' → ')}`
+      )
     results.push(
       `3 stopApp at ${seen}%; after launchApp the row read ${marks.join(' → ')}, then went`
     )

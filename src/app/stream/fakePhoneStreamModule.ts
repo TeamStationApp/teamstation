@@ -142,7 +142,9 @@ export function fakePhoneStreamModule(
     'uploadRecording',
     'resumePendingUploads',
     'cancelUpload',
-    'deleteRecording'
+    'deleteRecording',
+    'appInstalled',
+    'openInApp'
   ])
     module[name] = answer(name)
   return module as unknown as FakePhoneStreamModule

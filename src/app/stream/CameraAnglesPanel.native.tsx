@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { AppState, Platform, Text, View } from 'react-native'
+import { AppState, Linking, Platform, Text, View } from 'react-native'
 
 import {
   type CameraSource,
@@ -17,6 +17,11 @@ import { lstrings, sprintf } from '../locales/strings'
 import { usePublishingReport } from '../player/useVideoListRefresh'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { AngleNamePrompt } from './AngleNamePrompt'
+import {
+  type CameraLinks,
+  launchCamera,
+  type LinkedCamera
+} from './cameraDeepLinks'
 import { CameraRow } from './CameraRow'
 import {
   type Angle,
@@ -53,6 +58,13 @@ import { VideoDetailsSheet } from './VideoDetailsSheet'
 /** How often the game's cameras are read again while the panel is up. */
 export const ANGLES_POLL_MS = 5000
 
+/**
+ * How long a camera's row may take to make its camera and open its app. Nothing
+ * else bounds it: a request on Android has no timeout of its own, and neither
+ * do the system's answers about the app, and the sheet stays up until it ends.
+ */
+export const LAUNCH_LIMIT_MS = 30_000
+
 export interface CameraAnglesPanelProps {
   client: TeamStationClient
   gameId: string
@@ -64,6 +76,8 @@ export interface CameraAnglesPanelProps {
   Screen?: typeof StreamingScreen
   /** The clipboard; a test hands in its own. */
   copy?: (text: string) => void
+  /** Opens the camera apps; a test hands in its own. */
+  links?: CameraLinks
   /** The videos this game's cameras are publishing to, each time that changes. */
   onPublishing?: (videoIds: string[]) => void
   /** Whether the game has a video to play. Without one the tab says so here. */
@@ -72,6 +86,17 @@ export interface CameraAnglesPanelProps {
   onPlay?: (videoId: string) => void
   /** The app's state; a test hands in its own. */
   appState?: AppStateLike
+  /** How long a row's launch may take; a test hands in its own. */
+  launchLimitMs?: number
+}
+
+const systemLinks: CameraLinks = {
+  canOpenURL: async url => await Linking.canOpenURL(url),
+  openURL: async url => {
+    await Linking.openURL(url)
+  },
+  appInstalled: phoneStream.appInstalled,
+  openInApp: phoneStream.openInApp
 }
 
 /** The sheet up, or the next once iOS has taken the last away. */
@@ -118,8 +143,9 @@ function isUploading(
  * - A row for every take on this phone that TeamStation does not have yet,
  *   with Upload Recording.
  * - Record Video, which steps through setup: the angle's name, then this
- *   phone's camera or an external one (its make, then its RTMP URL). Disabled
- *   with the reason beside it at either limit on cameras.
+ *   phone's camera or an external one: its make, then its own app or, for any
+ *   other camera, its RTMP URL. Disabled with the reason beside it at either
+ *   limit on cameras.
  *
  * It asks `streamAccess` first, and only somebody who may film reads the
  * cameras: anybody else is answered `404` for them. It asks again each time the
@@ -139,9 +165,11 @@ export function CameraAnglesPanel(
     deviceId = installId,
     Screen = StreamingScreen,
     copy,
+    links = systemLinks,
     hasVideo,
     onPlay,
-    appState = AppState
+    appState = AppState,
+    launchLimitMs = LAUNCH_LIMIT_MS
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -169,6 +197,8 @@ export function CameraAnglesPanel(
   const [promptKey, setPromptKey] = useState(0)
   /** The angle's name, carried from the prompt to the camera's make. */
   const [angleName, setAngleName] = useState('')
+  /** Why the camera's row went nowhere, shown on the sheet that is still up. */
+  const [sourceError, setSourceError] = useState<string | undefined>(undefined)
   const [rtmp, setRtmp] = useState<RtmpTarget | undefined>(undefined)
   /** Bumped each time the RTMP sheet opens, so it asks afresh. */
   const [rtmpKey, setRtmpKey] = useState(0)
@@ -181,6 +211,18 @@ export function CameraAnglesPanel(
   const [pending, setPending] = useState<OpenCamera | undefined>(undefined)
   const [open, setOpen] = useState<OpenCamera | undefined>(undefined)
   const live = useRef(true)
+  /**
+   * A row's camera is being made, and its app opened. The sheet stays up with
+   * nothing answering until that ends, so no second camera is made, and no app
+   * opens over a sheet somebody has left.
+   */
+  const [launchingSource, setLaunchingSource] = useState<
+    CameraSource | undefined
+  >(undefined)
+  const launchUnderWay = useRef<AbortController | undefined>(undefined)
+  /** The sheet up now, for an answer that arrives after the render that asked. */
+  const stepNow = useRef(step)
+  stepNow.current = step
   const askDeviceId = useRef(deviceId)
   askDeviceId.current = deviceId
   /** The last read of `streamAccess` asked for: an older answer is passed over. */
@@ -246,6 +288,7 @@ export function CameraAnglesPanel(
     )
     return () => {
       live.current = false
+      launchUnderWay.current?.abort()
     }
   }, [client, gameId, phone, readAccess])
 
@@ -384,7 +427,7 @@ export function CameraAnglesPanel(
 
   /** The next sheet, or none. iOS waits for this one to leave (`sheetGone`). */
   const goTo = (next: SheetStep | undefined): void => {
-    if (Platform.OS === 'ios' && step != null) {
+    if (Platform.OS === 'ios' && stepNow.current != null) {
       setStep(undefined)
       setNextStep(next)
     } else setStep(next)
@@ -417,8 +460,57 @@ export function CameraAnglesPanel(
     goTo('rtmp')
   }
 
+  const launch = (source: LinkedCamera): void => {
+    const abort = new AbortController()
+    launchUnderWay.current = abort
+    setLaunchingSource(source)
+    setSourceError(undefined)
+    let limit: ReturnType<typeof setTimeout> | undefined
+    const tooSlow = new Promise<never>((_resolve, reject) => {
+      limit = setTimeout(() => {
+        abort.abort()
+        reject(new Error(lstrings.stream_source_too_slow))
+      }, launchLimitMs)
+    })
+    Promise.race([
+      launchCamera({
+        client,
+        gameId,
+        name: angleName,
+        source,
+        links,
+        os: Platform.OS,
+        onCreated: reloadQuietly,
+        signal: abort.signal
+      }),
+      tooSlow
+    ])
+      .then(
+        launched => {
+          if (!live.current) return
+          if (launched.kind === 'opened') goTo(undefined)
+          if (launched.kind === 'sheet') openRtmp(launched.target)
+        },
+        (error: unknown) => {
+          if (!live.current) return
+          setSourceError(
+            error instanceof Error ? error.message : lstrings.common_retry
+          )
+        }
+      )
+      .finally(() => {
+        clearTimeout(limit)
+        launchUnderWay.current = undefined
+        setLaunchingSource(undefined)
+      })
+  }
+
   const chooseSource = (source: CameraSource): void => {
-    openRtmp({ name: angleName, source })
+    // The sheet takes a moment to slide away, and its rows still answer then.
+    // A second tap on Other camera would make a second camera.
+    if (step !== 'source' || launchUnderWay.current != null) return
+    if (source === 'rtmp') openRtmp({ name: angleName, source })
+    else launch(source)
   }
 
   const reopen = (stream: LiveStream): void => {
@@ -634,6 +726,7 @@ export function CameraAnglesPanel(
         onStart={start}
         onExternal={name => {
           setAngleName(name)
+          setSourceError(undefined)
           goTo('source')
         }}
         onDismiss={sheetGone}
@@ -645,6 +738,8 @@ export function CameraAnglesPanel(
           goTo(undefined)
         }}
         onDismiss={sheetGone}
+        error={sourceError}
+        busy={launchingSource}
       />
       {rtmp != null && (
         <RtmpUrlSheet

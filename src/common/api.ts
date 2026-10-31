@@ -4876,26 +4876,30 @@ export class TeamStationClient {
   async addLiveStream(
     gameId: string,
     label?: string,
-    device?: DeviceStreamOptions | CameraSourceOptions
+    device?: DeviceStreamOptions | CameraSourceOptions,
+    options: { signal?: AbortSignal } = {}
   ): Promise<LiveStream> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/live-streams`,
       asLiveStream,
-      { ...(label == null ? {} : { label }), ...(device ?? {}) }
+      { ...(label == null ? {} : { label }), ...(device ?? {}) },
+      options
     )
   }
 
   /** Asks for one of my URLs again, key and all. Recorded in the audit log. */
   async revealLiveStream(
     gameId: string,
-    streamId: string
+    streamId: string,
+    options: { signal?: AbortSignal } = {}
   ): Promise<LiveStream> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/live-streams/${encodeURIComponent(streamId)}/reveal`,
       asLiveStream,
-      {}
+      {},
+      options
     )
   }
 

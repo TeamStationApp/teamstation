@@ -1,9 +1,11 @@
 import React from 'react'
+import { ActivityIndicator, Text } from 'react-native'
 
 import type { CameraSource } from '../../common/api'
 import { ListCard } from '../components/ListCard'
 import { ListRow } from '../components/ListRow'
 import { lstrings } from '../locales/strings'
+import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { CameraLogo } from './CameraLogo'
 import { SheetModal } from './SheetModal'
 
@@ -12,6 +14,10 @@ export interface CameraSourceSheetProps {
   onChoose: (source: CameraSource) => void
   onClose: () => void
   onDismiss?: () => void
+  /** Why the last row chosen did not go anywhere. */
+  error?: string
+  /** The row whose camera is being made: nothing else answers until it ends. */
+  busy?: CameraSource
 }
 
 /** The rows, read when drawn so a chosen language applies. */
@@ -36,12 +42,15 @@ function sources(): Array<{
 export function CameraSourceSheet(
   props: CameraSourceSheetProps
 ): React.ReactElement {
-  const { visible, onChoose, onClose, onDismiss } = props
+  const { visible, onChoose, onClose, onDismiss, error, busy } = props
+  const theme = useTheme()
+  const styles = getStyles(theme)
   return (
     <SheetModal
       visible={visible}
       title={lstrings.stream_source_title}
       cancelLabel={lstrings.stream_prompt_cancel}
+      closeLocked={busy != null}
       onClose={onClose}
       onDismiss={onDismiss}
       testID="camera-source-sheet"
@@ -54,12 +63,27 @@ export function CameraSourceSheet(
             leading={<CameraLogo source={source} />}
             title={title}
             subtitle={subtitle}
+            disabled={busy != null}
+            end={busy === source ? <ActivityIndicator /> : undefined}
             onPress={() => {
               onChoose(source)
             }}
           />
         ))}
       </ListCard>
+      {error != null && (
+        <Text style={styles.error} testID="camera-source-error">
+          {error}
+        </Text>
+      )}
     </SheetModal>
   )
 }
+
+const getStyles = cacheStyles((theme: Theme) => ({
+  error: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.875),
+    color: theme.dangerColor
+  }
+}))

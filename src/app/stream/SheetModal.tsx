@@ -23,6 +23,11 @@ export interface SheetModalProps {
   onClose: () => void
   /** A red word at the title's right, for a sheet with no action of its own. */
   cancelLabel?: string
+  /**
+   * Something the sheet started is under way and must not be left behind: the
+   * backdrop, Android's back button and `cancelLabel` do nothing until it ends.
+   */
+  closeLocked?: boolean
   /** Once the sheet has gone from the screen (iOS), so another modal may open. */
   onDismiss?: () => void
   /** Once the sheet is on screen. */
@@ -43,7 +48,8 @@ export interface SheetModalProps {
  * once.
  */
 export function SheetModal(props: SheetModalProps): React.ReactElement {
-  const { visible, title, onClose, cancelLabel, onDismiss, onShow } = props
+  const { visible, title, cancelLabel, closeLocked, onDismiss, onShow } = props
+  const onClose = closeLocked === true ? () => undefined : props.onClose
   const theme = useTheme()
   const styles = getStyles(theme)
   const insets = useInsets()
@@ -72,6 +78,7 @@ export function SheetModal(props: SheetModalProps): React.ReactElement {
       >
         <Pressable
           style={styles.behind}
+          disabled={closeLocked}
           onPress={onClose}
           accessibilityRole="button"
           accessibilityLabel={cancelLabel ?? title}
@@ -92,10 +99,18 @@ export function SheetModal(props: SheetModalProps): React.ReactElement {
                 <Pressable
                   accessibilityRole="button"
                   hitSlop={8}
+                  disabled={closeLocked}
                   onPress={onClose}
                   testID="sheet-cancel"
                 >
-                  <Text style={styles.cancel}>{cancelLabel}</Text>
+                  <Text
+                    style={[
+                      styles.cancel,
+                      closeLocked === true && styles.cancelLocked
+                    ]}
+                  >
+                    {cancelLabel}
+                  </Text>
                 </Pressable>
               )}
             </View>
@@ -160,5 +175,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1),
     fontWeight: '600',
     color: theme.dangerColor
+  },
+  cancelLocked: {
+    opacity: 0.4
   }
 }))

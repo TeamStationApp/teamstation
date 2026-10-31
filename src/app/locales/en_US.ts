@@ -1085,6 +1085,8 @@ export const enUs = {
   stream_error_permission:
     'TeamStation needs the camera and the microphone to record. Allow them in Settings.',
   stream_error_uploading: '%s is still uploading',
+  stream_source_too_slow:
+    'That took too long. Check your connection, and see the camera list before trying again.',
   stream_error_failed: 'That did not work: %s',
   stream_camera_unavailable: 'Camera unavailable',
   stream_streaming_only: 'Streaming only: not enough free space to record',
