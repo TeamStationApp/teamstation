@@ -27,7 +27,9 @@ function listing () {
     '--device', UDID,
     '--domain-type', 'appDataContainer',
     '--domain-identifier', BUNDLE,
-    '--username', 'mobile'
+    '--username', 'mobile',
+    // The whole container runs to more entries than a listing can buffer.
+    '--subdirectory', 'Documents/Program'
   ])
 }
 
@@ -73,7 +75,7 @@ function main () {
   rmSync(OUT, { recursive: true, force: true })
   mkdirSync(OUT, { recursive: true })
 
-  const names = [ ...listing().matchAll(/Documents\/Program\/([^\s/]+\.mp4)/g) ].map((m) => m[1])
+  const names = listing().match(/program-\d{8}-\d{6}(?:-\d+)?\.mp4/g) ?? []
   const unique = [ ...new Set(names) ]
   if (!unique.length) throw new Error('no program files on device')
 

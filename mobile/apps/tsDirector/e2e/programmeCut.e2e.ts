@@ -50,6 +50,8 @@ const maxRapidHoldMs = Number(process.env.CUT_MAX_RAPID_HOLD_MS ?? 100)
 const takes: Take[] = scenario === 'slow' ? ['cuts'] : ['cuts', 'replays', 'rapid']
 const SINK_PORT = 19351
 const SETTLE_SECONDS = 12
+/// Pictures with no camera's strip a take may open on: a second of whatever was on air before.
+const MAX_UNREAD = 60
 /// The hard cap stressFourHour.js holds the app to.
 const MEMORY_CAP_MB = 1200
 
@@ -100,10 +102,11 @@ function cut(source: number, seconds: number): Step {
 
 function steps(take: Take, first: number, second: number): Step[] {
   if (take === 'rapid') {
-    // Faster than the live delay: each camera goes off air before its first picture is due.
+    // Faster than the live delay: each camera goes off air before its first picture is due. Each
+    // control call takes about a quarter of a second, so no wait goes between them.
     return [
-      cut(second, 0.25), cut(first, 0.25), cut(second, 0.25),
-      cut(first, 0.25), cut(second, 0.25), cut(first, 3)
+      cut(second, 0), cut(first, 0), cut(second, 0),
+      cut(first, 0), cut(second, 0), cut(first, 0), cut(second, 3)
     ]
   }
   if (take === 'replays') {
@@ -202,13 +205,17 @@ function judge(name: string, take: Take, report: Report, commanded: number): str
   const problems: string[] = []
   if (report.flashes.length > 0) problems.push(`${name}: ${report.flashes.length} flashes of a camera`)
   if (take === 'rapid') {
-    // One camera plays on through the chain and hands over to the last: judged on the whole take.
+    // One camera plays on through the chain and hands over to the last, and a camera whose pictures
+    // come due early may go on air on the way: judged on the whole take, not on how many cuts it saw.
     if (report.longestHoldMs > maxRapidHoldMs) problems.push(`${name}: a picture held ${report.longestHoldMs} ms, over ${maxRapidHoldMs}`)
     if (jumps.length > 0) problems.push(`${name}: ${jumps.length} jumps within a camera`)
-    if (cuts.length > 1) problems.push(`${name}: ${cuts.length} cuts, at most one expected`)
+    if (cuts.length === 0) problems.push(`${name}: the chain never handed over to the last camera`)
+    if (cuts.length > 0 && cuts[cuts.length - 1].to === cuts[0].from) problems.push(`${name}: ended on the camera it started on`)
+    if (report.unread > MAX_UNREAD) problems.push(`${name}: ${report.unread} pictures read no camera`)
     return problems
   }
   if (cuts.length !== commanded) problems.push(`${name}: ${cuts.length} cuts, ${commanded} commanded`)
+  if (report.unread > MAX_UNREAD) problems.push(`${name}: ${report.unread} pictures read no camera`)
   // The replays take has one cut away from a replay, which holds by design and is reported above.
   const allowed = take === 'replays' ? 1 : 0
   const over = held.filter(ms => ms > maxHeldMs)
@@ -267,6 +274,9 @@ async function main(): Promise<void> {
       console.log(await get(host, target))
     }
 
+    // A take left open by an earlier session resumes at launch, ahead of any camera.
+    await send('/record?on=false')
+    await wait(3)
     await send('/enable-source?index=1&on=true')
     await send('/enable-source?index=2&on=true')
     await send('/start')
@@ -283,11 +293,12 @@ async function main(): Promise<void> {
     }
 
     const peak = { mb: 0 }
-    const sampling = setInterval(() => {
+    const sample = (): void => {
       get(host, '/dump-state').then((text: string) => {
         peak.mb = Math.max(peak.mb, JSON.parse(text).physFootprintMB ?? 0)
       }, () => undefined)
-    }, 1000)
+    }
+    const sampling = setInterval(sample, 1000)
 
     const problems: string[] = []
     for (const take of takes) {
@@ -308,6 +319,8 @@ async function main(): Promise<void> {
       const run = steps(take, first, second)
       for (const step of run) {
         await send(step.path)
+        // A cut holds the most pictures just before the new camera's first comes due.
+        if (step.path.startsWith('/program')) setTimeout(sample, 500)
         await wait(step.seconds)
       }
       await wait(3)
