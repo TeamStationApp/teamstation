@@ -3,6 +3,8 @@ import CoreVideo
 import DirectorCore
 @testable import DirectorPipeline
 import DirectorSources
+import DirectorTestHarness
+@testable import DirectorUI
 import Foundation
 import Testing
 
@@ -274,6 +276,57 @@ struct ProgrammeHandoverTests {
     rig.pipes[1].returnToLive()
     rig.router.selectProgram(sourceIndex: 1)
     #expect(rig.router.outgoingSourceID == rig.id(0))
+  }
+
+  @Test("A cut back on the very tick the new camera goes on air starts the old camera again")
+  func cutBackOnTheTickTheNewCameraGoesOn() async throws {
+    let rig = try Rig(cameras: 2)
+    defer { rig.stop() }
+    rig.feed()
+    try await rig.goOnAir()
+    let shown = rig.shown
+    let router = rig.router
+    let newCamera = rig.id(1)
+    router.onProgrammeShown = { sourceID in
+      shown.add(sourceID)
+      // After the tick's lock, where a cut can land before anything else of the tick has run.
+      if sourceID == newCamera {
+        router.onProgrammeShown = { shown.add($0) }
+        router.selectProgram(sourceIndex: 0)
+      }
+    }
+    router.selectProgram(sourceIndex: 1)
+    try await Task.sleep(for: .seconds(Self.delay + 0.1))
+    let reached = try #require(shown.entries.lastIndex { $0.sourceID == newCamera })
+    try await Task.sleep(for: .seconds(Self.delay + 0.4))
+    let after = shown.entries.dropFirst(reached + 1)
+    #expect(after.count > 10, "the programme froze on the new camera")
+    #expect(after.allSatisfy { $0.sourceID == rig.id(0) })
+    #expect(rig.pipes[0].hasProgramSink)
+  }
+
+  @MainActor
+  @Test("The remote's cut-live to a camera off live hands over, because it goes live first")
+  func remoteCutLiveHandsOver() async throws {
+    var launch = LaunchConfiguration()
+    launch.isUITest = true
+    launch.sourceProfile = .synthetic4
+    launch.syntheticCount = 2
+    launch.syntheticWidth = 320
+    launch.syntheticHeight = 180
+    let model = AppEnvironment(launch: launch)
+    await model.bootstrap()
+    for _ in 0 ..< 100 where model.selections.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+    for selection in model.selections { _ = model.setEnabled(true, for: selection.id) }
+    await model.enterDirecting()
+    for _ in 0 ..< 100 where model.router.activePipelines.count < 2 { try await Task.sleep(for: .milliseconds(50)) }
+    let pipelines = model.router.activePipelines
+    try #require(pipelines.count >= 2)
+    model.router.selectProgram(sourceIndex: pipelines[0].sourceIndex)
+    try await Task.sleep(for: .seconds(1.5))
+    pipelines[1].beginScrubbing()
+    model.cutSourceLive(sourceIndex: pipelines[1].sourceIndex)
+    #expect(model.router.outgoingSourceID == pipelines[0].sourceID)
   }
 
   @Test("Once the new camera is on air the old one's pictures are refused, ahead of the tick ending the handover")

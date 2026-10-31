@@ -876,14 +876,14 @@ public final class TileRouter: @unchecked Sendable {
     lock.lock()
     // The compositor's output is the programme's picture source; see `ProgrammePictureSource`.
     guard let (tick, due) = programmeClock.tick(at: now, wallNow: wallNow, from: &programPictures) else {
-      let finished = finishedHandoverLocked(wallNow: wallNow)
+      let finished = finishHandoverLocked(wallNow: wallNow)
       lock.unlock()
       if let finished { endHandover(finished) }
       return
     }
     tickLatenessMax = max(tickLatenessMax, tick.lateness)
     missedTicks &+= UInt64(max(0, tick.ticksMissed))
-    let finished = finishedHandoverLocked(wallNow: wallNow)
+    let finished = finishHandoverLocked(wallNow: wallNow)
     guard let entry = due else {
       lock.unlock()
       if let finished { endHandover(finished) }
@@ -912,7 +912,6 @@ public final class TileRouter: @unchecked Sendable {
 
     shown?(picture.sourceID)
     if wantsKeyframe { programStreamer.requestKeyframe() }
-    if let finished { endHandover(finished) }
 
     if let frame = tick.recordingFrame, programEncoder.running {
       // The recording is written on an exact grid, so frames a late timer skipped are written as
@@ -948,34 +947,35 @@ public final class TileRouter: @unchecked Sendable {
         captureWall: streamCapture
       )
     }
+    // Last, because it takes the lock a cut holds across every camera's sink.
+    if let finished { endHandover(finished) }
   }
 
-  /// The handover this tick ends: the new camera is on air, it has sent nothing in time, or the
-  /// camera on program has left live. `lock` held.
-  private func finishedHandoverLocked(wallNow: Double) -> Handover? {
-    guard let outgoing else { return nil }
+  /// Ends the handover if this tick is its last: the new camera is on air, it has sent nothing in
+  /// time, or the camera on program has left live. In the tick's own hold of `lock`, with the pick
+  /// that put the new camera on air, so no cut can find a handover whose camera has already gone.
+  /// `lock` held.
+  private func finishHandoverLocked(wallNow: Double) -> Handover? {
+    guard let handover = outgoing else { return nil }
     let onProgram = programSource.flatMap { pipelines[$0] }
-    let over = programPictures.onAirRun == programGeneration
-      || wallNow >= outgoing.deadline
+    guard programPictures.onAirRun == programGeneration
+      || wallNow >= handover.deadline
       || onProgram?.currentState != .live
-    return over ? outgoing : nil
+    else { return nil }
+    outgoing = nil
+    return handover
   }
 
   /// Takes the sink from the camera a handover has finished with, unless a cut has put it back on
-  /// program or moved the handover on since the tick decided.
+  /// program or made it the outgoing camera again since the tick.
   private func endHandover(_ handover: Handover) {
     programmeSinkLock.lock()
     defer { programmeSinkLock.unlock() }
     lock.lock()
-    guard outgoing?.run == handover.run else {
-      lock.unlock()
-      return
-    }
-    outgoing = nil
     let pipeline = pipelines.values.first { $0.sourceID == handover.sourceID }
-    let isOnProgram = handover.sourceID == programSourceID
+    let isInUse = handover.sourceID == programSourceID || handover.sourceID == outgoing?.sourceID
     lock.unlock()
-    if let pipeline, !isOnProgram { detach(pipeline) }
+    if let pipeline, !isInUse { detach(pipeline) }
   }
 
   private func detach(_ pipeline: SourcePipeline) {

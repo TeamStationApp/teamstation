@@ -212,11 +212,11 @@ public final class ProgrammeComposer: @unchecked Sendable {
       lock.unlock()
       guard !queues.isEmpty else { return }
 
-      // The camera on air's pictures, and during a handover those of the camera it is taking over
-      // from, oldest handed over first; any other camera's are from a camera cut away from. Judged
-      // outside the lock: the router's checks take its own.
+      // The camera on program's pictures, and during a handover what time is left goes to those of
+      // the camera it is taking over from, whose next picture is due no sooner; any other camera's
+      // are from a camera cut away from. Judged outside the lock: the router's checks take its own.
       let live = queues.filter { _, queued in queued.last.map(isOnAir) ?? false }
-      let onAir = live.min { ($0.value.first?.sequence ?? .max) < ($1.value.first?.sequence ?? .max) }?.key
+      let onAir = live.max { ($0.value.last?.generation ?? 0) < ($1.value.last?.generation ?? 0) }?.key
       var chosen: Job?
       if let onAir, let snapshot = queues[onAir] {
         // The oldest picture that can still make its moment. The newest goes regardless: it is the
