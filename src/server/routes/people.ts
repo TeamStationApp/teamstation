@@ -16,7 +16,10 @@ import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
-import { authorizePersonChange } from '../groups/adminGuard'
+import {
+  authorizePersonChange,
+  refuseRoleWhileHeld
+} from '../groups/adminGuard'
 import { type Clock, realClock } from '../groups/requests'
 import {
   canAdminister,
@@ -130,7 +133,7 @@ export function peopleRoutes(
         throw conflict(
           'Only somebody who can sign in can hold a role. Add an email address to their account first.'
         )
-      if (!(await onPeopleList(db, ref, userId))) throw notFound()
+      if (!(await onPeopleList(db, ref, userId, actor))) throw notFound()
       const added = await atomic(db, async trx => {
         await lockKeys(trx, ['creation:parent-graph'])
         await authorizePersonChange(
@@ -141,6 +144,8 @@ export function peopleRoutes(
           role === 'admin',
           role === 'admin' ? 'admin' : 'manager'
         )
+        if (role !== 'member')
+          await refuseRoleWhileHeld(trx, ref, userId, actor.userId)
         const added = await grantAt(
           trx,
           ref,

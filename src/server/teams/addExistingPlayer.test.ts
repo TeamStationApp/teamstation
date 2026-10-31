@@ -14,9 +14,12 @@ import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
+import { playedForOther } from '../games/guestChecks'
 import { gameAvailability } from '../games/rosterAvailability'
+import { refuseOtherSide } from '../groups/noticePolicy'
 import { jsonBody } from '../jsonBody'
 import type { MediaContext } from '../media/mediaContext'
 import { withActor } from '../middleware/withAuth'
@@ -134,13 +137,19 @@ describe('adding a player who already exists', function () {
     db = makeDatabase(scratchUrl)
     const d = db
     await d
+      .insertInto('leagues')
+      .values({ id: 'lea_existingA', name: 'Valley League' })
+      .execute()
+    await db
       .insertInto('teams')
-      .values([
-        { id: TEAM.falcons, name: 'Ridgeview Falcons' },
-        { id: TEAM.herons, name: 'Lakeside Herons' },
-        { id: TEAM.owls, name: 'Ridgeview Owls' },
-        { id: TEAM.bears, name: 'Valley Bears' }
-      ])
+      .values(
+        [
+          { id: TEAM.falcons, name: 'Ridgeview Falcons' },
+          { id: TEAM.herons, name: 'Lakeside Herons' },
+          { id: TEAM.owls, name: 'Ridgeview Owls' },
+          { id: TEAM.bears, name: 'Valley Bears' }
+        ].map(team => ({ ...team, league_id: 'lea_existingA' }))
+      )
       .execute()
     const coach = await person('Dave Roberts', TEAM.falcons, false)
     await d
@@ -289,6 +298,7 @@ describe('adding a player who already exists', function () {
     expect(added.body.positions).deep.equals(['RF'])
     expect(added.body.nameDetails).equals(undefined)
     expect(added.body.notice.requestId).match(/^inv_/)
+    expect(added.body.notice.told).equals('guardians')
     const again = await roster(
       { userId: ids['Mookie Betts'], jersey: '50', positions: ['RF'] },
       COACH,
@@ -298,6 +308,7 @@ describe('adding a player who already exists', function () {
     // Already on the team, a new call changes nothing.
     const unchanged = await roster({ userId: ids['Mookie Betts'] })
     expect(unchanged.status).equals(200)
+    expect(unchanged.body.unchanged).equals(true)
     expect(unchanged.body.jersey).equals('50')
     expect(unchanged.body.notice).equals(undefined)
   })
@@ -398,7 +409,7 @@ describe('adding a player who already exists', function () {
     expect(made.body.nameDetails.firstName).equals('Max')
   })
 
-  it('puts a full account that plays for no team on the roster, and refuses one switched off', async function () {
+  it('only asks for a full account that plays for no team, and refuses one switched off', async function () {
     const harper = await person('Bryce Harper')
     const off = await person('Rafael Furcal')
     await db!
@@ -422,20 +433,183 @@ describe('adding a player who already exists', function () {
       jersey: '3',
       positions: ['RF']
     })
-    expect(added.status).equals(201)
-    expect(added.body).to.include({
-      userId: harper,
-      shortName: 'Bryce H',
-      jersey: '3',
-      isPlayer: true
-    })
-    // He signs in himself, so he is the one told.
-    expect(added.body.notice.requestId).match(/^inv_/)
-    expect(await membership('Bryce Harper', TEAM.falcons)).to.include({
-      is_player: true,
-      jersey: '3'
-    })
+    // Nobody's player, so nobody this team has a reason to know: he is asked,
+    // and nothing about him reaches the team until he accepts.
+    expect(added.status).equals(202)
+    expect(added.body.pending.requestId).match(/^inv_/)
+    expect(await membership('Bryce Harper', TEAM.falcons)).equals(undefined)
     expect((await roster({ userId: off })).status).equals(404)
+  })
+
+  it('never adds a stranger on nobody’s say', async function () {
+    // On a team outside the league, with no guardian, no sign-in and no coach
+    // to stand in: nobody can answer for them.
+    await db!
+      .insertInto('teams')
+      .values({ id: 'tem_existingAFar', name: 'Faraway Gulls' })
+      .execute()
+    await person('Faraway Child', 'tem_existingAFar')
+    await db!
+      .updateTable('users')
+      .set({ login_enabled: false })
+      .where('id', '=', ids['Faraway Child'])
+      .execute()
+    const asked = await roster({ userId: ids['Faraway Child'] })
+    expect(asked.status).equals(403)
+    expect(JSON.stringify(asked.body)).includes('Nobody can approve')
+    expect(await membership('Faraway Child', TEAM.falcons)).equals(undefined)
+  })
+
+  it('adds a coach with no player row of their own to the roster and to a game', async function () {
+    const self = ids['Dave Roberts']
+    await db!
+      .insertInto('user_emails')
+      .values({
+        id: makeId('userEmail'),
+        user_id: self,
+        email: 'roberts@example.test'
+      })
+      .execute()
+    const pool = await guest({
+      side: 'home',
+      teamId: TEAM.falcons,
+      userId: self
+    })
+    expect(pool.status).equals(201)
+    await db!
+      .deleteFrom('game_guest_details')
+      .where('user_id', '=', self)
+      .execute()
+    const added = await roster({ userId: self })
+    expect(added.status).equals(201)
+    expect(added.body.notice).equals(undefined)
+    expect(await membership('Dave Roberts', TEAM.falcons)).to.include({
+      is_player: true
+    })
+    // Back as they were, for the tests after.
+    await db!
+      .updateTable('memberships')
+      .set({ is_player: false })
+      .where('user_id', '=', self)
+      .where('team_id', '=', TEAM.falcons)
+      .execute()
+  })
+
+  it('refuses a pool add of somebody who played for the other team in the game', async function () {
+    await person('Left The Herons', TEAM.owls)
+    const eventId = makeId('event')
+    await db!
+      .insertInto('events')
+      .values({
+        id: eventId,
+        gameId: GAME,
+        startTime: new Date(),
+        battingTeamId: TEAM.herons,
+        gumbo: {
+          about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+          result: { eventType: 'single' }
+        }
+      })
+      .execute()
+    await db!
+      .insertInto('event_players')
+      .values({
+        id: makeId('eventPlayer'),
+        event_id: eventId,
+        gumbo_id: gumbo['Left The Herons'],
+        team_id: TEAM.herons,
+        role: 'batter'
+      })
+      .execute()
+    const asked = await guest({
+      side: 'home',
+      teamId: TEAM.falcons,
+      userId: ids['Left The Herons']
+    })
+    expect(asked.status).equals(409)
+    expect(JSON.stringify(asked.body)).includes('played for the other team')
+    await db!.deleteFrom('events').where('id', '=', eventId).execute()
+  })
+
+  it('counts a fielder, and who batted or pitched in the at-bat under way, as played', async function () {
+    for (const name of ['Herons Fielder', 'Herons Batter', 'Herons Pitcher'])
+      await person(name, TEAM.owls)
+    const game = (
+      currentPlay: object | null
+    ): Parameters<typeof playedForOther>[1] => ({
+      id: GAME,
+      currentPlay,
+      home_team_id: TEAM.falcons,
+      away_team_id: TEAM.herons
+    })
+    const played = async (
+      name: string,
+      currentPlay: object | null
+    ): Promise<boolean> =>
+      await atomic(
+        db!,
+        async trx =>
+          await playedForOther(
+            trx,
+            game(currentPlay),
+            [ids[name]],
+            TEAM.falcons
+          )
+      )
+    const matchup = {
+      batter: { id: gumbo['Herons Batter'] },
+      pitcher: { id: gumbo['Herons Pitcher'] }
+    }
+    const pitched = [{ isPitch: true }]
+    // The Herons are away, so they bat in the top and field in the bottom.
+    const batting = {
+      about: { halfInning: 'top' },
+      matchup,
+      playEvents: pitched
+    }
+    const fielding = { ...batting, about: { halfInning: 'bottom' } }
+    expect(await played('Herons Batter', batting)).equals(true)
+    expect(await played('Herons Pitcher', fielding)).equals(true)
+    // Each only for the side they did it for.
+    expect(await played('Herons Pitcher', batting)).equals(false)
+    expect(await played('Herons Batter', fielding)).equals(false)
+    // An at-bat with no pitch yet is nobody's appearance.
+    expect(
+      await played('Herons Batter', { ...batting, playEvents: [] })
+    ).equals(false)
+    expect(await played('Herons Batter', null)).equals(false)
+
+    const eventId = makeId('event')
+    await db!
+      .insertInto('events')
+      .values({
+        id: eventId,
+        gameId: GAME,
+        startTime: new Date(),
+        battingTeamId: TEAM.falcons,
+        gumbo: {
+          about: { atBatIndex: 0, inning: 1, halfInning: 'bottom' },
+          result: { eventType: 'single' },
+          lineups: {
+            began: { away: { defense: { RF: gumbo['Herons Fielder'] } } }
+          }
+        }
+      })
+      .execute()
+    try {
+      expect(await played('Herons Fielder', null)).equals(true)
+    } finally {
+      await db!.deleteFrom('events').where('id', '=', eventId).execute()
+    }
+  })
+
+  it('answers two adds of one person at once as one add', async function () {
+    await person('Twice At Once', TEAM.owls)
+    const answers = await Promise.all([
+      roster({ userId: ids['Twice At Once'] }),
+      roster({ userId: ids['Twice At Once'] })
+    ])
+    expect(answers.map(answer => answer.status)).has.members([200, 201])
   })
 
   it('adds an existing player to one side of a game as a pool player', async function () {
@@ -454,7 +628,7 @@ describe('adding a player who already exists', function () {
       bats: 'left',
       throws: 'right'
     })
-    expect(added.body.notice.requestId).match(/^inv_/)
+    expect(added.body.notice).to.include({ told: 'player' })
     const details = await db!
       .selectFrom('game_guest_details')
       .selectAll()
@@ -479,6 +653,7 @@ describe('adding a player who already exists', function () {
         row.throws
       ])
     ).deep.equals([['Freddie F', 'left', 'right']])
+    expect(availability.guestPlayers.away[0].pool).equals(true)
 
     // In the game once: on either side, and not as a player of either team.
     const twice = await guest({ side: 'home', userId: ids['Freddie Freeman'] })
@@ -488,9 +663,59 @@ describe('adding a player who already exists', function () {
     const across = await roster({ userId: ids['Freddie Freeman'] })
     expect(across.status).equals(409)
     expect(JSON.stringify(across.body)).includes(
-      'plays for the other team in a game against Ridgeview Falcons'
+      'plays for the other team in the game on'
     )
     expect(await membership('Freddie Freeman', TEAM.falcons)).equals(undefined)
+    // Nor from the other team's roster: a scoring read of that game would throw.
+    const opposing = await roster({ userId: ids['Ryan Helsley'] })
+    expect(opposing.status).equals(409)
+    expect(JSON.stringify(opposing.body)).includes(
+      'plays for the other team in the game on'
+    )
+    expect(await membership('Ryan Helsley', TEAM.falcons)).equals(undefined)
+    // A game long past that nobody scored holds nothing up.
+    const { start_at: starts } = await db!
+      .selectFrom('games')
+      .select('start_at')
+      .where('id', '=', GAME)
+      .executeTakeFirstOrThrow()
+    await db!
+      .updateTable('games')
+      .set({ start_at: new Date(Date.now() - 30 * 86_400_000) })
+      .where('id', '=', GAME)
+      .execute()
+    const stale = await atomic(db!, async trx => {
+      await refuseOtherSide(trx, [ids['Ryan Helsley']], {
+        kind: 'playerAdd',
+        mode: 'roster',
+        userId: ids['Ryan Helsley'],
+        teamId: TEAM.falcons,
+        jersey: null,
+        positions: [],
+        teamName: 'Ridgeview Falcons'
+      })
+      return 'allowed'
+    })
+    expect(stale).equals('allowed')
+    await db!
+      .updateTable('games')
+      .set({ start_at: starts })
+      .where('id', '=', GAME)
+      .execute()
+    // Unless that game left them out of it.
+    await db!
+      .updateTable('games')
+      .set({
+        unrostered: JSON.stringify({ [TEAM.herons]: [gumbo['Ryan Helsley']] })
+      })
+      .where('id', '=', GAME)
+      .execute()
+    expect((await roster({ userId: ids['Ryan Helsley'] })).status).equals(201)
+    await db!
+      .updateTable('games')
+      .set({ unrostered: JSON.stringify({}) })
+      .where('id', '=', GAME)
+      .execute()
     for (const name of ['Ryan Helsley', 'Mookie Betts']) {
       const rostered = await guest({ side: 'away', userId: ids[name] })
       expect(rostered.status, name).equals(409)

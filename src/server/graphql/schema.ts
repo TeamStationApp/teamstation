@@ -232,17 +232,35 @@ const rate = (name: string): GraphQLFieldConfig<Json, GraphqlContext> => ({
 })
 const count = { type: GraphQLInt }
 
-const playerOf = (line: Json): PlayerSource => ({
-  userId: String(line.userId),
-  ...(typeof line.shortName === 'string' ? { shortName: line.shortName } : {})
-})
+/** The line's player: nobody on a withdrawn line, which keeps only its name. */
+const playerOf = (line: Json): PlayerSource | null =>
+  line.userId == null
+    ? null
+    : {
+        userId: line.userId as string,
+        ...(typeof line.shortName === 'string'
+          ? { shortName: line.shortName }
+          : {})
+      }
+
+const lineName = {
+  type: GraphQLString,
+  description:
+    'The name the line reads under: a player’s short name, or the placeholder a withdrawn player reads as.',
+  resolve: (line: Json) => line.shortName ?? null
+}
 
 const BattingLineType: GraphQLObjectType = new GraphQLObjectType({
   name: 'BattingLine',
   description:
     'A player’s batting, over the games the route that served it counts, with the rates it worked out.',
   fields: () => ({
-    player: { type: required(PlayerType), resolve: playerOf },
+    player: {
+      type: PlayerType,
+      description: 'Nobody on a withdrawn line.',
+      resolve: playerOf
+    },
+    name: lineName,
     teamId: from(GraphQLID),
     g: count,
     pa: count,
@@ -276,7 +294,12 @@ const PitchingLineType: GraphQLObjectType = new GraphQLObjectType({
   name: 'PitchingLine',
   description: 'A player’s pitching, with the rates the route worked out.',
   fields: () => ({
-    player: { type: required(PlayerType), resolve: playerOf },
+    player: {
+      type: PlayerType,
+      description: 'Nobody on a withdrawn line.',
+      resolve: playerOf
+    },
+    name: lineName,
     teamId: from(GraphQLID),
     g: count,
     outs: count,
@@ -300,7 +323,7 @@ const StatLineType: GraphQLObjectType = new GraphQLObjectType({
   description:
     'One player in one game: batting and pitching together, from the game’s box score.',
   fields: () => ({
-    player: { type: required(PlayerType) },
+    player: { type: PlayerType, description: 'Nobody on a withdrawn line.' },
     teamId: from(GraphQLID),
     batting: from(BattingLineType),
     pitching: from(PitchingLineType)
@@ -555,7 +578,8 @@ const GameType: GraphQLObjectType = new GraphQLObjectType({
         )
         const lines = new Map<string, Json>()
         const lineOf = (row: Json): Json => {
-          const key = String(row.userId)
+          // A withdrawn line has no id: its placeholder is unique on its team.
+          const key = JSON.stringify(row.userId ?? [row.teamId, row.shortName])
           const held = lines.get(key) ?? {
             player: playerOf(row),
             teamId: row.teamId,

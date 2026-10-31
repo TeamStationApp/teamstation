@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely'
 
 import { conflict, forbidden, notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
+import { heldByOpenAdd } from '../access'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { currentActor, requireGroupAdmin, requirePeopleManager } from './rights'
@@ -66,6 +67,31 @@ export async function requireDirectAdmin(
  * leave or step down (`self`).
  */
 export type PersonChangeAuthority = 'admin' | 'manager' | 'self'
+
+/**
+ * A role keeps them on the team through a rejection, whole name and addresses
+ * with it, so nobody but a site administrator gives one to somebody the team
+ * holds only by an open add. Every immediate grant asks; a person's own accept
+ * of an invitation does not.
+ */
+export async function refuseRoleWhileHeld(
+  db: Kysely<Database>,
+  ref: GroupRef,
+  targetId: string,
+  actorId: string
+): Promise<void> {
+  if (ref.kind !== 'team' || !(await heldByOpenAdd(db, ref.id, [targetId])))
+    return
+  const actor = await currentActor(db, {
+    userId: actorId,
+    isAdmin: false,
+    scopes: []
+  })
+  if (!actor.isAdmin)
+    throw forbidden(
+      'They can be given a role once their side can no longer reject this add'
+    )
+}
 
 export async function authorizePersonChange(
   db: Kysely<Database>,

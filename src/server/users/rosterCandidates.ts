@@ -8,10 +8,13 @@ import {
   canManageRoster,
   canScore,
   canSeeTeam,
+  guardedRows,
   nonMemberTeam,
+  openAddTeams,
   roleScopes,
   visibleScopes
 } from '../access'
+import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { publicNames } from '../groups/playerNamePrivacy'
@@ -214,6 +217,65 @@ interface CandidateRow {
 }
 
 /**
+ * Whether a person is somebody this team has a reason to know, as the search's
+ * tiers read it: on a team of the caller's, in the team's season or league, or
+ * somebody the caller guards. Anybody else is a stranger, and an add of a
+ * stranger only asks: creating a team takes nothing but an account, and a
+ * team that holds a player reads their whole name, their guardians and their
+ * birth month.
+ */
+export async function hasTie(
+  db: Kysely<Database>,
+  actor: Actor,
+  teamId: string,
+  gameId: string | undefined,
+  userIds: readonly string[]
+): Promise<boolean> {
+  if (actor.isAdmin) return true
+  // Nobody is a stranger to themself: there is no side to ask.
+  const own = await onePerson(db, actor.userId)
+  if (userIds.some(id => own.userIds.includes(id))) return true
+  const target = await candidateTarget(db, actor, teamId, gameId)
+  const seasons =
+    target.gameSeasonId != null
+      ? sql`select ${target.gameSeasonId}::text as season_id`
+      : sql`select season_id from team_seasons where team_id = ${target.teamId}`
+  const ids = sql.join(userIds)
+  // A team holding them only by an open add is no tie to them yet.
+  const held = sql.join(['', ...(await openAddTeams(db, userIds))])
+  const { rows } = await sql`
+    with recursive
+    team_seasons as (
+      select season_id, team_id from season_teams where active
+      union
+      select season_id, team_id from season_team_parents
+    ),
+    target_seasons as (${seasons}),
+    caller_teams as (
+      select team_id from memberships where user_id = ${actor.userId}
+      union
+      select scope_id from scope_roles
+        where user_id = ${actor.userId} and scope_type = 'team'
+    )
+    select 1 from memberships m
+      join teams t on t.id = m.team_id and t.merged_into is null
+      where m.is_player and m.user_id in (${ids})
+        and m.team_id not in (${held})
+        and (m.team_id in (select team_id from caller_teams)
+          or m.team_id in (
+            select team_id from team_seasons
+              where season_id in (select season_id from target_seasons)
+          )
+          or t.league_id = ${target.leagueId})
+    union all
+    select 1 from user_links
+      where user_id in (${sql.join(own.userIds)}) and related_user_id in (${ids})
+        and kind in ('guardian', 'family')
+    limit 1`.execute(db)
+  return rows.length > 0
+}
+
+/**
  * Every live player the asker may add, nearest first: the asker's own teams
  * and guarded players, then the season (the game's, or any `forTeam` is in),
  * then the team's league, then, once three letters are typed, everyone else.
@@ -266,9 +328,20 @@ export async function rosterCandidates(
           ),
           sql` and `
         )
-  // Strangers are listed only once three letters or digits are typed.
+  // Strangers are listed only once three letters or digits are typed. A word
+  // that starts another counts for nothing, as each matches alone: `j j j` is
+  // one letter, and `ab a` two, while `Bo Li` is a name typed whole.
+  const letters = [
+    ...new Set(
+      words.map(word => word.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase())
+    )
+  ]
   const strangers =
-    words.join('').replace(/[^\p{L}\p{N}]/gu, '').length >= OTHER_TIER_QUERY
+    letters
+      .filter(
+        word => !letters.some(other => other !== word && other.startsWith(word))
+      )
+      .join('').length >= OTHER_TIER_QUERY
   const rows = await sql<CandidateRow>`
     with recursive
     team_seasons as (
@@ -284,8 +357,7 @@ export async function rosterCandidates(
         where user_id = ${actor.userId} and scope_type = 'team'
     ),
     guarded as (
-      select related_user_id as user_id from user_links
-        where user_id = ${actor.userId} and kind in ('guardian', 'family')
+      select unnest(${await guardedRows(db, actor.userId)}::text[]) as user_id
     ),
     named as (select u.id from users u where ${matches}),
     named_origins as (
@@ -344,18 +416,18 @@ export async function rosterCandidates(
         where m.is_player
           and (m.team_id = ${target.teamId}
             ${inGame.length === 0 ? sql`` : sql`or m.team_id in (${sql.join(inGame)})`})
-      union
-      select u.merged_into from held h join users u on u.id = h.id
-        where u.merged_into is not null
-    ),
-    excluded as (
-      select id as user_id from held
       ${
         guestGumbos.length === 0
           ? sql``
           : sql`union select user_id from gumbo_ids
                   where gumbo_id in (${sql.join(guestGumbos)})`
       }
+      union
+      select u.merged_into from held h join users u on u.id = h.id
+        where u.merged_into is not null
+    ),
+    excluded as (
+      select id as user_id from held
     ),
     ranked as (
       select r.user_id, min(case

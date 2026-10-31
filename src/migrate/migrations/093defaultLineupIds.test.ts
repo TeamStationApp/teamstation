@@ -160,6 +160,11 @@ describe('093 default lineups keep ids', function () {
   it('reads the default named from the accounts, as before', async function () {
     const db = makeDatabase(url)
     try {
+      // Read as today's server does, which asks who is a pool guest: a column
+      // of a later migration.
+      await pool.query(
+        'alter table game_guest_details add column if not exists pool boolean'
+      )
       const row = await db
         .selectFrom('teams')
         .select('default_lineup')

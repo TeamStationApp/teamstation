@@ -192,7 +192,7 @@ async function main(): Promise<void> {
     // A game-only player on the hosts' side, whose roster the visitors'
     // administrator does not keep.
     await rosters('Home')
-    await browser.tap('Create Game Guests')
+    await browser.tap('Create Player')
     await browser.waitText('Select number of players to create')
     await browser.tap('Create')
     await browser.waitText('game-only player')

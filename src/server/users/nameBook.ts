@@ -10,11 +10,14 @@ import {
   spokenFormat
 } from '../../common/playerNamePrivacy'
 import type { NameOf } from '../../common/scoring/storedNames'
+import { openAddsOf } from '../access'
 import type { Database } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
 import {
   currentFormats,
   formatForReader,
+  lentFormat,
+  lentPlayers,
   teamFormats
 } from '../groups/playerNamePrivacy'
 import { playerTeamsIn, scoringIdsIn } from '../scoring/projection'
@@ -210,6 +213,66 @@ function bookOf(
 }
 
 /**
+ * The placeholder each game's withdrawn players read as, by every gumbo id of
+ * theirs: the rows merged into them, and the row they were merged into, whose
+ * ids a game's documents may hold. One query for all the games.
+ */
+export async function withdrawnLabels(
+  db: Db,
+  gameIds: readonly string[]
+): Promise<Map<string, Map<number, string>>> {
+  const labels = new Map<string, Map<number, string>>()
+  if (gameIds.length === 0) return labels
+  const { rows } = await sql<{
+    game_id: string
+    label: string
+    gumbo_id: string
+  }>`with recursive family(game_id, label, id) as (
+      select game_id, label, user_id from game_withdrawn_players
+        where game_id in (${sql.join(gameIds)})
+      union
+      select f.game_id, f.label, related.id from family f
+        join users u on u.id = f.id
+        join users related
+          on related.id = u.merged_into or related.merged_into = u.id
+    )
+    select family.game_id, family.label, gumbo_ids.gumbo_id from family
+      join gumbo_ids on gumbo_ids.user_id = family.id`.execute(db)
+  for (const row of rows) {
+    const held = labels.get(row.game_id) ?? new Map<number, string>()
+    held.set(Number(row.gumbo_id), row.label)
+    labels.set(row.game_id, held)
+  }
+  return labels
+}
+
+/** `book` with a game's withdrawn players read as their placeholders. */
+function labelled(
+  book: NameBook,
+  labels: ReadonlyMap<number, string> | undefined
+): NameBook {
+  if (labels == null) return book
+  return {
+    nameOf: id => labels.get(id) ?? book.nameOf(id),
+    // A placeholder is no name to format.
+    formatOf: id => (labels.has(id) ? undefined : book.formatOf(id)),
+    digest: createHash('md5')
+      .update(book.digest)
+      .update(JSON.stringify([...labels].sort(([a], [b]) => a - b)))
+      .digest('hex')
+  }
+}
+
+/** `book`, one game's, with that game's withdrawn players relabelled. */
+export async function withWithdrawn(
+  db: Db,
+  gameId: string,
+  book: NameBook
+): Promise<NameBook> {
+  return labelled(book, (await withdrawnLabels(db, [gameId])).get(gameId))
+}
+
+/**
  * A book for each scope, read in one query for all of them: what a response
  * that shows several games, each named over its own players, reads.
  */
@@ -237,11 +300,24 @@ export async function booksOver<K>(
     const team = scope.teams.get(id)
     return team != null && teams.has(team) ? team : undefined
   }
+  const lent = await lentPlayers(
+    db,
+    everyone.flatMap(scope =>
+      scope.ids.flatMap(id => {
+        const teamId = teamOf(scope, id)
+        return teamId == null || !people.has(id)
+          ? []
+          : [{ userId: people.get(id)!.userId, teamId }]
+      })
+    )
+  )
+  const isLent = (scope: GameScope, id: number): boolean =>
+    people.has(id) && lent.has(`${teamOf(scope, id)} ${people.get(id)!.userId}`)
   const current = await currentFormats(
     db,
     everyone.flatMap(scope =>
       scope.ids.flatMap(id =>
-        teamOf(scope, id) != null || !people.has(id)
+        !people.has(id) || (teamOf(scope, id) != null && !isLent(scope, id))
           ? []
           : [people.get(id)!.userId]
       )
@@ -255,9 +331,13 @@ export async function booksOver<K>(
         scope.ids,
         (id, person) => {
           const team = teamOf(scope, id)
+          const own = current.get(person.userId)
           const format =
-            (team == null ? current.get(person.userId) : teams.get(team)) ??
-            DEFAULT_PLAYER_NAME_PRIVACY
+            team == null
+              ? (own ?? DEFAULT_PLAYER_NAME_PRIVACY)
+              : isLent(scope, id)
+                ? lentFormat(teams.get(team)!, own)
+                : (teams.get(team) ?? DEFAULT_PLAYER_NAME_PRIVACY)
           return options.spoken === true ? spokenFormat(format) : format
         },
         options.spoken === true ? true : undefined
@@ -459,12 +539,24 @@ export async function gameNames(
       scopes.set(row.id, scope)
     }
   }
-  return await booksOver(db, scopes)
+  const books = await booksOver(db, scopes)
+  const labels = await withdrawnLabels(db, wanted)
+  return new Map(
+    [...books].map(([id, book]) => [id, labelled(book, labels.get(id))])
+  )
 }
 
-/** The digest of the book over `scope` (`NameBook.digest`). */
-export async function scopeDigest(db: Db, scope: GameScope): Promise<string> {
-  return (await booksOver(db, new Map([[0, scope]]))).get(0)!.digest
+/**
+ * The digest of the book over `scope` (`NameBook.digest`), one game's: a
+ * rejection moves it, as a rename does.
+ */
+export async function scopeDigest(
+  db: Db,
+  scope: GameScope,
+  gameId: string
+): Promise<string> {
+  const book = (await booksOver(db, new Map([[0, scope]]))).get(0)!
+  return (await withWithdrawn(db, gameId, book)).digest
 }
 
 /**
@@ -481,7 +573,7 @@ export async function gameNamesDigest(db: Db, gameId: string): Promise<string> {
     .where('games.id', '=', gameId)
     .executeTakeFirst()
   if (row == null) return ''
-  return await scopeDigest(db, await scopeUnder(db, gameId, row.stamp))
+  return await scopeDigest(db, await scopeUnder(db, gameId, row.stamp), gameId)
 }
 
 /**
@@ -519,6 +611,8 @@ export async function modelNames(
     .innerJoin('gumbo_ids', 'gumbo_ids.user_id', 'memberships.user_id')
     .innerJoin('users', 'users.id', 'memberships.user_id')
     .select([
+      'memberships.team_id as teamId',
+      'memberships.user_id as userId',
       'gumbo_ids.gumbo_id as gumboId',
       'users.display_name as displayName',
       'users.first_name as firstName',
@@ -528,11 +622,22 @@ export async function modelNames(
     .where('memberships.is_player', '=', true)
     .where('users.merged_into', 'is', null)
     .execute()
+  // Somebody a team holds only by an open add reads as their own teams say.
+  const open = await openAddsOf(db, teamIds)
+  const held = rows.filter(
+    row => open.get(row.teamId)?.has(row.userId) === true
+  )
+  const own = await currentFormats(
+    db,
+    held.map(row => row.userId)
+  )
   return Object.fromEntries(
     rows.map(row => {
       const name = modelLabel(
         { ...row, id: row.gumboId },
-        DEFAULT_PLAYER_NAME_PRIVACY
+        (open.get(row.teamId)?.has(row.userId) === true
+          ? own.get(row.userId)
+          : undefined) ?? DEFAULT_PLAYER_NAME_PRIVACY
       )
       return [
         String(row.gumboId),

@@ -40,6 +40,8 @@ export function PlayerEntrySheet({
   onAddPlaceholders,
   initialDraft,
   existing,
+  ownIdentity = false,
+  ownBats = null,
   onAdd
 }: {
   onClose: () => void
@@ -52,6 +54,13 @@ export function PlayerEntrySheet({
    * and only the jersey and positions are theirs to set here.
    */
   existing?: ExistingEntry
+  /**
+   * Editing a pool player: their name and hands are their own, so they show
+   * greyed, and only the jersey and positions change.
+   */
+  ownIdentity?: boolean
+  /** Their own bat side, unknown included: a draft's is a guess for scoring. */
+  ownBats?: 'left' | 'right' | 'switch' | null
   /** Create Player and Edit Player; unused with `existing`. */
   onAdd?: (draft: PlayerDraft) => void | Promise<void>
 }): React.ReactElement {
@@ -67,9 +76,17 @@ export function PlayerEntrySheet({
         }
       : initialDraft == null
         ? emptyPlayerDraft()
-        : { ...initialDraft, throws: initialDraft.throws ?? 'right' }
+        : {
+            ...initialDraft,
+            // A pool player's hands are shown as held, unknown included.
+            throws: ownIdentity
+              ? initialDraft.throws
+              : (initialDraft.throws ?? 'right')
+          }
   )
   const editing = initialDraft != null
+  // Their name is not for this sheet to change: the jersey is the first field.
+  const fromJersey = existing != null || ownIdentity
   const [pending, setPending] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [placeholders, setPlaceholders] = useState(false)
@@ -95,11 +112,12 @@ export function PlayerEntrySheet({
     }
   }, [])
   const focus = (): void => {
-    first.current?.focus()
+    const field = fromJersey ? jersey : first
+    field.current?.focus()
     // The web modal activates its focus trap after onShow; focus after that commit.
     if (focusFrame.current != null) cancelAnimationFrame(focusFrame.current)
     focusFrame.current = requestAnimationFrame(() => {
-      first.current?.focus()
+      field.current?.focus()
     })
   }
   const add = async (another: boolean): Promise<void> => {
@@ -216,8 +234,7 @@ export function PlayerEntrySheet({
       <>
         {pending && (
           <Text accessibilityRole="alert" style={text}>
-            This needs a guardian's approval first. Use a placeholder for this
-            game.
+            This needs approval first. Use a placeholder for this game.
           </Text>
         )}
         {onAddToRoster != null && (
@@ -268,7 +285,7 @@ export function PlayerEntrySheet({
       textCancel
       scrollReset={scrollReset}
       onClose={onCancel}
-      onShow={editing ? focus : undefined}
+      onShow={editing || existing != null ? focus : undefined}
     >
       <View style={{ gap: 16 }}>
         <View
@@ -300,9 +317,14 @@ export function PlayerEntrySheet({
                         else if (key === 'lastName') jersey.current?.focus()
                         else jersey.current?.blur()
                       }}
-                      autoFocus={editing && key === 'firstName'}
+                      autoFocus={
+                        (editing || existing != null) &&
+                        key === (fromJersey ? 'jersey' : 'firstName')
+                      }
                       accessibilityLabel={label}
-                      editable={existing == null || key === 'jersey'}
+                      editable={
+                        (existing == null && !ownIdentity) || key === 'jersey'
+                      }
                       value={draft[key]}
                       keyboardType={key === 'jersey' ? 'number-pad' : 'default'}
                       autoCapitalize="words"
@@ -318,6 +340,8 @@ export function PlayerEntrySheet({
               <Text style={text}>Throws</Text>
               {existing != null ? (
                 hands(existing.candidate.throws, 'Throws')
+              ) : ownIdentity ? (
+                hands(draft.throws, 'Throws')
               ) : (
                 <RosterSelector
                   compact
@@ -337,6 +361,8 @@ export function PlayerEntrySheet({
               <Text style={text}>Bats</Text>
               {existing != null ? (
                 hands(existing.candidate.bats, 'Bats')
+              ) : ownIdentity ? (
+                hands(ownBats, 'Bats')
               ) : (
                 <RosterSelector
                   compact

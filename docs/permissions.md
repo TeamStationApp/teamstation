@@ -737,6 +737,68 @@ A season and a league have the same list on their **People** tab, in the same se
 
 Rows open the same way as a team's: a player's page, and for the level's admins, coaches and assistants everybody else's profile.
 
+### Adding a player who already exists
+
+A roster manager of a team (a coach, assistant, scorekeeper or admin) can add somebody who already exists in TeamStation, so nobody needs a duplicate. There are two kinds of add:
+
+- **Add to Roster** makes them a player of the team.
+- **Add as Pool Player** puts them in one game for one side. A scorekeeper of either team may do this too. It gives the team no membership, and it opens nothing of the player's to anybody new.
+
+**How the add happens.** It depends on whether the person has a tie to the team: they play on one of the caller's teams, in the team's season or league, or the caller guards them, or they are the caller.
+
+| Situation                                       | What happens                                        |
+| ----------------------------------------------- | --------------------------------------------------- |
+| A tie, and no earlier rejection by this team    | The add applies at once, and their side is told.    |
+| No tie, or this team's earlier add was rejected | Nothing changes until their side accepts a request. |
+| No tie, and nobody can answer for them          | The add is refused.                                 |
+| A tie, and nobody to tell                       | The add simply applies.                             |
+
+**Their side** is whoever can answer for them, and it is read when they answer, not only when the add is made:
+
+1. their guardians who can act
+2. with none, the player, if they can sign in
+3. with neither, the coaches, assistants and admins of their other teams, standing in for this add alone
+
+Whoever made the add is never the side that answers it. A team holding them only by an open add (below) is not their side either.
+
+**An add that can never apply.** Nobody is on both sides of a game. A roster add is refused while they play for the other side of a game of the team that isn't over, unless that side left them out of it, and a pool add is refused once they have played for the other team in that game. Somebody who still ends up on both rosters, as a merge can leave them, plays for neither side until a coach leaves them out of one. Both coaches can still save a lineup.
+
+#### While their side can still reject it
+
+For 90 days after a roster add, the team holds them only by an **open add**. A rejection has to be able to undo everything the add did, so until then nothing that is the person's own is the team's.
+
+| The team can                               | The team can't                                                                                                                          |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Set their jersey and positions on the team | Read their whole name, or show it by choosing a longer name format: a team's format can shorten a held player's name, never lengthen it |
+| Put them in its lineups and score them     | Change their name, bats and throws, or picture, including by an import                                                                  |
+| See them on its roster with a short name   | Read or change their guardians, or see them in a family list or on event attendees                                                      |
+|                                            | Read their addresses and sign-in times, or their birth month                                                                            |
+|                                            | Give them a role, by any route, or link a guardian by an import                                                                         |
+|                                            | Open a chat with them, or bring them or their parents into the team's chats                                                             |
+|                                            | Count as their team when somebody asks to be their guardian                                                                             |
+
+This holds only against people the add gave no rights. These readers keep everything they already had: site admins, the player, their guardians and family, and the staff of another team the player is settled on, so a coach of both teams still sees the whole name. Pool players are never held in this way, but a team's name format can only shorten their name too.
+
+Somebody already on the team in another role, such as a parent or spectator, stays in its chats and people list. What is theirs is still held from the team.
+
+**A hold ends** when any of these happens:
+
+- the 90 days pass
+- the team removes them, or a merge takes away the row the add made
+- their side accepts a later add of them to the team
+
+#### Rejecting an add
+
+Rejecting takes the add away. Their side rejects from the notice in their inbox, which also keeps it in their History.
+
+- **Only the latest add** of a person to a team can be rejected. The next add by that team needs their side's approval first.
+- **Their place on the team goes, and only what the add made.** A row the add created is removed. A place they already had stays as it was, with the jersey and positions it had before. A row kept because they have a role loses what the add put on it.
+- **Games already played stay on the record**, so the game still adds up. Their part reads under a placeholder such as a team's name and a letter, leaves their own stats, plays and highlights, and is told to the team's managers.
+- **A game not played yet** simply loses them.
+- **It can be refused.** If they play for the team by a row the add did not make, because they came back another way or a merge folded theirs into one already there, the add has nothing left to reject. Off the roster altogether, a rejection still takes the add's games off their record.
+
+Adding somebody who is on the roster already changes nothing, and the app says so.
+
 ---
 
 ## 14. Words that mean two things
@@ -767,6 +829,15 @@ Yes, if the team's chain of parents leads up to your league. If the team only _c
 
 **Our team joined a season. Can the season's admins now edit our roster?**
 No. Competing gives the season no management rights. Only a parent link does, and that needs your team admin's approval.
+
+**Another team added my child. What can I do?**
+You'll get a notice. For 90 days you can reject it, which takes them off that team and takes any games they played for it off their record. Until then that team can't read their whole name, their family or their details. See [Adding a player who already exists](#adding-a-player-who-already-exists).
+
+**Can our team add a player from another league?**
+Yes, but their side has to accept first. With nobody who can answer for them, the add is refused. Without a tie to your team, an add never happens on its own.
+
+**We added a player. Why can't we see their whole name?**
+Because their side can still reject the add. The name, hands and family stay theirs for 90 days, and the team keeps the jersey and positions.
 
 **Why is a league admin on our team's roster?**
 Because your team's league, or a season that is its parent, gave them that role. Their pill says where it comes from. To take it away, change it at that level.
@@ -829,6 +900,7 @@ Where the rules live in code:
 | Guardian invitations and requests               | `src/server/groups/requests.ts` (`relationshipSides`, `approvesSide`, `hasGuardian`, `guardianInviteAs`, `speaksForSender`, `createRelationshipRequest`), `src/server/groups/guardianLimits.ts` (`checkGuardianLimits`, `isGuardianRequest`)                                                                                                                                                                                                                                         |
 | Guardians from a roster import                  | `src/server/teams/addAdults.ts` (`linkGuardian`)                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Non-member view                                 | `src/server/access.ts` (`nonMemberTeam`, `canSeeGame`), `src/server/routes/teams.ts`, `src/server/routes/media.ts`, `src/server/routes/stats.ts` (standings), `src/server/groups/publicSummary.ts` (`nonMemberView`), `src/app/screens/TeamScreen.tsx`, `src/app/screens/GameScreen.tsx`                                                                                                                                                                                             |
+| Adding existing players and open adds           | `src/server/groups/noticePolicy.ts` (`playerAddPolicy`, `playerAddApprovers`, `applyPlayerAdd`, `undoPlayerAdd`, `decidePlayerAdd`, `refuseOtherSide`, `rejoinedSince`, `lockPlayerAdds`), `src/server/teams/addExistingPlayer.ts` (`addByPolicy`), `src/server/access.ts` (`openAdds`, `openAddsOf`, `openArrivalsOf`, `openAddTeams`, `heldByOpenAdd`, `settledTeams`), `src/server/groups/playerNamePrivacy.ts` (`lentPlayers`, `lentFormat`), `src/server/games/withdrawn.ts`    |
 | Roster sections                                 | `src/server/teams/teamRoster.ts` (`followersOf`), `src/server/access.ts` (`levelsAboveTeam`, `membersOfLevels`), `src/app/screens/TeamScreen.tsx`                                                                                                                                                                                                                                                                                                                                    |
 | Who administers a group, including custodians   | `src/server/groups/rights.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Parent links                                    | `src/common/groupLinks.ts`, `src/server/groups/relationships.ts`                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -875,6 +947,11 @@ Things worth knowing:
 - **`spectator_access`** on `leagues` and `seasons` is stored but not read by anything. It was once "everyone on any team in the season sees all its games." Tests check that it grants nothing.
 - **`memberships.granted_by_link_id`** has no effect on access. `memberships.is_spectator` was dropped by `056oneMemberKind`.
 - **`season_members.role` / `league_members.role`** hold only `member` since `056oneMemberKind`, which turned every `spectator` row into one. The column is kept so a person's grant on every level reads a stored role, as a team membership's does.
+- **Holds are enforced by each read, so a new read must choose.** A read of `memberships` or `teamsPlayedOnNow` sees a held player like any other, and nothing stops it. A new right over a person starts from `settledTeams`, in place of `teamsPlayedOnNow`. `openAdds` and `openAddsOf` answer who a team holds, and `openArrivalsOf` only those the add brought to the team, which is what chat audiences and people lists read. Withhold only from a reader `mayEditName` refuses, as `teamRoster` does, or the page offers what the route refuses. All of them read `openHolds`, which answers every row of the person, so compare with `userIds`, never with `terms.userId` as stored.
+- **An add records the row it landed on.** `terms.membershipId` is that row, and a hold lasts while it stands as a player's. Terms without one, from before it was recorded, count as standing. A merge that folds a row keeps the add answerable by moving it to the row that stays (`foldOpenAdds` in `src/server/admin/people.ts`, and the statement in `mergeTeams`).
+- **One person, one lock.** `lockPlayerAdds` serializes every add, accept and rejection of a person. Take it after any game row, as `addExistingGuest` and `decideOnce` do, and before the checks it protects.
+- **A stored play is not always a game begun.** `hasScoringEventsSql` asks for a pitch or a ball in play. A rejection also counts a stored play with a result of its own (`isRealPlaySql`), so an intentional walk counts and a lineup change doesn't.
+- **Withdrawn lines have two known limits.** A withdrawn guest answers an id made for that game instead of their account (`withdrawnUserId`), but their `gumboId` stays in the entry, the plays and `standsFor`, and for an account from before the identity cutover a gumbo id decodes to the account. `withdrawnLabels` relabels a person across the whole game, while `statRows` keeps a part they played for the other team under their name, so somebody with a part on each side reads differently on the two.
 - **Adding is not an invitation.** `addPersonByAddress` (`src/server/invites/personRequests.ts`) adds an account that has verified the address at once, through `grantAt` (membership plus roles, never taking any away), records a `grant` notification event (`notifyGrant`) and mails the address (`mailGrant`), all in one transaction, so a failed mail undoes the add. Only an address no account has verified is a `person` request, which `applyWaitingInvitations` accepts for the account when it signs in with that address (`userForSignIn` in `src/server/routes/auth.ts`) or confirms it as a new address (`POST /me/account/emails/confirm`). An accepted invitation is told by the same `grant` notification. `POST /relationship-requests` with kind `person` and an address an account holds answers 201 `accepted` (409 when nothing was new). Pending person invitations made out to an account before this are still answered and resent as before.
 - **Grant notifications** are `notification_events` with `source_type` `grant`, metadata `{ scope, roles }`; the title and description are written when the inbox is read, from the granting person's name and the group's name as they are then. The inbox lists them on the default tab until viewed, and they set `hasPending` while unviewed; history lists them always. `leave` on the notification is the level while the person still holds a membership or role there (`heldAt`).
 - **Who may change people.** `requirePeopleManager` accepts a level's admins (`canAdminister`) and its coaches and assistants, set there or inherited (`roleScopes` coach/assistant at that level), answering 404 to anybody else and 403 to a coach or assistant touching Admin (giving or taking it, or taking out a member who holds it). `authorizePersonChange` takes an authority, `admin`, `manager` or `self`: `self` is leaving (`DELETE /me/groups/:kind/:id`, `removeFromScope`) and stepping down (`DELETE /me/groups/:kind/:id/roles/:role`, `setScopeRoles`), and keeps the last-direct-admin guard. A grant by id (`PUT /manage/:scope/people/:userId/roles[/:role]`) needs the person on the level's people list (`onPeopleList`, 404 otherwise) and, for a role, an account that signs in (`canHoldRoles`, 409). Taking Member from a player of the team (`DELETE …/roles/member`) is refused (409); taking somebody out whole (`DELETE /manage/:scope/:id/people/:userId`, `removeFromScope`) needs an admin of that level (`adminScopes`, 404 otherwise) and removes players too, with every role they hold at that level. The player's Settings uses it (`PlayerRemoveFromTeam.tsx`).

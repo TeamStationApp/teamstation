@@ -4,16 +4,19 @@ import {
   mostRestrictive,
   type PlayerNamePrivacy
 } from '../../common/playerNamePrivacy'
+import { settledTeams } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { retargetGameTeams } from '../games/retargetTeams'
 import { requireDirectAdmin } from '../groups/adminGuard'
+import { freeLabel, namesOnSide } from '../groups/noticePolicy'
 import { teamFormats } from '../groups/playerNamePrivacy'
 import { mergeParents } from '../groups/teamMerge'
 import { noteScopeChange } from '../socket/syncRevision'
 import { requestGameStats } from '../statsBuilder/request'
 import { refreshFieldWarnings } from '../venues/fieldWarnings'
+import { onePerson } from './people'
 
 /**
  * Joining two rows that are one real team.
@@ -196,6 +199,76 @@ async function refuseGamesBetween(
     )
 }
 
+/**
+ * A retired fixture's withdrawals onto the game that stays, each on the side
+ * of its team and under a placeholder nobody on that side holds there.
+ */
+async function carryWithdrawals(
+  trx: Kysely<Database>,
+  retiredGameId: string,
+  keptGameId: string
+): Promise<void> {
+  const carried = await trx
+    .selectFrom('game_withdrawn_players')
+    .selectAll()
+    .where('game_id', '=', retiredGameId)
+    .execute()
+  if (carried.length === 0) return
+  const retired = await trx
+    .selectFrom('games')
+    .select('home_team_id')
+    .where('id', '=', retiredGameId)
+    .executeTakeFirstOrThrow()
+  const kept = await trx
+    .selectFrom('games')
+    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
+    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+    .select([
+      'games.id',
+      'games.guests',
+      'games.home_team_id',
+      'games.away_team_id',
+      'home.name as homeName',
+      'away.name as awayName'
+    ])
+    .where('games.id', '=', keptGameId)
+    .executeTakeFirstOrThrow()
+  const flipped = retired.home_team_id !== kept.home_team_id
+  const names = {
+    away: await namesOnSide(trx, kept, 'away'),
+    home: await namesOnSide(trx, kept, 'home')
+  }
+  const taken = new Set(
+    (
+      await trx
+        .selectFrom('game_withdrawn_players')
+        .select('user_id')
+        .where('game_id', '=', keptGameId)
+        .execute()
+    ).map(row => row.user_id)
+  )
+  for (const row of carried) {
+    if (taken.has(row.user_id)) continue
+    const side = flipped === (row.side === 'home') ? 'away' : 'home'
+    // A rejection took back the team that goes, not a team they play for.
+    const { userIds } = await onePerson(trx, row.user_id)
+    if (
+      (await settledTeams(trx, userIds)).includes(
+        side === 'home' ? kept.home_team_id : kept.away_team_id
+      )
+    )
+      continue
+    const label = names[side].has(row.label.toLowerCase())
+      ? freeLabel(side === 'home' ? kept.homeName : kept.awayName, names[side])
+      : row.label
+    names[side].add(label.toLowerCase())
+    await trx
+      .insertInto('game_withdrawn_players')
+      .values({ ...row, game_id: keptGameId, side, label })
+      .execute()
+  }
+}
+
 export async function mergeTeams(
   db: Kysely<Database>,
   input: MergeTeamsInput
@@ -297,6 +370,70 @@ export async function mergeTeams(
     const stricter = await stricterOfTeams(trx, fromTeamId, intoTeamId)
     await mergeParents(trx, fromTeamId, intoTeamId, true)
     await keepPrivacy(trx, intoTeamId, stricter)
+    // A player add is the team's: its rejection undoes it there, and the
+    // team's next add reads what became of the last.
+    // Unless the other team had the person anyway, on any row of theirs, in
+    // either direction: the add made nothing there, and rejecting it must not
+    // take them off their own team. As a player, it has nothing left to undo;
+    // as anything else, it undoes the playing and leaves the row as it was,
+    // and follows the row that stays. A row itself held by an open add is no
+    // such thing: both adds stand, on the row that stays, and the later of
+    // them answers for it as it would on one team.
+    await sql`with recursive family(request_id, id) as (
+        select id, terms->>'userId' from group_requests
+          where kind = 'playerAdd' and status = 'applied'
+            and initiating_team_id in (${fromTeamId}, ${intoTeamId})
+            and terms->>'mode' = 'roster'
+        union
+        select f.request_id, related.id from family f
+          join users u on u.id = f.id
+          join users related
+            on related.id = u.merged_into or related.merged_into = u.id
+      ),
+      held as (
+        select distinct on (f.request_id) f.request_id,
+            m.id, m.is_player, m.jersey, m.positions, o.terms as open_terms
+          from family f
+          join group_requests asked on asked.id = f.request_id
+          join memberships m on m.user_id = f.id and m.team_id = case
+            when asked.initiating_team_id = ${fromTeamId} then ${intoTeamId}
+            else ${fromTeamId} end
+          left join group_requests o on o.kind = 'playerAdd'
+            and o.status = 'applied' and o.expires_at > now()
+            and o.terms->>'mode' = 'roster' and o.terms->>'membershipId' = m.id
+          order by f.request_id, m.is_player desc
+      )
+      update group_requests r set
+        status = case when held.is_player and held.open_terms is null
+          then 'superseded' else r.status end,
+        resolved_at = case when held.is_player and held.open_terms is null
+          then now() else r.resolved_at end,
+        terms = case
+          when held.open_terms is not null then
+            case when held.open_terms->>'createdMembership' = 'true' then r.terms
+              else (r.terms - 'createdMembership') || jsonb_build_object(
+                'previous', held.open_terms->'previous') end
+            || case when r.initiating_team_id = ${fromTeamId}
+              then jsonb_build_object('membershipId', held.id)
+              else '{}'::jsonb end
+          when held.is_player then r.terms
+          else (r.terms - 'createdMembership') || jsonb_build_object(
+            'previous', jsonb_build_object(
+              'jersey', held.jersey, 'positions', to_jsonb(held.positions)))
+            || case when r.initiating_team_id = ${fromTeamId}
+              then jsonb_build_object('membershipId', held.id)
+              else '{}'::jsonb end
+          end
+      from held where held.request_id = r.id`.execute(trx)
+    await sql`update group_requests set
+      initiating_team_id = ${intoTeamId},
+      sender_scope_id = ${intoTeamId},
+      terms = jsonb_set(
+        jsonb_set(terms, '{teamId}', to_jsonb(${intoTeamId}::text)),
+        '{teamName}', to_jsonb(${into.name}::text))
+      where kind = 'playerAdd' and initiating_team_id = ${fromTeamId}`.execute(
+      trx
+    )
     // Merge overlapping rows before repointing, so unique constraints remain valid.
     await sql`update memberships target set
       role = case when target.role = 'owner' or source.role = 'owner' then 'owner'
@@ -422,11 +559,27 @@ export async function mergeTeams(
         .where('status', '=', 'pending')
         .where('game_id', 'in', [fixture.keptGameId, fixture.retiredGameId])
         .execute()
+      // A pool add's guest goes with the game they were added to, and the
+      // add with them: nothing is left for its side to reject. A withdrawal
+      // of a game already played stays, on the side of the team it was for.
+      await trx
+        .updateTable('group_requests')
+        .set({ status: 'superseded', resolved_at: new Date() })
+        .where('kind', '=', 'playerAdd')
+        .where('status', '=', 'applied')
+        .where('game_id', '=', fixture.retiredGameId)
+        .execute()
+      await carryWithdrawals(trx, fixture.retiredGameId, fixture.keptGameId)
       await trx
         .updateTable('group_requests')
         .set({ game_id: fixture.keptGameId })
         .where('game_id', '=', fixture.retiredGameId)
         .execute()
+      await sql`update group_requests set
+        terms = jsonb_set(terms, '{gameId}', to_jsonb(${fixture.keptGameId}::text))
+        where kind = 'playerAdd' and game_id = ${fixture.keptGameId}`.execute(
+        trx
+      )
       // The video is the whole point: it lives on the game that was never
       // scored, and the plays live on the one that was never filmed.
       await trx

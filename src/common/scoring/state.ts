@@ -248,6 +248,8 @@ export const asGamePlay = asObject({
    * (`document.ts`), so a change undone before then is never written.
    */
   lineups: asOptional(asObject({ opened: asLineups, began: asLineups })),
+  /** A stand-in for a play scored elsewhere: who it names, and no line. */
+  appeared: asOptional(asArray(asNumber)),
   /**
    * The ball in play as the scoring screen draws it: the launch angle and its
    * label, where the scorer put the ball on the field, and the fielder who

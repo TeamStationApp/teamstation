@@ -21,6 +21,7 @@ import type {
   RosterEntry,
   TeamStationClient
 } from '../../common/api'
+import { playerAddToldWords } from '../../common/notifications'
 import {
   type ExistingRosterPlayer,
   PLAYER_POSITIONS as STORED_POSITIONS
@@ -34,6 +35,7 @@ import {
 } from '../../common/scoring/rosterCommands'
 import { rosterError } from '../../common/scoring/rules'
 import {
+  appearedIn,
   reconcileRoster,
   type ScoringRosterEntry
 } from '../../common/scoring/startingSetup'
@@ -186,6 +188,7 @@ export function RosterEditor({
   defaultSide,
   scorekeeperSide,
   rosters,
+  guests = [],
   unaccepted = false,
   conflict = false,
   onDraftChange,
@@ -267,6 +270,8 @@ export function RosterEditor({
    */
   conflict?: boolean
   onDraftChange?: (draft: RosterEditorDraft) => void
+  /** The game's guests: a pool player among them keeps their own name. */
+  guests?: readonly RosterEntry[]
   /** Whether the draft differs from the game it was opened over, as it changes. */
   onDirtyChange?: (dirty: boolean) => void
   onEditPlayer?: (userId: string, name: string, teamId: string) => void
@@ -376,6 +381,10 @@ export function RosterEditor({
   }, [draft])
   const [created, setCreated] = useState<Record<string, RosterEntry[]>>({})
   const [editingLocal, setEditingLocal] = useState<number>()
+  // Pool players added here, whom the game's guests do not list yet.
+  const [pooled, setPooled] = useState<
+    ReadonlyMap<number, RosterEntry['bats']>
+  >(new Map())
   const [nextBatter, setNextBatter] = useState<number | undefined>(
     initialDraft?.nextBatter
   )
@@ -425,7 +434,8 @@ export function RosterEditor({
       next.gameData.teams,
       { away: roster('away'), home: roster('home') },
       { away: entries('away', true), home: entries('home', true) },
-      lists
+      lists,
+      appearedIn(next)
     )
     next.gameData.players = setup.players
     next.liveData.boxscore.teams[side] = setup.sides[side]
@@ -517,15 +527,21 @@ export function RosterEditor({
       })
       if ('pendingRequestId' in answer) return 'pending'
       const { entry } = answer
+      // Somebody on the roster already plays as it holds them, not as typed.
+      const held = answer.unchanged === true
       const player: PlayerDraft = {
         firstName: candidate.shortParts.first,
         lastName: candidate.shortParts.last,
-        jersey: choice.jersey,
+        jersey: held ? (entry.jersey ?? '') : choice.jersey,
         bats: candidate.bats ?? 'right',
         throws: candidate.throws,
-        positions: choice.positions
+        positions: held ? [...entry.positions] : choice.positions
       }
       const teamId = draft.gameData.teams[side].id
+      if (pool && entry.gumboId != null) {
+        const { gumboId } = entry
+        setPooled(held => new Map(held).set(gumboId, candidate.bats))
+      }
       if (!pool)
         setCreated(held => ({
           ...held,
@@ -536,9 +552,11 @@ export function RosterEditor({
       addedNote.current = {
         side,
         text:
-          answer.noticeId == null
-            ? `${candidate.shortName} was added.`
-            : `${candidate.shortName} was added. Their guardians were notified.`
+          answer.unchanged === true
+            ? `${candidate.shortName} is already on the roster.`
+            : answer.noticeId == null
+              ? `${candidate.shortName} was added.`
+              : `${candidate.shortName} was added. ${playerAddToldWords(answer.told)}`
       }
       edit(next => {
         if (pool) addPlayerDraft(next, side, player, entry.gumboId!)
@@ -1129,6 +1147,17 @@ export function RosterEditor({
       {editingLocal != null && state.readOnly !== true && (
         <PlayerEntrySheet
           key={`edit:${side}:${editingLocal}`}
+          ownIdentity={
+            pooled.has(editingLocal) ||
+            guests.some(
+              guest => guest.pool === true && guest.gumboId === editingLocal
+            )
+          }
+          ownBats={
+            pooled.get(editingLocal) ??
+            guests.find(guest => guest.gumboId === editingLocal)?.bats ??
+            null
+          }
           initialDraft={draftOfLocalPlayer(
             draft.gameData.players[editingLocal]
           )}

@@ -28,6 +28,7 @@ import {
   withHalfOuts
 } from './linescore'
 import { addPlayer, newSetup } from './lineup'
+import { appearedIn } from './rosterAvailability'
 import { copyState, type GameState, setupOf } from './state'
 
 /**
@@ -620,6 +621,13 @@ describe('reading a game back', function () {
       null
     ])
     expect(imported.offense.batter!.id).equals(7003)
+    // Who batted in those plays has appeared, though their detail is lost.
+    expect(
+      appearedIn(
+        replayPlays({ plays: documents(false), currentPlay: null }, context)
+          .state
+      )
+    ).includes(7002)
 
     // Scoring carries on from there with the lineup the first scored play kept.
     const next = score(state, [{ type: 'pitch', call: 'B' }])

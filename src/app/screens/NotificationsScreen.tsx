@@ -14,6 +14,30 @@ import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
+/**
+ * What to say when a decision did not do what was asked, because somebody
+ * else got there first or it had lapsed: an answer that is not the one asked
+ * for would otherwise read as done. A request can stay pending after an
+ * accept, until the other side answers.
+ */
+function staleAnswer(
+  item: Notification,
+  action: 'accept' | 'decline',
+  status: string
+): string | undefined {
+  if (
+    action === 'accept'
+      ? status === 'accepted' || status === 'pending'
+      : status === 'declined'
+  )
+    return undefined
+  if (status === 'accepted') return 'Somebody else already accepted this.'
+  if (status === 'declined') return 'Somebody else already declined this.'
+  return item.type === 'playerAdd'
+    ? 'That add could no longer be changed.'
+    : 'This request is no longer open.'
+}
+
 function accessRefused(error: unknown): boolean {
   return (
     error instanceof HttpError &&
@@ -196,9 +220,10 @@ export function NotificationsScreen({
     setDeciding({ id: item.requestId, action })
     setError('')
     try {
-      if (item.type === 'game')
-        await client.decideGameRequest(item.requestId, action)
-      else await client.decideRelationship(item.requestId, action)
+      const answer =
+        item.type === 'game'
+          ? await client.decideGameRequest(item.requestId, action)
+          : await client.decideRelationship(item.requestId, action)
       const kept = (list: Notification[]): Notification[] =>
         list.filter(other => other.requestId !== item.requestId)
       setItems(kept)
@@ -207,6 +232,8 @@ export function NotificationsScreen({
         cache.current.pending = { ...pending, items: kept(pending.items) }
       delete cache.current.history
       onDecided?.()
+      const stale = staleAnswer(item, action, answer.status)
+      if (stale != null) setError(stale)
     } catch (error) {
       setError(
         error instanceof Error

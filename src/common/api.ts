@@ -73,6 +73,7 @@ import {
   asNotification,
   asNotificationPage,
   type Notification,
+  type PlayerAddTold,
   type RelationshipRequestInput
 } from './notifications'
 import { type AnalyticsSink, observeApi } from './observability/apiEvents'
@@ -1298,6 +1299,16 @@ const cleanRosterEntry = asObject({
   jersey: asNullable(asString),
   positions: asArray(asString),
   isPlayer: asBoolean,
+  /**
+   * A guest who already existed, added for this game only: their name and
+   * hands are their own, and only their jersey and positions are the game's.
+   */
+  pool: asOptional(asBoolean),
+  /**
+   * Held only through an add their side may still reject: their name and
+   * hands are their own until it can no longer be.
+   */
+  ownIdentity: asOptional(asBoolean),
   role: asString,
   /** The section they are listed under: the first of these that fits. */
   section: asRosterSection,
@@ -1330,11 +1341,13 @@ const cleanRosterEntry = asObject({
 })
 export type RosterEntry = Omit<
   ReturnType<typeof cleanRosterEntry>,
-  'teamNames' | 'guardianOf' | 'nameFormat'
+  'teamNames' | 'guardianOf' | 'nameFormat' | 'pool' | 'ownIdentity'
 > & {
   teamNames?: string[]
   guardianOf?: string[]
   nameFormat?: PlayerNamePrivacy
+  pool?: boolean
+  ownIdentity?: boolean
 }
 export const asRosterEntry: (raw: unknown) => RosterEntry = cleanRosterEntry
 
@@ -1448,6 +1461,11 @@ export const asPlayerDetail = asObject({
   name: asString,
   /** Whether to offer this person the name field. A parent or an admin. */
   canEditName: asOptional(asBoolean, false),
+  /**
+   * Teams that hold them only by an add their side may still reject: what is
+   * the person's is not offered for those.
+   */
+  openAddTeams: asOptional(asArray(asString), []),
   /**
    * How the viewer may invite a guardian of this person: `guardian`, as one
    * of their guardians, with no sending team; `team`, from a team the viewer
@@ -1683,18 +1701,30 @@ export const asRosterCandidate: Cleaner<RosterCandidate> = asObject({
  * when there was one, or the request their side must accept first.
  */
 export type ExistingPlayerAnswer =
-  { entry: RosterEntry; noticeId: string | null } | { pendingRequestId: string }
+  | {
+      entry: RosterEntry
+      noticeId: string | null
+      /** Who that notice went to. */
+      told?: PlayerAddTold
+      /** They were on the roster already: nothing was added. */
+      unchanged?: boolean
+    }
+  | { pendingRequestId: string }
+const asTold = asOptional(asValue('guardians', 'player', 'coaches'))
 export function asExistingPlayerAnswer(raw: unknown): ExistingPlayerAnswer {
   const held = raw as {
     pending?: { requestId?: unknown }
-    notice?: { requestId?: unknown }
+    notice?: { requestId?: unknown; told?: unknown }
+    unchanged?: unknown
   }
   if (held?.pending != null)
     return { pendingRequestId: asString(held.pending.requestId) }
   return {
     entry: asRosterEntry(raw),
     noticeId:
-      held?.notice?.requestId == null ? null : asString(held.notice.requestId)
+      held?.notice?.requestId == null ? null : asString(held.notice.requestId),
+    told: asTold(held?.notice?.told),
+    unchanged: held?.unchanged === true
   }
 }
 

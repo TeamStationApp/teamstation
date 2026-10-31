@@ -1,9 +1,14 @@
 import { expect } from 'chai'
-import { Kysely, PostgresDialect } from 'kysely'
+import { Kysely, PostgresDialect, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
+import type { PlayerAddTerms } from '../../common/notifications'
+import {
+  placeholderSuffix,
+  placeholderTeamName
+} from '../../common/placeholderNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -11,15 +16,12 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { listenScreenScopes } from '../../test/screenScopeNotices'
+import { openAdds } from '../access'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
-import { mergeTeams } from './mergeTeams'
-
-const adminUrl = testDatabaseUrl
-const scratchName = `teamstation_mergeteams_${Date.now()}`
-const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
-
+import { rejoinedSince, supersededPlayerAdd } from '../groups/noticePolicy'
+import type { StoredRequest } from '../groups/requests'
 /**
  * The real shape of the problem, in miniature.
  *
@@ -29,6 +31,13 @@ const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
  * case — it is the QPLL playoffs, where every team entered its opponent by
  * hand as a new team.
  */
+import { ensureGumboId, insertUser } from '../users/insertUser'
+import { mergeTeams } from './mergeTeams'
+
+const adminUrl = testDatabaseUrl
+const scratchName = `teamstation_mergeteams_${Date.now()}`
+const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+
 describe('merging two rows that are one team', function () {
   this.timeout(60000)
 
@@ -259,6 +268,336 @@ describe('merging two rows that are one team', function () {
 
   it('keeps the scored game and moves the video onto it', async function () {
     if (db == null) this.skip()
+    // A player add of the team that goes, for the game that goes with it.
+    const { id: sender } = await db
+      .selectFrom('users')
+      .select('id')
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_merge_add',
+        kind: 'playerAdd',
+        sender_id: sender,
+        sender_scope_type: 'team',
+        sender_scope_id: houser,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'pool',
+          teamId: houser,
+          gameId: filmedGame
+        }),
+        status: 'applied',
+        sent_at: new Date(),
+        expires_at: new Date(Date.now() + 86400000),
+        game_id: filmedGame,
+        initiating_team_id: houser
+      })
+      .execute()
+    // A roster add of somebody the team that stays already had.
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: sender,
+        team_id: hawks,
+        role: 'member',
+        is_player: true
+      })
+      .onConflict(oc =>
+        oc.columns(['team_id', 'user_id']).doUpdateSet({ is_player: true })
+      )
+      .execute()
+    await db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_merge_kept',
+        kind: 'playerAdd',
+        sender_id: sender,
+        sender_scope_type: 'team',
+        sender_scope_id: houser,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'roster',
+          teamId: houser,
+          userId: sender,
+          createdMembership: true
+        }),
+        status: 'applied',
+        sent_at: new Date(),
+        expires_at: new Date(Date.now() + 86400000),
+        initiating_team_id: houser
+      })
+      .execute()
+    // One of somebody the team that stays has, on a row merged into theirs,
+    // as nothing but a coach.
+    const survivor = await insertUser(db, {
+      display_name: 'Coach Stays',
+      password_hash: null,
+      login_enabled: false,
+      is_admin: false
+    })
+    const closed = await insertUser(db, {
+      display_name: 'Coach Closed',
+      password_hash: null,
+      login_enabled: false,
+      is_admin: false
+    })
+    await db
+      .updateTable('users')
+      .set({ merged_into: survivor })
+      .where('id', '=', closed)
+      .execute()
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: survivor,
+        team_id: hawks,
+        role: 'owner',
+        is_player: false,
+        jersey: '9'
+      })
+      .execute()
+    await db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_merge_coach',
+        kind: 'playerAdd',
+        sender_id: sender,
+        sender_scope_type: 'team',
+        sender_scope_id: houser,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          mode: 'roster',
+          teamId: houser,
+          userId: closed,
+          createdMembership: true
+        }),
+        status: 'applied',
+        sent_at: new Date(),
+        expires_at: new Date(Date.now() + 86400000),
+        initiating_team_id: houser
+      })
+      .execute()
+    // The other way: adds by the team that stays of somebody the team that
+    // goes had, as a player and as nothing but a coach.
+    const addedHere = async (
+      id: string,
+      name: string,
+      leaving: { role: 'member' | 'owner'; isPlayer: boolean }
+    ): Promise<string> => {
+      const userId = await insertUser(db!, {
+        display_name: name,
+        password_hash: null,
+        login_enabled: false,
+        is_admin: false
+      })
+      const membershipId = makeId('membership')
+      await db!
+        .insertInto('memberships')
+        .values([
+          {
+            id: membershipId,
+            user_id: userId,
+            team_id: hawks,
+            role: 'member',
+            is_player: true
+          },
+          {
+            id: makeId('membership'),
+            user_id: userId,
+            team_id: houser,
+            role: leaving.role,
+            is_player: leaving.isPlayer,
+            jersey: '4'
+          }
+        ])
+        .execute()
+      await db!
+        .insertInto('group_requests')
+        .values({
+          id,
+          kind: 'playerAdd',
+          sender_id: sender,
+          sender_scope_type: 'team',
+          sender_scope_id: hawks,
+          terms: JSON.stringify({
+            kind: 'playerAdd',
+            mode: 'roster',
+            teamId: hawks,
+            userId,
+            membershipId,
+            createdMembership: true
+          }),
+          status: 'applied',
+          sent_at: new Date(),
+          expires_at: new Date(Date.now() + 86400000),
+          initiating_team_id: hawks
+        })
+        .execute()
+      return membershipId
+    }
+    await addedHere('grq_merge_into_player', 'Player Both', {
+      role: 'member',
+      isPlayer: true
+    })
+    const staying = await addedHere('grq_merge_into_coach', 'Coach Leaving', {
+      role: 'owner',
+      isPlayer: false
+    })
+    // Both teams holding somebody only by an open add: neither row has them
+    // for the other's add to give way to.
+    const heldByBoth = async (
+      into: string,
+      from: string,
+      name: string,
+      fromLater: boolean,
+      fromTerms: object = { createdMembership: true }
+    ): Promise<void> => {
+      await addedHere(into, name, { role: 'member', isPlayer: true })
+      const { userId } = await db!
+        .selectFrom('group_requests')
+        .select(sql<string>`terms->>'userId'`.as('userId'))
+        .where('id', '=', into)
+        .executeTakeFirstOrThrow()
+      const theirs = await db!
+        .selectFrom('memberships')
+        .select('id')
+        .where('user_id', '=', userId)
+        .where('team_id', '=', houser)
+        .executeTakeFirstOrThrow()
+      const sentAt = new Date(Date.now() + (fromLater ? 1000 : -1000))
+      await db!
+        .insertInto('group_requests')
+        .values({
+          id: from,
+          kind: 'playerAdd',
+          sender_id: sender,
+          sender_scope_type: 'team',
+          sender_scope_id: houser,
+          terms: JSON.stringify({
+            kind: 'playerAdd',
+            mode: 'roster',
+            teamId: houser,
+            userId,
+            membershipId: theirs.id,
+            ...fromTerms
+          }),
+          status: 'applied',
+          sent_at: sentAt,
+          expires_at: new Date(Date.now() + 86400000),
+          initiating_team_id: houser
+        })
+        .execute()
+    }
+    await heldByBoth(
+      'grq_merge_into_first',
+      'grq_merge_from_later',
+      'Held By Both',
+      true
+    )
+    await heldByBoth(
+      'grq_merge_into_later',
+      'grq_merge_from_first',
+      'Held By Both Again',
+      false
+    )
+    // One add on a place that predates it: the other add, on the row that
+    // stays, must not delete that place by rejecting.
+    await heldByBoth(
+      'grq_merge_into_new',
+      'grq_merge_from_old',
+      'Held On An Old Place',
+      false,
+      { previous: { jersey: '4', positions: [] } }
+    )
+    // A withdrawal on the game that goes, whose sides are the other way round
+    // from the game that stays, for a side already holding that placeholder.
+    await db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_merge_withdrawn',
+        kind: 'playerAdd',
+        sender_id: sender,
+        sender_scope_type: 'team',
+        sender_scope_id: houser,
+        terms: JSON.stringify({ kind: 'playerAdd', mode: 'pool' }),
+        status: 'declined',
+        sent_at: new Date(),
+        expires_at: new Date(Date.now() + 86400000),
+        initiating_team_id: houser
+      })
+      .execute()
+    const carried = await insertUser(db, {
+      display_name: 'Carried Across',
+      password_hash: null,
+      login_enabled: false,
+      is_admin: false
+    })
+    await db
+      .insertInto('game_withdrawn_players')
+      .values([
+        {
+          game_id: filmedGame,
+          user_id: carried,
+          side: 'away',
+          request_id: 'grq_merge_withdrawn',
+          label: 'Houser Player 1'
+        },
+        {
+          game_id: scoredGame,
+          user_id: survivor,
+          side: 'home',
+          request_id: 'grq_merge_withdrawn',
+          label: 'Houser Player 1'
+        }
+      ])
+      .execute()
+    // One the team that stays has as a settled player, withdrawn only from
+    // the team that goes: their own line in the kept game stays theirs.
+    const settled = await insertUser(db, {
+      display_name: 'Settled Hawk',
+      password_hash: null,
+      login_enabled: false,
+      is_admin: false
+    })
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: settled,
+        team_id: hawks,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    await db
+      .insertInto('game_withdrawn_players')
+      .values({
+        game_id: filmedGame,
+        user_id: settled,
+        side: 'away',
+        request_id: 'grq_merge_withdrawn',
+        label: 'Houser Player 2'
+      })
+      .execute()
+    const guest = await insertUser(db, {
+      display_name: `${placeholderTeamName('Alta Hawks')} ${placeholderSuffix(0)}`,
+      password_hash: null,
+      login_enabled: false,
+      is_admin: false
+    })
+    await db
+      .updateTable('games')
+      .set({
+        guests: JSON.stringify({
+          [hawks]: [await ensureGumboId(db, guest)],
+          [widows]: []
+        })
+      })
+      .where('id', '=', scoredGame)
+      .execute()
     const notices = await listenScreenScopes(db)
     const mark = notices.mark()
     const report = await mergeTeams(db, {
@@ -267,6 +606,129 @@ describe('merging two rows that are one team', function () {
       apply: true
     })
     expect(report.applied).equals(true)
+    expect(
+      await db
+        .selectFrom('game_withdrawn_players')
+        .select(['game_id', 'user_id'])
+        .where('user_id', '=', carried)
+        .execute()
+    ).deep.equals([{ game_id: scoredGame, user_id: carried }])
+    expect(
+      await db
+        .selectFrom('game_withdrawn_players')
+        .select('game_id')
+        .where('user_id', '=', settled)
+        .execute()
+    ).deep.equals([])
+    const coach = await db
+      .selectFrom('group_requests')
+      .select(['status', 'terms'])
+      .where('id', '=', 'grq_merge_coach')
+      .executeTakeFirstOrThrow()
+    expect(coach.status).equals('applied')
+    expect(coach.terms).not.has.property('createdMembership')
+    expect(coach.terms).has.property('previous').that.includes({ jersey: '9' })
+    // The add now stands on the row that stayed.
+    expect((coach.terms as { membershipId: string }).membershipId).equals(
+      (
+        await db
+          .selectFrom('memberships')
+          .select('id')
+          .where('team_id', '=', hawks)
+          .where('user_id', '=', survivor)
+          .executeTakeFirstOrThrow()
+      ).id
+    )
+    const here = async (
+      id: string
+    ): Promise<{ status: string; terms: unknown }> =>
+      await db!
+        .selectFrom('group_requests')
+        .select(['status', 'terms'])
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+    expect((await here('grq_merge_into_player')).status).equals('superseded')
+    // Both stand, on the row that stays, and exactly the later one answers.
+    for (const [later, earlier] of [
+      ['grq_merge_from_later', 'grq_merge_into_first'],
+      ['grq_merge_into_later', 'grq_merge_from_first']
+    ]) {
+      const stored = async (id: string): Promise<StoredRequest> =>
+        await db!
+          .selectFrom('group_requests')
+          .selectAll()
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      const newest = await stored(later)
+      const terms = newest.terms as PlayerAddTerms
+      expect(newest.status).equals('applied')
+      expect((await stored(earlier)).status).equals('applied')
+      expect(await supersededPlayerAdd(db, newest)).equals(false)
+      expect(await rejoinedSince(db, terms)).equals(false)
+      expect(await supersededPlayerAdd(db, await stored(earlier))).equals(true)
+      expect(await openAdds(db, hawks)).includes(terms.userId)
+    }
+    const onOldPlace = await here('grq_merge_into_new')
+    expect(onOldPlace.terms).not.has.property('createdMembership')
+    expect(onOldPlace.terms)
+      .has.property('previous')
+      .that.includes({ jersey: '4' })
+    // The label its side already holds on the game that stays is not reused.
+    const labels = await db
+      .selectFrom('game_withdrawn_players')
+      .select(['user_id', 'label'])
+      .where('game_id', '=', scoredGame)
+      .execute()
+    expect(new Set(labels.map(row => row.label)).size).equals(labels.length)
+    // Nor the name of a guest on that side.
+    expect(labels.find(row => row.user_id === carried)?.label).equals(
+      `${placeholderTeamName('Alta Hawks')} ${placeholderSuffix(1)}`
+    )
+    const keptCoach = await here('grq_merge_into_coach')
+    expect(keptCoach.status).equals('applied')
+    expect(keptCoach.terms).not.has.property('createdMembership')
+    expect(keptCoach.terms)
+      .has.property('previous')
+      .that.includes({ jersey: '4' })
+    expect(keptCoach.terms).to.include({ membershipId: staying })
+    const add = await db
+      .selectFrom('group_requests')
+      .select([
+        'initiating_team_id',
+        'sender_scope_id',
+        'game_id',
+        'terms',
+        'status'
+      ])
+      .where('id', '=', 'grq_merge_add')
+      .executeTakeFirstOrThrow()
+    expect(add).to.deep.include({
+      // Its game is gone, and its guest with it.
+      status: 'superseded',
+      initiating_team_id: hawks,
+      sender_scope_id: hawks,
+      game_id: scoredGame
+    })
+    expect(add.terms).to.include({ teamId: hawks, gameId: scoredGame })
+    expect((add.terms as { teamName: string }).teamName).equals(
+      (
+        await db
+          .selectFrom('teams')
+          .select('name')
+          .where('id', '=', hawks)
+          .executeTakeFirstOrThrow()
+      ).name
+    )
+    // A rejection could only take them off the team they were on.
+    expect(
+      (
+        await db
+          .selectFrom('group_requests')
+          .select('status')
+          .where('id', '=', 'grq_merge_kept')
+          .executeTakeFirstOrThrow()
+      ).status
+    ).equals('superseded')
     // Both teams' screens are told, and the game that moved.
     try {
       for (const ids of [

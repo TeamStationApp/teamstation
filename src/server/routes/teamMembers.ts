@@ -8,6 +8,8 @@ import {
   adminScopes,
   canManageTeam,
   canSeeTeam,
+  heldByOpenAdd,
+  mayEditName,
   visibleScopes
 } from '../access'
 import type { Actor } from '../auth/sessions'
@@ -74,7 +76,7 @@ export function teamMemberRoutes(
       await mustManage(actor, teamId)
       const body = cleanBody(asTeamPlayersBody, req.body)
 
-      const answer = await addPlayers(db, teamId, body.players)
+      const answer = await addPlayers(db, actor, teamId, body.players)
       setAudit(res.locals, {
         entityType: 'team',
         entityId: teamId,
@@ -158,6 +160,13 @@ export function teamMemberRoutes(
         .executeTakeFirst()
       if (plays == null) throw notFound('No such player on this team')
       await refuseDeleted(db, userId)
+      if (
+        (await heldByOpenAdd(db, teamId, [userId])) &&
+        !(await mayEditName(db, actor.userId, userId, actor))
+      )
+        throw forbidden(
+          'Their picture is their own while their side may reject this add'
+        )
       const picture = asPictureBody(req.body)
 
       const answer = await storePlayerAvatar(

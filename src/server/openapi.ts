@@ -81,7 +81,16 @@ const pitchingCounts = [
   'k'
 ]
 const statIdentity = {
-  userId: userIdSchema,
+  userId: {
+    ...userIdSchema,
+    type: ['string', 'null'],
+    description: 'Null on a withdrawn line, which has nobody to open.'
+  },
+  openable: {
+    type: 'boolean',
+    description:
+      'Whether the line opens its player\u2019s page for this viewer. Absent from team tables, which is true.'
+  },
   shortName: { type: 'string' },
   teamId: { type: ['string', 'null'] }
 }
@@ -90,6 +99,11 @@ const battingSchema = {
   required: ['userId', 'teamId', ...battingCounts, 'rates'],
   properties: {
     ...statIdentity,
+    standsFor: {
+      type: ['number', 'null'],
+      description:
+        'On a withdrawn line of a box score, the gumbo id of the batter it stands in for.'
+    },
     ...Object.fromEntries(
       battingCounts.map(name => [name, { type: 'number' }])
     ),
@@ -2260,6 +2274,17 @@ export function openApiDocument(version: string): OpenApiDocument {
               type: 'string',
               description: PUBLIC_NAME
             },
+            pool: {
+              type: 'boolean',
+              description:
+                'A guest who already existed, added for this game only.'
+            },
+            ownIdentity: {
+              type: 'boolean',
+              description:
+                'Held from this reader by an add their side may still reject: ' +
+                'their name, hands and family are not the team\u2019s yet.'
+            },
             nameDetails: {
               type: 'object',
               required: ['firstName', 'lastName', 'displayName'],
@@ -3837,8 +3862,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             '**Who may call:** an administrator of the team (set on the ' +
             'team, its season or its league, or its owner or manager) or a ' +
             'site administrator. Anyone else gets 403; a team the caller ' +
-            'cannot see gets 404. A person an external id already names is ' +
-            'added to the team wherever else they are.\n\n' +
+            'cannot see gets 404. A person an external id already names, ' +
+            'and who is not on the team, joins as any existing player does: ' +
+            'at once with a notice their side may reject, or their row ' +
+            'answers a `conflict` when their side must accept first, or ' +
+            'when they play for another team and nobody can answer for ' +
+            'them. Somebody with no team and nobody to ask simply joins.\n\n' +
             '**A row:** `firstName` and `lastName` (trimmed, at most 100 ' +
             'characters, either may be empty), `jersey` (at most 3 ' +
             'characters), `bats` (`left`, `right` or `switch`), `throws` ' +
@@ -3853,9 +3882,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'a `member` with the jersey, and an existing one keeps its jersey ' +
             'unless it had none. Each of `bats` and `throws` sent replaces ' +
             'an imported one and is never written over a coach\u2019s; a ' +
-            'hand not sent is left as it is. An id held by something that ' +
-            "is not a user is that row's `conflict`; the other rows still " +
-            'apply.\n\n' +
+            'hand not sent is left as it is, and no hand is written for ' +
+            'somebody the team holds by an add their side may reject. An id ' +
+            "held by something that is not a user is that row's `conflict`; " +
+            'the other rows still apply.\n\n' +
             '**Answers:** `result` is `created` (a new user), `joined` (an ' +
             'existing user newly a player here), `unchanged` (already a ' +
             'player here) or `error`, with the `userId`.',
@@ -4062,6 +4092,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                             guardianLinks: { type: 'integer' },
                             guardiansMissing: { type: 'integer' },
                             guardiansRefused: { type: 'integer' },
+                            rolesRefused: {
+                              type: 'boolean',
+                              description:
+                                'Staff was asked for, and the team holds this ' +
+                                'person only by an add their side may reject.'
+                            },
                             rolesAdded: {
                               type: 'array',
                               items: {
@@ -4094,6 +4130,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                           error: { type: 'integer' },
                           guardianLinks: { type: 'integer' },
                           guardiansRefused: { type: 'integer' },
+                          rolesRefused: { type: 'integer' },
                           staff: { type: 'integer' }
                         }
                       }
@@ -4889,9 +4926,11 @@ export function openApiDocument(version: string): OpenApiDocument {
             'to its lineup. GameDetail.guestPlayers returns the saved guest details on reopen. Final, cancelled or unresolved plays refuse creation. ' +
             'With `{ side, userId, jersey?, positions?, teamId? }` instead, an existing player ' +
             '(one `GET /users?forTeam=` lists) joins this side for this game only, as a pool ' +
-            'player: 201 with their entry and `notice.requestId` when their side was told, or ' +
+            'player: 201 with their entry and `notice` (`requestId`, and `told`: guardians, ' +
+            'player or coaches) when their side was told, or ' +
             '202 `{ pending: { requestId } }` when their side must accept first. Any other key ' +
-            'beside `userId` is 400; a player already on either team or a guest of either side is 409.',
+            'beside `userId` is 400; a player already on either team, a guest of either side, or ' +
+            'somebody who has played for the other team in this game is 409.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {
@@ -5671,6 +5710,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                         description: PUBLIC_NAME
                       },
                       canEditName: { type: 'boolean' },
+                      openAddTeams: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description:
+                          'Teams that hold them only by an add their side may still reject.'
+                      },
                       guardianInviteAs: {
                         type: ['string', 'null'],
                         enum: ['guardian', 'team', null],
@@ -6365,8 +6410,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'hand, so a roster import does not overwrite them. The person ' +
             'can be merged later because they are a real user. Audited. ' +
             'With `{ userId, jersey?, positions? }` instead, an existing player joins the ' +
-            'team: 201 with their entry (short name only) and `notice.requestId` when their ' +
-            'side was told, 200 when they already play for it, or 202 `{ pending: { requestId } }` ' +
+            'team: 201 with their entry (short name only) and `notice` (`requestId`, and `told`: ' +
+            'guardians, player or coaches) when their side was told, 200 with `unchanged` when ' +
+            'they already play for it, or 202 `{ pending: { requestId } }` ' +
             'when their side must accept first. Any other key beside `userId` is 400. ' +
             "Answers with the player's authorized roster entry, including " +
             'the whole name, as GET /teams/{teamId}/roster lists it for a ' +

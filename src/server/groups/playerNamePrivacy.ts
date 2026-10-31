@@ -12,9 +12,11 @@ import {
   resolvePlayerNamePrivacy,
   spokenFormat
 } from '../../common/playerNamePrivacy'
+import { openAddsOf } from '../access'
 import type { Database } from '../db/database'
 import { isWithdrawnKey } from '../games/withdrawn'
 import { followMerges } from '../teams/followMerges'
+import { survivors } from '../teams/teamStaff'
 import { isSpoken } from '../users/readerNames'
 
 /**
@@ -202,9 +204,95 @@ export async function teamFormats(
 }
 
 /**
+ * Who appears for a team that does not have them, as `teamId userId` keys:
+ * held by its open add, or a pool guest of one of its games. Its format is for
+ * its own players, and may only restrict these (`lentFormat`): a team cannot
+ * read a whole name by asking to show whole names.
+ */
+export async function lentPlayers(
+  db: Db,
+  pairs: ReadonlyArray<{ userId: string; teamId: string }>
+): Promise<Set<string>> {
+  if (pairs.length === 0) return new Set()
+  const lent = new Set<string>()
+  const open = await openAddsOf(
+    db,
+    pairs.map(pair => pair.teamId)
+  )
+  for (const pair of pairs)
+    if (open.get(pair.teamId)?.has(pair.userId) === true)
+      lent.add(`${pair.teamId} ${pair.userId}`)
+  // By the teams: this runs on every look at a board, and there are few.
+  const teamIds = [...new Set(pairs.map(pair => pair.teamId))]
+  const pool = await db
+    .selectFrom('game_guest_details')
+    .innerJoin('games', 'games.id', 'game_guest_details.game_id')
+    .select([
+      'game_guest_details.user_id as userId',
+      'games.home_team_id as home',
+      'games.away_team_id as away'
+    ])
+    .where('game_guest_details.pool', '=', true)
+    .where(eb =>
+      eb.or([
+        eb('games.home_team_id', 'in', teamIds),
+        eb('games.away_team_id', 'in', teamIds)
+      ])
+    )
+    .execute()
+  if (pool.length === 0) return lent
+  const current = await survivors(
+    db,
+    pool.map(row => row.userId)
+  )
+  const guested = new Set(
+    pool.flatMap(row => {
+      const userId = current.get(row.userId) ?? row.userId
+      return [`${row.home} ${userId}`, `${row.away} ${userId}`]
+    })
+  )
+  // Once they play for the team, its format is theirs like anybody's.
+  const candidates = pairs.filter(pair =>
+    guested.has(`${pair.teamId} ${pair.userId}`)
+  )
+  const own =
+    candidates.length === 0
+      ? []
+      : await db
+          .selectFrom('memberships')
+          .select(['team_id', 'user_id'])
+          .where('is_player', '=', true)
+          .where(
+            'team_id',
+            'in',
+            candidates.map(pair => pair.teamId)
+          )
+          .where(
+            'user_id',
+            'in',
+            candidates.map(pair => pair.userId)
+          )
+          .execute()
+  const players = new Set(own.map(row => `${row.team_id} ${row.user_id}`))
+  for (const pair of candidates) {
+    const key = `${pair.teamId} ${pair.userId}`
+    if (!players.has(key)) lent.add(key)
+  }
+  return lent
+}
+
+/** A lent player's format: their team's, only where it says less. */
+export const lentFormat = (
+  team: PlayerNamePrivacy,
+  own: PlayerNamePrivacy | undefined
+): PlayerNamePrivacy =>
+  mostRestrictive([team, own ?? DEFAULT_PLAYER_NAME_PRIVACY])
+
+/**
  * Each user's format when they are shown with no single team: the most
  * restrictive among the teams they play for now, as `teamsPlayedOnNow` reads
- * it, or the built-in format for somebody who plays for none.
+ * it, or the built-in format for somebody who plays for none. A team holding
+ * them only by an open add is not theirs yet, and has no say.
  */
 export async function currentFormats(
   db: Db,
@@ -224,10 +312,14 @@ export async function currentFormats(
     db,
     plays.map(play => play.teamId)
   )
+  const open = await openAddsOf(
+    db,
+    plays.map(play => play.teamId)
+  )
   const byUser = new Map<string, PlayerNamePrivacy[]>()
   for (const play of plays) {
     const format = formats.get(play.teamId)
-    if (format != null)
+    if (format != null && open.get(play.teamId)?.has(play.userId) !== true)
       byUser.set(play.userId, [...(byUser.get(play.userId) ?? []), format])
   }
   return new Map(
@@ -259,6 +351,8 @@ export interface PublicPerson {
   teamId?: string | null
   /** Somebody shown as anything but a player keeps the built-in format. */
   player?: boolean
+  /** Shown for a team they are not on, as a candidate for it. */
+  candidate?: boolean
 }
 
 /**
@@ -280,19 +374,32 @@ export async function publicFormats(
   )
   const held = (entry: PublicPerson): PlayerNamePrivacy | undefined =>
     entry.teamId == null ? undefined : teams.get(entry.teamId)
+  const lent = await lentPlayers(
+    db,
+    players.flatMap(entry =>
+      entry.teamId == null
+        ? []
+        : [{ userId: String(entry.person.id), teamId: entry.teamId }]
+    )
+  )
+  const borrowed = (entry: PublicPerson): boolean =>
+    entry.candidate === true ||
+    lent.has(`${entry.teamId} ${String(entry.person.id)}`)
   const current = await currentFormats(
     db,
     players.flatMap(entry =>
-      held(entry) == null ? [String(entry.person.id)] : []
+      held(entry) == null || borrowed(entry) ? [String(entry.person.id)] : []
     )
   )
   const formats = new Map<string | number, PlayerNamePrivacy>()
   for (const entry of people) {
+    const team = held(entry)
+    const own = current.get(String(entry.person.id))
     const format = !named(entry)
       ? DEFAULT_PLAYER_NAME_PRIVACY
-      : (held(entry) ??
-        current.get(String(entry.person.id)) ??
-        DEFAULT_PLAYER_NAME_PRIVACY)
+      : team != null && borrowed(entry)
+        ? lentFormat(team, own)
+        : (team ?? own ?? DEFAULT_PLAYER_NAME_PRIVACY)
     const earlier = formats.get(entry.person.id)
     formats.set(
       entry.person.id,

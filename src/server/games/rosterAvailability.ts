@@ -12,6 +12,8 @@ import { readPlays } from '../events/postPlays'
 import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
 import { resolveGumboIds } from '../scoring/gumboIds'
 import { teamRoster } from '../teams/teamRoster'
+import { withdrawnLabels } from '../users/nameBook'
+import { withdrawnUserId } from './withdrawn'
 
 export interface GameAvailability {
   guests: Guests
@@ -105,6 +107,10 @@ export async function gameAvailability(
   const names = formatForReader(
     people.map(({ person }) => ({ person, format: formats.get(person.id)! }))
   )
+  // A rejected pool player who played stays a guest, under the placeholder.
+  const withdrawn =
+    (await withdrawnLabels(db, [game.id])).get(game.id) ??
+    new Map<number, string>()
   for (const side of ['away', 'home'] as const) {
     for (const original of guests[side]) {
       const id = resolve(original)
@@ -116,20 +122,25 @@ export async function gameAvailability(
       const detail =
         details.find(row => row.gumbo_id === id) ??
         details.find(row => row.gumbo_id === original)
+      const label = withdrawn.get(id) ?? withdrawn.get(original)
       guestPlayers[side].push(
         asRosterEntry({
-          userId: user.id,
+          // A withdrawn line carries no account: scoring reads it by gumbo id.
+          userId: label == null ? user.id : withdrawnUserId(game.id, id),
           gumboId: id,
-          shortName: names.get(user.id)!,
+          shortName: label ?? names.get(user.id)!,
+          // A placeholder is no name to format.
           nameFormat:
+            label != null ||
             formats.get(user.id) === DEFAULT_PLAYER_NAME_PRIVACY
               ? undefined
               : formats.get(user.id),
           jersey: detail?.jersey ?? held?.jersey ?? null,
           positions: detail?.positions ?? held?.positions ?? [],
-          bats: user.bats,
-          throws: user.throws,
+          bats: label == null ? user.bats : null,
+          throws: label == null ? user.throws : null,
           isPlayer: true,
+          ...(detail?.pool === true ? { pool: true } : {}),
           role: 'player',
           section: 'player',
           staffRoles: [],

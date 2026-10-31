@@ -8,7 +8,7 @@ import type {
   ChatMember,
   ChatPerson
 } from '../../common/api'
-import { hasRole, roleScopes } from '../access'
+import { hasRole, openAdds, roleScopes } from '../access'
 import type { ChatKind, Database } from '../db/database'
 import {
   formatForReader,
@@ -555,13 +555,16 @@ async function labelsOf(
         .execute(),
       row => ROLE_WORDS[row.role] ?? 'Staff'
     )
+    const held = await openAdds(db, scopeId)
     await resolve(
-      await db
-        .selectFrom('memberships')
-        .select(['user_id'])
-        .where('team_id', '=', scopeId)
-        .where('is_player', '=', true)
-        .execute(),
+      (
+        await db
+          .selectFrom('memberships')
+          .select(['user_id'])
+          .where('team_id', '=', scopeId)
+          .where('is_player', '=', true)
+          .execute()
+      ).filter(row => !held.has(row.user_id)),
       () => 'Player'
     )
     await resolve(

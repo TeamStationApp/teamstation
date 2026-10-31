@@ -836,7 +836,7 @@ export function teamRoutes(
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       if (canSeeTeam(scopes, teamId)) {
         res.json(
-          await teamRoster(db, media.space, teamId, fullNames === 'true')
+          await teamRoster(db, media.space, teamId, fullNames === 'true', actor)
         )
         return
       }

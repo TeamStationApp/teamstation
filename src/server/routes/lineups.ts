@@ -39,6 +39,10 @@ import {
   NO_DEFAULT_LINEUP,
   placeholderSidesOf
 } from '../../common/scoring/lineupHistory'
+import {
+  appearedIn,
+  reconcileRoster
+} from '../../common/scoring/rosterAvailability'
 import { awaitingResult } from '../../common/scoring/rules'
 import {
   type EventStore,
@@ -225,7 +229,7 @@ export function lineupRoutes(
           ...added.entry,
           ...(added.requestId == null
             ? {}
-            : { notice: { requestId: added.requestId } })
+            : { notice: { requestId: added.requestId, told: added.told } })
         })
         return
       }
@@ -588,6 +592,7 @@ async function saveSide(
       return {
         stored,
         context,
+        availability,
         guests: availability.guests[body.side].filter(
           id =>
             !availability.roster[body.side].some(
@@ -677,7 +682,8 @@ async function saveSide(
     body,
     held,
     read.roster,
-    read.guests
+    read.guests,
+    read.availability
   )
   markRosterVisibility(
     actions,
@@ -820,14 +826,23 @@ function markRosterVisibility(
 function sideActions(
   state: GameState,
   body: SaveLineupsBody,
-  held = true,
-  roster: readonly RosterEntry[] = [],
-  guests: readonly number[] = []
+  held: boolean,
+  roster: readonly RosterEntry[],
+  guests: readonly number[],
+  availability: Awaited<ReturnType<typeof gameAvailability>>
 ): ScoringAction[] {
-  const required = new Set([
-    ...roster.map(row => asGumboId(row.gumboId)),
-    ...guests.filter(id => !roster.some(row => asGumboId(row.gumboId) === id))
-  ])
+  // Who this side fields, read as the app reads it to build this body: with
+  // the setup and who has played, or no body could ever be saved.
+  const required = new Set(
+    reconcileRoster(
+      setupOf(state),
+      state.gameData.teams,
+      availability.roster,
+      availability.guestPlayers,
+      availability.unrostered,
+      appearedIn(state)
+    ).sides[body.side].players
+  )
   const sent = body.players.map(player => player.gumboId)
   if (
     sent.length !== required.size ||
@@ -844,12 +859,24 @@ function sideActions(
     liveData: { boxscore: { teams: setup.sides } },
     meta: { tagOrder: setup.tagOrder }
   }
+  const teamId = state.gameData.teams[side].id
+  // Somebody the other side's setup still names is only a saved setup, or
+  // `required` would not hold them: this side fields them now.
+  const takeOver = (id: number): void => {
+    if (setup.players[id]?.teamId === teamId) return
+    const other = setup.sides[side === 'away' ? 'home' : 'away']
+    other.players = other.players.filter(held => held !== id)
+    other.battingOrder = other.battingOrder.filter(held => held !== id)
+    for (const position of POSITIONS)
+      if (other.defense[position] === id) other.defense[position] = null
+  }
   const ids: number[] = []
   for (const player of body.players) {
     if (player.gumboId == null)
       throw badRequest('Create the player before saving the lineup')
     let known = team.players.find(id => id === player.gumboId)
-    if (known == null && guests.includes(player.gumboId))
+    if (known == null && guests.includes(player.gumboId)) {
+      takeOver(player.gumboId)
       known = addPlayer(
         draft,
         side,
@@ -857,6 +884,7 @@ function sideActions(
         player.fullName,
         player.jersey
       )
+    }
     // A guest's name is his account's: a save never renames him, so a stale
     // copy held by an open session or an older build cannot undo a
     // correction (`PUT /games/:gameId/guest-players/:userId` makes one).
@@ -868,20 +896,22 @@ function sideActions(
         throw badRequest(`${player.fullName} is not on this team's roster`)
       const id = asGumboId(entry.gumboId)
       if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
-      const existing = setup.players[id]
-      if (existing != null && existing.teamId !== state.gameData.teams[side].id)
-        throw badRequest(`${player.fullName} is already on the other team`)
+      takeOver(id)
       // Use current roster data, never caller-provided identity/name details.
-      setup.players[id] = existing ?? {
-        id,
-        teamId: state.gameData.teams[side].id,
-        fullName: entry.shortName,
-        jersey: entry.jersey ?? '',
-        bats: entry.bats ?? 'right',
-        throws: entry.throws ?? null,
-        positions: [...entry.positions],
-        local: false
-      }
+      const existing = setup.players[id]
+      setup.players[id] =
+        existing?.teamId === teamId
+          ? existing
+          : {
+              id,
+              teamId,
+              fullName: entry.shortName,
+              jersey: entry.jersey ?? '',
+              bats: entry.bats ?? 'right',
+              throws: entry.throws ?? null,
+              positions: [...entry.positions],
+              local: false
+            }
       known = id
     }
     const id = known

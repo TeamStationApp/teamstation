@@ -9,7 +9,10 @@ import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
-import { authorizePersonChange } from '../groups/adminGuard'
+import {
+  authorizePersonChange,
+  refuseRoleWhileHeld
+} from '../groups/adminGuard'
 import {
   type Clock,
   createRelationshipRequest,
@@ -184,6 +187,8 @@ export async function addPersonByAddress(
     )
       throw conflict('Promote a placeholder team before inviting people to it')
     await authorizePersonChange(trx, scope, account.id, actor.userId, admin)
+    if (admin || flags.length > 0)
+      await refuseRoleWhileHeld(trx, scope, account.id, actor.userId)
     const added = await grantAt(
       trx,
       scope,

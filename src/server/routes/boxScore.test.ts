@@ -19,6 +19,7 @@ import { errorHandler } from '../middleware/withErrors'
 import { battingLines, pitchingLines } from '../stats'
 import { boxScoreOrder } from '../stats/boxScoreOrder'
 import { statRows } from '../stats/rows'
+import { insertUser } from '../users/insertUser'
 import { teamRoutes } from './teams'
 
 const adminUrl = testDatabaseUrl
@@ -376,5 +377,91 @@ describe('GET /games/:gameId/box-score stats', function () {
       userId: userIdOfGumbo(reliever),
       outs: 6
     })
+  })
+
+  it('keeps a withdrawn starter ahead of the reliever who followed', async function () {
+    await db!
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_box_withdrawn',
+        kind: 'playerAdd',
+        sender_id: userIdOfGumbo(reliever),
+        sender_scope_type: 'team',
+        sender_scope_id: home,
+        terms: '{}',
+        status: 'declined',
+        sent_at: new Date(0),
+        expires_at: new Date(1)
+      })
+      .execute()
+    await db!
+      .insertInto('game_withdrawn_players')
+      .values({
+        game_id: gameId,
+        user_id: userIdOfGumbo(pitcher),
+        side: 'home',
+        request_id: 'grq_box_withdrawn',
+        label: 'HWKS A'
+      })
+      .execute()
+    try {
+      const box = await ask()
+      expect(box.pitching.map(line => line.userId)).deep.equals([
+        null,
+        userIdOfGumbo(reliever)
+      ])
+    } finally {
+      await db!
+        .deleteFrom('group_requests')
+        .where('id', '=', 'grq_box_withdrawn')
+        .execute()
+    }
+  })
+
+  it('keeps a line withdrawn under an account that has merged since', async function () {
+    const closed = await insertUser(db!, {
+      display_name: 'Closed Row',
+      password_hash: null,
+      login_enabled: false,
+      is_admin: false
+    })
+    await db!
+      .updateTable('users')
+      .set({ merged_into: userIdOfGumbo(pitcher) })
+      .where('id', '=', closed)
+      .execute()
+    await db!
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_box_merged',
+        kind: 'playerAdd',
+        sender_id: userIdOfGumbo(reliever),
+        sender_scope_type: 'team',
+        sender_scope_id: home,
+        terms: '{}',
+        status: 'declined',
+        sent_at: new Date(0),
+        expires_at: new Date(1)
+      })
+      .execute()
+    await db!
+      .insertInto('game_withdrawn_players')
+      .values({
+        game_id: gameId,
+        user_id: closed,
+        side: 'home',
+        request_id: 'grq_box_merged',
+        label: 'HWKS A'
+      })
+      .execute()
+    try {
+      const box = await ask()
+      expect(box.pitching[0].userId).equals(null)
+    } finally {
+      await db!
+        .deleteFrom('group_requests')
+        .where('id', '=', 'grq_box_merged')
+        .execute()
+    }
   })
 })
