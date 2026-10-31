@@ -599,17 +599,48 @@ export async function roleScopes(
   userId: string,
   _isAdmin: boolean
 ): Promise<RoleScopes> {
-  const user = await db
-    .selectFrom('users')
-    .select(['is_admin', 'disabled_at', 'merged_into'])
-    .where('id', '=', userId)
-    .executeTakeFirst()
-  if (user == null || user.disabled_at != null || user.merged_into != null)
-    return { ...noRoles(), isAdmin: false }
+  const scopes = await roleScopesForUsers(db, [userId])
+  return scopes.get(userId)!
+}
 
-  const inherited = await inheritScopes(db, await directRoles(db, userId))
-  addImpliedRoles(inherited)
-  return { ...inherited, isAdmin: user.is_admin }
+/**
+ * `roleScopes` of each of these rows at once, in one set of reads however many
+ * there are, each answer as though it had been asked for alone. Somebody who
+ * has no open row holds nothing.
+ */
+export async function roleScopesForUsers(
+  db: Kysely<Database>,
+  userIds: readonly string[]
+): Promise<Map<string, RoleScopes>> {
+  const answers = new Map<string, RoleScopes>()
+  for (const userId of userIds)
+    answers.set(userId, { ...noRoles(), isAdmin: false })
+  if (answers.size === 0) return answers
+
+  const users = await db
+    .selectFrom('users')
+    .select(['id', 'is_admin', 'disabled_at', 'merged_into'])
+    .where('id', '=', anyOf([...answers.keys()]))
+    .execute()
+  const open = users.filter(
+    user => user.disabled_at == null && user.merged_into == null
+  )
+  if (open.length === 0) return answers
+
+  const directs = await directRolesOfEach(
+    db,
+    open.map(user => user.id)
+  )
+  await inheritSets(
+    db,
+    [...directs.values()].flatMap(roles => Object.values<ScopeSet>(roles))
+  )
+  for (const user of open) {
+    const inherited = directs.get(user.id)!
+    addImpliedRoles(inherited)
+    answers.set(user.id, { ...inherited, isAdmin: user.is_admin })
+  }
+  return answers
 }
 
 function noRoles(): Record<Role, ScopeSet> {
@@ -620,18 +651,10 @@ function noRoles(): Record<Role, ScopeSet> {
 }
 
 /**
- * Where this person was given each role, before it is carried down: the
- * `scope_roles` rows, and a team's owner or manager as its administrator.
+ * Where each of these rows was given each role, before it is carried down: the
+ * `scope_roles` rows, and a team's owner or manager as its administrator. Two
+ * reads however many rows there are.
  */
-async function directRoles(
-  db: Kysely<Database>,
-  userId: string
-): Promise<Record<Role, ScopeSet>> {
-  const roles = await directRolesOfEach(db, [userId])
-  return roles.get(userId)!
-}
-
-/** `directRoles` of each of these rows at once, in two reads. */
 async function directRolesOfEach(
   db: Kysely<Database>,
   userIds: readonly string[]

@@ -1,6 +1,10 @@
 import type { Kysely } from 'kysely'
 
+import { ROLES } from '../../common/roles'
 import {
+  type RoleScopes,
+  roleScopes,
+  roleScopesForUsers,
   type VisibleScopes,
   visibleScopes,
   visibleScopesForUsers
@@ -23,6 +27,8 @@ export interface AgreementOptions {
   print: (line: string) => void
   /** Stands in for the batched read, so the check itself can be checked. */
   batchedScopes?: typeof visibleScopesForUsers
+  /** Stands in for the batched read of roles, likewise. */
+  batchedRoles?: typeof roleScopesForUsers
 }
 
 export interface AgreementResult {
@@ -43,6 +49,19 @@ function sameScopes(a: VisibleScopes | undefined, b: VisibleScopes): boolean {
   )
 }
 
+function sameRoles(a: RoleScopes | undefined, b: RoleScopes): boolean {
+  if (a == null) return false
+  const sorted = (scopes: RoleScopes): string =>
+    JSON.stringify(
+      ROLES.map(role => [
+        [...scopes[role].leagueIds].sort(),
+        [...scopes[role].seasonIds].sort(),
+        [...scopes[role].teamIds].sort()
+      ])
+    )
+  return a.isAdmin === b.isAdmin && sorted(a) === sorted(b)
+}
+
 function samePerson(a: OnePerson | undefined, b: OnePerson): boolean {
   if (a == null) return false
   return (
@@ -58,6 +77,7 @@ export async function checkScopeAgreement(
 ): Promise<AgreementResult> {
   const batchSize = options.batchSize ?? 200
   const batchedScopes = options.batchedScopes ?? visibleScopesForUsers
+  const batchedRoles = options.batchedRoles ?? roleScopesForUsers
   const result: AgreementResult = { people: 0, batches: 0, disagreements: [] }
   let after = ''
   for (;;) {
@@ -72,10 +92,12 @@ export async function checkScopeAgreement(
     after = rows[rows.length - 1].id
     const ids = rows.map(row => row.id)
     const scopes = await batchedScopes(db, ids)
+    const roles = await batchedRoles(db, ids)
     const people = await onePeople(db, ids)
     for (const id of ids) {
       const agrees =
         sameScopes(scopes.get(id), await visibleScopes(db, id, false)) &&
+        sameRoles(roles.get(id), await roleScopes(db, id, false)) &&
         samePerson(people.get(id), await onePerson(db, id))
       if (!agrees) {
         result.disagreements.push(id)

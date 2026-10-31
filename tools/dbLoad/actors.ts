@@ -503,7 +503,10 @@ export const spawnTestPattern: SpawnPattern = (url, seconds) =>
       '--size',
       '320x180',
       '--rate',
-      '10'
+      '10',
+      // The ingest takes HEVC and hangs up on anything else.
+      '--codec',
+      'libx265'
     ],
     { stdio: 'ignore' }
   )
