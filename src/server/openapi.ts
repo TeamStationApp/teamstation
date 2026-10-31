@@ -9345,6 +9345,273 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/auth/tv/start': {
+        post: {
+          summary: 'Start a two-minute TV approval request',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    platform: {
+                      type: 'string',
+                      enum: ['Apple TV', 'Google TV']
+                    }
+                  },
+                  required: ['platform']
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description:
+                'Private TV request credentials; do not log or share clientSecret',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      requestId: {
+                        type: 'string',
+                        pattern: '^[A-Za-z0-9_-]{43}$'
+                      },
+                      clientSecret: {
+                        type: 'string',
+                        pattern: '^[A-Za-z0-9_-]{43}$'
+                      },
+                      displayCode: {
+                        type: 'string',
+                        description:
+                          'Eight uppercase letters grouped four\u2013four'
+                      },
+                      qrUrl: {
+                        type: 'string',
+                        format: 'uri'
+                      },
+                      expiresAt: {
+                        type: 'number',
+                        description: 'Unix milliseconds'
+                      }
+                    },
+                    required: [
+                      'requestId',
+                      'clientSecret',
+                      'displayCode',
+                      'qrUrl',
+                      'expiresAt'
+                    ]
+                  }
+                }
+              }
+            },
+            '400': {
+              description: 'Malformed request'
+            },
+            '401': {
+              description:
+                'Expired, consumed, invalid request or missing session'
+            },
+            '429': {
+              description: 'Rate limited'
+            }
+          }
+        }
+      },
+      '/auth/tv/claim': {
+        post: {
+          summary: 'Claim a TV session once approved',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    requestId: {
+                      type: 'string',
+                      pattern: '^[A-Za-z0-9_-]{43}$'
+                    },
+                    clientSecret: {
+                      type: 'string',
+                      pattern: '^[A-Za-z0-9_-]{43}$'
+                    }
+                  },
+                  required: ['requestId', 'clientSecret']
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description: 'One-time claim of a 180-day named TV session',
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/Session'
+                  }
+                }
+              }
+            },
+            '202': {
+              description: 'Waiting for approval',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      ready: {
+                        type: 'boolean',
+                        enum: [false]
+                      }
+                    },
+                    required: ['ready']
+                  }
+                }
+              }
+            },
+            '400': {
+              description: 'Malformed request'
+            },
+            '401': {
+              description:
+                'Expired, consumed, invalid request or missing session'
+            },
+            '429': {
+              description: 'Rate limited'
+            }
+          }
+        }
+      },
+      '/auth/tv/inspect': {
+        post: {
+          summary: 'Preview a QR request for a signed-in human',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    token: {
+                      type: 'string',
+                      pattern: '^[A-Za-z0-9_-]{43}$'
+                    }
+                  },
+                  required: ['token']
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description:
+                'Approximate device location, or null when unavailable; does not approve',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      platform: {
+                        type: 'string',
+                        enum: ['Apple TV', 'Google TV']
+                      },
+                      location: {
+                        type: ['string', 'null']
+                      },
+                      expiresAt: {
+                        type: 'number',
+                        description: 'Unix milliseconds'
+                      }
+                    },
+                    required: ['platform', 'location', 'expiresAt']
+                  }
+                }
+              }
+            },
+            '400': {
+              description: 'Malformed request'
+            },
+            '401': {
+              description:
+                'Expired, consumed, invalid request or missing session'
+            },
+            '429': {
+              description: 'Rate limited'
+            },
+            '403': {
+              description: 'Human session required'
+            },
+            '409': {
+              description: 'Approved by another account'
+            }
+          },
+          description:
+            'Requires a signed-in human session; API keys, machine tokens and delegated agents cannot approve.'
+        }
+      },
+      '/auth/tv/approve': {
+        post: {
+          summary: 'Approve a TV as the signed-in human',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  oneOf: [
+                    {
+                      type: 'object',
+                      properties: {
+                        code: {
+                          type: 'string',
+                          description:
+                            'Eight alphabetic letters, case insensitive; grouping optional'
+                        }
+                      },
+                      required: ['code']
+                    },
+                    {
+                      type: 'object',
+                      properties: {
+                        token: {
+                          type: 'string',
+                          pattern: '^[A-Za-z0-9_-]{43}$'
+                        }
+                      },
+                      required: ['token']
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          responses: {
+            '204': {
+              description: 'Approved; TV claims its own session'
+            },
+            '400': {
+              description: 'Malformed request'
+            },
+            '401': {
+              description:
+                'Expired, consumed, invalid request or missing session'
+            },
+            '429': {
+              description: 'Rate limited'
+            },
+            '403': {
+              description: 'Human session required'
+            },
+            '409': {
+              description: 'Approved by another account'
+            }
+          },
+          description:
+            'Requires a signed-in human session; API keys, machine tokens and delegated agents cannot approve.'
+        }
+      },
       '/auth/request/claim': {
         post: {
           summary: 'What the client that asked for the sign-in is waiting on',

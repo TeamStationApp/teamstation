@@ -121,7 +121,9 @@
     "coverage.autoScheduler": "node scripts/auto-scheduler-coverage.mjs",
     "coverage.observability": "node scripts/observability-coverage.mjs",
     "chat-crypto": "node scripts/chatCryptoBuild.mjs node wasm",
-    "chat-seed": "node -r sucrase/register src/server/dev/chatSeed.ts"
+    "chat-seed": "node -r sucrase/register src/server/dev/chatSeed.ts",
+    "test.tv": "node scripts/build-scoring-tests.mjs && mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs --timeout 60000 --exit src/server/routes/tvLogin.test.ts src/server/auth/tvLocation.test.ts lib/scoring-tests.cjs --grep \"TV |TeamStation TV|account|Account\"",
+    "coverage.tv": "node scripts/tv-coverage.mjs"
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "^18.2.5",

@@ -151,6 +151,13 @@ import {
 } from './seasonScheduling'
 import { type ServerSentEvent, serverSentEvents } from './serverSentEvents'
 import {
+  asTvLoginPreview,
+  asTvLoginRequest,
+  type TvLoginPreview,
+  type TvLoginRequest,
+  type TvPlatform
+} from './tvLogin'
+import {
   asUmpireLeaderboard,
   asUmpireLeagues,
   asUmpireLevel,
@@ -2896,6 +2903,37 @@ export const asBoardTimelineWindow: Cleaner<BoardTimelineWindow> = asObject({
 })
 
 export class TeamStationClient {
+  async startTvLogin(platform: TvPlatform): Promise<TvLoginRequest> {
+    return await this.request('POST', '/auth/tv/start', asTvLoginRequest, {
+      platform
+    })
+  }
+
+  async claimTvLogin(
+    requestId: string,
+    clientSecret: string
+  ): Promise<Session | { ready: false }> {
+    return await this.request(
+      'POST',
+      '/auth/tv/claim',
+      asEither(asSession, asObject({ ready: asLiteral(false) })),
+      { requestId, clientSecret }
+    )
+  }
+
+  async inspectTvLogin(token: string): Promise<TvLoginPreview> {
+    return await this.request('POST', '/auth/tv/inspect', asTvLoginPreview, {
+      token
+    })
+  }
+
+  async approveTvLogin(input: {
+    code?: string
+    token?: string
+  }): Promise<void> {
+    await this.request('POST', '/auth/tv/approve', asUnknownOk, input)
+  }
+
   async umpireSettings(league: string): Promise<UmpireSettings> {
     return await this.request(
       'GET',
