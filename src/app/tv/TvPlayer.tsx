@@ -139,7 +139,7 @@ export function TvPlayer({
         .slice(0, 4)
       if (videos.length === 0)
         throw new Error('No camera angles are available for this game.')
-      const loaded = await Promise.all(
+      const results = await Promise.allSettled(
         videos.map(async video => {
           const [playback, timeline] = await Promise.all([
             client.playback(video.id),
@@ -154,6 +154,13 @@ export function TvPlayer({
           return { video, uri: playback.url, timeline }
         })
       )
+      const loaded = results.flatMap(result =>
+        result.status === 'fulfilled' ? [result.value] : []
+      )
+      if (loaded.length === 0) {
+        const failed = results.find(result => result.status === 'rejected')
+        throw failed?.reason ?? new Error('No camera angles could open.')
+      }
       if (!active) return
       loaded.forEach((angle, index) => {
         clock.current.register(index, angle.timeline, seconds =>

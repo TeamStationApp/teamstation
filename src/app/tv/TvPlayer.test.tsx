@@ -31,6 +31,7 @@ let count = 4
 let fail = false
 let pending = false
 let live = false
+let mixed = false
 let closed = false
 const client = {
   game: async () => {
@@ -66,9 +67,15 @@ const client = {
       stillUrl: 'https://example.test/still.jpg'
     }
   ],
-  playback: async (id: string) => ({
-    url: pending ? null : `https://example.test/${id}.mp4`
-  })
+  playback: async (id: string) => {
+    if (mixed && id === '0') throw new Error('Camera unavailable')
+    return {
+      url:
+        pending || (mixed && id === '1')
+          ? null
+          : `https://example.test/${id}.mp4`
+    }
+  }
 } as unknown as TeamStationClient
 const pause = async (): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, 20))
@@ -105,6 +112,7 @@ afterEach(async () => {
   document.body.innerHTML = ''
   root = undefined
   count = 4
+  mixed = false
   fail = false
   pending = false
   live = false
@@ -207,6 +215,17 @@ describe('TV game playback entry', () => {
     await press('Close panel')
     await press('−10 seconds')
     expect(videos.map(video => video.currentTime)).deep.equals([30, 30, 30, 30])
+  })
+  it('plays available cameras when another URL fails or is still preparing', async () => {
+    mixed = true
+    await render()
+    const videos = [...document.querySelectorAll('video')]
+    expect(videos).length(2)
+    expect(videos.map(video => video.getAttribute('src'))).deep.equals([
+      'https://example.test/2.mp4',
+      'https://example.test/3.mp4'
+    ])
+    expect(document.body.textContent).not.contains('Retry video')
   })
   it('recovers unavailable and pending sources and handles a single camera', async () => {
     fail = true
