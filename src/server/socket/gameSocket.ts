@@ -16,9 +16,15 @@ import {
   canSeeGame,
   type GameScope,
   type VisibleScopes,
-  visibleScopes
+  visibleScopes,
+  visibleScopesForUsers
 } from '../access'
-import { type Actor, actorForToken, keyAllows } from '../auth/sessions'
+import {
+  type Actor,
+  actorForToken,
+  actorsForTokens,
+  keyAllows
+} from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { PostgresFeed } from '../changeFeed/postgresFeed'
@@ -74,7 +80,7 @@ export interface GameSocketOptions {
    * `RESYNC_SPREAD_MS` unless given; 0 acts at once.
    */
   resyncSpreadMs?: number
-  fanout?: Omit<GameFanoutOptions, 'db' | 'feed' | 'onResync'>
+  fanout?: Omit<GameFanoutOptions, 'db' | 'feed' | 'authorize' | 'onResync'>
   screenScopes?: Omit<
     ScreenScopeListenerOptions,
     'feed' | 'deliver' | 'onResync'
@@ -211,6 +217,42 @@ interface Connection {
 }
 
 /**
+ * Which of these subscribers may see the game, on the delivery's connection: a
+ * read of their credentials and a set of reads of their scopes, however many
+ * there are. Somebody whose credential no longer answers as them is signed out
+ * and sent nothing. Nobody is sent anything when the reads fail.
+ */
+export async function authorizeSubscribers(
+  subscribers: FanoutSubscriber[],
+  game: GameScope,
+  source: Kysely<Database>,
+  log: (message: string) => void
+): Promise<boolean[]> {
+  if (subscribers.length === 0) return []
+  try {
+    const actors = await actorsForTokens(
+      source,
+      subscribers.map(subscriber => subscriber.token)
+    )
+    const stillThem = (subscriber: FanoutSubscriber): boolean =>
+      actors.get(subscriber.token)?.userId === subscriber.userId
+    const scopes = await visibleScopesForUsers(
+      source,
+      subscribers.filter(stillThem).map(subscriber => subscriber.userId)
+    )
+    return subscribers.map(subscriber => {
+      if (stillThem(subscriber))
+        return canSeeGame(scopes.get(subscriber.userId)!, game)
+      subscriber.signedOut()
+      return false
+    })
+  } catch (error: unknown) {
+    log(`game socket: authorizing a delivery: ${String(error)}`)
+    return subscribers.map(() => false)
+  }
+}
+
+/**
  * Answers WebSocket upgrades on `/socket` on this worker's HTTP server.
  *
  * The upgrade is authenticated as a REST request is, by the bearer header or
@@ -280,6 +322,8 @@ export function attachGameSocket(
     ...options.fanout,
     db,
     feed,
+    authorize: async (subscribers, game, source) =>
+      await authorizeSubscribers(subscribers, game, source, log),
     // A socket watching no game has its screen's and chat's own resync.
     onResync: () => {
       closeToResync(
@@ -313,14 +357,16 @@ export function attachGameSocket(
   })
   const chat = new ChatFanout({ ...options.chat, db, feed, resyncSpreadMs })
 
-  const scopesOf = async (connection: Connection): Promise<VisibleScopes> => {
-    if (connection.scopes != null && clock() - connection.scopesAt < recheckMs)
-      return connection.scopes
-    connection.reading ??= visibleScopes(
-      db,
-      connection.actor.userId,
-      connection.actor.isAdmin
-    )
+  /** Whether this socket's copy of its person's scopes is still good. */
+  const scopesFresh = (connection: Connection): boolean =>
+    connection.scopes != null && clock() - connection.scopesAt < recheckMs
+
+  /** A read under way for a socket, whose result becomes its copy. */
+  const readingInto = async (
+    connection: Connection,
+    read: Promise<VisibleScopes>
+  ): Promise<VisibleScopes> =>
+    await read
       .then(scopes => {
         connection.scopes = scopes
         connection.scopesAt = clock()
@@ -329,7 +375,34 @@ export function attachGameSocket(
       .finally(() => {
         connection.reading = undefined
       })
+
+  const scopesOf = async (connection: Connection): Promise<VisibleScopes> => {
+    if (scopesFresh(connection)) return connection.scopes!
+    connection.reading ??= readingInto(
+      connection,
+      visibleScopes(db, connection.actor.userId, connection.actor.isAdmin)
+    )
     return await connection.reading
+  }
+
+  /**
+   * Reads the scopes of every one of these sockets whose copy is stale, once
+   * for all their people, so that `scopesOf` then finds each read under way.
+   */
+  const readScopesOf = (concerned: Connection[]): void => {
+    const stale = concerned.filter(
+      connection => !scopesFresh(connection) && connection.reading == null
+    )
+    if (stale.length === 0) return
+    const reading = visibleScopesForUsers(
+      db,
+      stale.map(connection => connection.actor.userId)
+    )
+    for (const connection of stale)
+      connection.reading = readingInto(
+        connection,
+        reading.then(scopes => scopes.get(connection.actor.userId)!)
+      )
   }
 
   const reply = (connection: Connection, frame: GameSocketReply): void => {
@@ -600,6 +673,20 @@ export function attachGameSocket(
             awayTeamId: row.away_team_id,
             seasonId: row.season_id
           }
+    // Everybody whose answer turns on their scopes, read together.
+    readScopesOf(
+      holding.filter(connection => {
+        const screen = connection.screen!
+        if (gameId != null)
+          return (
+            game != null &&
+            (screen.scope !== 'event' || screen.gameId === gameId)
+          )
+        if (screen.scope === 'event') return false
+        if (userId != null && connection.actor.userId === userId) return false
+        return teamId != null || seasonId != null
+      })
+    )
     await Promise.all(
       holding.map(async connection => {
         const screen = connection.screen!
@@ -800,26 +887,10 @@ export function attachGameSocket(
         send: message => {
           reply(connection, message)
         },
-        maySee: async (game, source) => {
-          try {
-            const authenticated = await actorForToken(source, token, {
-              recordUse: false
-            })
-            if (authenticated?.userId !== connection.actor.userId) {
-              connection.ws.close(1008, 'Sign in again')
-              return false
-            }
-            return canSeeGame(
-              await visibleScopes(
-                source,
-                authenticated.userId,
-                authenticated.isAdmin
-              ),
-              game
-            )
-          } catch {
-            return false
-          }
+        token,
+        userId: actor.userId,
+        signedOut: () => {
+          connection.ws.close(1008, 'Sign in again')
         },
         resync: () => {
           closeToResync([connection])

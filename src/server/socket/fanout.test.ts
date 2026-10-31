@@ -38,11 +38,19 @@ async function until(ready: () => boolean, what: string): Promise<void> {
   }
 }
 
+/** A subscriber whose rights the test decides. */
+interface Seeing {
+  maySee: (game: GameScope) => Promise<boolean>
+}
+
 /** A subscriber that keeps what it is sent. */
 function subscriber(sees = true): {
   sent: GameChange[]
   resynced: { count: number }
   send: (message: GameChange) => void
+  token: string
+  userId: string
+  signedOut: () => void
   maySee: (game: GameScope) => Promise<boolean>
   resync: () => void
 } {
@@ -57,6 +65,9 @@ function subscriber(sees = true): {
     send: message => {
       sent.push(message)
     },
+    token: 'token',
+    userId: 'usr',
+    signedOut: () => undefined,
     maySee: async () => sees
   }
 }
@@ -109,6 +120,13 @@ describe('the game socket fan-out (U15)', function () {
     const made = new GameFanout({
       db: db!,
       feed: feedOf(50),
+      authorize: async (subscribers, game) =>
+        await Promise.all(
+          subscribers.map(
+            async subscriber =>
+              await (subscriber as unknown as Seeing).maySee(game)
+          )
+        ),
       log: message => {
         logs.push(message)
       },
@@ -397,6 +415,9 @@ describe('the game socket fan-out (U15)', function () {
         send: message => {
           sent.push(message.kind)
         },
+        token: 'token',
+        userId: 'usr',
+        signedOut: () => undefined,
         maySee: async () => {
           asked.push(String(asked.length))
           if (asked.length === 1) await held

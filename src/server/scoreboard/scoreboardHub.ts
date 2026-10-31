@@ -19,8 +19,19 @@ import {
   radarPacket,
   type RadarReading
 } from '../../common/scoring/radarSpeeds'
-import { adminScopes, canSeeGame, visibleScopes } from '../access'
-import { type Actor, actorForToken, keyAllows } from '../auth/sessions'
+import {
+  adminScopes,
+  canSeeGame,
+  type GameScope,
+  visibleScopes,
+  visibleScopesForUsers
+} from '../access'
+import {
+  type Actor,
+  actorForToken,
+  actorsForTokens,
+  keyAllows
+} from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { mayRunGame } from '../director/runGames'
@@ -370,23 +381,28 @@ export function makeScoreboardHub(
         const keyExists = await store.exists(room.gameId)
         if (record != null) room.record = record
         if (scoreboardOpen(record, keyExists, now())) {
-          for (const member of room.members) {
+          for (const member of room.members)
             if (member.kind !== 'viewer') await authorizeCurrent(room, member)
-            else if (member.timeline) await stillSees(room, member)
-          }
+          await stillSee(
+            room,
+            [...room.members].filter(
+              member => member.kind === 'viewer' && member.timeline
+            )
+          )
           return
         }
+        const staying = [...room.members].filter(
+          member => member.timeline && record != null
+        )
         for (const member of room.members) {
-          if (member.timeline && record != null) {
-            await stillSees(room, member)
-            continue
-          }
+          if (staying.includes(member)) continue
           shut(
             member.socket,
             SCOREBOARD_CLOSE.closed,
             'The scoreboard is closed'
           )
         }
+        await stillSee(room, staying)
       })
     }
   }, options.checkMs ?? 60_000)
@@ -540,7 +556,17 @@ export function makeScoreboardHub(
     actor: { userId: string; isAdmin: boolean },
     gameId: string
   ): Promise<boolean> {
-    const game = await db
+    const game = await gameScopeOf(gameId)
+    if (game == null) return false
+    return canSeeGame(
+      await visibleScopes(db, actor.userId, actor.isAdmin),
+      game
+    )
+  }
+
+  /** The teams and season that decide who may see this game. */
+  async function gameScopeOf(gameId: string): Promise<GameScope | undefined> {
+    return await db
       .selectFrom('games')
       .select([
         'home_team_id as homeTeamId',
@@ -549,38 +575,50 @@ export function makeScoreboardHub(
       ])
       .where('id', '=', gameId)
       .executeTakeFirst()
-    if (game == null) return false
-    return canSeeGame(
-      await visibleScopes(db, actor.userId, actor.isAdmin),
-      game
-    )
   }
 
   /**
    * A `timeline=1` socket outlives the board, so the credential it opened
    * with and the membership it was admitted on are asked again at each check:
-   * a session signed out, or a team left, ends it.
+   * a session signed out, or a team left, ends it. Asked of all a room's such
+   * sockets together, in the same reads however many there are.
    */
-  async function stillSees(room: Room, member: Member): Promise<void> {
+  async function stillSee(room: Room, members: Member[]): Promise<void> {
+    if (members.length === 0) return
     try {
-      const actor =
-        member.token == null
-          ? undefined
-          : await actorForToken(db, member.token, { recordUse: false })
-      if (actor == null || actor.userId !== member.userId) {
+      const actors = await actorsForTokens(
+        db,
+        members.flatMap(member => (member.token == null ? [] : [member.token]))
+      )
+      const signedIn = members.filter(member => {
+        const actor =
+          member.token == null ? undefined : actors.get(member.token)
+        if (actor != null && actor.userId === member.userId) return true
         shut(member.socket, SCOREBOARD_CLOSE.notSignedIn, 'Sign in to continue')
-        return
-      }
-      if (!(await maySeeGame(actor, room.gameId))) {
-        shut(
-          member.socket,
-          SCOREBOARD_CLOSE.notAllowed,
-          'This game is for members'
-        )
+        return false
+      })
+      if (signedIn.length === 0) return
+      const game = await gameScopeOf(room.gameId)
+      const scopes =
+        game == null
+          ? undefined
+          : await visibleScopesForUsers(
+              db,
+              signedIn.map(member => member.userId!)
+            )
+      for (const member of signedIn) {
+        const seen = scopes?.get(member.userId!)
+        if (game == null || seen == null || !canSeeGame(seen, game))
+          shut(
+            member.socket,
+            SCOREBOARD_CLOSE.notAllowed,
+            'This game is for members'
+          )
       }
     } catch (error) {
       log(`scoreboard ${room.gameId}: authorization: ${describe(error)}`)
-      shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
+      for (const member of members)
+        shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
     }
   }
 

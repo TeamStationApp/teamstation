@@ -9,6 +9,7 @@ import {
 import type { ApiKeyPermission } from '../../common/apiKeys'
 import { unauthorized } from '../../common/errors'
 import { makeId } from '../../common/ids'
+import { anyOf } from '../db/anyOf'
 import type { Database } from '../db/database'
 import { hashToken, makeToken } from './tokens'
 
@@ -163,57 +164,119 @@ export async function actorForToken(
   token: string,
   options: { recordUse?: boolean } = {}
 ): Promise<Actor | undefined> {
-  const tokenHash = hashToken(token)
+  const actors = await actorsForTokens(db, [token])
+  const actor = actors.get(token)
+  if (actor != null && options.recordUse !== false)
+    await recordCredentialUse(db, actor, new Date())
+  return actor
+}
+
+/**
+ * `actorForToken` of each of these tokens at once, recording no use: whoever
+ * each resolves to, with a token refused for any reason left out. A read of
+ * each kind of credential, for all the tokens still unanswered, however many
+ * there are.
+ */
+export async function actorsForTokens(
+  db: Kysely<Database>,
+  tokens: readonly string[]
+): Promise<Map<string, Actor>> {
+  const actors = new Map<string, Actor>()
+  const hashes = new Map(tokens.map(token => [token, hashToken(token)]))
   const now = new Date()
 
   // A session token can begin `tsk_` too, one in 16.7 million: one that is
   // no key is looked for as a session after all.
-  if (token.startsWith(USER_API_KEY_PREFIX)) {
-    const keyActor = await actorForApiKey(db, tokenHash, now, options)
-    if (keyActor != null) return keyActor
+  const keyShaped = [...hashes.keys()].filter(token =>
+    token.startsWith(USER_API_KEY_PREFIX)
+  )
+  if (keyShaped.length > 0) {
+    const keys = await db
+      .selectFrom('user_api_keys')
+      .innerJoin('users', 'users.id', 'user_api_keys.user_id')
+      .select([
+        'user_api_keys.id as keyId',
+        'user_api_keys.user_id as userId',
+        'user_api_keys.token_hash as tokenHash',
+        'user_api_keys.permissions as permissions',
+        'user_api_keys.revoked_at as revokedAt',
+        'users.is_admin as isAdmin',
+        'users.disabled_at as disabledAt',
+        'users.merged_into as mergedInto'
+      ])
+      .where(
+        'user_api_keys.token_hash',
+        '=',
+        anyOf(keyShaped.map(token => hashes.get(token)!))
+      )
+      .execute()
+    const keyed = new Map(keys.map(key => [key.tokenHash, key]))
+    for (const token of keyShaped) {
+      const key = keyed.get(hashes.get(token)!)
+      if (key == null || key.revokedAt != null) continue
+      if (key.disabledAt != null || key.mergedInto != null) continue
+      actors.set(token, {
+        userId: key.userId,
+        isAdmin: key.isAdmin,
+        apiKey: {
+          id: key.keyId,
+          permissions: new Set(key.permissions as ApiKeyPermission[])
+        },
+        scopes: []
+      })
+    }
   }
 
-  const session = await db
+  const unkeyed = [...hashes.keys()].filter(token => !actors.has(token))
+  if (unkeyed.length === 0) return actors
+  const sessions = await db
     .selectFrom('auth_sessions')
     .innerJoin('users', 'users.id', 'auth_sessions.user_id')
     .select([
       'auth_sessions.id as sessionId',
       'auth_sessions.user_id as userId',
+      'auth_sessions.token_hash as tokenHash',
       'auth_sessions.expires_at as expiresAt',
       'auth_sessions.revoked_at as revokedAt',
       'users.is_admin as isAdmin',
       'users.disabled_at as disabledAt',
       'users.merged_into as mergedInto'
     ])
-    .where('auth_sessions.token_hash', '=', tokenHash)
-    .executeTakeFirst()
-
-  if (session != null) {
-    if (session.disabledAt != null || session.mergedInto != null)
-      return undefined
-    if (session.revokedAt != null) return undefined
-    if (new Date(session.expiresAt).getTime() <= now.getTime()) return undefined
-    if (options.recordUse !== false)
-      await db
-        .updateTable('auth_sessions')
-        .set({ last_used_at: now })
-        .where('id', '=', session.sessionId)
-        .where(staleUse(now))
-        .execute()
-    return {
+    .where(
+      'auth_sessions.token_hash',
+      '=',
+      anyOf(unkeyed.map(token => hashes.get(token)!))
+    )
+    .execute()
+  const bySession = new Map(sessions.map(row => [row.tokenHash, row]))
+  // A token found as a session is answered by that session, even when it
+  // refuses: only one found nowhere is looked for as a machine token.
+  const unfound: string[] = []
+  for (const token of unkeyed) {
+    const session = bySession.get(hashes.get(token)!)
+    if (session == null) {
+      unfound.push(token)
+      continue
+    }
+    if (session.disabledAt != null || session.mergedInto != null) continue
+    if (session.revokedAt != null) continue
+    if (new Date(session.expiresAt).getTime() <= now.getTime()) continue
+    actors.set(token, {
       userId: session.userId,
       isAdmin: session.isAdmin,
       sessionId: session.sessionId,
       scopes: []
-    }
+    })
   }
+  if (unfound.length === 0) return actors
 
-  const apiToken = await db
+  const apiTokens = await db
     .selectFrom('api_tokens')
     .innerJoin('users', 'users.id', 'api_tokens.user_id')
     .select([
       'api_tokens.id as tokenId',
       'api_tokens.user_id as userId',
+      'api_tokens.token_hash as tokenHash',
       'api_tokens.scopes as scopes',
       'api_tokens.expires_at as expiresAt',
       'api_tokens.revoked_at as revokedAt',
@@ -221,74 +284,60 @@ export async function actorForToken(
       'users.disabled_at as disabledAt',
       'users.merged_into as mergedInto'
     ])
-    .where('api_tokens.token_hash', '=', tokenHash)
-    .executeTakeFirst()
-
-  if (apiToken == null) return undefined
-  if (apiToken.disabledAt != null || apiToken.mergedInto != null)
-    return undefined
-  if (apiToken.revokedAt != null) return undefined
-  if (
-    apiToken.expiresAt != null &&
-    new Date(apiToken.expiresAt).getTime() <= now.getTime()
-  ) {
-    return undefined
+    .where(
+      'api_tokens.token_hash',
+      '=',
+      anyOf(unfound.map(token => hashes.get(token)!))
+    )
+    .execute()
+  const byApiToken = new Map(apiTokens.map(row => [row.tokenHash, row]))
+  for (const token of unfound) {
+    const apiToken = byApiToken.get(hashes.get(token)!)
+    if (apiToken == null) continue
+    if (apiToken.disabledAt != null || apiToken.mergedInto != null) continue
+    if (apiToken.revokedAt != null) continue
+    if (
+      apiToken.expiresAt != null &&
+      new Date(apiToken.expiresAt).getTime() <= now.getTime()
+    )
+      continue
+    actors.set(token, {
+      userId: apiToken.userId,
+      isAdmin: apiToken.isAdmin,
+      apiTokenId: apiToken.tokenId,
+      scopes: apiToken.scopes
+    })
   }
-
-  if (options.recordUse !== false)
-    await db
-      .updateTable('api_tokens')
-      .set({ last_used_at: now })
-      .where('id', '=', apiToken.tokenId)
-      .where(staleUse(now))
-      .execute()
-
-  return {
-    userId: apiToken.userId,
-    isAdmin: apiToken.isAdmin,
-    apiTokenId: apiToken.tokenId,
-    scopes: apiToken.scopes
-  }
+  return actors
 }
 
-async function actorForApiKey(
+/** Writes `last_used_at` on whichever credential this actor came through. */
+async function recordCredentialUse(
   db: Kysely<Database>,
-  tokenHash: string,
-  now: Date,
-  options: { recordUse?: boolean }
-): Promise<Actor | undefined> {
-  const key = await db
-    .selectFrom('user_api_keys')
-    .innerJoin('users', 'users.id', 'user_api_keys.user_id')
-    .select([
-      'user_api_keys.id as keyId',
-      'user_api_keys.user_id as userId',
-      'user_api_keys.permissions as permissions',
-      'user_api_keys.revoked_at as revokedAt',
-      'users.is_admin as isAdmin',
-      'users.disabled_at as disabledAt',
-      'users.merged_into as mergedInto'
-    ])
-    .where('user_api_keys.token_hash', '=', tokenHash)
-    .executeTakeFirst()
-  if (key == null || key.revokedAt != null) return undefined
-  if (key.disabledAt != null || key.mergedInto != null) return undefined
-  if (options.recordUse !== false)
+  actor: Actor,
+  now: Date
+): Promise<void> {
+  if (actor.apiKey != null)
     await db
       .updateTable('user_api_keys')
       .set({ last_used_at: now })
-      .where('id', '=', key.keyId)
+      .where('id', '=', actor.apiKey.id)
       .where(staleUse(now))
       .execute()
-  return {
-    userId: key.userId,
-    isAdmin: key.isAdmin,
-    apiKey: {
-      id: key.keyId,
-      permissions: new Set(key.permissions as ApiKeyPermission[])
-    },
-    scopes: []
-  }
+  else if (actor.sessionId != null)
+    await db
+      .updateTable('auth_sessions')
+      .set({ last_used_at: now })
+      .where('id', '=', actor.sessionId)
+      .where(staleUse(now))
+      .execute()
+  else if (actor.apiTokenId != null)
+    await db
+      .updateTable('api_tokens')
+      .set({ last_used_at: now })
+      .where('id', '=', actor.apiTokenId)
+      .where(staleUse(now))
+      .execute()
 }
 
 export async function revokeSession(

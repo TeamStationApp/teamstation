@@ -145,7 +145,9 @@ describe('walk-up songs', function () {
   const subscriber = (): {
     sent: GameChange[]
     send: (message: GameChange) => void
-    maySee: () => Promise<boolean>
+    token: string
+    userId: string
+    signedOut: () => void
     resync: () => void
   } => {
     const sent: GameChange[] = []
@@ -154,7 +156,9 @@ describe('walk-up songs', function () {
       send: message => {
         sent.push(message)
       },
-      maySee: async () => true,
+      token: 'token',
+      userId: 'usr',
+      signedOut: () => undefined,
       resync: () => undefined
     }
   }
@@ -611,6 +615,7 @@ describe('walk-up songs', function () {
     fanout = new GameFanout({
       db,
       feed,
+      authorize: async subscribers => subscribers.map(() => true),
       log: () => undefined
     })
     await fanout.listening

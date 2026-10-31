@@ -40,40 +40,69 @@ export interface OnePerson {
 /** However deep a chain of merges can sensibly go before it is a mistake. */
 const MAX_DEPTH = 16
 
+/**
+ * Every row of each of these people, in one query however long their chains:
+ * each row asked about, keyed by itself, as the open row it is now and every
+ * row closed into that one, the open row first.
+ *
+ * Up the chain to whoever is still open, then back down it, gathering everybody
+ * who became them. A cycle would be a bug in whatever wrote it; the path and
+ * the depth mean it cannot become a hung request, and each stops after
+ * `MAX_DEPTH` steps. A row that does not exist is its own answer.
+ */
+export async function onePeople(
+  db: Kysely<Database>,
+  userIds: readonly string[]
+): Promise<Map<string, OnePerson>> {
+  const asked = [...new Set(userIds)]
+  const people = new Map<string, OnePerson>()
+  if (asked.length === 0) return people
+  const { rows } = await sql<{ start: string; survivor: string; id: string }>`
+    with recursive up(start, id, depth, path) as (
+      select asked.id, asked.id, 0, array[asked.id]
+      from unnest(${asked}::text[]) as asked(id)
+      union all
+      select up.start, users.merged_into, up.depth + 1,
+        up.path || users.merged_into
+      from up
+      inner join users on users.id = up.id
+      where users.merged_into is not null
+        and not users.merged_into = any(up.path)
+        and up.depth < ${MAX_DEPTH}
+    ),
+    survivor(start, id) as (
+      select distinct on (start) start, id from up order by start, depth desc
+    ),
+    down(start, id, depth) as (
+      select start, id, 0 from survivor
+      union
+      select down.start, users.id, down.depth + 1
+      from down
+      inner join users on users.merged_into = down.id
+      where down.depth < ${MAX_DEPTH}
+    )
+    select down.start, survivor.id as survivor, down.id
+    from down
+    inner join survivor on survivor.start = down.start
+    group by down.start, survivor.id, down.id
+    order by down.start, min(down.depth), down.id
+  `.execute(db)
+  for (const row of rows) {
+    const person = people.get(row.start)
+    if (person == null)
+      people.set(row.start, { userId: row.survivor, userIds: [row.id] })
+    else person.userIds.push(row.id)
+  }
+  return people
+}
+
+/** `onePeople` of one row. */
 export async function onePerson(
   db: Kysely<Database>,
   userId: string
 ): Promise<OnePerson> {
-  // Up the chain to whoever is still open. A cycle would be a bug in whatever
-  // wrote it; the guard means it cannot become a hung request.
-  let survivor = userId
-  const walked = new Set<string>([userId])
-  for (let step = 0; step < MAX_DEPTH; step += 1) {
-    const row = await db
-      .selectFrom('users')
-      .select(['merged_into'])
-      .where('id', '=', survivor)
-      .executeTakeFirst()
-    const next = row?.merged_into
-    if (next == null || walked.has(next)) break
-    walked.add(next)
-    survivor = next
-  }
-
-  // And back down it, gathering everybody who became them.
-  const userIds = new Set<string>([survivor])
-  let frontier = [survivor]
-  for (let step = 0; step < MAX_DEPTH && frontier.length > 0; step += 1) {
-    const rows = await db
-      .selectFrom('users')
-      .select(['id'])
-      .where('merged_into', 'in', frontier)
-      .execute()
-    frontier = rows.map(row => row.id).filter(id => !userIds.has(id))
-    for (const id of frontier) userIds.add(id)
-  }
-
-  return { userId: survivor, userIds: [...userIds] }
+  const people = await onePeople(db, [userId])
+  return people.get(userId)!
 }
 
 /**
