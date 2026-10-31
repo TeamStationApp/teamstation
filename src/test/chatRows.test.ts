@@ -239,18 +239,22 @@ function suites(): string[] {
       const path = join(dir, entry.name)
       if (entry.isDirectory()) walk(path)
       else if (
-        /\.e2e\.tsx?$|^scripts\/.*\.(mjs|cjs|js|ts|sh)$/.test(
+        /\.e2e\.tsx?$|^e2e\/(?:tests|rigs|fixtures)\/.*\.tsx?$|^scripts\/.*\.(mjs|cjs|js|ts|sh)$/.test(
           relative(root, path)
         )
       )
         found.push(path)
     }
   }
-  for (const dir of ['src', 'scripts', 'mobile']) walk(join(root, dir))
+  for (const dir of ['src', 'scripts', 'mobile', 'e2e']) walk(join(root, dir))
   return found.map(path => relative(root, path))
 }
 
 describe('chat row lookups in the end-to-end suites', function () {
+  it('scan the suites under e2e/', function () {
+    expect(suites()).includes('e2e/tests/app-shell/lists/list-screens.e2e.ts')
+  })
+
   it('never match a scope chat row by its whole title', function () {
     const root = join(__dirname, '..', '..')
     // `[aria-label="Hawks Members"]`, also inside a page script's quotes.

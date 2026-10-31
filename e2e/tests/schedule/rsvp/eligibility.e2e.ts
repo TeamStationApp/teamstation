@@ -1,40 +1,43 @@
-import { execFileSync } from 'node:child_process'
-import { mkdir, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { writeFile } from 'node:fs/promises'
 
 import { expect } from 'chai'
 
-import { asEventInfo } from '../../common/eventInfo'
-import { makeId } from '../../common/ids'
-import { userIdOfGumbo } from '../../common/userId'
-import { guardianFixture } from '../../test/guardianFixture'
-import { capture, maestro } from '../../test/refinementsMaestro.e2e'
+import {
+  attachDevice,
+  connectDaemon,
+  type MaestroDevice
+} from '../../../core/maestro'
+import { loadSettings } from '../../../core/settings'
+import { defineE2e, type E2eContext } from '../../../core/spec'
 
-/** Real RSVP eligibility, roster removal and write authorization in Safari on a simulator only. */
-async function main(): Promise<void> {
-  const device = process.env.TS_SIMULATOR_UDID
-  const out = process.env.TS_ARTIFACTS_DIR
-  if (device == null || out == null)
-    throw new Error('Supply simulator and artifact directory')
-  const inventory = JSON.parse(
-    execFileSync('xcrun', ['simctl', 'list', 'devices', 'booted', '-j'], {
-      encoding: 'utf8'
-    })
-  ) as { devices: Record<string, Array<{ udid: string }>> }
-  if (
-    !Object.values(inventory.devices)
-      .flat()
-      .some(sim => sim.udid === device)
-  )
-    throw new Error('A booted iOS simulator is required')
-  await mkdir(out, { recursive: true })
-  const f = await guardianFixture(resolve('dist'))
-  const d = await maestro('rsvp-eligibility-simulator')
-  const m = await d.attach({
+async function capture(
+  m: MaestroDevice,
+  ctx: E2eContext,
+  name: string
+): Promise<void> {
+  await m.waitForAnimationToEnd()
+  await writeFile(ctx.artifact(name), await m.screenshot())
+}
+
+/** Real RSVP eligibility, roster removal and write authorization, in Safari. */
+async function rosterRemoval(ctx: E2eContext): Promise<void> {
+  // Server code loads only when the scenario runs, so reading the spec has no side
+  // effects.
+  const { asEventInfo } = await import('../../../../src/common/eventInfo')
+  const { makeId } = await import('../../../../src/common/ids')
+  const { userIdOfGumbo } = await import('../../../../src/common/userId')
+  const { guardianFixture } =
+    await import('../../../../src/test/guardianFixture')
+  if (ctx.stack.webDir == null)
+    throw new Error('This scenario needs a web build')
+  const f = await guardianFixture(ctx.stack.webDir)
+  ctx.stack.adopt(f.h.origin)
+  const device = ctx.device('browser')
+  const daemon = await connectDaemon(loadSettings(), `e2e-rsvp-${process.pid}`)
+  const m = await attachDevice(daemon, ctx.runDir, {
     device,
     platform: 'ios',
     appId: 'com.apple.mobilesafari',
-    artifacts: 'on-failure',
     commandTimeout: 30000
   })
   try {
@@ -93,12 +96,12 @@ async function main(): Promise<void> {
     const link = f.h.links.get(f.emails[user])!
     await m.openLink({ link: f.h.origin + new URL(link).pathname })
     await m.assertVisible({ text: 'RSVP', timeout: 20000 })
-    await capture(m, out, 'eligible-rsvp-card.png')
+    await capture(m, ctx, 'eligible-rsvp-card.png')
     await m.tapOn({ text: 'RSVP' })
     await m.assertVisible({ text: childName })
     await m.assertVisible({ text: ownName })
     await m.assertNotVisible({ text: 'Ken G' })
-    await capture(m, out, 'eligible-rsvp-modal.png')
+    await capture(m, ctx, 'eligible-rsvp-modal.png')
     await f.h.db
       .deleteFrom('memberships')
       .where('user_id', '=', userIdOfGumbo(child))
@@ -106,7 +109,7 @@ async function main(): Promise<void> {
       .execute()
     const rejected = await f.h.request(
       'PUT',
-      `/events/${game.id}/rsvps/${child}`,
+      `/events/${game.id}/rsvps/${userIdOfGumbo(child)}`,
       { response: 'yes' },
       user
     )
@@ -116,24 +119,45 @@ async function main(): Promise<void> {
     await m.tapOn({ text: 'RSVP' })
     await m.assertVisible({ text: ownName })
     await m.assertNotVisible({ text: childName })
-    await capture(m, out, 'removed-player-rsvp.png')
-    console.log(
-      'PASS simulator RSVP card/modal excludes unrelated children; roster removal refreshes eligibility and rejects writes'
-    )
+    await capture(m, ctx, 'removed-player-rsvp.png')
   } catch (error) {
     await writeFile(
-      join(out, 'failure-hierarchy.json'),
+      ctx.artifact('failure-hierarchy.json'),
       JSON.stringify(await m.hierarchy(), null, 2)
     )
-    await capture(m, out, 'failure.png')
+    await capture(m, ctx, 'failure.png')
     throw error
   } finally {
     await m.detach()
-    await d.shutdown()
+    await daemon.shutdown()
     await f.h.close()
   }
 }
-main().catch((error: unknown) => {
-  console.error(error)
-  process.exitCode = 1
+
+export default defineE2e({
+  id: 'schedule/rsvp/eligibility',
+  title: 'RSVP lists only eligible people, and follows a roster removal',
+  kind: 'e2e',
+  covers: [
+    'src/server/routes/events.ts',
+    'src/app/screens/**',
+    'src/common/eventInfo.ts'
+  ],
+  stack: 'isolated',
+  fixtures: [],
+  exclusive: false,
+  surfaces: {
+    'web-safari-ios': {
+      devices: [{ role: 'browser', needs: ['ios-phone'], hardware: 'none' }]
+    }
+  },
+  services: ['web'],
+  apps: [],
+  secrets: [],
+  costUsd: 0,
+  minutes: 4,
+  guards: [],
+  faults: ['api-500', 'api-hang', 'api-garbage', 'wrong-data'],
+  manual: false,
+  scenarios: { 'roster-removal': rosterRemoval }
 })

@@ -14,6 +14,7 @@ import {
   withCsp,
   withIntegrity
 } from './buildCsp.mjs'
+import { workerOutDir, workerUrl } from './buildWorker.mjs'
 
 /**
  * Everything below is written relative to the repository root, and this is
@@ -120,7 +121,7 @@ const wasmFile = serve
 const workerOptions = {
   entryPoints: ['src/app/platform/passwordWorker.ts'],
   bundle: true,
-  outdir: 'dist',
+  outdir: workerOutDir(),
   entryNames: serve ? 'password-worker' : 'password-worker-[hash]',
   format: 'iife',
   target: ['es2021'],
@@ -175,7 +176,7 @@ const options = {
     TS_CHAT_WASM_URL: JSON.stringify(`/${wasmFile}`),
     TS_CHAT_WASM_INTEGRITY: JSON.stringify(integrityOf(wasmBytes)),
     TS_PASSWORD_WORKER_URL: JSON.stringify(
-      '/' + workerFile.replace(/^dist\//, '')
+      workerUrl(workerFile, workerOutDir())
     ),
     TS_FIELD_PREVIEW: process.env.TS_FIELD_PREVIEW === '1' ? 'true' : 'false',
     // Where the app reports crashes; empty reports nothing (src/app/sentry.ts).
