@@ -141,7 +141,7 @@ struct ProgrammePicturePlacementTests {
     #expect(queue.pick(at: 100.21, period: 1 / 60)?.picture == -1)
     // A cut drops what was waiting; what is on air stays.
     queue.add(100.5, capture: 100.5)
-    queue.removeQueued()
+    queue.dropRuns(keeping: nil)
     #expect(queue.count == 0)
     #expect(queue.pick(at: 101.5, period: 1 / 60)?.picture == -1)
     queue.setDelay(seconds: 0.2)
@@ -264,6 +264,15 @@ struct ProgrammePicturePlacementTests {
     #expect(tick(&queue, at: 95) == -1)
     #expect(queue.onAirRun == 3)
     #expect(queue.count == 0)
+  }
+
+  @Test("A run's first queued picture gives its moment; none queued gives none")
+  func firstMomentOfARun() {
+    var queue = ProgrammePictureQueue<Double>(delaySeconds: 1)
+    #expect(queue.firstMoment(ofRun: 2) == nil)
+    queue.add(99.0, capture: 99.0, run: 1)
+    queue.add(99.5, capture: 99.5, run: 2)
+    #expect(queue.firstMoment(ofRun: 2) == 100.5)
   }
 
   @Test("Two overlapping runs are both held until the later one is on air")
