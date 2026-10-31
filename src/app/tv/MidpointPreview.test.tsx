@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+
 import { MidpointPreview, previewMidpoint } from './MidpointPreview'
 
 let root: Root | undefined
@@ -60,6 +61,11 @@ describe('TV midpoint previews', () => {
       media.dispatchEvent(new window.Event('durationchange'))
     })
     expect(media.currentTime).equals(30)
+    await act(async () => {
+      media.currentTime = 32
+      media.dispatchEvent(new window.Event('timeupdate'))
+    })
+    expect(media.currentTime).equals(32)
     await act(async () => {
       media.currentTime = 60
       media.dispatchEvent(new window.Event('ended'))

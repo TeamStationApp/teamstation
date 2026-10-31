@@ -126,7 +126,11 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 @end
 
 #import <UIKit/UIKit.h>
-#import <React/UIView+React.h>
+@interface UIView (TVReactSubviews)
+- (void)insertReactSubview:(UIView *)subview atIndex:(NSInteger)index;
+- (void)removeReactSubview:(UIView *)subview;
+- (void)didUpdateReactSubviews;
+@end
 @interface TVPosterView : UIImageView
 @property(nonatomic, copy) NSString *uri;
 @property(nonatomic, strong) NSURLSessionDataTask *task;

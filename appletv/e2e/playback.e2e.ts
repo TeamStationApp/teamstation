@@ -97,7 +97,7 @@ async function main(): Promise<void> {
       path.join(artifacts, 'score-after.png'),
       await tv.screenshot()
     )
-    await tv.tapOn({ id: 'Team and player statistics' })
+    await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
     await tv.assertVisible({ text: 'Batting', timeout: 15000 })
