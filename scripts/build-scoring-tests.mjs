@@ -42,6 +42,13 @@ for (const entry of entries)
       {
         name: 'native-initials-measurement-unit',
         setup(build) {
+          build.onLoad({ filter: /app\/tv\/remote\.ts$/ }, args => ({
+            contents: readFileSync(args.path, 'utf8').replace(
+              "import * as ReactNative from 'react-native'",
+              "import * as ReactNative from '../../test/tvRemoteRuntime'"
+            ),
+            loader: 'ts'
+          }))
           build.onLoad({ filter: /FittedInitials\.native\.tsx$/ }, args => ({
             contents: readFileSync(args.path, 'utf8').replace(
               "from 'react-native'",

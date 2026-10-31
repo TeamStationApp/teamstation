@@ -4,6 +4,7 @@ import {
   Platform,
   requireNativeComponent,
   StyleSheet,
+  View,
   type ViewProps
 } from 'react-native'
 
@@ -25,25 +26,41 @@ export const NativeSearch = nativeTvPresentation
   ? requireNativeComponent<SearchProps>('TVSearch')
   : null
 const NativePoster = nativeTvPresentation
-  ? requireNativeComponent<ViewProps & { uri: string }>('TVPoster')
+  ? requireNativeComponent<
+      ViewProps & { uri: string; previewFocused: boolean }
+    >('TVPoster')
   : null
 export const NativeGradient = nativeTvPresentation
   ? requireNativeComponent<
       ViewProps & { direction: 'left' | 'right' | 'bottom'; maxOpacity: number }
     >('TVGradient')
   : null
-export function TvPoster({ uri }: { uri: string }): React.ReactElement {
+export function TvPoster({
+  uri,
+  children,
+  focused = false
+}: {
+  uri: string
+  children?: React.ReactNode
+  focused?: boolean
+}): React.ReactElement {
   return NativePoster === null ? (
-    <Image
-      source={{ uri }}
-      style={StyleSheet.absoluteFill}
-      resizeMode="cover"
-    />
+    <View style={StyleSheet.absoluteFill}>
+      <Image
+        source={{ uri }}
+        style={StyleSheet.absoluteFill}
+        resizeMode="cover"
+      />
+      {children}
+    </View>
   ) : (
     <NativePoster
       uri={uri}
+      previewFocused={focused}
       style={StyleSheet.absoluteFill}
       pointerEvents="none"
-    />
+    >
+      {children}
+    </NativePoster>
   )
 }

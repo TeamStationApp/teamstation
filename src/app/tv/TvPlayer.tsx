@@ -16,8 +16,8 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  View,
-  useWindowDimensions
+  useWindowDimensions,
+  View
 } from 'react-native'
 import { Defs, LinearGradient, Rect, Stop, Svg } from 'react-native-svg'
 import Video, { type VideoRef } from 'react-native-video'
@@ -30,11 +30,10 @@ import type {
   VideoSummary
 } from '../../common/api'
 import type { ScoreboardOverlay } from '../../common/nodeSettings'
-import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
-import { angleNeighbor, tvLayout, type Direction } from './tvLayout'
 import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
+import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
 import { NativeGradient } from './NativePresentation'
 import { PlaybackClock } from './playbackClock'
@@ -44,9 +43,10 @@ import {
   type SidePanel
 } from './playbackState'
 import { type BoxStep, boxTimeline, timelineFor } from './playbackTimeline'
-import { tvControl, tvEvents, TvFocusGuide, TvTextScrollView } from './remote'
+import { tvControl, tvEvents, TvFocusGuide } from './remote'
 import type { TvPlayRequest } from './TvBrowser'
 import { TvButton } from './TvButton'
+import { angleNeighbor, type Direction, tvLayout } from './tvLayout'
 
 interface Angle {
   video: VideoSummary
@@ -108,6 +108,9 @@ export function TvPlayer({
   const statsScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const statsOffset = useRef(0)
   const statsExtent = useRef({ content: 0, viewport: 0 })
+  const scoreScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
+  const scoreOffset = useRef(0)
+  const scoreExtent = useRef({ content: 0, viewport: 0 })
   const [placement, setPlacement] = useState<ScoreboardOverlay | null>(null)
   useEffect(() => {
     let active = true
@@ -125,9 +128,9 @@ export function TvPlayer({
         pending = false
       }
     }
-    void refresh()
+    refresh().catch(() => undefined)
     const timer = setInterval(() => {
-      void refresh()
+      refresh().catch(() => undefined)
     }, 5000)
     return () => {
       active = false
@@ -283,7 +286,7 @@ export function TvPlayer({
               : current.current.visible[0])
         ]
       if (
-        node !== null &&
+        node != null &&
         'requestTVFocus' in node &&
         typeof node.requestTVFocus === 'function'
       )
@@ -365,6 +368,10 @@ export function TvPlayer({
   }, [renderedSide])
   useEffect(() => {
     if (state.box !== 'closed') setRenderedBox(state.box)
+    if (state.box === 'compact') {
+      statsOffset.current = 0
+      statsScroll.current?.scrollTo({ y: 0, animated: false })
+    }
     const animation = Animated.timing(boxMotion, {
       toValue: state.box === 'closed' ? 0 : 1,
       duration: 220,
@@ -401,6 +408,22 @@ export function TvPlayer({
         return
       }
       if (held.box !== 'closed') {
+        if (direction === 'left' || direction === 'right') {
+          scoreOffset.current = Math.max(
+            0,
+            Math.min(
+              scoreExtent.current.content - scoreExtent.current.viewport,
+              scoreOffset.current +
+                ((direction === 'right' ? 1 : -1) *
+                  scoreExtent.current.viewport) /
+                  2
+            )
+          )
+          scoreScroll.current?.scrollTo({
+            x: scoreOffset.current,
+            animated: true
+          })
+        }
         if (direction === 'down' && held.box !== 'expanded')
           dispatch({ type: 'box' })
         else if (direction === 'down' || direction === 'up') {
@@ -563,10 +586,6 @@ export function TvPlayer({
       animation.stop()
     }
   }, [state.box, boxGrowth])
-  const wideScore =
-    line != null &&
-    Math.max(line.away.innings.length, line.home.innings.length) > 9
-  const ScoreScroll = wideScore ? TvTextScrollView : ScrollView
   const audio =
     (state.full !== null && clock.current.available(state.full)
       ? state.full
@@ -1012,7 +1031,19 @@ export function TvPlayer({
                   </Text>
                 ) : (
                   <>
-                    <ScoreScroll
+                    <ScrollView
+                      ref={scoreScroll}
+                      onContentSizeChange={width => {
+                        scoreExtent.current.content = width
+                      }}
+                      onLayout={event => {
+                        scoreExtent.current.viewport =
+                          event.nativeEvent.layout.width
+                      }}
+                      onScroll={event => {
+                        scoreOffset.current = event.nativeEvent.contentOffset.x
+                      }}
+                      scrollEventThrottle={16}
                       testID="tv-line-score"
                       horizontal
                       style={{ width: scoreWidth, alignSelf: 'center' }}
@@ -1063,7 +1094,7 @@ export function TvPlayer({
                           />
                         ))}
                       </View>
-                    </ScoreScroll>
+                    </ScrollView>
                   </>
                 )}
               </>
