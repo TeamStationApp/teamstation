@@ -2,7 +2,12 @@ import { expect } from 'chai'
 
 import { scheduleDate } from '../../../../src/app/screens/format'
 import { userIdOfGumbo } from '../../../../src/common/userId'
-import { defineE2e, type Scenario, type WebSession } from '../../../core/spec'
+import {
+  defineE2e,
+  type E2eContext,
+  type Scenario,
+  type WebSession
+} from '../../../core/spec'
 
 type Page = WebSession['page']
 let session: WebSession
@@ -289,19 +294,23 @@ async function thumb(page: Page): Promise<Thumb | undefined> {
 
 const scenarios: Record<string, Scenario> = {}
 
-function scenario(name: string, size: Size, run: () => Promise<void>): void {
+function scenario(
+  name: string,
+  size: Size,
+  run: (ctx: E2eContext) => Promise<void>
+): void {
   scenarios[`${name}-${size.name}`] = async ctx => {
     origin = ctx.stack.origin
     session = await ctx.browser(
       { width: size.width, height: size.height },
       { clock: '2026-10-04T12:00:00.000Z', timeZone: 'America/Los_Angeles' }
     )
-    await run()
+    await run(ctx)
   }
 }
 
 for (const size of SIZES) {
-  scenario('thumbnails', size, async function () {
+  scenario('thumbnails', size, async function (ctx) {
     listed = [GAME]
     const page = await open('/videos')
     const box = await until('the thumbnail', async () => {
@@ -318,9 +327,13 @@ for (const size of SIZES) {
         box.objectPosition.includes('50%')
     ).equals(true)
     expect(Math.abs(box.rowHeight - box.height)).lessThan(2)
+    await ctx.checkpoint('videos-list', {
+      expect: [{ text: 'Badgers' }],
+      golden: {}
+    })
   })
 
-  scenario('location-row', size, async function () {
+  scenario('location-row', size, async function (ctx) {
     listed = [
       {
         ...GAME,
@@ -351,7 +364,8 @@ for (const size of SIZES) {
           const row = document.querySelector(`[aria-label^="${name}"]`)
           if (row == null) return undefined
           const img = row.querySelector('img')
-          if (img?.parentElement == null) return undefined
+          if (img === null) return undefined
+          if (img.parentElement === null) return undefined
           const frame = img.parentElement.parentElement
           if (frame == null) return undefined
           const frameBox = frame.getBoundingClientRect()
@@ -389,9 +403,13 @@ for (const size of SIZES) {
     expect(boxes.placed.venueBottom ?? 0).lessThanOrEqual(
       boxes.placed.rowBottom + 1
     )
+    await ctx.checkpoint('videos-list', {
+      expect: [{ text: 'Poway National Little League' }, { text: 'Otters' }],
+      golden: {}
+    })
   })
 
-  scenario('result-pill', size, async function () {
+  scenario('result-pill', size, async function (ctx) {
     listed = [GAME]
     const page = await open('/videos')
     const pill = await until('the result pill', async () => {
@@ -480,6 +498,10 @@ for (const size of SIZES) {
       expect(pill.chevronOnFirst).equals(true)
       expect(pill.secondPastPill).equals(true)
     }
+    await ctx.checkpoint('videos-list', {
+      expect: [{ text: '4–0' }],
+      golden: {}
+    })
   })
 
   scenario('schedule-row', size, async function () {

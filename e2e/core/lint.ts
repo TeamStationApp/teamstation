@@ -12,6 +12,7 @@ const DEVICE_ID =
 const ZERO_ID = /^0{8}-/
 const EMPTY_CATCH = /catch\s*(?:\([^)]*\))?\s*\{\s*\}/
 const OPTIONAL = /\boptional:\s*true\b/
+const GOLDEN_THRESHOLD = /\bmaxDifferingPercent:\s*([\d.]+)/g
 const ASSERTION =
   /\bctx\.checkpoint\(|\bexpect\(|\bassert\b[.(]|\.assert[A-Z]\w*\(/
 
@@ -54,6 +55,19 @@ export function lintFile(file: string, text: string): LintProblem[] {
     !file.endsWith('/browserCdp.ts')
   ) {
     add('no-puppeteer', 'drive the UI through maestro-d')
+  }
+  for (const match of text.matchAll(GOLDEN_THRESHOLD)) {
+    const percent = Number(match[1])
+    const from = text.lastIndexOf('{', match.index)
+    const until = text.indexOf('}', match.index)
+    if (percent > 1) {
+      add(
+        'golden-threshold',
+        `${percent}% is above the 1% any golden may allow`
+      )
+    } else if (percent > 0.1 && !text.slice(from, until).includes('reason:')) {
+      add('golden-threshold', `${percent}% is above the default: give a reason`)
+    }
   }
   if (isTest(file) && !ASSERTION.test(text)) {
     add('needs-assertion', 'a test must check something')

@@ -1,9 +1,16 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 
+import {
+  acceptGolden,
+  type GoldenManifest,
+  requireStore,
+  rotateStore,
+  syncStore
+} from './goldens'
 import { buildManifest, readManifest, ROOT, writeManifest } from './manifest'
 import { type PlanResource, planScenarios } from './plan'
 import { prepareApp } from './prepare'
@@ -46,6 +53,10 @@ function targetFor(
   return undefined
 }
 
+function gitOutput(args: string[]): string {
+  return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' }).trim()
+}
+
 const OPTIONS = {
   category: { type: 'string' },
   surface: { type: 'string' },
@@ -65,6 +76,9 @@ const OPTIONS = {
   device: { type: 'string', multiple: true },
   package: { type: 'string' },
   'run-dir': { type: 'string' },
+  checkpoint: { type: 'string' },
+  'manifest-ref': { type: 'string' },
+  concurrent: { type: 'boolean' },
   retries: { type: 'string' },
   'budget-usd': { type: 'string' }
 } as const
@@ -112,7 +126,6 @@ export async function main(argv: string[]): Promise<number> {
     case 'select': {
       let changed = values.changed ?? []
       if (values.base != null) {
-        const { execFileSync } = await import('node:child_process')
         changed = execFileSync(
           'git',
           ['diff', '--name-only', `${values.base}...HEAD`],
@@ -244,7 +257,8 @@ export async function main(argv: string[]): Promise<number> {
           kind: 'isolated',
           origin: state.origin,
           webDir: state.webDir,
-          adopt: origin => origin
+          adopt: origin => origin,
+          serverErrors: async () => undefined
         }
       }
       const outcome = await runScenario({
@@ -255,6 +269,7 @@ export async function main(argv: string[]): Promise<number> {
         stack,
         runDir: values['run-dir'],
         retries: values.retries == null ? 0 : Number(values.retries),
+        concurrent: values.concurrent,
         budgetUsd:
           values['budget-usd'] == null
             ? settings.judgeBudgetUsd
@@ -263,6 +278,45 @@ export async function main(argv: string[]): Promise<number> {
       })
       print({ ...outcome.result, runDir: outcome.runDir })
       return outcome.exitCode
+    }
+
+    case 'golden': {
+      if (subcommand === 'accept') {
+        const runDir = positionals[2]
+        if (runDir == null || values.checkpoint == null) {
+          throw new Error('golden accept wants <run-dir> --checkpoint <id>')
+        }
+        print(
+          acceptGolden({
+            root: ROOT,
+            store: settings.goldenStore,
+            runDir,
+            checkpoint: values.checkpoint,
+            headRef: gitOutput(['rev-parse', '--short', 'HEAD'])
+          })
+        )
+        return 0
+      }
+      if (subcommand === 'sync') {
+        print({ refs: syncStore(requireStore(settings.goldenStore)) })
+        return 0
+      }
+      if (subcommand === 'rotate') {
+        const ref = values['manifest-ref'] ?? 'origin/master'
+        const keep = JSON.parse(
+          gitOutput(['show', `${ref}:e2e/goldens/manifest.json`])
+        ) as GoldenManifest
+        const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+        print(
+          rotateStore({
+            store: requireStore(settings.goldenStore),
+            keep,
+            date
+          })
+        )
+        return 0
+      }
+      throw new Error('golden wants accept, sync or rotate')
     }
 
     default:

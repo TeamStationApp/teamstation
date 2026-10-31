@@ -1,0 +1,44 @@
+{
+  "goldens": {
+    "app-shell/lists/list-screens#location-row-desktop/videos-list/web-chromium@chromium-1440x900-128": {
+      "sha256": "fbd20f3d283af2ec6c6aef248564b960c5b64d0a997cf1522ad4f9c3ecd1aa88",
+      "size": 29021,
+      "masks": []
+    },
+    "app-shell/lists/list-screens#location-row-phone/videos-list/web-chromium@chromium-393x852-128": {
+      "sha256": "753233b003ce99a27f11b3945513155ec1744c1a2b8f4f0e625808ad05c16db4",
+      "size": 33496,
+      "masks": []
+    },
+    "app-shell/lists/list-screens#result-pill-desktop/videos-list/web-chromium@chromium-1440x900-128": {
+      "sha256": "f6b256b5085a4b3a1f4f1743069360107bb822845d7dec33ddfcb5031eb7fc3d",
+      "size": 25364,
+      "masks": []
+    },
+    "app-shell/lists/list-screens#result-pill-phone/videos-list/web-chromium@chromium-393x852-128": {
+      "sha256": "e00be343458fe558c94996301bc7205ccadd897d112ea3cb0d62827a2c863dc5",
+      "size": 23660,
+      "masks": []
+    },
+    "app-shell/lists/list-screens#thumbnails-desktop/videos-list/web-chromium@chromium-1440x900-128": {
+      "sha256": "f6b256b5085a4b3a1f4f1743069360107bb822845d7dec33ddfcb5031eb7fc3d",
+      "size": 25364,
+      "masks": []
+    },
+    "app-shell/lists/list-screens#thumbnails-phone/videos-list/web-chromium@chromium-393x852-128": {
+      "sha256": "e00be343458fe558c94996301bc7205ccadd897d112ea3cb0d62827a2c863dc5",
+      "size": 23660,
+      "masks": []
+    },
+    "schedule/rsvp/eligibility#roster-removal/rsvp-after-removal/web-safari-ios@ios-simulator-402x874-27": {
+      "sha256": "7ec34a848765cb42f0d550bda625368335e716c32d823059a8dc4cd3a24a4fee",
+      "size": 217717,
+      "masks": []
+    },
+    "schedule/rsvp/eligibility#roster-removal/rsvp-list/web-safari-ios@ios-simulator-402x874-27": {
+      "sha256": "6211aa37eac14489b6e8d10afc2b3b964d4915f87546fd1ce0cb32cce33ed71f",
+      "size": 230366,
+      "masks": []
+    }
+  }
+}

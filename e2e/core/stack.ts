@@ -245,6 +245,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
     }
 
     let origin = front.url
+    let adoptedAny = false
     return {
       id,
       dir,
@@ -255,8 +256,11 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       webDir,
       adopt: adopted => {
         origin = adopted
+        adoptedAny = true
         return adopted
       },
+      serverErrors: async since =>
+        adoptedAny ? undefined : front.errors.filter(row => row.at >= since),
       stop
     }
   } catch (error) {

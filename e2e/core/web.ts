@@ -7,6 +7,7 @@ import {
   connectToMaestroChromium,
   type Emulation
 } from './browserCdp'
+import { browserClassOf } from './goldens'
 import { attachDevice, connectDaemon } from './maestro'
 import type { LocalSettings } from './settings'
 import type { WebSession } from './spec'
@@ -43,6 +44,7 @@ export async function openWebSession(
   return {
     m,
     page,
+    deviceClass: browserClassOf(await browser.version(), size),
     close: async () => {
       await browser.disconnect()
       await m.detach()

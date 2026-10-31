@@ -1,4 +1,6 @@
 import type { BrowserPage, Emulation } from './browserCdp'
+import type { CheckpointSpec } from './checkpoint'
+import type { ServerError } from './invariants'
 
 /** The contract every end-to-end and integration test declares. */
 export const SURFACES = [
@@ -55,6 +57,20 @@ export interface E2eContext {
     size: { width: number; height: number },
     emulation?: Emulation
   ) => Promise<WebSession>
+  /** Attaches the device in `role` through maestro-d, for the run to detach. */
+  attach: (role: string, options: Record<string, unknown>) => Promise<any>
+  /** Lets checkpoints look at a device a rig attached for itself. */
+  watch: (device: any, info: WatchedDevice) => void
+  /**
+   * States what must be true of the screen. Looks at the device attached or opened
+   * last, or at `on`.
+   */
+  checkpoint: (id: string, spec: CheckpointSpec, on?: any) => Promise<void>
+}
+
+export interface WatchedDevice {
+  deviceClass: string
+  appId?: string
 }
 
 /** Where a scenario's server is, whichever kind that is. */
@@ -64,12 +80,15 @@ export interface StackHandle {
   webDir: string | undefined
   /** Registers a server the scenario started, so the stack's tools reach it. */
   adopt: (origin: string) => string
+  /** The API's 5xx since a time, or undefined when nothing can see them. */
+  serverErrors: (since: number) => Promise<ServerError[] | undefined>
 }
 
 export interface WebSession {
   m: any
   /** For reading what maestro-d cannot, never for acting on the UI. */
   page: BrowserPage
+  deviceClass: string
   close: () => Promise<void>
 }
 
