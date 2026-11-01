@@ -17,6 +17,8 @@ declare module '@mason/types' {
     scheme: string
     configuration?: string
     buildNumber?: string
+    /** Added to xcodebuild's environment, which the project's build scripts see. */
+    env?: Record<string, string>
   }
   export interface ArchiveResult {
     archive: string
@@ -31,6 +33,14 @@ declare module '@mason/types' {
     artifacts: {
       save: (name: string, paths: string | string[]) => Promise<void>
     }
+    fs: {
+      glob: (patterns: string | string[]) => Promise<string[]>
+    }
+    publish: (options: {
+      app: string
+      platform: string
+      path: string
+    }) => Promise<void>
     apple: {
       archive: (options: ArchiveOptions) => Promise<ArchiveResult>
     }
@@ -60,7 +70,8 @@ declare module '@mason/types' {
     ) => void
     parallel: (
       name: string,
-      members: Record<string, StageOptions | StageOptions[]>
+      members: Record<string, StageOptions | StageOptions[]>,
+      options?: { failFast?: boolean }
     ) => unknown
   }
 }
