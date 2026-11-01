@@ -29,13 +29,15 @@ describe('patchExpoModulesJsi', () => {
     return file
   }
 
-  it('turns explicit modules off and drops the quiet flag', () => {
+  it('turns explicit modules off and keeps the xcodebuild command intact', () => {
     const file = copy(fixture)
     execFileSync(process.execPath, [script, file])
     const patched = readFileSync(file, 'utf8')
-    assert.equal(patched.includes('-quiet'), false)
-    assert.match(patched, /^ {4}SWIFT_ENABLE_EXPLICIT_MODULES=NO \\$/m)
-    assert.match(patched, /CLANG_COVERAGE_MAPPING=NO \\/)
+    assert.match(patched, /^ + -quiet \\$/m)
+    assert.match(
+      patched,
+      /^ {4}CLANG_COVERAGE_MAPPING=NO \\\n {4}SWIFT_ENABLE_EXPLICIT_MODULES=NO \\$/m
+    )
     execFileSync(process.execPath, [script, file])
     assert.equal(readFileSync(file, 'utf8'), patched)
   })
@@ -60,8 +62,14 @@ describe('patchExpoModulesJsi', () => {
     const file = copy(readFileSync(installed, 'utf8'))
     execFileSync(process.execPath, [script, file])
     const patched = readFileSync(file, 'utf8')
-    assert.equal(patched.includes('\n    -quiet \\\n'), false)
-    assert.match(patched, /^ {4}SWIFT_ENABLE_EXPLICIT_MODULES=NO \\$/m)
-    assert.match(patched, /env -i /)
+    assert.match(
+      patched,
+      /\n {4}-quiet \\\n {4}-disableAutomaticPackageResolution \\\n/
+    )
+    assert.match(
+      patched,
+      /\n {4}CLANG_COVERAGE_MAPPING=NO \\\n {4}SWIFT_ENABLE_EXPLICIT_MODULES=NO \\\n/
+    )
+    execFileSync('bash', ['-n', file])
   })
 })
