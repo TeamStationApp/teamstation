@@ -318,6 +318,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 - (UIView *)view;
 @end
 @interface TVGradientView : UIView
+@property(nonatomic, strong) CAGradientLayer *gradient;
 @property(nonatomic, copy) NSString *direction;
 @property(nonatomic) CGFloat maxOpacity;
 @end
@@ -335,7 +336,8 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 - (void)testGradientTracksPanelBounds {
   TVGradientView *view = (TVGradientView *)[[NSClassFromString(@"TVGradientManager") new] view];
   view.frame = CGRectMake(0,0,1920,216); view.direction = @"bottom"; view.maxOpacity = 0.1;
-  CAGradientLayer *layer = (CAGradientLayer *)view.layer;
+  [view layoutSubviews];
+  CAGradientLayer *layer = view.gradient;
   XCTAssertEqualObjects(layer.locations,(@[@0,@1]));
   XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[0]),0.1,0.001);
   XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[1]),0,0.001);
@@ -344,9 +346,25 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
   view.maxOpacity = -1; XCTAssertEqual(view.maxOpacity,0);
   view.maxOpacity = 2; XCTAssertEqual(view.maxOpacity,1);
   XCTAssertTrue(CGPointEqualToPoint(layer.startPoint,CGPointMake(0,1)));
-  view.frame = CGRectMake(0,0,1920,356); XCTAssertEqual(layer.bounds.size.height,356);
+  view.frame = CGRectMake(0,0,1920,356); [view layoutSubviews]; XCTAssertEqual(layer.bounds.size.height,356);
   view.direction = @"right"; XCTAssertEqual(layer.startPoint.x,1); XCTAssertEqual(layer.endPoint.x,0);
   view.direction = @"left"; XCTAssertEqual(layer.startPoint.x,0); XCTAssertEqual(layer.endPoint.x,1);
+}
+- (void)testBottomGradientCompositesAnEvenTransparentRamp {
+  TVGradientView *view = (TVGradientView *)[[NSClassFromString(@"TVGradientManager") new] view];
+  view.frame = CGRectMake(0,0,4,100); view.direction = @"bottom";
+  for (NSNumber *opacity in @[@0.1, @0.15]) {
+    view.maxOpacity = opacity.doubleValue; [view layoutSubviews];
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(NULL,4,100,8,16,space,kCGImageAlphaPremultipliedLast);
+    [view.layer renderInContext:context];
+    unsigned char *pixels = CGBitmapContextGetData(context);
+    int first = pixels[3], middle = pixels[50*16+3], last = pixels[99*16+3];
+    XCTAssertLessThanOrEqual(MIN(first,last),2);
+    XCTAssertEqualWithAccuracy(MAX(first,last),opacity.doubleValue*255,2);
+    XCTAssertEqualWithAccuracy(middle,opacity.doubleValue*255/2,2);
+    CGContextRelease(context); CGColorSpaceRelease(space);
+  }
 }
 - (void)testPreviewChildrenShareLiftAndReturnToRest {
   UIView *parent = [[UIView alloc] initWithFrame:CGRectMake(0,0,400,240)];

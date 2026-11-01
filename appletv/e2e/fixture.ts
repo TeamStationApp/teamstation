@@ -13,7 +13,6 @@ import path from 'node:path'
 
 import { Router } from 'express'
 
-import { asLineScoreTimeline } from '../../src/common/api'
 import { asPostEventsBody } from '../../src/common/gumboPlay'
 import { makeId } from '../../src/common/ids'
 import { ScoringSession } from '../../src/common/scoring/session'
@@ -24,6 +23,7 @@ import { verifyMediaPath } from '../../src/server/media/mediaTokens'
 import { eventListRoutes } from '../../src/server/routes/eventList'
 import { eventRoutes } from '../../src/server/routes/events'
 import { followRoutes } from '../../src/server/routes/follows'
+import { lineupRoutes } from '../../src/server/routes/lineups'
 import { mediaRoutes } from '../../src/server/routes/media'
 import { nodeAdministrationRoutes } from '../../src/server/routes/nodeAdministration'
 import { scoreboardRoutes } from '../../src/server/routes/scoreboard'
@@ -47,7 +47,6 @@ export async function tvFixture(
   options: {
     scored?: boolean
     webRoot?: string
-    wideStats?: boolean
     statsInnings?: number
   } = {}
 ): Promise<
@@ -92,40 +91,6 @@ export async function tvFixture(
         }
         next()
       })
-      if (options.wideStats === true)
-        app.use('/api/v1/games/gam_tv_0/line-score', (_req, res, next) => {
-          const send = res.json.bind(res)
-          res.json = body => {
-            const timeline = asLineScoreTimeline(body)
-            return send({
-              ...timeline,
-              teams: {
-                away: 'Demo Mountain Valley Visitors',
-                home: 'Demo Coastal Valley Hawks'
-              },
-              steps: timeline.steps.map(step => ({
-                ...step,
-                line: {
-                  away: {
-                    ...step.line.away,
-                    innings: Array.from(
-                      { length: options.statsInnings ?? 25 },
-                      (_, i) => (i === 24 ? 7 : 0)
-                    )
-                  },
-                  home: {
-                    ...step.line.home,
-                    innings: Array.from(
-                      { length: options.statsInnings ?? 25 },
-                      (_, i) => (i === 24 ? 8 : 0)
-                    )
-                  }
-                }
-              }))
-            })
-          }
-          next()
-        })
       media = fixture.media
       media.mediaRoot = directory
       app.get('/api/v1/videos/:videoId/stills/:filename', (_req, res) => {
@@ -164,6 +129,18 @@ export async function tvFixture(
       app.use('/api/v1', userRoutes(db, media.space))
       app.use('/api/v1', followRoutes(db, media))
       app.use('/api/v1', eventRoutes(db))
+      app.use('/api/v1', lineupRoutes(db))
+      if (options.webRoot !== undefined)
+        app.get('/api/v1/health', (_req, res) => {
+          res.json({
+            status: 'ok',
+            version: 'fixture',
+            database: 'ok',
+            migrations: 0,
+            narration: false,
+            replayPitchSec: 1
+          })
+        })
       const noStore = new Proxy(
         {},
         {
@@ -330,6 +307,28 @@ export async function tvFixture(
         .set({ status: 'inProgress' })
         .where('id', '=', 'gam_tv_0')
         .execute()
+      const names = {
+        away:
+          options.statsInnings === undefined
+            ? 'Demo Visitors'
+            : 'Demo Mountain Valley Visitors',
+        home:
+          options.statsInnings === undefined
+            ? 'Demo Hawks'
+            : 'Demo Coastal Valley Hawks'
+      }
+      if (options.statsInnings !== undefined) {
+        await h.db
+          .updateTable('teams')
+          .set({ name: names.away })
+          .where('id', '=', 'tem_opponent')
+          .execute()
+        await h.db
+          .updateTable('teams')
+          .set({ name: names.home })
+          .where('id', '=', 'tem_account')
+          .execute()
+      }
       const store = new MemoryStore()
       const setup = replaySetup()
       for (const player of Object.values(setup.players))
@@ -342,8 +341,8 @@ export async function tvFixture(
         {
           gamePk: 'gam_tv_0',
           teams: {
-            home: { id: 'tem_account', name: 'Demo Hawks' },
-            away: { id: 'tem_opponent', name: 'Demo Visitors' }
+            home: { id: 'tem_account', name: names.home },
+            away: { id: 'tem_opponent', name: names.away }
           },
           setup
         },
@@ -353,8 +352,21 @@ export async function tvFixture(
           clearTimer: () => undefined
         }
       )
-      for (const action of replayActions(setup)) {
+      for (const action of replayActions(setup).filter(
+        action =>
+          options.statsInnings === undefined ||
+          action.type !== 'gameFlow' ||
+          action.kind !== 'endGame'
+      )) {
         const applied = session.apply(action)
+        if (applied.problems.length > 0)
+          throw new Error(applied.problems[0].message)
+      }
+      while (
+        session.state.liveData.linescore.currentInning <
+        (options.statsInnings ?? 1)
+      ) {
+        const applied = session.apply({ type: 'gameFlow', kind: 'endHalf' })
         if (applied.problems.length > 0)
           throw new Error(applied.problems[0].message)
       }
