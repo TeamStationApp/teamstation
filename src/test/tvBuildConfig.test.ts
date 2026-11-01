@@ -1,10 +1,47 @@
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { runInNewContext } from 'node:vm'
 
 import { expect } from 'chai'
+import { transformSync } from 'esbuild'
 import { describe, it } from 'mocha'
 const requireConfig = createRequire(path.resolve('appletv/package.json'))
 describe('TV build configuration', () => {
+  it('keeps development overlays off the TV without disabling app registration', () => {
+    const code = transformSync(readFileSync('appletv/index.js', 'utf8'), {
+      loader: 'js',
+      format: 'cjs'
+    }).code
+    for (const dev of [true, false]) {
+      const calls: string[] = []
+      const loading = {
+        hide: () => calls.push('hide'),
+        showMessage: () => calls.push('banner')
+      }
+      runInNewContext(code, {
+        __DEV__: dev,
+        require: (name: string) => {
+          if (name === 'react-native')
+            return {
+              AppRegistry: {
+                registerComponent: (name: string) => calls.push(name)
+              },
+              LogBox: { ignoreAllLogs: () => calls.push('warnings') }
+            }
+          if (name.endsWith('DevLoadingView')) return { default: loading }
+          return { TvApp: () => null }
+        }
+      })
+      loading.showMessage()
+      expect(calls).deep.equals(
+        dev
+          ? ['warnings', 'hide', 'TeamStationTV']
+          : ['TeamStationTV', 'banner']
+      )
+    }
+  })
+
   it('isolates the native runtime while preserving nested dependencies', () => {
     const config = requireConfig('./metro.config.js')
     const origin = path.resolve('src/app/tv/TvApp.tsx')
