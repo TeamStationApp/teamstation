@@ -101,7 +101,19 @@ const client = {
 const pause = async (): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, 20))
 }
+const mediaPrototype = window.HTMLMediaElement.prototype
+// Preserve the original methods for restoration, never invoke them unbound.
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const originalPlay = mediaPrototype.play
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const originalPause = mediaPrototype.pause
 async function render(): Promise<void> {
+  mediaPrototype.play = async function () {
+    Object.defineProperty(this, 'paused', { value: false, configurable: true })
+  }
+  mediaPrototype.pause = function () {
+    Object.defineProperty(this, 'paused', { value: true, configurable: true })
+  }
   BackHandler.addEventListener = (_event, handler) => {
     remoteBack = () =>
       handler({ type: 'hardwareBackPress', timeStamp: Date.now() })
@@ -128,9 +140,46 @@ async function render(): Promise<void> {
   })
 }
 async function press(label: string): Promise<void> {
-  if (label === 'Close panel') {
+  if (['Close panel', 'Back to cameras', 'Back to games'].includes(label)) {
     await act(async () => {
       remoteBack?.()
+      await pause()
+    })
+    return
+  }
+  const direction = {
+    Highlights: 'swipeRight',
+    Cameras: 'swipeLeft',
+    'Box score': 'swipeDown',
+    Pause: 'playPause',
+    Play: 'playPause',
+    '−10 seconds': 'left',
+    '+10 seconds': 'right'
+  }[label]
+  if (direction !== undefined) {
+    const index =
+      label === 'Highlights'
+        ? Math.min(count - 1, 1)
+        : label === 'Box score'
+          ? count - 1
+          : 0
+    if (direction.startsWith('swipe')) {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 2100))
+      })
+    }
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(`[data-testid="tv-angle-${index}"]`)
+        ?.blur()
+      document
+        .querySelector<HTMLElement>(`[data-testid="tv-angle-${index}"]`)
+        ?.focus()
+      await pause()
+    })
+    await act(async () => {
+      emitTvDirection(direction)
+      if (direction.startsWith('swipe')) emitTvDirection(direction)
       await pause()
     })
     return
@@ -146,6 +195,8 @@ afterEach(async () => {
   await act(async () => {
     root?.unmount()
   })
+  mediaPrototype.play = originalPlay
+  mediaPrototype.pause = originalPause
   document.body.innerHTML = ''
   BackHandler.addEventListener = originalBack
   root = undefined
@@ -243,7 +294,7 @@ describe('TV game playback entry', () => {
         expect(
           document.querySelector('[data-testid="tv-highlights-panel"]')
         ).equals(null)
-        expect(document.querySelector('[aria-label="Pause"]')).not.equals(null)
+        expect(document.querySelector('video')!.paused).equals(false)
       } else {
         expect(
           document.querySelector('[data-testid="tv-highlights-panel"]')
@@ -437,25 +488,30 @@ describe('TV game playback entry', () => {
     expect(videos.every(v => paused.get(v) === false)).equals(true)
     expect(videos.map(v => v.playbackRate)).deep.equals([1, 1, 1, 1])
   })
-  it('leaves control-button directions to focus navigation', async () => {
+  it('has no transport buttons and keeps Up navigation on the video', async () => {
     await render()
     await press('Close panel')
-    const videos = [...document.querySelectorAll('video')]
+    for (const label of [
+      'Back to games',
+      'Cameras',
+      'Highlights',
+      'Box score',
+      'Pause',
+      '−10 seconds',
+      '+10 seconds'
+    ]) {
+      expect(document.querySelector(`[aria-label="${label}"]`)).equals(null)
+    }
     await act(async () => {
       document.querySelector<HTMLElement>('[data-testid="tv-angle-0"]')!.focus()
       emitTvDirection('up')
-      await pause()
-      document
-        .querySelector<HTMLElement>('[aria-label="Back to games"]')!
-        .focus()
-      await pause()
-      emitTvDirection('right')
-      emitTvDirection('longUp', 0)
+      emitTvDirection('swipeUp')
       await pause()
     })
-    expect(document.querySelector('[data-testid="tv-scrubber"]')).equals(null)
-    expect(videos.map(v => v.currentTime)).deep.equals([0, 0, 0, 0])
-    expect(videos.map(v => v.playbackRate)).deep.equals([1, 1, 1, 1])
+    await press('+10 seconds')
+    expect(document.querySelector('[data-testid="tv-scrubber"]')).not.equals(
+      null
+    )
   })
   it('opens panels only after boundary moves, dismisses inward and expands then scrolls stats', async () => {
     await render()
@@ -544,9 +600,6 @@ describe('TV game playback entry', () => {
     })
     restored = 0
     await act(async () => {
-      document
-        .querySelector<HTMLElement>('[aria-label="Back to cameras"]')!
-        .focus()
       remoteBack?.()
       await pause()
     })
@@ -647,6 +700,18 @@ describe('TV game playback entry', () => {
     )!
     expect(clip.textContent).contains('Home run')
     expect(clip.style.flexDirection).not.equals('row')
+    expect(clip.style.borderWidth).equals('')
+    const frame = clip.querySelector<HTMLElement>(
+      '[data-testid="tv-highlight-frame-0"]'
+    )!
+    expect(getComputedStyle(frame).borderTopWidth).equals('3px')
+    expect(frame.textContent).equals('')
+    await act(async () => {
+      clip.focus()
+      await pause()
+    })
+    expect(getComputedStyle(frame).borderTopColor).equals('rgb(255, 255, 255)')
+    expect(clip.style.borderWidth).equals('')
     const thumbnail = clip.querySelector<HTMLElement>(
       '[data-testid="tv-highlight-thumbnail-0"]'
     )!
@@ -715,7 +780,8 @@ describe('TV game playback entry', () => {
     })
     await press('Close panel')
     await press('−10 seconds')
-    expect(videos.map(video => video.currentTime)).deep.equals([30, 30, 30, 30])
+    // Live streams without a finite recording extent cannot use recorded seeking.
+    expect(videos.map(video => video.currentTime)).deep.equals([40, 40, 40, 40])
   })
   it('continues the game and transfers audio when the first recording ends', async () => {
     count = 2
@@ -738,7 +804,7 @@ describe('TV game playback entry', () => {
       videos[0].dispatchEvent(new window.Event('ended', { bubbles: true }))
       await pause()
     })
-    expect(document.querySelector('[aria-label="Pause"]')).not.equals(null)
+    expect(document.querySelector('video')!.paused).equals(false)
     expect(videos[0].muted).equals(true)
     expect(videos[1].muted).equals(false)
     await press('+10 seconds')
