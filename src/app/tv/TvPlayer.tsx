@@ -928,7 +928,12 @@ export function TvPlayer({
         ]}
       >
         {renderedSide === 'highlights' && (
-          <PanelGradient direction="right" maxOpacity={0.5} />
+          <View
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, { left: -screen.width * 0.1 }]}
+          >
+            <PanelGradient direction="right" maxOpacity={0.6} />
+          </View>
         )}
         <TvFocusGuide
           autoFocus
