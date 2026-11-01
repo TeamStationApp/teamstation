@@ -32,10 +32,11 @@ import type {
 import type { ScoreboardOverlay } from '../../common/nodeSettings'
 import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
+import { angleLabels } from '../player/multiCam/takes'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
-import { PlaybackBoundary, TvBlur } from './NativePresentation'
+import { NativeGradient, PlaybackBoundary, TvBlur } from './NativePresentation'
 import { NativeSeekQueue } from './nativeSeekQueue'
 import { PlaybackClock } from './playbackClock'
 import {
@@ -58,6 +59,7 @@ import { TvButton } from './TvButton'
 import { angleNeighbor, tvLayout } from './tvLayout'
 
 interface Angle {
+  name: string
   video: VideoSummary
   uri: string
   timeline: WallTimeline
@@ -262,6 +264,9 @@ export function TvPlayer({
         .slice(0, 4)
       if (videos.length === 0)
         throw new Error('No camera angles are available for this game.')
+      const names = new Map(
+        angleLabels(game.videos).map(label => [label.id, label.name])
+      )
       const results = await Promise.allSettled(
         videos.map(async video => {
           const [playback, timeline] = await Promise.all([
@@ -274,7 +279,12 @@ export function TvPlayer({
             throw new Error(
               'This game is still preparing its video. Please try again.'
             )
-          return { video, uri: playback.url, timeline }
+          return {
+            video,
+            name: names.get(video.id) ?? video.title,
+            uri: playback.url,
+            timeline
+          }
         })
       )
       const loaded = results.flatMap(result =>
@@ -753,7 +763,7 @@ export function TvPlayer({
                 }}
                 testID={`tv-angle-${index}`}
                 accessibilityRole="button"
-                accessibilityLabel={`Camera ${angle.video.title}`}
+                accessibilityLabel={`Camera ${angle.name}`}
                 accessibilityValue={{
                   text: `${clock.current.ports[index]?.position.toFixed(1)} seconds`
                 }}
@@ -846,7 +856,7 @@ export function TvPlayer({
                 {(!available || failures.includes(index)) && (
                   <View style={styles.unavailable}>
                     <Text style={styles.copy}>
-                      {angle.video.title}: video unavailable at this moment
+                      {angle.name}: video unavailable at this moment
                     </Text>
                   </View>
                 )}
@@ -935,7 +945,7 @@ export function TvPlayer({
                 testID={`tv-toggle-${index}`}
                 accessibilityRole="checkbox"
                 accessibilityState={{ checked: state.visible.includes(index) }}
-                accessibilityLabel={`Toggle ${angle.video.title}`}
+                accessibilityLabel={`Toggle ${angle.name}`}
                 {...{
                   hasTVPreferredFocus:
                     state.side === 'cameras' &&
@@ -985,7 +995,7 @@ export function TvPlayer({
                     ]}
                   >
                     {state.visible.includes(index) ? '✓ ' : ''}
-                    {angle.video.title}
+                    {angle.name}
                   </Text>
                 </>
               </Pressable>
@@ -1351,28 +1361,31 @@ function PanelGradient({
   direction: 'left' | 'right' | 'bottom'
 }): React.ReactElement {
   const id = useId().replace(/[^A-Za-z0-9]/g, '')
-  const [size, setSize] = useState({ width: 0, height: 0 })
+  if (NativeGradient !== null)
+    return (
+      <NativeGradient
+        testID="tv-panel-gradient"
+        collapsable={false}
+        gradientDirection={direction}
+        maxOpacity={maxOpacity}
+        pointerEvents="none"
+        style={StyleSheet.absoluteFill}
+      />
+    )
   return (
     <View
+      collapsable={false}
       pointerEvents="none"
       style={StyleSheet.absoluteFill}
-      onLayout={event => {
-        const { width, height } = event.nativeEvent.layout
-        setSize({ width, height })
-      }}
     >
-      <Svg
-        key={`${size.width}:${size.height}`}
-        width={size.width}
-        height={size.height}
-      >
+      <Svg width="100%" height="100%">
         <Defs>
           <LinearGradient
             id={id}
-            x1={direction === 'right' ? '1' : '0'}
-            y1={direction === 'bottom' ? '1' : '0'}
-            x2={direction === 'left' ? '1' : '0'}
-            y2="0"
+            x1={direction === 'right' ? '100%' : '0%'}
+            y1={direction === 'bottom' ? '100%' : '0%'}
+            x2={direction === 'left' ? '100%' : '0%'}
+            y2="0%"
           >
             <Stop offset="0" stopColor="#000" stopOpacity={maxOpacity} />
             <Stop offset="1" stopColor="#000" stopOpacity={0} />
