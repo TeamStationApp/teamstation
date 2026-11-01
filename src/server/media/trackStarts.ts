@@ -244,6 +244,9 @@ export async function checkTrackStarts(
   const dir = dirname(playlistPath)
   const map = /#EXT-X-MAP:.*URI="([^"]+)"/.exec(playlist)?.[1]
   if (map == null) return undefined
+  // The tracks are that init segment's, so only the segments under it can be
+  // read by them: a later map's may number its tracks another way.
+  const [firstRun] = /#EXT-X-MAP:[^]*?(?=#EXT-X-MAP:|$)/.exec(playlist) ?? ['']
   const moov = await firstBox(join(dir, map), 'moov')
   if (moov == null) return undefined
   const tracks = readTracks(moov)
@@ -251,7 +254,7 @@ export async function checkTrackStarts(
   // read once, start to finish.
   const segments = [
     ...new Set(
-      playlist
+      firstRun
         .split('\n')
         .map(line => line.trim())
         .filter(line => line !== '' && !line.startsWith('#'))

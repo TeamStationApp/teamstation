@@ -1476,7 +1476,7 @@ describe('a live playlist through a reconnect', function () {
     rmSync(path, { force: true })
     writeFileSync(
       ffmpegPath,
-      `#!/bin/sh\nprintf '%s\\n' "$@" > ${argsFile}\necho spawn >> ${path}\nexec sleep 30\n`
+      `#!/bin/sh\necho spawn >> ${path}\nprintf '%s\\n' "$@" > ${argsFile}\nexec sleep 30\n`
     )
     chmodSync(ffmpegPath, 0o755)
   }
@@ -1525,7 +1525,7 @@ describe('a live playlist through a reconnect', function () {
     // arrives. The shell stays, so the stop cannot be mistaken for an exit.
     writeFileSync(
       ffmpegPath,
-      `#!/bin/sh\necho $$ >> ${pids}\nprintf '%s\\n' "$@" > ${argsFile}\necho spawn >> ${spawns}\ntrap 'true' TERM\nwhile true; do sleep 30; done\n`
+      `#!/bin/sh\necho $$ >> ${pids}\necho spawn >> ${spawns}\nprintf '%s\\n' "$@" > ${argsFile}\ntrap 'true' TERM\nwhile true; do sleep 30; done\n`
     )
     chmodSync(ffmpegPath, 0o755)
     setLive(KEY, spec())
