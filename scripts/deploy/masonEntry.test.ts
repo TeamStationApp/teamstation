@@ -332,8 +332,13 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.deepEqual(android[1]?.publishes, ['app.teamstation.app'])
     const commands: string[] = []
     const ctx = {
-      async sh(command: string) {
+      async sh(
+        command: string,
+        options?: { env?: { MASON_BUILD_NUMBER?: string } }
+      ) {
         commands.push(command)
+        if (options?.env?.MASON_BUILD_NUMBER != null)
+          commands.push(`build-number:${options.env.MASON_BUILD_NUMBER}`)
         return { code: 0, stdout: '', stderr: '' }
       },
       getBuildNumber(key: string) {
@@ -393,7 +398,13 @@ describe('TeamStation pipeline Masonfile', () => {
     )
     assert.equal(log.includes('CODE_SIGNING_ALLOWED'), false)
     assert.match(log, /cargo install cargo-ndk/)
-    assert.match(log, /assembleRelease -PversionCode=26103101/)
+    assert.match(log, /MASON_BUILD_NUMBER/)
+    assert.match(log, /build-number:26103101/)
+    assert.match(
+      log,
+      /--init-script mason-version\.gradle :app:assembleRelease/
+    )
+    assert.equal(log.includes('-PversionCode'), false)
     assert.match(log, /stash:android-release/)
     assert.match(log, /unstash:android-release/)
     assert.match(log, /teamstation-sign-release-apk/)
