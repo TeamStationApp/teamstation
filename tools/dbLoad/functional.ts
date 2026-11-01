@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 
-import type { CDPSession, Page } from 'puppeteer'
+import type { CDPSession, Dialog, Page } from 'puppeteer'
 import puppeteer, { type Browser } from 'puppeteer'
 
 import { requireServerHost } from './actors'
@@ -983,13 +983,36 @@ const pressable = new Function(
 const POLL_MS = 200
 
 /** A real browser's tab, signed in through the screen a person uses. */
+/**
+ * Confirms leaving a screen that warns of unsaved work, as a person would.
+ * Until a warning is answered the navigation waits, and fails as a timeout that
+ * looks like a slow page. Any other dialog stays unanswered, so it is noticed.
+ */
+export async function answerLeaving(
+  dialog: Pick<Dialog, 'type' | 'accept'>,
+  label: string,
+  where: string,
+  note: (line: string) => void
+): Promise<void> {
+  if (dialog.type() !== 'beforeunload') return
+  note(`NOTE ${label} left ${where} while it warned of unsaved work`)
+  await dialog.accept()
+}
+
+/** A failed navigation, naming the tab and the address it could not open. */
+export function openFailure(label: string, url: string, error: Error): Error {
+  return new Error(`${label} could not open ${url}: ${error.message}`)
+}
+
 class BrowserSurface implements Surface {
   private readonly seen: unknown[] = []
 
   constructor(
     private readonly page: Page,
     private readonly server: string,
-    private readonly patienceMs: number
+    private readonly patienceMs: number,
+    private readonly label: string,
+    private readonly note: (line: string) => void
   ) {}
 
   /** A wait that says, when it fails, what it wanted and what it saw instead. */
@@ -1006,6 +1029,12 @@ class BrowserSurface implements Surface {
   }
 
   async listen(): Promise<void> {
+    this.page.on('dialog', dialog => {
+      const { pathname } = new URL(this.page.url())
+      answerLeaving(dialog, this.label, pathname, this.note).catch(
+        () => undefined
+      )
+    })
     const session: CDPSession = await this.page.createCDPSession()
     await session.send('Network.enable')
     session.on('Network.webSocketFrameReceived', event => {
@@ -1018,9 +1047,12 @@ class BrowserSurface implements Surface {
   }
 
   async open(path: string): Promise<void> {
-    await this.page.goto(`${this.server}${path}`, {
-      waitUntil: 'domcontentloaded'
-    })
+    const url = `${this.server}${path}`
+    try {
+      await this.page.goto(url, { waitUntil: 'domcontentloaded' })
+    } catch (error) {
+      throw openFailure(this.label, url, error as Error)
+    }
   }
 
   async press(label: string): Promise<void> {
@@ -1151,7 +1183,10 @@ class BrowserSurface implements Surface {
 export class BrowserDriver implements Driver {
   private readonly browsers: Browser[] = []
 
-  constructor(private readonly patienceMs: number) {}
+  constructor(
+    private readonly patienceMs: number,
+    private readonly note: (line: string) => void = () => undefined
+  ) {}
 
   async signIn(account: BrowserAccount, server: string): Promise<Surface> {
     const browser = await puppeteer.launch({
@@ -1169,7 +1204,13 @@ export class BrowserDriver implements Driver {
     const page = await browser.newPage()
     page.setDefaultTimeout(this.patienceMs)
     await page.setViewport({ width: 1200, height: 900 })
-    const surface = new BrowserSurface(page, server, this.patienceMs)
+    const surface = new BrowserSurface(
+      page,
+      server,
+      this.patienceMs,
+      account.label,
+      this.note
+    )
     await surface.listen()
     await surface.open('/sign-in')
     await surface.waitForText('Sign in', this.patienceMs)
@@ -1219,7 +1260,12 @@ export async function runFunctional(
     values.only == null
       ? actions
       : actions.filter(action => values.only?.includes(action.name))
-  const driver = io.driver ?? new BrowserDriver(patienceMs)
+  const lines: string[] = []
+  const say = (line: string): void => {
+    lines.push(line)
+    io.log(line)
+  }
+  const driver = io.driver ?? new BrowserDriver(patienceMs, say)
   const context: Context = {
     servers,
     credentials,
@@ -1234,11 +1280,7 @@ export async function runFunctional(
     pitches: 0
   }
   try {
-    const lines: string[] = []
-    const results = await runActions(chosen, context, line => {
-      lines.push(line)
-      io.log(line)
-    })
+    const results = await runActions(chosen, context, say)
     const summary = renderSummary(results)
     io.log(summary)
     if (values.report != null)

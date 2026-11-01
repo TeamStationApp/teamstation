@@ -10,12 +10,14 @@ import { after, before, describe, it } from 'mocha'
 import type { BrowserAccount, CredentialsFile } from './fixture'
 import {
   ACTIONS,
+  answerLeaving,
   type Action,
   type Answer,
   BrowserDriver,
   type Context,
   type Driver,
   fillTemplate,
+  openFailure,
   outOfOrder,
   pitchMarks,
   type Playback,
@@ -954,6 +956,55 @@ describe('the browser script', function () {
       } finally {
         await driver.close()
       }
+    })
+  })
+
+  describe('a navigation that cannot finish', () => {
+    const dialogOf = (
+      kind: string
+    ): { type: () => any; accept: () => Promise<void>; accepted: number } => {
+      const dialog = {
+        accepted: 0,
+        type: () => kind,
+        accept: async () => {
+          dialog.accepted += 1
+        }
+      }
+      return dialog
+    }
+
+    it('confirms leaving a screen that warns of unsaved work, and says so', async () => {
+      const dialog = dialogOf('beforeunload')
+      const notes: string[] = []
+      await answerLeaving(dialog, 'browser.scorer', '/games/g/score', line =>
+        notes.push(line)
+      )
+      expect(dialog.accepted).equals(1)
+      expect(notes).deep.equals([
+        'NOTE browser.scorer left /games/g/score while it warned of unsaved work'
+      ])
+    })
+
+    it('leaves any other dialog unanswered', async () => {
+      const dialog = dialogOf('confirm')
+      const notes: string[] = []
+      await answerLeaving(dialog, 'browser.scorer', '/x', line =>
+        notes.push(line)
+      )
+      expect(dialog.accepted).equals(0)
+      expect(notes).deep.equals([])
+    })
+
+    it('names the tab and the address it could not open', () => {
+      expect(
+        openFailure(
+          'browser.scorer',
+          'http://node.example.test/games/g/score',
+          new Error('Navigation timeout of 60000 ms exceeded')
+        ).message
+      ).equals(
+        'browser.scorer could not open http://node.example.test/games/g/score: Navigation timeout of 60000 ms exceeded'
+      )
     })
   })
 })
