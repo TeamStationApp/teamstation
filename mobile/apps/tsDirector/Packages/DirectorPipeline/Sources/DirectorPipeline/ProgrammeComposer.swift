@@ -75,6 +75,8 @@ public final class ProgrammeComposer: @unchecked Sendable {
   private let isOnAir: (Job) -> Bool
   /// Whether a picture can still make its moment if delivered the given number of seconds from now.
   private let isStillDue: (Job, Double) -> Bool
+  /// Whether a picture of the camera a cut is leaving is the only one the programme has for its moment.
+  private let fillsGap: (Job) -> Bool
   private let deliver: (Job, CVPixelBuffer) -> Void
   private let onMiss: () -> Void
   private let signposter = OSSignposter(subsystem: "app.teamstation.director", category: "programme")
@@ -104,12 +106,14 @@ public final class ProgrammeComposer: @unchecked Sendable {
     compose: @escaping Compose,
     isOnAir: @escaping (Job) -> Bool,
     isStillDue: @escaping (Job, Double) -> Bool = { _, _ in true },
+    fillsGap: @escaping (Job) -> Bool = { _ in false },
     deliver: @escaping (Job, CVPixelBuffer) -> Void,
     onMiss: @escaping () -> Void
   ) {
     self.compose = compose
     self.isOnAir = isOnAir
     self.isStillDue = isStillDue
+    self.fillsGap = fillsGap
     self.deliver = deliver
     self.onMiss = onMiss
   }
@@ -212,9 +216,13 @@ public final class ProgrammeComposer: @unchecked Sendable {
       lock.unlock()
       guard !queues.isEmpty else { return }
 
-      // The camera on air's pictures; any other camera's are from a camera cut away from. Judged
-      // outside the lock: the router's checks take its own.
-      let onAir = queues.first { _, queued in queued.last.map(isOnAir) ?? false }?.key
+      // The camera on program's pictures, and during a handover the time left goes to those of the
+      // camera it is taking over from, ahead of it only for a picture the programme has nothing else
+      // for; any other camera's are from a camera cut away from. Judged outside the lock: the
+      // router's checks take its own.
+      let live = queues.filter { _, queued in queued.last.map(isOnAir) ?? false }
+      let needed = live.first { _, queued in queued.first.map(fillsGap) ?? false }?.key
+      let onAir = needed ?? live.max { ($0.value.last?.generation ?? 0) < ($1.value.last?.generation ?? 0) }?.key
       var chosen: Job?
       if let onAir, let snapshot = queues[onAir] {
         // The oldest picture that can still make its moment. The newest goes regardless: it is the
@@ -226,7 +234,7 @@ public final class ProgrammeComposer: @unchecked Sendable {
       var taken: Job?
       lock.lock()
       // Only what was looked at: a picture handed over since stays for the next pass.
-      for (sourceID, snapshot) in queues where sourceID != onAir {
+      for (sourceID, snapshot) in queues where live[sourceID] == nil {
         let seen = Set(snapshot.map(\.sequence))
         let before = waiting[sourceID]?.count ?? 0
         waiting[sourceID]?.removeAll { seen.contains($0.sequence) }

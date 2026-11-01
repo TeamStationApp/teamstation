@@ -87,12 +87,14 @@ struct ProgrammeComposerTests {
   private func makeComposer(
     log: Log,
     isStillDue: @escaping (ProgrammeComposer.Job, Double) -> Bool = { _, _ in true },
+    fillsGap: @escaping (ProgrammeComposer.Job) -> Bool = { _ in false },
     compose: @escaping ProgrammeComposer.Compose
   ) -> ProgrammeComposer {
     ProgrammeComposer(
       compose: compose,
       isOnAir: { log.isOnAir($0.sourceID) },
       isStillDue: isStillDue,
+      fillsGap: fillsGap,
       deliver: { job, _ in log.deliver(job) },
       onMiss: { log.miss() }
     )
@@ -271,6 +273,51 @@ struct ProgrammeComposerTests {
     #expect(log.deliveries.map(\.sourceID) == [Self.cameraB])
     #expect(composer.skipped == 1)
     #expect(composer.statistics().dropped == 0, "a cut is not a loss")
+  }
+
+  @Test("During a handover the camera on program is composed first, the other with what is left, and a third is passed over")
+  func handoverComposesBothCameras() throws {
+    let log = Log()
+    let composer = makeComposer(log: log) { buffer, completion in
+      log.park(buffer, completion)
+      return true
+    }
+    let buffer = try picture()
+    let third = SourceID("camera-c")
+    composer.submit(job(buffer, from: Self.cameraA, index: 0, generation: 1))
+    #expect(waitFor { log.parkedCount == 1 })
+    composer.submit(job(buffer, from: Self.cameraA, index: 1, generation: 1))
+    composer.submit(job(buffer, from: Self.cameraB, index: 2, generation: 2))
+    composer.submit(job(buffer, from: third, index: 3, generation: 1))
+    composer.submit(job(buffer, from: Self.cameraB, index: 4, generation: 2))
+    for delivered in 1 ... 4 {
+      log.releaseParked()
+      if delivered < 4 { #expect(waitFor { log.deliveries.count == delivered && log.parkedCount == 1 }) }
+    }
+    #expect(composer.waitUntilIdle())
+    #expect(log.deliveries.map(\.sourceID) == [Self.cameraA, Self.cameraB, Self.cameraB, Self.cameraA])
+    #expect(composer.skipped == 1)
+    #expect(composer.statistics().dropped == 0)
+  }
+
+  @Test("A picture only the camera a cut is leaving can fill goes ahead of the camera on program")
+  func gapFillerGoesFirst() throws {
+    let log = Log()
+    let composer = makeComposer(log: log, fillsGap: { $0.sourceID == Self.cameraA }) { buffer, completion in
+      log.park(buffer, completion)
+      return true
+    }
+    let buffer = try picture()
+    composer.submit(job(buffer, from: Self.cameraB, index: 0, generation: 2))
+    #expect(waitFor { log.parkedCount == 1 })
+    composer.submit(job(buffer, from: Self.cameraB, index: 1, generation: 2))
+    composer.submit(job(buffer, from: Self.cameraA, index: 2, generation: 1))
+    for delivered in 1 ... 3 {
+      log.releaseParked()
+      if delivered < 3 { #expect(waitFor { log.deliveries.count == delivered && log.parkedCount == 1 }) }
+    }
+    #expect(composer.waitUntilIdle())
+    #expect(log.deliveries.map(\.sourceID) == [Self.cameraB, Self.cameraA, Self.cameraB])
   }
 
   @Test("A waiting picture is judged at its delivery: the test delay and the compose's own cost ahead")

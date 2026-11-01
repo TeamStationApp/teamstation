@@ -682,6 +682,32 @@ function senderReport({ ssrc, wallMs, rtpTimestamp, packets, octets }) {
   return packet
 }
 
+/// One sender report for each of `source`'s two streams, and what it has sent so far, which
+/// `countSent` keeps.
+function sendSenderReports(source, { wallMs, videoTimestamp, audioTimestamp, sent }) {
+  source.emit('rtp', {
+    channel: 1,
+    keyframe: false,
+    packet: senderReport({ ssrc: source.videoSsrc, wallMs, rtpTimestamp: videoTimestamp, ...sent.video })
+  })
+  source.emit('rtp', {
+    channel: 3,
+    keyframe: false,
+    packet: senderReport({ ssrc: source.audioSsrc, wallMs, rtpTimestamp: audioTimestamp, ...sent.audio })
+  })
+}
+
+function countSent(source) {
+  const sent = { video: { packets: 0, octets: 0 }, audio: { packets: 0, octets: 0 } }
+  source.on('rtp', ({ channel, packet }) => {
+    const stream = channel === 0 ? sent.video : channel === 2 ? sent.audio : null
+    if (!stream) return
+    stream.packets += 1
+    stream.octets += Math.max(0, packet.length - 12)
+  })
+  return sent
+}
+
 class LiveSource extends LoopSource {
   constructor(options) {
     super({ ...options, codec: 'h264', frameRate: options.fps ?? 30, audioRate: 48_000 })
@@ -690,13 +716,7 @@ class LiveSource extends LoopSource {
     this.spawnedAt = null
     this.startLatencyMs = null
     this.reportTimer = null
-    this.sent = { video: { packets: 0, octets: 0 }, audio: { packets: 0, octets: 0 } }
-    this.on('rtp', ({ channel, packet }) => {
-      const stream = channel === 0 ? this.sent.video : channel === 2 ? this.sent.audio : null
-      if (!stream) return
-      stream.packets += 1
-      stream.octets += Math.max(0, packet.length - 12)
-    })
+    this.sent = countSent(this)
   }
 
   /// Frame n is generated at epoch + n/fps and audio sample k at epoch + k/48000, and the RTP
@@ -705,25 +725,11 @@ class LiveSource extends LoopSource {
     if (this.epochMs === null || this.startLatencyMs === null) return
     const wallMs = Date.now()
     const elapsedMs = wallMs - this.spawnedAt
-    this.emit('rtp', {
-      channel: 1,
-      keyframe: false,
-      packet: senderReport({
-        ssrc: this.videoSsrc,
-        wallMs,
-        rtpTimestamp: Math.round(elapsedMs * (this.videoClock / 1000)),
-        ...this.sent.video
-      })
-    })
-    this.emit('rtp', {
-      channel: 3,
-      keyframe: false,
-      packet: senderReport({
-        ssrc: this.audioSsrc,
-        wallMs,
-        rtpTimestamp: Math.round(elapsedMs * 48),
-        ...this.sent.audio
-      })
+    sendSenderReports(this, {
+      wallMs,
+      videoTimestamp: Math.round(elapsedMs * (this.videoClock / 1000)),
+      audioTimestamp: Math.round(elapsedMs * 48),
+      sent: this.sent
     })
   }
 
@@ -781,6 +787,8 @@ module.exports = {
   liveArgs,
   liveSampleArgs,
   LoopSource,
+  countSent,
+  sendSenderReports,
   senderReport,
   createCameraServer,
   packetizeH264,

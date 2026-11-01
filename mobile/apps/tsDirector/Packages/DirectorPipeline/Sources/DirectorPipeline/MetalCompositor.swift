@@ -38,7 +38,9 @@ public final class MetalCompositor: @unchecked Sendable {
   /// How many composed pictures may be alive at once. Each waits in the programme's queue from when
   /// it arrives until its capture time plus D (`ProgrammePictureQueue`), up to D plus a quarter second
   /// of a 60 fps camera's pictures at D's ceiling of 2 s, and a few more are on screen or in an
-  /// encoder. The pool allocates only what is asked of it, so this is a ceiling, not a cost: at 32,
+  /// encoder. Two runs overlap in the queue across a cut, and fit a 60 fps camera up to a D of about
+  /// 1.2 s; past that a cut's extra pictures are compose misses, which keeps memory where one run at
+  /// D's ceiling puts it. The pool allocates only what is asked of it, so this is a ceiling, not a cost: at 32,
   /// D at 1 s ran it dry and every picture composed past it went out without its overlay.
   public static let maximumComposedPictures = Int(((2.0 + 0.25) * 60).rounded(.up)) + 8
 

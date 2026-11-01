@@ -1,7 +1,7 @@
 # Archive wall-clock RTSP farm. No clearState. Not in the operator suite.
 #
 # Simulator or M4 (Bench iPad (2)): LAN_HOSTS is semicolon-separated host:port
-# (18554–18557). Commas are eaten by maestro-runner `-e`.
+# (18554–18557). Commas are eaten by maestro-d's `-e`.
 # Do not run this, or recordings-export.yaml, on the rec-18 iPad.
 appId: app.teamstation.director
 ---

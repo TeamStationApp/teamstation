@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds an installable .app for an iPad simulator and prints its path for
-# `maestro-runner --app-file`.
+# `maestro-d --app-file`.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
