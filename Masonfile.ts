@@ -1,81 +1,100 @@
-/** Node 24 entrypoint. Dependencies belong to this pinned checkout. */
-import { spawn } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import type { Setup, Stage } from '@mason/types'
 
-import { dependencyInputs } from './scripts/deploy/dependencyInputs.ts'
+// TeamStation for iOS on the Mac node (macos-arm64) and for Android on the
+// DigitalOcean Linux pool (do-linux). The iOS archive is unsigned; the
+// Android release build uses the debug keystore the app's release type
+// already signs with. Signing for distribution stays with the master once
+// it holds the Apple team and a release keystore.
 
-export async function masonBootstrap(
-  cwd = process.cwd(),
-  env: NodeJS.ProcessEnv = process.env
-): Promise<number> {
-  let child: ReturnType<typeof spawn> | undefined
-  let stopping = false
-  let killTimer: NodeJS.Timeout | undefined
-  const stop = (): void => {
-    stopping = true
-    // The deploy process handles TERM and forwards it to its compiler groups.
-    child?.kill('SIGTERM')
-    killTimer = setTimeout(() => {
-      child?.kill('SIGKILL')
-    }, 9000)
-    killTimer.unref()
-  }
-  process.on('SIGTERM', stop)
-  process.on('SIGINT', stop)
-  // Socket's risks are for a developer to meet while updating dependencies. By
-  // the time a commit reaches Mason they are settled, and an advisory published
-  // since must not stop the build of a lockfile that has not changed.
-  const dependencyEnv: NodeJS.ProcessEnv = {
-    ...env,
-    SOCKET_CLI_ACCEPT_RISKS: '1'
-  }
-  delete dependencyEnv.DEPLOY_UPLOAD_CREDENTIAL
-  const run = async (
-    file: string,
-    args: string[],
-    childEnv: NodeJS.ProcessEnv = env
-  ): Promise<number> => {
-    if (stopping) return 1
-    return await new Promise(resolve => {
-      child = spawn(file, args, { cwd, env: childEnv, stdio: 'inherit' })
-      child.once('error', () => {
-        resolve(1)
-      })
-      child.once('exit', code => {
-        resolve(code ?? 1)
-      })
-    })
-  }
-  try {
-    if ((await run('socket', ['npm', 'ci'], dependencyEnv)) !== 0) return 1
-    writeFileSync(
-      path.join(cwd, '.deploy-dependencies'),
-      dependencyInputs(cwd),
-      { mode: 0o600 }
-    )
-    return await run(process.execPath, [
-      '-r',
-      'sucrase/register',
-      'scripts/deploy/mason.ts'
-    ])
-  } finally {
-    process.off('SIGTERM', stop)
-    process.off('SIGINT', stop)
-    if (killTimer != null) clearTimeout(killTimer)
-  }
+const APP = 'app.teamstation.app'
+const IOS = { type: 'macos-arm64', os: 'macos', arch: 'arm64' } as const
+const ANDROID = { type: 'do-linux', os: 'linux', arch: 'x64' } as const
+
+export function setup(m: Setup): void {
+  m.apiVersion(1)
+  m.buildNumber(APP, { format: 'YYMMDDCC', timeZone: 'America/Los_Angeles' })
+  m.parallel('build', {
+    ios: {
+      on: IOS,
+      tools: { node: '24', xcode: '26.6', cocoapods: '1.16.2' },
+      timeout: '4h',
+      publishes: [APP],
+      buildNumbers: [APP],
+      cache: [{ key: 'npm', paths: ['~/.npm'] }],
+      run: buildIos
+    },
+    android: {
+      on: ANDROID,
+      tools: {
+        node: '24',
+        java: '17',
+        android: [
+          'platforms;android-37',
+          'build-tools;37.0.0',
+          'ndk;27.1.12297006',
+          'cmake;3.22.1'
+        ],
+        androidLicenses: 'accept'
+      },
+      timeout: '4h',
+      publishes: [APP],
+      buildNumbers: [APP],
+      cache: [{ key: 'npm', paths: ['~/.npm'] }],
+      run: buildAndroid
+    }
+  })
 }
-if (
-  process.argv[1] != null &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
-  masonBootstrap()
-    .then(code => {
-      process.exitCode = code
-    })
-    .catch(() => {
-      console.error('Mason dependency setup failed')
-      process.exitCode = 1
-    })
+
+/** Installs dependencies through Socket, the wrapper this repo's installs use. */
+async function install(ctx: Stage): Promise<void> {
+  await ctx.sh('npm install --prefix .mason-tools @socketsecurity/cli')
+  // An advisory published after this lockfile was committed does not fail the build.
+  await ctx.sh('.mason-tools/bin/socket npm ci', {
+    env: { SOCKET_CLI_ACCEPT_RISKS: '1' }
+  })
+}
+
+export async function buildIos(ctx: Stage): Promise<void> {
+  await install(ctx)
+  await ctx.sh('pod install', { cwd: 'ios' })
+  const build = ctx.getBuildNumber(APP)
+  await ctx.sh(
+    [
+      'xcodebuild archive',
+      '-workspace TeamStation.xcworkspace',
+      '-scheme TeamStation',
+      '-configuration Release',
+      "-destination 'generic/platform=iOS'",
+      '-archivePath "$PWD/../build/TeamStation.xcarchive"',
+      `CURRENT_PROJECT_VERSION=${build}`,
+      'CODE_SIGNING_ALLOWED=NO'
+    ].join(' '),
+    { cwd: 'ios' }
+  )
+  await ctx.artifacts.save('ios-archive', 'build/TeamStation.xcarchive/**')
+}
+
+export async function buildAndroid(ctx: Stage): Promise<void> {
+  await install(ctx)
+  const build = ctx.getBuildNumber(APP)
+  await ctx.sh(
+    [
+      'test -f app/debug.keystore || keytool -genkeypair',
+      '-keystore app/debug.keystore -alias androiddebugkey',
+      '-keyalg RSA -keysize 2048 -validity 10000',
+      '-storepass android -keypass android',
+      "-dname 'CN=Android Debug,O=Android,C=US'"
+    ].join(' '),
+    { cwd: 'android' }
+  )
+  await ctx.sh(
+    `./gradlew --no-daemon :app:assembleRelease -PversionCode=${build}`,
+    {
+      cwd: 'android'
+    }
+  )
+  await ctx.artifacts.save(
+    'android-apk',
+    'android/app/build/outputs/apk/release/*.apk'
+  )
 }
