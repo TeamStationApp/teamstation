@@ -6,7 +6,7 @@ const listeners = new Set<
   (event: {
     eventType: string
     eventKeyAction?: number
-    body?: { state: string; x: number }
+    body?: { state: string; x: number; y?: number }
   }) => void
 >()
 export const panRequests: boolean[] = []
@@ -35,7 +35,7 @@ export const TVEventHandler = {
 export function emitTvDirection(eventType: string, eventKeyAction = 0): void {
   for (const listener of listeners) listener({ eventType, eventKeyAction })
 }
-export function emitTvPan(state: string, x: number): void {
+export function emitTvPan(state: string, x: number, y?: number): void {
   for (const listener of listeners)
-    listener({ eventType: 'pan', body: { state, x } })
+    listener({ eventType: 'pan', body: { state, x, y } })
 }
