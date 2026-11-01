@@ -280,7 +280,12 @@ describe('TeamStation pipeline Masonfile', () => {
       string,
       {
         on: { type: string }
-        tools: { node: string; android?: string[] }
+        tools: {
+          node: string
+          android?: string[]
+          rust?: string
+          apt?: string[]
+        }
         run: (ctx: {
           sh: (command: string, options?: { cwd?: string }) => Promise<unknown>
           getBuildNumber: (key: string) => string
@@ -306,6 +311,7 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.equal(stages.android?.on.type, 'do-linux')
     assert.equal(stages.ios?.tools.node, '24')
     assert.equal(stages.android?.tools.rust, '1.98.0')
+    assert.deepEqual(stages.android?.tools.apt, ['build-essential'])
     assert.deepEqual(stages.android?.tools.android, [
       'platforms;android-37.0',
       'build-tools;37.0.0',
