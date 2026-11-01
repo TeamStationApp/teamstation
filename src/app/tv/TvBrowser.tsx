@@ -1,6 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as ReactNative from 'react-native'
-import { Defs, LinearGradient, Rect, Stop, Svg } from 'react-native-svg'
+import {
+  Circle,
+  Defs,
+  Line,
+  LinearGradient,
+  Rect,
+  Stop,
+  Svg
+} from 'react-native-svg'
 
 import type {
   TeamStationClient,
@@ -8,7 +16,13 @@ import type {
   UserMatch,
   VideoGame
 } from '../../common/api'
-import { fourAcross, gameDate, monthSections } from './browseLayout'
+import {
+  browseGeometry,
+  collectionTop,
+  fourAcross,
+  gameDate,
+  monthSections
+} from './browseLayout'
 import { loadTvCollection, type TvClip, type TvCollection } from './collections'
 import { HeroPreview } from './HeroPreview'
 import {
@@ -56,12 +70,8 @@ const pageKey = (page: TvPage): string =>
       ? page.team.id
       : page.player.userId
 
-export function TvScrim({
-  header = false
-}: {
-  header?: boolean
-}): React.ReactElement {
-  if (!header && NativeGradient !== null)
+export function TvScrim(): React.ReactElement {
+  if (NativeGradient !== null)
     return (
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
         <NativeGradient
@@ -102,21 +112,48 @@ export function TvScrim({
           <Stop offset="0.75" stopColor="#000" stopOpacity={0} />
         </LinearGradient>
         <LinearGradient id="bottom" x1="0" y1="0" x2="0" y2="1">
-          <Stop
-            offset={header ? '0' : '0.3'}
-            stopColor={header ? '#171717' : '#000'}
-            stopOpacity={header ? 0.98 : 0}
-          />
-          <Stop
-            offset="1"
-            stopColor={header ? '#171717' : '#000'}
-            stopOpacity={header ? 0 : 0.15}
-          />
+          <Stop offset="0.3" stopColor="#000" stopOpacity={0} />
+          <Stop offset="1" stopColor="#000" stopOpacity={0.15} />
         </LinearGradient>
       </Defs>
-      {!header && <Rect width="100%" height="100%" fill="url(#left)" />}
+      <Rect width="100%" height="100%" fill="url(#left)" />
       <Rect width="100%" height="100%" fill="url(#bottom)" />
     </Svg>
+  )
+}
+
+function CollectionBackground({
+  top,
+  rowHeight
+}: {
+  top: number
+  rowHeight: number
+}): React.ReactElement {
+  return (
+    <View
+      testID="tv-collection-background"
+      pointerEvents="none"
+      style={{ position: 'absolute', top, left: 0, right: 0, bottom: 0 }}
+    >
+      {NativeGradient !== null ? (
+        <NativeGradient
+          direction="bottom"
+          maxOpacity={0.1}
+          style={{ height: rowHeight }}
+        />
+      ) : (
+        <Svg width="100%" height={rowHeight}>
+          <Defs>
+            <LinearGradient id="collection" x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor="black" stopOpacity={0} />
+              <Stop offset="1" stopColor="black" stopOpacity={0.1} />
+            </LinearGradient>
+          </Defs>
+          <Rect width="100%" height="100%" fill="url(#collection)" />
+        </Svg>
+      )}
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.1)' }} />
+    </View>
   )
 }
 
@@ -357,7 +394,27 @@ export function TvBrowser({
             }}
             style={styles.search}
           >
-            <Text style={styles.copy}>⌕ Search teams or players</Text>
+            <View testID="tv-search-label" style={styles.searchLabel}>
+              <Svg width={28} height={28} viewBox="0 0 28 28">
+                <Circle
+                  cx={11}
+                  cy={11}
+                  r={8}
+                  fill="none"
+                  stroke="white"
+                  strokeWidth={2.5}
+                />
+                <Line
+                  x1={17}
+                  y1={17}
+                  x2={25}
+                  y2={25}
+                  stroke="white"
+                  strokeWidth={2.5}
+                />
+              </Svg>
+              <Text style={styles.searchText}>Search</Text>
+            </View>
           </Pressable>
         ) : (
           <TextInput
@@ -516,8 +573,16 @@ function BrowsePage({
   onOpen: (page: TvPage) => void
   onPlay: (request: TvPlayRequest) => void
 }): React.ReactElement {
-  const { width } = useWindowDimensions()
-  const tileWidth = (width - 152 - 72) / 4
+  const { width, height, fontScale } = useWindowDimensions()
+  const [viewportHeight, setViewportHeight] = useState(height - 115)
+  const [scrollY, setScrollY] = useState(0)
+  const geometry = browseGeometry(
+    width,
+    viewportHeight,
+    page.kind === 'team',
+    fontScale
+  )
+  const tileWidth = geometry.tileWidth
   const [collection, setCollection] = useState<TvCollection | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
@@ -616,9 +681,10 @@ function BrowsePage({
     prefix: string
   ): React.ReactElement => (
     <View key={prefix} style={styles.row}>
-      <Text style={styles.heading}>{title}</Text>
+      <Text style={[styles.heading, styles.rowHeading]}>{title}</Text>
       <ScrollView
         horizontal
+        style={styles.horizontalViewport}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.horizontal}
       >
@@ -633,7 +699,8 @@ function BrowsePage({
     children.push(
       <View
         key="hero"
-        style={[styles.hero, page.kind !== 'home' && styles.entityHero]}
+        testID="tv-hero"
+        style={[styles.hero, { height: geometry.heroHeight }]}
       >
         {hero?.posterUrl != null && (
           <Image
@@ -731,8 +798,11 @@ function BrowsePage({
       ]).entries()) {
         sticky.push(children.length)
         children.push(
-          <View key={`month-${index}`} style={styles.month}>
-            <TvScrim header />
+          <View
+            key={`month-${index}`}
+            testID={`tv-month-${index}`}
+            style={styles.month}
+          >
             <Text style={styles.heading}>{section.month}</Text>
           </View>
         )
@@ -750,9 +820,12 @@ function BrowsePage({
       if (collection.highlights.length > 0)
         children.push(
           <View key="highlights" style={styles.row}>
-            <Text style={styles.heading}>Recent Highlights</Text>
+            <Text style={[styles.heading, styles.rowHeading]}>
+              Recent Highlights
+            </Text>
             <ScrollView
               horizontal
+              style={styles.horizontalViewport}
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.horizontal}
             >
@@ -791,9 +864,10 @@ function BrowsePage({
       if (collection.teams.length > 0)
         children.push(
           <View key="teams" style={styles.row}>
-            <Text style={styles.heading}>Teams</Text>
+            <Text style={[styles.heading, styles.rowHeading]}>Teams</Text>
             <ScrollView
               horizontal
+              style={styles.horizontalViewport}
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.horizontal}
             >
@@ -839,45 +913,56 @@ function BrowsePage({
       )
   }
   return (
-    <ScrollView
-      testID={`tv-page-${pageKey(page)}`}
+    <View
       style={styles.page}
-      contentContainerStyle={styles.pageContent}
-      onScroll={event => {
-        setHeroVisible(
-          event.nativeEvent.contentOffset.y < (page.kind === 'home' ? 550 : 380)
-        )
+      onLayout={event => {
+        setViewportHeight(event.nativeEvent.layout.height)
       }}
-      scrollEventThrottle={100}
-      stickyHeaderIndices={sticky}
     >
-      {children}
-      {collection === null && error === null && (
-        <Text style={[styles.copy, styles.gridHeading]}>Loading games…</Text>
-      )}
-      {error !== null && (
-        <View style={styles.status}>
-          <Text style={styles.copy}>{error}</Text>
-          <TvButton
-            label="Retry games"
-            onPress={() => {
-              if (collection === null) setRetry(n => n + 1)
-              else loadMore().catch(() => undefined)
-            }}
-          />
-        </View>
-      )}
-      {collection?.nextOffset != null && (
-        <View style={styles.status}>
-          <TvButton
-            label={more ? 'Loading more…' : 'More games'}
-            onPress={() => {
-              loadMore().catch(() => undefined)
-            }}
-          />
-        </View>
-      )}
-    </ScrollView>
+      <CollectionBackground
+        top={collectionTop(geometry.heroHeight, scrollY)}
+        rowHeight={geometry.rowHeight}
+      />
+      <ScrollView
+        testID={`tv-page-${pageKey(page)}`}
+        style={styles.page}
+        contentContainerStyle={styles.pageContent}
+        onScroll={event => {
+          const y = event.nativeEvent.contentOffset.y
+          setScrollY(y)
+          setHeroVisible(y < geometry.heroHeight)
+        }}
+        scrollEventThrottle={16}
+        stickyHeaderIndices={sticky}
+      >
+        {children}
+        {collection === null && error === null && (
+          <Text style={[styles.copy, styles.gridHeading]}>Loading games…</Text>
+        )}
+        {error !== null && (
+          <View style={styles.status}>
+            <Text style={styles.copy}>{error}</Text>
+            <TvButton
+              label="Retry games"
+              onPress={() => {
+                if (collection === null) setRetry(n => n + 1)
+                else loadMore().catch(() => undefined)
+              }}
+            />
+          </View>
+        )}
+        {collection?.nextOffset != null && (
+          <View style={styles.status}>
+            <TvButton
+              label={more ? 'Loading more…' : 'More games'}
+              onPress={() => {
+                loadMore().catch(() => undefined)
+              }}
+            />
+          </View>
+        )}
+      </ScrollView>
+    </View>
   )
 }
 const styles = StyleSheet.create({
@@ -894,18 +979,31 @@ const styles = StyleSheet.create({
   welcome: { color: '#ddd', fontSize: 18, flex: 1 },
   search: {
     height: 60,
-    width: 400,
+    width: 210,
+    alignItems: 'center',
+    justifyContent: 'center',
     color: '#fff',
     fontSize: 24,
     backgroundColor: '#555',
     borderRadius: 30,
     paddingHorizontal: 30
   },
+  searchLabel: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  searchText: {
+    fontSize: 25,
+    lineHeight: 30,
+    color: '#fff',
+    includeFontPadding: false
+  },
   page: { flex: 1 },
   hidden: { display: 'none' },
   pageContent: { paddingBottom: 90 },
-  hero: { height: 550, justifyContent: 'center' },
-  entityHero: { height: 400 },
+  hero: { justifyContent: 'center' },
   heroDetails: { paddingHorizontal: 76, width: 1050, gap: 18 },
   title: { fontSize: 70, color: '#fff', fontWeight: '700', flexShrink: 1 },
   matchup: { flexDirection: 'row', alignItems: 'center', gap: 24 },
@@ -916,14 +1014,13 @@ const styles = StyleSheet.create({
   entityTitle: { flexDirection: 'row', alignItems: 'center', gap: 24 },
   watch: { alignSelf: 'flex-start', marginTop: 10 },
   copy: { fontSize: 25, color: '#eee' },
-  heading: { fontSize: 32, color: '#fff', fontWeight: '700' },
-  row: { marginBottom: 38, paddingLeft: 76, gap: 18 },
-  horizontal: { gap: 24, paddingRight: 76, paddingTop: 24, paddingBottom: 24 },
+  heading: { fontSize: 32, lineHeight: 38, color: '#fff', fontWeight: '700' },
+  rowHeading: { marginLeft: 76 },
+  row: { marginBottom: 38, gap: 18 },
+  horizontalViewport: { marginHorizontal: 52 },
+  horizontal: { gap: 24, padding: 24 },
   tile: {
-    borderWidth: 3,
-    borderColor: 'transparent',
     borderRadius: 17,
-    padding: 3,
     gap: 7
   },
   tileFocus: {
@@ -946,8 +1043,8 @@ const styles = StyleSheet.create({
     borderRadius: 12
   },
   placeholder: { fontSize: 54, color: '#818b84' },
-  tileTitle: { fontSize: 32, color: '#fff' },
-  tileDetail: { fontSize: 28, color: '#eee' },
+  tileTitle: { fontSize: 32, lineHeight: 38, color: '#fff' },
+  tileDetail: { fontSize: 28, lineHeight: 34, color: '#eee' },
   gridRow: {
     flexDirection: 'row',
     gap: 24,
