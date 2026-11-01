@@ -455,7 +455,7 @@ export async function sweepLocalCopies(
     .select(['id'])
     .where('storage', '=', 'spaces')
     .where('spaces_verified_at', 'is not', null)
-    .where('local_delete_after', '<', now)
+    .where('local_delete_after', '<=', now)
     .limit(20)
     .execute()
 

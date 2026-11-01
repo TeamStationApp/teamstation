@@ -2391,6 +2391,7 @@ describe('a live publish that jumps (U19)', function () {
       streamApp: 'live',
       streamName: KEY,
       streamPath: `/live/${KEY}`,
+      videoCodec: 12,
       close: () => undefined,
       socket: { destroy: () => undefined },
       broadcast: made
