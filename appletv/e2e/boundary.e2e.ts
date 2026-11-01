@@ -6,6 +6,7 @@ import path from 'node:path'
 import { userIdOfGumbo } from '../../src/common/userId'
 import { captureScreenshot } from './capture'
 import { tvFixture } from './fixture'
+import { assertCameraLayout } from './layoutAssertions'
 
 async function main(): Promise<void> {
   const {
@@ -70,8 +71,9 @@ async function main(): Promise<void> {
     // A nonfirst camera must regain focus after its full-screen round trip.
     await key('SWIPE_RIGHT')
     await key('DPAD_CENTER')
-    await tv.assertVisible({ text: 'Back to cameras' })
+    await assertCameraLayout(tv, 1, true)
     await key('BACK')
+    await assertCameraLayout(tv, 1, false)
     await shot('fullscreen-return')
     await key('SWIPE_LEFT')
     await tv.assertNotVisible({ id: 'tv-cameras-panel' })

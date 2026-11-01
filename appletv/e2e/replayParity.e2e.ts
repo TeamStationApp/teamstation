@@ -20,6 +20,7 @@ import {
   replaySetup
 } from '../../src/test/replayGameFixture'
 import { tvFixture } from './fixture'
+import { openStatsPanel } from './layoutAssertions'
 
 interface Node {
   id?: string
@@ -160,6 +161,14 @@ async function main(): Promise<void> {
       ? startingBox(game, await client.gameLineups(game.id))!
       : replayScore(source.timeline.end, source.timeline)
   }
+  const openReplayStats = async (): Promise<void> => {
+    await openStatsPanel(tv)
+    // Let the opening pan finish before sending the separate expansion click.
+    await new Promise(resolve => setTimeout(resolve, 350))
+    await tv.pressKey({ key: 'DPAD_DOWN' })
+    await tv.assertVisible({ id: 'tv-stats-away', timeout: 5000 })
+    await tv.assertVisible({ id: 'tv-stats-home', timeout: 5000 })
+  }
   const compare = async (
     expected: ReplayBoxScore,
     label: string,
@@ -271,11 +280,7 @@ async function main(): Promise<void> {
     await tv.assertNotVisible({ id: 'tv-box-panel', timeout: 15000 })
     await tv.pressKey({ key: 'playPause' })
     for (let i = 0; i < 5; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
-    await tv.pressKey({ key: 'DPAD_UP' })
-    for (let i = 0; i < 3; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
-    await tv.pressKey({ key: 'DPAD_CENTER' })
-    await tv.pressKey({ key: 'DPAD_DOWN' })
-    await tv.pressKey({ key: 'DPAD_DOWN' })
+    await openReplayStats()
     await compare(first, 'first pitch')
     await compare(await publish(actions.slice(0, 6)), 'completed walk')
     const substitution = actions.findIndex(
@@ -299,11 +304,7 @@ async function main(): Promise<void> {
       await new Promise(resolve => setTimeout(resolve, 200))
     }
     await tv.assertVisible({ id: 'tv-current-time', text: '0:00' })
-    await tv.pressKey({ key: 'DPAD_UP' })
-    for (let i = 0; i < 3; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
-    await tv.pressKey({ key: 'DPAD_CENTER' })
-    await tv.pressKey({ key: 'DPAD_DOWN' })
-    await tv.pressKey({ key: 'DPAD_DOWN' })
+    await openReplayStats()
     const source = replaySourceOf(
       await client.game('gam_tv_0'),
       await client.gameEvents('gam_tv_0')
@@ -381,11 +382,7 @@ async function main(): Promise<void> {
         await tv.pressKey({ key: clicks > 0 ? 'DPAD_RIGHT' : 'DPAD_LEFT' })
         await new Promise(resolve => setTimeout(resolve, 200))
       }
-      await tv.pressKey({ key: 'DPAD_UP' })
-      for (let i = 0; i < 3; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
-      await tv.pressKey({ key: 'DPAD_CENTER' })
-      await tv.pressKey({ key: 'DPAD_DOWN' })
-      await tv.pressKey({ key: 'DPAD_DOWN' })
+      await openReplayStats()
     }
     for (const [expected, clicks, label] of [
       [historicalFirst, 1, 'historical first pitch with future plays stored'],
