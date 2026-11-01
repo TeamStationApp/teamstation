@@ -4,7 +4,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { AppRegistry, NativeModules } from 'react-native'
+import { AppRegistry, BackHandler, NativeModules } from 'react-native'
 
 import { asSession, asVideoGame, TeamStationClient } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
@@ -17,6 +17,8 @@ const session = asSession({
   expiresAt: '2030-01-01',
   user: { id: userIdOfGumbo(101), displayName: 'Babe Ruth', isAdmin: false }
 })
+const originalBack = BackHandler.addEventListener
+let onBack: (() => boolean | null | undefined) | undefined
 let root: Root | undefined
 const original = {
   start: TeamStationClient.prototype.startTvLogin,
@@ -29,6 +31,14 @@ const pause = async (ms = 20): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
 async function render(probeUrls?: string): Promise<void> {
+  BackHandler.addEventListener = (_name, handler) => {
+    onBack = () => handler({ type: 'hardwareBackPress', timeStamp: Date.now() })
+    return {
+      remove: () => {
+        onBack = undefined
+      }
+    }
+  }
   const host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
@@ -40,6 +50,13 @@ async function render(probeUrls?: string): Promise<void> {
   })
 }
 async function press(label: string): Promise<void> {
+  if (label === 'Back to games') {
+    await act(async () => {
+      onBack?.()
+      await pause()
+    })
+    return
+  }
   const button = document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
   expect(button).not.equals(null)
   await act(async () => {
@@ -71,6 +88,7 @@ function setup(saved: string | null = null): void {
   TeamStationClient.prototype.signOut = async () => undefined
 }
 afterEach(async () => {
+  BackHandler.addEventListener = originalBack
   await act(async () => root?.unmount())
   root = undefined
   document.body.innerHTML = ''

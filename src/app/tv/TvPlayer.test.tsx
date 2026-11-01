@@ -60,7 +60,12 @@ const client = {
           status: live ? 'live' : 'ready'
         })),
         { id: 'mosaic', title: 'Mosaic', numCameras: 4, status: 'ready' },
-        { id: 'processing', numCameras: 1, status: 'processing' }
+        {
+          id: 'processing',
+          title: 'Processing',
+          numCameras: 1,
+          status: 'processing'
+        }
       ]
     }
   },
@@ -219,6 +224,34 @@ afterEach(async () => {
   closed = false
 })
 describe('TV game playback entry', () => {
+  it('uses the same short camera names as the regular game player', async () => {
+    const original = client.game.bind(client)
+    client.game = async (...args) => {
+      const game = await original(...args)
+      return {
+        ...game,
+        videos: game.videos.map((video, i) => ({
+          ...video,
+          title: `Visitors vs Hosts — ${['Home', 'First base', 'Third base', 'Outfield'][i] ?? 'Other'}`
+        }))
+      }
+    }
+    try {
+      await render()
+      expect(
+        document.querySelector('[aria-label="Toggle First base"]')
+      ).not.equals(null)
+      expect(
+        document.querySelector('[aria-label="Toggle Third base"]')
+      ).not.equals(null)
+      expect(
+        document.querySelector('[aria-label="Toggle First base"]')!.textContent
+      ).not.contains('Visitors vs Hosts')
+    } finally {
+      client.game = original
+    }
+  })
+
   it('drains recording completion even when touch begin/end are batched together', async () => {
     viewport = await windowSize(1920, 1080)
     count = 1
