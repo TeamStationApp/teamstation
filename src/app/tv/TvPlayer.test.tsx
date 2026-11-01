@@ -160,6 +160,35 @@ afterEach(async () => {
   closed = false
 })
 describe('TV game playback entry', () => {
+  it('drains recording completion even when touch begin/end are batched together', async () => {
+    viewport = await windowSize(1920, 1080)
+    count = 1
+    await render()
+    const video = document.querySelector('video')!
+    await act(async () => {
+      Object.defineProperty(video, 'duration', {
+        value: 100,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('durationchange', { bubbles: true }))
+      await pause()
+    })
+    await press('Close panel')
+    await act(async () => {
+      emitTvDirection('right')
+      await pause()
+    })
+    await act(async () => {
+      emitTvPan('Began', 0)
+      emitTvPan('Changed', -100)
+      video.dispatchEvent(new window.Event('ended', { bubbles: true }))
+      emitTvPan('Cancelled', -100)
+    })
+    expect(
+      document.querySelector('[data-testid="tv-highlights-panel"]')
+    ).not.equals(null)
+    expect(document.querySelector('[data-testid="tv-scrubber"]')).equals(null)
+  })
   for (const finish of ['Ended', 'Cancelled'] as const) {
     it(`defers natural recording completion during a drag and handles ${finish}`, async () => {
       viewport = await windowSize(1920, 1080)

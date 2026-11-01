@@ -193,7 +193,21 @@ export function TvPlayer({
       enabled
         ? tvControl?.enableTVPanGesture()
         : tvControl?.disableTVPanGesture(),
-    changed: setTransportState,
+    changed: snapshot => {
+      setTransportState(snapshot)
+      // Release ownership synchronously: React may batch begin/end together.
+      if (!snapshot.scrubbing) {
+        if (pendingRecordingEnd.current) {
+          pendingRecordingEnd.current = false
+          if (!clock.current.ports.some((_, i) => clock.current.available(i))) {
+            dispatch({ type: 'ended' })
+            dispatch({ type: 'open', panel: 'highlights' })
+          }
+        }
+        const position = clock.current.wall
+        if (position !== null) dispatch({ type: 'progress', wall: position })
+      }
+    },
     now: Date.now,
     later: (callback, ms) => setTimeout(callback, ms),
     clear: timer => {
@@ -213,18 +227,6 @@ export function TvPlayer({
     if (state.side !== null || state.box !== 'closed' || error !== null)
       transport.current?.cancel()
   }, [state.side, state.box, error])
-  useEffect(() => {
-    if (transportState.scrubbing) return
-    if (pendingRecordingEnd.current) {
-      pendingRecordingEnd.current = false
-      if (!clock.current.ports.some((_, i) => clock.current.available(i))) {
-        dispatch({ type: 'ended' })
-        dispatch({ type: 'open', panel: 'highlights' })
-      }
-    }
-    const position = clock.current.wall
-    if (position !== null) dispatch({ type: 'progress', wall: position })
-  }, [transportState.scrubbing])
   const statisticsRefresh = useRef<(() => Promise<void>) | null>(null)
   const ready = useRef(false)
   const generation = useRef(0)
