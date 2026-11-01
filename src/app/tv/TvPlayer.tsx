@@ -99,25 +99,8 @@ export function TvPlayer({
   const focusedAngle = useRef<number | null>(0)
   const lastAngle = useRef(0)
   const handledFocus = useRef(0)
-  const [controlsRequested, setControlsRequested] = useState(false)
+  const [highlightFocus, setHighlightFocus] = useState<string | null>(null)
   const [cameraFocus, setCameraFocus] = useState<number | null>(null)
-  const transportNode = useRef<React.ComponentRef<typeof View> | null>(null)
-  const transportRef = useCallback(
-    (node: React.ComponentRef<typeof View> | null): void => {
-      transportNode.current = node
-    },
-    []
-  )
-  const requestFocus = (
-    node: React.ComponentRef<typeof View> | null | undefined
-  ): void => {
-    if (
-      node != null &&
-      'requestTVFocus' in node &&
-      typeof node.requestTVFocus === 'function'
-    )
-      node.requestTVFocus()
-  }
   const statsScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const statsOffset = useRef(0)
   const statsExtent = useRef({ content: 0, viewport: 0 })
@@ -418,7 +401,6 @@ export function TvPlayer({
   const open = useCallback(
     (panel: Exclude<SidePanel, null>): void => {
       if (panel === 'cameras' && (angles?.length ?? 0) < 2) return
-      setControlsRequested(false)
       dispatch({ type: 'open', panel })
     },
     [angles]
@@ -568,10 +550,6 @@ export function TvPlayer({
       }
       const index = focusedAngle.current
       if (index === null) return
-      if (input.kind === 'click' && direction === 'up') {
-        setControlsRequested(true)
-        return
-      }
       if (input.kind !== 'swipe') return
       if (index !== handledFocus.current) {
         handledFocus.current = index
@@ -584,7 +562,7 @@ export function TvPlayer({
       else if (direction === 'down') {
         statsOffset.current = 0
         dispatch({ type: 'box' })
-      } else requestFocus(transportNode.current)
+      }
     })
     return () => {
       subscription?.remove()
@@ -678,13 +656,6 @@ export function TvPlayer({
     )
       dispatch({ type: 'progress', wall: next })
   }
-  const seek = (seconds: number): void => {
-    const next = clock.current.move(seconds)
-    if (next !== null) {
-      setWall(next)
-      dispatch({ type: 'seek' })
-    }
-  }
   const board = boardAt(stats.board?.steps ?? [], wall)?.state
   const { box, message: statsMessage } = statisticsAt(stats, wall)
   const line = box == null ? null : lineOf(box)
@@ -751,7 +722,8 @@ export function TvPlayer({
         {...{
           trapFocusLeft: true,
           trapFocusRight: true,
-          trapFocusDown: !controlsRequested
+          trapFocusDown: true,
+          trapFocusUp: true
         }}
       >
         {angles?.map((angle, index) => {
@@ -792,12 +764,9 @@ export function TvPlayer({
                 }
                 {...{
                   hasTVPreferredFocus:
-                    !overlay &&
-                    !controlsRequested &&
-                    (state.full ?? state.visible[0]) === index
+                    !overlay && (state.full ?? state.visible[0]) === index
                 }}
                 onFocus={() => {
-                  setControlsRequested(false)
                   lastAngle.current = index
                   focusedAngle.current = index
                   setFocus(index)
@@ -926,64 +895,6 @@ export function TvPlayer({
           />
         </View>
       )}
-      {state.box === 'closed' && (
-        <TvFocusGuide
-          autoFocus
-          focusable={error === null}
-          style={styles.controls}
-        >
-          <TvButton
-            buttonRef={transportRef}
-            preferred={controlsRequested && !overlay}
-            label={
-              state.side !== null || state.box !== 'closed'
-                ? 'Close panel'
-                : state.full !== null
-                  ? 'Back to cameras'
-                  : 'Back to games'
-            }
-            onPress={back}
-          />
-          {(angles?.length ?? 0) > 1 && (
-            <TvButton
-              label="Cameras"
-              onPress={() => {
-                open('cameras')
-              }}
-            />
-          )}
-          <TvButton
-            label="Highlights"
-            onPress={() => {
-              open('highlights')
-            }}
-          />
-          <TvButton
-            label="Box score"
-            onPress={() => {
-              dispatch({ type: 'box' })
-            }}
-          />
-          <TvButton
-            label={state.paused ? 'Play' : 'Pause'}
-            onPress={() => {
-              togglePlayback()
-            }}
-          />
-          <TvButton
-            label="−10 seconds"
-            onPress={() => {
-              seek(-10)
-            }}
-          />
-          <TvButton
-            label="+10 seconds"
-            onPress={() => {
-              seek(10)
-            }}
-          />
-        </TvFocusGuide>
-      )}
       <Animated.View
         testID={state.side === null ? undefined : `tv-${renderedSide}-panel`}
         accessibilityElementsHidden={state.side === null}
@@ -992,7 +903,7 @@ export function TvPlayer({
           styles.side,
           renderedSide === 'cameras'
             ? { left: 0, paddingTop: 40 }
-            : { right: 0 },
+            : { right: 0, width: 420 },
           {
             opacity: sideMotion,
             transform: [
@@ -1006,7 +917,9 @@ export function TvPlayer({
           }
         ]}
       >
-        {renderedSide === 'highlights' && <TvBlur shade="#666666" />}
+        {renderedSide === 'highlights' && (
+          <TvBlur shade="#666666" opacity={0.2} />
+        )}
         <TvFocusGuide
           autoFocus
           focusable={state.side !== null}
@@ -1111,21 +1024,32 @@ export function TvPlayer({
                   onPress={() => {
                     chooseClip(clip)
                   }}
-                  style={({
-                    focused
-                  }: {
-                    pressed: boolean
-                    focused?: boolean
-                  }) => [styles.clip, focused === true && styles.selected]}
+                  onFocus={() => {
+                    setHighlightFocus(clip.eventId)
+                  }}
+                  onBlur={() => {
+                    setHighlightFocus(null)
+                  }}
+                  style={styles.clip}
                 >
-                  <Image
-                    testID={`tv-highlight-thumbnail-${index}`}
-                    source={{ uri: clip.stillUrl }}
-                    style={styles.preview}
-                  />
-                  <Text style={[styles.copy, styles.clipText]}>
-                    {clip.title}
-                  </Text>
+                  <>
+                    <View
+                      testID={`tv-highlight-frame-${index}`}
+                      style={[
+                        styles.previewFrame,
+                        highlightFocus === clip.eventId && styles.selected
+                      ]}
+                    >
+                      <Image
+                        testID={`tv-highlight-thumbnail-${index}`}
+                        source={{ uri: clip.stillUrl }}
+                        style={styles.preview}
+                      />
+                    </View>
+                    <Text style={[styles.copy, styles.clipText]}>
+                      {clip.title}
+                    </Text>
+                  </>
                 </Pressable>
               ))}
             </ScrollView>
@@ -1561,21 +1485,11 @@ const styles = StyleSheet.create({
     gap: 24,
     borderRadius: 24
   },
-  controls: {
-    position: 'absolute',
-    bottom: 20,
-    left: 32,
-    right: 32,
-    zIndex: 7,
-    flexDirection: 'row',
-    gap: 12,
-    flexWrap: 'wrap'
-  },
   scrubber: {
     position: 'absolute',
     left: 40,
     right: 40,
-    bottom: 110,
+    bottom: 40,
     zIndex: 8,
     flexDirection: 'row',
     alignItems: 'center',
@@ -1605,7 +1519,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     bottom: 0,
-    paddingBottom: 110,
+    paddingBottom: 32,
     width: 540,
     paddingTop: 100,
     paddingHorizontal: 40,
@@ -1627,9 +1541,13 @@ const styles = StyleSheet.create({
     marginVertical: 8
   },
   clip: {
+    width: 306,
+    alignSelf: 'flex-start',
     alignItems: 'flex-start',
     gap: 16,
-    padding: 10,
+    paddingVertical: 10
+  },
+  previewFrame: {
     borderWidth: 3,
     borderColor: 'transparent',
     borderRadius: 12

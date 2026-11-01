@@ -6,6 +6,7 @@ import path from 'node:path'
 
 import { captureAllowed, captureScreenshot } from './capture'
 import { tvFixture } from './fixture'
+import { openStatsPanel } from './layoutAssertions'
 
 async function main(): Promise<void> {
   const {
@@ -83,11 +84,9 @@ async function main(): Promise<void> {
     await tv.assertVisible({ id: 'tv-scoreboard', timeout: 30000 })
     await tv.assertNotVisible({ id: 'tv-cameras-panel', timeout: 15000 })
     await tv.assertNotVisible({ id: 'tv-box-panel', timeout: 15000 })
-    // Seek beyond the fixture's scored actions, then use the accessible controls.
+    // Seek beyond the fixture's scored actions, then open the bottom panel.
     for (let i = 0; i < 5; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
-    await tv.pressKey({ key: 'DPAD_UP' })
-    for (let i = 0; i < 3; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
-    await tv.pressKey({ key: 'DPAD_CENTER' })
+    await openStatsPanel(tv)
     await tv.waitForAnimationToEnd({ timeout: 3000 })
     await tv.assertVisible({ text: 'Demo Mountain Valley Visitors' })
     const column = (node: any): any =>
