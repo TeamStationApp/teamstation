@@ -28,6 +28,7 @@ export function setup(m: Setup): void {
       tools: {
         node: '24',
         java: '17',
+        rust: '1.98.0',
         android: [
           'platforms;android-37.0',
           'build-tools;37.0.0',
@@ -97,6 +98,7 @@ export async function buildAndroid(ctx: Stage): Promise<void> {
     ].join(' '),
     { cwd: 'android' }
   )
+  await ctx.sh('cargo install cargo-ndk')
   await ctx.sh(
     `./gradlew --no-daemon :app:assembleRelease -PversionCode=${build}`,
     {
