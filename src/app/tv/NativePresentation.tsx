@@ -40,6 +40,44 @@ export const PlaybackBoundary = nativeTvPresentation
       ViewProps & { transportEnabled: boolean; onCancelTransport: () => void }
     >('TVPlaybackBoundary')
   : View
+const NativeBlur = nativeTvPresentation
+  ? requireNativeComponent<
+      ViewProps & { shade: string; tintOpacity: number; highlighted: boolean }
+    >('TVBlur')
+  : null
+/** Tint is separate from the content so labels keep their full contrast. */
+export function TvBlur({
+  shade,
+  opacity = 0.8,
+  highlighted = false
+}: {
+  shade: string
+  opacity?: number
+  highlighted?: boolean
+}): React.ReactElement {
+  return NativeBlur === null ? (
+    <View
+      pointerEvents="none"
+      testID="tv-blur-fallback"
+      style={[
+        StyleSheet.absoluteFill,
+        {
+          backgroundColor:
+            shade.toLowerCase() === '#ffffff' ? '#ffffff' : '#4c4c4c',
+          borderRadius: 20
+        }
+      ]}
+    />
+  ) : (
+    <NativeBlur
+      pointerEvents="none"
+      shade={shade}
+      tintOpacity={opacity}
+      highlighted={highlighted}
+      style={StyleSheet.absoluteFill}
+    />
+  )
+}
 export function TvPoster({
   uri,
   children,

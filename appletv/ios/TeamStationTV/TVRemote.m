@@ -9,6 +9,10 @@
 @property(nonatomic, copy) void (^changed)(BOOL active, BOOL cancelled);
 @end
 @implementation TVTransportPressObserver
+- (void)reset {
+  [super reset];
+  dispatch_async(dispatch_get_main_queue(), ^{ if (self.changed) self.changed(NO, NO); });
+}
 - (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
   if (self.changed) self.changed(YES, NO);
 }
@@ -27,6 +31,7 @@
 @interface TVPlaybackBoundaryView : RCTView <UIGestureRecognizerDelegate>
 @property(nonatomic, assign) BOOL transportEnabled;
 @property(nonatomic, assign) BOOL transportPress;
+@property(nonatomic, assign) UIFocusHeading pressHeading;
 @property(nonatomic, strong) TVTransportPressObserver *pressMonitor;
 @property(nonatomic, copy) RCTDirectEventBlock onCancelTransport;
 @end
@@ -63,12 +68,13 @@
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldReceivePress:(UIPress *)press {
   BOOL directional = press.type == UIPressTypeLeftArrow || press.type == UIPressTypeRightArrow || press.type == UIPressTypeUpArrow;
   self.transportPress = self.transportEnabled && directional;
+  self.pressHeading = press.type == UIPressTypeLeftArrow ? UIFocusHeadingLeft : press.type == UIPressTypeRightArrow ? UIFocusHeadingRight : UIFocusHeadingUp;
   return self.transportPress;
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldReceiveTouch:(UITouch *)touch { return NO; }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other { return YES; }
 - (BOOL)shouldUpdateFocusInContext:(UIFocusUpdateContext *)context {
-  if (self.transportEnabled && self.transportPress && [context.previouslyFocusedView isDescendantOfView:self]) return NO;
+  if (self.transportEnabled && self.transportPress && (context.focusHeading & self.pressHeading) != 0 && [context.previouslyFocusedView isDescendantOfView:self]) return NO;
   return [super shouldUpdateFocusInContext:context];
 }
 - (void)cancelTransport {
