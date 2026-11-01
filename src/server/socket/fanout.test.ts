@@ -18,7 +18,7 @@ import { type Database, makeDatabase } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
 import { playsDigest, postGamePlays, readPlays } from '../events/postPlays'
 import { readWalkUpSong } from '../routes/walkUpSongs'
-import { GameFanout } from './fanout'
+import { type FanoutSubscriber, GameFanout } from './fanout'
 import { GAME_CHANGES_CHANNEL } from './gameChanges'
 
 const adminUrl = testDatabaseUrl
@@ -411,7 +411,7 @@ describe('the game socket fan-out (U15)', function () {
       })
       const asked: string[] = []
       const sent: string[] = []
-      one.watch(today, scopeOf(team, rival), {
+      const holding: FanoutSubscriber & Seeing = {
         send: message => {
           sent.push(message.kind)
         },
@@ -424,7 +424,8 @@ describe('the game socket fan-out (U15)', function () {
           return true
         },
         resync: () => undefined
-      })
+      }
+      one.watch(today, scopeOf(team, rival), holding)
       const first = one.deliver(JSON.stringify({ game: today, kind: 'plays' }))
       await until(() => asked.length === 1, 'the first delivery')
       const second = one.deliver(JSON.stringify({ game: today, kind: 'game' }))

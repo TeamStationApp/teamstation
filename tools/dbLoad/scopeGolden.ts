@@ -184,7 +184,7 @@ export async function seedAgreementShapes(
     userId: string,
     teamId: string,
     isPlayer = true,
-    role = 'member'
+    role: 'member' | 'owner' | 'manager' = 'member'
   ): Promise<void> => {
     await db
       .insertInto('memberships')
@@ -200,7 +200,7 @@ export async function seedAgreementShapes(
   const link = async (
     userId: string,
     relatedId: string,
-    kind = 'guardian'
+    kind: 'guardian' | 'family' | 'other' = 'guardian'
   ): Promise<void> => {
     await db
       .insertInto('user_links')

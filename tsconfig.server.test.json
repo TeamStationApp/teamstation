@@ -7,7 +7,10 @@
   // server check `npm run typecheck` runs.
   "extends": "./tsconfig.server.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // Some tests share tools/dbLoad's fixtures. Nothing is emitted here, and the
+    // build's own `rootDir` of `src` is what keeps the tools out of `lib/`.
+    "rootDir": "."
   },
   "include": [
     "src/common/**/*.ts",
