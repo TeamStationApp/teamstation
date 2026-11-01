@@ -43,6 +43,10 @@ export const PlaybackBoundary = nativeTvPresentation
       ViewProps & {
         transportEnabled: boolean
         scrubEnabled: boolean
+        statsPanEnabled?: boolean
+        onStatsPan?: (event: {
+          nativeEvent: { state: string; y: number; velocityY: number }
+        }) => void
         onTransportRelease: (event: {
           nativeEvent: { direction: 'left' | 'right' | 'up' }
         }) => void
