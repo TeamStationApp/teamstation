@@ -336,11 +336,26 @@ RCT_EXPORT_VIEW_PROPERTY(onDismiss, RCTDirectEventBlock)
 
 /** A layer-backed scrim stays aligned while the containing panel animates. */
 @interface TVGradientView : UIView
+@property(nonatomic, strong) CAGradientLayer *gradient;
 @property(nonatomic, copy) NSString *direction;
 @property(nonatomic) CGFloat maxOpacity;
 @end
 @implementation TVGradientView
-+ (Class)layerClass { return CAGradientLayer.class; }
+- (instancetype)initWithFrame:(CGRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    self.userInteractionEnabled = NO;
+    self.opaque = NO;
+    _gradient = [CAGradientLayer layer];
+    [self.layer addSublayer:_gradient];
+  }
+  return self;
+}
+- (void)layoutSubviews {
+  [super layoutSubviews];
+  [CATransaction begin]; [CATransaction setDisableActions:YES];
+  self.gradient.frame = self.bounds;
+  [CATransaction commit];
+}
 - (void)setDirection:(NSString *)direction {
   _direction = [direction copy];
   [self updateGradient];
@@ -351,7 +366,7 @@ RCT_EXPORT_VIEW_PROPERTY(onDismiss, RCTDirectEventBlock)
 }
 - (void)updateGradient {
   NSString *direction = self.direction;
-  CAGradientLayer *gradient = (CAGradientLayer *)self.layer;
+  CAGradientLayer *gradient = self.gradient;
   BOOL bottom = [direction isEqualToString:@"bottom"];
   gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:self.maxOpacity].CGColor,
                       (id)[UIColor colorWithWhite:0 alpha:0].CGColor];

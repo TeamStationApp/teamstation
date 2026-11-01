@@ -28,7 +28,6 @@ async function main(): Promise<void> {
   const innings = Number(process.env.TV_STATS_INNINGS ?? 25)
   const h = await tvFixture({
     scored: true,
-    wideStats: true,
     statsInnings: innings
   })
   const daemon = await MaestroD.connect({
@@ -84,8 +83,11 @@ async function main(): Promise<void> {
     await tv.assertVisible({ id: 'tv-scoreboard', timeout: 30000 })
     await tv.assertNotVisible({ id: 'tv-cameras-panel', timeout: 15000 })
     await tv.assertNotVisible({ id: 'tv-box-panel', timeout: 15000 })
-    await tv.pressKey({ key: 'DPAD_DOWN' })
-    await tv.pressKey({ key: 'DPAD_DOWN' })
+    // Seek beyond the fixture's scored actions, then use the accessible controls.
+    for (let i = 0; i < 5; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
+    await tv.pressKey({ key: 'DPAD_UP' })
+    for (let i = 0; i < 3; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
+    await tv.pressKey({ key: 'DPAD_CENTER' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
     await tv.assertVisible({ text: 'Demo Mountain Valley Visitors' })
     const column = (node: any): any =>
