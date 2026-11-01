@@ -89,7 +89,7 @@ if (!serverOnly) {
       '--exit',
       'lib/scoring-tests.cjs',
       '--grep',
-      'TeamStation TV|TV |account|Account|NodeSettingsCard'
+      'TeamStation TV|TV |account|Account|NodeSettingsCard|the replay screen'
     ],
     { NODE_V8_COVERAGE: temp },
     true
