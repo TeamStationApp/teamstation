@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
 import {
   mkdir,
   mkdtemp,
@@ -294,6 +295,67 @@ describe('publishing a live origin', function () {
     }
     await publisher.flush()
     expect(notifications).length(1)
+  })
+
+  it('stores a later init segment ahead of the segments listed under it', async function () {
+    await stage(2)
+    await writeFile(join(dir, 'init000002.mp4'), 'a second init segment')
+    await writeFile(join(dir, segment(2)), 'a later picture')
+    await writeFile(
+      join(dir, 'master.m3u8'),
+      `${playlist(2)}#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000002.mp4"\n#EXTINF:4,\n${segment(2)}\n`
+    )
+    await new OriginPublisher(options).flush()
+
+    const put = puts()
+    expect(put.indexOf('init000002.mp4')).above(-1)
+    expect(put.indexOf('init000002.mp4')).below(put.indexOf(segment(0)))
+    expect(await readFile(object('init000002.mp4'), 'utf8')).equals(
+      'a second init segment'
+    )
+    expect(await readFile(object('index.m3u8'), 'utf8')).contains(
+      '#EXT-X-MAP:URI="init000002.mp4"'
+    )
+
+    // A new publisher object seeds itself from what the store holds.
+    requests.length = 0
+    await new OriginPublisher(options).flush()
+    expect(puts()).deep.equals([])
+  })
+
+  it('holds a playlist back while a later init segment is being replaced', async function () {
+    await stage(1)
+    await writeFile(join(dir, 'init000001.mp4'), 'a second init segment')
+    await writeFile(join(dir, segment(1)), 'a later picture')
+    await writeFile(
+      join(dir, 'master.m3u8'),
+      `${playlist(1)}#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000001.mp4"\n#EXTINF:4,\n${segment(1)}\n`
+    )
+    let changed = false
+    const publisher = new OriginPublisher({
+      ...options,
+      isFinal: name => {
+        if (!changed && name === segment(1)) {
+          changed = true
+          writeFileSync(join(dir, 'init000001.mp4'), 'changed under it, longer')
+        }
+        return true
+      }
+    })
+    const first = await publisher.flush()
+    expect(first.complete).equals(false)
+  })
+
+  it('refuses a later map with a name no writer gives', async function () {
+    await stage(1)
+    await writeFile(
+      join(dir, 'master.m3u8'),
+      `${playlist(1)}#EXT-X-MAP:URI="../other.mp4"\n#EXTINF:4,\n${segment(1)}\n`
+    )
+    await writeFile(join(dir, segment(1)), 'a later picture')
+    expect(await failure(new OriginPublisher(options).flush())).contains(
+      'Invalid live object'
+    )
   })
 
   it('refuses malformed playlists and does not hide local read errors', async function () {

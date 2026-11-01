@@ -17,14 +17,27 @@ import {
   listSpaceObjectEntries,
   verifyObjectLength
 } from '../media/spacesVideo'
-import { parseMediaPlaylist } from '../media/wallClockScan'
+import { type MediaPlaylist, parseMediaPlaylist } from '../media/wallClockScan'
 import { isSegmentName, objectKey, publishedPlaylist } from './originPublish'
+import { FIRST_INIT, isInitName } from './segmentClock'
 
 interface FileStamp {
   size: number
   mtimeMs: number
   md5: string
 }
+/** The init segments a playlist names, in order, each once. */
+function initsOf(playlist: MediaPlaylist): string[] {
+  return [
+    ...new Set([
+      ...(playlist.map == null ? [] : [playlist.map.uri]),
+      ...playlist.segments.flatMap(segment =>
+        segment.map == null ? [] : [segment.map.uri]
+      )
+    ])
+  ]
+}
+
 export interface OriginPublisherOptions {
   space: SpaceSettings
   videoId: string
@@ -91,16 +104,17 @@ export class OriginPublisher {
       if (response.status !== 404)
         throw new Error(`Reading live origin answered ${response.status}`)
     }
+    const local = parseMediaPlaylist(body)
     const names = [
-      'init.mp4',
-      ...parseMediaPlaylist(body).segments.map(segment => segment.uri)
+      ...initsOf(local).filter(isInitName),
+      ...local.segments.map(segment => segment.uri)
     ]
     for (const name of names) {
       const entry = remote.get(objectKey(videoId, name))
       if (entry == null) continue
-      const local = await this.snapshot(name)
-      if (local?.size === entry.size && local.md5 === entry.etag.toLowerCase())
-        this.acknowledged.set(name, local)
+      const here = await this.snapshot(name)
+      if (here?.size === entry.size && here.md5 === entry.etag.toLowerCase())
+        this.acknowledged.set(name, here)
     }
     this.masterWritten = remote.has(objectKey(videoId, 'master.m3u8'))
     this.started = true
@@ -117,9 +131,14 @@ export class OriginPublisher {
     // Validate every name before performing any write.
     for (const segment of playlist.segments)
       objectKey(this.options.videoId, segment.uri)
-    if (playlist.map?.uri !== 'init.mp4')
+    if (playlist.map?.uri !== FIRST_INIT)
       throw new Error('Live playlist has no init.mp4 map')
-    if (!(await this.publishFile('init.mp4'))) return { complete: false }
+    const inits = initsOf(playlist)
+    // Every map is in the store before the segments listed under it.
+    for (const init of inits) {
+      objectKey(this.options.videoId, init)
+      if (!(await this.publishFile(init))) return { complete: false }
+    }
     let failure: unknown
     let failed = false
     for (const segment of playlist.segments) {
@@ -141,8 +160,10 @@ export class OriginPublisher {
         acknowledged.add(segment.uri)
     }
     // A reconnect can replace the init while a slow segment upload runs.
-    if (!(await this.unchanged('init.mp4', this.acknowledged.get('init.mp4'))))
-      return { complete: false }
+    for (const init of inits) {
+      if (!(await this.unchanged(init, this.acknowledged.get(init))))
+        return { complete: false }
+    }
     const body = publishedPlaylist(onDisk, acknowledged, this.published)
     const exposed = parseMediaPlaylist(body).segments
     if (exposed.length > 0 && (await this.active())) {
@@ -155,7 +176,7 @@ export class OriginPublisher {
         this.metadata ??= await this.probe(body)
         if (!this.masterWritten && (await this.active())) {
           const codecs = codecsAttribute(
-            codecsFromInit(await readFile(join(this.options.dir, 'init.mp4')))
+            codecsFromInit(await readFile(join(this.options.dir, FIRST_INIT)))
           )
           const first = exposed[0]
           const bytes = (await stat(join(this.options.dir, first.uri))).size
