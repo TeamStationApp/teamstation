@@ -117,6 +117,7 @@ run(
     'src/app/tv/*.test.ts',
     'src/test/tvBuildConfig.test.ts',
     'src/test/tvNativePresentation.test.ts',
+    'src/test/tvBrowserNative.test.ts',
     'src/server/auth/tvLocation.test.ts',
     'src/app/navigation/*.test.ts',
     'src/server/routes/signup.test.ts',
@@ -170,6 +171,10 @@ writeFileSync(
   resolve('coverage/tv/unit/coverage-final.json'),
   JSON.stringify(map.toJSON())
 )
+// FileCoverage instances are mutable; the browser merge must not alter units.
+const unitMap = require('istanbul-lib-coverage').createCoverageMap(
+  JSON.parse(JSON.stringify(map.toJSON()))
+)
 if (process.env.TS_TV_BROWSER_COVERAGE != null)
   map.merge(
     JSON.parse(readFileSync(process.env.TS_TV_BROWSER_COVERAGE, 'utf8'))
@@ -191,6 +196,14 @@ const {
   withoutTypeOnlyLines
 } = require('./changed-line-coverage.cjs')
 const counts = {}
+const unitCounts = {}
+for (const path of paths)
+  if (unitMap.files().includes(resolve(path)))
+    unitCounts[path] = withoutTypeOnlyLines(
+      path,
+      readFileSync(path, 'utf8'),
+      istanbulCounts(unitMap.fileCoverageFor(resolve(path)).toJSON())
+    )
 for (const path of paths)
   if (map.files().includes(resolve(path)))
     counts[path] = withoutTypeOnlyLines(
@@ -203,7 +216,9 @@ if (nativePaths.length > 0) {
   const nativeEnvelope = JSON.parse(
     readFileSync('appletv/coverage/native-counts.json', 'utf8')
   )
-  Object.assign(counts, validateCounts(nativeEnvelope, process.cwd()))
+  const nativeCounts = validateCounts(nativeEnvelope, process.cwd())
+  Object.assign(counts, nativeCounts)
+  Object.assign(unitCounts, nativeCounts)
 }
 const result = lineReportFromCounts(
   changedLines(diff),
@@ -215,7 +230,24 @@ writeFileSync(
   resolve(report, 'changed-lines.json'),
   JSON.stringify(result, null, 2)
 )
+const unitResult = lineReportFromCounts(
+  changedLines(diff),
+  unitCounts,
+  path => allPaths.includes(path),
+  { min: 90 }
+)
+writeFileSync(
+  resolve('coverage/tv/unit/changed-lines.json'),
+  JSON.stringify(unitResult, null, 2)
+)
 const failures = []
+for (const [path, lines] of Object.entries(unitResult.files)) {
+  const total = lines.covered.length + lines.uncovered.length
+  if (total > 0 && lines.covered.length / total < 0.9)
+    failures.push(`unit: ${path}`)
+}
+if (!unitResult.pass)
+  failures.push(`unit missing: ${unitResult.missing.join(', ')}`)
 for (const [path, lines] of Object.entries(result.files)) {
   const total = lines.covered.length + lines.uncovered.length
   if (total === 0) continue
