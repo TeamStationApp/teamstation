@@ -1,6 +1,8 @@
 import type { ScoreboardOverlay } from '../../common/nodeSettings'
 import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { playerLayout } from '../player/multiCam/playerLayout'
+import { lineBoxHeight } from '../player/scoreboardOverlay/lineScoreLayout'
+import { FULL_BOARD_HEIGHT } from '../player/scoreboardOverlay/overlayLayout'
 import type { PlaybackState } from './playbackState'
 
 export function tvLayout(
@@ -11,7 +13,7 @@ export function tvLayout(
   hasLine: boolean,
   natural: { width: number; height: number } = SCOREBOARD_BOARD_SIZE
 ): ReturnType<typeof playerLayout> {
-  return playerLayout({
+  const result = playerLayout({
     screen,
     safe: { x: 0, y: 0, w: screen.width, h: screen.height },
     count: state.visible.length,
@@ -29,6 +31,52 @@ export function tvLayout(
     line: hasLine || state.visible.length === 3,
     zoomed: state.full === null ? null : state.visible.indexOf(state.full)
   })
+  if (state.full !== null) return result
+  const count = state.visible.length
+  if (count === 2) {
+    result.tiles = result.tiles.map(tile => ({
+      ...tile,
+      y: (screen.height - tile.h) / 2
+    }))
+    const bottom = result.tiles[0].y - 8
+    const width = screen.width / 2 - 16
+    const fullHeight = Math.min(lineBoxHeight(width) * 0.75, bottom - 8)
+    if (result.box !== null)
+      result.box = { x: 8, y: bottom - fullHeight, w: width, h: fullHeight }
+    if (result.board !== null) {
+      const scale = Math.min(
+        fullHeight / FULL_BOARD_HEIGHT,
+        width / natural.width
+      )
+      result.board = {
+        x: screen.width / 2 + 8,
+        y: bottom - fullHeight,
+        w: natural.width * scale,
+        h: natural.height * scale
+      }
+    }
+  } else if (count === 3) {
+    const width = screen.width / 2
+    const fullHeight = (FULL_BOARD_HEIGHT * width) / natural.width
+    if (result.board !== null)
+      result.board = {
+        x: 0,
+        y: 0,
+        w: width,
+        h: (natural.height * width) / natural.width
+      }
+    if (result.box !== null)
+      result.box = {
+        x: 0,
+        y: result.board === null ? 0 : fullHeight + 5,
+        w: width,
+        h: Math.min(
+          lineBoxHeight(width),
+          screen.height / 2 - (result.board === null ? 0 : fullHeight + 5)
+        )
+      }
+  }
+  return result
 }
 
 export type Direction = 'left' | 'right' | 'up' | 'down'

@@ -22,7 +22,7 @@ describe('TV playback composition and remote state', () => {
     expect(angleLayout(1, state)).includes({ opacity: 1, width: 50 })
     state = reduce(state, { type: 'collapse' })
     for (const index of [3, 2]) state = reduce(state, { type: 'toggle', index })
-    expect(angleLayout(0, state)).includes({ top: 50, height: 50 })
+    expect(angleLayout(0, state)).includes({ top: 25, height: 50 })
     expect(angleLayout(3, state)).includes({ opacity: 0, width: 50 })
     state = reduce(state, { type: 'toggle', index: 1 })
     expect(angleLayout(0, state)).includes({ width: 100 })
@@ -91,7 +91,7 @@ describe('TV playback composition and remote state', () => {
     expect(angleNeighbor(four, 8, 'right')).equals(null)
     expect(angleNeighbor({ ...four, visible: [1, 3] }, 1, 'right')).equals(3)
   })
-  it('shares landscape geometry and isolates the four-angle TV setting', () => {
+  it('centers two angles, fills the three-angle board cell and isolates TV settings', () => {
     const screen = { width: 1920, height: 1080 }
     const settings = { ...defaultScoreboardSettings, show: true }
     const three = tvLayout(initialPlayback(3), screen, settings, true, true)
@@ -99,7 +99,11 @@ describe('TV playback composition and remote state', () => {
     expect(three.tiles[1].y).equals(540)
     expect(three.box).not.equals(null)
     const two = tvLayout(initialPlayback(2), screen, settings, true, true)
-    expect(two.tiles[0].y).equals(540)
+    expect(two.tiles[0].y).equals(270)
+    expect(two.board!.h).closeTo(two.box!.h, 0.001)
+    expect(three.board!.w).equals(960)
+    expect(three.box!.w).equals(960)
+    expect(three.box!.y + three.box!.h).at.most(540)
     expect(two.box!.x).lessThan(960)
     expect(two.board!.x).greaterThan(960)
     const four = initialPlayback(4)
