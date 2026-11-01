@@ -305,6 +305,7 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.equal(stages.ios?.on.type, 'macos-arm64')
     assert.equal(stages.android?.on.type, 'do-linux')
     assert.equal(stages.ios?.tools.node, '24')
+    assert.equal(stages.android?.tools.rust, '1.98.0')
     assert.deepEqual(stages.android?.tools.android, [
       'platforms;android-37.0',
       'build-tools;37.0.0',
@@ -335,6 +336,7 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.match(log, /xcodebuild archive/)
     assert.match(log, /CODE_SIGNING_ALLOWED=NO/)
     assert.match(log, /CURRENT_PROJECT_VERSION=26103101/)
+    assert.match(log, /cargo install cargo-ndk/)
     assert.match(log, /assembleRelease -PversionCode=26103101/)
     assert.match(log, /save:ios-archive/)
     assert.match(log, /save:android-apk/)
