@@ -3003,10 +3003,24 @@ describe('prior-play runner field corrections and scoring sheet', () => {
       document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.click()
     })
   }
+  it('leaves a runner called safe at home off the field, with no drag back', async () => {
+    const { session } = priorRunnerFixture('home')
+    await mount(
+      { persistent: false, open: async () => session },
+      { away: priorRunnerRoster('away'), home: priorRunnerRoster('home') }
+    )
+    expect(session.state.liveData.linescore.teams.away.runs).equals(1)
+    expect(baseIds(session.state)).deep.equals([101, null, null])
+    expect(
+      players().some(
+        player => player.playerId === 100 && player.team === 'runner'
+      )
+    ).equals(false)
+    expect(field().interaction!.retreatIds ?? []).not.includes('offense-100')
+  })
   for (const [scenario, to] of [
     ['first', 1],
-    ['second', 2],
-    ['home', 3]
+    ['second', 2]
   ] as const)
     it(`returns the closed ${scenario} runner and displays the notice`, async () => {
       const { session } = priorRunnerFixture(scenario)
@@ -3016,12 +3030,6 @@ describe('prior-play runner field corrections and scoring sheet', () => {
       )
       expect(field().interaction!.retreatIds).includes('offense-100')
       expect(field().runnerSafeError?.('offense-100', to)).equals(undefined)
-      if (scenario === 'home') {
-        expect(
-          players().some(p => p.playerId === 100 && p.team === 'runner')
-        ).equals(true)
-        expect(field().interaction!.advanceIds).not.includes('offense-100')
-      }
       const beforeDrag = field().players
       await step(() => field().onGestureActive?.(true))
       expect(field().players).equals(beforeDrag)

@@ -42,6 +42,10 @@ export function priorRunners(state: GameState): PriorRunner[] {
       ) ||
       row.movement.isOut ||
       row.movement.forced === true ||
+      // Called safe at home from third: that choice was made before the plate.
+      (row.details.movementReason === 'Safe at home' &&
+        row.movement.start === 3 &&
+        from === 4) ||
       (previous.result.eventType === 'home_run' &&
         previous.matchup.batter.id !== runner) ||
       from == null ||

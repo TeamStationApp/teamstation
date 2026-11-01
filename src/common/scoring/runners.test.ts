@@ -315,6 +315,31 @@ describe('runners on a hit', function () {
     )
   })
 
+  it('keeps an unforced runner from third at home once he has been called safe', function () {
+    // Steal twice so the next single is an optional advance, third to home.
+    let state = after(
+      single(game()),
+      close,
+      { type: 'baseRunning', kind: 'steal', runner: 1 },
+      { type: 'baseRunning', kind: 'steal', runner: 1 }
+    )
+    expect(bases(state)).deep.equals([null, null, 1])
+    state = single(state)
+    expect(state.homeQueue).deep.equals([1])
+    const held = after(state, move(1, '3B', { reason: 'Back' }))
+    expect(bases(held)).deep.equals([2, null, 1])
+    expect(held.homeQueue).deep.equals([])
+    expect(runs(held)).equals(0)
+    state = after(state, move(1, 'home'))
+    expect(runs(state)).equals(1)
+    expect(bases(state)).deep.equals([2, null, null])
+    expect(
+      applyAction(state, move(1, '3B', { reason: 'Back' })).problems[0].message
+    ).equals('That runner is not on the play')
+    expect(bases(state)).deep.equals([2, null, null])
+    expect(runs(state)).equals(1)
+  })
+
   it('refuses to send back a runner who was forced', function () {
     let state = walk(walk(walk(game())))
     state = after(state, result('single'))
