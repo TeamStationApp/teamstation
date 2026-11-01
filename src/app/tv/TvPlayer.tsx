@@ -1529,7 +1529,8 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     alignItems: 'flex-start',
     gap: 16,
-    paddingVertical: 10
+    paddingTop: 10,
+    paddingBottom: 20
   },
   previewFrame: {
     borderWidth: 3,
@@ -1538,7 +1539,7 @@ const styles = StyleSheet.create({
   },
   selected: { borderColor: '#fff' },
   preview: { width: 300, height: 170, borderRadius: 6 },
-  clipText: { alignSelf: 'stretch' },
+  clipText: { alignSelf: 'stretch', fontSize: 31.25 },
   statsTeam: { flex: 1, gap: 16, paddingVertical: 24 },
   unavailable: {
     position: 'absolute',
