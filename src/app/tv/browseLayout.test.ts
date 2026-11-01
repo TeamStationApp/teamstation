@@ -2,7 +2,14 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asVideoGame } from '../../common/api'
-import { fourAcross, gameDate, monthOf, monthSections } from './browseLayout'
+import {
+  browseGeometry,
+  collectionTop,
+  fourAcross,
+  gameDate,
+  monthOf,
+  monthSections
+} from './browseLayout'
 
 describe('TV browsing layout', () => {
   it('uses the event timezone and handles unknown dates and invalid zones', () => {
@@ -50,5 +57,28 @@ describe('TV browsing layout', () => {
     expect(sections[0].rows.map(row => row.length)).deep.equals([4, 1])
     expect(sections[1].rows[0]).length(4)
     expect(fourAcross([])).deep.equals([])
+  })
+  it('reserves a complete first row and four thumbnails with room for native lift', () => {
+    for (const width of [1920, 3840]) {
+      for (const monthly of [false, true]) {
+        for (const fontScale of [1, 1.3]) {
+          const height = (width * 9) / 16 - 115
+          const layout = browseGeometry(width, height, monthly, fontScale)
+          expect(layout.heroHeight + layout.rowHeight).closeTo(height, 0.01)
+          expect(152 + 4 * layout.tileWidth + 3 * 24).equals(width)
+          // The viewport includes lift gutters, but the fifth starts outside it.
+          const fifthLeft = 76 + 4 * (layout.tileWidth + 24)
+          expect(fifthLeft).equals(width - 52)
+          expect(layout.tileWidth).greaterThan((width - 224) / 4 - 12)
+        }
+      }
+    }
+  })
+  it('moves the collection transition with scrolling and pins it at the viewport top', () => {
+    expect(collectionTop(500, 0)).equals(500)
+    expect(collectionTop(500, 250)).equals(250)
+    expect(collectionTop(500, 700)).equals(0)
+    expect(collectionTop(500, -30)).equals(500)
+    expect(browseGeometry(1280, 605, false).heroHeight).at.least(0)
   })
 })
