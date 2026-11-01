@@ -25,7 +25,6 @@ import type { VideoRef } from 'react-native-video'
 
 import type {
   BoardTimelineWindow,
-  LineScoreTimeline,
   TeamStationClient,
   TvHighlight,
   VideoSummary
@@ -44,8 +43,14 @@ import {
   playbackReducer,
   type SidePanel
 } from './playbackState'
-import { type BoxStep, boxTimeline, timelineFor } from './playbackTimeline'
+import { timelineFor } from './playbackTimeline'
 import { normalizeRemote, tvControl, tvEvents, TvFocusGuide } from './remote'
+import {
+  lineOf,
+  readTvStatistics,
+  type ReplayStatistics,
+  statisticsAt
+} from './replayStatistics'
 import { TvTransport } from './transportState'
 import { TransportVideo } from './TransportVideo'
 import type { TvPlayRequest } from './TvBrowser'
@@ -57,12 +62,14 @@ interface Angle {
   uri: string
   timeline: WallTimeline
 }
-interface Statistics {
+interface Statistics extends ReplayStatistics {
   board: BoardTimelineWindow | null
-  line: LineScoreTimeline | null
-  boxes: BoxStep[]
 }
-const EMPTY_STATS: Statistics = { board: null, line: null, boxes: [] }
+const EMPTY_STATS: Statistics = {
+  board: null,
+  boxes: [],
+  message: 'Loading statistics…'
+}
 
 export function TvPlayer({
   client,
@@ -204,6 +211,7 @@ export function TvPlayer({
     if (state.side !== null || state.box !== 'closed' || error !== null)
       transport.current?.cancel()
   }, [state.side, state.box, error])
+  const statisticsRefresh = useRef<(() => Promise<void>) | null>(null)
   const ready = useRef(false)
   const generation = useRef(0)
   const [readySequence, setReadySequence] = useState(0)
@@ -280,21 +288,26 @@ export function TvPlayer({
       })
       dispatch({ type: 'reset', count: loaded.length })
       setAngles(loaded)
+      let refreshSequence = 0
+      let appliedStatisticsSequence = 0
+      let appliedTimelineSequence = 0
       const refresh = async (): Promise<void> => {
-        const [board, line, stored, highlights] = await Promise.all([
+        const sequence = ++refreshSequence
+        const [board, replay, highlights] = await Promise.all([
           client.scoreboardTimeline(game.id).catch(() => null),
-          client.lineScore(game.id).catch(() => null),
-          client.gameEvents(game.id).catch(() => null),
+          readTvStatistics(client, request.game.id),
           client.tvHighlights(loaded[0].video.id).catch(() => null)
         ])
         if (!active) return
-        setStats({
-          board,
-          line,
-          boxes: stored === null ? [] : boxTimeline(game, stored)
-        })
-        setClipError(highlights === null)
-        if (highlights !== null) setClips(highlights)
+        if (sequence > appliedStatisticsSequence) {
+          appliedStatisticsSequence = sequence
+          setStats({
+            board,
+            ...replay
+          })
+          setClipError(highlights === null)
+          if (highlights !== null) setClips(highlights)
+        }
         if (loaded.some(a => a.video.status === 'live')) {
           const updates = await Promise.all(
             loaded.map(
@@ -302,14 +315,21 @@ export function TvPlayer({
                 await client.wallTimeline(a.video.id).catch(() => a.timeline)
             )
           )
-          if (active)
+          if (active && sequence > appliedTimelineSequence) {
+            appliedTimelineSequence = sequence
             updates.forEach((timeline, i) => {
               clock.current.ports[i].timeline = timeline
             })
+          }
         }
       }
+      statisticsRefresh.current = refresh
       await refresh()
-      if (active && loaded.some(a => a.video.status === 'live'))
+      if (
+        active &&
+        (game.status === 'inProgress' ||
+          loaded.some(a => a.video.status === 'live'))
+      )
         timer = setInterval(() => {
           refresh().catch(() => undefined)
         }, 10000)
@@ -323,6 +343,7 @@ export function TvPlayer({
     })
     return () => {
       active = false
+      statisticsRefresh.current = null
       generation.current = activeGeneration + 1
       clearInterval(timer)
     }
@@ -633,14 +654,14 @@ export function TvPlayer({
     }
   }
   const board = boardAt(stats.board?.steps ?? [], wall)?.state
-  const line = boardAt(stats.line?.steps ?? [], wall)?.line
-  const box = boardAt(stats.boxes, wall)?.box
+  const { box, message: statsMessage } = statisticsAt(stats, wall)
+  const line = box == null ? null : lineOf(box)
   const layout = tvLayout(
     state,
     screen,
     placement,
     board != null,
-    stats.line !== null,
+    box != null,
     boardSize
   )
   const staticScore =
@@ -850,19 +871,13 @@ export function TvPlayer({
             step={boardAt(stats.board?.steps ?? [], wall) ?? null}
             onNaturalSize={measureBoard}
             place={natural =>
-              tvLayout(
-                state,
-                screen,
-                placement,
-                true,
-                stats.line !== null,
-                natural
-              ).board
+              tvLayout(state, screen, placement, true, box != null, natural)
+                .board
             }
           />
         </View>
       )}
-      {staticScore && layout.box !== null && stats.line !== null && (
+      {staticScore && layout.box !== null && box != null && (
         <View
           pointerEvents="none"
           style={[StyleSheet.absoluteFill, { zIndex: 4 }]}
@@ -870,7 +885,7 @@ export function TvPlayer({
           <LineScoreBox
             rect={layout.box}
             line={line ?? null}
-            teams={stats.line.teams}
+            teams={{ away: box.away.name, home: box.home.name }}
             at={wall}
           />
         </View>
@@ -1105,6 +1120,7 @@ export function TvPlayer({
         ]}
       >
         <Animated.View
+          collapsable={false}
           pointerEvents="none"
           style={[
             StyleSheet.absoluteFill,
@@ -1136,6 +1152,17 @@ export function TvPlayer({
             }}
             scrollEventThrottle={16}
           >
+            {stats.message !== null &&
+              stats.message !== 'Loading statistics…' && (
+                <View style={{ alignSelf: 'flex-start' }}>
+                  <TvButton
+                    label="Retry statistics"
+                    onPress={() => {
+                      statisticsRefresh.current?.().catch(() => undefined)
+                    }}
+                  />
+                </View>
+              )}
             {!staticScore && (
               <>
                 {(line === undefined || line === null) &&
@@ -1148,9 +1175,7 @@ export function TvPlayer({
                     />
                   )}
                 {line === undefined || line === null ? (
-                  <Text style={styles.copy}>
-                    Statistics unavailable at this point in the video.
-                  </Text>
+                  <Text style={styles.copy}>{statsMessage}</Text>
                 ) : (
                   <>
                     <ScrollView
@@ -1201,7 +1226,7 @@ export function TvPlayer({
                           <StatRow
                             key={side}
                             singleLine
-                            name={stats.line?.teams[side] ?? side}
+                            name={box?.[side].name ?? side}
                             values={[
                               ...Array.from(
                                 {
@@ -1223,9 +1248,9 @@ export function TvPlayer({
             )}
             {!staticScore && renderedBox !== 'expanded' ? null : box ===
                 undefined || box === null ? (
-              <Text style={styles.copy}>
-                Player statistics unavailable at this point in the video.
-              </Text>
+              staticScore || line != null ? (
+                <Text style={styles.copy}>{statsMessage}</Text>
+              ) : null
             ) : (
               <>
                 {box.from !== null && (
@@ -1375,6 +1400,8 @@ function PanelGradient({
   if (NativeGradient !== null)
     return (
       <NativeGradient
+        testID="tv-panel-gradient"
+        collapsable={false}
         direction={direction}
         maxOpacity={maxOpacity}
         pointerEvents="none"

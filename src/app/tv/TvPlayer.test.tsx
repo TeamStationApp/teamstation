@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { BackHandler } from 'react-native'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
+import { replayContext, scored } from '../../test/replayGameFixture'
 import { windowSize } from '../../test/tessTestKit'
 import {
   emitTvDirection,
@@ -48,6 +49,9 @@ const client = {
   game: async () => {
     if (fail) throw new Error('Game unavailable')
     return {
+      ...game,
+      awayTeamId: replayContext().teams.away.id,
+      homeTeamId: replayContext().teams.home.id,
       videos: [
         ...Array.from({ length: count }, (_, i) => ({
           id: String(i),
@@ -62,22 +66,18 @@ const client = {
   },
   wallTimeline: async () => timelineFor('2026-10-01T00:00:00Z'),
   scoreboardTimeline: async () => ({ steps: [], version: 'fixture' }),
-  lineScore: async () => ({
-    steps: wide
-      ? [
-          {
-            at: 0,
-            line: {
-              away: { innings: Array(25).fill(0), r: 7, h: 9, e: 0 },
-              home: { innings: Array(25).fill(0), r: 8, h: 10, e: 1 }
-            }
-          }
-        ]
-      : [],
-    version: 'fixture',
-    teams: { home: 'Hosts', away: 'Visitors' }
-  }),
-  gameEvents: async () => ({ plays: [], currentPlay: null }),
+  lineScore: async () => {
+    throw new Error('TV must use replay state')
+  },
+  gameEvents: async () =>
+    wide
+      ? await scored(
+          Array.from({ length: 48 }, () => ({
+            type: 'gameFlow' as const,
+            kind: 'endHalf' as const
+          }))
+        )
+      : { plays: [], currentPlay: null },
   tvHighlights: async () => [
     {
       eventId: 'clip',
@@ -160,6 +160,57 @@ afterEach(async () => {
   closed = false
 })
 describe('TV game playback entry', () => {
+  it('applies slow overlapping refreshes and never lets an older response replace newer highlights', async () => {
+    live = true
+    const originalInterval = globalThis.setInterval
+    const originalHighlights = client.tvHighlights.bind(client)
+    let poll: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 10000) poll = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    try {
+      await render()
+      await press('Highlights')
+      const pendingRefreshes: Array<
+        (value: Awaited<ReturnType<typeof client.tvHighlights>>) => void
+      > = []
+      client.tvHighlights = async () =>
+        await new Promise(resolve => {
+          pendingRefreshes.push(resolve)
+        })
+      expect(poll).not.equals(undefined)
+      await act(async () => {
+        poll!()
+        poll!()
+        await pause()
+      })
+      const clips = await originalHighlights('0')
+      await act(async () => {
+        pendingRefreshes[0]([{ ...clips[0], title: 'First slow refresh' }])
+        await pause()
+      })
+      expect(document.body.textContent).contains('First slow refresh')
+      await act(async () => {
+        pendingRefreshes[1]([{ ...clips[0], title: 'Second slow refresh' }])
+        await pause()
+        poll!()
+        poll!()
+        await pause()
+      })
+      await act(async () => {
+        pendingRefreshes[3]([{ ...clips[0], title: 'Newest response' }])
+        await pause()
+        pendingRefreshes[2]([{ ...clips[0], title: 'Stale response' }])
+        await pause()
+      })
+      expect(document.body.textContent).contains('Newest response')
+      expect(document.body.textContent).not.contains('Stale response')
+    } finally {
+      globalThis.setInterval = originalInterval
+      client.tvHighlights = originalHighlights
+    }
+  })
   it('owns native pan only during scrubbing and seeks every persistent player', async () => {
     viewport = await windowSize(1920, 1080)
     await render()
@@ -442,7 +493,9 @@ describe('TV game playback entry', () => {
       document.querySelector('[data-testid="tv-score-column-25"]')
     ).not.equals(null)
     await press('Team and player statistics')
-    expect(document.body.textContent).contains('Player statistics unavailable')
+    expect(document.querySelector('[data-testid="tv-stats-away"]')).not.equals(
+      null
+    )
     await press('Close panel')
     expect(document.querySelector('[data-testid="tv-box-panel"]')).equals(null)
   })
@@ -526,10 +579,14 @@ describe('TV game playback entry', () => {
     await press('Close panel')
     await press('Box score')
     expect(document.body.textContent).contains(
-      'Statistics unavailable at this point'
+      'Replay statistics are not available for this game.'
     )
     await press('Team and player statistics')
-    expect(document.body.textContent).contains('Player statistics unavailable')
+    expect(
+      document.body.textContent?.split(
+        'Replay statistics are not available for this game.'
+      ).length
+    ).equals(2)
     await press('Close panel')
     await press('Pause')
     await press('Play')
