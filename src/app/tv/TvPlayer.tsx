@@ -105,6 +105,8 @@ export function TvPlayer({
   const [cameraFocus, setCameraFocus] = useState<number | null>(null)
   const statsScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const statsOffset = useRef(0)
+  const statsPan = useRef<{ y: number; moved: boolean } | null>(null)
+  const statsPanEnded = useRef(0)
   const statsExtent = useRef({ content: 0, viewport: 0 })
   const scoreScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const scoreOffset = useRef(0)
@@ -492,7 +494,53 @@ export function TvPlayer({
     }
   }, [state.box, boxMotion])
   useEffect(() => {
+    if (state.box === 'closed') return
+    tvControl?.enableTVPanGesture()
+    return () => {
+      statsPan.current = null
+      tvControl?.disableTVPanGesture()
+    }
+  }, [state.box])
+  useEffect(() => {
     const subscription = tvEvents?.addListener(event => {
+      if (current.current.box !== 'closed' && event.eventType === 'pan') {
+        const body = event.body
+        if (body?.state === 'Ended' || body?.state === 'Cancelled') {
+          if (statsPan.current?.moved === true)
+            statsPanEnded.current = Date.now()
+          statsPan.current = null
+          return
+        }
+        if (!Number.isFinite(body?.y)) return
+        const y = body!.y!
+        if (body?.state === 'Began' || statsPan.current === null) {
+          statsPan.current = { y, moved: false }
+          return
+        }
+        const delta = y - statsPan.current.y
+        statsPan.current.y = y
+        if (Math.abs(delta) < 0.1) return
+        statsPan.current.moved = true
+        if (delta > 0 && current.current.box !== 'expanded') {
+          dispatch({ type: 'box' })
+          return
+        }
+        statsOffset.current = Math.max(
+          0,
+          Math.min(
+            Math.max(
+              0,
+              statsExtent.current.content - statsExtent.current.viewport
+            ),
+            statsOffset.current + delta
+          )
+        )
+        statsScroll.current?.scrollTo({
+          y: statsOffset.current,
+          animated: false
+        })
+        return
+      }
       const input = normalizeRemote(event, Platform.OS === 'ios')
       if (input === null) return
       if (input.kind === 'cancel') {
@@ -525,6 +573,13 @@ export function TvPlayer({
         return
       }
       if (held.box !== 'closed') {
+        // The same touch also emits a discrete swipe; do not scroll twice.
+        if (
+          input.kind === 'swipe' &&
+          (statsPan.current?.moved === true ||
+            Date.now() - statsPanEnded.current < 250)
+        )
+          return
         if (direction === 'left' || direction === 'right') {
           scoreOffset.current = Math.max(
             0,
@@ -714,7 +769,9 @@ export function TvPlayer({
       testID="tv-player"
       style={styles.scene}
       transportEnabled={!overlay && focus !== null}
-      scrubEnabled={!overlay && transportState.visible}
+      scrubEnabled={
+        state.box !== 'closed' || (!overlay && transportState.visible)
+      }
       onTransportRelease={event =>
         transport.current?.handle({
           kind: 'hold',
@@ -1376,7 +1433,11 @@ function PanelGradient({
         )
       }}
     >
-      <Svg width={size.width} height={size.height} style={StyleSheet.absoluteFill}>
+      <Svg
+        width={size.width}
+        height={size.height}
+        style={StyleSheet.absoluteFill}
+      >
         <Defs>
           <LinearGradient
             id={id}
