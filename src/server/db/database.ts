@@ -1723,6 +1723,14 @@ export function starvationCheck(
 }
 
 /**
+ * A timer that does not hold the process open. The app's type check reads this
+ * file too, and with the DOM's library in scope a timer is typed as a number.
+ */
+function unrefTimer(timer: number | NodeJS.Timeout): void {
+  if (typeof timer !== 'number') timer.unref()
+}
+
+/**
  * The pool, with every connection it opens listening for its own `'error'`.
  *
  * Postgres can drop a connection at any time: a restart, a full disk, an
@@ -1762,7 +1770,7 @@ export function makePool(
       if (pool.ended) clearInterval(sampling)
       else check()
     }, STARVATION_SAMPLE_MS)
-    sampling.unref()
+    unrefTimer(sampling)
   }
   return pool
 }
