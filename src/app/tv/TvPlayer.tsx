@@ -1097,7 +1097,10 @@ export function TvPlayer({
         <View
           collapsable={false}
           pointerEvents="none"
-          style={[StyleSheet.absoluteFill, { top: -screen.height * 0.1 }]}
+          style={[
+            StyleSheet.absoluteFill,
+            { top: -screen.height * 0.1, bottom: -screen.height * 0.15 }
+          ]}
         >
           <PanelGradient direction="bottom" maxOpacity={0.5} />
         </View>
@@ -1358,14 +1361,22 @@ function PanelGradient({
   direction: 'left' | 'right' | 'bottom'
 }): React.ReactElement {
   const id = useId().replace(/[^A-Za-z0-9]/g, '')
+  const [size, setSize] = useState({ width: 0, height: 0 })
   return (
     <View
       testID="tv-panel-gradient"
       collapsable={false}
       pointerEvents="none"
       style={StyleSheet.absoluteFill}
+      onLayout={({ nativeEvent: { layout } }) => {
+        setSize(previous =>
+          previous.width === layout.width && previous.height === layout.height
+            ? previous
+            : { width: layout.width, height: layout.height }
+        )
+      }}
     >
-      <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
+      <Svg width={size.width} height={size.height} style={StyleSheet.absoluteFill}>
         <Defs>
           <LinearGradient
             id={id}
