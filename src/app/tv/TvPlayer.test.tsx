@@ -189,7 +189,12 @@ describe('TV game playback entry', () => {
     ).not.equals(null)
     expect(document.querySelector('[data-testid="tv-scrubber"]')).equals(null)
   })
-  for (const finish of ['Ended', 'Cancelled'] as const) {
+  for (const finish of [
+    'Ended',
+    'Cancelled',
+    'clickLeft',
+    'holdLeft'
+  ] as const) {
     it(`defers natural recording completion during a drag and handles ${finish}`, async () => {
       viewport = await windowSize(1920, 1080)
       count = 1
@@ -227,11 +232,14 @@ describe('TV game playback entry', () => {
         document.querySelector('[data-testid="tv-highlights-panel"]')
       ).equals(null)
       await act(async () => {
-        emitTvPan(finish, -100)
+        if (finish === 'clickLeft') emitTvDirection('left')
+        else if (finish === 'holdLeft') emitTvDirection('longLeft', 0)
+        else emitTvPan(finish, -100)
         await pause()
       })
-      if (finish === 'Ended') {
-        expect(video.currentTime).lessThan(10)
+      if (finish !== 'Cancelled') {
+        if (finish === 'Ended') expect(video.currentTime).lessThan(10)
+        else expect(video.currentTime).equals(90)
         expect(
           document.querySelector('[data-testid="tv-highlights-panel"]')
         ).equals(null)

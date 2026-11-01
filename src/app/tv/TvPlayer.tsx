@@ -195,17 +195,28 @@ export function TvPlayer({
         : tvControl?.disableTVPanGesture(),
     changed: snapshot => {
       setTransportState(snapshot)
-      // Release ownership synchronously: React may batch begin/end together.
+      // Drain after the whole input action (cancel + optional seek), independently
+      // of React batching. A new drag or game invalidates this pending drain.
       if (!snapshot.scrubbing) {
-        if (pendingRecordingEnd.current) {
-          pendingRecordingEnd.current = false
-          if (!clock.current.ports.some((_, i) => clock.current.available(i))) {
-            dispatch({ type: 'ended' })
-            dispatch({ type: 'open', panel: 'highlights' })
+        const activeGeneration = generation.current
+        queueMicrotask(() => {
+          if (
+            generation.current !== activeGeneration ||
+            transport.current?.scrubbing === true
+          )
+            return
+          if (pendingRecordingEnd.current) {
+            pendingRecordingEnd.current = false
+            if (
+              !clock.current.ports.some((_, i) => clock.current.available(i))
+            ) {
+              dispatch({ type: 'ended' })
+              dispatch({ type: 'open', panel: 'highlights' })
+            }
           }
-        }
-        const position = clock.current.wall
-        if (position !== null) dispatch({ type: 'progress', wall: position })
+          const position = clock.current.wall
+          if (position !== null) dispatch({ type: 'progress', wall: position })
+        })
       }
     },
     now: Date.now,
