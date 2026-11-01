@@ -66,3 +66,25 @@ export function monthSections(
     rows: fourAcross(group.games)
   }))
 }
+
+/** Reserve a complete first row, including title, details and focus-lift gutters. */
+export function browseGeometry(
+  width: number,
+  viewportHeight: number,
+  monthly: boolean,
+  fontScale = 1
+): { tileWidth: number; rowHeight: number; heroHeight: number } {
+  const tileWidth = Math.max(1, (width - 152 - 72) / 4)
+  const tileHeight = (tileWidth * 9) / 16 + (38 + 34) * fontScale + 14
+  const rowHeight = monthly
+    ? 92 + tileHeight + 28
+    : 38 * fontScale + 18 + 48 + tileHeight
+  return {
+    tileWidth,
+    rowHeight,
+    heroHeight: Math.max(440, viewportHeight - rowHeight)
+  }
+}
+export function collectionTop(heroHeight: number, scrollY: number): number {
+  return Math.max(0, heroHeight - Math.max(0, scrollY))
+}
