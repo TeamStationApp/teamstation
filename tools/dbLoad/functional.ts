@@ -261,7 +261,7 @@ async function scoreUntilHeard(
     const before = pitchMarks(watcher.frames(), liveGameId).length
     await scorer.press(PITCH_CALLS[context.pitches % PITCH_CALLS.length])
     context.pitches += 1
-    const nextPitch = Date.now() + Math.min(10000, context.patienceMs)
+    const nextPitch = Date.now() + Math.min(10000, context.patienceMs / 4)
     while (Date.now() < nextPitch) {
       if (pitchMarks(watcher.frames(), liveGameId).length > before) return
       await new Promise(done => {
