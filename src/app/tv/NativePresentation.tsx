@@ -35,6 +35,16 @@ export const NativeGradient = nativeTvPresentation
       ViewProps & { direction: 'left' | 'right' | 'bottom'; maxOpacity: number }
     >('TVGradient')
   : null
+export const PlaybackBoundary = nativeTvPresentation
+  ? requireNativeComponent<
+      ViewProps & {
+        transportEnabled: boolean
+        scrubEnabled: boolean
+        onCancelTransport: () => void
+        onPanCancelled: () => void
+      }
+    >('TVPlaybackBoundary')
+  : View
 export function TvPoster({
   uri,
   children,

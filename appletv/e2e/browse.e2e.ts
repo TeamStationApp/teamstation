@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
+import { captureAllowed, captureScreenshot } from './capture'
 import { tvFixture } from './fixture'
 
 async function main(): Promise<void> {
@@ -27,7 +28,7 @@ async function main(): Promise<void> {
   const daemon = await MaestroD.connect({
     name: process.env.MAESTRO_D ?? 'appleTvNative'
   })
-  const tv = await daemon.attach({ device, platform: 'ios' })
+  const tv = await daemon.attach({ device, platform: 'ios', artifacts: 'none' })
   let recording: ReturnType<typeof spawn> | undefined
   const waitForHero = async (): Promise<void> => {
     await tv.assertVisible({ id: 'tv-hero-video', timeout: 15000 })
@@ -49,10 +50,7 @@ async function main(): Promise<void> {
       timeout: 60000
     })
     await tv.tapOn({ text: 'Dismiss', optional: true, timeout: 1000 })
-    await writeFile(
-      path.join(artifacts, 'login-after.png'),
-      await tv.screenshot()
-    )
+    await captureScreenshot(tv, path.join(artifacts, 'login-after.png'))
     const findCode = (node: any): string | undefined =>
       /[A-Z]{4}[–-][A-Z]{4}/.exec(String(node.text ?? ''))?.[0] ??
       node.children?.map(findCode).find(Boolean)
@@ -64,22 +62,21 @@ async function main(): Promise<void> {
     )
     await tv.assertVisible({ text: 'Recent Games', timeout: 30000 })
     await waitForHero()
-    recording = spawn(
-      'xcrun',
-      [
-        'simctl',
-        'io',
-        device,
-        'recordVideo',
-        '--force',
-        path.join(artifacts, 'preview-focus.mp4')
-      ],
-      { stdio: 'ignore' }
-    )
-    await writeFile(
-      path.join(artifacts, 'home-after.png'),
-      await tv.screenshot()
-    )
+    recording = captureAllowed()
+      ? spawn(
+          'xcrun',
+          [
+            'simctl',
+            'io',
+            device,
+            'recordVideo',
+            '--force',
+            path.join(artifacts, 'preview-focus.mp4')
+          ],
+          { stdio: 'ignore' }
+        )
+      : undefined
+    await captureScreenshot(tv, path.join(artifacts, 'home-after.png'))
     await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.pressKey({ key: 'DPAD_RIGHT' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
@@ -88,10 +85,7 @@ async function main(): Promise<void> {
       text: '.*Preview: (3[0-9]|4[0-9]) seconds',
       timeout: 15000
     })
-    await writeFile(
-      path.join(artifacts, 'focus-after.png'),
-      await tv.screenshot()
-    )
+    await captureScreenshot(tv, path.join(artifacts, 'focus-after.png'))
     await tv.pressKey({ key: 'DPAD_LEFT' })
     await tv.pressKey({ key: 'DPAD_UP' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
@@ -104,18 +98,12 @@ async function main(): Promise<void> {
     await tv.assertVisible({ id: 'tv-search-results', timeout: 15000 })
     await tv.assertVisible({ text: 'Demo Comets', timeout: 15000 })
     await tv.assertNotVisible({ text: 'Searching…', timeout: 15000 })
-    await writeFile(
-      path.join(artifacts, 'search-after.png'),
-      await tv.screenshot()
-    )
+    await captureScreenshot(tv, path.join(artifacts, 'search-after.png'))
     await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.pressKey({ key: 'DPAD_CENTER' })
     await tv.assertVisible({ text: 'October 2026', timeout: 15000 })
     await waitForHero()
-    await writeFile(
-      path.join(artifacts, 'team-after.png'),
-      await tv.screenshot()
-    )
+    await captureScreenshot(tv, path.join(artifacts, 'team-after.png'))
     for (let row = 0; row < 4; row++) {
       await tv.pressKey({ key: 'DPAD_DOWN' })
       await tv.waitForAnimationToEnd({ timeout: 1500 })
@@ -123,9 +111,9 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'DPAD_RIGHT' })
     await tv.pressKey({ key: 'DPAD_LEFT' })
     await tv.assertVisible({ text: 'September 2026' })
-    await writeFile(
-      path.join(artifacts, 'tv-team-month-scroll.png'),
-      await tv.screenshot()
+    await captureScreenshot(
+      tv,
+      path.join(artifacts, 'tv-team-month-scroll.png')
     )
     await tv.pressKey({ key: 'BACK' })
     await tv.assertVisible({ id: 'tv-page-home' })
@@ -144,10 +132,7 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'DPAD_CENTER' })
     await tv.assertVisible({ text: 'Recent Games', timeout: 15000 })
     await waitForHero()
-    await writeFile(
-      path.join(artifacts, 'player-after.png'),
-      await tv.screenshot()
-    )
+    await captureScreenshot(tv, path.join(artifacts, 'player-after.png'))
     await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.pressKey({ key: 'DPAD_RIGHT' })
     await tv.pressKey({ key: 'DPAD_LEFT' })
@@ -183,7 +168,7 @@ async function main(): Promise<void> {
       '/private/tmp/tv-browse-hierarchy.json',
       JSON.stringify(await tv.hierarchy(), null, 2)
     )
-    await writeFile('/private/tmp/tv-browse-failure.png', await tv.screenshot())
+    await captureScreenshot(tv, '/private/tmp/tv-browse-failure.png')
     throw error
   } finally {
     if (recording?.exitCode === null) {
