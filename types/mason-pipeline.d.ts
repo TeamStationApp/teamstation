@@ -17,6 +17,8 @@ declare module '@mason/types' {
     scheme: string
     configuration?: string
     buildNumber?: string
+    /** Extra arguments passed to xcodebuild, including build settings. */
+    xcargs?: string[]
     /** Added to xcodebuild's environment, which the project's build scripts see. */
     env?: Record<string, string>
   }
