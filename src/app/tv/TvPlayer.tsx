@@ -35,7 +35,7 @@ import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
-import { NativeGradient, PlaybackBoundary, TvBlur } from './NativePresentation'
+import { PlaybackBoundary, TvBlur } from './NativePresentation'
 import { NativeSeekQueue } from './nativeSeekQueue'
 import { PlaybackClock } from './playbackClock'
 import {
@@ -918,7 +918,7 @@ export function TvPlayer({
         ]}
       >
         {renderedSide === 'highlights' && (
-          <TvBlur shade="#666666" opacity={0.2} />
+          <PanelGradient direction="right" maxOpacity={0.1} />
         )}
         <TvFocusGuide
           autoFocus
@@ -1065,7 +1065,7 @@ export function TvPlayer({
           {
             height: boxGrowth.interpolate({
               inputRange: [0, 1],
-              outputRange: ['25%', '33%']
+              outputRange: ['20%', '25%']
             }),
             opacity: boxMotion,
             transform: [
@@ -1115,25 +1115,20 @@ export function TvPlayer({
             {stats.message !== null &&
               stats.message !== 'Loading statistics…' && (
                 <View style={{ alignSelf: 'flex-start' }}>
-                  <TvButton
-                    label="Retry statistics"
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry statistics"
                     onPress={() => {
                       statisticsRefresh.current?.().catch(() => undefined)
                     }}
-                  />
+                    style={{ paddingVertical: 8 }}
+                  >
+                    <Text style={styles.copy}>Retry statistics</Text>
+                  </Pressable>
                 </View>
               )}
             {!staticScore && (
               <>
-                {(line === undefined || line === null) &&
-                  renderedBox !== 'expanded' && (
-                    <TvButton
-                      label="Team and player statistics"
-                      onPress={() => {
-                        dispatch({ type: 'box' })
-                      }}
-                    />
-                  )}
                 {line === undefined || line === null ? (
                   <Text style={styles.copy}>{statsMessage}</Text>
                 ) : (
@@ -1357,17 +1352,6 @@ function PanelGradient({
 }): React.ReactElement {
   const id = useId().replace(/[^A-Za-z0-9]/g, '')
   const [size, setSize] = useState({ width: 0, height: 0 })
-  if (NativeGradient !== null)
-    return (
-      <NativeGradient
-        testID="tv-panel-gradient"
-        collapsable={false}
-        direction={direction}
-        maxOpacity={maxOpacity}
-        pointerEvents="none"
-        style={StyleSheet.absoluteFill}
-      />
-    )
   return (
     <View
       pointerEvents="none"

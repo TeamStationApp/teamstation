@@ -151,12 +151,20 @@ async function press(label: string): Promise<void> {
     Highlights: 'swipeRight',
     Cameras: 'swipeLeft',
     'Box score': 'swipeDown',
+    'Team and player statistics': 'down',
     Pause: 'playPause',
     Play: 'playPause',
     '−10 seconds': 'left',
     '+10 seconds': 'right'
   }[label]
   if (direction !== undefined) {
+    if (label === 'Team and player statistics') {
+      await act(async () => {
+        emitTvDirection('down')
+        await pause()
+      })
+      return
+    }
     const index =
       label === 'Highlights'
         ? Math.min(count - 1, 1)
@@ -635,11 +643,12 @@ describe('TV game playback entry', () => {
     const panel = document.querySelector<HTMLElement>(
       '[data-testid="tv-box-panel"]'
     )!
-    expect(panel.style.height).equals('25%')
+    expect(panel.style.height).equals('20%')
     expect(
       document.querySelector('[data-testid="tv-score-column-25"]')
     ).not.equals(null)
     await press('Team and player statistics')
+    expect(panel.style.height).equals('25%')
     expect(document.querySelector('[data-testid="tv-stats-away"]')).not.equals(
       null
     )
