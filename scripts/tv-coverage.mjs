@@ -171,7 +171,10 @@ writeFileSync(
   resolve('coverage/tv/unit/coverage-final.json'),
   JSON.stringify(map.toJSON())
 )
-const unitMap = require('istanbul-lib-coverage').createCoverageMap(map.toJSON())
+// FileCoverage instances are mutable; the browser merge must not alter units.
+const unitMap = require('istanbul-lib-coverage').createCoverageMap(
+  JSON.parse(JSON.stringify(map.toJSON()))
+)
 if (process.env.TS_TV_BROWSER_COVERAGE != null)
   map.merge(
     JSON.parse(readFileSync(process.env.TS_TV_BROWSER_COVERAGE, 'utf8'))
