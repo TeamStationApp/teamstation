@@ -1,5 +1,111 @@
 #import <React/RCTEventEmitter.h>
 #import <GameController/GameController.h>
+#import <React/RCTView.h>
+#import <React/RCTViewManager.h>
+#import <UIKit/UIGestureRecognizerSubclass.h>
+
+/** Observes presses without winning recognition against React Native's tap/hold recognizers. */
+@interface TVTransportPressObserver : UIGestureRecognizer
+@property(nonatomic, copy) void (^changed)(BOOL active, BOOL cancelled);
+@end
+@implementation TVTransportPressObserver
+- (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+  if (self.changed) self.changed(YES, NO);
+}
+- (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+  // Keep the ownership flag through UIKit's synchronous focus decision.
+  dispatch_async(dispatch_get_main_queue(), ^{ if (self.changed) self.changed(NO, NO); });
+  self.state = UIGestureRecognizerStateFailed;
+}
+- (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+  if (self.changed) self.changed(NO, YES);
+  self.state = UIGestureRecognizerStateFailed;
+}
+@end
+
+/** Directional presses belong to transport, while touch swipes retain UIKit focus routing. */
+@interface TVPlaybackBoundaryView : RCTView <UIGestureRecognizerDelegate>
+@property(nonatomic, assign) BOOL transportEnabled;
+@property(nonatomic, assign) BOOL scrubEnabled;
+@property(nonatomic, assign) BOOL transportPress;
+@property(nonatomic, strong) TVTransportPressObserver *pressMonitor;
+@property(nonatomic, strong) UIPanGestureRecognizer *panMonitor;
+@property(nonatomic, copy) RCTDirectEventBlock onCancelTransport;
+@property(nonatomic, copy) RCTDirectEventBlock onPanCancelled;
+@end
+@implementation TVPlaybackBoundaryView
+- (instancetype)initWithFrame:(CGRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    _pressMonitor = [TVTransportPressObserver new];
+    __weak TVPlaybackBoundaryView *weakSelf = self;
+    _pressMonitor.changed = ^(BOOL active, BOOL cancelled) {
+      weakSelf.transportPress = active;
+      if (cancelled) [weakSelf cancelTransport];
+    };
+    _pressMonitor.allowedPressTypes = @[@(UIPressTypeLeftArrow), @(UIPressTypeRightArrow), @(UIPressTypeUpArrow)];
+    _pressMonitor.cancelsTouchesInView = NO;
+    _pressMonitor.delegate = self;
+    [self addGestureRecognizer:_pressMonitor];
+    // RN's pan event bridge omits UIGestureRecognizerStateCancelled.
+    // Observe that native terminal state alongside RN, without stealing touches.
+    _panMonitor = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panChanged:)];
+    _panMonitor.cancelsTouchesInView = NO;
+    _panMonitor.allowedPressTypes = @[];
+    _panMonitor.delegate = self;
+    _panMonitor.enabled = NO;
+    [self addGestureRecognizer:_panMonitor];
+  }
+  return self;
+}
+- (void)didMoveToWindow {
+  [super didMoveToWindow];
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+  if (self.window) {
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(cancelTransport) name:UIApplicationWillResignActiveNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(cancelTransport) name:GCControllerDidDisconnectNotification object:nil];
+  } else [self cancelTransport];
+}
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
+- (void)setTransportEnabled:(BOOL)value {
+  _transportEnabled = value;
+  self.pressMonitor.enabled = value;
+  if (!value) self.transportPress = NO;
+}
+- (void)setScrubEnabled:(BOOL)value {
+  _scrubEnabled = value;
+  self.panMonitor.enabled = value;
+}
+- (void)panChanged:(UIPanGestureRecognizer *)recognizer {
+  if (recognizer.state == UIGestureRecognizerStateCancelled && self.onPanCancelled)
+    self.onPanCancelled(@{});
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldReceivePress:(UIPress *)press {
+  if (recognizer == self.panMonitor) return NO;
+  BOOL directional = press.type == UIPressTypeLeftArrow || press.type == UIPressTypeRightArrow || press.type == UIPressTypeUpArrow;
+  self.transportPress = self.transportEnabled && directional;
+  return self.transportPress;
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldReceiveTouch:(UITouch *)touch { return recognizer == self.panMonitor && self.scrubEnabled; }
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other { return YES; }
+- (BOOL)shouldUpdateFocusInContext:(UIFocusUpdateContext *)context {
+  if (self.scrubEnabled && !self.transportPress && context.focusHeading != UIFocusHeadingNone && [context.previouslyFocusedView isDescendantOfView:self]) return NO;
+  if (self.transportEnabled && self.transportPress && [context.previouslyFocusedView isDescendantOfView:self]) return NO;
+  return [super shouldUpdateFocusInContext:context];
+}
+- (void)cancelTransport {
+  self.transportPress = NO;
+  if (self.onCancelTransport) self.onCancelTransport(@{});
+}
+@end
+@interface TVPlaybackBoundaryManager : RCTViewManager @end
+@implementation TVPlaybackBoundaryManager
+RCT_EXPORT_MODULE(TVPlaybackBoundary)
+- (UIView *)view { return [TVPlaybackBoundaryView new]; }
+RCT_EXPORT_VIEW_PROPERTY(transportEnabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(scrubEnabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(onCancelTransport, RCTDirectEventBlock)
+RCT_EXPORT_VIEW_PROPERTY(onPanCancelled, RCTDirectEventBlock)
+@end
 
 /** Absolute remote coordinates are separate from UIKit's relative focus pans. */
 @interface TVRemote : RCTEventEmitter
