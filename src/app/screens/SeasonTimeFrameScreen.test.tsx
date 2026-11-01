@@ -179,12 +179,12 @@ describe('a season’s date range', function () {
   })
 
   it('reads a Custom range that is a season of the year shown as that season', async function () {
-    const f = fake({ startsOn: null, endsOn: null })
+    // A non-season range anchors the calendar in March regardless of today's
+    // month. The screen's injected clock controls only its year selector.
+    const f = fake({ startsOn: '2026-03-02', endsOn: '2026-05-30' })
     await mount(f)
-    await press('Custom')
-    await press('Previous month')
-    // Back from October to March, then on to May.
-    for (let month = 0; month < 6; month++) await press('Previous month')
+    expect(selected()).deep.equals([])
+    await press(`Custom, ${formatDateRange('2026-03-02', '2026-05-30')}`)
     await press('2026-03-01')
     await press('Next month')
     await press('Next month')
