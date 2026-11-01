@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { BackHandler } from 'react-native'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
+import { replayContext, scored } from '../../test/replayGameFixture'
 import { windowSize } from '../../test/tessTestKit'
 import {
   emitTvDirection,
@@ -48,6 +49,9 @@ const client = {
   game: async () => {
     if (fail) throw new Error('Game unavailable')
     return {
+      ...game,
+      awayTeamId: replayContext().teams.away.id,
+      homeTeamId: replayContext().teams.home.id,
       videos: [
         ...Array.from({ length: count }, (_, i) => ({
           id: String(i),
@@ -62,22 +66,18 @@ const client = {
   },
   wallTimeline: async () => timelineFor('2026-10-01T00:00:00Z'),
   scoreboardTimeline: async () => ({ steps: [], version: 'fixture' }),
-  lineScore: async () => ({
-    steps: wide
-      ? [
-          {
-            at: 0,
-            line: {
-              away: { innings: Array(25).fill(0), r: 7, h: 9, e: 0 },
-              home: { innings: Array(25).fill(0), r: 8, h: 10, e: 1 }
-            }
-          }
-        ]
-      : [],
-    version: 'fixture',
-    teams: { home: 'Hosts', away: 'Visitors' }
-  }),
-  gameEvents: async () => ({ plays: [], currentPlay: null }),
+  lineScore: async () => {
+    throw new Error('TV must use replay state')
+  },
+  gameEvents: async () =>
+    wide
+      ? await scored(
+          Array.from({ length: 48 }, () => ({
+            type: 'gameFlow' as const,
+            kind: 'endHalf' as const
+          }))
+        )
+      : { plays: [], currentPlay: null },
   tvHighlights: async () => [
     {
       eventId: 'clip',
@@ -369,7 +369,9 @@ describe('TV game playback entry', () => {
       document.querySelector('[data-testid="tv-score-column-25"]')
     ).not.equals(null)
     await press('Team and player statistics')
-    expect(document.body.textContent).contains('Player statistics unavailable')
+    expect(document.querySelector('[data-testid="tv-stats-away"]')).not.equals(
+      null
+    )
     await press('Close panel')
     expect(document.querySelector('[data-testid="tv-box-panel"]')).equals(null)
   })
@@ -453,10 +455,14 @@ describe('TV game playback entry', () => {
     await press('Close panel')
     await press('Box score')
     expect(document.body.textContent).contains(
-      'Statistics unavailable at this point'
+      'Replay statistics are not available for this game.'
     )
     await press('Team and player statistics')
-    expect(document.body.textContent).contains('Player statistics unavailable')
+    expect(
+      document.body.textContent?.split(
+        'Replay statistics are not available for this game.'
+      ).length
+    ).equals(2)
     await press('Close panel')
     await press('Pause')
     await press('Play')
