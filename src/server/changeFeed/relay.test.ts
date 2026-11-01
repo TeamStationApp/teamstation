@@ -239,10 +239,12 @@ describe('the feed relay', function () {
     ) => {
       const client = makeScoreboardClient(url, log, name, caFile)
       const publish = client.publish.bind(client)
-      client.publish = (async (channel: string, message: string) => {
-        if (failing) throw new Error('publish refused')
-        return await publish(channel, message)
-      }) as ScoreboardClient['publish']
+      Object.assign(client, {
+        publish: (async (channel: string, message: string) => {
+          if (failing) throw new Error('publish refused')
+          return await publish(channel, message)
+        }) as ScoreboardClient['publish']
+      })
       return client
     }
     relayOf(prefix, 'flaky', { makeClient, log: line => lines.push(line) })
@@ -286,11 +288,13 @@ describe('the feed relay', function () {
     ) => {
       const client = makeScoreboardClient(url, log, name, caFile)
       const evaluate = client.eval.bind(client)
-      client.eval = (async (...args: Parameters<typeof evaluate>) => {
-        if (hanging && args[0].includes('pexpire'))
-          return await new Promise(() => undefined)
-        return await evaluate(...args)
-      }) as ScoreboardClient['eval']
+      Object.assign(client, {
+        eval: async (...args: Parameters<typeof evaluate>) => {
+          if (hanging && args[0].includes('pexpire'))
+            return await new Promise(() => undefined)
+          return await evaluate(...args)
+        }
+      })
       return client
     }
     relayOf(prefix, 'hung', { makeClient, log: line => lines.push(line) })
@@ -377,8 +381,10 @@ describe('the feed relay', function () {
       caFile
     ) => {
       const client = makeScoreboardClient(url, log, name, caFile)
-      client.get = async () => null
-      client.eval = async () => 1
+      Object.assign(client, {
+        get: async () => null,
+        eval: async () => 1
+      })
       return client
     }
     const options: FeedRelayOptions & { log: (line: string) => void } = {
