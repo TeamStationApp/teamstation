@@ -6,6 +6,7 @@ import path from 'node:path'
 
 import { captureAllowed, captureScreenshot } from './capture'
 import { tvFixture } from './fixture'
+import { assertCameraLayout } from './layoutAssertions'
 
 async function main(): Promise<void> {
   const {
@@ -83,10 +84,10 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'BACK' })
     await tv.assertNotVisible({ id: 'tv-cameras-panel' })
     await tv.tapOn({ id: 'tv-angle-0' })
-    await tv.assertVisible({ id: 'Back to cameras' })
+    await assertCameraLayout(tv, 0, true)
     await captureScreenshot(tv, path.join(artifacts, 'tv-fullscreen.png'))
     await tv.pressKey({ key: 'BACK' })
-    await tv.assertVisible({ id: 'Back to games' })
+    await assertCameraLayout(tv, 0, false)
     await tv.swipe({ direction: 'DOWN' })
     await tv.swipe({ direction: 'DOWN' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
