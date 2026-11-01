@@ -126,6 +126,129 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 @end
 
 #import <UIKit/UIKit.h>
+#import <UIKit/UIGestureRecognizerSubclass.h>
+@interface NSObject (TVBoundaryFactory)
+- (UIView *)view;
+@end
+@interface TVPlaybackBoundaryView : UIView <UIGestureRecognizerDelegate>
+@property(nonatomic) BOOL transportEnabled;
+@property(nonatomic) BOOL scrubEnabled;
+@property(nonatomic) BOOL transportPress;
+@property(nonatomic, strong) UIGestureRecognizer *pressMonitor;
+@property(nonatomic, strong) UIPanGestureRecognizer *panMonitor;
+@property(nonatomic, copy) void (^onCancelTransport)(NSDictionary *);
+@property(nonatomic, copy) void (^onPanCancelled)(NSDictionary *);
+- (void)cancelTransport;
+- (void)panChanged:(UIPanGestureRecognizer *)recognizer;
+@end
+@interface TestCancelledPan : UIPanGestureRecognizer
+@property(nonatomic) UIGestureRecognizerState reportedState;
+@end
+@implementation TestCancelledPan
+- (UIGestureRecognizerState)state { return self.reportedState; }
+@end
+@interface TestTransportPress : UIPress
+@property(nonatomic) UIPressType testType;
+@end
+@implementation TestTransportPress
+- (UIPressType)type { return self.testType; }
+@end
+// UIKit constructs real focus contexts; a protocol-shaped double avoids its private initializer.
+@interface TestTransportFocus : NSObject
+@property(nonatomic, strong) UIView *previous;
+@end
+@implementation TestTransportFocus
+- (UIView *)previouslyFocusedView { return self.previous; }
+@end
+@interface TVTransportBoundaryTests : XCTestCase @end
+@implementation TVTransportBoundaryTests
+- (void)testPressOwnershipAndLifecycleCancellation {
+  id manager = [NSClassFromString(@"TVPlaybackBoundaryManager") new];
+  TVPlaybackBoundaryView *view = (TVPlaybackBoundaryView *)[manager view];
+  XCTAssertTrue([view isKindOfClass:TVPlaybackBoundaryView.class]);
+  view.frame = CGRectMake(0, 0, 800, 400);
+  UIWindowScene *scene = (UIWindowScene *)UIApplication.sharedApplication.connectedScenes.anyObject;
+  UIWindow *window = scene.windows.firstObject;
+  XCTAssertNotNil(window);
+  [window addSubview:view];
+  __block NSInteger cancelled = 0;
+  view.onCancelTransport = ^(NSDictionary *event) { cancelled++; };
+  view.transportEnabled = YES;
+  XCTAssertTrue(view.pressMonitor.enabled);
+  TestTransportPress *press = [TestTransportPress new];
+  for (NSNumber *kind in @[@(UIPressTypeLeftArrow), @(UIPressTypeRightArrow), @(UIPressTypeUpArrow)]) {
+    press.testType = kind.integerValue;
+    XCTAssertTrue([view gestureRecognizer:view.pressMonitor shouldReceivePress:press]);
+  }
+  UIView *child = [UIView new]; [view addSubview:child];
+  TestTransportFocus *context = [TestTransportFocus new]; context.previous = child;
+  XCTAssertFalse([view shouldUpdateFocusInContext:(UIFocusUpdateContext *)context]);
+  press.testType = UIPressTypeDownArrow;
+  XCTAssertFalse([view gestureRecognizer:view.pressMonitor shouldReceivePress:press]);
+  [view shouldUpdateFocusInContext:(UIFocusUpdateContext *)context];
+  XCTAssertFalse([view gestureRecognizer:view.pressMonitor shouldReceiveTouch:nil]);
+  XCTAssertTrue([view gestureRecognizer:view.pressMonitor shouldRecognizeSimultaneouslyWithGestureRecognizer:[UIGestureRecognizer new]]);
+  [view.pressMonitor pressesBegan:[NSSet setWithObject:press] withEvent:nil];
+  XCTAssertTrue(view.transportPress);
+  [view.pressMonitor pressesEnded:[NSSet setWithObject:press] withEvent:nil];
+  XCTestExpectation *released = [self expectationWithDescription:@"press ownership released"];
+  dispatch_async(dispatch_get_main_queue(), ^{ XCTAssertFalse(view.transportPress); [released fulfill]; });
+  [self waitForExpectations:@[released] timeout:1];
+  // A recognizer reset also releases focus ownership without reporting cancellation.
+  [view.pressMonitor pressesBegan:[NSSet setWithObject:press] withEvent:nil];
+  XCTAssertTrue(view.transportPress);
+  [view.pressMonitor reset];
+  XCTestExpectation *reset = [self expectationWithDescription:@"reset releases ownership"];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    XCTAssertFalse(view.transportPress);
+    XCTAssertEqual(cancelled, 0);
+    [reset fulfill];
+  });
+  [self waitForExpectations:@[reset] timeout:1];
+  view.scrubEnabled = YES;
+  XCTAssertFalse([view shouldUpdateFocusInContext:(UIFocusUpdateContext *)context]);
+  view.scrubEnabled = NO;
+  XCTAssertTrue([view shouldUpdateFocusInContext:(UIFocusUpdateContext *)context]);
+  [view.pressMonitor pressesCancelled:[NSSet setWithObject:press] withEvent:nil];
+  XCTAssertEqual(cancelled, 1);
+  [[NSNotificationCenter defaultCenter] postNotificationName:GCControllerDidDisconnectNotification object:nil];
+  [[NSNotificationCenter defaultCenter] postNotificationName:UIApplicationWillResignActiveNotification object:nil];
+  XCTAssertEqual(cancelled, 3);
+  view.transportEnabled = NO;
+  XCTAssertFalse(view.pressMonitor.enabled);
+  press.testType = UIPressTypeLeftArrow;
+  XCTAssertFalse([view gestureRecognizer:view.pressMonitor shouldReceivePress:press]);
+  [view removeFromSuperview];
+  XCTAssertEqual(cancelled, 4);
+  view.onCancelTransport = nil; [view cancelTransport];
+}
+- (void)testNativePanCancellationReachesThePlayer {
+  TVPlaybackBoundaryView *view = [[TVPlaybackBoundaryView alloc] initWithFrame:CGRectMake(0, 0, 800, 400)];
+  UIWindowScene *scene = (UIWindowScene *)UIApplication.sharedApplication.connectedScenes.anyObject;
+  [scene.windows.firstObject addSubview:view];
+  XCTAssertFalse(view.panMonitor.enabled);
+  XCTAssertFalse([view gestureRecognizer:view.panMonitor shouldReceiveTouch:nil]);
+  view.scrubEnabled = YES;
+  XCTAssertTrue([view gestureRecognizer:view.panMonitor shouldReceiveTouch:nil]);
+  XCTAssertFalse([view gestureRecognizer:view.panMonitor shouldReceivePress:[TestTransportPress new]]);
+  __block NSInteger cancelled = 0;
+  view.onPanCancelled = ^(NSDictionary *event) { cancelled++; };
+  TestCancelledPan *pan = [TestCancelledPan new];
+  for (NSNumber *state in @[@(UIGestureRecognizerStateBegan), @(UIGestureRecognizerStateChanged), @(UIGestureRecognizerStateEnded)]) {
+    pan.reportedState = state.integerValue;
+    [view panChanged:pan];
+  }
+  XCTAssertEqual(cancelled, 0);
+  // RN omits this native enum state from its JS event body. Our native target
+  // receives it directly, without relying on a fabricated JS "Cancelled" event.
+  pan.reportedState = UIGestureRecognizerStateCancelled;
+  [view panChanged:pan];
+  XCTAssertEqual(cancelled, 1);
+  view.scrubEnabled = NO;
+  XCTAssertFalse(view.panMonitor.enabled);
+  [view removeFromSuperview];
+}
+@end
 @interface UIView (TVReactSubviews)
 - (void)insertReactSubview:(UIView *)subview atIndex:(NSInteger)index;
 - (void)removeReactSubview:(UIView *)subview;

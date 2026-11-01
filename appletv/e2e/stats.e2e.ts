@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
+import { captureAllowed, captureScreenshot } from './capture'
 import { tvFixture } from './fixture'
 
 async function main(): Promise<void> {
@@ -33,7 +34,7 @@ async function main(): Promise<void> {
   const daemon = await MaestroD.connect({
     name: process.env.MAESTRO_D ?? 'appleTvNative'
   })
-  const tv = await daemon.attach({ device, platform: 'ios' })
+  const tv = await daemon.attach({ device, platform: 'ios', artifacts: 'none' })
   let recording: ReturnType<typeof spawn> | undefined
   try {
     await mkdir(artifacts, { recursive: true })
@@ -61,21 +62,23 @@ async function main(): Promise<void> {
     )
     await tv.assertVisible({ text: 'Recent Games', timeout: 30000 })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
-    recording = spawn(
-      'xcrun',
-      [
-        'simctl',
-        'io',
-        device,
-        'recordVideo',
-        '--force',
-        path.join(
-          artifacts,
-          innings > 18 ? 'tv-extra-innings.mp4' : 'tv-compact-score.mp4'
+    recording = captureAllowed()
+      ? spawn(
+          'xcrun',
+          [
+            'simctl',
+            'io',
+            device,
+            'recordVideo',
+            '--force',
+            path.join(
+              artifacts,
+              innings > 18 ? 'tv-extra-innings.mp4' : 'tv-compact-score.mp4'
+            )
+          ],
+          { stdio: 'ignore' }
         )
-      ],
-      { stdio: 'ignore' }
-    )
+      : undefined
     await tv.pressKey({ key: 'DPAD_CENTER' })
     await tv.assertVisible({ id: 'tv-angle-3', timeout: 30000 })
     await tv.assertVisible({ id: 'tv-scoreboard', timeout: 30000 })
@@ -104,10 +107,7 @@ async function main(): Promise<void> {
         after.x < before.x && after.x + after.width <= 1880,
         'remote scroll brings the final inning fully on screen'
       )
-      await writeFile(
-        path.join(artifacts, 'extra-innings.png'),
-        await tv.screenshot()
-      )
+      await captureScreenshot(tv, path.join(artifacts, 'extra-innings.png'))
       await tv.pressKey({ key: 'DPAD_LEFT' })
       await tv.waitForAnimationToEnd({ timeout: 3000 })
       await tv.assertVisible({ text: 'Demo Mountain Valley Visitors' })
@@ -121,9 +121,9 @@ async function main(): Promise<void> {
         bounds.y + bounds.height <= 1080,
         'home row remains fully on screen'
       )
-      await writeFile(
-        path.join(artifacts, 'compact-long-names.png'),
-        await tv.screenshot()
+      await captureScreenshot(
+        tv,
+        path.join(artifacts, 'compact-long-names.png')
       )
     }
     await tv.pressKey({ key: 'BACK' })
@@ -132,10 +132,7 @@ async function main(): Promise<void> {
     await tv.assertVisible({ id: 'tv-page-home' })
     console.log(`PASS long team names, ${innings} innings and panel Back`)
   } catch (error) {
-    await writeFile(
-      '/private/tmp/tv-playback-failure.png',
-      await tv.screenshot()
-    )
+    await captureScreenshot(tv, '/private/tmp/tv-playback-failure.png')
     await writeFile(
       '/private/tmp/tv-playback-hierarchy.json',
       JSON.stringify(await tv.hierarchy(), null, 2)

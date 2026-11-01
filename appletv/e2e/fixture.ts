@@ -55,6 +55,8 @@ export async function tvFixture(
     tvMedia: { fail: boolean; live: boolean; searchFail: boolean }
   }
 > {
+  if (process.env.TV_CAPTURE_MODE !== 'none')
+    throw new Error('Synthetic TV fixtures require TV_CAPTURE_MODE=none')
   const directory = await mkdtemp(path.join(os.tmpdir(), 'tv-fixture-'))
   const hls = path.join(directory, 'clock')
   const source = process.env.TV_PROBE_FILE
