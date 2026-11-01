@@ -5,7 +5,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { BackHandler } from 'react-native'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
-import { emitTvDirection } from '../../test/tvRemoteRuntime'
+import { windowSize } from '../../test/tessTestKit'
+import {
+  emitTvDirection,
+  emitTvPan,
+  panRequests
+} from '../../test/tvRemoteRuntime'
 import { timelineFor } from './playbackTimeline'
 import { TvPlayer } from './TvPlayer'
 
@@ -29,6 +34,7 @@ const game = asVideoGame({
   latestVideoAt: '2026-10-01T00:00:00Z'
 })
 let root: Root | undefined
+let viewport: Awaited<ReturnType<typeof windowSize>> | undefined
 let remoteBack: (() => boolean | null | undefined) | undefined
 const originalBack = BackHandler.addEventListener.bind(BackHandler)
 let wide = false
@@ -143,6 +149,8 @@ afterEach(async () => {
   document.body.innerHTML = ''
   BackHandler.addEventListener = originalBack
   root = undefined
+  await viewport?.restore()
+  viewport = undefined
   count = 4
   wide = false
   mixed = false
@@ -152,6 +160,68 @@ afterEach(async () => {
   closed = false
 })
 describe('TV game playback entry', () => {
+  it('owns native pan only during scrubbing and seeks every persistent player', async () => {
+    viewport = await windowSize(1920, 1080)
+    await render()
+    const videos = [...document.querySelectorAll('video')]
+    await act(async () => {
+      for (const video of videos) {
+        Object.defineProperty(video, 'duration', {
+          value: 100,
+          configurable: true
+        })
+        video.dispatchEvent(
+          new window.Event('durationchange', { bubbles: true })
+        )
+      }
+      await pause()
+    })
+    await press('Close panel')
+    panRequests.length = 0
+    await act(async () => {
+      emitTvDirection('right')
+      await pause()
+    })
+    expect(videos.map(v => v.currentTime)).deep.equals([10, 10, 10, 10])
+    expect(document.querySelector('[data-testid="tv-scrubber"]')).not.equals(
+      null
+    )
+    expect(
+      document.querySelector('[data-testid="tv-highlights-panel"]')
+    ).equals(null)
+    expect(
+      document.querySelector('[data-testid="tv-total-time"]')!.textContent
+    ).equals('1:40')
+    expect(panRequests).deep.equals([true])
+    await act(async () => {
+      emitTvDirection('swipeRight')
+      await pause()
+    })
+    expect(videos.map(v => v.currentTime)).deep.equals([10, 10, 10, 10])
+    await act(async () => {
+      emitTvPan('Began', 0)
+      emitTvPan('Changed', 100)
+      emitTvPan('Ended', 100)
+      await pause()
+    })
+    expect(videos.every(v => v.currentTime > 10)).equals(true)
+    await press('Highlights')
+    expect(panRequests).deep.equals([true, false])
+    expect(document.querySelector('[data-testid="tv-scrubber"]')).equals(null)
+    await press('Close panel')
+    await act(async () => {
+      emitTvDirection('longUp', 0)
+      await pause()
+    })
+    expect(videos.map(v => v.playbackRate)).deep.equals([
+      0.25, 0.25, 0.25, 0.25
+    ])
+    await act(async () => {
+      emitTvDirection('longUp', 1)
+      await pause()
+    })
+    expect(videos.map(v => v.playbackRate)).deep.equals([1, 1, 1, 1])
+  })
   it('opens panels only after boundary moves, dismisses outward and expands then scrolls stats', async () => {
     await render()
     const focus = async (index: number): Promise<void> => {
@@ -169,12 +239,12 @@ describe('TV game playback entry', () => {
       })
     }
     await focus(0)
-    await key('right')
+    await key('swipeRight')
     expect(
       document.querySelector('[data-testid="tv-highlights-panel"]')
     ).equals(null)
     await focus(1)
-    await key('right')
+    await key('swipeRight')
     expect(
       document.querySelector('[data-testid="tv-highlights-panel"]')
     ).equals(null)
@@ -186,32 +256,32 @@ describe('TV game playback entry', () => {
     expect(
       document.querySelector('[data-testid="tv-highlights-panel"]')
     ).not.equals(null)
-    await key('right')
+    await key('swipeRight')
     expect(
       document.querySelector('[data-testid="tv-highlights-panel"]')
     ).equals(null)
     await focus(0)
-    await key('left')
-    await key('left')
+    await key('swipeLeft')
+    await key('swipeLeft')
     expect(
       document.querySelector('[data-testid="tv-cameras-panel"]')
     ).not.equals(null)
     await key('down')
-    await key('left')
+    await key('swipeLeft')
     expect(document.querySelector('[data-testid="tv-cameras-panel"]')).equals(
       null
     )
     await focus(2)
-    await key('down')
-    await key('down')
+    await key('swipeDown')
+    await key('swipeDown')
     expect(document.querySelector('[data-testid="tv-box-panel"]')).not.equals(
       null
     )
     await key('down')
     await key('down')
     await key('up')
-    await key('right')
-    await key('left')
+    await key('swipeRight')
+    await key('swipeLeft')
     await key('playPause')
     await key('unknown')
     expect(document.querySelector('video')!.paused).equals(true)
@@ -251,7 +321,7 @@ describe('TV game playback entry', () => {
     expect(restored).equals(1)
     expect(document.activeElement).equals(angle)
     await act(async () => {
-      emitTvDirection('right')
+      emitTvDirection('swipeRight')
       await pause()
     })
     expect(
