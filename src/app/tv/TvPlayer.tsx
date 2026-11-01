@@ -11,7 +11,6 @@ import {
   Animated,
   AppState,
   BackHandler,
-  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -36,7 +35,7 @@ import { angleLabels } from '../player/multiCam/takes'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
-import { PlaybackBoundary, TvBlur } from './NativePresentation'
+import { PlaybackBoundary, TvBlur, TvPoster } from './NativePresentation'
 import { NativeSeekQueue } from './nativeSeekQueue'
 import { PlaybackClock } from './playbackClock'
 import {
@@ -100,7 +99,7 @@ export function TvPlayer({
   const angleNodes = useRef<Array<React.ComponentRef<typeof View> | null>>([])
   const focusedAngle = useRef<number | null>(0)
   const lastAngle = useRef(0)
-  const handledFocus = useRef(0)
+  const focusChangedAt = useRef(0)
   const [highlightFocus, setHighlightFocus] = useState<string | null>(null)
   const [cameraFocus, setCameraFocus] = useState<number | null>(null)
   const statsScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
@@ -112,6 +111,9 @@ export function TvPlayer({
     startedAtTop: boolean
   } | null>(null)
   const statsPanEnded = useRef(0)
+  const statsMomentum = useRef<ReturnType<typeof requestAnimationFrame> | null>(
+    null
+  )
   const statsExtent = useRef({ content: 0, viewport: 0 })
   const scoreScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const scoreOffset = useRef(0)
@@ -182,7 +184,7 @@ export function TvPlayer({
     extent: () => clock.current.extent(),
     width: () => scrubWidth.current,
     panEnabled: enabled =>
-      enabled
+      enabled || current.current.box !== 'closed'
         ? tvControl?.enableTVPanGesture()
         : tvControl?.disableTVPanGesture(),
     changed: snapshot => {
@@ -388,11 +390,6 @@ export function TvPlayer({
     previousOverlay.current = overlay
     if (!restore) return
     const timer = setTimeout(() => {
-      handledFocus.current =
-        current.current.full ??
-        (current.current.visible.includes(lastAngle.current)
-          ? lastAngle.current
-          : current.current.visible[0])
       const node =
         angleNodes.current[
           current.current.full ??
@@ -498,14 +495,52 @@ export function TvPlayer({
       animation.stop()
     }
   }, [state.box, boxMotion])
+  const stopStatsMomentum = useCallback(() => {
+    if (statsMomentum.current !== null)
+      cancelAnimationFrame(statsMomentum.current)
+    statsMomentum.current = null
+  }, [])
+  const glideStats = useCallback(
+    (initialVelocity: number) => {
+      stopStatsMomentum()
+      let velocity = Math.max(-2400, Math.min(2400, initialVelocity))
+      let last = Date.now()
+      const tick = (): void => {
+        if (current.current.box === 'closed') return
+        const now = Date.now()
+        const dt = Math.min(32, Math.max(1, now - last))
+        last = now
+        const next = Math.max(
+          0,
+          Math.min(
+            Math.max(
+              0,
+              statsExtent.current.content - statsExtent.current.viewport
+            ),
+            statsOffset.current + (velocity * dt) / 1000
+          )
+        )
+        if (Math.abs(next - statsOffset.current) < 0.01) return
+        statsOffset.current = next
+        statsScroll.current?.scrollTo({ y: next, animated: false })
+        velocity *= Math.exp(-dt / 260)
+        if (Math.abs(velocity) > 12)
+          statsMomentum.current = requestAnimationFrame(tick)
+      }
+      statsMomentum.current = requestAnimationFrame(tick)
+    },
+    [stopStatsMomentum]
+  )
+  const statsOpen = state.box !== 'closed'
   useEffect(() => {
-    if (state.box === 'closed') return
+    if (!statsOpen) return
     tvControl?.enableTVPanGesture()
     return () => {
       statsPan.current = null
+      stopStatsMomentum()
       tvControl?.disableTVPanGesture()
     }
-  }, [state.box])
+  }, [statsOpen, stopStatsMomentum])
   useEffect(() => {
     const subscription = tvEvents?.addListener(event => {
       if (current.current.box !== 'closed' && event.eventType === 'pan') {
@@ -513,12 +548,16 @@ export function TvPlayer({
         if (body?.state === 'Ended' || body?.state === 'Cancelled') {
           if (statsPan.current?.moved === true)
             statsPanEnded.current = Date.now()
+          if (body?.state === 'Ended' && Number.isFinite(body.velocityY))
+            glideStats(body.velocityY!)
+          else stopStatsMomentum()
           statsPan.current = null
           return
         }
         if (!Number.isFinite(body?.y)) return
         const y = body!.y!
         if (body?.state === 'Began' || statsPan.current === null) {
+          stopStatsMomentum()
           statsPan.current = {
             y,
             startY: y,
@@ -621,7 +660,10 @@ export function TvPlayer({
         }
         if (direction === 'down' && held.box !== 'expanded')
           dispatch({ type: 'box' })
-        else if (direction === 'down' || direction === 'up') {
+        else if (
+          (direction === 'down' || direction === 'up') &&
+          input.kind === 'click'
+        ) {
           statsOffset.current = Math.max(
             0,
             Math.min(
@@ -639,10 +681,8 @@ export function TvPlayer({
       const index = focusedAngle.current
       if (index === null) return
       if (input.kind !== 'swipe') return
-      if (index !== handledFocus.current) {
-        handledFocus.current = index
-        return
-      }
+      // Ignore only the event that just moved UIKit focus, not the next gesture.
+      if (Date.now() - focusChangedAt.current < 100) return
       const neighbor = angleNeighbor(held, index, direction)
       if (neighbor !== null) return
       if (direction === 'left') open('cameras')
@@ -655,7 +695,7 @@ export function TvPlayer({
     return () => {
       subscription?.remove()
     }
-  }, [open, error])
+  }, [open, error, glideStats, stopStatsMomentum])
   const chooseClip = (clip: TvHighlight, sourceIndex = 0): void => {
     const timeline = clock.current.ports[sourceIndex]?.timeline
     if (timeline === undefined) return
@@ -857,6 +897,7 @@ export function TvPlayer({
                     !overlay && (state.full ?? state.visible[0]) === index
                 }}
                 onFocus={() => {
+                  focusChangedAt.current = Date.now()
                   lastAngle.current = index
                   focusedAngle.current = index
                   setFocus(index)
@@ -992,7 +1033,7 @@ export function TvPlayer({
         style={[
           styles.side,
           renderedSide === 'cameras'
-            ? { left: 0, paddingTop: 40 }
+            ? { left: 0, paddingTop: 40, width: 356 }
             : { right: 0, width: 420 },
           {
             opacity: sideMotion,
@@ -1020,9 +1061,9 @@ export function TvPlayer({
           focusable={state.side !== null}
           style={{ flex: 1, display: state.side === null ? 'none' : 'flex' }}
         >
-          <Text style={styles.heading}>
-            {renderedSide === 'cameras' ? 'Camera angles' : 'Highlights'}
-          </Text>
+          {renderedSide === 'highlights' && (
+            <Text style={styles.heading}>Highlights</Text>
+          )}
           {renderedSide === 'cameras' ? (
             angles?.map((angle, index) => (
               <Pressable
@@ -1035,7 +1076,15 @@ export function TvPlayer({
                   hasTVPreferredFocus:
                     state.side === 'cameras' &&
                     !state.preview &&
-                    index === (focus ?? state.visible[0])
+                    index === (focus ?? state.visible[0]),
+                  tvParallaxProperties: {
+                    enabled: true,
+                    magnification: 1.16,
+                    shiftDistanceX: 10,
+                    shiftDistanceY: 10,
+                    tiltAngle: 0.08,
+                    pressMagnification: 1.08
+                  }
                 }}
                 onFocus={() => {
                   setCameraFocus(index)
@@ -1065,21 +1114,22 @@ export function TvPlayer({
                 <>
                   <TvBlur
                     shade={
-                      state.visible.includes(index) ? '#ffffff' : '#cccccc'
+                      state.visible.includes(index) ? '#ffffff' : '#b8b8b8'
                     }
+                    opacity={state.visible.includes(index) ? 0.9 : 0.8}
                     highlighted={cameraFocus === index}
                   />
                   <Text
                     style={[
                       styles.copy,
                       {
+                        fontSize: 37.5,
                         color: state.visible.includes(index)
                           ? '#1a1a1a'
                           : '#ffffff'
                       }
                     ]}
                   >
-                    {state.visible.includes(index) ? '✓ ' : ''}
                     {angle.name}
                   </Text>
                 </>
@@ -1135,11 +1185,24 @@ export function TvPlayer({
                         highlightFocus === clip.eventId && styles.selected
                       ]}
                     >
-                      <Image
+                      <View
                         testID={`tv-highlight-thumbnail-${index}`}
-                        source={{ uri: clip.stillUrl }}
                         style={styles.preview}
-                      />
+                      >
+                        <TvPoster
+                          uri={clip.stillUrl}
+                          focused={highlightFocus === clip.eventId}
+                        >
+                          <View
+                            pointerEvents="none"
+                            style={[
+                              StyleSheet.absoluteFill,
+                              styles.previewFrame,
+                              highlightFocus === clip.eventId && styles.selected
+                            ]}
+                          />
+                        </TvPoster>
+                      </View>
                     </View>
                     <Text style={[styles.copy, styles.clipText]}>
                       {clip.title}
@@ -1191,6 +1254,7 @@ export function TvPlayer({
         >
           <ScrollView
             ref={statsScroll}
+            scrollEnabled={false}
             onContentSizeChange={(_width, height) => {
               statsExtent.current.content = height
             }}
