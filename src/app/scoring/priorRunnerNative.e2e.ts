@@ -180,11 +180,16 @@ async function main(): Promise<void> {
         )
         continue
       }
-      if (scenario === 'home')
-        await gesture([
-          { x: 159, y: 542 },
-          { x: 106, y: 528 }
-        ])
+      if (scenario === 'home') {
+        assert.equal(before.score, 1)
+        assert.equal(before.bases.includes(100), false)
+        assert.equal(before.bases[2], null)
+        await shot('home-stays-scored')
+        console.log(
+          'Optional advance from third stays scored; the plate call is not dragged back'
+        )
+        continue
+      }
       if (scenario === 'pitched') {
         await m.assertVisible({
           text: 'Yes, send back runner',
@@ -201,12 +206,7 @@ async function main(): Promise<void> {
         await gesture(first)
         await tap('Yes, send back runner')
       }
-      const to =
-        scenario === 'second' || scenario === 'timed'
-          ? 2
-          : scenario === 'home'
-            ? 3
-            : 1
+      const to = scenario === 'second' || scenario === 'timed' ? 2 : 1
       await shot(`${scenario}-return-after`)
       await m.assertVisible({
         text: `Runner did not advance on prior play. Sent back to ${['', '1st', '2nd', '3rd'][to]}.`,
@@ -220,7 +220,6 @@ async function main(): Promise<void> {
         before.times,
         'Every current pitch retains its original time'
       )
-      if (scenario === 'home') assert.equal(after.score, 0)
       console.log(
         `S2/S3/S4: ${scenario} return, current count and original times verified`
       )
