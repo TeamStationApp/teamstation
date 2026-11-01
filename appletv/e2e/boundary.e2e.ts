@@ -27,7 +27,6 @@ async function main(): Promise<void> {
   const tv = await daemon.attach({ device, platform: 'ios', artifacts: 'none' })
   const h = await tvFixture({
     scored: true,
-    wideStats: true,
     statsInnings: Number(process.env.TV_STATS_INNINGS ?? 6)
   })
   const key = async (key: string): Promise<void> => {

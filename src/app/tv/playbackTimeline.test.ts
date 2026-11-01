@@ -28,7 +28,8 @@ describe('TV historical box score', () => {
     const before = JSON.stringify(stored)
     const steps = boxTimeline(game, stored)
     expect(steps.length).greaterThan(20)
-    expect(boardAt(steps, 99999)).equals(null)
+    expect(boardAt(steps, 99999)!.box.away.runs).equals(0)
+    expect(boardAt(steps, 99999)!.box.away.batting.length).greaterThan(0)
     const early = boardAt(steps, steps[0].at)!.box
     const final = boardAt(steps, Infinity)!.box
     expect(early.away.runs).equals(0)
