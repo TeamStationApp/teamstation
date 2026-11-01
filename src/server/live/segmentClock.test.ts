@@ -390,16 +390,18 @@ describe('placing a returned segment on the programme clock', function () {
     expect(listed).deep.equals([
       {
         name: 'seg000000.m4s',
+        init: 'init.mp4',
         durationSec: 4,
         programDateMs: Date.parse('2026-10-14T16:00:00.000Z')
       },
-      { name: 'seg000001.m4s', durationSec: 3.96 },
+      { name: 'seg000001.m4s', init: 'init.mp4', durationSec: 3.96 },
       {
         name: 'seg000003.m4s',
+        init: 'init.mp4',
         durationSec: 4,
         programDateMs: Date.parse('2026-10-14T16:00:40.000Z')
       },
-      { name: 'seg000004.m4s', durationSec: 2.5 }
+      { name: 'seg000004.m4s', init: 'init.mp4', durationSec: 2.5 }
     ])
     expect(firstProgramDateMs(listed)).equals(
       Date.parse('2026-10-14T16:00:00.000Z')
