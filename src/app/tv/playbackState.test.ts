@@ -122,6 +122,34 @@ describe('TV playback composition and remote state', () => {
   })
 })
 describe('TV native playback clock contracts', () => {
+  it('exposes only finite known recording bounds for proportional scrubbing', () => {
+    const clock = new PlaybackClock()
+    expect(clock.extent()).equals(null)
+    clock.register(0, timeline(), () => undefined)
+    clock.load(0, 0)
+    expect(clock.extent()).equals(null)
+    clock.load(0, 60)
+    expect(clock.extent()).deep.equals({ start: 100000, end: 159900 })
+    expect(clock.recordingExtent()).deep.equals({ start: 100000, end: 160000 })
+    clock.register(
+      1,
+      {
+        anchors: [],
+        source: 'start',
+        confidence: 'approximate',
+        live: false,
+        startAt: null
+      },
+      () => undefined
+    )
+    clock.load(1, 60)
+    expect(clock.extent()).equals(null)
+    clock.fail(1)
+    expect(clock.extent()).deep.equals({ start: 100000, end: 159900 })
+    expect(clock.recordingExtent()).deep.equals({ start: 100000, end: 160000 })
+    clock.load(0, 0.01)
+    expect(clock.extent()).equals(null)
+  })
   it('maps unequal starts, corrects drift, retains all seek ports and seeks backwards', () => {
     const calls: number[][] = [[], [], [], []]
     const clock = new PlaybackClock()

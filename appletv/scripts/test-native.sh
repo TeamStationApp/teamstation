@@ -2,6 +2,7 @@
 set -euo pipefail
 : "${TV_SIMULATOR_UDID:?Set the task simulator UDID}"
 cd "$(dirname "$0")/../.."
+node appletv/scripts/test-video-seek.cjs
 mkdir -p appletv/coverage
 rm -rf appletv/coverage/native-tests.xcresult
 rm -f appletv/coverage/native-snapshot.json appletv/coverage/native-counts.json

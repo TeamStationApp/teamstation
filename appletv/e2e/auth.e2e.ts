@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
+import { captureScreenshot } from './capture'
 import { tvFixture } from './fixture'
 
 async function main(): Promise<void> {
@@ -23,11 +24,12 @@ async function main(): Promise<void> {
   const daemon = await MaestroD.connect({
     name: process.env.MAESTRO_D ?? 'appleTvNative'
   })
-  const tv = await daemon.attach({ device, platform: 'ios' })
+  const tv = await daemon.attach({ device, platform: 'ios', artifacts: 'none' })
   const browserDaemon = await MaestroD.connect({
     name: process.env.MAESTRO_D_WEB ?? 'appleTvExperience'
   })
   const browser = await browserDaemon.attach({
+    artifacts: 'none',
     device: 'tvApprovalWeb',
     platform: 'web',
     url: h.origin + '/account/tv',
@@ -53,7 +55,7 @@ async function main(): Promise<void> {
     }
     const code = findCode(tree)
     assert(code != null, 'TV exposes eight-letter code')
-    await writeFile(path.join(artifacts, 'tv-login.png'), await tv.screenshot())
+    await captureScreenshot(tv, path.join(artifacts, 'tv-login.png'))
     await browser.setCookies({
       cookies: [
         {
@@ -106,10 +108,7 @@ async function main(): Promise<void> {
       'PASS TV code approval through browser, Keychain restoration after relaunch, remote direction, sign out, expired request rotation'
     )
   } catch (error) {
-    await writeFile(
-      path.join(artifacts, 'tv-auth-failure.png'),
-      await tv.screenshot()
-    )
+    await captureScreenshot(tv, path.join(artifacts, 'tv-auth-failure.png'))
     await writeFile(
       '/private/tmp/tv-auth-hierarchy.json',
       JSON.stringify(await tv.hierarchy(), null, 2)
