@@ -49,7 +49,7 @@ export function setup(m: Setup): void {
 async function install(ctx: Stage): Promise<void> {
   await ctx.sh('npm install --prefix .mason-tools @socketsecurity/cli')
   // An advisory published after this lockfile was committed does not fail the build.
-  await ctx.sh('.mason-tools/bin/socket npm ci', {
+  await ctx.sh('.mason-tools/node_modules/.bin/socket npm ci', {
     env: { SOCKET_CLI_ACCEPT_RISKS: '1' }
   })
 }

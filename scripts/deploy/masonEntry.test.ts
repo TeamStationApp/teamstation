@@ -330,7 +330,7 @@ describe('TeamStation pipeline Masonfile', () => {
     await buildIos(ctx)
     await buildAndroid(ctx)
     const log = commands.join('\n')
-    assert.match(log, /\.mason-tools\/bin\/socket npm ci/)
+    assert.match(log, /\.mason-tools\/node_modules\/\.bin\/socket npm ci/)
     assert.match(log, /pod install/)
     assert.match(log, /xcodebuild archive/)
     assert.match(log, /CODE_SIGNING_ALLOWED=NO/)
