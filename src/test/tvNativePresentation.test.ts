@@ -26,6 +26,12 @@ describe('TV native presentation bridge', () => {
     expect(bridge.NativeSearch).equals('TVSearch')
     expect(bridge.NativeGradient).equals('TVGradient')
     expect(bridge.PlaybackBoundary).equals('TVPlaybackBoundary')
+    const blur = bridge.TvBlur({ shade: '#cccccc', highlighted: true })
+    expect(blur.type).equals('TVBlur')
+    expect(blur.props.tintOpacity).equals(0.8)
+    expect(blur.props.shade).equals('#cccccc')
+    expect(blur.props.highlighted).equals(true)
+    expect(blur.props.pointerEvents).equals('none')
     const poster = bridge.TvPoster({
       uri: 'https://example.test/poster.jpg',
       focused: true,

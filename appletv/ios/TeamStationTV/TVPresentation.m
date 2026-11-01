@@ -3,6 +3,60 @@
 #import <React/UIView+React.h>
 #import <UIKit/UIKit.h>
 
+@interface TVBlurView : UIView
+@property(nonatomic, strong) UIVisualEffectView *blur;
+@property(nonatomic, strong) UIView *tint;
+@property(nonatomic, strong) UIView *focusLight;
+@property(nonatomic, strong) UIColor *shade;
+@property(nonatomic) CGFloat tintOpacity;
+@property(nonatomic) BOOL highlighted;
+- (void)updateAppearance;
+@end
+@implementation TVBlurView
+- (instancetype)initWithFrame:(CGRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    self.userInteractionEnabled = NO;
+    self.clipsToBounds = YES;
+    self.layer.cornerRadius = 20;
+    _blur = [[UIVisualEffectView alloc] initWithEffect:nil];
+    _tint = [UIView new]; _focusLight = [UIView new];
+    _shade = [UIColor colorWithWhite:0.4 alpha:1]; _tintOpacity = 0.8;
+    [self addSubview:_blur]; [self addSubview:_tint]; [self addSubview:_focusLight];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateAppearance) name:UIAccessibilityReduceTransparencyStatusDidChangeNotification object:nil];
+    [self updateAppearance];
+  }
+  return self;
+}
+- (void)layoutSubviews {
+  [super layoutSubviews];
+  self.blur.frame = self.bounds; self.tint.frame = self.bounds; self.focusLight.frame = self.bounds;
+}
+- (void)setShade:(UIColor *)shade { _shade = shade; [self updateAppearance]; }
+- (void)setTintOpacity:(CGFloat)value { _tintOpacity = MAX(0, MIN(1, value)); [self updateAppearance]; }
+- (void)setHighlighted:(BOOL)value { _highlighted = value; [self updateAppearance]; }
+- (void)updateAppearance {
+  [self applyReducedTransparency:UIAccessibilityIsReduceTransparencyEnabled()];
+}
+- (void)applyReducedTransparency:(BOOL)solid {
+  self.blur.effect = solid ? nil : [UIBlurEffect effectWithStyle:UIBlurEffectStyleRegular];
+  CGFloat red = 0, green = 0, blue = 0, alpha = 0;
+  [self.shade getRed:&red green:&green blue:&blue alpha:&alpha];
+  UIColor *opaque = red > 0.99 && green > 0.99 && blue > 0.99 ? UIColor.whiteColor : [UIColor colorWithWhite:0.3 alpha:1];
+  self.tint.backgroundColor = solid ? opaque : [self.shade colorWithAlphaComponent:self.tintOpacity];
+  // A static lighting cue remains distinct when Reduce Motion is enabled.
+  self.focusLight.backgroundColor = [UIColor colorWithWhite:1 alpha:self.highlighted ? 0.18 : 0];
+}
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
+@end
+@interface TVBlurManager : RCTViewManager @end
+@implementation TVBlurManager
+RCT_EXPORT_MODULE(TVBlur)
+- (UIView *)view { return [TVBlurView new]; }
+RCT_EXPORT_VIEW_PROPERTY(shade, UIColor)
+RCT_EXPORT_VIEW_PROPERTY(tintOpacity, CGFloat)
+RCT_EXPORT_VIEW_PROPERTY(highlighted, BOOL)
+@end
+
 /** UIKit owns the floating image, lighting and Reduce Motion behavior. */
 @interface TVPosterView : UIImageView
 @property(nonatomic, copy) NSString *uri;
