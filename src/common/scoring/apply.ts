@@ -1493,11 +1493,11 @@ function returnHitAdvance(
     to < 1 ||
     to !== move.to - 1 ||
     to < (move.start ?? move.from) ||
-    baseIds(ctx.state)[to - 1] != null ||
-    // Safe, out, or back was already offered before this runner crossed.
-    ((move.start ?? move.from) === 3 && move.to === 4)
+    baseIds(ctx.state)[to - 1] != null
   )
     return false
+  // Safe, out, or back was already offered before this runner crossed.
+  if (move.start === 3 && move.to === 4) return false
   const play = current(ctx)
   const row = [...play.runners]
     .reverse()
