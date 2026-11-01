@@ -284,6 +284,20 @@ describe('swapping a game’s home and away teams', function () {
   const settle = async (): Promise<void> => {
     await new Promise(resolve => setTimeout(resolve, 150))
   }
+  /**
+   * Hears out what the commits so far announced, then forgets it. The queue
+   * keeps commit order, so a notice sent now arrives after all of those, however
+   * late a busy machine delivers them.
+   */
+  const forgetHeard = async (): Promise<void> => {
+    const mark = makeId('game')
+    await sql`select pg_notify(${GAME_CHANGES_CHANNEL}, ${JSON.stringify({ mark })})`.execute(
+      db
+    )
+    while (!heard.some(({ payload }) => payload.mark === mark))
+      await new Promise(resolve => setTimeout(resolve, 5))
+    heard = []
+  }
   const notices = (id: string, kind: string): number =>
     heard.filter(
       ({ channel, payload }) =>
@@ -717,7 +731,7 @@ describe('swapping a game’s home and away teams', function () {
   it('leaves nothing and says nothing when its transaction rolls back', async function () {
     await prepared('gam_rolled')
     const before = await row('gam_rolled')
-    heard = []
+    await forgetHeard()
     const error = await failure(
       async () =>
         await atomic(db, async trx => {
