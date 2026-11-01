@@ -45,6 +45,7 @@ import {
   type LiveEvent,
   type LiveSpec,
   type LiveStatus,
+  outputsSettled,
   setLive,
   startIngest,
   statusFor,
@@ -650,6 +651,12 @@ async function handle(
     await placeByFrameWall(db, event.liveStreamId, event.startedAt)
     return
   }
+  if (
+    event.refusedSince != null &&
+    (await forgetRefusedPublish(current, event, event.refusedSince))
+  ) {
+    return
+  }
   await stoppedPublishing(current, event.liveStreamId, event.reason)
 }
 
@@ -799,10 +806,10 @@ async function stoppedPublishing(
     if (stopped.numUpdatedRows > 0n)
       noteScopeChange(trx, { gameId: row.gameId })
 
-    // A publish that was turned away — the wrong codec, usually — leaves a
-    // video row that was made visible the moment it connected and holds no
-    // video at all. It goes back to being a placeholder, rather than sitting
-    // on the home screen as a live game nobody can watch.
+    // A publish that dropped before anything was written leaves a video row
+    // that was made visible the moment it connected and holds no video at
+    // all. It goes back to being a placeholder, rather than sitting on the
+    // home screen as a live game nobody can watch.
     if (row.videoId == null || !empty) return
     const hidden = await trx
       .updateTable('videos')
@@ -811,6 +818,99 @@ async function stoppedPublishing(
       .where('status', '=', 'live')
       .executeTakeFirst()
     if (hidden.numUpdatedRows > 0n) await noteGameFigures(trx, row.gameId)
+  })
+}
+
+/**
+ * The ingest refused a stream's codec, a moment after it had connected and
+ * been taken for the camera's first publish.
+ *
+ * No picture ever came of that, so the camera goes back to what it was: no
+ * published stamp, a hidden placeholder with no start, and none of the
+ * segments the writer got down before the refusal. Those are in a codec the
+ * recording cannot hold, and the next publish would continue them. A camera
+ * stamped before `refusedSince` has real video behind it and keeps all of
+ * this. Answers whether the publish was the camera's first.
+ */
+async function forgetRefusedPublish(
+  current: LiveControllerOptions,
+  event: { key: string; liveStreamId: string; reason: string },
+  refusedSince: Date
+): Promise<boolean> {
+  const { db } = current
+  const { key, liveStreamId, reason } = event
+  const row = await db
+    .selectFrom('live_streams')
+    .select(['video_id as videoId', 'game_id as gameId'])
+    .where('id', '=', liveStreamId)
+    .where('first_published_at', '>=', refusedSince)
+    .executeTakeFirst()
+  if (row == null) return false
+
+  const now = new Date()
+  publisherActivity.set(liveStreamId, now)
+  // A writer told to stop still writes its playlist on the way out. And an
+  // encoder that has already come back has a writer in this directory again.
+  await outputsSettled(key)
+  const { videoId, gameId } = row
+  if (videoId != null && statusFor(key)?.ingress.publishing !== true) {
+    await removeRefusedMedia(current, videoId)
+  }
+
+  await atomic(db, async trx => {
+    await trx
+      .updateTable('live_streams')
+      .set({
+        state: sql`case when state = 'publishing' then 'idle' else state end`,
+        first_published_at: null,
+        last_published_at: null,
+        last_error: reason,
+        updated_at: now
+      })
+      .where('id', '=', liveStreamId)
+      .execute()
+    noteScopeChange(trx, { gameId })
+    if (videoId == null) return
+    await trx
+      .deleteFrom('video_wall_anchors')
+      .where('video_id', '=', videoId)
+      .execute()
+    await trx
+      .updateTable('videos')
+      .set({
+        status: 'processing',
+        hidden: true,
+        start_at: null,
+        start_at_source: null,
+        storage: 'local',
+        width: null,
+        height: null,
+        codecs: null,
+        updated_at: now
+      })
+      .where('id', '=', videoId)
+      .where('status', '=', 'live')
+      .execute()
+    await noteGameFigures(trx, gameId)
+  })
+  return true
+}
+
+/** Takes what a refused publish wrote back off the disk and the Space. */
+async function removeRefusedMedia(
+  current: LiveControllerOptions,
+  videoId: string
+): Promise<void> {
+  await new Promise<void>(resolve => {
+    queue(`publish:${videoId}`, async () => {
+      try {
+        await removeDeletedOrigin(current, videoId)
+      } finally {
+        // The row stays, so no later tick would retire this origin.
+        stopOrigin(videoId)
+        resolve()
+      }
+    })
   })
 }
 
@@ -1367,11 +1467,10 @@ async function finishStreamRecording(
     })
   }
 
-  // A key nobody ever used, or used only by something that was turned away —
-  // an encoder in the wrong codec connects and is refused, which does count as
-  // having published — leaves nothing behind. Deleting the placeholder is what
-  // keeps "we gave this game a stream URL once" from showing up in the game's
-  // videos for ever as a recording that does not exist.
+  // A key nobody ever used, or used only by something that was turned away,
+  // leaves nothing behind. Deleting the placeholder is what keeps "we gave
+  // this game a stream URL once" from showing up in the game's videos for ever
+  // as a recording that does not exist.
   if (
     row.firstPublishedAt == null ||
     !(await hasMedia(mediaRoot, row.videoId))

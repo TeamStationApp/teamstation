@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,6 +22,7 @@ import { makeDatabase } from '../db/database'
 import {
   beganPublishing,
   handleLiveEventForTest,
+  liveVideoDir,
   resolveKey
 } from '../live/controller'
 import {
@@ -2790,6 +2791,132 @@ describe('phones and Directors asking for their streams by device', function () 
         )
       ).deep.equals([])
       expect(await exists(late)).equals(false)
+    })
+  })
+
+  describe('S9 a publish refused for its codec', function () {
+    const REFUSAL = 'TeamStation takes HEVC. This stream is H.264.'
+
+    const ingest = (): Parameters<typeof beganPublishing>[0] => ({
+      db: db!,
+      live: LIVE,
+      ffmpegPath: '/not-used',
+      mediaRoot: uploadsDir,
+      workDir: uploadsDir,
+      sessionSecret: 'k'.repeat(32)
+    })
+
+    const external = async (gameId: string): Promise<Body> =>
+      (await ask(gameId, { label: 'Backstop', source: 'rtmp' })).body
+
+    /** H.264 arrives, the writer starts on it, and the ingest refuses it. */
+    const refuse = async (streamId: string): Promise<string> => {
+      const since = new Date()
+      await beganPublishing(ingest(), streamId)
+      const videoId = (await stream(streamId)).videoId!
+      const dir = liveVideoDir(uploadsDir, videoId)
+      await mkdir(dir, { recursive: true })
+      await writeFile(join(dir, 'master.m3u8'), '#EXTM3U\n')
+      await writeFile(join(dir, 'seg000000.m4s'), 'h264')
+      await handleLiveEventForTest(
+        {
+          type: 'publishEnded',
+          key: 'ts_unused',
+          liveStreamId: streamId,
+          reason: REFUSAL,
+          refusedSince: since
+        },
+        ingest()
+      )
+      return videoId
+    }
+
+    const row = async (gameId: string, streamId: string): Promise<Body> => {
+      const listed = await call('GET', `/games/${gameId}/live-streams`, OWNER)
+      return (listed.body.mine as Body[]).find(one => one.id === streamId)!
+    }
+
+    it('reads as never published, so Revoke takes the camera, its video and its files', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await external(gameId)
+      const videoId = await refuse(made.id)
+
+      const shown = await row(gameId, made.id)
+      expect(shown.publishedAt).equals(null)
+      expect(shown.state).equals('idle')
+      expect(shown.lastError).equals(REFUSAL)
+
+      // Revoke: End, then Remove, because `publishedAt` is null.
+      await end(gameId, made.id)
+      const removed = await call(
+        'DELETE',
+        `/games/${gameId}/live-streams/${made.id}`,
+        OWNER
+      )
+      expect(removed.status).equals(200)
+
+      expect(await row(gameId, made.id), 'the row went').equals(undefined)
+      expect(
+        await db
+          .selectFrom('videos')
+          .select('id')
+          .where('id', '=', videoId)
+          .executeTakeFirst(),
+        'the video went'
+      ).equals(undefined)
+      expect(
+        await readdir(liveVideoDir(uploadsDir, videoId)).catch(() => 'gone'),
+        'the folder went'
+      ).equals('gone')
+    })
+
+    it('counts a later good publish from that publish', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await external(gameId)
+      const videoId = await refuse(made.id)
+
+      await new Promise(resolve => setTimeout(resolve, 5))
+      const good = Date.now()
+      await beganPublishing(ingest(), made.id)
+
+      const shown = await row(gameId, made.id)
+      expect(shown.state).equals('publishing')
+      expect(shown.lastError).equals(null)
+      expect(Date.parse(shown.publishedAt)).is.at.least(good)
+      const placed = await db
+        .selectFrom('videos')
+        .select(['start_at as startAt', 'hidden'])
+        .where('id', '=', videoId)
+        .executeTakeFirstOrThrow()
+      expect(placed.hidden).equals(false)
+      expect(placed.startAt?.getTime()).is.at.least(good)
+    })
+
+    it('stays published when the refusal follows a real publish', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await external(gameId)
+      await beganPublishing(ingest(), made.id)
+      await handleLiveEventForTest(
+        {
+          type: 'publishEnded',
+          key: 'ts_unused',
+          liveStreamId: made.id,
+          reason: 'The stream ended'
+        },
+        ingest()
+      )
+      const first = (await row(gameId, made.id)).publishedAt
+      expect(first).not.equals(null)
+
+      await new Promise(resolve => setTimeout(resolve, 5))
+      await refuse(made.id)
+
+      const shown = await row(gameId, made.id)
+      expect(shown.publishedAt).equals(first)
+      expect(shown.lastError).equals(REFUSAL)
     })
   })
 

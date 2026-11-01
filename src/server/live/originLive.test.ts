@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import {
   drainLiveController,
   drainPublishForTest,
+  handleLiveEventForTest,
   startLiveController,
   stopLiveController,
   sync
@@ -220,6 +221,36 @@ describe('a live origin shared by API nodes', function () {
     expect(names).deep.equals([])
     expect(await stat(f.dir).catch(() => undefined)).equals(undefined)
     console.log('prefix after idle delete:', names)
+  })
+
+  it('takes a refused first publish back off the Space, keeping its placeholder', async () => {
+    await f.stage()
+    const refusedSince = new Date()
+    await f.begin()
+    await drainPublishForTest(f.videoId)
+    expect((await f.row())?.storage).equals('spaces')
+
+    await handleLiveEventForTest(
+      {
+        type: 'publishEnded',
+        key: f.stream.key,
+        liveStreamId: f.stream.id,
+        reason: 'TeamStation takes HEVC.',
+        refusedSince
+      },
+      f.options
+    )
+
+    expect(
+      await readdir(join(f.remote, 'videos', f.videoId)).catch(() => [])
+    ).deep.equals([])
+    expect(await stat(f.dir).catch(() => undefined)).equals(undefined)
+    expect(await f.row()).to.deep.include({
+      storage: 'local',
+      status: 'processing',
+      hidden: true,
+      codecs: null
+    })
   })
 
   it('queues one flush without blocking the tick when the Space is slow', async () => {

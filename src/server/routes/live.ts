@@ -1,3 +1,6 @@
+import { rm } from 'node:fs/promises'
+import { join } from 'node:path'
+
 import { asBoolean, asObject, asOptional, asString } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
@@ -555,11 +558,11 @@ export function liveRoutes(
    * can already *stop* another person's camera, which is the thing that
    * matters during a game; quietly deleting somebody else's row is not.
    *
-   * A camera that never carried any video takes its empty recording with it.
-   * One that did leaves the recording behind: the key is a credential and the
-   * video is a game, and throwing away the second because somebody tidied up
-   * the first is not a thing to do without being asked. `DELETE /videos/{id}`
-   * is how the video goes.
+   * A camera that never carried any video takes its empty recording and that
+   * recording's folder with it. One that did leaves the recording behind: the
+   * key is a credential and the video is a game, and throwing away the second
+   * because somebody tidied up the first is not a thing to do without being
+   * asked. `DELETE /videos/{id}` is how the video goes.
    */
   router.delete(
     '/games/:gameId/live-streams/:streamId',
@@ -612,6 +615,10 @@ export function liveRoutes(
           video.size_bytes == null
         ) {
           await db.deleteFrom('videos').where('id', '=', video.id).execute()
+          await rm(join(mediaRoot, 'work', 'videos', video.id), {
+            recursive: true,
+            force: true
+          })
           removedVideo = true
         }
       }
