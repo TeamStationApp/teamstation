@@ -68,29 +68,29 @@ describe('rtmpUrlParts', function () {
 
 describe('cameraLink', function () {
   it('hands GoPro the whole URL, as its link carries it', function () {
-    expect(cameraLink('gopro', RTMP, 'Home')).equals(
+    expect(cameraLink('gopro', RTMP, 'Home', 'android')).equals(
       `https://gopro.com/app/streaming/rtmp?server=${RTMP}`
     )
-    expect(cameraLink('gopro', RTMPS, 'Home')).equals(
+    expect(cameraLink('gopro', RTMPS, 'Home', 'android')).equals(
       `https://gopro.com/app/streaming/rtmp?server=${RTMPS}`
     )
   })
 
   it('builds Mevo’s link for rtmp with a custom port', function () {
-    const link = cameraLink('mevo', RTMP, 'Home')
+    const link = cameraLink('mevo', RTMP, 'Home', 'android')
     expect(link).equals(
       `mevostream://configure/?publishHost=ingest.example.test&publishApplication=live&publishStream=${KEY}&publishPort=1936&publishProtocol=rtmp&streamTitle=Home&encoder=hevc`
     )
   })
 
   it('builds Mevo’s link for rtmps on the default port', function () {
-    expect(fields(cameraLink('mevo', RTMPS, 'Home')!)).deep.equals(
+    expect(fields(cameraLink('mevo', RTMPS, 'Home', 'android')!)).deep.equals(
       mevoFields('rtmps', '443', 'Home')
     )
   })
 
   it('encodes a name that needs it, and only as far as a query must', function () {
-    const link = cameraLink('mevo', RTMP, '1st & 3rd/Home?')!
+    const link = cameraLink('mevo', RTMP, '1st & 3rd/Home?', 'android')!
     expect(link).contains('streamTitle=1st%20%26%203rd%2FHome%3F&')
     expect(fields(link)).deep.equals(
       mevoFields('rtmp', '1936', '1st & 3rd/Home?')
@@ -98,7 +98,7 @@ describe('cameraLink', function () {
   })
 
   it('encodes Mevo Studio’s link inside its outer link', function () {
-    const link = cameraLink('mevoStudio', RTMP, '1st & 3rd')!
+    const link = cameraLink('mevoStudio', RTMP, '1st & 3rd', 'android')!
     expect(
       link.startsWith('https://multicam.mevo.com?link=https%3A%2F%2F')
     ).equals(true)
@@ -113,27 +113,43 @@ describe('cameraLink', function () {
     expect(fields(inner)).deep.equals(mevoFields('rtmp', '1936', '1st & 3rd'))
   })
 
+  it('gives iOS, which refuses Mevo’s scheme, Mevo’s universal link', function () {
+    const link = cameraLink('mevo', RTMP, 'Home', 'ios')
+    expect(link).equals(
+      `https://app.mevo.com/configure?publishHost=ingest.example.test&publishApplication=live&publishStream=${KEY}&publishPort=1936&publishProtocol=rtmp&streamTitle=Home&encoder=hevc`
+    )
+    expect(fields(link!)).deep.equals(mevoFields('rtmp', '1936', 'Home'))
+    expect(fields(cameraLink('mevo', RTMPS, 'Home', 'ios')!)).deep.equals(
+      mevoFields('rtmps', '443', 'Home')
+    )
+    expect(link).not.contains('provider')
+  })
+
   it('builds Mevo Studio’s link for rtmps', function () {
-    const inner = fields(cameraLink('mevoStudio', RTMPS, 'Home')!)[0][1]
+    const inner = fields(
+      cameraLink('mevoStudio', RTMPS, 'Home', 'android')!
+    )[0][1]
     expect(fields(inner)).deep.equals(mevoFields('rtmps', '443', 'Home'))
   })
 
   it('names HEVC on both Mevo links, and never a provider', function () {
     for (const source of ['mevo', 'mevoStudio'] as const) {
-      const link = decodeURIComponent(cameraLink(source, RTMP, 'Home')!)
+      const link = decodeURIComponent(
+        cameraLink(source, RTMP, 'Home', 'android')!
+      )
       expect(link, source).contains('encoder=hevc')
       expect(link, source).not.contains('provider')
     }
   })
 
   it('sends GoPro no codec', function () {
-    expect(cameraLink('gopro', RTMP, 'Home')).not.contains('encoder')
+    expect(cameraLink('gopro', RTMP, 'Home', 'android')).not.contains('encoder')
   })
 
   it('has no link for a URL it cannot split', function () {
-    expect(cameraLink('mevo', 'https://example.test/', 'Home')).equals(
-      undefined
-    )
+    expect(
+      cameraLink('mevo', 'https://example.test/', 'Home', 'android')
+    ).equals(undefined)
   })
 })
 
@@ -228,7 +244,7 @@ describe('launchCamera', function () {
         expect(await go.run()).deep.equals({ kind: 'opened' })
         expect(go.added).deep.equals([['gam_1', 'Home', { source }]])
         expect(go.created).deep.equals([1])
-        expect(go.fired).deep.equals([cameraLink(source, RTMP, 'Home')])
+        expect(go.fired).deep.equals([cameraLink(source, RTMP, 'Home', os)])
       })
 
   it('opens Android’s store page for a missing app, and makes no camera', async function () {
@@ -244,15 +260,52 @@ describe('launchCamera', function () {
   })
 
   it('leaves a missing app to the RTMP sheet on iOS, which makes the camera', async function () {
-    for (const source of ['gopro', 'mevo'] as const) {
-      const go = launcher({ source, os: 'ios' })
-      expect(await go.run()).deep.equals({
-        kind: 'sheet',
-        target: { name: 'Home', source }
-      })
-      expect(go.fired).deep.equals([])
-      expect(go.added).deep.equals([])
-    }
+    const go = launcher({ source: 'gopro', os: 'ios' })
+    expect(await go.run()).deep.equals({
+      kind: 'sheet',
+      target: { name: 'Home', source: 'gopro' }
+    })
+    expect(go.fired).deep.equals([])
+    expect(go.added).deep.equals([])
+  })
+
+  it('asks iOS nothing about Mevo, and holds its link to the app', async function () {
+    const asked: string[] = []
+    const go = launcher({
+      os: 'ios',
+      canOpenURL: async url => {
+        asked.push(url)
+        return false
+      }
+    })
+    expect(await go.run()).deep.equals({ kind: 'opened' })
+    expect(asked, 'no probe of a scheme iOS refuses').deep.equals([])
+    expect(go.inApp).deep.equals([
+      [cameraLink('mevo', RTMP, 'Home', 'ios'), 'com.livestream.mevo']
+    ])
+    expect(go.fired).length(1)
+  })
+
+  it('shows the URL on iOS when Mevo will not take its link, rather than a browser', async function () {
+    const go = launcher({ os: 'ios', openInApp: async () => false })
+    expect(await go.run()).deep.equals({
+      kind: 'sheet',
+      target: { stream: go.stream }
+    })
+    expect(go.added).length(1)
+    expect(go.fired).length(1)
+    expect(go.fired[0].startsWith('https://app.mevo.com/')).equals(true)
+  })
+
+  it('keeps Mevo’s scheme and its check on Android', async function () {
+    const missing = launcher({})
+    expect(await missing.run()).deep.equals({ kind: 'store' })
+    expect(missing.added).deep.equals([])
+    expect(missing.fired).deep.equals([storePage('com.livestream.mevo')])
+
+    const go = launcher({ installed: [MEVO_SCHEME] })
+    await go.run()
+    expect(go.fired[0].startsWith('mevostream://configure/?')).equals(true)
   })
 
   it('treats a check that fails as a missing app', async function () {
@@ -269,12 +322,12 @@ describe('launchCamera', function () {
       const gopro = launcher({ os, source: 'gopro', installed: [GOPRO_SCHEME] })
       await gopro.run()
       expect(gopro.inApp).deep.equals([
-        [cameraLink('gopro', RTMP, 'Home'), 'com.gopro.smarty']
+        [cameraLink('gopro', RTMP, 'Home', 'android'), 'com.gopro.smarty']
       ])
       const studio = launcher({ os, source: 'mevoStudio', apps: [STUDIO_APP] })
       expect(await studio.run()).deep.equals({ kind: 'opened' })
       expect(studio.inApp).deep.equals([
-        [cameraLink('mevoStudio', RTMP, 'Home'), STUDIO_APP]
+        [cameraLink('mevoStudio', RTMP, 'Home', 'android'), STUDIO_APP]
       ])
     }
   })
@@ -283,7 +336,7 @@ describe('launchCamera', function () {
     const go = launcher({ installed: [MEVO_SCHEME] })
     await go.run()
     expect(go.inApp).deep.equals([])
-    expect(go.fired).deep.equals([cameraLink('mevo', RTMP, 'Home')])
+    expect(go.fired).deep.equals([cameraLink('mevo', RTMP, 'Home', 'android')])
   })
 
   it('opens Android’s store page with Mevo Studio missing, with no key and no camera', async function () {
@@ -321,7 +374,7 @@ describe('launchCamera', function () {
     })
     expect(go.added).to.have.length(1)
     expect(go.fired, 'one try, held to the app').deep.equals([
-      cameraLink('mevoStudio', RTMP, 'Home')
+      cameraLink('mevoStudio', RTMP, 'Home', 'android')
     ])
   })
 
@@ -340,7 +393,7 @@ describe('launchCamera', function () {
   it('reveals the URL when the answer leaves it out', async function () {
     const go = launcher({ url: undefined, installed: [MEVO_SCHEME] })
     expect(await go.run()).deep.equals({ kind: 'opened' })
-    expect(go.fired).deep.equals([cameraLink('mevo', RTMP, 'Home')])
+    expect(go.fired).deep.equals([cameraLink('mevo', RTMP, 'Home', 'android')])
   })
 
   it('fires nothing for a refused camera', async function () {

@@ -51,24 +51,29 @@ const DEFAULT_PORT = { rtmp: 1935, rtmps: 443 }
 
 const GOPRO_LINK = 'https://gopro.com/app/streaming/rtmp'
 const MEVO_LINK = 'mevostream://configure/'
+const MEVO_UNIVERSAL_LINK = 'https://app.mevo.com/configure'
 const MEVO_STUDIO_HOST = 'https://multicam.mevo.com'
 const MEVO_STUDIO_APP = 'com.mevo.multicam'
 
 /**
  * How each app is known to be on this phone, and its Play Store page. Mevo
  * Studio answers to no scheme of its own: Android's package manager knows of
- * it, and iOS finds out only by opening its link.
+ * it, and iOS finds out only by opening its link. Mevo is the same on iOS,
+ * which refuses `mevostream://`, and answers to that scheme on Android alone.
  */
 const INSTALL_CHECKS: Record<
   LinkedCamera,
-  { url?: string; packageName: string }
+  { url?: string; androidUrl?: string; packageName: string }
 > = {
   // Quik's Android filters name a host and path: the bare scheme matches none.
   gopro: {
     url: 'goprocontrol://com.gopro.smarty/home',
     packageName: 'com.gopro.smarty'
   },
-  mevo: { url: 'mevostream://configure', packageName: 'com.livestream.mevo' },
+  mevo: {
+    androidUrl: 'mevostream://configure',
+    packageName: 'com.livestream.mevo'
+  },
   mevoStudio: { packageName: MEVO_STUDIO_APP }
 }
 
@@ -117,7 +122,8 @@ function mevoQuery(parts: RtmpUrlParts, title: string): string {
 export function cameraLink(
   source: LinkedCamera,
   url: string,
-  title: string
+  title: string,
+  os: string
 ): string | undefined {
   const parts = rtmpUrlParts(url)
   if (parts == null) return undefined
@@ -125,7 +131,7 @@ export function cameraLink(
     case 'gopro':
       return `${GOPRO_LINK}?server=${url}`
     case 'mevo':
-      return `${MEVO_LINK}?${mevoQuery(parts, title)}`
+      return `${os === 'android' ? MEVO_LINK : MEVO_UNIVERSAL_LINK}?${mevoQuery(parts, title)}`
     case 'mevoStudio': {
       const inner = `${MEVO_STUDIO_HOST}/configure?${mevoQuery(parts, title)}`
       return `${MEVO_STUDIO_HOST}?link=${encodeURIComponent(inner)}&apn=${MEVO_STUDIO_APP}`
@@ -154,7 +160,8 @@ async function urlOf(
 export async function launchCamera(args: LaunchCamera): Promise<CameraLaunch> {
   const { client, gameId, name, source, links, os, onCreated } = args
   const check = INSTALL_CHECKS[source]
-  if (!(await installed(links, check.url, check.packageName, os))) {
+  const probe = os === 'android' ? (check.androidUrl ?? check.url) : check.url
+  if (!(await installed(links, probe, check.packageName, os))) {
     if (os !== 'android') return { kind: 'sheet', target: { name, source } }
     await links.openURL(storePage(check.packageName))
     return { kind: 'store' }
@@ -163,7 +170,7 @@ export async function launchCamera(args: LaunchCamera): Promise<CameraLaunch> {
   onCreated()
   try {
     const url = await urlOf(client, stream)
-    const link = url == null ? undefined : cameraLink(source, url, name)
+    const link = url == null ? undefined : cameraLink(source, url, name, os)
     if (link != null && (await fire(links, link, check.packageName)))
       return { kind: 'opened' }
   } catch {

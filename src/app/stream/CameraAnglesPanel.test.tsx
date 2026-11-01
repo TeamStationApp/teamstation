@@ -1331,7 +1331,6 @@ describe('setting up a camera on a phone', function () {
 
   for (const [row, source] of [
     ['GoPro, with its app missing', 'gopro'],
-    ['Mevo, with its app missing', 'mevo'],
     ['Other camera', 'rtmp']
   ] as const) {
     it(`makes the camera with its source as ${row} opens the RTMP sheet, and not before`, async function () {
@@ -1394,6 +1393,7 @@ describe('setting up a camera on a phone', function () {
     }
 
     it('makes the camera, fires its link and leaves it on the tab', async function () {
+      ;(Platform as { OS: string }).OS = 'android'
       const fake = fakeClient()
       listed(fake)
       const links = fakeLinks(['mevostream://configure'])
