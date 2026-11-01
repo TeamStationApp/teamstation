@@ -341,19 +341,19 @@ RCT_EXPORT_VIEW_PROPERTY(onDismiss, RCTDirectEventBlock)
 @property(nonatomic) CGFloat maxOpacity;
 @end
 @implementation TVGradientView
++ (Class)layerClass { return CAGradientLayer.class; }
 - (instancetype)initWithFrame:(CGRect)frame {
   if ((self = [super initWithFrame:frame])) {
     self.userInteractionEnabled = NO;
     self.opaque = NO;
-    _gradient = [CAGradientLayer layer];
-    [self.layer addSublayer:_gradient];
+    _gradient = (CAGradientLayer *)self.layer;
   }
   return self;
 }
 - (void)layoutSubviews {
   [super layoutSubviews];
   [CATransaction begin]; [CATransaction setDisableActions:YES];
-  self.gradient.frame = self.bounds;
+  // The backing layer follows the view bounds without a separate layout pass.
   [CATransaction commit];
 }
 - (void)setGradientDirection:(NSString *)gradientDirection {
@@ -368,9 +368,10 @@ RCT_EXPORT_VIEW_PROPERTY(onDismiss, RCTDirectEventBlock)
   NSString *direction = self.gradientDirection;
   CAGradientLayer *gradient = self.gradient;
   BOOL bottom = [direction isEqualToString:@"bottom"];
-  gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:self.maxOpacity].CGColor,
-                      (id)[UIColor colorWithWhite:0 alpha:0].CGColor];
-  gradient.locations = @[@0, @1];
+  id dark = (id)[UIColor colorWithWhite:0 alpha:self.maxOpacity].CGColor;
+  id clear = (id)[UIColor colorWithWhite:0 alpha:0].CGColor;
+  gradient.colors = bottom ? @[dark, dark, clear] : @[dark, clear];
+  gradient.locations = bottom ? @[@0, @0.35, @1] : @[@0, @1];
   gradient.startPoint = bottom ? CGPointMake(0,1) : CGPointMake([direction isEqualToString:@"right"] ? 1 : 0,0);
   gradient.endPoint = bottom ? CGPointMake(0,0) : CGPointMake([direction isEqualToString:@"left"] ? 1 : 0,0);
 }

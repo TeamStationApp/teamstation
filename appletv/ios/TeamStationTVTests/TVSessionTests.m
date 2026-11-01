@@ -133,6 +133,8 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 @interface TVPlaybackBoundaryView : UIView <UIGestureRecognizerDelegate>
 @property(nonatomic) BOOL transportEnabled;
 @property(nonatomic) BOOL scrubEnabled;
+@property(nonatomic) BOOL statsPanEnabled;
+@property(nonatomic, copy) void (^onStatsPan)(NSDictionary *);
 @property(nonatomic) BOOL transportPress;
 @property(nonatomic, strong) UIGestureRecognizer *pressMonitor;
 @property(nonatomic, strong) UIPanGestureRecognizer *panMonitor;
@@ -144,9 +146,13 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 @end
 @interface TestCancelledPan : UIPanGestureRecognizer
 @property(nonatomic) UIGestureRecognizerState reportedState;
+@property(nonatomic) CGPoint reportedTranslation;
+@property(nonatomic) CGPoint reportedVelocity;
 @end
 @implementation TestCancelledPan
 - (UIGestureRecognizerState)state { return self.reportedState; }
+- (CGPoint)translationInView:(UIView *)view { return self.reportedTranslation; }
+- (CGPoint)velocityInView:(UIView *)view { return self.reportedVelocity; }
 @end
 @interface TestTransportPress : UIPress
 @property(nonatomic) UIPressType testType;
@@ -231,6 +237,32 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
   [view removeFromSuperview];
   XCTAssertEqual(cancelled, 4);
   view.onCancelTransport = nil; [view cancelTransport];
+}
+- (void)testStatsPanPreservesContinuousCoordinatesAndTerminalPhases {
+  TVPlaybackBoundaryView *view = [[TVPlaybackBoundaryView alloc] initWithFrame:CGRectMake(0, 0, 800, 400)];
+  NSMutableArray<NSDictionary *> *events = [NSMutableArray new];
+  view.onStatsPan = ^(NSDictionary *event) { [events addObject:event]; };
+  TestCancelledPan *pan = [TestCancelledPan new];
+  pan.reportedState = UIGestureRecognizerStateBegan;
+  [view panChanged:pan];
+  XCTAssertEqual(events.count, 0); // Ordinary transport pans are not stats input.
+  view.statsPanEnabled = YES;
+  NSArray *states = @[@(UIGestureRecognizerStateBegan), @(UIGestureRecognizerStateChanged), @(UIGestureRecognizerStateEnded), @(UIGestureRecognizerStateCancelled)];
+  NSArray *names = @[@"Began", @"Changed", @"Ended", @"Cancelled"];
+  for (NSUInteger i = 0; i < states.count; i++) {
+    pan.reportedState = [states[i] integerValue];
+    pan.reportedTranslation = CGPointMake(99, -12.5 * (i + 1));
+    pan.reportedVelocity = CGPointMake(700, -240.25 * (i + 1));
+    [view panChanged:pan];
+    XCTAssertEqualObjects(events.lastObject, (@{@"state": names[i], @"y": @(-12.5 * (i + 1)), @"velocityY": @(-240.25 * (i + 1))}));
+  }
+  XCTAssertEqual(events.count, 4);
+  view.statsPanEnabled = NO;
+  [view panChanged:pan];
+  XCTAssertEqual(events.count, 4);
+  view.statsPanEnabled = YES;
+  view.onStatsPan = nil;
+  [view panChanged:pan]; // Unmounting the callback is safe during a gesture.
 }
 - (void)testNativePanCancellationReachesThePlayer {
   TVPlaybackBoundaryView *view = [[TVPlaybackBoundaryView alloc] initWithFrame:CGRectMake(0, 0, 800, 400)];
@@ -385,9 +417,10 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
   view.frame = CGRectMake(0,0,1920,216); view.gradientDirection = @"bottom"; view.maxOpacity = 0.1;
   [view layoutSubviews];
   CAGradientLayer *layer = view.gradient;
-  XCTAssertEqualObjects(layer.locations,(@[@0,@1]));
+  XCTAssertEqualObjects(layer.locations,(@[@0,@0.35,@1]));
+  XCTAssertEqual(layer, view.layer);
   XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[0]),0.1,0.001);
-  XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[1]),0,0.001);
+  XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[2]),0,0.001);
   view.maxOpacity = 0.15;
   XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[0]),0.15,0.001);
   view.maxOpacity = -1; XCTAssertEqual(view.maxOpacity,0);
@@ -400,7 +433,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 - (void)testBottomGradientCompositesAnEvenTransparentRamp {
   TVGradientView *view = (TVGradientView *)[[NSClassFromString(@"TVGradientManager") new] view];
   view.frame = CGRectMake(0,0,4,100); view.gradientDirection = @"bottom";
-  for (NSNumber *opacity in @[@0.1, @0.15]) {
+  for (NSNumber *opacity in @[@0.1, @0.5]) {
     view.maxOpacity = opacity.doubleValue; [view layoutSubviews];
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     CGContextRef context = CGBitmapContextCreate(NULL,4,100,8,16,space,kCGImageAlphaPremultipliedLast);
@@ -409,7 +442,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
     int first = pixels[3], middle = pixels[50*16+3], last = pixels[99*16+3];
     XCTAssertLessThanOrEqual(MIN(first,last),2);
     XCTAssertEqualWithAccuracy(MAX(first,last),opacity.doubleValue*255,2);
-    XCTAssertEqualWithAccuracy(middle,opacity.doubleValue*255/2,2);
+    XCTAssertEqualWithAccuracy(middle,opacity.doubleValue*255*(0.5/0.65),3);
     CGContextRelease(context); CGColorSpaceRelease(space);
   }
 }
