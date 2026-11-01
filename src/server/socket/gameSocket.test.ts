@@ -511,6 +511,84 @@ describe('the game socket (U14)', function () {
       ).equals(404)
     })
 
+    it('tells an upgrade starved at sign-in to come back, and only that one', async function () {
+      const feed: ChangeFeed = {
+        subscribe: () => ({
+          listening: Promise.resolve(),
+          stop: () => undefined
+        }),
+        publishEphemeral: async () => undefined,
+        close: async () => undefined
+      }
+      /** A socket server signing in on this pool, and how it refuses `VIEWER`. */
+      const refusal = async (
+        pool: Pool
+      ): Promise<{ status?: number; retryAfter?: string | string[] }> => {
+        const plain = createServer()
+        const starved = new Kysely<Database>({
+          dialect: new PostgresDialect({ pool })
+        })
+        const handle = attachGameSocket(plain, starved, scratchUrl, {
+          feed,
+          stopSignals: null,
+          fanout: { log: () => undefined }
+        })
+        await new Promise<void>(resolve =>
+          plain.listen(0, '127.0.0.1', resolve)
+        )
+        const { port } = plain.address() as AddressInfo
+        try {
+          return await new Promise((resolve, reject) => {
+            const ws = new WebSocket(`ws://127.0.0.1:${port}/socket`, {
+              headers: { authorization: `Bearer ${VIEWER}` }
+            })
+            ws.on('unexpected-response', (_req, res) => {
+              resolve({
+                status: res.statusCode,
+                retryAfter: res.headers['retry-after']
+              })
+              ws.terminate()
+            })
+            ws.on('open', () => {
+              reject(new Error('The upgrade was accepted'))
+            })
+            ws.on('error', () => undefined)
+          })
+        } finally {
+          await handle.close()
+          await new Promise(resolve => plain.close(resolve))
+        }
+      }
+
+      const small = new Pool({
+        connectionString: scratchUrl,
+        max: 1,
+        connectionTimeoutMillis: 50
+      })
+      const held = await small.connect()
+      try {
+        expect(await refusal(small)).deep.equals({
+          status: 503,
+          retryAfter: '1'
+        })
+      } finally {
+        held.release()
+        await small.end()
+      }
+
+      const absent = new Pool({
+        connectionString: scratchUrl.replace(scratchName, `${scratchName}_no`)
+      })
+      try {
+        expect(await refusal(absent)).deep.equals({
+          status: 500,
+          retryAfter: undefined
+        })
+      } finally {
+        await absent.end()
+      }
+    })
+
     it('declines a scoreboard path without writing a response', function () {
       const raw = new PassThrough()
       const req = {

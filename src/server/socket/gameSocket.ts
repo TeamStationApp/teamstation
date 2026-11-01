@@ -990,7 +990,16 @@ export function attachGameSocket(
       },
       (error: unknown) => {
         console.error(`game socket: signing in an upgrade: ${String(error)}`)
-        refuseUpgrade(socket, 500, 'Internal Server Error')
+        // Out of connections for the moment, so it is told to come back, as a
+        // starved request is.
+        if (isPoolTimeout(error))
+          refuseUpgrade(
+            socket,
+            503,
+            'Service Unavailable',
+            'Retry-After: 1\r\n'
+          )
+        else refuseUpgrade(socket, 500, 'Internal Server Error')
       }
     )
     return true
@@ -1068,8 +1077,13 @@ function rawText(data: RawData): string {
   return data.toString('utf8')
 }
 
-function refuseUpgrade(socket: Duplex, status: number, text: string): void {
+function refuseUpgrade(
+  socket: Duplex,
+  status: number,
+  text: string,
+  headers = ''
+): void {
   socket.end(
-    `HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`
+    `HTTP/1.1 ${status} ${text}\r\n${headers}Connection: close\r\nContent-Length: 0\r\n\r\n`
   )
 }
