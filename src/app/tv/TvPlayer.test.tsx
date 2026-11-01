@@ -277,7 +277,27 @@ describe('TV game playback entry', () => {
     expect(videos.every(v => paused.get(v) === false)).equals(true)
     expect(videos.map(v => v.playbackRate)).deep.equals([1, 1, 1, 1])
   })
-  it('opens panels only after boundary moves, dismisses outward and expands then scrolls stats', async () => {
+  it('leaves control-button directions to focus navigation', async () => {
+    await render()
+    await press('Close panel')
+    const videos = [...document.querySelectorAll('video')]
+    await act(async () => {
+      document.querySelector<HTMLElement>('[data-testid="tv-angle-0"]')!.focus()
+      emitTvDirection('up')
+      await pause()
+      document
+        .querySelector<HTMLElement>('[aria-label="Back to games"]')!
+        .focus()
+      await pause()
+      emitTvDirection('right')
+      emitTvDirection('longUp', 0)
+      await pause()
+    })
+    expect(document.querySelector('[data-testid="tv-scrubber"]')).equals(null)
+    expect(videos.map(v => v.currentTime)).deep.equals([0, 0, 0, 0])
+    expect(videos.map(v => v.playbackRate)).deep.equals([1, 1, 1, 1])
+  })
+  it('opens panels only after boundary moves, dismisses inward and expands then scrolls stats', async () => {
     await render()
     const focus = async (index: number): Promise<void> => {
       await act(async () => {
@@ -311,7 +331,7 @@ describe('TV game playback entry', () => {
     expect(
       document.querySelector('[data-testid="tv-highlights-panel"]')
     ).not.equals(null)
-    await key('swipeRight')
+    await key('swipeLeft')
     expect(
       document.querySelector('[data-testid="tv-highlights-panel"]')
     ).equals(null)
@@ -322,7 +342,7 @@ describe('TV game playback entry', () => {
       document.querySelector('[data-testid="tv-cameras-panel"]')
     ).not.equals(null)
     await key('down')
-    await key('swipeLeft')
+    await key('swipeRight')
     expect(document.querySelector('[data-testid="tv-cameras-panel"]')).equals(
       null
     )
@@ -441,13 +461,35 @@ describe('TV game playback entry', () => {
     expect(
       document.querySelector('[data-testid="tv-cameras-panel"]')
     ).not.equals(null)
+    const camera = document.querySelector<HTMLElement>(
+      '[data-testid="tv-toggle-0"]'
+    )!
+    expect(camera.style.borderWidth).not.equals('3px')
+    expect(
+      camera.querySelector<HTMLElement>('[data-testid="tv-blur-fallback"]')!
+        .style.backgroundColor
+    ).equals('rgb(255, 255, 255)')
     await press('Toggle Angle 0')
+    expect(
+      camera.querySelector<HTMLElement>('[data-testid="tv-blur-fallback"]')!
+        .style.backgroundColor
+    ).equals('rgb(76, 76, 76)')
     expect([...document.querySelectorAll('video')]).deep.equals(videos)
     expect(videos[0].muted).equals(true)
     expect(videos[1].muted).equals(false)
     await press('Toggle Angle 0')
     await press('Close panel')
     await press('Highlights')
+    const clip = document.querySelector<HTMLElement>(
+      '[data-testid="tv-highlight-0"]'
+    )!
+    expect(clip.textContent).contains('Home run')
+    expect(clip.style.flexDirection).not.equals('row')
+    const thumbnail = clip.querySelector<HTMLElement>(
+      '[data-testid="tv-highlight-thumbnail-0"]'
+    )!
+    expect(getComputedStyle(thumbnail).width).equals('300px')
+    expect(getComputedStyle(thumbnail).height).equals('170px')
     await press('Home run')
     expect(
       document.querySelector('[data-testid="tv-highlights-panel"]')
