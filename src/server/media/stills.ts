@@ -8,7 +8,7 @@ import { putObject } from './images'
 import type { MediaContext } from './mediaContext'
 import { signQueryToken } from './mediaTokens'
 import { isReadOnlySourceKey, presignGetUrl } from './presign'
-import { fetchSpaceFrame } from './spaceFrames'
+import { fetchSpaceFrame, readLocalFrame } from './spaceFrames'
 import { spaceConfigured, spaceKey, type SpaceSettings } from './spacesHls'
 
 const run = promisify(execFile)
@@ -231,6 +231,8 @@ async function openFrame(
   { path: string; seekSec: number; release: () => Promise<void> } | undefined
 > {
   if (source.kind === 'file') {
+    const fragment = await readLocalFrame(source.path, atSec, scratch)
+    if (fragment != null) return fragment
     return {
       path: source.path,
       seekSec: atSec,

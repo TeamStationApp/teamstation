@@ -182,9 +182,10 @@ describe('a season’s date range', function () {
     const f = fake({ startsOn: null, endsOn: null })
     await mount(f)
     await press('Custom')
-    await press('Previous month')
-    // Back from October to March, then on to May.
-    for (let month = 0; month < 6; month++) await press('Previous month')
+    // The calendar opens on the month it is: back to March, then on to May.
+    for (let month = 0; month < 240 && byLabel('2026-03-01') == null; month++) {
+      await press('Previous month')
+    }
     await press('2026-03-01')
     await press('Next month')
     await press('Next month')

@@ -36,6 +36,7 @@ import { OriginPublisher } from './originPublisher'
 import { quietStreamCanEnd } from './quietStream'
 import { openSecret } from './secrets'
 import {
+  absorbWriterPlaylist,
   clearLive,
   clearLiveSettled,
   configureIngest,
@@ -1919,13 +1920,16 @@ async function closePlaylist(
    */
   stillAway: () => boolean = () => true
 ): Promise<void> {
-  const path = join(liveVideoDir(mediaRoot, videoId), LIVE_PLAYLIST_NAME)
+  const dir = liveVideoDir(mediaRoot, videoId)
+  const path = join(dir, LIVE_PLAYLIST_NAME)
   let playlist: string
   try {
     playlist = await readFile(path, 'utf8')
   } catch {
     return
   }
+  // The last writer's segments, when one went down with this process.
+  if (stillAway()) absorbWriterPlaylist(dir)
   if (playlist.includes('#EXT-X-ENDLIST')) return
   // The last look, the read and the write happen together, with nothing
   // awaited between them. A publisher coming back reopens the playlist the
