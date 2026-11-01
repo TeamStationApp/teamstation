@@ -21,7 +21,8 @@ export function setup(m: Setup): void {
   m.parallel('build', {
     ios: {
       on: IOS,
-      tools: { node: '24', xcode: '26.6', cocoapods: '1.16.2' },
+      // Nomac provides Xcode and cannot install another, so this matches the one it has.
+      tools: { node: '24', xcode: '>=26', cocoapods: '1.16.2' },
       timeout: '6h',
       apple: { distribution: 'appStore', app: APP },
       publishes: [APP],
