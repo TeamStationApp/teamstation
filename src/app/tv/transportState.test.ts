@@ -15,6 +15,7 @@ function fixture() {
   let id = 0
   const moves: number[] = []
   const seeks: number[] = []
+  const previews: Array<number | null> = []
   const pan: boolean[] = []
   const transport = new TvTransport({
     move: seconds => {
@@ -25,6 +26,7 @@ function fixture() {
       seeks.push(wall)
       position = wall
     },
+    preview: wall => previews.push(wall),
     position: () => position,
     extent: () => extent,
     width: () => width,
@@ -58,6 +60,7 @@ function fixture() {
     advance,
     moves,
     seeks,
+    previews,
     pan,
     timers,
     state: () => snapshot,
@@ -140,9 +143,10 @@ describe('TV transport ownership', () => {
     f.transport.handle({ kind: 'pan', phase: 'begin', x: 0 })
     f.transport.handle({ kind: 'pan', phase: 'change', x: 100 })
     f.advance(16)
-    expect(f.seeks).length(1)
+    expect(f.seeks).length(0)
     expect(f.moves).length(count)
     f.transport.handle({ kind: 'pan', phase: 'end', x: 100 })
+    expect(f.seeks).length(1)
     f.advance(2000)
     expect(f.state().visible).equals(false)
   })
@@ -165,7 +169,7 @@ describe('TV transport ownership', () => {
     expect(f.state().visible).equals(false)
   })
 
-  it('scrubs proportionally, coalesces changes, clamps limits and renews the timeout', () => {
+  it('previews each movement immediately without video work, then commits on release', () => {
     const f = fixture()
     expect(f.transport.handle({ kind: 'pan', phase: 'begin', x: 0 })).equals(
       false
@@ -174,21 +178,23 @@ describe('TV transport ownership', () => {
     f.transport.handle({ kind: 'pan', phase: 'begin', x: 0 })
     f.transport.handle({ kind: 'pan', phase: 'change', x: 200 })
     f.transport.handle({ kind: 'pan', phase: 'change', x: 500 })
-    f.advance(16)
-    expect(f.seeks).deep.equals([260000])
+    expect(f.previews.slice(-2)).deep.equals([170000, 260000])
+    expect(f.seeks).deep.equals([])
     f.advance(2500)
     expect(f.state().visible).equals(true)
     f.transport.handle({ kind: 'pan', phase: 'change', x: -10000 })
-    f.advance(16)
-    expect(f.seeks.at(-1)).equals(0)
+    expect(f.previews.at(-1)).equals(0)
+    expect(f.seeks).deep.equals([])
     f.transport.handle({ kind: 'pan', phase: 'end', x: 10000 })
-    f.advance(16)
-    expect(f.seeks.at(-1)).equals(1000000)
-    f.advance(1984)
+    expect(f.seeks).deep.equals([1000000])
+    expect(f.previews.at(-1)).equals(null)
+    f.advance(2000)
     expect(f.state().visible).equals(false)
     f.transport.handle({ kind: 'click', direction: 'left' })
     f.transport.handle({ kind: 'pan', phase: 'begin', x: 0 })
     f.transport.handle({ kind: 'pan', phase: 'cancel', x: 10 })
+    expect(f.seeks).deep.equals([1000000])
+    expect(f.previews.at(-1)).equals(null)
     f.advance(2000)
     expect(f.pan.at(-1)).equals(false)
   })

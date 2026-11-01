@@ -12,6 +12,7 @@ export interface TransportSnapshot {
 export interface TransportHost {
   move: (seconds: number) => void
   seek: (wall: number) => void
+  preview: (wall: number | null) => void
   position: () => number | null
   extent: () => { start: number; end: number } | null
   width: () => number
@@ -29,7 +30,6 @@ export class TvTransport {
   private held: RemoteDirection | null = null
   private repeat: unknown
   private hide: unknown
-  private flush: unknown
   private pending: number | null = null
   private pan: {
     wall: number
@@ -43,7 +43,7 @@ export class TvTransport {
 
   constructor(private readonly host: TransportHost) {}
 
-  private stop(timer: 'repeat' | 'hide' | 'flush'): void {
+  private stop(timer: 'repeat' | 'hide'): void {
     if (this[timer] !== undefined) this.host.clear(this[timer])
     this[timer] = undefined
   }
@@ -71,7 +71,7 @@ export class TvTransport {
 
   private closeScrub(): void {
     this.stop('hide')
-    this.stop('flush')
+    this.host.preview(null)
     this.pending = null
     this.pan = null
     if (this.visible) {
@@ -173,18 +173,15 @@ export class TvTransport {
           start,
           Math.min(end, wall + (input.x / width) * (end - start) * 0.3)
         )
-        if (this.flush === undefined)
-          this.flush = this.host.later(() => {
-            this.flush = undefined
-            if (this.pending !== null) this.host.seek(this.pending)
-            this.pending = null
-          }, 16)
+        // Render only the small scrub view during touch movement. Native seeks
+        // and replay calculations start once the viewer commits by lifting.
+        this.host.preview(this.pending)
       }
       if (input.phase === 'end' || input.phase === 'cancel') {
-        if (input.phase === 'cancel') {
-          this.stop('flush')
-          this.pending = null
-        }
+        if (input.phase === 'end' && this.pending !== null)
+          this.host.seek(this.pending)
+        this.pending = null
+        this.host.preview(null)
         this.pan = null
         this.dismissLater()
       }

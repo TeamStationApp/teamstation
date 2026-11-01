@@ -167,6 +167,7 @@ export function TvPlayer({
     visible: false,
     rate: 1
   })
+  const scrubber = useRef<ScrubberHandle>(null)
   const scrubWidth = useRef(screen.width - 320)
   const transport = useRef<TvTransport | null>(null)
   transport.current ??= new TvTransport({
@@ -182,6 +183,7 @@ export function TvPlayer({
       setWall(target)
       dispatch({ type: 'seek' })
     },
+    preview: target => scrubber.current?.preview(target),
     position: () => clock.current.wall,
     extent: () => clock.current.extent(),
     width: () => scrubWidth.current,
@@ -694,15 +696,6 @@ export function TvPlayer({
   const overlay =
     state.side !== null || state.box !== 'closed' || error !== null
   const extent = clock.current.recordingExtent()
-  const elapsed =
-    extent === null || wall === null
-      ? 0
-      : Math.max(0, (wall - extent.start) / 1000)
-  const duration = extent === null ? 0 : (extent.end - extent.start) / 1000
-  const timeLabel = (seconds: number): string => {
-    const total = Math.floor(seconds)
-    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
-  }
   return (
     <PlaybackBoundary
       testID="tv-player"
@@ -858,31 +851,12 @@ export function TvPlayer({
         })}
       </TvFocusGuide>
       {transportState.visible && !overlay && (
-        <View testID="tv-scrubber" pointerEvents="none" style={styles.scrubber}>
-          <Text testID="tv-current-time" style={styles.copy}>
-            {extent === null ? 'LIVE' : timeLabel(elapsed)}
-          </Text>
-          <View
-            testID="tv-scrub-track"
-            style={styles.scrubTrack}
-            onLayout={event => {
-              scrubWidth.current = event.nativeEvent.layout.width
-            }}
-          >
-            <View
-              testID="tv-scrub-dot"
-              style={[
-                styles.scrubDot,
-                {
-                  left: `${duration > 0 ? Math.min(100, (elapsed / duration) * 100) : 0}%`
-                }
-              ]}
-            />
-          </View>
-          <Text testID="tv-total-time" style={styles.copy}>
-            {extent === null ? 'Seeking unavailable' : timeLabel(duration)}
-          </Text>
-        </View>
+        <Scrubber
+          ref={scrubber}
+          wall={wall}
+          extent={extent}
+          width={scrubWidth}
+        />
       )}
       {angles === null && error === null && (
         <Text style={styles.copy}>Opening game…</Text>
@@ -1465,6 +1439,60 @@ function PanelGradient({
     </View>
   )
 }
+interface ScrubberHandle {
+  preview: (wall: number | null) => void
+}
+
+/** Touch updates stay inside this small view, away from replay and video work. */
+const Scrubber = React.forwardRef<
+  ScrubberHandle,
+  {
+    wall: number | null
+    extent: { start: number; end: number } | null
+    width: React.RefObject<number>
+  }
+>(function Scrubber({ wall, extent, width }, ref) {
+  const [preview, setPreview] = useState<number | null>(null)
+  React.useImperativeHandle(ref, () => ({ preview: setPreview }), [])
+  const position = preview ?? wall
+  const elapsed =
+    extent === null || position === null
+      ? 0
+      : Math.max(0, (position - extent.start) / 1000)
+  const duration = extent === null ? 0 : (extent.end - extent.start) / 1000
+  const timeLabel = (seconds: number): string => {
+    const total = Math.floor(seconds)
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+  }
+  return (
+    <View testID="tv-scrubber" pointerEvents="none" style={styles.scrubber}>
+      <Text testID="tv-current-time" style={styles.copy}>
+        {extent === null ? 'LIVE' : timeLabel(elapsed)}
+      </Text>
+      <View
+        testID="tv-scrub-track"
+        style={styles.scrubTrack}
+        onLayout={event => {
+          width.current = event.nativeEvent.layout.width
+        }}
+      >
+        <View
+          testID="tv-scrub-dot"
+          style={[
+            styles.scrubDot,
+            {
+              left: `${duration > 0 ? Math.min(100, (elapsed / duration) * 100) : 0}%`
+            }
+          ]}
+        />
+      </View>
+      <Text testID="tv-total-time" style={styles.copy}>
+        {extent === null ? 'Seeking unavailable' : timeLabel(duration)}
+      </Text>
+    </View>
+  )
+})
+
 const styles = StyleSheet.create({
   statRow: { flexDirection: 'row', paddingVertical: 3, alignItems: 'center' },
   statName: { width: 300, paddingRight: 20 },

@@ -252,6 +252,21 @@ describe('TV game playback entry', () => {
     await act(async () => {
       emitTvPan('Began', 0)
       emitTvPan('Changed', 100)
+    })
+    // The dot and label move before any timer/native seek can complete.
+    const dot = document.querySelector<HTMLElement>(
+      '[data-testid="tv-scrub-dot"]'
+    )!
+    expect(parseFloat(dot.style.left)).greaterThan(10)
+    expect(
+      document.querySelector('[data-testid="tv-current-time"]')!.textContent
+    ).not.equals('0:10')
+    expect(videos.map(v => v.currentTime)).deep.equals([10, 10, 10, 10])
+    await act(async () => {
+      videos[0].dispatchEvent(new window.Event('timeupdate', { bubbles: true }))
+    })
+    expect(parseFloat(dot.style.left)).greaterThan(10)
+    await act(async () => {
       emitTvPan('Ended', 100)
       await pause()
     })
