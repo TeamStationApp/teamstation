@@ -36,7 +36,7 @@ import { angleLabels } from '../player/multiCam/takes'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
-import { NativeGradient, PlaybackBoundary, TvBlur } from './NativePresentation'
+import { PlaybackBoundary, TvBlur } from './NativePresentation'
 import { NativeSeekQueue } from './nativeSeekQueue'
 import { PlaybackClock } from './playbackClock'
 import {
@@ -1361,24 +1361,14 @@ function PanelGradient({
   direction: 'left' | 'right' | 'bottom'
 }): React.ReactElement {
   const id = useId().replace(/[^A-Za-z0-9]/g, '')
-  if (NativeGradient !== null)
-    return (
-      <NativeGradient
-        testID="tv-panel-gradient"
-        collapsable={false}
-        gradientDirection={direction}
-        maxOpacity={maxOpacity}
-        pointerEvents="none"
-        style={StyleSheet.absoluteFill}
-      />
-    )
   return (
     <View
+      testID="tv-panel-gradient"
       collapsable={false}
       pointerEvents="none"
       style={StyleSheet.absoluteFill}
     >
-      <Svg width="100%" height="100%">
+      <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
         <Defs>
           <LinearGradient
             id={id}
