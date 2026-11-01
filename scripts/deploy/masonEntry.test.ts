@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { buildAndroid, buildIos, setup } from '../../Masonfile'
 import { app, fixtureSettings, testRoot } from './config.test'
 import { masonDeploy } from './mason'
 import { buildEnvironment } from './prepare'
@@ -13,7 +14,6 @@ import { gitFixture } from './source.test'
 import { type Endpoint, endpoint } from './upload.test'
 
 let root: string, source: string, config: string, service: Endpoint
-const entry = path.resolve('Masonfile.ts')
 const builder: Builder = async context => {
   const file = path.join(context.source, context.target.platform + '.ipa')
   writeFileSync(file, 'fake-compiler-package')
@@ -56,43 +56,6 @@ function saveConfig(iosOnly = false, credentialEnv?: string): void {
     { mode: 0o600 }
   )
 }
-async function bootstrap(
-  script: string,
-  socketExit = 0,
-  cancel = false,
-  uploadCredential?: string
-): Promise<number | null> {
-  const bin = path.join(root, 'bin')
-  mkdirSync(bin, { recursive: true })
-  writeFileSync(
-    path.join(bin, 'socket'),
-    `#!/bin/sh\n[ -z "\u0024DEPLOY_UPLOAD_CREDENTIAL" ] || exit 91\n[ "\u0024SOCKET_CLI_ACCEPT_RISKS" = 1 ] || exit 92\nexit ${socketExit}\n`,
-    {
-      mode: 0o700
-    }
-  )
-  mkdirSync(path.join(source, 'node_modules/sucrase'), { recursive: true })
-  writeFileSync(path.join(source, 'node_modules/sucrase/register.js'), '')
-  mkdirSync(path.join(source, 'scripts/deploy'), { recursive: true })
-  writeFileSync(path.join(source, 'scripts/deploy/mason.ts'), script)
-  return await new Promise(resolve => {
-    const child = spawn(process.execPath, [entry], {
-      cwd: source,
-      env: {
-        ...process.env,
-        ...environment(),
-        DEPLOY_UPLOAD_CREDENTIAL: uploadCredential,
-        PATH: bin + ':' + process.env.PATH
-      },
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-    child.stderr.resume()
-    child.stdout.on('data', () => {
-      if (cancel) child.kill('SIGTERM')
-    })
-    child.once('exit', resolve)
-  })
-}
 describe('TeamStation Mason entrypoint', () => {
   beforeEach(async () => {
     root = testRoot('mason-entry-')
@@ -114,17 +77,6 @@ describe('TeamStation Mason entrypoint', () => {
     delete process.env.FIXTURE_UPLOAD_CREDENTIAL
     await service.close()
     rmSync(root, { recursive: true, force: true })
-  })
-  it('passes the stored upload secret only to the deployment entrypoint', async () => {
-    assert.equal(
-      await bootstrap(
-        'if (process.env.DEPLOY_UPLOAD_CREDENTIAL !== "synthetic-upload-credential") process.exit(92)',
-        0,
-        false,
-        'synthetic-upload-credential'
-      ),
-      0
-    )
   })
   it('builds and publishes both platforms using only the Mason environment secret', async () => {
     process.env.FIXTURE_UPLOAD_CREDENTIAL = readFileSync(
@@ -320,17 +272,71 @@ describe('TeamStation Mason entrypoint', () => {
     )
     assert.equal(await new Promise(resolve => child.once('exit', resolve)), 1)
   })
-  it('executes Node 24 bootstrap, dependency failure and cancellation', async () => {
-    assert.equal(await bootstrap('process.exitCode=0'), 0)
-    assert.equal(await bootstrap('process.exitCode=0', 2), 1)
-    assert.equal(await bootstrap('process.exitCode=3'), 3)
-    assert.equal(
-      await bootstrap(
-        'process.on("SIGTERM",()=>process.exit(2)); console.log("ready"); setInterval(()=>{},1000)',
-        0,
-        true
-      ),
-      2
-    )
+})
+
+describe('TeamStation pipeline Masonfile', () => {
+  it('builds iOS on the Mac node and Android on the Linux pool', async () => {
+    const stages: Record<
+      string,
+      {
+        on: { type: string }
+        tools: { node: string; android?: string[] }
+        run: (ctx: {
+          sh: (command: string, options?: { cwd?: string }) => Promise<unknown>
+          getBuildNumber: (key: string) => string
+          artifacts: { save: (name: string, paths: string) => Promise<void> }
+        }) => Promise<void>
+      }
+    > = {}
+    setup({
+      apiVersion(version) {
+        assert.equal(version, 1)
+      },
+      buildNumber(key, options) {
+        assert.equal(key, 'app.teamstation.app')
+        assert.equal(options?.format, 'YYMMDDCC')
+        assert.equal(options?.timeZone, 'America/Los_Angeles')
+      },
+      parallel(name, members) {
+        assert.equal(name, 'build')
+        Object.assign(stages, members)
+      }
+    })
+    assert.equal(stages.ios?.on.type, 'macos-arm64')
+    assert.equal(stages.android?.on.type, 'do-linux')
+    assert.equal(stages.ios?.tools.node, '24')
+    assert.deepEqual(stages.android?.tools.android, [
+      'platforms;android-37',
+      'build-tools;37.0.0',
+      'ndk;27.1.12297006',
+      'cmake;3.22.1'
+    ])
+    const commands: string[] = []
+    const ctx = {
+      async sh(command: string) {
+        commands.push(command)
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      getBuildNumber(key: string) {
+        assert.equal(key, 'app.teamstation.app')
+        return '26103101'
+      },
+      artifacts: {
+        async save(name: string) {
+          commands.push(`save:${name}`)
+        }
+      }
+    }
+    await buildIos(ctx)
+    await buildAndroid(ctx)
+    const log = commands.join('\n')
+    assert.match(log, /\.mason-tools\/bin\/socket npm ci/)
+    assert.match(log, /pod install/)
+    assert.match(log, /xcodebuild archive/)
+    assert.match(log, /CODE_SIGNING_ALLOWED=NO/)
+    assert.match(log, /CURRENT_PROJECT_VERSION=26103101/)
+    assert.match(log, /assembleRelease -PversionCode=26103101/)
+    assert.match(log, /save:ios-archive/)
+    assert.match(log, /save:android-apk/)
   })
 })

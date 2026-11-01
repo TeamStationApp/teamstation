@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.deploy.json",
   "compilerOptions": { "module": "esnext", "allowImportingTsExtensions": true },
-  "include": ["Masonfile.ts"]
+  "include": ["Masonfile.ts", "types/mason-pipeline.d.ts"]
 }
