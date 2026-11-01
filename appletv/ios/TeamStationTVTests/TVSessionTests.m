@@ -385,9 +385,10 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
   view.frame = CGRectMake(0,0,1920,216); view.gradientDirection = @"bottom"; view.maxOpacity = 0.1;
   [view layoutSubviews];
   CAGradientLayer *layer = view.gradient;
-  XCTAssertEqualObjects(layer.locations,(@[@0,@1]));
+  XCTAssertEqualObjects(layer.locations,(@[@0,@0.35,@1]));
+  XCTAssertEqual(layer, view.layer);
   XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[0]),0.1,0.001);
-  XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[1]),0,0.001);
+  XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[2]),0,0.001);
   view.maxOpacity = 0.15;
   XCTAssertEqualWithAccuracy(CGColorGetAlpha((__bridge CGColorRef)layer.colors[0]),0.15,0.001);
   view.maxOpacity = -1; XCTAssertEqual(view.maxOpacity,0);
@@ -400,7 +401,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 - (void)testBottomGradientCompositesAnEvenTransparentRamp {
   TVGradientView *view = (TVGradientView *)[[NSClassFromString(@"TVGradientManager") new] view];
   view.frame = CGRectMake(0,0,4,100); view.gradientDirection = @"bottom";
-  for (NSNumber *opacity in @[@0.1, @0.15]) {
+  for (NSNumber *opacity in @[@0.1, @0.5]) {
     view.maxOpacity = opacity.doubleValue; [view layoutSubviews];
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     CGContextRef context = CGBitmapContextCreate(NULL,4,100,8,16,space,kCGImageAlphaPremultipliedLast);
@@ -409,7 +410,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
     int first = pixels[3], middle = pixels[50*16+3], last = pixels[99*16+3];
     XCTAssertLessThanOrEqual(MIN(first,last),2);
     XCTAssertEqualWithAccuracy(MAX(first,last),opacity.doubleValue*255,2);
-    XCTAssertEqualWithAccuracy(middle,opacity.doubleValue*255/2,2);
+    XCTAssertEqualWithAccuracy(middle,opacity.doubleValue*255*(0.5/0.65),3);
     CGContextRelease(context); CGColorSpaceRelease(space);
   }
 }

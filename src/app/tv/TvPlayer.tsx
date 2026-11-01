@@ -35,7 +35,12 @@ import { angleLabels } from '../player/multiCam/takes'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
-import { PlaybackBoundary, TvBlur, TvPoster } from './NativePresentation'
+import {
+  NativeGradient,
+  PlaybackBoundary,
+  TvBlur,
+  TvPoster
+} from './NativePresentation'
 import { NativeSeekQueue } from './nativeSeekQueue'
 import { PlaybackClock } from './playbackClock'
 import {
@@ -541,62 +546,69 @@ export function TvPlayer({
       tvControl?.disableTVPanGesture()
     }
   }, [statsOpen, stopStatsMomentum])
+  const handleStatsPan = useCallback(
+    (body: { state: string; y?: number; velocityY?: number }) => {
+      if (current.current.box === 'closed') return
+      if (body?.state === 'Ended' || body?.state === 'Cancelled') {
+        if (statsPan.current?.moved === true) statsPanEnded.current = Date.now()
+        if (body?.state === 'Ended' && Number.isFinite(body.velocityY))
+          glideStats(body.velocityY!)
+        else stopStatsMomentum()
+        statsPan.current = null
+        return
+      }
+      if (!Number.isFinite(body?.y)) return
+      const y = body.y!
+      if (body?.state === 'Began' || statsPan.current === null) {
+        stopStatsMomentum()
+        statsPan.current = {
+          y,
+          startY: y,
+          moved: false,
+          startedAtTop: statsOffset.current <= 1
+        }
+        return
+      }
+      const delta = y - statsPan.current.y
+      statsPan.current.y = y
+      if (Math.abs(delta) < 0.1) return
+      statsPan.current.moved = true
+      if (
+        y - statsPan.current.startY < -8 &&
+        statsPan.current.startedAtTop &&
+        statsOffset.current <= 1
+      ) {
+        statsPanEnded.current = Date.now()
+        dispatch({ type: 'dismiss' })
+        return
+      }
+      if (delta > 0 && current.current.box !== 'expanded') {
+        dispatch({ type: 'box' })
+        return
+      }
+      statsOffset.current = Math.max(
+        0,
+        Math.min(
+          Math.max(
+            0,
+            statsExtent.current.content - statsExtent.current.viewport
+          ),
+          statsOffset.current + delta
+        )
+      )
+      statsScroll.current?.scrollTo({
+        y: statsOffset.current,
+        animated: false
+      })
+    },
+    [glideStats, stopStatsMomentum]
+  )
   useEffect(() => {
     const subscription = tvEvents?.addListener(event => {
       if (current.current.box !== 'closed' && event.eventType === 'pan') {
-        const body = event.body
-        if (body?.state === 'Ended' || body?.state === 'Cancelled') {
-          if (statsPan.current?.moved === true)
-            statsPanEnded.current = Date.now()
-          if (body?.state === 'Ended' && Number.isFinite(body.velocityY))
-            glideStats(body.velocityY!)
-          else stopStatsMomentum()
-          statsPan.current = null
-          return
-        }
-        if (!Number.isFinite(body?.y)) return
-        const y = body!.y!
-        if (body?.state === 'Began' || statsPan.current === null) {
-          stopStatsMomentum()
-          statsPan.current = {
-            y,
-            startY: y,
-            moved: false,
-            startedAtTop: statsOffset.current <= 1
-          }
-          return
-        }
-        const delta = y - statsPan.current.y
-        statsPan.current.y = y
-        if (Math.abs(delta) < 0.1) return
-        statsPan.current.moved = true
-        if (
-          y - statsPan.current.startY < -8 &&
-          statsPan.current.startedAtTop &&
-          statsOffset.current <= 1
-        ) {
-          statsPanEnded.current = Date.now()
-          dispatch({ type: 'dismiss' })
-          return
-        }
-        if (delta > 0 && current.current.box !== 'expanded') {
-          dispatch({ type: 'box' })
-          return
-        }
-        statsOffset.current = Math.max(
-          0,
-          Math.min(
-            Math.max(
-              0,
-              statsExtent.current.content - statsExtent.current.viewport
-            ),
-            statsOffset.current + delta
-          )
-        )
-        statsScroll.current?.scrollTo({
-          y: statsOffset.current,
-          animated: false
-        })
+        // Physical tvOS receives a dedicated native pan stream below.
+        if (Platform.OS !== 'ios' && event.body !== undefined)
+          handleStatsPan(event.body)
         return
       }
       const input = normalizeRemote(event, Platform.OS === 'ios')
@@ -695,7 +707,7 @@ export function TvPlayer({
     return () => {
       subscription?.remove()
     }
-  }, [open, error, glideStats, stopStatsMomentum])
+  }, [open, error, handleStatsPan])
   const chooseClip = (clip: TvHighlight, sourceIndex = 0): void => {
     const timeline = clock.current.ports[sourceIndex]?.timeline
     if (timeline === undefined) return
@@ -842,6 +854,10 @@ export function TvPlayer({
           phase: 'end'
         })
       }
+      statsPanEnabled={statsOpen}
+      onStatsPan={event => {
+        handleStatsPan(event.nativeEvent)
+      }}
       onCancelTransport={() => transport.current?.cancel()}
       onPanCancelled={() =>
         transport.current?.handle({ kind: 'pan', phase: 'cancel', x: 0 })
@@ -1506,6 +1522,17 @@ function PanelGradient({
 }): React.ReactElement {
   const id = useId().replace(/[^A-Za-z0-9]/g, '')
   const [size, setSize] = useState({ width: 0, height: 0 })
+  if (direction === 'bottom' && NativeGradient !== null)
+    return (
+      <NativeGradient
+        testID="tv-panel-gradient"
+        collapsable={false}
+        pointerEvents="none"
+        gradientDirection="bottom"
+        maxOpacity={maxOpacity}
+        style={StyleSheet.absoluteFill}
+      />
+    )
   return (
     <View
       testID="tv-panel-gradient"

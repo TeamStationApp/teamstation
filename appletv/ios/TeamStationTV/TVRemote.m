@@ -33,6 +33,8 @@
 @interface TVPlaybackBoundaryView : RCTView <UIGestureRecognizerDelegate>
 @property(nonatomic, assign) BOOL transportEnabled;
 @property(nonatomic, assign) BOOL scrubEnabled;
+@property(nonatomic, assign) BOOL statsPanEnabled;
+@property(nonatomic, copy) RCTDirectEventBlock onStatsPan;
 @property(nonatomic, assign) BOOL transportPress;
 @property(nonatomic, assign) UIFocusHeading pressHeading;
 @property(nonatomic, strong) TVTransportPressObserver *pressMonitor;
@@ -88,6 +90,14 @@
   self.panMonitor.enabled = value;
 }
 - (void)panChanged:(UIPanGestureRecognizer *)recognizer {
+  if (self.statsPanEnabled && self.onStatsPan) {
+    NSString *state = recognizer.state == UIGestureRecognizerStateBegan ? @"Began" :
+      recognizer.state == UIGestureRecognizerStateChanged ? @"Changed" :
+      recognizer.state == UIGestureRecognizerStateEnded ? @"Ended" : @"Cancelled";
+    self.onStatsPan(@{@"state":state,
+      @"y":@([recognizer translationInView:self].y),
+      @"velocityY":@([recognizer velocityInView:self].y)});
+  }
   if (recognizer.state == UIGestureRecognizerStateCancelled && self.onPanCancelled)
     self.onPanCancelled(@{});
 }
@@ -116,6 +126,8 @@ RCT_EXPORT_MODULE(TVPlaybackBoundary)
 - (UIView *)view { return [TVPlaybackBoundaryView new]; }
 RCT_EXPORT_VIEW_PROPERTY(transportEnabled, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(scrubEnabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(statsPanEnabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(onStatsPan, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onCancelTransport, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onTransportRelease, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onPanCancelled, RCTDirectEventBlock)
