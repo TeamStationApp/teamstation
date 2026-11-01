@@ -165,8 +165,10 @@ export function TvPlayer({
   const clock = useRef(new PlaybackClock())
   const [transportState, setTransportState] = useState({
     visible: false,
-    rate: 1
+    rate: 1,
+    scrubbing: false
   })
+  const pendingRecordingEnd = useRef(false)
   const scrubber = useRef<ScrubberHandle>(null)
   const scrubWidth = useRef(screen.width - 320)
   const transport = useRef<TvTransport | null>(null)
@@ -211,6 +213,18 @@ export function TvPlayer({
     if (state.side !== null || state.box !== 'closed' || error !== null)
       transport.current?.cancel()
   }, [state.side, state.box, error])
+  useEffect(() => {
+    if (transportState.scrubbing) return
+    if (pendingRecordingEnd.current) {
+      pendingRecordingEnd.current = false
+      if (!clock.current.ports.some((_, i) => clock.current.available(i))) {
+        dispatch({ type: 'ended' })
+        dispatch({ type: 'open', panel: 'highlights' })
+      }
+    }
+    const position = clock.current.wall
+    if (position !== null) dispatch({ type: 'progress', wall: position })
+  }, [transportState.scrubbing])
   const statisticsRefresh = useRef<(() => Promise<void>) | null>(null)
   const ready = useRef(false)
   const generation = useRef(0)
@@ -233,6 +247,7 @@ export function TvPlayer({
     let active = true
     const activeGeneration = ++generation.current
     ready.current = false
+    pendingRecordingEnd.current = false
     setReadySequence(0)
     clock.current = new PlaybackClock()
     setError(null)
@@ -643,7 +658,11 @@ export function TvPlayer({
         ? previous
         : next
     )
-    if (current.current.clipEnd !== null && next >= current.current.clipEnd)
+    if (
+      transport.current?.scrubbing !== true &&
+      current.current.clipEnd !== null &&
+      next >= current.current.clipEnd
+    )
       dispatch({ type: 'progress', wall: next })
   }
   const seek = (seconds: number): void => {
@@ -826,6 +845,10 @@ export function TvPlayer({
                     setWall(clock.current.wall)
                     setReadySequence(n => n + 1)
                     if (complete) {
+                      if (transport.current?.scrubbing === true) {
+                        pendingRecordingEnd.current = true
+                        return
+                      }
                       dispatch({ type: 'ended' })
                       open('highlights')
                     }

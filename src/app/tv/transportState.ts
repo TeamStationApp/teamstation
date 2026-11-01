@@ -8,6 +8,7 @@ export type RemoteInput =
 export interface TransportSnapshot {
   visible: boolean
   rate: number
+  scrubbing: boolean
 }
 export interface TransportHost {
   move: (seconds: number) => void
@@ -49,7 +50,21 @@ export class TvTransport {
   }
 
   private publish(): void {
-    this.host.changed({ visible: this.visible, rate: this.rate })
+    this.host.changed({
+      visible: this.visible,
+      rate: this.rate,
+      scrubbing: this.pan !== null
+    })
+  }
+
+  get scrubbing(): boolean {
+    return this.pan !== null
+  }
+
+  private cancelPan(): void {
+    this.pending = null
+    this.pan = null
+    this.host.preview(null)
   }
 
   private show(): void {
@@ -71,9 +86,7 @@ export class TvTransport {
 
   private closeScrub(): void {
     this.stop('hide')
-    this.host.preview(null)
-    this.pending = null
-    this.pan = null
+    this.cancelPan()
     if (this.visible) {
       this.visible = false
       this.host.panEnabled(false)
@@ -148,6 +161,8 @@ export class TvTransport {
         return true
       if (input.direction !== 'left' && input.direction !== 'right')
         return false
+      this.cancelPan()
+      this.publish()
       this.jump(input.direction)
       this.dismissLater()
       return true
@@ -166,6 +181,7 @@ export class TvTransport {
           extent !== null && wall !== null && width > 0
             ? { ...extent, wall, width }
             : null
+        this.publish()
       }
       if (this.pan !== null && input.phase !== 'cancel') {
         const { wall, width, start, end } = this.pan
@@ -183,6 +199,7 @@ export class TvTransport {
         this.pending = null
         this.host.preview(null)
         this.pan = null
+        this.publish()
         this.dismissLater()
       }
       return true

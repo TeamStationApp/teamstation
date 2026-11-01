@@ -10,7 +10,11 @@ function fixture() {
   let position: number | null = 100000
   let extent: { start: number; end: number } | null = { start: 0, end: 1000000 }
   let width = 1000
-  let snapshot: TransportSnapshot = { visible: false, rate: 1 }
+  let snapshot: TransportSnapshot = {
+    visible: false,
+    rate: 1,
+    scrubbing: false
+  }
   const timers = new Map<number, { at: number; callback: () => void }>()
   let id = 0
   const moves: number[] = []
@@ -77,6 +81,20 @@ function fixture() {
 }
 
 describe('TV transport ownership', () => {
+  it('a deliberate directional click cancels the pending touch target', () => {
+    const f = fixture()
+    f.transport.handle({ kind: 'click', direction: 'right' })
+    f.transport.handle({ kind: 'pan', phase: 'begin', x: 0 })
+    f.transport.handle({ kind: 'pan', phase: 'change', x: 500 })
+    expect(f.previews.at(-1)).equals(260000)
+    expect(f.transport.scrubbing).equals(true)
+    f.transport.handle({ kind: 'click', direction: 'right' })
+    f.transport.handle({ kind: 'pan', phase: 'end', x: 500 })
+    expect(f.moves).deep.equals([10, 10])
+    expect(f.seeks).deep.equals([])
+    expect(f.previews.at(-1)).equals(null)
+    expect(f.transport.scrubbing).equals(false)
+  })
   it('seeks once per click and owns pan for exactly the scrub visibility window', () => {
     const f = fixture()
     expect(f.transport.handle({ kind: 'swipe', direction: 'right' })).equals(
@@ -119,7 +137,7 @@ describe('TV transport ownership', () => {
     f.transport.cancel()
     f.advance(10000)
     expect(f.timers.size).equals(0)
-    expect(f.state()).deep.equals({ visible: false, rate: 1 })
+    expect(f.state()).deep.equals({ visible: false, rate: 1, scrubbing: false })
   })
 
   it('ignores touch motion during a hold and accepts a fresh scrub after release', () => {
