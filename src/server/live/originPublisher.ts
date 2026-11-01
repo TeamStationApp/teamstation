@@ -3,7 +3,11 @@ import { createReadStream } from 'node:fs'
 import { readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { codecsAttribute, codecsFromInit } from '../media/codecString'
+import {
+  codecsAttribute,
+  codecsFromInit,
+  pictureSizeFromInit
+} from '../media/codecString'
 import {
   ffprobeFor,
   type ProbedStream,
@@ -17,14 +21,32 @@ import {
   listSpaceObjectEntries,
   verifyObjectLength
 } from '../media/spacesVideo'
-import { parseMediaPlaylist } from '../media/wallClockScan'
+import { type MediaPlaylist, parseMediaPlaylist } from '../media/wallClockScan'
+import {
+  combinedMaster,
+  masterPictureSize,
+  type PictureSize
+} from './finishVideo'
 import { isSegmentName, objectKey, publishedPlaylist } from './originPublish'
+import { FIRST_INIT, isInitName, listedSegments } from './segmentClock'
 
 interface FileStamp {
   size: number
   mtimeMs: number
   md5: string
 }
+/** The init segments a playlist names, in order, each once. */
+function initsOf(playlist: MediaPlaylist): string[] {
+  return [
+    ...new Set([
+      ...(playlist.map == null ? [] : [playlist.map.uri]),
+      ...playlist.segments.flatMap(segment =>
+        segment.map == null ? [] : [segment.map.uri]
+      )
+    ])
+  ]
+}
+
 export interface OriginPublisherOptions {
   space: SpaceSettings
   videoId: string
@@ -33,6 +55,9 @@ export interface OriginPublisherOptions {
   isFinal: (name: string) => boolean
   rowExists: () => Promise<boolean>
   onFirstSegment: (probe: ProbedStream) => Promise<void>
+  /** The recording's largest picture, when a later part has changed it. */
+  onLargestPicture: (size: PictureSize) => Promise<void>
+  log: (message: string) => void
   /** A test may substitute a probe; object I/O still goes through HTTP. */
   probe?: (playlist: string) => Promise<ProbedStream>
 }
@@ -52,6 +77,8 @@ export class OriginPublisher {
   private started = false
   private masterWritten = false
   private notified = false
+  /** How many parts the Space's master has been written to cover. */
+  private partsInMaster = 1
   private metadata?: ProbedStream
   private lastBody?: string
   private readonly acknowledged = new Map<string, FileStamp>()
@@ -91,16 +118,17 @@ export class OriginPublisher {
       if (response.status !== 404)
         throw new Error(`Reading live origin answered ${response.status}`)
     }
+    const local = parseMediaPlaylist(body)
     const names = [
-      'init.mp4',
-      ...parseMediaPlaylist(body).segments.map(segment => segment.uri)
+      ...initsOf(local).filter(isInitName),
+      ...local.segments.map(segment => segment.uri)
     ]
     for (const name of names) {
       const entry = remote.get(objectKey(videoId, name))
       if (entry == null) continue
-      const local = await this.snapshot(name)
-      if (local?.size === entry.size && local.md5 === entry.etag.toLowerCase())
-        this.acknowledged.set(name, local)
+      const here = await this.snapshot(name)
+      if (here?.size === entry.size && here.md5 === entry.etag.toLowerCase())
+        this.acknowledged.set(name, here)
     }
     this.masterWritten = remote.has(objectKey(videoId, 'master.m3u8'))
     this.started = true
@@ -117,9 +145,14 @@ export class OriginPublisher {
     // Validate every name before performing any write.
     for (const segment of playlist.segments)
       objectKey(this.options.videoId, segment.uri)
-    if (playlist.map?.uri !== 'init.mp4')
+    if (playlist.map?.uri !== FIRST_INIT)
       throw new Error('Live playlist has no init.mp4 map')
-    if (!(await this.publishFile('init.mp4'))) return { complete: false }
+    const inits = initsOf(playlist)
+    // Every map is in the store before the segments listed under it.
+    for (const init of inits) {
+      objectKey(this.options.videoId, init)
+      if (!(await this.publishFile(init))) return { complete: false }
+    }
     let failure: unknown
     let failed = false
     for (const segment of playlist.segments) {
@@ -141,8 +174,10 @@ export class OriginPublisher {
         acknowledged.add(segment.uri)
     }
     // A reconnect can replace the init while a slow segment upload runs.
-    if (!(await this.unchanged('init.mp4', this.acknowledged.get('init.mp4'))))
-      return { complete: false }
+    for (const init of inits) {
+      if (!(await this.unchanged(init, this.acknowledged.get(init))))
+        return { complete: false }
+    }
     const body = publishedPlaylist(onDisk, acknowledged, this.published)
     const exposed = parseMediaPlaylist(body).segments
     if (exposed.length > 0 && (await this.active())) {
@@ -154,27 +189,14 @@ export class OriginPublisher {
       if (!this.notified && acknowledged.size > 0) {
         this.metadata ??= await this.probe(body)
         if (!this.masterWritten && (await this.active())) {
-          const codecs = codecsAttribute(
-            codecsFromInit(await readFile(join(this.options.dir, 'init.mp4')))
-          )
-          const first = exposed[0]
-          const bytes = (await stat(join(this.options.dir, first.uri))).size
-          // Include every track's bytes; HLS probes commonly report no bitrate.
-          const bandwidth = Math.max(
-            1,
-            Math.ceil(((bytes * 8) / first.durationSec) * 1.1)
-          )
           const { width, height } = this.metadata
-          const attributes = [
-            `BANDWIDTH=${bandwidth}`,
-            ...(width == null || height == null
-              ? []
-              : [`RESOLUTION=${width}x${height}`]),
-            ...(codecs === '' ? [] : [`CODECS="${codecs}"`])
-          ]
           await this.putPlaylist(
             'master.m3u8',
-            `#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:${attributes.join(',')}\nindex.m3u8\n`
+            await this.masterOfPart(
+              FIRST_INIT,
+              exposed[0],
+              width == null || height == null ? undefined : { width, height }
+            )
           )
           this.masterWritten = true
         }
@@ -183,6 +205,7 @@ export class OriginPublisher {
           this.notified = true
         }
       }
+      if (this.notified && this.masterWritten) await this.sayEveryPart(body)
     }
     if (failed) throw failure
     return {
@@ -193,6 +216,70 @@ export class OriginPublisher {
         this.notified &&
         !this.stopped,
       body
+    }
+  }
+
+  /** A master playlist of one part, from its init segment and first segment. */
+  private async masterOfPart(
+    init: string,
+    first: { uri: string; durationSec: number },
+    size: PictureSize | undefined
+  ): Promise<string> {
+    const { dir } = this.options
+    const codecs = codecsAttribute(
+      codecsFromInit(await readFile(join(dir, init)))
+    )
+    const bytes = (await stat(join(dir, first.uri))).size
+    // Include every track's bytes; HLS probes commonly report no bitrate.
+    const bandwidth = Math.max(
+      1,
+      Math.ceil(((bytes * 8) / first.durationSec) * 1.1)
+    )
+    const attributes = [
+      `BANDWIDTH=${bandwidth}`,
+      ...(size == null ? [] : [`RESOLUTION=${size.width}x${size.height}`]),
+      ...(codecs === '' ? [] : [`CODECS="${codecs}"`])
+    ]
+    return `#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:${attributes.join(',')}\nindex.m3u8\n`
+  }
+
+  /**
+   * Once a playlist lists a part with its own init segment, the Space's master
+   * and the video's row say the most any part needs, as a recording finished
+   * on this machine does (`combinedMaster`): players choose by the master, and
+   * the first part's says only what that part needs. Each pass that lists a new
+   * part does it, which the closing pass is one of, and a new process does it
+   * again.
+   *
+   * The recording is whole and playing whatever this does. A failure is said
+   * in the log and tried again at the next pass, and never stops a flush or a
+   * close.
+   */
+  private async sayEveryPart(body: string): Promise<void> {
+    const parts = new Map<string, { uri: string; durationSec: number }>()
+    for (const { name, init, durationSec } of listedSegments(body)) {
+      if (!parts.has(init)) parts.set(init, { uri: name, durationSec })
+    }
+    if (parts.size <= this.partsInMaster) return
+    try {
+      const { width, height } = this.metadata ?? {}
+      const masters: string[] = []
+      for (const [init, first] of parts) {
+        const size =
+          init === FIRST_INIT && width != null && height != null
+            ? { width, height }
+            : pictureSizeFromInit(await readFile(join(this.options.dir, init)))
+        masters.push(await this.masterOfPart(init, first, size))
+      }
+      const master = combinedMaster(masters)
+      await this.putPlaylist('master.m3u8', master)
+      const size = masterPictureSize(master)
+      if (size != null) await this.options.onLargestPicture(size)
+      this.partsInMaster = parts.size
+    } catch (error) {
+      this.options.log(
+        `live: ${this.options.videoId} master of ${parts.size} parts not written: ${String(error)}`
+      )
     }
   }
 
@@ -236,6 +323,9 @@ export class OriginPublisher {
     this.acknowledged.delete(name)
     const held = await this.snapshot(name)
     if (held == null || !(await this.active())) return false
+    // FFmpeg empties an init segment as a writer continuing a recording starts,
+    // and writes it again moments later. The next pass gets it.
+    if (held.size === 0) return false
     const { space, videoId, dir } = this.options
     const key = objectKey(videoId, name)
     await putObjectFile({

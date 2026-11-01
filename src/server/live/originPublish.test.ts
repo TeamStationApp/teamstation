@@ -13,6 +13,24 @@ const whole = header + first + second + third + '#EXT-X-ENDLIST\n'
 const set = (...names: string[]): Set<string> => new Set(names)
 
 describe('the published live playlist', function () {
+  it('keeps a later map with the segment it opens, and names it as an object', function () {
+    const later =
+      '#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000002.mp4"\n#EXTINF:4.000000,\nseg000002.m4s\n'
+    const body = header + first + second + later
+    const two = set('seg000000.m4s', 'seg000001.m4s')
+    expect(publishedPlaylist(body, two, set())).equals(header + first + second)
+    expect(publishedPlaylist(body, set(...two, 'seg000002.m4s'), set())).equals(
+      body
+    )
+    expect(objectKey('vid_a', 'init000002.mp4')).equals(
+      'videos/vid_a/init000002.mp4'
+    )
+    expect(() => objectKey('vid_a', 'init2.mp4')).throws('Invalid live object')
+    expect(() => objectKey('vid_a', '../init000002.mp4')).throws(
+      'Invalid live object'
+    )
+  })
+
   it('publishes only the unbroken acknowledged prefix', function () {
     expect(
       publishedPlaylist(whole, set('seg000000.m4s', 'seg000002.m4s'), set())

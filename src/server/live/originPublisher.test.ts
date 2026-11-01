@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
 import {
   mkdir,
   mkdtemp,
@@ -16,6 +17,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { startFakeSpace } from '../dev/fakeSpace'
 import type { ProbedStream } from '../media/ffmpeg'
 import type { SpaceSettings } from '../media/spacesHls'
+import type { PictureSize } from './finishVideo'
 import { OriginPublisher, type OriginPublisherOptions } from './originPublisher'
 
 const header =
@@ -45,6 +47,8 @@ describe('publishing a live origin', function () {
   let store: Awaited<ReturnType<typeof startFakeSpace>>
   let options: OriginPublisherOptions
   let notifications: ProbedStream[]
+  let pictures: PictureSize[]
+  let logged: string[]
   let requests: Array<{ method: string; key: string; range?: string }>
   let exists: boolean
   let final: Set<string> | undefined
@@ -74,6 +78,8 @@ describe('publishing a live origin', function () {
       })
     )
     notifications = []
+    pictures = []
+    logged = []
     exists = true
     final = undefined
     options = {
@@ -85,6 +91,12 @@ describe('publishing a live origin', function () {
       rowExists: async () => exists,
       onFirstSegment: async probe => {
         notifications.push(probe)
+      },
+      onLargestPicture: async size => {
+        pictures.push(size)
+      },
+      log: message => {
+        logged.push(message)
       },
       probe: async () => ({
         codecName: 'hevc',
@@ -296,6 +308,82 @@ describe('publishing a live origin', function () {
     expect(notifications).length(1)
   })
 
+  it('stores a later init segment ahead of the segments listed under it', async function () {
+    await stage(2)
+    await writeFile(join(dir, 'init000002.mp4'), 'a second init segment')
+    await writeFile(join(dir, segment(2)), 'a later picture')
+    await writeFile(
+      join(dir, 'master.m3u8'),
+      `${playlist(2)}#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000002.mp4"\n#EXTINF:4,\n${segment(2)}\n`
+    )
+    await new OriginPublisher(options).flush()
+
+    const put = puts()
+    expect(put.indexOf('init000002.mp4')).above(-1)
+    expect(put.indexOf('init000002.mp4')).below(put.indexOf(segment(0)))
+    expect(await readFile(object('init000002.mp4'), 'utf8')).equals(
+      'a second init segment'
+    )
+    expect(await readFile(object('index.m3u8'), 'utf8')).contains(
+      '#EXT-X-MAP:URI="init000002.mp4"'
+    )
+
+    // A new publisher object seeds itself from what the store holds, and says
+    // every part in the master again.
+    requests.length = 0
+    await new OriginPublisher(options).flush()
+    expect(puts()).deep.equals(['master.m3u8'])
+  })
+
+  it('holds a playlist back while a later init segment is being replaced', async function () {
+    await stage(1)
+    await writeFile(join(dir, 'init000001.mp4'), 'a second init segment')
+    await writeFile(join(dir, segment(1)), 'a later picture')
+    await writeFile(
+      join(dir, 'master.m3u8'),
+      `${playlist(1)}#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000001.mp4"\n#EXTINF:4,\n${segment(1)}\n`
+    )
+    let changed = false
+    const publisher = new OriginPublisher({
+      ...options,
+      isFinal: name => {
+        if (!changed && name === segment(1)) {
+          changed = true
+          writeFileSync(join(dir, 'init000001.mp4'), 'changed under it, longer')
+        }
+        return true
+      }
+    })
+    const first = await publisher.flush()
+    expect(first.complete).equals(false)
+  })
+
+  it('waits out an init segment a starting writer has emptied', async function () {
+    await stage(1)
+    await writeFile(join(dir, 'init.mp4'), '')
+    const publisher = new OriginPublisher(options)
+    expect((await publisher.flush()).complete).equals(false)
+    expect(puts()).deep.equals([])
+
+    await writeFile(join(dir, 'init.mp4'), 'its writer filled it')
+    await publisher.flush()
+    expect(await readFile(object('init.mp4'), 'utf8')).equals(
+      'its writer filled it'
+    )
+  })
+
+  it('refuses a later map with a name no writer gives', async function () {
+    await stage(1)
+    await writeFile(
+      join(dir, 'master.m3u8'),
+      `${playlist(1)}#EXT-X-MAP:URI="../other.mp4"\n#EXTINF:4,\n${segment(1)}\n`
+    )
+    await writeFile(join(dir, segment(1)), 'a later picture')
+    expect(await failure(new OriginPublisher(options).flush())).contains(
+      'Invalid live object'
+    )
+  })
+
   it('refuses malformed playlists and does not hide local read errors', async function () {
     await stage(1)
     await writeFile(
@@ -327,6 +415,147 @@ describe('publishing a live origin', function () {
     expect(await failure(new OriginPublisher(options).flush())).contains(
       'Invalid published live segment'
     )
+  })
+
+  describe('a recording that goes on at a larger picture', function () {
+    /** Real fragments of one configuration, under the names a writer gives. */
+    const encode = (
+      size: string,
+      level: string,
+      init: string,
+      firstSegment: number
+    ): void => {
+      execFileSync('ffmpeg', [
+        '-v',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        `testsrc2=size=${size}:rate=10:duration=2`,
+        '-c:v',
+        'libx264',
+        '-level',
+        level,
+        '-g',
+        '10',
+        '-f',
+        'hls',
+        '-hls_time',
+        '1',
+        '-hls_playlist_type',
+        'event',
+        '-hls_segment_type',
+        'fmp4',
+        '-hls_fmp4_init_filename',
+        init,
+        '-start_number',
+        String(firstSegment),
+        '-hls_segment_filename',
+        join(dir, 'seg%06d.m4s'),
+        join(dir, 'part.m3u8')
+      ])
+    }
+    const SECOND_INIT = 'init000002.mp4'
+    const entry = (n: number): string => `#EXTINF:1,\n${segment(n)}\n`
+    const listed = (ended: boolean): string =>
+      `#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-MAP:URI="init.mp4"\n${entry(0)}${entry(1)}#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="${SECOND_INIT}"\n${entry(2)}${entry(3)}${ended ? '#EXT-X-ENDLIST\n' : ''}`
+    const master = async (): Promise<string> =>
+      await readFile(object('master.m3u8'), 'utf8')
+
+    beforeEach(async function () {
+      encode('160x90', '3.0', 'init.mp4', 0)
+      encode('320x180', '4.0', SECOND_INIT, 2)
+      options.probe = async () => ({
+        codecName: 'h264',
+        codecTag: 'avc1',
+        width: 160,
+        height: 90
+      })
+    })
+
+    it('says the most any part needs in the master, and the largest picture on the row', async function () {
+      await writeFile(join(dir, 'master.m3u8'), listed(false))
+      await new OriginPublisher(options).flush()
+      const written = await master()
+      expect(written).contains('RESOLUTION=320x180')
+      expect(written).matches(/CODECS="avc1\.[0-9a-f]{4}28"/)
+      expect(written).contains('\nindex.m3u8\n')
+      expect(pictures).deep.equals([{ width: 320, height: 180 }])
+      expect(logged).deep.equals([])
+    })
+
+    it('leaves the first part’s master alone until a second part is listed, and writes it once', async function () {
+      await writeFile(
+        join(dir, 'master.m3u8'),
+        listed(false).split('#EXT-X-DISCONTINUITY')[0]
+      )
+      const publisher = new OriginPublisher(options)
+      await publisher.flush()
+      expect(await master()).contains('RESOLUTION=160x90')
+      expect(pictures).deep.equals([])
+
+      await writeFile(join(dir, 'master.m3u8'), listed(false))
+      await publisher.flush()
+      expect(await master()).contains('RESOLUTION=320x180')
+      expect(pictures).length(1)
+
+      requests.length = 0
+      await publisher.flush()
+      expect(puts()).deep.equals([])
+      expect(pictures).length(1)
+    })
+
+    it('writes it again from a new process, and at close', async function () {
+      await writeFile(join(dir, 'master.m3u8'), listed(false))
+      await new OriginPublisher(options).flush()
+      await writeFile(object('master.m3u8'), 'an old master')
+      await writeFile(join(dir, 'master.m3u8'), listed(true))
+      const closed = await new OriginPublisher(options).flush({ close: true })
+      expect(closed.complete).equals(true)
+      expect(await master()).contains('RESOLUTION=320x180')
+    })
+
+    it('finishes the close and logs it when the master cannot be written, and tries again', async function () {
+      await writeFile(join(dir, 'master.m3u8'), listed(false))
+      const publisher = new OriginPublisher(options)
+      store.faults.set({ method: 'PUT', key: /master\.m3u8$/, status: 500 })
+      await failure(publisher.flush())
+      store.faults.clear()
+      await publisher.flush()
+      expect(await master()).contains('RESOLUTION=320x180')
+      expect(logged).deep.equals([])
+
+      const closing = new OriginPublisher(options)
+      await writeFile(join(dir, 'master.m3u8'), listed(true))
+      store.faults.set({ method: 'PUT', key: /master\.m3u8$/, status: 500 })
+      const closed = await closing.flush({ close: true })
+      expect(closed.complete, 'the recording is on the Space').equals(true)
+      expect(logged.join('\n')).contains('vid_origin master of 2 parts')
+
+      store.faults.clear()
+      await closing.flush({ close: true })
+      expect(puts()).contains('master.m3u8')
+    })
+
+    it('finishes the close when the row cannot be told', async function () {
+      await writeFile(join(dir, 'master.m3u8'), listed(true))
+      options.onLargestPicture = async () => {
+        throw new Error('database failed')
+      }
+      const closed = await new OriginPublisher(options).flush({ close: true })
+      expect(closed.complete).equals(true)
+      expect(logged.join('\n')).contains('database failed')
+    })
+
+    it('leaves out a picture size no part can say', async function () {
+      options.probe = async () => ({ codecName: 'h264', codecTag: 'avc1' })
+      await writeFile(join(dir, 'init.mp4'), 'an init segment')
+      await writeFile(join(dir, SECOND_INIT), 'a second init segment')
+      await writeFile(join(dir, 'master.m3u8'), listed(false))
+      await new OriginPublisher(options).flush()
+      expect(await master()).not.contains('RESOLUTION')
+      expect(pictures).deep.equals([])
+    })
   })
 
   it('probes real fragments and writes their exact codec and resolution', async function () {

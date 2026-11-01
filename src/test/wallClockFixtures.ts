@@ -39,6 +39,8 @@ export async function encodeFragmented(
     sound?: boolean
     /** FFmpeg's `-movflags`, for a file laid out some other way. */
     movflags?: string
+    /** The picture's size, as FFmpeg writes one; 160x120 if not given. */
+    size?: string
   }
 ): Promise<void> {
   const bframes = options.bframes ?? 0
@@ -63,7 +65,7 @@ export async function encodeFragmented(
       '-f',
       'lavfi',
       '-i',
-      `testsrc2=size=160x120:rate=30:duration=${options.seconds}`,
+      `testsrc2=size=${options.size ?? '160x120'}:rate=30:duration=${options.seconds}`,
       ...(options.sound === true
         ? [
             '-f',

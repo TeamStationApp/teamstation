@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { createServer, type Server } from 'node:http'
+import { createServer, globalAgent, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -423,6 +423,27 @@ describe('stored images', function () {
         framing.get(path)?.transferEncoding,
         'S3 refuses a chunked body against a presigned signature'
       ).equals(undefined)
+    })
+
+    it('opens no request for a file with nothing in it', async function () {
+      const source = join(dir, 'empty.mp4')
+      await writeFile(source, '')
+      const open = (): number =>
+        Object.values(globalAgent.sockets).flat().length
+      const held = open()
+      let message = ''
+      try {
+        await putObjectFile({
+          space,
+          key: 'videos/vid_empty/init.mp4',
+          path: source,
+          contentType: 'video/mp4'
+        })
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error)
+      }
+      expect(message).contains('"end" is out of range')
+      expect(open(), 'nothing left to fail unheard').equals(held)
     })
 
     it('reports what the Space said when it refuses mid-send', async function () {

@@ -1476,7 +1476,7 @@ describe('a live playlist through a reconnect', function () {
     rmSync(path, { force: true })
     writeFileSync(
       ffmpegPath,
-      `#!/bin/sh\nprintf '%s\\n' "$@" > ${argsFile}\necho spawn >> ${path}\nexec sleep 30\n`
+      `#!/bin/sh\necho spawn >> ${path}\nprintf '%s\\n' "$@" > ${argsFile}\nexec sleep 30\n`
     )
     chmodSync(ffmpegPath, 0o755)
   }
@@ -1525,7 +1525,7 @@ describe('a live playlist through a reconnect', function () {
     // arrives. The shell stays, so the stop cannot be mistaken for an exit.
     writeFileSync(
       ffmpegPath,
-      `#!/bin/sh\necho $$ >> ${pids}\nprintf '%s\\n' "$@" > ${argsFile}\necho spawn >> ${spawns}\ntrap 'true' TERM\nwhile true; do sleep 30; done\n`
+      `#!/bin/sh\necho $$ >> ${pids}\necho spawn >> ${spawns}\nprintf '%s\\n' "$@" > ${argsFile}\ntrap 'true' TERM\nwhile true; do sleep 30; done\n`
     )
     chmodSync(ffmpegPath, 0o755)
     setLive(KEY, spec())
@@ -2328,7 +2328,11 @@ describe('a live publish that jumps (U19)', function () {
     >
     flvGopCache: { clear: () => void }
     rtmpGopCache: { clear: () => void }
-    broadcastMessage: (packet: { flags: number; dts: number }) => void
+    broadcastMessage: (packet: {
+      flags: number
+      dts: number
+      data?: Buffer
+    }) => void
     donePublish: (session: never) => void
     publisher?: unknown
   }
@@ -2411,11 +2415,20 @@ describe('a live publish that jumps (U19)', function () {
     for (const name of ['seg000000.m4s', 'seg000001.m4s'])
       writeFileSync(join(dir, name), 'x')
   }
+  /** A publisher's sound header: a first writer starts once it has one. */
+  const showSound = (made: Broadcast): void => {
+    made.broadcastMessage({
+      flags: 0,
+      dts: 0,
+      data: Buffer.from([0xaf, 0, 0x11, 0x90])
+    })
+  }
   /** Publishes on `made`, and waits for its HLS writer. */
   async function publish(made: Broadcast, id = 'first'): Promise<TestSession> {
     const session = publisher(id, made)
     const before = started('hls').length
     publishArrivedForTest(session)
+    showSound(made)
     await until(() => started('hls').length > before)
     return session
   }
@@ -2642,6 +2655,7 @@ describe('a live publish that jumps (U19)', function () {
       logs.filter(line => line.includes('jumped')).length
     const cutsBefore = cuts()
     video(made, 0, 5)
+    showSound(made)
     release()
     await until(() => started('hls').length === 2)
     video(made, 165, 5)

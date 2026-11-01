@@ -29,6 +29,8 @@ import type { LiveSettings } from '../serverConfig'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
 import {
   isRecordingShape,
+  moveWallPoints,
+  recordingSpanSec,
   replaceAnchorsFromRecording,
   toRecording
 } from './finishVideo'
@@ -36,6 +38,7 @@ import { OriginPublisher } from './originPublisher'
 import { quietStreamCanEnd } from './quietStream'
 import { openSecret } from './secrets'
 import {
+  absorbWriterPlaylist,
   clearLive,
   clearLiveSettled,
   configureIngest,
@@ -211,6 +214,18 @@ function startOrigin(
         .where('kind', '=', 'live')
         .where('spaces_verified_at', 'is', null)
         .execute()
+    },
+    onLargestPicture: async ({ width, height }) => {
+      await db
+        .updateTable('videos')
+        .set({ width, height, updated_at: new Date() })
+        .where('id', '=', videoId)
+        .where('kind', '=', 'live')
+        .where('spaces_verified_at', 'is', null)
+        .execute()
+    },
+    log: message => {
+      ;(current.log ?? console.log)(message)
     }
   })
   const origin = {
@@ -1398,10 +1413,20 @@ async function finishStreamRecording(
 
   await closePlaylist(mediaRoot, row.videoId)
   const dir = liveVideoDir(mediaRoot, row.videoId)
-  const durationSec = await probeDuration(
+  const probedSec = await probeDuration(
     ffprobeFor(ffmpegPath),
     join(dir, LIVE_PLAYLIST_NAME)
   ).catch(() => null)
+  const durationSec =
+    probedSec == null
+      ? null
+      : Math.max(
+          probedSec,
+          (await recordingSpanSec(
+            dir,
+            await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8')
+          ).catch(() => undefined)) ?? 0
+        )
 
   if (durationSec == null) {
     const videoId = row.videoId
@@ -1678,6 +1703,7 @@ async function putAway(
 
   // The recording's own timeline, which is where the points belong now.
   try {
+    await moveWallPoints(db, videoId, recording.moved)
     await replaceAnchorsFromRecording(db, videoId, dir)
   } catch (error) {
     log(`live: wall clock of ${videoId} not rescanned: ${String(error)}`)
@@ -1843,13 +1869,16 @@ async function closePlaylist(
    */
   stillAway: () => boolean = () => true
 ): Promise<void> {
-  const path = join(liveVideoDir(mediaRoot, videoId), LIVE_PLAYLIST_NAME)
+  const dir = liveVideoDir(mediaRoot, videoId)
+  const path = join(dir, LIVE_PLAYLIST_NAME)
   let playlist: string
   try {
     playlist = await readFile(path, 'utf8')
   } catch {
     return
   }
+  // The last writer's segments, when one went down with this process.
+  if (stillAway()) absorbWriterPlaylist(dir)
   if (playlist.includes('#EXT-X-ENDLIST')) return
   // The last look, the read and the write happen together, with nothing
   // awaited between them. A publisher coming back reopens the playlist the

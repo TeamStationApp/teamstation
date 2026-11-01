@@ -461,6 +461,10 @@ async function streamPutFile(options: {
   const { space, key, path, contentType, start, end, query } = options
   const length = end - start + 1
   const url = new URL(signedSpaceUrl(space, key, 'PUT', query))
+  // Ahead of the request: this throws for a file with nothing in the range, and
+  // a request left open would fail later with nobody listening, which ends the
+  // process.
+  const body = createReadStream(path, { start, end })
   const send = url.protocol === 'https:' ? httpsRequest : httpRequest
   const request = send({
     protocol: url.protocol,
@@ -515,10 +519,7 @@ async function streamPutFile(options: {
   // refusal already in hand. Measured: the 403 at 12 ms, the write giving up
   // at 6 s.
   let sendFailed: Error | undefined
-  const sending = pipeline(
-    createReadStream(path, { start, end }),
-    request
-  ).catch((error: unknown) => {
+  const sending = pipeline(body, request).catch((error: unknown) => {
     sendFailed = error instanceof Error ? error : new Error(String(error))
   })
   const result = await Promise.race([

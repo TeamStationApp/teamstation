@@ -39,6 +39,34 @@ export function codecsFromInit(init: Buffer): TrackCodec[] {
   return found
 }
 
+/**
+ * The picture's size out of a fragmented MP4's sample description, where the
+ * muxer writes it: a visual sample entry's width and height are 24 bytes in.
+ */
+export function pictureSizeFromInit(
+  init: Buffer
+): { width: number; height: number } | undefined {
+  for (const stsd of findBoxes(init, [
+    'moov',
+    'trak',
+    'mdia',
+    'minf',
+    'stbl',
+    'stsd'
+  ])) {
+    for (const entry of boxesIn(stsd.subarray(8))) {
+      if (!VISUAL_SAMPLE_ENTRIES.has(entry.type)) continue
+      if (entry.payload.length < 28) continue
+      const width = entry.payload.readUInt16BE(24)
+      const height = entry.payload.readUInt16BE(26)
+      if (width > 0 && height > 0) return { width, height }
+    }
+  }
+  return undefined
+}
+
+const VISUAL_SAMPLE_ENTRIES = new Set(['hvc1', 'hev1', 'avc1', 'avc3'])
+
 /** The `CODECS` attribute value: video first, then audio, comma separated. */
 export function codecsAttribute(tracks: TrackCodec[]): string {
   const order = (track: TrackCodec): number => (track.kind === 'video' ? 0 : 1)

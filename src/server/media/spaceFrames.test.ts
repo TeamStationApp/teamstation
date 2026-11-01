@@ -37,6 +37,50 @@ video.mp4
 `
 
 describe('finding the fragment that holds a second', function () {
+  it('takes each fragment with the init segment listed over it', function () {
+    const changed = [
+      '#EXTM3U',
+      '#EXT-X-MAP:URI="init.mp4"',
+      '#EXTINF:4.000000,',
+      'seg000000.m4s',
+      '#EXT-X-DISCONTINUITY',
+      '#EXT-X-MAP:URI="init000001.mp4"',
+      '#EXTINF:4.000000,',
+      'seg000001.m4s',
+      ''
+    ].join('\n')
+    expect(fragmentAt(changed, 1)?.initFile).equals('init.mp4')
+    expect(fragmentAt(changed, 5)).deep.includes({
+      initFile: 'init000001.mp4',
+      segmentFile: 'seg000001.m4s',
+      startSec: 4
+    })
+  })
+
+  it("moves on to the next map's own range of the one file", function () {
+    const single = [
+      '#EXTM3U',
+      '#EXT-X-MAP:URI="video.mp4",BYTERANGE="100@0"',
+      '#EXTINF:4.000000,',
+      '#EXT-X-BYTERANGE:900@100',
+      'video.mp4',
+      '#EXT-X-DISCONTINUITY',
+      '#EXT-X-MAP:URI="video.mp4",BYTERANGE="120@1000"',
+      '#EXTINF:4.000000,',
+      '#EXT-X-BYTERANGE:880@1120',
+      'video.mp4',
+      ''
+    ].join('\n')
+    expect(fragmentAt(single, 5)?.init).deep.equals({
+      length: 120,
+      offset: 1000
+    })
+    expect(fragmentAt(single, 5)?.segment).deep.equals({
+      length: 880,
+      offset: 1120
+    })
+  })
+
   it('takes the fragment the moment falls inside', function () {
     expect(fragmentAt(PLAYLIST, 0)?.segment).deep.equals({
       length: 1000,
