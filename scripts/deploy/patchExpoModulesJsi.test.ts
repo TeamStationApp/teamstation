@@ -33,7 +33,7 @@ describe('patchExpoModulesJsi', () => {
     const file = copy(fixture)
     execFileSync(process.execPath, [script, file])
     const patched = readFileSync(file, 'utf8')
-    assert.match(patched, /^ + -quiet \\$/m)
+    assert.equal(patched.includes('-quiet'), false)
     assert.match(
       patched,
       /^ {4}CLANG_COVERAGE_MAPPING=NO \\\n {4}SWIFT_ENABLE_EXPLICIT_MODULES=NO \\$/m
@@ -62,9 +62,10 @@ describe('patchExpoModulesJsi', () => {
     const file = copy(readFileSync(installed, 'utf8'))
     execFileSync(process.execPath, [script, file])
     const patched = readFileSync(file, 'utf8')
+    assert.equal(patched.includes('-quiet'), false)
     assert.match(
       patched,
-      /\n {4}-quiet \\\n {4}-disableAutomaticPackageResolution \\\n/
+      /-configuration "\$CONFIGURATION" \\\n {4}-disableAutomaticPackageResolution \\\n/
     )
     assert.match(
       patched,
