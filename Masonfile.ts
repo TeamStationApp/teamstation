@@ -1,14 +1,19 @@
 import type { Setup, Stage } from '@mason/types'
 
-// TeamStation for iOS on the Mac node (macos-arm64) and for Android on the
-// DigitalOcean Linux pool (do-linux). The iOS archive is unsigned; the
-// Android release build uses the debug keystore the app's release type
-// already signs with. Signing for distribution stays with the master once
-// it holds the Apple team and a release keystore.
+// TeamStation for iOS on the Nomac pool and for Android on the DigitalOcean
+// Linux pool. The iOS stage signs with the master's Apple distribution
+// certificate. The Android release is compiled on Linux, then signed on the
+// node labelled android-signing, which provides teamstation-sign-release-apk.
 
 const APP = 'app.teamstation.app'
-const IOS = { type: 'macos-arm64', os: 'macos', arch: 'arm64' } as const
+const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
 const ANDROID = { type: 'do-linux', os: 'linux', arch: 'x64' } as const
+const SIGN = {
+  type: 'macos-arm64',
+  os: 'macos',
+  arch: 'arm64',
+  labels: ['android-signing']
+} as const
 
 export function setup(m: Setup): void {
   m.apiVersion(1)
@@ -17,33 +22,48 @@ export function setup(m: Setup): void {
     ios: {
       on: IOS,
       tools: { node: '24', xcode: '26.6', cocoapods: '1.16.2' },
-      timeout: '4h',
+      timeout: '6h',
+      apple: { distribution: 'appStore', app: APP },
       publishes: [APP],
       buildNumbers: [APP],
       cache: [{ key: 'npm', paths: ['~/.npm'] }],
       run: buildIos
     },
-    android: {
-      on: ANDROID,
-      tools: {
-        node: '24',
-        java: '17',
-        rust: '1.98.0',
-        apt: ['build-essential'],
-        android: [
-          'platforms;android-37.0',
-          'build-tools;37.0.0',
-          'ndk;27.1.12297006',
-          'cmake;3.22.1'
-        ],
-        androidLicenses: 'accept'
+    android: [
+      {
+        name: 'compile',
+        on: ANDROID,
+        tools: {
+          node: '24',
+          java: '17',
+          rust: '1.98.0',
+          apt: ['build-essential'],
+          android: [
+            'platforms;android-37.0',
+            'build-tools;37.0.0',
+            'ndk;27.1.12297006',
+            'cmake;3.22.1'
+          ],
+          androidLicenses: 'accept'
+        },
+        timeout: '6h',
+        publishes: [APP],
+        buildNumbers: [APP],
+        cache: [{ key: 'npm', paths: ['~/.npm'] }],
+        run: compileAndroid
       },
-      timeout: '4h',
-      publishes: [APP],
-      buildNumbers: [APP],
-      cache: [{ key: 'npm', paths: ['~/.npm'] }],
-      run: buildAndroid
-    }
+      {
+        name: 'sign',
+        on: SIGN,
+        tools: {
+          node: '24',
+          java: '17',
+          android: ['build-tools;37.0.0']
+        },
+        timeout: '1h',
+        run: signAndroid
+      }
+    ]
   })
 }
 
@@ -53,7 +73,6 @@ export function setup(m: Setup): void {
  */
 async function install(ctx: Stage): Promise<void> {
   await ctx.sh('npm install --prefix .mason-tools @socketsecurity/cli')
-  // An advisory published after this lockfile was committed does not fail the build.
   const scanned = await ctx.sh('.mason-tools/node_modules/.bin/socket npm ci', {
     env: { SOCKET_CLI_ACCEPT_RISKS: '1' },
     allowFailure: true
@@ -70,23 +89,18 @@ export async function buildIos(ctx: Stage): Promise<void> {
   await install(ctx)
   await ctx.sh('pod install', { cwd: 'ios' })
   const build = ctx.getBuildNumber(APP)
-  await ctx.sh(
-    [
-      'xcodebuild archive',
-      '-workspace TeamStation.xcworkspace',
-      '-scheme TeamStation',
-      '-configuration Release',
-      "-destination 'generic/platform=iOS'",
-      '-archivePath "$PWD/../build/TeamStation.xcarchive"',
-      `CURRENT_PROJECT_VERSION=${build}`,
-      'CODE_SIGNING_ALLOWED=NO'
-    ].join(' '),
-    { cwd: 'ios' }
-  )
-  await ctx.artifacts.save('ios-archive', 'build/TeamStation.xcarchive/**')
+  const archived = await ctx.apple.archive({
+    workspace: 'ios/TeamStation.xcworkspace',
+    scheme: 'TeamStation',
+    configuration: 'Release',
+    buildNumber: build
+  })
+  if (archived.ipa == null) throw new Error('No IPA was exported')
+  await ctx.artifacts.save('ios-ipa', archived.ipa)
+  await ctx.artifacts.save('ios-dsym', archived.dsyms)
 }
 
-export async function buildAndroid(ctx: Stage): Promise<void> {
+export async function compileAndroid(ctx: Stage): Promise<void> {
   await install(ctx)
   const build = ctx.getBuildNumber(APP)
   await ctx.sh(
@@ -99,7 +113,6 @@ export async function buildAndroid(ctx: Stage): Promise<void> {
     ].join(' '),
     { cwd: 'android' }
   )
-  // Cargo for the toolchain Mason installed under the worker's data directory.
   const rustRoot = `${process.env.HOME}/.mason/tools/rust/1.98.0`
   const rustEnv = {
     CARGO_HOME: `${rustRoot}/cargo`,
@@ -109,10 +122,18 @@ export async function buildAndroid(ctx: Stage): Promise<void> {
   await ctx.sh('cargo install cargo-ndk', { env: rustEnv })
   await ctx.sh(
     `./gradlew --no-daemon :app:assembleRelease -PversionCode=${build}`,
-    {
-      cwd: 'android',
-      env: rustEnv
-    }
+    { cwd: 'android', env: rustEnv }
+  )
+  await ctx.stash(
+    'android-release',
+    'android/app/build/outputs/apk/release/*.apk'
+  )
+}
+
+export async function signAndroid(ctx: Stage): Promise<void> {
+  await ctx.unstash('android-release')
+  await ctx.sh(
+    '"$HOME/.local/bin/teamstation-sign-release-apk" android/app/build/outputs/apk/release'
   )
   await ctx.artifacts.save(
     'android-apk',

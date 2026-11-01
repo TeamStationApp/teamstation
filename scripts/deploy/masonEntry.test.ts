@@ -5,7 +5,7 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import { buildAndroid, buildIos, setup } from '../../Masonfile'
+import { buildIos, compileAndroid, setup, signAndroid } from '../../Masonfile'
 import { app, fixtureSettings, testRoot } from './config.test'
 import { masonDeploy } from './mason'
 import { buildEnvironment } from './prepare'
@@ -275,24 +275,8 @@ describe('TeamStation Mason entrypoint', () => {
 })
 
 describe('TeamStation pipeline Masonfile', () => {
-  it('builds iOS on the Mac node and Android on the Linux pool', async () => {
-    const stages: Record<
-      string,
-      {
-        on: { type: string }
-        tools: {
-          node: string
-          android?: string[]
-          rust?: string
-          apt?: string[]
-        }
-        run: (ctx: {
-          sh: (command: string, options?: { cwd?: string }) => Promise<unknown>
-          getBuildNumber: (key: string) => string
-          artifacts: { save: (name: string, paths: string) => Promise<void> }
-        }) => Promise<void>
-      }
-    > = {}
+  it('builds iOS on Nomac and signs the Android release on the signing node', async () => {
+    const stages: Record<string, unknown> = {}
     setup({
       apiVersion(version) {
         assert.equal(version, 1)
@@ -307,17 +291,38 @@ describe('TeamStation pipeline Masonfile', () => {
         Object.assign(stages, members)
       }
     })
-    assert.equal(stages.ios?.on.type, 'macos-arm64')
-    assert.equal(stages.android?.on.type, 'do-linux')
-    assert.equal(stages.ios?.tools.node, '24')
-    assert.equal(stages.android?.tools.rust, '1.98.0')
-    assert.deepEqual(stages.android?.tools.apt, ['build-essential'])
-    assert.deepEqual(stages.android?.tools.android, [
+    const ios = stages.ios as {
+      on: { type: string }
+      tools: { node: string }
+      apple: { distribution: string; app: string }
+    }
+    const android = stages.android as Array<{
+      name: string
+      on: { type: string; labels?: readonly string[] }
+      tools: {
+        node?: string
+        android?: string[]
+        rust?: string
+        apt?: string[]
+      }
+    }>
+    assert.equal(ios.on.type, 'nomac')
+    assert.equal(ios.apple.distribution, 'appStore')
+    assert.equal(ios.apple.app, 'app.teamstation.app')
+    assert.equal(ios.tools.node, '24')
+    assert.equal(android[0]?.name, 'compile')
+    assert.equal(android[0]?.on.type, 'do-linux')
+    assert.equal(android[0]?.tools.rust, '1.98.0')
+    assert.deepEqual(android[0]?.tools.apt, ['build-essential'])
+    assert.deepEqual(android[0]?.tools.android, [
       'platforms;android-37.0',
       'build-tools;37.0.0',
       'ndk;27.1.12297006',
       'cmake;3.22.1'
     ])
+    assert.equal(android[1]?.name, 'sign')
+    assert.equal(android[1]?.on.type, 'macos-arm64')
+    assert.deepEqual(android[1]?.on.labels, ['android-signing'])
     const commands: string[] = []
     const ctx = {
       async sh(command: string) {
@@ -328,23 +333,44 @@ describe('TeamStation pipeline Masonfile', () => {
         assert.equal(key, 'app.teamstation.app')
         return '26103101'
       },
+      async stash(name: string) {
+        commands.push(`stash:${name}`)
+      },
+      async unstash(name: string) {
+        commands.push(`unstash:${name}`)
+      },
       artifacts: {
         async save(name: string) {
           commands.push(`save:${name}`)
         }
+      },
+      apple: {
+        async archive(options: { scheme: string; buildNumber?: string }) {
+          commands.push(
+            `archive:${options.scheme}:${options.buildNumber ?? ''}`
+          )
+          return {
+            archive: 'build/TeamStation.xcarchive',
+            ipa: 'build/TeamStation.ipa',
+            dsyms: 'build/TeamStation.dSYM'
+          }
+        }
       }
     }
     await buildIos(ctx)
-    await buildAndroid(ctx)
+    await compileAndroid(ctx)
+    await signAndroid(ctx)
     const log = commands.join('\n')
     assert.match(log, /\.mason-tools\/node_modules\/\.bin\/socket npm ci/)
     assert.match(log, /pod install/)
-    assert.match(log, /xcodebuild archive/)
-    assert.match(log, /CODE_SIGNING_ALLOWED=NO/)
-    assert.match(log, /CURRENT_PROJECT_VERSION=26103101/)
+    assert.match(log, /archive:TeamStation:26103101/)
+    assert.equal(log.includes('CODE_SIGNING_ALLOWED'), false)
     assert.match(log, /cargo install cargo-ndk/)
     assert.match(log, /assembleRelease -PversionCode=26103101/)
-    assert.match(log, /save:ios-archive/)
+    assert.match(log, /stash:android-release/)
+    assert.match(log, /unstash:android-release/)
+    assert.match(log, /teamstation-sign-release-apk/)
+    assert.match(log, /save:ios-ipa/)
     assert.match(log, /save:android-apk/)
   })
 
@@ -368,6 +394,15 @@ describe('TeamStation pipeline Masonfile', () => {
       artifacts: {
         async save(name: string) {
           commands.push(`save:${name}`)
+        }
+      },
+      apple: {
+        async archive() {
+          return {
+            archive: 'build/TeamStation.xcarchive',
+            ipa: 'build/TeamStation.ipa',
+            dsyms: 'build/TeamStation.dSYM'
+          }
         }
       }
     }
