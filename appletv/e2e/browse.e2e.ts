@@ -35,6 +35,67 @@ async function main(): Promise<void> {
     // Wait for the loaded midpoint frame, rather than capturing its poster.
     await new Promise(resolve => setTimeout(resolve, 2500))
   }
+  const checkLayout = async (kind: string, prefix: string): Promise<void> => {
+    const tree = await tv.hierarchy()
+    const nodes = (node: any): any[] => [
+      node,
+      ...(node.children ?? []).flatMap(nodes)
+    ]
+    const all = nodes(tree)
+    const hero = all.find(node => node.id === 'tv-hero')
+    const tiles = all.filter(
+      node => node.type === 'Button' && node.id?.startsWith(prefix)
+    )
+    assert(
+      hero !== undefined && tiles.length >= 4,
+      `${kind}: complete first row`
+    )
+    const first = tiles.slice(0, 4).map(node => node.bounds)
+    const viewport =
+      all.find(node => node.id === 'tv-page-home')?.bounds ?? tree.bounds
+    for (let i = 0; i < 4; i++) {
+      assert(
+        first[i].x >= 0 && first[i].x + first[i].width <= tree.bounds.width
+      )
+      assert(first[i].y + first[i].height <= tree.bounds.height + 1)
+      assert(Math.abs(first[i].y - first[0].y) <= 1)
+      if (i > 0)
+        assert(
+          Math.abs(first[i].x - first[i - 1].x - first[i - 1].width - 24) <= 1
+        )
+    }
+    if (kind === 'team' && tiles.length > 4)
+      assert(
+        tiles[4].bounds.y >= tree.bounds.height,
+        'second grid row stays below entry viewport'
+      )
+    if (kind !== 'team' && tiles.length > 4)
+      assert(
+        tiles[4].bounds.x >= tree.bounds.width - 52,
+        'fifth tile stays outside the row viewport'
+      )
+    const search = all.find(node => node.id === 'tv-search')
+    const label = all.find(node => node.id === 'tv-search-label')
+    assert(search !== undefined && label !== undefined)
+    assert(
+      Math.abs(
+        search.bounds.y +
+          search.bounds.height / 2 -
+          label.bounds.y -
+          label.bounds.height / 2
+      ) <= 2
+    )
+    console.log(
+      `PASS ${kind} measured hero/first-row/search bounds`,
+      JSON.stringify({
+        hero: hero.bounds,
+        first,
+        viewport,
+        search: search.bounds,
+        label: label.bounds
+      })
+    )
+  }
   try {
     await mkdir(artifacts, { recursive: true })
     await tv.launchApp({
@@ -76,6 +137,7 @@ async function main(): Promise<void> {
           { stdio: 'ignore' }
         )
       : undefined
+    await checkLayout('home', 'recent-')
     await captureScreenshot(tv, path.join(artifacts, 'home-after.png'))
     await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.pressKey({ key: 'DPAD_RIGHT' })
@@ -103,6 +165,7 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'DPAD_CENTER' })
     await tv.assertVisible({ text: 'October 2026', timeout: 15000 })
     await waitForHero()
+    await checkLayout('team', 'team-gam_')
     await captureScreenshot(tv, path.join(artifacts, 'team-after.png'))
     for (let row = 0; row < 4; row++) {
       await tv.pressKey({ key: 'DPAD_DOWN' })
@@ -132,6 +195,7 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'DPAD_CENTER' })
     await tv.assertVisible({ text: 'Recent Games', timeout: 15000 })
     await waitForHero()
+    await checkLayout('player', 'recent-')
     await captureScreenshot(tv, path.join(artifacts, 'player-after.png'))
     await tv.pressKey({ key: 'DPAD_DOWN' })
     await tv.pressKey({ key: 'DPAD_RIGHT' })
