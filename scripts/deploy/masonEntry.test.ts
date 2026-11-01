@@ -390,6 +390,7 @@ describe('TeamStation pipeline Masonfile', () => {
     await signAndroid(ctx)
     const log = commands.join('\n')
     assert.match(log, /\.mason-tools\/node_modules\/\.bin\/socket npm ci/)
+    assert.match(log, /node scripts\/deploy\/patchExpoModulesJsi\.mjs/)
     assert.match(log, /pod install/)
     assert.match(log, /archive:TeamStation:26103101/)
     assert.match(log, /xcargs:SWIFT_ENABLE_EXPLICIT_MODULES=NO/)

@@ -104,6 +104,9 @@ async function install(ctx: Stage): Promise<void> {
 
 export async function buildIos(ctx: Stage): Promise<void> {
   await install(ctx)
+  // The ExpoModulesJSI slice is a nested xcodebuild with a clean environment,
+  // so the archive setting below does not apply to it.
+  await ctx.sh('node scripts/deploy/patchExpoModulesJsi.mjs')
   await ctx.sh('pod install', { cwd: 'ios' })
   const build = ctx.getBuildNumber(APP)
   const rustRoot = `${process.env.HOME}/.mason/tools/rust/1.98.0`
