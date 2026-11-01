@@ -26,6 +26,7 @@ import {
   taggedIn,
   type TokensFile,
   verifyShapes,
+  viewersByLabel,
   writeTokens
 } from './fixture'
 import { TEST_AMOUNTS } from './testAmounts'
@@ -270,6 +271,39 @@ describe('the fixture', function () {
       .deleteFrom('leagues')
       .where('id', '=', stranger.id)
       .execute()
+  })
+
+  it('chooses viewers by label, whichever write finished first', async function () {
+    const account = (label: string, kind: string): SeededAccount =>
+      ({ label, kind }) as SeededAccount
+    expect(
+      viewersByLabel([
+        account('viewer00002', 'viewer'),
+        account('person.admin', 'person'),
+        account('viewer00000', 'viewer'),
+        account('viewer00001', 'viewer')
+      ]).map(row => row.label)
+    ).deep.equals(['viewer00000', 'viewer00001', 'viewer00002'])
+
+    const users = await taggedIn(scratch.db, 'first', 'user')
+    const teams = await taggedIn(scratch.db, 'first', 'team')
+    const members = await scratch.db
+      .selectFrom('memberships')
+      .select('user_id')
+      .where('team_id', '=', teams.get('chat.largeTeam') as string)
+      .execute()
+    const joined = new Set(members.map(row => row.user_id))
+    expect(
+      [...users]
+        .filter(([label, id]) => label.startsWith('viewer') && joined.has(id))
+        .map(([label]) => label)
+        .sort()
+    ).deep.equals(
+      Array.from(
+        { length: TEST_AMOUNTS.largeChatMembers },
+        (_, i) => `viewer${String(i).padStart(5, '0')}`
+      )
+    )
   })
 
   it('deals shards that are disjoint and cover every account', function () {

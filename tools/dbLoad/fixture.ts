@@ -1388,10 +1388,21 @@ async function seedConsumables(seeder: Seeder, groups: Groups): Promise<void> {
   }
 }
 
+/**
+ * The viewers in label order. They were made side by side, so the accounts hold
+ * them in whatever order those writes finished, and a repeat seed must choose
+ * the same ones.
+ */
+export function viewersByLabel(accounts: SeededAccount[]): SeededAccount[] {
+  return accounts
+    .filter(account => account.kind === 'viewer')
+    .sort((a, b) => (a.label < b.label ? -1 : 1))
+}
+
 /** The team chats, the large chat, the person in many chats, and the DMs. */
 async function seedChats(seeder: Seeder, groups: Groups): Promise<void> {
   const { amounts, db } = seeder
-  const viewers = seeder.accounts.filter(account => account.kind === 'viewer')
+  const viewers = viewersByLabel(seeder.accounts)
 
   const largeTeam = await seeder.team('chat.largeTeam', groups.seasons[0])
   const largeMembers = viewers.slice(0, amounts.largeChatMembers)
