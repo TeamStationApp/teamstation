@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 
 import { userIdOfGumbo } from '../../src/common/userId'
+import { captureScreenshot } from './capture'
 import { tvFixture } from './fixture'
 
 async function main(): Promise<void> {
@@ -23,7 +24,7 @@ async function main(): Promise<void> {
     './dist/cjs/index.js'
   )
   const daemon = await MaestroD.connect({ name: process.env.MAESTRO_D })
-  const tv = await daemon.attach({ device, platform: 'ios' })
+  const tv = await daemon.attach({ device, platform: 'ios', artifacts: 'none' })
   const h = await tvFixture({
     scored: true,
     wideStats: true,
@@ -35,10 +36,7 @@ async function main(): Promise<void> {
     await tv.waitForAnimationToEnd({ timeout: 1000 })
   }
   const shot = async (name: string): Promise<void> => {
-    await writeFile(
-      path.join(artifacts, name + '-after.png'),
-      await tv.screenshot()
-    )
+    await captureScreenshot(tv, path.join(artifacts, name + '-after.png'))
   }
   try {
     await mkdir(artifacts, { recursive: true })
@@ -142,10 +140,7 @@ async function main(): Promise<void> {
       'PASS boundary navigation, two/three static scores and stats progression'
     )
   } catch (error) {
-    await writeFile(
-      path.join(artifacts, 'boundary-failure.png'),
-      await tv.screenshot()
-    )
+    await captureScreenshot(tv, path.join(artifacts, 'boundary-failure.png'))
     await writeFile(
       path.join(artifacts, 'boundary-failure.json'),
       JSON.stringify(await tv.hierarchy(), null, 2)

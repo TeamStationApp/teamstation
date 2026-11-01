@@ -3,8 +3,23 @@
 // eslint-disable-next-line import/export
 export * from 'react-native'
 const listeners = new Set<
-  (event: { eventType: string; eventKeyAction?: number }) => void
+  (event: {
+    eventType: string
+    eventKeyAction?: number
+    body?: { state: string; x: number }
+  }) => void
 >()
+export const panRequests: boolean[] = []
+export const TVEventControl = {
+  enableTVMenuKey: () => undefined,
+  disableTVMenuKey: () => undefined,
+  enableTVPanGesture: () => {
+    panRequests.push(true)
+  },
+  disableTVPanGesture: () => {
+    panRequests.push(false)
+  }
+}
 export const TVEventHandler = {
   addListener(
     callback: (event: { eventType: string; eventKeyAction?: number }) => void
@@ -19,4 +34,8 @@ export const TVEventHandler = {
 }
 export function emitTvDirection(eventType: string, eventKeyAction = 0): void {
   for (const listener of listeners) listener({ eventType, eventKeyAction })
+}
+export function emitTvPan(state: string, x: number): void {
+  for (const listener of listeners)
+    listener({ eventType: 'pan', body: { state, x } })
 }
