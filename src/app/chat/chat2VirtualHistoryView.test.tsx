@@ -392,7 +392,7 @@ describe('virtualized chat message history', function () {
       host!.querySelector('[data-testid="chat-bubble-msg_179"]'),
       'Mounted rows keep their public bubble'
     ).not.equals(null)
-    expect(host!.textContent).contains('Hank C’s safety number changed')
+    expect(host!.textContent).contains('Hank C’s safety words changed')
     // A mounted row still offers every action, here the emoji picker.
     await act(async () => {
       host!

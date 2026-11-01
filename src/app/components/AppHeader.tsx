@@ -336,9 +336,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
 
   handoffLeft: {
     flex: 1,
+    minWidth: 0,
     justifyContent: 'center'
   },
   back: {
+    flexShrink: 0,
     // The glyph doubled, and the target is the whole height of the header and
     // as wide as it is tall. It sits at the edge of a phone, which is where a
     // thumb is least accurate.

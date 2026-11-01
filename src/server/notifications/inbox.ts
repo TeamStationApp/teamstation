@@ -3,6 +3,7 @@ import { type Kysely, type RawBuilder, type Selectable, sql } from 'kysely'
 import { forbidden, notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import {
+  CHAT_DEVICE_APPROVAL,
   isSchedulingNews,
   type Notification,
   type PlayerAddTerms,
@@ -63,7 +64,8 @@ async function informationFor(
   db: Kysely<Database>,
   actor: Actor,
   event: Selectable<NotificationEventsTable>,
-  names: PageNames
+  names: PageNames,
+  clock: Clock
 ): Promise<Listed | null> {
   if (
     event.source_type === 'groupRequest' ||
@@ -132,6 +134,35 @@ async function informationFor(
   // which settles it the same way.
   const reminder = event.source_type === RECORDING_UPLOAD
   const waiting = reminder && receipt?.dismissed_at == null
+  let link: { status: Notification['status']; expiresAt: string } | undefined
+  if (event.source_type === CHAT_DEVICE_APPROVAL) {
+    const request = await db
+      .selectFrom('chat_links')
+      .innerJoin('chat_devices', 'chat_devices.id', 'chat_links.new_device_id')
+      .select([
+        'chat_links.box',
+        'chat_links.declined_at',
+        'chat_links.expires_at',
+        'chat_devices.revoked_at'
+      ])
+      .where('chat_links.id', '=', event.source_id)
+      .where('chat_links.user_id', '=', actor.userId)
+      .executeTakeFirst()
+    if (request == null) return null
+    link = {
+      expiresAt: new Date(request.expires_at).toISOString(),
+      status:
+        request.box != null
+          ? 'accepted'
+          : request.declined_at != null
+            ? 'declined'
+            : request.revoked_at != null
+              ? 'cancelled'
+              : new Date(request.expires_at).getTime() <= clock.now().getTime()
+                ? 'expired'
+                : 'pending'
+    }
+  }
   // A player taken off a roster by their side is news to its managers until
   // they dismiss it; there is nothing to do but read it.
   const removal =
@@ -140,14 +171,14 @@ async function informationFor(
     // A removal waits until dismissed, with nothing to do but read it.
     news: removal,
     id: event.id,
-    requestId: event.id,
+    requestId: link == null ? event.id : event.source_id,
     type: event.source_type,
     title,
     description,
     sentAt: event.created_at.toISOString(),
-    expiresAt: event.created_at.toISOString(),
-    status: waiting ? 'pending' : 'accepted',
-    canAct: waiting,
+    expiresAt: link?.expiresAt ?? event.created_at.toISOString(),
+    status: link?.status ?? (waiting ? 'pending' : 'accepted'),
+    canAct: link == null ? waiting : link.status === 'pending',
     canWithdraw: false,
     canResend: false,
     canReject: false,
@@ -663,22 +694,43 @@ export async function inbox(
     .where('source_type', '!=', 'groupRequest')
     .$if(options.history !== true, query =>
       query.where(eb =>
-        eb.and([
-          eb('source_type', 'in', [RECORDING_UPLOAD, PLAYER_ADD_REJECTED]),
-          eb.not(
+        eb.or([
+          eb.and([
+            eb('source_type', '=', CHAT_DEVICE_APPROVAL),
             eb.exists(
               eb
-                .selectFrom('notification_receipts')
-                .select('notification_receipts.event_id')
-                .whereRef(
-                  'notification_receipts.event_id',
-                  '=',
-                  'notification_events.id'
+                .selectFrom('chat_links')
+                .innerJoin(
+                  'chat_devices',
+                  'chat_devices.id',
+                  'chat_links.new_device_id'
                 )
-                .where('notification_receipts.user_id', '=', fresh.userId)
-                .where('notification_receipts.dismissed_at', 'is not', null)
+                .select('chat_links.id')
+                .whereRef('chat_links.id', '=', 'notification_events.source_id')
+                .where('chat_links.user_id', '=', fresh.userId)
+                .where('chat_links.box', 'is', null)
+                .where('chat_links.declined_at', 'is', null)
+                .where('chat_links.expires_at', '>', clock.now())
+                .where('chat_devices.revoked_at', 'is', null)
             )
-          )
+          ]),
+          eb.and([
+            eb('source_type', 'in', [RECORDING_UPLOAD, PLAYER_ADD_REJECTED]),
+            eb.not(
+              eb.exists(
+                eb
+                  .selectFrom('notification_receipts')
+                  .select('notification_receipts.event_id')
+                  .whereRef(
+                    'notification_receipts.event_id',
+                    '=',
+                    'notification_events.id'
+                  )
+                  .where('notification_receipts.user_id', '=', fresh.userId)
+                  .where('notification_receipts.dismissed_at', 'is not', null)
+              )
+            )
+          ])
         ])
       )
     )
@@ -693,7 +745,7 @@ export async function inbox(
     if (row != null) projected.push(row)
   }
   for (const event of information) {
-    const row = await informationFor(db, fresh, event, names)
+    const row = await informationFor(db, fresh, event, names, clock)
     if (row != null) projected.push(row)
   }
   projected.sort((a, b) =>
@@ -769,7 +821,8 @@ export async function notificationDetail(
       db,
       fresh,
       event,
-      await pageNames(db, [event])
+      await pageNames(db, [event]),
+      clock
     )
     if (information == null) throw notFound()
     return sent(information)
@@ -814,6 +867,8 @@ export async function dismissNotification(
   clock: Clock = realClock
 ): Promise<void> {
   const detail = await notificationDetail(db, actor, id, clock)
+  if (detail.type === CHAT_DEVICE_APPROVAL)
+    throw forbidden('Approve or decline this device request instead')
   const event = await db
     .selectFrom('notification_events')
     .select('id')

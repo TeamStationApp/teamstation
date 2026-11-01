@@ -89,12 +89,12 @@ async function safetyNumber(
   await page.goto(`${WEB}/chat/${conversationId}/members`, {
     waitUntil: 'networkidle2'
   })
-  const button = await page.$(`[aria-label="Safety number with ${name}"]`)
+  const button = await page.$(`[aria-label^="Safety words with ${name}, "]`)
   if (button == null) return `${name}: no button`
   await button.click()
-  // The members row bears the same label as the digits: wait for it to go.
+  // Wait for the member row to go before reading the safety grid.
   await page.waitForFunction(row => !row.isConnected, {}, button)
-  // The screen settles on the digits, or on why there are none: somebody
+  // The screen settles on the words, or on why there are none: somebody
   // who has not set up chat, or a number that cannot be loaded.
   const settled = await page.waitForFunction(
     (label: string, who: string) => {
@@ -112,7 +112,7 @@ async function safetyNumber(
       return false
     },
     { timeout: 30000 },
-    `Safety number with ${name}`,
+    `Safety words with ${name}`,
     name
   )
   const read = (await settled.jsonValue()) as string

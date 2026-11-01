@@ -16,6 +16,23 @@ import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 // The real shell and route adapters, with access and conversation boundaries controlled.
 describe('entity chat app routing', () => {
   it('opens scoped rows on the originating stack and returns directly with Back', async () => {
+    const viewportDescriptors = Object.fromEntries(
+      ['visualViewport', 'innerWidth', 'innerHeight'].map(key => [
+        key,
+        Object.getOwnPropertyDescriptor(window, key)
+      ])
+    )
+    const visual = Object.assign(new window.EventTarget(), {
+      height: 844,
+      width: 390,
+      scale: 1,
+      offsetTop: 0
+    })
+    Object.defineProperties(window, {
+      visualViewport: { configurable: true, value: visual },
+      innerWidth: { configurable: true, value: 390 },
+      innerHeight: { configurable: true, value: 844 }
+    })
     const proto = TeamStationClient.prototype
     const originals = Object.getOwnPropertyDescriptors(proto)
     const engineProto = ChatEngine.prototype
@@ -119,6 +136,26 @@ describe('entity chat app routing', () => {
           })
           await settle()
           expect(window.location.pathname).equals('/chat/cnv_exact')
+          // Entity-origin chats keep Home selected, but still hide its floating
+          // navigation while an editor's keyboard covers the viewport.
+          const navigation = (): Element | null =>
+            host.querySelector('[data-chrome] [role="tablist"]')
+          expect(navigation()).not.equals(null)
+          const editor = document.createElement('textarea')
+          host.append(editor)
+          await act(async () => {
+            editor.focus()
+            visual.height = 500
+            visual.dispatchEvent(new window.Event('resize'))
+          })
+          expect(navigation()).equals(null)
+          await act(async () => {
+            editor.blur()
+            visual.height = 844
+            visual.dispatchEvent(new window.Event('resize'))
+          })
+          editor.remove()
+          expect(navigation()).not.equals(null)
           await act(async () => {
             document.querySelector<HTMLElement>('[aria-label="Back"]')!.click()
           })
@@ -153,6 +190,10 @@ describe('entity chat app routing', () => {
         }
       }
     } finally {
+      for (const [key, descriptor] of Object.entries(viewportDescriptors)) {
+        if (descriptor == null) Reflect.deleteProperty(window, key)
+        else Object.defineProperty(window, key, descriptor)
+      }
       Object.defineProperties(proto, originals)
       Object.defineProperties(engineProto, engineOriginals)
       window.history.replaceState(null, '', '/')

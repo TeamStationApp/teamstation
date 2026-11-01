@@ -314,6 +314,11 @@ describe('chat audiences (U5)', function () {
 
   it('titles scope chats from their scope names, with and without a league', async function () {
     const db = fixture.db
+    await db
+      .updateTable('leagues')
+      .set({ name: 'Harbor League' })
+      .where('id', '=', fixture.seed.leagueId)
+      .execute()
     const loose = makeId('season')
     await db
       .insertInto('seasons')
@@ -380,10 +385,10 @@ describe('chat audiences (U5)', function () {
       a: 'Hawks Staff',
       b: 'Hawks Members',
       c: 'Hawks Fans',
-      d: 'QPLL Spring 2027 Staff',
-      e: 'QPLL Spring 2027 All Staff',
-      f: 'QPLL Spring 2027 Announcements',
-      g: 'QPLL Org',
+      d: 'Spring 2027 - Harbor League Staff',
+      e: 'Spring 2027 - Harbor League All Staff',
+      f: 'Spring 2027 - Harbor League Announcements',
+      g: 'Harbor League Org',
       h: 'Fall Ball Staff',
       i: null,
       j: 'Chat Staff'

@@ -527,6 +527,10 @@ export const enUs = {
   chat_link_code_label: 'Six-digit code %s',
   chat_link_waiting: 'Waiting for approval…',
   chat_link_expired: 'That request expired.',
+  chat_link_declined: 'That request was declined. You can ask again.',
+  chat_approval_on_linked_device:
+    'Open this request on a device already approved for chat.',
+  chat_approval_later: 'Later',
   chat_link_again: 'Ask again',
   chat_link_cant_reach: 'I can’t reach my other devices',
   chat_link_done: 'This device is linked.',
@@ -535,7 +539,7 @@ export const enUs = {
   chat_reset_no_device:
     'None of your devices can approve this one, so chat starts again here.',
   chat_reset_detail:
-    'Your other devices will stop working for chat. Earlier messages stay locked until another member of each chat opens TeamStation and unlocks them for you, and the people you chat with will see that your safety number changed.',
+    'Your other devices will stop working for chat. Earlier messages stay locked until another member of each chat opens TeamStation and unlocks them for you, and the people you chat with will see that your safety words changed.',
   chat_reset_submit: 'Reset chat on this device',
   chat_reset_back: 'Back to linking',
 
@@ -613,8 +617,8 @@ export const enUs = {
   chat_locked_message: 'Locked message',
   chat_lost_message: 'This message can’t be opened',
   chat_invalid_message: 'This message could not be verified',
-  chat_sent_before_change: 'sent before %s’s safety number changed',
-  chat_safety_changed: '%s’s safety number changed',
+  chat_sent_before_change: 'sent before %s’s safety words changed',
+  chat_safety_changed: '%s’s safety words changed',
   chat_read_by: 'Read by %s',
   chat_seen_by: 'Seen by %s',
   chat_sent: 'Sent',
@@ -694,15 +698,15 @@ export const enUs = {
   chat_members: 'Members',
   chat_members_count_one: '%s member',
   chat_members_count_many: '%s members',
-  chat_safety_number_with: 'Safety number with %s',
+  chat_safety_number_with: 'Safety words with %s',
   chat_safety_number_detail:
-    'Compare these 60 digits with %s, side by side or read aloud. If they match, nobody is between you.',
+    'Compare these 16 words with %s, side by side or read aloud. If they match, nobody is between you.',
   chat_safety_number_none: '%s has not set up chat yet.',
   chat_approvals: 'Waiting for approval',
   chat_approval_request:
     '%s reset their chat keys and asks for this chat’s history.',
-  chat_old_safety_number: 'Old safety number',
-  chat_new_safety_number: 'New safety number',
+  chat_old_safety_number: 'Old safety words',
+  chat_new_safety_number: 'New safety words',
   chat_approve: 'Approve',
   chat_review: 'Review',
   chat_approve_label: 'Approve %s',
@@ -712,6 +716,7 @@ export const enUs = {
   chat_new_title: 'New message',
   chat_new_search: 'Name',
   chat_new_none: 'Nobody matches.',
+  chat_new_search_failed: 'People could not be loaded.',
   chat_new_pick: 'Pick %s',
   chat_new_unpick: 'Remove %s',
   chat_new_start: 'Start conversation',

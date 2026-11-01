@@ -8,6 +8,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   type ChatKeysClient,
   ensureEnrolled,
+  ownLinkCode,
   pollLink,
   reasonOf,
   resetIdentity,
@@ -38,6 +39,7 @@ type Step =
   | { kind: 'linked' }
   | { kind: 'code'; record: ChatKeyRecord; code: string }
   | { kind: 'expired'; record: ChatKeyRecord }
+  | { kind: 'declined'; record: ChatKeyRecord }
   | { kind: 'reset'; record: ChatKeyRecord; fromLink: boolean }
   | { kind: 'failed' }
 
@@ -97,6 +99,27 @@ function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
     [setup]
   )
 
+  const resume = useCallback(
+    async (record: ChatKeyRecord): Promise<Step> => {
+      if (record.pendingLinkId != null) {
+        const polled = await pollLink(setup, record)
+        if (polled.state === 'declined')
+          return { kind: 'declined', record: polled.record }
+        if (polled.state === 'installed') return { kind: 'linked' }
+        // A waiting request keeps its code. Asking again here would post a
+        // replacement if the approver declined in the gap after this poll.
+        if (polled.state === 'waiting')
+          return {
+            kind: 'code',
+            record,
+            code: ownLinkCode(record, record.pendingLinkId)
+          }
+      }
+      return await ask(record)
+    },
+    [ask, setup]
+  )
+
   useEffect(() => {
     let live = true
     ensureEnrolled(setup)
@@ -107,7 +130,7 @@ function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
         if (enrolment.state === 'reset') {
           return { kind: 'reset', record: enrolment.record, fromLink: false }
         }
-        return await ask(enrolment.record)
+        return await resume(enrolment.record)
       })
       .then(next => {
         if (live) setStep(next)
@@ -118,7 +141,7 @@ function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [ask, round, setup])
+  }, [resume, round, setup])
 
   // While the code is up, ask now and then whether it was approved.
   useEffect(() => {
@@ -131,8 +154,11 @@ function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
           if (polled.state === 'installed') {
             setStep({ kind: 'linked' })
             done.current()
-          } else if (polled.state === 'expired') {
-            setStep({ kind: 'expired', record: polled.record })
+          } else if (
+            polled.state === 'expired' ||
+            polled.state === 'declined'
+          ) {
+            setStep({ kind: polled.state, record: polled.record })
           }
         })
         .catch((caught: unknown) => {
@@ -229,7 +255,7 @@ function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
               disabled={busy}
               onPress={() => {
                 run(async () => {
-                  setStep(await ask(record))
+                  setStep(await resume(record))
                 })
               }}
             />
@@ -259,7 +285,11 @@ function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
           </>
         ) : (
           <View style={styles.expired}>
-            <Text style={styles.body}>{lstrings.chat_link_expired}</Text>
+            <Text style={styles.body}>
+              {step.kind === 'declined'
+                ? lstrings.chat_link_declined
+                : lstrings.chat_link_expired}
+            </Text>
             <Button
               label={lstrings.chat_link_again}
               kind="primary"

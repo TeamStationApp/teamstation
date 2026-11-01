@@ -9,7 +9,7 @@ import type {
 } from '../../../common/api'
 import type { AttachmentRef, ChatContent } from '../../../common/chatContent'
 import { fromUtf8 } from '../../../common/chatCrypto/bytes'
-import { safetyNumber } from '../../../common/chatCrypto/safetyNumber'
+import { safetyWords as safetyNumber } from '../../../common/chatCrypto/safetyNumber'
 import { messageKey, openWithMessageKey } from '../../../common/chatCrypto/seal'
 import { HttpError } from '../../../common/errors'
 import type { ChatSocketEvent, GameSocket } from '../../../common/gameSocket'
@@ -1223,7 +1223,7 @@ export class ChatEngine {
   }
 
   /**
-   * The 60-digit safety number the person shares with `userId`, from their
+   * The sixteen space-separated safety words shared with `userId`, from their
    * current identity; undefined when they have none.
    */
   async safetyNumber(userId: string): Promise<string | undefined> {

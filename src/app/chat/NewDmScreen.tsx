@@ -1,5 +1,11 @@
-import React, { useEffect, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import React, { useEffect, useRef, useState } from 'react'
+import {
+  ActivityIndicator,
+  Pressable,
+  Text,
+  type TextInput,
+  View
+} from 'react-native'
 
 import type {
   ChatConversation,
@@ -25,7 +31,7 @@ import { IncludeAdultSheet } from './IncludeAdultSheet'
 import type { ChatScreenEngine } from './screenEngine'
 
 /** How long typing pauses before the candidates are asked again. */
-export const CANDIDATE_PAUSE_MS = 250
+export const CANDIDATE_PAUSE_MS = 500
 
 export interface NewDmScreenProps {
   client: Pick<
@@ -50,24 +56,40 @@ export function NewDmScreen(props: NewDmScreenProps): React.ReactElement {
   const theme = useTheme()
   const shared = getChatStyles(theme)
   const [query, setQuery] = useState('')
+  const input = useRef<React.ComponentRef<typeof TextInput>>(null)
+  const generation = useRef(0)
   const [people, setPeople] = useState<ChatPerson[] | undefined>(undefined)
+  const [lookupFailed, setLookupFailed] = useState(false)
   const [picked, setPicked] = useState<ChatPerson[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   const [adultsFor, setAdultsFor] = useState<string[] | undefined>(undefined)
 
-  const asked = query.trim()
+  const changeQuery = (value: string): void => {
+    generation.current += 1
+    setQuery(value)
+    setPeople(undefined)
+    setLookupFailed(false)
+    setError(undefined)
+  }
   useEffect(() => {
     let live = true
+    const version = generation.current
+    const asked = query.trim()
+    setPeople(undefined)
+    setLookupFailed(false)
     const timer = setTimeout(
       () => {
         client
           .dmCandidates(asked)
           .then(found => {
-            if (live) setPeople(found)
+            if (live && version === generation.current) setPeople(found)
           })
           .catch(() => {
-            if (live) setError(lstrings.chat_new_failed)
+            if (live && version === generation.current) {
+              setLookupFailed(true)
+              setError(lstrings.chat_new_search_failed)
+            }
           })
       },
       asked === '' ? 0 : pauseMs
@@ -76,7 +98,7 @@ export function NewDmScreen(props: NewDmScreenProps): React.ReactElement {
       live = false
       clearTimeout(timer)
     }
-  }, [asked, client, pauseMs])
+  }, [query, client, pauseMs])
 
   const isPicked = (person: ChatPerson): boolean =>
     picked.some(entry => entry.userId === person.userId)
@@ -94,6 +116,8 @@ export function NewDmScreen(props: NewDmScreenProps): React.ReactElement {
       return
     }
     setPicked(current => [...current, person])
+    if (query !== '') changeQuery('')
+    input.current?.focus()
   }
 
   const start = (extra: string[] = []): void => {
@@ -137,7 +161,10 @@ export function NewDmScreen(props: NewDmScreenProps): React.ReactElement {
       <TextField
         label={lstrings.chat_new_search}
         value={query}
-        onChangeText={setQuery}
+        inputRef={input}
+        onChangeText={value => {
+          if (value !== query) changeQuery(value)
+        }}
       />
       {picked.length > 0 && (
         <View style={shared.actions}>
@@ -168,8 +195,8 @@ export function NewDmScreen(props: NewDmScreenProps): React.ReactElement {
           start()
         }}
       />
-      {people == null ? (
-        <Text style={shared.muted}>{lstrings.common_loading}</Text>
+      {lookupFailed ? null : people == null ? (
+        <ActivityIndicator accessibilityLabel={lstrings.common_loading} />
       ) : people.length === 0 ? (
         <Text style={shared.muted}>{lstrings.chat_new_none}</Text>
       ) : (

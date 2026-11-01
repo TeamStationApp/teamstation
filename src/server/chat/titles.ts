@@ -8,7 +8,7 @@ import type { ChatKind, Database } from '../db/database'
  *
  * - team chats: `<team> Staff`, `<team> Members`, `<team> Fans`;
  * - season chats: `<season title> Staff`, `… All Staff`, `… Announcements`,
- *   where the season title is `<league name> <season name>` when the season
+ *   where the season title is `<season name> - <league name>` when the season
  *   has a league, and `<season name>` otherwise;
  * - `leagueOrg`: `<league> Org`.
  *
@@ -50,12 +50,12 @@ export interface ScopeIdentity {
   leagueId: string | null
 }
 
-/** `<league name> <season name>`, or the season's own name without one. */
+/** `<season name> - <league name>`, or the season's own name without one. */
 export function seasonTitle(
   seasonName: string,
   leagueName: string | null
 ): string {
-  return leagueName == null ? seasonName : `${leagueName} ${seasonName}`
+  return leagueName == null ? seasonName : `${seasonName} - ${leagueName}`
 }
 
 /** The key a scope has in a `scopeIdentities` map. */

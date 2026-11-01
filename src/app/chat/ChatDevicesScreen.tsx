@@ -13,6 +13,10 @@ import {
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
+  DeviceApprovalActions,
+  useDeviceApprovals
+} from './DeviceApprovalPrompt'
+import {
   approveLink,
   type ChatKeysClient,
   ensureEnrolled,
@@ -43,7 +47,7 @@ interface Listing {
   links: ChatPendingLink[]
 }
 
-const platformName = (device: ChatDevice): string =>
+const platformName = (device: Pick<ChatDevice, 'platform'>): string =>
   device.platform === 'web'
     ? lstrings.chat_devices_platform_web
     : device.platform === 'ios'
@@ -71,6 +75,7 @@ function ChatDevices(props: ChatDevicesScreenProps): React.ReactElement {
   const store = props.store ?? keyStore
   const pollMs = props.pollMs ?? DEVICES_POLL_MS
   const styles = getStyles(useTheme())
+  const approvals = useDeviceApprovals()
   const setup = useRef({
     client,
     store,
@@ -140,7 +145,7 @@ function ChatDevices(props: ChatDevicesScreenProps): React.ReactElement {
       live = false
       clearInterval(timer)
     }
-  }, [load, pollMs, record])
+  }, [load, pollMs, record, approvals.state.revision])
 
   const act = (key: string, work: () => Promise<void>): void => {
     setBusy(key)
@@ -190,6 +195,68 @@ function ChatDevices(props: ChatDevicesScreenProps): React.ReactElement {
   const own = record.deviceId
   const devices = listing.devices.filter(device => device.revokedAt == null)
   const links = listing.links.filter(link => link.newDevice.id !== own)
+  const holder = record.identity != null
+  const localDecision = (link: (typeof links)[number]): React.ReactElement => (
+    <View style={styles.actions}>
+      <Button
+        label={lstrings.chat_devices_approve}
+        accessibilityLabel={sprintf(
+          lstrings.chat_devices_approve_label,
+          link.newDevice.name
+        )}
+        kind="primary"
+        busy={busy === link.id}
+        disabled={busy != null}
+        onPress={() => {
+          act(link.id, async () => {
+            await approveLink(setup, record, link)
+          })
+        }}
+      />
+      <Button
+        label={lstrings.chat_devices_decline}
+        accessibilityLabel={sprintf(
+          lstrings.chat_devices_decline_label,
+          link.newDevice.name
+        )}
+        kind="text"
+        disabled={busy != null}
+        onPress={() => {
+          act(link.id, async () => {
+            await client.declineChatLink(link.id)
+          })
+        }}
+      />
+    </View>
+  )
+  const decisionFor = (link: (typeof links)[number]): React.ReactElement => {
+    const controller = approvals.controller
+    const state = approvals.state
+    const shared =
+      controller != null &&
+      (state.ready || (state.settled && state.readError == null && !holder))
+    if (shared) return <DeviceApprovalActions id={link.id} showCode={false} />
+    if (controller != null && !state.settled && !holder)
+      return <Text style={styles.muted}>{lstrings.common_loading}</Text>
+    return (
+      <>
+        {controller != null && state.readError != null && !state.ready && (
+          <Text style={styles.error}>{state.readError}</Text>
+        )}
+        {holder || controller == null ? (
+          localDecision(link)
+        ) : (
+          <Button
+            label={lstrings.common_retry}
+            kind="secondary"
+            onPress={() => {
+              controller.refresh().catch(() => undefined)
+            }}
+          />
+        )}
+      </>
+    )
+  }
 
   return (
     <Screen>
@@ -206,6 +273,10 @@ function ChatDevices(props: ChatDevicesScreenProps): React.ReactElement {
                 <Text style={styles.heading}>
                   {sprintf(lstrings.chat_devices_request, link.newDevice.name)}
                 </Text>
+                <Text style={styles.muted}>
+                  {platformName(link.newDevice)} ·{' '}
+                  {new Date(link.createdAt).toLocaleString()}
+                </Text>
                 <Text
                   style={styles.code}
                   accessibilityLabel={sprintf(
@@ -221,43 +292,7 @@ function ChatDevices(props: ChatDevicesScreenProps): React.ReactElement {
                     link.newDevice.name
                   )}
                 </Text>
-                <View style={styles.actions}>
-                  <Button
-                    label={lstrings.chat_devices_approve}
-                    accessibilityLabel={sprintf(
-                      lstrings.chat_devices_approve_label,
-                      link.newDevice.name
-                    )}
-                    kind="primary"
-                    busy={busy === link.id}
-                    disabled={busy != null}
-                    onPress={() => {
-                      act(link.id, async () => {
-                        await approveLink(setup, record, link)
-                      })
-                    }}
-                  />
-                  <Button
-                    label={lstrings.chat_devices_decline}
-                    accessibilityLabel={sprintf(
-                      lstrings.chat_devices_decline_label,
-                      link.newDevice.name
-                    )}
-                    kind="text"
-                    disabled={busy != null}
-                    onPress={() => {
-                      act(link.id, async () => {
-                        setRecord(
-                          await revokeOtherDevice(
-                            setup,
-                            record,
-                            link.newDevice.id
-                          )
-                        )
-                      })
-                    }}
-                  />
-                </View>
+                {decisionFor(link)}
               </Card>
             )
           })}

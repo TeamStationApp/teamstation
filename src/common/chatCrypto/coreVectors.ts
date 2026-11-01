@@ -299,6 +299,11 @@ export function runCoreVectors(core: CoreCall = call): CoreVectorResult[] {
   )
 
   // Safety numbers (lower user id first) and link codes.
+  check(
+    'safety bytes',
+    () => toHex(one('safetyBytes', [new Uint8Array(32).fill(1), num(7)])),
+    frozen.safetyBytes
+  )
   const ascii = (bytes: Uint8Array): string => String.fromCharCode(...bytes)
   check(
     'safety number',

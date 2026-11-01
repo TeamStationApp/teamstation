@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import { IDBFactory } from 'fake-indexeddb'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 
@@ -34,6 +35,10 @@ describe('the scope the visible route holds', () => {
   let originals: PropertyDescriptorMap
   const originalSocket = globalThis.WebSocket
   const originalFetch = globalThis.fetch
+  const originalIndexedDB = Object.getOwnPropertyDescriptor(
+    globalThis,
+    'indexedDB'
+  )
   let sockets: ReturnType<typeof fakeSockets>
   let reads: string[]
 
@@ -42,6 +47,15 @@ describe('the scope the visible route holds', () => {
     originals = Object.getOwnPropertyDescriptors(api)
     sockets = fakeSockets()
     reads = []
+    // Exercise the approval poll with a readable, empty key store. Without
+    // IndexedDB it stops early and can hide a missing background API stub.
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: new IDBFactory()
+    })
+    globalThis.fetch = async () => {
+      throw new TypeError('fetch failed')
+    }
     globalThis.WebSocket = sockets.Impl as unknown as typeof WebSocket
     // The page the socket's address is found from, as a browser has one.
     Object.defineProperty(globalThis, 'location', {
@@ -66,10 +80,11 @@ describe('the scope the visible route holds', () => {
       dictationModels: []
     })
     api.hasNotifications = async () => false
-    // The shell loads its chat list before any screen scope is acknowledged.
-    // Keep that background request online; a missing fetch stub otherwise
+    // The shell loads its chat list and approvals before a scope is acknowledged.
+    // Keep those background requests online; a missing fetch stub otherwise
     // marks the caching client offline and bypasses the scope's wait.
     api.chatConversations = async () => []
+    api.chatLinks = async () => []
     api.teams = async () => {
       reads.push('teams')
       return []
@@ -102,6 +117,9 @@ describe('the scope the visible route holds', () => {
     Object.defineProperties(TeamStationClient.prototype, originals)
     globalThis.WebSocket = originalSocket
     globalThis.fetch = originalFetch
+    if (originalIndexedDB == null)
+      delete (globalThis as { indexedDB?: unknown }).indexedDB
+    else Object.defineProperty(globalThis, 'indexedDB', originalIndexedDB)
     delete (globalThis as { location?: unknown }).location
   })
 
