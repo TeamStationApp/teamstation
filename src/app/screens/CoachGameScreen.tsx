@@ -772,6 +772,10 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
               initialDraft={held}
               onDraftChange={setHeld}
               rosters={opened.rosters}
+              guests={[
+                ...Object.values((detail ?? opened.game).guestPlayers).flat(),
+                ...createdGuests.current
+              ]}
               unrostered={(detail ?? opened.game).unrostered}
               onRosteredChange={async (side, userId, rostered) => {
                 const posted = client.setRostered(gameId, {
@@ -818,9 +822,16 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
                 if ('entry' in answer) holdRosterEntry(id, answer.entry)
                 return answer
               }}
-              onAddExistingGuest={async (side, body) =>
-                await client.addExistingGuest(gameId, side, body, teamId)
-              }
+              onAddExistingGuest={async (side, body) => {
+                const answer = await client.addExistingGuest(
+                  gameId,
+                  side,
+                  body,
+                  teamId
+                )
+                if ('entry' in answer) createdGuests.current.push(answer.entry)
+                return answer
+              }}
               onCreateGuest={async (side, player) => {
                 const entry = await client.createGuestPlayer(
                   gameId,

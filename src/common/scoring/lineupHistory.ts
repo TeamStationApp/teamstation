@@ -10,7 +10,11 @@ import {
 } from 'cleaners'
 
 import { asLiteral } from '../asLiteral'
-import type { CurrentPlay, GumboPlay } from '../gumboPlay'
+import {
+  type CurrentPlay,
+  type GumboPlay,
+  SUBSTITUTION_TYPES
+} from '../gumboPlay'
 import { asGumboId } from '../userId'
 import type { ScoringAction } from './actions'
 import { recordOf, replayPlays, storedRecordOf } from './gumbo'
@@ -50,13 +54,6 @@ export interface Lineup {
   defense: Record<Position, LineupPerson | null>
 }
 
-export const SUBSTITUTION_TYPES = [
-  'offensive_substitution',
-  'defensive_substitution',
-  'defensive_switch',
-  'pitching_substitution',
-  'ts_batting_order'
-] as const
 export type SubstitutionType = (typeof SUBSTITUTION_TYPES)[number]
 
 /** One Gumbo substitution event, as stored. */

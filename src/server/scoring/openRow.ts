@@ -4,6 +4,7 @@ import { conflict } from '../../common/errors'
 import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import type { StoredGame } from '../../common/scoring/session'
 import { withNames } from '../../common/scoring/storedNames'
+import { openAddsOf } from '../access'
 import { UnresolvedAccount } from '../admin/people'
 import type { Database } from '../db/database'
 import {
@@ -13,8 +14,10 @@ import {
   type NameBook,
   type NameHalves,
   nameHalves,
-  scopeOf
+  scopeOf,
+  withWithdrawn
 } from '../users/nameBook'
+import { survivorsOf } from '../users/survivors'
 import { resolveGumboIds } from './gumboIds'
 import { projectScoringGame, scoringIdsIn } from './projection'
 
@@ -112,6 +115,50 @@ function withHalves(
   }
 }
 
+/**
+ * `ids` without the game's pool players, the players withdrawn from it, and
+ * those a side's team holds only by an open add: people who already exist,
+ * whose whole names an add never gave the game, and who are nobody's here to
+ * correct (`renameGuestPlayer`).
+ */
+async function withoutBorrowed(
+  db: Kysely<Database>,
+  gameId: string | undefined,
+  ids: number[],
+  teams: ReadonlySet<string>
+): Promise<number[]> {
+  if (ids.length === 0) return ids
+  const held = [...(await openAddsOf(db, [...teams])).values()].flatMap(
+    open => [...open]
+  )
+  const [pool, withdrawn] =
+    gameId == null
+      ? [[], []]
+      : await Promise.all([
+          db
+            .selectFrom('game_guest_details')
+            .select('user_id')
+            .where('game_id', '=', gameId)
+            .where('pool', '=', true)
+            .execute(),
+          db
+            .selectFrom('game_withdrawn_players')
+            .select('user_id')
+            .where('game_id', '=', gameId)
+            .execute()
+        ])
+  const users = [...held, ...[...pool, ...withdrawn].map(row => row.user_id)]
+  if (users.length === 0) return ids
+  const survivors = await survivorsOf(db, users)
+  const borrowed = await db
+    .selectFrom('gumbo_ids')
+    .select('gumbo_id')
+    .where('user_id', 'in', [...users, ...survivors.values()])
+    .execute()
+  const gone = new Set(borrowed.map(row => Number(row.gumbo_id)))
+  return ids.filter(id => !gone.has(id))
+}
+
 /** The players of `teams` a game's setups hold. */
 function playersOf(stored: StoredGame, teams: ReadonlySet<string>): number[] {
   const ids = new Set<number>()
@@ -173,16 +220,29 @@ export async function namedScoringGame<T extends StoredGame>(
   // General scoring reads also feed public scoreboards. Disambiguate against
   // everyone in the game without adding private name parts to the projection.
   // Ids as stored and their survivors' read as the same accounts.
-  const names = (
+  const book = (
     await booksOver(db, new Map([[0, scopeOf(projected, players)]]), {
       spoken: options.spoken
     })
   ).get(0)!
+  // A rejected add's plays stay; every surface reads them as the placeholder.
+  const names =
+    options.gameId == null
+      ? book
+      : await withWithdrawn(db, options.gameId, book)
   const teams = new Set(options.halves ?? [])
   const halves =
     teams.size === 0
       ? new Map<number, NameHalves>()
-      : await nameHalves(db, playersOf(projected, teams))
+      : await nameHalves(
+          db,
+          await withoutBorrowed(
+            db,
+            options.gameId,
+            playersOf(projected, teams),
+            teams
+          )
+        )
   const name = <D extends GumboDocument>(document: D): D => {
     if (document == null) return document
     const named = withNames(document, names.nameOf)

@@ -11,11 +11,15 @@ import {
 import {
   asPostEventsBody,
   type CurrentPlay,
-  type GumboPlay
+  type GumboPlay,
+  isRealPlay
 } from '../../common/gumboPlay'
 import { storedRecordOf } from '../../common/scoring/gumbo'
-import { newSetup } from '../../common/scoring/lineup'
-import { reconcileRoster } from '../../common/scoring/rosterAvailability'
+import {
+  appearedIn,
+  onBothSides,
+  reconcileRoster
+} from '../../common/scoring/rosterAvailability'
 import { awaitingResult } from '../../common/scoring/rules'
 import { ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
@@ -38,6 +42,7 @@ import { contextOf } from '../scoring/replayContext'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { gameAvailability } from './rosterAvailability'
+import { hasScoringEventsSql } from './scoringActivity'
 
 /** A switch and its lineup change commit together, serialized with scoring writes. */
 export async function setRostered(
@@ -82,24 +87,17 @@ export async function setRostered(
     unrostered[body.side] = body.rostered
       ? unrostered[body.side].filter(id => id !== gumboId)
       : [...unrostered[body.side], gumboId]
-    // A merge can leave one person on both team rosters with one side
-    // excluded. Re-enabling that side must not make the next setup unreadable.
-    const teams = {
-      away: { id: game.away_team_id, name: '' },
-      home: { id: game.home_team_id, name: '' }
-    }
-    try {
-      reconcileRoster(
-        newSetup(teams, { away: [], home: [] }),
-        teams,
+    // Somebody on both rosters plays for one side once the other leaves them
+    // out: putting them back is refused, or they would play for neither.
+    if (
+      body.rostered &&
+      onBothSides(
         availability.roster,
         availability.guestPlayers,
         unrostered
-      )
-    } catch (error) {
-      if (!(error instanceof Error)) throw error
-      throw conflict(error.message)
-    }
+      ).has(gumboId)
+    )
+      throw conflict('A player cannot be available for both teams')
     const rows = await readPlays(trx, gameId)
     const stored = await resolveScoringGame(
       trx,
@@ -199,7 +197,8 @@ async function applyAvailability(
     context.teams,
     availability.roster,
     availability.guestPlayers,
-    unrostered
+    unrostered,
+    appearedIn(session.state)
   )
   const problem = session.apply({ type: 'lineup', kind: 'roster', setup })
     .problems[0]
@@ -226,21 +225,28 @@ export async function reconcileUnbegunLineup(
     .executeTakeFirst()
   if (game == null || game.status === 'final' || game.status === 'cancelled')
     return
+  // Its first at-bat lives only on the game row: under way, it is begun.
+  const { begun } = await trx
+    .selectFrom('games')
+    .select(hasScoringEventsSql.as('begun'))
+    .where('id', '=', gameId)
+    .executeTakeFirstOrThrow()
   const rows = await readPlays(trx, gameId)
-  if (rows.length > 0) return
-  const stored = await resolveScoringGame(trx, {
-    plays: [],
-    currentPlay: atBatOf(game, false) as CurrentPlay | null
-  })
-  if (
-    stored.currentPlay?.teamStation != null &&
-    storedRecordOf(stored.currentPlay) == null
-  )
-    return
-  const context = await contextOf(trx, gameId, game, stored)
-  if (context == null) return
-  const availability = await gameAvailability(trx, game)
+  if (begun || rows.some(row => isRealPlay(row.gumbo))) return
   try {
+    const stored = await resolveScoringGame(trx, {
+      plays: rows.map(row => row.gumbo as GumboPlay),
+      currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
+    })
+    if (
+      [...stored.plays, stored.currentPlay].some(
+        play => play?.teamStation != null && storedRecordOf(play) == null
+      )
+    )
+      return
+    const context = await contextOf(trx, gameId, game, stored)
+    if (context == null) return
+    const availability = await gameAvailability(trx, game)
     await applyAvailability(
       trx,
       gameId,

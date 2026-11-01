@@ -614,6 +614,29 @@ describe('a player’s settings form', function () {
     expect(text()).includes('Not set')
   })
 
+  it('draws no guardians for a player held only by an open add', async function () {
+    let asked = 0
+    const client = Object.assign(
+      settingsClient([{ ...jordan, ownIdentity: true }], []),
+      {
+        guardians: async () => {
+          asked++
+          throw new Error('Not found')
+        }
+      }
+    )
+    await render(
+      <PlayerSettingsTab
+        client={client}
+        teamId="t1"
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    expect(asked).equals(0)
+    expect(text()).not.includes('Cannot load the guardians')
+    expect(text()).not.includes('Change guardians and family')
+  })
+
   it('lists the player’s guardians and family, and opens the way to change them', async function () {
     const client = Object.assign(settingsClient([jordan], []), {
       guardians: async () => [

@@ -132,7 +132,7 @@ export function manageRoutes(
       const tree = await managementPeopleTree(db, scopeType, scopeId)
       if (tree == null) throw notFound()
       const [people, pending, invites] = await Promise.all([
-        peopleInScope(db, tree),
+        peopleInScope(db, tree, actor),
         pendingInvitations(db, scopeType, scopeId, options.clock?.now()),
         listInvites(db, scopeType, scopeId)
       ])
@@ -331,7 +331,7 @@ export function manageRoutes(
       await requirePeopleManager(db, actor, ref, touchesAdmin)
 
       await mustBePerson(userId)
-      if (!(await onPeopleList(db, ref, userId))) throw notFound()
+      if (!(await onPeopleList(db, ref, userId, actor))) throw notFound()
 
       const { before, roles } = await atomic(db, async trx => {
         await lockKeys(trx, ['creation:parent-graph'])
@@ -388,7 +388,14 @@ export function manageRoutes(
 
       await mustBePerson(userId)
 
-      if (!(await onPeopleList(db, { kind: scopeType, id: scopeId }, userId)))
+      if (
+        !(await onPeopleList(
+          db,
+          { kind: scopeType, id: scopeId },
+          userId,
+          actor
+        ))
+      )
         throw notFound()
 
       const { before, roles } = await atomic(db, async trx => {

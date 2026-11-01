@@ -10,6 +10,15 @@ import {
 import { IMPLIED_ROLES, type Role, ROLES } from '../common/roles'
 import { type OnePerson, onePerson } from './admin/people'
 import type { Database } from './db/database'
+import { openAddTeams, peopleOf } from './openAdds'
+
+export {
+  heldByOpenAdd,
+  openAdds,
+  openAddsOf,
+  openAddTeams,
+  openArrivalsOf
+} from './openAdds'
 
 /**
  * What one person is allowed to see, worked out once per request.
@@ -92,61 +101,6 @@ export async function guardedPlayers(
   userId: string
 ): Promise<string[]> {
   return (await guardedPeople(db, userId)).map(child => child.userId)
-}
-
-/** However deep a chain of merges can go, as `onePerson` walks it. */
-const MAX_MERGE_DEPTH = 16
-
-/**
- * `onePerson` for several rows at once, in one query: each row asked about,
- * keyed by itself, as the open row it is now and every row closed into that
- * one. Walks the merges the way `onePerson` does: up to whoever is still open,
- * stopping at a loop or after `MAX_MERGE_DEPTH` steps, then back down.
- */
-async function peopleOf(
-  db: Kysely<Database>,
-  userIds: readonly string[]
-): Promise<Map<string, OnePerson>> {
-  const asked = [...new Set(userIds)]
-  const people = new Map<string, OnePerson>()
-  if (asked.length === 0) return people
-  const { rows } = await sql<{ start: string; survivor: string; id: string }>`
-    with recursive up(start, id, depth, path) as (
-      select asked.id, asked.id, 0, array[asked.id]
-      from unnest(${asked}::text[]) as asked(id)
-      union all
-      select up.start, users.merged_into, up.depth + 1,
-        up.path || users.merged_into
-      from up
-      inner join users on users.id = up.id
-      where users.merged_into is not null
-        and not users.merged_into = any(up.path)
-        and up.depth < ${MAX_MERGE_DEPTH}
-    ),
-    survivor(start, id) as (
-      select distinct on (start) start, id from up order by start, depth desc
-    ),
-    down(start, id, depth) as (
-      select start, id, 0 from survivor
-      union
-      select down.start, users.id, down.depth + 1
-      from down
-      inner join users on users.merged_into = down.id
-      where down.depth < ${MAX_MERGE_DEPTH}
-    )
-    select down.start, survivor.id as survivor, down.id
-    from down
-    inner join survivor on survivor.start = down.start
-    group by down.start, survivor.id, down.id
-    order by down.start, min(down.depth), down.id
-  `.execute(db)
-  for (const row of rows) {
-    const person = people.get(row.start)
-    if (person == null)
-      people.set(row.start, { userId: row.survivor, userIds: [row.id] })
-    else person.userIds.push(row.id)
-  }
-  return people
 }
 
 /**
@@ -283,8 +237,10 @@ export async function mayManagePlayer(
   const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
   if (teamId != null) return canManageRoster(scopes, teamId)
   const player = await onePerson(db, playerUserId)
-  const plays = await teamsPlayedOnNow(db, player.userIds)
-  return plays.some(teamId => canManageRoster(scopes, teamId))
+  // A team holding them only by an open add manages what is the team's, by
+  // the route with its id: not what is the person's.
+  const plays = await settledTeams(db, player.userIds)
+  return plays.some(team => canManageRoster(scopes, team))
 }
 
 /**
@@ -1129,15 +1085,32 @@ export async function openablePeople(
   viewerUserId: string,
   userIds: readonly string[]
 ): Promise<Set<string>> {
-  const ids = [...new Set(userIds)]
-  if (scopes.isAdmin) return new Set(ids)
+  const asked = [...new Set(userIds)]
+  if (scopes.isAdmin) return new Set(asked)
+  if (asked.length === 0) return new Set()
+  // A person's lines and memberships may sit on rows merged into them, as
+  // `teamsOf` counts them: each row answers for the person asked about.
+  const rows = await sql<{ id: string; person: string }>`
+    with recursive family as (
+      select id, id as person from users where id in (${sql.join(asked)})
+      union
+      select u.id, f.person from users u
+        join family f on u.merged_into = f.id
+    )
+    select id, person from family`.execute(db)
+  const personOf = new Map(rows.rows.map(row => [row.id, row.person]))
+  const ids = [...personOf.keys()]
   // Themselves, and anybody they guard: their page is theirs to open
   // wherever the line is from.
   const guarded =
     scopes.guardedIds ?? new Set(await guardedPlayers(db, viewerUserId))
-  const open = new Set(ids.filter(id => id === viewerUserId || guarded.has(id)))
+  const open = new Set(
+    ids
+      .filter(id => id === viewerUserId || guarded.has(id))
+      .map(id => personOf.get(id)!)
+  )
   const teams = [...scopes.teamIds]
-  if (teams.length === 0 || ids.length === 0) return open
+  if (teams.length === 0) return open
   // As `teamsOf` counts the teams a person played for: a player's
   // membership, on a team not merged away.
   const members = await db
@@ -1150,51 +1123,33 @@ export async function openablePeople(
     .where('memberships.is_player', '=', true)
     .where('teams.merged_into', 'is', null)
     .execute()
-  for (const row of members) open.add(row.user_id)
+  for (const row of members) open.add(personOf.get(row.user_id)!)
   const played = await db
     .selectFrom('game_player_stats')
     .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'game_player_stats.gumbo_id')
-    .select('gumbo_ids.user_id')
+    .select(['gumbo_ids.user_id', 'game_player_stats.game_id'])
     .distinct()
     .where('gumbo_ids.user_id', 'in', ids)
     .where('game_player_stats.team_id', 'in', teams)
-    .where(eb =>
-      eb.not(
-        eb.exists(
-          eb
-            .selectFrom('game_guest_details')
-            .select('game_guest_details.game_id')
-            .whereRef(
-              'game_guest_details.game_id',
-              '=',
-              'game_player_stats.game_id'
-            )
-            .whereRef('game_guest_details.user_id', '=', 'gumbo_ids.user_id')
-            .where('game_guest_details.pool', '=', true)
-        )
-      )
-    )
-    .where(eb =>
-      eb.not(
-        eb.exists(
-          eb
-            .selectFrom('game_withdrawn_players')
-            .select('game_withdrawn_players.game_id')
-            .whereRef(
-              'game_withdrawn_players.game_id',
-              '=',
-              'game_player_stats.game_id'
-            )
-            .whereRef(
-              'game_withdrawn_players.user_id',
-              '=',
-              'gumbo_ids.user_id'
-            )
-        )
-      )
-    )
     .execute()
-  for (const row of played) open.add(row.user_id)
+  // A game they played as a pool player, or were withdrawn from, opens
+  // nothing, on whichever of their rows it is held.
+  const pool = await db
+    .selectFrom('game_guest_details')
+    .select(['user_id', 'game_id'])
+    .where('user_id', 'in', ids)
+    .where('pool', '=', true)
+    .execute()
+  const withdrawn = await db
+    .selectFrom('game_withdrawn_players')
+    .select(['user_id', 'game_id'])
+    .where('user_id', 'in', ids)
+    .execute()
+  const key = (row: { user_id: string; game_id: string }): string =>
+    `${row.game_id} ${personOf.get(row.user_id)}`
+  const closed = new Set([...pool, ...withdrawn].map(key))
+  for (const row of played)
+    if (!closed.has(key(row))) open.add(personOf.get(row.user_id)!)
   return open
 }
 
@@ -1346,12 +1301,29 @@ export async function mayEditName(
   if (staffOf.size === 0) return false
   const plays = await db
     .selectFrom('memberships')
-    .select(['id'])
+    .select(['team_id'])
     .where('user_id', 'in', player.userIds)
     .where('is_player', '=', true)
     .where('team_id', 'in', [...staffOf])
-    .executeTakeFirst()
-  return plays != null
+    .execute()
+  const held = await openAddTeams(db, player.userIds)
+  return plays.some(row => !held.includes(row.team_id))
+}
+
+/**
+ * The teams a person plays on that stand to them as theirs: `teamsPlayedOnNow`
+ * less those holding them only by an open add. What a right over the person
+ * themself reads, so a new one is safe without knowing about adds.
+ */
+export async function settledTeams(
+  db: Kysely<Database>,
+  userIds: readonly string[]
+): Promise<string[]> {
+  const [plays, held] = await Promise.all([
+    teamsPlayedOnNow(db, userIds),
+    openAddTeams(db, userIds)
+  ])
+  return plays.filter(team => !held.includes(team))
 }
 
 /** Legacy team-follow listing, separate from private team visibility. */

@@ -1,7 +1,7 @@
 import { type Kysely, sql, type Transaction } from 'kysely'
 
-import { notFound } from '../../common/errors'
-import type { PlayerAddTerms } from '../../common/notifications'
+import { forbidden, notFound } from '../../common/errors'
+import type { PlayerAddTerms, PlayerAddTold } from '../../common/notifications'
 import {
   DEFAULT_PLAYER_NAME_PRIVACY,
   type PlayerNamePrivacy
@@ -13,14 +13,16 @@ import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
   applyPlayerAdd,
+  lockPlayerAdds,
   personOf,
+  playerAddApprovers,
   playerAddPolicy,
   recordPlayerAdd,
   refuseOtherSide
 } from '../groups/noticePolicy'
 import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
 import { type Clock, realClock } from '../groups/requests'
-import { fullAccount } from '../users/rosterCandidates'
+import { fullAccount, hasTie } from '../users/rosterCandidates'
 
 type Trx = Transaction<Database>
 
@@ -77,7 +79,9 @@ export async function candidatePerson(
     lastName: user.last_name,
     displayName: user.display_name
   }
-  const formats = await publicFormats(trx, [{ person: named, teamId }])
+  const formats = await publicFormats(trx, [
+    { person: named, teamId, candidate: true }
+  ])
   const shortName =
     formatForReader([{ person: named, format: formats.get(user.id)! }]).get(
       user.id
@@ -105,7 +109,12 @@ export async function teamName(
 
 /** What an existing-player add answers, before the route reads the entry. */
 export type ExistingAdd =
-  | { kind: 'added'; userId: string; requestId: string | null }
+  | {
+      kind: 'added'
+      userId: string
+      requestId: string | null
+      told: PlayerAddTold | null
+    }
   | { kind: 'unchanged'; userId: string }
   | { kind: 'pending'; userId: string; requestId: string }
 
@@ -128,7 +137,16 @@ export async function addByPolicy(
       (await personOf(trx, terms.userId)).userIds,
       terms
     )
-  const policy = await playerAddPolicy(trx, terms.userId, terms.teamId)
+  const known = await hasTie(
+    trx,
+    actor,
+    terms.teamId,
+    terms.gameId,
+    (await personOf(trx, terms.userId)).userIds
+  )
+  const policy = known
+    ? await playerAddPolicy(trx, terms.userId, terms.teamId)
+    : 'approval'
   if (policy === 'approval') {
     // Asked again while the first ask waits: the same request, not another.
     const waiting = await trx
@@ -139,7 +157,11 @@ export async function addByPolicy(
       // Nothing marks an unanswered one expired: its date does.
       .where('expires_at', '>', clock.now())
       .where('initiating_team_id', '=', terms.teamId)
-      .where(sql<boolean>`terms->>'userId' = ${terms.userId}`)
+      .where(
+        sql<string>`terms->>'userId'`,
+        'in',
+        (await personOf(trx, terms.userId)).userIds
+      )
       .where(sql<boolean>`terms->>'mode' = ${terms.mode}`)
       .where(
         sql<boolean>`coalesce(terms->>'gameId', '') = ${terms.gameId ?? ''}`
@@ -150,10 +172,32 @@ export async function addByPolicy(
     const requestId = await recordPlayerAdd(trx, actor, terms, 'pending', clock)
     if (requestId != null)
       return { kind: 'pending', userId: terms.userId, requestId }
+    // A stranger is never added on nobody's say.
+    if (!known) throw forbidden('Nobody can approve adding this player')
   }
   const applied = await applyPlayerAdd(trx, terms, terms.mode === 'roster')
+  // An ask of the same add still waiting is answered by this one: neither
+  // reply to it could mean what its side would take it to.
+  await trx
+    .updateTable('group_requests')
+    .set({ status: 'superseded', resolved_at: clock.now() })
+    .where('kind', '=', 'playerAdd')
+    .where('status', '=', 'pending')
+    .where('initiating_team_id', '=', terms.teamId)
+    .where(
+      sql<string>`terms->>'userId'`,
+      'in',
+      (await personOf(trx, terms.userId)).userIds
+    )
+    .where(sql<boolean>`terms->>'mode' = ${terms.mode}`)
+    .where(sql<boolean>`coalesce(terms->>'gameId', '') = ${terms.gameId ?? ''}`)
+    .execute()
   const requestId = await recordPlayerAdd(trx, actor, applied, 'applied', clock)
-  return { kind: 'added', userId: terms.userId, requestId }
+  const told =
+    requestId == null
+      ? null
+      : (await playerAddApprovers(trx, terms.userId, terms.teamId)).told
+  return { kind: 'added', userId: terms.userId, requestId, told }
 }
 
 /**
@@ -172,6 +216,7 @@ export async function addExistingRosterPlayer(
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
     const person = await candidatePerson(trx, teamId, body.userId)
+    await lockPlayerAdds(trx, person.userId)
     const playing = await trx
       .selectFrom('memberships')
       .select('id')

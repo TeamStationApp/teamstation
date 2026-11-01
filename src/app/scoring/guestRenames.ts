@@ -39,7 +39,7 @@ export function guestRenames(
 }
 
 /** A guest as Save Rosters finds his account: his user id by gumbo id. */
-type GuestAccount = Pick<RosterEntry, 'userId' | 'gumboId'>
+type GuestAccount = Pick<RosterEntry, 'userId' | 'gumboId' | 'pool'>
 
 /**
  * Sends each correction to the guest's account, in order, before the setup
@@ -57,9 +57,14 @@ export async function sendGuestRenames(
   lookUp?: () => Promise<Iterable<GuestAccount>>
 ): Promise<void> {
   const userOf = new Map<number, string>()
+  // A pool player keeps their own name: nothing to send, whatever was typed.
+  const pool = new Set<number>()
   const add = (from: Iterable<GuestAccount>): void => {
     for (const guest of from)
-      if (guest.gumboId != null) userOf.set(guest.gumboId, guest.userId)
+      if (guest.gumboId != null) {
+        userOf.set(guest.gumboId, guest.userId)
+        if (guest.pool === true) pool.add(guest.gumboId)
+      }
   }
   add(guests)
   const unknown = (): boolean =>
@@ -69,7 +74,7 @@ export async function sendGuestRenames(
     throw new Error(
       "This game-only player's name cannot be corrected here. Open the game again and try once more."
     )
-  for (const rename of renames)
+  for (const rename of renames.filter(({ gumboId }) => !pool.has(gumboId)))
     await client.renameGuestPlayer(
       gameId,
       userOf.get(rename.gumboId)!,

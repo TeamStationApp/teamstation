@@ -28,6 +28,7 @@ import {
   withHalfOuts
 } from './linescore'
 import { addPlayer, newSetup } from './lineup'
+import { appearedBySide, appearedIn } from './rosterAvailability'
 import { copyState, type GameState, setupOf } from './state'
 
 /**
@@ -620,6 +621,104 @@ describe('reading a game back', function () {
       null
     ])
     expect(imported.offense.batter!.id).equals(7003)
+    // Who batted in those plays has appeared, though their detail is lost.
+    expect(
+      appearedIn(
+        replayPlays({ plays: documents(false), currentPlay: null }, context)
+          .state
+      )
+    ).includes(7002)
+    // A runner of such a play too, whose base is left for the scorer.
+    const [first, ...rest] = documents(false)
+    const running = {
+      ...first,
+      runners: [
+        {
+          ...first.runners![0],
+          details: { ...first.runners![0].details, runner: { id: 7004 } }
+        }
+      ]
+    } as unknown as GumboPlay
+    expect(
+      appearedIn(
+        replayPlays({ plays: [running, ...rest], currentPlay: null }, context)
+          .state
+      )
+    ).includes(7004)
+    // Its credited fielders by their team, and somebody off the setup by now.
+    const credited = {
+      ...first,
+      matchup: { ...first.matchup, batter: { id: 9001 } },
+      credits: [
+        { teamId: TEAMS.home.id, creditUserId: 7005, credit: 'f_assist' },
+        { teamId: TEAMS.away.id, creditUserId: 7006, credit: 'r_rbi' }
+      ]
+    } as unknown as GumboPlay
+    const appeared = appearedBySide(
+      replayPlays({ plays: [credited, ...rest], currentPlay: null }, context)
+        .state
+    )
+    expect([...appeared.away]).includes(9001)
+    expect([...appeared.away]).includes(7006)
+    expect([...appeared.home]).includes(7005)
+    expect([...appeared.home]).not.includes(7006)
+    // Fielders a runner's credits name, as a Gumbo document does.
+    const fielded = {
+      ...first,
+      runners: [
+        {
+          ...first.runners![0],
+          credits: [
+            { player: { id: 8004 }, credit: 'f_assist' },
+            { player: { id: 8005 }, credit: 'f_putout' },
+            { player: { id: 'not a number' }, credit: 'f_putout' }
+          ]
+        }
+      ]
+    } as unknown as GumboPlay
+    const inField = appearedBySide(
+      replayPlays({ plays: [fielded, ...rest], currentPlay: null }, context)
+        .state
+    )
+    expect([...inField.home]).includes.members([8004, 8005])
+    expect([...inField.away]).not.includes(8004)
+    // A credit names a side only by a team the game has, in the half played.
+    const unnamed = {
+      ...first,
+      about: { ...first.about, halfInning: null },
+      credits: [
+        { teamId: TEAMS.away.id, creditUserId: 7007, credit: 'r_rbi' },
+        { teamId: TEAMS.home.id, creditUserId: 8007, credit: 'f_assist' },
+        { teamId: null, creditUserId: 7008, credit: 'f_assist' },
+        { teamId: 'team-merged-away', creditUserId: 7009, credit: 'f_assist' }
+      ]
+    } as unknown as GumboPlay
+    const sided = appearedBySide(
+      replayPlays({ plays: [unnamed, ...rest], currentPlay: null }, context)
+        .state
+    )
+    expect([...sided.away]).includes(7007)
+    expect([...sided.home]).includes(8007)
+    for (const id of [7008, 7009]) {
+      expect([...sided.away]).not.includes(id)
+      expect([...sided.home]).not.includes(id)
+    }
+    // A stored lineup change names nobody, once the game has a record or not.
+    const change = {
+      ...first,
+      result: { ...first.result, eventType: 'defensive_switch' },
+      matchup: { batter: { id: 9002 }, pitcher: { id: 9003 } },
+      runners: [{ details: { runner: { id: 9004 } } }],
+      credits: [
+        { teamId: TEAMS.home.id, creditUserId: 9005, credit: 'f_assist' }
+      ]
+    } as unknown as GumboPlay
+    const nobody = appearedIn(
+      replayPlays({ plays: [change, ...rest], currentPlay: null }, context)
+        .state
+    )
+    for (const id of [9002, 9003, 9004, 9005])
+      expect([...nobody]).not.includes(id)
 
     // Scoring carries on from there with the lineup the first scored play kept.
     const next = score(state, [{ type: 'pitch', call: 'B' }])

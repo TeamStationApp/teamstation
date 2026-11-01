@@ -201,6 +201,25 @@ export function asGumboPlay(raw: unknown): GumboPlay {
   }
 }
 
+/** What a stored play holding only a lineup change carries as its result. */
+export const SUBSTITUTION_TYPES = [
+  'offensive_substitution',
+  'defensive_substitution',
+  'defensive_switch',
+  'pitching_substitution',
+  'ts_batting_order'
+] as const
+
+/**
+ * Whether a stored play has a result of its own, not only a lineup change:
+ * `isRealPlaySql`, of a play already read.
+ */
+export function isRealPlay(gumbo: unknown): boolean {
+  const type = (gumbo as { result?: { eventType?: string } } | null)?.result
+    ?.eventType
+  return !(SUBSTITUTION_TYPES as readonly unknown[]).includes(type)
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value)
 }

@@ -4,6 +4,7 @@ import type { RosterEntry } from '../../common/api'
 import { conflict, forbidden, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
 import { shortParts } from '../../common/names'
+import type { PlayerAddTold } from '../../common/notifications'
 import type {
   ExistingRosterPlayer,
   NewRosterPlayer
@@ -15,6 +16,7 @@ import { lockPlayerEdits } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { atomic } from '../db/atomic'
 import type { Database, GamesTable } from '../db/database'
+import { lockPlayerAdds } from '../groups/noticePolicy'
 import { type Clock, realClock } from '../groups/requests'
 import { noteScopeChange } from '../socket/syncRevision'
 import {
@@ -24,7 +26,11 @@ import {
 } from '../teams/addExistingPlayer'
 import { refuseDeleted } from '../users/deleted'
 import { ensureGumboId, insertUser } from '../users/insertUser'
-import { guestAlreadyInGame, guestGameOpen } from './guestChecks'
+import {
+  guestAlreadyInGame,
+  guestGameOpen,
+  playedForOther
+} from './guestChecks'
 
 /**
  * What every guest write checks, with the game row held: the side holds the
@@ -261,7 +267,12 @@ export async function renameGuestPlayer(
 
 /** What an existing player's guest add answers. */
 export type ExistingGuest =
-  | { kind: 'added'; entry: RosterEntry; requestId: string | null }
+  | {
+      kind: 'added'
+      entry: RosterEntry
+      requestId: string | null
+      told: PlayerAddTold | null
+    }
   | { kind: 'pending'; requestId: string }
 
 /**
@@ -293,7 +304,11 @@ export async function addExistingGuest(
       side === 'away' ? game.away_team_id : game.home_team_id,
       body.userId
     )
+    await lockPlayerAdds(trx, person.userId)
     await guestAlreadyInGame(trx, game, person.userIds)
+    // Before anybody is told: somebody stays with the team they played for.
+    if (await playedForOther(trx, game, person.userIds, teamId))
+      throw conflict('This player already played for the other team')
     const result = await addByPolicy(
       trx,
       actor,
@@ -325,6 +340,7 @@ export async function addExistingGuest(
     return {
       kind: 'added',
       requestId: result.requestId,
+      told: result.told,
       entry: {
         userId: person.userId,
         gumboId,
@@ -340,6 +356,7 @@ export async function addExistingGuest(
         bats: user.bats,
         throws: user.throws,
         isPlayer: true,
+        pool: true,
         role: 'player',
         section: 'player',
         staffRoles: [],

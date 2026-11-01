@@ -3,15 +3,18 @@ import type { Kysely } from 'kysely'
 import { conflict } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { type Role, type RoleFlag, ROLES } from '../../common/roles'
+import { mayEditName, openArrivalsOf } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
   authorizePersonChange,
   type PersonChangeAuthority,
+  refuseRoleWhileHeld,
   requireDirectAdmin
 } from '../groups/adminGuard'
 import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
+import { shortNamesOf } from '../users/nameBook'
 import type { InviteScopeType } from './invites'
 
 /**
@@ -253,7 +256,8 @@ async function teamsOfSeasons(
 /** Everybody holding any grant anywhere in this tree, and which grants. */
 export async function peopleInScope(
   db: Kysely<Database>,
-  tree: ScopeTree
+  tree: ScopeTree,
+  viewer: { isAdmin: boolean; userId?: string } = { isAdmin: false }
 ): Promise<ScopePerson[]> {
   const teamIds = tree.teams.map(team => team.id)
   const seasonIds = tree.seasons.map(season => season.id)
@@ -440,6 +444,40 @@ export async function peopleInScope(
       held.lastSeenAt =
         row.lastSeenAt == null ? null : new Date(row.lastSeenAt).toISOString()
     }
+  }
+
+  // Somebody here only through open adds shows as the add gave them: a short
+  // name, and no addresses, until their side can no longer reject it.
+  if (!viewer.isAdmin) {
+    const open = await openArrivalsOf(db, teamIds)
+    const everyone = [...people.values()]
+    const held: Array<(typeof everyone)[number]> = []
+    for (const each of everyone)
+      if (
+        each.teams.length > 0 &&
+        each.seasons.length === 0 &&
+        each.leagues.length === 0 &&
+        each.teams.every(
+          team => open.get(team.id)?.has(each.userId) === true
+        ) &&
+        // Not from a reader whose rights no add takes away.
+        !(
+          viewer.userId != null &&
+          (await mayEditName(db, viewer.userId, each.userId, viewer))
+        )
+      )
+        held.push(each)
+    const names = await shortNamesOf(
+      db,
+      held.map(each => each.userId)
+    )
+    for (const each of held)
+      Object.assign(each, {
+        displayName: names.get(each.userId),
+        emails: [],
+        lastSignInAt: null,
+        lastSeenAt: null
+      })
   }
 
   return [...people.values()].sort((a, b) =>
@@ -709,6 +747,14 @@ export async function setScopeRoles(
       wanted.admin,
       authority
     )
+    const had = await rolesAt(trx, scopeType, scopeId, userId)
+    if (roles.some(role => !had.includes(role)))
+      await refuseRoleWhileHeld(
+        trx,
+        { kind: scopeType, id: scopeId },
+        userId,
+        grantedBy
+      )
     await addToScope(trx, scopeType, scopeId, userId)
     if (scopeType === 'team' && !wanted.admin)
       await trx

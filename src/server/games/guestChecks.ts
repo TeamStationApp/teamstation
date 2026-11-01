@@ -4,12 +4,14 @@ import { conflict } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
+import { appearedBySide } from '../../common/scoring/rosterAvailability'
 import { awaitingResult } from '../../common/scoring/rules'
 import { teamsOfRow } from '../../common/teamLists'
 import type { Database, GamesTable } from '../db/database'
 import { readPlays } from '../events/postPlays'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
+import { isRealPlaySql } from './scoringActivity'
 
 type Trx = Kysely<Database>
 
@@ -24,17 +26,8 @@ export async function guestGameOpen(
 ): Promise<void> {
   if (game.status === 'final' || game.status === 'cancelled')
     throw conflict('This game cannot accept players')
-  const stored = await resolveScoringGame(
-    trx,
-    {
-      plays: (await readPlays(trx, game.id)).map(row => row.gumbo as GumboPlay),
-      currentPlay: game.currentPlay as CurrentPlay | null
-    },
-    { gameId: game.id }
-  )
-  const context = await contextOf(trx, game.id, game, stored)
-  if (context != null) {
-    const replay = replayPlays(stored, context)
+  const replay = await replayedGame(trx, game)
+  if (replay != null) {
     if (replay.problems.length > 0 || awaitingResult(replay.state))
       throw conflict('Finish the current play before creating a player')
   } else if (
@@ -74,6 +67,66 @@ export async function inGameAs(
   )
     ? 'guest'
     : null
+}
+
+/**
+ * A game's plays replayed, or nothing when it has no record to read. With
+ * problems, the state is only as far as the replay got.
+ */
+export async function replayedGame(
+  trx: Trx,
+  game: Pick<
+    Selectable<GamesTable>,
+    'id' | 'currentPlay' | 'home_team_id' | 'away_team_id'
+  >
+): Promise<ReturnType<typeof replayPlays> | null> {
+  const stored = await resolveScoringGame(
+    trx,
+    {
+      plays: (await readPlays(trx, game.id)).map(row => row.gumbo as GumboPlay),
+      currentPlay: game.currentPlay as CurrentPlay | null
+    },
+    { gameId: game.id }
+  )
+  const context = await contextOf(trx, game.id, game, stored)
+  return context == null ? null : replayPlays(stored, context)
+}
+
+/**
+ * Whether they have appeared in this game for the team this one plays: in a
+ * stored play of its own (`isRealPlaySql`), which a game scored elsewhere has
+ * nothing else to say it with, or as the app reads the game (`appearedBySide`).
+ */
+export async function playedForOther(
+  trx: Trx,
+  game: Pick<
+    Selectable<GamesTable>,
+    'id' | 'currentPlay' | 'home_team_id' | 'away_team_id'
+  >,
+  userIds: string[],
+  teamId: string
+): Promise<boolean> {
+  const stored = await trx
+    .selectFrom('event_players')
+    .innerJoin('events', 'events.id', 'event_players.event_id')
+    .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'event_players.gumbo_id')
+    .select('event_players.id')
+    .where('events.gameId', '=', game.id)
+    .where('gumbo_ids.user_id', 'in', userIds)
+    .where('event_players.team_id', '!=', teamId)
+    .where(isRealPlaySql)
+    .executeTakeFirst()
+  if (stored != null) return true
+  const replay = await replayedGame(trx, game)
+  if (replay == null) return false
+  const gumbos = await trx
+    .selectFrom('gumbo_ids')
+    .select('gumbo_id')
+    .where('user_id', 'in', userIds)
+    .execute()
+  const other = game.home_team_id === teamId ? 'away' : 'home'
+  const appeared = appearedBySide(replay.state)[other]
+  return gumbos.some(row => appeared.has(row.gumbo_id))
 }
 
 /** Refuses a guest who is in the game already. */

@@ -6,7 +6,14 @@ import { asBirthMonthBody, birthMonthText } from '../../common/age'
 import { asLiteral } from '../../common/asLiteral'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { asUserId } from '../../common/userId'
-import { adminScopes, canCoach, roleScopes, visibleScopes } from '../access'
+import {
+  adminScopes,
+  canCoach,
+  heldByOpenAdd,
+  mayEditName,
+  roleScopes,
+  visibleScopes
+} from '../access'
 import { findUserByEmail } from '../auth/emails'
 import type { Database } from '../db/database'
 import { createInvite } from '../invites/invites'
@@ -73,6 +80,19 @@ export function guardianRoutes(
     if (place == null) throw notFound()
   }
 
+  /**
+   * Whether a team reaches this player only through an add their side may
+   * still reject. Their guardians are that side: who they are, and the links
+   * themselves, are not such a team's to read or change.
+   */
+  const heldFrom = async (
+    actor: { userId: string; isAdmin: boolean },
+    teamId: string,
+    userId: string
+  ): Promise<boolean> =>
+    (await heldByOpenAdd(db, teamId, [userId])) &&
+    !(await mayEditName(db, actor.userId, userId, actor))
+
   router.get(
     '/teams/:teamId/players/:userId/guardians',
     requireActor,
@@ -85,7 +105,8 @@ export function guardianRoutes(
 
       const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
       const allowed =
-        canCoach(scopes, teamId) ||
+        (canCoach(scopes, teamId) &&
+          !(await heldFrom(actor, teamId, userId))) ||
         actor.userId === userId ||
         (await isGuardianOf(db, actor.userId, userId))
       if (!allowed) throw notFound()
@@ -105,6 +126,7 @@ export function guardianRoutes(
       const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
       if (!canCoach(scopes, teamId)) throw notFound()
       await mustPlayOn(teamId, userId)
+      if (await heldFrom(actor, teamId, userId)) throw notFound()
 
       const body = cleanBody(asNewRelative, req.body)
       if ((body.userId == null) === (body.email == null)) {
@@ -216,6 +238,11 @@ export function guardianRoutes(
         throw notFound()
       }
       await mustPlayOn(teamId, userId)
+      if (
+        actor.userId !== guardianId &&
+        (await heldFrom(actor, teamId, userId))
+      )
+        throw notFound()
 
       const removed = await db
         .transaction()

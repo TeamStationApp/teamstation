@@ -20,6 +20,7 @@ describe('roster writes concurrent with an account merge', function () {
   let fixture: AccountHarness
   const closing = userIdOfGumbo(101)
   const keeping = userIdOfGumbo(102)
+  const IMPORTER = { userId: keeping, isAdmin: true, scopes: [] }
   const externalId = { system: 'example', kind: 'person', id: 'ruth' }
 
   beforeEach(async () => {
@@ -120,6 +121,7 @@ describe('roster writes concurrent with an account merge', function () {
         ])
         players = addPlayers(
           db,
+          IMPORTER,
           playerTeam,
           asTeamPlayersBody({
             players: [0, 1].map(index => ({
@@ -258,6 +260,7 @@ describe('roster writes concurrent with an account merge', function () {
       ])
       imported = addPlayers(
         db,
+        IMPORTER,
         'tem_account',
         asTeamPlayersBody({
           players: [{ externalId, jersey: '9' }]
@@ -364,7 +367,7 @@ describe('roster writes concurrent with an account merge', function () {
           jersey: String(index + 1)
         }))
       }).players
-    const one = addPlayers(importer, teams[0], rows(0))
+    const one = addPlayers(importer, IMPORTER, teams[0], rows(0))
     one.catch(() => undefined)
     let two: ReturnType<typeof addPlayers> | undefined
     try {
@@ -374,14 +377,14 @@ describe('roster writes concurrent with an account merge', function () {
           throw new Error('Import did not pause')
         })
       ])
-      two = addPlayers(db, teams[1], rows(1))
+      two = addPlayers(db, IMPORTER, teams[1], rows(1))
       two.catch(() => undefined)
       const deadline = Date.now() + 5000
       let waiting = false
       while (Date.now() < deadline) {
         const locks = await sql<{ waiting: boolean }>`
           select exists(select 1 from pg_locks
-            where locktype = 'transactionid' and not granted
+            where locktype in ('transactionid', 'advisory') and not granted
             and pid in (select pid from pg_stat_activity where datname = current_database())
           ) as waiting`.execute(db)
         if (locks.rows[0].waiting) {
@@ -392,7 +395,7 @@ describe('roster writes concurrent with an account merge', function () {
       }
       expect(
         waiting,
-        'second import waits on the ordered account locks'
+        'second import waits on the ordered player-add and account locks'
       ).equals(true)
       release()
       expect((await one).counts).includes({ joined: 2, error: 0 })
@@ -462,6 +465,7 @@ describe('roster writes concurrent with an account merge', function () {
     })
     const imported = addPlayers(
       importer,
+      IMPORTER,
       'tem_account',
       asTeamPlayersBody({
         players: [{ externalId, bats: 'left', jersey: '12' }]
@@ -546,6 +550,7 @@ describe('roster writes concurrent with an account merge', function () {
           )
         return await addPlayers(
           db,
+          IMPORTER,
           'tem_account',
           asTeamPlayersBody({ players: [{ externalId, jersey: '12' }] }).players
         )

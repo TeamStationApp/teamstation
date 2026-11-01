@@ -81,6 +81,21 @@ export type RequestTerms =
     }
   | GuardianTerms
 
+/** Who was told of a player add: the tier of its approvers that had anybody. */
+export type PlayerAddTold = 'guardians' | 'player' | 'coaches'
+
+/** The line that says who was told, for the screen that made the add. */
+export function playerAddToldWords(told: PlayerAddTold = 'guardians'): string {
+  switch (told) {
+    case 'guardians':
+      return 'Their guardians were notified.'
+    case 'player':
+      return 'They were notified.'
+    case 'coaches':
+      return 'Their coaches were notified.'
+  }
+}
+
 /**
  * A roster manager putting a player who already exists onto their team
  * (`roster`) or into one game for one side (`pool`). Applied at once and told
@@ -97,6 +112,8 @@ export interface PlayerAddTerms {
   side?: 'away' | 'home'
   jersey: string | null
   positions: string[]
+  /** The row the add landed on: gone or no player's, the add no longer stands. */
+  membershipId?: string
   /** Whether the add made the membership, so a rejection removes it whole. */
   createdMembership?: boolean
   /** The jersey and positions a membership held before the add, to restore. */

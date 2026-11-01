@@ -6,6 +6,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import { type ApiFixture, apiFixture } from '../../test/apiFixture'
 import { apiKeyRoutes } from '../routes/apiKeys'
 import { graphqlRoutes, MAX_QUERY_LENGTH } from '../routes/graphql'
+import { insertUser } from '../users/insertUser'
 import { MAX_READS } from './restReader'
 import { MAX_DEPTH } from './schema'
 
@@ -330,6 +331,91 @@ describe('the GraphQL API', function () {
         batting: { h: 0, hr: 0 },
         pitching: { k: 7 }
       })
+    })
+
+    it('gives a withdrawn line its placeholder and no player', async function () {
+      const { db } = f.h
+      const game = f.games[0].id
+      const row = await db
+        .selectFrom('games')
+        .select(['home_team_id', 'away_team_id'])
+        .where('id', '=', game)
+        .executeTakeFirstOrThrow()
+      await db
+        .insertInto('group_requests')
+        .values({
+          id: 'grq_graphql_withdrawn',
+          kind: 'playerAdd',
+          sender_id: userIdOfGumbo(202),
+          sender_scope_type: 'team',
+          sender_scope_id: row.home_team_id,
+          terms: '{}',
+          status: 'declined',
+          sent_at: new Date(0),
+          expires_at: new Date(1)
+        })
+        .execute()
+      const lines = `query ($game: ID!) {
+        game(id: $game) {
+          statLines { player { id } batting { name h } pitching { name k } }
+        }
+      }`
+      await db
+        .insertInto('game_withdrawn_players')
+        .values({
+          game_id: game,
+          user_id: userIdOfGumbo(202),
+          side: 'home',
+          request_id: 'grq_graphql_withdrawn',
+          label: 'HWKS A'
+        })
+        .execute()
+      try {
+        const answer = await ask(104, lines, { game })
+        expect(answer.body.errors).equals(undefined)
+        const gone = answer.body.data.game.statLines.filter(
+          (line: { player: unknown }) => line.player == null
+        )
+        expect(gone).has.length(1)
+        expect(gone[0].pitching).deep.equals({ name: 'HWKS A', k: 7 })
+        // Their own figures leave the game out.
+        const own = `{ stats(perspective: PITCHING, filter: { playerId: "${userIdOfGumbo(202)}" }) { pa k } }`
+        const figures = (await ask(104, own)).body.data.stats
+        expect(figures.map((row: { k: number }) => row.k)).not.includes(7)
+        // By player too, with the withdrawal held on the row they merged into.
+        const kept = await insertUser(db, {
+          display_name: 'Kept Row',
+          password_hash: null,
+          login_enabled: false,
+          is_admin: false
+        })
+        await db
+          .updateTable('game_withdrawn_players')
+          .set({ user_id: kept })
+          .where('game_id', '=', game)
+          .execute()
+        await db
+          .updateTable('users')
+          .set({ merged_into: kept })
+          .where('id', '=', userIdOfGumbo(202))
+          .execute()
+        try {
+          const grouped = `{ stats(perspective: PITCHING, groupBy: [PLAYER]) { k } }`
+          const rows = (await ask(105, grouped)).body.data.stats
+          expect(rows.map((row: { k: number }) => row.k)).not.includes(7)
+        } finally {
+          await db
+            .updateTable('users')
+            .set({ merged_into: null })
+            .where('id', '=', userIdOfGumbo(202))
+            .execute()
+        }
+      } finally {
+        await db
+          .deleteFrom('group_requests')
+          .where('id', '=', 'grq_graphql_withdrawn')
+          .execute()
+      }
     })
 
     it('counts a player’s games over the lines the caller may see', async function () {

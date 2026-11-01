@@ -1,4 +1,4 @@
-import type { Kysely, Transaction } from 'kysely'
+import { type Kysely, sql, type Transaction } from 'kysely'
 
 import { conflict, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
@@ -109,6 +109,12 @@ export async function swapGameSides(
       updated_at: new Date()
     })
     .where('id', '=', gameId)
+    .execute()
+  // Withdrawn lines are kept by side, and go with their team.
+  await trx
+    .updateTable('game_withdrawn_players')
+    .set({ side: sql`case when side = 'home' then 'away' else 'home' end` })
+    .where('game_id', '=', gameId)
     .execute()
   // The teams' lists show the game on its new side, and every screen
   // holding it reads its sides, lineups and at-bat again.
