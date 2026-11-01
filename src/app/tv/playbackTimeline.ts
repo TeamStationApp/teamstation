@@ -1,10 +1,6 @@
 import type { GameDetail } from '../../common/api'
-import {
-  type ReplayBoxScore,
-  replayBoxScore,
-  scoredFrom
-} from '../../common/replay/replayBoxScore'
-import { replayContextOf } from '../../common/replay/replayTimeline'
+import type { ReplayBoxScore } from '../../common/replay/replayBoxScore'
+import { replayScore, replaySourceOf } from '../../common/replay/replaySource'
 import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import type { StoredGame } from '../../common/scoring/session'
 import { mediaAt, wallAt, type WallTimeline } from '../../common/wallTimeline'
@@ -22,15 +18,19 @@ export function boxTimeline(
   >,
   stored: StoredGame
 ): BoxStep[] {
-  const context = replayContextOf(game, stored)
-  if (context === null) return []
-  const steps: BoxStep[] = []
+  const source = replaySourceOf(game, stored)
+  if (source === null) return []
+  const { context, timeline } = source
+  const steps: BoxStep[] =
+    timeline.derived === 0
+      ? [{ at: -Infinity, box: replayScore(timeline.start, timeline) }]
+      : []
   const fallback = new Map<number, number>()
   for (const play of stored.plays) {
     const at = Date.parse(play.about.endTime ?? '')
     if (Number.isFinite(at)) fallback.set(play.about.atBatIndex, at)
   }
-  const replayed = replayPlays(
+  replayPlays(
     {
       plays: stored.plays.map(playbackDocument),
       currentPlay: playbackDocument(stored.currentPlay)
@@ -39,13 +39,11 @@ export function boxTimeline(
     (state, index, time) => {
       const stamped = Date.parse(time ?? '')
       const at = Number.isFinite(stamped) ? stamped : fallback.get(index)
-      if (at !== undefined) steps.push({ at, box: replayBoxScore(state) })
+      if (at !== undefined)
+        steps.push({ at, box: replayScore(state, timeline) })
     }
   )
-  const from = scoredFrom(replayed.base, replayed.derived)
-  return steps
-    .map(step => ({ ...step, box: { ...step.box, from } }))
-    .sort((a, b) => a.at - b.at)
+  return steps.sort((a, b) => a.at - b.at)
 }
 
 export function timelineFor(startAt: string | null): WallTimeline {
