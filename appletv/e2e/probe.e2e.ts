@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 
 import express from 'express'
+
+import { captureScreenshot } from './capture'
 
 async function main(): Promise<void> {
   const {
@@ -37,7 +38,7 @@ async function main(): Promise<void> {
   const daemon = await MaestroD.connect({
     name: process.env.MAESTRO_D ?? 'appleTvNative'
   })
-  const tv = await daemon.attach({ device, platform: 'ios' })
+  const tv = await daemon.attach({ device, platform: 'ios', artifacts: 'none' })
   async function clocks(): Promise<number[]> {
     const texts: string[] = []
     const walk = (node: any): void => {
@@ -80,10 +81,7 @@ async function main(): Promise<void> {
     await tv.tapOn({ text: 'Restore angle 2' })
     await tv.tapOn({ text: 'Collapse angle 1' })
     const restored = await advancing(enlarged)
-    await writeFile(
-      path.join(artifacts, 'tv-playback-probe.png'),
-      await tv.screenshot()
-    )
+    await captureScreenshot(tv, path.join(artifacts, 'tv-playback-probe.png'))
     console.log(
       'PASS: four native playback clocks advance through hide, enlarge, restore and collapse',
       JSON.stringify({ first, hidden, enlarged, restored })

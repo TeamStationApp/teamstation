@@ -57,7 +57,29 @@ export class PlaybackClock {
     }
   }
 
-  /** Seek across the union of camera recordings, not just the current master. */
+  /** Full recording duration, without the seek guard before the final frame. */
+  recordingExtent(): { start: number; end: number } | null {
+    const ports = this.ports.filter(p => p.loaded && !p.failed)
+    if (ports.length === 0 || ports.some(p => !Number.isFinite(p.duration)))
+      return null
+    const ranges = ports.map(p => ({
+      start: wallAt(p.timeline.anchors, 0),
+      end: wallAt(p.timeline.anchors, p.duration * 1000)
+    }))
+    if (ranges.some(r => r.start === null || r.end === null)) return null
+    const start = Math.min(...ranges.map(r => r.start!))
+    const end = Math.max(...ranges.map(r => r.end!))
+    return end > start ? { start, end } : null
+  }
+
+  /** Seek across the union, stopping before the final frame. */
+  extent(): { start: number; end: number } | null {
+    const range = this.recordingExtent()
+    return range === null || range.end - range.start <= 100
+      ? null
+      : { start: range.start, end: range.end - 100 }
+  }
+
   move(seconds: number): number | null {
     if (this.wall === null) return null
     const ranges = this.ports
