@@ -618,6 +618,27 @@ describe('TV game playback entry', () => {
     await key('unknown')
     expect(document.querySelector('video')!.paused).equals(true)
   })
+  it('dismisses topmost stats with an upward swipe or continuous upward touch', async () => {
+    await render()
+    await press('Close panel')
+    await press('Box score')
+    expect(document.querySelector('[data-testid="tv-box-panel"]')).not.equals(
+      null
+    )
+    await act(async () => {
+      emitTvDirection('swipeUp')
+      await pause()
+    })
+    expect(document.querySelector('[data-testid="tv-box-panel"]')).equals(null)
+    await press('Box score')
+    await act(async () => {
+      emitTvPan('Began', 0, 50)
+      emitTvPan('Changed', 0, 20)
+      emitTvPan('Ended', 0, 20)
+      await pause()
+    })
+    expect(document.querySelector('[data-testid="tv-box-panel"]')).equals(null)
+  })
   it('restores the selected camera and boundary tracking after collapsing fullscreen', async () => {
     await render()
     await press('Close panel')
