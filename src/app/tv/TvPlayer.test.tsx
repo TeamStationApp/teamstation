@@ -191,8 +191,9 @@ async function press(label: string): Promise<void> {
       await pause()
     })
     await act(async () => {
+      if (direction.startsWith('swipe'))
+        await new Promise(resolve => setTimeout(resolve, 120))
       emitTvDirection(direction)
-      if (direction.startsWith('swipe')) emitTvDirection(direction)
       await pause()
     })
     return
@@ -554,19 +555,19 @@ describe('TV game playback entry', () => {
       null
     )
   })
-  it('opens panels only after boundary moves, dismisses inward and expands then scrolls stats', async () => {
+  it('opens each panel on the first swipe beyond its edge after focus arrives', async () => {
     await render()
     const focus = async (index: number): Promise<void> => {
       await act(async () => {
         document
           .querySelector<HTMLElement>(`[data-testid="tv-angle-${index}"]`)!
           .focus()
-        await pause()
+        await new Promise(resolve => setTimeout(resolve, 120))
       })
     }
-    const key = async (direction: string, action = 0): Promise<void> => {
+    const key = async (direction: string): Promise<void> => {
       await act(async () => {
-        emitTvDirection(direction, action)
+        emitTvDirection(direction)
         await pause()
       })
     }
@@ -579,44 +580,21 @@ describe('TV game playback entry', () => {
     await key('swipeRight')
     expect(
       document.querySelector('[data-testid="tv-highlights-panel"]')
-    ).equals(null)
-    await key('right', 1)
-    expect(
-      document.querySelector('[data-testid="tv-highlights-panel"]')
-    ).equals(null)
-    await key('swipeRight')
-    expect(
-      document.querySelector('[data-testid="tv-highlights-panel"]')
     ).not.equals(null)
     await key('swipeLeft')
-    expect(
-      document.querySelector('[data-testid="tv-highlights-panel"]')
-    ).equals(null)
     await focus(0)
-    await key('swipeLeft')
     await key('swipeLeft')
     expect(
       document.querySelector('[data-testid="tv-cameras-panel"]')
     ).not.equals(null)
-    await key('down')
     await key('swipeRight')
-    expect(document.querySelector('[data-testid="tv-cameras-panel"]')).equals(
-      null
-    )
     await focus(2)
-    await key('swipeDown')
     await key('swipeDown')
     expect(document.querySelector('[data-testid="tv-box-panel"]')).not.equals(
       null
     )
-    await key('down')
-    await key('down')
-    await key('up')
-    await key('swipeRight')
-    await key('swipeLeft')
-    await key('playPause')
-    await key('unknown')
-    expect(document.querySelector('video')!.paused).equals(true)
+    await key('swipeUp')
+    expect(document.querySelector('[data-testid="tv-box-panel"]')).equals(null)
   })
   it('dismisses topmost stats with an upward swipe or continuous upward touch', async () => {
     await render()

@@ -5,7 +5,7 @@ import type { RemoteDirection, RemoteInput } from './transportState'
 export interface TvRemoteEvent {
   eventType: string
   eventKeyAction?: number
-  body?: { state: string; x?: number; y?: number }
+  body?: { state: string; x?: number; y?: number; velocityY?: number }
 }
 
 /** The pinned tvOS runtime emits taps on Up, long presses on Down/Up, and touch phases separately. */
