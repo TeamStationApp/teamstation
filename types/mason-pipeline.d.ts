@@ -9,6 +9,8 @@ declare module '@mason/types' {
   export interface CommandOptions {
     cwd?: string
     env?: Record<string, string>
+    /** Resolve instead of rejecting on a nonzero exit. */
+    allowFailure?: boolean
   }
   export interface Stage {
     sh: (command: string, options?: CommandOptions) => Promise<CommandResult>

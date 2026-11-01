@@ -29,7 +29,7 @@ export function setup(m: Setup): void {
         node: '24',
         java: '17',
         android: [
-          'platforms;android-37',
+          'platforms;android-37.0',
           'build-tools;37.0.0',
           'ndk;27.1.12297006',
           'cmake;3.22.1'
@@ -45,13 +45,23 @@ export function setup(m: Setup): void {
   })
 }
 
-/** Installs dependencies through Socket, the wrapper this repo's installs use. */
+/**
+ * Installs dependencies through Socket. A quota refusal or a worker with no
+ * Socket token installs with npm; any other Socket failure stops the build.
+ */
 async function install(ctx: Stage): Promise<void> {
   await ctx.sh('npm install --prefix .mason-tools @socketsecurity/cli')
   // An advisory published after this lockfile was committed does not fail the build.
-  await ctx.sh('.mason-tools/node_modules/.bin/socket npm ci', {
-    env: { SOCKET_CLI_ACCEPT_RISKS: '1' }
+  const scanned = await ctx.sh('.mason-tools/node_modules/.bin/socket npm ci', {
+    env: { SOCKET_CLI_ACCEPT_RISKS: '1' },
+    allowFailure: true
   })
+  if (scanned.code === 0) return
+  const detail = `${scanned.stdout}\n${scanned.stderr}`
+  if (!/429|Insufficient quota|requires an API token/.test(detail)) {
+    throw new Error(`socket npm ci failed with exit code ${scanned.code}`)
+  }
+  await ctx.sh('npm ci')
 }
 
 export async function buildIos(ctx: Stage): Promise<void> {

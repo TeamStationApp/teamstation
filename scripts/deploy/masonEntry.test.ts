@@ -306,7 +306,7 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.equal(stages.android?.on.type, 'do-linux')
     assert.equal(stages.ios?.tools.node, '24')
     assert.deepEqual(stages.android?.tools.android, [
-      'platforms;android-37',
+      'platforms;android-37.0',
       'build-tools;37.0.0',
       'ndk;27.1.12297006',
       'cmake;3.22.1'
@@ -338,5 +338,55 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.match(log, /assembleRelease -PversionCode=26103101/)
     assert.match(log, /save:ios-archive/)
     assert.match(log, /save:android-apk/)
+  })
+
+  it('installs with npm when Socket has no quota or no token', async () => {
+    const commands: string[] = []
+    const ctx = {
+      async sh(command: string) {
+        commands.push(command)
+        if (command.includes('socket npm ci')) {
+          return {
+            code: 1,
+            stdout: '',
+            stderr: 'Socket API Request failed (429): Insufficient quota'
+          }
+        }
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      getBuildNumber() {
+        return '26103101'
+      },
+      artifacts: {
+        async save(name: string) {
+          commands.push(`save:${name}`)
+        }
+      }
+    }
+    await buildIos(ctx)
+    assert.ok(commands.includes('npm ci'))
+  })
+
+  it('stops when Socket reports a failure other than quota or a missing token', async () => {
+    const commands: string[] = []
+    const ctx = {
+      async sh(command: string) {
+        commands.push(command)
+        if (command.includes('socket npm ci')) {
+          return { code: 1, stdout: '', stderr: 'found 2 alerts' }
+        }
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      getBuildNumber() {
+        return '26103101'
+      },
+      artifacts: {
+        async save() {}
+      }
+    }
+    await assert.rejects(async () => {
+      await buildIos(ctx)
+    }, /socket npm ci failed/)
+    assert.equal(commands.includes('npm ci'), false)
   })
 })
