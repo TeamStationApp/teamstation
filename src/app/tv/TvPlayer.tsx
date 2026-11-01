@@ -9,6 +9,7 @@ import React, {
 } from 'react'
 import {
   Animated,
+  AppState,
   BackHandler,
   Image,
   Platform,
@@ -20,7 +21,7 @@ import {
   View
 } from 'react-native'
 import { Defs, LinearGradient, Rect, Stop, Svg } from 'react-native-svg'
-import Video, { type VideoRef } from 'react-native-video'
+import type { VideoRef } from 'react-native-video'
 
 import type {
   BoardTimelineWindow,
@@ -35,7 +36,8 @@ import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
-import { NativeGradient } from './NativePresentation'
+import { NativeGradient, PlaybackBoundary } from './NativePresentation'
+import { NativeSeekQueue } from './nativeSeekQueue'
 import { PlaybackClock } from './playbackClock'
 import {
   initialPlayback,
@@ -43,10 +45,12 @@ import {
   type SidePanel
 } from './playbackState'
 import { type BoxStep, boxTimeline, timelineFor } from './playbackTimeline'
-import { tvControl, tvEvents, TvFocusGuide } from './remote'
+import { normalizeRemote, tvControl, tvEvents, TvFocusGuide } from './remote'
+import { TvTransport } from './transportState'
+import { TransportVideo } from './TransportVideo'
 import type { TvPlayRequest } from './TvBrowser'
 import { TvButton } from './TvButton'
-import { angleNeighbor, type Direction, tvLayout } from './tvLayout'
+import { angleNeighbor, tvLayout } from './tvLayout'
 
 interface Angle {
   video: VideoSummary
@@ -148,7 +152,70 @@ export function TvPlayer({
   const current = useRef(state)
   current.current = state
   const refs = useRef<Array<VideoRef | null>>([])
+  const seekQueues = useRef<NativeSeekQueue[]>([])
   const clock = useRef(new PlaybackClock())
+  const [transportState, setTransportState] = useState({
+    visible: false,
+    rate: 1,
+    scrubbing: false
+  })
+  const pendingRecordingEnd = useRef(false)
+  const scrubber = useRef<ScrubberHandle>(null)
+  const scrubWidth = useRef(screen.width - 320)
+  const transport = useRef<TvTransport | null>(null)
+  transport.current ??= new TvTransport({
+    move: seconds => {
+      const next = clock.current.move(seconds)
+      if (next !== null) {
+        setWall(next)
+        dispatch({ type: 'seek' })
+      }
+    },
+    seek: target => {
+      clock.current.seek(target)
+      setWall(target)
+      dispatch({ type: 'seek' })
+    },
+    preview: target => scrubber.current?.preview(target),
+    position: () => clock.current.wall,
+    extent: () => clock.current.extent(),
+    width: () => scrubWidth.current,
+    panEnabled: enabled =>
+      enabled
+        ? tvControl?.enableTVPanGesture()
+        : tvControl?.disableTVPanGesture(),
+    changed: setTransportState,
+    now: Date.now,
+    later: (callback, ms) => setTimeout(callback, ms),
+    clear: timer => {
+      clearTimeout(timer as ReturnType<typeof setTimeout>)
+    }
+  })
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', value => {
+      if (value !== 'active') transport.current?.cancel()
+    })
+    return () => {
+      subscription.remove()
+      transport.current?.cancel()
+    }
+  }, [])
+  useEffect(() => {
+    if (state.side !== null || state.box !== 'closed' || error !== null)
+      transport.current?.cancel()
+  }, [state.side, state.box, error])
+  useEffect(() => {
+    if (transportState.scrubbing) return
+    if (pendingRecordingEnd.current) {
+      pendingRecordingEnd.current = false
+      if (!clock.current.ports.some((_, i) => clock.current.available(i))) {
+        dispatch({ type: 'ended' })
+        dispatch({ type: 'open', panel: 'highlights' })
+      }
+    }
+    const position = clock.current.wall
+    if (position !== null) dispatch({ type: 'progress', wall: position })
+  }, [transportState.scrubbing])
   const ready = useRef(false)
   const generation = useRef(0)
   const [readySequence, setReadySequence] = useState(0)
@@ -170,6 +237,7 @@ export function TvPlayer({
     let active = true
     const activeGeneration = ++generation.current
     ready.current = false
+    pendingRecordingEnd.current = false
     setReadySequence(0)
     clock.current = new PlaybackClock()
     setError(null)
@@ -212,9 +280,16 @@ export function TvPlayer({
       }
       if (!active) return
       loaded.forEach((angle, index) => {
-        clock.current.register(index, angle.timeline, seconds =>
-          refs.current[index]?.seek(seconds, 0)
+        const queue = new NativeSeekQueue(
+          seconds => refs.current[index]?.seek(seconds, 0),
+          () => {
+            clock.current.settled(index)
+          }
         )
+        seekQueues.current[index] = queue
+        clock.current.register(index, angle.timeline, seconds => {
+          queue.request(seconds)
+        })
       })
       dispatch({ type: 'reset', count: loaded.length })
       setAngles(loaded)
@@ -312,6 +387,7 @@ export function TvPlayer({
     [angles]
   )
   const back = useCallback((): void => {
+    transport.current?.cancel()
     const held = current.current
     if (held.side !== null || held.box !== 'closed')
       dispatch({ type: 'dismiss' })
@@ -388,25 +464,32 @@ export function TvPlayer({
   }, [state.box, boxMotion])
   useEffect(() => {
     const subscription = tvEvents?.addListener(event => {
-      // UIKit tap recognizers emit only the completed (up) event.
-      if (
-        Platform.OS === 'ios'
-          ? event.eventKeyAction === 0
-          : event.eventKeyAction === 1
-      )
+      const input = normalizeRemote(event, Platform.OS === 'ios')
+      if (input === null) return
+      if (input.kind === 'cancel') {
+        transport.current?.cancel()
         return
-      if (event.eventType === 'playPause') {
+      }
+      if (input.kind === 'playPause') {
         togglePlayback()
         return
       }
-      const direction = event.eventType.replace(/^swipe/, '').toLowerCase()
-      if (!['left', 'right', 'up', 'down'].includes(direction)) return
       const held = current.current
+      if (error !== null) return
+      if (
+        held.side === null &&
+        held.box === 'closed' &&
+        transport.current?.handle(input) === true
+      )
+        return
+      if (input.kind !== 'click' && input.kind !== 'swipe') return
+      const direction = input.direction
       if (held.side !== null) {
         if (held.side === 'cameras') dispatch({ type: 'activity' })
         if (
-          (held.side === 'cameras' && direction === 'left') ||
-          (held.side === 'highlights' && direction === 'right')
+          input.kind === 'swipe' &&
+          ((held.side === 'cameras' && direction === 'left') ||
+            (held.side === 'highlights' && direction === 'right'))
         )
           dispatch({ type: 'dismiss' })
         return
@@ -447,11 +530,12 @@ export function TvPlayer({
       }
       const index = focusedAngle.current
       if (index === null) return
+      if (input.kind !== 'swipe') return
       if (index !== handledFocus.current) {
         handledFocus.current = index
         return
       }
-      const neighbor = angleNeighbor(held, index, direction as Direction)
+      const neighbor = angleNeighbor(held, index, direction)
       if (neighbor !== null) return
       if (direction === 'left') open('cameras')
       else if (direction === 'right') open('highlights')
@@ -463,7 +547,7 @@ export function TvPlayer({
     return () => {
       subscription?.remove()
     }
-  }, [open])
+  }, [open, error])
   const chooseClip = (clip: TvHighlight, sourceIndex = 0): void => {
     const timeline = clock.current.ports[sourceIndex]?.timeline
     if (timeline === undefined) return
@@ -545,7 +629,11 @@ export function TvPlayer({
         ? previous
         : next
     )
-    if (current.current.clipEnd !== null && next >= current.current.clipEnd)
+    if (
+      transport.current?.scrubbing !== true &&
+      current.current.clipEnd !== null &&
+      next >= current.current.clipEnd
+    )
       dispatch({ type: 'progress', wall: next })
   }
   const seek = (seconds: number): void => {
@@ -597,8 +685,25 @@ export function TvPlayer({
     clock.current.master
   const overlay =
     state.side !== null || state.box !== 'closed' || error !== null
+  const extent = clock.current.recordingExtent()
   return (
-    <View testID="tv-player" style={styles.scene}>
+    <PlaybackBoundary
+      testID="tv-player"
+      style={styles.scene}
+      transportEnabled={!overlay}
+      scrubEnabled={!overlay && transportState.visible}
+      onTransportRelease={event =>
+        transport.current?.handle({
+          kind: 'hold',
+          direction: event.nativeEvent.direction,
+          phase: 'end'
+        })
+      }
+      onCancelTransport={() => transport.current?.cancel()}
+      onPanCancelled={() =>
+        transport.current?.handle({ kind: 'pan', phase: 'cancel', x: 0 })
+      }
+    >
       <TvFocusGuide
         style={StyleSheet.absoluteFill}
         {...{ trapFocusLeft: true, trapFocusRight: true, trapFocusDown: true }}
@@ -666,16 +771,17 @@ export function TvPlayer({
                   borderColor: '#fff'
                 }}
               >
-                <Video
+                <TransportVideo
                   ref={ref => {
                     refs.current[index] = ref
                   }}
                   source={sources[index]}
                   style={StyleSheet.absoluteFill}
                   muted={index !== audio}
+                  rate={transportState.rate}
                   paused={
                     readySequence === 0 ||
-                    state.paused ||
+                    (state.paused && transportState.rate === 1) ||
                     (buffering.includes(clock.current.master) &&
                       index !== clock.current.master)
                   }
@@ -684,8 +790,8 @@ export function TvPlayer({
                   onLoad={event => {
                     loaded(index, event.duration)
                   }}
-                  onSeek={() => {
-                    clock.current.settled(index)
+                  onSeek={event => {
+                    seekQueues.current[index]?.complete(event.seekTime)
                   }}
                   onProgress={event => {
                     progress(index, event.currentTime)
@@ -702,6 +808,10 @@ export function TvPlayer({
                     setWall(clock.current.wall)
                     setReadySequence(n => n + 1)
                     if (complete) {
+                      if (transport.current?.scrubbing === true) {
+                        pendingRecordingEnd.current = true
+                        return
+                      }
                       dispatch({ type: 'ended' })
                       open('highlights')
                     }
@@ -726,6 +836,14 @@ export function TvPlayer({
           )
         })}
       </TvFocusGuide>
+      {transportState.visible && !overlay && (
+        <Scrubber
+          ref={scrubber}
+          wall={wall}
+          extent={extent}
+          width={scrubWidth}
+        />
+      )}
       {angles === null && error === null && (
         <Text style={styles.copy}>Opening game…</Text>
       )}
@@ -1187,7 +1305,7 @@ export function TvPlayer({
           />
         </View>
       )}
-    </View>
+    </PlaybackBoundary>
   )
 }
 
@@ -1294,6 +1412,60 @@ function PanelGradient({
     </View>
   )
 }
+interface ScrubberHandle {
+  preview: (wall: number | null) => void
+}
+
+/** Touch updates stay inside this small view, away from replay and video work. */
+const Scrubber = React.forwardRef<
+  ScrubberHandle,
+  {
+    wall: number | null
+    extent: { start: number; end: number } | null
+    width: React.RefObject<number>
+  }
+>(function Scrubber({ wall, extent, width }, ref) {
+  const [preview, setPreview] = useState<number | null>(null)
+  React.useImperativeHandle(ref, () => ({ preview: setPreview }), [])
+  const position = preview ?? wall
+  const elapsed =
+    extent === null || position === null
+      ? 0
+      : Math.max(0, (position - extent.start) / 1000)
+  const duration = extent === null ? 0 : (extent.end - extent.start) / 1000
+  const timeLabel = (seconds: number): string => {
+    const total = Math.floor(seconds)
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+  }
+  return (
+    <View testID="tv-scrubber" pointerEvents="none" style={styles.scrubber}>
+      <Text testID="tv-current-time" style={styles.copy}>
+        {extent === null ? 'LIVE' : timeLabel(elapsed)}
+      </Text>
+      <View
+        testID="tv-scrub-track"
+        style={styles.scrubTrack}
+        onLayout={event => {
+          width.current = event.nativeEvent.layout.width
+        }}
+      >
+        <View
+          testID="tv-scrub-dot"
+          style={[
+            styles.scrubDot,
+            {
+              left: `${duration > 0 ? Math.min(100, (elapsed / duration) * 100) : 0}%`
+            }
+          ]}
+        />
+      </View>
+      <Text testID="tv-total-time" style={styles.copy}>
+        {extent === null ? 'Seeking unavailable' : timeLabel(duration)}
+      </Text>
+    </View>
+  )
+})
+
 const styles = StyleSheet.create({
   statRow: { flexDirection: 'row', paddingVertical: 3, alignItems: 'center' },
   statName: { width: 300, paddingRight: 20 },
@@ -1335,6 +1507,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     flexWrap: 'wrap'
+  },
+  scrubber: {
+    position: 'absolute',
+    left: 40,
+    right: 40,
+    bottom: 110,
+    zIndex: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 24,
+    padding: 20,
+    backgroundColor: '#0006',
+    borderRadius: 16
+  },
+  scrubTrack: { flex: 1, height: 5, backgroundColor: '#fff7' },
+  scrubDot: {
+    position: 'absolute',
+    top: -8,
+    marginLeft: -10,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#fff'
   },
   scoreboard: {
     position: 'absolute',
