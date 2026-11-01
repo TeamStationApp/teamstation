@@ -160,6 +160,57 @@ afterEach(async () => {
   closed = false
 })
 describe('TV game playback entry', () => {
+  it('applies slow overlapping refreshes and never lets an older response replace newer highlights', async () => {
+    live = true
+    const originalInterval = globalThis.setInterval
+    const originalHighlights = client.tvHighlights.bind(client)
+    let poll: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 10000) poll = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    try {
+      await render()
+      await press('Highlights')
+      const pendingRefreshes: Array<
+        (value: Awaited<ReturnType<typeof client.tvHighlights>>) => void
+      > = []
+      client.tvHighlights = async () =>
+        await new Promise(resolve => {
+          pendingRefreshes.push(resolve)
+        })
+      expect(poll).not.equals(undefined)
+      await act(async () => {
+        poll!()
+        poll!()
+        await pause()
+      })
+      const clips = await originalHighlights('0')
+      await act(async () => {
+        pendingRefreshes[0]([{ ...clips[0], title: 'First slow refresh' }])
+        await pause()
+      })
+      expect(document.body.textContent).contains('First slow refresh')
+      await act(async () => {
+        pendingRefreshes[1]([{ ...clips[0], title: 'Second slow refresh' }])
+        await pause()
+        poll!()
+        poll!()
+        await pause()
+      })
+      await act(async () => {
+        pendingRefreshes[3]([{ ...clips[0], title: 'Newest response' }])
+        await pause()
+        pendingRefreshes[2]([{ ...clips[0], title: 'Stale response' }])
+        await pause()
+      })
+      expect(document.body.textContent).contains('Newest response')
+      expect(document.body.textContent).not.contains('Stale response')
+    } finally {
+      globalThis.setInterval = originalInterval
+      client.tvHighlights = originalHighlights
+    }
+  })
   it('owns native pan only during scrubbing and seeks every persistent player', async () => {
     viewport = await windowSize(1920, 1080)
     await render()

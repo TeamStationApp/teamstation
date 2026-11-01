@@ -287,6 +287,8 @@ export function TvPlayer({
       dispatch({ type: 'reset', count: loaded.length })
       setAngles(loaded)
       let refreshSequence = 0
+      let appliedStatisticsSequence = 0
+      let appliedTimelineSequence = 0
       const refresh = async (): Promise<void> => {
         const sequence = ++refreshSequence
         const [board, replay, highlights] = await Promise.all([
@@ -294,13 +296,16 @@ export function TvPlayer({
           readTvStatistics(client, request.game.id),
           client.tvHighlights(loaded[0].video.id).catch(() => null)
         ])
-        if (!active || sequence !== refreshSequence) return
-        setStats({
-          board,
-          ...replay
-        })
-        setClipError(highlights === null)
-        if (highlights !== null) setClips(highlights)
+        if (!active) return
+        if (sequence > appliedStatisticsSequence) {
+          appliedStatisticsSequence = sequence
+          setStats({
+            board,
+            ...replay
+          })
+          setClipError(highlights === null)
+          if (highlights !== null) setClips(highlights)
+        }
         if (loaded.some(a => a.video.status === 'live')) {
           const updates = await Promise.all(
             loaded.map(
@@ -308,10 +313,12 @@ export function TvPlayer({
                 await client.wallTimeline(a.video.id).catch(() => a.timeline)
             )
           )
-          if (active && sequence === refreshSequence)
+          if (active && sequence > appliedTimelineSequence) {
+            appliedTimelineSequence = sequence
             updates.forEach((timeline, i) => {
               clock.current.ports[i].timeline = timeline
             })
+          }
         }
       }
       statisticsRefresh.current = refresh
