@@ -133,12 +133,13 @@ export class PlaybackClock {
   }
 
   settled(index: number): void {
-    this.ports[index].settling = false
+    if (this.ports[index] !== undefined) this.ports[index].settling = false
   }
 
   progress(index: number, seconds: number): number | null {
     const port = this.ports[index]
-    if (port.settling || port.failed || port.ended) return this.wall
+    if (port === undefined || port.settling || port.failed || port.ended)
+      return this.wall
     // Native progress queued before a seek can arrive after its completion callback.
     if (port.target !== null && Math.abs(seconds - port.target) > 1)
       return this.wall

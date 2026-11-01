@@ -122,6 +122,14 @@ describe('TV playback composition and remote state', () => {
   })
 })
 describe('TV native playback clock contracts', () => {
+  it('ignores late native progress and seek completions after a clock reset', () => {
+    const clock = new PlaybackClock()
+    expect(clock.progress(0, 12)).equals(null)
+    expect(() => {
+      clock.settled(0)
+    }).not.throws()
+  })
+
   it('exposes only finite known recording bounds for proportional scrubbing', () => {
     const clock = new PlaybackClock()
     expect(clock.extent()).equals(null)

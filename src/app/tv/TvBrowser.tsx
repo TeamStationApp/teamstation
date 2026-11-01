@@ -75,7 +75,7 @@ export function TvScrim(): React.ReactElement {
     return (
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
         <NativeGradient
-          direction="left"
+          gradientDirection="left"
           maxOpacity={0.35}
           style={{
             position: 'absolute',
@@ -86,7 +86,7 @@ export function TvScrim(): React.ReactElement {
           }}
         />
         <NativeGradient
-          direction="bottom"
+          gradientDirection="bottom"
           maxOpacity={0.15}
           style={{
             position: 'absolute',
@@ -137,7 +137,7 @@ function CollectionBackground({
     >
       {NativeGradient !== null ? (
         <NativeGradient
-          direction="bottom"
+          gradientDirection="bottom"
           maxOpacity={0.1}
           style={{ height: rowHeight }}
         />

@@ -366,7 +366,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 @end
 @interface TVGradientView : UIView
 @property(nonatomic, strong) CAGradientLayer *gradient;
-@property(nonatomic, copy) NSString *direction;
+@property(nonatomic, copy) NSString *gradientDirection;
 @property(nonatomic) CGFloat maxOpacity;
 @end
 @interface TVPresentationTests : XCTestCase @end
@@ -382,7 +382,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 }
 - (void)testGradientTracksPanelBounds {
   TVGradientView *view = (TVGradientView *)[[NSClassFromString(@"TVGradientManager") new] view];
-  view.frame = CGRectMake(0,0,1920,216); view.direction = @"bottom"; view.maxOpacity = 0.1;
+  view.frame = CGRectMake(0,0,1920,216); view.gradientDirection = @"bottom"; view.maxOpacity = 0.1;
   [view layoutSubviews];
   CAGradientLayer *layer = view.gradient;
   XCTAssertEqualObjects(layer.locations,(@[@0,@1]));
@@ -394,12 +394,12 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
   view.maxOpacity = 2; XCTAssertEqual(view.maxOpacity,1);
   XCTAssertTrue(CGPointEqualToPoint(layer.startPoint,CGPointMake(0,1)));
   view.frame = CGRectMake(0,0,1920,356); [view layoutSubviews]; XCTAssertEqual(layer.bounds.size.height,356);
-  view.direction = @"right"; XCTAssertEqual(layer.startPoint.x,1); XCTAssertEqual(layer.endPoint.x,0);
-  view.direction = @"left"; XCTAssertEqual(layer.startPoint.x,0); XCTAssertEqual(layer.endPoint.x,1);
+  view.gradientDirection = @"right"; XCTAssertEqual(layer.startPoint.x,1); XCTAssertEqual(layer.endPoint.x,0);
+  view.gradientDirection = @"left"; XCTAssertEqual(layer.startPoint.x,0); XCTAssertEqual(layer.endPoint.x,1);
 }
 - (void)testBottomGradientCompositesAnEvenTransparentRamp {
   TVGradientView *view = (TVGradientView *)[[NSClassFromString(@"TVGradientManager") new] view];
-  view.frame = CGRectMake(0,0,4,100); view.direction = @"bottom";
+  view.frame = CGRectMake(0,0,4,100); view.gradientDirection = @"bottom";
   for (NSNumber *opacity in @[@0.1, @0.15]) {
     view.maxOpacity = opacity.doubleValue; [view layoutSubviews];
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
