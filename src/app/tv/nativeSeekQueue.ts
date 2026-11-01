@@ -8,8 +8,6 @@ const nativeTime = (seconds: number): number =>
 export class NativeSeekQueue {
   private active: number | null = null
   private desired = 0
-  private position = 0
-  private awaitingProgress: number | null = null
 
   constructor(
     private readonly seek: (seconds: number) => void,
@@ -19,37 +17,21 @@ export class NativeSeekQueue {
   request(seconds: number): void {
     this.desired = seconds
     if (this.active !== null) return
-    if (nativeTime(seconds) === nativeTime(this.position)) {
-      // react-native-video does not emit onSeek for a no-op seek.
-      this.settled()
-      return
-    }
+    // Always ask native: playback may have moved since the last JS event.
+    // The pinned native no-op patch guarantees acknowledgement in that case.
     this.active = seconds
     this.seek(seconds)
   }
 
-  complete(seekTime: number, currentTime: number): void {
+  complete(seekTime: number): void {
     if (
       this.active === null ||
       nativeTime(seekTime) !== nativeTime(this.active)
     )
       return
     this.active = null
-    this.position = currentTime
-    this.awaitingProgress = currentTime
     if (nativeTime(this.desired) !== nativeTime(seekTime))
       this.request(this.desired)
     else this.settled()
-  }
-
-  progress(seconds: number): void {
-    if (
-      this.active !== null ||
-      (this.awaitingProgress !== null &&
-        Math.abs(seconds - this.awaitingProgress) > 1)
-    )
-      return
-    this.awaitingProgress = null
-    this.position = seconds
   }
 }

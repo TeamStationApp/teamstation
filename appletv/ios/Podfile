@@ -7,6 +7,8 @@ require Pod::Executable.execute_command('node', ['-p',
 
 platform :tvos, min_ios_version_supported
 prepare_react_native_project!
+require_relative '../scripts/patch-video-seek'
+patch_video_seek(File.expand_path('../node_modules/react-native-video/ios/Video/Features/RCTPlayerOperations.swift', __dir__))
 
 linkage = ENV['USE_FRAMEWORKS']
 if linkage != nil

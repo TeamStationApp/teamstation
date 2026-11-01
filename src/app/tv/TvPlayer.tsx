@@ -809,13 +809,9 @@ export function TvPlayer({
                     loaded(index, event.duration)
                   }}
                   onSeek={event => {
-                    seekQueues.current[index]?.complete(
-                      event.seekTime,
-                      event.currentTime
-                    )
+                    seekQueues.current[index]?.complete(event.seekTime)
                   }}
                   onProgress={event => {
-                    seekQueues.current[index]?.progress(event.currentTime)
                     progress(index, event.currentTime)
                   }}
                   onBuffer={event => {

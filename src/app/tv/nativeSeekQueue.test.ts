@@ -4,26 +4,29 @@ import { describe, it } from 'mocha'
 import { NativeSeekQueue } from './nativeSeekQueue'
 
 describe('TV native seek backpressure', () => {
-  it('does not strand repeated fractional targets after native Float/CMTime rounding', () => {
+  it('acknowledges native no-ops even when playback moved beyond the last JS sample', () => {
     const sent: number[] = []
+    let nativePosition = 10.25 // JS last saw 10; native has advanced.
     let settled = 0
     const queue = new NativeSeekQueue(
-      n => sent.push(n),
+      target => {
+        sent.push(target)
+        // The patched native operation acknowledges both real and no-op seeks.
+        nativePosition = target
+        queue.complete(target)
+      },
       () => {
         settled++
       }
     )
-    queue.request(8192.02002)
-    queue.complete(8192.02002, 8192.021484375)
-    queue.request(8192.02002)
-    expect(sent).deep.equals([8192.02002])
-    expect(settled).equals(2)
-    queue.request(8182)
-    expect(sent).deep.equals([8192.02002, 8182])
-    queue.complete(8182, 8182)
+    queue.request(10.25)
+    queue.request(20.25)
+    queue.request(10.25)
+    expect(sent).deep.equals([10.25, 20.25, 10.25])
+    expect(nativePosition).equals(10.25)
     expect(settled).equals(3)
   })
-  it('coalesces slow native seeks and ignores stale completions until the latest target settles', () => {
+  it('coalesces requests and rejects stale acknowledgements including fractional targets', () => {
     const sent: number[] = []
     let settled = 0
     const queue = new NativeSeekQueue(
@@ -32,36 +35,24 @@ describe('TV native seek backpressure', () => {
         settled++
       }
     )
-    queue.request(0)
-    expect(settled).equals(1)
     queue.request(10)
     for (let n = 20; n <= 100; n += 10) queue.request(n)
-    queue.progress(2)
     expect(sent).deep.equals([10])
-    queue.complete(9, 9)
-    expect(settled).equals(1)
-    queue.complete(10, 10)
+    queue.complete(9)
+    expect(settled).equals(0)
+    queue.complete(10)
     expect(sent).deep.equals([10, 100])
-    queue.complete(10, 10)
+    queue.complete(10)
+    queue.complete(100)
+    queue.complete(100)
     expect(settled).equals(1)
-    queue.complete(100, 100)
-    expect(settled).equals(2)
-    queue.complete(100, 100)
-    expect(settled).equals(2)
-    queue.progress(10) // queued progress from the previous seek must not reset position
-    queue.request(100)
-    expect(sent).deep.equals([10, 100])
-    expect(settled).equals(3)
-    queue.progress(101)
-    queue.request(101)
+    queue.request(8192.02002)
+    queue.complete(8192.021484375)
+    queue.request(8192.02002)
+    queue.complete(8192.02002)
+    queue.request(8182)
+    queue.complete(8182)
     expect(settled).equals(4)
-    expect(sent).deep.equals([10, 100])
-    queue.request(90)
-    queue.request(80)
-    queue.request(70)
-    queue.complete(90, 90)
-    expect(sent).deep.equals([10, 100, 90, 70])
-    queue.complete(70, 70)
-    expect(settled).equals(5)
+    expect(sent).deep.equals([10, 100, 8192.02002, 8192.02002, 8182])
   })
 })
