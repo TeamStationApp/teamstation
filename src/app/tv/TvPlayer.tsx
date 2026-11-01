@@ -928,7 +928,7 @@ export function TvPlayer({
         ]}
       >
         {renderedSide === 'highlights' && (
-          <PanelGradient direction="right" maxOpacity={0.1} />
+          <PanelGradient direction="right" maxOpacity={0.5} />
         )}
         <TvFocusGuide
           autoFocus
@@ -1089,21 +1089,13 @@ export function TvPlayer({
           }
         ]}
       >
-        <Animated.View
+        <View
           collapsable={false}
           pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            {
-              opacity: boxGrowth.interpolate({
-                inputRange: [0, 1],
-                outputRange: [2 / 3, 1]
-              })
-            }
-          ]}
+          style={StyleSheet.absoluteFill}
         >
-          <PanelGradient direction="bottom" maxOpacity={0.15} />
-        </Animated.View>
+          <PanelGradient direction="bottom" maxOpacity={0.5} />
+        </View>
         <TvFocusGuide
           autoFocus
           focusable={state.box !== 'closed'}
