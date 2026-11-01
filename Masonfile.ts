@@ -29,6 +29,7 @@ export function setup(m: Setup): void {
         node: '24',
         java: '17',
         rust: '1.98.0',
+        apt: ['build-essential'],
         android: [
           'platforms;android-37.0',
           'build-tools;37.0.0',
@@ -98,11 +99,19 @@ export async function buildAndroid(ctx: Stage): Promise<void> {
     ].join(' '),
     { cwd: 'android' }
   )
-  await ctx.sh('cargo install cargo-ndk')
+  // Cargo for the toolchain Mason installed under the worker's data directory.
+  const rustRoot = `${process.env.HOME}/.mason/tools/rust/1.98.0`
+  const rustEnv = {
+    CARGO_HOME: `${rustRoot}/cargo`,
+    RUSTUP_HOME: `${rustRoot}/rustup`,
+    PATH: `${rustRoot}/cargo/bin:${process.env.PATH ?? ''}`
+  }
+  await ctx.sh('cargo install cargo-ndk', { env: rustEnv })
   await ctx.sh(
     `./gradlew --no-daemon :app:assembleRelease -PversionCode=${build}`,
     {
-      cwd: 'android'
+      cwd: 'android',
+      env: rustEnv
     }
   )
   await ctx.artifacts.save(
