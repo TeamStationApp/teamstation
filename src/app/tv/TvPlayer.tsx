@@ -36,7 +36,7 @@ import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
-import { NativeGradient, PlaybackBoundary } from './NativePresentation'
+import { NativeGradient, PlaybackBoundary, TvBlur } from './NativePresentation'
 import { NativeSeekQueue } from './nativeSeekQueue'
 import { PlaybackClock } from './playbackClock'
 import {
@@ -92,6 +92,8 @@ export function TvPlayer({
   const focusedAngle = useRef<number | null>(0)
   const lastAngle = useRef(0)
   const handledFocus = useRef(0)
+  const [controlsRequested, setControlsRequested] = useState(false)
+  const [cameraFocus, setCameraFocus] = useState<number | null>(null)
   const transportNode = useRef<React.ComponentRef<typeof View> | null>(null)
   const transportRef = useCallback(
     (node: React.ComponentRef<typeof View> | null): void => {
@@ -395,6 +397,7 @@ export function TvPlayer({
   const open = useCallback(
     (panel: Exclude<SidePanel, null>): void => {
       if (panel === 'cameras' && (angles?.length ?? 0) < 2) return
+      setControlsRequested(false)
       dispatch({ type: 'open', panel })
     },
     [angles]
@@ -492,6 +495,7 @@ export function TvPlayer({
       if (
         held.side === null &&
         held.box === 'closed' &&
+        focusedAngle.current !== null &&
         transport.current?.handle(input) === true
       )
         return
@@ -501,8 +505,8 @@ export function TvPlayer({
         if (held.side === 'cameras') dispatch({ type: 'activity' })
         if (
           input.kind === 'swipe' &&
-          ((held.side === 'cameras' && direction === 'left') ||
-            (held.side === 'highlights' && direction === 'right'))
+          ((held.side === 'cameras' && direction === 'right') ||
+            (held.side === 'highlights' && direction === 'left'))
         )
           dispatch({ type: 'dismiss' })
         return
@@ -543,6 +547,10 @@ export function TvPlayer({
       }
       const index = focusedAngle.current
       if (index === null) return
+      if (input.kind === 'click' && direction === 'up') {
+        setControlsRequested(true)
+        return
+      }
       if (input.kind !== 'swipe') return
       if (index !== handledFocus.current) {
         handledFocus.current = index
@@ -703,7 +711,7 @@ export function TvPlayer({
     <PlaybackBoundary
       testID="tv-player"
       style={styles.scene}
-      transportEnabled={!overlay}
+      transportEnabled={!overlay && focus !== null}
       scrubEnabled={!overlay && transportState.visible}
       onTransportRelease={event =>
         transport.current?.handle({
@@ -719,7 +727,11 @@ export function TvPlayer({
     >
       <TvFocusGuide
         style={StyleSheet.absoluteFill}
-        {...{ trapFocusLeft: true, trapFocusRight: true, trapFocusDown: true }}
+        {...{
+          trapFocusLeft: true,
+          trapFocusRight: true,
+          trapFocusDown: !controlsRequested
+        }}
       >
         {angles?.map((angle, index) => {
           const rect = layout.tiles[state.visible.indexOf(index)] ?? {
@@ -759,14 +771,18 @@ export function TvPlayer({
                 }
                 {...{
                   hasTVPreferredFocus:
-                    !overlay && (state.full ?? state.visible[0]) === index
+                    !overlay &&
+                    !controlsRequested &&
+                    (state.full ?? state.visible[0]) === index
                 }}
                 onFocus={() => {
+                  setControlsRequested(false)
                   lastAngle.current = index
                   focusedAngle.current = index
                   setFocus(index)
                 }}
                 onBlur={() => {
+                  transport.current?.cancel()
                   if (focusedAngle.current === index)
                     focusedAngle.current = null
                   setFocus(null)
@@ -903,6 +919,7 @@ export function TvPlayer({
         >
           <TvButton
             buttonRef={transportRef}
+            preferred={controlsRequested && !overlay}
             label={
               state.side !== null || state.box !== 'closed'
                 ? 'Close panel'
@@ -959,7 +976,7 @@ export function TvPlayer({
         style={[
           styles.side,
           renderedSide === 'cameras'
-            ? { left: 0, paddingTop: board == null ? 100 : 320 }
+            ? { left: 0, paddingTop: 40 }
             : { right: 0 },
           {
             opacity: sideMotion,
@@ -974,9 +991,7 @@ export function TvPlayer({
           }
         ]}
       >
-        <PanelGradient
-          direction={renderedSide === 'cameras' ? 'left' : 'right'}
-        />
+        {renderedSide === 'highlights' && <TvBlur shade="#666666" />}
         <TvFocusGuide
           autoFocus
           focusable={state.side !== null}
@@ -1000,7 +1015,11 @@ export function TvPlayer({
                     index === (focus ?? state.visible[0])
                 }}
                 onFocus={() => {
+                  setCameraFocus(index)
                   dispatch({ type: 'activity' })
+                }}
+                onBlur={() => {
+                  setCameraFocus(null)
                 }}
                 onPress={() => {
                   dispatch({ type: 'toggle', index })
@@ -1013,34 +1032,40 @@ export function TvPlayer({
                 }) => [
                   styles.angleOption,
                   {
-                    borderColor:
-                      focused === true
-                        ? '#b596ff'
-                        : state.visible.includes(index)
-                          ? '#fff'
-                          : '#777',
-                    backgroundColor:
-                      state.visible.length === 1 && state.visible[0] === index
-                        ? '#fff'
-                        : '#262626bb'
+                    shadowOpacity: focused === true ? 0.5 : 0,
+                    shadowRadius: 12,
+                    shadowColor: '#fff',
+                    shadowOffset: { width: 0, height: 0 }
                   }
                 ]}
               >
-                <Text
-                  style={[
-                    styles.copy,
-                    state.visible.length === 1 &&
-                      state.visible[0] === index && { color: '#111' }
-                  ]}
-                >
-                  {state.visible.includes(index) ? '✓ ' : ''}
-                  {angle.video.title}
-                </Text>
+                <>
+                  <TvBlur
+                    shade={
+                      state.visible.includes(index) ? '#ffffff' : '#cccccc'
+                    }
+                    highlighted={cameraFocus === index}
+                  />
+                  <Text
+                    style={[
+                      styles.copy,
+                      {
+                        color: state.visible.includes(index)
+                          ? '#1a1a1a'
+                          : '#ffffff'
+                      }
+                    ]}
+                  >
+                    {state.visible.includes(index) ? '✓ ' : ''}
+                    {angle.video.title}
+                  </Text>
+                </>
               </Pressable>
             ))
           ) : (
             <ScrollView
               ref={highlightScroll}
+              contentContainerStyle={{ padding: 8 }}
               onScroll={event => {
                 highlightOffset.current = event.nativeEvent.contentOffset.y
               }}
@@ -1079,13 +1104,11 @@ export function TvPlayer({
                   }) => [styles.clip, focused === true && styles.selected]}
                 >
                   <Image
+                    testID={`tv-highlight-thumbnail-${index}`}
                     source={{ uri: clip.stillUrl }}
                     style={styles.preview}
                   />
-                  <Text
-                    numberOfLines={3}
-                    style={[styles.copy, styles.clipText]}
-                  >
+                  <Text style={[styles.copy, styles.clipText]}>
                     {clip.title}
                   </Text>
                 </Pressable>
@@ -1572,23 +1595,21 @@ const styles = StyleSheet.create({
     zIndex: 4
   },
   angleOption: {
-    borderWidth: 3,
     borderRadius: 20,
     padding: 20,
     marginVertical: 8
   },
   clip: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 16,
     padding: 10,
     borderWidth: 3,
     borderColor: 'transparent',
     borderRadius: 12
   },
-  selected: { borderColor: '#fff', backgroundColor: '#5559' },
-  preview: { width: 120, height: 68, borderRadius: 6 },
-  clipText: { flex: 1 },
+  selected: { borderColor: '#fff' },
+  preview: { width: 300, height: 170, borderRadius: 6 },
+  clipText: { alignSelf: 'stretch' },
   statsTeam: { flex: 1, gap: 16, paddingVertical: 24 },
   unavailable: {
     position: 'absolute',
