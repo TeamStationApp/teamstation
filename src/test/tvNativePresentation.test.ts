@@ -25,6 +25,7 @@ describe('TV native presentation bridge', () => {
     expect(bridge.nativeTvPresentation).equals(true)
     expect(bridge.NativeSearch).equals('TVSearch')
     expect(bridge.NativeGradient).equals('TVGradient')
+    expect(bridge.PlaybackBoundary).equals('TVPlaybackBoundary')
     const poster = bridge.TvPoster({
       uri: 'https://example.test/poster.jpg',
       focused: true,
