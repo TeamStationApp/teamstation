@@ -369,11 +369,13 @@ describe('TeamStation pipeline Masonfile', () => {
         async archive(options: {
           scheme: string
           buildNumber?: string
+          xcargs?: string[]
           env?: { CARGO_HOME?: string }
         }) {
           commands.push(
             `archive:${options.scheme}:${options.buildNumber ?? ''}`
           )
+          commands.push(`xcargs:${(options.xcargs ?? []).join(' ')}`)
           commands.push(`cargo:${options.env?.CARGO_HOME ?? ''}`)
           return {
             archive: 'build/TeamStation.xcarchive',
@@ -390,6 +392,7 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.match(log, /\.mason-tools\/node_modules\/\.bin\/socket npm ci/)
     assert.match(log, /pod install/)
     assert.match(log, /archive:TeamStation:26103101/)
+    assert.match(log, /xcargs:SWIFT_ENABLE_EXPLICIT_MODULES=NO/)
     assert.match(log, /cargo:.*\.mason\/tools\/rust\/1\.98\.0\/cargo/)
     assert.match(log, /publish:ios:build\/TeamStation\.ipa/)
     assert.match(

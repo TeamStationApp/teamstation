@@ -112,6 +112,9 @@ export async function buildIos(ctx: Stage): Promise<void> {
     scheme: 'TeamStation',
     configuration: 'Release',
     buildNumber: build,
+    // Xcode 27 treats a Swift explicit-module compile that exits 0 with no
+    // output as a failed archive. Turning explicit modules off avoids it.
+    xcargs: ['SWIFT_ENABLE_EXPLICIT_MODULES=NO'],
     env: {
       CARGO_HOME: `${rustRoot}/cargo`,
       RUSTUP_HOME: `${rustRoot}/rustup`,
