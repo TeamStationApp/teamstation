@@ -104,7 +104,7 @@
     "deploy:hosting": "node -r sucrase/register scripts/deploy/hosting.ts",
     "test:hosting": "mocha -r sucrase/register --timeout 60000 'scripts/deploy/hosting/*.test.ts'",
     "test:portable": "npm run test.eventControl && npm run test:deploy && npm run test:hosting && node --test scripts/coverage-provenance.test.cjs",
-    "coverage.mason": "c8 --all --include Masonfile.ts --include scripts/deploy/mason.ts --report-dir coverage/mason --reporter text --reporter json --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 scripts/deploy/masonEntry.test.ts",
+    "coverage.mason": "c8 --all --include Masonfile.ts --include scripts/deploy/mason.ts --report-dir coverage/mason --reporter text --reporter json --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 scripts/deploy/masonEntry.test.ts scripts/deploy/patchExpoModulesJsi.test.ts",
     "coverage.creation": "node scripts/creation-coverage.mjs",
     "coverage.refinements": "node scripts/refinements-coverage.mjs",
     "coverage.guardian": "node scripts/guardian-coverage.mjs",
