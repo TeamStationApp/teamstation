@@ -159,6 +159,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 @end
 @implementation TestTransportFocus
 - (UIView *)previouslyFocusedView { return self.previous; }
+- (UIFocusHeading)focusHeading { return UIFocusHeadingRight; }
 @end
 @interface TVTransportBoundaryTests : XCTestCase @end
 @implementation TVTransportBoundaryTests
@@ -182,6 +183,8 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
   }
   UIView *child = [UIView new]; [view addSubview:child];
   TestTransportFocus *context = [TestTransportFocus new]; context.previous = child;
+  press.testType = UIPressTypeRightArrow;
+  [view gestureRecognizer:view.pressMonitor shouldReceivePress:press];
   XCTAssertFalse([view shouldUpdateFocusInContext:(UIFocusUpdateContext *)context]);
   press.testType = UIPressTypeDownArrow;
   XCTAssertFalse([view gestureRecognizer:view.pressMonitor shouldReceivePress:press]);
@@ -253,6 +256,46 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 - (void)insertReactSubview:(UIView *)subview atIndex:(NSInteger)index;
 - (void)removeReactSubview:(UIView *)subview;
 - (void)didUpdateReactSubviews;
+@end
+@interface TVBlurView : UIView
+@property(nonatomic, strong) UIVisualEffectView *blur;
+@property(nonatomic, strong) UIView *tint;
+@property(nonatomic, strong) UIView *focusLight;
+@property(nonatomic, strong) UIColor *shade;
+@property(nonatomic) CGFloat tintOpacity;
+@property(nonatomic) BOOL highlighted;
+- (void)applyReducedTransparency:(BOOL)solid;
+- (void)updateAppearance;
+@end
+@interface TVBlurTests : XCTestCase @end
+@implementation TVBlurTests
+- (void)testTintBlurFocusAndAccessibleFallback {
+  TVBlurView *view = [[TVBlurView alloc] initWithFrame:CGRectMake(0, 0, 460, 100)];
+  view.shade = UIColor.whiteColor; view.tintOpacity = 0.8;
+  [view applyReducedTransparency:NO]; [view layoutSubviews];
+  XCTAssertNotNil(view.blur.effect);
+  XCTAssertEqualWithAccuracy(CGColorGetAlpha(view.tint.backgroundColor.CGColor), 0.8, 0.001);
+  XCTAssertTrue(CGRectEqualToRect(view.blur.frame, view.bounds));
+  XCTAssertTrue(CGRectEqualToRect(view.tint.frame, view.bounds));
+  XCTAssertTrue(CGRectEqualToRect(view.focusLight.frame, view.bounds));
+  XCTAssertEqual(view.layer.cornerRadius, 20);
+  XCTAssertTrue(view.clipsToBounds); XCTAssertFalse(view.userInteractionEnabled);
+  view.highlighted = YES;
+  XCTAssertGreaterThan(CGColorGetAlpha(view.focusLight.backgroundColor.CGColor), 0);
+  [view applyReducedTransparency:YES];
+  XCTAssertNil(view.blur.effect); XCTAssertEqualObjects(view.tint.backgroundColor, UIColor.whiteColor);
+  view.shade = [UIColor colorWithWhite:0.8 alpha:1];
+  [view applyReducedTransparency:NO];
+  CGFloat white = 0, alpha = 0; [view.tint.backgroundColor getWhite:&white alpha:&alpha];
+  XCTAssertEqualWithAccuracy(white, 0.8, 0.001); XCTAssertEqualWithAccuracy(alpha, 0.8, 0.001);
+  [view applyReducedTransparency:YES]; [view.tint.backgroundColor getWhite:&white alpha:&alpha];
+  XCTAssertLessThan(white, 0.4); XCTAssertEqual(alpha, 1);
+  view.highlighted = NO;
+  XCTAssertEqual(CGColorGetAlpha(view.focusLight.backgroundColor.CGColor), 0);
+  view.tintOpacity = 2; XCTAssertEqual(view.tintOpacity, 1);
+  view.tintOpacity = -1; XCTAssertEqual(view.tintOpacity, 0);
+  [[NSNotificationCenter defaultCenter] postNotificationName:UIAccessibilityReduceTransparencyStatusDidChangeNotification object:nil];
+}
 @end
 @interface TVPosterView : UIImageView
 @property(nonatomic, copy) NSString *uri;
