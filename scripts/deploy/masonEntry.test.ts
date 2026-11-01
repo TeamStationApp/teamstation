@@ -310,7 +310,7 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.equal(ios.apple.distribution, 'appStore')
     assert.equal(ios.apple.app, 'app.teamstation.app')
     assert.equal(ios.tools.node, '24')
-    assert.equal(ios.tools.xcode, '>=26')
+    assert.equal(ios.tools.xcode, '27.0')
     assert.equal(android[0]?.name, 'compile')
     assert.equal(android[0]?.on.type, 'do-linux')
     assert.equal(android[0]?.tools.rust, '1.98.0')
