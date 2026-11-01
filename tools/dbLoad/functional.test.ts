@@ -77,6 +77,7 @@ class StubApp {
   lacking = new Set<string>()
   answers = new Map<string, Answer>()
   streamState = 'publishing'
+  playbackMs = 0
   calls: string[] = []
 
   answer(method: string, path: string): Answer {
@@ -175,6 +176,7 @@ class StubSurface implements Surface {
   }
 
   async videoPlayback(): Promise<Playback> {
+    await new Promise(resolve => setTimeout(resolve, this.app.playbackMs))
     if (this.app.lacking.has('decoder')) return 'undecodable'
     return this.app.lacking.has('video') ? 'stalled' : 'plays'
   }
@@ -203,8 +205,11 @@ function contextFor(app: StubApp, overrides: Partial<Context> = {}): Context {
     publishCommand: 'publish {url} {duration}',
     restartCommand: 'restart',
     valkeyBlockCommand: 'block',
-    run: () => ({
-      done: Promise.resolve(0),
+    // A publisher runs until it is stopped, as one the ingest accepted does.
+    run: template => ({
+      done: template.startsWith('publish')
+        ? new Promise<number>(() => undefined)
+        : Promise.resolve(0),
       stop: async () => undefined
     }),
     pollMs: 1,
@@ -505,6 +510,47 @@ describe('the browser script', function () {
     expect(app.calls).include('POST /games/gam_live/live-streams/stream/end')
   })
 
+  it('fails a publisher that was refused or exited, rather than skipping it', async function () {
+    const name =
+      'publish, watch live from both nodes, end it and play the recording'
+    const exiting =
+      (delayMs: number): Context['run'] =>
+      () => ({
+        done: new Promise<number>(resolve => {
+          setTimeout(() => {
+            resolve(1)
+          }, delayMs)
+        }),
+        stop: async () => undefined
+      })
+
+    // It never went live.
+    const refused = new StubApp()
+    refused.streamState = 'starting'
+    const early = await runOne(
+      name,
+      contextFor(refused, { run: exiting(0), pollMs: 5 })
+    )
+    expect(early.status).equals('failed')
+    expect(early.detail).equals(
+      'The publisher was refused or exited, with code 1, before the stream went live'
+    )
+    expect(refused.calls).include(
+      'POST /games/gam_live/live-streams/stream/end'
+    )
+
+    // The row said publishing for a moment, and this browser cannot decode:
+    // that is no proof the stream was taken, so it must not read as a skip.
+    const closed = new StubApp()
+    closed.lacking.add('decoder')
+    closed.playbackMs = 30
+    const late = await runOne(name, contextFor(closed, { run: exiting(5) }))
+    expect(late.status).equals('failed')
+    expect(late.detail).equals(
+      'The publisher was refused or exited, with code 1, while the stream was live'
+    )
+  })
+
   it('fills the publish template and starts the stream with it, then stops it', async function () {
     const name =
       'publish, watch live from both nodes, end it and play the recording'
@@ -516,7 +562,7 @@ describe('the browser script', function () {
       run: (template, values) => {
         started.push({ template, values })
         return {
-          done: Promise.resolve(0),
+          done: new Promise<number>(() => undefined),
           stop: async () => {
             stopped += 1
             app.streamState = 'ended'

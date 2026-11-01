@@ -698,6 +698,22 @@ const publishAndWatch: Action = {
       url: revealed.url,
       duration: String(PUBLISH_SECONDS)
     })
+    let exited: number | undefined
+    publishing.done.then(
+      code => {
+        exited = code
+      },
+      () => {
+        exited = 1
+      }
+    )
+    /** Fails on a publisher that has gone: the ingest refused it, or it died. */
+    const requirePublisher = (when: string): void => {
+      if (exited != null)
+        throw new Error(
+          `The publisher was refused or exited, with code ${exited}, ${when}`
+        )
+    }
     const end = async (): Promise<void> => {
       await publishing.stop()
       okBody(
@@ -717,11 +733,13 @@ const publishAndWatch: Action = {
     }
     let undecodable = false
     try {
-      await waitUntil(context, 'the stream to go live', async () =>
-        (await streamState(camera, liveGameId, created.id)) === 'publishing'
+      await waitUntil(context, 'the stream to go live', async () => {
+        requirePublisher('before the stream went live')
+        return (await streamState(camera, liveGameId, created.id)) ===
+          'publishing'
           ? true
           : undefined
-      )
+      })
       for (const [i, server] of context.servers.entries()) {
         const viewer = await watching(
           context,
@@ -732,6 +750,7 @@ const publishAndWatch: Action = {
         if (await watch(viewer, `The live video on ${server}`))
           undecodable = true
       }
+      requirePublisher('while the stream was live')
     } catch (error) {
       await end().catch(() => undefined)
       throw error
