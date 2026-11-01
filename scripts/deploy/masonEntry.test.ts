@@ -286,14 +286,15 @@ describe('TeamStation pipeline Masonfile', () => {
         assert.equal(options?.format, 'YYMMDDCC')
         assert.equal(options?.timeZone, 'America/Los_Angeles')
       },
-      parallel(name, members) {
+      parallel(name, members, options) {
         assert.equal(name, 'build')
+        assert.equal(options?.failFast, false)
         Object.assign(stages, members)
       }
     })
     const ios = stages.ios as {
       on: { type: string }
-      tools: { node: string; xcode: string }
+      tools: { node: string; xcode: string; rust: string }
       apple: { distribution: string; app: string }
     }
     const android = stages.android as Array<{
@@ -304,13 +305,16 @@ describe('TeamStation pipeline Masonfile', () => {
         android?: string[]
         rust?: string
         apt?: string[]
+        androidLicenses?: string
       }
+      publishes?: string[]
     }>
     assert.equal(ios.on.type, 'nomac')
-    assert.equal(ios.apple.distribution, 'appStore')
+    assert.equal(ios.apple.distribution, 'adHoc')
     assert.equal(ios.apple.app, 'app.teamstation.app')
     assert.equal(ios.tools.node, '24')
     assert.equal(ios.tools.xcode, '27.0')
+    assert.equal(ios.tools.rust, '1.98.0')
     assert.equal(android[0]?.name, 'compile')
     assert.equal(android[0]?.on.type, 'do-linux')
     assert.equal(android[0]?.tools.rust, '1.98.0')
@@ -324,6 +328,8 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.equal(android[1]?.name, 'sign')
     assert.equal(android[1]?.on.type, 'macos-arm64')
     assert.deepEqual(android[1]?.on.labels, ['android-signing'])
+    assert.equal(android[1]?.tools.androidLicenses, 'accept')
+    assert.deepEqual(android[1]?.publishes, ['app.teamstation.app'])
     const commands: string[] = []
     const ctx = {
       async sh(command: string) {
@@ -345,11 +351,25 @@ describe('TeamStation pipeline Masonfile', () => {
           commands.push(`save:${name}`)
         }
       },
+      fs: {
+        async glob(pattern: string) {
+          commands.push(`glob:${pattern}`)
+          return ['android/app/build/outputs/apk/release/app-release.apk']
+        }
+      },
+      async publish(options: { platform: string; path: string }) {
+        commands.push(`publish:${options.platform}:${options.path}`)
+      },
       apple: {
-        async archive(options: { scheme: string; buildNumber?: string }) {
+        async archive(options: {
+          scheme: string
+          buildNumber?: string
+          env?: { CARGO_HOME?: string }
+        }) {
           commands.push(
             `archive:${options.scheme}:${options.buildNumber ?? ''}`
           )
+          commands.push(`cargo:${options.env?.CARGO_HOME ?? ''}`)
           return {
             archive: 'build/TeamStation.xcarchive',
             ipa: 'build/TeamStation.ipa',
@@ -365,6 +385,12 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.match(log, /\.mason-tools\/node_modules\/\.bin\/socket npm ci/)
     assert.match(log, /pod install/)
     assert.match(log, /archive:TeamStation:26103101/)
+    assert.match(log, /cargo:.*\.mason\/tools\/rust\/1\.98\.0\/cargo/)
+    assert.match(log, /publish:ios:build\/TeamStation\.ipa/)
+    assert.match(
+      log,
+      /publish:android:android\/app\/build\/outputs\/apk\/release\/app-release\.apk/
+    )
     assert.equal(log.includes('CODE_SIGNING_ALLOWED'), false)
     assert.match(log, /cargo install cargo-ndk/)
     assert.match(log, /assembleRelease -PversionCode=26103101/)
@@ -405,7 +431,8 @@ describe('TeamStation pipeline Masonfile', () => {
             dsyms: 'build/TeamStation.dSYM'
           }
         }
-      }
+      },
+      async publish() {}
     }
     await buildIos(ctx)
     assert.ok(commands.includes('npm ci'))
