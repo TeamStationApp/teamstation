@@ -144,9 +144,25 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
     PATH: `${rustRoot}/cargo/bin:${process.env.PATH ?? ''}`
   }
   await ctx.sh('cargo install cargo-ndk', { env: rustEnv })
+  // The checked-in release config leaves versionCode at 1. The init script
+  // sets the run's number the way the deploy build does, without its keystore.
   await ctx.sh(
-    `./gradlew --no-daemon :app:assembleRelease -PversionCode=${build}`,
-    { cwd: 'android', env: rustEnv }
+    [
+      "cat > mason-version.gradle << 'EOF'",
+      'gradle.beforeProject { project ->',
+      "  project.plugins.withId('com.android.application') {",
+      "    project.extensions.getByName('androidComponents').finalizeDsl { android ->",
+      "      android.defaultConfig.versionCode = Integer.parseInt(System.getenv('MASON_BUILD_NUMBER'))",
+      '    }',
+      '  }',
+      '}',
+      'EOF',
+      './gradlew --no-daemon --init-script mason-version.gradle :app:assembleRelease'
+    ].join('\n'),
+    {
+      cwd: 'android',
+      env: { ...rustEnv, MASON_BUILD_NUMBER: build }
+    }
   )
   await ctx.stash(
     'android-release',
