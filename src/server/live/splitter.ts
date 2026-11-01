@@ -1,17 +1,29 @@
 import type { ChildProcess } from 'child_process'
 import { spawn } from 'child_process'
 import type { FSWatcher } from 'fs'
-import { readdirSync, readFileSync, watch, writeFileSync } from 'fs'
+import { readdirSync, readFileSync, rmSync, watch, writeFileSync } from 'fs'
 import type { Server } from 'net'
 
 import { CODEC_REFUSAL } from '../../common/api'
 import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
 import { segmentPictureSec } from '../media/trackStarts'
 import {
+  configurationOfInit,
+  type DecoderConfiguration,
+  type HeardPublish,
+  hevcHeaderOf,
+  publishDiffers,
+  silenceFor,
+  type SilentSound,
+  soundHeaderOf
+} from './decoderConfig'
+import {
+  FIRST_INIT,
   firstProgramDateMs,
   type FrameWall,
   listedSegments,
   listedTimelineEndSec,
+  ownInitName,
   readFrameWall,
   readLeadingBoxesSync,
   recordPlacedBelow,
@@ -20,7 +32,8 @@ import {
   segmentName,
   segmentNumber,
   segmentsFrom,
-  stampNewSegments
+  stampNewSegments,
+  writeStamped
 } from './segmentClock'
 import { type JumpDetector, jumpDetector } from './timestampJump'
 
@@ -31,6 +44,8 @@ import { type JumpDetector, jumpDetector } from './timestampJump'
  * the URL — and goes into TeamStation's own HLS on this machine, and on to any
  * further RTMP destination it is given. Every leg is `-c copy`, so nothing is
  * ever re-encoded and whatever the Director sent is what everybody receives.
+ * The one thing ever encoded is silence, for a soundless publish continuing a
+ * recording with sound (`silenceFor`).
  *
  * The process handling here is the splitter TeamStation 1.0 has been running
  * for a year (`src/server/rtmp/splitter.ts` at 25f9496e), brought across deliberately
@@ -63,6 +78,8 @@ interface NmsSession {
    * sends a four-character code instead.
    */
   videoCodec?: number | string
+  /** The sound codec its metadata names; 0 or absent when it names none. */
+  audioCodec?: number | string
   // RtmpSession.close() ends the underlying TCP socket, which (when the socket
   // is healthy) cascades through onClose -> broadcast.donePublish -> our
   // donePublish handler, releasing the "already has a publisher" lock.
@@ -93,8 +110,10 @@ interface NmsPacket {
    * node-media-server could not read it.
    */
   codec_id?: number
-  /** The FLV tag's body. */
+  /** The FLV tag's body, and whatever follows it in the server's buffer. */
   data?: Buffer
+  /** How much of `data` is this packet's. */
+  size?: number
 }
 
 /**
@@ -292,10 +311,30 @@ interface OutputRuntime {
    */
   respawnAtKeyframe?: boolean
   /**
-   * Since when a writer has waited to hear the publish's codec, in
-   * milliseconds (`mustKnowCodec`). The publish saying what it is starts it.
+   * Since when a writer has waited to hear what the publish is, in
+   * milliseconds (`mustKnowPublish`). The publish saying so starts it.
    */
   awaitingCodecSince?: number
+  /** The segment number that wait was for. */
+  awaitingNext?: number
+  /**
+   * Since when that writer, knowing the publish is HEVC, has waited for its
+   * first picture. `CONFIGURATION_WAIT_MS` counts from here, not from the
+   * connection, so a publish slow to name its codec still gets to show headers.
+   */
+  awaitingHeadersSince?: number
+  /**
+   * Whether the recording that writer continues has sound, read once for the
+   * wait: packets ask many times a second (`soundMayFollow`).
+   */
+  recordingHasSound?: boolean
+  /**
+   * The init segment of a writer that cannot share `init.mp4`, or undefined
+   * for one that can: see `absorbWriterPlaylist`.
+   */
+  ownInit?: string
+  /** What this writer adds as a sound track, for a publish with none. */
+  silence?: SilentSound
   /** A start is reading the playlist before its ffmpeg exists. */
   preparing?: boolean
   /** Another start arrived while that read was in progress. */
@@ -343,6 +382,8 @@ interface OutputRuntime {
 interface WriterPlacement {
   /** When the writer started, in milliseconds. */
   startedAt: number
+  /** The init segment its segments are read with. */
+  init: string
   /** Continuing a playlist, rather than starting one. */
   continuing: boolean
   /** The end of the timeline already listed. A continuation never starts before it. */
@@ -409,6 +450,12 @@ interface LiveEntry {
  */
 export const LIVE_PLAYLIST_NAME = 'master.m3u8'
 
+/**
+ * What a writer with an init segment of its own lists its segments in, beside
+ * the playlist. A dot file, so it is not sent to the Space with the recording.
+ */
+export const WRITER_PLAYLIST_NAME = '.writer.m3u8'
+
 const SAMPLE_INTERVAL_MS = 1000
 const BACKOFF_STEPS_MS = [1000, 2000, 5000, 10000]
 /** How long a writer must have run for its next failure to count as the first. */
@@ -452,6 +499,27 @@ const exitHandledFor = new WeakMap<ChildProcess, Promise<void>>()
  */
 const HLS_DRAIN_MS = 10_000
 const STALE_INGRESS_TICKS = 30
+/**
+ * How long a writer on a recording, once the publish has shown it is HEVC,
+ * waits for its first picture before it goes ahead on an init segment of its
+ * own (`mustKnowPublish`). What the sequence headers say comes first, within a
+ * moment of the publish. A publish that has not shown one by now has not said
+ * it can share this recording's, and nothing it writes under its own name can
+ * harm the recording. A publish that never shows HEVC never gets this far.
+ */
+export const CONFIGURATION_WAIT_MS = 3000
+/**
+ * How long after its first picture a publish that has shown no sound has to
+ * show some, on a recording with sound (`soundMayFollow`). After this it is
+ * taken to have none, and gets a part of its own with a silent track.
+ *
+ * Most publishers send their sound header ahead of their first picture and
+ * never meet this. A phone sends it once its first AAC packet is ready, a
+ * moment behind the picture. It stays under the two-second GOP those publishers
+ * use, so a writer that waits it out still starts from the first picture: the
+ * server replays only what has gone since the last keyframe.
+ */
+export const SOUND_WAIT_MS = 1000
 /**
  * Silent ticks after which a publisher gives way to a new publish on its key.
  *
@@ -878,6 +946,12 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
   //   keeps the sum of its durations. The offset is applied to each new
   //   segment after ffmpeg closes it. Asking the muxer to apply it rewrites
   //   the init segment and moves the parts already listed onto the new time.
+  //
+  // A writer with an init segment of its own writes a playlist of its own, and
+  // the ingest carries its segments across (`absorbWriterPlaylist`). FFmpeg's
+  // `append_list` keeps one `EXT-X-MAP`, naming the writer's init segment, at
+  // the head of everything it found listed: on the game's own playlist that
+  // would hand every earlier segment the wrong init segment.
   const flags = [
     'independent_segments',
     'temp_file',
@@ -890,10 +964,32 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     0,
     output.target.length - LIVE_PLAYLIST_NAME.length - 1
   )
+  const own = output.ownInit
+  const silence = output.silence
   return [
     ...base,
-    '-c',
-    'copy',
+    // The silence runs for ever, and `-shortest` ends it with the picture. It
+    // starts at 0: the encoder's priming frame would otherwise start it early,
+    // and the muxer would move the picture late to make room.
+    ...(silence == null
+      ? ['-c', 'copy']
+      : [
+          '-f',
+          'lavfi',
+          '-i',
+          `anullsrc=r=${String(silence.sampleRate)}:cl=${silence.channelLayout}`,
+          '-map',
+          '0:v',
+          '-map',
+          '1:a',
+          '-c:v',
+          'copy',
+          '-c:a',
+          'aac',
+          '-bsf:a',
+          'setts=ts=TS-STARTPTS',
+          '-shortest'
+        ]),
     // Safari refuses HEVC tagged `hev1`, which is what a copy from RTMP is
     // tagged by default, so every HLS track here is tagged `hvc1`. It is also
     // why an H.264 publish is turned away rather than written: this tag and
@@ -909,7 +1005,7 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     '-hls_segment_type',
     'fmp4',
     '-hls_fmp4_init_filename',
-    'init.mp4',
+    own ?? FIRST_INIT,
     // A sound track that starts after the picture keeps its RTMP time rather
     // than being stamped from 0 s.
     ...KEEP_STREAM_TIMES,
@@ -919,7 +1015,7 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     String(output.continuation?.startNumber ?? 0),
     '-hls_segment_filename',
     `${directory}/seg%06d.m4s`,
-    output.target
+    own == null ? output.target : `${directory}/${WRITER_PLAYLIST_NAME}`
   ]
 }
 
@@ -1019,7 +1115,8 @@ async function spawnPrepared(
   let wallClock = (): number => Date.now()
   if (output.kind === 'hls') {
     const next = nextSegmentNumber(entry.hlsDir)
-    if (mustKnowCodec(entry)) {
+    output.awaitingNext = next
+    if (mustKnowPublish(entry, output, next)) {
       output.awaitingCodecSince ??= Date.now()
       return
     }
@@ -1028,32 +1125,54 @@ async function spawnPrepared(
     const waitedMs = Date.now() - (output.awaitingCodecSince ?? Date.now())
     if (output.awaitingCodecSince != null) {
       log(
-        `[live:${entry.liveStreamId}] the HLS writer waited ${String(waitedMs)} ms for the publish's codec`
+        `[live:${entry.liveStreamId}] the HLS writer waited ${String(waitedMs)} ms for the publish to say what it is`
       )
     }
     output.awaitingCodecSince = undefined
+    output.awaitingHeadersSince = undefined
+    output.recordingHasSound = undefined
     wallClock = () => Date.now() - waitedMs
     output.firstSegmentNumber = next
+    output.ownInit = undefined
+    output.silence = undefined
     let placement: WriterPlacement | undefined
     if (next > 0) {
       output.hlsRestarted = true
+      retireWriterPlaylist(entry.hlsDir)
       reopenPlaylist(entry.hlsDir)
       settleLastSegment(entry.hlsDir)
       const playlist = readPlaylist(entry.hlsDir)
-      if (listedSegments(playlist ?? '').length === 0) {
+      const listed = listedSegments(playlist ?? '')
+      const lastInit = listed.at(-1)?.init ?? FIRST_INIT
+      if (needsOwnInit(entry, listed.at(-1)?.init)) {
+        output.ownInit = ownInitName(next)
+        output.hlsRestarted = false
+        output.silence = silenceFor(
+          readConfiguration(entry, lastInit)?.sound,
+          heardOf(entry)?.heard ?? {}
+        )
+        log(
+          `[live:${entry.liveStreamId}] this publish cannot share the recording's init segment: it carries on under ${output.ownInit}${output.silence == null ? '' : ', with a silent sound track'}`
+        )
+      }
+      // FFmpeg numbers a writer of its own from here, with nothing to append.
+      const continueAt = (now: Date): Continuation => {
+        const continuation = playlistContinuation(playlist, next, now)
+        return output.ownInit == null
+          ? continuation
+          : { ...continuation, startNumber: next }
+      }
+      if (listed.length === 0) {
         // Segments on disk and none listed: whatever emptied the playlist,
         // the game before this point is about to drop out of the recording.
         log(
           `[live:${entry.liveStreamId}] playlist lists nothing but ${String(next)} segments are on disk: the recording before this will be missing`
         )
       }
-      output.continuation = playlistContinuation(
-        playlist,
-        next,
-        new Date(wallClock())
-      )
+      output.continuation = continueAt(new Date(wallClock()))
       const offsetSec = output.continuation.offsetSec
-      if (offsetSec > 0) {
+      // A writer of its own always has a stamper: it is what lists its segments.
+      if (offsetSec > 0 || output.ownInit != null) {
         // A segment closed before the last stamp is still on the publisher's
         // clock. Move it onto its programme date; every name already in the
         // directory is then on that clock and stays there.
@@ -1071,11 +1190,7 @@ async function spawnPrepared(
         // they take a while. The wall clock the writer starts at is now, with
         // nothing awaited between here and the spawn: measured before them,
         // a return with no frame wall clocks went early by that long.
-        output.continuation = playlistContinuation(
-          playlist,
-          next,
-          new Date(wallClock())
-        )
+        output.continuation = continueAt(new Date(wallClock()))
         // Never before the end of what is listed, as for a frame wall clock.
         // The program dates run behind the timeline by the first writer's
         // capture-to-start lag, so a quick return after a part its frame
@@ -1084,6 +1199,7 @@ async function spawnPrepared(
         const wallClockSec = Math.max(output.continuation.offsetSec, floorSec)
         placement = {
           startedAt: wallClock(),
+          init: output.ownInit ?? FIRST_INIT,
           continuing: true,
           floorSec,
           offsetSec: wallClockSec,
@@ -1095,6 +1211,7 @@ async function spawnPrepared(
     } else {
       placement = {
         startedAt: wallClock(),
+        init: FIRST_INIT,
         continuing: false,
         floorSec: 0,
         offsetSec: 0,
@@ -1105,6 +1222,7 @@ async function spawnPrepared(
     }
     if (placement != null) {
       const held = placement
+      const ownInit = output.ownInit
       installStamp = () => {
         held.startedAt = wallClock()
         // Every segment on disk now is placed, or recovered above. This
@@ -1139,10 +1257,19 @@ async function spawnPrepared(
           for (const name of stampNewSegments(
             entry.hlsDir,
             held.offsetSec,
-            unhandled()
+            unhandled(),
+            held.init
           )) {
             handle(name)
             held.stamped.add(name)
+          }
+          // Listed once on the programme clock, unlike FFmpeg's own: nothing
+          // lists a segment of this writer's until that is done.
+          if (ownInit != null) {
+            absorbWriterPlaylist(
+              entry.hlsDir,
+              name => (segmentNumber(name) ?? cursor) < cursor
+            )
           }
         }
         let watcher: FSWatcher | undefined
@@ -1157,6 +1284,7 @@ async function spawnPrepared(
         output.stopStamp = () => {
           watcher?.close()
           stamp()
+          if (ownInit != null) absorbWriterPlaylist(entry.hlsDir)
           output.stampSegments = undefined
           output.stopStamp = undefined
           output.placement = undefined
@@ -1387,6 +1515,20 @@ async function spawnPrepared(
  * writes nothing, which leaves nothing to undo if it is refused or this
  * process dies first.
  *
+ * In HEVC, a publish configured differently from the recording does the same
+ * damage, and the only thing that tells them apart is its sequence headers:
+ * so a writer continuing a recording waits for the publish's first picture,
+ * which the picture's headers come before. That ends in `needsOwnInit`, and
+ * `CONFIGURATION_WAIT_MS` bounds it. That limit bounds only this second wait: a
+ * publish that never shows a codec records nothing, however long it stays. A
+ * first publish has no `init.mp4` to compare with, so the codec is all it waits
+ * for.
+ *
+ * A recording with sound has one more thing to wait for. FFmpeg writes the
+ * init segment from what reaches it, so a publish that matches in every other
+ * way and shows no sound would replace it with one that has no sound track, and
+ * a sound header can follow the first picture: see `soundMayFollow`.
+ *
  * An HEVC publish loses no pictures by it. Its metadata arrives within a
  * moment, often before the key has been looked up, and any wait ends there
  * rather than at the sampler. The server replays its headers and everything
@@ -1394,9 +1536,45 @@ async function spawnPrepared(
  * sound sent before the first keyframe, and `spawnPrepared` takes the wait off
  * the writer's wall clock.
  */
-function mustKnowCodec(entry: LiveEntry): boolean {
+function mustKnowPublish(
+  entry: LiveEntry,
+  output: OutputRuntime,
+  next: number
+): boolean {
   if (entry.ingress.session == null) return false
-  return !shownHevc(entry)
+  if (!shownHevc(entry)) return true
+  if (next === 0) return false
+  const heard = heardOf(entry)
+  if (heard?.firstPictureAt != null) return soundMayFollow(entry, output, heard)
+  output.awaitingHeadersSince ??= Date.now()
+  return Date.now() - output.awaitingHeadersSince < CONFIGURATION_WAIT_MS
+}
+
+/**
+ * Whether a publish past its first picture may yet show sound this recording
+ * needs. It ends as soon as a sound header arrives or metadata says there is
+ * none, so a publish that has shown either costs nothing, and `SOUND_WAIT_MS`
+ * bounds the rest. Metadata naming sound does not end it: only the header can
+ * be compared, and some publishers name sound they never send. Sound that
+ * arrives after the bound is left out of this part, because its writer has
+ * started on silence. The next writer on this publish uses it.
+ */
+function soundMayFollow(
+  entry: LiveEntry,
+  output: OutputRuntime,
+  { heard, firstPictureAt = 0 }: PublishHeard
+): boolean {
+  if (heard.soundHeader != null || heard.says?.noSound === true) return false
+  if (Date.now() - firstPictureAt >= SOUND_WAIT_MS) return false
+  output.recordingHasSound ??= lastInitHasSound(entry)
+  return output.recordingHasSound
+}
+
+/** Whether the part a new writer would follow has a sound track. */
+function lastInitHasSound(entry: LiveEntry): boolean {
+  const listed = listedSegments(readPlaylist(entry.hlsDir) ?? '')
+  const init = listed.at(-1)?.init ?? FIRST_INIT
+  return readConfiguration(entry, init)?.sound != null
 }
 
 /** Whether the publish on a key has said what it carries, and that is HEVC. */
@@ -1425,6 +1603,36 @@ function acceptIfHevc(entry: LiveEntry): void {
   report(entry)
 }
 
+/**
+ * Whether the writer about to start must leave `init.mp4` alone. `lastInit` is
+ * the init segment of the last segment listed. Once a writer has had one of
+ * its own, each one after does too, whatever it carries: only the last of them
+ * could be compared, and a name no segment uses yet cannot hurt anything.
+ *
+ * An init segment that cannot be read has nothing left to protect, and FFmpeg
+ * writing a new one is all that can mend it. With no publisher to ask, as for
+ * a test's forced publish, the writer continues as it always did.
+ */
+function needsOwnInit(entry: LiveEntry, lastInit: string | undefined): boolean {
+  if (lastInit == null || entry.ingress.session == null) return false
+  if (lastInit !== FIRST_INIT) return true
+  const held = readConfiguration(entry, FIRST_INIT)
+  if (held == null) return false
+  return publishDiffers(held, heardOf(entry)?.heard ?? {})
+}
+
+/** What an init segment of a recording configures, if it can be read. */
+function readConfiguration(
+  entry: LiveEntry,
+  init: string
+): DecoderConfiguration | undefined {
+  try {
+    return configurationOfInit(readFileSync(`${entry.hlsDir}/${init}`))
+  } catch {
+    return undefined
+  }
+}
+
 /** Classic FLV's number for HEVC. */
 const FLV_CODEC_HEVC = 12
 
@@ -1444,6 +1652,34 @@ function classifyClassicHevc(packet: NmsPacket): void {
   else if (packet.data[0] >> 4 === 1) packet.flags = 3
 }
 
+/** Keeps what a publish's packets say about it, for the writer deciding. */
+function hearPublish(watch: JumpWatch, packet: NmsPacket): void {
+  const heard = watch.heard.heard
+  // A packet's body is the server's own chunk buffer, as long as the longest
+  // message so far and read into again by the next: this message is the first
+  // `size` bytes of it, and they are copied.
+  const body =
+    packet.size == null ? packet.data : packet.data?.subarray(0, packet.size)
+  const kept = (part: Buffer | undefined): Buffer | undefined =>
+    part == null ? undefined : Buffer.from(part)
+  if (packet.flags === 2) {
+    heard.hevcHeader = kept(hevcHeaderOf(body)) ?? heard.hevcHeader
+  } else if (packet.flags === 0) {
+    heard.soundHeader = kept(soundHeaderOf(body)) ?? heard.soundHeader
+  } else if (packet.flags === 3) {
+    watch.heard.firstPictureAt ??= Date.now()
+  }
+}
+
+/** Starts a waiting writer once it has heard what it waited for. */
+function startIfKnown(entry: LiveEntry): void {
+  const hls = hlsOutputOf(entry)
+  if (hls?.awaitingCodecSince == null) return
+  if (!mustKnowPublish(entry, hls, hls.awaitingNext ?? 0)) {
+    spawnOutput(entry, hls)
+  }
+}
+
 /**
  * Hears what a publish carries from its packets, for the writer waiting on it.
  *
@@ -1460,10 +1696,7 @@ function codecHeard(entry: LiveEntry, packet: NmsPacket): void {
     }
   }
   acceptIfHevc(entry)
-  const hls = hlsOutputOf(entry)
-  if (hls?.awaitingCodecSince != null && shownHevc(entry)) {
-    spawnOutput(entry, hls)
-  }
+  startIfKnown(entry)
 }
 
 /**
@@ -1634,7 +1867,7 @@ function placeFromFrameWalls(
   if (fresh.length === 0) return
   let init: Buffer
   try {
-    init = readFileSync(`${entry.hlsDir}/init.mp4`)
+    init = readFileSync(`${entry.hlsDir}/${placement.init}`)
   } catch {
     return
   }
@@ -1675,7 +1908,8 @@ function placeFromFrameWalls(
       entry.hlsDir,
       placement.stamped,
       placement.offsetSec,
-      offsetSec
+      offsetSec,
+      placement.init
     )
     placement.offsetSec = offsetSec
     log(
@@ -1714,8 +1948,9 @@ export function settleLastSegment(directory: string): void {
     }
     if (durationAt < 0) return
     const listed = Number.parseFloat(lines[durationAt].slice('#EXTINF:'.length))
+    const init = listedSegments(lines.join('\n')).at(-1)?.init ?? FIRST_INIT
     const real = segmentPictureSec(
-      readFileSync(`${directory}/init.mp4`),
+      readFileSync(`${directory}/${init}`),
       readFileSync(`${directory}/${lines[segmentAt].trim()}`)
     )
     if (real == null || real <= 0) return
@@ -1758,6 +1993,89 @@ export function reopenPlaylist(directory: string): void {
     // No playlist, or no permission to rewrite it. The spawn that follows will
     // say so far more loudly than this could.
   }
+}
+
+/**
+ * Carries a writer's segments from its own playlist onto the recording's.
+ *
+ * FFmpeg lists one init segment per playlist, so a writer whose init segment
+ * cannot be the recording's writes a playlist of its own, and this is what
+ * puts its segments on the end of the one everybody reads: behind a
+ * discontinuity and an `EXT-X-MAP` naming that init segment, the first time it
+ * has one to list. Nothing already listed changes, and an `EVENT` playlist may
+ * only grow at the end anyway. An end the controller has closed the playlist
+ * with stays the end.
+ *
+ * `ready` says which segments may be listed yet, stopping at the first that
+ * may not, so they go on in order. The target duration rises as FFmpeg's does
+ * for a segment longer than it, which a later camera's keyframes can make.
+ *
+ * Whatever the writer left listed gets here, in this process or the next,
+ * before anything reads the recording's end (`retireWriterPlaylist`,
+ * `closePlaylist`). No segment listed in only the writer's playlist is lost to
+ * a crash; a player just cannot have it until then.
+ */
+export function absorbWriterPlaylist(
+  directory: string,
+  ready: (name: string) => boolean = () => true
+): void {
+  let written: string
+  try {
+    written = readFileSync(`${directory}/${WRITER_PLAYLIST_NAME}`, 'utf8')
+  } catch {
+    return
+  }
+  const recording = readPlaylist(directory)
+  const init = /^#EXT-X-MAP:URI="([^"]+)"/m.exec(written)?.[1]
+  if (recording == null || init == null) return
+  const known = new Set(listedSegments(recording).map(segment => segment.name))
+  const added: string[] = []
+  let targetSec = 0
+  let entry: string[] = []
+  let inMedia = false
+  for (const raw of written.split('\n')) {
+    const line = raw.trim()
+    if (line.startsWith('#EXT-X-MAP:')) {
+      inMedia = true
+    } else if (inMedia && line.startsWith('#')) {
+      if (line !== '#EXT-X-ENDLIST') entry.push(line)
+    } else if (inMedia && line !== '') {
+      if (!known.has(line)) {
+        if (!ready(line)) break
+        const listed = listedSegments(`${entry.join('\n')}\n${line}`).at(0)
+        targetSec = Math.max(targetSec, Math.round(listed?.durationSec ?? 0))
+        added.push(...entry, line)
+      }
+      entry = []
+    }
+  }
+  if (added.length === 0) return
+  const end = '#EXT-X-ENDLIST'
+  const closed = recording.includes(end)
+  const opening = recording.includes(`#EXT-X-MAP:URI="${init}"`)
+    ? []
+    : ['#EXT-X-DISCONTINUITY', `#EXT-X-MAP:URI="${init}"`]
+  const body = recording
+    .replace(/#EXT-X-ENDLIST\s*$/, '')
+    .replace(/\n*$/, '\n')
+    .replace(/^#EXT-X-TARGETDURATION:(\d+)$/m, (_line, held: string) => {
+      return `#EXT-X-TARGETDURATION:${String(Math.max(Number(held), targetSec))}`
+    })
+  writeStamped(
+    `${directory}/${LIVE_PLAYLIST_NAME}`,
+    Buffer.from(
+      `${body}${[...opening, ...added, ...(closed ? [end] : [])].join('\n')}\n`
+    )
+  )
+}
+
+/**
+ * Absorbs what the last writer left, and takes its playlist away: the next
+ * writer with an init segment of its own starts a new one.
+ */
+function retireWriterPlaylist(directory: string): void {
+  absorbWriterPlaylist(directory)
+  rmSync(`${directory}/${WRITER_PLAYLIST_NAME}`, { force: true })
 }
 
 function startOutputs(entry: LiveEntry): void {
@@ -1823,6 +2141,8 @@ const terminated = new WeakSet<ChildProcess>()
 function stopOutput(output: OutputRuntime, signal = true): void {
   output.stopGeneration += 1
   output.awaitingCodecSince = undefined
+  output.awaitingHeadersSince = undefined
+  output.recordingHasSound = undefined
   if (output.restartTimer != null) {
     clearTimeout(output.restartTimer)
     output.restartTimer = undefined
@@ -1965,6 +2285,7 @@ function pollSampler(): void {
           acceptIfHevc(entry)
         }
       }
+      startIfKnown(entry)
       const delta = currentInBytes - ingress.bytesAtLastTick
       ingress.bytesPerSecond = delta > 0 ? delta : 0
       ingress.bytesAtLastTick = currentInBytes
@@ -2143,11 +2464,19 @@ function replaceQuietPublisher(entry: LiveEntry, session: NmsSession): void {
   report(entry)
 }
 
+/** What the publisher on a broadcast has shown of itself. */
+interface PublishHeard {
+  heard: HeardPublish
+  /** When its first keyframe arrived: its picture's headers are all in. */
+  firstPictureAt?: number
+}
+
 /** What the ingest keeps beside each broadcast it has wrapped. */
 interface JumpWatch {
   detector: JumpDetector
-  /** The stream whose publisher is on it now. */
-  entry: LiveEntry
+  /** The stream whose publisher is on it now, once a key says which. */
+  entry?: LiveEntry
+  heard: PublishHeard
 }
 const WRAPPED = Symbol('jump watch')
 type WatchedBroadcast = NmsBroadcast & { [WRAPPED]?: JumpWatch }
@@ -2167,42 +2496,78 @@ type WatchedBroadcast = NmsBroadcast & { [WRAPPED]?: JumpWatch }
  */
 function watchForJumps(entry: LiveEntry, raw: NmsBroadcast | undefined): void {
   if (raw == null) return
+  const known = wrapBroadcast(raw)
+  known.entry = entry
+  known.detector.reset()
+  forgetCut(entry)
+}
+
+/** What a stream's publisher has shown of itself, once it is watched. */
+function heardOf(entry: LiveEntry): PublishHeard | undefined {
+  const broadcast: WatchedBroadcast | undefined =
+    entry.ingress.session?.broadcast
+  return broadcast?.[WRAPPED]?.heard
+}
+
+function makeHeard(): PublishHeard {
+  return { heard: {} }
+}
+
+/**
+ * Wraps a broadcast the moment a publish arrives, ahead of looking its key up:
+ * a publisher's sequence headers can follow within that look-up, and it sends
+ * them once. A classic HEVC header left unread is one a late reader never
+ * gets, and a recording with no header to compare has only a guess to go on.
+ */
+function wrapBroadcast(raw: NmsBroadcast): JumpWatch {
   const broadcast = raw as WatchedBroadcast
   const known = broadcast[WRAPPED]
-  if (known != null) {
-    known.entry = entry
-    known.detector.reset()
-    forgetCut(entry)
-    return
-  }
+  if (known != null) return known
   const watch: JumpWatch = {
     detector: jumpDetector(requireConfig().segmentSeconds * 1000),
-    entry
+    heard: makeHeard()
   }
   broadcast[WRAPPED] = watch
   const pass = broadcast.broadcastMessage?.bind(broadcast)
   const done = broadcast.donePublish?.bind(broadcast)
+  const passOn = (packet: NmsPacket): void => {
+    pass?.(packet)
+    // Its metadata is read there, for a publisher it knows as publishing.
+    const publisher = broadcast.publisher
+    if (packet.flags !== 5 || publisher == null) return
+    if (publisher.videoCodec === 0) return
+    const sound = publisher.audioCodec
+    watch.heard.heard.says = {
+      noSound: sound == null || sound === 0 || sound === ''
+    }
+  }
   broadcast.broadcastMessage = packet => {
     classifyClassicHevc(packet)
+    hearPublish(watch, packet)
+    const entry = watch.entry
+    if (entry == null) {
+      passOn(packet)
+      return
+    }
     const video = packet.flags === 3 || packet.flags === 4
     const jump = watch.detector.feed({
       video,
       dtsMs: packet.dts,
       arrivalMs: Date.now()
     })
-    if (jump) cutAtJump(watch.entry, broadcast, packet)
-    const hls = hlsOutputOf(watch.entry)
+    if (jump) cutAtJump(entry, broadcast, packet)
+    const hls = hlsOutputOf(entry)
     if (packet.flags === 3 && hls?.respawnAtKeyframe === true) {
       // The new writer's first picture is this keyframe: node-media-server
       // replays it to a reader from its cache, which it starts again here.
       hls.respawnAtKeyframe = false
-      if (watch.entry.ingress.publishing && !hls.released) {
-        spawnOutput(watch.entry, hls)
+      if (entry.ingress.publishing && !hls.released) {
+        spawnOutput(entry, hls)
       }
     }
-    pass?.(packet)
+    passOn(packet)
     // After passing it on, which is where its metadata is read.
-    codecHeard(watch.entry, packet)
+    codecHeard(entry, packet)
   }
   broadcast.donePublish = session => {
     // As node-media-server's own: only the session publishing ends the
@@ -2212,10 +2577,12 @@ function watchForJumps(entry: LiveEntry, raw: NmsBroadcast | undefined): void {
     const current = broadcast.publisher
     if (current == null || session === current) {
       watch.detector.reset()
-      forgetCut(watch.entry)
+      watch.heard = makeHeard()
+      if (watch.entry != null) forgetCut(watch.entry)
     }
     done?.(session)
   }
+  return watch
 }
 
 function hlsOutputOf(entry: LiveEntry): OutputRuntime | undefined {
@@ -2395,6 +2762,7 @@ function publishArrived(session: NmsSession): void {
   }
   const entry = entries.get(key)
   if (entry != null) replaceQuietPublisher(entry, session)
+  if (session.broadcast != null) wrapBroadcast(session.broadcast)
   const resolve = requireConfig().resolve
   // Cached keys also need current authority before each new connection.
   if (entry != null && resolve == null) {
@@ -2688,15 +3056,18 @@ export interface TestSession {
   streamPath?: string
   inBytes?: number
   videoCodec?: number
+  audioCodec?: number
   close?: () => void
   socket?: { destroy?: () => void }
   broadcast?: {
+    publisher?: unknown
     donePublish?: (session: never) => void
     broadcastMessage?: (packet: {
       flags: number
       dts: number
       codec_id?: number
       data?: Buffer
+      size?: number
     }) => void
     subscribers?: Map<
       string,

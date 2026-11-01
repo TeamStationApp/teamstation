@@ -158,6 +158,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/invites/personRequests.js',
   'server/jsonBody.js',
   'server/live/controller.js',
+  'server/live/decoderConfig.js',
   'server/live/finishVideo.js',
   'server/live/frameWallFixture.js',
   'server/live/holeFiller.js',

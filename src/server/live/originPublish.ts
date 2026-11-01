@@ -1,3 +1,5 @@
+import { isInitName } from './segmentClock'
+
 /** Object names emitted by the live writer; temporary files are never public. */
 export function isSegmentName(name: string): boolean {
   return /^seg\d{6,}\.m4s$/.test(name)
@@ -7,7 +9,8 @@ export function objectKey(videoId: string, name: string): string {
   if (
     !/^[a-zA-Z0-9_-]+$/.test(videoId) ||
     (!isSegmentName(name) &&
-      !['init.mp4', 'index.m3u8', 'master.m3u8'].includes(name))
+      !isInitName(name) &&
+      !['index.m3u8', 'master.m3u8'].includes(name))
   )
     throw new Error('Invalid live object name')
   return `videos/${videoId}/${name}`
