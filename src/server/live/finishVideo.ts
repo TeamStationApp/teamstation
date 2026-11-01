@@ -1,12 +1,15 @@
+import { createReadStream, createWriteStream } from 'node:fs'
 import {
   mkdir,
   readdir,
   readFile,
   rename,
   rm,
+  stat,
   writeFile
 } from 'node:fs/promises'
 import { join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 
 import { type Kysely, sql } from 'kysely'
 
@@ -22,9 +25,11 @@ import {
 } from '../media/ffmpeg'
 import { isStampedAt, readRecordingStamps } from '../media/wallClockScan'
 import { storeWallPoints } from '../media/wallTimeline'
-import { fillHoles } from './holeFiller'
+import { boxesIn, fillHoles } from './holeFiller'
 import {
+  FIRST_INIT,
   FRAME_SLACK_SEC,
+  isInitName,
   listedSegments,
   readLeadingBoxes,
   timelineStartSec
@@ -50,7 +55,7 @@ import { LIVE_PLAYLIST_NAME } from './splitter'
 
 /** The files a live stream leaves behind, alongside the recording it becomes. */
 export function isLivePart(name: string): boolean {
-  return name === 'init.mp4' || /^seg\d+\.m4s$/.test(name)
+  return isInitName(name) || /^seg\d+\.m4s$/.test(name)
 }
 
 export interface VodResult {
@@ -73,6 +78,14 @@ export interface VodResult {
  * A playlist whose holes were filled that then fails to remux is logged and
  * remuxed again with its holes unfilled, as it packed before the filler
  * existed, so a fault only the filler causes never leaves a game unpacked.
+ *
+ * A recording that changed configuration part way (`absorbWriterPlaylist`) has
+ * more than one init segment, which one fragmented MP4's one sample entry
+ * cannot hold, and which FFmpeg will not read across. Each configuration is
+ * remuxed by itself and the results follow each other in the one file, each
+ * with its own `moov`: `video.mp4` is then read only by its playlist, whose
+ * `EXT-X-MAP` byte ranges say where each starts. It is still one object in the
+ * Space and one presigned URL.
  */
 export async function toRecording(
   ffmpegPath: string,
@@ -83,32 +96,24 @@ export async function toRecording(
   await rm(staging, { recursive: true, force: true })
   await mkdir(staging, { recursive: true })
 
-  const playlistPath = join(dir, LIVE_PLAYLIST_NAME)
-  try {
-    const { source, unfilled } = await remuxSources(dir, ffmpegPath, log)
-    try {
-      await remuxToHls(ffmpegPath, {
-        input: source,
-        outDir: staging,
-        concatList: source !== playlistPath
-      })
-    } catch (error) {
-      if (unfilled == null) throw error
-      log(
-        `live: ${dir}: remux of the filled holes failed, remuxing them unfilled: ${String(error)}`
-      )
-      await rm(staging, { recursive: true, force: true })
-      await mkdir(staging, { recursive: true })
-      await remuxToHls(ffmpegPath, {
-        input: unfilled,
-        outDir: staging,
-        concatList: true
-      })
-    }
-  } finally {
-    await rm(join(dir, '.holes'), { recursive: true, force: true })
+  const parts = configurationRuns(
+    await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8').catch(() => ''),
+    await moovsOf(dir)
+  )
+  if (parts.length > 1) {
+    await remuxRuns(ffmpegPath, dir, staging, parts, log)
+  } else {
+    await remuxOne(
+      ffmpegPath,
+      dir,
+      join(dir, LIVE_PLAYLIST_NAME),
+      FIRST_INIT,
+      staging,
+      log
+    )
   }
 
+  // Of the first configuration, which is all a demuxer reads of the file.
   const probe = await probeVideoStream(
     ffprobeFor(ffmpegPath),
     join(staging, VIDEO_FILE)
@@ -143,6 +148,237 @@ export async function toRecording(
     codecTag: probe.codecTag,
     files: files.sort()
   }
+}
+
+/** One playlist's remux into `outDir`, holes and their fallback as above. */
+async function remuxOne(
+  ffmpegPath: string,
+  dir: string,
+  playlistPath: string,
+  initName: string,
+  outDir: string,
+  log: (message: string) => void
+): Promise<void> {
+  try {
+    const { source, unfilled } = await remuxSources(
+      dir,
+      ffmpegPath,
+      log,
+      playlistPath,
+      initName
+    )
+    try {
+      await remuxToHls(ffmpegPath, {
+        input: source,
+        outDir,
+        concatList: source !== playlistPath
+      })
+    } catch (error) {
+      if (unfilled == null) throw error
+      log(
+        `live: ${dir}: remux of the filled holes failed, remuxing them unfilled: ${String(error)}`
+      )
+      await rm(outDir, { recursive: true, force: true })
+      await mkdir(outDir, { recursive: true })
+      await remuxToHls(ffmpegPath, {
+        input: unfilled,
+        outDir,
+        concatList: true
+      })
+    }
+  } finally {
+    await rm(join(dir, '.holes'), { recursive: true, force: true })
+  }
+}
+
+/** The part of a live playlist that one configuration wrote, in order. */
+export interface ConfigurationRun {
+  /** The init segment its segments are remuxed with. */
+  init: string
+  /** Its lines, as a playlist of its own without its head. */
+  lines: string[]
+}
+
+/**
+ * Splits a live playlist where its configuration changes.
+ *
+ * Writers after a change have an init segment each, and neighbouring ones from
+ * the same camera write the same `moov`: those stay one run, so that the holes
+ * between them are filled as any other's. Anything of which `moovs` has no
+ * record is its own run.
+ */
+export function configurationRuns(
+  playlist: string,
+  moovs: ReadonlyMap<string, string>
+): ConfigurationRun[] {
+  const runs: ConfigurationRun[] = []
+  let run: ConfigurationRun | undefined
+  for (const raw of playlist.split('\n')) {
+    const line = raw.trim()
+    if (line === '#EXT-X-ENDLIST') continue
+    if (line.startsWith('#EXT-X-MAP:')) {
+      const init = /URI="([^"]+)"/.exec(line)?.[1] ?? FIRST_INIT
+      const same =
+        run != null &&
+        moovs.get(run.init) != null &&
+        moovs.get(run.init) === moovs.get(init)
+      if (same) continue
+      if (run != null) {
+        // The discontinuity above this map is where the runs meet now.
+        if (run.lines.at(-1) === '#EXT-X-DISCONTINUITY') run.lines.pop()
+        runs.push(run)
+      }
+      run = { init, lines: [] }
+    } else if (run != null) {
+      run.lines.push(line)
+    }
+  }
+  return run == null ? [] : [...runs, run]
+}
+
+/** Each init segment in a directory, and its `moov`. */
+async function moovsOf(dir: string): Promise<Map<string, string>> {
+  const moovs = new Map<string, string>()
+  for (const name of await readdir(dir).catch((): string[] => [])) {
+    if (!isInitName(name)) continue
+    const init = await readFile(join(dir, name)).catch(() => undefined)
+    const moov =
+      init == null
+        ? undefined
+        : boxesIn(init, 0, init.length).find(box => box.type === 'moov')
+    if (init != null && moov != null) {
+      moovs.set(name, init.subarray(moov.start, moov.end).toString('base64'))
+    }
+  }
+  return moovs
+}
+
+/**
+ * Remuxes each run by itself into `staging`, then joins them there into the
+ * one file a recording is, with one media playlist and the first run's master.
+ */
+async function remuxRuns(
+  ffmpegPath: string,
+  dir: string,
+  staging: string,
+  runs: ConfigurationRun[],
+  log: (message: string) => void
+): Promise<void> {
+  const remuxed: string[] = []
+  for (const [index, run] of runs.entries()) {
+    const playlistPath = join(dir, `.run${String(index)}.m3u8`)
+    const outDir = join(staging, `run${String(index)}`)
+    await mkdir(outDir, { recursive: true })
+    await writeFile(playlistPath, runPlaylist(run))
+    try {
+      await remuxOne(ffmpegPath, dir, playlistPath, run.init, outDir, log)
+    } finally {
+      await rm(playlistPath, { force: true })
+    }
+    remuxed.push(outDir)
+  }
+
+  const playlists: string[] = []
+  let offset = 0
+  const video = join(staging, VIDEO_FILE)
+  for (const outDir of remuxed) {
+    playlists.push(
+      shiftByteRanges(
+        await readFile(join(outDir, MEDIA_PLAYLIST), 'utf8'),
+        offset
+      )
+    )
+    const file = join(outDir, VIDEO_FILE)
+    offset += (await stat(file)).size
+    await pipeline(
+      createReadStream(file),
+      createWriteStream(video, { flags: 'a' })
+    )
+  }
+  await writeFile(join(staging, MEDIA_PLAYLIST), joinMediaPlaylists(playlists))
+  await rename(
+    join(remuxed[0], MASTER_PLAYLIST),
+    join(staging, MASTER_PLAYLIST)
+  )
+  for (const outDir of remuxed) {
+    await rm(outDir, { recursive: true, force: true })
+  }
+}
+
+/** A run as a closed playlist of its own, for the HLS demuxer to read. */
+function runPlaylist(run: ConfigurationRun): string {
+  const longestSec = Math.max(
+    1,
+    ...run.lines.flatMap(line =>
+      line.startsWith('#EXTINF:')
+        ? [Math.ceil(Number.parseFloat(line.slice('#EXTINF:'.length)))]
+        : []
+    )
+  )
+  const start = run.lines.findIndex(
+    line => line.startsWith('#EXTINF:') || line.startsWith('#EXT-X-PROGRAM')
+  )
+  return `${[
+    '#EXTM3U',
+    '#EXT-X-VERSION:7',
+    `#EXT-X-TARGETDURATION:${String(longestSec)}`,
+    '#EXT-X-MEDIA-SEQUENCE:0',
+    '#EXT-X-PLAYLIST-TYPE:VOD',
+    '#EXT-X-INDEPENDENT-SEGMENTS',
+    `#EXT-X-MAP:URI="${run.init}"`,
+    ...run.lines.slice(Math.max(0, start)).filter(line => line !== ''),
+    '#EXT-X-ENDLIST'
+  ].join('\n')}\n`
+}
+
+/** A single-file media playlist with its byte ranges moved along its file. */
+export function shiftByteRanges(playlist: string, offset: number): string {
+  return playlist
+    .replace(
+      /(#EXT-X-MAP:.*BYTERANGE=")(\d+)@(\d+)"/g,
+      (_line, head: string, length: string, at: string) =>
+        `${head}${length}@${String(Number(at) + offset)}"`
+    )
+    .replace(
+      /^#EXT-X-BYTERANGE:(\d+)@(\d+)$/gm,
+      (_line, length: string, at: string) =>
+        `#EXT-X-BYTERANGE:${length}@${String(Number(at) + offset)}`
+    )
+}
+
+/**
+ * Single-file media playlists as one, each after the first behind a
+ * discontinuity and its own `EXT-X-MAP`. The timestamps of each start again,
+ * which is what a discontinuity tells a player to expect. The target duration
+ * is the largest of theirs, as every segment has to fit under it.
+ */
+export function joinMediaPlaylists(playlists: readonly string[]): string {
+  let targetSec = 0
+  const body: string[] = []
+  const [first] = playlists
+  for (const [index, playlist] of playlists.entries()) {
+    const lines = playlist.trimEnd().split('\n')
+    const map = lines.findIndex(line => line.startsWith('#EXT-X-MAP:'))
+    for (const line of lines) {
+      const target = /^#EXT-X-TARGETDURATION:(\d+)$/.exec(line)
+      if (target != null) targetSec = Math.max(targetSec, Number(target[1]))
+    }
+    if (index > 0) body.push('#EXT-X-DISCONTINUITY')
+    body.push(...lines.slice(map).filter(line => line !== '#EXT-X-ENDLIST'))
+  }
+  const head = first.split('\n')
+  const headEnd = head.findIndex(line => line.startsWith('#EXT-X-MAP:'))
+  return `${[
+    ...head
+      .slice(0, headEnd)
+      .map(line =>
+        line.startsWith('#EXT-X-TARGETDURATION:')
+          ? `#EXT-X-TARGETDURATION:${String(targetSec)}`
+          : line
+      ),
+    ...body,
+    '#EXT-X-ENDLIST'
+  ].join('\n')}\n`
 }
 
 /**
@@ -192,14 +428,15 @@ export async function fileForRemux(
 async function remuxSources(
   dir: string,
   ffmpegPath: string,
-  log: (message: string) => void
+  log: (message: string) => void,
+  playlistPath: string = join(dir, LIVE_PLAYLIST_NAME),
+  initName: string = FIRST_INIT
 ): Promise<{ source: string; unfilled?: string }> {
-  const playlistPath = join(dir, LIVE_PLAYLIST_NAME)
   const asIs = { source: playlistPath }
   const playlist = await readFile(playlistPath, 'utf8').catch(() => '')
   const listed = listedSegments(playlist)
   if (listed.length < 2) return asIs
-  const init = await readFile(join(dir, 'init.mp4')).catch(() => undefined)
+  const init = await readFile(join(dir, initName)).catch(() => undefined)
   if (init == null) return asIs
   const pieces: Array<{
     name: string
@@ -220,7 +457,7 @@ async function remuxSources(
   const scratch = join(dir, '.holes')
   await rm(scratch, { recursive: true, force: true })
   await mkdir(scratch, { recursive: true })
-  const initPath = join(dir, 'init.mp4')
+  const initPath = join(dir, initName)
   const isHole = (index: number): boolean =>
     timelineHole([pieces[index], pieces[index + 1]])
   let lines: string[] | undefined

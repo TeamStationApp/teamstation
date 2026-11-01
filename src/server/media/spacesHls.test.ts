@@ -221,6 +221,8 @@ describe('live Space playback cache', function () {
     expect(cache.rewrite('live', 'video.m3u8', MEDIA_PLAYLIST)).not.equals(
       rewritten
     )
+    expect(cache.sign('live', 'init000012.mp4')).contains('init000012.mp4')
+    expect(() => cache.sign('live', 'init12.mp4')).throws('Invalid media')
     expect(() => cache.sign('live', '../other/video.mp4')).throws(
       'Invalid media'
     )

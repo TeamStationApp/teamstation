@@ -521,11 +521,19 @@ export interface PlaylistSegment {
   range?: { offset: number; length: number }
   /** `EXT-X-DISCONTINUITY` before it: the publisher went and came back. */
   discontinuity: boolean
+  /** The `EXT-X-MAP` in force, when it is not the playlist's first. */
+  map?: PlaylistMap
+}
+
+/** An init segment, whole or as a byte range of a recording's one file. */
+export interface PlaylistMap {
+  uri: string
+  range?: { offset: number; length: number }
 }
 
 export interface MediaPlaylist {
-  /** `EXT-X-MAP`: where the init segment is. */
-  map?: { uri: string; range?: { offset: number; length: number } }
+  /** The first `EXT-X-MAP`: where the first segment's init segment is. */
+  map?: PlaylistMap
   segments: PlaylistSegment[]
   ended: boolean
 }
@@ -537,6 +545,7 @@ export function parseMediaPlaylist(text: string): MediaPlaylist {
   let range: PlaylistSegment['range']
   let discontinuity = false
   let rangeEnd = 0
+  let later: PlaylistMap | undefined
   // A byte range without an offset starts where the last one ended.
   const readRange = (value: string): { offset: number; length: number } => {
     const [length, offset] = value.split('@').map(Number)
@@ -549,10 +558,12 @@ export function parseMediaPlaylist(text: string): MediaPlaylist {
     if (line.startsWith('#EXT-X-MAP:')) {
       const uri = /URI="([^"]*)"/.exec(line)?.[1] ?? ''
       const byterange = /BYTERANGE="([^"]*)"/.exec(line)?.[1]
-      playlist.map = {
+      const map: PlaylistMap = {
         uri,
         ...(byterange == null ? {} : { range: readRange(byterange) })
       }
+      if (playlist.map == null) playlist.map = map
+      else later = map
     } else if (line.startsWith('#EXTINF:')) {
       duration = Number.parseFloat(line.slice('#EXTINF:'.length))
     } else if (line.startsWith('#EXT-X-BYTERANGE:')) {
@@ -566,6 +577,7 @@ export function parseMediaPlaylist(text: string): MediaPlaylist {
         uri: line,
         durationSec: duration,
         ...(range == null ? {} : { range }),
+        ...(later == null ? {} : { map: later }),
         discontinuity
       })
       duration = undefined
@@ -648,10 +660,17 @@ export async function readRecordingStamps(
     await readFile(join(dir, options.playlistFile ?? MEDIA_PLAYLIST), 'utf8')
   )
   if (playlist.map == null) return none
-  const track = videoTrackOf(
-    await readPart(join(dir, playlist.map.uri), playlist.map.range)
-  )
-  if (track == null) return none
+  const tracks = new Map<string, VideoTrack | null>()
+  const trackOf = async (map: PlaylistMap): Promise<VideoTrack | null> => {
+    const key = `${map.uri}@${String(map.range?.offset ?? 0)}`
+    const held = tracks.get(key)
+    if (held !== undefined) return held
+    const track = videoTrackOf(await readPart(join(dir, map.uri), map.range))
+    tracks.set(key, track)
+    return track
+  }
+  const first = await trackOf(playlist.map)
+  if (first == null) return none
   const points: WallPoint[] = []
   const stamped: StampedSpan[] = []
   /** Where the stamped stretch being read began, while it goes on. */
@@ -659,6 +678,11 @@ export async function readRecordingStamps(
   let startMs = 0
   let placement: Placement | undefined
   for (const [index, segment] of playlist.segments.entries()) {
+    const track = await trackOf(segment.map ?? playlist.map)
+    if (track == null) {
+      startMs += segment.durationSec * 1000
+      continue
+    }
     const bytes = await readPart(join(dir, segment.uri), segment.range)
     const scanned = scanSegment(
       bytes,

@@ -17,6 +17,9 @@ import {
   videoTrackOf
 } from '../media/wallClockScan'
 
+/** The init segment of a recording's first writer, and of its continuations. */
+export const FIRST_INIT = 'init.mp4'
+
 interface LocatedBox {
   type: string
   start: number
@@ -277,7 +280,8 @@ function trackTimescale(init: Buffer, trackId: number): number | undefined {
   )?.timescale
 }
 
-function writeStamped(path: string, bytes: Buffer): void {
+/** Replaces a file in one step, so a reader sees the old one or the new. */
+export function writeStamped(path: string, bytes: Buffer): void {
   const temporary = `${path}.${process.pid}.stamp`
   writeFileSync(temporary, bytes)
   renameSync(temporary, path)
@@ -287,6 +291,8 @@ function writeStamped(path: string, bytes: Buffer): void {
 export interface ListedSegment {
   /** Its file name, as the HLS writer names it (`seg%06d.m4s`). */
   name: string
+  /** The init segment the `EXT-X-MAP` above it names. */
+  init: string
   /** Its `#EXTINF` length, in seconds. */
   durationSec: number
   /** The program date written for it, in milliseconds since 1970, if one was. */
@@ -310,8 +316,12 @@ export function listedSegments(playlist: string): ListedSegment[] {
   const listed: ListedSegment[] = []
   let pendingSec: number | undefined
   let pendingPdt: number | undefined
+  let init = FIRST_INIT
   for (const raw of playlist.split('\n')) {
     const line = raw.trim()
+    if (line.startsWith('#EXT-X-MAP:')) {
+      init = /URI="([^"]+)"/.exec(line)?.[1] ?? init
+    }
     const dated = /^#EXT-X-PROGRAM-DATE-TIME:(.+)$/.exec(line)
     if (dated != null) {
       const ms = Date.parse(dated[1])
@@ -323,6 +333,7 @@ export function listedSegments(playlist: string): ListedSegment[] {
     if (pendingSec != null) {
       listed.push({
         name: line,
+        init,
         durationSec: pendingSec,
         ...(pendingPdt == null ? {} : { programDateMs: pendingPdt })
       })
@@ -341,6 +352,7 @@ export function firstProgramDateMs(
 }
 
 interface ProgrammeSegment {
+  init: string
   start: number
   duration: number
 }
@@ -360,7 +372,11 @@ function listedProgramme(playlist: string): Map<string, ProgrammeSegment> {
     const mark = segment.programDateMs ?? timelineEnd
     const start =
       mark != null && firstPdt != null ? (mark - firstPdt) / 1000 : mediaBefore
-    listed.set(segment.name, { start, duration: segment.durationSec })
+    listed.set(segment.name, {
+      init: segment.init,
+      start,
+      duration: segment.durationSec
+    })
     if (mark != null) timelineEnd = mark + segment.durationSec * 1000
     mediaBefore += segment.durationSec
   }
@@ -402,7 +418,7 @@ export async function listedTimelineEndSec(
   if (last == null) return undefined
   try {
     const start = timelineStartSec(
-      readFileSync(`${directory}/init.mp4`),
+      readFileSync(`${directory}/${last.init}`),
       await readLeadingBoxes(`${directory}/${last.name}`)
     )
     return start == null ? undefined : start + last.durationSec
@@ -486,11 +502,11 @@ export async function recoverUnstampedSegments(
 ): Promise<string[]> {
   if (!(offsetSec > 0) || playlist == null) return []
   const listed = listedProgramme(playlist)
-  let init: Buffer
-  try {
-    init = readFileSync(`${directory}/init.mp4`)
-  } catch {
-    return []
+  const inits = new Map<string, Buffer>()
+  const initOf = (name: string): Buffer => {
+    const held = inits.get(name) ?? readFileSync(`${directory}/${name}`)
+    inits.set(name, held)
+    return held
   }
   const below = Math.max(from, placedBelowOnDisk(directory))
   const moved: string[] = []
@@ -503,8 +519,10 @@ export async function recoverUnstampedSegments(
       continue
     }
     await yieldTurn()
+    let init: Buffer
     let actual: number | undefined
     try {
+      init = initOf(programme.init)
       actual = timelineStartSec(
         init,
         await readLeadingBoxes(`${directory}/${name}`)
@@ -548,6 +566,19 @@ function stampFile(
   }
 }
 
+/**
+ * The init segment of a writer that may not share {@link FIRST_INIT}, named
+ * after its first segment, so no two writers ever have the same one.
+ */
+export function ownInitName(firstSegment: number): string {
+  return `init${String(firstSegment).padStart(6, '0')}.mp4`
+}
+
+/** Whether a name is an init segment of a live recording. */
+export function isInitName(name: string): boolean {
+  return /^init(?:\d{6,})?\.mp4$/.test(name)
+}
+
 /** A segment's file name, as the HLS writer names it (`seg%06d.m4s`). */
 export function segmentName(segment: number): string {
   return `seg${String(segment).padStart(6, '0')}.m4s`
@@ -586,14 +617,15 @@ export function segmentsFrom(directory: string, from: number): string[] {
 export function stampNewSegments(
   directory: string,
   offsetSec: number,
-  names: readonly string[]
+  names: readonly string[],
+  initName: string = FIRST_INIT
 ): string[] {
   if (!(offsetSec > 0)) return []
   const moved: string[] = []
   let init: Buffer | undefined
   for (const name of names) {
     try {
-      init ??= readFileSync(`${directory}/init.mp4`)
+      init ??= readFileSync(`${directory}/${initName}`)
     } catch {
       return moved
     }
@@ -613,12 +645,13 @@ export function restampSegments(
   directory: string,
   names: Iterable<string>,
   fromSec: number,
-  toSec: number
+  toSec: number,
+  initName: string = FIRST_INIT
 ): string[] {
   if (!(toSec > 0) || fromSec === toSec) return []
   let init: Buffer
   try {
-    init = readFileSync(`${directory}/init.mp4`)
+    init = readFileSync(`${directory}/${initName}`)
   } catch {
     return []
   }

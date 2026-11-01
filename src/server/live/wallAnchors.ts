@@ -8,6 +8,7 @@ import {
   type MediaPlaylist,
   parseMediaPlaylist,
   type Placement,
+  type PlaylistSegment,
   readPart,
   type ScannedFrame,
   scanSegment,
@@ -17,6 +18,7 @@ import {
   type WallPoint
 } from '../media/wallClockScan'
 import type { StoredWallPoint } from '../media/wallTimeline'
+import { FIRST_INIT } from './segmentClock'
 import { LIVE_PLAYLIST_NAME } from './splitter'
 
 /**
@@ -106,9 +108,17 @@ export async function scanNewSegments(
   )
   if (fresh.length === 0) return { points: [], cursor, unreadable: [] }
 
-  // No init segment, so nothing can be read out of the segments: they are
-  // placed by their arrival.
-  const track = await readTrack(directory, playlist)
+  // No init segment, so nothing can be read out of a segment: it is placed by
+  // its arrival.
+  const tracks = new Map<string, VideoTrack | null>()
+  const trackOf = async (
+    segment: PlaylistSegment
+  ): Promise<VideoTrack | null> => {
+    const uri = segment.map?.uri ?? playlist.map?.uri ?? FIRST_INIT
+    const held = tracks.get(uri) ?? (await readTrack(directory, uri))
+    tracks.set(uri, held)
+    return held
+  }
 
   const points: StoredWallPoint[] = []
   const unreadable: string[] = []
@@ -120,9 +130,10 @@ export async function scanNewSegments(
     end += segment.durationSec * 1000
   }
   let startMs = starts[cursor.segments] ?? end
-  if (track != null && placementSegment != null) {
+  if (placementSegment != null) {
     const reference = playlist.segments[placementSegment]
-    if (reference != null) {
+    const track = reference == null ? null : await trackOf(reference)
+    if (track != null) {
       placement = scanSegment(
         await readPart(join(directory, reference.uri)),
         track,
@@ -137,6 +148,7 @@ export async function scanNewSegments(
   for (const [index, segment] of fresh.entries()) {
     const lengthMs = segment.durationSec * 1000
     let frames: ScannedFrame[] = []
+    const track = await trackOf(segment)
     if (track != null) {
       const bytes = await readPart(join(directory, segment.uri))
       try {
@@ -244,8 +256,11 @@ export async function resumeScan(
   while (runStart > 0 && !playlist.segments[runStart].discontinuity) runStart--
   let placement: Placement | undefined
   if (runStart < held) {
-    const track = await readTrack(directory, playlist)
     const first = playlist.segments[runStart]
+    const track = await readTrack(
+      directory,
+      first.map?.uri ?? playlist.map?.uri ?? FIRST_INIT
+    )
     try {
       if (track != null)
         placement = scanSegment(
@@ -284,18 +299,16 @@ async function readPlaylist(directory: string): Promise<MediaPlaylist | null> {
 }
 
 /**
- * The video track of the init segment as it is now, which is the current
- * writer's: a reconnect writes a new one under the same name. Null without
- * one.
+ * The video track of an init segment as it is now, which for the first is the
+ * current writer's: a reconnect writes a new one under the same name. Null
+ * without one.
  */
 async function readTrack(
   directory: string,
-  playlist: MediaPlaylist
+  init: string
 ): Promise<VideoTrack | null> {
   try {
-    return videoTrackOf(
-      await readFile(join(directory, playlist.map?.uri ?? 'init.mp4'))
-    )
+    return videoTrackOf(await readFile(join(directory, init)))
   } catch {
     return null
   }

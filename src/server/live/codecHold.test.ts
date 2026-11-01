@@ -13,7 +13,12 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { CODEC_REFUSAL } from '../../common/api'
-import { hevcSegment, IDR_SLICE } from './frameWallFixture'
+import {
+  hevcHeaderBody,
+  hevcSegment,
+  IDR_SLICE,
+  parameterSetNals
+} from './frameWallFixture'
 import {
   configureIngest,
   forcePublishForTest,
@@ -153,6 +158,24 @@ describe('a publish on a key that already holds a recording', function () {
     made.broadcast?.broadcastMessage?.(packet)
   }
 
+  /**
+   * What a publisher sends first: the sequence header of the configuration
+   * `firstPublishOnDisk` recorded, and a keyframe.
+   */
+  const show = (made: TestSession, codec: 12 | typeof FOURCC_HEVC): void => {
+    const header = hevcHeaderBody(
+      codec === 12 ? 'classic' : 'enhanced',
+      parameterSetNals(1)
+    )
+    send(made, {
+      flags: codec === 12 ? 4 : 2,
+      dts: 0,
+      codec_id: codec,
+      data: header
+    })
+    send(made, { flags: 3, dts: 0, codec_id: codec })
+  }
+
   /** Forgets the key and its writers, and puts the recording back. */
   const anew = (): void => {
     resetForTest()
@@ -257,6 +280,7 @@ describe('a publish on a key that already holds a recording', function () {
     live(START_MS)
     const hevc = session('camera', FOURCC_HEVC)
     publishArrivedForTest(hevc)
+    show(hevc, FOURCC_HEVC)
     await until(() => spawned().length === 1)
     await until(() => writerForTest(KEY) != null)
     const writer = writerForTest(KEY)
@@ -276,7 +300,9 @@ describe('a publish on a key that already holds a recording', function () {
     expect(recording()).deep.equals(before)
 
     // The camera itself comes back, and the recording goes on.
-    publishArrivedForTest(session('camera again', FOURCC_HEVC))
+    const again = session('camera again', FOURCC_HEVC)
+    publishArrivedForTest(again)
+    show(again, FOURCC_HEVC)
     await until(() => spawned().length === 2)
     const next = spawned()[1]
     const flags = next[next.indexOf('-hls_flags') + 1].split('+')
@@ -287,7 +313,9 @@ describe('a publish on a key that already holds a recording', function () {
   it('refuses a newcomer that replaced a quiet publisher, its writer still finishing', async function () {
     firstPublishOnDisk(DIR, START_MS)
     live(START_MS)
-    publishArrivedForTest(session('stalled camera', FOURCC_HEVC))
+    const stalled = session('stalled camera', FOURCC_HEVC)
+    publishArrivedForTest(stalled)
+    show(stalled, FOURCC_HEVC)
     await until(() => spawned().length === 1)
     await until(() => writerForTest(KEY) != null)
     const writer = writerForTest(KEY)
@@ -306,7 +334,7 @@ describe('a publish on a key that already holds a recording', function () {
     expect(recording()).deep.equals(before)
   })
 
-  it('starts the writer as soon as metadata shows HEVC', async function () {
+  it('holds a writer past metadata until the first picture has shown its headers', async function () {
     firstPublishOnDisk(DIR, START_MS)
     live(START_MS)
     const made = session('camera')
@@ -314,6 +342,9 @@ describe('a publish on a key that already holds a recording', function () {
     await sleep(50)
     expect(spawned()).length(0)
     send(made, { flags: 5, dts: 0, metadataCodec: FOURCC_HEVC })
+    await sleep(50)
+    expect(spawned(), 'metadata is not a sequence header').length(0)
+    show(made, FOURCC_HEVC)
     await until(() => spawned().length === 1)
     expect(spawned()[0].join(' ')).contains('append_list')
   })
@@ -331,7 +362,7 @@ describe('a publish on a key that already holds a recording', function () {
       send(made, { flags: 0, dts: 0, codec_id: 10 })
       await sleep(50)
       expect(spawned(), 'audio says nothing about the picture').length(0)
-      send(made, { flags: 4, dts: 0, codec_id: codec })
+      show(made, codec)
       await until(() => spawned().length === 1)
       tickSamplerForTest()
       expect(refusals()).length(0)
@@ -344,8 +375,9 @@ describe('a publish on a key that already holds a recording', function () {
     const made = session('camera')
     publishArrivedForTest(made)
     await sleep(50)
+    show(made, 12)
     for (let dts = 0; dts < 20; dts += 1) {
-      send(made, { flags: 4, dts, codec_id: 12 })
+      send(made, { flags: 3, dts, codec_id: 12 })
     }
     await until(() => writerForTest(KEY) != null)
     await sleep(100)
@@ -369,6 +401,7 @@ describe('a publish on a key that already holds a recording', function () {
     live(START_MS)
     const made = session('camera', FOURCC_HEVC)
     publishArrivedForTest(made)
+    show(made, FOURCC_HEVC)
     await until(() => spawned().length === 1)
     send(made, { flags: 4, dts: 0, codec_id: 7 })
     expect(made.videoCodec).equals(FOURCC_HEVC)
@@ -398,11 +431,11 @@ describe('a publish on a key that already holds a recording', function () {
       const made = session('camera')
       Object.assign(made, { videoCodec: codec })
       publishArrivedForTest(made)
-      // No sampler tick: one that has said so has nothing to wait for.
+      show(made, codec === 12 ? 12 : FOURCC_HEVC)
+      // No sampler tick: one that has shown itself has nothing to wait for.
       await until(() => spawned().length === 1)
       expect(spawned()[0].slice(1), String(codec)).deep.equals(baseline)
     }
-    expect(logs.join('\n')).not.contains('for the publish')
   })
 
   it('lets a late reader of classic HEVC have its header and keyframes', function () {
@@ -451,7 +484,7 @@ describe('a publish on a key that already holds a recording', function () {
     const publishedAt = Date.now()
     publishArrivedForTest(made)
     await sleep(1500)
-    send(made, { flags: 3, dts: 0, codec_id: 12 })
+    show(made, 12)
     await until(() => spawned().length === 1)
     expect(logs.join('\n')).match(/waited 1[4-9]\d\d ms/)
 
@@ -475,7 +508,7 @@ describe('a publish on a key that already holds a recording', function () {
 
     const made = session('camera again')
     publishArrivedForTest(made)
-    send(made, { flags: 3, dts: 0, codec_id: 12 })
+    show(made, 12)
     await until(() => spawned().length === 1)
     expect(logs.join('\n')).match(/waited \d{1,3} ms/)
   })

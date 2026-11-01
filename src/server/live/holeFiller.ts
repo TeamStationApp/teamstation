@@ -26,10 +26,12 @@ const run = promisify(execFile)
  * the filler's VPS, SPS and PPS are renumbered to ids the phone does not use
  * and added beside the phone's in that one `hvcC`. Each slice names its own
  * PPS, so a decoder switches at the filler's first picture and back at the
- * return's keyframe, and the phone's pictures are copied untouched. Separate
- * init segments behind a discontinuity would need a playlist the single-file
- * recording does not have, and pictures relying on parameter sets in the
- * stream are not allowed in an `hvc1` track, which is what Safari plays.
+ * return's keyframe, and the phone's pictures are copied untouched. A map of
+ * its own behind a discontinuity for every hole would mean a recording whose
+ * every FFmpeg reader stops at the first, which only a publish that cannot
+ * share the init segment is worth (`toRecording`), and pictures relying on
+ * parameter sets in the stream are not allowed in an `hvc1` track, which is
+ * what Safari plays.
  *
  * Every filler picture is a keyframe, and all of them are the same few hundred
  * bytes, so only one is encoded however long the hole is, and a seek into the
@@ -723,14 +725,14 @@ export function renumberPicture(
 
 /* The sample entry -------------------------------------------------------- */
 
-interface Box {
+export interface Box {
   type: string
   start: number
   end: number
   header: number
 }
 
-function boxesIn(data: Buffer, start: number, end: number): Box[] {
+export function boxesIn(data: Buffer, start: number, end: number): Box[] {
   const boxes: Box[] = []
   let at = start
   while (at + 8 <= end) {
@@ -755,7 +757,7 @@ function boxesIn(data: Buffer, start: number, end: number): Box[] {
 }
 
 /** The chain of boxes from `moov` down to the video track's `hvcC`. */
-function hvcCPath(init: Buffer): Box[] | undefined {
+export function hvcCPath(init: Buffer): Box[] | undefined {
   const moov = boxesIn(init, 0, init.length).find(box => box.type === 'moov')
   if (moov == null) return undefined
   for (const trak of boxesIn(init, moov.start + 8, moov.end)) {
