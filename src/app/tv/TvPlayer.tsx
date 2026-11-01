@@ -105,7 +105,12 @@ export function TvPlayer({
   const [cameraFocus, setCameraFocus] = useState<number | null>(null)
   const statsScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const statsOffset = useRef(0)
-  const statsPan = useRef<{ y: number; moved: boolean } | null>(null)
+  const statsPan = useRef<{
+    y: number
+    startY: number
+    moved: boolean
+    startedAtTop: boolean
+  } | null>(null)
   const statsPanEnded = useRef(0)
   const statsExtent = useRef({ content: 0, viewport: 0 })
   const scoreScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
@@ -514,13 +519,27 @@ export function TvPlayer({
         if (!Number.isFinite(body?.y)) return
         const y = body!.y!
         if (body?.state === 'Began' || statsPan.current === null) {
-          statsPan.current = { y, moved: false }
+          statsPan.current = {
+            y,
+            startY: y,
+            moved: false,
+            startedAtTop: statsOffset.current <= 1
+          }
           return
         }
         const delta = y - statsPan.current.y
         statsPan.current.y = y
         if (Math.abs(delta) < 0.1) return
         statsPan.current.moved = true
+        if (
+          y - statsPan.current.startY < -8 &&
+          statsPan.current.startedAtTop &&
+          statsOffset.current <= 1
+        ) {
+          statsPanEnded.current = Date.now()
+          dispatch({ type: 'dismiss' })
+          return
+        }
         if (delta > 0 && current.current.box !== 'expanded') {
           dispatch({ type: 'box' })
           return
@@ -580,6 +599,10 @@ export function TvPlayer({
             Date.now() - statsPanEnded.current < 250)
         )
           return
+        if (direction === 'up' && statsOffset.current <= 1) {
+          dispatch({ type: 'dismiss' })
+          return
+        }
         if (direction === 'left' || direction === 'right') {
           scoreOffset.current = Math.max(
             0,
