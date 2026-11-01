@@ -1097,7 +1097,7 @@ export function TvPlayer({
         <View
           collapsable={false}
           pointerEvents="none"
-          style={StyleSheet.absoluteFill}
+          style={[StyleSheet.absoluteFill, { top: -screen.height * 0.1 }]}
         >
           <PanelGradient direction="bottom" maxOpacity={0.5} />
         </View>
