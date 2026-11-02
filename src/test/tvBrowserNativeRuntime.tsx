@@ -2,6 +2,7 @@ import React from 'react'
 import { Pressable as WebPressable, View } from 'react-native-web'
 
 export {
+  Animated,
   Image,
   ScrollView,
   StyleSheet,

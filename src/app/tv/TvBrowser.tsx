@@ -18,7 +18,6 @@ import type {
 } from '../../common/api'
 import {
   browseGeometry,
-  collectionTop,
   fourAcross,
   gameDate,
   heroDetailsScale,
@@ -37,6 +36,7 @@ import { tvControl } from './remote'
 import { TvButton } from './TvButton'
 
 const {
+  Animated,
   BackHandler,
   Image,
   Pressable,
@@ -135,36 +135,35 @@ function BrowseGradient({
   )
 }
 
+/** One continuous ramp with a long 50% tail: no join can expose the video. */
+const collectionGradient =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAQACAYAAAAgBjM/AAABCUlEQVR4nO3EVzsQYABAYSlkZGQTGSl774xsomXvXfaeGfHTPeeu8xt878UbEfG/FxTpXtIrF0XRLoZeu1iKc/GU4N5QokuiZJdCb10qpbl0ynCZlOWyKcfl0juXR/nuPRW4QipyxfTBldBH94lKXRmVuwqqdFVU7Wqo1tVRvWugRtdEza6FWl0btbvP1OE6qct10xfXQ72uj/rdAA26IRp2I/TVjdKY+0bf3Q/66X7RuJugSTdF026GZt0czbsFWnRLtOxWaNWt0brboE33m/64Ldp2O7Tr9mjfHdChO6Jjd0Kn7ozO3QVduiu6dn/pxt3Snbunf+6BHkOhUCgUCoVCoVAoFHoOPQGk3L/QOf9djAAAAABJRU5ErkJggg=='
 function CollectionBackground({
   top,
   rowHeight
 }: {
-  top: number
+  top: ReactNative.Animated.AnimatedInterpolation<number>
   rowHeight: number
 }): React.ReactElement {
   return (
-    <View
+    <Animated.View
       testID="tv-collection-background"
       pointerEvents="none"
-      style={{ position: 'absolute', top, left: 0, right: 0, bottom: 0 }}
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: rowHeight * 4,
+        transform: [{ translateY: top }]
+      }}
     >
-      {nativeTvPresentation ? (
-        <View style={{ height: rowHeight }}>
-          <BrowseGradient />
-        </View>
-      ) : (
-        <Svg width="100%" height={rowHeight}>
-          <Defs>
-            <LinearGradient id="collection" x1="0%" y1="0%" x2="0%" y2="100%">
-              <Stop offset="0" stopColor="black" stopOpacity={0} />
-              <Stop offset="1" stopColor="black" stopOpacity={0.5} />
-            </LinearGradient>
-          </Defs>
-          <Rect width="100%" height="100%" fill="url(#collection)" />
-        </Svg>
-      )}
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} />
-    </View>
+      <Image
+        source={{ uri: collectionGradient }}
+        resizeMode="stretch"
+        style={StyleSheet.absoluteFill}
+      />
+    </Animated.View>
   )
 }
 
@@ -680,7 +679,7 @@ function BrowsePage({
   }, [active, key, watchNode, registerWatch])
   const { width, height, fontScale } = useWindowDimensions()
   const [viewportHeight, setViewportHeight] = useState(height - 115)
-  const [scrollY, setScrollY] = useState(0)
+  const scrollY = useRef(new Animated.Value(0)).current
   const geometry = browseGeometry(
     width,
     viewportHeight,
@@ -798,7 +797,7 @@ function BrowsePage({
         horizontal
         style={styles.horizontalViewport}
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.horizontal}
+        contentContainerStyle={[styles.horizontal, { gap: geometry.tileGap }]}
       >
         {games.map((game, index) =>
           gameTile(
@@ -939,7 +938,10 @@ function BrowsePage({
         )
         section.rows.forEach((games, i) =>
           children.push(
-            <View key={`grid-${index}-${i}`} style={styles.gridRow}>
+            <View
+              key={`grid-${index}-${i}`}
+              style={[styles.gridRow, { gap: geometry.tileGap }]}
+            >
               {games.map((game, column) =>
                 gameTile(
                   game,
@@ -965,7 +967,10 @@ function BrowsePage({
               horizontal
               style={styles.horizontalViewport}
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.horizontal}
+              contentContainerStyle={[
+                styles.horizontal,
+                { gap: geometry.tileGap }
+              ]}
             >
               {collection.highlights.map(clip => (
                 <Tile
@@ -1007,7 +1012,10 @@ function BrowsePage({
               horizontal
               style={styles.horizontalViewport}
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.horizontal}
+              contentContainerStyle={[
+                styles.horizontal,
+                { gap: geometry.tileGap }
+              ]}
             >
               {collection.teams.map(team => (
                 <Tile
@@ -1036,7 +1044,10 @@ function BrowsePage({
         )
         fourAcross(collection.remaining).forEach((games, index) =>
           children.push(
-            <View key={`remaining-${index}`} style={styles.gridRow}>
+            <View
+              key={`remaining-${index}`}
+              style={[styles.gridRow, { gap: geometry.tileGap }]}
+            >
               {games.map(game => gameTile(game, 'more'))}
             </View>
           )
@@ -1078,18 +1089,30 @@ function BrowsePage({
         )}
       </View>
       <CollectionBackground
-        top={collectionTop(geometry.heroHeight, scrollY)}
+        top={scrollY.interpolate({
+          inputRange: [0, Math.max(1, geometry.heroHeight)],
+          outputRange: [geometry.heroHeight, 0],
+          extrapolate: 'clamp'
+        })}
         rowHeight={geometry.rowHeight}
       />
-      <ScrollView
+      <Animated.ScrollView
         testID={`tv-page-${pageKey(page)}`}
         style={styles.page}
         contentContainerStyle={styles.pageContent}
-        onScroll={event => {
-          const y = event.nativeEvent.contentOffset.y
-          setScrollY(y)
-          setHeroVisible(y < geometry.heroHeight)
-        }}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          {
+            useNativeDriver: nativeTvPresentation,
+            listener: (
+              event: ReactNative.NativeSyntheticEvent<ReactNative.NativeScrollEvent>
+            ) => {
+              setHeroVisible(
+                event.nativeEvent.contentOffset.y < geometry.heroHeight
+              )
+            }
+          }
+        )}
         scrollEventThrottle={16}
         stickyHeaderIndices={sticky}
       >
@@ -1119,7 +1142,7 @@ function BrowsePage({
             />
           </View>
         )}
-      </ScrollView>
+      </Animated.ScrollView>
     </View>
   )
 }
@@ -1187,8 +1210,8 @@ const styles = StyleSheet.create({
   heading: { fontSize: 32, lineHeight: 38, color: '#fff', fontWeight: '700' },
   rowHeading: { marginLeft: 76 },
   row: { marginBottom: 38, gap: 18 },
-  horizontalViewport: { marginHorizontal: 52 },
-  horizontal: { gap: 24, padding: 24 },
+  horizontalViewport: { overflow: 'visible' },
+  horizontal: { paddingVertical: 24, paddingHorizontal: 76 },
   tile: {
     borderRadius: 17,
     gap: 7
