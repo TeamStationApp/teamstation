@@ -29,81 +29,93 @@ const versionPattern = /^[0-9]+(\.[0-9]+){0,2}$/
 export function setup(m: Setup): void {
   m.apiVersion(1)
   m.buildNumber(APP, { format: 'YYMMDDCC', timeZone: 'America/Los_Angeles' })
-  m.parallel(
+  m.workflow(
     'build',
     {
-      ios: [
-        {
-          name: 'archive',
-          on: IOS,
-          // Nomac provides Xcode 27.0 and cannot install another version.
-          // Rust is installed into the worker tools directory; the archive
-          // environment points the Xcode script phase at that cargo.
-          tools: {
-            node: '24',
-            xcode: '27.0',
-            cocoapods: '1.16.2',
-            rust: '1.98.0'
-          },
-          timeout: '6h',
-          apple: { distribution: 'adHoc', app: APP },
-          publishes: [APP],
-          buildNumbers: [APP],
-          cache: [{ key: 'npm', paths: ['~/.npm'] }],
-          run: buildIos
-        },
-        {
-          name: 'release',
-          on: APPLE,
-          timeout: '2h',
-          // package.json is the short version. A shallow checkout reads it;
-          // this stage re-signs the stashed IPA and does not compile.
-          checkout: { depth: 1 },
-          when: { branch: ['master'] },
-          apple: { distribution: 'appStore', app: APP },
-          run: releaseIos
-        }
-      ],
-      android: [
-        {
-          name: 'compile',
-          on: ANDROID,
-          tools: {
-            node: '24',
-            java: '17',
-            rust: '1.98.0',
-            apt: ['build-essential'],
-            android: [
-              'platforms;android-37.0',
-              'build-tools;37.0.0',
-              'ndk;27.1.12297006',
-              'cmake;3.22.1'
-            ],
-            androidLicenses: 'accept'
-          },
-          timeout: '6h',
-          publishes: [APP],
-          buildNumbers: [APP],
-          cache: [{ key: 'npm', paths: ['~/.npm'] }],
-          run: compileAndroid
-        },
-        {
-          name: 'sign',
-          on: SIGN,
-          tools: {
-            node: '24',
-            java: '17',
-            android: ['build-tools;37.0.0'],
-            androidLicenses: 'accept'
-          },
-          timeout: '1h',
-          publishes: [APP],
-          buildNumbers: [APP],
-          run: signAndroid
-        }
-      ]
+      triggers: [{ push: true }, { request: true }],
+      params: {
+        // A development server's host for this build's iOS app; empty is production.
+        server: { type: 'string', pattern: '^[a-z0-9.-]*$', default: '' }
+      }
     },
-    { failFast: false }
+    w => {
+      w.parallel(
+        'build',
+        {
+          ios: [
+            {
+              name: 'archive',
+              on: IOS,
+              // Nomac provides Xcode 27.0 and cannot install another version.
+              // Rust is installed into the worker tools directory; the archive
+              // environment points the Xcode script phase at that cargo.
+              tools: {
+                node: '24',
+                xcode: '27.0',
+                cocoapods: '1.16.2',
+                rust: '1.98.0'
+              },
+              timeout: '6h',
+              apple: { distribution: 'adHoc', app: APP },
+              publishes: [APP],
+              buildNumbers: [APP],
+              cache: [{ key: 'npm', paths: ['~/.npm'] }],
+              run: buildIos
+            },
+            {
+              name: 'release',
+              on: APPLE,
+              timeout: '2h',
+              // package.json is the short version. A shallow checkout reads it;
+              // this stage re-signs the stashed IPA and does not compile.
+              checkout: { depth: 1 },
+              when: { branch: ['master'] },
+              apple: { distribution: 'appStore', app: APP },
+              run: releaseIos
+            }
+          ],
+          android: [
+            {
+              name: 'compile',
+              on: ANDROID,
+              tools: {
+                node: '24',
+                java: '17',
+                rust: '1.98.0',
+                apt: ['build-essential'],
+                android: [
+                  'platforms;android-37.0',
+                  'build-tools;37.0.0',
+                  'ndk;27.1.12297006',
+                  'cmake;3.22.1'
+                ],
+                androidLicenses: 'accept'
+              },
+              timeout: '6h',
+              publishes: [APP],
+              buildNumbers: [APP],
+              cache: [{ key: 'npm', paths: ['~/.npm'] }],
+              run: compileAndroid
+            },
+            {
+              name: 'sign',
+              on: SIGN,
+              tools: {
+                node: '24',
+                java: '17',
+                android: ['build-tools;37.0.0'],
+                androidLicenses: 'accept'
+              },
+              timeout: '1h',
+              publishes: [APP],
+              buildNumbers: [APP],
+              run: signAndroid
+            }
+          ]
+        },
+        { failFast: false }
+      )
+    }
   )
 }
 
@@ -145,6 +157,16 @@ async function install(ctx: Stage): Promise<void> {
   await ctx.sh('npm ci')
 }
 
+/** Points the bundled app at the server a request named, as Babel inlines it. */
+function serverEnvironment(ctx: Stage): Record<string, string> {
+  const server = ctx.run.params.server
+  if (typeof server !== 'string' || server === '') return {}
+  return {
+    TS_API_BASE_URL: `https://${server}/api/v1`,
+    TS_PRIMARY_HOST: server
+  }
+}
+
 export async function buildIos(ctx: Stage): Promise<void> {
   await install(ctx)
   // The ExpoModulesJSI slice is a nested xcodebuild with a clean environment,
@@ -164,6 +186,7 @@ export async function buildIos(ctx: Stage): Promise<void> {
     // output as a failed archive. Turning explicit modules off avoids it.
     xcargs: ['SWIFT_ENABLE_EXPLICIT_MODULES=NO'],
     env: {
+      ...serverEnvironment(ctx),
       CARGO_HOME: `${rustRoot}/cargo`,
       RUSTUP_HOME: `${rustRoot}/rustup`,
       PATH: `${rustRoot}/cargo/bin:${process.env.PATH ?? ''}`
