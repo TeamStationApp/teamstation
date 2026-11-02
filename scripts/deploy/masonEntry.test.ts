@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import {
+  buildIos,
+  compileAndroid,
+  releaseIos,
+  setup,
+  shipIos,
+  signAndroid
+} from '../../Masonfile'
 import { app, fixtureSettings, testRoot } from './config.test'
 import { masonDeploy } from './mason'
 import { buildEnvironment } from './prepare'
@@ -13,7 +22,6 @@ import { gitFixture } from './source.test'
 import { type Endpoint, endpoint } from './upload.test'
 
 let root: string, source: string, config: string, service: Endpoint
-const entry = path.resolve('Masonfile.ts')
 const builder: Builder = async context => {
   const file = path.join(context.source, context.target.platform + '.ipa')
   writeFileSync(file, 'fake-compiler-package')
@@ -56,43 +64,6 @@ function saveConfig(iosOnly = false, credentialEnv?: string): void {
     { mode: 0o600 }
   )
 }
-async function bootstrap(
-  script: string,
-  socketExit = 0,
-  cancel = false,
-  uploadCredential?: string
-): Promise<number | null> {
-  const bin = path.join(root, 'bin')
-  mkdirSync(bin, { recursive: true })
-  writeFileSync(
-    path.join(bin, 'socket'),
-    `#!/bin/sh\n[ -z "\u0024DEPLOY_UPLOAD_CREDENTIAL" ] || exit 91\n[ "\u0024SOCKET_CLI_ACCEPT_RISKS" = 1 ] || exit 92\nexit ${socketExit}\n`,
-    {
-      mode: 0o700
-    }
-  )
-  mkdirSync(path.join(source, 'node_modules/sucrase'), { recursive: true })
-  writeFileSync(path.join(source, 'node_modules/sucrase/register.js'), '')
-  mkdirSync(path.join(source, 'scripts/deploy'), { recursive: true })
-  writeFileSync(path.join(source, 'scripts/deploy/mason.ts'), script)
-  return await new Promise(resolve => {
-    const child = spawn(process.execPath, [entry], {
-      cwd: source,
-      env: {
-        ...process.env,
-        ...environment(),
-        DEPLOY_UPLOAD_CREDENTIAL: uploadCredential,
-        PATH: bin + ':' + process.env.PATH
-      },
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-    child.stderr.resume()
-    child.stdout.on('data', () => {
-      if (cancel) child.kill('SIGTERM')
-    })
-    child.once('exit', resolve)
-  })
-}
 describe('TeamStation Mason entrypoint', () => {
   beforeEach(async () => {
     root = testRoot('mason-entry-')
@@ -114,17 +85,6 @@ describe('TeamStation Mason entrypoint', () => {
     delete process.env.FIXTURE_UPLOAD_CREDENTIAL
     await service.close()
     rmSync(root, { recursive: true, force: true })
-  })
-  it('passes the stored upload secret only to the deployment entrypoint', async () => {
-    assert.equal(
-      await bootstrap(
-        'if (process.env.DEPLOY_UPLOAD_CREDENTIAL !== "synthetic-upload-credential") process.exit(92)',
-        0,
-        false,
-        'synthetic-upload-credential'
-      ),
-      0
-    )
   })
   it('builds and publishes both platforms using only the Mason environment secret', async () => {
     process.env.FIXTURE_UPLOAD_CREDENTIAL = readFileSync(
@@ -320,17 +280,482 @@ describe('TeamStation Mason entrypoint', () => {
     )
     assert.equal(await new Promise(resolve => child.once('exit', resolve)), 1)
   })
-  it('executes Node 24 bootstrap, dependency failure and cancellation', async () => {
-    assert.equal(await bootstrap('process.exitCode=0'), 0)
-    assert.equal(await bootstrap('process.exitCode=0', 2), 1)
-    assert.equal(await bootstrap('process.exitCode=3'), 3)
-    assert.equal(
-      await bootstrap(
-        'process.on("SIGTERM",()=>process.exit(2)); console.log("ready"); setInterval(()=>{},1000)',
-        0,
-        true
-      ),
-      2
+})
+
+describe('TeamStation pipeline Masonfile', () => {
+  it('builds iOS on Nomac and signs the Android release on the signing node', async () => {
+    const stages: Record<string, unknown> = {}
+    const workflows: Record<string, Record<string, unknown>> = {}
+    setup({
+      apiVersion(version) {
+        assert.equal(version, 1)
+      },
+      buildNumber(key, options) {
+        assert.equal(key, 'app.teamstation.app')
+        assert.equal(options?.format, 'YYMMDDCC')
+        assert.equal(options?.timeZone, 'America/Los_Angeles')
+      },
+      parallel(name, members, options) {
+        assert.equal(name, 'build')
+        assert.equal(options?.failFast, false)
+        Object.assign(stages, members)
+      },
+      workflow(name, options, declare) {
+        const recorded: Record<string, unknown> = { options }
+        declare({
+          stage(stageName, stageOptions) {
+            recorded[stageName] = stageOptions
+          }
+        })
+        workflows[name] = recorded
+      }
+    })
+    const ios = stages.ios as Array<{
+      name: string
+      on: { type: string }
+      tools?: { node: string; xcode: string; rust: string }
+      apple: { distribution: string; app: string }
+      checkout?: boolean | { depth: number }
+    }>
+    const android = stages.android as Array<{
+      name: string
+      on: { type: string; labels?: readonly string[] }
+      tools: {
+        node?: string
+        android?: string[]
+        rust?: string
+        apt?: string[]
+        androidLicenses?: string
+      }
+      publishes?: string[]
+    }>
+    assert.equal(ios[0]?.name, 'archive')
+    assert.equal(ios[0]?.on.type, 'nomac')
+    assert.equal(ios[0]?.apple.distribution, 'adHoc')
+    assert.equal(ios[0]?.apple.app, 'app.teamstation.app')
+    assert.equal(ios[0]?.tools?.node, '24')
+    assert.equal(ios[0]?.tools?.xcode, '27.0')
+    assert.equal(ios[0]?.tools?.rust, '1.98.0')
+    assert.equal(ios[1]?.name, 'release')
+    assert.equal(ios[1]?.on.type, 'macos-arm64')
+    assert.equal(ios[1]?.apple.distribution, 'appStore')
+    assert.deepEqual(ios[1]?.checkout, { depth: 1 })
+    const ship = workflows.release?.ios as {
+      on: { type: string }
+      apple: { distribution: string }
+      checkout?: { depth: number }
+      buildNumbers?: string[]
+    }
+    assert.deepEqual(workflows.release?.options, {
+      triggers: [{ request: true }]
+    })
+    assert.equal(ship.on.type, 'macos-arm64')
+    assert.equal(ship.apple.distribution, 'appStore')
+    assert.deepEqual(ship.checkout, { depth: 1 })
+    assert.deepEqual(ship.buildNumbers, ['app.teamstation.app'])
+    assert.equal(android[0]?.name, 'compile')
+    assert.equal(android[0]?.on.type, 'do-linux')
+    assert.equal(android[0]?.tools.rust, '1.98.0')
+    assert.deepEqual(android[0]?.tools.apt, ['build-essential'])
+    assert.deepEqual(android[0]?.tools.android, [
+      'platforms;android-37.0',
+      'build-tools;37.0.0',
+      'ndk;27.1.12297006',
+      'cmake;3.22.1'
+    ])
+    assert.equal(android[1]?.name, 'sign')
+    assert.equal(android[1]?.on.type, 'macos-arm64')
+    assert.deepEqual(android[1]?.on.labels, ['android-signing'])
+    assert.equal(android[1]?.tools.androidLicenses, 'accept')
+    assert.deepEqual(android[1]?.publishes, ['app.teamstation.app'])
+    const commands: string[] = []
+    const ctx = {
+      async sh(
+        command: string,
+        options?: {
+          env?: { MASON_BUILD_NUMBER?: string; MASON_APP_VERSION?: string }
+        }
+      ) {
+        commands.push(command)
+        if (options?.env?.MASON_BUILD_NUMBER != null)
+          commands.push(`build-number:${options.env.MASON_BUILD_NUMBER}`)
+        if (options?.env?.MASON_APP_VERSION != null)
+          commands.push(`app-version:${options.env.MASON_APP_VERSION}`)
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      getBuildNumber(key: string) {
+        assert.equal(key, 'app.teamstation.app')
+        return '26103101'
+      },
+      async stash(name: string, paths?: string | string[]) {
+        const listed = Array.isArray(paths) ? paths.join(',') : (paths ?? '')
+        commands.push(`stash:${name}:${listed}`)
+      },
+      async unstash(name: string) {
+        commands.push(`unstash:${name}`)
+      },
+      artifacts: {
+        async save(name: string) {
+          commands.push(`save:${name}`)
+        }
+      },
+      fs: {
+        async glob(pattern: string) {
+          commands.push(`glob:${pattern}`)
+          return ['android/app/build/outputs/apk/release/app-release.apk']
+        }
+      },
+      async publish(options: { platform: string; path: string }) {
+        commands.push(`publish:${options.platform}:${options.path}`)
+      },
+      apple: {
+        async archive(options: {
+          scheme: string
+          version?: string
+          buildNumber?: string
+          xcargs?: string[]
+          env?: { CARGO_HOME?: string }
+        }) {
+          commands.push(
+            `archive:${options.scheme}:${options.version ?? ''}:${options.buildNumber ?? ''}`
+          )
+          commands.push(`xcargs:${(options.xcargs ?? []).join(' ')}`)
+          commands.push(`cargo:${options.env?.CARGO_HOME ?? ''}`)
+          return {
+            archive: 'build/TeamStation.xcarchive',
+            ipa: 'build/TeamStation.ipa',
+            dsyms: 'build/TeamStation.dSYM'
+          }
+        }
+      }
+    }
+    await buildIos(ctx)
+    await compileAndroid(ctx)
+    await signAndroid(ctx)
+    const log = commands.join('\n')
+    assert.match(log, /\.mason-tools\/node_modules\/\.bin\/socket npm ci/)
+    assert.match(log, /node scripts\/deploy\/patchExpoModulesJsi\.mjs/)
+    assert.match(log, /pod install/)
+    const version = JSON.parse(readFileSync('package.json', 'utf8')).version
+    assert.match(
+      log,
+      new RegExp(
+        `archive:TeamStation:${String(version).replace(/\./g, '\\.')}:26103101`
+      )
     )
+    assert.match(
+      log,
+      new RegExp(`app-version:${String(version).replace(/\./g, '\\.')}`)
+    )
+    assert.match(
+      log,
+      /android\.defaultConfig\.versionName = System\.getenv\('MASON_APP_VERSION'\)/
+    )
+    assert.match(log, /xcargs:SWIFT_ENABLE_EXPLICIT_MODULES=NO/)
+    assert.match(log, /cargo:.*\.mason\/tools\/rust\/1\.98\.0\/cargo/)
+    assert.match(log, /publish:ios:build\/TeamStation\.ipa/)
+    assert.match(
+      log,
+      /publish:android:android\/app\/build\/outputs\/apk\/release\/app-release\.apk/
+    )
+    assert.equal(log.includes('CODE_SIGNING_ALLOWED'), false)
+    assert.match(log, /cargo install cargo-ndk/)
+    assert.match(log, /MASON_BUILD_NUMBER/)
+    assert.match(log, /build-number:26103101/)
+    assert.match(
+      log,
+      /--init-script mason-version\.gradle :app:assembleRelease/
+    )
+    assert.equal(log.includes('-PversionCode'), false)
+    assert.match(log, /stash:ios-adhoc:build\/TeamStation\.ipa/)
+    assert.match(log, /stash:android-release/)
+    assert.match(log, /unstash:android-release/)
+    assert.match(log, /teamstation-sign-release-apk/)
+    assert.match(log, /save:ios-ipa/)
+    assert.match(log, /save:android-apk/)
+  })
+
+  it('installs with npm when Socket has no quota or no token', async () => {
+    const commands: string[] = []
+    const ctx = {
+      async sh(command: string) {
+        commands.push(command)
+        if (command.includes('socket npm ci')) {
+          return {
+            code: 1,
+            stdout: '',
+            stderr: 'Socket API Request failed (429): Insufficient quota'
+          }
+        }
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      getBuildNumber() {
+        return '26103101'
+      },
+      artifacts: {
+        async save(name: string) {
+          commands.push(`save:${name}`)
+        }
+      },
+      apple: {
+        async archive() {
+          return {
+            archive: 'build/TeamStation.xcarchive',
+            ipa: 'build/TeamStation.ipa',
+            dsyms: 'build/TeamStation.dSYM'
+          }
+        }
+      },
+      async stash() {},
+      async publish() {}
+    }
+    await buildIos(ctx)
+    assert.ok(commands.includes('npm ci'))
+  })
+
+  it('stops when Socket reports a failure other than quota or a missing token', async () => {
+    const commands: string[] = []
+    const ctx = {
+      async sh(command: string) {
+        commands.push(command)
+        if (command.includes('socket npm ci')) {
+          return { code: 1, stdout: '', stderr: 'found 2 alerts' }
+        }
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      getBuildNumber() {
+        return '26103101'
+      },
+      artifacts: {
+        async save() {}
+      }
+    }
+    await assert.rejects(async () => {
+      await buildIos(ctx)
+    }, /socket npm ci failed/)
+    assert.equal(commands.includes('npm ci'), false)
+  })
+
+  it('stashes the ad hoc IPA as a path inside the workspace', async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'mason-stash-'))
+    try {
+      writeFileSync(
+        path.join(workspace, 'package.json'),
+        JSON.stringify({ version: '9.8.7' })
+      )
+      let stashed = ''
+      let archivedVersion = ''
+      await buildIos({
+        workspace,
+        async sh() {
+          return { code: 0, stdout: '', stderr: '' }
+        },
+        getBuildNumber() {
+          return '26103101'
+        },
+        async stash(_name: string, paths: string) {
+          stashed = paths
+        },
+        artifacts: {
+          async save() {}
+        },
+        async publish() {},
+        apple: {
+          async archive(options: { version?: string }) {
+            archivedVersion = options.version ?? ''
+            return {
+              archive: path.join(workspace, 'build/TeamStation.xcarchive'),
+              ipa: path.join(workspace, 'build/mason-archive/TeamStation.ipa'),
+              dsyms: path.join(workspace, 'build/TeamStation.dSYM')
+            }
+          }
+        }
+      })
+      assert.equal(archivedVersion, '9.8.7')
+      assert.equal(stashed, 'build/mason-archive/TeamStation.ipa')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a package.json version Mason cannot write', async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'mason-version-'))
+    try {
+      writeFileSync(
+        path.join(workspace, 'package.json'),
+        JSON.stringify({ version: '1.0.0-beta' })
+      )
+      await assert.rejects(async () => {
+        await buildIos({
+          workspace,
+          async sh() {
+            return { code: 0, stdout: '', stderr: '' }
+          },
+          getBuildNumber() {
+            return '26103101'
+          }
+        })
+      }, /package.json version must be one to three numeric components/)
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('re-signs the stashed IPA for the App Store and uploads it', async () => {
+    const commands: string[] = []
+    await releaseIos({
+      async unstash(name: string) {
+        commands.push(`unstash:${name}`)
+      },
+      fs: {
+        async glob() {
+          return ['build/mason-archive/TeamStation.ipa']
+        }
+      },
+      artifacts: {
+        async save(name: string, paths: string) {
+          commands.push(`save:${name}:${paths}`)
+        }
+      },
+      apple: {
+        async resign(options: {
+          path: string
+          version?: string
+          buildNumber?: string
+        }) {
+          commands.push(
+            `resign:${options.path}:${options.version ?? ''}:${options.buildNumber ?? ''}`
+          )
+          return { ipa: 'build/mason-archive/TeamStation-appStore.ipa' }
+        },
+        async testflight(options: {
+          path: string
+          groups?: string[]
+          usesNonExemptEncryption?: boolean
+          whatToTest?: string
+        }) {
+          commands.push(
+            `testflight:${options.path}:${(options.groups ?? []).join(',')}:${String(options.usesNonExemptEncryption)}:${options.whatToTest ?? ''}`
+          )
+          return {
+            buildId: '1',
+            version: '1.0',
+            buildNumber: '26103101',
+            state: 'VALID'
+          }
+        }
+      }
+    })
+    const log = commands.join('\n')
+    const version = JSON.parse(readFileSync('package.json', 'utf8')).version
+    assert.match(log, /unstash:ios-adhoc/)
+    assert.match(
+      log,
+      new RegExp(
+        `resign:build/mason-archive/TeamStation\\.ipa:${String(version).replace(/\./g, '\\.')}:\\n`
+      )
+    )
+    assert.match(
+      log,
+      /save:ios-appstore:build\/mason-archive\/TeamStation-appStore\.ipa/
+    )
+    assert.match(
+      log,
+      /testflight:build\/mason-archive\/TeamStation-appStore\.ipa:TeamStation testers:false:TeamStation production build\./
+    )
+  })
+
+  it('stops when the stashed iOS build has no IPA', async () => {
+    await assert.rejects(async () => {
+      await releaseIos({
+        async unstash() {},
+        fs: {
+          async glob() {
+            return []
+          }
+        }
+      })
+    }, /No ad hoc IPA was stashed/)
+  })
+
+  it('re-signs the last successful IPA and uploads that to TestFlight', async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'mason-ship-'))
+    const commands: string[] = []
+    try {
+      writeFileSync(
+        path.join(workspace, 'package.json'),
+        JSON.stringify({ version: '4.5.6' })
+      )
+      await shipIos({
+        workspace,
+        run: { branch: 'paul/masonCluster' },
+        getBuildNumber(key: string) {
+          assert.equal(key, 'app.teamstation.app')
+          return '26110106'
+        },
+        artifacts: {
+          async fetch(
+            query: { workflow: string; branch?: string; name: string },
+            into: string
+          ) {
+            commands.push(
+              `fetch:${query.workflow}:${query.branch}:${query.name}:${into}`
+            )
+            return [`${into}/build/TeamStation.ipa`]
+          },
+          async save(name: string) {
+            commands.push(`save:${name}`)
+          }
+        },
+        apple: {
+          async resign(options: {
+            path: string
+            version?: string
+            buildNumber?: string
+          }) {
+            commands.push(
+              `resign:${options.path}:${options.version ?? ''}:${options.buildNumber ?? ''}`
+            )
+            return { ipa: 'fetched/TeamStation-appStore.ipa' }
+          },
+          async testflight(options: { path: string; groups?: string[] }) {
+            commands.push(
+              `testflight:${options.path}:${(options.groups ?? []).join(',')}`
+            )
+            return {
+              buildId: '1',
+              version: '1.0',
+              buildNumber: '26110105',
+              state: 'VALID'
+            }
+          }
+        }
+      })
+      const log = commands.join('\n')
+      assert.match(log, /fetch:build:paul\/masonCluster:ios-ipa:fetched/)
+      assert.match(
+        log,
+        /resign:fetched\/build\/TeamStation\.ipa:4\.5\.6:26110106/
+      )
+      assert.match(
+        log,
+        /testflight:fetched\/TeamStation-appStore\.ipa:TeamStation testers/
+      )
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('stops when the fetched iOS artifact has no IPA', async () => {
+    await assert.rejects(async () => {
+      await shipIos({
+        run: { branch: 'paul/masonCluster' },
+        artifacts: {
+          async fetch() {
+            return ['fetched/notes.txt']
+          }
+        }
+      })
+    }, /The iOS artifact has no IPA/)
   })
 })
