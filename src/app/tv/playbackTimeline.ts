@@ -1,50 +1,6 @@
-import type { GameDetail } from '../../common/api'
-import type { ReplayBoxScore } from '../../common/replay/replayBoxScore'
-import { replayScore, replaySourceOf } from '../../common/replay/replaySource'
-import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
-import type { StoredGame } from '../../common/scoring/session'
 import { mediaAt, wallAt, type WallTimeline } from '../../common/wallTimeline'
 
-export interface BoxStep {
-  at: number
-  box: ReplayBoxScore
-}
-
-/** Rebuild from stamped actions; never substitute the final-game stat totals. */
-export function boxTimeline(
-  game: Pick<
-    GameDetail,
-    'id' | 'awayTeamId' | 'homeTeamId' | 'awayTeamName' | 'homeTeamName'
-  >,
-  stored: StoredGame
-): BoxStep[] {
-  const source = replaySourceOf(game, stored)
-  if (source === null) return []
-  const { context, timeline } = source
-  const steps: BoxStep[] =
-    timeline.derived === 0
-      ? [{ at: -Infinity, box: replayScore(timeline.start, timeline) }]
-      : []
-  const fallback = new Map<number, number>()
-  for (const play of stored.plays) {
-    const at = Date.parse(play.about.endTime ?? '')
-    if (Number.isFinite(at)) fallback.set(play.about.atBatIndex, at)
-  }
-  replayPlays(
-    {
-      plays: stored.plays.map(playbackDocument),
-      currentPlay: playbackDocument(stored.currentPlay)
-    },
-    context,
-    (state, index, time) => {
-      const stamped = Date.parse(time ?? '')
-      const at = Number.isFinite(stamped) ? stamped : fallback.get(index)
-      if (at !== undefined)
-        steps.push({ at, box: replayScore(state, timeline) })
-    }
-  )
-  return steps.sort((a, b) => a.at - b.at)
-}
+export { type BoxStep, boxTimeline } from '../../common/replay/videoBoxTimeline'
 
 export function timelineFor(startAt: string | null): WallTimeline {
   const start = Date.parse(startAt ?? '')
@@ -76,15 +32,4 @@ export function commonStart(timelines: WallTimeline[]): number | null {
   return starts.length === timelines.length && starts.length > 0
     ? Math.max(...starts)
     : null
-}
-
-/** The documents are JSON data; copying just the record preserves the original timing array. */
-function playbackDocument<T>(play: T): T {
-  const times = storedRecordOf(play)?.playbackTimes
-  if (times === undefined) return play
-  const document = play as T & { teamStation: Record<string, unknown> }
-  return {
-    ...document,
-    teamStation: { ...document.teamStation, actionTimes: times }
-  }
 }

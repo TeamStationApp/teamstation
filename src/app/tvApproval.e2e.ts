@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 
 import express from 'express'
+import { rateLimit } from 'express-rate-limit'
 
 import { TeamStationClient } from '../common/api'
 import { apiKeyRoutes } from '../server/routes/apiKeys'
@@ -26,6 +27,7 @@ async function main(): Promise<void> {
   const h = await accountHarness(
     path.resolve('dist'),
     app => {
+      app.use(rateLimit({ windowMs: 60_000, limit: 6000 }))
       if (baseline !== undefined) {
         app.get('/account', (_req, res, next) => {
           if (showBaseline) res.sendFile(path.resolve(baseline, 'index.html'))

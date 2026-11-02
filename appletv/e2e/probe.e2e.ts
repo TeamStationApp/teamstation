@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 
 import express from 'express'
+import { rateLimit } from 'express-rate-limit'
 
 import { captureScreenshot } from './capture'
 
@@ -25,6 +26,7 @@ async function main(): Promise<void> {
     'Set TV simulator, artifacts, client, Metro and synthetic video path'
   )
   const app = express()
+  app.use(rateLimit({ windowMs: 60_000, limit: 6000 }))
   app.get('/clock.mp4', (_req, res) => {
     res.sendFile(path.resolve(video))
   })

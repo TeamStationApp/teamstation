@@ -12,6 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { Router } from 'express'
+import { rateLimit } from 'express-rate-limit'
 
 import { asPostEventsBody } from '../../src/common/gumboPlay'
 import { makeId } from '../../src/common/ids'
@@ -84,6 +85,7 @@ export async function tvFixture(
   const h = await accountHarness(
     options.webRoot,
     (app, fixture) => {
+      app.use(rateLimit({ windowMs: 60_000, limit: 6000 }))
       app.use(['/api/v1/teams', '/api/v1/users'], (req, res, next) => {
         if (tvMedia.searchFail && req.query.q !== undefined) {
           res.status(503).json({ error: 'Synthetic search outage' })

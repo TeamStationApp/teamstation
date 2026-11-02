@@ -1,5 +1,6 @@
 import { asObject, asOptional, asString } from 'cleaners'
 import { type Response, Router } from 'express'
+import { rateLimit } from 'express-rate-limit'
 import { type Kysely, sql } from 'kysely'
 
 import { asAccountEmail } from '../../common/accountSettings'
@@ -240,6 +241,18 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       ? makeToken()
       : options.passwordParameterSecret
   const router = Router()
+  // Bound request load before parsing, location lookup, or authentication.
+  // Database-backed TV attempt limits still enforce security across workers.
+  const tvTrafficLimit = rateLimit({
+    windowMs: 60_000,
+    limit: 240,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: {
+      code: 'rateLimited',
+      message: 'Too many TV sign-in requests. Try again shortly.'
+    }
+  })
   const secureCookie = secureCookieFor(options.publicUrl)
 
   /**
@@ -300,6 +313,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
 
   router.post(
     '/auth/tv/start',
+    tvTrafficLimit,
     withAsync(async (req, res) => {
       res.set('cache-control', 'no-store')
       const body = cleanBody(asObject({ platform: asTvPlatform }), req.body)
@@ -316,6 +330,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
   )
   router.post(
     '/auth/tv/claim',
+    tvTrafficLimit,
     withAsync(async (req, res) => {
       res.set('cache-control', 'no-store')
       const body = cleanBody(
@@ -356,6 +371,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
   )
   router.post(
     '/auth/tv/inspect',
+    tvTrafficLimit,
     requireActor,
     withAsync(async (req, res) => {
       res.set('cache-control', 'no-store')
@@ -368,6 +384,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
   )
   router.post(
     '/auth/tv/approve',
+    tvTrafficLimit,
     requireActor,
     withAsync(async (req, res) => {
       res.set('cache-control', 'no-store')

@@ -19,6 +19,33 @@ import { requireTvHuman, tvApprovalHash } from '../auth/tvLogin'
 
 describe('TV device approval', function () {
   this.timeout(60000)
+  it('bounds request traffic before authentication and shares the budget across TV endpoints', async () => {
+    const isolated = await accountHarness()
+    try {
+      for (let i = 0; i < 240; i++) {
+        const response = await isolated.request(
+          'POST',
+          '/auth/tv/inspect',
+          {},
+          null
+        )
+        expect(response.status).equals(401)
+      }
+      for (const action of ['start', 'claim', 'inspect', 'approve']) {
+        const response = await isolated.request(
+          'POST',
+          `/auth/tv/${action}`,
+          {},
+          null
+        )
+        expect(response.status).equals(429)
+        expect(Number(response.headers.get('retry-after'))).greaterThan(0)
+        expect((await response.json()).code).equals('rateLimited')
+      }
+    } finally {
+      await isolated.close()
+    }
+  })
   let h: AccountHarness
   before(async () => {
     h = await accountHarness()
