@@ -5,7 +5,14 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import { buildIos, compileAndroid, setup, signAndroid } from '../../Masonfile'
+import {
+  buildIos,
+  compileAndroid,
+  releaseIos,
+  setup,
+  shipIos,
+  signAndroid
+} from '../../Masonfile'
 import { app, fixtureSettings, testRoot } from './config.test'
 import { masonDeploy } from './mason'
 import { buildEnvironment } from './prepare'
@@ -277,6 +284,7 @@ describe('TeamStation Mason entrypoint', () => {
 describe('TeamStation pipeline Masonfile', () => {
   it('builds iOS on Nomac and signs the Android release on the signing node', async () => {
     const stages: Record<string, unknown> = {}
+    const workflows: Record<string, Record<string, unknown>> = {}
     setup({
       apiVersion(version) {
         assert.equal(version, 1)
@@ -290,13 +298,24 @@ describe('TeamStation pipeline Masonfile', () => {
         assert.equal(name, 'build')
         assert.equal(options?.failFast, false)
         Object.assign(stages, members)
+      },
+      workflow(name, options, declare) {
+        const recorded: Record<string, unknown> = { options }
+        declare({
+          stage(stageName, stageOptions) {
+            recorded[stageName] = stageOptions
+          }
+        })
+        workflows[name] = recorded
       }
     })
-    const ios = stages.ios as {
+    const ios = stages.ios as Array<{
+      name: string
       on: { type: string }
-      tools: { node: string; xcode: string; rust: string }
+      tools?: { node: string; xcode: string; rust: string }
       apple: { distribution: string; app: string }
-    }
+      checkout?: boolean
+    }>
     const android = stages.android as Array<{
       name: string
       on: { type: string; labels?: readonly string[] }
@@ -309,12 +328,28 @@ describe('TeamStation pipeline Masonfile', () => {
       }
       publishes?: string[]
     }>
-    assert.equal(ios.on.type, 'nomac')
-    assert.equal(ios.apple.distribution, 'adHoc')
-    assert.equal(ios.apple.app, 'app.teamstation.app')
-    assert.equal(ios.tools.node, '24')
-    assert.equal(ios.tools.xcode, '27.0')
-    assert.equal(ios.tools.rust, '1.98.0')
+    assert.equal(ios[0]?.name, 'archive')
+    assert.equal(ios[0]?.on.type, 'nomac')
+    assert.equal(ios[0]?.apple.distribution, 'adHoc')
+    assert.equal(ios[0]?.apple.app, 'app.teamstation.app')
+    assert.equal(ios[0]?.tools?.node, '24')
+    assert.equal(ios[0]?.tools?.xcode, '27.0')
+    assert.equal(ios[0]?.tools?.rust, '1.98.0')
+    assert.equal(ios[1]?.name, 'release')
+    assert.equal(ios[1]?.on.type, 'macos-arm64')
+    assert.equal(ios[1]?.apple.distribution, 'appStore')
+    assert.equal(ios[1]?.checkout, false)
+    const ship = workflows.release?.ios as {
+      on: { type: string }
+      apple: { distribution: string }
+      checkout?: boolean
+    }
+    assert.deepEqual(workflows.release?.options, {
+      triggers: [{ request: true }]
+    })
+    assert.equal(ship.on.type, 'macos-arm64')
+    assert.equal(ship.apple.distribution, 'appStore')
+    assert.equal(ship.checkout, false)
     assert.equal(android[0]?.name, 'compile')
     assert.equal(android[0]?.on.type, 'do-linux')
     assert.equal(android[0]?.tools.rust, '1.98.0')
@@ -345,8 +380,9 @@ describe('TeamStation pipeline Masonfile', () => {
         assert.equal(key, 'app.teamstation.app')
         return '26103101'
       },
-      async stash(name: string) {
-        commands.push(`stash:${name}`)
+      async stash(name: string, paths?: string | string[]) {
+        const listed = Array.isArray(paths) ? paths.join(',') : (paths ?? '')
+        commands.push(`stash:${name}:${listed}`)
       },
       async unstash(name: string) {
         commands.push(`unstash:${name}`)
@@ -409,6 +445,7 @@ describe('TeamStation pipeline Masonfile', () => {
       /--init-script mason-version\.gradle :app:assembleRelease/
     )
     assert.equal(log.includes('-PversionCode'), false)
+    assert.match(log, /stash:ios-adhoc:build\/TeamStation\.ipa/)
     assert.match(log, /stash:android-release/)
     assert.match(log, /unstash:android-release/)
     assert.match(log, /teamstation-sign-release-apk/)
@@ -447,6 +484,7 @@ describe('TeamStation pipeline Masonfile', () => {
           }
         }
       },
+      async stash() {},
       async publish() {}
     }
     await buildIos(ctx)
@@ -474,5 +512,158 @@ describe('TeamStation pipeline Masonfile', () => {
       await buildIos(ctx)
     }, /socket npm ci failed/)
     assert.equal(commands.includes('npm ci'), false)
+  })
+
+  it('stashes the ad hoc IPA as a path inside the workspace', async () => {
+    let stashed = ''
+    await buildIos({
+      workspace: '/work',
+      async sh() {
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      getBuildNumber() {
+        return '26103101'
+      },
+      async stash(_name: string, paths: string) {
+        stashed = paths
+      },
+      artifacts: {
+        async save() {}
+      },
+      async publish() {},
+      apple: {
+        async archive() {
+          return {
+            archive: '/work/build/TeamStation.xcarchive',
+            ipa: '/work/build/mason-archive/TeamStation.ipa',
+            dsyms: '/work/build/TeamStation.dSYM'
+          }
+        }
+      }
+    })
+    assert.equal(stashed, 'build/mason-archive/TeamStation.ipa')
+  })
+
+  it('re-signs the stashed IPA for the App Store and uploads it', async () => {
+    const commands: string[] = []
+    await releaseIos({
+      async unstash(name: string) {
+        commands.push(`unstash:${name}`)
+      },
+      fs: {
+        async glob() {
+          return ['build/mason-archive/TeamStation.ipa']
+        }
+      },
+      artifacts: {
+        async save(name: string, paths: string) {
+          commands.push(`save:${name}:${paths}`)
+        }
+      },
+      apple: {
+        async resign(options: { path: string }) {
+          commands.push(`resign:${options.path}`)
+          return { ipa: 'build/mason-archive/TeamStation-appStore.ipa' }
+        },
+        async testflight(options: {
+          path: string
+          groups?: string[]
+          usesNonExemptEncryption?: boolean
+          whatToTest?: string
+        }) {
+          commands.push(
+            `testflight:${options.path}:${(options.groups ?? []).join(',')}:${String(options.usesNonExemptEncryption)}:${options.whatToTest ?? ''}`
+          )
+          return {
+            buildId: '1',
+            version: '1.0',
+            buildNumber: '26103101',
+            state: 'VALID'
+          }
+        }
+      }
+    })
+    const log = commands.join('\n')
+    assert.match(log, /unstash:ios-adhoc/)
+    assert.match(log, /resign:build\/mason-archive\/TeamStation\.ipa/)
+    assert.match(
+      log,
+      /save:ios-appstore:build\/mason-archive\/TeamStation-appStore\.ipa/
+    )
+    assert.match(
+      log,
+      /testflight:build\/mason-archive\/TeamStation-appStore\.ipa:TeamStation testers:false:TeamStation production build\./
+    )
+  })
+
+  it('stops when the stashed iOS build has no IPA', async () => {
+    await assert.rejects(async () => {
+      await releaseIos({
+        async unstash() {},
+        fs: {
+          async glob() {
+            return []
+          }
+        }
+      })
+    }, /No ad hoc IPA was stashed/)
+  })
+
+  it('re-signs the last successful IPA and uploads that to TestFlight', async () => {
+    const commands: string[] = []
+    await shipIos({
+      run: { branch: 'paul/masonCluster' },
+      artifacts: {
+        async fetch(
+          query: { workflow: string; branch?: string; name: string },
+          into: string
+        ) {
+          commands.push(
+            `fetch:${query.workflow}:${query.branch}:${query.name}:${into}`
+          )
+          return [`${into}/build/TeamStation.ipa`]
+        },
+        async save(name: string) {
+          commands.push(`save:${name}`)
+        }
+      },
+      apple: {
+        async resign(options: { path: string }) {
+          commands.push(`resign:${options.path}`)
+          return { ipa: 'fetched/TeamStation-appStore.ipa' }
+        },
+        async testflight(options: { path: string; groups?: string[] }) {
+          commands.push(
+            `testflight:${options.path}:${(options.groups ?? []).join(',')}`
+          )
+          return {
+            buildId: '1',
+            version: '1.0',
+            buildNumber: '26110105',
+            state: 'VALID'
+          }
+        }
+      }
+    })
+    const log = commands.join('\n')
+    assert.match(log, /fetch:build:paul\/masonCluster:ios-ipa:fetched/)
+    assert.match(log, /resign:fetched\/build\/TeamStation\.ipa/)
+    assert.match(
+      log,
+      /testflight:fetched\/TeamStation-appStore\.ipa:TeamStation testers/
+    )
+  })
+
+  it('stops when the fetched iOS artifact has no IPA', async () => {
+    await assert.rejects(async () => {
+      await shipIos({
+        run: { branch: 'paul/masonCluster' },
+        artifacts: {
+          async fetch() {
+            return ['fetched/notes.txt']
+          }
+        }
+      })
+    }, /The iOS artifact has no IPA/)
   })
 })
