@@ -721,15 +721,17 @@ describe('TV game playback entry', () => {
       '[data-testid="tv-toggle-0"]'
     )!
     expect(camera.style.borderWidth).not.equals('3px')
-    expect(
-      camera.querySelector<HTMLElement>('[data-testid="tv-blur-fallback"]')!
-        .style.backgroundColor
-    ).equals('rgb(255, 255, 255)')
+    expect(getComputedStyle(camera).width).equals('207px')
+    expect(camera.querySelector('[data-testid="tv-camera-dim-0"]')).equals(null)
+    expect(camera.textContent).equals('Angle 0')
+    const stops = camera.querySelectorAll('stop')
+    expect(stops[0].getAttribute('stop-opacity')).equals('0')
+    expect(stops[1].getAttribute('stop-opacity')).equals('0.5')
     await press('Toggle Angle 0')
     expect(
-      camera.querySelector<HTMLElement>('[data-testid="tv-blur-fallback"]')!
+      camera.querySelector<HTMLElement>('[data-testid="tv-camera-dim-0"]')!
         .style.backgroundColor
-    ).equals('rgb(76, 76, 76)')
+    ).equals('rgba(0, 0, 0, 0.3)')
     expect([...document.querySelectorAll('video')]).deep.equals(videos)
     expect(videos[0].muted).equals(true)
     expect(videos[1].muted).equals(false)
