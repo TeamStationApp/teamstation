@@ -33,6 +33,7 @@ async function main(): Promise<void> {
         : 'app.teamstation.app'
   })) as MaestroDevice & {
     setOrientation: (options: { orientation: string }) => Promise<unknown>
+    launchApp: (options: object) => Promise<unknown>
   }
   const tap = async (text: string): Promise<void> => {
     await d.tapOn({ text, timeout: 15000 })
@@ -68,6 +69,12 @@ async function main(): Promise<void> {
       { composer, keyboard }
     )
     return
+  }
+  if (platform === 'ios') {
+    await d.launchApp({
+      appId: 'app.teamstation.app',
+      environment: { TS_DECLARED_AGE_LOWER: '13' }
+    })
   }
   await d.hideKeyboard()
   for (let depth = 0; depth < 3; depth++) {

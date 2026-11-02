@@ -16,6 +16,7 @@ import { eventName } from '../../common/eventInfo'
 import type { GroupDetail } from '../../common/publicGroups'
 import type { Role } from '../../common/roles'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
+import { useChatAllowed } from '../chat/DeclaredAgeGate'
 import {
   Badge,
   Card,
@@ -229,7 +230,12 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     )
   )
 
-  const [tab, setTab] = useState<TabId>(tabOf(initialTab))
+  const chatOn = useChatAllowed()
+  const visibleTabs = chatOn ? TABS : TABS.filter(item => item.id !== 'chats')
+  const [tab, setTab] = useState<TabId>(() => {
+    const next = tabOf(initialTab)
+    return !chatOn && next === 'chats' ? 'videos' : next
+  })
   const [games, setGames] = useState<GameSummary[]>([])
   const [roster, setRoster] = useState<RosterEntry[]>([])
   const [batting, setBatting] = useState<BattingRow[]>([])
@@ -242,12 +248,13 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
 
   // Browser/native Back can change the address while this team stays mounted.
   useEffect(() => {
-    const next = tabOf(initialTab)
+    const picked = tabOf(initialTab)
+    const next = !chatOn && picked === 'chats' ? 'videos' : picked
     setTab(next)
     if (initialTab != null && initialTab !== next) onTab?.(next, true)
     // React to the address, not the shell's freshly created callback.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialTab])
+  }, [initialTab, chatOn])
 
   useEffect(() => {
     let cancelled = false
@@ -361,7 +368,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   })
 
   // Which way a pill change slides the content.
-  const tabIndex = TABS.findIndex(item => item.id === tab)
+  const tabIndex = visibleTabs.findIndex(item => item.id === tab)
   // The latest handler under one identity: a season's cards, kept built
   // across pill changes, are drawn again only when their games change.
   const openGame = useStableCallback(onOpenGame)
@@ -439,7 +446,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
 
       <PillBand part={pinned.pillBand}>
         <PillTabs
-          tabs={TABS}
+          tabs={visibleTabs}
           selected={tab}
           onSelect={selected => {
             selectTab(selected)

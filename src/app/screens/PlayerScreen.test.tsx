@@ -29,6 +29,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import { App } from '../App'
 import { chat } from '../chat/chatViews.test.helpers'
+import { ChatGateOverride } from '../chat/DeclaredAgeGate'
 import { parseRoute, routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -297,6 +298,29 @@ describe('a player’s tabs', function () {
       await delay(20)
     })
     expect(opened).deep.equals(['cnv_player'])
+  })
+
+  it('draws no Message action when chat is denied', async function () {
+    const client = playerClient()
+    client.dmCandidates = async () => [
+      { userId: userIdOfGumbo(7), shortName: 'Jordan P', avatarUrl: null }
+    ]
+    await render(
+      <ChatGateOverride gate="denied">
+        <PlayerScreen
+          client={client}
+          userId={userIdOfGumbo(7)}
+          onOpenChat={() => undefined}
+        />
+      </ChatGateOverride>
+    )
+    await act(async () => {
+      await delay(30)
+    })
+    expect(document.querySelector('[data-testid="person-message"]')).equals(
+      null
+    )
+    expect(text()).includes('Jordan P')
   })
 
   it('reads Videos, Stats, Walk-up, Teams, Settings beside a team', async function () {

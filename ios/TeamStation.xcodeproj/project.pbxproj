@@ -32,6 +32,9 @@
 		D7E5A1F00000000000000002 /* TSShiftReturn.m in Sources */ = {isa = PBXBuildFile; fileRef = D7E5A1F00000000000000001 /* TSShiftReturn.m */; };
 		A1D1C7A70000000000000004 /* DictationMicrophone.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D1C7A70000000000000003 /* DictationMicrophone.swift */; };
 		A1D1C7A70000000000000006 /* RCTDictationMicrophone.mm in Sources */ = {isa = PBXBuildFile; fileRef = A1D1C7A70000000000000005 /* RCTDictationMicrophone.mm */; };
+		D3C1A9E10000000000000002 /* DeclaredAge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C1A9E10000000000000001 /* DeclaredAge.swift */; };
+		D3C1A9E10000000000000004 /* RCTDeclaredAge.mm in Sources */ = {isa = PBXBuildFile; fileRef = D3C1A9E10000000000000003 /* RCTDeclaredAge.mm */; };
+		D3C1A9E10000000000000007 /* DeclaredAgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C1A9E10000000000000006 /* DeclaredAgeTests.swift */; };
 		A3B9F8BF2B4B8B281DA4559E /* WalkUpMusic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E7A3A1FC198F5282BFE912E /* WalkUpMusic.swift */; };
 		A56AECCC271AB817D1F6F73B /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC23F00CA775A60ECBCD53A3 /* ExpoModulesProvider.swift */; };
 		AF93B88AB30698F959B782C7 /* Quicksand-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2BAF3301E8A8AEC2FE079763 /* Quicksand-Regular.ttf */; };
@@ -100,6 +103,9 @@
 		D7E5A1F00000000000000001 /* TSShiftReturn.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = TSShiftReturn.m; path = TeamStation/TSShiftReturn.m; sourceTree = SOURCE_ROOT; };
 		A1D1C7A70000000000000003 /* DictationMicrophone.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DictationMicrophone.swift; sourceTree = "<group>"; };
 		A1D1C7A70000000000000005 /* RCTDictationMicrophone.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = RCTDictationMicrophone.mm; sourceTree = "<group>"; };
+		D3C1A9E10000000000000001 /* DeclaredAge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DeclaredAge.swift; sourceTree = "<group>"; };
+		D3C1A9E10000000000000003 /* RCTDeclaredAge.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = RCTDeclaredAge.mm; sourceTree = "<group>"; };
+		D3C1A9E10000000000000006 /* DeclaredAgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeclaredAgeTests.swift; sourceTree = "<group>"; };
 		A9244C9899EB18E867E716E9 /* SpaceGrotesk-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "SpaceGrotesk-Regular.ttf"; path = "../src/app/assets/fonts/SpaceGrotesk-Regular.ttf"; sourceTree = SOURCE_ROOT; };
 		B5E0A1C10000000000000001 /* RCTPhoneStream.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = RCTPhoneStream.mm; sourceTree = "<group>"; };
 		B5E0A1C10000000000000003 /* PhoneStreamBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PhoneStreamBridge.swift; sourceTree = "<group>"; };
@@ -162,6 +168,7 @@
 				A1D1C7A70000000000000001 /* TSPointerEvents.m */,
 				D7E5A1F00000000000000001 /* TSShiftReturn.m */,
 				A1D1C7A70000000000000007 /* DictationMicrophone */,
+				D3C1A9E10000000000000005 /* DeclaredAge */,
 				B5E0A1C10000000000000007 /* PhoneStream */,
 				C9B2E4F10000000000000003 /* QrScanner */,
 				079C0F7B05299D6A392E2536 /* ChatCrypto */,
@@ -232,6 +239,7 @@
 			children = (
 				5CE4E0A10000000000000007 /* LinkLaunchOptionsTests.swift */,
 				5CE4E0A10000000000000005 /* SceneLifecycleTests.swift */,
+				D3C1A9E10000000000000006 /* DeclaredAgeTests.swift */,
 			);
 			path = TeamStationTests;
 			sourceTree = "<group>";
@@ -302,6 +310,16 @@
 			);
 			path = Pods;
 			sourceTree = "<group>";
+		};
+		D3C1A9E10000000000000005 /* DeclaredAge */ = {
+			isa = PBXGroup;
+			children = (
+				D3C1A9E10000000000000003 /* RCTDeclaredAge.mm */,
+				D3C1A9E10000000000000001 /* DeclaredAge.swift */,
+			);
+			name = DeclaredAge;
+			path = TeamStation/DeclaredAge;
+			sourceTree = SOURCE_ROOT;
 		};
 /* End PBXGroup section */
 
@@ -539,6 +557,7 @@
 			files = (
 				5CE4E0A10000000000000008 /* LinkLaunchOptionsTests.swift in Sources */,
 				5CE4E0A10000000000000006 /* SceneLifecycleTests.swift in Sources */,
+				D3C1A9E10000000000000007 /* DeclaredAgeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -562,6 +581,8 @@
 				D7E5A1F00000000000000002 /* TSShiftReturn.m in Sources */,
 				A1D1C7A70000000000000006 /* RCTDictationMicrophone.mm in Sources */,
 				A1D1C7A70000000000000004 /* DictationMicrophone.swift in Sources */,
+				D3C1A9E10000000000000004 /* RCTDeclaredAge.mm in Sources */,
+				D3C1A9E10000000000000002 /* DeclaredAge.swift in Sources */,
 				2C4859213D85F5C819CDFF61 /* SystemVolume.swift in Sources */,
 				B5E0A1C10000000000000002 /* RCTPhoneStream.mm in Sources */,
 				B5E0A1C10000000000000004 /* PhoneStreamBridge.swift in Sources */,
@@ -650,6 +671,8 @@
 					"-ObjC",
 					"-lc++",
 					"-lchat_crypto",
+					"-weak_framework",
+					DeclaredAgeRange,
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;
@@ -695,6 +718,8 @@
 					"-ObjC",
 					"-lc++",
 					"-lchat_crypto",
+					"-weak_framework",
+					DeclaredAgeRange,
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;

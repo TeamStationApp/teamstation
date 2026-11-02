@@ -2068,7 +2068,12 @@ export class Chat2UI {
       const once = device.assertNotVisible.bind(device)
       device.assertNotVisible = async args => await pollNotVisible(once, args)
     }
-    await this.device.launchApp({ appId: this.fixture.appId })
+    await this.device.launchApp({
+      appId: this.fixture.appId,
+      ...(platform === 'ios'
+        ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+        : {})
+    })
     // A phone's Google Password Manager sheet outlives the app that raised it,
     // and its own Password label would read as the app's sign-in form.
     if (
@@ -2486,7 +2491,12 @@ export class Chat2UI {
     if (this.native) {
       await this.device.stopApp({ appId: this.fixture.appId })
       beforeLaunch?.()
-      await this.device.launchApp({ appId: this.fixture.appId })
+      await this.device.launchApp({
+        appId: this.fixture.appId,
+        ...(this.surface === 'ios'
+          ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+          : {})
+      })
       await this.open(path)
     } else {
       // Full navigation through Maestro destroys the previous JS workspace.
@@ -3685,7 +3695,12 @@ export class Chat2UI {
    * bar's Chat item that every main screen shows.
    */
   async returnFromSettings(): Promise<void> {
-    await this.device.launchApp({ appId: this.fixture.appId })
+    await this.device.launchApp({
+      appId: this.fixture.appId,
+      ...(this.surface === 'ios'
+        ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+        : {})
+    })
     await until(
       async () => {
         // Element lookups, not whole-tree reads: an iPhone's tree of a long

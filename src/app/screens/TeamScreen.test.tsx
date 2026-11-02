@@ -15,6 +15,7 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { ChatGateOverride } from '../chat/DeclaredAgeGate'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { GameListOpenOptions } from './gameListOptions'
 import { staffSubtitle, TeamScreen } from './TeamScreen'
@@ -563,6 +564,36 @@ describe('TeamScreen’s stat tables for a member', function () {
     expect(opened).deep.equals([
       [line.userId, 'Mookie B', { teamId: hawks.id }]
     ])
+  })
+})
+
+describe('a team page with chat denied', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+
+  it('drops the Chats pill and keeps Videos', async function () {
+    const { client } = fakeClient()
+    await render(
+      <ChatGateOverride gate="denied">
+        <TeamScreen
+          client={client}
+          team={hawks}
+          initialTab="chats"
+          chats={[{ id: 'cnv_hawks', title: 'Hawks chat' }]}
+          onOpenGame={() => undefined}
+          onOpenChat={() => undefined}
+        />
+      </ChatGateOverride>
+    )
+    expect(tabs()).not.includes('Chats')
+    expect(document.querySelector('[data-testid="entity-chat-list"]')).equals(
+      null
+    )
+    expect(tabs()).includes('Videos')
   })
 })
 

@@ -689,7 +689,10 @@ async function main(): Promise<void> {
     await device.stopApp({ appId: fixture.appId }).catch(() => undefined)
     await device.launchApp({
       appId: fixture.appId,
-      permissions: { all: 'unset' }
+      permissions: { all: 'unset' },
+      ...(platform === 'ios'
+        ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+        : {})
     })
     const m = device
     if (process.argv[2] === 'locked-link') {
@@ -6636,7 +6639,10 @@ async function main(): Promise<void> {
       await m.stopApp({ appId: fixture.appId })
       await m.launchApp({
         appId: fixture.appId,
-        permissions: { all: 'unset' }
+        permissions: { all: 'unset' },
+        ...(platform === 'ios'
+          ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+          : {})
       })
       await list()
       const four = [
@@ -6809,7 +6815,10 @@ async function main(): Promise<void> {
     await m.stopApp({ appId: fixture.appId })
     await m.launchApp({
       appId: fixture.appId,
-      permissions: { all: 'unset' }
+      permissions: { all: 'unset' },
+      ...(platform === 'ios'
+        ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+        : {})
     })
     await list()
     assert(

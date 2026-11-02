@@ -12,6 +12,7 @@ import {
 import { HttpError } from '../../common/errors'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { chat } from './chatViews.test.helpers'
+import { ChatGateOverride } from './DeclaredAgeGate'
 import { PersonMessageButton } from './PersonMessageButton'
 
 let root: Root | undefined
@@ -290,5 +291,34 @@ describe('the person Message hero action', function () {
     })
     expect(calls.at(-1)).deep.equals([person.userId, 'usr_adult'])
     expect(opened).equals(true)
+  })
+
+  it('renders no Message action when chat is denied', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    let calls = 0
+    const client = {
+      dmCandidates: async () => {
+        calls += 1
+        return [person]
+      }
+    } as unknown as TeamStationClient
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <ChatGateOverride gate="denied">
+            <PersonMessageButton
+              client={client}
+              userId={person.userId}
+              onOpenChat={() => undefined}
+            />
+          </ChatGateOverride>
+        </ThemeProvider>
+      )
+      await delay()
+    })
+    expect(message()).equals(null)
+    expect(calls).equals(0)
   })
 })

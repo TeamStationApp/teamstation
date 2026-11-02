@@ -7,6 +7,7 @@ import { localityLabel } from '../../common/locality'
 import type { GroupDetail, PublicGroup } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
+import { useChatAllowed } from '../chat/DeclaredAgeGate'
 import {
   Card,
   Emblem,
@@ -74,10 +75,11 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
   const styles = getStyles(theme)
   const { group } = detail
   const league: GroupRef = { kind: 'league', id: group.id }
+  const chatOn = useChatAllowed()
   const tabs = [
     { id: 'seasons' as const, label: 'Seasons' },
     { id: 'teams' as const, label: 'Teams' },
-    { id: 'chats' as const, label: 'Chats' },
+    ...(chatOn ? [{ id: 'chats' as const, label: 'Chats' }] : []),
     // Its members and role holders read the league's people.
     ...(detail.canSeePeople === true
       ? [{ id: 'people' as const, label: 'People' }]
@@ -92,7 +94,7 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
     if (initialTab != null && initialTab !== next) onTab?.(next, true)
     // Tab validity changes when management rights do.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialTab, detail.canSeePeople])
+  }, [initialTab, detail.canSeePeople, chatOn])
   const chooseTab = (next: TabId): void => {
     setTab(next)
     onTab?.(next)

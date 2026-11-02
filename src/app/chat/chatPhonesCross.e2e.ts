@@ -31,6 +31,7 @@ interface Device {
   tapOn: (options: object) => Promise<unknown>
   longPressOn: (options: object) => Promise<unknown>
   inputText: (options: object) => Promise<unknown>
+  launchApp: (options: object) => Promise<unknown>
   openLink: (options: object) => Promise<unknown>
   assertVisible: (options: object) => Promise<unknown>
   takeScreenshot: (options: object) => Promise<unknown>
@@ -159,6 +160,10 @@ async function main(): Promise<void> {
   })
   try {
     const words = `From the iPhone ${Date.now() % 100000} 🎉`
+    await iphone.launchApp({
+      appId: APP,
+      environment: { TS_DECLARED_AGE_LOWER: '13' }
+    })
     await iphone.openLink({ link: `teamstation://chat/${dm}` })
     await iphone.tapOn({ id: 'chat-composer', timeout: 60000 })
     await iphone.inputText({ text: words })

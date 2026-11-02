@@ -12,6 +12,7 @@ import { newIdentityId } from '../../common/chatCrypto/messageIds'
 import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatLinks } from './ChatLinks'
+import { ChatGateOverride } from './DeclaredAgeGate'
 import type { ChatEngine, ConversationListItem } from './engine/engine'
 import { entityChats, entityPreviewLoader } from './entityChats'
 import { type ChatKeyRecord, newRecord } from './keyRecord'
@@ -166,6 +167,28 @@ describe('entity chat scoped rows', () => {
       null
     )
     expect(document.body.textContent).contains('No chats available.')
+  })
+
+  it('renders nothing when chat is denied', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    const requests: string[][] = []
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <ChatGateOverride gate="denied">
+            <ChatLinks
+              chats={[{ id: 'cnv_staff', title: 'Staff' }]}
+              onOpen={() => {}}
+              onLoadPreview={ids => requests.push(ids)}
+            />
+          </ChatGateOverride>
+        </ThemeProvider>
+      )
+    })
+    expect(document.querySelector('[data-testid="entity-chats"]')).equals(null)
+    expect(requests).deep.equals([])
   })
 })
 

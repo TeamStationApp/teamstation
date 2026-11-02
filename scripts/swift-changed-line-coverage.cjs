@@ -1,5 +1,6 @@
 const { execFileSync } = require('node:child_process')
 const {
+  existsSync,
   mkdtempSync,
   readdirSync,
   realpathSync,
@@ -242,13 +243,24 @@ function derivedDataCounts(dir, run) {
   ])
     .split('\n')
     .filter(bundle => bundle !== '')
-    .map(bundle => join(bundle, basename(bundle).replace(/\.[^.]+$/, '')))
+    .map(bundle => {
+      const binary = join(bundle, basename(bundle).replace(/\.[^.]+$/, ''))
+      // Xcode's debug dylib holds the instrumented app code. The stub
+      // executable beside it has no coverage, and llvm-cov rejects the
+      // whole export when any object has none.
+      const debug = `${binary}.debug.dylib`
+      return existsSync(debug) ? debug : binary
+    })
     // A vendored binary framework (Sentry's) ships for several architectures, which llvm-cov
     // refuses without an -arch, and holds none of this repository's code. What the build compiled
     // here is for the one simulator architecture.
-    .filter(
-      binary => run('lipo', ['-archs', binary]).trim().split(/\s+/).length === 1
-    )
+    .filter(binary => {
+      try {
+        return run('lipo', ['-archs', binary]).trim().split(/\s+/).length === 1
+      } catch {
+        return false
+      }
+    })
   const [first, ...rest] = binaries
   const lcov = run('xcrun', [
     'llvm-cov',
