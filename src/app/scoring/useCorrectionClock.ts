@@ -17,8 +17,9 @@ export interface ScreenVisibility {
 /**
  * The correction window's countdown. It ticks from a monotonic clock while
  * the window is open, stops while anything pauses it or the screen is hidden,
- * and keeps its remainder across a pause. The returned function stops it at
- * once, before React has re-rendered with the pause.
+ * and keeps its remainder across a pause. `pause` stops it at once, before
+ * React has re-rendered. `resume` starts it again while the window is still
+ * open and nothing else is holding it.
  */
 export function useCorrectionClock(
   state: ScoringState,
@@ -26,11 +27,15 @@ export function useCorrectionClock(
   dispatch: (event: ScoringEvent) => void,
   clock: ScoringClock,
   visibility: ScreenVisibility
-): () => void {
+): { pause: () => void; resume: () => void } {
   const activeStop = useRef<(() => void) | null>(null)
+  const [resumeTick, setResumeTick] = useState(0)
   const pauseNow = useCallback(() => {
     activeStop.current?.()
     activeStop.current = null
+  }, [])
+  const resumeNow = useCallback(() => {
+    setResumeTick(tick => tick + 1)
   }, [])
   const [hidden, setHidden] = useState(() => visibility.hidden())
   useEffect(() => {
@@ -70,7 +75,8 @@ export function useCorrectionClock(
     revision,
     state.generation,
     state.phase,
-    visibility
+    visibility,
+    resumeTick
   ])
-  return pauseNow
+  return { pause: pauseNow, resume: resumeNow }
 }

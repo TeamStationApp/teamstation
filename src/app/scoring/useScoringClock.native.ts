@@ -22,6 +22,6 @@ export function useScoringClock(
   paused: boolean,
   dispatch: (event: ScoringEvent) => void,
   clock: ScoringClock = scoringClock
-): () => void {
+): { pause: () => void; resume: () => void } {
   return useCorrectionClock(state, paused, dispatch, clock, appVisibility)
 }

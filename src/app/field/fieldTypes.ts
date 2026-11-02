@@ -94,6 +94,11 @@ export interface FieldCanvasProps {
   onFieldPlacement?: (event: FieldPlacement) => void
   onGestureActive?: (active: boolean) => void
   /**
+   * Holds the correction clock across a touch drag without redrawing the
+   * screen. A redraw before the finger finishes drops the rest of that touch.
+   */
+  onHoldClock?: (held: boolean) => void
+  /**
    * The scorer accepted the trajectory at `angle`: `dragged` when his drag
    * on the field turned the angle, `false` for a gesture that left it where
    * it was (up or down by no more than `TAP_SLOP_PX`, and then `angle` is

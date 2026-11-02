@@ -1415,7 +1415,7 @@ function ScoringPanel(props: {
   useEffect(() => {
     onOverlay?.(overlaid)
   }, [onOverlay, overlaid])
-  const pauseClock = useScoringClock(
+  const { pause: pauseClock, resume: resumeClock } = useScoringClock(
     state,
     !props.active ||
       menu ||
@@ -2560,6 +2560,10 @@ function ScoringPanel(props: {
           dispatch({ type: 'PRESENTATION_DONE', id, generation, stage })
         },
         onGestureActive: setGesture,
+        onHoldClock: held => {
+          if (held) pauseClock()
+          else resumeClock()
+        },
         onRunnerDrag: runnerDrag.set,
         runnerSafeError: (id, to) => {
           const player = players.find(item => item.id === id)
