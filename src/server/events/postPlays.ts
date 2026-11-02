@@ -647,7 +647,10 @@ const PLAY_COLUMNS = [
   'gumbo'
 ] as const
 
-type StoredPlay = Pick<Selectable<EventsTable>, (typeof PLAY_COLUMNS)[number]>
+export type StoredPlay = Pick<
+  Selectable<EventsTable>,
+  (typeof PLAY_COLUMNS)[number]
+>
 
 /**
  * A game's stored plays in index order, with the columns the line score and

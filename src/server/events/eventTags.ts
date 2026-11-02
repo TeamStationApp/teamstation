@@ -126,12 +126,14 @@ async function planEventTagRepair(
  * needs no lock: a reader asks this of its snapshot and takes the game row
  * only when there is something to repair. The identities it decorates with
  * along the way are thrown away; the repair makes its own, under the lock.
+ * A caller that has the game's plays in index order passes them as `held`.
  */
 export async function eventTagsNeedRepair(
   db: Kysely<Database>,
-  gameId: string
+  gameId: string,
+  held?: readonly TaggedRow[]
 ): Promise<boolean> {
-  const repair = await planEventTagRepair(db, gameId)
+  const repair = await planEventTagRepair(db, gameId, held)
   return (
     repair.stale.length > 0 ||
     repair.moved.length > 0 ||
