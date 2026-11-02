@@ -1,0 +1,221 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+
+import { expect } from 'chai'
+import { build } from 'esbuild'
+import { describe, it } from 'mocha'
+import React, { act } from 'react'
+import { createRoot } from 'react-dom/client'
+
+import { asTeamSummary, asVideoGame } from '../common/api'
+
+describe('TV native browser bridge', () => {
+  it('opens the native search, forwards authorized results, retries and dismisses', async () => {
+    const outfile = path.resolve('lib/tv-browser-native.cjs')
+    const { webSettings } = require('../../scripts/web-build-settings.mjs')
+    await build({
+      ...webSettings,
+      stdin: {
+        contents:
+          "export { TvBrowser } from './src/app/tv/TvBrowser'; export { nativeViews } from './src/test/tvBrowserNativeRuntime'",
+        resolveDir: process.cwd(),
+        loader: 'tsx'
+      },
+      outfile,
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      sourcemap: true,
+      external: ['react', 'react-dom'],
+      plugins: [
+        ...webSettings.plugins,
+        {
+          name: 'native-presentation-bridge',
+          setup(builder: any) {
+            builder.onLoad(
+              { filter: /app\/tv\/TvBrowser\.tsx$/ },
+              (args: any) => ({
+                contents: readFileSync(args.path, 'utf8').replace(
+                  "import * as ReactNative from 'react-native'",
+                  "import * as ReactNative from '../../test/tvBrowserNativeRuntime'"
+                ),
+                loader: 'tsx'
+              })
+            )
+            builder.onLoad(
+              { filter: /app\/tv\/NativePresentation\.tsx$/ },
+              (args: any) => ({
+                contents: readFileSync(args.path, 'utf8').replace(
+                  "from 'react-native'",
+                  "from '../../test/tvBrowserNativeRuntime'"
+                ),
+                loader: 'tsx'
+              })
+            )
+          }
+        }
+      ]
+    })
+    const { TvBrowser, nativeViews } = require(outfile)
+    const element = document.createElement('div')
+    document.body.append(element)
+    const root = createRoot(element)
+    let fail = false
+    const team = asTeamSummary({
+      id: 'team',
+      name: 'Demo Hawks',
+      shortName: null,
+      logoPath: null,
+      logoUrl: null
+    })
+    const game = asVideoGame({
+      id: 'game',
+      homeTeamId: 'team',
+      awayTeamId: 'away',
+      homeTeamName: 'Demo Hawks',
+      awayTeamName: 'Demo Comets',
+      homeTeamExternal: false,
+      awayTeamExternal: false,
+      seasonId: null,
+      startAt: '2026-10-30T12:00:00Z',
+      venue: null,
+      status: 'final',
+      homeScore: null,
+      awayScore: null,
+      ingestStatus: 'ok',
+      videoCount: 1,
+      latestVideoId: 'video',
+      latestVideoAt: '2026-10-30T12:00:00Z'
+    })
+    const client = {
+      videoGames: async (options: any) =>
+        options.team === undefined ? [] : [game],
+      tvHighlights: async () => [],
+      game: async () => ({ videos: [] }),
+      myFollows: async () => [],
+      videoTeams: async (options: any) => {
+        if (fail) throw new Error('Offline')
+        return typeof options?.q === 'string' ? [team] : []
+      },
+      videoPlayers: async () => [],
+      me: async () => ({ guardians: [] })
+    }
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 600))
+      })
+    }
+    try {
+      await act(async () => {
+        root.render(
+          React.createElement(TvBrowser, {
+            client,
+            viewerName: 'Viewer',
+            onPlay: () => undefined,
+            onSignOut: () => undefined
+          })
+        )
+      })
+      expect(
+        element.querySelector('[data-testid="tv-search-label"]')?.textContent
+      ).equals('Search')
+      await settle()
+      expect(
+        element
+          .querySelector('[data-testid="tv-hero"]')
+          ?.getAttribute('tabindex')
+      ).equals('-1')
+      const searchButton = element.querySelector<HTMLElement>(
+        '[data-testid="tv-search"]'
+      )!
+      await act(async () => {
+        searchButton.focus()
+      })
+      expect(getComputedStyle(searchButton).backgroundColor).equals(
+        'rgb(255, 255, 255)'
+      )
+      expect(
+        searchButton.querySelector('circle')?.getAttribute('stroke')
+      ).equals('#102318')
+      await act(async () => {
+        searchButton.blur()
+      })
+      expect(getComputedStyle(searchButton).backgroundColor).equals(
+        'rgb(85, 85, 85)'
+      )
+      await act(async () => {
+        searchButton.click()
+      })
+      await act(async () => {
+        nativeViews.get('TVSearch').onQuery({ nativeEvent: { query: 'Hawks' } })
+      })
+      await settle()
+      expect(nativeViews.get('TVSearch').items[0].title).equals('Demo Hawks')
+      await act(async () => {
+        searchButton.focus()
+      })
+      await act(async () => {
+        nativeViews
+          .get('TVSearch')
+          .onSelect({ nativeEvent: { id: 'team:team' } })
+      })
+      expect(element.textContent).contains('Demo Hawks')
+      expect(
+        getComputedStyle(
+          element.querySelector<HTMLElement>('[data-testid="tv-search"]')!
+        ).backgroundColor
+      ).equals('rgb(85, 85, 85)')
+      await act(async () => {
+        element.querySelector<HTMLElement>('[data-testid="tv-search"]')!.click()
+      })
+      fail = true
+      await act(async () => {
+        nativeViews.get('TVSearch').onQuery({ nativeEvent: { query: 'Retry' } })
+      })
+      await settle()
+      expect(nativeViews.get('TVSearch').items[0].id).equals('retry')
+      fail = false
+      await act(async () => {
+        nativeViews.get('TVSearch').onSelect({ nativeEvent: { id: 'retry' } })
+      })
+      await settle()
+      expect(nativeViews.get('TVSearch').items[0].id).equals('team:team')
+      await act(async () => {
+        nativeViews.get('TVSearch').onDismiss()
+      })
+      expect(
+        element.querySelector('[data-testid="tv-search-label"]')?.textContent
+      ).equals('Search')
+      expect(element.querySelector('[data-testid="TVSearch"]')).equals(null)
+      await settle()
+      const originalWatchTarget = nativeViews.get('tv-search').nextFocusDown
+      expect(originalWatchTarget).to.be.a('number')
+      await act(async () => {
+        element.querySelector<HTMLElement>('[data-testid="tv-search"]')!.click()
+        nativeViews.get('TVSearch').onQuery({ nativeEvent: { query: 'Hawks' } })
+      })
+      await settle()
+      await act(async () => {
+        nativeViews
+          .get('TVSearch')
+          .onSelect({ nativeEvent: { id: 'team:team' } })
+      })
+      await settle()
+      expect(nativeViews.get('tv-search').nextFocusDown)
+        .to.be.a('number')
+        .and.not.equal(originalWatchTarget)
+      await act(async () => {
+        nativeViews.get('hardwareBackPress')()
+      })
+      await settle()
+      expect(nativeViews.get('tv-search').nextFocusDown).equals(
+        originalWatchTarget
+      )
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      element.remove()
+    }
+  })
+})
