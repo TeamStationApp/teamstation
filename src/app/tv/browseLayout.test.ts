@@ -66,11 +66,12 @@ describe('TV browsing layout', () => {
           const height = (width * 9) / 16 - 115
           const layout = browseGeometry(width, height, monthly, fontScale)
           expect(layout.heroHeight + layout.rowHeight).closeTo(height, 0.01)
-          expect(152 + 4 * layout.tileWidth + 3 * 24).equals(width)
-          // The viewport includes lift gutters, but the fifth starts outside it.
-          const fifthLeft = 76 + 4 * (layout.tileWidth + 24)
-          expect(fifthLeft).equals(width - 52)
-          expect(layout.tileWidth).greaterThan((width - 224) / 4 - 12)
+          expect(layout.tileWidth).closeTo(((width - 224) / 4) * 0.85, 0.01)
+          expect(layout.tileGap).greaterThan(24)
+          // Keep four complete cards and a 52-point preview of the fifth.
+          const fifthLeft = 76 + 4 * (layout.tileWidth + layout.tileGap)
+          expect(fifthLeft).closeTo(width - 52, 0.01)
+          expect(76 + 4 * layout.tileWidth + 3 * layout.tileGap).lessThan(width)
         }
       }
     }

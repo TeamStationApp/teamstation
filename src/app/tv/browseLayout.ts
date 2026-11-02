@@ -73,14 +73,22 @@ export function browseGeometry(
   viewportHeight: number,
   monthly: boolean,
   fontScale = 1
-): { tileWidth: number; rowHeight: number; heroHeight: number } {
-  const tileWidth = Math.max(1, (width - 152 - 72) / 4)
+): {
+  tileWidth: number
+  tileGap: number
+  rowHeight: number
+  heroHeight: number
+} {
+  const originalWidth = Math.max(1, (width - 152 - 72) / 4)
+  const tileWidth = originalWidth * 0.85
+  const tileGap = 24 + originalWidth - tileWidth
   const tileHeight = (tileWidth * 9) / 16 + (38 + 34) * fontScale + 14
   const rowHeight = monthly
     ? 92 + tileHeight + 28
     : 38 * fontScale + 18 + 48 + tileHeight
   return {
     tileWidth,
+    tileGap,
     rowHeight,
     heroHeight: Math.max(0, viewportHeight - rowHeight)
   }
