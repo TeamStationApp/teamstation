@@ -85,6 +85,7 @@ export function useDictationControls(
     onAnswer,
     onDismissQuestion,
     spaceTalks = true,
+    gestureHeld,
     spaceHoldMs,
     suspended,
     onActions,
@@ -151,7 +152,7 @@ export function useDictationControls(
     available && dictation.enabled && suspended !== true,
     spaceTalks,
     keys,
-    { holdMs: spaceHoldMs }
+    { holdMs: spaceHoldMs, held: gestureHeld }
   )
   const { setEnabled } = dictation
   useEffect(() => {

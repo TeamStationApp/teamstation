@@ -39,7 +39,7 @@ export function useSpaceToTalk(
 ): void {
   const now = useRef(talks)
   now.current = talks
-  const { holdMs } = options
+  const { holdMs, held } = options
   useEffect(() => {
     if (!active || holdMs != null) return
     let talking = false
@@ -56,6 +56,7 @@ export function useSpaceToTalk(
         event.metaKey ||
         event.altKey ||
         typing(event.target) ||
+        held?.current === true ||
         (!now.current && !talking)
       )
         return
@@ -80,8 +81,8 @@ export function useSpaceToTalk(
       window.removeEventListener('blur', letGo)
       letGo()
     }
-  }, [active, holdMs, keys])
-  useHeldSpace(active && holdMs != null, now, keys, holdMs ?? 0)
+  }, [active, holdMs, held, keys])
+  useHeldSpace(active && holdMs != null, now, keys, holdMs ?? 0, held)
 }
 
 interface Press {
@@ -144,7 +145,8 @@ function useHeldSpace(
   active: boolean,
   talks: RefObject<boolean>,
   keys: RefObject<TalkKeys>,
-  holdMs: number
+  holdMs: number,
+  held?: { current: boolean }
 ): void {
   useEffect(() => {
     if (!active) return
@@ -184,6 +186,7 @@ function useHeldSpace(
         event.altKey ||
         event.isComposing ||
         !talks.current ||
+        held?.current === true ||
         (event.target instanceof Element &&
           (event.target.tagName === 'SELECT' ||
             event.target.closest(OWNS_SPACE) != null))
@@ -240,7 +243,7 @@ function useHeldSpace(
       window.removeEventListener('blur', cancel)
       cancel()
     }
-  }, [active, holdMs, keys, talks])
+  }, [active, held, holdMs, keys, talks])
 }
 
 const TEXT_INPUTS = ['text', 'search', 'url', 'tel', 'password', 'email']
