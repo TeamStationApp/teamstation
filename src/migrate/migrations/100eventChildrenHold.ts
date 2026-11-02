@@ -6,8 +6,8 @@ import type { Migration } from '../runner'
  * Every other writer leaves the setting unset, so it fires as it always has.
  * `create or replace` so the table's lock stays one that readers pass.
  */
-export const migration099EventChildrenHold: Migration = {
-  name: '099eventChildrenHold',
+export const migration100EventChildrenHold: Migration = {
+  name: '100eventChildrenHold',
   up: `
 create or replace trigger events_sync_children_trg
 after insert or update of gumbo, "battingTeamId" on events
