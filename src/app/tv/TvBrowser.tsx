@@ -115,6 +115,26 @@ const focusTag = (node: FocusNode | null): number | undefined =>
     ? (ReactNative.findNodeHandle(node) ?? undefined)
     : undefined
 
+/** One-pixel-wide alpha ramps stretch smoothly without native layer seams. */
+const browseGradientDown =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAEACAYAAAByPhyYAAAA8UlEQVR4nFXEU1seAACA0a9Vy3Zt2TbWsm3btrHaT+9573rPxQkEvguiHy6YQlwo/XRhFO4iKNJFUbSLoVgXR/EugRJdEiW7FEp1aZTuMijTZdEv95uyXQ7lujzKdwVU6Iqo2JVQqSujcldBla6Kql0N1bo6qncN1OiaqNm1UKtroz+unf66Dup0XdTteqjX9VG/G6BBN0TDboRG3RiNuwmadFM07WZo1s3RvFugRbdEy26FVt0arbsN2nRbtO12aNft0b47oEN3RMfuhE7dGZ27C7p0V3TtbujW3dG9e6BH90TP7oVe3Ru9u3/04T7p/xe1Jz/BwQ1IPgAAAABJRU5ErkJggg=='
+const browseGradientUp =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAEACAYAAAByPhyYAAAA+UlEQVR4nFXE1VJQAQAA0Ut3d0p3h9JIN0oooXQqINIdnw77wszuzJ4gCILX94MXeDZP8Gge4N7cwa25gWtzBZfmAs7NGfw3p/DPnMCxOYK/5g8cmgPYN3uwa3Zg22zBptmAdbMGv80vWDUrsGyW4Kf5AYtmAebNHHw332DWzMC0mYJJMwHjZgxGzQgMmyEYNAPw1fRDn+mFHtMNXaYTOswX+Gzaoc20QotphibTCA2mHupMLdSYaqgylVBhyqHMlEKJKYYi8wkKTQHkmzzINTmQbbIg02RAukmDVJMCySYJEk0CxJs4iDUxEG2iINJEQLgJg1ATEnz0BmgsP8GHdTAfAAAAAElFTkSuQmCC'
+function BrowseGradient({
+  reverse = false
+}: {
+  reverse?: boolean
+}): React.ReactElement {
+  return (
+    <Image
+      pointerEvents="none"
+      source={{ uri: reverse ? browseGradientUp : browseGradientDown }}
+      resizeMode="stretch"
+      style={StyleSheet.absoluteFill}
+    />
+  )
+}
+
 function CollectionBackground({
   top,
   rowHeight
@@ -128,15 +148,21 @@ function CollectionBackground({
       pointerEvents="none"
       style={{ position: 'absolute', top, left: 0, right: 0, bottom: 0 }}
     >
-      <Svg width="100%" height={rowHeight}>
-        <Defs>
-          <LinearGradient id="collection" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor="black" stopOpacity={0} />
-            <Stop offset="1" stopColor="black" stopOpacity={0.5} />
-          </LinearGradient>
-        </Defs>
-        <Rect width="100%" height="100%" fill="url(#collection)" />
-      </Svg>
+      {nativeTvPresentation ? (
+        <View style={{ height: rowHeight }}>
+          <BrowseGradient />
+        </View>
+      ) : (
+        <Svg width="100%" height={rowHeight}>
+          <Defs>
+            <LinearGradient id="collection" x1="0%" y1="0%" x2="0%" y2="100%">
+              <Stop offset="0" stopColor="black" stopOpacity={0} />
+              <Stop offset="1" stopColor="black" stopOpacity={0.5} />
+            </LinearGradient>
+          </Defs>
+          <Rect width="100%" height="100%" fill="url(#collection)" />
+        </Svg>
+      )}
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} />
     </View>
   )
@@ -406,15 +432,19 @@ export function TvBrowser({
           pointerEvents="none"
           style={StyleSheet.absoluteFill}
         >
-          <Svg width="100%" height="100%">
-            <Defs>
-              <LinearGradient id="header" x1="0" y1="0" x2="0" y2="1">
-                <Stop offset="0" stopColor="black" stopOpacity={0.5} />
-                <Stop offset="1" stopColor="black" stopOpacity={0} />
-              </LinearGradient>
-            </Defs>
-            <Rect width="100%" height="100%" fill="url(#header)" />
-          </Svg>
+          {nativeTvPresentation ? (
+            <BrowseGradient reverse />
+          ) : (
+            <Svg width="100%" height="100%">
+              <Defs>
+                <LinearGradient id="header" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <Stop offset="0" stopColor="black" stopOpacity={0.5} />
+                  <Stop offset="1" stopColor="black" stopOpacity={0} />
+                </LinearGradient>
+              </Defs>
+              <Rect width="100%" height="100%" fill="url(#header)" />
+            </Svg>
+          )}
         </View>
         <Text style={styles.brand}>TeamStation TV</Text>
         <Text style={styles.welcome}>Welcome, {viewerName}</Text>
