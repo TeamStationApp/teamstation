@@ -11,7 +11,6 @@ import {
   compileAndroid,
   releaseIos,
   setup,
-  shipIos,
   signAndroid
 } from '../../Masonfile'
 import { app, fixtureSettings, testRoot } from './config.test'
@@ -320,6 +319,7 @@ describe('TeamStation pipeline Masonfile', () => {
       tools?: { node: string; xcode: string; rust: string }
       apple: { distribution: string; app: string }
       checkout?: boolean | { depth: number }
+      when?: { branch?: string[] }
     }>
     const android = stages.android as Array<{
       name: string
@@ -344,19 +344,8 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.equal(ios[1]?.on.type, 'macos-arm64')
     assert.equal(ios[1]?.apple.distribution, 'appStore')
     assert.deepEqual(ios[1]?.checkout, { depth: 1 })
-    const ship = workflows.release?.ios as {
-      on: { type: string }
-      apple: { distribution: string }
-      checkout?: { depth: number }
-      buildNumbers?: string[]
-    }
-    assert.deepEqual(workflows.release?.options, {
-      triggers: [{ request: true }]
-    })
-    assert.equal(ship.on.type, 'macos-arm64')
-    assert.equal(ship.apple.distribution, 'appStore')
-    assert.deepEqual(ship.checkout, { depth: 1 })
-    assert.deepEqual(ship.buildNumbers, ['app.teamstation.app'])
+    assert.deepEqual(ios[1]?.when, { branch: ['master'] })
+    assert.deepEqual(workflows, {})
     assert.equal(android[0]?.name, 'compile')
     assert.equal(android[0]?.on.type, 'do-linux')
     assert.equal(android[0]?.tools.rust, '1.98.0')
@@ -675,86 +664,5 @@ describe('TeamStation pipeline Masonfile', () => {
         }
       })
     }, /No ad hoc IPA was stashed/)
-  })
-
-  it('re-signs the last successful IPA and uploads that to TestFlight', async () => {
-    const workspace = mkdtempSync(path.join(tmpdir(), 'mason-ship-'))
-    const commands: string[] = []
-    try {
-      writeFileSync(
-        path.join(workspace, 'package.json'),
-        JSON.stringify({ version: '4.5.6' })
-      )
-      await shipIos({
-        workspace,
-        run: { branch: 'paul/masonCluster' },
-        getBuildNumber(key: string) {
-          assert.equal(key, 'app.teamstation.app')
-          return '26110106'
-        },
-        artifacts: {
-          async fetch(
-            query: { workflow: string; branch?: string; name: string },
-            into: string
-          ) {
-            commands.push(
-              `fetch:${query.workflow}:${query.branch}:${query.name}:${into}`
-            )
-            return [`${into}/build/TeamStation.ipa`]
-          },
-          async save(name: string) {
-            commands.push(`save:${name}`)
-          }
-        },
-        apple: {
-          async resign(options: {
-            path: string
-            version?: string
-            buildNumber?: string
-          }) {
-            commands.push(
-              `resign:${options.path}:${options.version ?? ''}:${options.buildNumber ?? ''}`
-            )
-            return { ipa: 'fetched/TeamStation-appStore.ipa' }
-          },
-          async testflight(options: { path: string; groups?: string[] }) {
-            commands.push(
-              `testflight:${options.path}:${(options.groups ?? []).join(',')}`
-            )
-            return {
-              buildId: '1',
-              version: '1.0',
-              buildNumber: '26110105',
-              state: 'VALID'
-            }
-          }
-        }
-      })
-      const log = commands.join('\n')
-      assert.match(log, /fetch:build:paul\/masonCluster:ios-ipa:fetched/)
-      assert.match(
-        log,
-        /resign:fetched\/build\/TeamStation\.ipa:4\.5\.6:26110106/
-      )
-      assert.match(
-        log,
-        /testflight:fetched\/TeamStation-appStore\.ipa:TeamStation testers/
-      )
-    } finally {
-      rmSync(workspace, { recursive: true, force: true })
-    }
-  })
-
-  it('stops when the fetched iOS artifact has no IPA', async () => {
-    await assert.rejects(async () => {
-      await shipIos({
-        run: { branch: 'paul/masonCluster' },
-        artifacts: {
-          async fetch() {
-            return ['fetched/notes.txt']
-          }
-        }
-      })
-    }, /The iOS artifact has no IPA/)
   })
 })

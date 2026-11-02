@@ -6,11 +6,11 @@ import type { Setup, Stage } from '@mason/types'
 // TeamStation for iOS on the Nomac pool and for Android on the DigitalOcean
 // Linux pool. The iOS archive signs an ad hoc build with the master's Apple
 // distribution certificate and publishes it, so a registered device can
-// install it. The release stage re-signs that IPA with the App Store profile
-// and uploads it to TestFlight. The Android release is compiled on Linux,
-// then signed on the node labelled android-signing, which provides
-// teamstation-sign-release-apk, and published from there. One platform
-// failing leaves the other running.
+// install it. A master build then re-signs that IPA with the App Store
+// profile and uploads it to TestFlight. Other branches leave that stage
+// skipped. The Android release is compiled on Linux, then signed on the node
+// labelled android-signing, which provides teamstation-sign-release-apk, and
+// published from there. One platform failing leaves the other running.
 
 const APP = 'app.teamstation.app'
 const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
@@ -59,6 +59,7 @@ export function setup(m: Setup): void {
           // package.json is the short version. A shallow checkout reads it;
           // this stage re-signs the stashed IPA and does not compile.
           checkout: { depth: 1 },
+          when: { branch: ['master'] },
           apple: { distribution: 'appStore', app: APP },
           run: releaseIos
         }
@@ -104,19 +105,6 @@ export function setup(m: Setup): void {
     },
     { failFast: false }
   )
-  // The last successful ad hoc IPA, re-signed at this commit's package.json
-  // version. The checkout reads that file. This does not archive again.
-  // Apple rejects a second upload of a build number it already has.
-  m.workflow('release', { triggers: [{ request: true }] }, w => {
-    w.stage('ios', {
-      on: APPLE,
-      timeout: '2h',
-      checkout: { depth: 1 },
-      apple: { distribution: 'appStore', app: APP },
-      buildNumbers: [APP],
-      run: shipIos
-    })
-  })
 }
 
 function workspacePath(ctx: Stage, name: string): string {
@@ -220,21 +208,6 @@ export async function releaseIos(ctx: Stage): Promise<void> {
   const input = packed[0]
   if (input == null) throw new Error('No ad hoc IPA was stashed')
   await uploadAppStore(ctx, input)
-}
-
-export async function shipIos(ctx: Stage): Promise<void> {
-  const files = await ctx.artifacts.fetch(
-    {
-      workflow: 'build',
-      branch: ctx.run.branch,
-      status: 'success',
-      name: 'ios-ipa'
-    },
-    'fetched'
-  )
-  const input = files.find(file => file.endsWith('.ipa'))
-  if (input == null) throw new Error('The iOS artifact has no IPA')
-  await uploadAppStore(ctx, input, ctx.getBuildNumber(APP))
 }
 
 export async function compileAndroid(ctx: Stage): Promise<void> {
