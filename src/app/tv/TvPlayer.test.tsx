@@ -731,7 +731,7 @@ describe('TV game playback entry', () => {
     expect(
       camera.querySelector<HTMLElement>('[data-testid="tv-camera-dim-0"]')!
         .style.backgroundColor
-    ).equals('rgba(0, 0, 0, 0.3)')
+    ).equals('rgba(0, 0, 0, 0.6)')
     expect([...document.querySelectorAll('video')]).deep.equals(videos)
     expect(videos[0].muted).equals(true)
     expect(videos[1].muted).equals(false)
