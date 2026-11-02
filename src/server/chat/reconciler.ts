@@ -449,7 +449,9 @@ export function distinctMarks<
  * The hourly pass: drains the marks, re-checks every DM, reconciles every
  * conversation, and creates any missing scope chat for every unmerged full
  * team, every season and every league. It is also what lets a player who
- * turns 13 in, on the first of the month after their birth month.
+ * turns 13 in, on the first of the month after their birth month. With no
+ * connection to be had it stops at once and throws, since the rest would only
+ * wait for one too, and whoever swept asks again.
  */
 export async function sweep(
   db: Kysely<Database>,
@@ -463,12 +465,12 @@ export async function sweep(
     .where('kind', '=', 'dm')
     .orderBy('id')
     .execute()
-  const failures: string[] = []
   for (const dm of dms) {
     try {
       await recheckDm(db, dm.id, now)
     } catch (error) {
-      failures.push(`DM ${dm.id}: ${String(error)}`)
+      if (isConnectionUnavailable(error)) throw error
+      log(`sweep: DM ${dm.id}: ${String(error)}`)
     }
   }
   const scopes = new Map<string, ScopeTarget>()
@@ -503,10 +505,10 @@ export async function sweep(
     try {
       await reconcileScope(db, target.kind, target.scopeId, now)
     } catch (error) {
-      failures.push(`${target.kind} ${target.scopeId}: ${String(error)}`)
+      if (isConnectionUnavailable(error)) throw error
+      log(`sweep: ${target.kind} ${target.scopeId}: ${String(error)}`)
     }
   }
-  for (const failure of failures) log(`sweep: ${failure}`)
 }
 
 /** The marks that could change whether `userId` belongs in a conversation. */
@@ -614,7 +616,7 @@ export interface ChatReconcilerOptions {
   debounceMs?: number
   /** How often the sweep runs. */
   sweepMs?: number
-  /** How soon marks are drained again after connections ran out. */
+  /** How soon a drain or a sweep runs again after connections ran out. */
   retryMs?: number
   now?: () => Date
   log?: (message: string) => void
@@ -636,6 +638,8 @@ export class ChatReconciler {
   private debounce: ReturnType<typeof setTimeout> | undefined
   private readonly retryMs: number
   private retry: ReturnType<typeof setTimeout> | undefined
+  /** A sweep gave up for connections, so the retry sweeps, which drains too. */
+  private sweepOwed = false
   private readonly sweepTimer: ReturnType<typeof setInterval>
   /** Work runs one piece at a time, in order. */
   private queue: Promise<void> = Promise.resolve()
@@ -684,7 +688,7 @@ export class ChatReconciler {
   async sweep(): Promise<void> {
     await this.enqueue(async () => {
       await sweep(this.db, this.now(), this.log)
-    })
+    }, true)
   }
 
   /** A `chat_dirty` notify: drains once the debounce is up. */
@@ -705,7 +709,10 @@ export class ChatReconciler {
     await this.queue
   }
 
-  private async enqueue(work: () => Promise<void>): Promise<void> {
+  private async enqueue(
+    work: () => Promise<void>,
+    sweeping = false
+  ): Promise<void> {
     const next = this.queue.then(async () => {
       if (this.closed) return
       try {
@@ -713,18 +720,21 @@ export class ChatReconciler {
       } catch (error) {
         this.log(String(error))
         // Connections are short, not gone, and the marks are all still there.
-        if (isConnectionUnavailable(error)) this.askAgain()
+        if (isConnectionUnavailable(error)) this.askAgain(sweeping)
       }
     })
     this.queue = next
     await next
   }
 
-  private askAgain(): void {
+  private askAgain(sweeping: boolean): void {
+    this.sweepOwed ||= sweeping
     if (this.closed || this.retry != null) return
     this.retry = setTimeout(() => {
       this.retry = undefined
-      this.drain().catch(() => undefined)
+      const again = this.sweepOwed ? this.sweep() : this.drain()
+      this.sweepOwed = false
+      again.catch(() => undefined)
     }, this.retryMs)
   }
 }

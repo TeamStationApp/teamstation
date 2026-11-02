@@ -822,6 +822,70 @@ describe('the chat reconciler (U5)', function () {
     }
   })
 
+  it('ends a sweep at the first lost connection and sweeps again on a timer, not waiting the hour', async function () {
+    await fixture.drain()
+    const j10 = await fixture.person('J10')
+    let starving = true
+    let attempts = 0
+    const lines: string[] = []
+    // Each DM and scope works in a transaction, so each would wait out the pool.
+    const starved = new Proxy(db, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target)
+        if (starving && prop === 'transaction')
+          return () => {
+            attempts += 1
+            throw new Error('timeout exceeded when trying to connect')
+          }
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    })
+    const feed = new PostgresFeed({
+      databaseUrl: fixture.url,
+      log: () => undefined
+    })
+    const reconciler = new ChatReconciler({
+      db: starved,
+      feed,
+      retryMs: 30,
+      now: () => fixture.now,
+      log: line => lines.push(line)
+    })
+    try {
+      await reconciler.listening
+      const before = await conversation(
+        'seasonAnnouncements',
+        fixture.seed.seasonId
+      )
+      expect(await members(before.id)).not.includes('J10')
+      await db
+        .insertInto('league_members')
+        .values({
+          id: makeId('leagueMember'),
+          user_id: j10,
+          league_id: fixture.seed.leagueId
+        })
+        .execute()
+      // With the marks gone a drain finds nothing, and only a sweep lets them in.
+      await db.deleteFrom('chat_dirty').execute()
+      lines.length = 0
+      attempts = 0
+      await reconciler.sweep()
+      expect(attempts).equals(1)
+      expect(lines.join('\n')).includes('timeout exceeded')
+      expect(lines.join('\n')).not.includes('sweep:')
+      starving = false
+      for (let i = 0; i < 100; i += 1) {
+        if ((await members(before.id)).includes('J10')) break
+        await wait(20)
+      }
+      expect(await members(before.id)).includes('J10')
+    } finally {
+      await reconciler.close()
+      await feed.close()
+    }
+  })
+
   it('listens, drains on start, and listens again after losing the connection', async function () {
     const lines: string[] = []
     const j6 = await fixture.person('J6')
