@@ -65,6 +65,9 @@ jobs:
       - run: npm ci
       - run: npm run prepare
       - run: npm run precommit
+        env:
+          # The complete server and rendered UI suite outgrows Node's default heap.
+          NODE_OPTIONS: --max-old-space-size=8192
 
   portable:
     name: Portable contracts
