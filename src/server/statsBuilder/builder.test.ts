@@ -729,6 +729,43 @@ describe('statsBuilder drain', function () {
     ).equals('built')
   })
 
+  it('leaves a game owed, with no attempt counted, when a build loses its connection', async function () {
+    const gameId = await seedGame([paPlay(batter, pitcher)])
+    const failures = [
+      new Error('timeout exceeded when trying to connect'),
+      new Error('Connection terminated unexpectedly'),
+      Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })
+    ]
+    for (const failure of failures) {
+      const losing: AfterReadHook = async () => {
+        throw failure
+      }
+      let thrown: unknown
+      try {
+        await drain(db, clock, losing)
+      } catch (error) {
+        thrown = error
+      }
+      expect(thrown).equals(failure)
+      const owed = await db
+        .selectFrom('game_stats_state')
+        .selectAll()
+        .where('game_id', '=', gameId)
+        .executeTakeFirstOrThrow()
+      expect(owed.status).not.equals('failed')
+      expect(owed.detail).equals(null)
+      expect(owed.attempts).equals(0)
+      expect(owed.retry_at).equals(null)
+    }
+    await drain(db, clock)
+    const built = await db
+      .selectFrom('game_stats_state')
+      .selectAll()
+      .where('game_id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    expect(built.status).equals('built')
+  })
+
   it('does not let markFailed clobber a concurrent poke', async function () {
     const doomed = mint()
     await insertFixtureUsers(db, {
