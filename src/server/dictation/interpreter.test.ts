@@ -103,7 +103,10 @@ describe('dictation interpreter', function () {
     'Fielder’s choice',
     'Out at first',
     'Out at second',
-    'Out at third'
+    'Out at third',
+    'Safe at first',
+    'Safe at second',
+    'Safe at third'
   ])
     it(`keeps the FC runner call when the model labels its optional reason ${reason}`, async function () {
       const out = reason.startsWith('Out')
