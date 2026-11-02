@@ -3,9 +3,12 @@ import type { Kysely, Transaction } from 'kysely'
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
 import { umpirePositions } from '../../common/umpires'
 import {
+  UMPIRE_LEADERBOARD_MAX_PAGE,
   UMPIRE_RANK_SYMBOLS,
   type UmpireGameBlock,
-  type UmpireLeaderboard
+  type UmpireLeaderboard,
+  type UmpireLeaderboardQuery,
+  type UmpireRank
 } from '../../common/umpireSchedule'
 import { hardUmpireConflict } from '../../common/umpireTime'
 import { onePerson } from '../admin/people'
@@ -16,6 +19,7 @@ import { canAdminister } from '../groups/rights'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { noteScopeChange } from '../socket/syncRevision'
+import { people } from './admin'
 import {
   type UmpireIdentity,
   umpireIdentity,
@@ -235,13 +239,23 @@ export async function gameUmpires(
     positions: positions.map(p => ({ ...p, person: slots.get(p.slot) ?? null }))
   }
 }
+interface LeaderboardCounts {
+  userId: string
+  name: string
+  completed: number
+  scheduled: number
+}
 export async function leaderboard(
   db: Kysely<Database>,
   actor: Actor,
-  leagueId: string
+  leagueId: string,
+  query?: UmpireLeaderboardQuery
 ): Promise<UmpireLeaderboard> {
   const admin = await canAdminister(db, actor, { kind: 'league', id: leagueId })
   await umpireAccess(db, actor, leagueId, admin ? 'league' : 'umpire')
+  // Any umpire sees the top ten; the whole list is as private as the roster.
+  if (query != null && !admin)
+    throw forbidden('Only a league administrator can page the leaderboard')
   const league = await db
     .selectFrom('leagues')
     .select('umpire_credits')
@@ -256,10 +270,15 @@ export async function leaderboard(
     .where('g.status', 'in', ['scheduled', 'inProgress', 'final'])
     .where('g.withdrawn_at', 'is', null)
     .execute()
-  const counts = new Map<
-    string,
-    { userId: string; name: string; completed: number; scheduled: number }
-  >()
+  const counts = new Map<string, LeaderboardCounts>()
+  const page =
+    query == null
+      ? undefined
+      : {
+          order: query.order ?? ('desc' as const),
+          limit: query.limit ?? UMPIRE_LEADERBOARD_MAX_PAGE,
+          offset: query.offset ?? 0
+        }
   const identities = new Map<string, UmpireIdentity>()
   for (const row of rows) {
     let p = identities.get(row.user_id)
@@ -277,24 +296,46 @@ export async function leaderboard(
     if (row.status === 'final') held.completed++
     counts.set(p.userId, held)
   }
-  const rank = (
-    key: 'completed' | 'scheduled'
-  ): UmpireLeaderboard['completed'] =>
-    [...counts.values()]
-      .filter(p => p[key] > 0)
-      .sort((a, b) => {
-        const count = b[key] - a[key]
-        if (count !== 0) return count
+  // A page is named as the roster names its people, and holds them all.
+  const roster = page == null ? [] : await people(db, leagueId)
+  const rosterNames = new Map(roster.map(p => [p.id, p.name]))
+  for (const p of roster)
+    if (!counts.has(p.id))
+      counts.set(p.id, {
+        userId: p.id,
+        name: p.name,
+        completed: 0,
+        scheduled: 0
+      })
+  const rank = (key: 'completed' | 'scheduled'): UmpireRank[] => {
+    // Ties break on the default answer's name, so a page lists the top ten in
+    // the order of its symbols, whatever name it shows them under.
+    const ordered = (direction: 1 | -1): LeaderboardCounts[] =>
+      [...counts.values()].sort((a, b) => {
+        if (a[key] !== b[key]) return direction * (a[key] - b[key])
         const name = a.name.localeCompare(b.name)
         return name === 0 ? a.userId.localeCompare(b.userId) : name
       })
+    const top = ordered(-1)
+      .filter(p => p[key] > 0)
       .slice(0, 10)
-      .map((p, i) => ({
-        userId: p.userId,
-        name: p.name,
-        count: p[key],
-        symbol: UMPIRE_RANK_SYMBOLS[i]
-      }))
+    const symbolOf = new Map(
+      top.map((p, i) => [p.userId, UMPIRE_RANK_SYMBOLS[i]])
+    )
+    const listed =
+      page == null
+        ? top
+        : ordered(page.order === 'asc' ? 1 : -1).slice(
+            page.offset,
+            page.offset + page.limit
+          )
+    return listed.map(p => ({
+      userId: p.userId,
+      name: rosterNames.get(p.userId) ?? p.name,
+      count: p[key],
+      symbol: symbolOf.get(p.userId) ?? ''
+    }))
+  }
   const teams = league.umpire_credits
     ? await db
         .selectFrom('teams')
@@ -319,6 +360,7 @@ export async function leaderboard(
             .sort((a, b) => {
               const count = b.count - a.count
               return count === 0 ? a.name.localeCompare(b.name) : count
-            })
+            }),
+    ...(page == null ? {} : { page: { ...page, total: counts.size } })
   }
 }

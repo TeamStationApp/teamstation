@@ -113,6 +113,10 @@ team, or the one team for a practice/other event. Canonical merged identities
 are deduplicated and disabled people are excluded. Saves recheck the same
 policy; an old reply cannot keep a removed player eligible.
 
+## Umpire leaderboard pages
+
+`GET /leagues/:leagueId/umpire-leaderboard` accepts `order` (`asc` or `desc`, default `desc`), `limit` (1 to 50, default 50) and `offset` (default 0). With none of them it answers the top ten with at least one game, to any league umpire. With any of them it needs a league administrator, and ranks every current league umpire who is not disabled, including those with no games, along with anyone else with a game still counted, such as a removed umpire. It adds `page: { order, limit, offset, total }`. It names people as the league's roster does, and anyone no longer on the roster by first name and last initial, as the default answer does. Equal counts sort by name in both directions, so the order of a tie can follow the people's name format. The defaults apply only once one of the three is named, so OpenAPI declares none. Only the real top ten have a symbol, and an invalid value returns 400. Pages rank live data, so a signup between two reads can repeat or skip someone at a page boundary.
+
 ## Umpire schedule timezones
 
 `GET /leagues/:leagueId/umpire-schedule` accepts an optional `timezone` query parameter. Clients send their local IANA timezone for row and conflict dates and weekday/time filtering. Invalid zones return400. When omitted, each game's stored timezone is used. Stored ISO instants and conflict intervals are unchanged.

@@ -1,3 +1,5 @@
+import { UMPIRE_LEADERBOARD_MAX_PAGE } from '../../common/umpireSchedule'
+
 export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
   const settings = {
     type: 'object',
@@ -391,15 +393,40 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
   )
   paths['/leagues/{leagueId}/umpire-leaderboard'] = {
     get: {
-      summary:
-        'Top ten completed and scheduled umpires and optional team credits',
+      summary: `Umpires ranked by completed and scheduled games, with team credits: the top ten, or for a league administrator a page of up to ${UMPIRE_LEADERBOARD_MAX_PAGE} of everyone, most first or fewest first`,
       security: [{ bearer: [] }],
-      parameters,
+      parameters: [
+        ...parameters,
+        {
+          name: 'order',
+          in: 'query',
+          schema: { type: 'string', enum: ['asc', 'desc'] },
+          description:
+            'desc is most games first and asc is fewest first; equal counts sort by name either way. Asks for a page, which needs a league administrator; desc once limit or offset asks for one'
+        },
+        {
+          name: 'limit',
+          in: 'query',
+          schema: {
+            type: 'integer',
+            minimum: 1,
+            maximum: UMPIRE_LEADERBOARD_MAX_PAGE
+          },
+          description: `How many people each ranking returns. Asks for a page, which needs a league administrator; ${UMPIRE_LEADERBOARD_MAX_PAGE} once order or offset asks for one`
+        },
+        {
+          name: 'offset',
+          in: 'query',
+          schema: { type: 'integer', minimum: 0 },
+          description:
+            'How many people each ranking skips. Asks for a page, which needs a league administrator; 0 once order or limit asks for one'
+        }
+      ],
       responses: {
         ...responses,
         200: {
           description:
-            'Completed and scheduled people rankings and team credits'
+            'Completed and scheduled people rankings and team credits. Without order, limit or offset, the top ten with at least one game. With any of them, every current league umpire, including those with no games, and anyone else with a game still counted, such as a removed umpire, and page: {order, limit, offset, total}; only the real top ten have a symbol. Each of them needs a league administrator. Pages rank live data, so a signup between two reads can move someone across a page boundary.'
         }
       }
     }
