@@ -128,24 +128,16 @@ function CollectionBackground({
       pointerEvents="none"
       style={{ position: 'absolute', top, left: 0, right: 0, bottom: 0 }}
     >
-      {NativeGradient !== null ? (
-        <NativeGradient
-          gradientDirection="bottom"
-          maxOpacity={0.1}
-          style={{ height: rowHeight }}
-        />
-      ) : (
-        <Svg width="100%" height={rowHeight}>
-          <Defs>
-            <LinearGradient id="collection" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0" stopColor="black" stopOpacity={0} />
-              <Stop offset="1" stopColor="black" stopOpacity={0.1} />
-            </LinearGradient>
-          </Defs>
-          <Rect width="100%" height="100%" fill="url(#collection)" />
-        </Svg>
-      )}
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.1)' }} />
+      <Svg width="100%" height={rowHeight}>
+        <Defs>
+          <LinearGradient id="collection" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor="black" stopOpacity={0} />
+            <Stop offset="1" stopColor="black" stopOpacity={0.5} />
+          </LinearGradient>
+        </Defs>
+        <Rect width="100%" height="100%" fill="url(#collection)" />
+      </Svg>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} />
     </View>
   )
 }
@@ -409,6 +401,21 @@ export function TvBrowser({
         destinations={searchNode === null ? undefined : [searchNode]}
         style={styles.toolbar}
       >
+        <View
+          testID="tv-header-gradient"
+          pointerEvents="none"
+          style={StyleSheet.absoluteFill}
+        >
+          <Svg width="100%" height="100%">
+            <Defs>
+              <LinearGradient id="header" x1="0" y1="0" x2="0" y2="1">
+                <Stop offset="0" stopColor="black" stopOpacity={0.5} />
+                <Stop offset="1" stopColor="black" stopOpacity={0} />
+              </LinearGradient>
+            </Defs>
+            <Rect width="100%" height="100%" fill="url(#header)" />
+          </Svg>
+        </View>
         <Text style={styles.brand}>TeamStation TV</Text>
         <Text style={styles.welcome}>Welcome, {viewerName}</Text>
         {nativeTvPresentation ? (
@@ -794,20 +801,6 @@ function BrowsePage({
         testID="tv-hero"
         style={[styles.hero, { height: geometry.heroHeight }]}
       >
-        {hero?.posterUrl != null && (
-          <Image
-            source={{ uri: hero.posterUrl }}
-            style={StyleSheet.absoluteFill}
-            resizeMode="cover"
-          />
-        )}
-        {hero !== null && (
-          <HeroPreview
-            client={client}
-            gameId={hero.id}
-            active={active && heroVisible && previewFocus === null}
-          />
-        )}
         <TvScrim />
         <View
           testID="tv-hero-details"
@@ -1044,6 +1037,26 @@ function BrowsePage({
         setViewportHeight(event.nativeEvent.layout.height)
       }}
     >
+      <View
+        testID="tv-browse-backdrop"
+        pointerEvents="none"
+        style={styles.backdrop}
+      >
+        {collection?.hero?.posterUrl != null && (
+          <Image
+            source={{ uri: collection.hero.posterUrl }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+          />
+        )}
+        {collection?.hero != null && (
+          <HeroPreview
+            client={client}
+            gameId={collection.hero.id}
+            active={active && heroVisible && previewFocus === null}
+          />
+        )}
+      </View>
       <CollectionBackground
         top={collectionTop(geometry.heroHeight, scrollY)}
         rowHeight={geometry.rowHeight}
@@ -1091,14 +1104,15 @@ function BrowsePage({
   )
 }
 const styles = StyleSheet.create({
-  scene: { flex: 1, width: '100%', backgroundColor: '#454545' },
+  scene: { flex: 1, width: '100%', backgroundColor: '#000' },
+  backdrop: { position: 'absolute', top: -115, bottom: 0, left: 0, right: 0 },
   toolbar: {
     height: 115,
     paddingHorizontal: 76,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 24,
-    backgroundColor: '#454545'
+    zIndex: 1
   },
   brand: { fontSize: 31, color: '#fff', fontWeight: '700' },
   welcome: { color: '#ddd', fontSize: 18, flex: 1 },
