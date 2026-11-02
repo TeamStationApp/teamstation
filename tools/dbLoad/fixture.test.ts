@@ -20,6 +20,7 @@ import {
   parseShard,
   readCredentials,
   readTokens,
+  scoreboardWatchers,
   type SeededAccount,
   seedFixture,
   systemOf,
@@ -335,6 +336,36 @@ describe('the fixture', function () {
     expect(() => accountsForShard(tokens, 40, undefined, 1)).throws(
       'seeded for 1 game(s)'
     )
+  })
+
+  it('connects people from all the games, not the first game’s', function () {
+    const taken = accountsForShard(tokens, 20)
+    expect(new Set(taken.map(row => row.label)).size).equals(20)
+    expect(new Set(taken.map(row => row.gameIndex ?? 0)).size).greaterThan(2)
+    const everyone = tokens.accounts.filter(
+      row => row.kind === 'viewer' || row.kind === 'worstCase'
+    )
+    expect(accountsForShard(tokens, everyone.length).length).equals(
+      everyone.length
+    )
+  })
+
+  it('opens each timeline socket as someone watching that game', function () {
+    const accounts = accountsForShard(tokens, 40, { index: 1, count: 2 })
+    const watchers = scoreboardWatchers(accounts, tokens.games, 15)
+    expect(watchers.length).equals(15)
+    for (const { account, game } of watchers)
+      expect(tokens.games[account.gameIndex ?? 0]).equals(game)
+    expect(new Set(watchers.map(row => row.game)).size).equals(
+      tokens.games.length
+    )
+    // With nobody on a game, the sockets go to those that have someone.
+    const firstOnly = accounts.filter(row => (row.gameIndex ?? 0) === 0)
+    const some = scoreboardWatchers(firstOnly, tokens.games, 3)
+    expect(some.map(row => row.game)).deep.equals(
+      Array.from({ length: 3 }, () => tokens.games[0])
+    )
+    expect(scoreboardWatchers([], tokens.games, 3)).deep.equals([])
   })
 
   it('places worst-case people at one in twenty among the viewers', function () {

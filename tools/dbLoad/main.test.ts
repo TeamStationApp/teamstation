@@ -114,6 +114,7 @@ describe('the command line', function () {
     expect(data.socketsOpened).at.least(4)
     expect(data.connections.peak).above(0)
     expect(data.streamsStarted).equals(1)
+    expect(text).not.contains('socket-close-4403')
   })
 
   it('holds a run to the thresholds when asked, counting the servers logs', async function () {

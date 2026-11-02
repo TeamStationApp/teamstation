@@ -2230,8 +2230,10 @@ export function verifyShapes(shapes: Shapes, amounts: Amounts): void {
 }
 
 /**
- * Which accounts this process connects: its slice of the first `users` of those
- * who watch one of the first `games`, since a viewer may only see their own.
+ * Which accounts this process connects: its slice of `users` of those who watch
+ * one of the first `games`, since a viewer may only see their own. They are
+ * taken evenly from all of them, as accounts are seeded a game at a time and the
+ * first of them would all be watching the crowded game.
  */
 export function accountsForShard(
   tokens: TokensFile,
@@ -2248,9 +2250,32 @@ export function accountsForShard(
     throw new Error(
       `--users ${users} is above the ${connectable.length} accounts seeded for ${games} game(s) of run ${tokens.runId}`
     )
-  return connectable
-    .slice(0, users)
-    .filter((_, i) => i % shard.count === shard.index)
+  return Array.from(
+    { length: users },
+    (_, i) => connectable[Math.floor((i * connectable.length) / users)]
+  ).filter((_, i) => i % shard.count === shard.index)
+}
+
+/**
+ * Who opens each `timeline=1` socket on what: a person watching that game, since
+ * a socket on a game they may not see is refused. Dealt across the games that
+ * have someone in `accounts` to watch them.
+ */
+export function scoreboardWatchers<Game>(
+  accounts: readonly SeededAccount[],
+  games: readonly Game[],
+  count: number
+): Array<{ account: SeededAccount; game: Game }> {
+  const watched = games.flatMap((game, index) => {
+    const viewers = accounts.filter(row => (row.gameIndex ?? 0) === index)
+    return viewers.length === 0 ? [] : [{ game, viewers }]
+  })
+  if (watched.length === 0) return []
+  return Array.from({ length: count }, (_, i) => {
+    const { game, viewers } = watched[i % watched.length]
+    const round = Math.floor(i / watched.length)
+    return { game, account: viewers[round % viewers.length] }
+  })
 }
 
 export function parseShard(text: string): { index: number; count: number } {

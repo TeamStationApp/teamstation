@@ -30,6 +30,7 @@ import {
   newRunId,
   parseShard,
   readTokens,
+  scoreboardWatchers,
   seedFixture,
   verifyShapes
 } from './fixture'
@@ -195,9 +196,8 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
         viewer.start()
       })
 
-      for (let i = 0; i < options.scoreboards; i++) {
-        const game = games[i % games.length]
-        const account = accounts[i % accounts.length]
+      const watchers = scoreboardWatchers(accounts, games, options.scoreboards)
+      for (const [i, { account, game }] of watchers.entries()) {
         const board = new SocketViewer(
           serverFor(options.servers, i),
           account,
