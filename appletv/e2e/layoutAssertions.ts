@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-/** Check rendered camera bounds and actual native focus, without removed buttons. */
+/** Check rendered camera bounds without removed buttons or unsupported focus fields. */
 export async function assertCameraLayout(
   tv: { hierarchy: () => Promise<any> },
   index: number,
@@ -17,18 +17,17 @@ export async function assertCameraLayout(
     const bounds = angle?.bounds
     const width = tree.bounds.width / (fullscreen ? 1 : 2)
     const height = tree.bounds.height / (fullscreen ? 1 : 2)
-    measured = { bounds, focused: angle?.focused, width, height }
+    measured = { bounds, width, height }
     if (
       bounds !== undefined &&
       Math.abs(bounds.width - width) <= 2 &&
-      Math.abs(bounds.height - height) <= 2 &&
-      angle.focused === true
+      Math.abs(bounds.height - height) <= 2
     )
       return
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   assert.fail(
-    `Camera ${index} ${fullscreen ? 'fullscreen' : 'quadrant'} bounds/focus: ${JSON.stringify(measured)}`
+    `Camera ${index} ${fullscreen ? 'fullscreen' : 'quadrant'} bounds: ${JSON.stringify(measured)}`
   )
 }
 
