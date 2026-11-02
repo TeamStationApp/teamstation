@@ -383,6 +383,7 @@
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 				TV_API_BASE_URL = "https://app.teamstation.app/api/v1";
+				TV_METRO_PORT = 8081;
 				TVOS_DEPLOYMENT_TARGET = 15.1;
 				VERSIONING_SYSTEM = "apple-generic";
 			};
@@ -411,6 +412,7 @@
 				PRODUCT_NAME = TeamStationTV;
 				SWIFT_VERSION = 5.0;
 				TV_API_BASE_URL = "https://app.teamstation.app/api/v1";
+				TV_METRO_PORT = 8081;
 				TVOS_DEPLOYMENT_TARGET = 15.1;
 				VERSIONING_SYSTEM = "apple-generic";
 			};

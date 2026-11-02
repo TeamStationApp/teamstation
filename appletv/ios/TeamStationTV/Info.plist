@@ -39,6 +39,8 @@
 	<true/>
 	<key>TVApiBaseUrl</key>
 	<string>$(TV_API_BASE_URL)</string>
+	<key>TVMetroPort</key>
+	<string>$(TV_METRO_PORT)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

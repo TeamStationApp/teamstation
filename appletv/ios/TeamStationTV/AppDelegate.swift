@@ -53,6 +53,19 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
        url.scheme == "http" || url.scheme == "https" {
       return url
     }
+    // React Native generates ip.txt from the build machine for physical Debug builds.
+    // Pair it with this build's Metro port when launched directly from the TV home screen.
+    if let file = Bundle.main.url(forResource: "ip", withExtension: "txt"),
+       let contents = try? String(contentsOf: file, encoding: .utf8),
+       let configuredPort = Bundle.main.object(forInfoDictionaryKey: "TVMetroPort") as? String,
+       let port = Int(configuredPort), (1...65535).contains(port) {
+      let host = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !host.isEmpty {
+        return RCTBundleURLProvider.jsBundleURL(forBundleRoot: "index",
+          packagerHost: "\(host):\(port)", enableDev: true,
+          enableMinification: false, inlineSourceMap: false)
+      }
+    }
     return RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: "index")
 #else
     Bundle.main.url(forResource: "main", withExtension: "jsbundle")
