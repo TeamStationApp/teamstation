@@ -63,7 +63,11 @@ async function main(): Promise<void> {
     const first = tiles.slice(0, 4).map(node => node.bounds)
     const viewport =
       all.find(node => node.id === 'tv-page-home')?.bounds ?? tree.bounds
+    const previousTileWidth = (tree.bounds.width - 224) / 4
+    const expectedWidth = previousTileWidth * 0.85
+    const expectedGap = 24 + previousTileWidth * 0.15
     for (let i = 0; i < 4; i++) {
+      assert(Math.abs(first[i].width - expectedWidth) <= 1)
       assert(
         first[i].x >= 0 && first[i].x + first[i].width <= tree.bounds.width
       )
@@ -71,7 +75,9 @@ async function main(): Promise<void> {
       assert(Math.abs(first[i].y - first[0].y) <= 1)
       if (i > 0)
         assert(
-          Math.abs(first[i].x - first[i - 1].x - first[i - 1].width - 24) <= 1
+          Math.abs(
+            first[i].x - first[i - 1].x - first[i - 1].width - expectedGap
+          ) <= 1
         )
     }
     if (kind === 'team' && tiles.length > 4)
@@ -81,8 +87,9 @@ async function main(): Promise<void> {
       )
     if (kind !== 'team' && tiles.length > 4)
       assert(
-        tiles[4].bounds.x >= tree.bounds.width - 52,
-        'fifth tile stays outside the row viewport'
+        Math.abs(tiles[4].bounds.x - (tree.bounds.width - 52)) <= 1 &&
+          tiles[4].bounds.x + tiles[4].bounds.width > tree.bounds.width,
+        'a small part of the fifth tile reaches the full screen boundary'
       )
     const search = all.find(node => node.id === 'tv-search')
     const label = all.find(node => node.id === 'tv-search-label')
