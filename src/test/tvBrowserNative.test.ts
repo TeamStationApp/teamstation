@@ -33,6 +33,16 @@ describe('TV native browser bridge', () => {
           name: 'native-presentation-bridge',
           setup(builder: any) {
             builder.onLoad(
+              { filter: /app\/tv\/TvBrowser\.tsx$/ },
+              (args: any) => ({
+                contents: readFileSync(args.path, 'utf8').replace(
+                  "import * as ReactNative from 'react-native'",
+                  "import * as ReactNative from '../../test/tvBrowserNativeRuntime'"
+                ),
+                loader: 'tsx'
+              })
+            )
+            builder.onLoad(
               { filter: /app\/tv\/NativePresentation\.tsx$/ },
               (args: any) => ({
                 contents: readFileSync(args.path, 'utf8').replace(
@@ -60,6 +70,7 @@ describe('TV native browser bridge', () => {
     })
     const client = {
       videoGames: async () => [],
+      myFollows: async () => [],
       videoTeams: async (options: any) => {
         if (fail) throw new Error('Offline')
         return typeof options?.q === 'string' ? [team] : []
@@ -86,8 +97,32 @@ describe('TV native browser bridge', () => {
       expect(
         element.querySelector('[data-testid="tv-search-label"]')?.textContent
       ).equals('Search')
+      await settle()
+      expect(
+        element
+          .querySelector('[data-testid="tv-hero"]')
+          ?.getAttribute('tabindex')
+      ).equals('-1')
+      const searchButton = element.querySelector<HTMLElement>(
+        '[data-testid="tv-search"]'
+      )!
       await act(async () => {
-        element.querySelector<HTMLElement>('[data-testid="tv-search"]')!.click()
+        searchButton.focus()
+      })
+      expect(getComputedStyle(searchButton).backgroundColor).equals(
+        'rgb(255, 255, 255)'
+      )
+      expect(
+        searchButton.querySelector('circle')?.getAttribute('stroke')
+      ).equals('#102318')
+      await act(async () => {
+        searchButton.blur()
+      })
+      expect(getComputedStyle(searchButton).backgroundColor).equals(
+        'rgb(85, 85, 85)'
+      )
+      await act(async () => {
+        searchButton.click()
       })
       await act(async () => {
         nativeViews.get('TVSearch').onQuery({ nativeEvent: { query: 'Hawks' } })
@@ -95,11 +130,19 @@ describe('TV native browser bridge', () => {
       await settle()
       expect(nativeViews.get('TVSearch').items[0].title).equals('Demo Hawks')
       await act(async () => {
+        searchButton.focus()
+      })
+      await act(async () => {
         nativeViews
           .get('TVSearch')
           .onSelect({ nativeEvent: { id: 'team:team' } })
       })
       expect(element.textContent).contains('Demo Hawks')
+      expect(
+        getComputedStyle(
+          element.querySelector<HTMLElement>('[data-testid="tv-search"]')!
+        ).backgroundColor
+      ).equals('rgb(85, 85, 85)')
       await act(async () => {
         element.querySelector<HTMLElement>('[data-testid="tv-search"]')!.click()
       })
