@@ -1,0 +1,1287 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import * as ReactNative from 'react-native'
+import {
+  Circle,
+  Defs,
+  Line,
+  LinearGradient,
+  Rect,
+  Stop,
+  Svg
+} from 'react-native-svg'
+
+import type {
+  TeamStationClient,
+  TeamSummary,
+  UserMatch,
+  VideoGame
+} from '../../common/api'
+import {
+  browseGeometry,
+  fourAcross,
+  gameDate,
+  heroDetailsScale,
+  monthSections
+} from './browseLayout'
+import { loadTvCollection, type TvClip, type TvCollection } from './collections'
+import { HeroPreview } from './HeroPreview'
+import {
+  NativeGradient,
+  NativeSearch,
+  nativeTvPresentation,
+  TvPoster,
+  type TvSearchItem
+} from './NativePresentation'
+import { tvControl } from './remote'
+import { TvButton } from './TvButton'
+
+const {
+  Animated,
+  BackHandler,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View
+} = ReactNative
+const FocusGuide =
+  (
+    ReactNative as unknown as {
+      TVFocusGuideView?: React.ComponentType<
+        React.ComponentProps<typeof View> & {
+          autoFocus?: boolean
+          destinations?: Array<React.ComponentRef<typeof View>>
+        }
+      >
+    }
+  ).TVFocusGuideView ?? View
+
+export type TvPage =
+  | { kind: 'home' }
+  | { kind: 'team'; team: TeamSummary }
+  | { kind: 'player'; player: UserMatch }
+export interface TvPlayRequest {
+  game: VideoGame
+  clip?: TvClip
+}
+const pageKey = (page: TvPage): string =>
+  page.kind === 'home'
+    ? 'home'
+    : page.kind === 'team'
+      ? page.team.id
+      : page.player.userId
+
+export function TvScrim(): React.ReactElement {
+  return (
+    <View
+      testID="tv-hero-scrim"
+      pointerEvents="none"
+      style={StyleSheet.absoluteFill}
+    >
+      {NativeGradient !== null ? (
+        <NativeGradient
+          gradientDirection="left"
+          maxOpacity={0.5}
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: '40%'
+          }}
+        />
+      ) : (
+        <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
+          <Defs>
+            <LinearGradient id="hero-left" x1="0" y1="0" x2="1" y2="0">
+              <Stop offset="0" stopColor="#000" stopOpacity={0.5} />
+              <Stop offset="0.4" stopColor="#000" stopOpacity={0} />
+            </LinearGradient>
+          </Defs>
+          <Rect width="100%" height="100%" fill="url(#hero-left)" />
+        </Svg>
+      )}
+    </View>
+  )
+}
+
+// Explicit destinations avoid the native spatial engine skipping the hero action.
+type FocusNode = React.ComponentRef<typeof View>
+const focusTag = (node: FocusNode | null): number | undefined =>
+  nativeTvPresentation && node !== null
+    ? (ReactNative.findNodeHandle(node) ?? undefined)
+    : undefined
+
+/** One-pixel-wide alpha ramps stretch smoothly without native layer seams. */
+const browseGradientDown =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAEACAYAAAByPhyYAAAA8UlEQVR4nFXEU1seAACA0a9Vy3Zt2TbWsm3btrHaT+9573rPxQkEvguiHy6YQlwo/XRhFO4iKNJFUbSLoVgXR/EugRJdEiW7FEp1aZTuMijTZdEv95uyXQ7lujzKdwVU6Iqo2JVQqSujcldBla6Kql0N1bo6qncN1OiaqNm1UKtroz+unf66Dup0XdTteqjX9VG/G6BBN0TDboRG3RiNuwmadFM07WZo1s3RvFugRbdEy26FVt0arbsN2nRbtO12aNft0b47oEN3RMfuhE7dGZ27C7p0V3TtbujW3dG9e6BH90TP7oVe3Ru9u3/04T7p/xe1Jz/BwQ1IPgAAAABJRU5ErkJggg=='
+const browseGradientUp =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAEACAYAAAByPhyYAAAA+UlEQVR4nFXE1VJQAQAA0Ut3d0p3h9JIN0oooXQqINIdnw77wszuzJ4gCILX94MXeDZP8Gge4N7cwa25gWtzBZfmAs7NGfw3p/DPnMCxOYK/5g8cmgPYN3uwa3Zg22zBptmAdbMGv80vWDUrsGyW4Kf5AYtmAebNHHw332DWzMC0mYJJMwHjZgxGzQgMmyEYNAPw1fRDn+mFHtMNXaYTOswX+Gzaoc20QotphibTCA2mHupMLdSYaqgylVBhyqHMlEKJKYYi8wkKTQHkmzzINTmQbbIg02RAukmDVJMCySYJEk0CxJs4iDUxEG2iINJEQLgJg1ATEnz0BmgsP8GHdTAfAAAAAElFTkSuQmCC'
+function BrowseGradient({
+  reverse = false
+}: {
+  reverse?: boolean
+}): React.ReactElement {
+  return (
+    <Image
+      pointerEvents="none"
+      source={{ uri: reverse ? browseGradientUp : browseGradientDown }}
+      resizeMode="stretch"
+      style={StyleSheet.absoluteFill}
+    />
+  )
+}
+
+/** One continuous ramp with a long 50% tail: no join can expose the video. */
+const collectionGradient =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAQACAYAAAAgBjM/AAABCUlEQVR4nO3EVzsQYABAYSlkZGQTGSl774xsomXvXfaeGfHTPeeu8xt878UbEfG/FxTpXtIrF0XRLoZeu1iKc/GU4N5QokuiZJdCb10qpbl0ynCZlOWyKcfl0juXR/nuPRW4QipyxfTBldBH94lKXRmVuwqqdFVU7Wqo1tVRvWugRtdEza6FWl0btbvP1OE6qct10xfXQ72uj/rdAA26IRp2I/TVjdKY+0bf3Q/66X7RuJugSTdF026GZt0czbsFWnRLtOxWaNWt0brboE33m/64Ldp2O7Tr9mjfHdChO6Jjd0Kn7ozO3QVduiu6dn/pxt3Snbunf+6BHkOhUCgUCoVCoVAoFHoOPQGk3L/QOf9djAAAAABJRU5ErkJggg=='
+function CollectionBackground({
+  top,
+  rowHeight
+}: {
+  top: ReactNative.Animated.AnimatedInterpolation<number>
+  rowHeight: number
+}): React.ReactElement {
+  return (
+    <Animated.View
+      testID="tv-collection-background"
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: rowHeight * 4,
+        transform: [{ translateY: top }]
+      }}
+    >
+      <Image
+        source={{ uri: collectionGradient }}
+        resizeMode="stretch"
+        style={StyleSheet.absoluteFill}
+      />
+    </Animated.View>
+  )
+}
+
+function Tile({
+  id,
+  image,
+  title,
+  detail,
+  width,
+  preferred,
+  onPress,
+  onFocus,
+  preview,
+  onPreviewFocus,
+  tileRef,
+  nextFocusUp
+}: {
+  tileRef?: React.Ref<FocusNode>
+  nextFocusUp?: number
+  id: string
+  image: string | null
+  title: string
+  detail?: string
+  width: number
+  preferred: boolean
+  onPress: () => void
+  onFocus: (id: string) => void
+  preview?: {
+    client: TeamStationClient
+    gameId: string
+    active: boolean
+    videoId?: string
+  }
+  onPreviewFocus?: (id: string, focused: boolean) => void
+}): React.ReactElement {
+  const [focused, setFocused] = useState(false)
+  const [previewPosition, setPreviewPosition] = useState<number | null>(null)
+  return (
+    <Pressable
+      ref={tileRef}
+      testID={id}
+      accessibilityRole="button"
+      accessibilityValue={
+        focused && previewPosition !== null
+          ? { text: `Preview: ${previewPosition} seconds` }
+          : undefined
+      }
+      accessibilityLabel={`${title}${detail === undefined ? '' : `, ${detail}`}${focused && previewPosition !== null ? `, Preview: ${previewPosition} seconds` : ''}`}
+      {...{
+        nextFocusUp,
+        hasTVPreferredFocus: preferred,
+        // UIImageView owns lift, parallax and Reduce Motion without a second scale.
+        tvParallaxProperties: { enabled: false }
+      }}
+      onFocus={() => {
+        setFocused(true)
+        onFocus(id)
+        onPreviewFocus?.(id, true)
+      }}
+      onBlur={() => {
+        setFocused(false)
+        setPreviewPosition(null)
+        onPreviewFocus?.(id, false)
+      }}
+      onPress={onPress}
+      style={[styles.tile, { width }]}
+    >
+      <View style={[styles.thumbnail, { height: (width * 9) / 16 }]}>
+        {image === null ? (
+          <View style={StyleSheet.absoluteFill}>
+            <Text style={styles.placeholder}>▶</Text>
+            {preview !== undefined && focused && preview.active && (
+              <HeroPreview {...preview} muted onPosition={setPreviewPosition} />
+            )}
+          </View>
+        ) : (
+          <TvPoster uri={image} focused={focused}>
+            {preview !== undefined && focused && preview.active && (
+              <HeroPreview {...preview} muted onPosition={setPreviewPosition} />
+            )}
+          </TvPoster>
+        )}
+        {/* A static image-area cue remains visible without artwork or motion. */}
+        {focused && (
+          <View
+            testID={`${id}-focus-cue`}
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, styles.thumbnailFocus]}
+          />
+        )}
+      </View>
+      <Text numberOfLines={1} style={styles.tileTitle}>
+        {title}
+      </Text>
+      {detail !== undefined && (
+        <Text numberOfLines={1} style={styles.tileDetail}>
+          {detail}
+        </Text>
+      )}
+    </Pressable>
+  )
+}
+
+export function TvBrowser({
+  client,
+  onPlay,
+  onSignOut,
+  viewerName,
+  visible = true
+}: {
+  client: TeamStationClient
+  onPlay: (request: TvPlayRequest) => void
+  onSignOut: () => void
+  viewerName: string
+  visible?: boolean
+}): React.ReactElement {
+  const [pages, setPages] = useState<TvPage[]>([{ kind: 'home' }])
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchFocused, setSearchFocused] = useState(false)
+  const [searchNode, setSearchNode] = useState<FocusNode | null>(null)
+  const [signOutNode, setSignOutNode] = useState<FocusNode | null>(null)
+  const focusSearch = useCallback((): void => {
+    // UIKit can lose a directional guide after restoring a hidden browse page.
+    const target = searchNode as unknown as {
+      requestTVFocus?: () => void
+    } | null
+    target?.requestTVFocus?.()
+  }, [searchNode])
+  const [watchNodes, setWatchNodes] = useState<
+    Record<string, FocusNode | null>
+  >({})
+  const registerWatch = useCallback(
+    (key: string, node: FocusNode | null): void => {
+      setWatchNodes(current =>
+        current[key] === node ? current : { ...current, [key]: node }
+      )
+    },
+    []
+  )
+  const [query, setQuery] = useState('')
+  const [editing, setEditing] = useState(false)
+  const [results, setResults] = useState<{
+    teams: TeamSummary[]
+    players: UserMatch[]
+  } | null>(null)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const [retry, setRetry] = useState(0)
+  const active = pages.length - 1
+  useEffect(() => {
+    setSearchFocused(false)
+  }, [active])
+  const open = (page: TvPage): void => {
+    setQuery('')
+    setSearchOpen(false)
+    setPages(current => [...current, page])
+  }
+  const back = useCallback((): void => {
+    if (searchOpen || query !== '') {
+      setSearchOpen(false)
+      setQuery('')
+    } else
+      setPages(current => (current.length > 1 ? current.slice(0, -1) : current))
+  }, [query, searchOpen])
+  useEffect(() => {
+    if (editing || searchOpen) {
+      tvControl?.disableTVMenuKey()
+      return
+    }
+    if (!visible || (query === '' && pages.length === 1)) return
+    tvControl?.enableTVMenuKey()
+    return () => tvControl?.disableTVMenuKey()
+  }, [visible, query, pages.length, editing, searchOpen])
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        if (
+          visible &&
+          !editing &&
+          (searchOpen || query !== '' || pages.length > 1)
+        ) {
+          back()
+          return true
+        }
+        return false
+      }
+    )
+    return () => {
+      subscription.remove()
+    }
+  }, [back, query, pages.length, visible, editing, searchOpen])
+  useEffect(() => {
+    let current = true
+    setResults(null)
+    setSearchError(null)
+    if (query.trim() === '') return
+    const timer = setTimeout(() => {
+      Promise.all([
+        client.videoTeams({ q: query.trim(), limit: 20 }),
+        client.videoPlayers({ q: query.trim(), limit: 20 })
+      ])
+        .then(([teams, players]) => {
+          if (current) setResults({ teams, players })
+        })
+        .catch(() => {
+          if (current) setSearchError('Search is unavailable. Try again.')
+        })
+    }, 500)
+    return () => {
+      current = false
+      clearTimeout(timer)
+    }
+  }, [client, query, retry])
+  const searchItems: TvSearchItem[] =
+    results === null
+      ? []
+      : [
+          ...results.teams.map(team => ({
+            id: `team:${team.id}`,
+            title: team.name,
+            image: team.logoUrl,
+            detail: [team.videoSeason?.name, team.videoSeason?.leagueName]
+              .filter(Boolean)
+              .join(' · ')
+          })),
+          ...results.players.map(player => ({
+            id: `player:${player.userId}`,
+            title: player.shortName ?? 'Player',
+            image: player.avatarUrl,
+            detail: (player.recentVideoTeams ?? [])
+              .map(team => team.name)
+              .join(' · ')
+          }))
+        ]
+  const selectResult = (id: string): void => {
+    if (id === 'retry') {
+      setRetry(n => n + 1)
+      return
+    }
+    const team = results?.teams.find(team => `team:${team.id}` === id)
+    const player = results?.players.find(
+      player => `player:${player.userId}` === id
+    )
+    if (team !== undefined) open({ kind: 'team', team })
+    else if (player !== undefined) open({ kind: 'player', player })
+  }
+  const searchStatus =
+    searchError ??
+    (query.trim() === ''
+      ? 'Search teams or players'
+      : results === null
+        ? 'Searching…'
+        : searchItems.length === 0
+          ? 'No accessible teams or players found.'
+          : '')
+  return (
+    <View style={styles.scene}>
+      <FocusGuide
+        autoFocus
+        destinations={searchNode === null ? undefined : [searchNode]}
+        style={styles.toolbar}
+      >
+        <View
+          testID="tv-header-gradient"
+          pointerEvents="none"
+          style={StyleSheet.absoluteFill}
+        >
+          {nativeTvPresentation ? (
+            <BrowseGradient reverse />
+          ) : (
+            <Svg width="100%" height="100%">
+              <Defs>
+                <LinearGradient id="header" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <Stop offset="0" stopColor="black" stopOpacity={0.5} />
+                  <Stop offset="1" stopColor="black" stopOpacity={0} />
+                </LinearGradient>
+              </Defs>
+              <Rect width="100%" height="100%" fill="url(#header)" />
+            </Svg>
+          )}
+        </View>
+        <Text style={styles.brand}>TeamStation TV</Text>
+        <Text style={styles.welcome}>Welcome, {viewerName}</Text>
+        {nativeTvPresentation ? (
+          <Pressable
+            ref={setSearchNode}
+            {...{
+              nextFocusDown: focusTag(
+                watchNodes[pageKey(pages[active])] ?? null
+              ),
+              nextFocusRight: focusTag(signOutNode)
+            }}
+            onFocus={() => {
+              setSearchFocused(true)
+            }}
+            onBlur={() => {
+              setSearchFocused(false)
+            }}
+            testID="tv-search"
+            accessibilityRole="button"
+            accessibilityLabel="Search teams or players"
+            onPress={() => {
+              setSearchOpen(true)
+            }}
+            style={[
+              styles.search,
+              searchFocused && { backgroundColor: '#fff' }
+            ]}
+          >
+            <View testID="tv-search-label" style={styles.searchLabel}>
+              <Svg width={28} height={28} viewBox="0 0 28 28">
+                <Circle
+                  cx={11}
+                  cy={11}
+                  r={8}
+                  fill="none"
+                  stroke={searchFocused ? '#102318' : '#fff'}
+                  strokeWidth={2.5}
+                />
+                <Line
+                  x1={17}
+                  y1={17}
+                  x2={25}
+                  y2={25}
+                  stroke={searchFocused ? '#102318' : '#fff'}
+                  strokeWidth={2.5}
+                />
+              </Svg>
+              <Text
+                style={[
+                  styles.searchText,
+                  searchFocused && { color: '#102318' }
+                ]}
+              >
+                Search
+              </Text>
+            </View>
+          </Pressable>
+        ) : (
+          <TextInput
+            testID="tv-search"
+            accessibilityLabel="Search teams or players"
+            placeholder="Search teams or players"
+            placeholderTextColor="#bbb"
+            value={query}
+            onChangeText={setQuery}
+            onFocus={() => {
+              setEditing(true)
+            }}
+            onBlur={() => {
+              setEditing(false)
+            }}
+            autoCorrect={false}
+            style={styles.search}
+          />
+        )}
+        <TvButton
+          label="Sign out"
+          testID="tv-sign-out"
+          onPress={onSignOut}
+          buttonRef={setSignOutNode}
+          nextFocusLeft={focusTag(searchNode)}
+          nextFocusDown={focusTag(watchNodes[pageKey(pages[active])] ?? null)}
+        />
+      </FocusGuide>
+      {searchOpen && visible && NativeSearch !== null && (
+        <NativeSearch
+          style={StyleSheet.absoluteFill}
+          items={
+            searchError === null
+              ? searchItems
+              : [
+                  {
+                    id: 'retry',
+                    title: 'Retry search',
+                    detail: '',
+                    image: null
+                  }
+                ]
+          }
+          status={searchStatus}
+          onQuery={event => {
+            setQuery(event.nativeEvent.query)
+          }}
+          onSelect={event => {
+            selectResult(event.nativeEvent.id)
+          }}
+          onDismiss={() => {
+            setSearchOpen(false)
+            setQuery('')
+          }}
+        />
+      )}
+      {pages.map((page, index) => (
+        <View
+          key={`${index}-${pageKey(page)}`}
+          style={[
+            styles.page,
+            (index !== active || query.trim() !== '' || searchOpen) &&
+              styles.hidden
+          ]}
+        >
+          <BrowsePage
+            client={client}
+            page={page}
+            active={visible && index === active && query === '' && !searchOpen}
+            onOpen={open}
+            searchTarget={focusTag(searchNode)}
+            focusSearch={focusSearch}
+            registerWatch={registerWatch}
+            onPlay={onPlay}
+          />
+        </View>
+      ))}
+      {!nativeTvPresentation && query.trim() !== '' && (
+        <ScrollView
+          testID="tv-search-results"
+          style={styles.searchResults}
+          contentContainerStyle={styles.searchContent}
+        >
+          {searchStatus !== '' && (
+            <Text style={styles.copy}>{searchStatus}</Text>
+          )}
+          {searchError !== null && (
+            <TvButton
+              label="Retry search"
+              onPress={() => {
+                setRetry(n => n + 1)
+              }}
+            />
+          )}
+          <View style={styles.searchGrid}>
+            {searchItems.map(item => (
+              <SearchRow
+                key={item.id}
+                label={item.title}
+                detail={item.detail}
+                image={item.image}
+                onPress={() => {
+                  selectResult(item.id)
+                }}
+              />
+            ))}
+          </View>
+        </ScrollView>
+      )}
+    </View>
+  )
+}
+function SearchRow({
+  label,
+  detail,
+  image,
+  onPress
+}: {
+  label: string
+  detail: string
+  image: string | null
+  onPress: () => void
+}): React.ReactElement {
+  const [focused, setFocused] = useState(false)
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      onFocus={() => {
+        setFocused(true)
+      }}
+      onBlur={() => {
+        setFocused(false)
+      }}
+      style={[styles.result, focused && styles.tileFocus]}
+    >
+      <View style={styles.identity}>
+        {image !== null && (
+          <Image source={{ uri: image }} style={styles.identity} />
+        )}
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text numberOfLines={2} style={styles.heading}>
+          {label}
+        </Text>
+        {detail !== '' && (
+          <Text numberOfLines={2} style={styles.copy}>
+            {detail}
+          </Text>
+        )}
+      </View>
+    </Pressable>
+  )
+}
+function BrowsePage({
+  client,
+  page,
+  active,
+  onOpen,
+  onPlay,
+  searchTarget,
+  focusSearch,
+  registerWatch
+}: {
+  client: TeamStationClient
+  page: TvPage
+  searchTarget?: number
+  focusSearch: () => void
+  registerWatch: (key: string, node: FocusNode | null) => void
+  active: boolean
+  onOpen: (page: TvPage) => void
+  onPlay: (request: TvPlayRequest) => void
+}): React.ReactElement {
+  const [watchNode, setWatchNode] = useState<FocusNode | null>(null)
+  const [heroDetailsHeight, setHeroDetailsHeight] = useState(0)
+  const [firstTile, setFirstTile] = useState<FocusNode | null>(null)
+  const key = pageKey(page)
+  useEffect(() => {
+    if (!active) return
+    registerWatch(key, watchNode)
+    return () => {
+      registerWatch(key, null)
+    }
+  }, [active, key, watchNode, registerWatch])
+  const { width, height, fontScale } = useWindowDimensions()
+  const [viewportHeight, setViewportHeight] = useState(height - 115)
+  const scrollY = useRef(new Animated.Value(0)).current
+  const geometry = browseGeometry(
+    width,
+    viewportHeight,
+    page.kind === 'team',
+    fontScale
+  )
+  const tileWidth = geometry.tileWidth
+  const [collection, setCollection] = useState<TvCollection | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [retry, setRetry] = useState(0)
+  const [heroVisible, setHeroVisible] = useState(true)
+  const [more, setMore] = useState(false)
+  const [focus, setFocus] = useState('')
+  const [restoringFocus, setRestoringFocus] = useState(active)
+  useEffect(() => {
+    setRestoringFocus(active)
+  }, [active])
+  const rememberFocus = (id: string): void => {
+    setFocus(id)
+    setRestoringFocus(false)
+  }
+  const alive = useRef(true)
+  const filter = useMemo(
+    () =>
+      page.kind === 'team'
+        ? { team: page.team.id }
+        : page.kind === 'player'
+          ? { participant: page.player.userId }
+          : {},
+    [page]
+  )
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+  useEffect(() => {
+    let current = true
+    setError(null)
+    loadTvCollection(client, filter)
+      .then(result => {
+        if (current) setCollection(result)
+      })
+      .catch(() => {
+        if (current) setError('Games are unavailable. Try again.')
+      })
+    return () => {
+      current = false
+    }
+  }, [client, filter, retry])
+  const loadMore = async (): Promise<void> => {
+    if (more || collection?.nextOffset == null) return
+    setMore(true)
+    setError(null)
+    try {
+      const games = await client.videoGames({
+        ...filter,
+        offset: collection.nextOffset,
+        limit: 50
+      })
+      if (alive.current)
+        setCollection({
+          ...collection,
+          remaining: [...collection.remaining, ...games],
+          nextOffset: games.length === 50 ? collection.nextOffset + 50 : null
+        })
+    } catch {
+      if (alive.current) setError('More games could not load. Try again.')
+    } finally {
+      if (alive.current) setMore(false)
+    }
+  }
+  const [previewFocus, setPreviewFocus] = useState<string | null>(null)
+  const previewFocusChanged = useCallback(
+    (id: string, focused: boolean): void => {
+      setPreviewFocus(current =>
+        focused ? id : current === id ? null : current
+      )
+    },
+    []
+  )
+  const gameTile = (
+    game: VideoGame,
+    prefix: string,
+    firstRow = false,
+    first = false
+  ): React.ReactElement => (
+    <Tile
+      key={game.id}
+      tileRef={first ? setFirstTile : undefined}
+      nextFocusUp={firstRow ? focusTag(watchNode) : undefined}
+      preview={{ client, gameId: game.id, active }}
+      onPreviewFocus={previewFocusChanged}
+      id={`${prefix}-${game.id}`}
+      image={game.posterUrl}
+      title={`${game.awayTeamName} at ${game.homeTeamName}`}
+      detail={gameDate(game)}
+      width={tileWidth}
+      preferred={active && restoringFocus && focus === `${prefix}-${game.id}`}
+      onFocus={rememberFocus}
+      onPress={() => {
+        onPlay({ game })
+      }}
+    />
+  )
+  const row = (
+    title: string,
+    games: VideoGame[],
+    prefix: string
+  ): React.ReactElement => (
+    <View key={prefix} style={styles.row}>
+      <Text style={[styles.heading, styles.rowHeading]}>{title}</Text>
+      <ScrollView
+        horizontal
+        style={styles.horizontalViewport}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={[styles.horizontal, { gap: geometry.tileGap }]}
+      >
+        {games.map((game, index) =>
+          gameTile(
+            game,
+            prefix,
+            prefix === 'recent',
+            prefix === 'recent' && index === 0
+          )
+        )}
+      </ScrollView>
+    </View>
+  )
+  const children: React.ReactElement[] = []
+  const sticky: number[] = []
+  if (collection !== null) {
+    const hero = collection.hero
+    children.push(
+      <FocusGuide
+        key="hero"
+        destinations={watchNode === null ? undefined : [watchNode]}
+        testID="tv-hero"
+        style={[styles.hero, { height: geometry.heroHeight }]}
+      >
+        <TvScrim />
+        <View
+          testID="tv-hero-details"
+          onLayout={event => {
+            setHeroDetailsHeight(event.nativeEvent.layout.height)
+          }}
+          style={[
+            styles.heroDetails,
+            {
+              transformOrigin: 'left center',
+              transform: [
+                {
+                  scale: heroDetailsScale(
+                    geometry.heroHeight,
+                    fontScale,
+                    heroDetailsHeight
+                  )
+                }
+              ]
+            }
+          ]}
+        >
+          {page.kind === 'team' ? (
+            <View style={styles.entityTitle}>
+              {page.team.logoUrl !== null && (
+                <Image
+                  source={{ uri: page.team.logoUrl }}
+                  style={styles.logo}
+                />
+              )}
+              <Text numberOfLines={2} style={styles.title}>
+                {page.team.name}
+              </Text>
+            </View>
+          ) : page.kind === 'player' ? (
+            <Text numberOfLines={1} ellipsizeMode="tail" style={styles.title}>
+              {page.player.shortName ?? 'Player'}
+            </Text>
+          ) : hero !== null ? (
+            <>
+              <View style={styles.matchup}>
+                <View style={styles.homeName}>
+                  {hero.homeLogoUrl !== null && (
+                    <Image
+                      source={{ uri: hero.homeLogoUrl }}
+                      style={styles.logo}
+                    />
+                  )}
+                  <Text numberOfLines={2} style={styles.title}>
+                    {hero.homeTeamName}
+                  </Text>
+                </View>
+                <Text style={styles.versus}>vs.</Text>
+                <View style={styles.homeName}>
+                  {hero.awayLogoUrl !== null && (
+                    <Image
+                      source={{ uri: hero.awayLogoUrl }}
+                      style={styles.logo}
+                    />
+                  )}
+                  <Text numberOfLines={2} style={styles.title}>
+                    {hero.awayTeamName}
+                  </Text>
+                </View>
+              </View>
+            </>
+          ) : (
+            <Text style={styles.title}>Your games</Text>
+          )}
+          {hero !== null && (
+            <>
+              <Text style={styles.copy}>{gameDate(hero)}</Text>
+              {hero.venue !== null && (
+                <Text style={styles.copy}>{hero.venue}</Text>
+              )}
+              <View style={styles.watch}>
+                <TvButton
+                  testID="tv-watch-game"
+                  buttonRef={setWatchNode}
+                  nextFocusUp={searchTarget}
+                  onUp={active ? focusSearch : undefined}
+                  nextFocusDown={focusTag(firstTile)}
+                  label={hero.isLive ? '▶ Watch Live' : '▶ Watch Game'}
+                  preferred={
+                    active &&
+                    restoringFocus &&
+                    (focus === '' || focus === 'hero')
+                  }
+                  onFocus={() => {
+                    rememberFocus('hero')
+                  }}
+                  onPress={() => {
+                    onPlay({ game: hero })
+                  }}
+                />
+              </View>
+            </>
+          )}
+        </View>
+      </FocusGuide>
+    )
+    if (page.kind === 'team') {
+      for (const [index, section] of monthSections([
+        ...collection.recent,
+        ...collection.remaining
+      ]).entries()) {
+        sticky.push(children.length)
+        children.push(
+          <View
+            key={`month-${index}`}
+            testID={`tv-month-${index}`}
+            style={styles.month}
+          >
+            <Text style={styles.heading}>{section.month}</Text>
+          </View>
+        )
+        section.rows.forEach((games, i) =>
+          children.push(
+            <View
+              key={`grid-${index}-${i}`}
+              style={[styles.gridRow, { gap: geometry.tileGap }]}
+            >
+              {games.map((game, column) =>
+                gameTile(
+                  game,
+                  'team',
+                  index === 0 && i === 0,
+                  index === 0 && i === 0 && column === 0
+                )
+              )}
+            </View>
+          )
+        )
+      }
+    } else {
+      if (collection.recent.length > 0)
+        children.push(row('Recent Games', collection.recent, 'recent'))
+      if (collection.highlights.length > 0)
+        children.push(
+          <View key="highlights" style={styles.row}>
+            <Text style={[styles.heading, styles.rowHeading]}>
+              Recent Highlights
+            </Text>
+            <ScrollView
+              horizontal
+              style={styles.horizontalViewport}
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={[
+                styles.horizontal,
+                { gap: geometry.tileGap }
+              ]}
+            >
+              {collection.highlights.map(clip => (
+                <Tile
+                  key={`${clip.game.id}-${clip.eventId}`}
+                  preview={{
+                    client,
+                    gameId: clip.game.id,
+                    videoId: clip.videoId,
+                    active
+                  }}
+                  onPreviewFocus={previewFocusChanged}
+                  id={`clip-${clip.game.id}-${clip.eventId}`}
+                  title={clip.title}
+                  detail={gameDate(clip.game)}
+                  image={clip.stillUrl}
+                  width={tileWidth}
+                  preferred={
+                    active &&
+                    restoringFocus &&
+                    focus === `clip-${clip.game.id}-${clip.eventId}`
+                  }
+                  onFocus={rememberFocus}
+                  onPress={() => {
+                    onPlay({ game: clip.game, clip })
+                  }}
+                />
+              ))}
+            </ScrollView>
+          </View>
+        )
+      collection.teamRows.forEach(({ team, games }) =>
+        children.push(row(`Recent ${team.name}`, games, `follow-${team.id}`))
+      )
+      if (collection.teams.length > 0)
+        children.push(
+          <View key="teams" style={styles.row}>
+            <Text style={[styles.heading, styles.rowHeading]}>Teams</Text>
+            <ScrollView
+              horizontal
+              style={styles.horizontalViewport}
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={[
+                styles.horizontal,
+                { gap: geometry.tileGap }
+              ]}
+            >
+              {collection.teams.map(team => (
+                <Tile
+                  key={team.id}
+                  id={`team-${team.id}`}
+                  image={team.logoUrl}
+                  title={team.name}
+                  width={tileWidth}
+                  preferred={
+                    active && restoringFocus && focus === `team-${team.id}`
+                  }
+                  onFocus={rememberFocus}
+                  onPress={() => {
+                    onOpen({ kind: 'team', team })
+                  }}
+                />
+              ))}
+            </ScrollView>
+          </View>
+        )
+      if (collection.remaining.length > 0) {
+        children.push(
+          <Text key="remaining" style={[styles.heading, styles.gridHeading]}>
+            More Games
+          </Text>
+        )
+        fourAcross(collection.remaining).forEach((games, index) =>
+          children.push(
+            <View
+              key={`remaining-${index}`}
+              style={[styles.gridRow, { gap: geometry.tileGap }]}
+            >
+              {games.map(game => gameTile(game, 'more'))}
+            </View>
+          )
+        )
+      }
+    }
+    if (collection.recent.length === 0)
+      children.push(
+        <Text key="empty" style={[styles.copy, styles.gridHeading]}>
+          No games are available yet.
+        </Text>
+      )
+  }
+  return (
+    <View
+      style={styles.page}
+      onLayout={event => {
+        setViewportHeight(event.nativeEvent.layout.height)
+      }}
+    >
+      <View
+        testID="tv-browse-backdrop"
+        pointerEvents="none"
+        style={styles.backdrop}
+      >
+        {collection?.hero?.posterUrl != null && (
+          <Image
+            source={{ uri: collection.hero.posterUrl }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+          />
+        )}
+        {collection?.hero != null && (
+          <HeroPreview
+            client={client}
+            gameId={collection.hero.id}
+            active={active && heroVisible && previewFocus === null}
+          />
+        )}
+      </View>
+      <CollectionBackground
+        top={scrollY.interpolate({
+          inputRange: [0, Math.max(1, geometry.heroHeight)],
+          outputRange: [geometry.heroHeight, 0],
+          extrapolate: 'clamp'
+        })}
+        rowHeight={geometry.rowHeight}
+      />
+      <Animated.ScrollView
+        testID={`tv-page-${pageKey(page)}`}
+        style={styles.page}
+        contentContainerStyle={styles.pageContent}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          {
+            useNativeDriver: nativeTvPresentation,
+            listener: (
+              event: ReactNative.NativeSyntheticEvent<ReactNative.NativeScrollEvent>
+            ) => {
+              setHeroVisible(
+                event.nativeEvent.contentOffset.y < geometry.heroHeight
+              )
+            }
+          }
+        )}
+        scrollEventThrottle={16}
+        stickyHeaderIndices={sticky}
+      >
+        {children}
+        {collection === null && error === null && (
+          <Text style={[styles.copy, styles.gridHeading]}>Loading games…</Text>
+        )}
+        {error !== null && (
+          <View style={styles.status}>
+            <Text style={styles.copy}>{error}</Text>
+            <TvButton
+              label="Retry games"
+              onPress={() => {
+                if (collection === null) setRetry(n => n + 1)
+                else loadMore().catch(() => undefined)
+              }}
+            />
+          </View>
+        )}
+        {collection?.nextOffset != null && (
+          <View style={styles.status}>
+            <TvButton
+              label={more ? 'Loading more…' : 'More games'}
+              onPress={() => {
+                loadMore().catch(() => undefined)
+              }}
+            />
+          </View>
+        )}
+      </Animated.ScrollView>
+    </View>
+  )
+}
+const styles = StyleSheet.create({
+  scene: { flex: 1, width: '100%', backgroundColor: '#000' },
+  backdrop: { position: 'absolute', top: -115, bottom: 0, left: 0, right: 0 },
+  toolbar: {
+    height: 115,
+    paddingHorizontal: 76,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 24,
+    zIndex: 1
+  },
+  brand: { fontSize: 31, color: '#fff', fontWeight: '700' },
+  welcome: { color: '#ddd', fontSize: 18, flex: 1 },
+  search: {
+    height: 60,
+    width: 210,
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+    fontSize: 24,
+    backgroundColor: '#555',
+    borderRadius: 30,
+    paddingHorizontal: 30
+  },
+  searchLabel: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  searchText: {
+    fontSize: 25,
+    lineHeight: 30,
+    color: '#fff',
+    includeFontPadding: false
+  },
+  page: { flex: 1 },
+  hidden: { display: 'none' },
+  pageContent: { paddingBottom: 90 },
+  hero: { justifyContent: 'center' },
+  heroDetails: { paddingHorizontal: 76, width: 1050, gap: 18 },
+  title: { fontSize: 70, color: '#fff', fontWeight: '700', flexShrink: 1 },
+  matchup: { alignItems: 'flex-start', gap: 8 },
+  homeName: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    alignSelf: 'stretch'
+  },
+  versus: { fontSize: 25, color: '#ddd' },
+  logo: {
+    width: 78,
+    height: 78,
+    resizeMode: 'contain',
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.12)'
+  },
+  entityTitle: { flexDirection: 'row', alignItems: 'center', gap: 24 },
+  watch: { alignSelf: 'flex-start', marginTop: 10 },
+  copy: { fontSize: 25, color: '#eee' },
+  heading: { fontSize: 32, lineHeight: 38, color: '#fff', fontWeight: '700' },
+  rowHeading: { marginLeft: 76 },
+  row: { marginBottom: 38, gap: 18 },
+  horizontalViewport: { overflow: 'visible' },
+  horizontal: { paddingVertical: 24, paddingHorizontal: 76 },
+  tile: {
+    borderRadius: 17,
+    gap: 7
+  },
+  tileFocus: {
+    borderColor: '#fff',
+    backgroundColor: '#5d506d',
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 }
+  },
+  thumbnail: {
+    backgroundColor: '#292e2c',
+    borderRadius: 12,
+    overflow: 'visible',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  thumbnailFocus: {
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 12
+  },
+  placeholder: { fontSize: 54, color: '#818b84' },
+  tileTitle: { fontSize: 32, lineHeight: 38, color: '#fff' },
+  tileDetail: { fontSize: 28, lineHeight: 34, color: '#eee' },
+  gridRow: {
+    flexDirection: 'row',
+    gap: 24,
+    paddingHorizontal: 76,
+    marginBottom: 28
+  },
+  gridHeading: { paddingHorizontal: 76, marginVertical: 24 },
+  month: {
+    height: 92,
+    paddingHorizontal: 76,
+    paddingTop: 20,
+    justifyContent: 'flex-start'
+  },
+  status: { padding: 76, gap: 24, alignItems: 'flex-start' },
+  searchResults: {
+    position: 'absolute',
+    top: 115,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#292929'
+  },
+  searchContent: { padding: 76, gap: 20 },
+  searchGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 24 },
+  result: {
+    width: '31.8%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 24,
+    borderWidth: 3,
+    borderColor: 'transparent',
+    borderRadius: 18,
+    backgroundColor: '#444',
+    padding: 20
+  },
+  identity: { height: 70, width: 70, borderRadius: 12, resizeMode: 'contain' }
+})
