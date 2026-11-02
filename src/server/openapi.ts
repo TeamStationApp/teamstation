@@ -3242,6 +3242,41 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/me/home': {
+        get: {
+          summary: 'The lists Home shows',
+          description:
+            'Teams, seasons, and leagues the caller has a tie to, apart ' +
+            'from the site-admin flag. A direct tie on the row itself ' +
+            '(a staff flag, a membership, a follow, or a team a guarded ' +
+            'player plays on now) comes before a row reached only by ' +
+            'inheritance or by being an admin. Inside each of those groups ' +
+            'the latest game start comes first, a row with no game last, ' +
+            'then name, then id. Each entry has `direct` and `source` ' +
+            '(`member` or `follow`). A follow whose group is gone is left ' +
+            'out. The five-row window is the client\u2019s.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description: 'The three lists, direct rows first',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['teams', 'seasons', 'leagues'],
+                    properties: {
+                      teams: { type: 'array', items: { type: 'object' } },
+                      seasons: { type: 'array', items: { type: 'object' } },
+                      leagues: { type: 'array', items: { type: 'object' } }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse
+          }
+        }
+      },
       '/auth/me': {
         get: {
           summary: 'Who this token belongs to',
