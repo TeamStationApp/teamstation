@@ -63,7 +63,7 @@ async function main(): Promise<void> {
       204
     )
     await tv.assertVisible({ text: 'Recent Games', timeout: 30000 })
-    await tv.tapOn({ id: '▶ Watch Game' })
+    await tv.tapOn({ id: 'tv-watch-game' })
     await tv.assertVisible({ id: 'tv-angle-3', timeout: 30000 })
     await tv.assertNotVisible({ id: 'tv-box-panel', timeout: 15000 })
     await tv.assertNotVisible({ id: 'tv-cameras-panel', timeout: 15000 })

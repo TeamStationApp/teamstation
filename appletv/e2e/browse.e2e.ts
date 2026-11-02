@@ -30,6 +30,24 @@ async function main(): Promise<void> {
   })
   const tv = await daemon.attach({ device, platform: 'ios', artifacts: 'none' })
   let recording: ReturnType<typeof spawn> | undefined
+  const openSearch = async (): Promise<void> => {
+    const findFocused = (node: any): any =>
+      node.focused === true
+        ? node
+        : node.children?.map(findFocused).find(Boolean)
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const focused = findFocused(await tv.hierarchy())
+      if (focused?.id === 'tv-search') {
+        await tv.pressKey({ key: 'DPAD_CENTER' })
+        return
+      }
+      await tv.pressKey({
+        key: focused?.id === 'tv-sign-out' ? 'DPAD_LEFT' : 'DPAD_UP'
+      })
+      await tv.waitForAnimationToEnd({ timeout: 1000 })
+    }
+    assert.fail('Search did not receive native focus through Watch Game')
+  }
   const waitForHero = async (): Promise<void> => {
     await tv.assertVisible({ id: 'tv-hero-video', timeout: 15000 })
     // Wait for the loaded midpoint frame, rather than capturing its poster.
@@ -153,7 +171,7 @@ async function main(): Promise<void> {
     await tv.waitForAnimationToEnd({ timeout: 3000 })
     await tv.pressKey({ key: 'DPAD_UP' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
-    await tv.tapOn({ id: 'tv-search' })
+    await openSearch()
     await tv.assertVisible({ id: 'tv-native-search-field', timeout: 10000 })
     await tv.inputText({ text: 'Demo' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
@@ -184,7 +202,7 @@ async function main(): Promise<void> {
     await tv.waitForAnimationToEnd({ timeout: 3000 })
     await tv.pressKey({ key: 'DPAD_UP' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
-    await tv.tapOn({ id: 'tv-search' })
+    await openSearch()
     await tv.inputText({ text: 'Babe' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
     await tv.assertVisible({ id: 'tv-search-results', timeout: 15000 })
@@ -203,7 +221,7 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'BACK' })
     await tv.assertVisible({ id: 'tv-page-home' })
     await tv.waitForAnimationToEnd({ timeout: 3000 })
-    await tv.tapOn({ id: 'tv-search' })
+    await openSearch()
     await tv.inputText({ text: 'zzzzzz' })
     await tv.assertVisible({
       text: 'No accessible teams or players found.',
@@ -212,7 +230,7 @@ async function main(): Promise<void> {
     await tv.pressKey({ key: 'BACK' })
     await tv.assertVisible({ id: 'tv-page-home', timeout: 10000 })
     h.tvMedia.searchFail = true
-    await tv.tapOn({ id: 'tv-search' })
+    await openSearch()
     await tv.inputText({ text: 'Demo' })
     await tv.assertVisible({
       text: 'Search is unavailable. Try again.',
