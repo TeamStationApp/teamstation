@@ -98,6 +98,8 @@ declare module '@mason/types' {
     cache?: Array<{ key: string; paths: string[] }>
     apple?: { distribution: string; app: string }
     checkout?: boolean | { depth?: number }
+    /** Skip the stage unless every listed field matches. `branch` entries are globs. */
+    when?: { branch?: string[] }
     run: (ctx: Stage) => Promise<void>
   }
   export interface WorkflowBuilder {
