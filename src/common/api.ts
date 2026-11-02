@@ -217,6 +217,10 @@ const asAbsentOr =
     raw === undefined ? undefined : cleaner(raw)
 
 export const asTeamSummary = asObject({
+  latestVideoAt: asOptional(asString),
+  videoRelationship: asOptional(
+    asLiteral('member', 'following', 'admin', 'other')
+  ),
   videoSeason: asOptional(
     asNullable(asObject({ name: asString, leagueName: asNullable(asString) }))
   ),
@@ -268,10 +272,23 @@ export const asTeamSummary = asObject({
 type TeamSummaryFromList = ReturnType<typeof asTeamSummary>
 export type TeamSummary = Omit<
   TeamSummaryFromList,
-  'access' | 'following' | 'onTeam' | 'videoSeason'
+  | 'access'
+  | 'following'
+  | 'onTeam'
+  | 'videoSeason'
+  | 'latestVideoAt'
+  | 'videoRelationship'
 > &
   Partial<
-    Pick<TeamSummaryFromList, 'access' | 'following' | 'onTeam' | 'videoSeason'>
+    Pick<
+      TeamSummaryFromList,
+      | 'access'
+      | 'following'
+      | 'onTeam'
+      | 'videoSeason'
+      | 'latestVideoAt'
+      | 'videoRelationship'
+    >
   >
 
 /** A team somebody may follow, from `GET /teams/search` or `/me/follows`. */
