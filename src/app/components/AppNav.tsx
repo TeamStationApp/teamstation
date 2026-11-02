@@ -1,6 +1,7 @@
 import React from 'react'
 import { Platform, Pressable, View } from 'react-native'
 
+import { useChatAllowed } from '../chat/DeclaredAgeGate'
 import { useChatVisualViewport } from '../chat/useChatVisualViewport'
 import { useInsets } from '../platform/safeArea'
 import { elevationFor } from '../theme/elevation'
@@ -143,6 +144,8 @@ export interface AppNavProps {
  */
 export function AppNav(props: AppNavProps): React.ReactElement {
   const { selected, onSelect, mode, dots } = props
+  const chatOn = useChatAllowed()
+  const tabs = chatOn ? NAV_TABS : NAV_TABS.filter(tab => tab.id !== 'chat')
   const theme = useTheme()
   const styles = getStyles(theme)
   const floating = mode === 'floating'
@@ -196,7 +199,7 @@ export function AppNav(props: AppNavProps): React.ReactElement {
         floating && { bottom: floatingBottom }
       ]}
     >
-      {NAV_TABS.map(tab => {
+      {tabs.map(tab => {
         const isSelected = tab.id === selected
         return (
           <Pressable

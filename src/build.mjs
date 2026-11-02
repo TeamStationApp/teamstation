@@ -178,6 +178,14 @@ const options = {
       '/' + workerFile.replace(/^dist\//, '')
     ),
     TS_FIELD_PREVIEW: process.env.TS_FIELD_PREVIEW === '1' ? 'true' : 'false',
+    // A dev-server stand-in for Apple's age-range answer. Production and a
+    // serve that was not given a finite integer define `''`, which the app
+    // reads as "this platform did not ask". Metro does not inline this name.
+    TS_DECLARED_AGE_LOWER: JSON.stringify(
+      serve && /^-?\d+$/.test(process.env.TS_DECLARED_AGE_LOWER ?? '')
+        ? process.env.TS_DECLARED_AGE_LOWER
+        : ''
+    ),
     // Where the app reports crashes; empty reports nothing (src/app/sentry.ts).
     'process.env.TS_SENTRY_DSN': JSON.stringify(
       process.env.TS_SENTRY_DSN ?? ''

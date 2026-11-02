@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { asSeasonSummary, type TeamStationClient } from '../../common/api'
+import { ChatGateOverride } from '../chat/DeclaredAgeGate'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { SeasonPresentation } from './SeasonPresentation'
 
@@ -106,5 +107,37 @@ describe('entity chat season sections', function () {
     expect(
       document.querySelector('[role="button"][aria-label="Open Spring Org"]')
     ).equals(null)
+  })
+
+  it('drops the Chats pill when chat is denied and still draws the season', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <ChatGateOverride gate="denied">
+            <SeasonPresentation
+              client={client}
+              season={season}
+              onOpenGame={() => undefined}
+              onOpenTeam={() => undefined}
+              initialTab="chats"
+              chats={[{ id: 'cnv_org', title: 'Spring Org' }]}
+              onOpenChat={() => undefined}
+            />
+          </ChatGateOverride>
+        </ThemeProvider>
+      )
+      await delay(20)
+    })
+    const labels = [
+      ...document.querySelectorAll<HTMLElement>('[role="tab"]')
+    ].map(node => node.textContent)
+    expect(labels).not.includes('Chats')
+    expect(document.querySelector('[data-testid="entity-chat-list"]')).equals(
+      null
+    )
+    expect(document.body.textContent).contains('Spring 2027')
   })
 })

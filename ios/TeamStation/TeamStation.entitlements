@@ -7,6 +7,8 @@
 	  clientConfig.xcconfig. Signed in only when the build has one: the target
 	  takes this file from TS_APP_ENTITLEMENTS, and NoAppLinks.entitlements otherwise.
 	-->
+	<key>com.apple.developer.declared-age-range</key>
+	<true/>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:$(TS_APP_LINK_HOST)</string>

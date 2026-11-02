@@ -310,6 +310,17 @@ describe('Account settings screen', () => {
     )
     expect(button('Node administration')).equals(undefined)
   })
+  it('shows chat devices only when the screen is given that action', async () => {
+    const f = fixture()
+    await render(<AccountScreen {...f} onSignOut={() => {}} />)
+    expect(text()).not.includes('Chat devices')
+    await act(async () => root?.unmount())
+    document.body.replaceChildren()
+    await render(
+      <AccountScreen {...f} onSignOut={() => {}} onChatDevices={() => {}} />
+    )
+    expect(text()).includes('Chat devices')
+  })
   it('changes an existing account to a shared catalog picture and back to initials, while cancellation preserves the saved picture', async () => {
     const f = fixture()
     await render(<AccountScreen {...f} onSignOut={() => {}} />)

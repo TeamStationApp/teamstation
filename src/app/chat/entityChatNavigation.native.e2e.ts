@@ -26,7 +26,10 @@ async function main(): Promise<void> {
   const daemon = await MaestroD.connect({ name: MAESTRO_D, spawn: false })
   const m = await daemon.attach({ device: MAESTRO_DEVICE })
   try {
-    await m.launchApp({ appId: TS_CHAT_APP_ID })
+    await m.launchApp({
+      appId: TS_CHAT_APP_ID,
+      environment: { TS_DECLARED_AGE_LOWER: '13' }
+    })
     await m.tapOn({ text: '^Home$', timeout: 30000 })
     await m.tapOn({ text: '^Home$' })
     if (process.env.TS_CHAT_FROM_SEARCH === '1') {

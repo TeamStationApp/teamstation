@@ -4,6 +4,7 @@ import { Text, View } from 'react-native'
 import { ListCard, ListRow, SectionHeader } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { useChatAllowed } from './DeclaredAgeGate'
 
 /** An accessible conversation linked from its owning group. */
 export interface ChatLink {
@@ -20,12 +21,15 @@ export interface ChatLinksProps {
 }
 
 /** One bounded collection, with previews supplied only after authentication. */
-export function ChatLinks(props: ChatLinksProps): React.ReactElement {
+export function ChatLinks(props: ChatLinksProps): React.ReactElement | null {
   const { chats, onOpen, onLoadPreview } = props
+  const chatOn = useChatAllowed()
   const styles = getStyles(useTheme())
   useEffect(() => {
+    if (!chatOn) return
     onLoadPreview?.(chats.map(chat => chat.id))
-  }, [chats, onLoadPreview])
+  }, [chatOn, chats, onLoadPreview])
+  if (!chatOn) return null
   return (
     <View style={styles.section} testID="entity-chats">
       <SectionHeader title={lstrings.chat_chats} />

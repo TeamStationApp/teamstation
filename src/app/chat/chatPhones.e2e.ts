@@ -221,7 +221,13 @@ async function signIn(
       ? (['whole', 'whole'] as const)
       : (['letters', 'letters', 'words'] as const)
   for (const pieces of tries) {
-    await m.launchApp({ appId: APP, clearState: true })
+    await m.launchApp({
+      appId: APP,
+      clearState: true,
+      ...(process.env.CHAT_PLATFORM === 'ios'
+        ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+        : {})
+    })
     await m.tapOn({ text: 'Use a password instead', timeout: 30000 })
     await typeIn(m, 'E-mail address', who.email, pieces)
     await typeIn(m, 'Password', who.password, pieces)

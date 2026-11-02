@@ -49,6 +49,8 @@ import {
   ChatListNavigationCapture,
   newChatWorkspaceState
 } from './chat/chatWorkspaceModel'
+import { isChatSurface } from './chat/declaredAge'
+import { DeclaredAgeGateProvider, useChatAllowed } from './chat/DeclaredAgeGate'
 import {
   DeviceApprovalContext,
   DeviceApprovalPrompt
@@ -428,20 +430,23 @@ startSentry()
  */
 export function App(props: AppProps): React.ReactElement {
   return (
-    <ThemeProvider>
-      <ErrorBoundary fallback={errorScreen}>
-        <AnalyticsProvider
-          endpoint={(props.apiBaseUrl ?? '/api/v1') + '/analytics/events'}
-          enabled={props.fieldPreview !== true}
-        >
-          <Shell {...props} />
-        </AnalyticsProvider>
-      </ErrorBoundary>
-    </ThemeProvider>
+    <DeclaredAgeGateProvider>
+      <ThemeProvider>
+        <ErrorBoundary fallback={errorScreen}>
+          <AnalyticsProvider
+            endpoint={(props.apiBaseUrl ?? '/api/v1') + '/analytics/events'}
+            enabled={props.fieldPreview !== true}
+          >
+            <Shell {...props} />
+          </AnalyticsProvider>
+        </ErrorBoundary>
+      </ThemeProvider>
+    </DeclaredAgeGateProvider>
   )
 }
 
 function Shell(props: AppProps): React.ReactElement {
+  const chatOn = useChatAllowed()
   const analytics = useAnalytics()
   const apiBaseUrl = props.apiBaseUrl ?? '/api/v1'
   const theme = useTheme()
@@ -1019,7 +1024,7 @@ function Shell(props: AppProps): React.ReactElement {
   approvalOwner.current = signedInAs
   const deviceApprovals = useMemo(
     () =>
-      signedInAs == null
+      signedInAs == null || !chatOn
         ? undefined
         : new DeviceApprovals(
             {
@@ -1031,7 +1036,7 @@ function Shell(props: AppProps): React.ReactElement {
             },
             gameSocket
           ),
-    [client, signedInAs, gameSocket]
+    [chatOn, client, signedInAs, gameSocket]
   )
   useEffect(() => {
     deviceApprovals?.start()
@@ -1246,6 +1251,23 @@ function Shell(props: AppProps): React.ReactElement {
 
   const stack = stacks[tab]
   const top = stack[stack.length - 1]
+  // A denied gate leaves a chat address on Home. The chat tab and the frames
+  // that draw a conversation are the surfaces; the rest of the stack stays.
+  useEffect(() => {
+    if (chatOn) return
+    if (!isChatSurface(tab, top?.name)) return
+    setTab('home')
+    setRoute({ name: 'home' })
+    setStacks(current => {
+      const next = { ...current, chat: [] as Pushed[] }
+      for (const key of ['home', 'videos', 'schedule', 'search'] as const) {
+        next[key] = current[key].filter(
+          frame => !isChatSurface('home', frame.name)
+        )
+      }
+      return next
+    })
+  }, [chatOn, tab, top])
   // One scorer per person and game, whether on top or kept beneath a child.
   const scoreKey = (gameId: string): string =>
     `score:${signedInAs ?? 'local'}:${gameId}`
@@ -2493,7 +2515,10 @@ function Shell(props: AppProps): React.ReactElement {
     const pop = onTop(popFrame)
     const replace = onTop(replaceFrame)
     const push = onTop(pushFrame)
-    return top?.name === 'conversation' || (top == null && tab === 'chat') ? (
+    const drawn =
+      chatOn || top == null || !isChatSurface(tab, top.name) ? top : undefined
+    return chatOn &&
+      (drawn?.name === 'conversation' || (drawn == null && tab === 'chat')) ? (
       gated(
         <ChatWorkspace
           engine={chatEngine!}
@@ -2528,8 +2553,8 @@ function Shell(props: AppProps): React.ReactElement {
           }}
         />
       )
-    ) : top == null ? (
-      tab === 'home' ? (
+    ) : drawn == null || top == null ? (
+      tab === 'home' || tab === 'chat' ? (
         <HomeScreen
           client={client}
           onOpenTeam={openTeam}
@@ -3101,13 +3126,13 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'game', gameId, title: '', tab: 'watch' })
         }}
       />
-    ) : top.name === 'chatMembers' || top.name === 'chatInfo' ? (
+    ) : drawn.name === 'chatMembers' || drawn.name === 'chatInfo' ? (
       gated(
         <ChatInfoScreen
-          showMembers={top.name === 'chatMembers'}
+          showMembers={drawn.name === 'chatMembers'}
           engine={chatEngine!}
           client={client}
-          conversationId={top.conversationId}
+          conversationId={drawn.conversationId}
           userId={signedInAs!}
           onLeft={() => {
             // Out of the chat and its members, back to the list.
@@ -3123,7 +3148,7 @@ function Shell(props: AppProps): React.ReactElement {
           }}
         />
       )
-    ) : top.name === 'chatNew' ? (
+    ) : drawn.name === 'chatNew' ? (
       gated(
         <NewDmScreen
           client={client}
@@ -3197,17 +3222,17 @@ function Shell(props: AppProps): React.ReactElement {
           }}
         />
       )
-    ) : top.name === 'chatDevices' ? (
+    ) : drawn.name === 'chatDevices' ? (
       session == null ? null : (
         <ChatCoreGate onUnavailable={reportChatCore}>
           <ChatDevicesScreen client={client} userId={session.user.id} />
         </ChatCoreGate>
       )
-    ) : top.name === 'chatReports' ? (
+    ) : drawn.name === 'chatReports' ? (
       session == null ? null : (
         <ChatReportsScreen client={client} isAdmin={session.user.isAdmin} />
       )
-    ) : top.name === 'chatLink' ? (
+    ) : drawn.name === 'chatLink' ? (
       session == null ? null : (
         <ChatCoreGate onUnavailable={reportChatCore}>
           <LinkDeviceScreen
@@ -3243,12 +3268,20 @@ function Shell(props: AppProps): React.ReactElement {
           )
         }}
         session={session}
-        onChatDevices={() => {
-          push({ name: 'chatDevices' })
-        }}
-        onChatReports={() => {
-          push({ name: 'chatReports' })
-        }}
+        onChatDevices={
+          chatOn
+            ? () => {
+                push({ name: 'chatDevices' })
+              }
+            : undefined
+        }
+        onChatReports={
+          chatOn
+            ? () => {
+                push({ name: 'chatReports' })
+              }
+            : undefined
+        }
         onSignOut={leaveSession}
         onSignOutRequest={() => {
           // Unsent changes go with the phone's file: ask first.
@@ -3917,7 +3950,7 @@ function Shell(props: AppProps): React.ReactElement {
                 </PaneBesideTess>
               </View>
               <SuccessToast notice={successNotice} />
-              <DeviceApprovalPrompt />
+              {chatOn && <DeviceApprovalPrompt />}
               {confirmingSignOut && (
                 <ChoiceSheet
                   title="Sign Out?"

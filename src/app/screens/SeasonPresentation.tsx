@@ -15,6 +15,7 @@ import { localityLabel } from '../../common/locality'
 import type { GroupDetail } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
+import { useChatAllowed } from '../chat/DeclaredAgeGate'
 import {
   Button,
   Card,
@@ -164,11 +165,12 @@ export function SeasonPresentation(
       : loadedPeople === true
   const waitingForPeople =
     initialTab === 'people' && publicDetail == null && loadedPeople == null
+  const chatOn = useChatAllowed()
   const tabs = [
     ...(mayView
       ? TABS
       : TABS.filter(item => item.id === 'schedule' || item.id === 'teams')),
-    { id: 'chats' as const, label: 'Chats' },
+    ...(chatOn ? [{ id: 'chats' as const, label: 'Chats' }] : []),
     ...(seesPeople ? [PEOPLE_TAB] : [])
   ]
   const defaultTab = mayView ? 'standings' : 'schedule'
@@ -226,7 +228,7 @@ export function SeasonPresentation(
     if (initialTab != null && initialTab !== next) onTab?.(next, true)
     // Tab validity changes when the server revokes private access.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialTab, mayView, seesPeople, waitingForPeople])
+  }, [initialTab, mayView, seesPeople, waitingForPeople, chatOn])
   useEffect(() => {
     if (initialWhen != null) setWhen(initialWhen)
   }, [initialWhen])

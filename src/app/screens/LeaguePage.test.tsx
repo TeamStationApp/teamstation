@@ -12,9 +12,11 @@ import {
   type PublicGroup
 } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
+import { ChatGateOverride } from '../chat/DeclaredAgeGate'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { GroupLinkChoice } from './GroupScreen'
 import { GroupScreen } from './GroupScreen'
+import { LeaguePage } from './LeaguePage'
 
 let root: Root | undefined
 afterEach(async () => {
@@ -455,5 +457,46 @@ describe('a league’s People tab', () => {
     expect(persons).deep.equals([
       [{ kind: 'league', id: league.id }, userIdOfGumbo(271)]
     ])
+  })
+
+  it('shows a Chats pill, and drops it when chat is denied', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    const page = (gate?: 'denied'): React.ReactElement => {
+      const screen = (
+        <LeaguePage
+          client={api}
+          detail={detail}
+          onOpen={() => {}}
+          onCreate={() => {}}
+          onSettings={() => {}}
+          onLink={() => {}}
+          onChanged={() => {}}
+          chats={[{ id: 'cnv_league', title: 'League chat' }]}
+          onOpenChat={() => {}}
+        />
+      )
+      return gate == null ? (
+        screen
+      ) : (
+        <ChatGateOverride gate={gate}>{screen}</ChatGateOverride>
+      )
+    }
+    await mount(page())
+    expect(
+      [...document.querySelectorAll('[role="tab"]')].map(
+        node => node.textContent
+      )
+    ).includes('Chats')
+    await act(async () => root?.unmount())
+    document.body.replaceChildren()
+    await mount(page('denied'))
+    const labels = [...document.querySelectorAll('[role="tab"]')].map(
+      node => node.textContent
+    )
+    expect(labels).not.includes('Chats')
+    expect(labels).includes('Seasons')
+    expect(document.querySelector('[data-testid="entity-chat-list"]')).equals(
+      null
+    )
   })
 })

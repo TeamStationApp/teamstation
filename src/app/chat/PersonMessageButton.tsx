@@ -6,6 +6,7 @@ import { Button } from '../components'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
+import { useChatAllowed } from './DeclaredAgeGate'
 import { reasonOf } from './engine/links'
 import { IncludeAdultSheet } from './IncludeAdultSheet'
 
@@ -20,6 +21,7 @@ export function PersonMessageButton(
   props: PersonMessageButtonProps
 ): React.ReactElement | null {
   const { client, userId } = props
+  const chatOn = useChatAllowed()
   const theme = useTheme()
   const [recipient, setRecipient] = useState<string>()
   const [busy, setBusy] = useState(false)
@@ -38,6 +40,7 @@ export function PersonMessageButton(
     setPlayers(undefined)
     setFailed(false)
     setBusy(false)
+    if (!chatOn) return
     client
       .dmCandidates('', userId)
       .then(found => {
@@ -45,7 +48,7 @@ export function PersonMessageButton(
           setRecipient(found.find(person => person.userId === userId)?.userId)
       })
       .catch(() => undefined)
-  }, [client, userId, reading, writing])
+  }, [chatOn, client, userId, reading, writing])
 
   const start = async (adults: string[] = []): Promise<void> => {
     if (pending.current || recipient == null) return
@@ -83,7 +86,7 @@ export function PersonMessageButton(
     }
   }
 
-  if (recipient == null) return null
+  if (!chatOn || recipient == null) return null
   return (
     <View style={{ alignItems: 'flex-end', gap: theme.rem(theme.spaceSmRem) }}>
       <Button
