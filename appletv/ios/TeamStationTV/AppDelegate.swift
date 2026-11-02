@@ -48,7 +48,17 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
 
   override func bundleURL() -> URL? {
 #if DEBUG
-    if let address = ProcessInfo.processInfo.environment["TV_METRO_URL"], let url = URL(string: address) { return url }
+    let defaults = UserDefaults.standard
+    let metroKey = "TeamStationTVMetroURL"
+    if let address = ProcessInfo.processInfo.environment["TV_METRO_URL"],
+       let url = URL(string: address), url.host != nil,
+       url.scheme == "http" || url.scheme == "https" {
+      defaults.set(address, forKey: metroKey)
+      return url
+    }
+    if let address = defaults.string(forKey: metroKey), let url = URL(string: address) {
+      return url
+    }
     return RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: "index")
 #else
     Bundle.main.url(forResource: "main", withExtension: "jsbundle")
