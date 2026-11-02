@@ -18,7 +18,12 @@ const appLinks = asAppLinksConfig({
   knownServers: [SEAT],
   apps: [
     {
+      origin: 'https://app.teamstation.app',
+      apple: { appIds: ['TEAM000000.test.example.companion'] }
+    },
+    {
       origin: 'https://app1.example.test',
+      tvLogin: true,
       apple: { appIds: ['TEAM000000.test.example.app1'] },
       android: {
         packageName: 'test.example.app1',
@@ -84,7 +89,41 @@ describe('app link hosts', function () {
     })
   }
 
+  it('lets the web shell handle TV approval with private link response headers', async () => {
+    const answer = await get(
+      'app.teamstation.app',
+      '/tv-login?token=' + 'a'.repeat(43)
+    )
+    expect(answer.status).equals(404) // This harness intentionally has no SPA fallback.
+    expect(answer.headers['cache-control']).equals('no-store')
+    expect(answer.headers['referrer-policy']).equals('no-referrer')
+  })
+
   describe('apple-app-site-association', function () {
+    it('associates production TV links only with the companion app host', async () => {
+      const companion = JSON.parse(
+        (
+          await get(
+            'app.teamstation.app',
+            '/.well-known/apple-app-site-association'
+          )
+        ).body
+      )
+      expect(companion.applinks.details[0].components).deep.includes({
+        '/': '/tv-login'
+      })
+      const other = JSON.parse(
+        (
+          await get(
+            'ios-only.example.test',
+            '/.well-known/apple-app-site-association'
+          )
+        ).body
+      )
+      expect(other.applinks.details[0].components).deep.equals([
+        { '/': '/signin/*' }
+      ])
+    })
     it('names the host’s iOS app and its sign-in path', async function () {
       const answer = await get(
         'app1.example.test',
@@ -98,7 +137,7 @@ describe('app link hosts', function () {
           details: [
             {
               appIDs: ['TEAM000000.test.example.app1'],
-              components: [{ '/': '/signin/*' }]
+              components: [{ '/': '/signin/*' }, { '/': '/tv-login' }]
             }
           ]
         }

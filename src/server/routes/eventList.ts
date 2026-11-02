@@ -6,9 +6,15 @@ import { notFound, unauthorized, unavailable } from '../../common/errors'
 import { adminScopes, roleScopes, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { eventWindow, parseEventListQuery } from '../events/eventListQuery'
+import {
+  accessibleVideoGames,
+  hasVideoFilter,
+  videoCollectionFilter
+} from '../events/videoCollections'
 import { opponentFixed, scoredInTeamStation } from '../games/opponentFixed'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
+import { posterSecond, posterUrl } from '../media/posters'
 import { requireActor } from '../middleware/withAuth'
 import { withRevision } from '../socket/syncRevision'
 import { scheduleOf, type ScheduleRow } from './seasons'
@@ -120,6 +126,55 @@ export function eventListRoutes(
     withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
+      if (hasVideoFilter(req.query)) {
+        const filter = videoCollectionFilter(req.query)
+        const videos = await accessibleVideoGames(db, actor, filter)
+        const metadata = new Map(videos.map(video => [video.gameId, video]))
+        const games = await scheduleOf(db, media, {
+          actor,
+          gamesOnly: true,
+          publishedOnly: true,
+          gameIds: videos.map(video => video.gameId)
+        })
+        const listed = games
+          .filter(game =>
+            `${game.awayTeamName} ${game.homeTeamName}`
+              .toLowerCase()
+              .includes(filter.q.toLowerCase())
+          )
+          .sort((a, b) => {
+            const left =
+              filter.sort === 'upload'
+                ? metadata.get(a.id)!.uploadedAt.getTime()
+                : a.startAt == null
+                  ? 0
+                  : Date.parse(a.startAt)
+            const right =
+              filter.sort === 'upload'
+                ? metadata.get(b.id)!.uploadedAt.getTime()
+                : b.startAt == null
+                  ? 0
+                  : Date.parse(b.startAt)
+            return right === left ? a.id.localeCompare(b.id) : right - left
+          })
+          .slice(filter.offset, filter.offset + filter.limit)
+        res.json(
+          (await withDirectorFields(db, media, listed)).map(game => {
+            const video = metadata.get(game.id)!
+            return {
+              ...game,
+              latestVideoId: video.videoId,
+              latestVideoAt: video.uploadedAt.toISOString(),
+              posterUrl: posterUrl(
+                media,
+                video.videoId,
+                posterSecond(video.durationSec)
+              )
+            }
+          })
+        )
+        return
+      }
       const parsed = parseEventListQuery(req.query)
       const now = new Date()
       const window = eventWindow(parsed, now)
