@@ -637,4 +637,51 @@ describe('screen scopes on the game socket', function () {
     expect(lines).length(2)
     await feed.close()
   })
+
+  it('resyncs once a window while notices find no connection, and owes one at its end', async function () {
+    const lines: string[] = []
+    const feed = new PostgresFeed({
+      databaseUrl: scratchUrl,
+      log: () => undefined
+    })
+    const starved = new ScreenScopeListener({
+      feed,
+      coalesceMs: 1,
+      starvedResyncMs: 200,
+      deliver: async () => {
+        throw new Error('timeout exceeded when trying to connect')
+      },
+      onResync: () => {
+        lines.push('resync')
+      },
+      log: () => undefined
+    })
+    await starved.listening
+    const notice = (gameId: string): void => {
+      starved.notified(JSON.stringify({ revision: '1', gameId }))
+    }
+    notice('gam_one')
+    await wait(30)
+    expect(lines).deep.equals(['resync'])
+    // Different notices, the same window: one owed, none at once.
+    notice('gam_two')
+    notice('gam_three')
+    await wait(30)
+    expect(lines).deep.equals(['resync'])
+    await wait(250)
+    expect(lines).deep.equals(['resync', 'resync'])
+    // Quiet after that: nothing more was owed.
+    await wait(250)
+    expect(lines).deep.equals(['resync', 'resync'])
+    // Owed when it closes, it has nobody left to tell.
+    notice('gam_four')
+    await wait(30)
+    expect(lines).deep.equals(['resync', 'resync', 'resync'])
+    notice('gam_five')
+    await wait(30)
+    await starved.close()
+    await wait(250)
+    expect(lines).deep.equals(['resync', 'resync', 'resync'])
+    await feed.close()
+  })
 })
