@@ -229,6 +229,72 @@ describe('TV video collections', function () {
         .execute()
     }
   })
+  it('describes membership, guardianship, following and admin-only video teams without widening access', async () => {
+    const get = async (id: string) =>
+      (await client.videoTeams()).find(t => t.id === id)
+    expect((await get('tem_account'))?.videoRelationship).equals('member')
+    expect((await get('tem_account'))?.latestVideoAt).to.be.a('string')
+    expect((await get('tem_visitors'))?.videoRelationship).equals('other')
+    await h.db
+      .insertInto('team_follows')
+      .values({ user_id: userIdOfGumbo(101), team_id: 'tem_visitors' })
+      .execute()
+    try {
+      expect((await get('tem_visitors'))?.videoRelationship).equals('following')
+    } finally {
+      await h.db
+        .deleteFrom('team_follows')
+        .where('user_id', '=', userIdOfGumbo(101))
+        .where('team_id', '=', 'tem_visitors')
+        .execute()
+    }
+    await h.db
+      .insertInto('scope_roles')
+      .values({
+        id: 'role_tv_admin',
+        user_id: userIdOfGumbo(101),
+        scope_type: 'team',
+        scope_id: 'tem_visitors',
+        role: 'admin'
+      })
+      .execute()
+    try {
+      expect((await get('tem_visitors'))?.videoRelationship).equals('admin')
+      await h.db
+        .insertInto('memberships')
+        .values({
+          id: 'mem_tv_child',
+          user_id: userIdOfGumbo(102),
+          team_id: 'tem_visitors',
+          role: 'member',
+          is_player: true
+        })
+        .execute()
+      await h.db
+        .insertInto('user_links')
+        .values({
+          id: 'link_tv_order',
+          user_id: userIdOfGumbo(101),
+          related_user_id: userIdOfGumbo(102),
+          kind: 'guardian'
+        })
+        .execute()
+      expect((await get('tem_visitors'))?.videoRelationship).equals('member')
+    } finally {
+      await h.db
+        .deleteFrom('scope_roles')
+        .where('id', '=', 'role_tv_admin')
+        .execute()
+      await h.db
+        .deleteFrom('memberships')
+        .where('id', '=', 'mem_tv_child')
+        .execute()
+      await h.db
+        .deleteFrom('user_links')
+        .where('id', '=', 'link_tv_order')
+        .execute()
+    }
+  })
   it('describes only recorded teams, newest first, and the latest accessible season', async () => {
     await h.db
       .insertInto('leagues')

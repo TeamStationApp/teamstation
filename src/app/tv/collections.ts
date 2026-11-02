@@ -112,7 +112,7 @@ export async function loadTvCollection(
     recent: games.slice(0, 10),
     highlights,
     teamRows,
-    teams,
+    teams: rankVideoTeams(teams),
     remaining: games.slice(10),
     nextOffset: games.length === 50 ? 50 : null
   }
@@ -128,4 +128,18 @@ async function allVideoTeams(
     teams.push(...page)
     if (page.length < 100) return teams
   }
+}
+
+/** Personal teams first; a newer upload never promotes an administrative tie. */
+export function rankVideoTeams(teams: TeamSummary[]): TeamSummary[] {
+  const rank = { member: 0, following: 1, admin: 2, other: 3 }
+  return [...teams].sort(
+    (a, b) =>
+      rank[a.videoRelationship ?? 'other'] -
+        rank[b.videoRelationship ?? 'other'] ||
+      Date.parse(b.latestVideoAt ?? '1970-01-01') -
+        Date.parse(a.latestVideoAt ?? '1970-01-01') ||
+      a.name.localeCompare(b.name) ||
+      a.id.localeCompare(b.id)
+  )
 }
