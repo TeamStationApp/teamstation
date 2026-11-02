@@ -3,14 +3,14 @@ import path from 'node:path'
 
 import type { Setup, Stage } from '@mason/types'
 
-// TeamStation for iOS on the Nomac pool and for Android on the DigitalOcean
-// Linux pool. The iOS archive signs an ad hoc build with the master's Apple
-// distribution certificate and publishes it, so a registered device can
-// install it. A master build then re-signs that IPA with the App Store
-// profile and uploads it to TestFlight. Other branches leave that stage
-// skipped. The Android release is compiled on Linux, then signed on the node
-// labelled android-signing, which provides teamstation-sign-release-apk, and
-// published from there. One platform failing leaves the other running.
+// Pushes to master and develop build. Every other branch builds when someone
+// requests a run. The iOS archive on Nomac uses the ad hoc profile, for every
+// branch. A master build then re-signs that IPA with the distribution profile
+// and certificate and uploads it to TestFlight; that stage runs on the same
+// node as Android signing. Android is compiled on the Linux pool. Every
+// branch's APK is signed with the release keystore on the node labelled
+// android-signing, which is the only node that has it. One platform failing
+// leaves the other running.
 
 const APP = 'app.teamstation.app'
 const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
@@ -21,7 +21,6 @@ const SIGN = {
   arch: 'arm64',
   labels: ['android-signing']
 } as const
-const APPLE = { type: 'macos-arm64', os: 'macos', arch: 'arm64' } as const
 const TESTFLIGHT_GROUP = 'TeamStation testers'
 // The same shape ctx.apple.archive and ctx.apple.resign accept.
 const versionPattern = /^[0-9]+(\.[0-9]+){0,2}$/
@@ -29,6 +28,17 @@ const versionPattern = /^[0-9]+(\.[0-9]+){0,2}$/
 export function setup(m: Setup): void {
   m.apiVersion(1)
   m.buildNumber(APP, { format: 'YYMMDDCC', timeZone: 'America/Los_Angeles' })
+  // Written out as literals so the master can read them without running setup.
+  m.workflow(
+    'build',
+    {
+      triggers: [
+        { push: true, branches: ['master', 'develop'] },
+        { request: true }
+      ]
+    },
+    () => {}
+  )
   m.parallel(
     'build',
     {
@@ -54,7 +64,7 @@ export function setup(m: Setup): void {
         },
         {
           name: 'release',
-          on: APPLE,
+          on: SIGN,
           timeout: '2h',
           // package.json is the short version. A shallow checkout reads it;
           // this stage re-signs the stashed IPA and does not compile.

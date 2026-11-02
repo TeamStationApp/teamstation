@@ -342,10 +342,18 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.equal(ios[0]?.tools?.rust, '1.98.0')
     assert.equal(ios[1]?.name, 'release')
     assert.equal(ios[1]?.on.type, 'macos-arm64')
+    assert.deepEqual((ios[1]?.on as { labels?: readonly string[] }).labels, [
+      'android-signing'
+    ])
     assert.equal(ios[1]?.apple.distribution, 'appStore')
     assert.deepEqual(ios[1]?.checkout, { depth: 1 })
     assert.deepEqual(ios[1]?.when, { branch: ['master'] })
-    assert.deepEqual(workflows, {})
+    assert.deepEqual(workflows.build?.options, {
+      triggers: [
+        { push: true, branches: ['master', 'develop'] },
+        { request: true }
+      ]
+    })
     assert.equal(android[0]?.name, 'compile')
     assert.equal(android[0]?.on.type, 'do-linux')
     assert.equal(android[0]?.tools.rust, '1.98.0')
