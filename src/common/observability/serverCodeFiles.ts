@@ -33,6 +33,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/backgroundJobs.js',
   'server/buildVersion.js',
   'server/changeFeed/feed.js',
+  'server/changeFeed/feedSubscribers.js',
   'server/changeFeed/feedTestKit.js',
   'server/changeFeed/makeChangeFeed.js',
   'server/changeFeed/postgresFeed.js',
