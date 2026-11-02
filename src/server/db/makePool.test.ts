@@ -237,7 +237,15 @@ describe('isConnectionUnavailable', () => {
   })
 
   it('knows a socket whose other end is down or gone', () => {
-    for (const code of ['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT'])
+    for (const code of [
+      'EAI_AGAIN',
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'EPIPE',
+      'ETIMEDOUT'
+    ])
       expect(isConnectionUnavailable(coded(code))).equals(true, code)
   })
 

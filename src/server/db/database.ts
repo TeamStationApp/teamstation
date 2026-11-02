@@ -1713,12 +1713,16 @@ const SERVER_REFUSALS = new Set(['53300', '57P01', '57P02', '57P03'])
 
 /**
  * What the socket says, which `pg` passes on as it is, when the other end is
- * down or goes away. Not a name that will not resolve: that is a wrong address
- * far more often than a brief failure.
+ * down or goes away, a route to it is flapping, or DNS could not answer for now
+ * (EAI_AGAIN). Not a name that does not resolve (ENOTFOUND): that is a wrong
+ * address far more often than a brief failure.
  */
 const SOCKET_FAILURES = new Set([
+  'EAI_AGAIN',
   'ECONNREFUSED',
   'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
   'EPIPE',
   'ETIMEDOUT'
 ])
