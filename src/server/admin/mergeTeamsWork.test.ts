@@ -263,7 +263,7 @@ describe('the work a team merge does', function () {
     expect(state[0].status).equals('pending')
   })
 
-  it('keeps what a play with an older record has always been left with', async () => {
+  it('tells the pitcher’s team for a play with an older record, as for a rewritten one', async () => {
     const teams = await seedTeams()
     const games = await seedGames(teams, 1, 2)
     const work = await measured(teams)
@@ -277,13 +277,78 @@ describe('the work a team merge does', function () {
     // An older record names sides and is not rewritten.
     for (const { gumbo } of records)
       expect(JSON.stringify(gumbo)).includes(teams.from)
-    // Its batting team moved while the game still named the source team, so
-    // that play's pitcher could not be told; the other play's moved by id.
+    // Its children are rebuilt under the merged game, so each pitcher is on the
+    // other team.
     expect(await playersOf(teams, games)).deep.equals([
       { role: 'batter', team_id: teams.into, batting: teams.into },
-      { role: 'pitcher', team_id: null, batting: teams.into },
+      { role: 'pitcher', team_id: teams.opponent, batting: teams.into },
       { role: 'batter', team_id: teams.opponent, batting: teams.opponent },
       { role: 'pitcher', team_id: teams.into, batting: teams.opponent }
+    ])
+  })
+
+  it('tells the pitcher’s team for a play with no record, with the source team away', async () => {
+    const teams = await seedTeams()
+    const game = makeId('game')
+    await db
+      .insertInto('games')
+      .values({
+        id: game,
+        home_team_id: teams.opponent,
+        away_team_id: teams.from,
+        start_at: new Date(Date.UTC(2026, 2, 1, 18)),
+        status: 'final'
+      })
+      .execute()
+    await db
+      .insertInto('events')
+      .values({
+        id: makeId('event'),
+        gameId: game,
+        battingTeamId: teams.from,
+        source: 'external' as const,
+        gumbo: thinPlay(0)
+      })
+      .execute()
+    await measured(teams)
+    expect(await playersOf(teams, [game])).deep.equals([
+      { role: 'batter', team_id: teams.into, batting: teams.into },
+      { role: 'pitcher', team_id: teams.opponent, batting: teams.into }
+    ])
+  })
+
+  it('leaves the pitcher unknown where the game does not name the batting team', async () => {
+    const teams = await seedTeams()
+    const other = makeId('team')
+    await db
+      .insertInto('teams')
+      .values({ id: other, name: 'Other', kind: 'full' })
+      .execute()
+    const game = makeId('game')
+    await db
+      .insertInto('games')
+      .values({
+        id: game,
+        home_team_id: teams.opponent,
+        away_team_id: other,
+        start_at: new Date(Date.UTC(2026, 2, 2, 18)),
+        status: 'final'
+      })
+      .execute()
+    await db
+      .insertInto('events')
+      .values({
+        id: makeId('event'),
+        gameId: game,
+        battingTeamId: teams.from,
+        source: 'external' as const,
+        gumbo: thinPlay(0)
+      })
+      .execute()
+    await measured(teams)
+    expect(await playersOf(teams, [game])).deep.equals([
+      { role: 'batter', team_id: teams.into, batting: teams.into },
+      { role: 'pitcher', team_id: null, batting: teams.into }
     ])
   })
 

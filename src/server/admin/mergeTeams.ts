@@ -340,9 +340,9 @@ export async function mergeTeams(
         .where(column as 'home_team_id', '=', fromTeamId)
         .execute()
     }
-    // A play whose record will not be rewritten moves now and has its children
-    // read from the game as it stands; one whose record will is left for that
-    // rewrite, so each play's children are built once, under the merged game.
+    // A play whose record will not be rewritten moves now, with its children
+    // rebuilt below; one whose record will is left for that rewrite, so each
+    // play's children are built once, under the merged game.
     const movedIds = movedGames.map(game => game.id)
     const moved = await holdingEventChildren(
       trx,
@@ -359,10 +359,6 @@ export async function mergeTeams(
           returning id
         `.execute(trx)
     )
-    await rebuildEventChildren(
-      trx,
-      moved.rows.map(play => play.id)
-    )
     // Update opponents and withdrawal identity in one statement so the
     // withdrawal remains attributed to an opponent throughout the merge.
     await sql`update games set
@@ -371,6 +367,12 @@ export async function mergeTeams(
       withdrawn_by_team_id = case when withdrawn_by_team_id = ${fromTeamId} then ${intoTeamId} else withdrawn_by_team_id end
       where home_team_id = ${fromTeamId} or away_team_id = ${fromTeamId}`.execute(
       trx
+    )
+    // After the games: a play's pitcher is on the team its game has opposite the
+    // batting team, which can only be told once the game names the kept team.
+    await rebuildEventChildren(
+      trx,
+      moved.rows.map(play => play.id)
     )
     // A game about to be folded into its fixture's kept game needs no rewrite.
     const retired = new Set(fixtures.map(fixture => fixture.retiredGameId))
