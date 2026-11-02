@@ -3316,7 +3316,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', default: '' },
               description:
-                'With hasVideo: case-insensitive public name substring; omitted: all. Results add optional videoSeason {name, leagueName}, null without a season, from the latest accessible recorded game.'
+                'With hasVideo: case-insensitive public name substring; omitted: all. Results add optional videoSeason {name, leagueName}, null without a season, from the latest accessible recorded game; latestVideoAt is the newest visible upload time and videoRelationship is member (including guardian), following, admin, or other, in that priority order.'
             },
             {
               name: 'limit',
