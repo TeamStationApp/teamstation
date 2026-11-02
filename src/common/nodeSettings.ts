@@ -29,6 +29,8 @@ export interface ScoreboardSettings {
   single: BoardPlacement
   /** The landscape grid of four angles: over the top-left angle. */
   landscape: BoardPlacement
+  /** Four-angle TV placement, independent of phone and web landscape. */
+  tvLandscape?: BoardPlacement
   /**
    * The portrait grid of four angles: the board's height above the stack, as
    * a fraction of one angle's height. With fewer angles it is full width.
@@ -94,6 +96,7 @@ export const defaultScoreboardSettings: ScoreboardSettings = {
   // On the card's stops, so Reset to defaults puts back exactly these.
   single: { x: 0.01, y: 0.01, height: 0.15 },
   landscape: { x: 0.01, y: 0.01, height: 0.15 },
+  tvLandscape: { x: 0.01, y: 0.01, height: 0.15 },
   portraitHeight: 0.15,
   speedHoldSec: 5
 }
@@ -122,6 +125,7 @@ export interface ScoreboardOverlay {
   show: boolean
   single: BoardPlacement
   landscape: BoardPlacement
+  tvLandscape?: BoardPlacement
   portraitHeight: number
 }
 
@@ -133,6 +137,10 @@ export function asScoreboardOverlay(raw: unknown): ScoreboardOverlay {
     show: value.show,
     single: asPlacement(value.single, 'single'),
     landscape: asPlacement(value.landscape, 'landscape'),
+    tvLandscape: asPlacement(
+      value.tvLandscape ?? defaultScoreboardSettings.tvLandscape,
+      'tvLandscape'
+    ),
     portraitHeight: asHeight(value.portraitHeight, 'portraitHeight')
   }
 }
@@ -143,7 +151,15 @@ export function asScoreboardOverlay(raw: unknown): ScoreboardOverlay {
  */
 export function asNodeSettings(raw: unknown): NodeSettings {
   const { replay, ...rest } = asNodeSettingsUpdate(raw)
-  return { ...rest, replay: replay ?? defaultReplaySettings }
+  return {
+    ...rest,
+    scoreboard: {
+      ...rest.scoreboard,
+      tvLandscape:
+        rest.scoreboard.tvLandscape ?? defaultScoreboardSettings.tvLandscape
+    },
+    replay: replay ?? defaultReplaySettings
+  }
 }
 
 /**
@@ -169,6 +185,14 @@ export function asNodeSettingsUpdate(raw: unknown): NodeSettingsUpdate {
       ),
       single: asPlacement(scoreboard.single, 'scoreboard.single'),
       landscape: asPlacement(scoreboard.landscape, 'scoreboard.landscape'),
+      ...(scoreboard.tvLandscape === undefined
+        ? {}
+        : {
+            tvLandscape: asPlacement(
+              scoreboard.tvLandscape,
+              'scoreboard.tvLandscape'
+            )
+          }),
       portraitHeight: asHeight(
         scoreboard.portraitHeight,
         'scoreboard.portraitHeight'

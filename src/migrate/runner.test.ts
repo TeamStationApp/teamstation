@@ -412,6 +412,7 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '097noticeRequests',
           '098playerNamePrivacy',
           '099ChatLinkDecisions',
+          '099tvLogin',
           '100streamManagement',
           '101videographerRequests',
           '102localCopyRemoved'
