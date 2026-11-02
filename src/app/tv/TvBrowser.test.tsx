@@ -188,12 +188,10 @@ describe('TV browser journeys', () => {
     expect(
       [...headerStops].map(stop => stop.getAttribute('stop-opacity'))
     ).deep.equals(['0.5', '0'])
-    const collectionStops = document.querySelectorAll(
-      '[data-testid="tv-collection-background"] stop'
-    )
     expect(
-      [...collectionStops].map(stop => stop.getAttribute('stop-opacity'))
-    ).deep.equals(['0', '0.5'])
+      document.querySelectorAll('[data-testid="tv-collection-background"] img')
+        .length
+    ).equals(1)
     expect(
       document.querySelector('[data-testid="tv-browse-backdrop"]')
     ).not.equals(null)
