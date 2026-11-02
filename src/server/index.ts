@@ -523,7 +523,9 @@ function runWorker(): void {
       sendCode,
       space: serverConfig.space,
       publicUrl,
-      appOrigins
+      appOrigins,
+      tvAppOrigin: serverConfig.appLinks.apps.find(app => app.tvLogin === true)
+        ?.origin
     })
   )
   app.use('/api/v1', inviteRoutes(db, { sendCode, publicUrl, appOrigins }))

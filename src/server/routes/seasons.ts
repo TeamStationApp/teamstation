@@ -253,6 +253,7 @@ export interface ScheduleRow extends Omit<
 }
 
 export interface ScheduleFilter {
+  gameIds?: string[]
   actor?: Actor
   /** Public game previews never include private titled team events. */
   gamesOnly?: boolean
@@ -299,6 +300,7 @@ export async function scheduleOf(
   media: MediaContext,
   filter: ScheduleFilter
 ): Promise<ScheduleRow[]> {
+  if (filter.gameIds?.length === 0) return []
   const effectiveNow = filter.now ?? new Date()
   const teamScope = filter.run ?? filter.film
   if (teamScope != null && !teamScope.isAdmin && teamScope.teamIds.size === 0) {
@@ -380,6 +382,8 @@ export async function scheduleOf(
       'away.logo_path'
     ])
 
+  if (filter.gameIds != null)
+    query = query.where('games.id', 'in', filter.gameIds)
   if (filter.teamId != null) {
     const teamId = filter.teamId
     query = query.where(eb =>
