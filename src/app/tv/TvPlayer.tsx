@@ -1538,13 +1538,13 @@ function PanelGradient({
 }): React.ReactElement {
   const id = useId().replace(/[^A-Za-z0-9]/g, '')
   const [size, setSize] = useState({ width: 0, height: 0 })
-  if (direction === 'bottom' && NativeGradient !== null)
+  if (NativeGradient !== null)
     return (
       <NativeGradient
         testID="tv-panel-gradient"
         collapsable={false}
         pointerEvents="none"
-        gradientDirection="bottom"
+        gradientDirection={direction}
         maxOpacity={maxOpacity}
         style={StyleSheet.absoluteFill}
       />
