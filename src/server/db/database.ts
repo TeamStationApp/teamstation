@@ -1681,15 +1681,29 @@ export function poolSettings(
 }
 
 /**
- * Whether an error is a pool giving up on a connection, while waiting for a
- * free one or while opening one. The database may be fine; this process just
- * could not reach it in time, so whoever asked can ask again.
+ * What PgBouncer says, as a FATAL to its client, when it gives up waiting for
+ * a server connection or has no room for another client.
+ */
+const POOLER_REFUSALS = [
+  'query_wait_timeout',
+  'client_login_timeout',
+  'no more connections allowed',
+  'server login has been failing'
+]
+
+/**
+ * Whether an error is a pool giving up on a connection: while waiting for a
+ * free one or while opening one, here or in the pooler in front of the
+ * database. The database may be fine; this process just could not reach it in
+ * time, so whoever asked can ask again.
  */
 export function isPoolTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const { message } = error
   return (
-    error instanceof Error &&
-    (error.message === 'timeout exceeded when trying to connect' ||
-      error.message === 'Connection terminated due to connection timeout')
+    message === 'timeout exceeded when trying to connect' ||
+    message === 'Connection terminated due to connection timeout' ||
+    POOLER_REFUSALS.some(refusal => message.startsWith(refusal))
   )
 }
 

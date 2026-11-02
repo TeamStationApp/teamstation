@@ -1,9 +1,13 @@
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { type AddressInfo, createServer, type Socket } from 'node:net'
+import { tmpdir, userInfo } from 'node:os'
+import { join } from 'node:path'
 
 import { expect } from 'chai'
 import { sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
-import { Pool } from 'pg'
+import { Client, Pool } from 'pg'
 
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { serverConfig } from '../serverConfig'
@@ -191,6 +195,24 @@ describe('isPoolTimeout', () => {
     silent.close()
   })
 
+  it('knows what PgBouncer says when it gives up or has no room', () => {
+    for (const message of [
+      'query_wait_timeout',
+      'client_login_timeout',
+      'client_login_timeout (server down)',
+      'no more connections allowed (max_client_conn)',
+      'no more connections allowed (max_user_connections)',
+      'server login has been failing, cached error: connect failed (server_login_retry)'
+    ])
+      expect(isPoolTimeout(new Error(message))).equals(true, message)
+    for (const message of [
+      'query_timeout',
+      'too many clients already',
+      'server login failed: wrong password type'
+    ])
+      expect(isPoolTimeout(new Error(message))).equals(false, message)
+  })
+
   it('knows nothing else', async () => {
     const pool = new Pool({ connectionString: testDatabaseUrl })
     expect(
@@ -268,4 +290,116 @@ async function waitFor(done: () => boolean): Promise<void> {
     if (Date.now() > deadline) throw new Error('timed out')
     await new Promise(resolve => setTimeout(resolve, 10))
   }
+}
+
+/** Needs a PgBouncer on the machine, and skips without one. */
+describe('isPoolTimeout against a real PgBouncer', function () {
+  this.timeout(30000)
+  const wait = async (ms: number): Promise<void> => {
+    await new Promise(resolve => setTimeout(resolve, ms))
+  }
+  let dir: string
+  let bouncer: ChildProcess | undefined
+  let url: string
+
+  before(async function () {
+    const found = spawnSync('pgbouncer', ['--version'], { stdio: 'ignore' })
+    if (found.status !== 0) {
+      this.skip()
+      return
+    }
+    const target = new URL(testDatabaseUrl)
+    const port = await freePort()
+    dir = mkdtempSync(join(tmpdir(), 'poolerRefusals-'))
+    const config = join(dir, 'pgbouncer.ini')
+    const user = target.username === '' ? userInfo().username : target.username
+    writeFileSync(
+      config,
+      `[databases]
+* = host=${target.hostname === 'localhost' ? '127.0.0.1' : target.hostname} port=${target.port} user=${user}
+[pgbouncer]
+listen_addr = 127.0.0.1
+listen_port = ${port}
+unix_socket_dir =
+pool_mode = transaction
+auth_type = any
+default_pool_size = 1
+max_client_conn = 3
+query_wait_timeout = 1
+logfile = ${join(dir, 'pgbouncer.log')}
+ignore_startup_parameters = extra_float_digits,options
+`
+    )
+    bouncer = spawn('pgbouncer', [config], { stdio: 'ignore' })
+    url = `postgres://${user}@127.0.0.1:${port}/postgres`
+    const deadline = Date.now() + 5000
+    for (;;) {
+      const client = new Client({ connectionString: url })
+      const up = await client.connect().then(
+        () => true,
+        () => false
+      )
+      await client.end().catch(() => undefined)
+      if (up) break
+      if (Date.now() > deadline) throw new Error('PgBouncer never answered')
+      await wait(50)
+    }
+  })
+
+  after(async function () {
+    bouncer?.kill()
+    if (dir != null) rmSync(dir, { recursive: true, force: true })
+  })
+
+  const failure = async (attempt: Promise<unknown>): Promise<Error> =>
+    await attempt.then(
+      () => {
+        throw new Error('it should have failed')
+      },
+      (error: unknown) => error as Error
+    )
+
+  it('knows a query that waited too long for a server connection, past the pool’s own limit', async () => {
+    const pool = new Pool({
+      connectionString: url,
+      max: 3,
+      connectionTimeoutMillis: 5000
+    })
+    pool.on('error', () => undefined)
+    const holding = pool.query('select pg_sleep(2)')
+    await wait(100)
+    const error = await failure(pool.query('select 1'))
+    expect(error.message).equals('query_wait_timeout')
+    expect(isPoolTimeout(error)).equals(true)
+    await holding.catch(() => undefined)
+    await pool.end()
+  })
+
+  it('knows a client it has no room for', async () => {
+    const clients = Array.from(
+      { length: 3 },
+      () => new Client({ connectionString: url })
+    )
+    for (const client of clients) {
+      client.on('error', () => undefined)
+      await client.connect()
+    }
+    const extra = new Client({ connectionString: url })
+    extra.on('error', () => undefined)
+    const error = await failure(extra.connect())
+    expect(error.message).equals(
+      'no more connections allowed (max_client_conn)'
+    )
+    expect(isPoolTimeout(error)).equals(true)
+    await extra.end().catch(() => undefined)
+    for (const client of clients) await client.end()
+  })
+})
+
+async function freePort(): Promise<number> {
+  const probe = createServer()
+  await new Promise<void>(resolve => probe.listen(0, '127.0.0.1', resolve))
+  const { port } = probe.address() as AddressInfo
+  await new Promise(resolve => probe.close(resolve))
+  return port
 }

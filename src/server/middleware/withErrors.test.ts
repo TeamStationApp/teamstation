@@ -14,6 +14,7 @@ describe('errorHandler', function () {
   const errorOf: Record<string, Error> = {
     waiting: new Error('timeout exceeded when trying to connect'),
     opening: new Error('Connection terminated due to connection timeout'),
+    pooler: new Error('query_wait_timeout'),
     other: new Error('relation "secrets" does not exist'),
     planned: forbidden('No')
   }
@@ -40,7 +41,7 @@ describe('errorHandler', function () {
     await new Promise(resolve => server.close(resolve))
   })
 
-  for (const kind of ['waiting', 'opening'])
+  for (const kind of ['waiting', 'opening', 'pooler'])
     it(`answers 503 with Retry-After for a pool timeout (${kind})`, async function () {
       const response = await fetch(`${base}/fail/${kind}`)
       expect(response.status).equals(503)
