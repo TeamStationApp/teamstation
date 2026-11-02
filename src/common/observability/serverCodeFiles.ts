@@ -388,6 +388,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/umpires/affiliations.js',
   'server/umpires/assignments.js',
   'server/umpires/context.js',
+  'server/umpires/leaderboardPages.e2e.js',
   'server/umpires/notes.js',
   'server/umpires/openApi.js',
   'server/umpires/presence.js',

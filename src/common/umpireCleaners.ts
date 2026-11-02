@@ -163,5 +163,13 @@ export const asUmpireLeaderboard = asObject({
   teams: asEither(
     asArray(asObject({ id: asString, name: asString, count: asNumber })),
     asLiteral(null)
+  ),
+  page: asOptional(
+    asObject({
+      order: asEither(asLiteral('asc'), asLiteral('desc')),
+      limit: asNumber,
+      offset: asNumber,
+      total: asNumber
+    })
   )
 })
