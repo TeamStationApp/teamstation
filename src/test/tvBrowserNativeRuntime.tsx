@@ -31,3 +31,17 @@ export function requireNativeComponent(name: string): React.ComponentType<any> {
     )
   }
 }
+
+/** Model the native wrapper's destination-based selectability for empty pages. */
+export function TVFocusGuideView({
+  destinations,
+  autoFocus,
+  ...props
+}: any): React.ReactElement {
+  return (
+    <View
+      {...props}
+      tabIndex={Boolean(destinations) || Boolean(autoFocus) ? 0 : -1}
+    />
+  )
+}

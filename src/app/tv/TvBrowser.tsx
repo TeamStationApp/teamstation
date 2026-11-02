@@ -21,6 +21,7 @@ import {
   collectionTop,
   fourAcross,
   gameDate,
+  heroDetailsScale,
   monthSections
 } from './browseLayout'
 import { loadTvCollection, type TvClip, type TvCollection } from './collections'
@@ -287,6 +288,9 @@ export function TvBrowser({
   const [searchError, setSearchError] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
   const active = pages.length - 1
+  useEffect(() => {
+    setSearchFocused(false)
+  }, [active])
   const open = (page: TvPage): void => {
     setQuery('')
     setSearchOpen(false)
@@ -396,7 +400,7 @@ export function TvBrowser({
       <FocusGuide
         key={active}
         autoFocus
-        destinations={searchNode === null ? [] : [searchNode]}
+        destinations={searchNode === null ? undefined : [searchNode]}
         style={styles.toolbar}
       >
         <Text style={styles.brand}>TeamStation TV</Text>
@@ -627,6 +631,7 @@ function BrowsePage({
   onPlay: (request: TvPlayRequest) => void
 }): React.ReactElement {
   const [watchNode, setWatchNode] = useState<FocusNode | null>(null)
+  const [heroDetailsHeight, setHeroDetailsHeight] = useState(0)
   const [firstTile, setFirstTile] = useState<FocusNode | null>(null)
   const key = pageKey(page)
   useEffect(() => {
@@ -775,7 +780,7 @@ function BrowsePage({
     children.push(
       <FocusGuide
         key="hero"
-        destinations={watchNode === null ? [] : [watchNode]}
+        destinations={watchNode === null ? undefined : [watchNode]}
         testID="tv-hero"
         style={[styles.hero, { height: geometry.heroHeight }]}
       >
@@ -795,12 +800,22 @@ function BrowsePage({
         )}
         <TvScrim />
         <View
+          testID="tv-hero-details"
+          onLayout={event => {
+            setHeroDetailsHeight(event.nativeEvent.layout.height)
+          }}
           style={[
             styles.heroDetails,
             {
               transformOrigin: 'left center',
               transform: [
-                { scale: Math.min(1, geometry.heroHeight / (440 * fontScale)) }
+                {
+                  scale: heroDetailsScale(
+                    geometry.heroHeight,
+                    fontScale,
+                    heroDetailsHeight
+                  )
+                }
               ]
             }
           ]}

@@ -70,6 +70,7 @@ describe('TV native browser bridge', () => {
     })
     const client = {
       videoGames: async () => [],
+      myFollows: async () => [],
       videoTeams: async (options: any) => {
         if (fail) throw new Error('Offline')
         return typeof options?.q === 'string' ? [team] : []
@@ -96,6 +97,12 @@ describe('TV native browser bridge', () => {
       expect(
         element.querySelector('[data-testid="tv-search-label"]')?.textContent
       ).equals('Search')
+      await settle()
+      expect(
+        element
+          .querySelector('[data-testid="tv-hero"]')
+          ?.getAttribute('tabindex')
+      ).equals('-1')
       const searchButton = element.querySelector<HTMLElement>(
         '[data-testid="tv-search"]'
       )!
@@ -123,11 +130,19 @@ describe('TV native browser bridge', () => {
       await settle()
       expect(nativeViews.get('TVSearch').items[0].title).equals('Demo Hawks')
       await act(async () => {
+        searchButton.focus()
+      })
+      await act(async () => {
         nativeViews
           .get('TVSearch')
           .onSelect({ nativeEvent: { id: 'team:team' } })
       })
       expect(element.textContent).contains('Demo Hawks')
+      expect(
+        getComputedStyle(
+          element.querySelector<HTMLElement>('[data-testid="tv-search"]')!
+        ).backgroundColor
+      ).equals('rgb(85, 85, 85)')
       await act(async () => {
         element.querySelector<HTMLElement>('[data-testid="tv-search"]')!.click()
       })
