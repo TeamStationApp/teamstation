@@ -5,7 +5,7 @@ import { makeId } from '../../common/ids'
 import { asUserId } from '../../common/userId'
 import { onePerson } from '../admin/people'
 import type { ChangeFeed } from '../changeFeed/feed'
-import { type Database, isPoolTimeout } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
 import { survivors } from '../teams/teamStaff'
 import {
   audienceOf,
@@ -366,7 +366,7 @@ export async function processMarks(
     try {
       await reconcileScope(db, target.kind, target.scopeId, now)
     } catch (error) {
-      if (isPoolTimeout(error)) throw error
+      if (isConnectionUnavailable(error)) throw error
       failed += 1
       log(`reconciling ${target.kind} ${target.scopeId}: ${String(error)}`)
     }
@@ -375,7 +375,7 @@ export async function processMarks(
     try {
       await recheckDm(db, id, now)
     } catch (error) {
-      if (isPoolTimeout(error)) throw error
+      if (isConnectionUnavailable(error)) throw error
       failed += 1
       log(`re-checking DM ${id}: ${String(error)}`)
     }
@@ -418,7 +418,7 @@ export async function drainDirty(
   try {
     await processMarks(db, marks, now, log)
   } catch (error) {
-    if (!isPoolTimeout(error)) {
+    if (!isConnectionUnavailable(error)) {
       const kept = new Set(rowsOf(marks))
       await forget(rowsOf(read).filter(row => !kept.has(row))).catch(
         (failure: unknown) => {
@@ -713,7 +713,7 @@ export class ChatReconciler {
       } catch (error) {
         this.log(String(error))
         // Connections are short, not gone, and the marks are all still there.
-        if (isPoolTimeout(error)) this.askAgain()
+        if (isConnectionUnavailable(error)) this.askAgain()
       }
     })
     this.queue = next

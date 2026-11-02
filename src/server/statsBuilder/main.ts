@@ -3,7 +3,7 @@ import { captureException, flush } from '@sentry/node'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { makeChangeFeed } from '../changeFeed/makeChangeFeed'
 import { PostgresFeed } from '../changeFeed/postgresFeed'
-import { isPoolTimeout, makeDatabase } from '../db/database'
+import { isConnectionUnavailable, makeDatabase } from '../db/database'
 import {
   requestDatabaseUrl,
   type ServerConfig,
@@ -167,7 +167,7 @@ export async function runStatsBuilder(
     } catch (error) {
       // Connections are short, not gone: a new process would find the same.
       // What is owed stays owed, so a later attempt finds it.
-      if (!isPoolTimeout(error)) throw error
+      if (!isConnectionUnavailable(error)) throw error
       console.error(`stats builder: asking again: ${String(error)}`)
       scheduleGen += 1
       clearTimer()

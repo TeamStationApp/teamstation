@@ -1,7 +1,7 @@
 import { asObject, asOptional, asString } from 'cleaners'
 
 import type { ChangeFeed } from '../changeFeed/feed'
-import { isPoolTimeout } from '../db/database'
+import { isConnectionUnavailable } from '../db/database'
 import {
   SCREEN_SCOPES_CHANNEL,
   type ScreenScopeIds,
@@ -116,7 +116,7 @@ export class ScreenScopeListener {
       timer: setTimeout(() => {
         this.held.delete(key)
         this.deliver(held.payload).catch((error: unknown) => {
-          if (!isPoolTimeout(error)) {
+          if (!isConnectionUnavailable(error)) {
             this.log(
               `sending ${JSON.stringify(held.payload)}: ${String(error)}`
             )

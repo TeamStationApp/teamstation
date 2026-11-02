@@ -13,7 +13,11 @@ import {
   testDatabaseUrl
 } from '../../migrate/testDatabase'
 import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
-import { type Database, isPoolTimeout, makeDatabase } from '../db/database'
+import {
+  type Database,
+  isConnectionUnavailable,
+  makeDatabase
+} from '../db/database'
 import { type ChatFixture, openChatFixture } from './chatTestFixture'
 import { createDm } from './dms'
 import { appendLog, joinMembers, openGrantRequests } from './membershipLog'
@@ -721,7 +725,7 @@ describe('the chat reconciler (U5)', function () {
       () => undefined,
       (error: unknown) => error
     )
-    expect(isPoolTimeout(failure)).equals(true)
+    expect(isConnectionUnavailable(failure)).equals(true)
     expect(
       await db
         .selectFrom('chat_dirty')

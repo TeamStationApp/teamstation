@@ -29,7 +29,7 @@ import { sessionToken } from '../auth/tokens'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { PostgresFeed } from '../changeFeed/postgresFeed'
 import { mayPost, type PostingStanding } from '../chat/messages'
-import { type Database, isPoolTimeout } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
 import {
   ChatFanout,
   type ChatFanoutOptions,
@@ -739,7 +739,7 @@ export function attachGameSocket(
           )
             tell(connection, screen)
         } catch (error: unknown) {
-          if (isPoolTimeout(error)) unread.push(connection)
+          if (isConnectionUnavailable(error)) unread.push(connection)
           else log(`game socket: telling ${screen.scope}: ${String(error)}`)
         }
       })
@@ -992,7 +992,7 @@ export function attachGameSocket(
         console.error(`game socket: signing in an upgrade: ${String(error)}`)
         // Out of connections for the moment, so it is told to come back, as a
         // starved request is.
-        if (isPoolTimeout(error))
+        if (isConnectionUnavailable(error))
           refuseUpgrade(
             socket,
             503,
