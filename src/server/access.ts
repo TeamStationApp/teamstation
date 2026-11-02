@@ -76,10 +76,7 @@ async function guardedPeopleOfEach(
     .execute()
   const related = new Map<string, string[]>()
   for (const link of links)
-    related.set(link.user_id, [
-      ...(related.get(link.user_id) ?? []),
-      link.related_user_id
-    ])
+    listUnder(related, link.user_id, link.related_user_id)
   const linked = await onePeople(
     db,
     links.map(link => link.related_user_id)
@@ -293,8 +290,7 @@ async function teamsPlayedOnNowByRow(
     .where('memberships.is_player', '=', true)
     .where('teams.merged_into', 'is', null)
     .execute()
-  for (const row of plays)
-    teams.set(row.user_id, [...(teams.get(row.user_id) ?? []), row.team_id])
+  for (const row of plays) listUnder(teams, row.user_id, row.team_id)
   return teams
 }
 
