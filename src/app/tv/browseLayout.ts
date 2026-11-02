@@ -88,3 +88,12 @@ export function browseGeometry(
 export function collectionTop(heroHeight: number, scrollY: number): number {
   return Math.max(0, heroHeight - Math.max(0, scrollY))
 }
+
+/** Fit wrapped matchup names and venue text inside the reserved hero area. */
+export function heroDetailsScale(
+  heroHeight: number,
+  fontScale: number,
+  measuredHeight: number
+): number {
+  return Math.min(1, heroHeight / Math.max(440 * fontScale, measuredHeight))
+}
