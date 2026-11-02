@@ -1030,12 +1030,14 @@ function cleanTagged(
   raw: Record<string, unknown> & { type: string },
   game: Players
 ): Cleaned {
-  // These model labels repeat the play/base, not a separate advance reason.
-  // Keep the actual runner, destination and Out call for the game to settle.
+  // These model labels repeat the play or the base, not a separate advance
+  // reason. "Safe at third" names where he is; "Safe at home" is a real reason
+  // and stays. Keep the runner, the destination and the out call.
   const optionalReason =
     raw.type === 'runnerMovement' &&
     typeof raw.reason === 'string' &&
     (/^fielder['’]?s? choice$/i.test(raw.reason) ||
+      /^safe at (?:first|second|third)$/i.test(raw.reason) ||
       (raw.out === true && /^out at (?:first|second|third)$/i.test(raw.reason)))
   const untagged = untaggedAction(
     optionalReason ? { ...raw, reason: undefined } : raw,
