@@ -197,7 +197,6 @@ async function main(): Promise<void> {
         }))
       ])
       if (
-        webTree !== undefined &&
         tvTree !== undefined &&
         rows.every(
           row =>
