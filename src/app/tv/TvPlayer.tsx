@@ -1068,7 +1068,7 @@ export function TvPlayer({
             pointerEvents="none"
             style={[StyleSheet.absoluteFill, { left: -screen.width * 0.1 }]}
           >
-            <PanelGradient direction="right" maxOpacity={0.6} />
+            <PanelGradient direction="right" maxOpacity={0.75} />
           </View>
         )}
         <TvFocusGuide
@@ -1150,7 +1150,11 @@ export function TvPlayer({
                           y2="1"
                         >
                           <Stop offset="0" stopColor="#000" stopOpacity={0} />
-                          <Stop offset="1" stopColor="#000" stopOpacity={0.5} />
+                          <Stop
+                            offset="1"
+                            stopColor="#000"
+                            stopOpacity={0.75}
+                          />
                         </LinearGradient>
                       </Defs>
                       <Rect
@@ -1277,7 +1281,7 @@ export function TvPlayer({
             { top: -screen.height * 0.1, bottom: -screen.height * 0.15 }
           ]}
         >
-          <PanelGradient direction="bottom" maxOpacity={0.5} />
+          <PanelGradient direction="bottom" maxOpacity={0.75} />
         </View>
         <TvFocusGuide
           autoFocus
@@ -1531,7 +1535,7 @@ function StatRow({
 
 function PanelGradient({
   direction,
-  maxOpacity = 0.1
+  maxOpacity = 0.75
 }: {
   maxOpacity?: number
   direction: 'left' | 'right' | 'bottom'

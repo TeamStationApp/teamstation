@@ -84,7 +84,7 @@ export function TvScrim(): React.ReactElement {
       {NativeGradient !== null ? (
         <NativeGradient
           gradientDirection="left"
-          maxOpacity={0.5}
+          maxOpacity={0.75}
           style={{
             position: 'absolute',
             left: 0,
@@ -97,7 +97,7 @@ export function TvScrim(): React.ReactElement {
         <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
           <Defs>
             <LinearGradient id="hero-left" x1="0" y1="0" x2="1" y2="0">
-              <Stop offset="0" stopColor="#000" stopOpacity={0.5} />
+              <Stop offset="0" stopColor="#000" stopOpacity={0.75} />
               <Stop offset="0.4" stopColor="#000" stopOpacity={0} />
             </LinearGradient>
           </Defs>
@@ -117,9 +117,9 @@ const focusTag = (node: FocusNode | null): number | undefined =>
 
 /** One-pixel-wide alpha ramps stretch smoothly without native layer seams. */
 const browseGradientDown =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAEACAYAAAByPhyYAAAA8UlEQVR4nFXEU1seAACA0a9Vy3Zt2TbWsm3btrHaT+9573rPxQkEvguiHy6YQlwo/XRhFO4iKNJFUbSLoVgXR/EugRJdEiW7FEp1aZTuMijTZdEv95uyXQ7lujzKdwVU6Iqo2JVQqSujcldBla6Kql0N1bo6qncN1OiaqNm1UKtroz+unf66Dup0XdTteqjX9VG/G6BBN0TDboRG3RiNuwmadFM07WZo1s3RvFugRbdEy26FVt0arbsN2nRbtO12aNft0b47oEN3RMfuhE7dGZ27C7p0V3TtbujW3dG9e6BH90TP7oVe3Ru9u3/04T7p/xe1Jz/BwQ1IPgAAAABJRU5ErkJggg=='
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAEACAYAAAByPhyYAAABBUlEQVR4AVXBsQEAMAzDIKL/j67Xgs+FMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhTuAcUmArouvq7PAAAAAElFTkSuQmCC'
 const browseGradientUp =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAEACAYAAAByPhyYAAAA+UlEQVR4nFXE1VJQAQAA0Ut3d0p3h9JIN0oooXQqINIdnw77wszuzJ4gCILX94MXeDZP8Gge4N7cwa25gWtzBZfmAs7NGfw3p/DPnMCxOYK/5g8cmgPYN3uwa3Zg22zBptmAdbMGv80vWDUrsGyW4Kf5AYtmAebNHHw332DWzMC0mYJJMwHjZgxGzQgMmyEYNAPw1fRDn+mFHtMNXaYTOswX+Gzaoc20QotphibTCA2mHupMLdSYaqgylVBhyqHMlEKJKYYi8wkKTQHkmzzINTmQbbIg02RAukmDVJMCySYJEk0CxJs4iDUxEG2iINJEQLgJg1ATEnz0BmgsP8GHdTAfAAAAAElFTkSuQmCC'
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAEACAYAAAByPhyYAAABIklEQVR4AVXBsWECQBAEMTH0XxOd/XlTS+YXLrxMJlx4mUy48DKZcOFlMuHCy2TChZfJhAsvkwkXXiYTLrxMJlx4mUy48DKZcOFlMuHCy2TChZfJhAsvkwkXXiYTLrxMJlx4mUy48DKZcOFlMuHCy2TChZfJhAsvkwkXXiYTLrxMJlx4mUy48DKZcOFlMuHCy2TChZfJhAsvkwkXLpMJL1wmE164TCa8cJlMeOEymfDCZTLhhctkwguXyYQXLpMJL1wmE164TCa8cJlMeOEymfDCZTLhhctkwguXyYQXLpMJL1wmE164TCa8cJlMeOEymfDCZTLhhctkwguXyYQXLpMJL1wmE164TCa8cJlMeOEymfDCZTLhhctkvviEy2S+/vkD/0J/A7c7W80AAAAASUVORK5CYII='
 function BrowseGradient({
   reverse = false
 }: {
@@ -135,9 +135,9 @@ function BrowseGradient({
   )
 }
 
-/** One continuous ramp with a long 50% tail: no join can expose the video. */
+/** One continuous ramp with a long 75% tail: no join can expose the video. */
 const collectionGradient =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAQACAYAAAAgBjM/AAABCUlEQVR4nO3EVzsQYABAYSlkZGQTGSl774xsomXvXfaeGfHTPeeu8xt878UbEfG/FxTpXtIrF0XRLoZeu1iKc/GU4N5QokuiZJdCb10qpbl0ynCZlOWyKcfl0juXR/nuPRW4QipyxfTBldBH94lKXRmVuwqqdFVU7Wqo1tVRvWugRtdEza6FWl0btbvP1OE6qct10xfXQ72uj/rdAA26IRp2I/TVjdKY+0bf3Q/66X7RuJugSTdF026GZt0czbsFWnRLtOxWaNWt0brboE33m/64Ldp2O7Tr9mjfHdChO6Jjd0Kn7ozO3QVduiu6dn/pxt3Snbunf+6BHkOhUCgUCoVCoVAoFHoOPQGk3L/QOf9djAAAAABJRU5ErkJggg=='
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAQACAYAAAAgBjM/AAADpUlEQVR4AVXBsQEAMAzDIKL/j67Xgs+FMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQuk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUzmAb8wCLqSa8HwAAAAAElFTkSuQmCC'
 function CollectionBackground({
   top,
   rowHeight
@@ -437,7 +437,7 @@ export function TvBrowser({
             <Svg width="100%" height="100%">
               <Defs>
                 <LinearGradient id="header" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <Stop offset="0" stopColor="black" stopOpacity={0.5} />
+                  <Stop offset="0" stopColor="black" stopOpacity={0.75} />
                   <Stop offset="1" stopColor="black" stopOpacity={0} />
                 </LinearGradient>
               </Defs>

@@ -726,7 +726,7 @@ describe('TV game playback entry', () => {
     expect(camera.textContent).equals('Angle 0')
     const stops = camera.querySelectorAll('stop')
     expect(stops[0].getAttribute('stop-opacity')).equals('0')
-    expect(stops[1].getAttribute('stop-opacity')).equals('0.5')
+    expect(stops[1].getAttribute('stop-opacity')).equals('0.75')
     await press('Toggle Angle 0')
     expect(
       camera.querySelector<HTMLElement>('[data-testid="tv-camera-dim-0"]')!

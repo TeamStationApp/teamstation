@@ -179,7 +179,7 @@ describe('TV browser journeys', () => {
     const stops = document.querySelectorAll(
       '[data-testid="tv-hero-scrim"] stop'
     )
-    expect(stops[0].getAttribute('stop-opacity')).equals('0.5')
+    expect(stops[0].getAttribute('stop-opacity')).equals('0.75')
     expect(stops[1].getAttribute('offset')).equals('0.4')
     expect(stops[1].getAttribute('stop-opacity')).equals('0')
     const headerStops = document.querySelectorAll(
@@ -187,7 +187,7 @@ describe('TV browser journeys', () => {
     )
     expect(
       [...headerStops].map(stop => stop.getAttribute('stop-opacity'))
-    ).deep.equals(['0.5', '0'])
+    ).deep.equals(['0.75', '0'])
     expect(
       document.querySelectorAll('[data-testid="tv-collection-background"] img')
         .length
