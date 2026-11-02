@@ -659,10 +659,12 @@ export function attachGameSocket(
    * Nothing else is told: a notice nobody matches is dropped.
    */
   const announce = async (payload: ScreenScopePayload): Promise<void> => {
-    const holding = [...connections].filter(
-      connection => connection.screen != null
+    const asked = [...connections].flatMap(connection =>
+      connection.screen == null
+        ? []
+        : [{ connection, screen: connection.screen }]
     )
-    if (holding.length === 0) return
+    if (asked.length === 0) return
     const { gameId, teamId, seasonId, userId, revision } = payload
     // A notice of one game alone (a play, its score) names it to home and
     // schedule too, so a list that shows no games can let it pass.
@@ -693,24 +695,29 @@ export function attachGameSocket(
             awayTeamId: row.away_team_id,
             seasonId: row.season_id
           }
+    // A socket that closed or changed its screen during that read is not
+    // told, and does not stop the others being told.
+    const holding = asked.filter(
+      ({ connection, screen }) => connection.screen === screen
+    )
     // Everybody whose answer turns on their scopes, read together.
     readScopesOf(
-      holding.filter(connection => {
-        const screen = connection.screen!
-        if (gameId != null)
-          return (
-            game != null &&
-            (screen.scope !== 'event' || screen.gameId === gameId)
-          )
-        if (screen.scope === 'event') return false
-        if (userId != null && connection.actor.userId === userId) return false
-        return teamId != null || seasonId != null
-      })
+      holding
+        .filter(({ connection, screen }) => {
+          if (gameId != null)
+            return (
+              game != null &&
+              (screen.scope !== 'event' || screen.gameId === gameId)
+            )
+          if (screen.scope === 'event') return false
+          if (userId != null && connection.actor.userId === userId) return false
+          return teamId != null || seasonId != null
+        })
+        .map(({ connection }) => connection)
     )
     const unread: Connection[] = []
     await Promise.all(
-      holding.map(async connection => {
-        const screen = connection.screen!
+      holding.map(async ({ connection, screen }) => {
         try {
           if (gameId != null) {
             if (screen.scope === 'event' && screen.gameId !== gameId) return
