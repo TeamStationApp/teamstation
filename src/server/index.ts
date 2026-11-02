@@ -23,7 +23,7 @@ import { modelsOf } from './dictation/models'
 import { attachDictation } from './dictation/route'
 import { dictationScopes } from './dictation/scopes'
 import { purgeReplacedRecordings } from './director/purge'
-import { reopenInterruptedUploads } from './director/uploads'
+import { reopenInterruptedUploadsSoon } from './director/uploads'
 import { deliverAccountMail } from './email/accountMail'
 import {
   type AddedNotice,
@@ -266,13 +266,7 @@ function liveRouteOptions(): LiveRouteOptions {
  * and an upload interrupted there stayed `assembling` for ever.
  */
 function reopenInterrupted(db: ReturnType<typeof makeDatabase>): void {
-  reopenInterruptedUploads(db)
-    .then((count: number) => {
-      if (count > 0) console.log(`reopened ${count} interrupted upload(s)`)
-    })
-    .catch((error: unknown) => {
-      console.error(`reopening interrupted uploads: ${String(error)}`)
-    })
+  reopenInterruptedUploadsSoon(db)
 }
 
 /** How often replaced recordings whose month is up are looked for. */
