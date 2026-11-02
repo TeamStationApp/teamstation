@@ -84,6 +84,19 @@ describe("Tess's system prompt", function () {
     expect(index.split('\n').every(line => line.length <= 900)).equals(true)
   })
 
+  it('tells her how to page the umpire leaderboard in either direction', function () {
+    const line = instructions()
+      .split('\n')
+      .find(each =>
+        each.startsWith('GET /leagues/{leagueId}/umpire-leaderboard:')
+      )
+    expect(line).includes('fewest first')
+    expect(line).includes('up to 50')
+    expect(line).includes('league administrator')
+    expect(line).match(/\. Query: order, limit, offset$/)
+    expect(line?.length).lessThan(900)
+  })
+
   it('reads GraphQL with its own tool: named in the instructions, left out of the index, and not refused', function () {
     const [instructed, index] = instructions().split('## API index')
     expect(instructed).includes('## Reading with GraphQL')
