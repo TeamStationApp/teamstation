@@ -76,6 +76,9 @@ export function shownSettings(settings: NodeSettings): NodeSettings {
       ...s,
       single: shownPlacement(s.single),
       landscape: shownPlacement(s.landscape),
+      tvLandscape: shownPlacement(
+        s.tvLandscape ?? defaultNodeSettings.scoreboard.tvLandscape!
+      ),
       portraitHeight: nearest(HEIGHTS, s.portraitHeight * 100) / 100,
       speedHoldSec: nearest(HOLDS, s.speedHoldSec)
     },
@@ -263,9 +266,10 @@ export function NodeSettingsCard({
     )
   const placementRows = (
     name: string,
-    key: 'single' | 'landscape'
+    key: 'single' | 'landscape' | 'tvLandscape'
   ): React.ReactElement => {
-    const placement = scoreboard[key]
+    const placement =
+      scoreboard[key] ?? defaultNodeSettings.scoreboard.tvLandscape!
     const set = (part: Partial<BoardPlacement>): NodeSettings => ({
       ...settings,
       scoreboard: { ...scoreboard, [key]: { ...placement, ...part } }
@@ -344,6 +348,7 @@ export function NodeSettingsCard({
         </ListCard>
         {placementRows('Single camera', 'single')}
         {placementRows('Four-angle landscape', 'landscape')}
+        {placementRows('Four-angle TV', 'tvLandscape')}
         <View style={styles.group}>
           <Text style={styles.groupTitle}>Four-angle portrait</Text>
           <ListCard>
