@@ -174,6 +174,30 @@ afterEach(async () => {
   failSearch = false
 })
 describe('TV browser journeys', () => {
+  it('provides the hero watch action on home, team and player pages with the requested scrim', async () => {
+    await render()
+    const stops = document.querySelectorAll(
+      '[data-testid="tv-hero-scrim"] stop'
+    )
+    expect(stops[0].getAttribute('stop-opacity')).equals('0.5')
+    expect(stops[1].getAttribute('offset')).equals('0.4')
+    expect(stops[1].getAttribute('stop-opacity')).equals('0')
+    await click('[data-testid="tv-watch-game"]')
+    expect(played.at(-1)?.game.id).equals(games[0].id)
+    await click('[data-testid="team-home"]')
+    const teamPage = document.querySelector('[data-testid="tv-page-home"]')!
+    expect(teamPage.querySelector('[data-testid="tv-watch-game"]')).not.equals(
+      null
+    )
+    await button('Back')
+    await search('Babe')
+    await button('Babe R')
+    const playerPage = document.querySelector('[data-testid="tv-page-player"]')!
+    expect(
+      playerPage.querySelector('[data-testid="tv-watch-game"]')
+    ).not.equals(null)
+  })
+
   it('keeps a static thumbnail focus cue with or without artwork and native motion', async () => {
     await render()
     for (const id of ['recent-game-0', 'recent-game-1']) {
@@ -285,6 +309,7 @@ describe('TV browser journeys', () => {
   })
   it('searches authorized teams and players, handles empty/error results and opens the player page', async () => {
     await render()
+    const searchTarget = document.querySelector('[data-testid="tv-search"]')
     await search('Babe')
     expect(
       document.querySelector('[data-testid="tv-search-results"]')?.textContent
@@ -295,7 +320,13 @@ describe('TV browser journeys', () => {
     )
       .contains('Babe R')
       .and.contains('Recent Games')
+    expect(document.querySelector('[data-testid="tv-search"]')).equals(
+      searchTarget
+    )
     await button('Back')
+    expect(document.querySelector('[data-testid="tv-search"]')).equals(
+      searchTarget
+    )
     await search('missing')
     expect(document.body.textContent).contains('No accessible teams or players')
     await button('Close search')
