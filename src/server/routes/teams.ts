@@ -158,6 +158,23 @@ export function teamRoutes(
                 .where('id', 'in', ids)
                 .where('merged_into', 'is', null)
                 .execute()
+        const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+        const admins = await adminScopes(db, actor.userId, actor.isAdmin)
+        const person = await onePerson(db, actor.userId)
+        const follows = await db
+          .selectFrom('team_follows')
+          .select('team_id')
+          .where('user_id', 'in', person.userIds)
+          .execute()
+        const followed = new Set(follows.map(row => row.team_id))
+        const latest = new Map<string, number>()
+        for (const game of games) {
+          for (const id of [game.homeTeamId, game.awayTeamId])
+            latest.set(
+              id,
+              Math.max(latest.get(id) ?? 0, game.uploadedAt.getTime())
+            )
+        }
         res.json(
           teams
             .filter(team =>
@@ -173,6 +190,15 @@ export function teamRoutes(
             .map(team => ({
               ...team,
               videoSeason: details.teams.get(team.id) ?? null,
+              latestVideoAt: new Date(latest.get(team.id)!).toISOString(),
+              videoRelationship:
+                scopes.memberTeamIds?.has(team.id) === true
+                  ? 'member'
+                  : followed.has(team.id)
+                    ? 'following'
+                    : canManageTeam(admins, team.id)
+                      ? 'admin'
+                      : 'other',
               logoUrl: imageUrl(media.space, team.logoPath),
               record: null
             }))
