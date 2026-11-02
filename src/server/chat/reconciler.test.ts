@@ -694,17 +694,12 @@ describe('the chat reconciler (U5)', function () {
     await fixture.drain()
   })
 
-  /** A database that answers reads, while every write and transaction finds no connection. */
+  /** A database whose reconciling finds no connection, nor does putting a mark back. */
   const starvedWrites = (starving: () => boolean): Kysely<Database> =>
     new Proxy(db, {
       get(target, prop) {
         const value = Reflect.get(target, prop, target)
-        if (
-          starving() &&
-          (prop === 'transaction' ||
-            prop === 'deleteFrom' ||
-            prop === 'insertInto')
-        )
+        if (starving() && (prop === 'transaction' || prop === 'insertInto'))
           return () => {
             throw new Error('timeout exceeded when trying to connect')
           }
