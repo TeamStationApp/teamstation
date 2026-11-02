@@ -20,14 +20,16 @@ import {
   parseStoredGame
 } from '../../common/api'
 import type { GameSocketListener } from '../../common/gameSocket'
-import { replayBoxScore, scoredFrom } from '../../common/replay/replayBoxScore'
 import { namesOf } from '../../common/replay/replayNames'
+import {
+  readReplaySource,
+  replayScore,
+  replaySourceOf
+} from '../../common/replay/replaySource'
 import {
   extendTimeline,
   isReplayable,
-  replayContextOf,
-  type ReplayTimeline,
-  replayTimelineOf
+  type ReplayTimeline
 } from '../../common/replay/replayTimeline'
 import type { SessionContext, StoredGame } from '../../common/scoring/session'
 import { Icon } from '../components/Icon'
@@ -235,21 +237,21 @@ export function GameReplayScreen(
       }),
       () => ({ announcer: false, pitchSlotMs: SLOT_MS.pitch })
     )
-    Promise.all([client.game(gameId), client.gameEvents(gameId), health])
-      .then(([game, stored, { announcer, pitchSlotMs }]) => {
+    Promise.all([readReplaySource(client, gameId), health])
+      .then(([{ game, stored }, { announcer, pitchSlotMs }]) => {
         if (!live) return
-        const context = replayContextOf(game, stored)
-        if (!isReplayable(game, game.replayable) || context == null) {
+        const source = replaySourceOf(game, stored)
+        if (!isReplayable(game, game.replayable) || source == null) {
           notReplayable.current()
           return
         }
         setLoaded({
           game,
-          timeline: replayTimelineOf(stored, context),
+          timeline: source.timeline,
           mode: game.status === 'inProgress' ? 'live' : 'replay',
           narration: announcer,
           pitchSlotMs,
-          context
+          context: source.context
         })
       })
       .catch(() => {
@@ -529,12 +531,7 @@ function ReplayView(props: {
       celebration == null ? undefined : { ...celebration, paused: state.paused }
   }
   const box = useMemo(
-    () =>
-      replayBoxScore(
-        session,
-        // The game as it stands: importing earlier plays rewrites the timeline.
-        scoredFrom(state.timeline.start, state.timeline.derived)
-      ),
+    () => replayScore(session, state.timeline),
     [session, state.timeline]
   )
   const card = replayCard(state, {
