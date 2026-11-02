@@ -61,7 +61,7 @@ export default [
   },
 
   {
-    files: ['Masonfile.ts'],
+    files: ['Masonfile.ts', 'types/mason-pipeline.d.ts'],
     languageOptions: {
       parserOptions: { projectService: false, project: './tsconfig.mason.json' }
     }
