@@ -165,9 +165,8 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
    * A finger reports faster than the screen draws, and each report re-renders
    * the drop targets; the runner and the guide follow it in the scene alone.
    */
-  const offered = (runner: { view: RunnerDragView; shown?: string }): void => {
-    const { view } = runner
-    const shown = JSON.stringify([
+  const offerKey = (view: RunnerDragView): string =>
+    JSON.stringify([
       view.id,
       view.from,
       view.to,
@@ -177,9 +176,11 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       view.safe,
       view.out
     ])
+  const offered = (runner: { view: RunnerDragView; shown?: string }): void => {
+    const shown = offerKey(runner.view)
     if (shown === runner.shown) return
     runner.shown = shown
-    callbacks.current.onRunnerDrag?.({ ...view })
+    callbacks.current.onRunnerDrag?.({ ...runner.view })
   }
   const clearHold = (): void => {
     if (holdTimer.current != null) clearTimeout(holdTimer.current)
@@ -288,9 +289,11 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         }
       if (drag.current != null) {
         const player = players.find(item => item.id === drag.current?.id)
+        const touch = drag.current.touch === true
         if (player != null) finishMove(player, drag.current, true)
         drag.current = null
         callbacks.current.onGestureActive?.(false)
+        if (touch) callbacks.current.onHoldClock?.(false)
       }
     }
   }, [
@@ -511,8 +514,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     dragCapture.current = event.target as Element
     dragGeneration.current = props.interaction?.generation ?? 0
     gestureId.current++
-    props.onGestureActive?.(true)
-    onSelect(player.id)
+    const touchGrab = isTouch(event)
     drag.current = beginMove(player, event.pointerId, point, nearest != null)
     drag.current.touch = isTouch(event)
     if (props.interaction?.runnerIds?.includes(player.id) === true) {
@@ -530,11 +532,21 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         props.interaction?.advanceIds == null ||
           props.interaction.advanceIds.includes(player.id)
       )
-      runnerDrag.current = { id: player.id, held: false, moved: false, view }
+      runnerDrag.current = {
+        id: player.id,
+        held: false,
+        moved: false,
+        view,
+        // The grab already offers this view. A wobble that leaves it
+        // unchanged must not publish again and remount Safe and Out.
+        shown: offerKey(view)
+      }
       clearHold()
       holdTimer.current = setTimeout(() => {
         if (runnerDrag.current?.id !== player.id) return
         runnerDrag.current.held = true
+        // A still hold publishes the view the grab already recorded.
+        runnerDrag.current.shown = undefined
         offered(runnerDrag.current)
       }, 350)
     }
@@ -547,6 +559,13 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         drag.current.goal = props.constrainPlacement(drag.current.goal)
     } else if (nearest == null)
       previewMove(drag.current, offsetTouchTarget(point, isTouch(event)))
+    // A scoring-screen redraw from this handler drops the rest of a touch on
+    // a just-finished play. The scene still selects the player and paints the
+    // guide. A touch holds the clock in the parent without that redraw; a
+    // pointer raises the gesture flag, which paints the grab itself.
+    if (touchGrab) props.onHoldClock?.(true)
+    else props.onGestureActive?.(true)
+    onSelect(player.id)
     setPreview({ ...drag.current })
     const capture = event.target as Element
     capture.setPointerCapture(event.pointerId)
@@ -582,6 +601,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     }
     if (drag.current?.pointer !== event.pointerId) return
     event.stopPropagation()
+    if (drag.current.touch === true) props.onHoldClock?.(false)
     if (!cancel && runnerDrag.current != null) move(event)
     clearHold()
     const runner = runnerDrag.current
@@ -642,8 +662,10 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const lostMove = (): void => {
     if (drag.current != null) {
       const player = players.find(item => item.id === drag.current?.id)
+      const touch = drag.current.touch === true
       if (player != null) finishMove(player, drag.current, true)
       drag.current = null
+      if (touch) props.onHoldClock?.(false)
       clearHold()
       runnerDrag.current = null
       props.onRunnerDrag?.(null)
@@ -679,6 +701,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       }
       const moving = drag.current
       drag.current = null
+      if (moving?.touch === true) callbacks.current.onHoldClock?.(false)
       if (moving != null) {
         const player = callbacks.current.players.find(
           item => item.id === moving.id

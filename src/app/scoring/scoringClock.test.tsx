@@ -45,20 +45,29 @@ class FakeClock implements ScoringClock {
 }
 let root: Root | undefined
 let result: ScoringState
+let clockControls: { pause: () => void; resume: () => void }
 function Window({
   initial,
   paused,
   clock,
-  native = false
+  native = false,
+  held
 }: {
   initial: ScoringState
   paused: boolean
   clock: ScoringClock
   native?: boolean
+  held?: { current: boolean }
 }): React.ReactElement {
   const [state, dispatch] = useReducer(scoringReducer, initial)
   result = state
-  ;(native ? nativeClock : useScoringClock)(state, paused, dispatch, clock)
+  clockControls = (native ? nativeClock : useScoringClock)(
+    state,
+    paused,
+    dispatch,
+    clock,
+    held
+  )
   return <div>{state.phase}</div>
 }
 /** Sets what a page reads for `document.hidden` and React Native Web's AppState. */
@@ -159,6 +168,75 @@ describe('correction clock', function () {
         result.session.liveData.plays.currentPlay!.matchup.batter.id
       ).equals(2)
     })
+  it('pauses at once for a touch and resumes the remainder', async function () {
+    let initial = initialScoringState(scoringSession(gameFixture))
+    initial = singleCorrection(initial)
+    const clock = new FakeClock()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(<Window initial={initial} paused={false} clock={clock} />)
+    })
+    await act(async () => {
+      clock.advance(1000)
+    })
+    expect(result.correctionWindow!.remainingMs).equals(
+      CORRECTION_WINDOW_MS - 1000
+    )
+    await act(async () => {
+      clockControls.pause()
+    })
+    await act(async () => {
+      clock.advance(50000)
+    })
+    expect(result.correctionWindow!.remainingMs).equals(
+      CORRECTION_WINDOW_MS - 1000
+    )
+    await act(async () => {
+      clockControls.resume()
+    })
+    await act(async () => {
+      clock.advance(1000)
+    })
+    expect(result.correctionWindow!.remainingMs).equals(
+      CORRECTION_WINDOW_MS - 2000
+    )
+  })
+  it('keeps the remainder while a touch is down', async function () {
+    let initial = initialScoringState(scoringSession(gameFixture))
+    initial = singleCorrection(initial)
+    const clock = new FakeClock()
+    const held = { current: false }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <Window initial={initial} paused={false} clock={clock} held={held} />
+      )
+    })
+    await act(async () => {
+      clock.advance(1000)
+    })
+    expect(result.correctionWindow!.remainingMs).equals(
+      CORRECTION_WINDOW_MS - 1000
+    )
+    held.current = true
+    await act(async () => {
+      clock.advance(50000)
+    })
+    expect(result.correctionWindow!.remainingMs).equals(
+      CORRECTION_WINDOW_MS - 1000
+    )
+    held.current = false
+    await act(async () => {
+      clock.advance(1000)
+    })
+    expect(result.correctionWindow!.remainingMs).equals(
+      CORRECTION_WINDOW_MS - 2000
+    )
+  })
   it('counts a phone as hidden only in the background', function () {
     expect(appVisibility.hidden()).equals(false)
     setHidden(true)
