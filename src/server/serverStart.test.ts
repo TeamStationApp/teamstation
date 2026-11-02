@@ -83,6 +83,9 @@ describe('the server process', function () {
         clusterWorkers: workers,
         statsBuilder: false,
         logRequests: false,
+        appLinks: {
+          apps: [{ origin: 'https://tv.example.test', tvLogin: true }]
+        },
         mediaDir: join(home, 'media'),
         workDir: join(home, 'work'),
         // The clustered run names its own uploads directory and a Space
@@ -143,6 +146,14 @@ describe('the server process', function () {
       const code = await start(workers, async base => {
         const health = await fetch(`${base}/api/v1/health`)
         expect(health.status).equals(200)
+        const tv = await fetch(`${base}/api/v1/auth/tv/start`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ platform: 'Apple TV' })
+        })
+        expect(tv.status).equals(200)
+        const login = await tv.json()
+        expect(new URL(login.qrUrl).origin).equals('https://tv.example.test')
         // Signed out, a chat route answers through the app as it is wired.
         const chats = await fetch(`${base}/api/v1/chat/conversations`)
         expect(chats.status).equals(401)
