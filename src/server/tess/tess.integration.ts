@@ -2,21 +2,24 @@ import { readFileSync } from 'node:fs'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { accountHarness } from '../../test/accountHarness'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { groupRoutes } from '../routes/groups'
 import { scheduleRoutes } from '../routes/schedule'
 import { statsRoutes } from '../routes/stats'
 import { tessRoutes } from '../routes/tess'
+import { umpireRoutes } from '../routes/umpires'
 import { type ServerConfig, tessSettings } from '../serverConfig'
 import type { StoredBlock } from './conversation'
 
 /**
- * Tess against the real model, six cases: an off-topic request is declined
+ * Tess against the real model, seven cases: an off-topic request is declined
  * with no tool call; "where are my team's settings" is answered with a path
  * link; adding a game ends in a proposed change, never a write; a stats
  * question reads the API; a chart request draws one; recording a pitch is
- * refused. Each case is one message to a fresh conversation, through the
- * real routes, the real API and a scratch database. Not part of `npm test`,
- * and it costs money: about a dozen requests.
+ * refused; a fewest-first umpire question pages the leaderboard. Each case is
+ * one message to a fresh conversation, through the real routes, the real API
+ * and a scratch database. Not part of `npm test`, and it costs money: about
+ * fifteen requests.
  *
  *   TS_TESS_CONFIG=<config.json> node -r sucrase/register src/server/tess/tess.integration.ts \
  *     [--case <n>] [--max-requests <n>]
@@ -119,6 +122,25 @@ const CASES: Case[] = [
           : turn.answer === ''
             ? 'no answer'
             : null
+  },
+  {
+    name: 'a fewest-first umpire question pages the leaderboard',
+    text: 'In my league, Demo Umpire League, which umpire has worked the fewest games?',
+    check: turn => {
+      const fewestFirst = turn.blocks.some(block => {
+        if (block.type !== 'tool_use' || block.name !== 'api_get') return false
+        const { path, query } = block.input as {
+          path: string
+          query?: { order?: string }
+        }
+        return (
+          path.includes('umpire-leaderboard') &&
+          (query?.order === 'asc' || path.includes('order=asc'))
+        )
+      })
+      if (!fewestFirst) return 'the leaderboard was not read with order=asc'
+      return turn.answer.includes('Jackie') ? null : 'Jackie was not named'
+    }
   }
 ]
 
@@ -172,6 +194,7 @@ async function main(): Promise<number> {
       app.use('/api/v1', groupRoutes(db, media))
       app.use('/api/v1', scheduleRoutes(db))
       app.use('/api/v1', statsRoutes(db, media))
+      app.use('/api/v1', umpireRoutes(db, media))
       app.use(
         '/api/v1',
         tessRoutes(db, { settings, origin: () => origin, fetch: counted })
@@ -182,6 +205,7 @@ async function main(): Promise<number> {
   const babe = userIdOfGumbo(101)
   try {
     await seed(h.db, babe)
+    await seedUmpires(h)
     let failed = 0
     for (const at of chosen) {
       const each = CASES[at]
@@ -253,6 +277,96 @@ async function writes(db: Db): Promise<number> {
       .where('path', 'not like', '/api/v1/me/tess%')
       .execute()
   ).length
+}
+
+/**
+ * User 101 runs Demo Umpire League, whose three umpires have worked three,
+ * one and no games.
+ */
+async function seedUmpires(
+  h: Awaited<ReturnType<typeof accountHarness>>
+): Promise<void> {
+  const { db } = h
+  const league = 'lea_umpires'
+  const owner = userIdOfGumbo(101)
+  await db
+    .insertInto('leagues')
+    .values({
+      id: league,
+      name: 'Demo Umpire League',
+      umpire_management: true
+    })
+    .execute()
+  await db
+    .insertInto('scope_roles')
+    .values({
+      id: 'srl_umpires',
+      user_id: owner,
+      scope_type: 'league',
+      scope_id: league,
+      role: 'admin',
+      granted_by: null
+    })
+    .execute()
+  const year = new Date().getUTCFullYear()
+  await db
+    .insertInto('seasons')
+    .values({
+      id: 'sea_umpires',
+      league_id: league,
+      name: `Demo Umpire Season ${year}`,
+      year,
+      starts_on: `${year}-01-01`,
+      ends_on: `${year}-12-31`,
+      timezone: 'UTC'
+    })
+    .execute()
+  // Its own teams, so the other cases' Demo Hawks schedule is unchanged.
+  await db
+    .insertInto('teams')
+    .values([
+      { id: 'tem_umpires_a', name: 'Demo Umpire Cubs' },
+      { id: 'tem_umpires_b', name: 'Demo Umpire Reds' }
+    ])
+    .execute()
+  const games = [0, 1, 2].map(at => ({
+    id: `gam_umpires_${at}`,
+    home_team_id: 'tem_umpires_a',
+    away_team_id: 'tem_umpires_b',
+    season_id: 'sea_umpires',
+    start_at: new Date(Date.UTC(year, 0, 8 + at)),
+    status: 'final' as const
+  }))
+  await db.insertInto('games').values(games).execute()
+  const umpires = [
+    { id: 301, first: 'Hank', last: 'Aaron', worked: 3 },
+    { id: 302, first: 'Willie', last: 'Mays', worked: 1 },
+    { id: 303, first: 'Jackie', last: 'Robinson', worked: 0 }
+  ]
+  for (const { id, first, last, worked } of umpires) {
+    await insertFixtureUsers(db, {
+      id,
+      legacyId: `usr_umpire_${id}`,
+      display_name: `${first} ${last}`,
+      first_name: first,
+      last_name: last
+    })
+    const user = userIdOfGumbo(id)
+    await db
+      .insertInto('league_umpires')
+      .values({ league_id: league, user_id: user, granted_by: owner })
+      .execute()
+    for (const game of games.slice(0, worked))
+      await db
+        .insertInto('umpire_assignments')
+        .values({
+          game_id: game.id,
+          slot: `uty_plate:${id - 300}`,
+          user_id: user,
+          assigned_by: owner
+        })
+        .execute()
+  }
 }
 
 /**
