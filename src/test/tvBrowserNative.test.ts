@@ -7,7 +7,7 @@ import { describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import { asTeamSummary } from '../common/api'
+import { asTeamSummary, asVideoGame } from '../common/api'
 
 describe('TV native browser bridge', () => {
   it('opens the native search, forwards authorized results, retries and dismisses', async () => {
@@ -68,8 +68,30 @@ describe('TV native browser bridge', () => {
       logoPath: null,
       logoUrl: null
     })
+    const game = asVideoGame({
+      id: 'game',
+      homeTeamId: 'team',
+      awayTeamId: 'away',
+      homeTeamName: 'Demo Hawks',
+      awayTeamName: 'Demo Comets',
+      homeTeamExternal: false,
+      awayTeamExternal: false,
+      seasonId: null,
+      startAt: '2026-10-30T12:00:00Z',
+      venue: null,
+      status: 'final',
+      homeScore: null,
+      awayScore: null,
+      ingestStatus: 'ok',
+      videoCount: 1,
+      latestVideoId: 'video',
+      latestVideoAt: '2026-10-30T12:00:00Z'
+    })
     const client = {
-      videoGames: async () => [],
+      videoGames: async (options: any) =>
+        options.team === undefined ? [] : [game],
+      tvHighlights: async () => [],
+      game: async () => ({ videos: [] }),
       myFollows: async () => [],
       videoTeams: async (options: any) => {
         if (fail) throw new Error('Offline')
@@ -165,6 +187,30 @@ describe('TV native browser bridge', () => {
         element.querySelector('[data-testid="tv-search-label"]')?.textContent
       ).equals('Search')
       expect(element.querySelector('[data-testid="TVSearch"]')).equals(null)
+      await settle()
+      const originalWatchTarget = nativeViews.get('tv-search').nextFocusDown
+      expect(originalWatchTarget).to.be.a('number')
+      await act(async () => {
+        element.querySelector<HTMLElement>('[data-testid="tv-search"]')!.click()
+        nativeViews.get('TVSearch').onQuery({ nativeEvent: { query: 'Hawks' } })
+      })
+      await settle()
+      await act(async () => {
+        nativeViews
+          .get('TVSearch')
+          .onSelect({ nativeEvent: { id: 'team:team' } })
+      })
+      await settle()
+      expect(nativeViews.get('tv-search').nextFocusDown)
+        .to.be.a('number')
+        .and.not.equal(originalWatchTarget)
+      await act(async () => {
+        nativeViews.get('hardwareBackPress')()
+      })
+      await settle()
+      expect(nativeViews.get('tv-search').nextFocusDown).equals(
+        originalWatchTarget
+      )
     } finally {
       await act(async () => {
         root.unmount()

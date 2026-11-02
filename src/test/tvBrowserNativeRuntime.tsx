@@ -1,10 +1,8 @@
 import React from 'react'
-import { View } from 'react-native-web'
+import { Pressable as WebPressable, View } from 'react-native-web'
 
 export {
-  BackHandler,
   Image,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -44,4 +42,19 @@ export function TVFocusGuideView({
       tabIndex={Boolean(destinations) || Boolean(autoFocus) ? 0 : -1}
     />
   )
+}
+
+export const Pressable = React.forwardRef<any, any>((props, ref) => {
+  if (props.testID !== undefined) nativeViews.set(props.testID, props)
+  return <WebPressable {...props} ref={ref} />
+})
+export const BackHandler = {
+  addEventListener: (event: string, listener: () => boolean) => {
+    nativeViews.set(event, listener)
+    return {
+      remove: () => {
+        if (nativeViews.get(event) === listener) nativeViews.delete(event)
+      }
+    }
+  }
 }

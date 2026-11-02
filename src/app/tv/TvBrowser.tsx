@@ -635,11 +635,12 @@ function BrowsePage({
   const [firstTile, setFirstTile] = useState<FocusNode | null>(null)
   const key = pageKey(page)
   useEffect(() => {
+    if (!active) return
     registerWatch(key, watchNode)
     return () => {
       registerWatch(key, null)
     }
-  }, [key, watchNode, registerWatch])
+  }, [active, key, watchNode, registerWatch])
   const { width, height, fontScale } = useWindowDimensions()
   const [viewportHeight, setViewportHeight] = useState(height - 115)
   const [scrollY, setScrollY] = useState(0)
