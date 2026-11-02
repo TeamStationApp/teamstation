@@ -6,8 +6,16 @@ export function TvButton({
   testID,
   preferred = false,
   onFocus,
-  buttonRef
+  buttonRef,
+  nextFocusUp,
+  nextFocusDown,
+  nextFocusLeft,
+  nextFocusRight
 }: {
+  nextFocusUp?: number
+  nextFocusDown?: number
+  nextFocusLeft?: number
+  nextFocusRight?: number
   label: string
   onPress: () => void
   testID?: string
@@ -22,7 +30,13 @@ export function TvButton({
       testID={testID}
       accessibilityRole="button"
       accessibilityLabel={label}
-      {...{ hasTVPreferredFocus: preferred }}
+      {...{
+        hasTVPreferredFocus: preferred,
+        nextFocusUp,
+        nextFocusDown,
+        nextFocusLeft,
+        nextFocusRight
+      }}
       onPress={onPress}
       onFocus={() => {
         setFocused(true)
