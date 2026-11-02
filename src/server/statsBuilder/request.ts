@@ -2,6 +2,15 @@ import { type Kysely, sql } from 'kysely'
 
 import type { Database } from '../db/database'
 
+/** A game already queued starts over, whatever state it had reached. */
+const askAgain = sql`
+    on conflict (game_id) do update
+      set requested_generation = game_stats_state.requested_generation + 1,
+          status = 'pending',
+          attempts = 0,
+          retry_at = null::timestamptz,
+          requested_at = now()`
+
 /**
  * Ask the stats builder to (re)build one game. The upsert is the durable
  * queue entry; `pg_notify` only wakes a listening builder. Postgres delivers
@@ -17,12 +26,7 @@ export async function requestGameStats(
       game_id, requested_generation, status, attempts, retry_at, requested_at
     )
     values (${gameId}, 1, 'pending', 0, null::timestamptz, now())
-    on conflict (game_id) do update
-      set requested_generation = game_stats_state.requested_generation + 1,
-          status = 'pending',
-          attempts = 0,
-          retry_at = null::timestamptz,
-          requested_at = now()
+    ${askAgain}
   `.execute(db)
   await sql`select pg_notify('game_stats', ${gameId})`.execute(db)
 }
@@ -42,12 +46,7 @@ export async function requestGamesStats(
     )
     select id, 1, 'pending', 0, null::timestamptz, now()
     from games where id = any(${[...gameIds]}::text[])
-    on conflict (game_id) do update
-      set requested_generation = game_stats_state.requested_generation + 1,
-          status = 'pending',
-          attempts = 0,
-          retry_at = null::timestamptz,
-          requested_at = now()
+    ${askAgain}
   `.execute(db)
   await sql`select pg_notify('game_stats', id) from games where id = any(${[...gameIds]}::text[])`.execute(
     db
@@ -65,12 +64,7 @@ export async function requestAllGameStats(db: Kysely<Database>): Promise<void> {
     )
     select distinct "gameId", 1, 'pending', 0, null::timestamptz, now()
     from events
-    on conflict (game_id) do update
-      set requested_generation = game_stats_state.requested_generation + 1,
-          status = 'pending',
-          attempts = 0,
-          retry_at = null::timestamptz,
-          requested_at = now()
+    ${askAgain}
   `.execute(db)
   await sql`select pg_notify('game_stats', ${'all'})`.execute(db)
 }
