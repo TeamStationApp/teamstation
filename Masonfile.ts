@@ -99,7 +99,7 @@ export function setup(m: Setup): void {
   )
   // The last successful ad hoc IPA, re-signed for the App Store. This uploads
   // a build that already compiled, so it does not archive again.
-  m.workflow('release', {}, w => {
+  m.workflow('release', { triggers: [{ request: true }] }, w => {
     w.stage('ios', {
       on: APPLE,
       timeout: '2h',

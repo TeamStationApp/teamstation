@@ -299,11 +299,11 @@ describe('TeamStation pipeline Masonfile', () => {
         assert.equal(options?.failFast, false)
         Object.assign(stages, members)
       },
-      workflow(name, _options, declare) {
-        const recorded: Record<string, unknown> = {}
+      workflow(name, options, declare) {
+        const recorded: Record<string, unknown> = { options }
         declare({
-          stage(stageName, options) {
-            recorded[stageName] = options
+          stage(stageName, stageOptions) {
+            recorded[stageName] = stageOptions
           }
         })
         workflows[name] = recorded
@@ -344,6 +344,9 @@ describe('TeamStation pipeline Masonfile', () => {
       apple: { distribution: string }
       checkout?: boolean
     }
+    assert.deepEqual(workflows.release?.options, {
+      triggers: [{ request: true }]
+    })
     assert.equal(ship.on.type, 'macos-arm64')
     assert.equal(ship.apple.distribution, 'appStore')
     assert.equal(ship.checkout, false)
