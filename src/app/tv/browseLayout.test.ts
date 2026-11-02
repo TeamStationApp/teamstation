@@ -7,6 +7,7 @@ import {
   collectionTop,
   fourAcross,
   gameDate,
+  heroDetailsScale,
   monthOf,
   monthSections
 } from './browseLayout'
@@ -73,6 +74,17 @@ describe('TV browsing layout', () => {
         }
       }
     }
+  })
+  it('fits wrapped matchup names and a venue without overlapping the first row', () => {
+    const { heroHeight } = browseGeometry(1280, 605, false)
+    for (const fontScale of [1, 1.3]) {
+      for (const measuredHeight of [0, 440, 640, 820]) {
+        const scale = heroDetailsScale(heroHeight, fontScale, measuredHeight)
+        expect(measuredHeight * scale).at.most(heroHeight)
+        expect(scale).at.most(1)
+      }
+    }
+    expect(heroDetailsScale(1000, 1, 640)).equals(1)
   })
   it('moves the collection transition with scrolling and pins it at the viewport top', () => {
     expect(collectionTop(500, 0)).equals(500)
