@@ -58,6 +58,7 @@ const SCREEN_IDS: { [Name in Pushed['name']]: Ids<Name> } = {
   team: frame => [frame.team.id],
   game: frame => [frame.gameId],
   account: () => [],
+  teamStationTv: () => [],
   apiKeyNew: () => [],
   chatDevices: () => [],
   chatLink: () => [],
