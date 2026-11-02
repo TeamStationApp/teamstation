@@ -27,13 +27,33 @@ declare module '@mason/types' {
     ipa?: string
     dsyms: string
   }
+  export interface ResignResult {
+    ipa: string
+  }
+  export interface TestflightResult {
+    buildId: string
+    version: string
+    buildNumber: string
+    state: string
+  }
   export interface Stage {
+    workspace?: string
+    run: { branch: string }
     sh: (command: string, options?: CommandOptions) => Promise<CommandResult>
     getBuildNumber: (key: string) => string
     stash: (name: string, paths: string | string[]) => Promise<void>
     unstash: (name: string) => Promise<void>
     artifacts: {
       save: (name: string, paths: string | string[]) => Promise<void>
+      fetch: (
+        query: {
+          workflow: string
+          branch?: string
+          status?: 'success'
+          name: string
+        },
+        into: string
+      ) => Promise<string[]>
     }
     fs: {
       glob: (patterns: string | string[]) => Promise<string[]>
@@ -45,6 +65,13 @@ declare module '@mason/types' {
     }) => Promise<void>
     apple: {
       archive: (options: ArchiveOptions) => Promise<ArchiveResult>
+      resign: (options: { path: string }) => Promise<ResignResult>
+      testflight: (options: {
+        path: string
+        whatToTest?: string
+        groups?: string[]
+        usesNonExemptEncryption?: boolean
+      }) => Promise<TestflightResult>
     }
   }
   export interface NodeSelector {
@@ -62,7 +89,11 @@ declare module '@mason/types' {
     buildNumbers?: string[]
     cache?: Array<{ key: string; paths: string[] }>
     apple?: { distribution: string; app: string }
+    checkout?: boolean
     run: (ctx: Stage) => Promise<void>
+  }
+  export interface WorkflowBuilder {
+    stage: (name: string, options: StageOptions) => void
   }
   export interface Setup {
     apiVersion: (version: 1) => void
@@ -75,5 +106,10 @@ declare module '@mason/types' {
       members: Record<string, StageOptions | StageOptions[]>,
       options?: { failFast?: boolean }
     ) => unknown
+    workflow: (
+      name: string,
+      options: Record<string, unknown>,
+      declare: (workflow: WorkflowBuilder) => void
+    ) => void
   }
 }
