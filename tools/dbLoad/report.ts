@@ -143,7 +143,9 @@ export function slowestRequests(
   const groups = new Map<string, RequestTiming[]>()
   for (const request of requests) {
     const key = `${request.route}\u0000${request.accountKind}`
-    groups.set(key, [...(groups.get(key) ?? []), request])
+    const group = groups.get(key)
+    if (group == null) groups.set(key, [request])
+    else group.push(request)
   }
   return [...groups.values()]
     .map(group => ({
