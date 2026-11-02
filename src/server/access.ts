@@ -376,20 +376,18 @@ export async function visibleScopesForUsers(
   // itself. The roles are carried down in the same pass as the membership,
   // as `roleScopes` carries them.
   const directs = await directRolesOfEach(db, openIds)
+  const leaguesOfRow = new Map<string, string[]>()
+  for (const row of leagueMemberships)
+    listUnder(leaguesOfRow, row.user_id, row.league_id)
+  const seasonsOfRow = new Map<string, string[]>()
+  for (const row of seasonMemberships)
+    listUnder(seasonsOfRow, row.user_id, row.season_id)
   const members = new Map<string, ScopeSet>()
   for (const userId of openIds) {
-    const rows = new Set(actors.get(userId)!.userIds)
+    const rows = actors.get(userId)!.userIds
     members.set(userId, {
-      leagueIds: new Set(
-        leagueMemberships
-          .filter(row => rows.has(row.user_id))
-          .map(row => row.league_id)
-      ),
-      seasonIds: new Set(
-        seasonMemberships
-          .filter(row => rows.has(row.user_id))
-          .map(row => row.season_id)
-      ),
+      leagueIds: new Set(rows.flatMap(row => leaguesOfRow.get(row) ?? [])),
+      seasonIds: new Set(rows.flatMap(row => seasonsOfRow.get(row) ?? [])),
       teamIds: new Set()
     })
   }
@@ -410,13 +408,16 @@ export async function visibleScopesForUsers(
     ...new Set([...guarded.values()].flat().flatMap(child => child.userIds))
   ])
 
+  const teamsOfUser = new Map<string, string[]>()
+  for (const row of memberships)
+    listUnder(teamsOfUser, row.user_id, row.team_id)
+
   for (const user of open) {
     const member = members.get(user.id)!
     const direct = directs.get(user.id)!
     const children = guarded.get(user.id)!
     const teamIds = new Set(member.teamIds)
-    for (const row of memberships)
-      if (row.user_id === user.id) teamIds.add(row.team_id)
+    for (const teamId of teamsOfUser.get(user.id) ?? []) teamIds.add(teamId)
     for (const child of children)
       for (const row of child.userIds)
         for (const teamId of childTeams.get(row) ?? []) teamIds.add(teamId)
