@@ -182,6 +182,22 @@ describe('TV browser journeys', () => {
     expect(stops[0].getAttribute('stop-opacity')).equals('0.5')
     expect(stops[1].getAttribute('offset')).equals('0.4')
     expect(stops[1].getAttribute('stop-opacity')).equals('0')
+    const headerStops = document.querySelectorAll(
+      '[data-testid="tv-header-gradient"] stop'
+    )
+    expect(
+      [...headerStops].map(stop => stop.getAttribute('stop-opacity'))
+    ).deep.equals(['0.5', '0'])
+    const collectionStops = document.querySelectorAll(
+      '[data-testid="tv-collection-background"] stop'
+    )
+    expect(
+      [...collectionStops].map(stop => stop.getAttribute('stop-opacity'))
+    ).deep.equals(['0', '0.5'])
+    expect(
+      document.querySelector('[data-testid="tv-browse-backdrop"]')
+    ).not.equals(null)
+
     await click('[data-testid="tv-watch-game"]')
     expect(played.at(-1)?.game.id).equals(games[0].id)
     await click('[data-testid="team-home"]')
