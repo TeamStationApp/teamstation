@@ -38,7 +38,6 @@ import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverl
 import {
   NativeGradient,
   PlaybackBoundary,
-  TvBlur,
   TvPoster
 } from './NativePresentation'
 import { NativeSeekQueue } from './nativeSeekQueue'
@@ -1112,49 +1111,66 @@ export function TvPlayer({
                 onPress={() => {
                   dispatch({ type: 'toggle', index })
                 }}
-                style={({
-                  focused
-                }: {
-                  pressed: boolean
-                  focused?: boolean
-                }) => [
+                style={[
                   styles.angleOption,
                   {
-                    shadowOpacity: focused === true ? 0.5 : 0,
+                    shadowOpacity: cameraFocus === index ? 0.5 : 0,
                     shadowRadius: 12,
                     shadowColor: '#fff',
                     shadowOffset: { width: 0, height: 0 }
                   }
                 ]}
               >
-                <>
-                  <TvBlur
-                    shade={
-                      state.visible.includes(index) ? '#ffffff' : '#b8b8b8'
-                    }
-                    opacity={state.visible.includes(index) ? 0.9 : 0.8}
-                    highlighted={cameraFocus === index}
-                  />
-                  <Text
-                    style={[
-                      styles.copy,
-                      {
-                        fontSize: 37.5,
-                        color: state.visible.includes(index)
-                          ? '#1a1a1a'
-                          : '#ffffff'
-                      }
-                    ]}
-                  >
-                    {angle.name}
-                  </Text>
-                </>
+                <View style={styles.cameraThumbnail}>
+                  {angle.video.posterUrl !== null && (
+                    <TvPoster uri={angle.video.posterUrl} focused={false} />
+                  )}
+                  {!state.visible.includes(index) && (
+                    <View
+                      testID={`tv-camera-dim-${index}`}
+                      pointerEvents="none"
+                      style={[
+                        StyleSheet.absoluteFill,
+                        { backgroundColor: 'rgba(0,0,0,0.3)' }
+                      ]}
+                    />
+                  )}
+                  <View pointerEvents="none" style={styles.cameraCaption}>
+                    <Svg
+                      style={StyleSheet.absoluteFill}
+                      width="100%"
+                      height="100%"
+                    >
+                      <Defs>
+                        <LinearGradient
+                          id={`camera-${index}`}
+                          x1="0"
+                          y1="0"
+                          x2="0"
+                          y2="1"
+                        >
+                          <Stop offset="0" stopColor="#000" stopOpacity={0} />
+                          <Stop offset="1" stopColor="#000" stopOpacity={0.5} />
+                        </LinearGradient>
+                      </Defs>
+                      <Rect
+                        width="100%"
+                        height="100%"
+                        fill={`url(#camera-${index})`}
+                      />
+                    </Svg>
+                    <Text numberOfLines={1} style={styles.cameraName}>
+                      {angle.name}
+                    </Text>
+                  </View>
+                </View>
               </Pressable>
             ))
           ) : (
             <ScrollView
               ref={highlightScroll}
-              contentContainerStyle={{ padding: 8 }}
+              style={{ marginLeft: -16 }}
+              contentContainerStyle={{ padding: 8, paddingLeft: 24 }}
               onScroll={event => {
                 highlightOffset.current = event.nativeEvent.contentOffset.y
               }}
@@ -1706,10 +1722,27 @@ const styles = StyleSheet.create({
     zIndex: 4
   },
   angleOption: {
-    borderRadius: 20,
-    padding: 20,
-    marginVertical: 8
+    width: 207,
+    borderRadius: 12,
+    marginVertical: 12
   },
+  cameraThumbnail: {
+    width: 207,
+    height: (207 * 9) / 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#252525'
+  },
+  cameraCaption: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: '33.333333%',
+    justifyContent: 'center',
+    paddingHorizontal: 12
+  },
+  cameraName: { color: '#fff', fontSize: 25, fontWeight: '600' },
   clip: {
     width: 306,
     alignSelf: 'flex-start',
