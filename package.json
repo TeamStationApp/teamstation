@@ -123,7 +123,9 @@
     "coverage.autoScheduler": "node scripts/auto-scheduler-coverage.mjs",
     "coverage.observability": "node scripts/observability-coverage.mjs",
     "chat-crypto": "node scripts/chatCryptoBuild.mjs node wasm",
-    "chat-seed": "node -r sucrase/register src/server/dev/chatSeed.ts"
+    "chat-seed": "node -r sucrase/register src/server/dev/chatSeed.ts",
+    "test.tv": "node scripts/build-scoring-tests.mjs && mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs --timeout 60000 --exit src/server/routes/tvLogin.test.ts src/server/routes/videoCollections.test.ts src/server/auth/tvLocation.test.ts 'src/app/tv/*.test.ts' src/test/tvBuildConfig.test.ts lib/scoring-tests.cjs --grep \"TV |TeamStation TV|account|Account\"",
+    "coverage.tv": "node scripts/tv-coverage.mjs"
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "^18.2.5",
@@ -147,6 +149,7 @@
     "expo-modules-autolinking": "58.0.3",
     "expo-modules-core": "58.0.4",
     "express": "^5.1.0",
+    "express-rate-limit": "8.7.2",
     "fflate": "0.8.3",
     "geo-tz": "^8.1.7",
     "graphql": "16.14.2",

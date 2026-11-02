@@ -1,5 +1,6 @@
 import { asObject, asOptional, asString } from 'cleaners'
 import { type Response, Router } from 'express'
+import { rateLimit } from 'express-rate-limit'
 import { type Kysely, sql } from 'kysely'
 
 import { asAccountEmail } from '../../common/accountSettings'
@@ -7,6 +8,7 @@ import { asSession } from '../../common/api'
 import { badRequest, unauthorized, unavailable } from '../../common/errors'
 import { asClientHash, rejectRawPassword } from '../../common/passwordProtocol'
 import { safeNext } from '../../common/signInReturn'
+import { asTvPlatform } from '../../common/tvLogin'
 import { allowedAppOrigin } from '../appLinks/appOrigin'
 import {
   asSignInOrigin,
@@ -33,6 +35,12 @@ import {
 import { createSession, revokeSession } from '../auth/sessions'
 import { onboardingFor, settleAccount } from '../auth/settleAccount'
 import { makeToken, SESSION_COOKIE, sessionToken } from '../auth/tokens'
+import { tvLocation } from '../auth/tvLocation'
+import {
+  claimTvLogin,
+  inspectOrApproveTvLogin,
+  startTvLogin
+} from '../auth/tvLogin'
 import type { Database } from '../db/database'
 import { settleInviteSignIn } from '../invites/joining'
 import { applyWaitingInvitations } from '../invites/personRequests'
@@ -121,6 +129,9 @@ export interface AuthOptions {
   publicUrl?: string
   /** The link hosts of the apps this server signs in (`appLinks.apps`). */
   appOrigins?: readonly string[]
+  tvAppOrigin?: string
+  /** Optional local GeoIP lookup; never send a viewer address to a third party. */
+  tvLocationLookup?: (ip: string) => Promise<string | null>
 }
 
 /**
@@ -230,6 +241,18 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       ? makeToken()
       : options.passwordParameterSecret
   const router = Router()
+  // Bound request load before parsing, location lookup, or authentication.
+  // Database-backed TV attempt limits still enforce security across workers.
+  const tvTrafficLimit = rateLimit({
+    windowMs: 60_000,
+    limit: 240,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: {
+      code: 'rateLimited',
+      message: 'Too many TV sign-in requests. Try again shortly.'
+    }
+  })
   const secureCookie = secureCookieFor(options.publicUrl)
 
   /**
@@ -287,6 +310,93 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       .executeTakeFirst()
     return imageUrl(options.space, row?.avatar_path ?? null)
   }
+
+  router.post(
+    '/auth/tv/start',
+    tvTrafficLimit,
+    withAsync(async (req, res) => {
+      res.set('cache-control', 'no-store')
+      const body = cleanBody(asObject({ platform: asTvPlatform }), req.body)
+      res.json(
+        await startTvLogin(
+          db,
+          body.platform,
+          options.tvAppOrigin ?? 'https://app.teamstation.app',
+          clientIp(req),
+          await tvLocation(clientIp(req), options.tvLocationLookup)
+        )
+      )
+    })
+  )
+  router.post(
+    '/auth/tv/claim',
+    tvTrafficLimit,
+    withAsync(async (req, res) => {
+      res.set('cache-control', 'no-store')
+      const body = cleanBody(
+        asObject({ requestId: asString, clientSecret: asString }),
+        req.body
+      )
+      const claim = await claimTvLogin(
+        db,
+        body.requestId,
+        body.clientSecret,
+        req.header('user-agent')
+      )
+      if (claim == null) {
+        res.status(202).json({ ready: false })
+        return
+      }
+      const user = await db
+        .selectFrom('users')
+        .select(['id', 'display_name', 'is_admin'])
+        .where('id', '=', claim.userId)
+        .executeTakeFirstOrThrow()
+      res.json(
+        asSession({
+          token: claim.session.token,
+          expiresAt: claim.session.expiresAt.toISOString(),
+          user: {
+            id: user.id,
+            gumboId: await gumboIdOf(db, user.id),
+            displayName: user.display_name,
+            email: await primaryEmail(db, user.id),
+            isAdmin: user.is_admin,
+            avatarUrl: await avatarFor(user.id),
+            onboarding: await onboardingFor(db, user.id)
+          }
+        })
+      )
+    })
+  )
+  router.post(
+    '/auth/tv/inspect',
+    tvTrafficLimit,
+    requireActor,
+    withAsync(async (req, res) => {
+      res.set('cache-control', 'no-store')
+      if (req.actor == null) throw unauthorized()
+      const body = cleanBody(asObject({ token: asString }), req.body)
+      res.json(
+        await inspectOrApproveTvLogin(db, req.actor, body, clientIp(req), false)
+      )
+    })
+  )
+  router.post(
+    '/auth/tv/approve',
+    tvTrafficLimit,
+    requireActor,
+    withAsync(async (req, res) => {
+      res.set('cache-control', 'no-store')
+      if (req.actor == null) throw unauthorized()
+      const body = cleanBody(
+        asObject({ code: asOptional(asString), token: asOptional(asString) }),
+        req.body
+      )
+      await inspectOrApproveTvLogin(db, req.actor, body, clientIp(req), true)
+      res.sendStatus(204)
+    })
+  )
 
   router.post(
     '/auth/password/parameters',
