@@ -1290,6 +1290,10 @@ function Shell(props: AppProps): React.ReactElement {
    */
   const health = useCallback(async () => await client.health(), [client])
   const tessAvailable = useTessAvailable(health, signedInAs)
+  // While a header menu is open, Android's Back closes it: the header is outside
+  // every scene, so `useBackOverride` can't say so, and the gesture has to stand
+  // down. The web's Back moves the page, and `menuKey` then closes the menu.
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false)
   const [tessOpen, setTessOpen] = useState(false)
   useEffect(() => {
     if (signedInAs == null) setTessOpen(false)
@@ -1310,6 +1314,14 @@ function Shell(props: AppProps): React.ReactElement {
     route.name !== 'oauthNative'
   const closeTess = useCallback(() => {
     setTessOpen(false)
+  }, [])
+  // Only an opening from the menu takes the focus, not her coming back after a
+  // screen that had the whole window.
+  const tessTakesFocus = useRef(false)
+  const takeTessFocus = useCallback(() => {
+    const takes = tessTakesFocus.current
+    tessTakesFocus.current = false
+    return takes
   }, [])
   // Her chat over the whole of a narrow window: Back closes it, and the
   // navigator takes no back gesture beneath it.
@@ -1415,6 +1427,7 @@ function Shell(props: AppProps): React.ReactElement {
   const immersiveTop = isImmersive(top)
   const swipeBack =
     props.fieldPreview !== true &&
+    !headerMenuOpen &&
     stack.length > 0 &&
     !immersiveTop &&
     presentationOf(top) === 'push' &&
@@ -3768,12 +3781,15 @@ function Shell(props: AppProps): React.ReactElement {
           ? undefined
           : (backOverride ?? (immersiveTop ? undefined : pop))
       }
+      menuKey={routePath(routeOf(tab, top, filters))}
+      onMenuOpenChange={setHeaderMenuOpen}
       tess={
-        tessAvailable && !tessSuppressed
+        // Not while her column is open: the row would have nothing to do.
+        tessAvailable && !tessSuppressed && !tessColumn
           ? {
-              open: tessOpen,
               onPress: () => {
-                setTessOpen(open => !open)
+                tessTakesFocus.current = true
+                setTessOpen(true)
               }
             }
           : undefined
@@ -3790,13 +3806,13 @@ function Shell(props: AppProps): React.ReactElement {
             }
       }
       account={
-        session == null || top?.name === 'account'
+        session == null
           ? undefined
           : {
               name: session.user.displayName,
               avatarUrl: session.user.avatarUrl,
               onPress: () => {
-                push({ name: 'account' })
+                if (top?.name !== 'account') push({ name: 'account' })
               }
             }
       }
@@ -3838,6 +3854,7 @@ function Shell(props: AppProps): React.ReactElement {
         onClose={closeTess}
         onNavigate={openTessLink}
         screen={tessScreen}
+        takesFocus={takeTessFocus}
       />
     </TessFrame>
   )
@@ -3934,7 +3951,9 @@ function Shell(props: AppProps): React.ReactElement {
                       // Not under Tess's layer: there Back closes the chat
                       // (`useTessBack`), and must not drag away the screen it
                       // covers.
-                      predictiveBack={predictiveBack && !tessLayer}
+                      predictiveBack={
+                        predictiveBack && !tessLayer && !headerMenuOpen
+                      }
                       predictiveBackNow={predictiveBackNow}
                       popPending={popPending}
                       headerHeight={

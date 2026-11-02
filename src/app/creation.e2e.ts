@@ -162,11 +162,11 @@ async function photoVector(page: Page, h: AccountHarness): Promise<void> {
   await page.screenshot({ path: join(artifacts!, 'photo-grid-after.png') })
   await press(page, 'Continue')
   await page.waitForFunction(
-    () => document.querySelector('[aria-label="Account, Mike Trout"]') != null
+    () => document.querySelector('[aria-label^="Account, Mike Trout"]') != null
   )
   await page.reload({ waitUntil: 'networkidle0' })
   await page.waitForFunction(
-    () => document.querySelector('[aria-label="Account, Mike Trout"]') != null
+    () => document.querySelector('[aria-label^="Account, Mike Trout"]') != null
   )
   expect(h.objects.size).equals(before)
   const user = await h.db
@@ -181,7 +181,10 @@ async function photoVector(page: Page, h: AccountHarness): Promise<void> {
       .where('id', '=', user.user_id)
       .executeTakeFirstOrThrow()
   ).deep.equals({ picture_catalog_id: 'baseball', onboarding_step: 'complete' })
-  await press(page, 'Account, Mike Trout')
+  await page.$eval('[aria-label^="Account, Mike Trout"]', node => {
+    ;(node as HTMLElement).click()
+  })
+  await press(page, 'Account')
   await text(page, 'Email addresses')
   await page.screenshot({ path: join(artifacts!, 'account-photo-after.png') })
 }

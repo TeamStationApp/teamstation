@@ -18,6 +18,7 @@ import {
 } from 'react-native'
 
 import { TESS_MAX_ATTACHMENTS } from '../../common/api'
+import { isFinePointer } from '../chat/chatWebInteractions'
 import { Icon } from '../components/Icon'
 import { lstrings, sprintf } from '../locales/strings'
 import { pillPadding } from '../theme/pill'
@@ -49,6 +50,8 @@ export interface ComposerProps {
   mic?: ReactNode
   /** Where the chat's microphone puts what was said. */
   handle?: Ref<ComposerHandle>
+  /** Asked once on mounting: whether this opening should take the focus. */
+  takesFocus?: () => boolean
 }
 
 /** What the field is on the web: react-native-web's textarea. */
@@ -92,7 +95,8 @@ export function Composer({
   busy,
   error,
   mic,
-  handle
+  handle,
+  takesFocus
 }: ComposerProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -105,6 +109,13 @@ export function Composer({
   // does (the column is dragged, the window resized), which changes how the
   // text wraps. A phone's grows within its limits on its own.
   const field = useRef<React.ComponentRef<typeof TextInput>>(null)
+  // She was opened from a menu that has gone, and a keyboard's focus would go
+  // with it. Only with a pointer: a touchscreen's keyboard would cover the chat.
+  const takeFocus = useRef(takesFocus)
+  useEffect(() => {
+    if (isFinePointer() && takeFocus.current?.() === true)
+      field.current?.focus()
+  }, [])
   const [grown, setGrown] = useState<number>()
   const [width, setWidth] = useState<number>()
   useEffect(() => {

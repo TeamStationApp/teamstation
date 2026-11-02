@@ -698,12 +698,18 @@ describe('roles given by somebody else, through the app', () => {
       await settle()
       const before = reads
       expect(before).greaterThan(0)
-      const bell = document.querySelector<HTMLElement>(
+      await act(async () => {
+        document
+          .querySelector<HTMLElement>('[aria-label^="Account, "]')!
+          .click()
+      })
+      await settle()
+      const row = document.querySelector<HTMLElement>(
         '[aria-label="Notifications"]'
       )
-      expect(bell).not.equals(null)
+      expect(row).not.equals(null)
       await act(async () => {
-        bell!.click()
+        row!.click()
       })
       await settle()
       expect(window.location.pathname).equals('/notifications')

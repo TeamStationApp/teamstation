@@ -12668,7 +12668,7 @@ describe('I2 descriptor-bound retained target session', () => {
       async () => {
         const m = model({ surface })
         expect(await captureFailure(m.scenario.signIn())).equals(m.boundary)
-        expect(m.calls).includes('assert:^Account, Willie Mays$')
+        expect(m.calls).includes('assert:^Account, Willie Mays(, .*)?$')
         expect(m.calls).includes('chat-conversation-list')
         expect(m.scenario.ui.steps).has.length(0)
       }

@@ -24,6 +24,8 @@ export interface TessPanelProps {
     DictationControlsProps,
     'openSocket' | 'openMicrophone' | 'tapMs' | 'tailMs'
   >
+  /** Asked once on opening: whether her field should take the focus. */
+  takesFocus?: () => boolean
 }
 
 /**
@@ -43,7 +45,8 @@ export function TessPanel({
   onClose,
   onNavigate,
   screen,
-  dictation: replaced
+  dictation: replaced,
+  takesFocus
 }: TessPanelProps): React.ReactElement {
   const tess = useTess(client, { screen })
   const composer = useRef<ComposerHandle>(null)
@@ -72,6 +75,7 @@ export function TessPanel({
       onNavigate={onNavigate}
       mic={dictation.control}
       composer={composer}
+      takesFocus={takesFocus}
     />
   )
 }

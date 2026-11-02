@@ -243,6 +243,7 @@ async function main(): Promise<void> {
       )
       assert(account?.text != null, 'Account navigation must be reachable')
       await tap(account.text)
+      await tap('Account')
       await m.scrollUntilVisible({
         element: { text: '^Sign out$' },
         direction: 'DOWN',
@@ -283,7 +284,9 @@ async function main(): Promise<void> {
       )
       if (
         account != null &&
-        account.text?.endsWith(cfg.primaryEmail.split('@')[0]) !== true
+        account.text
+          ?.replace(/, notifications waiting$/, '')
+          .endsWith(cfg.primaryEmail.split('@')[0]) !== true
       )
         await switchUser(primary)
       assert(

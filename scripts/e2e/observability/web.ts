@@ -100,7 +100,7 @@ export async function webScenario(
         "const button=[...document.querySelectorAll('button')].find(n=>n.textContent.trim()==='Sign in');if(!button)throw Error('Sign-in button missing');button.click();return 'submitted';"
     })
     await m.assertVisible({
-      text: 'Account, Observability admin',
+      text: 'Account, Observability admin.*',
       timeout: 15000
     })
   }
@@ -112,6 +112,7 @@ export async function webScenario(
     await webFunnel(m, origin, fixtures)
     return
   }
+  await m.tapOn({ text: 'TeamStation menu' })
   await m.tapOn({ text: 'About TeamStation' })
   const clicked = await m.evalBrowserScript({
     script:

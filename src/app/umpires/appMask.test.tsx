@@ -131,9 +131,7 @@ it('mounts the shell with role-only mask visibility and preserves header order a
       expect(labels.indexOf('Umpire schedule')).equals(-1)
       expect(labels.indexOf('Umpire Schedule')).greaterThan(-1)
       expect(host.textContent).match(/help umpire/i)
-      expect(labels.indexOf('Notifications')).lessThan(
-        labels.indexOf('Account, Demo Fan')
-      )
+      expect(labels.indexOf('Account, Demo Fan')).greaterThan(-1)
     }
     const settle = async (): Promise<void> => {
       await act(async () => {

@@ -295,13 +295,26 @@ describe('actual App scoring player Settings return', function () {
       await waitFor(() => currentRoute().name === 'home')
     })
   })
+  const openNotifications = async (): Promise<void> => {
+    await waitFor(
+      () => document.querySelector('[aria-label^="Account, "]') != null
+    )
+    await act(async () => {
+      document.querySelector<HTMLElement>('[aria-label^="Account, "]')!.click()
+    })
+    await waitFor(
+      () => document.querySelector('[aria-label="Notifications"]') != null
+    )
+    await press('Notifications')
+  }
+
   it('protects Notifications navigation while scoring writes are pending', async function () {
     await withScoringApp(async fixture => {
       fixture.pauseWrites(true)
       await press('Ball')
       await openEditor()
       await press('Mookie Betts,')
-      await press('Notifications')
+      await openNotifications()
       await waitFor(
         () => document.querySelector('[aria-label="Discard and Exit"]') != null
       )
@@ -311,7 +324,7 @@ describe('actual App scoring player Settings return', function () {
         userId: userIdOfGumbo(100)
       })
       expect(document.body.textContent).includes('JERSEY NUMBER')
-      await press('Notifications')
+      await openNotifications()
       await waitFor(
         () => document.querySelector('[aria-label="Discard and Exit"]') != null
       )

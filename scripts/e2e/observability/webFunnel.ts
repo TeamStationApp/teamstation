@@ -62,7 +62,7 @@ export async function webFunnel(
   await m.assertVisible({ text: 'Choose your photo' })
   await click(m, 'Use my initials')
   await m.assertVisible({
-    text: 'Account, Observability signup',
+    text: 'Account, Observability signup.*',
     timeout: 15000
   })
   const actor = await m.evalBrowserScript({
@@ -101,7 +101,7 @@ export async function webFunnel(
   await fill(m, { 'E-mail address': second.email, Password: second.password })
   await click(m, 'Sign in')
   await m.assertVisible({
-    text: 'Account, Observability second',
+    text: 'Account, Observability second.*',
     timeout: 15000
   })
   await pause(5500)

@@ -182,11 +182,15 @@ async function main(): Promise<void> {
     }
     assert.equal(scenario, 'errors')
     if (target.startsWith('ts-')) {
+      const openAbout = async (): Promise<void> => {
+        await m.tapOn({ text: 'TeamStation menu' })
+        await m.tapOn({ text: 'About TeamStation' })
+      }
       await m.launchApp({ appId, stopApp: true })
       // Sign-in is a prerequisite supplied by the isolated test environment.
       // It uses pasteboard input so the driver's inputText log holds no secret.
-      await m.assertVisible({ text: 'About TeamStation', timeout: 15000 })
-      await m.tapOn({ text: 'About TeamStation' })
+      await m.assertVisible({ text: 'Account, .*', timeout: 15000 })
+      await openAbout()
       await m.tapOn({ text: 'Send a test error' })
       await delay(3000)
       await m.detach()
@@ -195,7 +199,7 @@ async function main(): Promise<void> {
       // React Native treats this unhandled JS exception as fatal in Release.
       await observed('fatal')
       started = since()
-      await m.tapOn({ text: 'About TeamStation' })
+      await openAbout()
       await m.tapOn({ text: 'Test a native crash' })
       await delay(3000)
       await m.detach()
@@ -205,7 +209,7 @@ async function main(): Promise<void> {
         'fatal',
         target === 'ts-android' ? 'RuntimeException' : undefined
       )
-      await m.tapOn({ text: 'About TeamStation' })
+      await openAbout()
       await writeFile(
         join(
           required('OBSERVABILITY_ARTIFACT_DIR'),

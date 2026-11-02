@@ -238,9 +238,9 @@ async function signIn(
     // iOS offers to save the password; nothing here needs it.
     await m.tapOn({ text: 'Not Now', optional: true, timeout: 5000 })
     try {
-      // Signed in: the header's Notifications button, which a signed-out
-      // app never draws (chat2.e2e reads the same chrome).
-      await m.assertVisible({ text: 'Notifications', timeout: 20000 })
+      // Signed in: the header's picture, which a signed-out app never draws
+      // (chat2.e2e reads the same chrome).
+      await m.assertVisible({ text: 'Account, .*', timeout: 20000 })
       return
     } catch {
       console.log(`Sign-in typed as ${pieces} did not take; again`)

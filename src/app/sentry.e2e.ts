@@ -55,12 +55,13 @@ async function signIn(
 }
 
 async function openBuildInfo(m: Device): Promise<void> {
-  await m.assertVisible({ text: 'About TeamStation', timeout: 60000 })
+  await m.assertVisible({ text: 'Account, .*', timeout: 60000 })
   // A tap while the home screen is still loading its teams can be lost, so the
-  // sheet is asked for again until it opens.
+  // menu and the sheet are asked for again until the sheet opens.
   for (let attempt = 1; ; attempt++) {
-    await m.tapOn({ text: 'About TeamStation' })
     try {
+      await m.tapOn({ text: 'TeamStation menu' })
+      await m.tapOn({ text: 'About TeamStation', timeout: 15000 })
       await m.assertVisible({ text: 'Send a test error', timeout: 15000 })
       return
     } catch (error) {
@@ -110,7 +111,7 @@ async function main(): Promise<void> {
     await m.tapOn({ text: 'Test a native crash' })
     await new Promise(resolve => setTimeout(resolve, 3000))
     await m.launchApp({ appId: APP_ID, stopApp: true })
-    await m.assertVisible({ text: 'About TeamStation', timeout: 60000 })
+    await m.assertVisible({ text: 'Account, .*', timeout: 60000 })
     await shot('after-crash')
     // Give the SDK time to send the crash it found at start.
     await new Promise(resolve => setTimeout(resolve, 15000))

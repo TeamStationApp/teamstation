@@ -133,13 +133,13 @@ async function main(): Promise<void> {
     await m.inputText({ text: code })
     await m.hideKeyboard()
     await m.tapOn({ text: 'Sign in', optional: true })
-    await show('Notifications', 45000)
+    await show('Account, .*', 45000)
   }
   const TEAM = `groups/team/${manifest.teamId}/settings`
   try {
     await m.launchApp(platform === 'ios' ? {} : { clearState: true })
     const signedIn = await m
-      .assertVisible({ text: 'Notifications', timeout: 8000 })
+      .assertVisible({ text: 'Account, .*', timeout: 8000 })
       .then(
         () => true,
         () => false

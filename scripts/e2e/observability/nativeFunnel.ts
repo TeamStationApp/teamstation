@@ -52,6 +52,7 @@ export async function nativeFunnel(
   const signOut = async (): Promise<void> => {
     await m.tapOn({ text: 'Close', optional: true })
     await m.tapOn({ text: 'Account, Observability.*' })
+    await m.tapOn({ text: '^Account$' })
     await m.scrollUntilVisible({
       element: { text: 'Sign out' },
       direction: 'DOWN',
@@ -93,7 +94,7 @@ export async function nativeFunnel(
   await m.assertVisible({ text: 'Choose your photo' })
   await m.tapOn({ text: 'Use my initials' })
   await m.assertVisible({
-    text: 'Account, Observability signup',
+    text: 'Account, Observability signup.*',
     timeout: 15000
   })
   assert(fixtures.joinTeam != null, 'Owned discovery fixture required')
@@ -112,7 +113,7 @@ export async function nativeFunnel(
   await paste('Password', second.password)
   await m.tapOn({ text: 'Sign in', optional: true })
   await m.assertVisible({
-    text: 'Account, Observability second',
+    text: 'Account, Observability second.*',
     timeout: 15000
   })
   await new Promise(resolve => setTimeout(resolve, 5500))

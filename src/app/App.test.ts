@@ -59,8 +59,17 @@ describe('app layout', function () {
     // One condition for both: while the layer is up, Android Back is
     // `useTessBack`'s, so the navigator must not take the back gesture.
     expect(source).contains('useTessBack(tessLayer, closeTess)')
-    expect(source).contains('predictiveBack={predictiveBack && !tessLayer}')
+    expect(source).match(
+      /predictiveBack=\{\s*predictiveBack && !tessLayer && !headerMenuOpen\s*\}/
+    )
     expect(source.match(/const tessLayer = /g) ?? []).has.length(1)
+  })
+
+  it('lets Back close a header menu rather than drag the screen beneath it', function () {
+    expect(source).contains('onMenuOpenChange={setHeaderMenuOpen}')
+    expect(source).match(
+      /const swipeBack =\s+props\.fieldPreview !== true &&\s+!headerMenuOpen &&/
+    )
   })
 
   it('draws the header over the content rather than above it', function () {

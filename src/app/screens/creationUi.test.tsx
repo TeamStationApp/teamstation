@@ -201,7 +201,7 @@ it('highlights a wrapped inclusive calendar range with square continuations and 
   expect(css('2026-11-07').borderTopRightRadius).not.oneOf(['', '0', '0px'])
 })
 
-it('places navigation, bell and account in order and preserves pending and default section actions', async () => {
+it('places navigation before the picture, whose menu keeps its dot, and preserves default section actions', async () => {
   let bells = 0
   let accounts = 0
   let actions = 0
@@ -239,17 +239,23 @@ it('places navigation, bell and account in order and preserves pending and defau
     </>
   )
   const buttons = [...document.querySelectorAll('[role="button"]')]
+  const picture = 'Account, Demo User, notifications waiting'
   expect(buttons.indexOf(button('Schedule'))).lessThan(
-    buttons.indexOf(button('Notifications'))
-  )
-  expect(buttons.indexOf(button('Notifications'))).lessThan(
-    buttons.indexOf(button('Account, Demo User'))
+    buttons.indexOf(button(picture))
   )
   expect(
     document.querySelector('[data-testid="notification-pending-dot"]')
   ).not.equals(null)
+  await press(picture)
+  await act(async () => {
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
   await press('Notifications')
-  await press('Account, Demo User')
+  await press(picture)
+  await act(async () => {
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  await press('Account')
   await press('View all')
   expect([bells, accounts, actions]).deep.equals([1, 1, 1])
 })

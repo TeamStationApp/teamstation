@@ -460,7 +460,7 @@ async function main(): Promise<void> {
   const byText = (text: string) => (node: Node) => node.text === text
   const byId = (id: string) => (node: Node) => node.id === id
   const tap = async (
-    target: { text: string } | { id: string }
+    target: { text: string; childOf?: { id: string } } | { id: string }
   ): Promise<void> => {
     say(`$ tapOn ${'text' in target ? target.text : `#${target.id}`}`)
     await m.tapOn(target)
@@ -469,6 +469,14 @@ async function main(): Promise<void> {
     if (artifacts == null) return
     say(`$ takeScreenshot ${name}`)
     await m.takeScreenshot({ path: path.join(artifacts, name) })
+  }
+  /** In the panel, because a notification's own header says the same word. */
+  const openNotifications = async (): Promise<void> => {
+    await tap({ text: 'Account, .*' })
+    await tap({
+      text: '^Notifications$',
+      childOf: { id: 'header-menu-panel' }
+    })
   }
   /** Lists Pending afresh: a section change reloads it. */
   const reloadPending = async (): Promise<void> => {
@@ -482,13 +490,14 @@ async function main(): Promise<void> {
     say('$ launchApp')
     await m.launchApp({ appId: APP, stopApp: true })
     // The first launch waits on Metro's bundle; the shell is ready once it
-    // shows either the sign-in card or the bell.
+    // shows either the sign-in card or the picture.
     const ready = await find(
       node =>
-        node.text === 'Sign in to TeamStation' || node.id === 'Notifications',
+        node.text === 'Sign in to TeamStation' ||
+        node.text?.startsWith('Account, ') === true,
       60000
     )
-    if (ready?.id !== 'Notifications') {
+    if (ready?.text?.startsWith('Account, ') !== true) {
       const { link } = await askToSignIn()
       say('$ openLink teamstation://signin/<token>')
       await m.openLink({ link: `teamstation://signin/${link}` })
@@ -501,11 +510,11 @@ async function main(): Promise<void> {
       )
     }
 
-    // 1. The dot, then the bell.
+    // 1. The dot, then the menu's Notifications row.
     say(`$ assertVisible #${DOT}`)
     assert((await find(byId(DOT), 20000)) != null, 'the pending dot shows')
     pass('1 the header’s pending dot shows')
-    await tap({ id: 'Notifications' })
+    await openNotifications()
     await tap({ text: 'Pending' })
 
     // 2. The card.
@@ -598,7 +607,7 @@ async function main(): Promise<void> {
         undefined,
         `${secondAngle}'s reminder is not pending`
       )
-      await tap({ id: 'Notifications' })
+      await openNotifications()
       await reloadPending()
       say(`$ assertNotVisible "${TITLE}. ${secondAngle} on …"`)
       assert(
@@ -615,7 +624,7 @@ async function main(): Promise<void> {
     } else {
       // 6. An upload naming the stream clears its reminder by itself.
       const second = await remind(token, secondAngle)
-      await tap({ id: 'Notifications' })
+      await openNotifications()
       await reloadPending()
       say(`$ assertVisible "${TITLE}. ${describe(secondAngle)}"`)
       assert(

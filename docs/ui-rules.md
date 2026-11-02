@@ -70,6 +70,17 @@ the thumb and right above the keyboard it opens.
 example. A screen with a search field at the top moves to this the next time
 it is changed.
 
+## Header menus
+
+The header's actions live in two small menus rather than as loose icons. The
+TeamStation mark opens About TeamStation and features such as Ask Tess, and the
+person's picture opens Account and Notifications. Each is a `HeaderMenu`: a
+dropdown lined up with its button's edge, with a blurred background and a drop
+shadow. With no picture and no Tess, as when signed out, the mark opens About
+directly. A new header action is a row in one of these, not a new icon in the
+bar. In the signed-in app the mark is drawn only on tab roots, so an action that
+pushed screens need goes on the picture's menu.
+
 ## Cards and collections
 
 Use the Home team row (`ListRow`) for group identities: a fixed-size logo or

@@ -248,6 +248,8 @@ async function main(): Promise<void> {
     assert(account?.text != null, 'the header has an account button')
     say(`$ tapOn ${account.text}`)
     await m.tapOn({ text: escape(account.text) })
+    say('$ tapOn Account')
+    await m.tapOn({ text: '^Account$' })
     say('$ scrollUntilVisible Sign out')
     await m.scrollUntilVisible({ element: { text: 'Sign out' } })
     // The page ends with the button under the floating tab bar: tap its left

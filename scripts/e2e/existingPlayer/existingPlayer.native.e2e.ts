@@ -241,6 +241,7 @@ async function signIn(who: keyof Fixture['emails']): Promise<void> {
 }
 async function signOut(): Promise<void> {
   await tap('Account, .*')
+  await tap('^Account$')
   for (let page = 0; page < 3; page++) await m.scroll({ direction: 'DOWN' })
   await tap('Sign out')
   await settle(3000)
@@ -412,7 +413,8 @@ async function n3(): Promise<void> {
 async function n4(): Promise<void> {
   console.log("N4 the guardian's Reject")
   await signIn('guardian')
-  await tap('Notifications')
+  await tap('Account, .*')
+  await tap('^Notifications$')
   await m.assertVisible({ text: 'Reject .*', timeout: 15000 })
   await shot('guardian-notice')
   await tap('Reject .*')

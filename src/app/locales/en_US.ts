@@ -1145,7 +1145,6 @@ export const enUs = {
   lineupQr_imported_one: 'Imported 1 player',
   lineupQr_imported_other: 'Imported %s players',
   lineupQr_benched: '%s benched',
-  tess_title: 'Tess',
   tess_ask: 'Ask Tess',
   tess_ask_detail: 'Your AI chatbot',
   tess_heading: 'Ask Tess',

@@ -112,9 +112,7 @@ async function main(): Promise<void> {
             n =>
               n.bounds != null &&
               n.bounds.y < height / 4 &&
-              (n.text === 'Back' ||
-                n.text === 'Notifications' ||
-                n.text?.startsWith('Account,') === true)
+              (n.text === 'Back' || n.text?.startsWith('Account,') === true)
           )
           .map(n => n.bounds!.y + n.bounds!.height)
       )
@@ -192,9 +190,7 @@ async function main(): Promise<void> {
             n =>
               n.bounds != null &&
               n.bounds.y < height / 4 &&
-              (n.text === 'Back' ||
-                n.text === 'Notifications' ||
-                n.text?.startsWith('Account,') === true)
+              (n.text === 'Back' || n.text?.startsWith('Account,') === true)
           )
           .map(n => n.bounds!.y + n.bounds!.height)
       )
