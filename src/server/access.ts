@@ -22,6 +22,8 @@ import type { Database } from './db/database'
  * Public summaries are separate from these private permissions.
  */
 export interface VisibleScopes {
+  /** Membership and guardian teams before management roles broaden visibility. */
+  memberTeamIds?: ReadonlySet<string>
   /**
    * Teams the user is a member of — directly, or through a season or league
    * they are a member of — or holds a role on, or their guarded child plays
@@ -384,6 +386,8 @@ export async function visibleScopes(
   for (const teamId of await teamsPlayedOnNow(db, childRows))
     teamIds.add(teamId)
 
+  const memberTeamIds = new Set(teamIds)
+
   // Every role's sets, unioned. The implied roles are not added first: they
   // only copy their givers' sets, which this union already holds.
   for (const role of ROLES) {
@@ -392,6 +396,7 @@ export async function visibleScopes(
   }
   return {
     teamIds,
+    memberTeamIds,
     seasonIds: new Set(memberSeasonIds),
     isAdmin: user.is_admin,
     guardedIds
