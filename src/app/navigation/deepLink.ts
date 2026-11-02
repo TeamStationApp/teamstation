@@ -58,6 +58,13 @@ export function routeOfUrl(
     host !== hostOfOrigin(options.appOrigin)
   )
     return { name: 'signIn' }
+  if (
+    route.name === 'teamStationTv' &&
+    route.token != null &&
+    (!/^https:\/\//i.test(url) ||
+      host !== hostOfOrigin(options.appOrigin ?? 'https://app.teamstation.app'))
+  )
+    return { name: 'teamStationTv' }
   return route
 }
 
