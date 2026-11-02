@@ -53,6 +53,25 @@ it('cleans every umpire client response and persists each management action', as
     expect(
       (await client.umpireLeaderboard(f.leagueA)).scheduled[0].count
     ).equals(1)
+    expect((await client.umpireLeaderboard(f.leagueA)).page).equals(undefined)
+    const page = await client.umpireLeaderboard(f.leagueA, {
+      order: 'asc',
+      limit: 1,
+      offset: 1
+    })
+    expect(page.page).deep.equals({
+      order: 'asc',
+      limit: 1,
+      offset: 1,
+      total: 2
+    })
+    expect(page.scheduled.map(p => p.count)).deep.equals([1])
+    expect((await client.umpireLeaderboard(f.leagueA, {})).page).deep.equals({
+      order: 'desc',
+      limit: 50,
+      offset: 0,
+      total: 2
+    })
     await client.removeUmpire('gam_umpire', 'uty_plate:1')
     await client.removeUmpireLevel(f.leagueA, level.id)
   } finally {

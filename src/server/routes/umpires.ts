@@ -2,6 +2,10 @@ import { type Request, Router } from 'express'
 import type { Kysely, Transaction } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
+import {
+  UMPIRE_LEADERBOARD_MAX_PAGE,
+  type UmpireLeaderboardQuery
+} from '../../common/umpireSchedule'
 import { now } from '../clock'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
@@ -39,6 +43,34 @@ async function noteLeagueGames(
     .where('seasons.league_id', '=', leagueId)
     .execute()
   for (const game of games) noteScopeChange(trx, { gameId: game.id })
+}
+
+/** The page a leaderboard request asks for; none when it names no parameter. */
+function leaderboardQueryOf(
+  query: Request['query']
+): UmpireLeaderboardQuery | undefined {
+  const { order, limit, offset } = query
+  if (order == null && limit == null && offset == null) return undefined
+  if (order != null && order !== 'asc' && order !== 'desc')
+    throw badRequest('Order the leaderboard asc or desc')
+  const whole = (
+    name: string,
+    value: unknown,
+    least: number,
+    most: number
+  ): number | undefined => {
+    if (value == null) return undefined
+    const number =
+      typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN
+    if (!Number.isSafeInteger(number) || number < least || number > most)
+      throw badRequest(`Supply one ${name} from ${least} to ${most}`)
+    return number
+  }
+  return {
+    order: order ?? undefined,
+    limit: whole('limit', limit, 1, UMPIRE_LEADERBOARD_MAX_PAGE),
+    offset: whole('offset', offset, 0, Number.MAX_SAFE_INTEGER)
+  }
 }
 
 export function umpireRoutes(
@@ -324,7 +356,14 @@ export function umpireRoutes(
     requireActor,
     withAsync(async (req, res) => {
       if (req.actor == null) throw unauthorized()
-      res.json(await leaderboard(db, req.actor, String(req.params.leagueId)))
+      res.json(
+        await leaderboard(
+          db,
+          req.actor,
+          String(req.params.leagueId),
+          leaderboardQueryOf(req.query)
+        )
+      )
     })
   )
   return router
