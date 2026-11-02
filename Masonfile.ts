@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+
 import type { Setup, Stage } from '@mason/types'
 
 // TeamStation for iOS on the Nomac pool and for Android on the DigitalOcean
@@ -20,6 +23,8 @@ const SIGN = {
 } as const
 const APPLE = { type: 'macos-arm64', os: 'macos', arch: 'arm64' } as const
 const TESTFLIGHT_GROUP = 'TeamStation testers'
+// The same shape ctx.apple.archive and ctx.apple.resign accept.
+const versionPattern = /^[0-9]+(\.[0-9]+){0,2}$/
 
 export function setup(m: Setup): void {
   m.apiVersion(1)
@@ -51,7 +56,9 @@ export function setup(m: Setup): void {
           name: 'release',
           on: APPLE,
           timeout: '2h',
-          checkout: false,
+          // package.json is the short version. A shallow checkout reads it;
+          // this stage re-signs the stashed IPA and does not compile.
+          checkout: { depth: 1 },
           apple: { distribution: 'appStore', app: APP },
           run: releaseIos
         }
@@ -97,17 +104,39 @@ export function setup(m: Setup): void {
     },
     { failFast: false }
   )
-  // The last successful ad hoc IPA, re-signed for the App Store. This uploads
-  // a build that already compiled, so it does not archive again.
+  // The last successful ad hoc IPA, re-signed at this commit's package.json
+  // version. The checkout reads that file. This does not archive again.
+  // Apple rejects a second upload of a build number it already has.
   m.workflow('release', { triggers: [{ request: true }] }, w => {
     w.stage('ios', {
       on: APPLE,
       timeout: '2h',
-      checkout: false,
+      checkout: { depth: 1 },
       apple: { distribution: 'appStore', app: APP },
+      buildNumbers: [APP],
       run: shipIos
     })
   })
+}
+
+function workspacePath(ctx: Stage, name: string): string {
+  const root = ctx.workspace
+  if (root == null || root === '') return name
+  return path.join(root, name)
+}
+
+/** The version every store build publishes, taken from package.json. */
+function appVersion(ctx: Stage): string {
+  const parsed: { version?: unknown } = JSON.parse(
+    readFileSync(workspacePath(ctx, 'package.json'), 'utf8')
+  )
+  const version = parsed.version
+  if (typeof version !== 'string' || !versionPattern.test(version)) {
+    throw new Error(
+      'package.json version must be one to three numeric components'
+    )
+  }
+  return version
 }
 
 /**
@@ -135,11 +164,13 @@ export async function buildIos(ctx: Stage): Promise<void> {
   await ctx.sh('node scripts/deploy/patchExpoModulesJsi.mjs')
   await ctx.sh('pod install', { cwd: 'ios' })
   const build = ctx.getBuildNumber(APP)
+  const version = appVersion(ctx)
   const rustRoot = `${process.env.HOME}/.mason/tools/rust/1.98.0`
   const archived = await ctx.apple.archive({
     workspace: 'ios/TeamStation.xcworkspace',
     scheme: 'TeamStation',
     configuration: 'Release',
+    version,
     buildNumber: build,
     // Xcode 27 treats a Swift explicit-module compile that exits 0 with no
     // output as a failed archive. Turning explicit modules off avoids it.
@@ -164,8 +195,16 @@ function relativeIpa(ctx: Stage, file: string): string {
   return file.startsWith(prefix) ? file.slice(prefix.length) : file
 }
 
-async function uploadAppStore(ctx: Stage, path: string): Promise<void> {
-  const { ipa } = await ctx.apple.resign({ path })
+async function uploadAppStore(
+  ctx: Stage,
+  ipaPath: string,
+  buildNumber?: string
+): Promise<void> {
+  const { ipa } = await ctx.apple.resign({
+    path: ipaPath,
+    version: appVersion(ctx),
+    ...(buildNumber == null ? {} : { buildNumber })
+  })
   await ctx.artifacts.save('ios-appstore', ipa)
   await ctx.apple.testflight({
     path: ipa,
@@ -195,12 +234,13 @@ export async function shipIos(ctx: Stage): Promise<void> {
   )
   const input = files.find(file => file.endsWith('.ipa'))
   if (input == null) throw new Error('The iOS artifact has no IPA')
-  await uploadAppStore(ctx, input)
+  await uploadAppStore(ctx, input, ctx.getBuildNumber(APP))
 }
 
 export async function compileAndroid(ctx: Stage): Promise<void> {
   await install(ctx)
   const build = ctx.getBuildNumber(APP)
+  const version = appVersion(ctx)
   await ctx.sh(
     [
       'test -f app/debug.keystore || keytool -genkeypair',
@@ -218,8 +258,8 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
     PATH: `${rustRoot}/cargo/bin:${process.env.PATH ?? ''}`
   }
   await ctx.sh('cargo install cargo-ndk', { env: rustEnv })
-  // The checked-in release config leaves versionCode at 1. The init script
-  // sets the run's number the way the deploy build does, without its keystore.
+  // The checked-in release config leaves versionCode at 1 and versionName
+  // at 1.0. The init script sets this run's number and package.json's version.
   await ctx.sh(
     [
       "cat > mason-version.gradle << 'EOF'",
@@ -227,6 +267,7 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
       "  project.plugins.withId('com.android.application') {",
       "    project.extensions.getByName('androidComponents').finalizeDsl { android ->",
       "      android.defaultConfig.versionCode = Integer.parseInt(System.getenv('MASON_BUILD_NUMBER'))",
+      "      android.defaultConfig.versionName = System.getenv('MASON_APP_VERSION')",
       '    }',
       '  }',
       '}',
@@ -235,7 +276,11 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
     ].join('\n'),
     {
       cwd: 'android',
-      env: { ...rustEnv, MASON_BUILD_NUMBER: build }
+      env: {
+        ...rustEnv,
+        MASON_BUILD_NUMBER: build,
+        MASON_APP_VERSION: version
+      }
     }
   )
   await ctx.stash(

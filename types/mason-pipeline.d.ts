@@ -16,6 +16,8 @@ declare module '@mason/types' {
     workspace?: string
     scheme: string
     configuration?: string
+    /** Sets MARKETING_VERSION. One to three numeric components. */
+    version?: string
     buildNumber?: string
     /** Extra arguments passed to xcodebuild, including build settings. */
     xcargs?: string[]
@@ -65,7 +67,13 @@ declare module '@mason/types' {
     }) => Promise<void>
     apple: {
       archive: (options: ArchiveOptions) => Promise<ArchiveResult>
-      resign: (options: { path: string }) => Promise<ResignResult>
+      resign: (options: {
+        path: string
+        /** Sets CFBundleShortVersionString. */
+        version?: string
+        /** Sets CFBundleVersion. */
+        buildNumber?: string
+      }) => Promise<ResignResult>
       testflight: (options: {
         path: string
         whatToTest?: string
@@ -89,7 +97,7 @@ declare module '@mason/types' {
     buildNumbers?: string[]
     cache?: Array<{ key: string; paths: string[] }>
     apple?: { distribution: string; app: string }
-    checkout?: boolean
+    checkout?: boolean | { depth?: number }
     run: (ctx: Stage) => Promise<void>
   }
   export interface WorkflowBuilder {
