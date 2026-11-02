@@ -1626,6 +1626,54 @@ export const asSeasonSummary = asObject({
 })
 export type SeasonSummary = ReturnType<typeof asSeasonSummary>
 
+const asHomeMemberTeam = asObject({
+  ...asTeamSummary.shape,
+  direct: asBoolean,
+  source: asLiteral('member')
+})
+const asHomeFollow = asObject({
+  ...asPublicGroup.shape,
+  direct: asBoolean,
+  source: asLiteral('follow')
+})
+const asHomeMemberSeason = asObject({
+  ...asSeasonSummary.shape,
+  direct: asBoolean,
+  source: asLiteral('member')
+})
+const asHomeSource = asObject({ source: asLiteral('member', 'follow') })
+
+/** One team on Home: a member summary, or a follow's public group. */
+export const asHomeTeam = (raw: unknown): HomeTeam => {
+  const source = asHomeSource(raw).source
+  return source === 'follow' ? asHomeFollow(raw) : asHomeMemberTeam(raw)
+}
+export type HomeTeam = ReturnType<typeof asHomeMemberTeam | typeof asHomeFollow>
+
+/** One season on Home: a member summary, or a follow's public group. */
+export const asHomeSeason = (raw: unknown): HomeSeason => {
+  const source = asHomeSource(raw).source
+  return source === 'follow' ? asHomeFollow(raw) : asHomeMemberSeason(raw)
+}
+export type HomeSeason = ReturnType<
+  typeof asHomeMemberSeason | typeof asHomeFollow
+>
+
+/** One league on Home. Membership and follow both use the public group. */
+export const asHomeLeague = asObject({
+  ...asPublicGroup.shape,
+  direct: asBoolean,
+  source: asLiteral('member', 'follow')
+})
+export type HomeLeague = ReturnType<typeof asHomeLeague>
+
+export const asHomeLists = asObject({
+  teams: asArray(asHomeTeam),
+  seasons: asArray(asHomeSeason),
+  leagues: asArray(asHomeLeague)
+})
+export type HomeLists = ReturnType<typeof asHomeLists>
+
 export const asSeasonGame = withEventMetadata(
   asObject({
     id: asString,
@@ -3793,6 +3841,11 @@ export class TeamStationClient {
 
   async teams(): Promise<TeamSummary[]> {
     return await this.request('GET', '/teams', asArray(asTeamSummary))
+  }
+
+  /** Home's teams, seasons and leagues, direct ties first. */
+  async home(): Promise<HomeLists> {
+    return await this.request('GET', '/me/home', asHomeLists)
   }
 
   async discoverGroups(kind: GroupKind, query = ''): Promise<SearchRow[]> {

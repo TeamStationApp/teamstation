@@ -230,7 +230,7 @@ export async function accountHarness(
     '/api/v1',
     authRoutes(db, { space, sendCode, publicUrl: 'http://localhost' })
   )
-  app.use('/api/v1', meRoutes(db))
+  app.use('/api/v1', meRoutes(db, undefined, media))
   app.use('/api/v1', teamRoutes(db, media))
   app.use('/api/v1', playerRoutes(db, media))
   mountExtra?.(app, { db, media })

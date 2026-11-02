@@ -254,7 +254,23 @@ describe('OAuth provider and native approval over HTTPS', function () {
     const provider = createOAuthProvider(db, config, origin)
     app.use(oauthInteractionRoutes(db, provider, origin))
     app.use('/oauth', provider.callback())
-    app.use('/api/v1', meRoutes(db))
+    app.use(
+      '/api/v1',
+      meRoutes(db, undefined, {
+        ffmpegPath: 'ffmpeg',
+        mediaRoot: '/tmp',
+        mediaSecret: 'secret',
+        publicUrl: 'http://127.0.0.1',
+        space: {
+          endpoint: '',
+          region: '',
+          bucket: '',
+          accessKeyId: '',
+          secretAccessKey: '',
+          pathStyle: true
+        }
+      })
+    )
     app.use(errorHandler)
     agent = new Agent({
       connect: {
