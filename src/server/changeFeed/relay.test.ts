@@ -391,6 +391,30 @@ describe('the feed relay', function () {
     await control.stop()
   })
 
+  it('says a failed candidate’s reason once, and never that it stopped leading', async function () {
+    const prefix = testPrefix()
+    const lines: string[] = []
+    const closed = createServer()
+    await new Promise<void>(resolve => {
+      closed.listen(0, '127.0.0.1', resolve)
+    })
+    const { port } = closed.address() as AddressInfo
+    await new Promise(resolve => {
+      closed.close(resolve)
+    })
+    relayOf(
+      prefix,
+      'refused',
+      { log: line => lines.push(line) },
+      `postgres://127.0.0.1:${port}/nothing`
+    )
+    await until(() => lines.length > 0, 'the first attempt')
+    await wait(10 * FAST.pollMs!)
+    expect(lines.length).equals(1)
+    expect(lines[0]).matches(/^relay candidate: .*ECONNREFUSED/)
+    await stopAll()
+  })
+
   it('ends a claim whose connection never opens, and becomes a candidate again', async function () {
     const prefix = testPrefix()
     const lines: string[] = []
@@ -410,11 +434,11 @@ describe('the feed relay', function () {
       { claimMs: 50, log: line => lines.push(line) },
       `postgres://127.0.0.1:${port}/nothing`
     )
-    await until(
-      () => lines.filter(line => line.includes('the claim took')).length >= 2,
-      'a second attempt'
-    )
+    await until(() => sockets.length >= 2, 'a second attempt')
     expect(await leader(prefix)).equals(null)
+    expect(lines.filter(line => line.includes('the claim took'))).deep.equals([
+      'relay candidate: the claim took over 50 ms'
+    ])
     await relay.stop()
     running.splice(running.indexOf(relay), 1)
     for (const socket of sockets) socket.destroy()

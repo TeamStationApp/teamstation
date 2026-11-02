@@ -208,8 +208,8 @@ class Relay implements FeedRelay {
     try {
       const holder = await this.redis.get(feedLeaderKey(this.prefix))
       // A stop during that read: nothing may start now that it would leave behind.
-      if (holder == null && !this.stopped) await this.tryToLead()
-      this.lastComplaint = ''
+      if (holder != null) this.lastComplaint = ''
+      else if (!this.stopped) await this.tryToLead()
     } catch (error) {
       this.complain(String(error))
     }
@@ -274,6 +274,7 @@ class Relay implements FeedRelay {
       )
       if (turn.ended) return
       if (held?.rows[0]?.held !== true) {
+        this.lastComplaint = ''
         await this.leave(turn)
         return
       }
@@ -302,6 +303,7 @@ class Relay implements FeedRelay {
       clearTimeout(limit)
     }
     if (turn.ended) return
+    this.lastComplaint = ''
     turn.beat = setInterval(() => {
       this.beat(turn)
     }, this.beatMs)
@@ -365,7 +367,10 @@ class Relay implements FeedRelay {
   /** Ends a turn: nothing more goes out, and the process is a candidate again. */
   private async end(turn: Leadership, why: string): Promise<void> {
     if (turn.ended) return
-    this.log(`the relay stops leading here: ${why}`)
+    // A turn that claimed nothing led nothing, and a database that stays down
+    // fails every poll of every candidate: it is said once.
+    if (turn.claimed) this.log(`the relay stops leading here: ${why}`)
+    else this.complain(why)
     await this.leave(turn)
   }
 
