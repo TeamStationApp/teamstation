@@ -12,6 +12,7 @@ import type {
   FeedHandlers,
   FeedSubscription
 } from './feed'
+import { FeedSubscribers } from './feedSubscribers'
 
 /** Where a channel's notices are published. */
 export const feedChannelKey = (prefix: string, channel: string): string =>
@@ -40,23 +41,6 @@ export interface ValkeyFeedOptions {
   log: (message: string) => void
 }
 
-/** One handler on one channel. */
-interface Subscriber {
-  handlers: FeedHandlers
-  /** Waiting to hear that its channel is in place. */
-  owed: boolean
-  /** Its channel went unheard since it last heard that. */
-  gap: boolean
-  settle: () => void
-}
-
-interface ChannelState {
-  /** The subscription holds on the present connection. */
-  inPlace: boolean
-  subscribers: Set<Subscriber>
-  listener: (message: string) => void
-}
-
 /**
  * One subscriber connection for the process, on `<prefix>:feed:<channel>`,
  * opened at the first subscription, and one more client for publishing, opened
@@ -76,8 +60,9 @@ export class ValkeyFeed implements ChangeFeed {
   private readonly log: (message: string) => void
   private readonly publisher: ScoreboardClient
   private readonly subscriber: ScoreboardClient
-  private readonly channels = new Map<FeedChannel, ChannelState>()
-  /** One function for every connection: node-redis keeps a set of listeners. */
+  private readonly subscribers: FeedSubscribers
+  /** One function per channel for every connection: node-redis keeps a set of listeners. */
+  private readonly listeners = new Map<FeedChannel, (message: string) => void>()
   private readonly controlListener = (message: string): void => {
     this.controlled(message)
   }
@@ -96,6 +81,7 @@ export class ValkeyFeed implements ChangeFeed {
     this.silenceMs = options.silenceMs ?? 5000
     this.connectWaitMs = options.connectWaitMs ?? 2000
     this.log = options.log
+    this.subscribers = new FeedSubscribers(options.log)
     this.publisher = makeScoreboardClient(
       options.url,
       this.log,
@@ -116,46 +102,11 @@ export class ValkeyFeed implements ChangeFeed {
   }
 
   subscribe(channel: FeedChannel, handlers: FeedHandlers): FeedSubscription {
-    let settle: () => void = () => undefined
-    const listening = new Promise<void>(resolve => {
-      settle = resolve
-    })
-    if (this.closed) {
-      settle()
-      return { listening, stop: () => undefined }
-    }
-    const subscriber: Subscriber = { handlers, owed: true, gap: false, settle }
-    let state = this.channels.get(channel)
-    const added = state == null
-    if (state == null) {
-      state = {
-        inPlace: false,
-        subscribers: new Set(),
-        listener: message => {
-          this.notified(channel, message)
-        }
-      }
-      this.channels.set(channel, state)
-    }
-    const joined = state
-    joined.subscribers.add(subscriber)
-    if (joined.inPlace) {
-      // After the caller has its subscription, as when it has to wait.
-      queueMicrotask(() => {
-        this.tell(subscriber)
-      })
-    } else if (added && this.subscriber.isReady) {
-      this.place(channel, joined)
-    }
+    const { subscription, added } = this.subscribers.add(channel, handlers)
+    if (this.closed) return subscription
+    if (added && this.subscriber.isReady) this.place(channel)
     this.open()
-    return {
-      listening,
-      stop: () => {
-        joined.subscribers.delete(subscriber)
-        subscriber.owed = false
-        settle()
-      }
-    }
+    return subscription
   }
 
   /** `PUBLISH`, straight to Valkey: this leaves Postgres out of it. */
@@ -172,9 +123,7 @@ export class ValkeyFeed implements ChangeFeed {
 
   async close(): Promise<void> {
     this.closed = true
-    for (const state of this.channels.values())
-      for (const subscriber of state.subscribers) subscriber.settle()
-    this.channels.clear()
+    this.subscribers.close()
     await Promise.all([quit(this.subscriber), quit(this.publisher)])
   }
 
@@ -209,14 +158,7 @@ export class ValkeyFeed implements ChangeFeed {
     if (this.closed || this.down || this.subscriber.isReady) return
     this.down = true
     this.heardRelayAt = undefined
-    for (const state of this.channels.values()) {
-      state.inPlace = false
-      for (const subscriber of state.subscribers) {
-        subscriber.owed = true
-        subscriber.gap = true
-        subscriber.settle()
-      }
-    }
+    this.subscribers.lost()
   }
 
   /** Subscribing again is harmless for what node-redis restored itself. */
@@ -226,40 +168,28 @@ export class ValkeyFeed implements ChangeFeed {
     this.subscriber
       .subscribe(feedControlKey(this.prefix), this.controlListener)
       .catch(() => undefined)
-    for (const [channel, state] of this.channels) this.place(channel, state)
+    for (const channel of this.subscribers.known()) this.place(channel)
   }
 
-  private place(channel: FeedChannel, state: ChannelState): void {
+  private place(channel: FeedChannel): void {
     const session = this.session
+    let listener = this.listeners.get(channel)
+    if (listener == null) {
+      listener = message => {
+        this.subscribers.notified(channel, message)
+      }
+      this.listeners.set(channel, listener)
+    }
     this.subscriber
-      .subscribe(feedChannelKey(this.prefix, channel), state.listener)
+      .subscribe(feedChannelKey(this.prefix, channel), listener)
       .then(
         () => {
           // Lost on the way, so its handlers wait for the next connection.
           if (this.closed || session !== this.session || this.down) return
-          state.inPlace = true
-          for (const subscriber of [...state.subscribers]) this.tell(subscriber)
+          this.subscribers.placed(channel)
         },
         () => undefined
       )
-  }
-
-  private tell(subscriber: Subscriber): void {
-    if (!subscriber.owed) return
-    subscriber.owed = false
-    const first = !subscriber.gap
-    subscriber.gap = false
-    this.safely(() => subscriber.handlers.onListening?.(first))
-    subscriber.settle()
-  }
-
-  private notified(channel: FeedChannel, payload: string): void {
-    const state = this.channels.get(channel)
-    if (state == null) return
-    for (const subscriber of [...state.subscribers])
-      this.safely(() => {
-        subscriber.handlers.onPayload(payload)
-      })
   }
 
   /** A word from the relay. */
@@ -275,25 +205,6 @@ export class ValkeyFeed implements ChangeFeed {
     const silent =
       this.heardRelayAt != null && now - this.heardRelayAt >= this.silenceMs
     this.heardRelayAt = now
-    if (kind === 'resync' || silent) this.gap()
-  }
-
-  /** Notices may have gone unheard while the channels stayed in place. */
-  private gap(): void {
-    for (const state of this.channels.values())
-      for (const subscriber of [...state.subscribers]) {
-        subscriber.owed = true
-        subscriber.gap = true
-        if (state.inPlace) this.tell(subscriber)
-      }
-  }
-
-  /** One handler's failure is neither the feed's nor the other handlers'. */
-  private safely(act: () => void): void {
-    try {
-      act()
-    } catch (error) {
-      this.log(`a handler failed: ${String(error)}`)
-    }
+    if (kind === 'resync' || silent) this.subscribers.gap()
   }
 }

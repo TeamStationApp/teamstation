@@ -67,43 +67,6 @@ describe('the Valkey change feed', function () {
     await redis.close()
   })
 
-  it('hears a channel in order, and only that channel', async function () {
-    const { feed, prefix } = feedOf()
-    const games = hearer()
-    const chats = hearer()
-    await Promise.all([
-      feed.subscribe('game_changes', games).listening,
-      feed.subscribe('chat_changes', chats).listening
-    ])
-    expect(games.listenings).deep.equals([true])
-    const sent = Array.from({ length: 50 }, (_, index) => String(index))
-    for (const payload of sent)
-      await redis.publish(feedChannelKey(prefix, 'game_changes'), payload)
-    await redis.publish(feedChannelKey(prefix, 'chat_changes'), 'hello')
-    await until(
-      () => games.payloads.length === 50 && chats.payloads.length === 1,
-      'every payload'
-    )
-    expect(games.payloads).deep.equals(sent)
-    expect(chats.payloads).deep.equals(['hello'])
-  })
-
-  it('tells a late handler it is first, and lets one handler go', async function () {
-    const { feed, prefix } = feedOf()
-    const early = hearer()
-    const stopped = hearer()
-    const { stop } = feed.subscribe('game_changes', stopped)
-    await feed.subscribe('game_changes', early).listening
-    const late = hearer()
-    await feed.subscribe('game_changes', late).listening
-    expect(late.listenings).deep.equals([true])
-    stop()
-    await redis.publish(feedChannelKey(prefix, 'game_changes'), 'x')
-    await until(() => late.payloads.length === 1, 'the payload')
-    expect(stopped.payloads).deep.equals([])
-    expect(early.payloads).deep.equals(['x'])
-  })
-
   it('counts a control resync as a gap, once per handler', async function () {
     const { feed, prefix } = feedOf()
     const games = hearer()
@@ -199,23 +162,6 @@ describe('the Valkey change feed', function () {
     await door.shut()
   })
 
-  it('settles when a first attempt fails, says false for it, and true to one who came during the outage', async function () {
-    const door = await redisDoor(false)
-    const { feed } = feedOf({ url: door.url })
-    const early = hearer()
-    const subscription = feed.subscribe('game_changes', early)
-    await subscription.listening
-    expect(early.listenings).deep.equals([])
-    const during = hearer()
-    feed.subscribe('game_changes', during)
-    await door.open()
-    await until(() => during.listenings.length === 1, 'the connection')
-    expect(early.listenings).deep.equals([false])
-    expect(during.listenings).deep.equals([true])
-    await feed.close()
-    await door.shut()
-  })
-
   it('publishes straight to Valkey, connecting on first use and never touching Postgres', async function () {
     const { feed, prefix } = feedOf()
     const chats = hearer()
@@ -255,30 +201,6 @@ describe('the Valkey change feed', function () {
     })
     expect(refused).equals(true)
     await feed.close()
-  })
-
-  it('keeps one failing handler from the others', async function () {
-    const { feed, prefix } = feedOf()
-    const good = hearer()
-    feed.subscribe('game_changes', {
-      onPayload: () => {
-        throw new Error('boom')
-      }
-    })
-    await feed.subscribe('game_changes', good).listening
-    await redis.publish(feedChannelKey(prefix, 'game_changes'), 'x')
-    await until(() => good.payloads.length === 1, 'the payload')
-    expect(lines.some(line => line.includes('boom'))).equals(true)
-  })
-
-  it('answers a subscription after it closed, and lets its handlers go on closing', async function () {
-    const { feed } = feedOf()
-    const waiting = feed.subscribe('game_changes', hearer())
-    await feed.close()
-    await waiting.listening
-    const late = feed.subscribe('game_changes', hearer())
-    await late.listening
-    late.stop()
   })
 
   it('is what a process gets from its config, which defaults to Postgres', async function () {

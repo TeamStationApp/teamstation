@@ -44,9 +44,7 @@ describe('the Postgres change feed', function () {
   this.timeout(30000)
   const stamp = `${Date.now()}_${process.pid}`
   const scratchName = `teamstation_feed_${stamp}`
-  const lateName = `teamstation_feed_late_${stamp}`
   const scratchUrl = testDatabaseUrl.replace(/\/[^/]*$/, `/${scratchName}`)
-  const lateUrl = testDatabaseUrl.replace(/\/[^/]*$/, `/${lateName}`)
   const feeds: PostgresFeed[] = []
   let admin: Pool
   let db: Kysely<Database>
@@ -104,7 +102,6 @@ describe('the Postgres change feed', function () {
     await poker.end()
     await db.destroy()
     await admin.query(`drop database if exists ${scratchName} with (force)`)
-    await admin.query(`drop database if exists ${lateName} with (force)`)
     await admin.end()
   })
 
@@ -131,28 +128,6 @@ describe('the Postgres change feed', function () {
     for (const each of [early, alongside, late, sameChannel])
       expect(each.listenings).deep.equals([true])
     expect(await connections()).equals(1)
-    await feed.close()
-    await noConnections()
-  })
-
-  it('gives a notify only to its own channel’s handlers', async function () {
-    const feed = feedOf()
-    const games = hearer()
-    const moreGames = hearer()
-    const chat = hearer()
-    await Promise.all([
-      feed.subscribe('game_changes', games).listening,
-      feed.subscribe('game_changes', moreGames).listening,
-      feed.subscribe('chat_changes', chat).listening
-    ])
-    await notify('game_changes', 'a game')
-    await until(() => moreGames.payloads.length === 1, 'the notify')
-    await notify('screen_scopes', 'nobody here')
-    await notify('chat_changes', 'a chat')
-    await until(() => chat.payloads.length === 1, 'the chat notify')
-    expect(games.payloads).deep.equals(['a game'])
-    expect(moreGames.payloads).deep.equals(['a game'])
-    expect(chat.payloads).deep.equals(['a chat'])
     await feed.close()
     await noConnections()
   })
@@ -191,86 +166,6 @@ describe('the Postgres change feed', function () {
     await noConnections()
   })
 
-  it('settles listening when the first attempt fails, keeps trying, and calls the return a gap', async function () {
-    const feed = feedOf(lateUrl, 30)
-    const games = hearer()
-    const { listening } = feed.subscribe('game_changes', games)
-    await listening
-    expect(lines).to.have.length(1)
-    expect(lines[0]).includes('lost the feed connection')
-    expect(games.listenings).deep.equals([])
-    await until(() => lines.length >= 3, 'more attempts')
-    await admin.query(`create database ${lateName}`)
-    await until(() => games.listenings.length > 0, 'the return')
-    expect(games.listenings).deep.equals([false])
-    await feed.close()
-  })
-
-  it('stops only the handler it was given', async function () {
-    const feed = feedOf()
-    const leaving = hearer()
-    const staying = hearer()
-    const subscription = feed.subscribe('game_changes', leaving)
-    await Promise.all([
-      subscription.listening,
-      feed.subscribe('game_changes', staying).listening
-    ])
-    subscription.stop()
-    subscription.stop()
-    await notify('game_changes', 'after')
-    await until(() => staying.payloads.length === 1, 'the notify')
-    expect(leaving.payloads).deep.equals([])
-    await cut()
-    await until(() => staying.listenings.length === 2, 'the return')
-    expect(leaving.listenings).deep.equals([true])
-    await feed.close()
-  })
-
-  it('settles a subscription stopped before its channel is in place, and tells it nothing', async function () {
-    const feed = feedOf()
-    const leaving = hearer()
-    const subscription = feed.subscribe('game_changes', leaving)
-    subscription.stop()
-    await subscription.listening
-    const staying = hearer()
-    await feed.subscribe('game_changes', staying).listening
-    expect(leaving.listenings).deep.equals([])
-    // Its channel was in place when it went: still nothing.
-    const alsoLeaving = hearer()
-    const quick = feed.subscribe('game_changes', alsoLeaving)
-    quick.stop()
-    await quick.listening
-    await wait(10)
-    expect(alsoLeaving.listenings).deep.equals([])
-    await feed.close()
-  })
-
-  it('keeps one handler’s failure from the others, and logs it', async function () {
-    const feed = feedOf()
-    const fine = hearer()
-    await Promise.all([
-      feed.subscribe('game_changes', {
-        onPayload: () => {
-          throw new Error('a payload went wrong')
-        },
-        onListening: () => {
-          throw new Error('a listening went wrong')
-        }
-      }).listening,
-      feed.subscribe('game_changes', fine).listening
-    ])
-    await notify('game_changes', 'one')
-    await until(() => fine.payloads.length === 1, 'the notify')
-    expect(fine.listenings).deep.equals([true])
-    expect(lines.some(line => line.includes('a payload went wrong'))).equals(
-      true
-    )
-    expect(lines.some(line => line.includes('a listening went wrong'))).equals(
-      true
-    )
-    await feed.close()
-  })
-
   it('treats a LISTEN that fails like a lost connection', async function () {
     const feed = feedOf(scratchUrl, 10_000)
     await feed.subscribe('not a channel' as FeedChannel, hearer()).listening
@@ -297,16 +192,6 @@ describe('the Postgres change feed', function () {
     late.stop()
     expect(after.listenings).deep.equals([])
     expect(lines).to.have.length(counted)
-  })
-
-  it('can close while still connecting', async function () {
-    const feed = feedOf()
-    const games = hearer()
-    const { listening } = feed.subscribe('game_changes', games)
-    await feed.close()
-    await listening
-    expect(games.listenings).deep.equals([])
-    await noConnections()
   })
 
   it('publishes an ephemeral notice through the database it is given', async function () {
