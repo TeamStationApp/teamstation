@@ -678,6 +678,37 @@ describe('the feed relay', function () {
       await stopAll()
     })
 
+    it('times the echo alone, however long the leader takes to look up', async function () {
+      const prefix = testPrefix()
+      relayOf(prefix, '43@probe.example.test')
+      await until(
+        async () => (await leader(prefix)) != null && (await backends()) === 1,
+        'a leader'
+      )
+      await wait(50)
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const original = ValkeyFeed.prototype.leader
+      const slowMs = 600
+      ValkeyFeed.prototype.leader = async function (this: ValkeyFeed) {
+        await wait(slowMs)
+        return await original.call(this)
+      }
+      const printed: string[] = []
+      try {
+        const startedAt = Date.now()
+        const code = await runFeedProbe(configOf(prefix), {
+          print: line => printed.push(line)
+        })
+        expect(code).equals(0)
+        expect(Date.now() - startedAt).greaterThanOrEqual(slowMs)
+      } finally {
+        ValkeyFeed.prototype.leader = original
+      }
+      const [, roundTrip] = /round trip (\d+) ms/.exec(printed.join('\n')) ?? []
+      expect(Number(roundTrip)).lessThan(slowMs)
+      await stopAll()
+    })
+
     it('runs as a command, reading the config where it stands', async function () {
       const prefix = testPrefix()
       relayOf(prefix, '42@probe.example.test')

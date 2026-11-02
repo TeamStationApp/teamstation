@@ -44,30 +44,30 @@ export async function runFeedProbe(
   const silence = new Promise<void>(resolve => {
     timer = setTimeout(resolve, timeoutMs)
   })
-  let heard = false
+  let startedAt = 0
+  /** Set when the echo arrives: looking up the leader is no part of the round trip. */
+  let roundTripMs: number | undefined
   const subscription = feed.subscribe('feed_probe', {
     onPayload: payload => {
       if (payload !== token) return
-      heard = true
+      roundTripMs = Date.now() - startedAt
       echoed()
     }
   })
   try {
     await Promise.race([subscription.listening, silence])
-    const startedAt = Date.now()
+    startedAt = Date.now()
     await sendProbe(requestDatabaseUrl(config), token)
     await Promise.race([echo, silence])
     const leader = await Promise.race([
       feed.leader().catch(() => null),
       new Promise<null>(resolve => setTimeout(resolve, 1000, null))
     ])
-    if (!heard) {
+    if (roundTripMs == null) {
       io.print(`no echo within ${timeoutMs} ms; leader ${leader ?? '(none)'}`)
       return 1
     }
-    io.print(
-      `round trip ${Date.now() - startedAt} ms; leader ${leader ?? '(none)'}`
-    )
+    io.print(`round trip ${roundTripMs} ms; leader ${leader ?? '(none)'}`)
     return 0
   } catch (error) {
     io.print(`the probe failed: ${String(error)}`)
