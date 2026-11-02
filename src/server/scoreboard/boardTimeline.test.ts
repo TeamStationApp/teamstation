@@ -3,9 +3,9 @@ import type { AddressInfo } from 'node:net'
 
 import { expect } from 'chai'
 import express from 'express'
-import type { Kysely } from 'kysely'
-import { sql } from 'kysely'
+import { Kysely, PostgresDialect, sql } from 'kysely'
 import { after, afterEach, before, describe, it } from 'mocha'
+import { Pool, type PoolClient } from 'pg'
 import { WebSocket } from 'ws'
 
 import {
@@ -104,6 +104,7 @@ describe('the board timeline', function () {
   let clock = Date.now()
   const now = (): number => clock
   let runner: Person
+  let url: string
   let stranger: Person
   let teams: SessionContext['teams']
   let setup: SessionContext['setup']
@@ -118,21 +119,28 @@ describe('the board timeline', function () {
   }
 
   async function startWorker(
-    options: { checkMs?: number } = {}
+    options: {
+      checkMs?: number
+      starvedCheckMs?: number
+      starvedCloseMs?: number
+      db?: Kysely<Database>
+    } = {}
   ): Promise<Worker> {
     const client = await connectedClient()
     const subscriber = makeScoreboardSubscriber(client, quiet)
     await subscriber.connect()
     const store = makeScoreboardStore({ client, prefix, now })
     const hub = makeScoreboardHub({
-      db,
+      db: options.db ?? db,
       store,
       subscriber,
       log,
       now,
       // The test's clock stands still, so the real hold never fires.
       speedHoldMs: HOUR,
-      checkMs: options.checkMs
+      checkMs: options.checkMs,
+      starvedCheckMs: options.starvedCheckMs,
+      starvedCloseMs: options.starvedCloseMs
     })
     const app = express()
     app.use(withActor(db))
@@ -319,7 +327,7 @@ describe('the board timeline', function () {
 
   before(async function () {
     await requireRedis()
-    ;({ db, drop } = await scratchDatabase('board_timeline'))
+    ;({ db, drop, url } = await scratchDatabase('board_timeline'))
     prefix = testPrefix()
     teams = {
       home: {
@@ -1392,6 +1400,188 @@ describe('the board timeline', function () {
       expect(
         await connect(`${one.ws}/gam_nothere/socket?timeline=1`, runner).closed
       ).equals(4404)
+    })
+
+    describe('a check that finds no connection', function () {
+      const pools: Pool[] = []
+      after(async function () {
+        await Promise.all(
+          pools.map(async pool => {
+            await pool.end()
+          })
+        )
+      })
+
+      /**
+       * The database, on a pool of its own that can be told to refuse a
+       * checkout, or to fail what reads a credential.
+       */
+      const failingDb = (): {
+        db: Kysely<Database>
+        refuse: (message?: string) => void
+        failCredentials: (message: string) => void
+        refusals: () => number
+      } => {
+        let refusal: string | undefined
+        let credentialFailure: string | undefined
+        let refusals = 0
+        const pool = new Pool({ connectionString: url })
+        pools.push(pool)
+        pool.on('error', quiet)
+        const connect = pool.connect.bind(pool) as () => Promise<PoolClient>
+        const patched = new WeakSet<PoolClient>()
+        pool.connect = (async () => {
+          if (refusal != null) {
+            refusals += 1
+            throw new Error(refusal)
+          }
+          const client = await connect()
+          if (!patched.has(client)) {
+            patched.add(client)
+            const query = client.query.bind(client) as (
+              ...args: unknown[]
+            ) => Promise<unknown>
+            client.query = (async (...args: unknown[]) => {
+              if (
+                credentialFailure != null &&
+                /auth_sessions|api_tokens|user_api_keys/.test(String(args[0]))
+              )
+                throw new Error(credentialFailure)
+              return await query(...args)
+            }) as typeof client.query
+          }
+          return client
+        }) as typeof pool.connect
+        return {
+          db: new Kysely<Database>({ dialect: new PostgresDialect({ pool }) }),
+          refuse: message => {
+            refusal = message
+          },
+          failCredentials: message => {
+            credentialFailure = message
+          },
+          refusals: () => refusals
+        }
+      }
+      const POOL_TIMEOUT = 'timeout exceeded when trying to connect'
+      /** A socket is open before it is admitted, which reads the same database. */
+      const admitted = async (): Promise<void> => {
+        await new Promise(resolve => setTimeout(resolve, 150))
+      }
+
+      it('keeps a room’s sockets and asks again soon, not at the next regular check', async function () {
+        const failing = failingDb()
+        const worker = await startWorker({
+          db: failing.db,
+          checkMs: 200,
+          starvedCheckMs: 20,
+          starvedCloseMs: HOUR
+        })
+        const gameId = await newGame()
+        const owner = await addPerson(db, 'starvedOwner', {
+          owns: teams.home.id
+        })
+        const first = await opened(
+          `${worker.ws}/${gameId}/socket?timeline=1`,
+          owner
+        )
+        const second = await opened(
+          `${worker.ws}/${gameId}/socket?timeline=1`,
+          owner
+        )
+        await admitted()
+        logged.length = 0
+        failing.refuse(POOL_TIMEOUT)
+        await new Promise(resolve => setTimeout(resolve, 400))
+        // Two regular checks in that time, and more than that many asks.
+        expect(failing.refusals()).greaterThan(2)
+        expect(logged.join()).includes('asking again')
+        expect(logged.join()).not.includes('authorization')
+        for (const socket of [first, second])
+          expect(socket.socket.readyState).equals(WebSocket.OPEN)
+        failing.refuse(undefined)
+        // A session that ended while it could not ask is still noticed.
+        await db
+          .deleteFrom('auth_sessions')
+          .where('user_id', '=', owner.userId)
+          .execute()
+        await db
+          .deleteFrom('api_tokens')
+          .where('user_id', '=', owner.userId)
+          .execute()
+        expect(await first.closed).equals(4401)
+        expect(await second.closed).equals(4401)
+      })
+
+      it('closes a room’s timeline sockets once the checks have failed for the set time', async function () {
+        const failing = failingDb()
+        const worker = await startWorker({
+          db: failing.db,
+          checkMs: 40,
+          starvedCheckMs: 20,
+          starvedCloseMs: 10 * 60_000
+        })
+        const gameId = await newGame()
+        const listener = await opened(
+          `${worker.ws}/${gameId}/socket?timeline=1`,
+          runner
+        )
+        await admitted()
+        logged.length = 0
+        failing.refuse(POOL_TIMEOUT)
+        await until('a failed check', () =>
+          logged.some(line => line.includes('asking again'))
+        )
+        clock += 10 * 60_000 - 1
+        await new Promise(resolve => setTimeout(resolve, 100))
+        expect(listener.socket.readyState).equals(WebSocket.OPEN)
+        clock += 2
+        expect(await listener.closed).equals(1011)
+      })
+
+      it('starts the time again after a check that succeeds', async function () {
+        const failing = failingDb()
+        const worker = await startWorker({
+          db: failing.db,
+          checkMs: 40,
+          starvedCheckMs: 20,
+          starvedCloseMs: 10 * 60_000
+        })
+        const gameId = await newGame()
+        const listener = await opened(
+          `${worker.ws}/${gameId}/socket?timeline=1`,
+          runner
+        )
+        await admitted()
+        failing.refuse(POOL_TIMEOUT)
+        await new Promise(resolve => setTimeout(resolve, 100))
+        clock += 10 * 60_000 - 1
+        failing.refuse(undefined)
+        await new Promise(resolve => setTimeout(resolve, 100))
+        failing.refuse(POOL_TIMEOUT)
+        clock += 2
+        await new Promise(resolve => setTimeout(resolve, 100))
+        expect(listener.socket.readyState).equals(WebSocket.OPEN)
+      })
+
+      it('still closes a room’s sockets at once for any other failure', async function () {
+        const failing = failingDb()
+        const worker = await startWorker({
+          db: failing.db,
+          checkMs: 40,
+          starvedCheckMs: 20,
+          starvedCloseMs: HOUR
+        })
+        const gameId = await newGame()
+        const listener = await opened(
+          `${worker.ws}/${gameId}/socket?timeline=1`,
+          runner
+        )
+        await admitted()
+        failing.failCredentials('relation "auth_sessions" does not exist')
+        expect(await listener.closed).equals(1011)
+        expect(logged.join()).includes('authorization')
+      })
     })
 
     it('notices a game write that changes no live board', async function () {

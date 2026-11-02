@@ -33,7 +33,7 @@ import {
   keyAllows
 } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
-import type { Database } from '../db/database'
+import { type Database, isPoolTimeout } from '../db/database'
 import { mayRunGame } from '../director/runGames'
 import { refreshRadarSpeeds } from '../events/radarSpeeds'
 import { speedHoldMs as nodeSpeedHoldMs } from '../nodeSettings'
@@ -104,6 +104,10 @@ interface Room {
   members: Set<Member>
   /** This game's work, one step at a time, in order. */
   chain: Promise<void>
+  /** When its checks began finding no connection, while they still do. */
+  starvedSince?: number
+  /** The next of those checks, sooner than the regular one. */
+  recheck?: ReturnType<typeof setTimeout>
 }
 
 export interface ScoreboardHubOptions {
@@ -115,6 +119,10 @@ export interface ScoreboardHubOptions {
   now?: () => number
   /** How often each game with sockets is checked for having closed. */
   checkMs?: number
+  /** How soon a check that found no connection is asked again, on average. */
+  starvedCheckMs?: number
+  /** How long checks may keep finding none before a game's `timeline=1` sockets close. */
+  starvedCloseMs?: number
   /** How often every socket is pinged; one that missed the last is dropped. */
   pingMs?: number
   /**
@@ -141,6 +149,9 @@ const KIND_OF: Record<string, Kind> = {
 }
 /** Close code for a server that cannot reach Redis: retry, as after 1006. */
 const UNAVAILABLE = 1011
+/** After a check finds no connection: how soon it asks again, and for how long. */
+const STARVED_CHECK_MS = 10_000
+const STARVED_CLOSE_MS = 5 * 60_000
 const GOING_AWAY = 1001
 const BAD_REQUEST = 'HTTP/1.1 400 Bad Request\r\n\r\n'
 const CHANGED = JSON.stringify({ type: 'changed' })
@@ -156,6 +167,8 @@ export function makeScoreboardHub(
   // hold is armed in the middle of a message, with nothing to await.
   let speedHoldMs =
     options.speedHoldMs ?? defaultScoreboardSettings.speedHoldSec * 1000
+  const starvedCheckMs = options.starvedCheckMs ?? STARVED_CHECK_MS
+  const starvedCloseMs = options.starvedCloseMs ?? STARVED_CLOSE_MS
   const readHold = (): void => {
     if (options.speedHoldMs != null) return
     nodeSpeedHoldMs(db)
@@ -377,20 +390,26 @@ export function makeScoreboardHub(
   const checker = setInterval(() => {
     for (const room of rooms.values()) {
       enqueue(room, async () => {
-        const record = await gameRecord(db, room.gameId)
-        const keyExists = await store.exists(room.gameId)
-        if (record != null) room.record = record
-        if (scoreboardOpen(record, keyExists, now())) {
-          for (const member of room.members)
-            if (member.kind !== 'viewer') await authorizeCurrent(room, member)
-          await stillSee(
-            room,
-            [...room.members].filter(
-              member => member.kind === 'viewer' && member.timeline
-            )
+        await checkRoom(room)
+      })
+    }
+  }, options.checkMs ?? 60_000)
+
+  async function checkRoom(room: Room): Promise<void> {
+    try {
+      const record = await gameRecord(db, room.gameId)
+      const keyExists = await store.exists(room.gameId)
+      if (record != null) room.record = record
+      if (scoreboardOpen(record, keyExists, now())) {
+        for (const member of room.members)
+          if (member.kind !== 'viewer') await authorizeCurrent(room, member)
+        await stillSee(
+          room,
+          [...room.members].filter(
+            member => member.kind === 'viewer' && member.timeline
           )
-          return
-        }
+        )
+      } else {
         const staying = [...room.members].filter(
           member => member.timeline && record != null
         )
@@ -403,9 +422,43 @@ export function makeScoreboardHub(
           )
         }
         await stillSee(room, staying)
-      })
+      }
+      room.starvedSince = undefined
+    } catch (error) {
+      if (!isPoolTimeout(error)) throw error
+      starved(room, error)
     }
-  }, options.checkMs ?? 60_000)
+  }
+
+  /**
+   * A check found no connection, which says nothing of who may see the game.
+   * Sockets closed now would come straight back for the same connections, so
+   * they stay and are asked for again soon, each room at its own moment, and
+   * close only if connections stay short for `starvedCloseMs`.
+   */
+  function starved(room: Room, error: unknown): void {
+    const at = now()
+    room.starvedSince ??= at
+    log(`scoreboard ${room.gameId}: asking again: ${describe(error)}`)
+    if (at - room.starvedSince >= starvedCloseMs) {
+      room.starvedSince = undefined
+      for (const member of room.members)
+        if (member.kind === 'viewer' && member.timeline)
+          shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
+      return
+    }
+    clearTimeout(room.recheck)
+    room.recheck = setTimeout(
+      () => {
+        room.recheck = undefined
+        if (closing) return
+        enqueue(room, async () => {
+          await checkRoom(room)
+        })
+      },
+      starvedCheckMs * (0.5 + Math.random())
+    )
+  }
 
   /** Every 30 s: a socket that missed the last ping is gone. */
   const pinger = setInterval(() => {
@@ -436,7 +489,10 @@ export function makeScoreboardHub(
     const room = rooms.get(gameId)
     if (room == null) return
     room.members.delete(member)
-    if (room.members.size === 0) rooms.delete(gameId)
+    if (room.members.size === 0) {
+      clearTimeout(room.recheck)
+      rooms.delete(gameId)
+    }
   }
 
   /**
@@ -616,6 +672,7 @@ export function makeScoreboardHub(
           )
       }
     } catch (error) {
+      if (isPoolTimeout(error)) throw error
       log(`scoreboard ${room.gameId}: authorization: ${describe(error)}`)
       for (const member of members)
         shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
@@ -821,6 +878,7 @@ export function makeScoreboardHub(
       clearInterval(checker)
       clearInterval(pinger)
       clearInterval(holdReader)
+      for (const room of rooms.values()) clearTimeout(room.recheck)
       for (const timer of speedHolds.values()) clearTimeout(timer)
       speedHolds.clear()
       for (const member of everyone) {
