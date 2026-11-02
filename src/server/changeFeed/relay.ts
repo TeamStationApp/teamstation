@@ -273,7 +273,7 @@ class Relay implements FeedRelay {
         )
       )
       if (turn.ended) return
-      if (!held?.rows[0]?.held) {
+      if (held?.rows[0]?.held !== true) {
         await this.leave(turn)
         return
       }
