@@ -39,6 +39,7 @@
         "Resend code",
         "Cancel email change",
         "Saving…",
+        "TeamStation TV",
         "Chat",
         "Chat devices",
         "The devices that can read your chats",
@@ -1055,6 +1056,13 @@
         "Bats",
         "Select player positions"
       ]
+    },
+    {
+      "name": "teamStationTv",
+      "path": "/account/tv",
+      "title": "TeamStation TV",
+      "tabs": [],
+      "settings": []
     },
     {
       "name": "umpireLevels",

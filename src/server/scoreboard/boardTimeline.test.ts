@@ -1257,6 +1257,7 @@ describe('the board timeline', function () {
         show: true,
         single: { x: 0.01, y: 0.01, height: 0.15 },
         landscape: { x: 0.01, y: 0.01, height: 0.15 },
+        tvLandscape: { x: 0.01, y: 0.01, height: 0.15 },
         portraitHeight: 0.15
       })
       // A minute before 00:00 UTC on October 1, in any zone, is before it.
