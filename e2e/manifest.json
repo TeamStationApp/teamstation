@@ -239,20 +239,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -288,20 +274,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -337,20 +309,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -386,20 +344,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -435,20 +379,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -484,20 +414,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -533,20 +449,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -582,20 +484,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -631,20 +519,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -680,20 +554,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -729,20 +589,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -778,20 +624,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -827,20 +659,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
@@ -876,20 +694,6 @@
       ],
       "manual": false,
       "sendsNoMail": true,
-      "quarantine": {
-        "reason": "These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.",
-        "since": "2026-10-30",
-        "scenarios": [
-          "schedule-row-desktop",
-          "schedule-row-phone",
-          "schedule-filter-desktop",
-          "schedule-filter-phone",
-          "box-score-desktop",
-          "box-score-phone",
-          "stream-address-desktop",
-          "stream-address-phone"
-        ]
-      },
       "spec": "app-shell/lists/list-screens",
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },

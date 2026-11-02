@@ -94,6 +94,8 @@ let listed: Array<
     awayScore: number | null
     homeScore: number | null
     venue: string | null
+    /** A game being scored. A publishing camera is `isLive`, and draws no pill. */
+    isGameLive?: boolean
   }
 > = [GAME]
 
@@ -117,35 +119,12 @@ async function open(path: string): Promise<Page> {
     method: 'POST',
     response: json(200, { ...OWN_CAMERA, url: RTMP_URL })
   })
+  // A mock matches the first pattern that fits, and a parent path also
+  // fits its children, so the longer paths are registered first.
   const routes: Array<[string, number, unknown]> = [
     ['*/api/v1/auth/me', 200, USER],
     ['*/api/v1/me/roles', 200, { teams: {} }],
     ['*/api/v1/events*', 200, listed],
-    [
-      '*/api/v1/games/gam_box',
-      200,
-      {
-        id: 'gam_box',
-        homeTeamId: 'home',
-        awayTeamId: 'away',
-        homeTeamName: 'Hawks',
-        awayTeamName: 'Owls',
-        seasonId: null,
-        startAt: null,
-        venue: null,
-        status: 'final',
-        homeScore: 0,
-        awayScore: 1,
-        ingestStatus: 'done',
-        ingestMessage: null,
-        nonMemberView: false,
-        videos: [],
-        linescore: {
-          away: { runs: [1], r: 1, h: 2, e: 0 },
-          home: { runs: [0], r: 0, h: 1, e: 0 }
-        }
-      }
-    ],
     [
       '*/api/v1/games/gam_box/box-score',
       200,
@@ -174,6 +153,42 @@ async function open(path: string): Promise<Page> {
       }
     ],
     [
+      '*/api/v1/games/gam_box',
+      200,
+      {
+        id: 'gam_box',
+        homeTeamId: 'home',
+        awayTeamId: 'away',
+        homeTeamName: 'Hawks',
+        awayTeamName: 'Owls',
+        seasonId: null,
+        startAt: null,
+        venue: null,
+        status: 'final',
+        homeScore: 0,
+        awayScore: 1,
+        ingestStatus: 'done',
+        ingestMessage: null,
+        nonMemberView: false,
+        videos: [],
+        linescore: {
+          away: { runs: [1], r: 1, h: 2, e: 0 },
+          home: { runs: [0], r: 0, h: 1, e: 0 }
+        }
+      }
+    ],
+    [
+      '*/api/v1/games/gam_rtmp/live-streams',
+      200,
+      {
+        gameId: 'gam_rtmp',
+        mine: [OWN_CAMERA],
+        others: [OTHER_CAMERA],
+        canAdd: 3,
+        maxCameras: 4
+      }
+    ],
+    [
       '*/api/v1/games/gam_rtmp',
       200,
       {
@@ -192,17 +207,6 @@ async function open(path: string): Promise<Page> {
         ingestMessage: null,
         nonMemberView: false,
         videos: []
-      }
-    ],
-    [
-      '*/api/v1/games/gam_rtmp/live-streams',
-      200,
-      {
-        gameId: 'gam_rtmp',
-        mine: [OWN_CAMERA],
-        others: [OTHER_CAMERA],
-        canAdd: 3,
-        maxCameras: 4
       }
     ],
     [
@@ -528,7 +532,8 @@ for (const size of SIZES) {
         awayScore: 2,
         homeScore: 1,
         videoCount: 0,
-        isLive: true
+        isLive: true,
+        isGameLive: true
       },
       {
         ...GAME,
@@ -717,9 +722,8 @@ for (const size of SIZES) {
       return read
     })
     expect(back.selected).equals('Past')
-    await round.close()
 
-    const season = await open('/seasons/sea_1')
+    const season = await open('/seasons/sea_1?tab=schedule')
     const seasonStrip = await until('the season filter', async () => {
       const read = await whenStrip(season)
       if (read == null) return undefined
@@ -815,21 +819,6 @@ export default defineE2e({
   faults: ['layout-shift', 'hidden-element', 'missing-font', 'blank-screen'],
   manual: false,
   sendsNoMail: true,
-  quarantine: {
-    reason:
-      'These fixtures predate the current live pill, schedule filter, box score and stream screens. M17 rewrites them against those screens.',
-    since: '2026-10-30',
-    scenarios: [
-      'schedule-row-desktop',
-      'schedule-row-phone',
-      'schedule-filter-desktop',
-      'schedule-filter-phone',
-      'box-score-desktop',
-      'box-score-phone',
-      'stream-address-desktop',
-      'stream-address-phone'
-    ]
-  },
   scenarios
 })
 
@@ -874,6 +863,11 @@ async function whenStrip(page: Page): Promise<WhenStrip | undefined> {
 async function rowLabels(page: Page): Promise<string[]> {
   return await page.evaluate(() => {
     return Array.from(document.querySelectorAll('[role="button"]'))
+      .filter(function (node) {
+        // A filter pill keeps the page it left, hidden, so its rows are
+        // still in the document.
+        return getComputedStyle(node).visibility !== 'hidden'
+      })
       .map(function (node) {
         const label = node.getAttribute('aria-label')
         if (label === null) return ''
