@@ -49,6 +49,11 @@ export interface SpaceToTalkOptions {
    * have done.
    */
   holdMs?: number
+  /**
+   * While set, Space stays the page's. A touch drag sets this without a
+   * redraw, so the key reads it when it goes down.
+   */
+  held?: { current: boolean }
 }
 
 export interface DictationAsk {
@@ -183,6 +188,11 @@ export interface DictationControlsProps
    * off while the field has a use for Space.
    */
   spaceTalks?: boolean
+  /**
+   * While set, Space stays the page's even though the screen has not
+   * redrawn. A touch drag sets this for the life of the finger.
+   */
+  gestureHeld?: { current: boolean }
   /**
    * How long Space is held before it talks, anywhere on the page, text
    * fields included; a shorter press does what Space does there. Absent,

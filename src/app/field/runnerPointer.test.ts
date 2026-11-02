@@ -389,12 +389,13 @@ describe('runner captured pointer decisions', function () {
         )
         expect(marker().x).closeTo(runner.position.x, 1e-6)
       }
-      // …and the screen heard once: still bound for first.
-      expect(views.map(view => view?.to)).deep.equals([1])
+      // The grab already recorded first. Moving while still bound for it
+      // does not tell the screen again.
+      expect(views.map(view => view?.to)).deep.equals([])
       for (const t of [0.7, 0.8, 0.9])
         await renderer.fireEvent(surface, 'pointerMove', between(t))
       // Past halfway, second is the offer.
-      expect(views.map(view => view?.to)).deep.equals([1, 2])
+      expect(views.map(view => view?.to)).deep.equals([2])
       await renderer.fireEvent(surface, 'pointerUp', between(0.9))
       expect(views.at(-1)).equals(null)
     } finally {

@@ -17,20 +17,27 @@ export interface ScreenVisibility {
 /**
  * The correction window's countdown. It ticks from a monotonic clock while
  * the window is open, stops while anything pauses it or the screen is hidden,
- * and keeps its remainder across a pause. The returned function stops it at
- * once, before React has re-rendered with the pause.
+ * and keeps its remainder across a pause. `pause` stops it at once, before
+ * React has re-rendered. `resume` starts it again while the window is still
+ * open and nothing else is holding it.
  */
 export function useCorrectionClock(
   state: ScoringState,
   paused: boolean,
   dispatch: (event: ScoringEvent) => void,
   clock: ScoringClock,
-  visibility: ScreenVisibility
-): () => void {
+  visibility: ScreenVisibility,
+  /** While set, ticks keep the remainder and do not close the play. */
+  held?: { current: boolean }
+): { pause: () => void; resume: () => void } {
   const activeStop = useRef<(() => void) | null>(null)
+  const [resumeTick, setResumeTick] = useState(0)
   const pauseNow = useCallback(() => {
     activeStop.current?.()
     activeStop.current = null
+  }, [])
+  const resumeNow = useCallback(() => {
+    setResumeTick(tick => tick + 1)
   }, [])
   const [hidden, setHidden] = useState(() => visibility.hidden())
   useEffect(() => {
@@ -49,13 +56,13 @@ export function useCorrectionClock(
     )
       return
     const stop = runCorrectionClock(clock, elapsedMs => {
-      if (!visibility.hidden())
-        dispatch({
-          type: 'TIMER_TICK',
-          elapsedMs,
-          generation: state.generation,
-          revision
-        })
+      if (held?.current === true || visibility.hidden()) return
+      dispatch({
+        type: 'TIMER_TICK',
+        elapsedMs,
+        generation: state.generation,
+        revision
+      })
     })
     activeStop.current = stop
     return () => {
@@ -65,12 +72,14 @@ export function useCorrectionClock(
   }, [
     clock,
     dispatch,
+    held,
     hidden,
     paused,
     revision,
     state.generation,
     state.phase,
-    visibility
+    visibility,
+    resumeTick
   ])
-  return pauseNow
+  return { pause: pauseNow, resume: resumeNow }
 }

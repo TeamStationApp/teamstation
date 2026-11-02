@@ -1165,6 +1165,10 @@ function ScoringPanel(props: {
     []
   )
   const [gestureActive, setGestureActive] = useState(false)
+  // A touch drag. Scoring-screen state stays put until the finger is up,
+  // because a redraw from pointer-down drops the rest of that touch. Handlers
+  // read this ref for the same latch `gestureActive` gives a pointer.
+  const fingerDown = useRef(false)
   const [outcomeMenu, setOutcomeMenu] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [baseProjection, setBaseProjection] = useState<BaseProjection>()
@@ -1415,7 +1419,7 @@ function ScoringPanel(props: {
   useEffect(() => {
     onOverlay?.(overlaid)
   }, [onOverlay, overlaid])
-  const pauseClock = useScoringClock(
+  const { pause: pauseClock, resume: resumeClock } = useScoringClock(
     state,
     !props.active ||
       menu ||
@@ -1429,7 +1433,9 @@ function ScoringPanel(props: {
       gestureActive ||
       state.presentation != null ||
       props.walkUpOpen === true,
-    dispatch
+    dispatch,
+    undefined,
+    fingerDown
   )
   const setGesture = useCallback(
     (active: boolean) => {
@@ -1708,10 +1714,17 @@ function ScoringPanel(props: {
       !tiebreaker.active &&
       !rosterLoading &&
       (lineupAccepted || hasActivePlay),
+    gestureHeld: fingerDown,
     undone,
     refused,
     onActions: (transcript, actions, roster, undo) => {
-      if (!props.active || rosterLoading || tiebreaker.active) return
+      if (
+        fingerDown.current ||
+        !props.active ||
+        rosterLoading ||
+        tiebreaker.active
+      )
+        return
       if (undo === true) {
         // Undone now, before the rest of the sentence is applied. With a
         // question open, what is taken back is the unanswered sentence.
@@ -1949,7 +1962,8 @@ function ScoringPanel(props: {
   const following = useRef(false)
   const followStale = useRef<() => void>(() => undefined)
   followStale.current = () => {
-    if (!stale.current || following.current || !settled) return
+    if (!stale.current || following.current || !settled || fingerDown.current)
+      return
     if (props.game.readOnly) {
       stale.current = false
       return
@@ -2560,6 +2574,11 @@ function ScoringPanel(props: {
           dispatch({ type: 'PRESENTATION_DONE', id, generation, stage })
         },
         onGestureActive: setGesture,
+        onHoldClock: held => {
+          fingerDown.current = held
+          if (held) pauseClock()
+          else resumeClock()
+        },
         onRunnerDrag: runnerDrag.set,
         runnerSafeError: (id, to) => {
           const player = players.find(item => item.id === id)
@@ -2704,7 +2723,12 @@ function ScoringPanel(props: {
             })
         },
         selected,
-        onSelect: setSelected,
+        onSelect: id => {
+          // The scene still reports the grab. Applying it here would redraw
+          // this screen before the finger has finished.
+          if (fingerDown.current) return
+          setSelected(id)
+        },
         view: 'home',
         zoom: 1.25,
         movementRevision: state.generation + session.meta.sequence,
@@ -2758,11 +2782,13 @@ function ScoringPanel(props: {
             !actionsAllowed
           }
           onActive={active => {
+            if (fingerDown.current) return
             if (active) pauseClock()
             setMoreOpen(active)
           }}
           onChoose={input => {
             if (
+              fingerDown.current ||
               !actionsAllowed ||
               menu ||
               sheet != null ||
@@ -2792,9 +2818,13 @@ function ScoringPanel(props: {
             tiebreaker.active ||
             state.moreDraft != null
           }
-          onActive={setOutcomeMenu}
+          onActive={active => {
+            if (fingerDown.current) return
+            setOutcomeMenu(active)
+          }}
           onChoose={(outcome, contactKind) => {
             if (
+              fingerDown.current ||
               !actionsAllowed ||
               menu ||
               sheet != null ||
@@ -2813,7 +2843,7 @@ function ScoringPanel(props: {
       onMenuButton={setMenuButton}
       sound={{ on: sound, onToggle: toggleSound }}
       onMenu={() => {
-        if (tiebreaker.active) return
+        if (fingerDown.current || tiebreaker.active) return
         pauseClock()
         setOutcomeMenu(false)
         setMenu(value => !value)
@@ -2838,13 +2868,14 @@ function ScoringPanel(props: {
       }}
       onUndo={() => {
         scoringAudio.stop()
-        if (status.readOnly || rosterLoading) return
+        if (fingerDown.current || status.readOnly || rosterLoading) return
         tiebreaker.handleClose()
         // The reducer decides, from the state every earlier tap left, whether
         // this one is the screen's to take back or the saved game's.
         dispatch({ type: 'UNDO' })
       }}
       onPitch={kind => {
+        if (fingerDown.current) return
         if (
           choosingRunnerPitch &&
           !menu &&
@@ -2939,6 +2970,7 @@ function ScoringPanel(props: {
           : () => {
               if (
                 gestureActive ||
+                fingerDown.current ||
                 menu ||
                 sheet != null ||
                 outcomeMenu ||
