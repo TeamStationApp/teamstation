@@ -174,6 +174,31 @@ describe('the Valkey change feed', function () {
     await door.shut()
   })
 
+  it('hears a resync once per handler however many times it reconnected', async function () {
+    const door = await redisDoor()
+    const { feed, prefix } = feedOf({ url: door.url })
+    const games = hearer()
+    const screens = hearer()
+    await Promise.all([
+      feed.subscribe('game_changes', games).listening,
+      feed.subscribe('screen_scopes', screens).listening
+    ])
+    for (const returns of [2, 3]) {
+      await door.shut()
+      await wait(100)
+      await door.open()
+      await until(() => games.listenings.length === returns, 'the return')
+      await until(() => screens.listenings.length === returns, 'the return')
+    }
+    await control(prefix, 'resync')
+    await until(() => games.listenings.length === 4, 'the resync')
+    await wait(100)
+    expect(games.listenings).deep.equals([true, false, false, false])
+    expect(screens.listenings).deep.equals([true, false, false, false])
+    await feed.close()
+    await door.shut()
+  })
+
   it('settles when a first attempt fails, says false for it, and true to one who came during the outage', async function () {
     const door = await redisDoor(false)
     const { feed } = feedOf({ url: door.url })

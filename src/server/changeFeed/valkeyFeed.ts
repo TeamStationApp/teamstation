@@ -77,6 +77,11 @@ export class ValkeyFeed implements ChangeFeed {
   private readonly publisher: ScoreboardClient
   private readonly subscriber: ScoreboardClient
   private readonly channels = new Map<FeedChannel, ChannelState>()
+  /** One function for every connection: node-redis keeps a set of listeners. */
+  private readonly controlListener = (message: string): void => {
+    this.controlled(message)
+  }
+
   /** Counts connections, so a subscription answered on an old one is ignored. */
   private session = 0
   private opened = false
@@ -219,9 +224,7 @@ export class ValkeyFeed implements ChangeFeed {
     this.down = false
     this.session += 1
     this.subscriber
-      .subscribe(feedControlKey(this.prefix), message => {
-        this.controlled(message)
-      })
+      .subscribe(feedControlKey(this.prefix), this.controlListener)
       .catch(() => undefined)
     for (const [channel, state] of this.channels) this.place(channel, state)
   }
