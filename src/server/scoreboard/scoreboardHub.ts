@@ -276,8 +276,24 @@ export function makeScoreboardHub(
     hash: ScoreboardHash,
     only?: Member
   ): Promise<void> {
-    for (const member of only == null ? room.members : [only])
-      if (member.kind === 'dashboard') await authorizeCurrent(room, member)
+    // One finding no connection speaks for those after it, who would each wait
+    // as long. They stay unsent, not shut: `lastVersion` still owes them this
+    // state, and the check that next finds a connection sends it.
+    const unasked = new Set<Member>()
+    for (const member of only == null ? room.members : [only]) {
+      if (member.kind !== 'dashboard') continue
+      if (unasked.size > 0) {
+        unasked.add(member)
+        continue
+      }
+      try {
+        await authorizeCurrent(room, member)
+      } catch (error) {
+        if (!isPoolTimeout(error)) throw error
+        unasked.add(member)
+        starved(room, error)
+      }
+    }
     const overrides = hash.overrides ?? NO_OVERRIDES
     const { automated, final } = composeScoreboard({
       baseline: room.record,
@@ -296,6 +312,7 @@ export function makeScoreboardHub(
     })
     for (const member of only == null ? room.members : [only]) {
       if (member.kind === 'publisher' || member.timeline) continue
+      if (unasked.has(member)) continue
       if (hash.version <= member.lastVersion) continue
       if (member.socket.readyState !== WebSocket.OPEN) continue
       member.lastVersion = hash.version
@@ -423,7 +440,10 @@ export function makeScoreboardHub(
         }
         await stillSee(room, staying)
       }
+      const owing = room.starvedSince != null
       room.starvedSince = undefined
+      // A dashboard that could not be asked was not sent what it was owed.
+      if (owing) await catchUp(room)
     } catch (error) {
       if (!isPoolTimeout(error)) throw error
       starved(room, error)
@@ -433,21 +453,27 @@ export function makeScoreboardHub(
   /**
    * A check found no connection, which says nothing of who may see the game.
    * Sockets closed now would come straight back for the same connections, so
-   * they stay and are asked for again soon, each room at its own moment, and
-   * close only if connections stay short for `starvedCloseMs`.
+   * they stay and are asked for again soon, each room at its own moment. Who
+   * cannot be asked has authority nobody is checking, so every socket that is
+   * asked closes if connections stay short for `starvedCloseMs`; a plain viewer,
+   * which is public, is not one. A failure on any path counts, and only a check
+   * that succeeds starts the time again.
    */
   function starved(room: Room, error: unknown): void {
+    // A socket that closed while being admitted has a room nobody is in.
+    if (rooms.get(room.gameId) !== room) return
     const at = now()
     room.starvedSince ??= at
     log(`scoreboard ${room.gameId}: asking again: ${describe(error)}`)
     if (at - room.starvedSince >= starvedCloseMs) {
       room.starvedSince = undefined
       for (const member of room.members)
-        if (member.kind === 'viewer' && member.timeline)
+        if (member.kind !== 'viewer' || member.timeline)
           shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
       return
     }
-    clearTimeout(room.recheck)
+    // Already asking: a publisher's messages must not keep putting it off.
+    if (room.recheck != null) return
     room.recheck = setTimeout(
       () => {
         room.recheck = undefined
@@ -679,7 +705,10 @@ export function makeScoreboardHub(
     }
   }
 
-  /** Recheck the credential and current matchup before a private read or write. */
+  /**
+   * Recheck the credential and current matchup before a private read or write.
+   * Finding no connection decides nothing, so that is thrown for the caller.
+   */
   async function authorizeCurrent(
     room: Room,
     member: Member
@@ -714,6 +743,7 @@ export function makeScoreboardHub(
       }
       return true
     } catch (error) {
+      if (isPoolTimeout(error)) throw error
       log(`scoreboard ${room.gameId}: authorization: ${describe(error)}`)
       shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
       return false
@@ -726,13 +756,22 @@ export function makeScoreboardHub(
     member: Member,
     data: RawData
   ): Promise<void> {
-    if (!(await authorizeCurrent(room, member))) return
     const { socket } = member
-    const refuse = (message: string): void => {
+    const refuse = (message: string, retry?: true): void => {
       if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ error: message }))
+        socket.send(JSON.stringify({ error: message, retry }))
       }
     }
+    let allowed: boolean
+    try {
+      allowed = await authorizeCurrent(room, member)
+    } catch (error) {
+      if (!isPoolTimeout(error)) throw error
+      starved(room, error)
+      refuse('The server is busy; send that again', true)
+      return
+    }
+    if (!allowed) return
     let raw: unknown
     try {
       raw = JSON.parse(textOf(data))

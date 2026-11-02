@@ -1564,6 +1564,127 @@ describe('the board timeline', function () {
         expect(listener.socket.readyState).equals(WebSocket.OPEN)
       })
 
+      /** A worker on a database that can refuse, and a game with a publisher and a dashboard. */
+      const runningRoom = async (
+        starvedCloseMs: number
+      ): Promise<{
+        failing: ReturnType<typeof failingDb>
+        worker: Worker
+        gameId: string
+        publisher: Probe
+        dashboard: Probe
+      }> => {
+        const failing = failingDb()
+        const worker = await startWorker({
+          db: failing.db,
+          checkMs: 40,
+          starvedCheckMs: 20,
+          starvedCloseMs
+        })
+        const gameId = await newGame()
+        const publisher = await opened(`${worker.ws}/${gameId}/publish`, runner)
+        const dashboard = await opened(
+          `${worker.ws}/${gameId}/dashboard`,
+          runner
+        )
+        await messages(dashboard, 1)
+        await admitted()
+        return { failing, worker, gameId, publisher, dashboard }
+      }
+
+      it('keeps a publisher and a dashboard through failed checks, and the time still runs', async function () {
+        const { failing, publisher, dashboard } = await runningRoom(HOUR)
+        logged.length = 0
+        failing.refuse(POOL_TIMEOUT)
+        await new Promise(resolve => setTimeout(resolve, 300))
+        // The regular checks are not what asks: the starved ones come faster.
+        expect(failing.refusals()).greaterThan(4)
+        expect(logged.join()).includes('asking again')
+        expect(logged.join()).not.includes('authorization')
+        for (const socket of [publisher, dashboard])
+          expect(socket.socket.readyState).equals(WebSocket.OPEN)
+        // The time was never reset by a check that swallowed its failure:
+        clock += HOUR + 1
+        expect(await publisher.closed).equals(1011)
+        expect(await dashboard.closed).equals(1011)
+      })
+
+      it('leaves a plain viewer open when the time is up, as nobody checks its authority', async function () {
+        const { failing, worker, gameId, publisher } = await runningRoom(HOUR)
+        const viewer = await opened(`${worker.ws}/${gameId}/socket`)
+        failing.refuse(POOL_TIMEOUT)
+        await until('a failed check', () => failing.refusals() > 0)
+        clock += HOUR + 1
+        expect(await publisher.closed).equals(1011)
+        await new Promise(resolve => setTimeout(resolve, 60))
+        expect(viewer.socket.readyState).equals(WebSocket.OPEN)
+      })
+
+      it('closes a socket whose check fails for another reason, at once', async function () {
+        const { failing, publisher, dashboard } = await runningRoom(HOUR)
+        failing.failCredentials('relation "auth_sessions" does not exist')
+        expect(await publisher.closed).equals(1011)
+        expect(await dashboard.closed).equals(1011)
+        expect(logged.join()).includes('authorization')
+      })
+
+      it('answers a publisher’s message with a retry, stores nothing, and takes it when sent again', async function () {
+        const { failing, worker, gameId, publisher } = await runningRoom(HOUR)
+        failing.refuse(POOL_TIMEOUT)
+        publisher.socket.send(JSON.stringify({ balls: 3 }))
+        const [answer] = await messages(publisher, 1)
+        expect(JSON.parse(answer)).deep.equals({
+          error: 'The server is busy; send that again',
+          retry: true
+        })
+        expect(publisher.socket.readyState).equals(WebSocket.OPEN)
+        const held = await worker.store.readScoreboard(gameId)
+        expect(held?.watcher).equals(undefined)
+        failing.refuse(undefined)
+        publisher.socket.send(JSON.stringify({ balls: 3 }))
+        await until('the write', async () => {
+          const board = await worker.store.readScoreboard(gameId)
+          return board?.watcher?.state.balls === 3
+        })
+        expect(publisher.texts.length).equals(1)
+      })
+
+      it('closes a publisher that goes on sending, once the time is up', async function () {
+        const { failing, publisher } = await runningRoom(HOUR)
+        failing.refuse(POOL_TIMEOUT)
+        const sending = setInterval(() => {
+          publisher.socket.send(JSON.stringify({ balls: 1 }))
+        }, 5)
+        await until('messages refused', () => publisher.texts.length > 3)
+        clock += HOUR + 1
+        expect(await publisher.closed).equals(1011)
+        clearInterval(sending)
+      })
+
+      it('holds a dashboard’s state until it can be asked, then sends it, and a viewer is not held up', async function () {
+        const { failing, worker, gameId, publisher, dashboard } =
+          await runningRoom(HOUR)
+        const viewer = await opened(`${worker.ws}/${gameId}/socket`)
+        await messages(viewer, 1)
+        const seen = dashboard.texts.length
+        publisher.socket.send(JSON.stringify({ balls: 2 }))
+        await messages(viewer, 2)
+        const before = dashboard.texts.length
+        expect(before).equals(seen + 1)
+        failing.refuse(POOL_TIMEOUT)
+        await worker.store.mergeWatcher(gameId, { balls: 3 }, clock)
+        await messages(viewer, 3)
+        await new Promise(resolve => setTimeout(resolve, 60))
+        expect(dashboard.texts.length).equals(before)
+        expect(dashboard.socket.readyState).equals(WebSocket.OPEN)
+        failing.refuse(undefined)
+        await messages(dashboard, before + 1)
+        const last = JSON.parse(dashboard.texts.at(-1)!) as {
+          final: { balls: number }
+        }
+        expect(last.final.balls).equals(3)
+      })
+
       it('still closes a room’s sockets at once for any other failure', async function () {
         const failing = failingDb()
         const worker = await startWorker({
