@@ -113,8 +113,15 @@ async function main(): Promise<void> {
     })
   }
 
+  interface Bounds {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
   interface Node {
     text?: string
+    bounds?: Bounds
     children?: Node[]
   }
   interface Proof {
@@ -140,6 +147,44 @@ async function main(): Promise<void> {
     await m.assertVisible({ id: 'field-nameplate', timeout: 15000 })
     await new Promise(resolve => setTimeout(resolve, 1500))
   }
+  const sleep = async (ms: number): Promise<void> => {
+    await new Promise(resolve => setTimeout(resolve, ms))
+  }
+  const nodes = async (): Promise<Node[]> => flatten(await m.hierarchy())
+  const screenHas = async (fragment: string): Promise<boolean> =>
+    (await nodes()).some(node => node.text?.includes(fragment) === true)
+  // The field plate is the short label on the dirt. The lineup card and the
+  // play toast sit outside this band.
+  const runnerPlate = async (name: string): Promise<Bounds | undefined> => {
+    const found = (await nodes()).filter(node => {
+      const bounds = node.bounds
+      return (
+        node.text?.toLowerCase().includes(name.toLowerCase()) === true &&
+        bounds != null &&
+        bounds.height <= 40 &&
+        bounds.width <= 120 &&
+        bounds.y >= 400 &&
+        bounds.y <= 620
+      )
+    })
+    return found.sort((a, b) => b.bounds!.y - a.bounds!.y)[0]?.bounds
+  }
+  const waitFor = async (
+    label: string,
+    ready: () => Promise<boolean>,
+    timeout = 20000
+  ): Promise<void> => {
+    const start = Date.now()
+    while (Date.now() - start < timeout) {
+      if (await ready()) return
+      await sleep(250)
+    }
+    assert.fail(label)
+  }
+  const bodyOf = (plate: Bounds): { x: number; y: number } => ({
+    x: Math.round(plate.x + plate.width / 2),
+    y: Math.round(plate.y - 14)
+  })
   const first = [
     { x: 196, y: 452 },
     { x: 287, y: 528 }
@@ -162,8 +207,43 @@ async function main(): Promise<void> {
         await tap('Swing in Play')
         await tap('Single')
         await tap('Juan S')
+        // One tap places the fielder. The next tap, with no vertical travel,
+        // accepts the trajectory the play started at.
         await gesture([{ x: 196, y: 450 }])
-        await new Promise(resolve => setTimeout(resolve, 15000))
+        await waitFor(
+          'The single never offered a trajectory',
+          async () =>
+            (await screenHas('Drag up and down for ball trajectory')) ||
+            (await screenHas('Time to edit play')),
+          20000
+        )
+        if (await screenHas('Drag up and down for ball trajectory'))
+          await gesture([{ x: 196, y: 420 }], 80)
+        await waitFor(
+          'The Done countdown never opened',
+          async () => await screenHas('Time to edit play'),
+          30000
+        )
+        await waitFor(
+          'The real Done countdown did not close',
+          async () => !(await screenHas('Time to edit play')),
+          15000
+        )
+        await waitFor(
+          'Mookie never stood still at third',
+          async () => {
+            const plate = await runnerPlate('Mookie')
+            if (plate == null || plate.y < 510) return false
+            await sleep(400)
+            const settled = await runnerPlate('Mookie')
+            return (
+              settled != null &&
+              Math.abs(settled.x - plate.x) < 2 &&
+              Math.abs(settled.y - plate.y) < 2
+            )
+          },
+          20000
+        )
       }
       const before = await proof()
       if (scenario === 'timed')
@@ -173,18 +253,29 @@ async function main(): Promise<void> {
           'The real Done countdown closed the single'
         )
       if (scenario === 'first' || scenario === 'pitched') await gesture(first)
-      if (scenario === 'second' || scenario === 'timed') await gesture(second)
+      if (scenario === 'second') await gesture(second)
+      if (scenario === 'timed') {
+        const plate = await runnerPlate('Mookie')
+        assert(plate != null, 'Mookie is on the field')
+        const body = bodyOf(plate)
+        await gesture([body, second[1]])
+      }
       if (process.env.BASELINE === '1') {
         await shot(
           `${scenario === 'pitched' ? 'pitch-confirmation' : scenario + '-return'}-before`
         )
         continue
       }
-      if (scenario === 'home')
-        await gesture([
-          { x: 159, y: 542 },
-          { x: 106, y: 528 }
-        ])
+      if (scenario === 'home') {
+        assert.equal(before.score, 1)
+        assert.equal(before.bases.includes(100), false)
+        assert.equal(before.bases[2], null)
+        await shot('home-stays-scored')
+        console.log(
+          'Optional advance from third stays scored; the plate call is not dragged back'
+        )
+        continue
+      }
       if (scenario === 'pitched') {
         await m.assertVisible({
           text: 'Yes, send back runner',
@@ -201,12 +292,7 @@ async function main(): Promise<void> {
         await gesture(first)
         await tap('Yes, send back runner')
       }
-      const to =
-        scenario === 'second' || scenario === 'timed'
-          ? 2
-          : scenario === 'home'
-            ? 3
-            : 1
+      const to = scenario === 'second' || scenario === 'timed' ? 2 : 1
       await shot(`${scenario}-return-after`)
       await m.assertVisible({
         text: `Runner did not advance on prior play. Sent back to ${['', '1st', '2nd', '3rd'][to]}.`,
@@ -220,7 +306,6 @@ async function main(): Promise<void> {
         before.times,
         'Every current pitch retains its original time'
       )
-      if (scenario === 'home') assert.equal(after.score, 0)
       console.log(
         `S2/S3/S4: ${scenario} return, current count and original times verified`
       )
@@ -261,8 +346,33 @@ async function main(): Promise<void> {
       console.log('S5: occupied target rejected')
       await fixture('open')
       assert.equal((await proof()).open, true, 'Fixture is still an open play')
-      await gesture(second)
+      await waitFor(
+        'Mookie never arrived at third on the open play',
+        async () => {
+          const plate = await runnerPlate('Mookie')
+          return (
+            (await proof()).bases[2] === 100 && plate != null && plate.y >= 510
+          )
+        },
+        20000
+      )
+      const arrived = await runnerPlate('Mookie')
+      assert(arrived != null, 'Mookie is on the field')
+      await gesture([bodyOf(arrived), second[1]])
       assert.equal((await proof()).bases[1], 100)
+      // Forward again only counts when the finger finishes on Safe. That chip
+      // sits on the calibrated third-base point, so wait until he is standing
+      // on the calibrated second-base point and use that path.
+      await waitFor(
+        'Mookie never settled back on second',
+        async () => {
+          const plate = await runnerPlate('Mookie')
+          if (plate == null) return false
+          const body = bodyOf(plate)
+          return Math.hypot(body.x - 196, body.y - 452) <= 30
+        },
+        15000
+      )
       await gesture([
         { x: 196, y: 452 },
         { x: 106, y: 528 },

@@ -695,10 +695,24 @@ describe('prior runner corrections', () => {
       play.runners
     )
   })
+  it('does not offer a drag back after an optional advance from third was called safe at home', () => {
+    const { session: s } = priorRunnerFixture('home')
+    expect(baseIds(s.state)).deep.equals([101, null, null])
+    expect(s.state.liveData.linescore.teams.away.runs).equals(1)
+    expect(priorRunners(s.state)).deep.equals([])
+    expect(returnPriorRunner(s.opening, s.actions, s.state, 100, 3)).equals(
+      null
+    )
+    expect(baseIds(s.state)).deep.equals([101, null, null])
+    expect(s.state.liveData.linescore.teams.away.runs).equals(1)
+    const offered = priorRunnerFixture('second').session
+    expect(priorRunners(offered.state)).deep.equals([
+      { runner: 100, from: 3, to: 2 }
+    ])
+  })
   for (const [scenario, to] of [
     ['first', 1],
     ['second', 2],
-    ['home', 3],
     ['pitched', 1]
   ] as const)
     it(`returns to ${to} for ${scenario}, retaining the current at-bat`, async () => {
@@ -732,17 +746,6 @@ describe('prior runner corrections', () => {
           row => row.runner.id === 100 && row.destination > to
         )
       ).equals(false)
-      if (scenario === 'home') {
-        expect(previous.result.rbi).equals(1)
-        expect(changed.result.rbi).equals(0)
-        expect(s.state.liveData.linescore.teams.away.runs).equals(0)
-        expect(
-          changed.runners.filter(
-            row =>
-              row.details.runner.id === 100 && row.details.byAction !== true
-          )
-        ).deep.equals([])
-      }
       expect(applyActions(s.opening, next.log).state).deep.equals(s.state)
       await s.flush()
       const reopened = await ScoringSession.open(

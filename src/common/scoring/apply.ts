@@ -1496,6 +1496,8 @@ function returnHitAdvance(
     baseIds(ctx.state)[to - 1] != null
   )
     return false
+  // A runner already called safe from third to home is not sent back one base.
+  if (move.start === 3 && move.to === 4) return false
   const play = current(ctx)
   const row = [...play.runners]
     .reverse()
