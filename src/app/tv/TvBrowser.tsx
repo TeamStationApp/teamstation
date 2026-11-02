@@ -50,7 +50,10 @@ const FocusGuide =
   (
     ReactNative as unknown as {
       TVFocusGuideView?: React.ComponentType<
-        React.ComponentProps<typeof View> & { autoFocus?: boolean }
+        React.ComponentProps<typeof View> & {
+          autoFocus?: boolean
+          destinations?: Array<React.ComponentRef<typeof View>>
+        }
       >
     }
   ).TVFocusGuideView ?? View
@@ -71,56 +74,45 @@ const pageKey = (page: TvPage): string =>
       : page.player.userId
 
 export function TvScrim(): React.ReactElement {
-  if (NativeGradient !== null)
-    return (
-      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+  return (
+    <View
+      testID="tv-hero-scrim"
+      pointerEvents="none"
+      style={StyleSheet.absoluteFill}
+    >
+      {NativeGradient !== null ? (
         <NativeGradient
           gradientDirection="left"
-          maxOpacity={0.35}
+          maxOpacity={0.5}
           style={{
             position: 'absolute',
             left: 0,
             top: 0,
             bottom: 0,
-            width: '75%'
+            width: '40%'
           }}
         />
-        <NativeGradient
-          gradientDirection="bottom"
-          maxOpacity={0.15}
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: '35%'
-          }}
-        />
-      </View>
-    )
-  return (
-    <Svg
-      pointerEvents="none"
-      style={StyleSheet.absoluteFill}
-      width="100%"
-      height="100%"
-    >
-      <Defs>
-        <LinearGradient id="left" x1="0" y1="0" x2="1" y2="0">
-          <Stop offset="0" stopColor="#000" stopOpacity={0.35} />
-          <Stop offset="0.4" stopColor="#000" stopOpacity={0.18} />
-          <Stop offset="0.75" stopColor="#000" stopOpacity={0} />
-        </LinearGradient>
-        <LinearGradient id="bottom" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0.3" stopColor="#000" stopOpacity={0} />
-          <Stop offset="1" stopColor="#000" stopOpacity={0.15} />
-        </LinearGradient>
-      </Defs>
-      <Rect width="100%" height="100%" fill="url(#left)" />
-      <Rect width="100%" height="100%" fill="url(#bottom)" />
-    </Svg>
+      ) : (
+        <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
+          <Defs>
+            <LinearGradient id="hero-left" x1="0" y1="0" x2="1" y2="0">
+              <Stop offset="0" stopColor="#000" stopOpacity={0.5} />
+              <Stop offset="0.4" stopColor="#000" stopOpacity={0} />
+            </LinearGradient>
+          </Defs>
+          <Rect width="100%" height="100%" fill="url(#hero-left)" />
+        </Svg>
+      )}
+    </View>
   )
 }
+
+// Explicit destinations avoid the native spatial engine skipping the hero action.
+type FocusNode = React.ComponentRef<typeof View>
+const focusTag = (node: FocusNode | null): number | undefined =>
+  nativeTvPresentation && node !== null
+    ? (ReactNative.findNodeHandle(node) ?? undefined)
+    : undefined
 
 function CollectionBackground({
   top,
@@ -167,8 +159,12 @@ function Tile({
   onPress,
   onFocus,
   preview,
-  onPreviewFocus
+  onPreviewFocus,
+  tileRef,
+  nextFocusUp
 }: {
+  tileRef?: React.Ref<FocusNode>
+  nextFocusUp?: number
   id: string
   image: string | null
   title: string
@@ -189,6 +185,7 @@ function Tile({
   const [previewPosition, setPreviewPosition] = useState<number | null>(null)
   return (
     <Pressable
+      ref={tileRef}
       testID={id}
       accessibilityRole="button"
       accessibilityValue={
@@ -198,6 +195,7 @@ function Tile({
       }
       accessibilityLabel={`${title}${detail === undefined ? '' : `, ${detail}`}${focused && previewPosition !== null ? `, Preview: ${previewPosition} seconds` : ''}`}
       {...{
+        nextFocusUp,
         hasTVPreferredFocus: preferred,
         // UIImageView owns lift, parallax and Reduce Motion without a second scale.
         tvParallaxProperties: { enabled: false }
@@ -266,6 +264,20 @@ export function TvBrowser({
 }): React.ReactElement {
   const [pages, setPages] = useState<TvPage[]>([{ kind: 'home' }])
   const [searchOpen, setSearchOpen] = useState(false)
+  const [searchFocused, setSearchFocused] = useState(false)
+  const [searchNode, setSearchNode] = useState<FocusNode | null>(null)
+  const [signOutNode, setSignOutNode] = useState<FocusNode | null>(null)
+  const [watchNodes, setWatchNodes] = useState<
+    Record<string, FocusNode | null>
+  >({})
+  const registerWatch = useCallback(
+    (key: string, node: FocusNode | null): void => {
+      setWatchNodes(current =>
+        current[key] === node ? current : { ...current, [key]: node }
+      )
+    },
+    []
+  )
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState(false)
   const [results, setResults] = useState<{
@@ -381,18 +393,39 @@ export function TvBrowser({
           : '')
   return (
     <View style={styles.scene}>
-      <FocusGuide key={active} autoFocus style={styles.toolbar}>
+      <FocusGuide
+        key={active}
+        autoFocus
+        destinations={searchNode === null ? [] : [searchNode]}
+        style={styles.toolbar}
+      >
         <Text style={styles.brand}>TeamStation TV</Text>
         <Text style={styles.welcome}>Welcome, {viewerName}</Text>
         {nativeTvPresentation ? (
           <Pressable
+            ref={setSearchNode}
+            {...{
+              nextFocusDown: focusTag(
+                watchNodes[pageKey(pages[active])] ?? null
+              ),
+              nextFocusRight: focusTag(signOutNode)
+            }}
+            onFocus={() => {
+              setSearchFocused(true)
+            }}
+            onBlur={() => {
+              setSearchFocused(false)
+            }}
             testID="tv-search"
             accessibilityRole="button"
             accessibilityLabel="Search teams or players"
             onPress={() => {
               setSearchOpen(true)
             }}
-            style={styles.search}
+            style={[
+              styles.search,
+              searchFocused && { backgroundColor: '#fff' }
+            ]}
           >
             <View testID="tv-search-label" style={styles.searchLabel}>
               <Svg width={28} height={28} viewBox="0 0 28 28">
@@ -401,7 +434,7 @@ export function TvBrowser({
                   cy={11}
                   r={8}
                   fill="none"
-                  stroke="white"
+                  stroke={searchFocused ? '#102318' : '#fff'}
                   strokeWidth={2.5}
                 />
                 <Line
@@ -409,11 +442,18 @@ export function TvBrowser({
                   y1={17}
                   x2={25}
                   y2={25}
-                  stroke="white"
+                  stroke={searchFocused ? '#102318' : '#fff'}
                   strokeWidth={2.5}
                 />
               </Svg>
-              <Text style={styles.searchText}>Search</Text>
+              <Text
+                style={[
+                  styles.searchText,
+                  searchFocused && { color: '#102318' }
+                ]}
+              >
+                Search
+              </Text>
             </View>
           </Pressable>
         ) : (
@@ -434,7 +474,14 @@ export function TvBrowser({
             style={styles.search}
           />
         )}
-        <TvButton label="Sign out" onPress={onSignOut} />
+        <TvButton
+          label="Sign out"
+          testID="tv-sign-out"
+          onPress={onSignOut}
+          buttonRef={setSignOutNode}
+          nextFocusLeft={focusTag(searchNode)}
+          nextFocusDown={focusTag(watchNodes[pageKey(pages[active])] ?? null)}
+        />
       </FocusGuide>
       {searchOpen && visible && NativeSearch !== null && (
         <NativeSearch
@@ -478,6 +525,8 @@ export function TvBrowser({
             page={page}
             active={visible && index === active && query === '' && !searchOpen}
             onOpen={open}
+            searchTarget={focusTag(searchNode)}
+            registerWatch={registerWatch}
             onPlay={onPlay}
           />
         </View>
@@ -565,14 +614,27 @@ function BrowsePage({
   page,
   active,
   onOpen,
-  onPlay
+  onPlay,
+  searchTarget,
+  registerWatch
 }: {
   client: TeamStationClient
   page: TvPage
+  searchTarget?: number
+  registerWatch: (key: string, node: FocusNode | null) => void
   active: boolean
   onOpen: (page: TvPage) => void
   onPlay: (request: TvPlayRequest) => void
 }): React.ReactElement {
+  const [watchNode, setWatchNode] = useState<FocusNode | null>(null)
+  const [firstTile, setFirstTile] = useState<FocusNode | null>(null)
+  const key = pageKey(page)
+  useEffect(() => {
+    registerWatch(key, watchNode)
+    return () => {
+      registerWatch(key, null)
+    }
+  }, [key, watchNode, registerWatch])
   const { width, height, fontScale } = useWindowDimensions()
   const [viewportHeight, setViewportHeight] = useState(height - 115)
   const [scrollY, setScrollY] = useState(0)
@@ -658,9 +720,16 @@ function BrowsePage({
     },
     []
   )
-  const gameTile = (game: VideoGame, prefix: string): React.ReactElement => (
+  const gameTile = (
+    game: VideoGame,
+    prefix: string,
+    firstRow = false,
+    first = false
+  ): React.ReactElement => (
     <Tile
       key={game.id}
+      tileRef={first ? setFirstTile : undefined}
+      nextFocusUp={firstRow ? focusTag(watchNode) : undefined}
       preview={{ client, gameId: game.id, active }}
       onPreviewFocus={previewFocusChanged}
       id={`${prefix}-${game.id}`}
@@ -688,7 +757,14 @@ function BrowsePage({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.horizontal}
       >
-        {games.map(game => gameTile(game, prefix))}
+        {games.map((game, index) =>
+          gameTile(
+            game,
+            prefix,
+            prefix === 'recent',
+            prefix === 'recent' && index === 0
+          )
+        )}
       </ScrollView>
     </View>
   )
@@ -697,8 +773,9 @@ function BrowsePage({
   if (collection !== null) {
     const hero = collection.hero
     children.push(
-      <View
+      <FocusGuide
         key="hero"
+        destinations={watchNode === null ? [] : [watchNode]}
         testID="tv-hero"
         style={[styles.hero, { height: geometry.heroHeight }]}
       >
@@ -759,27 +836,34 @@ function BrowsePage({
                   </Text>
                 </View>
                 <Text style={styles.versus}>vs.</Text>
-                <View style={styles.awayName}>
+                <View style={styles.homeName}>
                   {hero.awayLogoUrl !== null && (
                     <Image
                       source={{ uri: hero.awayLogoUrl }}
                       style={styles.logo}
                     />
                   )}
-                  <Text
-                    numberOfLines={2}
-                    style={[styles.title, { textAlign: 'right' }]}
-                  >
+                  <Text numberOfLines={2} style={styles.title}>
                     {hero.awayTeamName}
                   </Text>
                 </View>
               </View>
+            </>
+          ) : (
+            <Text style={styles.title}>Your games</Text>
+          )}
+          {hero !== null && (
+            <>
               <Text style={styles.copy}>{gameDate(hero)}</Text>
               {hero.venue !== null && (
                 <Text style={styles.copy}>{hero.venue}</Text>
               )}
               <View style={styles.watch}>
                 <TvButton
+                  testID="tv-watch-game"
+                  buttonRef={setWatchNode}
+                  nextFocusUp={searchTarget}
+                  nextFocusDown={focusTag(firstTile)}
                   label={hero.isLive ? '▶ Watch Live' : '▶ Watch Game'}
                   preferred={
                     active &&
@@ -795,11 +879,9 @@ function BrowsePage({
                 />
               </View>
             </>
-          ) : (
-            <Text style={styles.title}>Your games</Text>
           )}
         </View>
-      </View>
+      </FocusGuide>
     )
     if (page.kind === 'team') {
       for (const [index, section] of monthSections([
@@ -819,7 +901,14 @@ function BrowsePage({
         section.rows.forEach((games, i) =>
           children.push(
             <View key={`grid-${index}-${i}`} style={styles.gridRow}>
-              {games.map(game => gameTile(game, 'team'))}
+              {games.map((game, column) =>
+                gameTile(
+                  game,
+                  'team',
+                  index === 0 && i === 0,
+                  index === 0 && i === 0 && column === 0
+                )
+              )}
             </View>
           )
         )
@@ -1016,11 +1105,22 @@ const styles = StyleSheet.create({
   hero: { justifyContent: 'center' },
   heroDetails: { paddingHorizontal: 76, width: 1050, gap: 18 },
   title: { fontSize: 70, color: '#fff', fontWeight: '700', flexShrink: 1 },
-  matchup: { flexDirection: 'row', alignItems: 'center', gap: 24 },
-  homeName: { flex: 1, alignItems: 'flex-start', gap: 16 },
-  awayName: { flex: 1, alignItems: 'flex-end', gap: 16 },
+  matchup: { alignItems: 'flex-start', gap: 8 },
+  homeName: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    alignSelf: 'stretch'
+  },
   versus: { fontSize: 25, color: '#ddd' },
-  logo: { width: 78, height: 78, resizeMode: 'contain' },
+  logo: {
+    width: 78,
+    height: 78,
+    resizeMode: 'contain',
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.12)'
+  },
   entityTitle: { flexDirection: 'row', alignItems: 'center', gap: 24 },
   watch: { alignSelf: 'flex-start', marginTop: 10 },
   copy: { fontSize: 25, color: '#eee' },

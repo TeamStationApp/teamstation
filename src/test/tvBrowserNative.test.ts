@@ -33,6 +33,16 @@ describe('TV native browser bridge', () => {
           name: 'native-presentation-bridge',
           setup(builder: any) {
             builder.onLoad(
+              { filter: /app\/tv\/TvBrowser\.tsx$/ },
+              (args: any) => ({
+                contents: readFileSync(args.path, 'utf8').replace(
+                  "import * as ReactNative from 'react-native'",
+                  "import * as ReactNative from '../../test/tvBrowserNativeRuntime'"
+                ),
+                loader: 'tsx'
+              })
+            )
+            builder.onLoad(
               { filter: /app\/tv\/NativePresentation\.tsx$/ },
               (args: any) => ({
                 contents: readFileSync(args.path, 'utf8').replace(
@@ -86,8 +96,26 @@ describe('TV native browser bridge', () => {
       expect(
         element.querySelector('[data-testid="tv-search-label"]')?.textContent
       ).equals('Search')
+      const searchButton = element.querySelector<HTMLElement>(
+        '[data-testid="tv-search"]'
+      )!
       await act(async () => {
-        element.querySelector<HTMLElement>('[data-testid="tv-search"]')!.click()
+        searchButton.focus()
+      })
+      expect(getComputedStyle(searchButton).backgroundColor).equals(
+        'rgb(255, 255, 255)'
+      )
+      expect(
+        searchButton.querySelector('circle')?.getAttribute('stroke')
+      ).equals('#102318')
+      await act(async () => {
+        searchButton.blur()
+      })
+      expect(getComputedStyle(searchButton).backgroundColor).equals(
+        'rgb(85, 85, 85)'
+      )
+      await act(async () => {
+        searchButton.click()
       })
       await act(async () => {
         nativeViews.get('TVSearch').onQuery({ nativeEvent: { query: 'Hawks' } })
