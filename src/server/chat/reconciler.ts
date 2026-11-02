@@ -1,11 +1,11 @@
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
 import { compareUserIds } from '../../common/chatCrypto/userId'
 import { makeId } from '../../common/ids'
 import { asUserId } from '../../common/userId'
 import { onePerson } from '../admin/people'
 import type { ChangeFeed } from '../changeFeed/feed'
-import type { Database } from '../db/database'
+import { type Database, isPoolTimeout } from '../db/database'
 import { survivors } from '../teams/teamStaff'
 import {
   audienceOf,
@@ -351,7 +351,8 @@ async function dmsWithPlayersOf(
 
 /**
  * Reconciles everything a batch of marks reaches. Throws after trying them
- * all when any failed, so the caller can put the marks back.
+ * all when any failed, so the caller can keep the marks. Connections running
+ * out ends the attempt at once, since the rest would only wait for one too.
  */
 export async function processMarks(
   db: Kysely<Database>,
@@ -365,6 +366,7 @@ export async function processMarks(
     try {
       await reconcileScope(db, target.kind, target.scopeId, now)
     } catch (error) {
+      if (isPoolTimeout(error)) throw error
       failed += 1
       log(`reconciling ${target.kind} ${target.scopeId}: ${String(error)}`)
     }
@@ -373,6 +375,7 @@ export async function processMarks(
     try {
       await recheckDm(db, id, now)
     } catch (error) {
+      if (isPoolTimeout(error)) throw error
       failed += 1
       log(`re-checking DM ${id}: ${String(error)}`)
     }
@@ -382,31 +385,50 @@ export async function processMarks(
 }
 
 /**
- * Takes every mark there is and reconciles what they reach. The queue is
- * append-only (088chatDirtyQueue), so a scope marked many times while the
- * reconciler was behind is coalesced here and read once. Marks appended
- * while it drains are left for the next drain. On a failure the marks go
- * back, once each (without a notify, so a broken conversation is retried by
- * the next notify or the sweep rather than in a loop). Answers how many
- * scopes were taken.
+ * Reconciles what every mark there is reaches, then removes those marks. The
+ * queue is append-only (088chatDirtyQueue), so a scope marked many times while
+ * the reconciler was behind is coalesced here and read once, and marks appended
+ * while it drains are left for the next drain. A mark stays until what it
+ * reaches is done, so nothing has to put it back when connections run out or
+ * the process dies, and the next drain does the work again, which is harmless.
+ * After a failure only the extra copies of a scope go (with no notify, so a
+ * broken conversation is retried by the next notify or the sweep rather than in
+ * a loop). Rows are told apart by `ctid`: nothing updates this table, and what
+ * was read is still there to delete. Answers how many scopes were reconciled.
  */
 export async function drainDirty(
   db: Kysely<Database>,
   now: Date,
   log: (message: string) => void = () => undefined
 ): Promise<number> {
-  const taken = await db
-    .deleteFrom('chat_dirty')
-    .returning(['scope_type', 'scope_id'])
+  const read = await db
+    .selectFrom('chat_dirty')
+    .select(['scope_type', 'scope_id', sql<string>`ctid::text`.as('row')])
     .execute()
-  const marks = distinctMarks(taken)
+  const marks = distinctMarks(read)
   if (marks.length === 0) return 0
+  const rowsOf = (rows: Array<{ row: string }>): string[] =>
+    rows.map(({ row }) => row)
+  const forget = async (rows: string[]): Promise<void> => {
+    await db
+      .deleteFrom('chat_dirty')
+      .where(sql<boolean>`ctid = any(${rows}::tid[])`)
+      .execute()
+  }
   try {
     await processMarks(db, marks, now, log)
   } catch (error) {
-    await db.insertInto('chat_dirty').values(marks).execute()
+    if (!isPoolTimeout(error)) {
+      const kept = new Set(rowsOf(marks))
+      await forget(rowsOf(read).filter(row => !kept.has(row))).catch(
+        (failure: unknown) => {
+          log(`dropping repeated marks: ${String(failure)}`)
+        }
+      )
+    }
     throw error
   }
+  await forget(rowsOf(read))
   return marks.length
 }
 
@@ -592,11 +614,15 @@ export interface ChatReconcilerOptions {
   debounceMs?: number
   /** How often the sweep runs. */
   sweepMs?: number
+  /** How soon marks are drained again after connections ran out. */
+  retryMs?: number
   now?: () => Date
   log?: (message: string) => void
 }
 
 export const CHAT_DIRTY_CHANNEL = 'chat_dirty'
+
+const POOL_RETRY_MS = 5000
 
 /** The primary's reconciler: hears `chat_dirty`, drains, and the sweep. */
 export class ChatReconciler {
@@ -608,6 +634,8 @@ export class ChatReconciler {
   private readonly log: (message: string) => void
   private readonly stopListening: () => void
   private debounce: ReturnType<typeof setTimeout> | undefined
+  private readonly retryMs: number
+  private retry: ReturnType<typeof setTimeout> | undefined
   private readonly sweepTimer: ReturnType<typeof setInterval>
   /** Work runs one piece at a time, in order. */
   private queue: Promise<void> = Promise.resolve()
@@ -616,6 +644,7 @@ export class ChatReconciler {
   constructor(options: ChatReconcilerOptions) {
     this.db = options.db
     this.debounceMs = options.debounceMs ?? 1000
+    this.retryMs = options.retryMs ?? POOL_RETRY_MS
     this.now = options.now ?? (() => new Date())
     this.log =
       options.log ??
@@ -671,6 +700,7 @@ export class ChatReconciler {
     this.closed = true
     this.stopListening()
     clearTimeout(this.debounce)
+    clearTimeout(this.retry)
     clearInterval(this.sweepTimer)
     await this.queue
   }
@@ -682,10 +712,20 @@ export class ChatReconciler {
         await work()
       } catch (error) {
         this.log(String(error))
+        // Connections are short, not gone, and the marks are all still there.
+        if (isPoolTimeout(error)) this.askAgain()
       }
     })
     this.queue = next
     await next
+  }
+
+  private askAgain(): void {
+    if (this.closed || this.retry != null) return
+    this.retry = setTimeout(() => {
+      this.retry = undefined
+      this.drain().catch(() => undefined)
+    }, this.retryMs)
   }
 }
 
