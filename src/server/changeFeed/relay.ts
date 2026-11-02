@@ -32,6 +32,9 @@ return 0`
 /** How long the end of a Postgres connection may hold up leaving the role. */
 const HANG_UP_WAIT_MS = 1000
 
+/** How long a candidate's connection may take to open, of the time its claim has. */
+const RELAY_CONNECT_WAIT_MS = 5000
+
 /**
  * The relay's connection. The lock goes when Postgres sees the session go, so
  * the settings that release it after a lost machine are the server's, sent at
@@ -44,6 +47,7 @@ export function relayConnectionConfig(databaseUrl: string): {
   application_name: string
   keepAlive: boolean
   keepAliveInitialDelayMillis: number
+  connectionTimeoutMillis: number
   options: string
 } {
   return {
@@ -51,6 +55,7 @@ export function relayConnectionConfig(databaseUrl: string): {
     application_name: RELAY_APPLICATION_NAME,
     keepAlive: true,
     keepAliveInitialDelayMillis: 10_000,
+    connectionTimeoutMillis: RELAY_CONNECT_WAIT_MS,
     options:
       '-c tcp_keepalives_idle=10 -c tcp_keepalives_interval=5 ' +
       '-c tcp_keepalives_count=3 -c tcp_user_timeout=30000'
@@ -68,6 +73,11 @@ export interface FeedRelayOptions {
   /** How often the leader asks its connection for an answer, and how long it waits. */
   checkMs?: number
   checkWaitMs?: number
+  /**
+   * How long a candidate has to connect, take the lock, listen and claim the
+   * key. Past it the attempt ends, and the process is a candidate again.
+   */
+  claimMs?: number
   /** What the leader key says. */
   identity?: string
   /** The client it talks to Valkey with, once connected on start. */
@@ -129,6 +139,7 @@ class Relay implements FeedRelay {
   private readonly beatMs: number
   private readonly checkMs: number
   private readonly checkWaitMs: number
+  private readonly claimMs: number
   private readonly log: (message: string) => void
   private leadership: Leadership | undefined
   private timer: ReturnType<typeof setTimeout> | undefined
@@ -150,6 +161,7 @@ class Relay implements FeedRelay {
     this.beatMs = options.beatMs ?? 1000
     this.checkMs = options.checkMs ?? 10_000
     this.checkWaitMs = options.checkWaitMs ?? 20_000
+    this.claimMs = options.claimMs ?? 10_000
     this.log = log
     this.redis = (options.makeClient ?? makeScoreboardClient)(
       config.redis.url,
@@ -239,37 +251,55 @@ class Relay implements FeedRelay {
           message.payload ?? ''
         )
     })
+    // Nothing here may wait past the end of the turn, whichever step is stuck:
+    // `pg` answers neither a connect it was told to end nor a query on a socket
+    // that has gone quiet, and a poll under way keeps this process from another.
+    const unlessLeft = async <T>(step: Promise<T>): Promise<T | undefined> =>
+      await Promise.race([step, leaving.then(() => undefined)])
+    const limit = setTimeout(() => {
+      this.end(turn, `the claim took over ${this.claimMs} ms`).catch(
+        () => undefined
+      )
+    }, this.claimMs)
     // `stop` ends the turn, so `ended` also says the process is stopping: from
     // there nothing more is claimed or announced, and each step checks for it.
     try {
-      // `pg` never answers a connect it was told to end.
-      await Promise.race([client.connect(), leaving])
+      await unlessLeft(client.connect())
       if (turn.ended) return
-      const held = await client.query<{ held: boolean }>(
-        'select pg_try_advisory_lock(hashtextextended($1, 0)) as held',
-        [LOCK_NAME]
+      const held = await unlessLeft(
+        client.query<{ held: boolean }>(
+          'select pg_try_advisory_lock(hashtextextended($1, 0)) as held',
+          [LOCK_NAME]
+        )
       )
       if (turn.ended) return
-      if (!held.rows[0]?.held) {
+      if (!held?.rows[0]?.held) {
         await this.leave(turn)
         return
       }
-      for (const channel of FEED_CHANNELS)
-        await client.query(`listen ${channel}`)
-      if (turn.ended) return
+      for (const channel of FEED_CHANNELS) {
+        await unlessLeft(client.query(`listen ${channel}`))
+        if (turn.ended) return
+      }
       turn.claimed = true
-      await this.redis.set(feedLeaderKey(this.prefix), this.identity, {
-        PX: this.leaderTtlMs
-      })
+      await unlessLeft(
+        this.redis.set(feedLeaderKey(this.prefix), this.identity, {
+          PX: this.leaderTtlMs
+        })
+      )
       if (turn.ended) return
       turn.publishing = true
-      await this.redis.publish(
-        feedControlKey(this.prefix),
-        JSON.stringify({ kind: 'resync' })
+      await unlessLeft(
+        this.redis.publish(
+          feedControlKey(this.prefix),
+          JSON.stringify({ kind: 'resync' })
+        )
       )
     } catch (error) {
       await this.end(turn, String(error))
       return
+    } finally {
+      clearTimeout(limit)
     }
     if (turn.ended) return
     turn.beat = setInterval(() => {

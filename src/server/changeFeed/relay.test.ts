@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { type AddressInfo, createServer, type Socket } from 'node:net'
+import { type AddressInfo, connect, createServer, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -391,6 +391,95 @@ describe('the feed relay', function () {
     await control.stop()
   })
 
+  it('ends a claim whose connection never opens, and becomes a candidate again', async function () {
+    const prefix = testPrefix()
+    const lines: string[] = []
+    // Accepts each connection and never says a word.
+    const sockets: Socket[] = []
+    const silent = createServer(socket => {
+      sockets.push(socket)
+      socket.on('error', quiet)
+    })
+    await new Promise<void>(resolve => {
+      silent.listen(0, '127.0.0.1', resolve)
+    })
+    const { port } = silent.address() as AddressInfo
+    const relay = relayOf(
+      prefix,
+      'unopened',
+      { claimMs: 50, log: line => lines.push(line) },
+      `postgres://127.0.0.1:${port}/nothing`
+    )
+    await until(
+      () => lines.filter(line => line.includes('the claim took')).length >= 2,
+      'a second attempt'
+    )
+    expect(await leader(prefix)).equals(null)
+    await relay.stop()
+    running.splice(running.indexOf(relay), 1)
+    for (const socket of sockets) socket.destroy()
+    await new Promise(resolve => {
+      silent.close(resolve)
+    })
+  })
+
+  it('ends a claim whose lock query never answers, then leads when Postgres does', async function () {
+    const prefix = testPrefix()
+    const lines: string[] = []
+    // Passes the connection through to Postgres until told to drop what comes back.
+    const target = new URL(testDatabaseUrl)
+    let stalled = true
+    let queries = 0
+    const sockets = new Set<Socket>()
+    const door = createServer(inbound => {
+      const outbound = connect(
+        Number(target.port),
+        target.hostname === 'localhost' ? '127.0.0.1' : target.hostname
+      )
+      for (const socket of [inbound, outbound]) {
+        sockets.add(socket)
+        socket.on('error', quiet)
+        socket.on('close', () => {
+          inbound.destroy()
+          outbound.destroy()
+        })
+      }
+      inbound.on('data', chunk => {
+        const isQuery = chunk.subarray(0, 1).toString() === 'P'
+        if (isQuery) queries += 1
+        if (!(stalled && isQuery)) outbound.write(chunk)
+      })
+      outbound.pipe(inbound)
+    })
+    await new Promise<void>(resolve => {
+      door.listen(0, '127.0.0.1', resolve)
+    })
+    const { port } = door.address() as AddressInfo
+    const url = new URL(scratchUrl)
+    url.hostname = '127.0.0.1'
+    url.port = String(port)
+    const relay = relayOf(
+      prefix,
+      'answered',
+      { claimMs: 100, log: line => lines.push(line) },
+      url.href
+    )
+    await until(
+      () => lines.some(line => line.includes('the claim took')),
+      'the first claim to end'
+    )
+    expect(queries).greaterThan(0)
+    expect(await leader(prefix)).equals(null)
+    stalled = false
+    await until(async () => (await leader(prefix)) === 'answered', 'the lead')
+    await relay.stop()
+    running.splice(running.indexOf(relay), 1)
+    for (const socket of sockets) socket.destroy()
+    await new Promise(resolve => {
+      door.close(resolve)
+    })
+  })
+
   it('ends leadership when the key no longer names it', async function () {
     const prefix = testPrefix()
     const lines: string[] = []
@@ -548,6 +637,7 @@ describe('the feed relay', function () {
     expect(config.application_name).equals(RELAY_APPLICATION_NAME)
     expect(config.keepAlive).equals(true)
     expect(config.keepAliveInitialDelayMillis).greaterThan(0)
+    expect(config.connectionTimeoutMillis).greaterThan(0)
     const client = new Client(config)
     await client.connect()
     const show = async (name: string): Promise<string> =>
