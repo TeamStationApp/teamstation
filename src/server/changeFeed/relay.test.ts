@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { type AddressInfo, createServer, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -260,6 +261,134 @@ describe('the feed relay', function () {
     failing = false
     await until(async () => (await backends()) === 1, 'the lead again')
     await stopAll()
+  })
+
+  it('publishes a notice that arrives before Valkey has answered the resync', async function () {
+    const prefix = testPrefix()
+    const feed = feedOf(prefix)
+    const games = hearer()
+    await feed.subscribe('game_changes', games).listening
+    let answer = (): void => undefined
+    const answered = new Promise<void>(resolve => {
+      answer = resolve
+    })
+    const makeClient: FeedRelayOptions['makeClient'] = (
+      url,
+      log,
+      name,
+      caFile
+    ) => {
+      const client = makeScoreboardClient(url, log, name, caFile)
+      const publish = client.publish.bind(client)
+      Object.assign(client, {
+        publish: (async (channel: string, message: string) => {
+          const sent = await publish(channel, message)
+          if (message.includes('resync')) await answered
+          return sent
+        }) as ScoreboardClient['publish']
+      })
+      return client
+    }
+    relayOf(prefix, 'early', { makeClient, leaderTtlMs: 5000 })
+    // Subscribers have the resync, and have read. The relay has no reply yet.
+    await until(() => games.listenings.length === 2, 'the resync')
+    await poker.query(`select pg_notify('game_changes', 'after the read')`)
+    await until(() => games.payloads.length === 1, 'the notice')
+    expect(games.payloads).deep.equals(['after the read'])
+    answer()
+    await stopAll()
+  })
+
+  /** A relay whose client waits at `method` until the test answers. */
+  const heldAt = (
+    method: 'get' | 'set'
+  ): {
+    makeClient: FeedRelayOptions['makeClient']
+    reached: () => boolean
+    answer: () => void
+  } => {
+    let reached = false
+    let answer = (): void => undefined
+    const answered = new Promise<void>(resolve => {
+      answer = resolve
+    })
+    return {
+      reached: () => reached,
+      answer: () => {
+        answer()
+      },
+      makeClient: (url, log, name, caFile) => {
+        const client = makeScoreboardClient(url, log, name, caFile)
+        const real = (client[method] as (...args: unknown[]) => unknown).bind(
+          client
+        )
+        Object.assign(client, {
+          [method]: async (...args: unknown[]) => {
+            const result = await real(...args)
+            reached = true
+            await answered
+            return result
+          }
+        })
+        return client
+      }
+    }
+  }
+
+  it('does not lead when it stops during a poll that finds no leader', async function () {
+    const prefix = testPrefix()
+    const control = await controlOf(prefix)
+    const { makeClient, reached, answer } = heldAt('get')
+    relayOf(prefix, 'stopping', { makeClient })
+    await until(reached, 'the poll')
+    const stopping = stopAll()
+    await wait(50)
+    answer()
+    await stopping
+    await wait(50)
+    expect(control.kinds).deep.equals([])
+    expect(await leader(prefix)).equals(null)
+    await control.stop()
+  })
+
+  it('announces nothing and leaves no key when it stops while claiming', async function () {
+    const prefix = testPrefix()
+    const control = await controlOf(prefix)
+    const { makeClient, reached, answer } = heldAt('set')
+    relayOf(prefix, 'claiming', { makeClient })
+    await until(reached, 'the claim')
+    const stopping = stopAll()
+    await wait(50)
+    answer()
+    await stopping
+    await wait(50)
+    expect(control.kinds).deep.equals([])
+    expect(await leader(prefix)).equals(null)
+    await control.stop()
+  })
+
+  it('stops while a connection to Postgres has not answered', async function () {
+    const prefix = testPrefix()
+    const control = await controlOf(prefix)
+    const sockets: Socket[] = []
+    const silent = createServer(socket => {
+      socket.on('error', () => undefined)
+      sockets.push(socket)
+    })
+    await new Promise<void>(resolve => {
+      silent.listen(0, '127.0.0.1', resolve)
+    })
+    const { port } = silent.address() as AddressInfo
+    relayOf(prefix, 'unanswered', {}, `postgres://127.0.0.1:${port}/nothing`)
+    await until(() => sockets.length === 1, 'the attempt')
+    await stopAll()
+    expect(control.kinds).deep.equals([])
+    expect(await leader(prefix)).equals(null)
+    for (const socket of sockets) socket.destroy()
+    await new Promise(resolve => {
+      silent.close(resolve)
+    })
+    await control.stop()
   })
 
   it('ends leadership when the key no longer names it', async function () {

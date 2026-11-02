@@ -86,11 +86,18 @@ export interface FeedRelay {
 /** One turn in the role, from opening the connection to leaving it. */
 interface Leadership {
   client: Client
-  /** Notices go out. Those before this come before the resync, which covers them. */
+  /**
+   * Notices go out. Those before this come before the resync, which covers
+   * them. It is set before the resync leaves, because a subscriber reads as soon
+   * as it hears that: a later notice must not wait on Valkey's reply, and one
+   * that goes out early is only a hint more.
+   */
   publishing: boolean
   /** The key may hold this leader's name. */
   claimed: boolean
   ended: boolean
+  /** Answers a connection attempt that leaving made pointless. */
+  left: () => void
   beat?: ReturnType<typeof setInterval>
   renewingSince?: number
   checkingSince?: number
@@ -188,7 +195,8 @@ class Relay implements FeedRelay {
   private async poll(): Promise<void> {
     try {
       const holder = await this.redis.get(feedLeaderKey(this.prefix))
-      if (holder == null) await this.tryToLead()
+      // A stop during that read: nothing may start now that it would leave behind.
+      if (holder == null && !this.stopped) await this.tryToLead()
       this.lastComplaint = ''
     } catch (error) {
       this.complain(String(error))
@@ -204,11 +212,16 @@ class Relay implements FeedRelay {
 
   private async tryToLead(): Promise<void> {
     const client = new Client(relayConnectionConfig(this.databaseUrl))
+    let left: () => void = () => undefined
+    const leaving = new Promise<void>(resolve => {
+      left = resolve
+    })
     const turn: Leadership = {
       client,
       publishing: false,
       claimed: false,
       ended: false,
+      left,
       checkedAt: Date.now()
     }
     this.leadership = turn
@@ -226,12 +239,17 @@ class Relay implements FeedRelay {
           message.payload ?? ''
         )
     })
+    // `stop` ends the turn, so `ended` also says the process is stopping: from
+    // there nothing more is claimed or announced, and each step checks for it.
     try {
-      await client.connect()
+      // `pg` never answers a connect it was told to end.
+      await Promise.race([client.connect(), leaving])
+      if (turn.ended) return
       const held = await client.query<{ held: boolean }>(
         'select pg_try_advisory_lock(hashtextextended($1, 0)) as held',
         [LOCK_NAME]
       )
+      if (turn.ended) return
       if (!held.rows[0]?.held) {
         await this.leave(turn)
         return
@@ -243,6 +261,8 @@ class Relay implements FeedRelay {
       await this.redis.set(feedLeaderKey(this.prefix), this.identity, {
         PX: this.leaderTtlMs
       })
+      if (turn.ended) return
+      turn.publishing = true
       await this.redis.publish(
         feedControlKey(this.prefix),
         JSON.stringify({ kind: 'resync' })
@@ -252,7 +272,6 @@ class Relay implements FeedRelay {
       return
     }
     if (turn.ended) return
-    turn.publishing = true
     turn.beat = setInterval(() => {
       this.beat(turn)
     }, this.beatMs)
@@ -323,6 +342,7 @@ class Relay implements FeedRelay {
   private async leave(turn: Leadership): Promise<void> {
     if (turn.ended) return
     turn.ended = true
+    turn.left()
     clearInterval(turn.beat)
     const hangingUp = turn.client.end().catch(() => undefined)
     let timer: ReturnType<typeof setTimeout> | undefined
