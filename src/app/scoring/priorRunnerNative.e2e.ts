@@ -351,9 +351,7 @@ async function main(): Promise<void> {
         async () => {
           const plate = await runnerPlate('Mookie')
           return (
-            (await proof()).bases[2] === 100 &&
-            plate != null &&
-            plate.y >= 510
+            (await proof()).bases[2] === 100 && plate != null && plate.y >= 510
           )
         },
         20000
