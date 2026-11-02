@@ -7,7 +7,7 @@ import {
   type TeamStationClient,
   type TvHighlight
 } from '../../common/api'
-import { loadTvCollection, topClips } from './collections'
+import { loadTvCollection, rankVideoTeams, topClips } from './collections'
 
 const game = (i: number): ReturnType<typeof asVideoGame> =>
   asVideoGame({
@@ -162,5 +162,44 @@ describe('TV collection layout and ranking', () => {
     expect(short.teamRows).deep.equals([])
     expect(short.remaining).deep.equals([])
     expect(short.nextOffset).equals(null)
+  })
+})
+
+describe('TV team relationship ordering', () => {
+  it('puts membership and guardian teams before follows, admin ties and other visible teams', () => {
+    const make = (
+      id: string,
+      relation: 'member' | 'following' | 'admin' | 'other',
+      day: number
+    ): ReturnType<typeof asTeamSummary> => ({
+      ...team(id),
+      videoRelationship: relation,
+      latestVideoAt: new Date(Date.UTC(2026, 0, day)).toISOString()
+    })
+    const input = [
+      make('admin', 'admin', 30),
+      make('follow', 'following', 20),
+      make('older-member', 'member', 1),
+      make('newer-member', 'member', 2),
+      make('other', 'other', 31)
+    ]
+    expect(rankVideoTeams(input).map(t => t.id)).deep.equals([
+      'newer-member',
+      'older-member',
+      'follow',
+      'admin',
+      'other'
+    ])
+    expect(input[0].id).equals('admin')
+    expect(rankVideoTeams([team('z'), team('a')]).map(t => t.id)).deep.equals([
+      'a',
+      'z'
+    ])
+    expect(
+      rankVideoTeams([
+        { ...team('z'), name: 'Same' },
+        { ...team('a'), name: 'Same' }
+      ]).map(t => t.id)
+    ).deep.equals(['a', 'z'])
   })
 })
