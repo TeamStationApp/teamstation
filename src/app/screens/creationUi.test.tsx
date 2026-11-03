@@ -270,46 +270,57 @@ for (const kinds of [
 ] as GroupKind[][]) {
   it(`shows contextual home creation controls for ${kinds.length === 0 ? 'empty account' : kinds.join(',')}`, async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
-    api.teams = async () =>
-      kinds.includes('team')
+    api.home = async () => ({
+      teams: kinds.includes('team')
         ? [
-            asTeamSummary({
-              id: 'team_demo',
-              name: 'Demo Team',
-              shortName: null,
-              logoPath: null,
-              logoUrl: null
-            })
+            {
+              ...asTeamSummary({
+                id: 'team_demo',
+                name: 'Demo Team',
+                shortName: null,
+                logoPath: null,
+                logoUrl: null
+              }),
+              direct: true,
+              source: 'member'
+            }
+          ]
+        : [],
+      seasons: kinds.includes('season')
+        ? [
+            {
+              ...asSeasonSummary({
+                id: 'season_demo',
+                name: 'Demo Season',
+                leagueId: null,
+                year: 2026,
+                term: null,
+                ageGroup: null,
+                teams: 1,
+                games: 0,
+                videos: 0
+              }),
+              direct: true,
+              source: 'member'
+            }
+          ]
+        : [],
+      leagues: kinds.includes('league')
+        ? [
+            {
+              ...asPublicGroup({
+                id: 'league_demo',
+                kind: 'league',
+                name: 'Demo League',
+                imageUrl: null,
+                locality: null
+              }),
+              direct: true,
+              source: 'member'
+            }
           ]
         : []
-    api.seasons = async () =>
-      kinds.includes('season')
-        ? [
-            asSeasonSummary({
-              id: 'season_demo',
-              name: 'Demo Season',
-              leagueId: null,
-              year: 2026,
-              term: null,
-              ageGroup: null,
-              teams: 1,
-              games: 0,
-              videos: 0
-            })
-          ]
-        : []
-    api.ownGroups = async () =>
-      kinds.includes('league')
-        ? [
-            asPublicGroup({
-              id: 'league_demo',
-              kind: 'league',
-              name: 'Demo League',
-              imageUrl: null,
-              locality: null
-            })
-          ]
-        : []
+    })
     api.liveNow = async () => []
     api.recentGame = async () => null
     const opened: GroupKind[] = []
@@ -354,9 +365,8 @@ for (const kinds of [
 it('does not show empty-account creation cards while loading or on a failed load', async () => {
   const api = new TeamStationClient({ baseUrl: '/api/v1' })
   api.liveNow = async () => []
-  api.seasons = async () => []
   let rejectLoad: (error: Error) => void = () => {}
-  api.teams = async () =>
+  api.home = async () =>
     await new Promise((_resolve, reject) => {
       rejectLoad = reject
     })

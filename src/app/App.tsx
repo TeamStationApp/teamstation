@@ -176,6 +176,7 @@ import { GroupLocationPage } from './screens/GroupLocationPage'
 import { GroupPeoplePage } from './screens/GroupPeoplePage'
 import { GroupScreen } from './screens/GroupScreen'
 import { GroupSettingsScreen } from './screens/GroupSettingsScreen'
+import { clearHomeListExpanded } from './screens/homeListExpanded'
 import { HomeScreen } from './screens/HomeScreen'
 import { JoinScreen } from './screens/JoinScreen'
 import { LoginScreen } from './screens/LoginScreen'
@@ -654,6 +655,7 @@ function Shell(props: AppProps): React.ReactElement {
   /** Forgets the session and starts every tab over, for sign-out and deletion alike. */
   const leaveSession = (): void => {
     rememberSession(undefined)
+    clearHomeListExpanded().catch(() => undefined)
     setStacks({ home: [], videos: [], schedule: [], search: [], chat: [] })
     setTab('home')
   }
@@ -2245,6 +2247,7 @@ function Shell(props: AppProps): React.ReactElement {
                   await client.signOut().catch(() => undefined)
                   client.token = undefined
                   rememberSession(undefined)
+                  clearHomeListExpanded().catch(() => undefined)
                   const destination: Route = {
                     name: 'signIn',
                     next: routePath(route)

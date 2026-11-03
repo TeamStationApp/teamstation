@@ -1,16 +1,16 @@
 import { asArray, type Cleaner } from 'cleaners'
 
 import {
+  asHomeLists,
   asMyRoles,
   asSeasonGame,
-  asTeamSummary,
   type ClientOptions,
+  type HomeLists,
   IDEMPOTENCY_HEADER,
   type MyRoles,
   type RequestOptions,
   type SeasonGame,
-  TeamStationClient,
-  type TeamSummary
+  TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { managesRoster } from '../../common/roles'
@@ -19,7 +19,7 @@ import {
   documentKeyOf,
   fallbackKeyOf,
   GAMES_UPCOMING,
-  HOME_TEAMS
+  HOME_LISTS
 } from './documentKeys'
 import {
   Outbox,
@@ -412,9 +412,9 @@ export class CachingClient extends TeamStationClient {
         return undefined
       }
     }
-    const [roles, teams, fetched] = await Promise.all([
+    const [roles, lists, fetched] = await Promise.all([
       read<MyRoles>('/me/roles', asMyRoles),
-      this.cached<TeamSummary[]>(HOME_TEAMS, asArray(asTeamSummary)),
+      this.cached<HomeLists>(HOME_LISTS, asHomeLists),
       read<SeasonGame[]>('/events?when=upcoming', asArray(asSeasonGame))
     ])
     // The games last stored stand in for a list that would not load.
@@ -428,7 +428,7 @@ export class CachingClient extends TeamStationClient {
       if (managesRoster(roles, teamId))
         paths.add(`/teams/${id}/roster?includeFullNames=true`)
     }
-    for (const summary of teams ?? []) team(summary.id)
+    for (const summary of lists?.teams ?? []) team(summary.id)
     for (const game of upcoming ?? []) {
       const id = encodeURIComponent(game.id)
       paths.add(`/games/${id}`)

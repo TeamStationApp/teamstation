@@ -42,6 +42,7 @@ function signedIn(canManage = true): void {
   proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
   proto.hasNotifications = async () => false
   proto.teams = async () => []
+  proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
   proto.ownGroups = async () => []
   proto.group = async ref =>
     asGroupDetail({

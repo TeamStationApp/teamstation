@@ -31,6 +31,7 @@ describe('the Search tab', () => {
     }
     proto.hasNotifications = async () => false
     proto.teams = async () => []
+    proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
     proto.seasons = async () => []
     proto.ownGroups = async () => []
     proto.follows = async () => []
@@ -127,6 +128,7 @@ describe('the Search tab', () => {
     }
     proto.hasNotifications = async () => false
     proto.teams = async () => []
+    proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
     proto.seasons = async () => []
     proto.ownGroups = async () => []
     proto.follows = async () => []

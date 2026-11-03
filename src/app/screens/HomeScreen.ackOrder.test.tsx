@@ -74,10 +74,14 @@ describe('S3: Home waits for the home scope before it reads', function () {
         return answer
       }
     const client = Object.assign(stamps, {
-      teams: call('teams', '/teams', [hawks]),
-      seasons: call('seasons', '/seasons', []),
+      home: call('home', '/me/home', {
+        teams: [{ ...hawks, direct: true, source: 'member' }],
+        seasons: [],
+        leagues: []
+      }),
       recentGame: call('recentGame', '/events?played=1&limit=1', null),
-      liveNow: call('liveNow', '/live/now', [])
+      liveNow: call('liveNow', '/live/now', []),
+      cached: async () => undefined
     })
     return { client: client as unknown as TeamStationClient, stamps }
   }
@@ -106,20 +110,20 @@ describe('S3: Home waits for the home scope before it reads', function () {
     await settle()
   }
 
-  const teamsCalls = (log: string[]): number =>
-    log.filter(line => line === 'client.teams').length
+  const homeCalls = (log: string[]): number =>
+    log.filter(line => line === 'client.home').length
 
   it('asks for the teams only after subscribed, and again for a newer changed', async function () {
     timers = heldTimers(ACK_GIVE_UP_MS)
     const log: string[] = []
     const socket = new FakeScopeSocket(log)
     const { client, stamps } = homeClient(log)
-    for (const path of ['/teams', '/seasons', '/events?played=1&limit=1'])
+    for (const path of ['/me/home', '/events?played=1&limit=1'])
       stamps.revisions.set(path, '3')
     await render(client, socket)
     expect(socket.asked()).deep.equals(['home'])
     // Rendered, and still waiting: inside the three seconds, nothing is read.
-    expect(teamsCalls(log), 'client.teams before subscribed').equals(0)
+    expect(homeCalls(log), 'client.home before subscribed').equals(0)
     expect(log).deep.equals(['subscribe home'])
     expect(document.body.textContent).includes('Loading…')
     expect(timers.pending(), 'each load waits for the ack').equals(3)
@@ -128,8 +132,8 @@ describe('S3: Home waits for the home scope before it reads', function () {
       socket.ack('3')
     })
     await settle()
-    expect(log.indexOf('subscribed 3')).lessThan(log.indexOf('client.teams'))
-    expect(teamsCalls(log), 'client.teams after subscribed').equals(1)
+    expect(log.indexOf('subscribed 3')).lessThan(log.indexOf('client.home'))
+    expect(homeCalls(log), 'client.home after subscribed').equals(1)
     expect(log).includes('client.recentGame').and.includes('client.liveNow')
     expect(document.body.textContent).includes('Alta Hawks')
     expect(timers.pending(), 'the give-up timers are cleared').equals(0)
@@ -139,14 +143,14 @@ describe('S3: Home waits for the home scope before it reads', function () {
       socket.changed('3')
     })
     await settle()
-    expect(teamsCalls(log)).equals(1)
+    expect(homeCalls(log)).equals(1)
 
-    stamps.revisions.set('/teams', '4')
+    stamps.revisions.set('/me/home', '4')
     await act(async () => {
       socket.changed('4')
     })
     await settle()
-    expect(teamsCalls(log), 'client.teams after a newer changed').equals(2)
+    expect(homeCalls(log), 'client.home after a newer changed').equals(2)
     trace('online: subscribe, ack, read, newer changed, read', log)
   })
 
@@ -162,24 +166,23 @@ describe('S3: Home waits for the home scope before it reads', function () {
     await settle()
     const count = (name: string): number =>
       log.filter(line => line === `client.${name}`).length
-    expect([count('teams'), count('recentGame'), count('liveNow')]).deep.equals(
-      [1, 1, 1]
-    )
+    expect([count('home'), count('recentGame'), count('liveNow')]).deep.equals([
+      1, 1, 1
+    ])
     // A play: the game's score moved, and no team or season did.
     await act(async () => {
       socket.deliver({ type: 'changed', revision: '9', gameId: 'g1' })
     })
     await settle()
-    expect(count('teams'), 'the lists let it pass').equals(1)
-    expect(count('seasons')).equals(1)
+    expect(count('home'), 'the lists let it pass').equals(1)
     expect(count('recentGame'), 'the recent game reads it').equals(2)
     expect(count('liveNow'), 'what is live reads it').equals(2)
-    // A notice of a team still reads the lists.
+    // A notice of a list still reads the lists.
     await act(async () => {
       socket.changed('10')
     })
     await settle()
-    expect(count('teams')).equals(2)
+    expect(count('home')).equals(2)
   })
 
   it('reads its teams again when a game goes final, and shows the record it moved', async function () {
@@ -189,11 +192,15 @@ describe('S3: Home waits for the home scope before it reads', function () {
     const { client, stamps } = homeClient(log)
     let record: TeamSummary['record'] = null
     Object.assign(client, {
-      teams: async (): Promise<TeamSummary[]> => {
-        log.push('client.teams')
+      home: async () => {
+        log.push('client.home')
         await Promise.resolve()
-        stamps.answer('/teams')
-        return [{ ...hawks, record }]
+        stamps.answer('/me/home')
+        return {
+          teams: [{ ...hawks, record, direct: true, source: 'member' }],
+          seasons: [],
+          leagues: []
+        }
       }
     })
     await render(client, socket)
@@ -201,7 +208,7 @@ describe('S3: Home waits for the home scope before it reads', function () {
       socket.ack('3')
     })
     await settle()
-    expect(teamsCalls(log)).equals(1)
+    expect(homeCalls(log)).equals(1)
     expect(document.body.textContent).not.include('1–0')
     // Going final, the server tells the game, and its teams and season at
     // the same revision: the lists pass the first and read on the second.
@@ -211,7 +218,7 @@ describe('S3: Home waits for the home scope before it reads', function () {
       socket.changed('9')
     })
     await settle()
-    expect(teamsCalls(log), 'the teams are read again').equals(2)
+    expect(homeCalls(log), 'the lists are read again').equals(2)
     expect(document.body.textContent).include('1–0')
   })
 
@@ -221,8 +228,13 @@ describe('S3: Home waits for the home scope before it reads', function () {
     const socket = new FakeScopeSocket(log)
     const { client } = homeClient(log)
     const stored: Record<string, unknown> = {
-      'home.teams': [{ ...hawks, name: 'Stored Hawks' }],
-      'home.seasons': [],
+      'home.lists': {
+        teams: [
+          { ...hawks, name: 'Stored Hawks', direct: true, source: 'member' }
+        ],
+        seasons: [],
+        leagues: []
+      },
       'home.recent': []
     }
     let loaded = 0
@@ -253,8 +265,8 @@ describe('S3: Home waits for the home scope before it reads', function () {
       )
     })
     await settle()
-    expect(teamsCalls(log), 'client.teams before subscribed').equals(0)
-    expect(log).includes('cached home.teams')
+    expect(homeCalls(log), 'client.home before subscribed').equals(0)
+    expect(log).includes('cached home.lists')
     expect(document.body.textContent).includes('Stored Hawks')
     expect(document.body.textContent).not.includes('Loading…')
     expect(loaded).equals(0)
@@ -263,7 +275,7 @@ describe('S3: Home waits for the home scope before it reads', function () {
       socket.ack('3')
     })
     await settle()
-    expect(teamsCalls(log)).equals(1)
+    expect(homeCalls(log)).equals(1)
     expect(document.body.textContent).includes('Alta Hawks')
     expect(document.body.textContent).not.includes('Stored Hawks')
     expect(loaded, 'the phone reads ahead after the load').equals(1)
@@ -291,7 +303,7 @@ describe('S3: Home waits for the home scope before it reads', function () {
     const { client, stamps } = homeClient(log)
     stamps.offline = true
     await render(client, socket)
-    expect(teamsCalls(log), 'client.teams with no ack').equals(1)
+    expect(homeCalls(log), 'client.home with no ack').equals(1)
     expect(log).not.includes('subscribed 1')
     expect(document.body.textContent).includes('Alta Hawks')
     expect(document.body.textContent).not.includes('Loading…')

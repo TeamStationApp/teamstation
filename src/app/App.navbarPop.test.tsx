@@ -95,6 +95,11 @@ describe('a navbar press clears that tab', () => {
     }
     proto.hasNotifications = async () => false
     proto.teams = async () => [team]
+    proto.home = async () => ({
+      teams: [{ ...team, direct: true, source: 'member' }],
+      seasons: [],
+      leagues: []
+    })
     proto.seasons = async () => []
     proto.ownGroups = async () => []
     proto.follows = async () => []
