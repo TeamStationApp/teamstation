@@ -21,13 +21,12 @@ import { mayRunGame } from '../director/runGames'
 import { requireActor } from '../middleware/withAuth'
 import { sendError, withAsync } from '../middleware/withErrors'
 import { scoreboardOverlayFor } from '../nodeSettings'
-import { boardTimeline, stepsInWindow } from '../scoreboard/boardTimeline'
 import { type GameRecord, gameRecord } from '../scoreboard/gameRecord'
 import {
   type ScoreboardStore,
   ScoreboardUnavailable
 } from '../scoreboard/scoreboardStore'
-import { lineStepsFor, lineTimeline } from '../scoring/lineTimeline'
+import { playbackBoard, playbackLine } from '../scoring/gameStatistics'
 import { isSpoken } from '../users/readerNames'
 
 /**
@@ -134,14 +133,11 @@ export function scoreboardRoutes(
       if (from != null && to != null && to < from)
         throw badRequest('to must not be before from')
       await visibleGame(actor, gameId)
-      const timeline = await boardTimeline(db, gameId, message => {
-        console.error(message)
+      const timeline = await playbackBoard(db, gameId, {
+        fromMs: from,
+        toMs: to
       })
-      if (timeline == null) throw notFound()
-      res.json({
-        version: timeline.version,
-        steps: stepsInWindow(timeline.steps, from, to)
-      })
+      res.json(timeline)
     })
   )
 
@@ -166,15 +162,12 @@ export function scoreboardRoutes(
       if (from != null && to != null && to < from)
         throw badRequest('to must not be before from')
       await visibleGame(actor, gameId)
-      const timeline = await lineTimeline(db, gameId, message => {
-        console.error(message)
+      const timeline = await playbackLine(db, gameId, {
+        at,
+        fromMs: from,
+        toMs: to
       })
-      if (timeline == null) throw notFound()
-      res.json({
-        version: timeline.version,
-        teams: timeline.teams,
-        steps: lineStepsFor(timeline.steps, { at, from, to })
-      })
+      res.json(timeline)
     })
   )
 

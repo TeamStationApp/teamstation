@@ -241,7 +241,7 @@ describe("a game's line score, fetched (U5)", function () {
     expect(seen.at(-1)?.steps).deep.equals([step])
     expect(seen.at(-1)?.teams).deep.equals(TEAMS)
     const asks = (): number =>
-      server.asked.filter(one => one.path === '/games/g1/line-score').length
+      server.asked.filter(one => one.path === '/games/g1/box-score').length
     expect(asks()).equals(1)
     await act(async () => {
       seen.at(-1)?.refetch()
@@ -280,7 +280,7 @@ describe("a game's line score, fetched (U5)", function () {
       return null
     }
     const asks = (): number =>
-      server.asked.filter(one => one.path === '/games/g1/line-score').length
+      server.asked.filter(one => one.path === '/games/g1/box-score').length
     const advance = async (ms: number): Promise<void> => {
       await act(async () => {
         clock.advance(ms)
@@ -318,7 +318,7 @@ describe("a game's line score, fetched (U5)", function () {
     await advance(BOARD_POLL_MS)
     expect(asks()).equals(4)
     // A failed ask is asked again by the next poll.
-    server.fail.add('/games/g1/line-score')
+    server.fail.add('/games/g1/box-score')
     await advance(BOARD_POLL_MS)
     expect(seen.at(-1)?.steps).length(1)
     // Unmounted, it asks no more.
