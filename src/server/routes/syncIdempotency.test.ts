@@ -344,7 +344,8 @@ describe('Idempotency-Key on the writes a phone queues', function () {
   it('keeps only a live post’s own digests, and rebuilds its answer from the game on replay', async function () {
     const gameId = await insertGame(f)
     const path = `/games/${gameId}/events`
-    const first = await send(f, path, livePost(0), 'k-live')
+    const edits = `${path}?answer=edits`
+    const first = await send(f, edits, livePost(0), 'k-live')
     expect(first.status).equals(200)
     const answered = first.body as {
       priorPlaysDigest: string | null
@@ -367,11 +368,11 @@ describe('Idempotency-Key on the writes a phone queues', function () {
       })
     })
     // Sent again at once, the answer is the first one.
-    expect(await send(f, path, livePost(0), 'k-live')).deep.equals(first)
+    expect(await send(f, edits, livePost(0), 'k-live')).deep.equals(first)
     // After another post, it is the game as it stands, with this post's
     // digests: the queue's next post is still checked against them.
-    expect((await send(f, path, livePost(1))).status).equals(200)
-    const again = await send(f, path, livePost(0), 'k-live')
+    expect((await send(f, edits, livePost(1))).status).equals(200)
+    const again = await send(f, edits, livePost(0), 'k-live')
     const read = (await (
       await f.h.request('GET', path, undefined, 101)
     ).json()) as { playsDigest: string; plays: unknown[] }
@@ -381,9 +382,27 @@ describe('Idempotency-Key on the writes a phone queues', function () {
       lineupsDigest: answered.lineupsDigest,
       playsDigest: read.playsDigest
     })
-    expect((again.body as { plays: unknown[] }).plays).deep.equals(read.plays)
+    // A post that asked for its edits is answered every stored play as a
+    // put, which its sender already holds or takes up.
+    expect(again.body).not.to.have.property('plays')
+    expect((again.body as { edits: unknown[] }).edits).deep.equals(
+      read.plays.map(play => ({ op: 'put', play }))
+    )
     expect(await playCount(f, gameId)).equals(2)
     expect((await row()).body).equals(null)
+
+    // One that asked for no answer is answered every play, as a read is.
+    const kept = await send(f, path, livePost(2), 'k-live-all')
+    expect(kept.status).equals(200)
+    expect((await send(f, path, livePost(3))).status).equals(200)
+    const replayed = await send(f, path, livePost(2), 'k-live-all')
+    const now = (await (
+      await f.h.request('GET', path, undefined, 101)
+    ).json()) as { plays: unknown[] }
+    expect(replayed.status).equals(200)
+    expect(replayed.body).not.to.have.property('edits')
+    expect((replayed.body as { plays: unknown[] }).plays).deep.equals(now.plays)
+    expect(now.plays).length(4)
   })
 
   it('keeps keys KEY_RETENTION_DAYS, deleting them on the sweep and never on a request', async function () {
@@ -473,12 +492,12 @@ describe('S4: a live play posted twice with one key is stored once', function ()
 
   it('stores one play, and answers the second post as the first', async function () {
     const gameId = await insertGame(f)
-    const path = `/games/${gameId}/events`
+    const path = `/games/${gameId}/events?answer=edits`
     note(`→ POST ${path.replace(gameId, ':gameId')} Idempotency-Key: s4-play`)
     const first = await send(f, path, livePost(0, 1), 's4-play')
     note(
-      `← ${first.status} plays ${JSON.stringify(
-        (first.body as { plays: unknown[] }).plays.length
+      `← ${first.status} edits ${JSON.stringify(
+        (first.body as { edits: unknown[] }).edits.length
       )}, playsDigest ${(first.body as { playsDigest: string }).playsDigest.slice(0, 12)}…`
     )
     note(
@@ -486,8 +505,8 @@ describe('S4: a live play posted twice with one key is stored once', function ()
     )
     const second = await send(f, path, livePost(0, 1), 's4-play')
     note(
-      `← ${second.status} plays ${JSON.stringify(
-        (second.body as { plays: unknown[] }).plays.length
+      `← ${second.status} edits ${JSON.stringify(
+        (second.body as { edits: unknown[] }).edits.length
       )}, playsDigest ${(second.body as { playsDigest: string }).playsDigest.slice(0, 12)}…`
     )
     const same = isDeepStrictEqual(second.body, first.body)

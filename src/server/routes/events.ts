@@ -111,6 +111,15 @@ export interface EventRouteOptions {
  * of the game as the post found it. A sender whose last digest that is holds
  * everything stored, and can pass over the notice of its own post.
  *
+ * A post answers every stored play as `GET` does, as builds before the
+ * edits answer read it and a phone's queue writes it over the game it holds.
+ * A live post with `?answer=edits` answers only what it wrote: `edits`, a
+ * put of each play it wrote or its tag repair rewrote and a remove of each
+ * index it took away, and the at-bat in progress, with those digests and the
+ * generation. Any other `answer` is refused. A live post asked for its edits
+ * and sent again under its `Idempotency-Key` answers every stored play as a
+ * put.
+ *
  * The write itself is `postGamePlays` in `events/postPlays.ts`, which the
  * refold script calls too.
  *
@@ -221,6 +230,11 @@ export function eventRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asPostEventsBody, req.body)
+      // A live post asked for its edits answers only what it wrote. Every
+      // other answers every play, as builds before the edits answer read it
+      // and a phone's queue writes it over the game it holds.
+      const edits =
+        postAnswerOf(req.query.answer) === 'edits' && body.mode === 'live'
       // Only a live post, a play at a time, is sent again from a queue.
       const call =
         body.mode === 'live' ? idempotentCallOf(req, actor.userId) : undefined
@@ -266,7 +280,8 @@ export function eventRoutes(
                 lineupTeams(
                   await roleScopes(trx, actor.userId, actor.isAdmin),
                   game
-                )
+                ),
+              answer: edits ? 'edits' : 'all'
             }
           )
           wrote = true
@@ -275,7 +290,9 @@ export function eventRoutes(
         keepsAnswer: false,
         // The game's plays as they stand, which hold this post's, with the
         // digests it was answered: a later lineups change by somebody else
-        // still shows as stale to the queue's next post.
+        // still shows as stale to the queue's next post. Asked for its edits,
+        // the post answers every play as a put, which its sender already
+        // holds or takes up.
         rebuild: async held => {
           const kept = JSON.parse(held.resultId!) as LivePostDigests
           // What a swap does is the read's, not a post's answer.
@@ -293,7 +310,17 @@ export function eventRoutes(
                   )
               )
           )
-          return { status: 200, body: { ...current, ...kept } }
+          if (!edits) return { status: 200, body: { ...current, ...kept } }
+          const { plays, currentPlay, ...digests } = current
+          return {
+            status: 200,
+            body: {
+              edits: plays.map(play => ({ op: 'put', play })),
+              currentPlay,
+              ...digests,
+              ...kept
+            }
+          }
         }
       })
       if (wrote) tellGameWritten(options.onGameWritten, gameId)
@@ -451,6 +478,16 @@ function asSwapSidesBody(raw: unknown): {
     playsDigest,
     swapped: { homeTeamId: awayTeamId, awayTeamId: homeTeamId }
   }
+}
+
+/**
+ * The `answer` a post asks for: `edits`, or none for every play. Anything
+ * else is refused.
+ */
+function postAnswerOf(raw: unknown): 'edits' | undefined {
+  if (raw === undefined) return undefined
+  if (raw === 'edits') return 'edits'
+  throw badRequest('answer must be edits, or left out')
 }
 
 /** What a live post's key keeps of its answer: the rest is read again. */

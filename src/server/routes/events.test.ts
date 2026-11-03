@@ -7,6 +7,7 @@ import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
 
 import { lineupQrOf } from '../../app/scoring/lineupQrExport'
+import { asPostedEdits } from '../../common/api'
 import {
   type TagDocument,
   tagMetadata,
@@ -1692,6 +1693,7 @@ describe('posting and reading plays', function () {
     expect(owed.status).equals('pending')
   })
 
+  /** A live post, answered with every stored play, which these cases read. */
   const live = async (
     gameId: string,
     body: Record<string, unknown>,
@@ -1960,6 +1962,90 @@ describe('posting and reading plays', function () {
     expect(replaced.body.playsDigest).equals(
       (await ask(`/games/${id}/events`)).body.playsDigest
     )
+  })
+
+  it('answers a live post asked for its edits with only what it wrote, and every play by default (M4)', async function () {
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const walk = (atBatIndex: number): unknown =>
+      play({
+        atBatIndex,
+        awayScore: 0,
+        homeScore: 0,
+        outs: 0,
+        eventType: 'walk'
+      })
+    const post = async (
+      body: Record<string, unknown>,
+      query = '?answer=edits'
+    ): Promise<{ status: number; body: Record<string, unknown> }> =>
+      await ask(`/games/${id}/events${query}`, 'POST', {
+        mode: 'live',
+        source: { system: 'teamstation' },
+        plays: [],
+        ...body
+      })
+    const first = await post({
+      plays: [walk(0), walk(1), walk(2)],
+      currentPlay: current(3)
+    })
+    expect(first.status).equals(200)
+    const read = await ask(`/games/${id}/events`)
+    const rows = read.body.plays as Array<{ id: string }>
+    expect(first.body).not.to.have.property('plays')
+    expect(first.body.edits).deep.equals(
+      rows.map(row => ({ op: 'put', play: row }))
+    )
+    expect(first.body.currentPlay).deep.equals(read.body.currentPlay)
+    expect(first.body.playsDigest).equals(read.body.playsDigest)
+    expect(first.body.generation).equals(read.body.generation)
+
+    // A play written again and another taken away: one put and one remove.
+    const next = await post({
+      plays: [walk(1)],
+      remove: [2],
+      currentPlay: current(2)
+    })
+    const after = await ask(`/games/${id}/events`)
+    const kept = after.body.plays as Array<{ id: string }>
+    expect(next.body.edits).deep.equals([
+      { op: 'put', play: kept[1] },
+      { op: 'remove', atBatIndex: 2 }
+    ])
+    expect(next.body.playsDigest).equals(after.body.playsDigest)
+    expect(next.body.priorPlaysDigest).equals(read.body.playsDigest)
+
+    // Asking for no answer, it answers every play as a read does.
+    const all = await post({ currentPlay: current(2, 1) }, '')
+    const now = await ask(`/games/${id}/events`)
+    expect(all.body).not.to.have.property('edits')
+    expect(all.body.plays).deep.equals(now.body.plays)
+    expect(all.body.playsDigest).equals(now.body.playsDigest)
+
+    // A replace post answers every play, even asked for its edits.
+    const replaced = await ask(`/games/${id}/events?answer=edits`, 'POST', {
+      source: { system: 'teamstation' },
+      plays: [walk(0)]
+    })
+    expect(replaced.body.plays).length(1)
+    expect(replaced.body).not.to.have.property('edits')
+
+    // An answer it does not give is refused, and nothing is written.
+    for (const query of ['?answer=all', '?answer=Edits'])
+      expect(await post({ plays: [walk(5)] }, query)).deep.include({
+        status: 400
+      })
+    const refused = await post({ plays: [walk(5)] }, '?answer=all')
+    expect(refused.body.message).equals('answer must be edits, or left out')
+    expect((await ask(`/games/${id}/events`)).body.plays).length(1)
   })
 
   it('refuses a live post built on lineups that have changed since, and writes nothing (stale)', async function () {
@@ -3889,11 +3975,8 @@ describe('the team default lineup a live post keeps (U10)', function () {
           : { currentPlay: change.currentPlay })
       })
       expect(answer.status, JSON.stringify(answer.body)).equals(200)
-      const plays = answer.body.plays as Array<{ gumbo: GumboPlay }>
-      return {
-        plays: plays.map(row => row.gumbo),
-        currentPlay: answer.body.currentPlay
-      }
+      // A live post answers its edits: the session reads their digests.
+      return asPostedEdits(answer.body)
     }
   })
   async function scoring(gameId: string): Promise<ScoringSession> {

@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import type { ScoringSession } from '../../src/common/scoring/session'
 import type { GameState } from '../../src/common/scoring/state'
 import {
   CAMERAS_PER_PERSON,
@@ -265,6 +266,17 @@ describe('the actors', function () {
       )
       await keeper.open()
       for (let i = 0; i < 2; i++) await keeper.pitch()
+      // Answered only its edits, it keeps the digests they carry: the game
+      // as a read gives it now is the one it left.
+      const read = (await request(
+        server.base,
+        account(game.scorekeeper),
+        'GET',
+        `/games/${game.id}/events`
+      )) as { playsDigest: string; lineupsDigest: string }
+      const session = (keeper as unknown as { session: ScoringSession }).session
+      expect(session.holdsPlays(read.playsDigest)).equals(true)
+      expect(session.holdsLineups(read.lineupsDigest)).equals(true)
       keeper.stop()
       expect(tally.errors).deep.equals({})
       expect(tally.postMs.length).at.least(2)

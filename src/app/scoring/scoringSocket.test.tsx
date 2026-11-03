@@ -154,7 +154,8 @@ async function scoring(
       if (lineups != null && change.lineupsBase !== lineups.value)
         throw new HttpError('conflict', 'The lineups changed', { stale: true })
       const prior = digestOf(await load(gameId))
-      const saved = await save(gameId, change)
+      // The memory store answers the whole game it keeps.
+      const saved = (await save(gameId, change)) as StoredGame
       return {
         ...saved,
         playsDigest: digestOf(saved),

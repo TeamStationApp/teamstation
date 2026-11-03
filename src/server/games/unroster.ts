@@ -170,7 +170,11 @@ async function applyAvailability(
               ...change,
               mode: 'live',
               source: { system: 'teamstation' }
-            })
+            }),
+            undefined,
+            undefined,
+            // The replay reads every play the post leaves.
+            { answer: 'all' }
           )
           return {
             plays: posted.plays.map(row => row.gumbo as GumboPlay),

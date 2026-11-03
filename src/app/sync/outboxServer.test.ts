@@ -227,6 +227,16 @@ describe('the outbox against the server', function () {
     for (const post of transport.posts)
       keys.set(post.key!, (keys.get(post.key!) ?? 0) + 1)
     expect([...keys.values()]).deep.equals([2, 2, 2])
+    // The live post asked for no answer both times, so the replay's answer
+    // is every play: the whole game the phone writes as its own copy.
+    expect(
+      transport.posts
+        .filter(post => post.path.startsWith(`/games/${gameId}/events`))
+        .map(post => [post.path, post.status])
+    ).deep.equals([
+      [`/games/${gameId}/events`, 200],
+      [`/games/${gameId}/events`, 200]
+    ])
     expect(await playCount(f, gameId)).equals(1)
     const made = await playersNamed(f, f.teamA, 'Vladimir')
     expect(made).length(1)

@@ -86,7 +86,7 @@ export type QueuedCall =
 
 const ROSTER_PATH = /^\/teams\/([^/?]+)\/roster-players$/
 const LINEUPS_PATH = /^\/games\/([^/?]+)\/lineups$/
-const EVENTS_PATH = /^\/games\/([^/?]+)\/events$/
+const EVENTS_PATH = /^(\/games\/([^/?]+)\/events)(?:\?answer=edits)?$/
 const GUEST_PATH = /^\/games\/([^/?]+)\/guest-players\/([^/?]+)$/
 
 function decoded(id: string): string | undefined {
@@ -134,13 +134,20 @@ export function queuedCallOf(
   if (lineupsGame != null)
     return { kind: 'lineups', gameId: lineupsGame, path, body }
   const events = EVENTS_PATH.exec(path)
-  const eventsGame = events == null ? undefined : decoded(events[1])
-  // Only a live post, a play at a time, is queued.
-  if (eventsGame != null && (body as { mode?: unknown })?.mode === 'live')
+  const eventsGame = events == null ? undefined : decoded(events[2])
+  // Only a live post, a play at a time, is queued. It is sent asking for no
+  // `answer`, so the server answers every play: the answer is written as the
+  // phone's copy of the game, and the writes queued behind it are applied
+  // onto that, which needs the whole list.
+  if (
+    events != null &&
+    eventsGame != null &&
+    (body as { mode?: unknown })?.mode === 'live'
+  )
     return {
       kind: 'events',
       gameId: eventsGame,
-      path,
+      path: events[1],
       body,
       ...(names == null ? {} : { names })
     }

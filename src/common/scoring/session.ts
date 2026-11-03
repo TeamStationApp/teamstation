@@ -1,3 +1,4 @@
+import type { PostedEdits } from '../api'
 import { HttpError } from '../errors'
 import {
   eventSignature,
@@ -152,10 +153,18 @@ export interface SaveChange {
    */
   generation?: number
 }
-/** Where a session reads and writes its game. It does no I/O of its own. */
+/**
+ * Where a session reads and writes its game. It does no I/O of its own. A
+ * save answers the digests and the generation it left the game with
+ * (`PostedEdits`), or the whole game, which holds them: the session reads
+ * only those, each when present.
+ */
 export interface EventStore {
   load: (gameId: string) => Promise<StoredGame>
-  save: (gameId: string, change: SaveChange) => Promise<StoredGame>
+  save: (
+    gameId: string,
+    change: SaveChange
+  ) => Promise<PostedEdits | StoredGame>
 }
 export interface SessionContext {
   gamePk: string
@@ -1673,7 +1682,7 @@ export class ScoringSession {
         change.currentPlay === undefined
       )
         return
-      let answer: StoredGame | undefined
+      let answer: PostedEdits | StoredGame | undefined
       try {
         answer = await this.store.save(this.gameId, {
           ...storedChange(change),
