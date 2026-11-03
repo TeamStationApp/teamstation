@@ -43,6 +43,7 @@ import {
   type GameProposal,
   type GameScheduleProposal
 } from './gameApprovals'
+import type { GameStatistics, StatisticsQuery } from './gameStatistics'
 import {
   asGroupRef,
   type CreateGroup,
@@ -109,6 +110,7 @@ import {
   type PublicGroup,
   type SearchRow
 } from './publicGroups'
+import { asReplayBoxScore } from './replay/replayBoxSchema'
 import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
 import {
   type AddedGame,
@@ -3022,7 +3024,73 @@ export const asBoardTimelineWindow: Cleaner<BoardTimelineWindow> = asObject({
   steps: asArray(asObject({ at: asNumber, state: asScoreboardState }))
 })
 
+export const asGameStatistics: Cleaner<GameStatistics> = asObject({
+  version: asString,
+  board: asBoardTimelineWindow,
+  line: asLineScoreTimeline,
+  initial: asNullable(asReplayBoxScore),
+  boxes: asArray(
+    asObject({
+      at: asNumber,
+      position: asNullable(
+        asObject({ atBatIndex: asNumber, actionIndex: asNumber })
+      ),
+      box: asNullable(asReplayBoxScore),
+      message: asNullable(asString)
+    })
+  ),
+  source: asObject({
+    plays: asArray(asGumboPlay),
+    currentPlay: asNullable(asCurrentPlay),
+    generation: asNumber
+  })
+})
+
+function statisticsPath(
+  gameId: string,
+  view: 'playback' | 'board' | 'line',
+  query: StatisticsQuery
+): string {
+  const params = new URLSearchParams({ view })
+  for (const [key, value] of [
+    ['at', query.at],
+    ['from', query.fromMs],
+    ['to', query.toMs]
+  ] as const)
+    if (value !== undefined)
+      params.set(
+        key,
+        String(Math.max(0, key === 'to' ? Math.ceil(value) : Math.floor(value)))
+      )
+  return `/games/${encodeURIComponent(gameId)}/box-score?${params}`
+}
+
 export class TeamStationClient {
+  private readonly statisticsRequests = new Map<
+    string,
+    Promise<GameStatistics>
+  >()
+
+  /** Historical scores and replay documents, from one authorized revision. */
+  async gameStatistics(
+    gameId: string,
+    query: StatisticsQuery = {}
+  ): Promise<GameStatistics> {
+    const path = statisticsPath(gameId, 'playback', query)
+    // A client may sign out while a request is pending. Never share that response
+    // with a newly authenticated identity, even within the same client instance.
+    const key = `${this.token ?? ''}\u0000${path}`
+    const held = this.statisticsRequests.get(key)
+    if (held !== undefined) return await held
+    const request = this.request('GET', path, asGameStatistics)
+    this.statisticsRequests.set(key, request)
+    try {
+      return await request
+    } finally {
+      this.statisticsRequests.delete(key)
+    }
+  }
+
   async startTvLogin(platform: TvPlatform): Promise<TvLoginRequest> {
     return await this.request('POST', '/auth/tv/start', asTvLoginRequest, {
       platform
@@ -4823,17 +4891,9 @@ export class TeamStationClient {
     gameId: string,
     window: { fromMs?: number; toMs?: number } = {}
   ): Promise<BoardTimelineWindow> {
-    const query = new URLSearchParams()
-    if (window.fromMs != null)
-      query.set('from', String(Math.max(0, Math.floor(window.fromMs))))
-    if (window.toMs != null)
-      query.set('to', String(Math.max(0, Math.ceil(window.toMs))))
-    const text = query.toString()
     return await this.request(
       'GET',
-      `/games/${encodeURIComponent(gameId)}/scoreboard-timeline${
-        text === '' ? '' : `?${text}`
-      }`,
+      statisticsPath(gameId, 'board', window),
       asBoardTimelineWindow
     )
   }
@@ -4847,19 +4907,9 @@ export class TeamStationClient {
     gameId: string,
     query: { at?: number; fromMs?: number; toMs?: number } = {}
   ): Promise<LineScoreTimeline> {
-    const params = new URLSearchParams()
-    if (query.at != null)
-      params.set('at', String(Math.max(0, Math.floor(query.at))))
-    if (query.fromMs != null)
-      params.set('from', String(Math.max(0, Math.floor(query.fromMs))))
-    if (query.toMs != null)
-      params.set('to', String(Math.max(0, Math.ceil(query.toMs))))
-    const text = params.toString()
     return await this.request(
       'GET',
-      `/games/${encodeURIComponent(gameId)}/line-score${
-        text === '' ? '' : `?${text}`
-      }`,
+      statisticsPath(gameId, 'line', query),
       asLineScoreTimeline
     )
   }

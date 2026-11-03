@@ -8,9 +8,9 @@ import type { GameSocketListener } from '../../common/gameSocket'
 import { replayTimelineOf } from '../../common/replay/replayTimeline'
 import type { StoredGame } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
+import { nativeStatistics } from '../../test/gameStatisticsFixture'
 import {
   finalGame,
-  importedThenScoredGame,
   inProgressGame,
   REPLAY_GAME_ID,
   REPLAY_TEAMS,
@@ -61,9 +61,14 @@ function fakeClient(
   game: () => Promise<GameDetail>,
   events: () => Promise<StoredGame>
 ): ReplayClient {
+  let metadata: Promise<GameDetail> | undefined
   return {
-    game,
-    gameEvents: events,
+    game: async () => {
+      metadata = game()
+      return await metadata
+    },
+    gameStatistics: async () =>
+      nativeStatistics(await (metadata ?? game()), await events()),
     health: async () => {
       if (announcer.health === 'fails') throw new Error('offline')
       return {
@@ -695,7 +700,7 @@ describe('the replay screen', function () {
 
     it('centres the box score, as wide as its widest row', async function () {
       resize(1024, 1366)
-      await show(gameOf(), importedThenScoredGame())
+      await show(gameOf(), finalGame())
       const scroll = propsOf('replay-box-score')
       expect(flat(scroll.contentContainerStyle).alignItems).equals('center')
       // The line score and the tables centre apart, so a long game's line
@@ -719,15 +724,9 @@ describe('the replay screen', function () {
       expect(line?.contains(tables)).equals(false)
       expect(line?.textContent).includes('R')
       expect(tables?.textContent).includes('batting')
-      // The imported-plays note spans the deck, centred, outside the column.
-      const note = [...document.querySelectorAll('div')].find(node =>
-        (node.textContent ?? '').startsWith('Stats from the')
+      expect(document.body.textContent).not.includes(
+        'earlier innings were imported'
       )
-      expect(note).not.equals(undefined)
-      const column = document.querySelector(
-        '[data-testid="replay-box-score-column"]'
-      )
-      expect(column?.contains(note!)).equals(false)
     })
 
     it('writes where it went on the card, then plays on from there', async function () {
@@ -1024,38 +1023,27 @@ describe('the replay screen', function () {
       }
     }
 
-    it('notes the imported innings under the box score once earlier plays are imported', async function () {
-      resize(402, 874)
-      const socket = new FakeSocket()
-      await following(socket)
-      const imported = 'earlier innings were imported'
-      expect(document.body.textContent).not.includes(imported)
-      await socket.emit(change('plays', await importedThenScoredGame()))
-      await wait(100)
-      expect(document.body.textContent).includes(imported)
-    })
-
     it('subscribes on opening, plays what the scorer adds, and lets go on Exit', async function () {
       resize(402, 874)
       const socket = new FakeSocket()
       const game = await following(socket)
       expect(socket.listeners.has(REPLAY_GAME_ID)).equals(true)
       const opened = card()
-      // The plays come with the change: nothing to read.
+      // Each notice refreshes the canonical statistics revision.
       await socket.emit(change('plays', await game.setStored(11)))
-      expect(game.reads()).equals(0)
+      expect(game.reads()).equals(1)
       now = 100
       await wait(250)
       expect(card()).not.equals(opened)
       // A change that carries no game it can use: read the game instead.
       await game.setStored(12)
       await socket.emit(change('plays'))
-      expect(game.reads()).equals(1)
+      expect(game.reads()).equals(2)
       // Nothing to read in a walk-up song.
       await socket.emit(change('walkUpSong'))
-      expect(game.reads()).equals(1)
-      await socket.emit({ type: 'resync', gameId: REPLAY_GAME_ID })
       expect(game.reads()).equals(2)
+      await socket.emit({ type: 'resync', gameId: REPLAY_GAME_ID })
+      expect(game.reads()).equals(3)
       await act(async () => {
         root?.unmount()
       })
