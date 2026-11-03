@@ -1,4 +1,5 @@
 import type { GameDetail, TeamStationClient } from '../api'
+import type { GameStatistics } from '../gameStatistics'
 import type { SessionContext, StoredGame } from '../scoring/session'
 import type { GameState } from '../scoring/state'
 import {
@@ -16,14 +17,18 @@ export type ReplayGame = Parameters<typeof replayContextOf>[0]
 
 /** Replay and video playback read the same authorized documents. */
 export async function readReplaySource(
-  client: Pick<TeamStationClient, 'game' | 'gameEvents'>,
+  client: Pick<TeamStationClient, 'game' | 'gameStatistics'>,
   gameId: string
-): Promise<{ game: GameDetail; stored: StoredGame }> {
-  const [game, stored] = await Promise.all([
+): Promise<{
+  game: GameDetail
+  stored: StoredGame
+  statistics: GameStatistics
+}> {
+  const [game, statistics] = await Promise.all([
     client.game(gameId),
-    client.gameEvents(gameId)
+    client.gameStatistics(gameId)
   ])
-  return { game, stored }
+  return { game, stored: statistics.source, statistics }
 }
 
 export function replaySourceOf(

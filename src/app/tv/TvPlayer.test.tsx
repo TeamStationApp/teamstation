@@ -5,6 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { BackHandler } from 'react-native'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
+import { nativeStatistics } from '../../test/gameStatisticsFixture'
+import { SHOWN_OVERLAY } from '../../test/overlayFixtures'
 import { replayContext, scored } from '../../test/replayGameFixture'
 import { windowSize } from '../../test/tessTestKit'
 import {
@@ -38,6 +40,7 @@ let root: Root | undefined
 let viewport: Awaited<ReturnType<typeof windowSize>> | undefined
 let remoteBack: (() => boolean | null | undefined) | undefined
 const originalBack = BackHandler.addEventListener.bind(BackHandler)
+let lineOnly = false
 let wide = false
 let count = 4
 let fail = false
@@ -69,8 +72,36 @@ const client = {
       ]
     }
   },
+  scoreboardOverlay: async () => SHOWN_OVERLAY,
   wallTimeline: async () => timelineFor('2026-10-01T00:00:00Z'),
-  scoreboardTimeline: async () => ({ steps: [], version: 'fixture' }),
+  gameStatistics: async () => {
+    const data = nativeStatistics(
+      await client.game('game'),
+      await client.gameEvents('game')
+    )
+    if (lineOnly) {
+      data.initial = null
+      data.boxes = [
+        {
+          at: 0,
+          position: null,
+          box: null,
+          message: 'Player statistics are incomplete in the recorded plays.'
+        }
+      ]
+      data.line.teams = { away: 'Recorded Visitors', home: 'Recorded Hosts' }
+      data.line.steps = [
+        {
+          at: 0,
+          line: {
+            away: { innings: [2], r: 2, h: null, e: null },
+            home: { innings: [1], r: 1, h: null, e: null }
+          }
+        }
+      ]
+    }
+    return data
+  },
   lineScore: async () => {
     throw new Error('TV must use replay state')
   },
@@ -217,6 +248,7 @@ afterEach(async () => {
   await viewport?.restore()
   viewport = undefined
   count = 4
+  lineOnly = false
   wide = false
   mixed = false
   fail = false
@@ -656,6 +688,28 @@ describe('TV game playback entry', () => {
       document.querySelector('[data-testid="tv-highlights-panel"]')
     ).not.equals(null)
   })
+  for (const angleCount of [2, 3, 4])
+    it(`keeps the imported inning score for ${angleCount} cameras without player detail`, async () => {
+      viewport = await windowSize(1920, 1080)
+      count = angleCount
+      lineOnly = true
+      await render()
+      const video = document.querySelector('video')!
+      await act(async () => {
+        video.currentTime = 1
+        video.dispatchEvent(new window.Event('timeupdate', { bubbles: true }))
+        await pause()
+      })
+      const selector = angleCount === 4 ? 'tv-line-score' : 'line-score-box'
+      const line = document.querySelector(`[data-testid="${selector}"]`)
+      expect(line).not.equals(null)
+      expect(line?.textContent).includes('Recorded Visitors')
+      expect(line?.textContent).includes('Recorded Hosts')
+      expect(document.querySelector('[data-testid="tv-stats-away"]')).equals(
+        null
+      )
+    })
+
   it('keeps extra innings scrollable and its statistics control reachable within the bottom third', async () => {
     wide = true
     await render()
@@ -781,12 +835,12 @@ describe('TV game playback entry', () => {
     await press('Close panel')
     await press('Box score')
     expect(document.body.textContent).contains(
-      'Replay statistics are not available for this game.'
+      'Statistics are not available in the recorded plays.'
     )
     await press('Team and player statistics')
     expect(
       document.body.textContent?.split(
-        'Replay statistics are not available for this game.'
+        'Statistics are not available in the recorded plays.'
       ).length
     ).equals(2)
     await press('Close panel')

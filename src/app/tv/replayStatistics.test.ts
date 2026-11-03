@@ -7,18 +7,12 @@ import {
   type TeamLineups,
   type TeamStationClient
 } from '../../common/api'
-import { replayScore, replaySourceOf } from '../../common/replay/replaySource'
 import { freshGame } from '../../common/scoring/lineup'
 import { lineupOf } from '../../common/scoring/lineupHistory'
 import { lineupsOf } from '../../common/scoring/state'
+import { nativeStatistics } from '../../test/gameStatisticsFixture'
+import { finalGame, replayContext } from '../../test/replayGameFixture'
 import {
-  finalGame,
-  importedThenScoredGame,
-  replayContext
-} from '../../test/replayGameFixture'
-import { boardAt } from '../player/scoreboardOverlay/boardAt'
-import {
-  canSupplement,
   lineOf,
   readTvStatistics,
   startingBox,
@@ -62,25 +56,54 @@ const lineups: GameLineupsResponse = {
 const empty = { plays: [], currentPlay: null, generation: 1 }
 
 describe('TV replay statistics source', () => {
-  it('explains the interval before partial records without revealing later totals', async () => {
-    const stored = await importedThenScoredGame()
+  it('reads only the shared resource and preserves its initial and historical boxes', async () => {
+    const stored = await finalGame()
+    const data = nativeStatistics(game, stored)
+    const calls: string[] = []
     const client = {
-      game: async () => game,
-      gameEvents: async () => stored
+      gameStatistics: async (id: string) => {
+        calls.push(id)
+        return data
+      }
     } as unknown as TeamStationClient
-    const statistics = await readTvStatistics(client, game.id)
-    expect(statistics.boxes.length).greaterThan(0)
-    const first = statistics.boxes[0]
-    expect(Number.isFinite(first.at)).equals(true)
-    const before = statisticsAt(statistics, first.at - 1)
-    expect(before.box).equals(undefined)
-    expect(before.message).equals(
-      'Statistics begin with the first recorded play.'
+    const actual = await readTvStatistics(client, game.id)
+    expect(calls).deep.equals([game.id])
+    expect(statisticsAt(actual, 0).box).deep.equals(data.initial)
+    expect(statisticsAt(actual, Infinity).box).deep.equals(
+      data.boxes.at(-1)?.box
     )
-    const recorded = statisticsAt(statistics, first.at)
-    expect(recorded.message).equals(null)
-    expect(recorded.box?.from?.inning).equals(3)
-    expect(statisticsAt(statistics, first.at - 1)).deep.equals(before)
+    expect(statisticsAt(actual, 0).box).deep.equals(data.initial)
+    expect(actual.teams).equals(data.line.teams)
+    expect(actual.lines).equals(data.line.steps)
+    expect(actual.board).equals(data.board)
+    const box = data.initial!
+    expect(lineOf(box).away.r).equals(box.away.runs)
+    expect(lineOf(box).home.innings).deep.equals(box.home.innings)
+  })
+  it('keeps independent inning data when player statistics are incomplete', async () => {
+    const data = nativeStatistics(game, empty)
+    data.boxes = [
+      {
+        at: 100,
+        position: null,
+        box: null,
+        message: 'Incomplete imported players'
+      }
+    ]
+    const client = {
+      gameStatistics: async () => data
+    } as unknown as TeamStationClient
+    const actual = await readTvStatistics(client, game.id)
+    expect(statisticsAt(actual, 99)).deep.equals({
+      box: undefined,
+      message: 'Statistics begin with the first recorded play.'
+    })
+    expect(statisticsAt(actual, 100)).deep.equals({
+      box: undefined,
+      message: 'Incomplete imported players'
+    })
+    expect(actual.teams).equals(data.line.teams)
+    expect(actual.lines).equals(data.line.steps)
     expect(
       statisticsAt({ boxes: [], message: 'Loading statistics…' }, null).message
     ).equals('Loading statistics…')
@@ -88,59 +111,37 @@ describe('TV replay statistics source', () => {
       null
     )
   })
-  it('reads the same documents and renders the initial replay state before a pitch', async () => {
-    const stored = await finalGame()
-    const calls: string[] = []
+  it('distinguishes unavailable data from denied and failed requests', async () => {
     const client = {
-      game: async (id: string) => {
-        calls.push(`game:${id}`)
-        return game
-      },
-      gameEvents: async (id: string) => {
-        calls.push(`events:${id}`)
-        return stored
-      },
-      gameLineups: async () => {
-        throw new Error('Historical games must not read current lineups')
+      gameStatistics: async () => nativeStatistics(game, empty)
+    } as unknown as TeamStationClient
+    expect((await readTvStatistics(client, game.id)).message).contains(
+      'not available'
+    )
+    for (const status of [401, 403]) {
+      client.gameStatistics = async () => {
+        throw Object.assign(new Error('Denied'), { status })
       }
-    } as unknown as TeamStationClient
-    const actual = await readTvStatistics(client, game.id)
-    const source = replaySourceOf(game, stored)!
-    expect(actual.message).equals(null)
-    expect(calls).deep.equals([`game:${game.id}`, `events:${game.id}`])
-    const first = boardAt(actual.boxes, 0)!.box
-    expect(first).deep.equals(
-      replayScore(source.timeline.start, source.timeline)
+      expect((await readTvStatistics(client, game.id)).message).contains(
+        'do not have access'
+      )
+    }
+    client.gameStatistics = async () => {
+      throw new Error('Offline')
+    }
+    expect((await readTvStatistics(client, game.id)).message).contains(
+      'could not load'
     )
-    expect(first.away.batting.length).greaterThan(0)
-    expect(first.away.batting.every(row => row.ab === 0 && row.h === 0)).equals(
-      true
-    )
-    const final = boardAt(actual.boxes, Infinity)!.box
-    expect(final).deep.equals(replayScore(source.timeline.end, source.timeline))
-    expect(lineOf(final).away.r).equals(final.away.runs)
-    expect(lineOf(final).home.innings).deep.equals(final.home.innings)
-    expect(boardAt(actual.boxes, 0)!.box).deep.equals(first)
+    client.gameStatistics = async () =>
+      nativeStatistics(game, await finalGame())
+    expect((await readTvStatistics(client, game.id)).message).equals(null)
   })
-
-  it('supplements only genuinely unstarted games using the saved arrangement', async () => {
-    const client = {
-      game: async () => game,
-      gameEvents: async () => empty,
-      gameLineups: async () => lineups
-    } as unknown as TeamStationClient
-    const result = await readTvStatistics(client, game.id)
-    const box = result.boxes[0].box
-    expect(result.message).equals(null)
+  it('preserves zero-stat starting lineups without inventing past results', async () => {
+    const box = startingBox(game, lineups)!
     expect(box.away.batting.map(row => row.id)).deep.equals(
       lineups.away.current!.batters.map(person => person.gumboId)
     )
-    expect(box.home.pitching.map(row => row.id)).deep.equals([
-      lineups.home.current!.defense.P!.gumboId
-    ])
     expect(box.away.runs).equals(0)
-    expect(canSupplement({ ...game, status: 'final' }, empty)).equals(false)
-    expect(canSupplement(game, await finalGame())).equals(false)
     expect(
       startingBox(game, {
         ...lineups,
@@ -148,43 +149,6 @@ describe('TV replay statistics source', () => {
         home: { ...lineups.home, current: null }
       })
     ).equals(null)
-  })
-
-  it('distinguishes unavailable lineups, changed generations and failed or denied reads', async () => {
-    const client = {
-      game: async () => game,
-      gameEvents: async () => empty,
-      gameLineups: async () => lineups
-    } as unknown as TeamStationClient
-    client.gameLineups = async () => ({ ...lineups, generation: 2 })
-    expect((await readTvStatistics(client, game.id)).message).contains(
-      'game changed'
-    )
-    client.gameLineups = async () => ({
-      ...lineups,
-      away: { ...lineups.away, current: null },
-      home: { ...lineups.home, current: null }
-    })
-    expect((await readTvStatistics(client, game.id)).message).contains(
-      'Starting lineups'
-    )
-    client.gameEvents = async () => {
-      throw Object.assign(new Error('Denied'), { status: 403 })
-    }
-    expect((await readTvStatistics(client, game.id)).message).contains(
-      'do not have access'
-    )
-    client.gameEvents = async () => {
-      throw new Error('Offline')
-    }
-    expect((await readTvStatistics(client, game.id)).message).contains(
-      'could not load'
-    )
-    client.gameEvents = async () => empty
-    client.game = async () => ({ ...game, status: 'final' })
-    expect((await readTvStatistics(client, game.id)).message).contains(
-      'not available for this game'
-    )
   })
   it('keeps explicitly named unregistered starters without inventing an account', () => {
     const lineup = structuredClone(lineups)

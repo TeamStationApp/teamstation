@@ -532,9 +532,7 @@ describe('the board over a single picture', function () {
     expect(asked.some(one => one.path.includes('scoreboard-overlay'))).equals(
       true
     )
-    expect(asked.some(one => one.path.includes('scoreboard-timeline'))).equals(
-      false
-    )
+    expect(asked.some(one => one.path.includes('box-score'))).equals(false)
   })
 
   it('draws nothing, and asks for no board, for a video with no game', async function () {
@@ -542,8 +540,6 @@ describe('the board over a single picture', function () {
     video.currentTime = 2
     await settle()
     expect(document.querySelector('[data-scoreboard="board"]')).equals(null)
-    expect(asked.some(one => one.path.includes('scoreboard-timeline'))).equals(
-      false
-    )
+    expect(asked.some(one => one.path.includes('box-score'))).equals(false)
   })
 })

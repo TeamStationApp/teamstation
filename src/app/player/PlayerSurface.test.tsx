@@ -729,7 +729,8 @@ describe('the game page’s player', function () {
   const askedBoard = (server: ReturnType<typeof overlayServer>): boolean =>
     server.asked.some(
       one =>
-        one.path === `/games/${gameFixture.id}/scoreboard-timeline` &&
+        one.path === `/games/${gameFixture.id}/box-score` &&
+        one.query.get('view') === 'board' &&
         one.query.get('from') === String(OVERLAY_T0)
     )
 
@@ -744,7 +745,9 @@ describe('the game page’s player', function () {
   it('asks for no board for a game with no video', async function () {
     const server = await page([])
     expect(
-      server.asked.filter(one => one.path.includes('timeline'))
+      server.asked.filter(
+        one => one.path.includes('timeline') || one.path.endsWith('/box-score')
+      )
     ).deep.equals([])
   })
 
