@@ -1,0 +1,43 @@
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "react": [
+        "node_modules/@types/react"
+      ],
+      "react-native": [
+        "node_modules/react-native/types_generated/index.d.ts"
+      ],
+      "react-native-video": [
+        "node_modules/react-native-video"
+      ],
+      "react-native-svg": [
+        "node_modules/react-native-svg"
+      ]
+    },
+    "types": [
+      "react",
+      "react-native"
+    ],
+    "lib": [
+      "es2023"
+    ],
+    "moduleSuffixes": [
+      ".native",
+      ""
+    ],
+    "moduleResolution": "bundler"
+  },
+  "include": [
+    "*.ts",
+    "*.tsx",
+    "../src/app/tv/**/*.ts",
+    "../src/app/tv/**/*.tsx"
+  ],
+  "exclude": [
+    "../src/app/tv/**/*.test.ts",
+    "../src/app/tv/**/*.test.tsx"
+  ]
+}
