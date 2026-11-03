@@ -113,6 +113,7 @@ describe('the phone session with no signal', () => {
     api.myRoles = async () => ({ teams: {}, guardianOf: [] })
     api.hasNotifications = async () => false
     api.teams = async () => []
+    api.home = async () => ({ teams: [], seasons: [], leagues: [] })
     api.seasons = async () => []
     api.ownGroups = async () => []
     api.follows = async () => []
@@ -367,10 +368,10 @@ describe('the phone session with no signal', () => {
         displayName: ICHIRO.displayName,
         isAdmin: true
       })
-    let teamReads = 0
-    TeamStationClient.prototype.teams = async () => {
-      teamReads++
-      return []
+    let homeReads = 0
+    TeamStationClient.prototype.home = async () => {
+      homeReads++
+      return { teams: [], seasons: [], leagues: [] }
     }
     await mount(
       <App
@@ -402,7 +403,7 @@ describe('the phone session with no signal', () => {
       })
     })
     await settle(50)
-    const reads = teamReads
+    const reads = homeReads
     expect(ahead(), 'once, after Home').equals(1)
     // Somebody scores: a team's notice reads Home's lists again, and not
     // everything ahead.
@@ -412,7 +413,7 @@ describe('the phone session with no signal', () => {
       })
       await settle(50)
     }
-    expect(teamReads).greaterThan(reads)
+    expect(homeReads).greaterThan(reads)
     expect(ahead()).equals(1)
     // No signal, then the server answers again: it reads ahead once more.
     netDown = true

@@ -64,6 +64,7 @@ describe('actual app event Settings navigation', () => {
       proto.hasNotifications = async () => false
       proto.game = async id => ({ ...game, id })
       proto.teams = async () => []
+      proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
       proto.eventInfo = async () => info
       proto.gameScheduling = async () =>
         asGameScheduling({

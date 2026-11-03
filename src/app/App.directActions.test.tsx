@@ -34,6 +34,7 @@ describe('direct action app completion navigation', () => {
         proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
         proto.hasNotifications = async () => false
         proto.teams = async () => []
+        proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
         proto.roster = async () => []
         proto.seasonTeams = async () => []
         proto.seasonGames = async () => []

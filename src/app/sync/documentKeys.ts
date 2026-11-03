@@ -6,6 +6,7 @@
  * query, and every other path are network reads and stay that way, so a
  * season's games are never answered offline with the whole list.
  */
+export const HOME_LISTS = 'home.lists'
 export const HOME_TEAMS = 'home.teams'
 export const HOME_SEASONS = 'home.seasons'
 export const HOME_GROUPS = 'home.groups'
@@ -36,6 +37,7 @@ export function gamesKey(when: 'past' | 'upcoming' | 'all'): string {
 
 /** Requests with no id in them, by path and query exactly as sent. */
 const FIXED: Record<string, string> = {
+  '/me/home': HOME_LISTS,
   '/teams': HOME_TEAMS,
   '/seasons': HOME_SEASONS,
   '/me/groups': HOME_GROUPS,

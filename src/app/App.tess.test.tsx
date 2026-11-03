@@ -121,6 +121,7 @@ describe("Tess in the app's shell", () => {
     api.umpireLeagues = async () => []
     api.hasNotifications = async () => false
     api.teams = async () => []
+    api.home = async () => ({ teams: [], seasons: [], leagues: [] })
     api.seasons = async () => []
     api.ownGroups = async () => []
     api.follows = async () => []

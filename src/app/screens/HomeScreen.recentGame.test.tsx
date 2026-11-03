@@ -83,8 +83,11 @@ async function renderHome(
   at: number = STARTED + HOUR
 ): Promise<{ container: HTMLElement; opened: Opened }> {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
-  client.teams = async () => [team]
-  client.seasons = async () => [season]
+  client.home = async () => ({
+    teams: [{ ...team, direct: true, source: 'member' as const }],
+    seasons: [{ ...season, direct: true, source: 'member' as const }],
+    leagues: []
+  })
   client.liveNow = async () => []
   client.recentGame = async () => recent
   setup(client)
@@ -344,7 +347,7 @@ describe('HomeScreen', function () {
 
   it('says what went wrong when the teams cannot be read', async function () {
     const { container } = await renderHome(client => {
-      client.teams = async () => {
+      client.home = async () => {
         throw new Error('The server is down')
       }
     })

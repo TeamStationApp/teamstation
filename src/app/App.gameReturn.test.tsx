@@ -53,6 +53,7 @@ describe('actual app game return navigation', () => {
     api.myRoles = async () => ({ teams: {}, guardianOf: [] })
     api.hasNotifications = async () => false
     api.teams = async () => []
+    api.home = async () => ({ teams: [], seasons: [], leagues: [] })
     api.roster = async () => []
     api.defaultLineup = async () => ({
       lineup: null,

@@ -80,6 +80,7 @@ describe('the app’s game replay', function () {
     proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
     proto.hasNotifications = async () => false
     proto.teams = async () => []
+    proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
     proto.game = async () => game
     proto.gameEvents = async () => stored
     host = document.createElement('div')
