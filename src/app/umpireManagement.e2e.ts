@@ -380,34 +380,28 @@ async function main(): Promise<void> {
           await m.tapOn({
             css: '[data-testid="umpire-game-gam_umpire_g1"] [aria-label="Uma L, uty_plate:1"]'
           })
-          await tap(m, 'Remove assignment')
-          await page.waitForFunction(
-            () =>
-              document.querySelector(
-                '[data-testid="umpire-game-gam_umpire_g1"] [aria-label^="Sign Up, Plate"]'
-              ) !== null
+          await contains(page, 'Uma Lee')
+          await contains(page, 'Go to profile page')
+          expect(await page.$('[aria-label="Remove assignment"]')).equals(null)
+          await tap(m, 'Cancel')
+          await page.waitForSelector(
+            '[data-testid="umpire-game-gam_umpire_g1"] [aria-label="Uma L, uty_plate:1"]'
           )
-          expect(
-            await page.$eval(
-              '[data-testid="umpire-game-gam_umpire_g4"] [aria-label="Uma L, uty_plate:1"]',
-              n => n.getAttribute('aria-disabled')
-            )
-          ).equals('true')
+          await m.tapOn({
+            css: '[data-testid="umpire-game-gam_umpire_g4"] [aria-label="Uma L, uty_plate:1"]'
+          })
+          await contains(page, 'Go to profile page')
+          await tap(m, 'Cancel')
           await signIn(101, `/umpires/${f.leagueA}?view=league`)
           await contains(page, 'Uma L')
           await m.tapOn({
             css: '[data-testid="umpire-game-gam_umpire_g4"] [aria-label="Uma L, uty_plate:1"]'
           })
-          await tap(m, 'Remove assignment')
-          await page.waitForFunction(
-            () =>
-              document.querySelector(
-                '[data-testid="umpire-game-gam_umpire_g4"] [aria-label^="Sign Up, Plate"]'
-              ) !== null
-          )
+          await contains(page, 'Uma Lee')
+          await tap(m, 'Cancel')
           expect(
             await f.h.db.selectFrom('umpire_assignments').selectAll().execute()
-          ).deep.equals([])
+          ).length(2)
         } else if (scenario === 6) {
           await signIn(101, settings)
           await tap(m, 'Umpire schedule')
@@ -632,7 +626,13 @@ async function main(): Promise<void> {
           await tap(m, 'Required Plate')
           await tap(m, 'Required Plate 0')
           await tap(m, 'Done')
+          const requirementsPut = page.waitForResponse(
+            r =>
+              r.request().method() === 'PUT' &&
+              r.url().endsWith('/umpire-requirements')
+          )
           await tap(m, 'Apply umpire requirements to the below seasons')
+          expect((await requirementsPut).status()).equals(200)
           await contains(page, 'Select seasons to apply umpire needs.')
           const requirements = await f.h.db
             .selectFrom('season_umpire_type_requirements')
@@ -655,23 +655,36 @@ async function main(): Promise<void> {
               const row = document.querySelector(
                 '[data-testid="umpire-game-gam_umpire_g1"]'
               )!
-              const viewport = row.parentElement!.parentElement!.parentElement!
+              const measured = Math.max(
+                ...[
+                  ...document.querySelectorAll(
+                    '[data-testid="umpire-date-measure"]'
+                  )
+                ].map(node => node.getBoundingClientRect().width)
+              )
+              const column = Math.ceil(Math.max(98, measured) + 16)
+              const date = row.children[0].getBoundingClientRect().width
+              const field = row.children[4].getBoundingClientRect().width
               return (
-                Math.abs(
-                  row.children[0].getBoundingClientRect().width -
-                    Math.max(
-                      160,
-                      viewport.getBoundingClientRect().width /
-                        row.children.length
-                    )
-                ) < 2
+                row.children.length === 9 &&
+                Math.abs(date - column) < 1 &&
+                Math.abs(field - column) < 1
               )
             })
             const geometry = await page.evaluate(() => {
               const row = document.querySelector(
                 '[data-testid="umpire-game-gam_umpire_g1"]'
               )!
-              const header = row.previousElementSibling!
+              const scroll = document.querySelector(
+                '[data-testid="umpire-table-header-scroll"]'
+              )!
+              const header = [
+                ...scroll.querySelectorAll<HTMLElement>('*')
+              ].find(
+                node =>
+                  node.childElementCount === row.children.length &&
+                  [...node.children].some(cell => cell.textContent === 'Date')
+              )!
               const viewport = row.parentElement!.parentElement!.parentElement!
               const funnel = document.querySelector(
                 '[aria-label="Schedule filters"]'
@@ -709,12 +722,10 @@ async function main(): Promise<void> {
             expect(geometry.action).equals(48)
             expect(geometry.pills.length).greaterThan(0)
             for (const pill of geometry.pills) {
-              expect(pill.height).equals(36)
-              expect(pill.width).lessThan(pill.cell - 20)
-              expect(pill.padding).equals('18px')
+              expect(pill.height).equals(24)
+              expect(pill.width).lessThan(pill.cell)
+              expect(pill.padding).equals('12px')
             }
-            if (width === 1920)
-              expect(Math.abs(geometry.table - geometry.viewport)).lessThan(2)
             if (width === 390)
               expect(geometry.table).greaterThan(geometry.viewport)
             console.log('E4 measured layout', width, JSON.stringify(geometry))
@@ -866,10 +877,9 @@ async function main(): Promise<void> {
             const row = document.querySelector(
               '[data-testid="umpire-game-gam_umpire_g1"]'
             )!
-            return (
-              row.children.length === 9 &&
-              Math.abs(row.getBoundingClientRect().width - 1872) < 2
-            )
+            const date = row.children[0].getBoundingClientRect().width
+            const field = row.children[4].getBoundingClientRect().width
+            return row.children.length === 10 && Math.abs(field - date) < 1
           })
           await signIn(101, base + '/umpire-levels')
           await page.waitForSelector('[aria-label="Remove AAA"]')

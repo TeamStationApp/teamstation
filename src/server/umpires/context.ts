@@ -10,6 +10,7 @@ import type { Database, GamesTable } from '../db/database'
 export type UmpireGame = Selectable<GamesTable>
 export interface UmpireIdentity extends OnePerson {
   name: string
+  displayName: string
   active: boolean
   gumboIds: number[]
   teamIds: string[]
@@ -44,6 +45,7 @@ export async function umpireIdentity(
       lastName: user.last_name,
       displayName: user.display_name
     }),
+    displayName: user.display_name,
     gumboIds: gumbo.map(g => Number(g.gumbo_id)),
     teamIds: teams.map(t => t.team_id)
   }

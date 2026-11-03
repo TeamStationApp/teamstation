@@ -2877,6 +2877,11 @@ function Shell(props: AppProps): React.ReactElement {
         onOpenGame={gameId => {
           push({ name: 'game', gameId, title: '', tab: 'info' })
         }}
+        onOpenPerson={(userId, name) => {
+          const leagueId = top.id === '' ? (umpireLeagues[0]?.id ?? '') : top.id
+          if (leagueId !== '')
+            openPerson({ kind: 'league', id: leagueId }, userId, name)
+        }}
         onRoute={route => {
           writeTop(current => ({
             ...current,

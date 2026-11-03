@@ -169,6 +169,20 @@ export async function schedule(
     .orderBy('start_at')
     .orderBy('id')
     .execute()
+  const fieldIds = [
+    ...new Set(
+      games.flatMap(game => (game.field_id == null ? [] : [game.field_id]))
+    )
+  ]
+  const fieldNames = new Map<string, string>()
+  if (fieldIds.length > 0) {
+    const fields = await db
+      .selectFrom('venue_fields')
+      .select(['id', 'name'])
+      .where('id', 'in', fieldIds)
+      .execute()
+    for (const field of fields) fieldNames.set(field.id, field.name)
+  }
   const assignments = await db
     .selectFrom('umpire_assignments')
     .selectAll()
@@ -362,6 +376,7 @@ export async function schedule(
               value => value !== ''
             ) ?? ''),
       venue: game.venue ?? '',
+      field: game.field_id == null ? '' : (fieldNames.get(game.field_id) ?? ''),
       notes: game.notes ?? '',
       umpireNotes: Object.fromEntries(
         notes
@@ -379,6 +394,7 @@ export async function schedule(
       row.assignments[a.slot] = {
         userId: p.userId,
         name: p.name,
+        displayName: p.displayName,
         assignedBy: author.userId,
         teams: await affiliations(p, season.id),
         canRemove:
