@@ -269,6 +269,47 @@ describe('the command line', function () {
     await pool.end()
   })
 
+  it('reads statements from --stats-database, where the database under test has none', async function () {
+    const stats = await openScratch('mainstats')
+    try {
+      await fakeStatementsView(stats)
+      const pool = new Pool({ connectionString: stats.url })
+      await pool.query(
+        `update pg_stat_statements set
+           dbid = (select oid from pg_database where datname = $1), calls = 5`,
+        [scratch.name]
+      )
+      await pool.end()
+      const report = join(dir, 'stats.log')
+      const code = await run(
+        ...flags(),
+        '--stats-database',
+        stats.url,
+        '--server',
+        server.base,
+        '--probe',
+        '--report',
+        report
+      )
+      expect(code).equals(1)
+      expect(readFileSync(report, 'utf8')).contains('socket subscribe')
+      expect(
+        await refusal(
+          ...flags(),
+          '--stats-database',
+          stats.url,
+          '--server',
+          server.base,
+          '--users',
+          '1',
+          '--require-statements'
+        )
+      ).contains('no pg_stat_statements')
+    } finally {
+      await stats.drop()
+    }
+  })
+
   it('cleans up by the run the tokens name', async function () {
     expect(readTokens(tokensPath).runId).equals('cli')
     expect(await run(...flags(), '--cleanup')).equals(0)

@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
+import type { Page } from 'puppeteer'
 
 import type { BrowserAccount, CredentialsFile } from './fixture'
 import {
@@ -81,6 +82,7 @@ class StubApp {
   streamState = 'publishing'
   playbackMs = 0
   calls: string[] = []
+  filled: string[] = []
 
   answer(method: string, path: string): Answer {
     this.calls.push(`${method} ${path}`)
@@ -103,7 +105,15 @@ class StubApp {
     if (path === '/players/usr_kept/stats')
       return { status: 200, body: { games: 5 } }
     if (path === '/games/gam_live/events')
-      return { status: 200, body: { plays: [{}] } }
+      return {
+        status: 200,
+        body: { plays: [{}], currentPlay: { names: this.filled } }
+      }
+    if (path === '/events')
+      return {
+        status: 200,
+        body: [{ id: 'gam_live', homeTeamName: 'Home', awayTeamName: 'Away' }]
+      }
     if (path === '/chat/conversations') return { status: 200, body: [] }
     return { status: 200, body: { rows: [{}] } }
   }
@@ -139,8 +149,9 @@ class StubSurface implements Surface {
     if (/^(Ball|Called Strike|Swing and Miss)$/.test(label)) this.app.pitch()
   }
 
-  async fill(label: string): Promise<void> {
+  async fill(label: string, value: string): Promise<void> {
     if (this.app.lacking.has(label)) throw new Error(`No ${label} to fill`)
+    this.app.filled.push(value)
   }
 
   async has(label: string): Promise<boolean> {
@@ -419,6 +430,50 @@ describe('the browser script', function () {
     const result = await runOne('edit a lineup mid-game', contextFor(app))
     expect(result.detail).match(
       /^The far node heard of no change of lineup, in \d+ frames/
+    )
+  })
+
+  it('fails a lineup edit that the saved game does not hold', async function () {
+    const app = new StubApp()
+    app.answers.set('GET /games/gam_live/events', {
+      status: 200,
+      body: { plays: [{}], currentPlay: {} }
+    })
+    const result = await runOne('edit a lineup mid-game', contextFor(app))
+    expect(result.status).equals('failed')
+    expect(result.detail).match(/^The saved game does not hold the new player/)
+  })
+
+  it("lists a person's games, the live one among them, on the All pill", async function () {
+    const passed = await runOne('open the schedule', contextFor(new StubApp()))
+    expect(passed.detail).equals(
+      "the schedule lists this person's 1 games, the live one among them"
+    )
+
+    const empty = new StubApp()
+    empty.answers.set('GET /events', { status: 200, body: [] })
+    expect(
+      (await runOne('open the schedule', contextFor(empty))).detail
+    ).equals("The live game of this person's team is not among their 0 games")
+
+    // The server has it, and the screen does not show it.
+    const unshown = new StubApp()
+    unshown.lacking.add('Away')
+    const failed = await runOne('open the schedule', contextFor(unshown))
+    expect(failed.status).equals('failed')
+    expect(failed.detail).equals('No words Away')
+
+    const many = new StubApp()
+    many.answers.set('GET /events', {
+      status: 200,
+      body: [
+        { id: 'gam_live', homeTeamName: 'Home', awayTeamName: 'Away' },
+        { id: 'gam_next', homeTeamName: 'Home', awayTeamName: 'Next' }
+      ]
+    })
+    many.lacking.add('2 games')
+    expect((await runOne('open the schedule', contextFor(many))).detail).equals(
+      'No words 2 games'
     )
   })
 
@@ -850,6 +905,13 @@ describe('the browser script', function () {
       <input aria-label="Password" hidden>
       <div role="button" aria-label="Off" aria-disabled="true"></div>
       <div role="button" aria-label="Go now">Go</div>
+      <div aria-label="Sections" style="visibility: hidden"><div role="button" aria-label="Tab">parked</div></div>
+      <div aria-label="Sections"><div role="button" aria-label="Tab" id="tab">shown</div></div>
+      <div style="visibility: hidden"><div role="button" aria-label="Go now" id="parked">parked</div><div role="button" aria-label="Parked">parked</div></div>
+      <div style="pointer-events: none"><div role="button" aria-label="Inert">inert</div></div>
+      <div role="alert" style="margin-top: 2000px">the reason</div>
+      <input aria-label="Slides in">
+      <input aria-label="Never holds">
       <video></video>
       <script>
         document.getElementById('use').onclick = () => {
@@ -865,6 +927,22 @@ describe('the browser script', function () {
         document.querySelector('[aria-label="Go now"]').onclick = () => {
           document.getElementById('out').textContent = 'Pressed'
         }
+        document.getElementById('parked').onclick = () => {
+          document.getElementById('out').textContent = 'Pressed behind'
+        }
+        document.getElementById('tab').onclick = () => {
+          document.getElementById('out').textContent = 'Pressed the tab'
+        }
+        // A sheet still sliding in: what is typed first goes nowhere.
+        let lost = false
+        document.querySelector('[aria-label="Slides in"]').addEventListener('input', event => {
+          if (lost) return
+          lost = true
+          setTimeout(() => { event.target.value = '' }, 50)
+        })
+        document.querySelector('[aria-label="Never holds"]').addEventListener('input', event => {
+          event.target.value = ''
+        })
         const socket = new WebSocket(location.origin.replace('http', 'ws') + '/socket')
         void socket
       </script>`
@@ -922,6 +1000,18 @@ describe('the browser script', function () {
         expect(await tab.has('Nothing')).equals(false)
         await tab.press('Go*')
         await tab.waitForText('pressed')
+        expect(await tab.text()).not.includes('Pressed behind')
+        expect(await tab.has('Parked')).equals(false)
+        expect(await tab.has('Inert')).equals(true)
+        await tab.press('Sections > Tab')
+        await tab.waitForText('Pressed the tab')
+        await tab.fill('Slides in', 'held')
+        expect(
+          await (tab as unknown as { page: Page }).page.$eval(
+            '[aria-label="Slides in"]',
+            (node: Element) => (node as HTMLInputElement).value
+          )
+        ).equals('held')
         await tab.fill('E-mail address', 'again')
         await tab.waitForLabel('Account,*')
         expect(await tab.text()).includes('Pressed')
@@ -937,6 +1027,22 @@ describe('the browser script', function () {
           message = error.message
         })
         expect(message).matches(/No Off to press at \/sign-in/)
+        expect(message).includes('alerts: the reason')
+        message = ''
+        await tab.press('Parked').catch((error: Error) => {
+          message = error.message
+        })
+        expect(message).matches(/No Parked to press/)
+        message = ''
+        await tab.press('Inert').catch((error: Error) => {
+          message = error.message
+        })
+        expect(message).matches(/No Inert to press/)
+        message = ''
+        await tab.fill('Never holds', 'x').catch((error: Error) => {
+          message = error.message
+        })
+        expect(message).matches(/Never holds would not hold what was typed/)
         message = ''
         await tab.waitForText('absent', 200).catch((error: Error) => {
           message = error.message

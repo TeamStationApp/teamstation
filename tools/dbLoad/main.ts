@@ -57,7 +57,9 @@ import { Sampler } from './sampler'
  *   npm run start.dbLoad -- --server <url> --database <url> --tokens tokens.json --probe
  *   npm run start.dbLoad -- --database <url> --tokens tokens.json --cleanup
  *
- * Every mode refuses a database not marked for load testing.
+ * Every mode refuses a database not marked for load testing. `--stats-database`
+ * is where `pg_stat_statements` is installed, when that is not `--database`: it
+ * is only read, and only for the statements of `--database`.
  */
 
 export interface Io {
@@ -67,6 +69,7 @@ export interface Io {
 const OPTIONS = {
   server: { type: 'string', multiple: true },
   database: { type: 'string' },
+  'stats-database': { type: 'string' },
   scale: { type: 'string' },
   accounts: { type: 'string' },
   crowded: { type: 'string' },
@@ -118,6 +121,7 @@ function count(
 export interface RunOptions {
   servers: string[]
   databaseUrl: string
+  statsDatabaseUrl?: string
   tokensPath: string
   users: number
   shard?: { index: number; count: number }
@@ -156,6 +160,15 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
   await client.connect()
   // A lost connection is reported by the read that needed it.
   client.on('error', () => undefined)
+  const statsClient =
+    options.statsDatabaseUrl == null
+      ? undefined
+      : new Client({
+          connectionString: options.statsDatabaseUrl,
+          application_name: 'dbload-sampler'
+        })
+  await statsClient?.connect()
+  statsClient?.on('error', () => undefined)
   let db: LoadDatabase | undefined
   const tally = new Tally()
   const actors: Actor[] = []
@@ -166,6 +179,7 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
   let events: EventResult[] = []
   const sampler = new Sampler({
     client,
+    statsClient,
     poolerAddress: options.poolerAddress,
     requireStatements: options.requireStatements,
     onError: () => {
@@ -254,6 +268,7 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
     await Promise.all(actors.map(async actor => await actor.stop()))
     await sampler.stop().catch(() => undefined)
     await db?.destroy()
+    await statsClient?.end()
     await client.end()
     loopDelay.disable()
   }
@@ -326,6 +341,7 @@ function finish(
 export async function runMain(argv: string[], io: Io): Promise<number> {
   const { values } = parseArgs({ args: argv, options: OPTIONS, strict: true })
   const databaseUrl = required(values.database, '--database')
+  const statsDatabaseUrl = values['stats-database'] ?? databaseUrl
 
   if (values.scale != null) return await seed(values, databaseUrl, io)
   const tokensPath = required(values.tokens, '--tokens')
@@ -362,6 +378,10 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
 
   if (values.probe === true) {
     const db = openLoadDatabase(databaseUrl, { max: 2 })
+    const statsDb =
+      statsDatabaseUrl === databaseUrl
+        ? db
+        : openLoadDatabase(statsDatabaseUrl, { max: 1 })
     try {
       await requireLoadDatabase(
         async text =>
@@ -369,12 +389,20 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
             .raw<{ comment: string | null; name: string }>(text)
             .execute(db)
       )
-      const results = await runProbes(db, servers[0], readTokens(tokensPath))
+      const { rows } = await sql<{
+        name: string
+      }>`select current_database() as name`.execute(db)
+      const results = await runProbes(
+        { db: statsDb, database: rows[0].name },
+        servers[0],
+        readTokens(tokensPath)
+      )
       const text = renderProbes(results)
       io.log(text)
       if (values.report != null) writeFileSync(values.report, text)
       return results.some(row => row.error != null) ? 1 : 0
     } finally {
+      if (statsDb !== db) await statsDb.destroy()
       await db.destroy()
     }
   }
@@ -382,6 +410,7 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
   const data = await runLoad({
     servers,
     databaseUrl,
+    statsDatabaseUrl: values['stats-database'],
     tokensPath,
     users: count(values.users, '--users'),
     shard: values.shard == null ? undefined : parseShard(values.shard),

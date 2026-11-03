@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 
-import type { CDPSession, Dialog, Page } from 'puppeteer'
+import type { CDPSession, Dialog, ElementHandle, Page } from 'puppeteer'
 import puppeteer, { type Browser } from 'puppeteer'
 
 import { requireServerHost } from './actors'
@@ -422,6 +422,7 @@ const editLineup: Action = {
     )
     const before = watcher.frames().length
     const scorer = await openScoring(context)
+    // Nobody sits on this sheet: it comes up on the game as it stands.
     await scorer.press('Open scoring menu')
     await scorer.press('Set Team Rosters')
     await scorer.press('Create Player')
@@ -449,8 +450,16 @@ const editLineup: Action = {
     const answer = okBody(
       await watcher.api('GET', `/games/${liveGameId}/events`),
       'reading plays after the edit'
-    ) as { lineups?: unknown; plays?: unknown[] }
-    return `lineups saved mid-game; ${after.length} frames since; ${answer.plays?.length ?? 0} plays stored`
+    ) as { plays?: unknown[] }
+    // What a person came here for: the game, read again, has the new player. As
+    // the scorekeeper reads it, since a viewer is not told a player's last name.
+    const saved = okBody(
+      await scorer.api('GET', `/games/${liveGameId}/events`),
+      'reading the game after the edit'
+    ) as { currentPlay?: unknown }
+    if (!JSON.stringify(saved.currentPlay).includes(last))
+      throw new Error(`The saved game does not hold the new player, ${last}`)
+    return `${last} saved into the game mid-game; ${after.length} frames since; ${answer.plays?.length ?? 0} plays stored`
   }
 }
 
@@ -799,10 +808,27 @@ const analytics: Action = {
 const schedule: Action = {
   name: 'open the schedule',
   run: async context => {
+    const { liveGameId } = context.credentials.places
     const viewer = await tabOf(context, 'browser.viewer')
+    const games = okBody(
+      await viewer.api('GET', '/events'),
+      'the list of games'
+    ) as Array<{ id: string; homeTeamName: string; awayTeamName: string }>
+    const live = games.find(game => game.id === liveGameId)
+    if (live == null)
+      throw new Error(
+        `The live game of this person's team is not among their ${games.length} games`
+      )
+    // Upcoming, where it opens, may truly be empty: a game under way is not to come.
     await viewer.open('/schedule')
-    await viewer.waitForText('Load', context.patienceMs)
-    return 'the schedule lists games'
+    await viewer.press('All')
+    await viewer.waitForText(live.awayTeamName, context.patienceMs)
+    await viewer.waitForText(live.homeTeamName, context.patienceMs)
+    await viewer.waitForText(
+      games.length === 1 ? '1 game' : `${games.length} games`,
+      context.patienceMs
+    )
+    return `the schedule lists this person's ${games.length} games, the live one among them`
   }
 }
 
@@ -942,28 +968,36 @@ export function renderSummary(results: ActionResult[]): string {
 }
 
 /**
- * Finds the last visible control so named: by its label, or by its words if it
- * has none. A name ending in `*` is its start. Plain text, because a page
- * function is not given the helpers this tool's compiler writes.
+ * Finds the last control on the screen so named: by its label, or by its words
+ * if it has none. A name ending in `*` is its start. A screen parked behind the
+ * current one stays laid out, with `visibility: hidden` and no pointer events,
+ * so its controls are not on the screen, whatever a bare `checkVisibility` says.
+ * Plain text, because a page function is not given the helpers this tool's
+ * compiler writes.
  */
 const FIND_CONTROL = `function (wanted, enabled) {
+  var shown = function (node) {
+    return node.checkVisibility({ checkVisibilityCSS: true })
+  }
   var path = wanted.split(' > ')
   var name = path[path.length - 1]
   var prefix = name.endsWith('*') ? name.slice(0, -1) : null
-  var root = path.length > 1
-    ? document.querySelector('[aria-label="' + path[0] + '"]')
-    : document
-  if (root === null) return null
-  var nodes = root.querySelectorAll('[aria-label], [role="button"], [role="tab"], a')
   var found = null
-  nodes.forEach(function (node) {
-    var own = node.hasAttribute('aria-label')
-      ? node.getAttribute('aria-label')
-      : (node.textContent || '').trim()
-    var named = prefix === null ? own === name : own.indexOf(prefix) === 0
-    if (!named || !node.checkVisibility()) return
-    if (enabled && node.getAttribute('aria-disabled') === 'true') return
-    found = node
+  var search = function (root) {
+    root.querySelectorAll('[aria-label], [role="button"], [role="tab"], a').forEach(function (node) {
+      var own = node.hasAttribute('aria-label')
+        ? node.getAttribute('aria-label')
+        : (node.textContent || '').trim()
+      var named = prefix === null ? own === name : own.indexOf(prefix) === 0
+      if (!named || !shown(node)) return
+      if (enabled && node.getAttribute('aria-disabled') === 'true') return
+      if (enabled && getComputedStyle(node).pointerEvents === 'none') return
+      found = node
+    })
+  }
+  if (path.length === 1) search(document)
+  else document.querySelectorAll('[aria-label="' + path[0] + '"]').forEach(function (root) {
+    if (shown(root)) search(root)
   })
   return found
 }`
@@ -1022,8 +1056,14 @@ class BrowserSurface implements Surface {
     } catch (error) {
       if ((error as Error).name !== 'TimeoutError') throw error
       const screen = (await this.text()).replace(/\s+/g, ' ').slice(0, 300)
+      // An alert may be below what is quoted, and it is the reason.
+      const alerts = await this.page.evaluate(() =>
+        [...document.querySelectorAll('[role="alert"]')]
+          .map(node => String(node.textContent))
+          .join('; ')
+      )
       throw new Error(
-        `No ${what} at ${new URL(this.page.url()).pathname}, on a screen saying: ${screen}`
+        `No ${what} at ${new URL(this.page.url()).pathname}, on a screen saying: ${screen}${alerts === '' ? '' : `; alerts: ${alerts}`}`
       )
     }
   }
@@ -1077,20 +1117,48 @@ class BrowserSurface implements Surface {
     )
   }
 
+  /**
+   * Types as a person does, and looks. A sheet takes focus when it has finished
+   * sliding in, and what was typed before that went nowhere, so a field that is
+   * not holding the words is typed into again until it does.
+   */
   async fill(label: string, value: string): Promise<void> {
     const selector = `:is(input, textarea)[aria-label="${label}"]`
-    await this.waited(
-      `${label} to fill`,
-      this.page.waitForSelector(selector, {
-        timeout: this.patienceMs,
-        visible: true
+    const end = Date.now() + this.patienceMs
+    for (;;) {
+      await this.waited(
+        `${label} to fill`,
+        this.page.waitForSelector(selector, {
+          timeout: this.patienceMs,
+          visible: true
+        })
+      )
+      const field = await this.visibleField(selector)
+      await field.evaluate(node => {
+        ;(node as HTMLInputElement).select()
       })
-    )
-    await this.page.$eval(selector, node => {
-      ;(node as HTMLInputElement).select()
-    })
-    await this.page.keyboard.press('Backspace')
-    await this.page.type(selector, value)
+      await this.page.keyboard.press('Backspace')
+      await field.type(value)
+      await new Promise(done => {
+        setTimeout(done, POLL_MS)
+      })
+      const held = await field.evaluate(
+        node => (node as HTMLInputElement).value
+      )
+      if (held === value) return
+      if (Date.now() > end)
+        throw new Error(
+          `${label} would not hold what was typed, at ${new URL(this.page.url()).pathname}: it holds "${held}"`
+        )
+    }
+  }
+
+  /** The last of these fields on the screen, as with a control. */
+  private async visibleField(selector: string): Promise<ElementHandle> {
+    const fields = await this.page.$$(selector)
+    const shown: ElementHandle[] = []
+    for (const field of fields) if (await field.isVisible()) shown.push(field)
+    return shown[shown.length - 1]
   }
 
   async has(label: string): Promise<boolean> {
