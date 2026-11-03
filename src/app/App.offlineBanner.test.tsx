@@ -108,6 +108,11 @@ describe('the phone shell offline', () => {
         )
         return new Response(JSON.stringify(madePlayer), { status: 201 })
       }
+      if (path.endsWith('/me/home'))
+        return new Response(
+          JSON.stringify({ teams: [], seasons: [], leagues: [] }),
+          { status: 200 }
+        )
       if (path.endsWith('/auth/me'))
         return new Response(JSON.stringify(BETTS), { status: 200 })
       return new Response('[]', { status: 200 })
@@ -134,10 +139,7 @@ describe('the phone shell offline', () => {
     })
     client.openFor(BETTS.id)
     await Promise.all([
-      client.teams(),
-      client.seasons(),
-      client.ownGroups(),
-      client.follows(),
+      client.home(),
       client.guardedPlayers(),
       client.recentGame()
     ])

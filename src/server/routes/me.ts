@@ -5,6 +5,8 @@ import { unauthorized } from '../../common/errors'
 import { type Role, ROLES } from '../../common/roles'
 import { guardedPlayers, roleScopes, rolesOnTeam } from '../access'
 import type { Database } from '../db/database'
+import { homeLists } from '../home/homeLists'
+import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { activeHuman } from '../oauth/provider'
@@ -23,7 +25,11 @@ import { withRevision } from '../socket/syncRevision'
  * `guardianOf` is the players they are a guardian of, by the row each signs
  * in as.
  */
-export function meRoutes(db: Kysely<Database>, buildsUrl?: string): Router {
+export function meRoutes(
+  db: Kysely<Database>,
+  buildsUrl: string | undefined,
+  media: MediaContext
+): Router {
   const router = Router()
 
   router.get(
@@ -56,6 +62,18 @@ export function meRoutes(db: Kysely<Database>, buildsUrl?: string): Router {
         teams[teamId] = rolesOnTeam(scopes, teamId)
       }
       res.json({ teams, guardianOf: await guardedPlayers(db, actor.userId) })
+    })
+  )
+
+  // Direct ties first, then a row reached only by inheritance or by being
+  // an admin. The site-admin flag adds nothing here.
+  router.get(
+    '/me/home',
+    requireActor,
+    withRevision(db, async (db, req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      res.json(await homeLists(db, actor.userId, media.space))
     })
   )
 

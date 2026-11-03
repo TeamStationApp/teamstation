@@ -257,6 +257,10 @@ const SCHEDULE_TAB = '57%,92%'
 async function home(m: AttachedDevice): Promise<void> {
   for (let tries = 0; tries < 4; tries++) {
     if (await visible(m, { text: 'Your Home' }, 3000)) {
+      if (!(await visible(m, { text: 'Hosts' }, 8000))) {
+        if (await visible(m, { text: 'More teams' }, 2000))
+          await m.tapOn({ text: 'More teams' })
+      }
       await m.extendedWaitUntil({ visible: { text: 'Hosts' }, timeout: 30000 })
       return
     }

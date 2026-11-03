@@ -21,6 +21,7 @@ it('mounts the shell with role-only mask visibility and preserves header order a
   proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
   proto.hasNotifications = async () => false
   proto.teams = async () => []
+  proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
   proto.seasons = async () => []
   proto.ownGroups = async () => []
   proto.follows = async () => []

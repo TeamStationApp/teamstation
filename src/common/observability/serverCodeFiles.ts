@@ -149,6 +149,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/groups/rights.js',
   'server/groups/teamMerge.js',
   'server/highlights.js',
+  'server/home/homeLists.js',
   'server/index.js',
   'server/ingest/main.js',
   'server/ingest/run.js',

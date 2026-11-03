@@ -3,10 +3,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import {
+  asHomeLists,
   asSeasonGame,
-  asSeasonSummary,
-  asTeamSummary,
   asUserMatch,
+  type HomeLeague,
+  type HomeSeason,
+  type HomeTeam,
   type LiveNow,
   type SeasonGame,
   type SeasonSummary,
@@ -15,8 +17,9 @@ import {
   type UserMatch
 } from '../../common/api'
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
+import { windowHomeList } from '../../common/homeList'
 import { localityLabel } from '../../common/locality'
-import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
+import type { PublicGroup } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { creationIcons } from '../assets'
 import {
@@ -36,19 +39,17 @@ import { useSceneShown } from '../components/sceneShown'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { useScreenScope } from '../hooks/useScreenScope'
-import {
-  HOME_FOLLOWS,
-  HOME_GROUPS,
-  HOME_GUARDED,
-  HOME_RECENT,
-  HOME_SEASONS,
-  HOME_TEAMS
-} from '../sync/documentKeys'
+import { HOME_GUARDED, HOME_LISTS, HOME_RECENT } from '../sync/documentKeys'
 import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { UmpireMaskDrawing } from '../umpires/UmpireMaskDrawing'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 import type { GameListOpenOptions } from './gameListOptions'
+import {
+  type HomeListExpanded,
+  readHomeListExpanded,
+  writeHomeListExpanded
+} from './homeListExpanded'
 import { recentGameIsCurrent } from './recentGameWindow'
 
 export interface HomeScreenProps {
@@ -105,10 +106,14 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const offline = usePhoneOffline(client)
 
   const [players, setPlayers] = useState<UserMatch[]>([])
-  const [teams, setTeams] = useState<TeamSummary[]>([])
-  const [groups, setGroups] = useState<PublicGroup[]>([])
-  const [followed, setFollowed] = useState<PublicGroup[]>([])
-  const [seasons, setSeasons] = useState<SeasonSummary[]>([])
+  const [teams, setTeams] = useState<HomeTeam[]>([])
+  const [seasons, setSeasons] = useState<HomeSeason[]>([])
+  const [leagues, setLeagues] = useState<HomeLeague[]>([])
+  const [expanded, setExpanded] = useState<HomeListExpanded>({
+    teams: false,
+    seasons: false,
+    leagues: false
+  })
   const [recent, setRecent] = useState<SeasonGame | undefined>(undefined)
   const [live, setLive] = useState<LiveNow[]>([])
   const [liveUrl, setLiveUrl] = useState<string | undefined>(undefined)
@@ -271,31 +276,42 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   // opens one: the shell hands over a new one whenever it renders, and that
   // is no reason to read everything again.
   const opensPlayers = props.onOpenPlayer != null
-  const opensGroups = props.onOpenGroup != null
   const loaded = useRef(props.onLoaded)
   loaded.current = props.onLoaded
+  useEffect(() => {
+    let live = true
+    readHomeListExpanded()
+      .then(stored => {
+        if (live) setExpanded(stored)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [])
+  const toggleList = (section: keyof HomeListExpanded): void => {
+    setExpanded(current => {
+      const next = { ...current, [section]: !current[section] }
+      writeHomeListExpanded(next).catch(() => undefined)
+      return next
+    })
+  }
   const beginLists = useLatestRequest()
   const loadLists = useCallback(async (): Promise<void> => {
     const current = beginLists()
     try {
-      const [loadedTeams, loadedSeasons, ownGroups, follows, guarded] =
-        await Promise.all([
-          client.teams(),
-          client.seasons(),
-          opensGroups ? client.ownGroups() : Promise.resolve([]),
-          // Following is a nicety: Home still opens when it cannot be read.
-          opensGroups ? client.follows().catch(() => []) : Promise.resolve([]),
-          // So is the list of the players one guards: Home opens without it.
-          opensPlayers
-            ? client.guardedPlayers().catch(() => [])
-            : Promise.resolve([])
-        ])
+      const [home, guarded] = await Promise.all([
+        client.home(),
+        // The players one guards are a nicety: Home opens without them.
+        opensPlayers
+          ? client.guardedPlayers().catch(() => [])
+          : Promise.resolve([])
+      ])
       if (!current()) return
       setPlayers(guarded)
-      setTeams(loadedTeams)
-      setSeasons(loadedSeasons)
-      setGroups(ownGroups)
-      setFollowed(follows)
+      setTeams(home.teams)
+      setSeasons(home.seasons)
+      setLeagues(home.leagues)
       setError(undefined)
       loaded.current?.()
     } catch (caught: unknown) {
@@ -304,35 +320,26 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     } finally {
       if (current()) setLoading(false)
     }
-  }, [client, opensGroups, opensPlayers, beginLists])
+  }, [client, opensPlayers, beginLists])
   /**
    * Home's lists as the phone last stored them, painted before the scope is
    * acknowledged. The web stores none, and stays on its loading state.
    */
   const paintLists = useCallback(async (): Promise<void> => {
     const current = beginLists()
-    const [storedTeams, storedSeasons, ownGroups, follows, guarded] =
-      await Promise.all([
-        client.cached(HOME_TEAMS, asArray(asTeamSummary)),
-        client.cached(HOME_SEASONS, asArray(asSeasonSummary)),
-        opensGroups
-          ? client.cached(HOME_GROUPS, asArray(asPublicGroup))
-          : undefined,
-        opensGroups
-          ? client.cached(HOME_FOLLOWS, asArray(asPublicGroup))
-          : undefined,
-        opensPlayers
-          ? client.cached(HOME_GUARDED, asArray(asUserMatch))
-          : undefined
-      ])
-    if (!current() || storedTeams == null || storedSeasons == null) return
-    setTeams(storedTeams)
-    setSeasons(storedSeasons)
-    setGroups(ownGroups ?? [])
-    setFollowed(follows ?? [])
+    const [stored, guarded] = await Promise.all([
+      client.cached(HOME_LISTS, asHomeLists),
+      opensPlayers
+        ? client.cached(HOME_GUARDED, asArray(asUserMatch))
+        : undefined
+    ])
+    if (!current() || stored == null) return
+    setTeams(stored.teams)
+    setSeasons(stored.seasons)
+    setLeagues(stored.leagues)
     setPlayers(guarded ?? [])
     setLoading(false)
-  }, [client, opensGroups, opensPlayers, beginLists])
+  }, [client, opensPlayers, beginLists])
   // A play names its game alone: the lists show no game, so they let it
   // pass, and the recent game and what is live take it. A write that moves
   // what the lists count (a game going final, a video, a new game) names
@@ -352,7 +359,6 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     )
   }
 
-  const leagues = groups.filter(group => group.kind === 'league')
   // recentGame asks for played rows, so pending revisions here retain an
   // approved score/recording. A projected unapproved event has neither.
   const recentPublished =
@@ -362,23 +368,13 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       recent.homeScore != null ||
       recent.awayScore != null)
 
-  // Followed groups sit in the same sections, after the person's own, and
-  // never twice.
-  const followedOf = (kind: GroupKind, own: Set<string>): PublicGroup[] =>
-    followed.filter(group => group.kind === kind && !own.has(group.id))
-  const followedTeams = followedOf('team', new Set(teams.map(team => team.id)))
-  const followedSeasons = followedOf(
-    'season',
-    new Set(seasons.map(season => season.id))
-  )
-  const followedLeagues = followedOf(
-    'league',
-    new Set(leagues.map(league => league.id))
-  )
+  const teamWindow = windowHomeList(teams, expanded.teams)
+  const seasonWindow = windowHomeList(seasons, expanded.seasons)
+  const leagueWindow = windowHomeList(leagues, expanded.leagues)
   const counts = {
-    league: leagues.length + followedLeagues.length,
-    season: seasons.length + followedSeasons.length,
-    team: teams.length + followedTeams.length
+    league: leagues.length,
+    season: seasons.length,
+    team: teams.length
   }
   const missingKinds = (['league', 'season', 'team'] as const).filter(
     kind => counts[kind] === 0
@@ -655,22 +651,28 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         <View style={styles.section}>
           <SectionHeader title="Your teams" actions={sectionActions('team')} />
           <ListCard>
-            {teams.map(team => (
-              <ListRow
-                key={team.id}
-                title={team.name}
-                subtitle={subtitleFor(team)}
-                teamName={team.name}
-                emblemUri={team.logoUrl}
-                onPress={() => {
-                  onOpenTeam(team)
-                }}
-              />
-            ))}
-            {followedTeams.map(group => (
-              <View key={group.id}>{followedRow(group)}</View>
-            ))}
+            {teamWindow.rows.map(row => {
+              if (row.source === 'follow') {
+                return <View key={row.id}>{followedRow(row)}</View>
+              }
+              const team = row
+              return (
+                <ListRow
+                  key={team.id}
+                  title={team.name}
+                  subtitle={subtitleFor(team)}
+                  teamName={team.name}
+                  emblemUri={team.logoUrl}
+                  onPress={() => {
+                    onOpenTeam(team)
+                  }}
+                />
+              )
+            })}
           </ListCard>
+          {listToggle('teams', teamWindow, () => {
+            toggleList('teams')
+          })}
         </View>
       )}
 
@@ -678,26 +680,32 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         <View style={styles.section}>
           <SectionHeader title="Seasons" actions={sectionActions('season')} />
           <ListCard>
-            {seasons.map(season => (
-              <ListRow
-                key={season.id}
-                title={season.name}
-                subtitle={`${season.teams} teams · ${season.games} games · ${season.videos} videos`}
-                emblemIcon="event"
-                emblemUri={season.logoUrl}
-                badgeLabel={season.term ?? undefined}
-                badgeTone="neutral"
-                onPress={() => {
-                  props.onOpenGroup == null
-                    ? onOpenSeason(season)
-                    : props.onOpenGroup({ kind: 'season', id: season.id })
-                }}
-              />
-            ))}
-            {followedSeasons.map(group => (
-              <View key={group.id}>{followedRow(group)}</View>
-            ))}
+            {seasonWindow.rows.map(row => {
+              if (row.source === 'follow') {
+                return <View key={row.id}>{followedRow(row)}</View>
+              }
+              const season = row
+              return (
+                <ListRow
+                  key={season.id}
+                  title={season.name}
+                  subtitle={`${season.teams} teams · ${season.games} games · ${season.videos} videos`}
+                  emblemIcon="event"
+                  emblemUri={season.logoUrl}
+                  badgeLabel={season.term ?? undefined}
+                  badgeTone="neutral"
+                  onPress={() => {
+                    props.onOpenGroup == null
+                      ? onOpenSeason(season)
+                      : props.onOpenGroup({ kind: 'season', id: season.id })
+                  }}
+                />
+              )
+            })}
           </ListCard>
+          {listToggle('seasons', seasonWindow, () => {
+            toggleList('seasons')
+          })}
         </View>
       )}
       {counts.league > 0 && (
@@ -707,21 +715,26 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
             actions={sectionActions('league')}
           />
           <ListCard>
-            {leagues.map(league => (
-              <ListRow
-                key={league.id}
-                title={league.name}
-                emblem={initialsOf(league.name)}
-                emblemUri={league.imageUrl}
-                onPress={() => {
-                  props.onOpenGroup?.({ kind: 'league', id: league.id })
-                }}
-              />
-            ))}
-            {followedLeagues.map(group => (
-              <View key={group.id}>{followedRow(group)}</View>
-            ))}
+            {leagueWindow.rows.map(row => {
+              if (row.source === 'follow') {
+                return <View key={row.id}>{followedRow(row)}</View>
+              }
+              return (
+                <ListRow
+                  key={row.id}
+                  title={row.name}
+                  emblem={initialsOf(row.name)}
+                  emblemUri={row.imageUrl}
+                  onPress={() => {
+                    props.onOpenGroup?.({ kind: 'league', id: row.id })
+                  }}
+                />
+              )
+            })}
           </ListCard>
+          {listToggle('leagues', leagueWindow, () => {
+            toggleList('leagues')
+          })}
         </View>
       )}
       {canCreate &&
@@ -729,6 +742,24 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         missingKinds.length > 0 &&
         creationCards(missingKinds)}
     </Screen>
+  )
+}
+
+/** More or Less under a section that is longer than the preview. */
+function listToggle(
+  section: string,
+  windowed: { toggle: boolean; expanded: boolean },
+  onPress: () => void
+): React.ReactElement | null {
+  if (!windowed.toggle) return null
+  const word = windowed.expanded ? 'Less' : 'More'
+  return (
+    <Button
+      label={word}
+      kind="text"
+      accessibilityLabel={`${word} ${section}`}
+      onPress={onPress}
+    />
   )
 }
 

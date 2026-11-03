@@ -1531,7 +1531,7 @@ async function guardian(run: Run): Promise<void> {
   expect(comets.body.canViewPrivate).equals(true)
   const removed = await api(
     'DELETE',
-    `/manage/team/${f.secondTeam}/people/${avery.id}`,
+    `/manage/team/${f.secondTeam}/people/${userIdOfGumbo(avery.id)}`,
     people.admin
   )
   expect(removed.status).equals(200)
@@ -2164,7 +2164,7 @@ async function home(run: Run): Promise<void> {
   // Alfonso leaves the Comets.
   const removed = await f.h.request(
     'DELETE',
-    `/manage/team/${f.secondTeam}/people/${avery.id}`,
+    `/manage/team/${f.secondTeam}/people/${userIdOfGumbo(avery.id)}`,
     undefined,
     people.admin
   )
@@ -2237,7 +2237,7 @@ async function home(run: Run): Promise<void> {
     timeout: 20000
   })
   const opened = new URL(guardian.page.url())
-  expect(opened.pathname).equals(`/players/${avery.id}`)
+  expect(opened.pathname).equals(`/players/${userIdOfGumbo(avery.id)}`)
   expect(opened.search).equals('')
   expect(await tabNames(guardian)).deep.equals(['Videos', 'Stats', 'Teams'])
   await guardian.m.tapOn({ text: 'Stats', role: 'tab', timeout: 15000 })

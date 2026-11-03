@@ -18,6 +18,7 @@ import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
+import type { MediaContext } from '../media/mediaContext'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { meRoutes } from './me'
@@ -171,9 +172,23 @@ describe('what the signed-in person may do', function () {
       })
       .execute()
 
+    const media: MediaContext = {
+      mediaRoot: '/tmp',
+      ffmpegPath: 'ffmpeg',
+      mediaSecret: 'secret',
+      publicUrl: 'http://127.0.0.1',
+      space: {
+        endpoint: '',
+        region: '',
+        bucket: '',
+        accessKeyId: '',
+        secretAccessKey: '',
+        pathStyle: true
+      }
+    }
     const app = express()
     app.use(withActor(db))
-    app.use('/api/v1', meRoutes(db))
+    app.use('/api/v1', meRoutes(db, undefined, media))
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server?.once('listening', resolve))

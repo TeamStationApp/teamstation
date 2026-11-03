@@ -29,7 +29,7 @@ describe('Routes for the person alone, asked by Tess', function () {
   before(async () => {
     w = await tessWorld({
       mountExtra: (app, { db, media }) => {
-        app.use('/api/v1', meRoutes(db, 'https://builds.example.test'))
+        app.use('/api/v1', meRoutes(db, 'https://builds.example.test', media))
         app.use(
           '/api/v1',
           deviceEventControlRoutes(db, {

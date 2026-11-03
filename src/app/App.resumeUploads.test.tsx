@@ -91,6 +91,7 @@ describe('the app at launch', () => {
     }
     proto.hasNotifications = async () => false
     proto.teams = async () => []
+    proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
     proto.seasons = async () => []
     proto.ownGroups = async () => []
     proto.follows = async () => []

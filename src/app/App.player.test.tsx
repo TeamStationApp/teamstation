@@ -49,6 +49,7 @@ describe('the full-screen player in the shell (U12)', () => {
     api.myRoles = async () => ({ teams: {}, guardianOf: [] })
     api.hasNotifications = async () => false
     api.teams = async () => []
+    api.home = async () => ({ teams: [], seasons: [], leagues: [] })
     api.follows = async () => []
     api.ownGroups = async () => []
     api.teamGames = async () => []
