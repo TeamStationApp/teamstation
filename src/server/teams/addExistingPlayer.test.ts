@@ -536,7 +536,7 @@ describe('adding a player who already exists', function () {
     expect((game.guests as Record<string, number[]>)[TEAM.herons]).deep.equals([
       gumbo['Freddie Freeman']
     ])
-    const availability = await gameAvailability(db!, game)
+    const availability = await gameAvailability(db!, game, { roster: false })
     expect(
       availability.guestPlayers.away.map(row => [
         row.shortName,

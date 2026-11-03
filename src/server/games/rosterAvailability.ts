@@ -15,15 +15,20 @@ import { teamRoster } from '../teams/teamRoster'
 import { withdrawnLabels } from '../users/nameBook'
 import { withdrawnUserId } from './withdrawn'
 
-export interface GameAvailability {
+/** Both teams' rosters only when asked for: `null` otherwise. */
+export interface GameAvailability<Rostered extends boolean = boolean> {
   guests: Guests
   unrostered: Unrostered
   guestPlayers: Record<Side, RosterEntry[]>
-  roster: Record<Side, RosterEntry[]>
+  roster: Rostered extends true ? Record<Side, RosterEntry[]> : null
 }
 
-/** Both membership and game-only identities are read through their surviving accounts. */
-export async function gameAvailability(
+/**
+ * Both membership and game-only identities are read through their surviving
+ * accounts. A reader that shows the game, not its lineups, passes
+ * `roster: false` and reads neither team's roster.
+ */
+export async function gameAvailability<Rostered extends boolean>(
   db: Kysely<Database>,
   game: {
     id: string
@@ -33,8 +38,9 @@ export async function gameAvailability(
     unrostered: unknown
     currentPlay: unknown
     pregame?: unknown
-  }
-): Promise<GameAvailability> {
+  },
+  options: { roster: Rostered }
+): Promise<GameAvailability<Rostered>> {
   const guests = storedGuests(game.guests, teamsOfRow(game))
   const unrostered = storedUnrostered(game.unrostered, teamsOfRow(game))
   const all = [
@@ -151,9 +157,16 @@ export async function gameAvailability(
     guests[side] = [...new Set(guests[side].map(resolve))]
     unrostered[side] = [...new Set(unrostered[side].map(resolve))]
   }
-  const [away, home] = await Promise.all([
-    teamRoster(db, undefined, game.away_team_id),
-    teamRoster(db, undefined, game.home_team_id)
-  ])
-  return { guests, unrostered, guestPlayers, roster: { away, home } }
+  const roster = options.roster
+    ? await Promise.all([
+        teamRoster(db, undefined, game.away_team_id),
+        teamRoster(db, undefined, game.home_team_id)
+      ]).then(([away, home]) => ({ away, home }))
+    : null
+  return {
+    guests,
+    unrostered,
+    guestPlayers,
+    roster: roster as GameAvailability<Rostered>['roster']
+  }
 }

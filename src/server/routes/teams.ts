@@ -699,7 +699,9 @@ export function teamRoutes(
         actor == null || nonMemberView
           ? undefined
           : await givenRolesOnTeams(db, [game.away_team_id, game.home_team_id])
-      const availability = await gameAvailability(db, game)
+      const availability = await gameAvailability(db, game, {
+        roster: false
+      })
       const answer = {
         id: game.id,
         umpires: await gameUmpires(db, game.id, media),

@@ -2143,7 +2143,7 @@ describe("saving a side's lineup (U8)", function () {
           .selectAll()
           .where('id', '=', games.batted)
           .executeTakeFirstOrThrow()
-        const available = await gameAvailability(db!, row)
+        const available = await gameAvailability(db!, row, { roster: true })
         const reconciled = reconcileRoster(
           setupOf(state),
           state.gameData.teams,

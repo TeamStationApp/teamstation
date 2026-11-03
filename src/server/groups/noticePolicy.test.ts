@@ -1075,9 +1075,9 @@ describe('adds made with a notice', function () {
       .where('id', '=', started)
       .executeTakeFirstOrThrow()
     expect(
-      (await gameAvailability(db!, game_)).guestPlayers.away.map(
-        row => row.shortName
-      )
+      (
+        await gameAvailability(db!, game_, { roster: false })
+      ).guestPlayers.away.map(row => row.shortName)
     ).includes(`${herons} B`)
     const book = (await gameNames(db!, [started])).get(started)!
     expect(book.nameOf(gumbo['Tony Kemp'])).equals(`${herons} B`)
@@ -2598,9 +2598,9 @@ describe('adds made with a notice', function () {
           .selectAll()
           .where('id', '=', gameId)
           .executeTakeFirstOrThrow()
-        const names = (await gameAvailability(db!, row)).guestPlayers.home.map(
-          guest => guest.shortName
-        )
+        const names = (
+          await gameAvailability(db!, row, { roster: false })
+        ).guestPlayers.home.map(guest => guest.shortName)
         expect(names).deep.equals([`Pool ${format[0]}`])
         const books = await booksOver(
           db!,
@@ -3651,12 +3651,14 @@ describe('adds made with a notice', function () {
       .selectAll()
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
-    const [guest] = (await gameAvailability(db!, row)).guestPlayers.home
+    const [guest] = (await gameAvailability(db!, row, { roster: false }))
+      .guestPlayers.home
     expect(guest.userId).not.equals(ids['Hidden Guest'])
     // Not made from the gumbo id: before the cutover that is the account.
     expect(guest.userId).not.equals(userIdOfGumbo(gumbo['Hidden Guest']))
     expect(
-      (await gameAvailability(db!, row)).guestPlayers.home[0].userId
+      (await gameAvailability(db!, row, { roster: false })).guestPlayers.home[0]
+        .userId
     ).equals(guest.userId)
     expect(guest.bats).equals(null)
     expect(guest.throws).equals(null)

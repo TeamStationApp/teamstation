@@ -91,7 +91,10 @@ import {
   createGuestPlayer,
   renameGuestPlayer
 } from '../games/guestPlayers'
-import { gameAvailability } from '../games/rosterAvailability'
+import {
+  type GameAvailability,
+  gameAvailability
+} from '../games/rosterAvailability'
 import { setRostered } from '../games/unroster'
 import { publicNames } from '../groups/playerNamePrivacy'
 import { cleanBody } from '../jsonBody'
@@ -588,7 +591,11 @@ async function saveSide(
       const context =
         (await contextOf(trx, gameId, game, stored)) ??
         (await startingContext(trx, gameId, game, sees))
-      const availability = await gameAvailability(trx, { id: gameId, ...game })
+      const availability = await gameAvailability(
+        trx,
+        { id: gameId, ...game },
+        { roster: true }
+      )
       return {
         stored,
         context,
@@ -731,7 +738,7 @@ export async function startingContext(
     .selectAll()
     .where('id', '=', gameId)
     .executeTakeFirstOrThrow()
-  const availability = await gameAvailability(db, gameRow)
+  const availability = await gameAvailability(db, gameRow, { roster: true })
   const rows = await db
     .selectFrom('teams')
     .select(['id', 'name', 'logo_path', 'default_lineup'])
@@ -829,7 +836,7 @@ function sideActions(
   held: boolean,
   roster: readonly RosterEntry[],
   guests: readonly number[],
-  availability: Awaited<ReturnType<typeof gameAvailability>>
+  availability: GameAvailability<true>
 ): ScoringAction[] {
   // Who this side fields, read as the app reads it to build this body: with
   // the setup and who has played, or no body could ever be saved.

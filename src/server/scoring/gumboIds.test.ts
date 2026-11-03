@@ -277,14 +277,18 @@ describe('independent account and scoring identities', function () {
     expect(rows).length(1)
     expect(rows[0]).includes({ userId: userIdOfGumbo(ids[0]), pa: 1, h: 1 })
     expect(await statRows(db, { userId: userIdOfGumbo(101) })).length(0)
-    const available = await gameAvailability(db, {
-      id: 'gam_demo',
-      home_team_id: 'tem_home',
-      away_team_id: 'tem_away',
-      guests: { away: [101], home: [] },
-      unrostered: { away: [101], home: [] },
-      currentPlay: null
-    })
+    const available = await gameAvailability(
+      db,
+      {
+        id: 'gam_demo',
+        home_team_id: 'tem_home',
+        away_team_id: 'tem_away',
+        guests: { away: [101], home: [] },
+        unrostered: { away: [101], home: [] },
+        currentPlay: null
+      },
+      { roster: false }
+    )
     expect(available.guests.away).deep.equals([101])
     expect(available.unrostered.away).deep.equals([101])
     expect(available.guestPlayers.away[0]).includes({
