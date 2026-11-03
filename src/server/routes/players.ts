@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
 import { birthMonthText } from '../../common/age'
 import {
@@ -366,7 +366,8 @@ export function playerRoutes(
           'games.season_id as seasonId',
           'games.ingest_status as ingestStatus'
         ])
-        .where('events.id', 'in', eventIds)
+        // One array parameter: a person's plays can outnumber a statement's 65535.
+        .where(sql<boolean>`events.id = any(${eventIds}::text[])`)
         .where('events.hidden', '=', false)
         .where('events.startTime', 'is not', null)
         .$if(withdrawn.length > 0, query =>
