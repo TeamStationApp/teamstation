@@ -10,6 +10,7 @@ import {
   buildIos,
   compileAndroid,
   releaseIos,
+  seatEnvironment,
   setup,
   signAndroid
 } from '../../Masonfile'
@@ -298,16 +299,19 @@ describe('TeamStation pipeline Masonfile', () => {
         assert.equal(options?.format, 'YYMMDDCC')
         assert.equal(options?.timeZone, 'America/Los_Angeles')
       },
-      parallel(name, members, options) {
-        assert.equal(name, 'build')
-        assert.equal(options?.failFast, false)
-        Object.assign(stages, members)
+      parallel() {
+        assert.fail('the build stages belong to the build workflow')
       },
       workflow(name, options, declare) {
         const recorded: Record<string, unknown> = { options }
         declare({
           stage(stageName, stageOptions) {
             recorded[stageName] = stageOptions
+          },
+          parallel(groupName, members, groupOptions) {
+            assert.equal(groupName, 'build')
+            assert.equal(groupOptions?.failFast, false)
+            Object.assign(stages, members)
           }
         })
         workflows[name] = recorded
@@ -319,7 +323,7 @@ describe('TeamStation pipeline Masonfile', () => {
       tools?: { node: string; xcode: string; rust: string }
       apple: { distribution: string; app: string }
       checkout?: boolean | { depth: number }
-      when?: { branch?: string[] }
+      when?: { branch?: string[]; params?: Record<string, string> }
     }>
     const android = stages.android as Array<{
       name: string
@@ -344,8 +348,20 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.equal(ios[1]?.on.type, 'macos-arm64')
     assert.equal(ios[1]?.apple.distribution, 'appStore')
     assert.deepEqual(ios[1]?.checkout, { depth: 1 })
-    assert.deepEqual(ios[1]?.when, { branch: ['master'] })
-    assert.deepEqual(workflows, {})
+    assert.deepEqual(ios[1]?.when, {
+      branch: ['master'],
+      params: { seat: 'production' }
+    })
+    assert.deepEqual(Object.keys(workflows), ['build'])
+    assert.deepEqual(workflows.build?.options, {
+      params: {
+        seat: {
+          type: 'choice',
+          choices: ['production', '1', '2', '3', '4', '5', '6', '7', '8'],
+          default: 'production'
+        }
+      }
+    })
     assert.equal(android[0]?.name, 'compile')
     assert.equal(android[0]?.on.type, 'do-linux')
     assert.equal(android[0]?.tools.rust, '1.98.0')
@@ -363,10 +379,15 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.deepEqual(android[1]?.publishes, ['app.teamstation.app'])
     const commands: string[] = []
     const ctx = {
+      run: { branch: 'master', params: { seat: 'production' } },
       async sh(
         command: string,
         options?: {
-          env?: { MASON_BUILD_NUMBER?: string; MASON_APP_VERSION?: string }
+          env?: {
+            MASON_BUILD_NUMBER?: string
+            MASON_APP_VERSION?: string
+            TS_API_BASE_URL?: string
+          }
         }
       ) {
         commands.push(command)
@@ -374,6 +395,8 @@ describe('TeamStation pipeline Masonfile', () => {
           commands.push(`build-number:${options.env.MASON_BUILD_NUMBER}`)
         if (options?.env?.MASON_APP_VERSION != null)
           commands.push(`app-version:${options.env.MASON_APP_VERSION}`)
+        if (options?.env?.TS_API_BASE_URL != null)
+          commands.push(`api:${options.env.TS_API_BASE_URL}`)
         return { code: 0, stdout: '', stderr: '' }
       },
       getBuildNumber(key: string) {
@@ -407,13 +430,15 @@ describe('TeamStation pipeline Masonfile', () => {
           version?: string
           buildNumber?: string
           xcargs?: string[]
-          env?: { CARGO_HOME?: string }
+          env?: { CARGO_HOME?: string; TS_API_BASE_URL?: string }
         }) {
           commands.push(
             `archive:${options.scheme}:${options.version ?? ''}:${options.buildNumber ?? ''}`
           )
           commands.push(`xcargs:${(options.xcargs ?? []).join(' ')}`)
           commands.push(`cargo:${options.env?.CARGO_HOME ?? ''}`)
+          if (options.env?.TS_API_BASE_URL != null)
+            commands.push(`api:${options.env.TS_API_BASE_URL}`)
           return {
             archive: 'build/TeamStation.xcarchive',
             ipa: 'build/TeamStation.ipa',
@@ -461,6 +486,62 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.match(log, /teamstation-sign-release-apk/)
     assert.match(log, /save:ios-ipa/)
     assert.match(log, /save:android-apk/)
+    // A production build leaves the app's own server alone.
+    assert.equal(log.includes('api:'), false)
+  })
+
+  it('points both platforms at a development seat', async () => {
+    const apis: string[] = []
+    const ctx = {
+      run: { branch: 'paul/example', params: { seat: '3' } },
+      async sh(
+        _command: string,
+        options?: { env?: { TS_API_BASE_URL?: string } }
+      ) {
+        if (options?.env?.TS_API_BASE_URL != null)
+          apis.push(`gradle:${options.env.TS_API_BASE_URL}`)
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      getBuildNumber() {
+        return '26110301'
+      },
+      async stash() {},
+      artifacts: {
+        async save() {}
+      },
+      async publish() {},
+      apple: {
+        async archive(options: { env?: { TS_API_BASE_URL?: string } }) {
+          apis.push(`xcode:${options.env?.TS_API_BASE_URL ?? ''}`)
+          return {
+            archive: 'build/TeamStation.xcarchive',
+            ipa: 'build/TeamStation.ipa',
+            dsyms: 'build/TeamStation.dSYM'
+          }
+        }
+      }
+    }
+    await buildIos(ctx)
+    await compileAndroid(ctx)
+    assert.deepEqual(apis, [
+      'xcode:https://develop3.teamstation.app/api/v1',
+      'gradle:https://develop3.teamstation.app/api/v1'
+    ])
+  })
+
+  it('names no server for production or a run with no seat, and refuses an unknown one', () => {
+    const seated = (
+      params?: Record<string, string | number | boolean>
+    ): Record<string, string> =>
+      seatEnvironment({ run: { branch: 'master', params } })
+    assert.deepEqual(seated({ seat: 'production' }), {})
+    assert.deepEqual(seated(), {})
+    assert.deepEqual(seated({ seat: '8' }), {
+      TS_APP_ORIGIN: 'https://develop8.teamstation.app',
+      TS_API_BASE_URL: 'https://develop8.teamstation.app/api/v1'
+    })
+    assert.throws(() => seated({ seat: '9' }), /Unknown seat 9/)
+    assert.throws(() => seated({ seat: 3 }), /Unknown seat 3/)
   })
 
   it('installs with npm when Socket has no quota or no token', async () => {
@@ -477,6 +558,7 @@ describe('TeamStation pipeline Masonfile', () => {
         }
         return { code: 0, stdout: '', stderr: '' }
       },
+      run: { branch: 'master' },
       getBuildNumber() {
         return '26103101'
       },
@@ -535,6 +617,7 @@ describe('TeamStation pipeline Masonfile', () => {
       let archivedVersion = ''
       await buildIos({
         workspace,
+        run: { branch: 'master' },
         async sh() {
           return { code: 0, stdout: '', stderr: '' }
         },

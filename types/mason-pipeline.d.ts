@@ -40,7 +40,11 @@ declare module '@mason/types' {
   }
   export interface Stage {
     workspace?: string
-    run: { branch: string }
+    run: {
+      branch: string
+      /** The run's workflow parameters, as the master checked them. */
+      params?: Readonly<Record<string, string | number | boolean>>
+    }
     sh: (command: string, options?: CommandOptions) => Promise<CommandResult>
     getBuildNumber: (key: string) => string
     stash: (name: string, paths: string | string[]) => Promise<void>
@@ -98,12 +102,34 @@ declare module '@mason/types' {
     cache?: Array<{ key: string; paths: string[] }>
     apple?: { distribution: string; app: string }
     checkout?: boolean | { depth?: number }
-    /** Skip the stage unless every listed field matches. `branch` entries are globs. */
-    when?: { branch?: string[] }
+    /**
+     * Skip the stage unless every listed field matches. `branch` entries are
+     * globs; `params` must equal the run's parameters.
+     */
+    when?: {
+      branch?: string[]
+      params?: Record<string, string | number | boolean>
+    }
     run: (ctx: Stage) => Promise<void>
+  }
+  export interface ParallelOptions {
+    failFast?: boolean
   }
   export interface WorkflowBuilder {
     stage: (name: string, options: StageOptions) => void
+    parallel: (
+      name: string,
+      members: Record<string, StageOptions | StageOptions[]>,
+      options?: ParallelOptions
+    ) => unknown
+  }
+  export interface ChoiceParam {
+    type: 'choice'
+    choices: string[]
+    default?: string
+  }
+  export interface WorkflowOptions {
+    params?: Record<string, ChoiceParam>
   }
   export interface Setup {
     apiVersion: (version: 1) => void
@@ -114,11 +140,11 @@ declare module '@mason/types' {
     parallel: (
       name: string,
       members: Record<string, StageOptions | StageOptions[]>,
-      options?: { failFast?: boolean }
+      options?: ParallelOptions
     ) => unknown
     workflow: (
       name: string,
-      options: Record<string, unknown>,
+      options: WorkflowOptions,
       declare: (workflow: WorkflowBuilder) => void
     ) => void
   }

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
-import type { Setup, Stage } from '@mason/types'
+import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 
 // TeamStation for iOS on the Nomac pool and for Android on the DigitalOcean
 // Linux pool. The iOS archive signs an ad hoc build with the master's Apple
@@ -11,6 +11,11 @@ import type { Setup, Stage } from '@mason/types'
 // skipped. The Android release is compiled on Linux, then signed on the node
 // labelled android-signing, which provides teamstation-sign-release-apk, and
 // published from there. One platform failing leaves the other running.
+//
+// The `seat` parameter picks the server the app talks to: `production`, the
+// default and what every push builds, or a development seat N, which points
+// the app at https://developN.teamstation.app. Only a production build goes
+// to TestFlight.
 
 const APP = 'app.teamstation.app'
 const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
@@ -29,7 +34,25 @@ const versionPattern = /^[0-9]+(\.[0-9]+){0,2}$/
 export function setup(m: Setup): void {
   m.apiVersion(1)
   m.buildNumber(APP, { format: 'YYMMDDCC', timeZone: 'America/Los_Angeles' })
-  m.parallel(
+  m.workflow(
+    'build',
+    {
+      params: {
+        seat: {
+          type: 'choice',
+          choices: ['production', '1', '2', '3', '4', '5', '6', '7', '8'],
+          default: 'production'
+        }
+      }
+    },
+    w => {
+      buildStages(w)
+    }
+  )
+}
+
+function buildStages(w: WorkflowBuilder): void {
+  w.parallel(
     'build',
     {
       ios: [
@@ -59,7 +82,7 @@ export function setup(m: Setup): void {
           // package.json is the short version. A shallow checkout reads it;
           // this stage re-signs the stashed IPA and does not compile.
           checkout: { depth: 1 },
-          when: { branch: ['master'] },
+          when: { branch: ['master'], params: { seat: 'production' } },
           apple: { distribution: 'appStore', app: APP },
           run: releaseIos
         }
@@ -105,6 +128,25 @@ export function setup(m: Setup): void {
     },
     { failFast: false }
   )
+}
+
+/**
+ * The environment that points the app at the run's seat. Babel inlines
+ * `TS_API_BASE_URL` into the bundle (`src/app/native/config.ts`), so a
+ * production build sets nothing and keeps the app's own default.
+ */
+export function seatEnvironment(
+  ctx: Pick<Stage, 'run'>
+): Record<string, string> {
+  const seat = ctx.run.params?.seat ?? 'production'
+  if (seat === 'production') return {}
+  if (typeof seat !== 'string' || !/^[1-8]$/.test(seat)) {
+    throw new Error(`Unknown seat ${String(seat)}`)
+  }
+  return {
+    TS_APP_ORIGIN: `https://develop${seat}.teamstation.app`,
+    TS_API_BASE_URL: `https://develop${seat}.teamstation.app/api/v1`
+  }
 }
 
 function workspacePath(ctx: Stage, name: string): string {
@@ -154,6 +196,11 @@ export async function buildIos(ctx: Stage): Promise<void> {
   const build = ctx.getBuildNumber(APP)
   const version = appVersion(ctx)
   const rustRoot = `${process.env.HOME}/.mason/tools/rust/1.98.0`
+  const seat = seatEnvironment(ctx)
+  const linkSettings = seat.TS_APP_ORIGIN == null ? [] : [
+    `TS_APP_LINK_HOST=${new URL(seat.TS_APP_ORIGIN).host}`,
+    'TS_APP_ENTITLEMENTS=TeamStation/TeamStation.entitlements'
+  ]
   const archived = await ctx.apple.archive({
     workspace: 'ios/TeamStation.xcworkspace',
     scheme: 'TeamStation',
@@ -162,11 +209,12 @@ export async function buildIos(ctx: Stage): Promise<void> {
     buildNumber: build,
     // Xcode 27 treats a Swift explicit-module compile that exits 0 with no
     // output as a failed archive. Turning explicit modules off avoids it.
-    xcargs: ['SWIFT_ENABLE_EXPLICIT_MODULES=NO'],
+    xcargs: ['SWIFT_ENABLE_EXPLICIT_MODULES=NO', ...linkSettings],
     env: {
       CARGO_HOME: `${rustRoot}/cargo`,
       RUSTUP_HOME: `${rustRoot}/rustup`,
-      PATH: `${rustRoot}/cargo/bin:${process.env.PATH ?? ''}`
+      PATH: `${rustRoot}/cargo/bin:${process.env.PATH ?? ''}`,
+      ...seat
     }
   })
   if (archived.ipa == null) throw new Error('No IPA was exported')
@@ -251,6 +299,7 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
       cwd: 'android',
       env: {
         ...rustEnv,
+        ...seatEnvironment(ctx),
         MASON_BUILD_NUMBER: build,
         MASON_APP_VERSION: version
       }
