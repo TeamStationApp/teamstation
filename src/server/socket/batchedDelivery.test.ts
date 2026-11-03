@@ -8,6 +8,7 @@ import { Pool } from 'pg'
 import { WebSocket } from 'ws'
 
 import { openScratch, type Scratch } from '../../../tools/dbLoad/testSupport'
+import { GAME_SOCKET_PROTOCOL } from '../../common/gameSocket'
 import { makeId } from '../../common/ids'
 import type { GameScope } from '../access'
 import { createSession, revokeSession } from '../auth/sessions'
@@ -346,7 +347,10 @@ describe('authorizing a delivery in one set of reads', function () {
       const gone = await connect(removed.token)
       const still = await connect(staying.token)
       for (const each of [out, gone, still])
-        await each.ask({ type: 'subscribe', gameId: game }, 'sub')
+        await each.ask(
+          { type: 'subscribe', gameId: game, protocol: GAME_SOCKET_PROTOCOL },
+          'sub'
+        )
       const changes = (frames: Array<Record<string, unknown>>): number =>
         frames.filter(frame => frame.type === 'change').length
 
@@ -371,7 +375,10 @@ describe('authorizing a delivery in one set of reads', function () {
 
     it('runs the same statements to deliver to one socket as to many', async function () {
       const first = await connect(members[0].token)
-      await first.ask({ type: 'subscribe', gameId: game }, 'sub')
+      await first.ask(
+        { type: 'subscribe', gameId: game, protocol: GAME_SOCKET_PROTOCOL },
+        'sub'
+      )
       const changes = (frames: Array<Record<string, unknown>>): number =>
         frames.filter(frame => frame.type === 'change').length
       statements.length = 0
@@ -384,7 +391,10 @@ describe('authorizing a delivery in one set of reads', function () {
       )
       await Promise.all(
         rest.map(async each => {
-          await each.ask({ type: 'subscribe', gameId: game }, 's')
+          await each.ask(
+            { type: 'subscribe', gameId: game, protocol: GAME_SOCKET_PROTOCOL },
+            's'
+          )
         })
       )
       statements.length = 0

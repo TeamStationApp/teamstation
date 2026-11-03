@@ -7,7 +7,10 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { Pool } from 'pg'
 import WebSocket from 'ws'
 
-import type { GameSocketReply } from '../../common/gameSocket'
+import {
+  GAME_SOCKET_PROTOCOL,
+  type GameSocketReply
+} from '../../common/gameSocket'
 import { userIdOfGumbo } from '../../common/userId'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import {
@@ -92,7 +95,12 @@ describe('private socket access follows approved game revisions', function () {
       client.once('error', reject)
     })
     client.send(
-      JSON.stringify({ type: 'subscribe', gameId: id, id: `subscribe-${user}` })
+      JSON.stringify({
+        type: 'subscribe',
+        gameId: id,
+        id: `subscribe-${user}`,
+        protocol: GAME_SOCKET_PROTOCOL
+      })
     )
     await until(() => frames.some(frame => frame.type === 'subscribed')).catch(
       (error: unknown) => {
