@@ -9,7 +9,10 @@ import { Client, Pool } from 'pg'
 import { notFound } from '../../common/errors'
 import { migrations } from '../../migrate/migrations'
 import { migrateDown, migrateUp } from '../../migrate/runner'
-import { testDatabaseUrl } from '../../migrate/testDatabase'
+import {
+  dropScratchDatabase,
+  testDatabaseUrl
+} from '../../migrate/testDatabase'
 import { atomic } from '../db/atomic'
 import { type Database, makeDatabase } from '../db/database'
 import { errorHandler } from '../middleware/withErrors'
@@ -108,7 +111,7 @@ describe('the sync clock', function () {
     )
     await listener?.end()
     await db?.destroy()
-    await admin.query(`drop database if exists ${name} with (force)`)
+    await dropScratchDatabase(admin, name)
     await admin.end()
   })
 
@@ -143,7 +146,7 @@ describe('the sync clock', function () {
       expect(rows).deep.equals([])
     } finally {
       await pool.end()
-      await admin.query(`drop database if exists ${scratch} with (force)`)
+      await dropScratchDatabase(admin, scratch)
     }
   })
 
