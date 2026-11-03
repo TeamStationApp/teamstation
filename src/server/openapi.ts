@@ -1719,6 +1719,243 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       schemas: {
         ...gumboSchemas,
+        HistoricalBox: {
+          type: 'object',
+          required: ['away', 'home', 'from'],
+          properties: {
+            ...Object.fromEntries(
+              ['away', 'home'].map(side => [
+                side,
+                {
+                  type: 'object',
+                  required: [
+                    'name',
+                    'innings',
+                    'runs',
+                    'hits',
+                    'errors',
+                    'batting',
+                    'pitching'
+                  ],
+                  properties: {
+                    name: { type: 'string' },
+                    innings: {
+                      type: 'array',
+                      items: { type: ['integer', 'null'] }
+                    },
+                    runs: { type: 'integer' },
+                    hits: { type: ['integer', 'null'] },
+                    errors: { type: ['integer', 'null'] },
+                    batting: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: [
+                          'id',
+                          'name',
+                          'ab',
+                          'r',
+                          'h',
+                          'rbi',
+                          'bb',
+                          'k',
+                          'sub',
+                          'current'
+                        ],
+                        properties: {
+                          id: { type: 'integer' },
+                          name: { type: 'string' },
+                          sub: { type: 'boolean' },
+                          current: { type: 'boolean' },
+                          ...Object.fromEntries(
+                            ['ab', 'r', 'h', 'rbi', 'bb', 'k'].map(key => [
+                              key,
+                              { type: 'integer' }
+                            ])
+                          )
+                        }
+                      }
+                    },
+                    pitching: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: [
+                          'id',
+                          'name',
+                          'outs',
+                          'ip',
+                          'h',
+                          'r',
+                          'er',
+                          'bb',
+                          'k',
+                          'pc',
+                          'current'
+                        ],
+                        properties: {
+                          id: { type: 'integer' },
+                          name: { type: 'string' },
+                          ip: { type: 'string' },
+                          current: { type: 'boolean' },
+                          pc: { type: ['integer', 'null'] },
+                          ...Object.fromEntries(
+                            ['outs', 'h', 'r', 'er', 'bb', 'k'].map(key => [
+                              key,
+                              { type: 'integer' }
+                            ])
+                          )
+                        }
+                      }
+                    }
+                  }
+                }
+              ])
+            ),
+            from: {
+              oneOf: [
+                { type: 'null' },
+                {
+                  type: 'object',
+                  required: ['inning', 'half'],
+                  properties: {
+                    inning: { type: 'integer' },
+                    half: { type: 'string', enum: ['top', 'bottom'] }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        GameStatistics: {
+          type: 'object',
+          required: ['version', 'board', 'line', 'initial', 'boxes', 'source'],
+          properties: {
+            version: { type: 'string' },
+            initial: {
+              oneOf: [
+                { type: 'null' },
+                { $ref: '#/components/schemas/HistoricalBox' }
+              ]
+            },
+            board: {
+              type: 'object',
+              required: ['version', 'steps'],
+              properties: {
+                version: { type: 'string' },
+                steps: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['at', 'state'],
+                    properties: {
+                      at: { type: 'number' },
+                      state: {
+                        type: 'object',
+                        description:
+                          'The scoreboard state, including publisher overrides, at this wall-clock millisecond.'
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            line: {
+              type: 'object',
+              required: ['version', 'teams', 'steps'],
+              properties: {
+                version: { type: 'string' },
+                teams: {
+                  type: 'object',
+                  required: ['away', 'home'],
+                  properties: {
+                    away: { type: 'string' },
+                    home: { type: 'string' }
+                  }
+                },
+                steps: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['at', 'line'],
+                    properties: {
+                      at: { type: 'number' },
+                      line: {
+                        type: 'object',
+                        required: ['away', 'home'],
+                        properties: Object.fromEntries(
+                          ['away', 'home'].map(side => [
+                            side,
+                            {
+                              type: 'object',
+                              required: ['innings', 'r', 'h', 'e'],
+                              properties: {
+                                innings: {
+                                  type: 'array',
+                                  items: { type: ['integer', 'null'] }
+                                },
+                                r: { type: 'integer' },
+                                h: { type: ['integer', 'null'] },
+                                e: { type: ['integer', 'null'] }
+                              }
+                            }
+                          ])
+                        )
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            boxes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['at', 'position', 'box', 'message'],
+                properties: {
+                  at: { type: 'number' },
+                  message: { type: ['string', 'null'] },
+                  box: {
+                    oneOf: [
+                      { type: 'null' },
+                      { $ref: '#/components/schemas/HistoricalBox' }
+                    ]
+                  },
+                  position: {
+                    oneOf: [
+                      { type: 'null' },
+                      {
+                        type: 'object',
+                        required: ['atBatIndex', 'actionIndex'],
+                        properties: {
+                          atBatIndex: { type: 'integer' },
+                          actionIndex: { type: 'integer' }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            source: {
+              type: 'object',
+              required: ['plays', 'currentPlay', 'generation'],
+              properties: {
+                plays: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/GumboPlay' }
+                },
+                currentPlay: {
+                  oneOf: [
+                    { type: 'null' },
+                    { $ref: '#/components/schemas/GumboCurrentPlay' }
+                  ]
+                },
+                generation: { type: 'integer' }
+              }
+            }
+          }
+        },
         BattingRow: battingSchema,
         PitchingRow: pitchingSchema,
         StandingsRow: standingsSchema,
@@ -5769,7 +6006,7 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/games/{gameId}/box-score': {
         get: {
-          summary: "A game's batting and pitching lines",
+          summary: "A game's totals or historical playback statistics",
           description:
             'Added up from the stored stat lines, one row per player per ' +
             "game. The stats builder writes them whenever the game's plays " +
@@ -5785,15 +6022,76 @@ export function openApiDocument(version: string): OpenApiDocument {
             'still names him shows the line instead; every other line has ' +
             '`standsFor` null. `gumboIds` are the ids a line goes by in the ' +
             "game's plays. Anybody signed in " +
-            'who is a member of neither team is answered 403 `membersOnly`.',
+            'who is a member of neither team is answered 403 `membersOnly`. ' +
+            '`view=playback` returns one coherent historical scoring revision: ' +
+            '`board` (version and timestamped scoreboard states), `line` ' +
+            '(version, team names and timestamped inning lines), `initial` ' +
+            '(the native pregame box or null), `boxes` (timestamped player ' +
+            'statistics or an availability message), and `source` (authorized ' +
+            'plays, currentPlay and generation for replay). Imported plays ' +
+            'are supported. Missing detail does not hide available inning ' +
+            'scores. Native box steps also identify their atBatIndex and ' +
+            'actionIndex so replay can distinguish actions at the same time. ' +
+            'Historical bounds select only steps already in effect; a window ' +
+            'includes its predecessor. Source documents remain whole for replay. ' +
+            'No query preserves the totals response used by installed clients.',
           security: [{ bearer: [] }],
-          parameters: [gameIdParam],
+          parameters: [
+            gameIdParam,
+            {
+              name: 'view',
+              in: 'query',
+              required: false,
+              description:
+                'Omitted: final/current totals. playback: full historical scoring revision. board or line: only that timeline for video overlays.',
+              schema: { type: 'string', enum: ['playback', 'board', 'line'] }
+            },
+            ...['at', 'from', 'to'].map(name => ({
+              name,
+              in: 'query',
+              required: false,
+              description:
+                'Optional non-negative integer wall-clock milliseconds; requires a historical view. at excludes from/to; to must be >= from. Omitted bounds return the whole timeline.',
+              schema: { type: 'integer', minimum: 0 }
+            }))
+          ],
           responses: {
             200: {
               description:
                 'A line per batter and pitcher, with rates, and `stats` for ' +
-                "the builder's status"
+                "the builder's status; view=playback returns the historical scoring revision",
+              content: {
+                'application/json': {
+                  schema: {
+                    anyOf: [
+                      { $ref: '#/components/schemas/GameStatistics' },
+                      {
+                        $ref: '#/components/schemas/GameStatistics/properties/board'
+                      },
+                      {
+                        $ref: '#/components/schemas/GameStatistics/properties/line'
+                      },
+                      {
+                        type: 'object',
+                        required: ['batting', 'pitching', 'stats'],
+                        properties: {
+                          batting: {
+                            type: 'array',
+                            items: { $ref: '#/components/schemas/BattingRow' }
+                          },
+                          pitching: {
+                            type: 'array',
+                            items: { $ref: '#/components/schemas/PitchingRow' }
+                          },
+                          stats: { type: 'object' }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
             },
+            400: errorResponse,
             403: errorResponse,
             404: errorResponse
           }
