@@ -238,6 +238,12 @@ interface Setup {
   groups?: () => Promise<PublicGroup[]>
   teams?: () => Promise<TeamSummary[]>
   seasons?: () => Promise<SeasonSummary[]>
+  /** Home's three lists. When absent, they are built from teams, seasons, groups, and follows. */
+  home?: () => Promise<{
+    teams: unknown[]
+    seasons: unknown[]
+    leagues: unknown[]
+  }>
   recent?: () => Promise<SeasonGame | null>
   live?: () => Promise<LiveNow[]>
   videos?: GameDetail['videos']
@@ -249,6 +255,7 @@ interface Setup {
 interface Calls {
   teams: TeamSummary[]
   seasons: SeasonSummary[]
+  groups: Array<{ kind: string; id: string }>
   games: Array<{ gameId: string; title: string; options?: unknown }>
   players: unknown[][]
   guardedAsked: number
@@ -260,6 +267,7 @@ async function mount(setup: Setup = {}): Promise<Calls> {
   const calls: Calls = {
     teams: [],
     seasons: [],
+    groups: [],
     games: [],
     players: [],
     guardedAsked: 0,
@@ -275,6 +283,59 @@ async function mount(setup: Setup = {}): Promise<Calls> {
     follows: setup.follows ?? (async () => []),
     teams: setup.teams ?? (async () => []),
     seasons: setup.seasons ?? (async () => []),
+    home:
+      setup.home ??
+      (async () => {
+      const [loadedTeams, loadedSeasons, groups, follows] = await Promise.all([
+        (setup.teams ?? (async () => []))(),
+        (setup.seasons ?? (async () => []))(),
+        setup.groups == null ? [] : setup.groups(),
+        setup.follows == null ? [] : setup.follows()
+      ])
+      const member = <T extends { id: string }>(
+        row: T
+      ): T & { direct: true; source: 'member' } => ({
+        ...row,
+        direct: true,
+        source: 'member'
+      })
+      const follow = (
+        row: PublicGroup
+      ): PublicGroup & { direct: true; source: 'follow' } => ({
+        ...row,
+        direct: true,
+        source: 'follow'
+      })
+      const teamIds = new Set(loadedTeams.map(row => row.id))
+      const seasonIds = new Set(loadedSeasons.map(row => row.id))
+      const ownLeagues = groups.filter(group => group.kind === 'league')
+      const leagueIds = new Set(ownLeagues.map(row => row.id))
+      return {
+        teams: [
+          ...loadedTeams.map(member),
+          ...follows
+            .filter(group => group.kind === 'team' && !teamIds.has(group.id))
+            .map(follow)
+        ],
+        seasons: [
+          ...loadedSeasons.map(member),
+          ...follows
+            .filter(
+              group => group.kind === 'season' && !seasonIds.has(group.id)
+            )
+            .map(follow)
+        ],
+        leagues: [
+          ...ownLeagues.map(member),
+          ...follows
+            .filter(
+              group => group.kind === 'league' && !leagueIds.has(group.id)
+            )
+            .map(follow)
+        ]
+      }
+    }),
+    cached: async () => undefined,
     recentGame: setup.recent ?? (async () => null),
     liveNow: setup.live ?? (async () => []),
     game: async (gameId: string) => {
@@ -307,7 +368,13 @@ async function mount(setup: Setup = {}): Promise<Calls> {
           onOpenGame={(gameId, title, options) =>
             calls.games.push({ gameId, title, options })
           }
-          onOpenGroup={setup.groups == null ? undefined : () => undefined}
+          onOpenGroup={
+            setup.groups == null
+              ? undefined
+              : ref => {
+                  calls.groups.push(ref)
+                }
+          }
           onOpenUmpireSchedule={
             setup.onOpenUmpireSchedule == null
               ? undefined
@@ -454,7 +521,7 @@ describe('the home screen', function () {
 
   it('shows what went wrong when the lists cannot be had', async function () {
     await mount({
-      teams: async () => {
+      home: async () => {
         throw new Error('The server answered 500')
       }
     })
@@ -464,7 +531,7 @@ describe('the home screen', function () {
 
   it('says it cannot load when the failure is not an Error', async function () {
     await mount({
-      seasons: async () => {
+      home: async () => {
         // eslint-disable-next-line @typescript-eslint/only-throw-error
         throw 'nope'
       }
@@ -506,7 +573,7 @@ describe('the home screen', function () {
   it('does not clear a group-loading error when the recent-game refresh recovers', async function () {
     clock = liveClock()
     await mount({
-      teams: async () => {
+      home: async () => {
         throw new Error('Teams unavailable')
       }
     })
@@ -552,9 +619,9 @@ describe('the home screen', function () {
     expect(page).includes('Spring')
 
     await press(labelled('Bay Stars, Sox · 5–6–1'))
-    expect(calls.teams).deep.equals([sox])
+    expect(calls.teams.map(row => row.id)).deep.equals(['tem_sox'])
     await press(labelled('Fall Ball 2025, 6 teams · 30 games · 12 videos'))
-    expect(calls.seasons).deep.equals([fall])
+    expect(calls.seasons.map(row => row.id)).deep.equals(['sea_fall'])
   })
 
   it('plays the recent game in its card, and opens it to watch or to the box score', async function () {
@@ -1037,25 +1104,27 @@ describe('the home screen’s players', function () {
   })
 
   it('reads nothing again when the shell hands over a new way to open a player', async function () {
-    const asked = { teams: 0, guarded: 0, recent: 0 }
+    const asked = { home: 0, guarded: 0, recent: 0 }
     const opened: string[] = []
     const client = {
       guardedPlayers: async () => {
         asked.guarded++
         return [guarded(7, 'Jordan P')]
       },
-      ownGroups: async () => [],
-      follows: async () => [],
-      teams: async () => {
-        asked.teams++
-        return [team('tem_hawks', 'Alta Hawks')]
+      home: async () => {
+        asked.home++
+        return {
+          teams: [team('tem_hawks', 'Alta Hawks')],
+          seasons: [],
+          leagues: []
+        }
       },
-      seasons: async () => [],
       recentGame: async () => {
         asked.recent++
         return null
       },
-      liveNow: async () => []
+      liveNow: async () => [],
+      cached: async () => undefined
     } as unknown as TeamStationClient
     const home = (which: string): React.ReactElement => (
       <ThemeProvider>
@@ -1084,7 +1153,7 @@ describe('the home screen’s players', function () {
         root!.render(home(which))
         await delay(10)
       })
-    expect(asked).deep.equals({ teams: 1, guarded: 1, recent: 1 })
+    expect(asked).deep.equals({ home: 1, guarded: 1, recent: 1 })
     // The newest one is the one a tap uses.
     await press(labelled('Jordan P'))
     expect(opened).deep.equals(['third'])
@@ -1204,7 +1273,9 @@ describe('a player opened from Home, through the app', function () {
             displayName: 'Demo Guardian',
             isAdmin: false
           }
-        : path.endsWith('/me/roles')
+        : path.endsWith('/me/home')
+          ? { teams: [], seasons: [], leagues: [] }
+          : path.endsWith('/me/roles')
           ? { teams: {}, guardianOf: [userIdOfGumbo(7)] }
           : url.endsWith('/users?guardedBy=me')
             ? [
@@ -1241,6 +1312,72 @@ describe('a player opened from Home, through the app', function () {
     expect(routePath(currentRoute())).equals(
       '/players/usr_1111111111111111111118'
     )
+  })
+})
+
+describe('home list window', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    window.localStorage.removeItem('home.listExpanded')
+  })
+
+  it('shows five rows, then More and Less, independently per section', async function () {
+    const teamNames = ['North', 'East', 'South', 'West', 'Harbor', 'Island']
+    const seasonNames = ['One', 'Two', 'Three', 'Four', 'Five', 'Six']
+    const calls = await mount({
+      teams: async () =>
+        teamNames.map((name, index) => team(`tem_${index}`, name)),
+      seasons: async () =>
+        seasonNames.map((name, index) => season(`sea_${index}`, `Spring ${name}`)),
+      groups: async () =>
+        seasonNames.map((name, index) => league(`lea_${index}`, `League ${name}`)),
+      follows: async () => [
+        asPublicGroup({
+          id: 'tem_follow',
+          kind: 'team',
+          name: 'Followed',
+          imageUrl: null,
+          locality: null
+        })
+      ]
+    })
+    const page = text()
+    expect(page).includes('Harbor')
+    expect(page).not.includes('Island')
+    expect(page).not.includes('Spring Six')
+    expect(page).not.includes('League Six')
+    expect(page).not.includes('Followed')
+    await press(labelled('More teams'))
+    expect(text()).includes('Island').and.includes('Followed')
+    expect(text()).not.includes('Spring Six')
+    await press(labelled('Less teams'))
+    expect(text()).not.includes('Island')
+    expect(text()).includes('Harbor')
+    await press(labelled('More seasons'))
+    expect(text()).includes('Spring Six')
+    expect(text()).not.includes('League Six')
+    expect(text()).not.includes('Island')
+    await press(labelled('More leagues'))
+    expect(text()).includes('League Six')
+    await press(labelled('North'))
+    expect(calls.teams.map(row => row.id)).deep.equals(['tem_0'])
+    await press(labelled('More teams'))
+    await press(labelled('Followed'))
+    expect(calls.groups).deep.equals([{ kind: 'team', id: 'tem_follow' }])
+  })
+
+  it('shows five teams and no More', async function () {
+    await mount({
+      teams: async () =>
+        ['North', 'East', 'South', 'West', 'Harbor'].map((name, index) =>
+          team(`tem_${index}`, name)
+        )
+    })
+    expect(text()).includes('Harbor')
+    expect(document.querySelector('[aria-label="More teams"]')).equals(null)
   })
 })
 

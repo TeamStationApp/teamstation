@@ -99,15 +99,18 @@ describe('a live game the phone read before it lost signal', function () {
 
   it('is not offered on Home offline: no Live now, and no Watch on the recent game', async function () {
     const client = phone(true)
-    client.teams = async () => [
-      asTeamSummary({
-        id: 'tem_sox',
-        name: 'Sox',
-        shortName: null,
-        logoPath: null,
-        logoUrl: null
-      })
-    ]
+    const sox = asTeamSummary({
+      id: 'tem_sox',
+      name: 'Sox',
+      shortName: null,
+      logoPath: null,
+      logoUrl: null
+    })
+    client.home = async () => ({
+      teams: [{ ...sox, direct: true, source: 'member' }],
+      seasons: [],
+      leagues: []
+    })
     client.seasons = async () => []
     client.recentGame = async () => streaming
     client.liveNow = async () => [

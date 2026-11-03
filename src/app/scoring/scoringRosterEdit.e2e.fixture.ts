@@ -273,7 +273,7 @@ export async function rosterEditFixture(
       next()
     })
     app.use(withAudit(db))
-    app.use('/api/v1', meRoutes(db))
+    app.use('/api/v1', meRoutes(db, undefined, media))
     app.use('/api/v1', playerRoutes(db, media))
     app.use('/api/v1', teamRoutes(db, media))
     app.use('/api/v1', groupRoutes(db, media))

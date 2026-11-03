@@ -27,6 +27,7 @@ describe('actual app Create Game navigation', () => {
       proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
       proto.hasNotifications = async () => false
       proto.teams = async () => []
+      proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
       proto.ownGroups = async () => []
       proto.relatedTeams = async () => [team('away', 'Demo Eagles')]
       proto.group = async ref =>

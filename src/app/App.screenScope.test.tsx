@@ -85,13 +85,10 @@ describe('the scope the visible route holds', () => {
     // marks the caching client offline and bypasses the scope's wait.
     api.chatConversations = async () => []
     api.chatLinks = async () => []
-    api.teams = async () => {
-      reads.push('teams')
-      return []
+    api.home = async () => {
+      reads.push('home')
+      return { teams: [], seasons: [], leagues: [] }
     }
-    api.seasons = async () => []
-    api.ownGroups = async () => []
-    api.follows = async () => []
     api.guardedPlayers = async () => []
     api.recentGame = async () => null
     api.liveNow = async () => []
@@ -151,19 +148,19 @@ describe('the scope the visible route holds', () => {
       acknowledge(socket, '3')
     })
     await settle(50)
-    expect(reads).deep.equals(['teams'])
+    expect(reads).deep.equals(['home'])
 
     await tab('Schedule')
     expect(scopeFrames(socket).at(-1)).deep.include({
       type: 'subscribe',
       scope: 'schedule'
     })
-    expect(reads).deep.equals(['teams'])
+    expect(reads).deep.equals(['home'])
     await act(async () => {
       acknowledge(socket, '3')
     })
     await settle(50)
-    expect(reads).deep.equals(['teams', 'games'])
+    expect(reads).deep.equals(['home', 'games'])
 
     const before = scopeFrames(socket).length
     await tab('Videos')
@@ -171,7 +168,7 @@ describe('the scope the visible route holds', () => {
     expect(scopeFrames(socket).slice(before)).deep.equals([
       { type: 'unsubscribe', scope: 'schedule', id: 'c4' }
     ])
-    expect(reads).deep.equals(['teams', 'games', 'games'])
+    expect(reads).deep.equals(['home', 'games', 'games'])
   })
 
   it('holds the event for a pushed game', async () => {
@@ -205,18 +202,14 @@ describe('the scope the visible route holds', () => {
     globalThis.fetch = (async (input: string) => {
       asked.push(input)
       // Refuse the scoped read, not unrelated shell or analytics requests.
-      if (!input.endsWith('/seasons'))
+      if (!input.endsWith('/me/home'))
         return new Response('{}', { status: 404 })
       return new Response('{"error":"unauthorized","message":"Sign in"}', {
         status: 401
       })
     }) as unknown as typeof fetch
-    // Seasons goes to the server, and the server refuses the session.
-    Object.defineProperty(
-      TeamStationClient.prototype,
-      'seasons',
-      originals.seasons
-    )
+    // Home goes to the server, and the server refuses the session.
+    Object.defineProperty(TeamStationClient.prototype, 'home', originals.home)
     showRoute({ name: 'home' }, true)
     await mount(<App initialToken="token-one" />)
     const socket = sockets.latest()
@@ -228,7 +221,7 @@ describe('the scope the visible route holds', () => {
       acknowledge(socket, '3')
     })
     await settle(50)
-    expect(asked.some(url => url.endsWith('/seasons'))).equals(true)
+    expect(asked.some(url => url.endsWith('/me/home'))).equals(true)
     expect(scopeFrames(socket).at(-1)).deep.include({
       type: 'unsubscribe',
       scope: 'home'

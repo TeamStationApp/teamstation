@@ -146,7 +146,7 @@ export function apiRoutes(): string[] {
     ...routesOf(inviteRoutes(db, { sendCode })),
     ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
     ...routesOf(peopleRoutes(db, media)),
-    ...routesOf(meRoutes(db)),
+    ...routesOf(meRoutes(db, undefined, media)),
     ...routesOf(deviceEventControlRoutes(db, { secret: '', issuer: '' })),
     ...routesOf(onboardingRoutes(db, media)),
     ...routesOf(pictureRoutes(db, media.space)),

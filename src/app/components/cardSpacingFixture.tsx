@@ -6,6 +6,7 @@ import {
   asUserMatch,
   type TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { HomeScreen } from '../screens/HomeScreen'
 import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -102,28 +103,34 @@ function Probe({
   )
 }
 
+const spacingTeams = [
+  'Comets',
+  'Harbor Owls',
+  'Copper Foxes',
+  'Meadow Stars',
+  'Clouds',
+  'Kites'
+].map((name, index) =>
+  asTeamSummary({
+    id: `tem_spacing_${index}`,
+    name,
+    shortName: null,
+    logoPath: null,
+    logoUrl: null,
+    record: { w: 3, l: 2, t: 0, seasonName: 'Example Season' }
+  })
+)
+
 const homeClient = {
-  teams: async () =>
-    [
-      'Comets',
-      'Harbor Owls',
-      'Copper Foxes',
-      'Meadow Stars',
-      'Clouds',
-      'Kites'
-    ].map((name, index) =>
-      asTeamSummary({
-        id: `tem_spacing_${index}`,
-        name,
-        shortName: null,
-        logoPath: null,
-        logoUrl: null,
-        record: { w: 3, l: 2, t: 0, seasonName: 'Example Season' }
-      })
-    ),
+  teams: async () => spacingTeams,
+  home: async () => ({
+    teams: spacingTeams.map(row => ({ ...row, direct: true, source: 'member' })),
+    seasons: [],
+    leagues: []
+  }),
   guardedPlayers: async () => [
     asUserMatch({
-      userId: 1,
+      userId: userIdOfGumbo(1),
       shortName: 'Babe Ruth',
       avatarUrl: null,
       externalIds: []

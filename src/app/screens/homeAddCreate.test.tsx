@@ -82,25 +82,34 @@ const group = (
 describe('Home Add and Create, following, and choosing a new team’s parents', () => {
   it('offers only Create on each Home section and lists followed groups', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
-    api.teams = async () => [
-      asTeamSummary({
-        id: 'team_own',
-        name: 'Demo Own',
-        shortName: null,
-        logoPath: null,
-        logoUrl: null,
-        canViewPrivate: true,
-        record: null,
-        kind: 'full'
-      })
-    ]
-    api.seasons = async () => []
-    api.ownGroups = async () => []
-    api.follows = async () => [
-      group('team', 'team_fan', 'Demo Followed Team'),
-      group('team', 'team_own', 'Demo Own'),
-      group('league', 'league_fan', 'Demo Followed League')
-    ]
+    const own = asTeamSummary({
+      id: 'team_own',
+      name: 'Demo Own',
+      shortName: null,
+      logoPath: null,
+      logoUrl: null,
+      canViewPrivate: true,
+      record: null,
+      kind: 'full'
+    })
+    api.home = async () => ({
+      teams: [
+        { ...own, direct: true, source: 'member' },
+        {
+          ...group('team', 'team_fan', 'Demo Followed Team'),
+          direct: true,
+          source: 'follow'
+        }
+      ],
+      seasons: [],
+      leagues: [
+        {
+          ...group('league', 'league_fan', 'Demo Followed League'),
+          direct: true,
+          source: 'follow'
+        }
+      ]
+    })
     api.recentGame = async () => null
     api.liveNow = async () => []
     const created: GroupKind[] = []

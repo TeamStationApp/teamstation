@@ -332,7 +332,7 @@ describe('a player, and who may change their name', function () {
     app.use(withAudit(db))
     app.use(playerRoutes(db, media))
     app.use(teamRoutes(db, media))
-    app.use(meRoutes(db))
+    app.use(meRoutes(db, undefined, media))
     app.use(errorHandler)
     server = await new Promise<Server>(resolve => {
       const listening = app.listen(0, '127.0.0.1', () => {

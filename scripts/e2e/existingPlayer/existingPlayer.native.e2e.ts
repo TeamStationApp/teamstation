@@ -341,6 +341,7 @@ async function home(): Promise<void> {
 async function openFalconsSettings(): Promise<void> {
   await home()
   await tap('Home')
+  if (!(await onScreen(/Ridgeview Falcons/))) await tap('More teams')
   await tap('Ridgeview Falcons')
   await settle(3000)
   await tap('Manage')
@@ -394,6 +395,7 @@ async function n3(): Promise<void> {
   console.log('N3 Player Settings')
   await home()
   await tap('Home')
+  if (!(await onScreen(/Ridgeview Falcons/))) await tap('More teams')
   await tap('Ridgeview Falcons')
   await settle(3000)
   await tap('Team')

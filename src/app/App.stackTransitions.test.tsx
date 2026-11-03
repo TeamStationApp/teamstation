@@ -89,6 +89,11 @@ describe('stack transitions in the actual app', () => {
     }
     proto.hasNotifications = async () => false
     proto.teams = async () => [team]
+    proto.home = async () => ({
+      teams: [{ ...team, direct: true, source: 'member' }],
+      seasons: [],
+      leagues: []
+    })
     proto.seasons = async () => []
     proto.ownGroups = async () => []
     proto.follows = async () => []

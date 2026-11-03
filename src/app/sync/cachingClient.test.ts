@@ -343,8 +343,14 @@ describe('CachingClient', function () {
       teams: { tem_hawks: ['scorekeeper'], tem_owls: ['videographer'] }
     }
     const net = server({
-      '/teams': {
-        body: [team('tem_hawks', 'Hawks'), team('tem_owls', 'Owls')],
+      '/me/home': {
+        body: {
+          teams: [team('tem_hawks', 'Hawks'), team('tem_owls', 'Owls')].map(
+            row => ({ ...row, direct: true, source: 'member' })
+          ),
+          seasons: [],
+          leagues: []
+        },
         revision: '5'
       },
       '/me/roles': { body: roles, revision: '5' },
@@ -372,7 +378,7 @@ describe('CachingClient', function () {
     await client.prefetch()
     expect(net.calls).deep.equals([])
     client.openFor('usr_1')
-    await client.teams()
+    await client.home()
     const collector: RevisionRead[] = []
     client.collectRevisions(collector)
     net.most = 0
@@ -575,6 +581,7 @@ describe('CachingClient', function () {
 
 describe('document keys', function () {
   it('names exactly the GETs the phone keeps', function () {
+    expect(documentKeyOf('/me/home')).equals('home.lists')
     expect(documentKeyOf('/teams')).equals('home.teams')
     expect(documentKeyOf('/users?guardedBy=me')).equals('home.guarded')
     expect(documentKeyOf('/events?played=1&limit=1')).equals('home.recent')

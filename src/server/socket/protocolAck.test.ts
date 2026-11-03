@@ -265,6 +265,7 @@ describe('the revision on every read a screen scope uses', function () {
       '/events',
       '/events?when=upcoming',
       '/me/roles',
+      '/me/home',
       `/teams/${f.teamA}/roster`,
       `/teams/${f.teamA}/roster?includeFullNames=true`,
       `/games/${gameId}`,
