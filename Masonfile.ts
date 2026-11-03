@@ -13,6 +13,7 @@ import type { Setup, Stage } from '@mason/types'
 // published from there. One platform failing leaves the other running.
 
 const APP = 'app.teamstation.app'
+const TV = 'app.teamstation.tv'
 const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
 const ANDROID = { type: 'do-linux', os: 'linux', arch: 'x64' } as const
 const SIGN = {
@@ -62,6 +63,20 @@ export function setup(m: Setup): void {
           when: { branch: ['master'] },
           apple: { distribution: 'appStore', app: APP },
           run: releaseIos
+        }
+      ],
+      tvos: [
+        {
+          name: 'archive-tv',
+          on: IOS,
+          when: { branch: ['master'] },
+          tools: { node: '24', xcode: '27.0', cocoapods: '1.16.2' },
+          timeout: '6h',
+          apple: { distribution: 'adHoc', app: TV },
+          publishes: [TV],
+          buildNumbers: [APP],
+          cache: [{ key: 'npm', paths: ['~/.npm'] }],
+          run: buildTv
         }
       ],
       android: [
@@ -133,7 +148,13 @@ function appVersion(ctx: Stage): string {
  */
 async function install(ctx: Stage): Promise<void> {
   await ctx.sh('npm install --prefix .mason-tools @socketsecurity/cli')
-  const scanned = await ctx.sh('.mason-tools/node_modules/.bin/socket npm ci', {
+  await installDependencies(ctx)
+}
+
+async function installDependencies(ctx: Stage, cwd = '.'): Promise<void> {
+  const socket = path.relative(cwd, '.mason-tools/node_modules/.bin/socket')
+  const scanned = await ctx.sh(`${socket} npm ci`, {
+    cwd,
     env: { SOCKET_CLI_ACCEPT_RISKS: '1' },
     allowFailure: true
   })
@@ -142,7 +163,7 @@ async function install(ctx: Stage): Promise<void> {
   if (!/429|Insufficient quota|requires an API token/.test(detail)) {
     throw new Error(`socket npm ci failed with exit code ${scanned.code}`)
   }
-  await ctx.sh('npm ci')
+  await ctx.sh('npm ci', { cwd })
 }
 
 export async function buildIos(ctx: Stage): Promise<void> {
@@ -174,6 +195,23 @@ export async function buildIos(ctx: Stage): Promise<void> {
   await ctx.artifacts.save('ios-ipa', archived.ipa)
   await ctx.artifacts.save('ios-dsym', archived.dsyms)
   await ctx.publish({ app: APP, platform: 'ios', path: archived.ipa })
+}
+
+export async function buildTv(ctx: Stage): Promise<void> {
+  await install(ctx)
+  await installDependencies(ctx, 'appletv')
+  await ctx.sh('pod install', { cwd: 'appletv/ios' })
+  const archived = await ctx.apple.archive({
+    workspace: 'appletv/ios/TeamStationTV.xcworkspace',
+    scheme: 'TeamStationTV',
+    configuration: 'Release',
+    version: appVersion(ctx),
+    buildNumber: ctx.getBuildNumber(APP)
+  })
+  if (archived.ipa == null) throw new Error('No tvOS IPA was exported')
+  await ctx.artifacts.save('tvos-ipa', archived.ipa)
+  await ctx.artifacts.save('tvos-dsym', archived.dsyms)
+  await ctx.publish({ app: TV, platform: 'tvos', path: archived.ipa })
 }
 
 function relativeIpa(ctx: Stage, file: string): string {
