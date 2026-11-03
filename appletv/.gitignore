@@ -1,0 +1,8 @@
+node_modules/
+ios/Pods/
+ios/build/
+ios/*.xcworkspace/
+ios/.xcode.env.local
+DerivedData/
+*.xcuserdatad/
+coverage/
