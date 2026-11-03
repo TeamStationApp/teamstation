@@ -382,15 +382,16 @@ async function main(): Promise<void> {
           })
           await contains(page, 'Uma Lee')
           await contains(page, 'Go to profile page')
-          expect(await page.$('[aria-label="Remove assignment"]')).equals(null)
-          await tap(m, 'Cancel')
+          await contains(page, 'Remove assignment')
+          await tap(m, 'Remove assignment')
           await page.waitForSelector(
-            '[data-testid="umpire-game-gam_umpire_g1"] [aria-label="Uma L, uty_plate:1"]'
+            '[data-testid="umpire-game-gam_umpire_g1"] [aria-label^="Sign Up, Plate"]'
           )
           await m.tapOn({
             css: '[data-testid="umpire-game-gam_umpire_g4"] [aria-label="Uma L, uty_plate:1"]'
           })
           await contains(page, 'Go to profile page')
+          expect(await page.$('[aria-label="Remove assignment"]')).equals(null)
           await tap(m, 'Cancel')
           await signIn(101, `/umpires/${f.leagueA}?view=league`)
           await contains(page, 'Uma L')
@@ -398,10 +399,14 @@ async function main(): Promise<void> {
             css: '[data-testid="umpire-game-gam_umpire_g4"] [aria-label="Uma L, uty_plate:1"]'
           })
           await contains(page, 'Uma Lee')
-          await tap(m, 'Cancel')
+          await contains(page, 'Remove assignment')
+          await tap(m, 'Remove assignment')
+          await page.waitForSelector(
+            '[data-testid="umpire-game-gam_umpire_g4"] [aria-label^="Sign Up, Plate"]'
+          )
           expect(
             await f.h.db.selectFrom('umpire_assignments').selectAll().execute()
-          ).length(2)
+          ).length(0)
         } else if (scenario === 6) {
           await signIn(101, settings)
           await tap(m, 'Umpire schedule')
