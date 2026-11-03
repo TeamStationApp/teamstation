@@ -51,6 +51,9 @@ const flatten = (node: Node): Node[] => [
 
 type Layout = 'iphone' | 'ipad' | 'android'
 
+/** The signed-in person's picture, which is on every signed-in header. */
+const PICTURE = 'Account, .*'
+
 async function main(): Promise<void> {
   const layout = (process.env.TS_TESS_LAYOUT ?? 'iphone') as Layout
   if (!['iphone', 'ipad', 'android'].includes(layout))
@@ -317,18 +320,22 @@ async function main(): Promise<void> {
     const y = (100 * (node.bounds.y + node.bounds.height / 2)) / size.height
     await m.swipe({ start: `${x}%,${y}%`, end: `${x}%,${y}%`, duration: ms })
   }
-  /** The x of each named header button that is drawn, in order. */
-  const headerOrder = async (): Promise<string[]> =>
-    (await nodes())
-      .filter(
-        node =>
-          node.bounds != null &&
-          node.bounds.y < 200 &&
-          ['Tess', 'Notifications'].includes(node.text ?? '')
-      )
-      .sort((a, b) => a.bounds!.x - b.bounds!.x)
-      .map(node => node.text!)
-      .filter((text, index, all) => all.indexOf(text) === index)
+  // She opens from the mark's menu, and only a tab root has the mark.
+  const openTess = async (): Promise<void> => {
+    await tap('TeamStation menu')
+    await tap('Ask Tess')
+  }
+  // Back as far as the tab root her link was reached from.
+  const backToMark = async (): Promise<void> => {
+    for (let steps = 0; (await find('TeamStation menu')) == null; steps++) {
+      if (steps === 4) throw new Error('The mark never came back')
+      await tap('Back')
+    }
+  }
+  const expectNoHeaderButtons = async (): Promise<void> => {
+    for (const label of ['Tess', 'Notifications'])
+      expect(await find(label), label).equals(undefined)
+  }
   const beacon = async (scenario: string): Promise<void> => {
     const { count } = await control<{ count: number }>('/beacon-count')
     expect(count, 'no remote load from rich HTML').equals(0)
@@ -388,7 +395,7 @@ async function main(): Promise<void> {
       await m.hideKeyboard()
       await m.tapOn({ text: 'Sign in', optional: true })
       try {
-        await show('Notifications', 30000)
+        await show(PICTURE, 30000)
         return
       } catch (error) {
         if (attempt === 3) throw error
@@ -403,22 +410,22 @@ async function main(): Promise<void> {
     if (layout === 'ipad')
       await native.setOrientation({ orientation: 'LANDSCAPE' })
     await signIn()
-    await show('Notifications', 60000)
+    await show(PICTURE, 60000)
 
     if (layout === 'iphone') {
       // N1: the header.
-      await show('Notifications')
-      if (!before) await show('Tess')
-      expect(await headerOrder()).deep.equals(
-        before ? ['Notifications'] : ['Tess', 'Notifications']
-      )
+      await show(PICTURE)
+      if (!before) {
+        await show('TeamStation menu')
+        await expectNoHeaderButtons()
+      }
       await capture(`header-narrow-${suffix}.png`)
       console.log('N1 header order passed', suffix)
       if (before) return
 
       // N2: the full-screen chat. Opening it turns dictation on, which asks
       // for the microphone the first time.
-      await tap('Tess')
+      await openTess()
       await m.tapOn({ text: 'Allow', optional: true, timeout: 5000 })
       for (const label of [
         'Close Tess',
@@ -461,8 +468,10 @@ async function main(): Promise<void> {
       await capture('narrow-link-closed.png')
       console.log('N3 the bubble opened team settings')
 
-      // N4: the same conversation.
-      await tap('Tess')
+      // N4: the same conversation. Team Settings has no mark, so no Tess.
+      await hidden('TeamStation menu')
+      await backToMark()
+      await openTess()
       await show('Where are my team settings?')
       await capture('narrow-reopened.png')
       console.log('N4 reopened on the same conversation')
@@ -623,11 +632,11 @@ async function main(): Promise<void> {
 
     if (layout === 'ipad') {
       // I1: the split in landscape.
-      await tap('Tess')
+      await openTess()
       await show('Ask Tess')
       const field = (await find('Tess field'))!.bounds!
       expect(field.x + field.width).lessThanOrEqual(400)
-      await show('Notifications')
+      await show(PICTURE)
       await capture('ipad-split.png')
       console.log('I1 the split')
 
@@ -683,8 +692,8 @@ async function main(): Promise<void> {
       if ((await exactly('Close', 8000)) != null) await tap('Close')
       await hidden('Close Tess')
       await show('DJ Game', 30000)
-      await show('Notifications')
-      expect(await headerOrder()).deep.equals(['Notifications'])
+      await show(PICTURE)
+      await hidden('TeamStation menu')
       await tap('Back')
       await show('Close Tess', 30000)
       console.log('I5 DJ hid Tess; leaving brought the column back')
@@ -692,13 +701,12 @@ async function main(): Promise<void> {
 
     if (layout === 'android') {
       // A1: the header.
-      await show('Tess')
-      const order = await headerOrder()
-      expect(order.indexOf('Tess')).lessThan(order.indexOf('Notifications'))
-      console.log('A1 the Tess button before Notifications')
+      await show('TeamStation menu')
+      await expectNoHeaderButtons()
+      console.log('A1 the mark and the picture, and no Tess or bell button')
 
       // A2: full screen, the bubble closes it and opens team settings.
-      await tap('Tess')
+      await openTess()
       await show('Ask Tess')
       await say('Where are my team settings?', "Your team's settings are here")
       await capture('android-chat.png')
@@ -707,16 +715,19 @@ async function main(): Promise<void> {
       await show('Team Settings')
       console.log('A2 the chat, and its link')
 
-      // A3: the hardware Back closes the chat and nothing else.
-      await tap('Tess')
+      // A3: the hardware Back closes the chat and nothing else. Team Settings
+      // has no mark, so she opens from Home, and that is what stays behind.
+      await hidden('TeamStation menu')
+      await backToMark()
+      await openTess()
       await show('Close Tess')
       await native.back()
       await hidden('Close Tess')
-      await show('Team Settings')
+      await show('TeamStation menu')
       console.log('A3 Back closed the chat; the screen behind is unchanged')
 
       // A4: the + sheet, with the document picker's module loaded.
-      await tap('Tess')
+      await openTess()
       await tap('Attach a file')
       await show('Photo')
       await show('File')

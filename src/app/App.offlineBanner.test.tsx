@@ -496,6 +496,8 @@ describe('the phone shell offline', () => {
       expect(players(), 'nothing of the first person’s').deep.equals([])
       // They sign out; the first person signs in again: theirs goes, once.
       await press('Account, Pete A')
+      await settle()
+      await press('Account')
       await press('Sign out')
       await settle(100)
       next = { user: BETTS, token: 'token-three' }

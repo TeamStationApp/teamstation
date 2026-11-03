@@ -125,7 +125,7 @@ export async function originPhone(options: {
       ...(safari ? { browser: true } : {})
     })
     await m.tapOn({ text: 'Not Now', timeout: 3000, optional: true })
-    await m.assertVisible({ text: 'Notifications', timeout: 30000 })
+    await m.assertVisible({ text: 'Account, .*', timeout: 30000 })
   } catch (error) {
     await writeFile(
       join(diagnostics, `${slug}-signin-failure.png`),

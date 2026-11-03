@@ -27,6 +27,8 @@ export interface TessChatProps {
   mic?: ReactNode
   /** Where the microphone's words go into the composer. */
   composer?: Ref<ComposerHandle>
+  /** Asked once on opening: whether her field should take the focus. */
+  takesFocus?: () => boolean
 }
 
 /**
@@ -41,7 +43,8 @@ export function TessChat({
   onClose,
   onNavigate,
   mic,
-  composer
+  composer,
+  takesFocus
 }: TessChatProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -136,6 +139,7 @@ export function TessChat({
       </ScrollView>
       <Composer
         handle={composer}
+        takesFocus={takesFocus}
         busy={tess.thinking}
         error={tess.error}
         mic={mic}

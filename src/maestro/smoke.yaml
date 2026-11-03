@@ -129,11 +129,12 @@ appId: app.teamstation.app
 
 # ---- The account -----------------------------------------------------------
 #
-# Reached by tapping your own picture at the top right, which is where every
-# application with a signed-in person puts it, and which is why there is no
-# fourth destination in the bar.
+# Reached through the menu on your own picture at the top right, which is where
+# every application with a signed-in person puts it, and which is why there is
+# no fourth destination in the bar.
 - runFlow: home.yaml
 - tapOn: 'Account,.*'
+- tapOn: '^Account$'
 - extendedWaitUntil:
     visible: 'Sign out'
     timeout: 20000

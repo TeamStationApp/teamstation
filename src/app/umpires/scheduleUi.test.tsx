@@ -698,7 +698,7 @@ describe('scheduleUi.test.tsx', () => {
       'Optional in some games'
     )
   })
-  it('leaves the umpire mask out of the header: bell and account only', async () => {
+  it('leaves the umpire mask out of the header: the picture only', async () => {
     await mount(
       <AppHeader
         nav={<span>Tabs</span>}
@@ -709,7 +709,7 @@ describe('scheduleUi.test.tsx', () => {
     const labels = [...document.querySelectorAll('[role="button"]')].map(n =>
       n.getAttribute('aria-label')
     )
-    expect(labels).deep.equals(['Notifications', 'Account, Uma'])
+    expect(labels).deep.equals(['Account, Uma'])
     expect(document.querySelector('[aria-label="Umpire schedule"]')).equals(
       null
     )

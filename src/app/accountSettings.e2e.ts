@@ -48,6 +48,16 @@ async function press(label: string): Promise<void> {
     button.click()
   }, label)
 }
+/** The picture opens its menu, whatever else its label says, then the row. */
+async function openAccount(): Promise<void> {
+  const picture = '[role="button"][aria-label^="Account, "]'
+  await page.waitForSelector(picture)
+  await page.$eval(picture, node => {
+    ;(node as HTMLElement).click()
+  })
+  await page.waitForSelector('[role="button"][aria-label="Account"]')
+  await press('Account')
+}
 async function fill(label: string, value: string): Promise<void> {
   const selector = `input[aria-label="${label}"]`
   await page.waitForSelector(selector)
@@ -151,8 +161,12 @@ describe('account settings in the finished desktop application', function () {
     ).equals(true)
     await page.screenshot({ path: path.join(artifacts, 'account-after.png') })
     await press('Back')
-    await page.waitForSelector('[aria-label="Account, Mookie Betts"]')
-    await press('Account, Mookie Betts')
+    // The picture stays on Account, so only the page going says Back landed.
+    await page.waitForFunction(
+      () => document.body.textContent?.includes('Email addresses') !== true
+    )
+    await page.waitForSelector('[aria-label^="Account, Mookie Betts"]')
+    await openAccount()
     await waitText('Email addresses')
     const playerResponse = await h.request(
       'GET',
@@ -192,8 +206,8 @@ describe('account settings in the finished desktop application', function () {
     await waitText('Verifying your email creates an')
     await fill('Sign-in code', h.mail.get('alex@example.com')!)
     await press('Sign in')
-    await page.waitForSelector('[aria-label="Account, Mookie Betts"]')
-    await press('Account, Mookie Betts')
+    await page.waitForSelector('[aria-label^="Account, Mookie Betts"]')
+    await openAccount()
     await waitText('Email addresses')
   })
   it('upgrades a legacy password only after email verification and resets forgotten passwords', async () => {

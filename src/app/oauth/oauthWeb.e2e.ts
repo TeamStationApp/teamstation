@@ -92,6 +92,11 @@ export async function verifyOAuthWeb(options: {
       ]
     })
     await device.openBrowser({ url: options.origin })
+    // Signed in, About is on the mark's menu.
+    await device.tapOn({
+      css: '[aria-label="TeamStation menu"]',
+      timeout: 20000
+    })
     await device.tapOn({
       css: '[aria-label="About TeamStation"]',
       timeout: 20000

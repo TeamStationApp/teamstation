@@ -82,7 +82,6 @@ async function main(): Promise<void> {
           '[role="tab"][aria-label="Home"]',
           '[role="tab"][aria-label="Videos"]',
           '[role="tab"][aria-label="Schedule"]',
-          '[aria-label="Notifications"]',
           '[aria-label^="Account,"]'
         ].map(selector => {
           const node = document.querySelector(selector)
@@ -187,9 +186,7 @@ async function main(): Promise<void> {
     await text(admin, 'Demo League A')
     await shot(admin, 'narrow-header')
     const narrow = await navigation(admin)
-    expect(narrow[3].right).at.most(narrow[4].left)
     expect(narrow[3].top).lessThan(60)
-    expect(narrow[4].top).lessThan(60)
     for (const tab of narrow.slice(0, 3)) expect(tab.top).greaterThan(700)
     expect(
       await admin.evaluate(

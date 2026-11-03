@@ -49,8 +49,8 @@ export function BuildInfoModal({
     [lstrings.about_version, info.version],
     [lstrings.about_number, info.buildNumber],
     [lstrings.about_branch, info.branch],
-    [lstrings.about_commit, info.commit],
-    [lstrings.about_time, info.builtAt],
+    [lstrings.about_commit, info.commit.slice(0, 6)],
+    [lstrings.about_time, localBuildTime(info.builtAt)],
     [lstrings.about_server, serverOrigin(apiBaseUrl)]
   ]
   return (
@@ -124,6 +124,24 @@ export function BuildInfoModal({
       </View>
     </Modal>
   )
+}
+
+/**
+ * When the build was made, in this device's own time and way of writing it.
+ * Anything that isn't a date stays as it is, such as a build's `—`.
+ */
+export function localBuildTime(builtAt: string, timeZone?: string): string {
+  const at = new Date(builtAt)
+  if (Number.isNaN(at.getTime())) return builtAt
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+    timeZone
+  }).format(at)
 }
 
 function serverOrigin(apiBaseUrl?: string): string {

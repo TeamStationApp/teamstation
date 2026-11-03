@@ -400,8 +400,12 @@ async function main(): Promise<void> {
     }
     if (process.env.TS_SETTINGS3_SIGN_IN === '1') await signIn(manifest.email)
     await m.openLink({ link: 'teamstation://' })
+    await m.tapOn({ text: 'TeamStation menu', timeout: 15000 })
     await m.tapOn({ text: 'About TeamStation', timeout: 15000 })
-    await m.assertVisible({ text: manifest.commit, timeout: 15000 })
+    await m.assertVisible({
+      text: manifest.commit.slice(0, 6),
+      timeout: 15000
+    })
     await m.assertVisible({ text: manifest.branch, timeout: 15000 })
     await m.assertVisible({
       text: new URL(manifest.apiBaseUrl).origin,

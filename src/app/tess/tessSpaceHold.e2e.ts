@@ -211,7 +211,6 @@ async function main(): Promise<void> {
       await waitFor(page, selector)
       await m.tapOn({ css: selector, timeout: 15000 })
     }
-    const tessButton = '[role="button"][aria-label="Tess"]'
     const column = '[data-testid="Tess column"]'
     const field = '[aria-label="Ask Tess"]'
     const mic = '[role="button"][aria-label="Dictation"]'
@@ -309,12 +308,25 @@ async function main(): Promise<void> {
     await page.evaluate(() => {
       localStorage.removeItem('tess.columnWidth')
     })
-    await m.openBrowser({ url: `${f.h.origin}/teams/${f.teamA}` })
-    await tap(paneTab('Schedule'))
-    await tap(tessButton)
+    await m.openBrowser({ url: `${f.h.origin}/` })
+    // She opens from the mark's menu on Home; a page load would close her.
+    await tap('[role="button"][aria-label="TeamStation menu"]')
+    await tap('[role="button"][aria-label="Ask Tess"]')
     await waitFor(page, column)
+    await page.evaluate(team => {
+      const state = history.state
+      const index = (state == null ? 0 : Number(state.tsRouteIndex)) + 1
+      history.pushState({ tsRouteIndex: index }, '', `/teams/${team}`)
+      window.dispatchEvent(
+        new PopStateEvent('popstate', { state: history.state })
+      )
+    }, f.teamA)
+    // The team's own pills: until they draw, Schedule is the app's tab.
+    await waitFor(page, paneTab('Team'))
+    await tap(paneTab('Schedule'))
     await waitFor(page, mic)
     await waitForStatus(page, 'Push to talk')
+    await pause(600)
     expect(await paneScroll(page, 0), 'the pane can scroll').equals(0)
     await page.evaluate(spaceCaption)
     const step = async (text: string): Promise<void> => {

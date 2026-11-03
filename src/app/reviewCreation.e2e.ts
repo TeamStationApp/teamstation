@@ -19,6 +19,16 @@ import {
   text
 } from './creationBrowserActions.e2e'
 
+/** The picture opens its menu, whatever else its label says, then the row. */
+async function openNotifications(page: Page): Promise<void> {
+  const picture = '[role="button"][aria-label^="Account, "]'
+  await page.waitForSelector(picture)
+  await page.$eval(picture, node => {
+    ;(node as HTMLElement).click()
+  })
+  await press(page, 'Notifications')
+}
+
 async function main(): Promise<void> {
   const artifacts = process.env.TS_CREATION_ARTIFACTS
   if (artifacts == null)
@@ -422,7 +432,7 @@ async function main(): Promise<void> {
     ).json()) as { title: string }
     await owner.goto(f.h.origin + '/', { waitUntil: 'domcontentloaded' })
     await text(owner, 'Your Home')
-    for (let tap = 0; tap < 4; tap++) await press(owner, 'Notifications')
+    for (let tap = 0; tap < 4; tap++) await openNotifications(owner)
     await text(owner, cached.title)
     await press(owner, 'Back')
     await text(owner, 'Your Home')
@@ -736,7 +746,7 @@ async function main(): Promise<void> {
       ).status
     ).equals('accepted')
     // The inbox says what was given, with nothing to accept.
-    await press(imported, 'Notifications')
+    await openNotifications(imported)
     await text(imported, 'Babe Ruth added you as Coach of Demo Hawks')
     expect(
       await imported.evaluate(() => document.body.textContent)
@@ -772,7 +782,7 @@ async function main(): Promise<void> {
     expect(
       await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
     ).deep.equals(['coach', 'songkeeper'])
-    await press(imported, 'Notifications')
+    await openNotifications(imported)
     await text(imported, 'added you as Songkeeper of Demo Hawks')
     await press(imported, 'Back')
     await press(imported, 'Walk-up', 'tab')

@@ -39,8 +39,6 @@ interface Rect {
   height: number
 }
 
-const HEADER_BUTTONS = ['Tess', 'Notifications']
-
 /** One second of a 440 Hz tone, 16 kHz mono, as a base64 WAV. */
 function toneWav(seconds = 1.2): string {
   const rate = 16000
@@ -95,16 +93,6 @@ async function paneRect(page: Page): Promise<Rect | null> {
     const box = pane.getBoundingClientRect()
     return { x: box.x, y: box.y, width: box.width, height: box.height }
   })
-}
-
-async function headerButtons(page: Page): Promise<string[]> {
-  return await page.evaluate(
-    (wanted: string[]) =>
-      Array.from(document.querySelectorAll('[role="button"][aria-label]'))
-        .map(node => node.getAttribute('aria-label') || '')
-        .filter(label => wanted.includes(label)),
-    HEADER_BUTTONS
-  )
 }
 
 async function waitFor(
@@ -185,7 +173,25 @@ async function main(): Promise<void> {
       await waitFor(page, selector)
       await m.tapOn({ css: selector, timeout: 15000 })
     }
-    const tessButton = '[role="button"][aria-label="Tess"]'
+    const picture = '[role="button"][aria-label^="Account, "]'
+    const mark = '[role="button"][aria-label="TeamStation menu"]'
+    const closeTess = '[role="button"][aria-label="Close Tess"]'
+    // She opens from the mark's menu, and only a tab root has the mark.
+    const openTess = async (): Promise<void> => {
+      await tap(mark)
+      await tap('[role="button"][aria-label="Ask Tess"]')
+    }
+    // A screen reached inside the app, because a page load closes her.
+    const goInApp = async (path: string): Promise<void> => {
+      await page.evaluate(path => {
+        const state = history.state
+        const index = (state == null ? 0 : Number(state.tsRouteIndex)) + 1
+        history.pushState({ tsRouteIndex: index }, '', path)
+        window.dispatchEvent(
+          new PopStateEvent('popstate', { state: history.state })
+        )
+      }, path)
+    }
     const column = '[data-testid="Tess column"]'
     const layer = '[data-testid="Tess layer"]'
     const chat = '[data-testid="Tess chat"]'
@@ -210,25 +216,28 @@ async function main(): Promise<void> {
         words
       )
 
-    // W1: the header's buttons, as user 101 (an umpire) and user 102.
+    const expectNoHeaderButtons = async (): Promise<void> => {
+      for (const label of ['Tess', 'Notifications'])
+        expect(
+          await page.$(`[role="button"][aria-label="${label}"]`),
+          label
+        ).equals(null)
+    }
+    // W1: the header's mark and picture, as user 101 (an umpire) and user 102.
     await identity(t, 101)
     await open('/')
-    await waitFor(page, '[role="button"][aria-label="Notifications"]')
-    if (!before) await waitFor(page, tessButton)
+    await waitFor(page, picture)
+    if (!before) await waitFor(page, mark)
     // Health is asked once a session is known; give the header that long.
     await pause(1500)
-    expect(await headerButtons(page)).deep.equals(
-      before ? ['Notifications'] : ['Tess', 'Notifications']
-    )
+    if (!before) await expectNoHeaderButtons()
     await shot(`header-wide-${suffix}.png`)
     await identity(t, 102)
     await open('/')
-    await waitFor(page, '[role="button"][aria-label="Notifications"]')
-    if (!before) await waitFor(page, tessButton)
+    await waitFor(page, picture)
+    if (!before) await waitFor(page, mark)
     await pause(1500)
-    expect(await headerButtons(page)).deep.equals(
-      before ? ['Notifications'] : ['Tess', 'Notifications']
-    )
+    if (!before) await expectNoHeaderButtons()
     console.log('W1 header order passed', suffix)
     if (before) return
     // A width a run before this one dragged the column to is not this one's.
@@ -239,7 +248,7 @@ async function main(): Promise<void> {
     // W2: the split.
     await identity(t, 101)
     await open('/')
-    await tap(tessButton)
+    await openTess()
     await waitFor(page, column)
     const split = {
       column: await rectOf(page, column),
@@ -253,7 +262,7 @@ async function main(): Promise<void> {
     console.log('W2 split passed', JSON.stringify(split))
 
     // W3: the team screen's breakpoint, and the video kept playing.
-    await tap(tessButton)
+    await tap(closeTess)
     await gone(page, column)
     await open(`/teams/${f.teamA}`)
     await waitFor(page, '[data-breakpoint]')
@@ -264,8 +273,10 @@ async function main(): Promise<void> {
         return last == null ? null : last.getAttribute('data-breakpoint')
       })
     expect(await breakpointNow()).equals('desktop')
-    await tap(tessButton)
+    await open('/')
+    await openTess()
     await waitFor(page, column)
+    await goInApp(`/teams/${f.teamA}`)
     await page.waitForFunction(
       () => {
         const nodes = Array.from(document.querySelectorAll('[data-breakpoint]'))
@@ -275,7 +286,12 @@ async function main(): Promise<void> {
       { timeout: 10000 }
     )
     console.log('W3 team screen: desktop closed, tablet beside Tess')
-    await open(`/games/${t.games.may3}?tab=watch&video=${t.videos.homePlate}`)
+    await open('/')
+    await openTess()
+    await waitFor(page, column)
+    await goInApp(
+      `/games/${t.games.may3}?tab=watch&video=${t.videos.homePlate}`
+    )
     await waitFor(page, '[aria-label="Home plate"]', 30000)
     await tap('[aria-label="Home plate"]')
     await waitFor(page, 'video', 30000)
@@ -296,8 +312,9 @@ async function main(): Promise<void> {
       video.__tessMarker = 'kept'
       return video.currentTime as number
     })
-    await tap(tessButton)
-    await waitFor(page, column)
+    // Closing her gives the pane the whole window, and the video stays itself.
+    await tap(closeTess)
+    await gone(page, column)
     await pause(2000)
     const after = await page.evaluate(() => {
       const video = document.querySelector('video') as any
@@ -315,7 +332,7 @@ async function main(): Promise<void> {
 
     // W4: the way bubble.
     await open('/')
-    await tap(tessButton)
+    await openTess()
     await waitFor(page, column)
     await say('Where are my team settings?', "Your team's settings are here")
     const bubble =
@@ -378,7 +395,7 @@ async function main(): Promise<void> {
     console.log('W6 angle overlay equals pane', JSON.stringify(angleBox))
     await page.keyboard.press('Escape')
     await open('/')
-    await tap(tessButton)
+    await openTess()
     await waitFor(page, column)
 
     // W7: a chart, opened over the pane; nothing remote loads.
@@ -495,7 +512,7 @@ async function main(): Promise<void> {
     await page.keyboard.press('Escape')
     console.log('W7c the chart opens over the angle view; its X is on top')
     await open('/')
-    await tap(tessButton)
+    await openTess()
     await waitFor(page, column)
 
     // W8–W10: the change card and the 3-second hold.
@@ -772,14 +789,21 @@ async function main(): Promise<void> {
     await contains(page, 'Your Home')
     console.log('W15 1024 full screen, 1280 split, closed at 1024')
     // Into a team from Home, inside the app, so Back has a step of its own
-    // to take: f.teamA, the Demo Hawks with a season.
-    await tap('[role="button"][aria-label^="Demo Hawks, Demo Regular"]')
-    await page.waitForFunction(
-      team => location.pathname === `/teams/${team}`,
-      { timeout: 20000 },
-      f.teamA
-    )
-    await tap(tessButton)
+    // to take: f.teamA, the Demo Hawks with a season. Wide, because the mark
+    // is only on Home and her layer stops anything moving beneath it.
+    const intoTheTeam = async (): Promise<void> => {
+      await page.setViewport({ width: 1280, height: 900 })
+      await openTess()
+      await waitFor(page, column)
+      await tap('[role="button"][aria-label^="Demo Hawks, Demo Regular"]')
+      await page.waitForFunction(
+        team => location.pathname === `/teams/${team}`,
+        { timeout: 20000 },
+        f.teamA
+      )
+    }
+    await intoTheTeam()
+    await page.setViewport({ width: 1024, height: 900 })
     await waitFor(page, layer)
     const address = await page.evaluate(() => location.href)
     await page.evaluate(() => {
@@ -796,9 +820,16 @@ async function main(): Promise<void> {
     // activates it and scrolls nothing; a quick Space in her field types a
     // space; and Space held 800 ms with the focus on the page listens from
     // 500 ms, and what was heard becomes her next message.
-    await page.setViewport({ width: 1280, height: 900 })
+    await page.evaluate(() => {
+      history.back()
+    })
+    await page.waitForFunction(() => location.pathname === '/', {
+      timeout: 20000
+    })
+    await intoTheTeam()
+    // The team's own pills: until they draw, Schedule is the app's tab.
+    await waitFor(page, '[role="tab"][aria-label="Team"]')
     await tap('[role="tab"][aria-label="Schedule"]')
-    await tap(tessButton)
     await waitFor(page, column)
     await page.waitForFunction(
       () => {
@@ -984,10 +1015,11 @@ async function main(): Promise<void> {
     console.log('W16 usage week matches', JSON.stringify(totals))
 
     // W18: scoring takes the window; DJ on the web keeps Tess.
-    await open(`/games/${t.games.scheduled}`)
-    await waitFor(page, tessButton, 30000)
-    await tap(tessButton)
+    await open('/')
+    await waitFor(page, mark, 30000)
+    await openTess()
     await waitFor(page, column)
+    await goInApp(`/games/${t.games.scheduled}`)
     await say('Take me to score the next game', 'Here is the scoring screen')
     await page.evaluate(() => {
       const link = Array.from(document.querySelectorAll('[role="link"]')).find(
@@ -1003,7 +1035,7 @@ async function main(): Promise<void> {
       t.games.scheduled
     )
     await gone(page, column)
-    expect(await page.$(tessButton)).equals(null)
+    expect(await page.$(mark)).equals(null)
     await pause(2500)
     await shot('wide-immersive.png')
     await page.evaluate(() => {
@@ -1011,10 +1043,11 @@ async function main(): Promise<void> {
     })
     await waitFor(page, column, 30000)
     console.log('W18 scoring hid the column; leaving brought it back')
-    await open(`/games/${t.games.scheduled}/dj`)
-    await waitFor(page, tessButton, 30000)
-    await tap(tessButton)
+    await open('/')
+    await waitFor(page, mark, 30000)
+    await openTess()
     await waitFor(page, column)
+    await goInApp(`/games/${t.games.scheduled}/dj`)
     await contains(page, 'Demo Hawks')
     console.log('W18 the DJ address on the web shows the game with Tess')
 
@@ -1023,7 +1056,7 @@ async function main(): Promise<void> {
     // and then a check, and her text growing in place; then a closed
     // "Thought for Ns" that opens to the summary and the two steps.
     await open('/')
-    await tap(tessButton)
+    await openTess()
     await waitFor(page, column)
     await page.evaluate(() => {
       // What the live reply showed, each time it changed.
@@ -1170,7 +1203,7 @@ async function main(): Promise<void> {
 
     // L5: the header and the +.
     await open('/')
-    await tap(tessButton)
+    await openTess()
     await waitFor(page, column)
     const header = await page.evaluate(() => {
       const title = document.querySelector(
@@ -1258,9 +1291,10 @@ async function main(): Promise<void> {
 
     // L2: the divider drags the column wider and narrower, and the pane
     // beside it follows; a reload keeps the width.
-    await open(`/teams/${f.teamA}`)
-    await tap(tessButton)
+    await open('/')
+    await openTess()
     await waitFor(page, column)
+    await goInApp(`/teams/${f.teamA}`)
     await waitFor(page, '[data-breakpoint]')
     const divider = '[data-testid="Tess divider"]'
     await waitFor(page, divider)
@@ -1313,9 +1347,10 @@ async function main(): Promise<void> {
     await dragBy(200)
     await pause(500)
     await drag.stop()
-    await page.reload()
-    await tap(tessButton)
+    await open('/')
+    await openTess()
     await waitFor(page, column, 30000)
+    await goInApp(`/teams/${f.teamA}`)
     await page.waitForFunction(
       selector => {
         const node = document.querySelector(selector)
@@ -1352,7 +1387,7 @@ async function main(): Promise<void> {
 
     // L6: a player Tess names is a blue link to their profile.
     await open('/')
-    await tap(tessButton)
+    await openTess()
     await waitFor(page, column)
     await say('Who plays shortstop for Demo Hawks?', 'plays shortstop')
     const playerLink = async (name: string, mark: string): Promise<string> =>
@@ -1422,14 +1457,16 @@ async function main(): Promise<void> {
         webRoot
       )
 
-    // W17: a server without Tess offers no button.
+    // W17: a server without Tess offers her in no menu.
     other = await tessFixture({ webRoot, tess: false, videos: false })
     await identity(other, 101)
     await open('/', other.f.h.origin)
-    await waitFor(page, '[role="button"][aria-label="Notifications"]')
+    await waitFor(page, picture)
     await pause(2000)
-    expect(await page.$(tessButton)).equals(null)
-    console.log('W17 no Tess button where the server has none')
+    await tap(mark)
+    await waitFor(page, '[role="button"][aria-label="About TeamStation"]')
+    expect(await page.$('[role="button"][aria-label="Ask Tess"]')).equals(null)
+    console.log('W17 no Ask Tess row where the server has none')
     console.log('Tess wide browser scenarios passed')
   } catch (error) {
     // What the page showed when a step failed, kept beside the artifacts.

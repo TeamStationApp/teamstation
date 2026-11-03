@@ -200,44 +200,69 @@ describe("Tess in the app's shell", () => {
     await mount(<App initialToken="token-one" />)
     await settle(60)
   }
+  const markMenu = 'TeamStation menu'
   const openTess = async (): Promise<void> => {
-    await tap(button('Tess')!)
+    await tap(button(markMenu)!)
+    await settle(30)
+    await tap(button('Ask Tess')!)
     await settle(60)
+  }
+  /** Whether the mark's menu has her row. It always has About. */
+  const offersTess = async (): Promise<boolean> => {
+    await tap(button(markMenu)!)
+    await settle(30)
+    const offered = button('Ask Tess') != null
+    await tap(button('Close menu')!)
+    await settle(30)
+    return offered
+  }
+  /** Only a tab root has the mark, so she opens there and the app moves on. */
+  const openOver = async (
+    route: Parameters<typeof showRoute>[0]
+  ): Promise<void> => {
+    await open(1280)
+    await openTess()
+    await act(async () => {
+      showRoute(route)
+      window.dispatchEvent(
+        new window.PopStateEvent('popstate', { state: window.history.state })
+      )
+    })
+    await settle(100)
   }
 
   describe('availability', () => {
-    it('shows no button while health fails, and the button once a retry says tess: true', async () => {
+    it('offers no Tess while health fails, and offers her once a retry says tess: true', async () => {
       healthAnswers = [new Error('offline'), health(true)]
       const clock = manualClock(TESS_HEALTH_RETRY_MS)
       try {
         await open(1280)
-        expect(button('Tess'), 'not while health fails').equals(null)
+        expect(await offersTess(), 'not while health fails').equals(false)
         await clock.advance(TESS_HEALTH_RETRY_MS)
         await settle(30)
-        expect(button('Tess'), 'after the retry').not.equals(null)
+        expect(await offersTess(), 'after the retry').equals(true)
       } finally {
         clock.restore()
       }
     })
 
-    it('shows no button when the server says tess: false, or says nothing', async () => {
+    it('offers no Tess when the server says tess: false, or says nothing', async () => {
       for (const answered of [health(false), health()]) {
         healthAnswers = [answered]
         await open(1280)
-        expect(button('Tess'), JSON.stringify(answered)).equals(null)
+        expect(await offersTess(), JSON.stringify(answered)).equals(false)
         await unmount()
         await restoreWindow?.()
         restoreWindow = undefined
       }
     })
 
-    it('takes the button and the chat away on sign-out', async () => {
-      await open(1280, { name: 'account' })
-      await openTess()
+    it('takes the menu and the chat away on sign-out', async () => {
+      await openOver({ name: 'account' })
       expect(byTestId('Tess column')).not.equals(null)
       await press('Sign out')
       await settle(100)
-      expect(button('Tess')).equals(null)
+      expect(button(markMenu)).equals(null)
       expect(byTestId('Tess chat')).equals(null)
     })
   })
@@ -254,7 +279,12 @@ describe("Tess in the app's shell", () => {
       await tap(link('Your account'))
       expect(byTestId('Tess chat'), 'closed by the link').equals(null)
       expect(currentRoute().name).equals('account')
-      // Reopened, it is the same conversation, and a way bubble goes too.
+      // Reopened from home, where the mark is, it is the same conversation,
+      // and a way bubble goes too.
+      await act(async () => {
+        window.history.back()
+      })
+      await settleUntil(() => currentRoute().name === 'home')
       await openTess()
       await tap(
         document.querySelector<HTMLElement>(
@@ -296,6 +326,14 @@ describe("Tess in the app's shell", () => {
       expect(destinations()).not.equals(null)
     })
 
+    it('takes the keyboard to her field when she opens', async () => {
+      await open(1024)
+      await openTess()
+      expect(document.activeElement?.getAttribute('aria-label')).equals(
+        'Ask Tess'
+      )
+    })
+
     it('sends no screen with a message', async () => {
       await open(1024)
       await openTess()
@@ -308,12 +346,18 @@ describe("Tess in the app's shell", () => {
     })
 
     it("closes on the browser's Back, leaving the route and the history as they were", async () => {
-      await open(1024)
+      // Over a pushed screen only by narrowing: the mark isn't on that screen.
+      await open(1280)
+      await openTess()
       await press('Account, Babe Ruth')
+      await settle(30)
+      await press('Account')
       await settle(60)
       expect(currentRoute().name).equals('account')
       const index = window.history.state?.tsRouteIndex as number
-      await openTess()
+      restoreWindow = (await windowSize(1024, 900)).restore
+      await settle(60)
+      expect(byTestId('Tess layer')).not.equals(null)
       await act(async () => {
         window.history.back()
       })
@@ -418,9 +462,14 @@ describe("Tess in the app's shell", () => {
       expect(byTestId('Tess column')).not.equals(null)
       expect(byTestId('Tess layer')).equals(null)
       expect(breakpoint(), 'open: the 880-point pane').equals('tablet')
-      expect(button('Tess')?.getAttribute('aria-expanded')).equals('true')
-      // The header's button closes it again, and the pane is the window.
-      await tap(button('Tess')!)
+      expect(document.activeElement?.getAttribute('aria-label')).equals(
+        'Ask Tess'
+      )
+      // Open already, the mark's menu has only About.
+      expect(await offersTess()).equals(false)
+      // Her own Close closes it again, and the pane is the window.
+      await tap(button('Close Tess')!)
+      expect(await offersTess()).equals(true)
       expect(byTestId('Tess column')).equals(null)
       expect(breakpoint()).equals('desktop')
     })
@@ -468,7 +517,7 @@ describe("Tess in the app's shell", () => {
       expect(breakpoint(), 'a 960-point pane').equals('tablet')
       expect(window.localStorage.getItem('tess.columnWidth')).equals('320')
       // Closed and opened again, the column is as wide as it was left.
-      await tap(button('Tess')!)
+      await tap(button('Close Tess')!)
       await openTess()
       expect(column().style.width).equals('320px')
     })
@@ -515,8 +564,7 @@ describe("Tess in the app's shell", () => {
     })
 
     it("sends the pane's screen and the steps that led there", async () => {
-      await open(1280, { name: 'account' })
-      await openTess()
+      await openOver({ name: 'account' })
       await fill('Ask Tess', 'What is on this page?')
       await press('Send')
       await settle(60)
@@ -570,8 +618,7 @@ describe("Tess in the app's shell", () => {
       api.teamGames = async () => []
       api.teamStats = async () => []
       api.teamPitchingStats = async () => []
-      await open(1280, { name: 'team', teamId: 't1', tab: 'schedule' })
-      await openTess()
+      await openOver({ name: 'team', teamId: 't1', tab: 'schedule' })
       await fill('Ask Tess', 'What is on this page?')
       await press('Send')
       await settle(60)
@@ -747,16 +794,14 @@ describe("Tess in the app's shell", () => {
   })
 
   describe('screens that take the whole window', () => {
-    it('hides the column and the button while scoring, and brings them back on leaving', async () => {
-      await open(1280, { name: 'game', gameId: 'g1' })
-      await openTess()
+    it('hides the column while scoring, and brings it back on leaving', async () => {
+      await openOver({ name: 'game', gameId: 'g1' })
       expect(byTestId('Tess column')).not.equals(null)
       await press('Score')
       await press('Full game scoring')
       await settle(100)
       expect(currentRoute().name).equals('scoreGame')
       expect(byTestId('Tess column'), 'scoring has the window').equals(null)
-      expect(button('Tess')).equals(null)
       expect(breakpoint()).not.equals('tablet')
       await act(async () => {
         window.history.back()
@@ -764,12 +809,10 @@ describe("Tess in the app's shell", () => {
       await settleUntil(() => currentRoute().name === 'scoreOptions')
       expect(currentRoute().name).equals('scoreOptions')
       expect(byTestId('Tess column'), 'back on leaving').not.equals(null)
-      expect(button('Tess')).not.equals(null)
     })
 
     it('draws no full-screen chat over scoring at 1024, and leaves its Back to scoring', async () => {
-      await open(1280, { name: 'game', gameId: 'g1' })
-      await openTess()
+      await openOver({ name: 'game', gameId: 'g1' })
       await press('Score')
       await press('Full game scoring')
       await settle(100)
@@ -788,35 +831,57 @@ describe("Tess in the app's shell", () => {
       expect(byTestId('Tess layer'), 'the chat was kept open').not.equals(null)
     })
 
-    it('hides them on the scoreboard override, which keeps its header', async () => {
-      await open(1280, { name: 'game', gameId: 'g1' })
-      await openTess()
+    it('leaves the focus alone when her column comes back after scoring', async () => {
+      await openOver({ name: 'game', gameId: 'g1' })
+      await press('Score')
+      await press('Full game scoring')
+      await settle(100)
+      expect(byTestId('Tess column')).equals(null)
+      await act(async () => {
+        ;(document.activeElement as HTMLElement | null)?.blur()
+      })
+      await act(async () => {
+        window.history.back()
+      })
+      await settleUntil(() => byTestId('Tess column') != null)
+      expect(document.activeElement?.getAttribute('aria-label')).not.equals(
+        'Ask Tess'
+      )
+    })
+
+    it('hides the column on the scoreboard override, which keeps its header', async () => {
+      await openOver({ name: 'game', gameId: 'g1' })
       await press('Score')
       await press('Scoreboard')
       await settle(100)
       expect(currentRoute().name).equals('scoreboardOverride')
       expect(byTestId('Tess column')).equals(null)
-      expect(button('Tess')).equals(null)
-      expect(button('Notifications'), 'the header is there').not.equals(null)
+      expect(button('Account, Babe Ruth'), 'the header is there').not.equals(
+        null
+      )
     })
 
-    it('hides them on DJ Game where the phone can DJ', async () => {
+    it('hides the column on DJ Game where the phone can DJ', async () => {
       webMusic.djSupported = true
       await open(1280)
       await openTess()
       await tap(link('DJ'))
       expect(currentRoute().name).equals('djGame')
       expect(byTestId('Tess column')).equals(null)
-      expect(button('Tess')).equals(null)
     })
 
-    it("keeps them on DJ Game's address where it shows the game", async () => {
+    it("keeps the column on DJ Game's address where it shows the game", async () => {
       await open(1280)
       await openTess()
       await tap(link('DJ'))
       expect(currentRoute().name).equals('djGame')
       expect(byTestId('Tess column')).not.equals(null)
-      expect(button('Tess')).not.equals(null)
+    })
+
+    it('offers no Tess on a pushed screen, where there is no mark', async () => {
+      await open(1280, { name: 'account' })
+      expect(button(markMenu)).equals(null)
+      expect(button('Ask Tess')).equals(null)
     })
   })
 })

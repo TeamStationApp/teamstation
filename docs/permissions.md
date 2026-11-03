@@ -260,7 +260,7 @@ You can belong to a season or a league without being on any team. This is for pe
 
 Nobody accepts anything to be added. Adding someone as a member, or as Admin, Coach, Assistant, Scorekeeper, Songkeeper or Videographer, takes effect at once, at a team, a season or a league: the membership of that level, and the role.
 
-- **Add by email.** An admin uses **Add somebody** in Settings, optionally with roles. An address an account has verified adds that account at once; they get a notification in the bell's inbox ("Dana Lee added you as Coach of Owls") and an email saying the same. An address nobody has verified yet gets an invitation ("Invitations last seven days"), which applies itself the moment somebody signs up or signs in with that address, or adds it to their account and verifies it.
+- **Add by email.** An admin uses **Add somebody** in Settings, optionally with roles. An address an account has verified adds that account at once; they get a notification in the Notifications inbox ("Dana Lee added you as Coach of Owls") and an email saying the same. An address nobody has verified yet gets an invitation ("Invitations last seven days"), which applies itself the moment somebody signs up or signs in with that address, or adds it to their account and verifies it.
 - **From the people list.** An admin, coach or assistant taps somebody on the level's people list (a season member on a team's roster, a follower, a guardian) and adds them as **Member** or a role on their profile. They are told the same way, and mailed when they were not in the level before.
 - **Invite link.** An admin uses **Invite people**: "Anybody with the link can watch…". A link makes whoever uses it a plain member of that level, team, season or league, and never lowers access someone already has.
 - **Added as a player** by a team admin.
@@ -332,7 +332,7 @@ A site admin can do all of it, whether or not the player has a guardian. Whether
 
 There are four ways.
 
-**1. A team invites the first guardian.** While the player has no guardian, an admin, coach or assistant of a team opens one of the team's players from the roster and uses **Settings → Invite a guardian**, with an email address. TeamStation emails that address ("‹coach› from ‹team› invited you to be ‹player›'s guardian on TeamStation"). The invited person signs in with an account that has verified that address and accepts from the bell's inbox. Their acceptance is the only one needed. If the player gets a guardian before the invitation is accepted, accepting it is refused with the same "has a guardian already" message, and the team can withdraw it.
+**1. A team invites the first guardian.** While the player has no guardian, an admin, coach or assistant of a team opens one of the team's players from the roster and uses **Settings → Invite a guardian**, with an email address. TeamStation emails that address ("‹coach› from ‹team› invited you to be ‹player›'s guardian on TeamStation"). The invited person signs in with an account that has verified that address and accepts from the Notifications inbox. Their acceptance is the only one needed. If the player gets a guardian before the invitation is accepted, accepting it is refused with the same "has a guardian already" message, and the team can withdraw it.
 
 **2. A guardian invites another.** A guardian of the player uses **Settings → Invite a guardian** on the player's page, opened from a team or from **Your Players** on Home. The invitation goes out in the guardian's own name, from no team ("‹guardian› invited you to be ‹player›'s guardian on TeamStation"), and the invited person accepts it the same way. It needs the sender to still be a guardian when it is accepted. It counts toward the sender's five waiting (below). Anyone else who sends one without a team gets "Only a guardian of the player can invite a guardian without a team".
 
@@ -344,7 +344,7 @@ There are four ways.
 
 The approval must come from someone other than the requester. A coach who asks to be the guardian of one of their own players waits for the player or for someone else who can approve, just as anyone else does.
 
-The request appears in the bell's inbox of the player and of each of the player's guardians, or, while the player has none, of every admin, coach and assistant of the player's teams, except the requester. It reads "‹name› asks to be ‹player›'s guardian", with "Approving lets them see ‹player›'s teams and manage ‹player›'s details." If the player gets a guardian while a request is waiting, it leaves the staff's inboxes and goes to that guardian. A scorekeeper, songkeeper or videographer can't approve.
+The request appears in the Notifications inbox of the player and of each of the player's guardians, or, while the player has none, of every admin, coach and assistant of the player's teams, except the requester. It reads "‹name› asks to be ‹player›'s guardian", with "Approving lets them see ‹player›'s teams and manage ‹player›'s details." If the player gets a guardian while a request is waiting, it leaves the staff's inboxes and goes to that guardian. A scorekeeper, songkeeper or videographer can't approve.
 
 **4. A roster import.** A team admin's roster tool can import adults with the players they look after. A guardian link is made only to a player who had no guardian (one who can sign in, as above) when that import began, so every parent one import names for a new player is linked. It is never made to the account of the person running the import. Links that are refused are counted as `guardiansRefused` in the import's answer. A site admin's import is held to neither rule. Imported guardians are also added to the team as members, so they keep that team even if the child leaves it.
 
@@ -354,7 +354,7 @@ sequenceDiagram
   participant TS as TeamStation
   participant A as Player, a guardian, or (no guardian yet) a team coach
   R->>TS: Request to be a guardian
-  TS->>A: Bell: "Pat asks to be Avery S's guardian"
+  TS->>A: Notification: "Pat asks to be Avery S's guardian"
   alt approved within 7 days
     A->>TS: Accept
     TS-->>R: Guardian of Avery S
@@ -613,7 +613,7 @@ once ([section 4](#how-people-become-members)). Invitations follow the same rule
 | **Guardian invitation (guardian)** | A guardian of the player, with no team                                                    | The invited person, who can't be the sender, while the sender is still a guardian                                                              | They become another guardian of the player                                                       |
 | **Guardian request**               | Anyone signed in who can see one of the player's teams                                    | The player, a guardian of the player, or (while there is none) an admin, coach or assistant of a team the player plays on; never the requester | The requester becomes the player's guardian                                                      |
 
-Everything waiting on you is in the bell's inbox:
+Everything waiting on you is in the Notifications inbox:
 
 - **Pending:** waiting on you ("Needs your approval")
 - **Sent:** waiting on others ("Awaiting approval")
@@ -625,7 +625,7 @@ sequenceDiagram
   participant TS as TeamStation
   participant B as Spring 2026 admin
   A->>TS: Send invitation (Owls side approved)
-  TS->>B: Bell: "Owls invited to Spring 2026"
+  TS->>B: Notification: "Owls invited to Spring 2026"
   alt accepted within 7 days
     B->>TS: Accept invitation
     TS-->>A: Applied
@@ -873,7 +873,7 @@ Ask a site admin. Nothing in the app removes a guardian link; a site admin can s
 A guardian sees the teams their child plays on now. Your child's own page still shows every team they have played for.
 
 **Somebody added me to a team I don't want to be in. What now?**
-Open the notification in the bell's inbox and tap **Leave**. Nothing was waiting for your answer: you were added at once, and leaving takes it all away again.
+Open the notification in the Notifications inbox and tap **Leave**. Nothing was waiting for your answer: you were added at once, and leaving takes it all away again.
 
 **Does following a team let me see its videos?**
 No. Anyone signed in can open a team, followed or not, from Search or anywhere else, and see its roster, schedule, scores and highlight list. Watching videos, and seeing batting, pitching and box scores, needs membership of the team, of its parent season or of its league. Ask an admin for an invitation or invite link. Following lists you under **Followers** on the team's roster.

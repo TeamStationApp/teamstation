@@ -62,6 +62,9 @@ import { type MessageView, reactionKey } from './engine/apply'
 
 type Peer = Awaited<ReturnType<typeof fixturePeer>>
 type Json = Record<string, unknown>
+/** The picture's label, which grows a suffix while a notification is pending. */
+const accountText = (label: string): string =>
+  `${exactText(label).slice(0, -1)}(, .*)?$`
 /** A public control that must lie inside the pinch-zoomed visual viewport. */
 interface ZoomedWebControl {
   name: string
@@ -2235,7 +2238,18 @@ export class Scenarios {
           'Retained I2 target must already be signed in and linked: ' + label
         )
     if (await ui.visible({ text: '^Account,.*$' }, 500)) {
-      await m.tapOn({ text: '^Account,.*$' })
+      // In the panel, because Account's own header says the same word. A row
+      // tap that was lost leaves the menu open, and the picture would shut it.
+      const accountRow = {
+        text: exactText('Account'),
+        childOf: { id: 'header-menu-panel' }
+      }
+      const openAccount = async (): Promise<void> => {
+        if (!(await ui.visible(accountRow, 500)))
+          await m.tapOn({ text: '^Account,.*$' })
+        await m.tapOn(accountRow)
+      }
+      await openAccount()
       // On a native device the page can fail to open, or be routed away
       // before it is read; its first section proves it is the Account page.
       if (
@@ -2243,7 +2257,7 @@ export class Scenarios {
         !(await ui.visible({ text: exactText('Name') }, 10000))
       ) {
         this.observations.push({ accountPageRetapped: true })
-        await m.tapOn({ text: '^Account,.*$' })
+        await openAccount()
         await m.assertVisible({ text: exactText('Name'), timeout: 15000 })
       }
       if (await ui.visible({ text: exactText(actor.email) }, 2000))
@@ -2287,7 +2301,7 @@ export class Scenarios {
     }
     if (retainedI2) {
       await m.assertVisible({
-        text: exactText(actor.accountLabel),
+        text: accountText(actor.accountLabel),
         timeout: 30000
       })
       await ui.present('chat-conversation-list')
@@ -2344,7 +2358,7 @@ export class Scenarios {
       }
     }
     await m.assertVisible({
-      text: exactText(actor.accountLabel),
+      text: accountText(actor.accountLabel),
       timeout: 30000
     })
     await ui.present('chat-conversation-list')
@@ -4477,9 +4491,7 @@ export class Scenarios {
         inViewport(n.bounds) &&
         n.bounds.y + n.bounds.height <= height / 3 &&
         (ui.surface !== 'ios' || n.type === 'Button') &&
-        (n.text === 'Back' ||
-          n.text === 'Notifications' ||
-          n.text?.startsWith('Account, ') === true)
+        (n.text === 'Back' || n.text?.startsWith('Account, ') === true)
     )
     assert(
       header.length > 0 &&
@@ -4963,9 +4975,7 @@ export class Scenarios {
         n =>
           visible(n.bounds) &&
           n.bounds.y + n.bounds.height <= height / 3 &&
-          (n.text === 'Back' ||
-            n.text === 'Notifications' ||
-            n.text?.startsWith('Account, ') === true)
+          (n.text === 'Back' || n.text?.startsWith('Account, ') === true)
       )
       assert(
         headers.length > 0,

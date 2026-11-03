@@ -10,6 +10,14 @@
  * Keys read as `area_thing`, and no screen contains a literal sentence.
  */
 export const enUs = {
+  header_menu_close: 'Close menu',
+  header_menu_panel: 'Menu',
+  header_account_label: 'Account, %s',
+  header_account_waiting: 'Account, %s, notifications waiting',
+  header_menu_teamstation: 'TeamStation menu',
+  header_account: 'Account',
+  header_notifications: 'Notifications',
+  header_notifications_waiting: 'Notifications waiting',
   about_title: 'About TeamStation',
   about_version: 'Version',
   about_number: 'Build number',
@@ -1137,7 +1145,8 @@ export const enUs = {
   lineupQr_imported_one: 'Imported 1 player',
   lineupQr_imported_other: 'Imported %s players',
   lineupQr_benched: '%s benched',
-  tess_title: 'Tess',
+  tess_ask: 'Ask Tess',
+  tess_ask_detail: 'Your AI chatbot',
   tess_heading: 'Ask Tess',
   tess_close: 'Close Tess',
   tess_empty:

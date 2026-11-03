@@ -133,6 +133,7 @@ async function openAccount() {
   await tap(
     node => node.type === 'Button' && (node.text ?? '').startsWith('Account,')
   )
+  await button('Account')
   await m.scrollUntilVisible({
     element: { text: 'Sign out' },
     direction: 'DOWN'

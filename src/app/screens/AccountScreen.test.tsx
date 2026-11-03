@@ -742,9 +742,29 @@ describe('Account settings screen', () => {
     await press('Back')
     expect(button('Account, Alex Shell')).not.equals(undefined)
     await press('Account, Alex Shell')
+    await press('Account')
     await press('Sign out')
     expect(tokens).deep.equals([undefined])
   })
+  it('keeps the picture on Account, whose row only closes the menu', async () => {
+    globalThis.fetch = fixture().fetcher
+    showRoute(parseRoute('/account'), true)
+    await render(<App initialToken="test-session" onToken={() => undefined} />)
+    const picture = (): string =>
+      [...document.querySelectorAll('[role="button"]')]
+        .map(node => node.getAttribute('aria-label') ?? '')
+        .find(label => label.startsWith('Account, '))!
+    await press(picture())
+    await press('Account')
+    expect(window.location.pathname).equals('/account')
+    expect(document.querySelector('[data-testid="header-menu-panel"]')).equals(
+      null
+    )
+    await press(picture())
+    await press('Notifications')
+    expect(window.location.pathname).equals('/notifications')
+  })
+
   it('opens Create API key at its own address, above Account, and makes a key that Account then lists', async () => {
     const f = fixture()
     globalThis.fetch = f.fetcher

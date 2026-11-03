@@ -2607,6 +2607,8 @@ describe('chat devices in the app', function () {
         }
         await open()
         if (nested) {
+          await press('Account, Blair B')
+          await until('menu', () => button('Notifications') != null)
           await press('Notifications')
           await until('season notice', () => button('Demo schedule') != null)
           await press('Demo schedule')
@@ -2817,6 +2819,16 @@ describe('chat devices in the app', function () {
           await click('[role="tab"][aria-label="Chats"]')
           await open()
           await press('Account, Blair B')
+          // In the panel, because `button` also takes the picture's own label.
+          const accountRow = (): HTMLElement | null =>
+            document.querySelector<HTMLElement>(
+              '[data-testid="header-menu-panel"] [aria-label="Account"]'
+            )
+          await until('menu', () => accountRow() != null)
+          await act(async () => {
+            accountRow()!.click()
+            await delay(20)
+          })
           await until('account', () => text().includes('Sign out'))
           await press('Sign out')
           await until('signed out', () =>

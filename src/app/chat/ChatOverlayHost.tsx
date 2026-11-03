@@ -12,6 +12,13 @@ const OverlayContext = createContext<
   React.Dispatch<React.SetStateAction<OverlayEntry | null>> | undefined
 >(undefined)
 
+/** Whether an overlay holds the host's one place, closing ones included. */
+const OverlayBusyContext = createContext(false)
+
+export function useChatOverlayBusy(): boolean {
+  return useContext(OverlayBusyContext)
+}
+
 /** A same-window host lets Android's native blur sample the actual chat. */
 export function ChatOverlayHost({
   children
@@ -28,19 +35,21 @@ export function ChatOverlayHost({
   const hiddenTouches = Platform.OS === 'web' ? 'none' : 'box-only'
   return (
     <OverlayContext.Provider value={setOverlay}>
-      <View style={{ flex: 1 }}>
-        <View
-          aria-hidden={modal}
-          collapsable={false}
-          style={{ flex: 1 }}
-          pointerEvents={modal ? hiddenTouches : 'auto'}
-          accessibilityElementsHidden={modal}
-          importantForAccessibility={modal ? 'no-hide-descendants' : 'auto'}
-        >
-          {children}
+      <OverlayBusyContext.Provider value={overlay != null}>
+        <View style={{ flex: 1 }}>
+          <View
+            aria-hidden={modal}
+            collapsable={false}
+            style={{ flex: 1 }}
+            pointerEvents={modal ? hiddenTouches : 'auto'}
+            accessibilityElementsHidden={modal}
+            importantForAccessibility={modal ? 'no-hide-descendants' : 'auto'}
+          >
+            {children}
+          </View>
+          {overlay?.node}
         </View>
-        {overlay?.node}
-      </View>
+      </OverlayBusyContext.Provider>
     </OverlayContext.Provider>
   )
 }
@@ -56,9 +65,11 @@ export function ChatOverlayPortal({
   // The web twin publishes controls before React restores their DOM values.
   useChatOverlayCommit(() => {
     if (host == null) return
-    host({ node: children, modal })
+    const entry = { node: children, modal }
+    host(entry)
+    // Only its own: another overlay may have taken the place since.
     return () => {
-      host(null)
+      host(current => (current === entry ? null : current))
     }
   }, [host, children, modal])
   return host == null ? <>{children}</> : null

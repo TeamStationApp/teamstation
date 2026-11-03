@@ -3,12 +3,13 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { edgeMarginRem } from '../layout/margins'
-import { lstrings } from '../locales/strings'
+import { lstrings, sprintf } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { BuildInfoModal } from './BuildInfoModal'
 import { Emblem } from './Emblem'
 import { GlassView } from './GlassView'
+import { HeaderMenu, type HeaderMenuItem } from './HeaderMenu'
 import { Icon } from './Icon'
 import { TsMark } from './TsMark'
 import { useBreakpoint } from './useBreakpoint'
@@ -18,7 +19,10 @@ export interface AppHeaderProps {
   buildsClient?: TeamStationClient
   /** The name of the screen, centred. Absent on screens that say it below. */
   title?: string
-  /** Home only. Everywhere else the screen says what it is. */
+  /**
+   * Tab roots, and the sign-in, join, onboarding and OAuth headers. Everywhere
+   * else the screen says what it is.
+   */
   showMark?: boolean
   onBack?: () => void
   /**
@@ -35,7 +39,7 @@ export interface AppHeaderProps {
   nav?: React.ReactNode
   /** An opt-in minimum for a scene's trailing controls, including scaled labels. */
   navMinWidth?: number
-  /** The signed-in person, drawn at the right and opening their account. */
+  /** The signed-in person, whose picture at the right opens their menu. */
   account?: {
     name: string
     avatarUrl?: string | null
@@ -45,12 +49,14 @@ export interface AppHeaderProps {
   onHeight?: (height: number) => void
   /** Whether the signed-in person is a site administrator. */
   isAdmin?: boolean
+  /** A row in the person's menu, and a dot on their picture when pending. */
   notifications?: { pending: boolean; onPress: () => void }
-  /**
-   * The button that opens Tess's chat, and closes it again, ahead of
-   * Notifications. Absent where Tess is not offered.
-   */
-  tess?: { onPress: () => void; open: boolean }
+  /** The mark's menu's row that opens Tess, after About. Absent where she isn't offered. */
+  tess?: { onPress: () => void }
+  /** Closes an open menu when it changes: the address, say. */
+  menuKey?: string
+  /** Whether a menu is open, for an owner whose Back has to wait for it. */
+  onMenuOpenChange?: (open: boolean) => void
 }
 
 /**
@@ -58,8 +64,8 @@ export interface AppHeaderProps {
  *
  * It used to say `TEAMSTATION` and then the name of the screen underneath,
  * which on the home screen meant reading the name of the app twice on a screen
- * that already has the mark in the corner. Now: the mark on home only, the
- * screen's name centred where a screen has one to give, and otherwise nothing
+ * that already has the mark in the corner. Now: the mark on tab roots only,
+ * the screen's name centred where a screen has one to give, and otherwise nothing
  * at all until something scrolls up into it.
  *
  * It is glass, and it sits **over** the content rather than above it, so the
@@ -92,6 +98,74 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
   // whichever is wider — the design's, or the corner's.
   const insets = useInsets()
   const margin = theme.rem(edgeMarginRem(theme, wide ? 'tablet' : 'phone'))
+  const pending = props.notifications?.pending === true
+  const openAbout = (): void => {
+    setAbout(true)
+  }
+  const picture = account != null && (
+    <Emblem
+      key={account.avatarUrl}
+      uri={account.avatarUrl}
+      fallback={initials(account.name)}
+      shape="circle"
+      size={2}
+    />
+  )
+  const accountRows: HeaderMenuItem[] =
+    account == null
+      ? []
+      : [
+          {
+            label: lstrings.header_account,
+            icon: picture,
+            onPress: account.onPress
+          },
+          ...(props.notifications == null
+            ? []
+            : [
+                {
+                  label: lstrings.header_notifications,
+                  hint: pending
+                    ? lstrings.header_notifications_waiting
+                    : undefined,
+                  icon: (
+                    <View>
+                      <Icon
+                        name="notifications"
+                        size={1.5}
+                        color={theme.headerTextColor}
+                      />
+                      {pending && <PendingDot testID="notification-row-dot" />}
+                    </View>
+                  ),
+                  onPress: props.notifications.onPress
+                }
+              ])
+        ]
+  const markRows: HeaderMenuItem[] = [
+    {
+      label: lstrings.about_title,
+      icon: <TsMark size={1.5} />,
+      onPress: openAbout
+    },
+    ...(props.tess == null
+      ? []
+      : [
+          {
+            label: lstrings.tess_ask,
+            detail: lstrings.tess_ask_detail,
+            icon: (
+              <Icon
+                name="auto_awesome"
+                size={1.5}
+                color={theme.headerTextColor}
+              />
+            ),
+            onPress: props.tess.onPress
+          }
+        ])
+  ]
+  const markStyle = [styles.mark, wide && styles.markWide]
 
   return (
     <>
@@ -139,18 +213,33 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
               />
             </Pressable>
           )}
-          {showMark && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={lstrings.about_title}
-              onPress={() => {
-                setAbout(true)
-              }}
-              style={[styles.mark, wide && styles.markWide]}
-            >
-              <TsMark size={1.75} />
-            </Pressable>
-          )}
+          {showMark &&
+            // A menu wherever the header has a picture or Tess, however short.
+            // Otherwise there is nothing else to offer, so it opens About.
+            (account != null || props.tess != null ? (
+              <HeaderMenu
+                label={lstrings.header_menu_teamstation}
+                align="left"
+                closeKey={props.menuKey}
+                onOpenChange={props.onMenuOpenChange}
+                items={markRows}
+                style={({ pressed }: { pressed: boolean }) => [
+                  markStyle,
+                  pressed && styles.pressed
+                ]}
+              >
+                <TsMark size={1.75} />
+              </HeaderMenu>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={lstrings.about_title}
+                onPress={openAbout}
+                style={({ pressed }) => [markStyle, pressed && styles.pressed]}
+              >
+                <TsMark size={1.75} />
+              </Pressable>
+            ))}
           {handoff != null ? (
             <View testID="headerHandoff" style={styles.handoffLeft}>
               {handoff}
@@ -174,86 +263,27 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           ]}
         >
           {nav}
-          {props.tess != null && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={lstrings.tess_title}
-              aria-expanded={props.tess.open}
-              onPress={() => {
-                props.tess?.onPress()
-              }}
-              style={({ pressed }) => [
-                styles.headerButton,
-                pressed && styles.pressed
-              ]}
-            >
-              <Icon
-                name="auto_awesome"
-                size={1.5}
-                color={theme.headerTextColor}
-              />
-            </Pressable>
-          )}
-          {props.notifications != null && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Notifications"
-              accessibilityHint={
-                props.notifications.pending
-                  ? 'Pending approvals'
-                  : 'No pending approvals'
-              }
-              onPress={() => {
-                props.notifications?.onPress()
-              }}
-              style={{
-                width: theme.rem(3),
-                height: theme.rem(3),
-                justifyContent: 'center',
-                alignItems: 'center'
-              }}
-            >
-              <Icon
-                name="notifications"
-                size={1.5}
-                color={theme.headerTextColor}
-              />
-              {props.notifications.pending && (
-                <View
-                  testID="notification-pending-dot"
-                  style={{
-                    position: 'absolute',
-                    top: theme.rem(0.45),
-                    right: theme.rem(0.55),
-                    width: theme.rem(0.5),
-                    height: theme.rem(0.5),
-                    borderRadius: theme.rem(0.25),
-                    backgroundColor: theme.dangerColor
-                  }}
-                />
-              )}
-            </Pressable>
-          )}
           {account != null && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Account, ${account.name}`}
-              onPress={() => {
-                account.onPress()
-              }}
-              style={({ pressed }) => [
+            <HeaderMenu
+              label={
+                pending
+                  ? sprintf(lstrings.header_account_waiting, account.name)
+                  : sprintf(lstrings.header_account_label, account.name)
+              }
+              align="right"
+              items={accountRows}
+              closeKey={props.menuKey}
+              onOpenChange={props.onMenuOpenChange}
+              style={({ pressed }: { pressed: boolean }) => [
                 styles.account,
                 pressed && styles.pressed
               ]}
             >
-              <Emblem
-                key={account.avatarUrl}
-                uri={account.avatarUrl}
-                fallback={initials(account.name)}
-                shape="circle"
-                size={2}
-              />
-            </Pressable>
+              <View>
+                {picture}
+                {pending && <PendingDot testID="notification-pending-dot" />}
+              </View>
+            </HeaderMenu>
           )}
         </View>
       </GlassView>
@@ -268,6 +298,25 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
         />
       )}
     </>
+  )
+}
+
+/** On the upper-right corner of whatever it's put in. */
+function PendingDot(props: { testID: string }): React.ReactElement {
+  const theme = useTheme()
+  return (
+    <View
+      testID={props.testID}
+      style={{
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        width: theme.rem(0.5),
+        height: theme.rem(0.5),
+        borderRadius: theme.rem(0.25),
+        backgroundColor: theme.dangerColor
+      }}
+    />
   )
 }
 
@@ -315,13 +364,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
   // stands off the window. Spacing that belongs to the mark and not to the row
   // it is in: a back chevron is the alternative to the mark and wants its own,
   // much smaller, because the glyph already sits in a target far wider than it
-  // is.
+  // is. Padding rather than a margin, and as tall as the picture, so the mark is
+  // as easy to hit and its menu drops to the same height as the picture's.
   mark: {
     flexShrink: 0,
-    marginRight: theme.rem(edgeMarginRem(theme, 'phone'))
+    justifyContent: 'center',
+    minHeight: theme.rem(2.75),
+    paddingRight: theme.rem(edgeMarginRem(theme, 'phone'))
   },
   markWide: {
-    marginRight: theme.rem(edgeMarginRem(theme, 'tablet'))
+    paddingRight: theme.rem(edgeMarginRem(theme, 'tablet'))
   },
   sideEnd: {
     gap: theme.rem(theme.spaceXsRem),
@@ -359,12 +411,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1.125),
     fontWeight: '700',
     color: theme.headerTextColor
-  },
-  headerButton: {
-    width: theme.rem(3),
-    height: theme.rem(3),
-    justifyContent: 'center',
-    alignItems: 'center'
   },
   account: {
     minWidth: theme.rem(2.75),

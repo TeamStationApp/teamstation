@@ -38,6 +38,15 @@ async function login(page: Page, f: GroupFixture, user: number): Promise<void> {
   await page.waitForSelector('[aria-label^="Account,"]')
   await text(page, 'Your Home')
 }
+/** The picture opens its menu, whatever else its label says, then the row. */
+async function openNotifications(page: Page): Promise<void> {
+  const picture = '[role="button"][aria-label^="Account, "]'
+  await page.waitForSelector(picture)
+  await page.$eval(picture, node => {
+    ;(node as HTMLElement).click()
+  })
+  await press(page, 'Notifications')
+}
 async function chooseLocation(
   page: Page,
   label = 'Location not set, Add a city'
@@ -332,7 +341,7 @@ async function main(): Promise<void> {
     await teamAdmin.goto(f.h.origin + '/', { waitUntil: 'networkidle0' })
     await teamAdmin.waitForSelector('[data-testid="notification-pending-dot"]')
     await shot(teamAdmin, 'notification-entry-after.png')
-    await press(teamAdmin, 'Notifications')
+    await openNotifications(teamAdmin)
     await text(teamAdmin, 'Hawks invited to Demo Tournament')
     await shot(teamAdmin, 'notifications-oldest-first.png')
     // Decided on its card in the list: Accept and Reject, and no detail.
@@ -439,7 +448,7 @@ async function main(): Promise<void> {
       deviceScaleFactor: 1
     })
     await login(recipient, f, 103)
-    await press(recipient, 'Notifications')
+    await openNotifications(recipient)
     await press(recipient, 'Become administrator of Demo Outside Opponent')
     await press(recipient, 'Accept invitation')
     await text(recipient, 'Accepted')

@@ -431,7 +431,8 @@ async function main(): Promise<void> {
     async E4() {
       await relaunch()
       await home()
-      await tap('Account, ', 2500, true)
+      await tap('Account, ', 1500, true)
+      await tap('Account', 2500)
       await m.scrollUntilVisible({
         element: { text: 'Sign out' },
         direction: 'DOWN'
