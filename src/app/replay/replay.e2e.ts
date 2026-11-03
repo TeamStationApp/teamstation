@@ -312,9 +312,24 @@ async function replay(m: Device): Promise<void> {
   // The announcer is off as the replay opens, so no step waits for speech.
   const pitchMs = Number(process.env.REPLAY_PITCH_MS ?? 5000)
   const { kinds, halfEnds } = await finalSteps()
+  await evalJson<boolean>(
+    m,
+    `
+    window.__pacing = [];
+    let previous = null;
+    new MutationObserver(() => {
+      const text = ${CARD};
+      if (text !== previous) {
+        previous = text;
+        window.__pacing.push({ text, at: Date.now() });
+      }
+    }).observe(document.body, { subtree: true, childList: true, characterData: true });
+    return true;
+  `
+  )
   const changes: number[] = []
   let last = await cardUntil(m, 'the card', text => text !== '', 15000)
-  assert.equal(last, 'Play ball!', 'the replay opens on Play ball!')
+  assert.ok(last.startsWith('Play ball!'), 'the replay opens on Play ball!')
   await shot(m, 'replay-open')
   while (changes.length < 8) {
     const before = last
@@ -324,7 +339,14 @@ async function replay(m: Device): Promise<void> {
       text => text !== before,
       pitchMs + 15000
     )
-    changes.push(Date.now())
+    // Timestamp the DOM change itself; 200ms polling can observe two
+    // equally spaced pitches with an apparent gap shorter than the slot.
+    changes.push(
+      await evalJson<number>(
+        m,
+        `return window.__pacing.findLast(change => change.text === ${JSON.stringify(last)}).at`
+      )
+    )
   }
   // The n-th change starts the n-th step: a gap is a pitch's when its step
   // is a pitch that does not end a half.

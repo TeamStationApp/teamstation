@@ -35,10 +35,10 @@ describe('TV historical box score', () => {
     const early = boardAt(steps, steps[1].at)!.box
     const final = boardAt(steps, Infinity)!.box
     expect(early.away.runs).equals(0)
-    expect(early.home.pitching.reduce((n, p) => n + p.pc, 0)).equals(1)
+    expect(early.home.pitching.reduce((n, p) => n + (p.pc ?? 0), 0)).equals(1)
     expect(early.away.batting.reduce((n, p) => n + p.bb, 0)).equals(0)
     const walk = boardAt(steps, steps[6].at)!.box
-    expect(walk.home.pitching.reduce((n, p) => n + p.pc, 0)).equals(5)
+    expect(walk.home.pitching.reduce((n, p) => n + (p.pc ?? 0), 0)).equals(5)
     expect(walk.away.batting.reduce((n, p) => n + p.bb, 0)).equals(1)
     expect(boardAt(steps, steps[1].at)!.box).deep.equals(early)
     expect(final.away.runs).equals(2)

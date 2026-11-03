@@ -327,8 +327,7 @@ export function TvPlayer({
       let appliedTimelineSequence = 0
       const refresh = async (): Promise<void> => {
         const sequence = ++refreshSequence
-        const [board, replay, highlights] = await Promise.all([
-          client.scoreboardTimeline(game.id).catch(() => null),
+        const [replay, highlights] = await Promise.all([
           readTvStatistics(client, request.game.id),
           client.tvHighlights(loaded[0].video.id).catch(() => null)
         ])
@@ -336,8 +335,8 @@ export function TvPlayer({
         if (sequence > appliedStatisticsSequence) {
           appliedStatisticsSequence = sequence
           setStats({
-            board,
-            ...replay
+            ...replay,
+            board: replay.board ?? null
           })
           setClipError(highlights === null)
           if (highlights !== null) setClips(highlights)
@@ -797,13 +796,15 @@ export function TvPlayer({
   }
   const board = boardAt(stats.board?.steps ?? [], wall)?.state
   const { box, message: statsMessage } = statisticsAt(stats, wall)
-  const line = box == null ? null : lineOf(box)
+  const line =
+    boardAt(stats.lines ?? [], wall)?.line ??
+    (box === undefined ? null : lineOf(box))
   const layout = tvLayout(
     state,
     screen,
     placement,
     board != null,
-    box != null,
+    line != null,
     boardSize
   )
   const staticScore =
@@ -1022,13 +1023,13 @@ export function TvPlayer({
             step={boardAt(stats.board?.steps ?? [], wall) ?? null}
             onNaturalSize={measureBoard}
             place={natural =>
-              tvLayout(state, screen, placement, true, box != null, natural)
+              tvLayout(state, screen, placement, true, line != null, natural)
                 .board
             }
           />
         </View>
       )}
-      {staticScore && layout.box !== null && box != null && (
+      {staticScore && layout.box !== null && line != null && (
         <View
           pointerEvents="none"
           style={[StyleSheet.absoluteFill, { zIndex: 4 }]}
@@ -1036,7 +1037,12 @@ export function TvPlayer({
           <LineScoreBox
             rect={layout.box}
             line={line ?? null}
-            teams={{ away: box.away.name, home: box.home.name }}
+            teams={
+              stats.teams ?? {
+                away: request.game.awayTeamName,
+                home: request.game.homeTeamName
+              }
+            }
             at={wall}
           />
         </View>
@@ -1371,7 +1377,12 @@ export function TvPlayer({
                           <StatRow
                             key={side}
                             singleLine
-                            name={box?.[side].name ?? side}
+                            name={
+                              stats.teams?.[side] ??
+                              (side === 'away'
+                                ? request.game.awayTeamName
+                                : request.game.homeTeamName)
+                            }
                             values={[
                               ...Array.from(
                                 {
@@ -1413,8 +1424,8 @@ export function TvPlayer({
                     >
                       <Text style={styles.statsHeading}>{box[side].name}</Text>
                       <Text style={styles.statText}>
-                        Runs {box[side].runs} Hits {box[side].hits} Errors{' '}
-                        {box[side].errors}
+                        Runs {box[side].runs} Hits {box[side].hits ?? '—'}{' '}
+                        Errors {box[side].errors ?? '—'}
                       </Text>
                       <StatRow
                         name="Batting"
@@ -1451,7 +1462,7 @@ export function TvPlayer({
                             player.er,
                             player.bb,
                             player.k,
-                            player.pc
+                            player.pc ?? '—'
                           ]}
                         />
                       ))}
