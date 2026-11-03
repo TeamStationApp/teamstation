@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 
 import { WebSocket } from 'ws'
 
+import { asPostedEdits, type PostedEdits } from '../../src/common/api'
 import {
   GAME_SOCKET_PROTOCOL,
   RECONNECT_DELAYS_MS
@@ -248,14 +249,18 @@ export class SocketViewer implements Actor {
   }
 }
 
-/** The game's plays over its route, as the scoring screen reads and saves them. */
+/**
+ * The game's plays over its route, as the scoring screen reads and saves
+ * them. A save keeps only the digests and the generation of its answer
+ * (`asPostedEdits`), which a server answers as edits or, older, as every play.
+ */
 export function httpStore(
   server: string,
   account: Pick<SeededAccount, 'token' | 'kind'>,
   tally: Tally
 ): {
   load: (gameId: string) => Promise<StoredGame>
-  save: (gameId: string, change: SaveChange) => Promise<StoredGame>
+  save: (gameId: string, change: SaveChange) => Promise<PostedEdits>
 } {
   const stored = (raw: unknown): StoredGame => {
     const read = raw as {
@@ -279,7 +284,8 @@ export function httpStore(
           server,
           account,
           'POST',
-          `/games/${gameId}/events`,
+          // Only what the post wrote, as the app asks.
+          `/games/${gameId}/events?answer=edits`,
           {
             route: '/games/:id/events',
             tally,
@@ -307,7 +313,7 @@ export function httpStore(
       }
       tally.postMs.push(performance.now() - started)
       tally.postAt.push(Date.now())
-      return stored(answer)
+      return asPostedEdits(answer)
     }
   }
 }

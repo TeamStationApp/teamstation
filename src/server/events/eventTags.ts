@@ -152,14 +152,14 @@ export async function reconcileEventTags(
 
 /**
  * `reconcileEventTags` for a caller that has just read the game's plays under
- * the lock (`held`): it works from those, and says whether it rewrote any, so
- * the caller need not read them again.
+ * the lock (`held`): it works from those, and says which plays it rewrote, by
+ * index, so the caller need not read the others again.
  */
 export async function repairEventTags(
   db: Kysely<Database>,
   gameId: string,
   held?: readonly TaggedRow[]
-): Promise<{ documents: TagDocument[]; rewrotePlays: boolean }> {
+): Promise<{ documents: TagDocument[]; rewritten: number[] }> {
   const repair = await planEventTagRepair(db, gameId, held)
   if (repair.stale.length > 0)
     await db
@@ -182,7 +182,10 @@ export async function repairEventTags(
       .set({ currentPlay: repair.currentPlay })
       .where('id', '=', gameId)
       .execute()
-  return { documents: repair.documents, rewrotePlays: repair.plays.length > 0 }
+  return {
+    documents: repair.documents,
+    rewritten: repair.plays.map(play => play.gumbo.about.atBatIndex)
+  }
 }
 
 export async function tagChoices(

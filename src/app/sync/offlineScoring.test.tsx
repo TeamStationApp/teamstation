@@ -36,6 +36,7 @@ const SERVER_GUMBO = 900_001
 
 interface Post {
   path: string
+  query: string
   body: Record<string, unknown>
 }
 
@@ -133,7 +134,10 @@ function fieldServer(stored: { plays: GumboPlay[]; currentPlay: unknown }): {
     posts: [] as Post[],
     fetch: (async (url: unknown, init?: RequestInit) => {
       if (state.offline) throw new TypeError('Load failed')
-      const path = String(url).replace('http://x/api/v1', '')
+      const target = String(url).replace('http://x/api/v1', '')
+      // A post is routed without its query, which says what it is answered.
+      const [path, query = ''] =
+        init?.method === 'POST' ? target.split('?') : [target]
       const json = (status: number, body: unknown): Response =>
         new Response(JSON.stringify(body), {
           status,
@@ -141,7 +145,7 @@ function fieldServer(stored: { plays: GumboPlay[]; currentPlay: unknown }): {
         })
       if (init?.method === 'POST') {
         const body = JSON.parse(init.body as string) as Record<string, unknown>
-        state.posts.push({ path, body })
+        state.posts.push({ path, query, body })
         revision++
         const team = /^\/teams\/([^/]+)\/roster-players$/.exec(path)?.[1]
         if (team != null) {
@@ -429,6 +433,9 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       ...sent.slice(1).map(() => '/games/g1/events')
     ])
     expect(sent.filter(post => post.path.includes('roster'))).length(1)
+    // The phone keeps the whole game it is answered with: it asks for no
+    // answer, so every play comes back.
+    for (const post of sent.slice(1)) expect(post.query).equals('')
     for (const post of sent.slice(1)) {
       const body = JSON.stringify(post.body)
       expect(body).not.includes(String(local!.gumboId))

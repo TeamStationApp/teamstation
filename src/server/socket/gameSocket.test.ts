@@ -10,6 +10,7 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 import WebSocket from 'ws'
 
+import { asPostedEdits } from '../../common/api'
 import {
   GAME_SOCKET_PROTOCOL,
   type GameSocketReply
@@ -244,15 +245,10 @@ describe('the game socket (U14)', function () {
             : { currentPlay: change.currentPlay })
         })
       })
-      const answer = (await response.json()) as {
-        plays: Array<{ gumbo: GumboPlay }>
-        currentPlay: CurrentPlay | null
-      }
+      const answer: unknown = await response.json()
       expect(response.status, JSON.stringify(answer)).equals(200)
-      return {
-        plays: answer.plays.map(row => row.gumbo),
-        currentPlay: answer.currentPlay
-      }
+      // A live post answers its edits: the session reads their digests.
+      return asPostedEdits(answer)
     }
   }
   let session: ScoringSession | undefined

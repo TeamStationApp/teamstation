@@ -266,7 +266,10 @@ export async function refoldGame(
         mode: 'live',
         remove: removed,
         ...(currentPlay ? { currentPlay: picture.current } : {})
-      })
+      }),
+      undefined,
+      undefined,
+      { answer: 'all' }
     )
   return {
     kind: 'changed',

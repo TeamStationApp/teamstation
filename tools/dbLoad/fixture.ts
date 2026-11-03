@@ -588,7 +588,10 @@ class Seeder {
         source: { system: 'teamstation' },
         plays: game.plays,
         currentPlay: game.currentPlay
-      })
+      }),
+      undefined,
+      undefined,
+      { answer: 'all' }
     )
   }
 

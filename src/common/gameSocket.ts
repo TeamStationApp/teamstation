@@ -39,6 +39,25 @@ import type { WalkUpSong } from './walkUpSong'
  */
 export const GAME_SOCKET_PROTOCOL = 2
 
+/**
+ * A stored play as `GET /games/:gameId/events` gives each row: its id, its
+ * game and its document, named.
+ */
+export interface WirePlayRow {
+  id: string
+  gameId: string
+  gumbo: unknown
+}
+
+/**
+ * One change to a game's stored plays: a play written at its
+ * `gumbo.about.atBatIndex`, in place of whatever was there, or the play at
+ * an index taken away. A put of a play the holder already has changes
+ * nothing.
+ */
+export type PlayEdit =
+  { op: 'put'; play: WirePlayRow } | { op: 'remove'; atBatIndex: number }
+
 /** What a `change` is about. */
 export type GameChangeKind = 'plays' | 'lineups' | 'walkUpSong' | 'game'
 

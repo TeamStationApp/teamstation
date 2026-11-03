@@ -84,6 +84,14 @@ const eventsDoc = (
   lineupsDigest: digest
 })
 
+/** The at-bats of the plays a phone's events document holds. */
+const atBatsOf = (document: Record<string, unknown> | undefined): number[] =>
+  (
+    JSON.parse(String(document?.body)) as {
+      plays: Array<{ gumbo: GumboPlay }>
+    }
+  ).plays.map(row => row.gumbo.about.atBatIndex)
+
 const lineupSave = (
   base: string,
   gumboIds: number[] = [7]
@@ -125,7 +133,10 @@ const serverEntry = (gumboId: number, firstName: string): unknown => ({
 
 interface Sent {
   method: string
+  /** The path, without its query. */
   path: string
+  /** The query the call was sent with, if it had one. */
+  query?: string
   body: unknown
   key: string | undefined
 }
@@ -172,9 +183,13 @@ describe('the phone outbox', function () {
     const clock = { now: 1_000_000 }
     const fetch = (async (url: unknown, init: RequestInit) => {
       const headers = init.headers as Record<string, string>
+      const [path, query] = String(url)
+        .replace('http://x/api/v1', '')
+        .split('?')
       const call: Sent = {
         method: String(init.method),
-        path: String(url).replace('http://x/api/v1', ''),
+        path,
+        ...(query == null ? {} : { query }),
         body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined,
         key: headers['idempotency-key']
       }
@@ -256,6 +271,18 @@ describe('the phone outbox', function () {
     expect(chainOf(queuedCallOf('POST', '/games/g1/events', live)!)).equals(
       'game:g1'
     )
+    // Asked for its edits by the client, it is queued to answer every play.
+    expect(
+      queuedCallOf('POST', '/games/g%201/events?answer=edits', live)
+    ).deep.equals({
+      kind: 'events',
+      gameId: 'g 1',
+      path: '/games/g%201/events',
+      body: live
+    })
+    expect(queuedCallOf('POST', '/games/g1/events?answer=all', live)).equals(
+      undefined
+    )
     expect(chainOf(queuedCallOf('POST', '/games/g1/lineups', {})!)).equals(
       'game:g1'
     )
@@ -269,6 +296,58 @@ describe('the phone outbox', function () {
     expect(queuedCallOf('POST', '/games/g1/tags', {})).equals(undefined)
     expect(queuedCallOf('GET', '/games/g1/lineups', {})).equals(undefined)
     expect(queuedCallOf('POST', '/games/%E0/lineups', {})).equals(undefined)
+  })
+
+  it('sends a live post asking for no answer, so every play, writes that answer as the game, and answers its digests (M4)', async function () {
+    let bare = false
+    const p = phone(
+      server(
+        {
+          '/games/g1/events': eventsDoc('g1', 'D0'),
+          '/games/g1/lineups': lineupsDoc('D0')
+        },
+        () => ({
+          body: bare
+            ? { plays: [], currentPlay: null }
+            : {
+                ...(eventsDoc('g1', 'D1', [play(0), play(1)]) as object),
+                priorPlaysDigest: 'plays-D0',
+                generation: 3
+              }
+        })
+      )
+    )
+    await p.client.gameEvents('g1')
+    const saved = await p.client.saveGameEvents('g1', {
+      plays: [play(1)],
+      remove: [],
+      lineupsBase: 'D0'
+    })
+    const [post] = p.posts()
+    // Sent with no answer asked for, so the server answers every play.
+    expect(post.path).equals('/games/g1/events')
+    expect(post.query).equals(undefined)
+    expect(post.key).to.be.a('string')
+    expect(saved).deep.equals({
+      playsDigest: 'plays-D1',
+      priorPlaysDigest: 'plays-D0',
+      lineupsDigest: 'D1',
+      generation: 3
+    })
+    // The whole answer is the phone's copy of the game now.
+    const document = p.document(eventsKey('g1'))!
+    expect(atBatsOf(document)).deep.equals([0, 1])
+    expect(document.pending).equals(0)
+    expect(document.server_digest).equals('D1')
+    // A server mocked with a bare list answers no digests, and no error.
+    bare = true
+    expect(
+      await p.client.saveGameEvents('g1', { plays: [play(2)], remove: [] })
+    ).deep.equals({})
+    expect(p.posts().map(sent => sent.query)).deep.equals([
+      undefined,
+      undefined
+    ])
   })
 
   it('answers a queued live post with the plays it adds, built on the stored game (Optimistic events)', async function () {
@@ -289,14 +368,13 @@ describe('the phone outbox', function () {
       currentPlay: null,
       lineupsBase: 'D0'
     })
-    expect(stored.plays.map(row => row.about.atBatIndex)).deep.equals([0, 1])
     expect(stored.priorPlaysDigest).equals('plays-D0')
     expect(stored.playsDigest).match(/^local-/)
     expect(stored.lineupsDigest).equals('D0')
     const document = p.document(eventsKey('g1'))!
     expect(document.pending).equals(1)
     expect(document.server_digest).equals('D0')
-    expect(JSON.parse(String(document.body)).plays).length(2)
+    expect(atBatsOf(document)).deep.equals([0, 1])
     const [row] = p.rows()
     expect(row).deep.include({
       chain: 'game:g1',
@@ -798,11 +876,11 @@ describe('the phone outbox', function () {
     expect(queued.idempotency_key).equals(p.posts()[0].key)
     expect(queued.attempts).equals(0)
     // The next post of that game waits behind it, and is answered by the phone.
-    const behind = await p.client.saveGameEvents('g1', {
+    await p.client.saveGameEvents('g1', {
       plays: [play(2)],
       remove: []
     })
-    expect(behind.plays.map(row => row.about.atBatIndex)).deep.equals([0, 1, 2])
+    expect(atBatsOf(p.document(eventsKey('g1')))).deep.equals([0, 1, 2])
     expect(p.posts()).length(1)
     // Another game's post goes, whatever g1 waits for.
     p.clock.now += 60_000
@@ -818,6 +896,8 @@ describe('the phone outbox', function () {
       queued.idempotency_key,
       queued.idempotency_key
     ])
+    // Sent from the queue too, it asks for no answer, so every play.
+    expect(g1.map(call => call.query)).deep.equals([undefined, undefined])
     expect(p.rows().map(row => row.state)).deep.equals(['pending', 'pending'])
     expect(p.rows()[0].attempts).equals(1)
   })

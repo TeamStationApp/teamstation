@@ -4,6 +4,7 @@ import { type Kysely, type Selectable, sql, type Transaction } from 'kysely'
 
 import { badRequest, conflict, notFound } from '../../common/errors'
 import { withPreviousTagIdentities } from '../../common/eventTags'
+import type { PlayEdit, WirePlayRow } from '../../common/gameSocket'
 import type {
   CurrentPlay,
   GumboPlay,
@@ -26,7 +27,11 @@ import { resolvedFenceDistance } from '../games/fenceDistance'
 import { scoringActivitySql } from '../games/scoringActivity'
 import { radarSettings } from '../nodeSettings'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
-import { resolveScoringGame } from '../scoring/openRow'
+import {
+  type NamedPlays,
+  resolveScoringGame,
+  resolveScoringPlays
+} from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { assertAuthoredRosters } from '../scoring/rosterWrites'
 import { notifyGameChange } from '../socket/gameChanges'
@@ -61,9 +66,15 @@ export interface PostedGame {
   away_team_id: string
 }
 
-export interface PostedPlays {
-  plays: Array<{ id: string; gameId: string; gumbo: unknown }>
-  currentPlay: unknown
+/**
+ * What a post answers: every stored play (`all`), or on a live post only the
+ * plays it wrote (`edits`), as `PostedEdits`. A post that is not live
+ * answers every play whichever is asked.
+ */
+export type PostAnswer = 'edits' | 'all'
+
+/** What every post's answer says of the game it leaves. */
+export interface PostedDigests {
   /**
    * The digest the game keeps of its lineups once this post is written, read
    * in its transaction: the base a sender's next live post names. Null only
@@ -85,6 +96,30 @@ export interface PostedPlays {
   generation: number
 }
 
+/** A post's answer of every stored play (`all`). */
+export interface PostedPlays extends PostedDigests {
+  plays: WirePlayRow[]
+  currentPlay: unknown
+}
+
+/**
+ * A live post's answer of only what it wrote (`edits`): a put of each play it
+ * wrote and each one its tag repair rewrote, in index order, then a remove
+ * of each index it took away, and the at-bat in progress.
+ */
+export interface PostedEdits extends PostedDigests {
+  edits: PlayEdit[]
+  currentPlay: unknown
+}
+
+/**
+ * What a post asking for `A` answers: every play when it asks for them, and
+ * when it asks for its edits, those or (not being live) every play.
+ */
+export type PostedAnswer<A extends PostAnswer> = A extends 'all'
+  ? PostedPlays
+  : PostedPlays | PostedEdits
+
 /** What a client's post says about the game it was made against. */
 export interface PostOptions {
   /**
@@ -99,6 +134,11 @@ export interface PostOptions {
    * absent.
    */
   halves?: (trx: Trx, game: PostedGame) => Promise<readonly string[]>
+  /**
+   * What the answer holds (`PostAnswer`). Every play when absent: a caller
+   * inside the server reads `plays` whole.
+   */
+  answer?: PostAnswer
 }
 
 /** The refusal of a post made against the game before its last reset. */
@@ -115,14 +155,17 @@ export const RESET_SINCE_READ = 'This game was reset since it was read'
  * post's `Idempotency-Key` keeps it. It sees a pregame at-bat as stored,
  * since the answer folds it only after the commit.
  */
-export async function postGamePlays(
+export async function postGamePlays<A extends PostAnswer = 'all'>(
   db: Kysely<Database>,
   gameId: string,
   sentBody: PostEventsBody,
   authorize?: (trx: Trx, game: PostedGame) => Promise<void>,
-  written?: (trx: Transaction<Database>, posted: PostedPlays) => Promise<void>,
-  options: PostOptions = {}
-): Promise<PostedPlays> {
+  written?: (
+    trx: Transaction<Database>,
+    posted: PostedPlays | PostedEdits
+  ) => Promise<void>,
+  options: PostOptions & { answer?: A } = {}
+): Promise<PostedAnswer<A>> {
   // TeamStation and a person typing name themselves. Every other sender, and
   // a post that names none, is an outside scorer: the least trusted one.
   const sent = sentBody.source?.system
@@ -148,7 +191,7 @@ export async function postGamePlays(
       }
     | undefined
 
-  return await atomic(db, async (trx): Promise<PostedPlays> => {
+  return await atomic(db, async (trx): Promise<PostedPlays | PostedEdits> => {
     await lockPlayerEdits(trx)
     // The game row stays locked until this post commits, so a second
     // post to the same game waits and then sees the plays, the final
@@ -477,8 +520,9 @@ export async function postGamePlays(
       .execute()
     // This post holds the game's row, so unless the repair writes them, its
     // plays are the ones just read.
-    const { rewrotePlays } = await repairEventTags(trx, gameId, stored)
-    const taggedStored = rewrotePlays ? await readPlays(trx, gameId) : stored
+    const { rewritten } = await repairEventTags(trx, gameId, stored)
+    const taggedStored =
+      rewritten.length > 0 ? await readPlays(trx, gameId) : stored
     const taggedGame = await trx
       .selectFrom('games')
       .select(['currentPlay', 'pregame'])
@@ -508,26 +552,49 @@ export async function postGamePlays(
     )
       await noteGameFigures(trx, gameId)
     else noteScopeChange(trx, { gameId })
-    const resolved = await resolveScoringGame(
-      trx,
-      {
-        plays: taggedStored.map(row => row.gumbo as GumboPlay),
-        currentPlay: taggedCurrent as CurrentPlay | null
-      },
-      { halves: (await options.halves?.(trx, game)) ?? [], gameId }
-    )
     const sides = teamsOfRow(game)
-    const answer: PostedPlays = {
-      plays: taggedStored.map((row, index) => ({
-        ...playJson(row),
-        gumbo: playForWire(resolved.plays[index], sides)
-      })),
-      currentPlay: playForWire(resolved.currentPlay, sides),
+    const whole = {
+      plays: taggedStored.map(row => row.gumbo as GumboPlay),
+      currentPlay: taggedCurrent as CurrentPlay | null
+    }
+    // What this post wrote: the plays it sent and those its tag repair
+    // rewrote; the indexes it took away that it did not write again.
+    const edited = new Set([...indexes, ...rewritten])
+    const storedAt = new Set(taggedStored.map(row => row.atBatIndex))
+    const removed = [...new Set(body.remove ?? [])].filter(
+      index => !storedAt.has(index)
+    )
+    const editsOf = (named: NamedPlays): PlayEdit[] =>
+      playEditsOf(taggedStored, named, removed, sides)
+    const digests: PostedDigests = {
       lineupsDigest: lineups.lineups_digest ?? game.lineups_digest,
       playsDigest: playsDigest(taggedStored, taggedCurrent),
       priorPlaysDigest: prior,
       generation: game.play_generation
     }
+    const senderHalves = (await options.halves?.(trx, game)) ?? []
+    // Only what this post wrote is named for an edits answer, every play for
+    // any other, over the whole game's book.
+    const edits = live && options.answer === 'edits'
+    const resolved = await resolveScoringPlays(trx, whole, {
+      ...(edits ? { only: edited } : {}),
+      halves: senderHalves,
+      gameId
+    })
+    const answer: PostedPlays | PostedEdits = edits
+      ? {
+          edits: editsOf(resolved),
+          currentPlay: playForWire(resolved.currentPlay, sides),
+          ...digests
+        }
+      : {
+          plays: taggedStored.map((row, index) => ({
+            ...playJson(row),
+            gumbo: playForWire(resolved.plays[index], sides)
+          })),
+          currentPlay: playForWire(resolved.currentPlay, sides),
+          ...digests
+        }
     await written?.(trx, answer)
     folding = {
       fold: await pregameFold(
@@ -548,12 +615,41 @@ export async function postGamePlays(
       // in a caller's transaction, once this post's part of it is done.
       if (folding != null)
         result.currentPlay = playForWire(await folding.fold(), folding.sides)
-      return result
+      // Every play unless asked for edits, and edits only on a live post.
+      return result as PostedAnswer<A>
     })
     .catch((error: unknown) => {
       // Which user a failed post named reads the same in either record.
       throw unknownUser(error, withHalfOuts(sentBody.plays)) ?? error
     })
+}
+
+/**
+ * The edits that take a game's stored plays to `stored`: a put of each of
+ * `named`'s plays as its stored row, named, in index order, then a remove of
+ * each index of `removed`.
+ */
+export function playEditsOf(
+  stored: readonly StoredPlay[],
+  named: NamedPlays,
+  removed: readonly number[],
+  sides: ReturnType<typeof teamsOfRow>
+): PlayEdit[] {
+  const byIndex = new Map(
+    named.plays.map(play => [play.about.atBatIndex, play])
+  )
+  return [
+    ...stored
+      .filter(row => byIndex.has(row.atBatIndex))
+      .map((row): PlayEdit => ({
+        op: 'put',
+        play: {
+          ...playJson(row),
+          gumbo: playForWire(byIndex.get(row.atBatIndex), sides)
+        }
+      })),
+    ...removed.map((atBatIndex): PlayEdit => ({ op: 'remove', atBatIndex }))
+  ]
 }
 
 /**

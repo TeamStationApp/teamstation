@@ -4,6 +4,7 @@ import { describe, it } from 'mocha'
 import { lineupsDigest } from '../../server/events/teamLineups'
 import { F, game, TEAMS } from '../../test/scoringGames'
 import { expectNamesRoundTrip } from '../../test/storedNamesRoundTrip'
+import { asPostedEdits } from '../api'
 import { HttpError } from '../errors'
 import { completedPlayTag, historyTargets, withTargetTags } from '../eventTags'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
@@ -1597,6 +1598,52 @@ describe('a scoring session', function () {
       // Read again, it holds what it read, the same game or not.
       await session.reload()
       expect(session.holdsPlays((await store.load()).playsDigest!)).equals(true)
+    })
+
+    it('holds the same digests from a save that answers only them, and takes none from one that answers none (M4)', async function () {
+      const store = new LineupStore()
+      let bare = false
+      // A server's edits answer: the digests and the generation, no plays.
+      const edits: EventStore = {
+        load: async () => await store.load(),
+        save: async (gameId, change) => {
+          const whole = await store.save(gameId, change)
+          return bare
+            ? asPostedEdits({ plays: [], currentPlay: null })
+            : asPostedEdits(whole)
+        }
+      }
+      const session = await ScoringSession.open(
+        edits,
+        'g1',
+        context,
+        new Clock().options
+      )
+      const opened = (await store.load()).playsDigest!
+      session.apply(ball)
+      store.moveTo = 'mine'
+      await session.flush()
+      const mine = (await store.load()).playsDigest!
+      expect(session.holdsPlays(mine)).equals(true)
+      expect(session.holdsPlays(opened)).equals(true)
+      expect(session.holdsLineups('mine')).equals(true)
+      expect(store.posts.at(-1)!.lineupsBase).equals('d0')
+      session.apply(strike)
+      await session.flush()
+      expect(store.posts.at(-1)!.lineupsBase).equals('mine')
+      expect(session.holdsPlays((await store.load()).playsDigest!)).equals(true)
+      // An answer with no digests, as a mocked server or the phone's own
+      // copy gives, leaves what it holds as it was.
+      bare = true
+      const before = (await store.load()).playsDigest!
+      session.apply(ball)
+      await session.flush()
+      expect(session.holdsPlays(before)).equals(true)
+      expect(session.holdsPlays((await store.load()).playsDigest!)).equals(
+        false
+      )
+      expect(session.problem).equals(null)
+      expect(session.pending).equals(0)
     })
 
     it('keeps the time an unsaved pitch was taken when it puts the pitch back on the lineups', async function () {

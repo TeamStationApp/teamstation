@@ -62,6 +62,7 @@
     "ios": "react-native run-ios",
     "lint": "node --max-old-space-size=8192 node_modules/eslint/bin/eslint.js .",
     "lineup-fixture": "node -r sucrase/register src/server/dev/lineupFixture.ts",
+    "live-pitch": "node -r sucrase/register src/server/dev/livePitch.ts",
     "make-season": "node -r sucrase/register src/server/dev/makeSeasonFromVideos.ts",
     "merge-team": "node -r sucrase/register src/server/dev/mergeTeam.ts",
     "metro": "react-native start",

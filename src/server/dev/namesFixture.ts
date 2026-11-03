@@ -627,7 +627,10 @@ export async function createNamesFixture(
       currentPlay: scored.currentPlay,
       mode: 'live',
       source: { system: 'teamstation' }
-    })
+    }),
+    undefined,
+    undefined,
+    { answer: 'all' }
   )
 
   // The outside scorer's game.

@@ -331,7 +331,10 @@ export async function seedStatsTables(
       currentPlay: nine.currentPlay,
       mode: 'live',
       source: { system: 'teamstation' }
-    })
+    }),
+    undefined,
+    undefined,
+    { answer: 'all' }
   )
   await drain(db, clock)
 

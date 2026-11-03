@@ -659,7 +659,8 @@ async function saveSide(
                   resultId: posted.lineupsDigest ?? read.digest
                 })
               },
-          { expectedGeneration: body.generation }
+          // The replay reads every play the post leaves.
+          { expectedGeneration: body.generation, answer: 'all' }
         )
         // A live post always keeps one.
         wrote = posted.lineupsDigest ?? read.digest
