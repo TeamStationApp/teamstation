@@ -11,6 +11,7 @@ import {
 import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { forPlayback } from '../../common/scoring/playbackTimes'
 import type { Database } from '../db/database'
+import { readSnapshot } from '../db/readSnapshot'
 import { atBatInProgress } from '../events/atBatInProgress'
 import { resolveScoringGame } from './openRow'
 import { contextOf } from './replayContext'
@@ -68,47 +69,44 @@ export async function computeLineTimeline(
   gameId: string,
   log: (message: string) => void = () => undefined
 ): Promise<LineTimeline | undefined> {
-  const read = await db
-    .transaction()
-    .setIsolationLevel('repeatable read')
-    .execute(async trx => {
-      const version = await lineTimelineVersion(trx, gameId)
-      if (version == null) return undefined
-      const game = await trx
-        .selectFrom('games')
-        .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-        .innerJoin('teams as away', 'away.id', 'games.away_team_id')
-        .select([
-          'games.home_team_id',
-          'games.away_team_id',
-          atBatInProgress('games').as('currentPlay'),
-          'games.start_at',
-          'home.name as homeTeam',
-          'away.name as awayTeam'
-        ])
-        .where('games.id', '=', gameId)
-        .executeTakeFirst()
-      if (game == null) return undefined
-      const plays = await trx
-        .selectFrom('events')
-        .select(['atBatIndex', 'gumbo', 'startTime', 'endTime'])
-        .where('gameId', '=', gameId)
-        .orderBy('atBatIndex')
-        .execute()
-      const stored = await resolveScoringGame(
-        trx,
-        {
-          plays: plays.map(row => row.gumbo as GumboPlay),
-          currentPlay: game.currentPlay as CurrentPlay | null
-        },
-        { gameId }
-      )
-      const context =
-        stored.plays.length === 0 && stored.currentPlay == null
-          ? null
-          : await contextOf(trx, gameId, game, stored)
-      return { version, game, plays, stored, context }
-    })
+  const read = await readSnapshot(db, async trx => {
+    const version = await lineTimelineVersion(trx, gameId)
+    if (version == null) return undefined
+    const game = await trx
+      .selectFrom('games')
+      .innerJoin('teams as home', 'home.id', 'games.home_team_id')
+      .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+      .select([
+        'games.home_team_id',
+        'games.away_team_id',
+        atBatInProgress('games').as('currentPlay'),
+        'games.start_at',
+        'home.name as homeTeam',
+        'away.name as awayTeam'
+      ])
+      .where('games.id', '=', gameId)
+      .executeTakeFirst()
+    if (game == null) return undefined
+    const plays = await trx
+      .selectFrom('events')
+      .select(['atBatIndex', 'gumbo', 'startTime', 'endTime'])
+      .where('gameId', '=', gameId)
+      .orderBy('atBatIndex')
+      .execute()
+    const stored = await resolveScoringGame(
+      trx,
+      {
+        plays: plays.map(row => row.gumbo as GumboPlay),
+        currentPlay: game.currentPlay as CurrentPlay | null
+      },
+      { gameId }
+    )
+    const context =
+      stored.plays.length === 0 && stored.currentPlay == null
+        ? null
+        : await contextOf(trx, gameId, game, stored)
+    return { version, game, plays, stored, context }
+  })
   if (read == null) return undefined
   const { version, game, plays, stored, context } = read
 
@@ -123,6 +121,7 @@ export async function computeLineTimeline(
       line: boardLineOfPlays(stored.plays.slice(0, i + 1))
     })
   }
+  const importedLine = lines.at(-1)?.line
   if (context != null) {
     const fallback = new Map<number, number | undefined>()
     for (const row of plays)
@@ -140,7 +139,7 @@ export async function computeLineTimeline(
       (state, atBatIndex, time) => {
         lines.push({
           at: msOf(time) ?? fallback.get(atBatIndex),
-          line: boardLineOf(state)
+          line: boardLineOf(state, importedLine)
         })
       }
     )

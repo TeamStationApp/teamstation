@@ -10,20 +10,20 @@ import {
   Platform,
   Pressable,
   StatusBar,
+  Text,
   useWindowDimensions,
   View
 } from 'react-native'
 
-import {
-  type BoxScore,
-  type GameDetail,
-  parseStoredGame
-} from '../../common/api'
+import type { BoxScore, GameDetail } from '../../common/api'
 import type { GameSocketListener } from '../../common/gameSocket'
+import {
+  type GameStatistics,
+  statisticsForCount
+} from '../../common/gameStatistics'
 import { namesOf } from '../../common/replay/replayNames'
 import {
   readReplaySource,
-  replayScore,
   replaySourceOf
 } from '../../common/replay/replaySource'
 import {
@@ -31,7 +31,7 @@ import {
   isReplayable,
   type ReplayTimeline
 } from '../../common/replay/replayTimeline'
-import type { SessionContext, StoredGame } from '../../common/scoring/session'
+import type { SessionContext } from '../../common/scoring/session'
 import { Icon } from '../components/Icon'
 import { SCORING_CAMERA } from '../field/BaseballScreen'
 import type { ScreenRect } from '../field/catcherBounds'
@@ -85,7 +85,7 @@ export interface ReplaySocket {
 
 export interface ReplayClient extends NarrationClient {
   game: (gameId: string) => Promise<GameDetail>
-  gameEvents: (gameId: string) => Promise<StoredGame>
+  gameStatistics: (gameId: string) => Promise<GameStatistics>
   /** Who on this game the reader may open; a replay plays on without it. */
   boxScore?: (gameId: string) => Promise<BoxScore>
   /** Says, among other things, whether the server has an announcer. */
@@ -225,6 +225,7 @@ export function GameReplayScreen(
     narration: boolean
     pitchSlotMs: number
     context: SessionContext
+    statistics: GameStatistics
   } | null>(null)
   useEffect(() => {
     let live = true
@@ -238,7 +239,7 @@ export function GameReplayScreen(
       () => ({ announcer: false, pitchSlotMs: SLOT_MS.pitch })
     )
     Promise.all([readReplaySource(client, gameId), health])
-      .then(([{ game, stored }, { announcer, pitchSlotMs }]) => {
+      .then(([{ game, stored, statistics }, { announcer, pitchSlotMs }]) => {
         if (!live) return
         const source = replaySourceOf(game, stored)
         if (!isReplayable(game, game.replayable) || source == null) {
@@ -246,6 +247,7 @@ export function GameReplayScreen(
           return
         }
         setLoaded({
+          statistics,
           game,
           timeline: source.timeline,
           mode: game.status === 'inProgress' ? 'live' : 'replay',
@@ -282,6 +284,7 @@ export function GameReplayScreen(
 }
 
 function ReplayView(props: {
+  statistics: GameStatistics
   client: ReplayClient
   socket?: ReplaySocket
   pollMs: number
@@ -328,7 +331,8 @@ function ReplayView(props: {
       clearInterval(timer)
     }
   }, [clock])
-  useLiveGame(props, state.timeline, state.gameOver, dispatch)
+  const [statistics, setStatistics] = useState(props.statistics)
+  useLiveGame(props, state.timeline, state.gameOver, dispatch, setStatistics)
   const [muted, setMuted] = useState(true)
   useEffect(() => {
     scoringAudio.setEnabled(false)
@@ -531,8 +535,12 @@ function ReplayView(props: {
       celebration == null ? undefined : { ...celebration, paused: state.paused }
   }
   const box = useMemo(
-    () => replayScore(session, state.timeline),
-    [session, state.timeline]
+    () =>
+      statisticsForCount(
+        statistics,
+        Object.values(state.applied).reduce((sum, count) => sum + count, 0)
+      ),
+    [statistics, state.applied]
   )
   const card = replayCard(state, {
     playBall: lstrings.replay_play_ball,
@@ -725,21 +733,29 @@ function ReplayView(props: {
               bottom: 0
             }}
           >
-            <ReplayBoxScore
-              box={box}
-              players={openable}
-              onOpenPlayer={onOpenPlayer}
-            />
+            {box === null ? (
+              <Text>Statistics are unavailable for this recorded play.</Text>
+            ) : (
+              <ReplayBoxScore
+                box={box}
+                players={openable}
+                onOpenPlayer={onOpenPlayer}
+              />
+            )}
           </View>
         )}
       </View>
       {layout.side && (
         <View style={[{ width: SIDE_DECK_WIDTH }, surfaceStyle.safe]}>
-          <ReplayBoxScore
-            box={box}
-            players={openable}
-            onOpenPlayer={onOpenPlayer}
-          />
+          {box === null ? (
+            <Text>Statistics are unavailable for this recorded play.</Text>
+          ) : (
+            <ReplayBoxScore
+              box={box}
+              players={openable}
+              onOpenPlayer={onOpenPlayer}
+            />
+          )}
         </View>
       )}
       <View
@@ -788,15 +804,6 @@ function FadingPlayCard(
  * of the game to final ends it. While the socket is down, or the server
  * failed to subscribe the game, it reads the game every five seconds.
  */
-/** The game a `plays` change carries; nothing when it carries no game. */
-function carriedGame(data: unknown): StoredGame | undefined {
-  try {
-    return parseStoredGame(data)
-  } catch {
-    return undefined
-  }
-}
-
 function useLiveGame(
   props: {
     client: ReplayClient
@@ -809,7 +816,8 @@ function useLiveGame(
   timeline: ReplayTimeline,
   /** The game is over: nothing more to poll for. */
   gameOver: boolean,
-  dispatch: (event: ReplayEvent) => void
+  dispatch: (event: ReplayEvent) => void,
+  onStatistics: (statistics: GameStatistics) => void
 ): void {
   const { client, socket, context, mode, pollMs } = props
   const gameId = props.game.id
@@ -818,18 +826,20 @@ function useLiveGame(
   const read = useMemo(() => {
     // One read at a time, each from the timeline the last one left.
     let chain: Promise<void> = Promise.resolve()
-    return async (carried?: StoredGame): Promise<void> => {
+    return async (): Promise<void> => {
       chain = chain
         .then(async () => {
-          const stored = carried ?? (await client.gameEvents(gameId))
+          const statistics = await client.gameStatistics(gameId)
+          const stored = statistics.source
           const change = extendTimeline(latest.current, stored, context)
           latest.current = change.timeline
+          onStatistics(statistics)
           dispatch({ type: 'CHANGED', change })
         })
         .catch(() => undefined)
       await chain
     }
-  }, [client, gameId, context, dispatch])
+  }, [client, gameId, context, dispatch, onStatistics])
   const over = useCallback(async (): Promise<void> => {
     await read()
     dispatch({ type: 'GAME_OVER' })
@@ -846,9 +856,9 @@ function useLiveGame(
         return
       }
       if (event.type === 'subscribed') setRefused(false)
-      // The plays changed: they come with the change.
+      // Fetch one coherent scoring revision after each change.
       if (event.type === 'change' && event.kind === 'plays') {
-        read(carriedGame(event.data)).catch(() => undefined)
+        read().catch(() => undefined)
         return
       }
       // Subscribed or reconnected: read the game.

@@ -497,7 +497,7 @@ describe('stack transitions in the actual app', () => {
     proto.health = async () => {
       throw new Error('offline')
     }
-    proto.gameEvents = async () =>
+    proto.gameStatistics = async () =>
       await new Promise((_resolve, reject) => {
         refuse = reject
       })
