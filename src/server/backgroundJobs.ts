@@ -8,6 +8,7 @@ export interface BackgroundJobs<Builder> {
   startLocalCopyWarnings: () => void
   startChatAttachmentPurge: () => void
   startChatReconciler: () => void
+  startRosterBumpPrune: () => void
   startStatsBuilder: () => Builder
 }
 
@@ -34,5 +35,6 @@ export function startBackgroundJobs<Builder>(
   jobs.startLocalCopyWarnings()
   jobs.startChatAttachmentPurge()
   jobs.startChatReconciler()
+  jobs.startRosterBumpPrune()
   return jobs.startStatsBuilder()
 }
