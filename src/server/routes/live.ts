@@ -1,44 +1,60 @@
+import { rm } from 'node:fs/promises'
+import { join } from 'node:path'
+
 import { asBoolean, asObject, asOptional, asString } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import {
+  asCameraSource,
   asGameLiveStreams,
   asLiveNow,
   asLiveStatus,
   asLiveStream,
+  asStreamAccess,
   type LiveStatus,
   type LiveStream
 } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { gameCalendarDay } from '../../common/gameTime'
 import { canFilm, canSeeGame, roleScopes, visibleScopes } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
+import { discardStream } from '../director/discard'
+import { isFullTeam, waitingOwnRequest } from '../groups/requests'
 import {
   cameraLabelOf,
+  canDeleteCameraVideo,
+  checkCameraLimits,
   createLiveStream,
   deviceIdOf,
   deviceLabelTaken,
   deviceModelOf,
-  freeSlot,
+  isActiveStream,
   labelFor,
   labelTaken,
   liveStreamById,
   type LiveStreamRow,
   liveStreamsFor,
   MAX_CAMERAS,
-  myLiveStreams,
+  MAX_GAME_CAMERAS,
   placeByPublisher,
+  refuseDiscarded,
   requestDeviceStream,
   revealKey,
   rotateLiveStreamKey,
   setCameraName,
   streamUrlFor
 } from '../live/streamKeys'
+import { imageUrl } from '../media/imageUrls'
+import type { SpaceSettings } from '../media/spacesHls'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
-import { recordRecordingReminder } from '../notifications/recordingReminders'
+import {
+  recordRecordingReminder,
+  settleRecordingReminder
+} from '../notifications/recordingReminders'
 import type { LiveSettings } from '../serverConfig'
 import { withRevision } from '../socket/syncRevision'
 
@@ -54,8 +70,10 @@ import { withRevision } from '../socket/syncRevision'
  * what it is doing, and how to stop it. That is the difference between knowing
  * who is streaming and being able to stream as them.
  *
- * One person may point up to four cameras at one game, which is four videos,
- * which is what the watch screen already calls angles.
+ * One person may have up to four cameras active on one game, which is four
+ * videos, which is what the watch screen already calls angles, and a game may
+ * have six. An ended camera stays on the list with its video and counts against
+ * neither limit.
  *
  * Nothing here talks to the ingest. These endpoints write rows; the ingest
  * reads them within the second and acts. See `server/live/controller.ts`.
@@ -67,12 +85,22 @@ export interface LiveRouteOptions {
   /** The host to print in a stream URL when none is configured. */
   /** What this deployment is called: the host a stream URL names. */
   host: string
+  /** Where a discarded camera's video is deleted from. */
+  space: SpaceSettings
+  mediaRoot: string
+  /** Where the parts of a discarded camera's unfinished uploads wait. */
+  uploadsDir: string
 }
 
 const asStreamChange = asObject({
   label: asOptional(asString),
-  /** Only `recorded`, and only on the caller's own device stream. */
+  /** `recorded` or `removed`, and only on the caller's own device stream. */
   localRecording: asOptional(asString),
+  /**
+   * When a take older than the phone's 30-day limit started counting them, as
+   * an ISO 8601 instant: what its warning counts from.
+   */
+  localCopyFrom: asOptional(asString),
   /**
    * When the stream's first picture was captured, on the publisher's wall
    * clock, as an ISO 8601 instant: where its live video starts.
@@ -85,7 +113,9 @@ const asNewStream = asObject({
   deviceId: asOptional(asString),
   deviceModel: asOptional(asString),
   recordsLocally: asOptional(asBoolean),
-  heldStreamId: asOptional(asString)
+  heldStreamId: asOptional(asString),
+  /** An external camera. It is tied to the account, so no device applies. */
+  source: asOptional(asCameraSource)
 })
 
 interface GameRow {
@@ -94,6 +124,8 @@ interface GameRow {
   awayTeamId: string
   seasonId: string | null
   startAt: Date
+  /** Its own zone, in which it has a calendar day. */
+  timezone: string
   homeTeamName: string
   awayTeamName: string
 }
@@ -103,7 +135,7 @@ export function liveRoutes(
   options: LiveRouteOptions
 ): Router {
   const router = Router()
-  const { live, sessionSecret, host } = options
+  const { live, sessionSecret, host, space, mediaRoot, uploadsDir } = options
 
   /**
    * The game, and the team of it this person films — a videographer of it,
@@ -127,20 +159,128 @@ export function liveRoutes(
     throw notFound()
   }
 
-  /** One of this person's own cameras, or nothing. Never somebody else's. */
+  /**
+   * One of this person's own cameras, or nothing. Never somebody else's.
+   *
+   * One its owner deleted answers `410` to everything but the delete, which
+   * can be asked for again until it has finished: a phone still holding it
+   * must not rename it, record a reminder against it or put it on the air.
+   *
+   * One its owner removed is not found either, unless `removed` is `'allow'`.
+   */
   const myStream = async (
     userId: string,
     gameId: string,
-    streamId: string
+    streamId: string,
+    from: Kysely<Database> = db,
+    options: { deleted?: 'allow'; removed?: 'allow' } = {}
   ): Promise<LiveStreamRow> => {
-    const row = await liveStreamById(db, streamId)
+    const row = await liveStreamById(from, streamId, {
+      removed: options.removed
+    })
     // 404 rather than 403 for another person's camera: its id is not something
     // to confirm to somebody who may not act on it.
     if (row?.gameId !== gameId || row.userId !== userId) {
       throw notFound()
     }
+    if (options.deleted !== 'allow') await refuseDiscarded(from, row.id)
     return row
   }
+
+  /**
+   * Takes a camera's recording with it if that never held anything.
+   *
+   * `hidden` is how a live video starts and stays until video actually
+   * arrives, so a hidden row with no length is a recording that never
+   * happened.
+   */
+  const removeEmptyVideo = async (row: LiveStreamRow): Promise<boolean> => {
+    if (row.videoId == null) return false
+    const video = await db
+      .selectFrom('videos')
+      .select(['id', 'duration_sec', 'size_bytes', 'hidden'])
+      .where('id', '=', row.videoId)
+      .executeTakeFirst()
+    if (
+      video == null ||
+      !video.hidden ||
+      video.duration_sec != null ||
+      video.size_bytes != null
+    ) {
+      return false
+    }
+    await db.deleteFrom('videos').where('id', '=', video.id).execute()
+    await rm(join(mediaRoot, 'work', 'videos', video.id), {
+      recursive: true,
+      force: true
+    })
+    return true
+  }
+
+  /**
+   * Settles a removed camera's upload reminder and copy warning, unless its
+   * phone still holds a take it has not uploaded (`localRecording` as the
+   * removal found it). That take can still be uploaded, since
+   * `POST /director/uploads` takes a removed camera, and it may be the only
+   * copy of the angle: its reminder stands, and its day-27 warning comes
+   * before the phone's 30-day sweep deletes it.
+   */
+  const settleUnlessHeld = async (
+    streamId: string,
+    localRecording: string | undefined,
+    now: Date = new Date()
+  ): Promise<void> => {
+    if (localRecording === 'recorded') return
+    await settleRecordingReminder(db, streamId, now)
+  }
+
+  /**
+   * Whether this person films this game, and if not whether they can ask to.
+   *
+   * 404 for somebody who cannot see the game, as every read of a game is: a
+   * member of neither team keeps the members-only message.
+   */
+  router.get(
+    '/games/:gameId/stream-access',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const game = await loadGame(db, pathParam(req.params.gameId))
+      const visible = await visibleScopes(db, actor.userId, actor.isAdmin)
+      if (game == null || !canSeeGame(visible, game)) throw notFound()
+      const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
+      const films = [game.homeTeamId, game.awayTeamId].some(teamId =>
+        canFilm(scopes, teamId)
+      )
+      const teamId = visible.teamIds.has(game.homeTeamId)
+        ? game.homeTeamId
+        : game.awayTeamId
+      const now = new Date()
+      const upcoming =
+        gameCalendarDay(game.startAt.toISOString(), game.timezone) >=
+        gameCalendarDay(now.toISOString(), game.timezone)
+      res.json(
+        asStreamAccess({
+          canFilm: films,
+          canRequest:
+            !films &&
+            upcoming &&
+            visible.teamIds.has(teamId) &&
+            (await isFullTeam(db, teamId)),
+          requested:
+            (await waitingOwnRequest(
+              db,
+              'videographer',
+              actor.userId,
+              teamId,
+              now
+            )) != null,
+          teamId
+        })
+      )
+    })
+  )
 
   /**
    * Everything pointed at this game: mine whole, everybody else's named.
@@ -160,12 +300,13 @@ export function liveRoutes(
         actor.isAdmin,
         pathParam(req.params.gameId)
       )
-      res.json(await listFor(db, game.id, actor.userId))
+      res.json(await listFor(db, space, game.id, actor.userId))
     })
   )
 
   /**
-   * Another camera of this person's own, up to the fourth.
+   * Another camera of this person's own, up to the fourth, while the game has
+   * fewer than six.
    *
    * With a `deviceId`, it is the stream that device holds under that camera
    * name: the same one again (200), one an installed Director claimed under
@@ -204,7 +345,7 @@ export function liveRoutes(
       const body = cleanBody(asNewStream, req.body)
       // Blank is the same as omitted: the slot's own name, not an empty one.
       const named = cameraLabelOf(body.label)
-      if (body.deviceId != null) {
+      if (body.deviceId != null && body.source == null) {
         const answer = await requestDeviceStream(db, {
           gameId: game.id,
           teamId,
@@ -224,7 +365,7 @@ export function liveRoutes(
           entityId: answer.row.id
         })
         res.status(answer.created ? 201 : 200).json({
-          ...(await summaryOf(db, answer.row, actor.userId)),
+          ...(await summaryOf(db, space, answer.row, actor.userId)),
           url: streamUrlFor(live, host, answer.key)
         })
         return
@@ -234,12 +375,7 @@ export function liveRoutes(
       // each, and neither is handed the other's key.
       const created = await db.transaction().execute(async trx => {
         await lockKeys(trx, [`liveStreams:${game.id}`])
-        const slot = freeSlot(await myLiveStreams(trx, game.id, actor.userId))
-        if (slot == null) {
-          throw badRequest(
-            `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
-          )
-        }
+        const slot = await checkCameraLimits(trx, game.id, actor.userId)
         return await createLiveStream(trx, {
           gameId: game.id,
           teamId,
@@ -249,13 +385,14 @@ export function liveRoutes(
           label: named ?? undefined,
           live,
           sessionSecret,
-          videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`
+          videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`,
+          source: body.source
         })
       })
 
       setAudit(res.locals, { entityType: 'liveStream', entityId: created.id })
       res.status(201).json({
-        ...(await summaryOf(db, created, actor.userId)),
+        ...(await summaryOf(db, space, created, actor.userId)),
         url: streamUrlFor(live, host, created.key)
       })
     })
@@ -291,7 +428,7 @@ export function liveRoutes(
         )
       }
       res.json({
-        ...(await summaryOf(db, row, actor.userId)),
+        ...(await summaryOf(db, space, row, actor.userId)),
         url: streamUrlFor(live, host, key)
       })
     })
@@ -318,7 +455,7 @@ export function liveRoutes(
       setAudit(res.locals, { entityType: 'liveStream', entityId: row.id })
       const fresh = (await liveStreamById(db, row.id)) ?? row
       res.json({
-        ...(await summaryOf(db, fresh, actor.userId)),
+        ...(await summaryOf(db, space, fresh, actor.userId)),
         url: streamUrlFor(live, host, key)
       })
     })
@@ -329,10 +466,16 @@ export function liveRoutes(
    * saying when its first picture was captured.
    *
    * A device stream's new name follows the label rule: no two of the
-   * caller's active device streams on the game share one. The first change
-   * of `localRecording` from `none` to `recorded` records the upload
-   * reminder. `liveStartedAt` places the live video by the publisher's own
-   * clock, once; see `placeByPublisher`.
+   * caller's active device streams on the game share one. A change of
+   * `localRecording` to `recorded`, from `none` or from `removed`, a new take
+   * after the last one went, records an upload reminder, and `removed`, the
+   * phone's copy gone, settles it. `localCopyFrom` moves when that copy's 30
+   * days began, for a take recorded before they counted. `liveStartedAt` places
+   * the live video by the publisher's own clock, once; see `placeByPublisher`.
+   *
+   * A camera its owner removed still takes what its phone says of its copy,
+   * `localRecording` and `localCopyFrom`, and nothing else: its take can still
+   * be uploaded, so the reminder and the warning about it are kept true.
    */
   router.patch(
     '/games/:gameId/live-streams/:streamId',
@@ -345,20 +488,37 @@ export function liveRoutes(
         actor.isAdmin,
         pathParam(req.params.gameId)
       )
+      const body = cleanBody(asStreamChange, req.body)
+      const aboutTheCopy =
+        body.label === undefined && body.liveStartedAt == null
       const row = await myStream(
         actor.userId,
         game.id,
-        pathParam(req.params.streamId)
+        pathParam(req.params.streamId),
+        db,
+        aboutTheCopy ? { removed: 'allow' } : {}
       )
-      const body = cleanBody(asStreamChange, req.body)
       const named = cameraLabelOf(body.label)
       if (body.localRecording != null) {
-        if (body.localRecording !== 'recorded') {
-          throw badRequest('localRecording can only be set to recorded.')
+        if (
+          body.localRecording !== 'recorded' &&
+          body.localRecording !== 'removed'
+        ) {
+          throw badRequest(
+            'localRecording can only be set to recorded or removed.'
+          )
         }
-        if (row.deviceId == null) {
-          throw badRequest('Only a device stream holds a recording.')
-        }
+      }
+      if (
+        (body.localRecording != null || body.localCopyFrom != null) &&
+        row.deviceId == null
+      ) {
+        throw badRequest('Only a device stream holds a recording.')
+      }
+      const localCopyFrom =
+        body.localCopyFrom == null ? undefined : new Date(body.localCopyFrom)
+      if (localCopyFrom != null && Number.isNaN(localCopyFrom.getTime())) {
+        throw badRequest('localCopyFrom must be an ISO 8601 instant.')
       }
       const liveStartedAt =
         body.liveStartedAt == null ? undefined : new Date(body.liveStartedAt)
@@ -382,7 +542,8 @@ export function liveRoutes(
       if (named !== undefined) {
         await setCameraName(db, row.id, named)
       }
-      if (body.localRecording != null) {
+      let localRecording = row.localRecording
+      if (body.localRecording === 'recorded') {
         // A device that holds a recording keeps its own, whatever the
         // request that made its stream said: the upload that settles the
         // reminder looks for streams that do.
@@ -394,10 +555,32 @@ export function liveRoutes(
             updated_at: new Date()
           })
           .where('id', '=', row.id)
-          .where('local_recording', '=', 'none')
+          .where('local_recording', 'in', ['none', 'removed'])
           .executeTakeFirst()
         if (Number(marked.numUpdatedRows) > 0) {
+          localRecording = 'recorded'
           await recordRecordingReminder(db, row.id)
+        }
+      }
+      if (localCopyFrom != null) {
+        await db
+          .updateTable('live_streams')
+          .set({ local_copy_from: localCopyFrom, updated_at: new Date() })
+          .where('id', '=', row.id)
+          .where('local_recording', '<>', 'uploaded')
+          .execute()
+      }
+      if (body.localRecording === 'removed') {
+        const now = new Date()
+        const marked = await db
+          .updateTable('live_streams')
+          .set({ local_recording: 'removed', updated_at: now })
+          .where('id', '=', row.id)
+          .where('local_recording', '<>', 'uploaded')
+          .executeTakeFirst()
+        if (Number(marked.numUpdatedRows) > 0) {
+          localRecording = 'removed'
+          await settleRecordingReminder(db, row.id, now)
         }
       }
       const placed =
@@ -410,15 +593,13 @@ export function liveRoutes(
         before: { label: row.label, localRecording: row.localRecording },
         after: {
           label: named === undefined ? row.label : named,
-          localRecording:
-            body.localRecording != null && row.localRecording === 'none'
-              ? 'recorded'
-              : row.localRecording,
+          localRecording,
           ...(placed ? { liveStartedAt: liveStartedAt.toISOString() } : {})
         }
       })
-      const fresh = (await liveStreamById(db, row.id)) ?? row
-      res.json(await summaryOf(db, fresh, actor.userId))
+      const fresh =
+        (await liveStreamById(db, row.id, { removed: 'allow' })) ?? row
+      res.json(await summaryOf(db, space, fresh, actor.userId))
     })
   )
 
@@ -443,6 +624,7 @@ export function liveRoutes(
       )
       const row = await liveStreamById(db, pathParam(req.params.streamId))
       if (row?.gameId !== game.id) throw notFound()
+      await refuseDiscarded(db, row.id)
 
       // Closing the window rather than ending the stream from here. The
       // ingest holds the ffmpeg writing the playlist, and it is the only
@@ -456,7 +638,7 @@ export function liveRoutes(
         .execute()
       setAudit(res.locals, { entityType: 'liveStream', entityId: row.id })
       const fresh = (await liveStreamById(db, row.id)) ?? row
-      res.json(await summaryOf(db, fresh, actor.userId))
+      res.json(await summaryOf(db, space, fresh, actor.userId))
     })
   )
 
@@ -472,11 +654,13 @@ export function liveRoutes(
    * can already *stop* another person's camera, which is the thing that
    * matters during a game; quietly deleting somebody else's row is not.
    *
-   * A camera that never carried any video takes its empty recording with it.
-   * One that did leaves the recording behind: the key is a credential and the
-   * video is a game, and throwing away the second because somebody tidied up
-   * the first is not a thing to do without being asked. `DELETE /videos/{id}`
-   * is how the video goes.
+   * A camera that never carried any video takes its empty recording and that
+   * recording's folder with it. One that did leaves the recording behind: the
+   * key is a credential and the video is a game, and throwing away the second
+   * because somebody tidied up the first is not a thing to do without being
+   * asked. `DELETE /videos/{id}` is how the video goes. Nor does it touch a
+   * take its phone still holds: that can still be uploaded, and its owner is
+   * still reminded and warned about it (`settleUnlessHeld`).
    */
   router.delete(
     '/games/:gameId/live-streams/:streamId',
@@ -506,32 +690,15 @@ export function liveRoutes(
       // existed, and `liveStreamsFor` already hides revoked ones, so the
       // camera disappears from the list and its number comes back.
       const now = new Date()
-      await db
+      const revoked = await db
         .updateTable('live_streams')
         .set({ state: 'revoked', closes_at: now, updated_at: now })
         .where('id', '=', row.id)
-        .execute()
+        .returning('local_recording as localRecording')
+        .executeTakeFirst()
+      await settleUnlessHeld(row.id, revoked?.localRecording, now)
 
-      let removedVideo = false
-      if (row.videoId != null) {
-        // Only the empty one. `hidden` is how a live video starts and stays
-        // until video actually arrives, so a hidden row with no length is a
-        // recording that never happened.
-        const video = await db
-          .selectFrom('videos')
-          .select(['id', 'duration_sec', 'size_bytes', 'hidden'])
-          .where('id', '=', row.videoId)
-          .executeTakeFirst()
-        if (
-          video != null &&
-          video.hidden &&
-          video.duration_sec == null &&
-          video.size_bytes == null
-        ) {
-          await db.deleteFrom('videos').where('id', '=', video.id).execute()
-          removedVideo = true
-        }
-      }
+      const removedVideo = await removeEmptyVideo(row)
 
       setAudit(res.locals, {
         entityType: 'liveStream',
@@ -539,7 +706,119 @@ export function liveRoutes(
         before: { state: row.state, slot: row.slot },
         after: { state: 'revoked', removedVideo }
       })
-      res.json(await listFor(db, game.id, actor.userId))
+      res.json(await listFor(db, space, game.id, actor.userId))
+    })
+  )
+
+  /**
+   * Revoke: this person's own camera stops, and goes if it never showed a
+   * picture.
+   *
+   * Decided here rather than from what the asker's list last said, because
+   * that list can be a moment old. The ingest stamps a publish it has accepted
+   * in one statement and this removes a camera in one, so a publish and a
+   * Revoke at the same moment settle on one answer: a key that was published
+   * on is only ended, and keeps what it recorded. Nothing is refused for an
+   * encoder that is still trying: until the ingest accepts it, it is not a
+   * publish, and with the key gone its next try is turned away.
+   */
+  router.post(
+    '/games/:gameId/live-streams/:streamId/revoke',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const { game } = await gameToManage(
+        actor.userId,
+        actor.isAdmin,
+        pathParam(req.params.gameId)
+      )
+      const streamId = pathParam(req.params.streamId)
+      const answer = await db.transaction().execute(async trx => {
+        await lockKeys(trx, [`liveStreams:${game.id}`])
+        const row = await myStream(actor.userId, game.id, streamId, trx)
+        const now = new Date()
+        const taken = await trx
+          .updateTable('live_streams')
+          .set({ state: 'revoked', closes_at: now, updated_at: now })
+          .where('id', '=', row.id)
+          .where('first_published_at', 'is', null)
+          .where('local_recording', '<>', 'uploaded')
+          .returning('local_recording as localRecording')
+          .executeTakeFirst()
+        const removed = taken != null
+        if (!removed) {
+          await trx
+            .updateTable('live_streams')
+            .set({ closes_at: now, updated_at: now })
+            .where('id', '=', row.id)
+            .where('closes_at', 'is', null)
+            .execute()
+        }
+        return { row, removed, localRecording: taken?.localRecording }
+      })
+
+      const { row, removed, localRecording } = answer
+      // One only ended keeps its reminders: its recording can still be
+      // uploaded, as can a removed one's (`settleUnlessHeld`).
+      if (removed) await settleUnlessHeld(row.id, localRecording)
+      const removedVideo = removed && (await removeEmptyVideo(row))
+      setAudit(res.locals, {
+        entityType: 'liveStream',
+        entityId: row.id,
+        before: { state: row.state, slot: row.slot },
+        after: { removed, removedVideo }
+      })
+      res.json({
+        removed,
+        streams: await listFor(db, space, game.id, actor.userId)
+      })
+    })
+  )
+
+  /**
+   * Deletes one of this person's own ended cameras, and everything it made.
+   *
+   * Removing a camera leaves its recording; this is the delete that takes the
+   * recording too (`discardStream`), which is what lets a phone drop its own
+   * copy. Only once it has stopped. A camera still active has End, and one
+   * still `publishing` after End is one whose playlist the ingest has not
+   * closed yet. Asked again it carries on, whatever stopped it the first time.
+   */
+  router.post(
+    '/games/:gameId/live-streams/:streamId/discard',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const { game } = await gameToManage(
+        actor.userId,
+        actor.isAdmin,
+        pathParam(req.params.gameId)
+      )
+      const row = await myStream(
+        actor.userId,
+        game.id,
+        pathParam(req.params.streamId),
+        db,
+        { deleted: 'allow' }
+      )
+      if (!canDeleteCameraVideo(row)) {
+        throw badRequest('That camera is still running. End it first.')
+      }
+
+      const videoIds = await discardStream(
+        { db, space, mediaRoot, uploadsDir },
+        row.id
+      )
+
+      setAudit(res.locals, {
+        entityType: 'liveStream',
+        entityId: row.id,
+        before: { state: row.state, slot: row.slot },
+        after: { discarded: true, deletedVideos: videoIds }
+      })
+      res.json(await listFor(db, space, game.id, actor.userId))
     })
   )
 
@@ -633,14 +912,21 @@ export function liveRoutes(
  */
 async function summaryOf(
   db: Kysely<Database>,
+  space: SpaceSettings,
   row: LiveStreamRow,
   askedBy: string
 ): Promise<LiveStream> {
-  const [status, names] = await Promise.all([
+  const [status, owners] = await Promise.all([
     statusOf(db, row.id),
-    namesFor(db, [row.userId])
+    ownersOf(db, space, [row.userId])
   ])
-  return oneStream(row, status, names.get(row.userId) ?? '', askedBy)
+  return oneStream(row, status, owners.get(row.userId)?.name ?? '', askedBy)
+}
+
+/** What a game's list says of a camera beyond what a single answer does. */
+interface ListedStream {
+  ownerPicture: string | null
+  video: PlayableVideo | undefined
 }
 
 /**
@@ -649,16 +935,17 @@ async function summaryOf(
  * Every item of a game's list says what device holds it and how far its
  * recording has got, and the owner's own items say which install. A single
  * camera says so too when a device holds it; one made for a browser or
- * streaming software answers exactly as it always has.
+ * streaming software answers exactly as it always has. Only a list says when
+ * the camera ran and what to play.
  */
 function oneStream(
   row: LiveStreamRow,
   status: LiveStatus | null,
   ownerName: string,
   askedBy: string,
-  inList = false
+  listed?: ListedStream
 ): LiveStream {
-  const device = inList || row.deviceId != null
+  const device = listed != null || row.deviceId != null
   return asLiveStream({
     id: row.id,
     gameId: row.gameId,
@@ -679,24 +966,50 @@ function oneStream(
     ...(device
       ? {
           deviceModel: row.deviceModel,
-          localRecording: row.localRecording,
+          // Installed builds know three states: a copy gone is no copy held.
+          localRecording:
+            row.localRecording === 'removed' ? 'none' : row.localRecording,
           ...(row.userId === askedBy ? { deviceId: row.deviceId } : {})
         }
-      : {})
+      : {}),
+    ...(listed == null
+      ? {}
+      : {
+          createdAt: row.createdAt.toISOString(),
+          source: row.source,
+          publishedAt: row.publishedAt?.toISOString() ?? null,
+          endedAt: row.endedAt?.toISOString() ?? null,
+          durationSec: listed.video?.durationSec ?? null,
+          playableVideoId: listed.video?.id ?? null,
+          ownerPicture: listed.ownerPicture
+        })
   })
 }
 
 /** Everything on one game, split by whose it is. */
 async function listFor(
   db: Kysely<Database>,
+  space: SpaceSettings,
   gameId: string,
   askedBy: string
 ): Promise<unknown> {
   const rows = await liveStreamsFor(db, gameId)
-  const names = await namesFor(
-    db,
-    rows.map(row => row.userId)
-  )
+  const [owners, videos, discarded] = await Promise.all([
+    ownersOf(
+      db,
+      space,
+      rows.map(row => row.userId)
+    ),
+    playableVideos(db, rows),
+    db
+      .selectFrom('live_streams')
+      .select('id')
+      .where('game_id', '=', gameId)
+      .where('user_id', '=', askedBy)
+      .where('discarded_at', 'is not', null)
+      .orderBy('id')
+      .execute()
+  ])
   const statuses = new Map<string, LiveStatus | null>()
   for (const row of rows) {
     statuses.set(
@@ -708,34 +1021,124 @@ async function listFor(
     oneStream(
       row,
       statuses.get(row.id) ?? null,
-      names.get(row.userId) ?? '',
+      owners.get(row.userId)?.name ?? '',
       askedBy,
-      true
+      {
+        ownerPicture: owners.get(row.userId)?.picture ?? null,
+        video: videos.get(row.id)
+      }
     )
   )
-  const mine = drawn.filter(row => row.userId === askedBy)
+  const active = rows.filter(row => isActiveStream(row))
+  const activeMine = active.filter(row => row.userId === askedBy)
+  const gameCanAdd = Math.max(0, MAX_GAME_CAMERAS - active.length)
   return asGameLiveStreams({
     gameId,
-    mine,
+    mine: drawn.filter(row => row.userId === askedBy),
     others: drawn.filter(row => row.userId !== askedBy),
-    canAdd: Math.max(0, MAX_CAMERAS - mine.length),
-    maxCameras: MAX_CAMERAS
+    canAdd: Math.min(MAX_CAMERAS - activeMine.length, gameCanAdd),
+    maxCameras: MAX_CAMERAS,
+    gameCanAdd,
+    maxGameCameras: MAX_GAME_CAMERAS,
+    discarded: discarded.map(row => row.id)
   })
 }
 
-/** Who these people are, in the words a screen would use. */
-async function namesFor(
+interface Owner {
+  name: string
+  picture: string | null
+}
+
+/** Who these people are, in the words a screen would use, and their picture. */
+async function ownersOf(
   db: Kysely<Database>,
+  space: SpaceSettings,
   userIds: string[]
-): Promise<Map<string, string>> {
+): Promise<Map<string, Owner>> {
   const wanted = [...new Set(userIds)]
   if (wanted.length === 0) return new Map()
   const rows = await db
     .selectFrom('users')
-    .select(['id', 'display_name as displayName'])
+    .select(['id', 'display_name as displayName', 'avatar_path as avatarPath'])
     .where('id', 'in', wanted)
     .execute()
-  return new Map(rows.map(row => [row.id, row.displayName]))
+  return new Map(
+    rows.map(row => [
+      row.id,
+      { name: row.displayName, picture: imageUrl(space, row.avatarPath) }
+    ])
+  )
+}
+
+interface PlayableVideo {
+  id: string
+  durationSec: number | null
+}
+
+/**
+ * The video each camera plays: its newest finished upload when that is
+ * visible, otherwise its live video when that is, otherwise what replaced its
+ * live video. By upload first rather than by `replaced_by`, because an upload
+ * that stands alone replaced nothing. What replaced a live video that has since
+ * gone is kept on the camera (`letCamerasGo`).
+ */
+async function playableVideos(
+  db: Kysely<Database>,
+  rows: LiveStreamRow[]
+): Promise<Map<string, PlayableVideo>> {
+  const ids = rows.map(row => row.id)
+  if (ids.length === 0) return new Map()
+  const uploads = await db
+    .selectFrom('director_uploads')
+    .select(['live_stream_id as streamId', 'video_id as videoId'])
+    .where('live_stream_id', 'in', ids)
+    .where('state', '=', 'ready')
+    .where('video_id', 'is not', null)
+    .orderBy('created_at', 'desc')
+    .orderBy('id', 'desc')
+    .execute()
+  const live = rows.flatMap(row => (row.videoId == null ? [] : [row.videoId]))
+  const replaced =
+    live.length === 0
+      ? []
+      : await db
+          .selectFrom('videos')
+          .select(['id', 'replaced_by as replacedBy'])
+          .where('id', 'in', live)
+          .where('replaced_by', 'is not', null)
+          .execute()
+  const replacedBy = new Map(replaced.map(one => [one.id, one.replacedBy]))
+  const wanted = [
+    ...live,
+    ...uploads.flatMap(one => one.videoId ?? []),
+    ...replaced.flatMap(one => one.replacedBy ?? []),
+    ...rows.flatMap(row => row.replacementVideoId ?? [])
+  ]
+  const visible =
+    wanted.length === 0
+      ? []
+      : await db
+          .selectFrom('videos')
+          .select(['id', 'duration_sec as durationSec'])
+          .where('id', 'in', wanted)
+          .where('hidden', '=', false)
+          .where('status', 'in', ['live', 'ready'])
+          .execute()
+  const byId = new Map(visible.map(one => [one.id, one]))
+  const answer = new Map<string, PlayableVideo>()
+  for (const row of rows) {
+    const candidates = [
+      ...uploads.filter(one => one.streamId === row.id).map(one => one.videoId),
+      row.videoId,
+      row.videoId == null ? null : replacedBy.get(row.videoId),
+      row.replacementVideoId
+    ]
+    const found = candidates
+      .map(id => (id == null ? undefined : byId.get(id)))
+      .find(one => one != null)
+    if (found != null) answer.set(row.id, found)
+  }
+  return answer
 }
 
 /**
@@ -776,6 +1179,7 @@ async function loadGame(
       'games.away_team_id as awayTeamId',
       'games.season_id as seasonId',
       'games.start_at as startAt',
+      'games.timezone as timezone',
       'home.name as homeTeamName',
       'away.name as awayTeamName'
     ])

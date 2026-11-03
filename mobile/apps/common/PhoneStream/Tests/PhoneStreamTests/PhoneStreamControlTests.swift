@@ -125,8 +125,8 @@ extension PhoneStreamTests {
       await engine.close()
     }
 
-    @Test("Recording does not start before open, nor without 2 GB free")
-    func startingNeedsAnOpenEngineAndSpace() async throws {
+    @Test("Recording does not start before open")
+    func startingNeedsAnOpenEngine() async throws {
       let rig = EngineRig(root: try scratchDirectory())
       let engine = try rig.engine()
       #expect(throws: PhoneStreamError.notReady) {
@@ -135,12 +135,6 @@ extension PhoneStreamTests {
       }
       #expect(throws: PhoneStreamError.notReady) { try engine.resumeInterrupted(request: rig.request) }
       try engine.open(angleName: "Home Plate")
-      rig.free.bytes = 1_900_000_000
-      #expect(throws: PhoneStreamError.insufficientStorage) {
-        try engine.startRecording(rtmpUrl: "rtmp://127.0.0.1:1/live/key-0000", liveStreamId: "lst_0001",
-                                  gameId: "gam_0001", angleName: "Home Plate", request: rig.request)
-      }
-      #expect(engine.status.error == .insufficientStorage)
       #expect(try engine.recordings().isEmpty)
       #expect(engine.interruptedSession() == nil)
       #expect(try engine.resumeInterrupted(request: rig.request) == false)
@@ -217,13 +211,29 @@ extension PhoneStreamTests {
       #expect(PhoneStorage(root: root.appendingPathComponent("not/yet/made")).freeBytes() > 0)
       #expect(PhoneStorage.standard.root.path.hasSuffix("Application Support/PhoneStream"))
       let rules = PhoneStorageRules.standard
-      #expect(rules.canStart(freeBytes: 2_000_000_000))
-      #expect(!rules.canStart(freeBytes: 1_999_999_999))
-      #expect(rules.mustStop(freeBytes: 499_999_999))
-      #expect(!rules.mustStop(freeBytes: 500_000_000))
+      #expect(rules.startFloorBytes == 10_000_000_000)
+      #expect(rules.stopFloorBytes == 2_000_000_000)
+      #expect(rules.canStart(freeBytes: 10_000_000_000))
+      #expect(!rules.canStart(freeBytes: 9_999_999_999))
+      #expect(rules.mustStop(freeBytes: 1_999_999_999))
+      #expect(!rules.mustStop(freeBytes: 2_000_000_000))
     }
 
-    @Test("Retention keeps every take that has not been uploaded, and one uploaded for under a week")
+    @Test("A debug build takes its start floor from a launch argument and keeps the stop floor")
+    func startFloorArgument() {
+      let moved = PhoneStorageRules.forLaunch(arguments: [ "app", "-TSPhoneStartFloorBytes", "123456" ])
+      #expect(moved.startFloorBytes == 123_456)
+      #expect(moved.stopFloorBytes == PhoneStorageRules.standard.stopFloorBytes)
+      #expect(PhoneStorageRules.forLaunch(arguments: [ "app" ]) == .standard)
+      #expect(PhoneStorageRules.forLaunch(arguments: [ "app", "-TSPhoneStartFloorBytes" ]) == .standard)
+      #expect(PhoneStorageRules.forLaunch(arguments: [ "app", "-TSPhoneStartFloorBytes", "lots" ]) == .standard)
+      #expect(PhoneStorageRules.forLaunch() == .standard)
+    }
+
+    @Test("""
+      Retention sweeps an uploaded take at once and an unuploaded one 30 days after it ended, and \
+      leaves running, pending and protected takes
+      """)
     func retention() throws {
       let root = try scratchDirectory()
       let storage = PhoneStorage(root: root)
@@ -234,32 +244,197 @@ extension PhoneStreamTests {
       let day = 86_400.0
       let start = WallClock(seconds: 1_800_000_000)
       var ids: [Int64] = []
-      for (offset, stream) in [ "lst_0001", "lst_0002", "lst_0003", "lst_0004" ].enumerated() {
+      for (offset, stream) in [ "lst_0001", "lst_0002", "lst_0003", "lst_0004", "lst_0005", "lst_0006" ].enumerated() {
         let id = try index.beginRecording(at: start + Double(offset))
-        try index.endRecording(id, at: start + Double(offset) + 60)
+        try index.endRecording(id, at: start + 60)
         try catalog.add(recordingID: id, liveStreamId: stream, gameId: "gam_0001", angleName: "Home Plate")
         ids.append(id)
       }
+      // Still running, however long ago it began.
+      let running = try index.beginRecording(at: start)
+      try catalog.add(recordingID: running, liveStreamId: "lst_0007", gameId: "gam_0001", angleName: "Home Plate")
       let file = storage.program.appendingPathComponent("program-20270115-080000.mp4")
       try Data([ 1, 2, 3 ]).write(to: file)
       try index.setProgramFilename(file.lastPathComponent, for: ids[0])
+      // Uploaded a minute ago, and uploaded but protected.
       try catalog.markUploaded(ids[0], videoId: "vid_0001", at: start + 60)
-      try catalog.markUploaded(ids[1], videoId: "vid_0002", at: start + 6 * day)
+      try catalog.markUploaded(ids[1], videoId: "vid_0002", at: start + 60)
+      // Upload pending, opened and not yet opened by the server.
       try catalog.setUpload(id: "upl_0003", title: "Home Plate", for: ids[2])
-      try catalog.markUploaded(ids[3], videoId: "vid_0004", at: start + 60)
+      try catalog.setUpload(id: nil, title: "Home Plate", for: ids[3])
+      // ids[4] has no upload, and ids[5] has none and is protected.
 
-      let now = start + 8 * day
       let policy = PhoneRetentionPolicy()
-      #expect(policy.keepUploadedSeconds == 7 * day)
-      let doomed = policy.expired(try catalog.recordings(), now: now, protecting: [ ids[3] ])
-      #expect(doomed.map { $0.recordingID } == [ ids[0] ])
-      #expect(try policy.sweep(catalog: catalog, index: index, storage: storage, now: now, protecting: [ ids[3] ]) == 1)
+      #expect(policy.keepUnuploadedSeconds == 30 * day)
+      let protected: Set<Int64> = [ ids[1], ids[5] ]
+      // 29 days after the takes ended: only the uploaded one goes.
+      let early = start + 60 + 29 * day
+      #expect(policy.expired(try catalog.recordings(), now: early, protecting: protected).map { $0.recordingID } == [ ids[0] ])
+      #expect(try policy.sweep(catalog: catalog, index: index, storage: storage, now: early, protecting: protected) == 1)
       #expect(!FileManager.default.fileExists(atPath: file.path))
-      let left = try catalog.recordings()
-      #expect(Set(left.map { $0.recordingID }) == Set([ ids[1], ids[2], ids[3] ]))
-      // Nothing un-uploaded ever goes, however old.
-      #expect(try policy.sweep(catalog: catalog, index: index, storage: storage, now: now + 365 * day) == 2)
-      #expect(try catalog.recordings().map { $0.recordingID } == [ ids[2] ])
+      // 30 days after: the unuploaded take with nothing holding it goes too.
+      let due = start + 60 + 30 * day
+      #expect(try policy.sweep(catalog: catalog, index: index, storage: storage, now: due, protecting: protected) == 1)
+      #expect(Set(try catalog.recordings().map { $0.recordingID }) == Set([ ids[1], ids[2], ids[3], ids[5], running ]))
+      // Nothing protects them any more: pending uploads and the running take stay, however old.
+      #expect(try policy.sweep(catalog: catalog, index: index, storage: storage, now: due + 365 * day) == 2)
+      #expect(Set(try catalog.recordings().map { $0.recordingID }) == Set([ ids[2], ids[3], running ]))
+    }
+
+    /// A catalog as an older app left it: the table before the 30-day limit, with one ended take.
+    private func olderCatalog(endedAt: WallClock) throws -> (
+      storage: PhoneStorage, store: SQLiteStore, index: ArchiveIndex, id: Int64
+    ) {
+      let storage = PhoneStorage(root: try scratchDirectory())
+      try storage.prepare()
+      let store = try SQLiteStore(url: storage.index)
+      let index = try ArchiveIndex(store: store)
+      let id = try index.beginRecording(at: endedAt - 60)
+      try index.endRecording(id, at: endedAt)
+      try store.execute("""
+        CREATE TABLE phone_recordings (
+          recording_id INTEGER PRIMARY KEY,
+          live_stream_id TEXT NOT NULL,
+          game_id TEXT NOT NULL,
+          angle_name TEXT NOT NULL,
+          upload_id TEXT,
+          upload_title TEXT,
+          uploaded_at REAL,
+          video_id TEXT,
+          low_storage_stop INTEGER NOT NULL DEFAULT 0,
+          published_outside_parts INTEGER NOT NULL DEFAULT 0
+        );
+        """)
+      try store.execute(
+        "INSERT INTO phone_recordings (recording_id, live_stream_id, game_id, angle_name) VALUES (?, 'lst_old', 'gam_0001', 'Home Plate');",
+        [ .integer(id) ]
+      )
+      return (storage, store, index, id)
+    }
+
+    @Test("""
+      A take that predates the 30-day limit survives the first sweep at 45 days old, starts its 30 days \
+      there, and goes after them once the server has heard
+      """)
+    func takeFromBeforeTheLimit() throws {
+      let day = 86_400.0
+      let firstOpen = WallClock(seconds: 1_800_000_000)
+      let old = try olderCatalog(endedAt: firstOpen - 45 * day)
+      let policy = PhoneRetentionPolicy()
+
+      // An older app's catalog loads, and reads as predating the limit.
+      var catalog = try PhoneCatalog(store: old.store, index: old.index)
+      var take = try #require(try catalog.recording(old.id))
+      #expect(take.predatesRetention)
+      #expect(take.retentionFrom == nil)
+      #expect(!take.retentionReported)
+
+      // First open: it stays, and its 30 days start.
+      let sweep = { (now: WallClock) in
+        try policy.sweep(catalog: catalog, index: old.index, storage: old.storage, now: now)
+      }
+      #expect(try sweep(firstOpen) == 0)
+      take = try #require(try catalog.recording(old.id))
+      #expect(take.retentionFrom == firstOpen)
+
+      // The stamp survives a restart, and a later sweep leaves it where it is.
+      catalog = try PhoneCatalog(store: old.store, index: old.index)
+      #expect(try sweep(firstOpen + 10 * day) == 0)
+      #expect(try catalog.recording(old.id)?.retentionFrom == firstOpen)
+
+      // Unheard, it stays however long: the server's warning is the only one its owner gets.
+      #expect(try sweep(firstOpen + 90 * day) == 0)
+      #expect(try catalog.recording(old.id) != nil)
+
+      // Heard: its 30 days count from there, and not before.
+      try catalog.setRetentionReported("lst_old", from: firstOpen)
+      take = try #require(try catalog.recording(old.id))
+      #expect(take.retentionReported)
+      #expect(policy.expired(try catalog.recordings(), now: firstOpen + 30 * day - 1).isEmpty)
+      #expect(try sweep(firstOpen + 30 * day) == 1)
+      #expect(try catalog.recording(old.id) == nil)
+      #expect(try catalog.swept() == [ .init(liveStreamId: "lst_old", gameId: "gam_0001") ])
+    }
+
+    @Test("A catalog whose upgrade stopped after the 30-day limit's first column opens, gains the rest and lists its takes")
+    func catalogUpgradeCutOffPartWay() throws {
+      let day = 86_400.0
+      let now = WallClock(seconds: 1_800_000_000)
+      let old = try olderCatalog(endedAt: now - 45 * day)
+      try old.store.execute("ALTER TABLE phone_recordings ADD COLUMN server_clock_offset REAL;")
+      try old.store.execute("ALTER TABLE phone_recordings ADD COLUMN predates_retention INTEGER NOT NULL DEFAULT 1;")
+
+      let catalog = try PhoneCatalog(store: old.store, index: old.index)
+      let columns = try old.store.query("PRAGMA table_info(phone_recordings);").map { $0.string(1) }
+      #expect(columns.contains("retention_from"))
+      #expect(columns.contains("retention_reported"))
+      let takes = try catalog.recordings()
+      #expect(takes.map { $0.recordingID } == [ old.id ])
+      #expect(takes.first?.predatesRetention == true)
+      #expect(takes.first?.retentionFrom == nil)
+      #expect(takes.first?.retentionReported == false)
+      // The sweep's own reads and writes work on it: the take starts its 30 days and stays.
+      #expect(try PhoneRetentionPolicy().sweep(catalog: catalog, index: old.index, storage: old.storage, now: now) == 0)
+      #expect(try catalog.recording(old.id)?.retentionFrom == now)
+      // Opening it again finds every column there.
+      #expect(try PhoneCatalog(store: old.store, index: old.index).recording(old.id)?.retentionFrom == now)
+    }
+
+    @Test("A report moved past the warning's window moves the phone's count with it")
+    func lateReportMovesTheCount() throws {
+      let day = 86_400.0
+      let firstOpen = WallClock(seconds: 1_800_000_000)
+      let old = try olderCatalog(endedAt: firstOpen - 45 * day)
+      let catalog = try PhoneCatalog(store: old.store, index: old.index)
+      let policy = PhoneRetentionPolicy()
+      #expect(try policy.sweep(catalog: catalog, index: old.index, storage: old.storage, now: firstOpen) == 0)
+      let moved = firstOpen + 3 * day
+      try catalog.setRetentionReported("lst_old", from: moved)
+      #expect(try catalog.recording(old.id)?.retentionFrom == moved)
+      #expect(try policy.sweep(catalog: catalog, index: old.index, storage: old.storage, now: firstOpen + 30 * day) == 0)
+      #expect(try policy.sweep(catalog: catalog, index: old.index, storage: old.storage, now: moved + 30 * day) == 1)
+    }
+
+    @Test("A take recorded since keeps counting from its own end, and an uploaded old one still goes")
+    func takeSinceTheLimit() throws {
+      let day = 86_400.0
+      let now = WallClock(seconds: 1_800_000_000)
+      let old = try olderCatalog(endedAt: now - 45 * day)
+      let catalog = try PhoneCatalog(store: old.store, index: old.index)
+      let policy = PhoneRetentionPolicy()
+      let since = try old.index.beginRecording(at: now - 31 * day)
+      try old.index.endRecording(since, at: now - 30 * day)
+      try catalog.add(recordingID: since, liveStreamId: "lst_new", gameId: "gam_0001", angleName: "First Base")
+      #expect(try catalog.recording(since)?.predatesRetention == false)
+      try catalog.markUploaded(old.id, videoId: "vid_0001", at: now)
+      #expect(try policy.sweep(catalog: catalog, index: old.index, storage: old.storage, now: now) == 2)
+      // Only the unuploaded one has anything to report.
+      #expect(try catalog.swept() == [ .init(liveStreamId: "lst_new", gameId: "gam_0001") ])
+      #expect(try catalog.recording(since) == nil)
+    }
+
+    @Test("The streams the sweep took a take of stay remembered across a restart until forgotten")
+    func sweptStreams() throws {
+      let day = 86_400.0
+      let storage = PhoneStorage(root: try scratchDirectory())
+      try storage.prepare()
+      let store = try SQLiteStore(url: storage.index)
+      let index = try ArchiveIndex(store: store)
+      var catalog = try PhoneCatalog(store: store, index: index)
+      let start = WallClock(seconds: 1_800_000_000)
+      let id = try index.beginRecording(at: start)
+      try index.endRecording(id, at: start + 60)
+      try catalog.add(recordingID: id, liveStreamId: "lst_0001", gameId: "gam_0001", angleName: "Home Plate")
+      #expect(try catalog.swept().isEmpty)
+      #expect(
+        try PhoneRetentionPolicy().sweep(catalog: catalog, index: index, storage: storage, now: start + 60 + 30 * day) == 1
+      )
+      catalog = try PhoneCatalog(store: store, index: index)
+      #expect(try catalog.swept() == [ .init(liveStreamId: "lst_0001", gameId: "gam_0001") ])
+      try catalog.forgetSwept("lst_0009")
+      #expect(try catalog.swept().count == 1)
+      try catalog.forgetSwept("lst_0001")
+      #expect(try catalog.swept().isEmpty)
     }
 
     @Test("The catalog files a take under its stream, game and angle, and tracks its upload")

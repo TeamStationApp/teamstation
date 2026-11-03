@@ -520,14 +520,14 @@ export class Phone {
     await this.m.scrollUntilVisible({ element, centerElement: true })
   }
 
-  /** Record video → the name → Start, then Record: on the air. */
+  /** Record Video → the name → Record with this phone, then Record: on the air. */
   async recordAngle(name: string): Promise<void> {
-    await this.scrollTo({ text: 'Record video' })
-    say('$ tapOn Record video')
-    await this.m.tapOn({ text: 'Record video' })
+    await this.scrollTo({ text: 'Record Video' })
+    say('$ tapOn Record Video')
+    await this.m.tapOn({ text: 'Record Video' })
     assert(
       (await this.find(node => node.text === 'Name this camera angle')) != null,
-      'Record video asks for the angle’s name'
+      'Record Video asks for the angle’s name'
     )
     // Typing a whole name through WebDriverAgent now and then drops a
     // character as the field redraws (the field's value is not in the
@@ -544,8 +544,12 @@ export class Phone {
         await sleep(150)
       }
     }
-    say('$ tapOn Start')
-    await this.m.tapOn({ text: 'Start' })
+    // A sheet still settling under a leaving keyboard can miss the first tap.
+    await sleep(800)
+    say('$ tapOn Record with this phone')
+    await this.m.tapOn({ text: 'Record with this phone' })
+    if ((await this.find(node => node.id === 'broadcast-button', 6000)) == null)
+      await this.m.tapOn({ text: 'Record with this phone' })
     assert(
       (await this.find(node => node.id === 'broadcast-button', 20000)) != null,
       'the streaming screen opened'

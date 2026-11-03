@@ -36,7 +36,7 @@ import {
   stopLiveController,
   sync
 } from './controller'
-import { replaceAnchorsFromRecording } from './finishVideo'
+import { moveWallPoints, replaceAnchorsFromRecording } from './finishVideo'
 import { sealSecret } from './secrets'
 import { placeSegmentOnTimeline } from './segmentClock'
 import { configureIngest, resetForTest } from './splitter'
@@ -855,6 +855,38 @@ describe('the controller and the wall clock (U25, U26)', function () {
     expect((await anchors(videoId)).at(-1)?.[2]).equals('sei')
     expect((await anchors(videoId)).at(-1)?.[0]).at.least(3000)
     expect(passedOver()).has.length(1)
+  })
+
+  it('moves its points where the file has their frames, by the gaps it kept at its joins', async function () {
+    const videoId = await stream('joined')
+    await storeWallPoints(
+      db,
+      videoId,
+      [0, 2999, 3000, 4000, 7000, 44000].map(mediaMs => ({
+        mediaMs,
+        wallMs: START + mediaMs,
+        source: 'arrival' as const,
+        corrected: true
+      }))
+    )
+    await moveWallPoints(db, videoId, [])
+    expect((await anchors(videoId)).map(point => point[0])).deep.equals([
+      0, 2999, 3000, 4000, 7000, 44000
+    ])
+
+    // Two joins, one landing where a later point stood before it moved.
+    await moveWallPoints(db, videoId, [
+      { fromMs: 3000, byMs: 40000 },
+      { fromMs: 7000, byMs: 50000 }
+    ])
+    expect(await anchors(videoId)).deep.equals([
+      [0, START, 'arrival'],
+      [2999, START + 2999, 'arrival'],
+      [43000, START + 3000, 'arrival'],
+      [44000, START + 4000, 'arrival'],
+      [57000, START + 7000, 'arrival'],
+      [94000, START + 44000, 'arrival']
+    ])
   })
 
   it('says why a stream could not be read, and tries again on the next tick', async function () {

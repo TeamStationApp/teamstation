@@ -808,11 +808,25 @@ export interface LiveStreamsTable {
   /** What that device is, in words: `iPhone 13 Pro`, `iPad Pro`. */
   device_model: string | null
   /** The phone's own recording: `none`, `recorded`, or `uploaded`. */
-  local_recording: Generated<'none' | 'recorded' | 'uploaded'>
+  local_recording: Generated<'none' | 'recorded' | 'uploaded' | 'removed'>
+  /**
+   * When a take older than the phone's 30-day limit started counting them, as
+   * its phone reports it.
+   */
+  local_copy_from: Timestamp | null
   /** Only the phone's own upload replaces this stream's live copy. */
   records_locally: Generated<boolean>
   /** The legacy Director claim route has returned this stream. */
   director_claimed: Generated<boolean>
+  /** What an external camera is. Null for a phone, Director or the website. */
+  source: 'rtmp' | 'gopro' | 'mevo' | 'mevoStudio' | null
+  /** When its owner deleted it. Such a camera leaves every list. */
+  discarded_at: Timestamp | null
+  /**
+   * What replaced this camera's live video, once that video has gone and its
+   * `replaced_by` with it. Null while the live video is there to say so.
+   */
+  replacement_video_id: string | null
   created_at: Timestamp
   updated_at: Timestamp
 }
@@ -912,12 +926,16 @@ export interface GroupRequestsTable {
     | 'promotion'
     | 'person'
     | 'membership'
+    | 'videographer'
     | 'guardian'
     | 'game'
     | 'gameChange'
     | 'playerAdd'
   sender_id: string
-  /** Null for a guardian or membership request sent on one’s own behalf. */
+  /**
+   * Null for a guardian, membership or videographer request sent on one’s own
+   * behalf.
+   */
   sender_scope_type: 'league' | 'season' | 'team' | null
   sender_scope_id: string | null
   terms: Json

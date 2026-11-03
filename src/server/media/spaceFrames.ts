@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
-import { MASTER_PLAYLIST } from './ffmpeg'
+import { MASTER_PLAYLIST, MEDIA_PLAYLIST } from './ffmpeg'
 import { presignGetUrl } from './presign'
 import type { SpaceSettings } from './spacesHls'
 import { mediaVariant, spaceKey, SpacePlayback } from './spacesHls'
+import { readPart } from './wallClockScan'
 
 /**
  * Reading one frame out of a video that lives in the Space.
@@ -97,7 +98,7 @@ export function fragmentAt(
     )
       return undefined
     if (
-      !/^(?:init|video)\.mp4$/.test(initFile) ||
+      !/^(?:init(?:\d{6,})?|video)\.mp4$/.test(initFile) ||
       !/^(?:video\.mp4|seg\d{6,}\.m4s)$/.test(text)
     )
       return undefined
@@ -233,6 +234,50 @@ export async function fetchSpaceFrame(
       await rm(path, { force: true })
     }
   }
+}
+
+/**
+ * The same, for a recording on this machine whose playlist changes init
+ * segment part way. No FFmpeg demuxer follows such a change, in a playlist or
+ * in the one file a remux leaves, so a moment past the first is read as a
+ * fragment is from the Space: its own init segment, then its own bytes.
+ *
+ * `path` is the playlist, or the file beside the playlist that lists it.
+ * Undefined for anything else, which is read where it lies.
+ */
+export async function readLocalFrame(
+  path: string,
+  atSec: number,
+  workDir: string
+): Promise<SpaceFrame | undefined> {
+  const playlistPath = path.endsWith('.m3u8')
+    ? path
+    : join(dirname(path), MEDIA_PLAYLIST)
+  const playlist = await readFile(playlistPath, 'utf8').catch(() => undefined)
+  if (playlist == null || !changesInit(playlist)) return undefined
+  const fragment = fragmentAt(playlist, atSec)
+  if (fragment == null) return undefined
+  const dir = dirname(playlistPath)
+  const framePath = join(workDir, `${randomUUID()}.mp4`)
+  await writeFile(
+    framePath,
+    Buffer.concat([
+      await readPart(join(dir, fragment.initFile), fragment.init),
+      await readPart(join(dir, fragment.segmentFile), fragment.segment)
+    ])
+  )
+  return {
+    path: framePath,
+    seekSec: Math.max(0, atSec - fragment.startSec),
+    release: async () => {
+      await rm(framePath, { force: true })
+    }
+  }
+}
+
+/** Whether a playlist names more than one init segment. */
+function changesInit(playlist: string): boolean {
+  return playlist.split('#EXT-X-MAP:').length > 2
 }
 
 async function range_(

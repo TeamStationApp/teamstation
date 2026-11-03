@@ -7,9 +7,11 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { CODEC_REFUSAL } from '../../common/api'
 import {
   drainLiveController,
   drainPublishForTest,
+  handleLiveEventForTest,
   startLiveController,
   stopLiveController,
   sync
@@ -20,7 +22,10 @@ import {
   configureIngest,
   forcePublishForTest,
   ingestPort,
+  type LiveEvent,
+  publishArrivedForTest,
   setLive,
+  tickSamplerForTest,
   writerForTest
 } from './splitter'
 import { firstPublishOnDisk, placedAt } from './splitterFixtures'
@@ -220,6 +225,69 @@ describe('a live origin shared by API nodes', function () {
     expect(names).deep.equals([])
     expect(await stat(f.dir).catch(() => undefined)).equals(undefined)
     console.log('prefix after idle delete:', names)
+  })
+
+  it('leaves the Space as it was when a recording is refused its next publish', async () => {
+    await f.stage()
+    await f.begin()
+    await drainPublishForTest(f.videoId)
+    const onSpace = async (): Promise<Record<string, string>> => {
+      const folder = join(f.remote, 'videos', f.videoId)
+      const held: Record<string, string> = {}
+      for (const name of await readdir(folder)) {
+        const bytes = await readFile(join(folder, name))
+        held[name] = createHash('md5').update(bytes).digest('hex')
+      }
+      return held
+    }
+    const before = await onSpace()
+    expect(Object.keys(before)).includes('init.mp4')
+    f.requests.length = 0
+
+    // What FFmpeg does as soon as it has read the publish's first packets.
+    const fake = join(f.root, 'clobbering-writer.sh')
+    writeFileSync(
+      fake,
+      `#!/bin/sh\nprintf refused > '${join(f.dir, 'init.mp4')}'\nexec sleep 30\n`
+    )
+    chmodSync(fake, 0o755)
+    const events: LiveEvent[] = []
+    configureIngest({
+      ...f.options.live,
+      ffmpegPath: fake,
+      log: () => {},
+      onEvent: event => events.push(event)
+    })
+    setLive(f.stream.key, {
+      liveStreamId: f.stream.id,
+      hlsDir: f.dir,
+      destinations: [],
+      videoStartMs: Date.now() - 60_000
+    })
+    publishArrivedForTest({
+      id: 'wrong-camera',
+      streamApp: 'live',
+      streamName: f.stream.key,
+      streamPath: `/live/${f.stream.key}`,
+      videoCodec: 7
+    })
+    await f.begin()
+    await new Promise(resolve => setTimeout(resolve, 300))
+    await drainPublishForTest(f.videoId)
+    tickSamplerForTest()
+    const refusal = events.find(
+      event =>
+        event.type === 'publishEnded' && event.reason.startsWith(CODEC_REFUSAL)
+    )
+    expect(refusal, 'the publish was refused').not.equals(undefined)
+    await handleLiveEventForTest(refusal!, f.options)
+    await drainPublishForTest(f.videoId)
+
+    expect(await onSpace()).deep.equals(before)
+    expect(
+      f.requests.filter((r: { method: string }) => r.method === 'PUT')
+    ).length(0)
+    expect((await f.row())?.status).equals('live')
   })
 
   it('queues one flush without blocking the tick when the Space is slow', async () => {

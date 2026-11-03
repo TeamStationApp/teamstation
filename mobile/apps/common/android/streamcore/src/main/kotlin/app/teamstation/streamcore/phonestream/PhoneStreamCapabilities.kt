@@ -4,8 +4,11 @@ import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
 
-/** What the bridge's `capabilities()` answers: whether this phone can record video, and its name. */
-data class PhoneCapabilities(val supported: Boolean, val deviceModel: String)
+/**
+ * What the bridge's `capabilities()` answers: whether this phone can record video, its name, and
+ * whether Record would keep a recording here now, rather than only streaming.
+ */
+data class PhoneCapabilities(val supported: Boolean, val deviceModel: String, val canRecordLocally: Boolean = false)
 
 /**
  * Whether this phone can stream and record: it needs an HEVC encoder that can code 1920×1080 at

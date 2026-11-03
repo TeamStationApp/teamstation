@@ -41,6 +41,8 @@ export interface ButtonProps {
   labelStyle?: StyleProp<TextStyle>
   /** For a device test that must tell this button from text that reads the same. */
   testID?: string
+  /** Points the target reaches past a shell drawn shorter than 48. */
+  hitSlop?: number
 }
 
 /**
@@ -75,7 +77,8 @@ export function Button(props: ButtonProps): React.ReactElement {
     icon,
     style,
     labelStyle,
-    testID
+    testID,
+    hitSlop
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -89,6 +92,7 @@ export function Button(props: ButtonProps): React.ReactElement {
       testID={testID ?? 'settings-pill-button'}
       aria-busy={busy}
       disabled={inert}
+      hitSlop={hitSlop}
       onPress={onPress}
       style={({ pressed }) => [
         styles.base,

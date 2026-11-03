@@ -56,7 +56,11 @@ function fixture(): {
   client: TeamStationClient
 } {
   const module = fakePhoneStreamModule({
-    capabilities: { supported: true, deviceModel: 'Phone' },
+    capabilities: {
+      supported: true,
+      deviceModel: 'Phone',
+      canRecordLocally: true
+    },
     recordings: []
   })
   const calls: Array<{ name?: string; options?: DeviceStreamOptions }> = []
@@ -129,7 +133,7 @@ async function mount(fake: ReturnType<typeof fixture>): Promise<void> {
 async function press(label: string): Promise<void> {
   const button = [
     ...document.querySelectorAll<HTMLElement>('button,[role="button"]')
-  ].find(node => node.textContent === label)
+  ].find(node => node.textContent?.replace(/chevron_right$/, '') === label)
   expect(button, label).not.equals(undefined)
   await act(async () => {
     button!.click()
@@ -156,8 +160,10 @@ describe('recording from the game hero', () => {
     await mount(fake)
     await press('Record')
     expect(prompt()).not.equals(null)
+    // The hero records with this phone: no external camera here.
+    expect(document.body.textContent).not.contains('Use external camera')
     await press('Home')
-    await press('Start')
+    await press('Record with this phone')
     expect(fake.calls).deep.equals([
       {
         name: 'Home',
@@ -172,6 +178,20 @@ describe('recording from the game hero', () => {
     expect(opened?.startOnOpen).equals(true)
   })
 
+  it('asks for a stream that keeps no recording on a phone under the start floor', async () => {
+    const fake = fixture()
+    fake.module.answers.capabilities = {
+      supported: true,
+      deviceModel: 'Phone',
+      canRecordLocally: false
+    }
+    await mount(fake)
+    await press('Record')
+    await press('Home')
+    await press('Record with this phone')
+    expect(fake.calls[0].options?.recordsLocally).equals(false)
+  })
+
   it('continues this device’s existing camera directly with its held stream id', async () => {
     const fake = fixture()
     fake.mine = [held]
@@ -182,13 +202,77 @@ describe('recording from the game hero', () => {
     expect(opened?.session.url).equals(held.url)
   })
 
+  describe('with a take of that name uploading', () => {
+    const uploading = { ...RECORDING, gameId: 'gam_1', angleName: 'Home' }
+    const ended: LiveStream = {
+      ...held,
+      state: 'ended',
+      closesAt: '2026-05-20T17:00:00.000Z'
+    }
+    const asking = async (fake: ReturnType<typeof fixture>): Promise<void> => {
+      await mount(fake)
+      await press('Record')
+      await press('Home')
+      await press('Record with this phone')
+    }
+
+    it('films a new camera beside an ended one', async () => {
+      const fake = fixture()
+      fake.mine = [ended]
+      fake.module.answers.recordings = [
+        { ...uploading, liveStreamId: ended.id, uploadId: 'upl_1' }
+      ]
+      await asking(fake)
+      expect(document.body.textContent).not.contains('still uploading')
+      expect(fake.calls.map(call => call.name)).deep.equals(['Home'])
+      expect(fake.calls[0].options?.heldStreamId).equals(undefined)
+    })
+
+    it('films when its camera is no longer listed', async () => {
+      const fake = fixture()
+      fake.module.answers.recordings = [
+        { ...uploading, liveStreamId: 'liv_gone', uploadRunning: true }
+      ]
+      await asking(fake)
+      expect(fake.calls.map(call => call.name)).deep.equals(['Home'])
+    })
+
+    it('refuses on the same active camera', async () => {
+      const fake = fixture()
+      fake.mine = [
+        { ...held, deviceId: '00000000-0000-4000-8000-00000000000a' }
+      ]
+      fake.module.answers.recordings = [
+        { ...uploading, liveStreamId: held.id, uploadId: 'upl_1' }
+      ]
+      await asking(fake)
+      expect(document.body.textContent).contains('Home is still uploading')
+      expect(fake.calls).deep.equals([])
+    })
+
+    it('refuses when the list cannot be read to say which it is', async () => {
+      const fake = fixture()
+      fake.mine = [ended]
+      fake.module.answers.recordings = [
+        { ...uploading, liveStreamId: ended.id, uploadId: 'upl_1' }
+      ]
+      await mount(fake)
+      await press('Record')
+      await press('Home')
+      fake.allowed = false
+      await press('Record with this phone')
+      expect(document.body.textContent).contains('Home is still uploading')
+      expect(fake.calls).deep.equals([])
+    })
+  })
+
   it('waits for the iOS name prompt to dismiss before opening the camera', async () => {
     Platform.OS = 'ios'
     const fake = fixture()
     await mount(fake)
     await press('Record')
     await press('Home')
-    await press('Start')
+    await press('Record with this phone')
     expect(opened).equals(undefined)
     await act(async () => {
       for (const node of document.body.querySelectorAll('div'))
@@ -228,7 +312,11 @@ describe('recording from the game hero', () => {
 
   it('offers no recording on an unsupported device', async () => {
     const fake = fixture()
-    fake.module.answers.capabilities = { supported: false, deviceModel: '' }
+    fake.module.answers.capabilities = {
+      supported: false,
+      deviceModel: '',
+      canRecordLocally: false
+    }
     await mount(fake)
     expect(document.body.textContent).not.includes('Record')
     expect(fake.reads).equals(0)
@@ -272,7 +360,7 @@ describe('recording from the game hero', () => {
     await mount(fake)
     await press('Record')
     await press('Home')
-    await press('Start')
+    await press('Record with this phone')
     await press('Cancel')
     await act(async () => {
       finish(held)

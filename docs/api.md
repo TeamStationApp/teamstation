@@ -102,6 +102,13 @@ user, deduplicates pending requests to the same team, and asks the team's
 administrators through the approval inbox. Acceptance grants only membership,
 never staff roles. Requests for missing, merged or placeholder teams fail.
 
+`{kind: "videographer", teamId, idempotencyKey}` asks in the same way for the
+Videographer role on a team. The sender must be a member of the team who cannot
+film its games, and its administrators, coaches and assistants approve it.
+`GET /games/:gameId/stream-access` answers `{canFilm, canRequest, requested,
+teamId}`, where `teamId` is the team to ask, and `404` for a caller who cannot
+see the game.
+
 ## RSVP eligibility
 
 Event info's `replyUserIds` and attendee `canReply` are authoritative for the

@@ -136,10 +136,15 @@ export function fakePhoneStreamModule(
     'radarUnpair',
     'radarState',
     'recordings',
+    'sweptStreams',
+    'forgetSwept',
+    'retentionReported',
     'uploadRecording',
     'resumePendingUploads',
     'cancelUpload',
-    'deleteRecording'
+    'deleteRecording',
+    'appInstalled',
+    'openInApp'
   ])
     module[name] = answer(name)
   return module as unknown as FakePhoneStreamModule

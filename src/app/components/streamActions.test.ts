@@ -6,6 +6,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import {
   asksTwice,
   copyStreamUrl,
+  phoneStreamActions,
   runStreamAction,
   streamActionsFor
 } from './streamActions'
@@ -75,6 +76,26 @@ describe('stream actions', function () {
       streamActionsFor(camera({ state: 'publishing' }), false)
     ).deep.equals(['end'])
     expect(streamActionsFor(camera({ state: 'ended' }), false)).deep.equals([])
+  })
+
+  it('narrows a phone to Rotate key and End on its own camera, End on somebody else’s', function () {
+    const idle = camera({ state: 'idle' })
+    expect(phoneStreamActions(idle, true)).deep.equals(['rotate', 'end'])
+    expect(phoneStreamActions(idle, false)).deep.equals(['end'])
+    expect(
+      phoneStreamActions(camera({ state: 'publishing' }), true)
+    ).deep.equals(['rotate', 'end'])
+    for (const mine of [true, false]) {
+      expect(phoneStreamActions(camera({ state: 'ended' }), mine)).deep.equals(
+        []
+      )
+      expect(
+        phoneStreamActions(
+          camera({ state: 'publishing', closesAt: '2026-05-20T17:00:00.000Z' }),
+          mine
+        )
+      ).deep.equals([])
+    }
   })
 
   it('asks twice on the air, always before deleting, and never to reveal', function () {

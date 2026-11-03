@@ -19,12 +19,13 @@ export type GuardianInput = { userId: string } | { email: string }
 
 /**
  * The body of `POST /relationship-requests`. A guardian invitation comes from
- * a team its sender coaches; a guardian or membership request, which a person sends for
- * themselves, has no sender.
+ * a team its sender coaches; a guardian, membership or videographer request,
+ * which a person sends for themselves, has no sender.
  */
 export type RelationshipRequestInput =
   | GroupRequestInput
   | { kind: 'membership'; teamId: string; idempotencyKey: string }
+  | { kind: 'videographer'; teamId: string; idempotencyKey: string }
   | {
       kind: 'guardian'
       playerUserId: string
@@ -59,6 +60,7 @@ type GroupRequestInput = {
 export type RequestTerms =
   | GameRequestTerms
   | { kind: 'membership'; teamId: string; userId: string }
+  | { kind: 'videographer'; teamId: string; userId: string }
   | { kind: 'parent'; preview: ParentPreview }
   | {
       kind: 'participation'
@@ -149,6 +151,13 @@ export interface RelationshipInvitation {
  */
 export const RECORDING_UPLOAD = 'recordingUpload'
 export const CHAT_DEVICE_APPROVAL = 'chatDeviceApproval'
+
+/**
+ * The notification source type of a warning that a phone's unuploaded copy of
+ * one camera angle reaches its 30-day limit in 3 days. One per stream, to the
+ * stream's owner only.
+ */
+export const LOCAL_COPY_EXPIRING = 'localCopyExpiring'
 
 /**
  * The Auto-Scheduler's notices: claims on a venue, a game's field warnings

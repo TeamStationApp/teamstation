@@ -31,7 +31,8 @@ describe('the app at launch', () => {
     // place of the browser's engine.
     phoneStream.capabilities = async () => ({
       supported: true,
-      deviceModel: 'iPhone 13 Pro'
+      deviceModel: 'iPhone 13 Pro',
+      canRecordLocally: true
     })
     phoneStream.recordings = async () => [
       {
@@ -47,6 +48,8 @@ describe('the app at launch', () => {
         videoId: null,
         stoppedForLowStorage: false,
         publishedOutsideParts: false,
+        retentionFrom: null,
+        retentionReported: false,
         hasPendingUpload: true,
         uploadRunning: false,
         uploadProgress: null

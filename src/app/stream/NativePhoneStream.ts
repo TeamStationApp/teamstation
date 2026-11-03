@@ -9,14 +9,15 @@ import { TurboModuleRegistry } from 'react-native'
 // adapter the screens use is shaped in phoneStreamClient.ts.
 //
 // A call the engine refuses rejects with the engine's error as its code:
-// `notReady`, `uploadInProgress`, `insufficientStorage`, `recordingFailed`,
-// `noRecording`, `stillRecording`, `permission` when the camera or the
+// `notReady`, `uploadInProgress`, `recordingFailed`, `noRecording`, `stillRecording`, `permission` when the camera or the
 // microphone was not allowed, or `cameraUnavailable` while the camera is
 // lost (Android says so; iOS may not).
 
 export interface NativePhoneStreamCapabilities {
   supported: boolean
   deviceModel: string
+  /** Whether Record would keep a recording now, rather than only streaming. */
+  canRecordLocally: boolean
 }
 
 /** What the engine's own redial needs to ask for this device's stream again. */
@@ -104,10 +105,23 @@ export interface NativePhoneRecording {
   videoId?: string
   stoppedForLowStorage: boolean
   publishedOutsideParts: boolean
+  /**
+   * For a take recorded before the phone's 30-day limit began, when its 30
+   * days began: the first sweep that saw it. Milliseconds since 1970.
+   */
+  retentionFrom?: CodegenTypes.Double
+  /** The server knows `retentionFrom`. The take stays on the phone until then. */
+  retentionReported?: boolean
   /** Its upload is running in this process now. */
   uploadRunning: boolean
   /** Where that running upload stands now: its last `onUpload`, for a screen that opens part-way. */
   uploadProgress?: NativeUploadProgress
+}
+
+/** A stream whose take the retention sweep deleted with no upload. */
+export interface NativeSweptStream {
+  liveStreamId: string
+  gameId: string
 }
 
 export interface NativeUploadProgress {
@@ -171,6 +185,14 @@ export interface Spec extends TurboModule {
   radarState: () => Promise<NativeRadarState>
 
   recordings: () => Promise<NativePhoneRecording[]>
+  /** The streams the retention sweep took a take of, until `forgetSwept`. */
+  sweptStreams: () => Promise<NativeSweptStream[]>
+  forgetSwept: (liveStreamId: string) => Promise<void>
+  /** The server now counts this stream's take's 30 days from `from`, in milliseconds since 1970. */
+  retentionReported: (
+    liveStreamId: string,
+    from: CodegenTypes.Double
+  ) => Promise<void>
   uploadRecording: (
     liveStreamId: string,
     apiBase: string,
@@ -183,6 +205,14 @@ export interface Spec extends TurboModule {
   ) => Promise<CodegenTypes.Int32>
   cancelUpload: (liveStreamId: string) => Promise<void>
   deleteRecording: (liveStreamId: string) => Promise<void>
+
+  /** Whether Android has this app, enabled. iOS cannot ask, and answers true. */
+  appInstalled: (packageName: string) => Promise<boolean>
+  /**
+   * Opens a link in its app and nowhere else, answering whether it did: in the
+   * named package on Android, and as a universal link on iOS.
+   */
+  openInApp: (url: string, packageName: string) => Promise<boolean>
 }
 
 /** Null in a build without the module, which then offers no Record video. */

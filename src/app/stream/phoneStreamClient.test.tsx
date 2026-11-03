@@ -133,6 +133,8 @@ describe('the phone stream bridge', function () {
     ).equals(2)
     await stream.cancelUpload('lst_00000000000000000001')
     await stream.deleteRecording('lst_00000000000000000001')
+    await stream.appInstalled('com.example.camera')
+    await stream.openInApp('https://example.test/link', 'com.example.camera')
     await stream.close()
     expect(native.calls).deep.equals([
       { name: 'open', args: ['Home Plate', true, []] },
@@ -173,13 +175,22 @@ describe('the phone stream bridge', function () {
       { name: 'resumePendingUploads', args: [REQUEST.apiBase, REQUEST.token] },
       { name: 'cancelUpload', args: ['lst_00000000000000000001'] },
       { name: 'deleteRecording', args: ['lst_00000000000000000001'] },
+      { name: 'appInstalled', args: ['com.example.camera'] },
+      {
+        name: 'openInApp',
+        args: ['https://example.test/link', 'com.example.camera']
+      },
       { name: 'close', args: [] }
     ])
   })
 
   it('shapes what the module answers', async function () {
     const native = fakePhoneStreamModule({
-      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      capabilities: {
+        supported: true,
+        deviceModel: 'iPhone 13 Pro',
+        canRecordLocally: true
+      },
       zoomScale: {
         presets: [0.5, 1, 3],
         switchOvers: [1, 3],
@@ -253,7 +264,8 @@ describe('the phone stream bridge', function () {
     const stream = makePhoneStream(native)
     expect(await stream.capabilities()).deep.equals({
       supported: true,
-      deviceModel: 'iPhone 13 Pro'
+      deviceModel: 'iPhone 13 Pro',
+      canRecordLocally: true
     })
     expect(await stream.zoomScale()).deep.equals({
       presets: [0.5, 1, 3],
@@ -282,6 +294,22 @@ describe('the phone stream bridge', function () {
         readingAt: 1_790_000_000_000
       }
     ])
+    native.answers.sweptStreams = [
+      { liveStreamId: 'lst_9', gameId: 'gam_9', extra: true }
+    ]
+    expect(await stream.sweptStreams()).deep.equals([
+      { liveStreamId: 'lst_9', gameId: 'gam_9' }
+    ])
+    await stream.forgetSwept('lst_9')
+    await stream.retentionReported('lst_9', 1_790_000_000_000)
+    expect(native.calls.at(-2)).deep.equals({
+      name: 'forgetSwept',
+      args: ['lst_9']
+    })
+    expect(native.calls.at(-1)).deep.equals({
+      name: 'retentionReported',
+      args: ['lst_9', 1_790_000_000_000]
+    })
     const recordings = await stream.recordings()
     expect(
       recordings.map(recording => [
@@ -378,7 +406,8 @@ describe('the phone stream bridge', function () {
     expect(await rejection(stream.recordings())).deep.equals({ code: '' })
     expect(await stream.capabilities()).deep.equals({
       supported: false,
-      deviceModel: ''
+      deviceModel: '',
+      canRecordLocally: false
     })
   })
 
@@ -495,7 +524,8 @@ describe('the phone stream bridge', function () {
     const stream = makePhoneStream(null)
     expect(await stream.capabilities()).deep.equals({
       supported: false,
-      deviceModel: ''
+      deviceModel: '',
+      canRecordLocally: false
     })
     for (const call of [
       async () => {
@@ -633,7 +663,9 @@ describe('the phone stream hooks', function () {
     const native = fakePhoneStreamModule({ recordings: [RECORDING] })
     const stream = makePhoneStream(native)
     const recordings = mount(() => useRecordingsOf(stream))
+    expect(recordings.current().loaded).equals(false)
     await flush()
+    expect(recordings.current().loaded).equals(true)
     expect(recordings.current().recordings.map(r => r.parts)).deep.equals([2])
     act(() => {
       native.emitUpload({
@@ -682,6 +714,7 @@ describe('the phone stream hooks', function () {
     const recordings = mount((): Recordings => useRecordingsOf(stream))
     await flush()
     expect(recordings.current().recordings).deep.equals([])
+    expect(recordings.current().loaded).equals(false)
     act(() => {
       root?.unmount()
     })

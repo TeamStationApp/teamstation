@@ -64,7 +64,11 @@ jobs:
           .test-tools/ffmpeg/bin/ffmpeg -encoders | grep libx265
       - run: npm ci
       - run: npm run prepare
+      # One mocha process runs the whole suite. Its heap outgrew Node's default
+      # on this runner (about 4 GB of its 16), and the run ended out of memory.
       - run: npm run precommit
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
 
   portable:
     name: Portable contracts

@@ -318,7 +318,7 @@ class PhoneStreamPartsTest {
     }
 
     @Test
-    fun retentionDeletesOnlyTakesUploadedAWeekAgo() {
+    fun retentionSweepsUploadedTakesAndOldUnuploadedOnes() {
         val (catalog, storage) = catalog()
         val index = catalog.index
         val day = 24 * 3_600.0
@@ -330,32 +330,189 @@ class PhoneStreamPartsTest {
             index.insertProgramAnchor(id, 1, 0.0, start)
             return id
         }
-        val old = take("old", 0.0)
-        val recent = take("recent", 1.0)
-        val waiting = take("waiting", 2.0)
-        val protectedTake = take("protected", 3.0)
-        catalog.markUploaded(old, "v1", 0.0)
-        catalog.markUploaded(recent, "v2", 6 * day)
+        fun ended(stream: String): Long = take(stream, 0.0).also { index.endRecording(it, 60.0) }
+        val uploaded = ended("uploaded")
+        val unuploaded = ended("unuploaded")
+        val waiting = ended("waiting")
+        val protectedUpload = ended("protectedUpload")
+        val protectedTake = ended("protected")
+        // Still running, however long ago it began.
+        val running = take("running", 0.0)
+        catalog.markUploaded(uploaded, "v1", 0.0)
         catalog.setUpload("u3", "waiting", waiting)
-        catalog.markUploaded(protectedTake, "v4", 0.0)
-        storage.export(old).apply {
+        catalog.markUploaded(protectedUpload, "v4", 0.0)
+        storage.export(uploaded).apply {
             parentFile!!.mkdirs()
             writeBytes(ByteArray(4))
         }
         val policy = PhoneRetentionPolicy()
-        assertEquals(7 * day, policy.keepUploadedSeconds, 0.0)
-        assertEquals(listOf(old), policy.expired(catalog.recordings(), 7 * day, setOf(protectedTake)).map { it.recordingID })
-        assertEquals(1, policy.sweep(catalog, storage, 7 * day, setOf(protectedTake)))
-        assertFalse(File(storage.program, "program-old.mp4").exists())
-        assertFalse(storage.export(old).exists())
+        assertEquals(30 * day, policy.keepUnuploadedSeconds, 0.0)
+        val shielded = setOf(protectedUpload, protectedTake)
+        // 29 days after the takes ended: only the uploaded one goes.
+        val early = 60 + 29 * day
+        assertEquals(listOf(uploaded), policy.expired(catalog.recordings(), early, shielded).map { it.recordingID })
+        assertEquals(1, policy.sweep(catalog, storage, early, shielded))
+        assertFalse(File(storage.program, "program-uploaded.mp4").exists())
+        assertFalse(storage.export(uploaded).exists())
         assertTrue(File(storage.program, "program-waiting.mp4").exists())
-        assertNull(index.recording(old))
-        assertTrue(index.programAnchors(old).isEmpty())
-        assertEquals(setOf(recent, waiting, protectedTake), catalog.recordings().map { it.recordingID }.toSet())
-        // Never one that has not been uploaded, however old.
+        assertNull(index.recording(uploaded))
+        assertTrue(index.programAnchors(uploaded).isEmpty())
+        // 30 days after: the unuploaded take with nothing holding it goes too.
+        assertEquals(1, policy.sweep(catalog, storage, 60 + 30 * day, shielded))
+        assertEquals(setOf(waiting, protectedUpload, protectedTake, running), catalog.recordings().map { it.recordingID }.toSet())
+        assertNull(index.recording(unuploaded))
+        // Nothing protects them any more: a pending upload and the running take stay, however old.
         assertEquals(2, policy.sweep(catalog, storage, 1_000 * day))
-        assertEquals(setOf(waiting), catalog.recordings().map { it.recordingID }.toSet())
+        assertEquals(setOf(waiting, running), catalog.recordings().map { it.recordingID }.toSet())
         assertEquals(File(context.filesDir, "phoneStream"), PhoneStorage.standard(context).root)
+        index.close()
+    }
+
+    /** The table as an older app left it, before the 30-day limit, with one ended take in it. */
+    private fun olderCatalog(index: RecordingCatalog, endedAt: Double): Long {
+        val id = index.beginRecording(endedAt - 60)
+        index.endRecording(id, endedAt)
+        index.database.execSQL(
+            """
+            CREATE TABLE phone_recordings (
+              recording_id INTEGER PRIMARY KEY,
+              live_stream_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              angle_name TEXT NOT NULL,
+              upload_id TEXT,
+              upload_title TEXT,
+              uploaded_at REAL,
+              video_id TEXT,
+              low_storage_stop INTEGER NOT NULL DEFAULT 0,
+              published_outside_parts INTEGER NOT NULL DEFAULT 0
+            );
+            """.trimIndent()
+        )
+        index.database.execSQL(
+            "INSERT INTO phone_recordings (recording_id, live_stream_id, game_id, angle_name) VALUES (?, 'old', 'g1', 'Home Plate');",
+            arrayOf<Any>(id)
+        )
+        return id
+    }
+
+    @Test
+    fun aTakeFromBeforeTheLimitCountsFromTheFirstSweepAndGoesOnceTheServerHasHeard() {
+        val day = 24 * 3_600.0
+        val firstOpen = 1_800_000_000.0
+        val storage = PhoneStorage(File(folder.root, "phoneStream")).apply { prepare() }
+        val index = RecordingCatalog(storage.index)
+        val id = olderCatalog(index, firstOpen - 45 * day)
+        val policy = PhoneRetentionPolicy()
+
+        // An older app's catalog loads, and reads as predating the limit.
+        var catalog = PhoneCatalog(index)
+        assertTrue(catalog.recording(id)!!.predatesRetention)
+        assertNull(catalog.recording(id)!!.retentionFrom)
+        assertFalse(catalog.recording(id)!!.retentionReported)
+
+        // First open: it stays, and its 30 days start.
+        assertEquals(0, policy.sweep(catalog, storage, firstOpen))
+        assertEquals(firstOpen, catalog.recording(id)!!.retentionFrom!!, 0.0)
+
+        // The stamp survives a restart, and a later sweep leaves it where it is.
+        catalog = PhoneCatalog(index)
+        assertEquals(0, policy.sweep(catalog, storage, firstOpen + 10 * day))
+        assertEquals(firstOpen, catalog.recording(id)!!.retentionFrom!!, 0.0)
+
+        // Unheard, it stays however long: the server's warning is the only one its owner gets.
+        assertEquals(0, policy.sweep(catalog, storage, firstOpen + 90 * day))
+        assertNotNull(catalog.recording(id))
+
+        // Heard: its 30 days count from there, and not before.
+        catalog.setRetentionReported("old", firstOpen)
+        assertTrue(catalog.recording(id)!!.retentionReported)
+        assertTrue(policy.expired(catalog.recordings(), firstOpen + 30 * day - 1).isEmpty())
+        assertEquals(1, policy.sweep(catalog, storage, firstOpen + 30 * day))
+        assertNull(catalog.recording(id))
+        assertEquals(listOf(PhoneCatalog.SweptStream("old", "g1")), catalog.swept())
+        index.close()
+    }
+
+    @Test
+    fun aCatalogWhoseUpgradeStoppedAfterTheLimitsFirstColumnOpensGainsTheRestAndListsItsTakes() {
+        val day = 24 * 3_600.0
+        val now = 1_800_000_000.0
+        val storage = PhoneStorage(File(folder.root, "phoneStream")).apply { prepare() }
+        val index = RecordingCatalog(storage.index)
+        val id = olderCatalog(index, now - 45 * day)
+        index.database.execSQL("ALTER TABLE phone_recordings ADD COLUMN server_clock_offset REAL;")
+        index.database.execSQL("ALTER TABLE phone_recordings ADD COLUMN predates_retention INTEGER NOT NULL DEFAULT 1;")
+
+        val catalog = PhoneCatalog(index)
+        val columns = index.database.rawQuery("PRAGMA table_info(phone_recordings);", null).use { cursor ->
+            buildList { while (cursor.moveToNext()) add(cursor.getString(1)) }
+        }
+        assertTrue("retention_from" in columns)
+        assertTrue("retention_reported" in columns)
+        val takes = catalog.recordings()
+        assertEquals(listOf(id), takes.map { it.recordingID })
+        assertTrue(takes.single().predatesRetention)
+        assertNull(takes.single().retentionFrom)
+        assertFalse(takes.single().retentionReported)
+        // The sweep's own reads and writes work on it: the take starts its 30 days and stays.
+        assertEquals(0, PhoneRetentionPolicy().sweep(catalog, storage, now))
+        assertEquals(now, catalog.recording(id)!!.retentionFrom!!, 0.0)
+        // Opening it again finds every column there.
+        assertEquals(now, PhoneCatalog(index).recording(id)!!.retentionFrom!!, 0.0)
+        index.close()
+    }
+
+    @Test
+    fun aReportPastTheWarningsWindowMovesThePhonesCountWithIt() {
+        val day = 24 * 3_600.0
+        val firstOpen = 1_800_000_000.0
+        val storage = PhoneStorage(File(folder.root, "phoneStream")).apply { prepare() }
+        val index = RecordingCatalog(storage.index)
+        val id = olderCatalog(index, firstOpen - 45 * day)
+        val catalog = PhoneCatalog(index)
+        val policy = PhoneRetentionPolicy()
+        assertEquals(0, policy.sweep(catalog, storage, firstOpen))
+        val moved = firstOpen + 3 * day
+        catalog.setRetentionReported("old", moved)
+        assertEquals(moved, catalog.recording(id)!!.retentionFrom!!, 0.0)
+        assertEquals(0, policy.sweep(catalog, storage, firstOpen + 30 * day))
+        assertEquals(1, policy.sweep(catalog, storage, moved + 30 * day))
+        index.close()
+    }
+
+    @Test
+    fun aTakeRecordedSinceCountsFromItsOwnEndAndOnlyAnUnuploadedOneIsRemembered() {
+        val day = 24 * 3_600.0
+        val now = 1_800_000_000.0
+        val storage = PhoneStorage(File(folder.root, "phoneStream")).apply { prepare() }
+        val index = RecordingCatalog(storage.index)
+        val old = olderCatalog(index, now - 45 * day)
+        val catalog = PhoneCatalog(index)
+        val since = index.beginRecording(now - 31 * day)
+        index.endRecording(since, now - 30 * day)
+        catalog.add(since, "new", "g1", "First Base")
+        assertFalse(catalog.recording(since)!!.predatesRetention)
+        catalog.markUploaded(old, "v1", now)
+        assertEquals(2, PhoneRetentionPolicy().sweep(catalog, storage, now))
+        assertEquals(listOf(PhoneCatalog.SweptStream("new", "g1")), catalog.swept())
+        index.close()
+    }
+
+    @Test
+    fun theStreamsTheSweepTookStayRememberedAcrossARestartUntilForgotten() {
+        val (first, storage) = catalog()
+        val index = first.index
+        val id = index.beginRecording(0.0)
+        index.endRecording(id, 60.0)
+        first.add(id, "s1", "g1", "Home Plate")
+        assertTrue(first.swept().isEmpty())
+        assertEquals(1, PhoneRetentionPolicy().sweep(first, storage, 60 + 30 * 24 * 3_600.0))
+        val again = PhoneCatalog(index)
+        assertEquals(listOf(PhoneCatalog.SweptStream("s1", "g1")), again.swept())
+        again.forgetSwept("s9")
+        assertEquals(1, again.swept().size)
+        again.forgetSwept("s1")
+        assertTrue(again.swept().isEmpty())
         index.close()
     }
 

@@ -1,7 +1,11 @@
 package app.teamstation.app.stream
 
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -139,8 +143,10 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
     override fun capabilities(promise: Promise) =
         settle(promise) {
             val current = PhoneStreamCapabilities.current()
-            val made = engineOrNull(reactApplicationContext) != null
-            PhoneStreamMaps.capabilities(if (made) current else current.copy(supported = false))
+            val made = engineOrNull(reactApplicationContext)
+            PhoneStreamMaps.capabilities(
+                current.copy(supported = current.supported && made != null, canRecordLocally = made?.canRecordLocally() == true)
+            )
         }
 
     override fun open(angleName: String, audioEnabled: Boolean, disabledLenses: ReadableArray, promise: Promise) {
@@ -234,6 +240,13 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
             engine.recordings().map { PhoneStreamMaps.recording(it, it.recordingID in running, progress[it.recordingID]) }
         }
 
+    override fun sweptStreams(promise: Promise) = settle(promise) { engine.sweptStreams().map(PhoneStreamMaps::swept) }
+
+    override fun forgetSwept(liveStreamId: String, promise: Promise) = settleInOrder(promise) { engine.forgetSwept(liveStreamId) }
+
+    override fun retentionReported(liveStreamId: String, from: Double, promise: Promise) =
+        settleInOrder(promise) { engine.retentionReported(liveStreamId, from / 1_000) }
+
     override fun uploadRecording(liveStreamId: String, apiBase: String, token: String, title: String, promise: Promise) =
         settle(promise) { engine.uploadRecording(liveStreamId, apiBase, token, title) }
 
@@ -243,6 +256,31 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
     override fun cancelUpload(liveStreamId: String, promise: Promise) = settleInOrder(promise) { engine.cancelUpload(liveStreamId) }
 
     override fun deleteRecording(liveStreamId: String, promise: Promise) = settleInOrder(promise) { engine.deleteRecording(liveStreamId) }
+
+    // MARK: - Camera apps
+
+    override fun appInstalled(packageName: String, promise: Promise) {
+        val enabled = try {
+            reactApplicationContext.packageManager.getApplicationInfo(packageName, 0).enabled
+        } catch (_: PackageManager.NameNotFoundException) {
+            false
+        }
+        promise.resolve(enabled)
+    }
+
+    /** Held to the one package, so a link that app does not take can never reach a browser. */
+    override fun openInApp(url: String, packageName: String, promise: Promise) {
+        val link = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            .setPackage(packageName)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val opened = try {
+            reactApplicationContext.startActivity(link)
+            true
+        } catch (_: ActivityNotFoundException) {
+            false
+        }
+        promise.resolve(opened)
+    }
 
     // MARK: - Display rotation
 

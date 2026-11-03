@@ -6,6 +6,7 @@
  */
 
 import { encodeWallClockSei } from '../../common/wallClockSei'
+import { hvcCWith, initWithHvcC } from './holeFiller'
 
 export function box(type: string, payload: Buffer): Buffer {
   const head = Buffer.alloc(8)
@@ -162,4 +163,61 @@ export function hevcSegment(
     moof,
     box('mdat', Buffer.concat([sound, sample]))
   ])
+}
+
+/** Parameter sets a publisher might send: `at` tells one camera's from another's. */
+export function parameterSetNals(at: number): Buffer[] {
+  return [32, 33, 34].map(type => Buffer.from([type << 1, 1, at, 0xaa]))
+}
+
+/** An HEVCDecoderConfigurationRecord holding `nals`. */
+export function hvcCRecord(nals: Buffer[]): Buffer {
+  const head = Buffer.alloc(23)
+  head[0] = 1
+  head[21] = 0xf0 | 3
+  return hvcCWith(head, nals)
+}
+
+/** {@link hevcInit} with `nals` in its `hvcC`, and sound described by `sound`. */
+export function configuredInit(nals: Buffer[], sound?: Buffer): Buffer {
+  const init = initWithHvcC(hevcInit(), hvcCRecord(nals))
+  if (sound == null) return init
+  const length = Buffer.from([sound.length])
+  const descriptors = Buffer.concat([
+    Buffer.from([3, 0x80, 0x80, 0x80, 32, 0, 2, 0]),
+    Buffer.from([4, 0x80, 0x80, 0x80, 20]),
+    Buffer.alloc(13),
+    Buffer.from([5]),
+    length,
+    sound,
+    Buffer.from([6, 1, 2])
+  ])
+  const esds = box('esds', Buffer.concat([Buffer.alloc(4), descriptors]))
+  const mp4a = box('mp4a', Buffer.concat([Buffer.alloc(28), esds]))
+  const stsdHead = Buffer.alloc(8)
+  stsdHead.writeUInt32BE(1, 4)
+  const stsd = box('stsd', Buffer.concat([stsdHead, mp4a]))
+  const trak = box('trak', box('mdia', box('minf', box('stbl', stsd))))
+  const at = init.indexOf(Buffer.from('moov', 'latin1')) - 4
+  const moovSize = init.readUInt32BE(at)
+  const grown = Buffer.concat([init, trak])
+  grown.writeUInt32BE(moovSize + trak.length, at)
+  return grown
+}
+
+/** A video sequence header's FLV body, classic or Enhanced RTMP. */
+export function hevcHeaderBody(
+  kind: 'classic' | 'enhanced',
+  nals: Buffer[]
+): Buffer {
+  const head =
+    kind === 'classic'
+      ? Buffer.from([0x1c, 0, 0, 0, 0])
+      : Buffer.concat([Buffer.from([0x90]), Buffer.from('hvc1', 'latin1')])
+  return Buffer.concat([head, hvcCRecord(nals)])
+}
+
+/** An AAC sequence header's FLV body. */
+export function soundHeaderBody(config: Buffer): Buffer {
+  return Buffer.concat([Buffer.from([0xaf, 0]), config])
 }

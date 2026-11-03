@@ -172,7 +172,7 @@ export class SpacePlayback {
 
   sign(videoId: string, uri: string): string {
     // Objects must remain inside this video's prefix, including init maps.
-    if (!/^(?:video\.mp4|init\.mp4|seg\d{6,}\.m4s)$/.test(uri))
+    if (!/^(?:video\.mp4|init(?:\d{6,})?\.mp4|seg\d{6,}\.m4s)$/.test(uri))
       throw new Error('Invalid media object URI')
     const window =
       Math.floor(this.now() / SIGNING_WINDOW_MS) * SIGNING_WINDOW_MS

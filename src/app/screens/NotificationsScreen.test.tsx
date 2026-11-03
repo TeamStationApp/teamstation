@@ -527,6 +527,40 @@ describe('a reminder to upload a recording', function () {
     expect(decided).deep.equals([])
   })
 
+  it('treats the warning that a copy is expiring the same way', async function () {
+    const warning: Notification = {
+      ...reminder,
+      id: 'evt_warning',
+      requestId: 'evt_warning',
+      type: 'localCopyExpiring',
+      title: "This phone's copy is expiring",
+      description:
+        "Home Plate on iPhone 13 Pro, Owls at Hawks — this phone's copy will be deleted in 3 days. Upload it to keep it."
+    }
+    const uploads: string[] = []
+    const client = {
+      notifications: async () => ({
+        items: [invitation, warning],
+        hasPending: true,
+        nextCursor: null
+      })
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen
+        client={client}
+        onOpen={() => {}}
+        onUpload={gameId => {
+          uploads.push(gameId)
+        }}
+      />
+    )
+    const page = text()
+    expect(page.indexOf(warning.title)).lessThan(page.indexOf(invitation.title))
+    expect(page).includes('Reminder')
+    await press(`${warning.title}. ${warning.description}`)
+    expect(uploads).deep.equals(['gam_00000000000000000001'])
+  })
+
   it('opens from History, without asking for a decision', async function () {
     const opened: string[] = []
     const settled = { ...reminder, status: 'accepted' as const, canAct: false }

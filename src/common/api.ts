@@ -1791,6 +1791,9 @@ export const asUserMatch = asObject({
 })
 export type UserMatch = ReturnType<typeof asUserMatch>
 
+/** How the ingest's `lastError` begins when it refused a camera's codec. */
+export const CODEC_REFUSAL = 'TeamStation takes HEVC.'
+
 /**
  * A live stream's own state, as the ingest last reported it.
  *
@@ -1821,6 +1824,28 @@ export const asLiveStatus = asObject({
   outputs: asArray(asLiveOutputStatus)
 })
 export type LiveStatus = ReturnType<typeof asLiveStatus>
+
+/** What an external camera says it is. */
+export const asCameraSource = asLiteral('rtmp', 'gopro', 'mevo', 'mevoStudio')
+export type CameraSource = ReturnType<typeof asCameraSource>
+
+/**
+ * Whether a camera's video can be deleted (`discard`): it was ended, and the
+ * ingest has closed its recording. A camera ended a moment ago keeps
+ * `publishing` until the ingest notices, and is refused until then. The one
+ * rule for the server's check and the phone's delete buttons.
+ */
+export function canDeleteCameraVideo(stream: {
+  state: string
+  closesAt: Date | string | null
+}): boolean {
+  if (stream.state === 'publishing') return false
+  return (
+    stream.state === 'ended' ||
+    stream.state === 'revoked' ||
+    stream.closesAt != null
+  )
+}
 
 /**
  * A game's live stream.
@@ -1859,6 +1884,23 @@ const cleanLiveStream = asObject({
   deviceId: asAbsentOr(asNullable(asString)),
   /** How far the phone's own recording has got. */
   localRecording: asOptional(asLiteral('none', 'recorded', 'uploaded')),
+  /** When it was made. On every item of a game's list, as what follows is. */
+  createdAt: asAbsentOr(asString),
+  /** What an external camera is. Null for a phone, Director or the website. */
+  source: asAbsentOr(asNullable(asCameraSource)),
+  /** When video first reached it. Null until then. */
+  publishedAt: asAbsentOr(asNullable(asString)),
+  /** When the ingest finished it. */
+  endedAt: asAbsentOr(asNullable(asString)),
+  /** How long `playableVideoId` runs, in seconds. */
+  durationSec: asAbsentOr(asNullable(asNumber)),
+  /**
+   * The video to play for this camera: the newest finished upload when it is
+   * visible, otherwise its live video when that is. Null when neither is.
+   */
+  playableVideoId: asAbsentOr(asNullable(asString)),
+  /** The owner's picture. */
+  ownerPicture: asAbsentOr(asNullable(asString)),
   /**
    * Only ever in the reply to a request that asked for it by name, and only
    * ever to the person the key belongs to.
@@ -1866,16 +1908,38 @@ const cleanLiveStream = asObject({
   url: asOptional(asString)
 })
 type CleanedLiveStream = ReturnType<typeof cleanLiveStream>
-/** The device fields are absent from a browser stream's own answers. */
-export type LiveStream = Omit<
-  CleanedLiveStream,
-  'deviceModel' | 'deviceId' | 'localRecording'
-> & {
-  deviceModel?: CleanedLiveStream['deviceModel']
-  deviceId?: CleanedLiveStream['deviceId']
-  localRecording?: CleanedLiveStream['localRecording']
-}
+/**
+ * The device fields are absent from a browser stream's own answers, and the
+ * list's own fields from every answer that is not a list.
+ */
+type AbsentLiveStreamField =
+  | 'deviceModel'
+  | 'deviceId'
+  | 'localRecording'
+  | 'createdAt'
+  | 'source'
+  | 'publishedAt'
+  | 'endedAt'
+  | 'durationSec'
+  | 'playableVideoId'
+  | 'ownerPicture'
+export type LiveStream = Omit<CleanedLiveStream, AbsentLiveStreamField> &
+  Partial<Pick<CleanedLiveStream, AbsentLiveStreamField>>
 export const asLiveStream: (raw: unknown) => LiveStream = cleanLiveStream
+
+/**
+ * What a person may do about filming one game. `teamId` is the team a request
+ * goes to: the home team for one of its members, otherwise the away team.
+ */
+export const asStreamAccess = asObject({
+  canFilm: asBoolean,
+  /** A member who cannot film, on a game not yet past in its own time. */
+  canRequest: asBoolean,
+  /** Their request to film `teamId` is waiting. */
+  requested: asBoolean,
+  teamId: asString
+})
+export type StreamAccess = ReturnType<typeof asStreamAccess>
 
 /** What a device sends with a camera name to get its own stream. */
 export interface DeviceStreamOptions {
@@ -1886,6 +1950,11 @@ export interface DeviceStreamOptions {
   recordsLocally?: boolean
   /** The stream a redial already holds: 410 if somebody ended it. */
   heldStreamId?: string
+}
+
+/** What an external camera says it is. Such a stream is tied to the account. */
+export interface CameraSourceOptions {
+  source: CameraSource
 }
 
 /**
@@ -1900,11 +1969,28 @@ export const asGameLiveStreams = asObject({
   gameId: asString,
   mine: asArray(asLiveStream),
   others: asArray(asLiveStream),
-  /** How many more cameras this person may add to this game. */
+  /**
+   * How many more cameras this person may add to this game: the smaller of the
+   * room left under their own limit and the game's, counting active cameras.
+   */
   canAdd: asNumber,
-  maxCameras: asNumber
+  maxCameras: asNumber,
+  /** How many more cameras the game has room for, whoever adds them. */
+  gameCanAdd: asOptional(asNumber),
+  /** How many cameras a game may have active at once, whoever holds them. */
+  maxGameCameras: asOptional(asNumber),
+  /** The stream ids this person deleted, so a phone can drop their copies. */
+  discarded: asOptional(asArray(asString), [])
 })
 export type GameLiveStreams = ReturnType<typeof asGameLiveStreams>
+
+/** What Revoke answers with: whether the camera went, and what is left. */
+export const asRevokedLiveStream = asObject({
+  /** False when it had published, so it is only ended and keeps its video. */
+  removed: asBoolean,
+  streams: asGameLiveStreams
+})
+export type RevokedLiveStream = ReturnType<typeof asRevokedLiveStream>
 
 /** What a delete answers with: which video went, and what left the Space. */
 export const asDeletedVideo = asObject({
@@ -4790,26 +4876,30 @@ export class TeamStationClient {
   async addLiveStream(
     gameId: string,
     label?: string,
-    device?: DeviceStreamOptions
+    device?: DeviceStreamOptions | CameraSourceOptions,
+    options: { signal?: AbortSignal } = {}
   ): Promise<LiveStream> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/live-streams`,
       asLiveStream,
-      { ...(label == null ? {} : { label }), ...(device ?? {}) }
+      { ...(label == null ? {} : { label }), ...(device ?? {}) },
+      options
     )
   }
 
   /** Asks for one of my URLs again, key and all. Recorded in the audit log. */
   async revealLiveStream(
     gameId: string,
-    streamId: string
+    streamId: string,
+    options: { signal?: AbortSignal } = {}
   ): Promise<LiveStream> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/live-streams/${encodeURIComponent(streamId)}/reveal`,
       asLiveStream,
-      {}
+      {},
+      options
     )
   }
 
@@ -4828,12 +4918,18 @@ export class TeamStationClient {
 
   /**
    * Renames one of my cameras, or says this phone holds its recording
-   * (`localRecording: 'recorded'`), which starts the upload reminder.
+   * (`localRecording: 'recorded'`), which starts the upload reminder, or no
+   * longer does (`'removed'`), which settles it. `localCopyFrom` says when a
+   * take older than the phone's 30-day limit started counting them.
    */
   async updateLiveStream(
     gameId: string,
     streamId: string,
-    change: { label?: string; localRecording?: 'recorded' }
+    change: {
+      label?: string
+      localRecording?: 'recorded' | 'removed'
+      localCopyFrom?: string
+    }
   ): Promise<LiveStream> {
     return await this.request(
       'PATCH',
@@ -4862,6 +4958,22 @@ export class TeamStationClient {
   }
 
   /**
+   * Stops one of my cameras, and takes it off the game if it never showed a
+   * picture. The server decides, and `removed` says which.
+   */
+  async revokeLiveStream(
+    gameId: string,
+    streamId: string
+  ): Promise<RevokedLiveStream> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/live-streams/${encodeURIComponent(streamId)}/revoke`,
+      asRevokedLiveStream,
+      {}
+    )
+  }
+
+  /**
    * Deletes a recording, its files, and what the Space holds of it.
    *
    * For whoever runs the game, and for the person whose camera made it — a
@@ -4873,6 +4985,30 @@ export class TeamStationClient {
       'DELETE',
       `/videos/${encodeURIComponent(videoId)}`,
       asDeletedVideo
+    )
+  }
+
+  /** Whether I film this game, and if not whether I can ask to. */
+  async streamAccess(gameId: string): Promise<StreamAccess> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/stream-access`,
+      asStreamAccess
+    )
+  }
+
+  /**
+   * Deletes one of my ended cameras: its row leaves the list, and its video
+   * and every upload of it go too.
+   */
+  async discardLiveStream(
+    gameId: string,
+    streamId: string
+  ): Promise<GameLiveStreams> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/live-streams/${encodeURIComponent(streamId)}/discard`,
+      asGameLiveStreams
     )
   }
 

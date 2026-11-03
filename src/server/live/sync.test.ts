@@ -11,7 +11,7 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 import type { Kysely } from 'kysely'
-import { after, before, describe, it } from 'mocha'
+import { after, afterEach, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { migrations } from '../../migrate/migrations'
@@ -24,9 +24,11 @@ import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import type { LiveControllerOptions } from './controller'
 import {
+  finishStream,
   handleLiveEventForTest,
   liveVideoDir,
   resolveKey,
+  settleLiveWork,
   sync
 } from './controller'
 import { sealSecret } from './secrets'
@@ -34,7 +36,9 @@ import {
   configureIngest,
   forcePublishForTest,
   liveKeys,
-  resetForTest
+  type LiveSpec,
+  resetForTest,
+  setLive
 } from './splitter'
 
 /**
@@ -247,6 +251,68 @@ describe('what the ingest is told', function () {
     expect(typeof answer === 'string' ? answer : '').contains('not enough room')
   })
 
+  it('leaves alone a key looked up after a running tick read the rows', async function () {
+    if (options == null || db == null) this.skip()
+    const lateKey = 'ts_latekeylatekeylatekeyl'
+    const now = new Date()
+    const first = await db
+      .selectFrom('live_streams')
+      .select('user_id')
+      .where('id', '=', 'liv_1')
+      .executeTakeFirstOrThrow()
+    let reading = (): void => undefined
+    const read = new Promise<void>(resolve => {
+      reading = resolve
+    })
+    let release = (): void => undefined
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const tick = sync({
+      ...options,
+      freeBytes: async () => {
+        reading()
+        await held
+        return 1_000_000_000_000
+      }
+    })
+    await read
+    await db
+      .insertInto('live_streams')
+      .values({
+        id: 'liv_late',
+        game_id: 'gam_1',
+        team_id: 'tem_home',
+        user_id: first.user_id,
+        slot: 2,
+        key_hash: hashToken(lateKey),
+        key_prefix: lateKey.slice(0, 8),
+        key_cipher: sealSecret(SECRET, lateKey),
+        state: 'idle',
+        opens_at: now,
+        video_id: 'vid_1',
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    const spec = await resolveKey(lateKey, options)
+    expect(typeof spec).equals('object')
+    setLive(lateKey, spec as LiveSpec)
+    release()
+    await tick
+    expect(liveKeys(), 'the tick that could not see it').includes(lateKey)
+    await sync(options)
+    expect(liveKeys(), 'the tick that can').includes(lateKey)
+
+    await db
+      .updateTable('live_streams')
+      .set({ state: 'revoked', closes_at: now, ended_at: now })
+      .where('id', '=', 'liv_late')
+      .execute()
+    await sync(options)
+    expect(liveKeys(), 'gone with the stream').not.includes(lateKey)
+  })
+
   it('lets a key through days before the game, so it can be tried', async function () {
     if (options == null) this.skip()
     // The game is on Saturday and it is Thursday. This used to answer "not
@@ -435,6 +501,231 @@ describe('what the ingest is told', function () {
     expect(after.startAt?.getTime()).equals(first.startAt?.getTime())
     // One video per stream: the reconnect made none of its own.
     expect(await gameVideos()).deep.equals(videosBefore)
+  })
+
+  describe('a publish refused for its codec', function () {
+    const REFUSAL = 'TeamStation takes HEVC. This stream is H.264.'
+
+    // Each camera has finished by the next, so the tests after these have
+    // nothing of theirs to keep open.
+    afterEach(async function () {
+      const now = new Date()
+      await db
+        ?.updateTable('live_streams')
+        .set({ state: 'ended', closes_at: now, ended_at: now })
+        .where('slot', '=', 3)
+        .execute()
+    })
+
+    const camera = async (id: string, key: string): Promise<string> => {
+      const now = new Date()
+      const videoId = `vid_${id}`
+      await db!
+        .insertInto('videos')
+        .values({
+          id: videoId,
+          game_id: 'gam_1',
+          kind: 'live',
+          title: 'Backstop',
+          storage: 'local',
+          status: 'processing',
+          hidden: true,
+          created_at: now,
+          updated_at: now
+        })
+        .execute()
+      const owner = await db!
+        .selectFrom('live_streams')
+        .select('user_id as userId')
+        .where('id', '=', 'liv_1')
+        .executeTakeFirstOrThrow()
+      await db!
+        .insertInto('live_streams')
+        .values({
+          id,
+          game_id: 'gam_1',
+          team_id: 'tem_home',
+          user_id: owner.userId,
+          key_hash: hashToken(key),
+          key_prefix: key.slice(0, 8),
+          key_cipher: sealSecret(SECRET, key),
+          state: 'idle',
+          slot: 3,
+          opens_at: new Date(now.getTime() - 3_600_000),
+          video_id: videoId,
+          created_at: now,
+          updated_at: now
+        })
+        .execute()
+      return videoId
+    }
+
+    /** The camera's real recording, from a publish before the refused one. */
+    const written = async (videoId: string): Promise<string> => {
+      const dir = liveVideoDir(mediaRoot, videoId)
+      await mkdir(dir, { recursive: true })
+      await writeFile(join(dir, 'master.m3u8'), '#EXTM3U\n')
+      await writeFile(join(dir, 'seg000000.m4s'), 'hevc')
+      return dir
+    }
+
+    /** All the controller hears of a publish the ingest refuses. */
+    const refused = async (id: string, key: string): Promise<void> => {
+      await handleLiveEventForTest(
+        { type: 'rejected', key, reason: REFUSAL },
+        options!
+      )
+      await handleLiveEventForTest(
+        {
+          type: 'publishEnded',
+          key,
+          liveStreamId: id,
+          reason: REFUSAL
+        },
+        options!
+      )
+    }
+
+    const onDisk = async (dir: string): Promise<boolean> =>
+      await readFile(join(dir, 'master.m3u8')).then(
+        () => true,
+        () => false
+      )
+
+    it('leaves a camera as it was made, with no sign of the attempt', async function () {
+      if (options == null || db == null) this.skip()
+      const key = 'ts_refusedkeyrefusedkeyre'
+      const videoId = await camera('liv_refused', key)
+      await refused('liv_refused', key)
+
+      expect(
+        await db
+          .selectFrom('live_streams')
+          .select([
+            'state',
+            'first_published_at as first',
+            'last_published_at as last',
+            'last_error as lastError'
+          ])
+          .where('id', '=', 'liv_refused')
+          .executeTakeFirstOrThrow()
+      ).deep.equals({
+        state: 'idle',
+        first: null,
+        last: null,
+        lastError: REFUSAL
+      })
+      expect(
+        await db
+          .selectFrom('videos')
+          .select(['status', 'hidden', 'start_at as startAt'])
+          .select('start_at_source as source')
+          .where('id', '=', videoId)
+          .executeTakeFirstOrThrow()
+      ).deep.equals({
+        status: 'processing',
+        hidden: true,
+        startAt: null,
+        source: null
+      })
+    })
+
+    it('keeps the first stamp and the recording of a camera that has published', async function () {
+      if (options == null || db == null) this.skip()
+      const key = 'ts_realkeyrealkeyrealkeyr'
+      const videoId = await camera('liv_real', key)
+      await handleLiveEventForTest(
+        { type: 'publishStarted', key, liveStreamId: 'liv_real' },
+        options
+      )
+      const dir = await written(videoId)
+      await handleLiveEventForTest(
+        {
+          type: 'publishEnded',
+          key,
+          liveStreamId: 'liv_real',
+          reason: 'The stream ended'
+        },
+        options
+      )
+      const stamped = async (): Promise<Date | null> =>
+        (
+          await db!
+            .selectFrom('live_streams')
+            .select('first_published_at as first')
+            .where('id', '=', 'liv_real')
+            .executeTakeFirstOrThrow()
+        ).first
+      const first = await stamped()
+      expect(first).not.equals(null)
+      const start = await db
+        .selectFrom('videos')
+        .select(['start_at as startAt'])
+        .where('id', '=', videoId)
+        .executeTakeFirstOrThrow()
+
+      await new Promise(resolve => setTimeout(resolve, 5))
+      await refused('liv_real', key)
+
+      expect(await stamped()).deep.equals(first)
+      const after = await db
+        .selectFrom('live_streams')
+        .innerJoin('videos', 'videos.id', 'live_streams.video_id')
+        .select([
+          'live_streams.state as state',
+          'live_streams.last_error as lastError',
+          'videos.status as status',
+          'videos.hidden as hidden',
+          'videos.start_at as startAt'
+        ])
+        .where('live_streams.id', '=', 'liv_real')
+        .executeTakeFirstOrThrow()
+      expect(after).deep.equals({
+        state: 'idle',
+        lastError: REFUSAL,
+        status: 'live',
+        hidden: false,
+        startAt: start.startAt
+      })
+      expect(await onDisk(dir), 'the recording stays').equals(true)
+    })
+
+    it('clears a folder made again behind a camera removed with its key open', async function () {
+      if (options == null || db == null) this.skip()
+      const key = 'ts_gonekeygonekeygonekeyg'
+      const videoId = await camera('liv_gone', key)
+      const dir = await written(videoId)
+      expect(await resolveKey(key, options)).to.be.an('object')
+      await db.deleteFrom('videos').where('id', '=', videoId).execute()
+      await db
+        .updateTable('live_streams')
+        .set({ state: 'revoked', closes_at: new Date() })
+        .where('id', '=', 'liv_gone')
+        .execute()
+
+      await finishStream(options, 'liv_gone', 'revoked')
+      await settleLiveWork()
+
+      expect(await onDisk(dir), 'nothing is left behind').equals(false)
+    })
+
+    it('leaves the folder of a video that outlives its camera', async function () {
+      if (options == null || db == null) this.skip()
+      const key = 'ts_keptkeykeptkeykeptkeyk'
+      const videoId = await camera('liv_kept', key)
+      const dir = await written(videoId)
+      expect(await resolveKey(key, options)).to.be.an('object')
+      await db
+        .updateTable('live_streams')
+        .set({ state: 'revoked', closes_at: new Date(), video_id: null })
+        .where('id', '=', 'liv_kept')
+        .execute()
+
+      await finishStream(options, 'liv_kept', 'revoked')
+      await settleLiveWork()
+
+      expect(await onDisk(dir), 'the video still has it').equals(true)
+    })
   })
 
   it('finishes angles ended together side by side, not one after another', async function () {

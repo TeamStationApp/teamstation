@@ -23,7 +23,7 @@
 // placeholder Apple Music song through the API, so the walk-up screen has a
 // clip to play and a jog wheel to turn.
 //
-//   1. The game's Videos tab offers Record video.
+//   1. The game's Videos tab offers Record Video.
 //   2. The walk-up module reports on the song, and its preview is asked to
 //      play; dictation's microphone is asked to start. Each must be answered
 //      by its native module: playing or a refusal in the module's own words.
@@ -366,7 +366,7 @@ async function main(): Promise<void> {
         await tap('signInLinkSignIn')
     }
 
-    // 1. Record video, which the Videos tab offers once the module says
+    // 1. Record Video, which the Videos tab offers once the module says
     // this phone can record.
     await openGame()
     if (android) {
@@ -374,7 +374,7 @@ async function main(): Promise<void> {
       // player, which would take a swipe across it for itself.
       for (
         let i = 0;
-        i < 8 && (await find('Record video', 1000)) == null;
+        i < 8 && (await find('Record Video', 1000)) == null;
         i++
       ) {
         say('$ swipe 50%,78% → 50%,30%')
@@ -383,10 +383,10 @@ async function main(): Promise<void> {
       }
     }
     assert(
-      (await find('Record video', 10000)) != null,
-      'the Videos tab offers Record video'
+      (await find('Record Video', 10000)) != null,
+      'the Videos tab offers Record Video'
     )
-    results.push('1 Videos tab offers Record video')
+    results.push('1 Videos tab offers Record Video')
     await shot('bridge-smoke-videos')
 
     // DJ Game is offered on an iPhone only (makeWalkUpMusic: djSupported is

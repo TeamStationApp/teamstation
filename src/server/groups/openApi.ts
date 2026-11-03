@@ -280,10 +280,11 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
     '/relationship-requests': {
       post: {
         summary:
-          'Send a seven-day relationship or guardian invitation, guardian request or team membership request',
+          'Send a seven-day relationship or guardian invitation, guardian request, team membership request or videographer request',
         security: [{ bearer: [] }],
         description:
           'Membership requests use kind=membership and teamId, without sender. The server binds them to the signed-in user, deduplicates pending requests, and requires a team administrator to accept before granting member access, never staff roles. Missing, merged and placeholder teams are refused. ' +
+          'Videographer requests use kind=videographer and teamId, without sender, and ask for the Videographer role on the team. The server binds them to the signed-in user, who must be a member of the team (403) and unable to film its games (409). The same request still waiting is answered with itself. An administrator, coach or assistant of the team approves, which fails with 409 if the requester has left the team since. Missing, merged and placeholder teams are refused. ' +
           'Sending records consent for that scope. confirmBoth explicitly records both sides when the sender administers both. Competition does not grant team permissions. Promotion preserves identity and history. ' +
           "Once a player has a guardian, only their guardians (and the player) say who else becomes one; a team's staff speak only for a player with no guardian. Only a guardian whose account can sign in counts: one a roster import made with no email address leaves the say with the team's staff. A site administrator may do all of it. " +
           "A team's guardian invitation comes from a team (`sender`) whose administrator, coach or assistant sends it, about one of the team's players who has no guardian yet (403 `<player> has a guardian already. Ask them to invite another guardian.` once they have one, also when the invitee accepts), to an account or an email address, which is mailed; the invitee accepts. " +
@@ -299,6 +300,15 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
               required: ['kind', 'teamId', 'idempotencyKey'],
               properties: {
                 kind: { const: 'membership' },
+                teamId: { type: 'string' },
+                idempotencyKey: { type: 'string', minLength: 8, maxLength: 120 }
+              }
+            },
+            {
+              type: 'object',
+              required: ['kind', 'teamId', 'idempotencyKey'],
+              properties: {
+                kind: { const: 'videographer' },
                 teamId: { type: 'string' },
                 idempotencyKey: { type: 'string', minLength: 8, maxLength: 120 }
               }
@@ -440,7 +450,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
           }
         ],
         description:
-          'hasPending counts the rows with `canAct` across every page: requests this person can answer, and `recordingUpload` reminders not yet dismissed. The default list is those rows, reminders first; a reminder is `pending` with `canAct` and carries `gameId` and `liveStreamId`. history holds every other status: decided requests, and every piece of information, grants (somebody added you to a team, season or league) and scheduling notices included, which are recorded `accepted` and so are history from the start. A grant carries `leave`, the level it gave, while you are still in it. Viewing an item does not resolve it. Eligibility is recomputed from current roles.',
+          'hasPending counts the rows with `canAct` across every page: requests this person can answer, and `recordingUpload` reminders and `localCopyExpiring` warnings not yet dismissed. The default list is those rows, reminders first; a reminder is `pending` with `canAct` and carries `gameId` and `liveStreamId`. history holds every other status: decided requests, and every piece of information, grants (somebody added you to a team, season or league) and scheduling notices included, which are recorded `accepted` and so are history from the start. A grant carries `leave`, the level it gave, while you are still in it. Viewing an item does not resolve it. Eligibility is recomputed from current roles.',
         responses
       }
     },

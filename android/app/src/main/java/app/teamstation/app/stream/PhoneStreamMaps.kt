@@ -1,6 +1,7 @@
 package app.teamstation.app.stream
 
 import app.teamstation.streamcore.phonestream.PhoneCapabilities
+import app.teamstation.streamcore.phonestream.PhoneCatalog
 import app.teamstation.streamcore.phonestream.PhoneInterruptedSession
 import app.teamstation.streamcore.phonestream.PhoneLens
 import app.teamstation.streamcore.phonestream.PhoneRadarState
@@ -17,7 +18,11 @@ import app.teamstation.streamcore.phonestream.PhoneZoomScale
  */
 object PhoneStreamMaps {
     fun capabilities(capabilities: PhoneCapabilities): Map<String, Any?> =
-        mapOf("supported" to capabilities.supported, "deviceModel" to capabilities.deviceModel)
+        mapOf(
+            "supported" to capabilities.supported,
+            "deviceModel" to capabilities.deviceModel,
+            "canRecordLocally" to capabilities.canRecordLocally
+        )
 
     fun status(status: PhoneStreamStatus): Map<String, Any?> =
         present(
@@ -80,8 +85,13 @@ object PhoneStreamMaps {
             "stoppedForLowStorage" to recording.stoppedForLowStorage,
             "publishedOutsideParts" to recording.publishedOutsideParts,
             "uploadRunning" to running,
-            "uploadProgress" to progress?.takeIf { running }?.let(::upload)
+            "uploadProgress" to progress?.takeIf { running }?.let(::upload),
+            "retentionFrom" to recording.retentionFrom?.let { it * 1_000 },
+            "retentionReported" to recording.retentionReported.takeIf { it }
         )
+
+    fun swept(stream: PhoneCatalog.SweptStream): Map<String, Any?> =
+        present("liveStreamId" to stream.liveStreamId, "gameId" to stream.gameId)
 
     fun zoomScale(scale: PhoneZoomScale): Map<String, Any?> =
         present(

@@ -22,6 +22,11 @@ export interface PhoneStreamCapabilities {
   supported: boolean
   /** What TeamStation lists this phone as beside its angles, "" when unsupported. */
   deviceModel: string
+  /**
+   * Whether Record would keep a recording now, rather than only streaming:
+   * false under the engine's start floor. Read at Record, not kept.
+   */
+  canRecordLocally: boolean
 }
 
 /** What the engine's redial needs to ask for this device's stream again. */
@@ -113,6 +118,13 @@ export interface PhoneRecording {
   videoId: string | null
   stoppedForLowStorage: boolean
   publishedOutsideParts: boolean
+  /**
+   * For a take recorded before the phone's 30-day limit began, when its 30
+   * days began: the first sweep that saw it. Milliseconds since 1970.
+   */
+  retentionFrom: number | null
+  /** The server knows `retentionFrom`. The take stays on the phone until then. */
+  retentionReported: boolean
   /** An upload was opened and has not landed: running, or cut off and waiting to resume. */
   hasPendingUpload: boolean
   /** Its upload is running in this process now. */
@@ -122,6 +134,12 @@ export interface PhoneRecording {
    * at launch reports before any screen listens, so its row starts from this.
    */
   uploadProgress: UploadProgress | null
+}
+
+/** A stream whose take the retention sweep deleted with no upload. */
+export interface SweptStream {
+  liveStreamId: string
+  gameId: string
 }
 
 export type UploadState =
@@ -148,9 +166,9 @@ export interface InterruptedSession {
 
 /**
  * A call the engine refused, by the engine's code: `notReady`,
- * `uploadInProgress`, `insufficientStorage`, `recordingFailed`,
- * `noRecording`, `stillRecording`, `permission`, `cameraUnavailable`, or
- * `unsupported` in a build without the module.
+ * `uploadInProgress`, `recordingFailed`, `noRecording`, `stillRecording`,
+ * `permission`, `cameraUnavailable`, or `unsupported` in a build without the
+ * module.
  */
 export class PhoneStreamError extends Error {
   readonly code: string
@@ -315,6 +333,8 @@ export function toRecording(recording: NativePhoneRecording): PhoneRecording {
     videoId: orNull(recording.videoId),
     stoppedForLowStorage: recording.stoppedForLowStorage,
     publishedOutsideParts: recording.publishedOutsideParts,
+    retentionFrom: orNull(recording.retentionFrom),
+    retentionReported: recording.retentionReported === true,
     // Wanted and not landed: the engines mark an upload wanted by its title before the export, so
     // one cut off while exporting resumes with the next launch, and an opened one carries its id.
     hasPendingUpload:
@@ -352,6 +372,19 @@ export function toUploadProgress(event: NativeUploadProgress): UploadProgress {
 
 type Listener<T> = (value: T) => void
 
+/**
+ * Deletes this phone's take of a camera, stopping its upload first, so an
+ * upload under way cannot go on sending a take that is gone. A take with no
+ * upload has nothing to stop, which is not a failure of the delete.
+ */
+export async function deleteTake(
+  phone: Pick<PhoneStream, 'cancelUpload' | 'deleteRecording'>,
+  liveStreamId: string
+): Promise<void> {
+  await phone.cancelUpload(liveStreamId).catch(() => undefined)
+  await phone.deleteRecording(liveStreamId)
+}
+
 /** The engine as the screens use it: typed results, and refusals as `PhoneStreamError`. */
 export interface PhoneStream {
   capabilities: () => Promise<PhoneStreamCapabilities>
@@ -385,6 +418,11 @@ export interface PhoneStream {
   radarUnpair: (serial: string) => Promise<void>
   radarState: () => Promise<RadarState>
   recordings: () => Promise<PhoneRecording[]>
+  /** The streams the retention sweep took a take of, until `forgetSwept`. */
+  sweptStreams: () => Promise<SweptStream[]>
+  forgetSwept: (liveStreamId: string) => Promise<void>
+  /** The server now counts this stream's take's 30 days from `from`. */
+  retentionReported: (liveStreamId: string, from: number) => Promise<void>
   uploadRecording: (options: {
     liveStreamId: string
     apiBase: string
@@ -404,6 +442,8 @@ export interface PhoneStream {
   }) => Promise<string>
   cancelUpload: (liveStreamId: string) => Promise<void>
   deleteRecording: (liveStreamId: string) => Promise<void>
+  appInstalled: (packageName: string) => Promise<boolean>
+  openInApp: (url: string, packageName: string) => Promise<boolean>
   onStatus: (listener: Listener<PhoneStreamStatus>) => () => void
   onRadar: (listener: Listener<RadarState>) => () => void
   onUpload: (listener: Listener<UploadProgress>) => () => void
@@ -471,12 +511,21 @@ export function makePhoneStream(
 
   return {
     capabilities: async () => {
-      if (module == null) return { supported: false, deviceModel: '' }
+      const none = {
+        supported: false,
+        deviceModel: '',
+        canRecordLocally: false
+      }
+      if (module == null) return none
       try {
         const answer = await module.capabilities()
-        return { supported: answer.supported, deviceModel: answer.deviceModel }
+        return {
+          supported: answer.supported,
+          deviceModel: answer.deviceModel,
+          canRecordLocally: answer.canRecordLocally
+        }
       } catch {
-        return { supported: false, deviceModel: '' }
+        return none
       }
     },
     open: async (angleName, options = {}) => {
@@ -590,6 +639,23 @@ export function makePhoneStream(
       await call(async () => toRadarState(await need().radarState())),
     recordings: async () =>
       await call(async () => (await need().recordings()).map(toRecording)),
+    sweptStreams: async () =>
+      await call(async () =>
+        (await need().sweptStreams()).map(stream => ({
+          liveStreamId: stream.liveStreamId,
+          gameId: stream.gameId
+        }))
+      ),
+    forgetSwept: async liveStreamId => {
+      await call(async () => {
+        await need().forgetSwept(liveStreamId)
+      })
+    },
+    retentionReported: async (liveStreamId, from) => {
+      await call(async () => {
+        await need().retentionReported(liveStreamId, from)
+      })
+    },
     uploadRecording: async ({ liveStreamId, apiBase, token, title }) =>
       await call(async () => {
         const engine = need()
@@ -614,6 +680,10 @@ export function makePhoneStream(
         await need().deleteRecording(liveStreamId)
       })
     },
+    appInstalled: async packageName =>
+      await call(async () => await need().appInstalled(packageName)),
+    openInApp: async (url, packageName) =>
+      await call(async () => await need().openInApp(url, packageName)),
     onStatus: listener => listen(module?.onStatus ?? null, toStatus, listener),
     onRadar: listener =>
       listen(module?.onRadar ?? null, toRadarState, listener),
@@ -660,6 +730,8 @@ export interface Recordings {
   recordings: PhoneRecording[]
   /** The latest progress of each upload heard of, by live stream. */
   uploads: Record<string, UploadProgress>
+  /** The takes were read at least once, so an empty list means none. */
+  loaded: boolean
   refresh: () => void
 }
 
@@ -670,6 +742,7 @@ export interface Recordings {
 export function useRecordingsOf(stream: PhoneStream): Recordings {
   const [recordings, setRecordings] = useState<PhoneRecording[]>([])
   const [uploads, setUploads] = useState<Record<string, UploadProgress>>({})
+  const [loaded, setLoaded] = useState(false)
   const [generation, setGeneration] = useState(0)
   const refresh = useCallback(() => {
     setGeneration(value => value + 1)
@@ -678,7 +751,9 @@ export function useRecordingsOf(stream: PhoneStream): Recordings {
     let live = true
     stream.recordings().then(
       list => {
-        if (live) setRecordings(list)
+        if (!live) return
+        setRecordings(list)
+        setLoaded(true)
       },
       () => {}
     )
@@ -698,5 +773,5 @@ export function useRecordingsOf(stream: PhoneStream): Recordings {
       }),
     [stream, refresh]
   )
-  return { recordings, uploads, refresh }
+  return { recordings, uploads, loaded, refresh }
 }

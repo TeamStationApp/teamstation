@@ -11,9 +11,10 @@
 //   [TS_STREAM_CHROME=<a Chrome that decodes HEVC, for puppeteer>]
 //     node -r sucrase/register src/app/stream/twoDevices.e2e.ts
 //
-//   1. The iPhone: Record video "Home Plate", on the air.
-//   2. The Pixel: its list reads "Home Plate" · "iPhone 13 Pro" · "Live";
-//      then Record video "First Base", on the air. With no Pixel, a stand-in
+//   1. The iPhone: Record Video "Home Plate", on the air.
+//   2. The Pixel: its list reads "Home Plate" · "Streaming with iPhone 13
+//      Pro" · "Live";
+//      then Record Video "First Base", on the air. With no Pixel, a stand-in
 //      device B (`curl` as the same account, `deviceModel` "Pixel 10",
 //      `recordsLocally`) makes "First Base" and ffmpeg publishes to it.
 //   3. Director streams as "Center Field": started by hand on the iPad,
@@ -261,12 +262,20 @@ async function main(): Promise<void> {
       await pixel.openGame()
       await pixel.scrollTo({ id: `angle-row-${home.id}` })
       pixelLines.push(
-        await rowReads(pixel, home, [HOME, 'iPhone 13 Pro', 'Live'])
+        await rowReads(pixel, home, [
+          HOME,
+          `Streaming with ${home.deviceModel ?? '?'}`,
+          'Live'
+        ])
       )
       if (center != null) {
         await pixel.scrollTo({ id: `angle-row-${center.id}` })
         pixelLines.push(
-          await rowReads(pixel, center, [CENTER, 'iPad Pro', 'Live'])
+          await rowReads(pixel, center, [
+            CENTER,
+            'Streaming with iPad Pro',
+            'Live'
+          ])
         )
       }
       for (const line of pixelLines) say(`$ assertVisible ${line}`)
@@ -322,7 +331,7 @@ async function main(): Promise<void> {
     // A real Pixel names itself with its maker (Build.MANUFACTURER before
     // Build.MODEL); the stand-in device B says only "Pixel 10".
     const models = new Map([
-      [HOME, 'iPhone 13 Pro'],
+      [HOME, home.deviceModel ?? '?'],
       [FIRST, pixel == null ? 'Pixel 10' : 'Google Pixel 10'],
       [CENTER, 'iPad Pro']
     ])
@@ -365,7 +374,7 @@ async function main(): Promise<void> {
         lines.push(
           await rowReads(listing, row, [
             row.label,
-            models.get(row.label) ?? '',
+            `${live ? 'Streaming with' : 'Waiting for stream from'} ${models.get(row.label) ?? ''}`,
             live ? 'Live' : 'Idle'
           ])
         )
@@ -400,6 +409,8 @@ async function main(): Promise<void> {
     )
     assert.deepEqual(pills, [HOME, FIRST, CENTER], 'a live video per angle')
     results.push(`5 the game has a live video for ${pills.join(', ')}`)
+    // A camera just on the air has no segment for a browser to start from.
+    await sleep(45000)
     results.push(await webMultiCam(token, [HOME, FIRST, CENTER]))
 
     // The Videos tab, framed as videos-tab-native-before.png. The game's

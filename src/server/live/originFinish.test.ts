@@ -92,6 +92,69 @@ describe('closing a live Space origin', function () {
     )
   })
 
+  it('ends a recording on its largest part: the Space’s master and the row', async () => {
+    await published()
+    // A later part: the same fragments under an init segment saying 1280x720.
+    const first = await files.readFile(join(f.dir, 'init.mp4'))
+    const entry = first.indexOf(Buffer.from('avc1', 'latin1'))
+    expect(entry).above(0)
+    const later = Buffer.from(first)
+    later.writeUInt16BE(1280, entry + 4 + 24)
+    later.writeUInt16BE(720, entry + 4 + 26)
+    await files.writeFile(join(f.dir, 'init000003.mp4'), later)
+    await files.copyFile(
+      join(f.dir, 'seg000000.m4s'),
+      join(f.dir, 'seg000003.m4s')
+    )
+    const playlist = await files.readFile(join(f.dir, 'master.m3u8'), 'utf8')
+    await files.writeFile(
+      join(f.dir, 'master.m3u8'),
+      `${playlist.replace('#EXT-X-ENDLIST\n', '')}#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000003.mp4"\n#EXTINF:1,\nseg000003.m4s\n`
+    )
+    expect((await f.row())?.width).equals(160)
+
+    await finish()
+    const row = await f.row()
+    expect(row?.spaces_verified_at).not.equals(null)
+    expect(row?.width).equals(1280)
+    expect(row?.height).equals(720)
+    expect(
+      await files.readFile(
+        join(f.remote, 'videos', f.videoId, 'master.m3u8'),
+        'utf8'
+      )
+    ).contains('RESOLUTION=1280x720')
+  })
+
+  it('says its span on the clock when a later part starts apart from the earlier one', async () => {
+    await published()
+    const init = await files.readFile(join(f.dir, 'init.mp4'))
+    await files.writeFile(join(f.dir, 'init000003.mp4'), init)
+    await files.writeFile(
+      join(f.dir, 'seg000003.m4s'),
+      placeSegmentOnTimeline(
+        init,
+        await files.readFile(join(f.dir, 'seg000000.m4s')),
+        300
+      )!
+    )
+    const playlist = await files.readFile(join(f.dir, 'master.m3u8'), 'utf8')
+    const lengthBefore = [...playlist.matchAll(/#EXTINF:([\d.]+)/g)].reduce(
+      (sum, found) => sum + Number(found[1]),
+      0
+    )
+    expect(lengthBefore).below(300)
+    await files.writeFile(
+      join(f.dir, 'master.m3u8'),
+      `${playlist.replace('#EXT-X-ENDLIST\n', '')}#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000003.mp4"\n#EXTINF:1,\nseg000003.m4s\n`
+    )
+
+    await finish()
+    const row = await f.row()
+    expect(row?.spaces_verified_at).not.equals(null)
+    expect(row?.duration_sec).closeTo(301, 0.5)
+  })
+
   for (const fault of ['put', 'read', 'different'] as const) {
     it(`retains scratch when the ${fault} close fails and retries after restart`, async () => {
       await published()

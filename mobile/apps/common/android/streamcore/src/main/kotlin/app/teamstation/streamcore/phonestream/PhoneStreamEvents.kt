@@ -28,11 +28,11 @@ enum class PhoneStreamError(val rawValue: String) {
     /** The server ended this camera (410): the pill reads "Stream ended", and the recording goes on. */
     STREAM_ENDED("streamEnded"),
 
-    /** A part finished because free space fell below 500 MB; the stream goes on. */
+    /**
+     * No part is being recorded for lack of space, and the stream goes on: a part finished because free
+     * space fell below 2 GB, or Record started under 10 GB free and only the stream went out.
+     */
     RECORDING_STOPPED_LOW_STORAGE("recordingStoppedLowStorage"),
-
-    /** Recording would not start with under 2 GB free. */
-    INSUFFICIENT_STORAGE("insufficientStorage"),
 
     /**
      * The camera stopped on its own (another app took it, or it failed) and is being opened again:

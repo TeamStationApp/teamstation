@@ -26,10 +26,12 @@ const run = promisify(execFile)
  * the filler's VPS, SPS and PPS are renumbered to ids the phone does not use
  * and added beside the phone's in that one `hvcC`. Each slice names its own
  * PPS, so a decoder switches at the filler's first picture and back at the
- * return's keyframe, and the phone's pictures are copied untouched. Separate
- * init segments behind a discontinuity would need a playlist the single-file
- * recording does not have, and pictures relying on parameter sets in the
- * stream are not allowed in an `hvc1` track, which is what Safari plays.
+ * return's keyframe, and the phone's pictures are copied untouched. A map of
+ * its own behind a discontinuity for every hole would mean a recording whose
+ * every FFmpeg reader stops at the first, which only a publish that cannot
+ * share the init segment is worth (`toRecording`), and pictures relying on
+ * parameter sets in the stream are not allowed in an `hvc1` track, which is
+ * what Safari plays.
  *
  * Every filler picture is a keyframe, and all of them are the same few hundred
  * bytes, so only one is encoded however long the hole is, and a seek into the
@@ -45,6 +47,15 @@ const run = promisify(execFile)
  * holes cannot be filled is, and the reason is logged.
  */
 export const MAX_HOLE_SEC = 60 * 60
+
+/**
+ * The longest gap filled where two configurations meet, in seconds. A camera
+ * swapped for another can be away for most of a game, far longer than a
+ * reconnect, so this only guards against timestamps that make no sense. A
+ * longer one stays out of the file, and the video's row still says its span
+ * (`recordingSpanSec`).
+ */
+export const MAX_JOIN_GAP_SEC = 6 * 60 * 60
 
 /** What a filler has to match. */
 export interface StreamShape {
@@ -270,13 +281,14 @@ export function planHole(
   nextStart: number,
   next: SegmentSpan,
   rate: { num: number; den: number },
-  sampleRate?: number
+  sampleRate?: number,
+  maxSec: number = MAX_HOLE_SEC
 ): HolePlan | string | undefined {
   const frame = rate.den / rate.num
   const pictureEnd = start + before.videoEnd
   const returnAt = nextStart + next.videoLead
-  if (returnAt - pictureEnd > MAX_HOLE_SEC) {
-    return `a ${(returnAt - pictureEnd).toFixed(1)} s hole is longer than ${MAX_HOLE_SEC} s`
+  if (returnAt - pictureEnd > maxSec) {
+    return `a ${(returnAt - pictureEnd).toFixed(1)} s hole is longer than ${maxSec} s`
   }
   const frames = Math.round((returnAt - pictureEnd) / frame)
   if (frames < 1) return undefined
@@ -723,14 +735,14 @@ export function renumberPicture(
 
 /* The sample entry -------------------------------------------------------- */
 
-interface Box {
+export interface Box {
   type: string
   start: number
   end: number
   header: number
 }
 
-function boxesIn(data: Buffer, start: number, end: number): Box[] {
+export function boxesIn(data: Buffer, start: number, end: number): Box[] {
   const boxes: Box[] = []
   let at = start
   while (at + 8 <= end) {
@@ -755,7 +767,7 @@ function boxesIn(data: Buffer, start: number, end: number): Box[] {
 }
 
 /** The chain of boxes from `moov` down to the video track's `hvcC`. */
-function hvcCPath(init: Buffer): Box[] | undefined {
+export function hvcCPath(init: Buffer): Box[] | undefined {
   const moov = boxesIn(init, 0, init.length).find(box => box.type === 'moov')
   if (moov == null) return undefined
   for (const trak of boxesIn(init, moov.start + 8, moov.end)) {
@@ -1014,13 +1026,18 @@ export async function writeFiller(
  * read through `pairOf`, the init-and-segment pair the concat demuxer opens.
  * The phone's init is rewritten into `scratch` with the filler's parameter
  * sets beside its own, and every pair then uses it.
+ *
+ * `joinAt` is where the next configuration starts on the same clock, when one
+ * follows: its first picture opens where this list stops, so the gap up to it
+ * is filled after the last piece, as a hole is.
  */
 export async function fillHoles(
   ffmpegPath: string,
   initPath: string,
   pieces: ReadonlyArray<{ name: string; start: number; path: string }>,
   isHole: (index: number) => boolean,
-  scratch: string
+  scratch: string,
+  joinAt?: number
 ): Promise<{ lines: string[]; fillers: number } | string> {
   const init = await readFile(initPath)
   const entry = readSampleEntry(init)
@@ -1045,26 +1062,31 @@ export async function fillHoles(
   for (let index = 0; index < pieces.length; index++) {
     const piece = pieces[index]
     lines.push(`file ${quote(pair(piece.path, sharedInit))}`)
-    if (index + 1 >= pieces.length) break
-    const next = pieces[index + 1]
+    const next = pieces.at(index + 1)
+    const nextStart = next?.start ?? joinAt
+    if (nextStart == null) break
     let plan: HolePlan | string | undefined
     let rate = { num: 30, den: 1 }
     if (isHole(index)) {
       const before = await probeSpan(ffmpegPath, pair(piece.path), shape)
-      const after = await probeSpan(ffmpegPath, pair(next.path), shape)
+      const after =
+        next == null
+          ? { videoEnd: 0, videoLead: 0, frameSec: before.frameSec }
+          : await probeSpan(ffmpegPath, pair(next.path), shape)
       rate = frameRate(before.frameSec)
       plan = planHole(
         piece.start,
         before,
-        next.start,
+        nextStart,
         after,
         rate,
-        shape.sound?.sampleRate
+        shape.sound?.sampleRate,
+        next == null ? MAX_JOIN_GAP_SEC : MAX_HOLE_SEC
       )
     }
     if (typeof plan === 'string') return plan
     if (plan == null) {
-      lines.push(`duration ${(next.start - piece.start).toFixed(6)}`)
+      lines.push(`duration ${(nextStart - piece.start).toFixed(6)}`)
       continue
     }
     const filler = join(scratch, `filler${fillers++}.mp4`)

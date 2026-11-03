@@ -448,12 +448,14 @@ class PhoneStreamUnitTest {
     }
 
     @Test
-    fun storageRulesStartAboveTwoGigabytesAndStopBelowFiveHundredMegabytes() {
+    fun storageRulesStartAtTenGigabytesAndStopBelowTwo() {
         val rules = PhoneStorageRules.standard
-        assertTrue(rules.canStart(2_000_000_000))
-        assertFalse(rules.canStart(1_999_999_999))
-        assertTrue(rules.mustStop(499_999_999))
-        assertFalse(rules.mustStop(500_000_000))
+        assertEquals(10_000_000_000L, rules.startFloorBytes)
+        assertEquals(2_000_000_000L, rules.stopFloorBytes)
+        assertTrue(rules.canStart(10_000_000_000))
+        assertFalse(rules.canStart(9_999_999_999))
+        assertTrue(rules.mustStop(1_999_999_999))
+        assertFalse(rules.mustStop(2_000_000_000))
     }
 
     @Test

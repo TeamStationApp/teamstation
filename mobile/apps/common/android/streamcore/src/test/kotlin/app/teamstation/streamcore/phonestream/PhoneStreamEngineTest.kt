@@ -705,10 +705,10 @@ class PhoneStreamEngineTest {
         // which the server adds.
         assertEquals(app.teamstation.streamcore.upload.UploadClient.instant(partOne), body.getString("startAt"))
         assertEquals(3_000, body.getInt("serverClockOffsetMs"))
-        val uploaded = runBlocking { second.recordings() }.single()
-        assertTrue(uploaded.isUploaded)
-        assertEquals("v1", uploaded.videoId)
+        // Swept as its upload landed: the take's files and rows are gone.
+        assertTrue(runBlocking { second.recordings() }.isEmpty())
         assertFalse(second.environment.storage.export(take.recordingID).exists())
+        assertTrue(second.environment.storage.program.listFiles()!!.isEmpty())
         assertEquals(PhoneUploadProgress.State.UPLOADED, uploads().last().state)
         assertTrue(uploads().any { it.state == PhoneUploadProgress.State.EXPORTING })
         assertTrue(foreground.calls.containsAll(listOf("upload Home Plate", "uploads done")))
@@ -717,12 +717,12 @@ class PhoneStreamEngineTest {
         val export = folder.newFile("export.mp4").apply { writeBytes(sent) }
         val reading = FragmentedMp4Reader.read(export)!!
         assertEquals(endedAt - partOne, reading.video!!.endSeconds!!, 1.0 / 30 + 1e-6)
-        // Uploaded, it is not sent again, and the stream's next take is a new one.
-        assertEquals("v1", runBlocking { second.uploadRecording("s1", server.url("/").toString(), "token-0000", "Home Plate") })
+        // Nothing is left to send, and the stream's next take is a new one.
+        expect(PhoneStreamError.NO_RECORDING) { second.uploadRecording("s1", server.url("/").toString(), "token-0000", "Home Plate") }
         requests.clear()
         liveStreamAnswer = stream("rtmp://ingest.example.test/live/key-0003")
         runBlocking { second.startRecording("rtmp://ingest.example.test/live/key-0003", "s1", "g1", "Home Plate", request) }
-        assertEquals(2, runBlocking { second.recordings() }.size)
+        assertEquals(1, runBlocking { second.recordings() }.size)
         runBlocking { second.stopRecording() }
     }
 
@@ -941,10 +941,9 @@ class PhoneStreamEngineTest {
         val again = runBlocking { second.resumePendingUploads(server.url("/").toString(), "token-0000") }
         assertEquals(1, started)
         assertEquals(0, again)
-        waitFor { runBlocking { second.recordings() }.single().isUploaded }
+        waitFor { runBlocking { second.recordings() }.isEmpty() }
         assertTrue(requests.none { it.method == "POST" && it.path!!.endsWith("/director/uploads") })
         assertEquals(1, requests.count { it.method == "GET" && it.path!!.endsWith("/director/uploads/u1") })
-        assertEquals("v1", runBlocking { second.recordings() }.single().videoId)
     }
 
     @Test
@@ -979,7 +978,7 @@ class PhoneStreamEngineTest {
         assertEquals(1_024.0 / partway.bytesTotal, partway.fraction, 1e-9)
         partGate!!.countDown()
         partGate = null
-        waitFor { runBlocking { second.recordings() }.single().isUploaded }
+        waitFor { runBlocking { second.recordings() }.isEmpty() }
         waitFor { second.runningUploadProgress().isEmpty() }
     }
 
@@ -1006,18 +1005,120 @@ class PhoneStreamEngineTest {
         assertTrue(runBlocking { engine.recordings() }.isEmpty())
     }
 
+    /** The stream drops and its redial runs. */
+    private fun redialOnce() {
+        val dials = streamOutput.starts.size
+        on { streamOutput.drop!!("gone") }
+        on { }
+        on { scheduler.pending!!() }
+        waitFor { streamOutput.starts.size == dials + 1 }
+    }
+
     @Test
-    fun lowStorageRefusesAStartAndFinishesARunningPartWhileTheStreamGoesOn() {
+    fun aStartUnderTheFloorStreamsWithNoTakeAndSaysSo() {
+        free = 9_900_000_000
         val engine = opened()
-        free = 1_000_000_000
-        expect(PhoneStreamError.INSUFFICIENT_STORAGE) {
-            engine.startRecording("rtmp://ingest.example.test/live/key-0001", "s1", "g1", "Home Plate", request)
-        }
-        assertEquals(PhoneStreamError.INSUFFICIENT_STORAGE, statuses().last().error)
+        assertFalse(engine.canRecordLocally())
+        start(engine)
+        assertTrue(engine.isStreaming)
+        assertFalse(engine.isRecording)
+        assertEquals(PhoneStreamError.RECORDING_STOPPED_LOW_STORAGE, on { engine.status }.error)
+        assertTrue(runBlocking { engine.recordings() }.isEmpty())
+        assertTrue(videos.isEmpty())
+        // Its redial says it keeps no recording.
+        redialOnce()
+        assertFalse(JSONObject(requests.first { it.path!!.contains("/live-streams") }.body.readUtf8()).getBoolean("recordsLocally"))
+        runBlocking { engine.abandonForTesting() }
+
+        // Relaunched, still short of room: the stream comes back and the notice with it.
+        free = 5_000_000_000
+        val again = opened()
+        assertNull(runBlocking { again.interruptedSession() }?.recordingID)
+        assertTrue(runBlocking { again.resumeInterrupted(request) })
+        assertFalse(again.isRecording)
+        assertEquals(PhoneStreamError.RECORDING_STOPPED_LOW_STORAGE, on { again.status }.error)
+        runBlocking { again.stopRecording() }
+
+        // With exactly 10 GB, it records.
         free = 10_000_000_000
+        assertTrue(again.canRecordLocally())
+        start(again)
+        assertTrue(again.isRecording)
+        assertNull(on { again.status }.error)
+        runBlocking { again.stopRecording() }
+    }
+
+    @Test
+    fun aSecondStartUnderTheFloorLeavesTheTakeNotCoveringTheWholeStream() {
+        val engine = opened()
         start(engine)
         capture(2.0)
-        free = 400_000_000
+        runBlocking { engine.stopRecording() }
+        val first = runBlocking { engine.recordings() }.single()
+        assertTrue(first.coversWholeStream)
+
+        free = 9_900_000_000
+        requests.clear()
+        start(engine)
+        assertFalse(engine.isRecording)
+        assertTrue(engine.isStreaming)
+        assertEquals(PhoneStreamError.RECORDING_STOPPED_LOW_STORAGE, on { engine.status }.error)
+        val marked = runBlocking { engine.recordings() }.single()
+        assertEquals(first.recordingID, marked.recordingID)
+        assertEquals(first.parts, marked.parts)
+        assertEquals(first.endedAt, marked.endedAt)
+        assertTrue(marked.stoppedForLowStorage)
+        assertTrue(marked.publishedOutsideParts)
+        assertFalse(marked.coversWholeStream)
+        // Marked once: the status loop does not write it again.
+        engine.index.database.execSQL("UPDATE phone_recordings SET published_outside_parts = 0 WHERE recording_id = ?;", arrayOf<Any>(first.recordingID))
+        on { engine.publishStatus() }
+        assertFalse(runBlocking { engine.recordings() }.single().publishedOutsideParts)
+        // The stream has a take, so its redial says so.
+        redialOnce()
+        assertTrue(JSONObject(requests.first { it.path!!.contains("/live-streams") }.body.readUtf8()).getBoolean("recordsLocally"))
+        runBlocking { engine.stopRecording() }
+    }
+
+    @Test
+    fun aTakeLeftOpenByAKillAndStartedOnAgainUnderTheFloorEndsWhereItGotTo() {
+        val first = opened()
+        start(first)
+        capture(2.0)
+        runBlocking { first.abandonForTesting() }
+        free = 9_900_000_000
+        val second = opened()
+        start(second)
+        val closed = runBlocking { second.recordings() }.single()
+        assertNotNull(closed.endedAt)
+        assertFalse(closed.coversWholeStream)
+        runBlocking { second.stopRecording() }
+    }
+
+    @Test
+    fun resumingBetweenTheFloorsContinuesTheTake() {
+        val first = opened()
+        start(first)
+        capture(2.0)
+        runBlocking { first.abandonForTesting() }
+        free = 5_000_000_000
+        val second = opened()
+        assertTrue(runBlocking { second.resumeInterrupted(request) })
+        assertTrue(second.isRecording)
+        assertNull(on { second.status }.error)
+        capture(1.0)
+        runBlocking { second.stopRecording() }
+        val take = runBlocking { second.recordings() }.single()
+        assertEquals(2, take.parts)
+        assertFalse(take.stoppedForLowStorage)
+    }
+
+    @Test
+    fun lowStorageFinishesARunningPartWhileTheStreamGoesOn() {
+        val engine = opened()
+        start(engine)
+        capture(2.0)
+        free = 1_900_000_000
         runBlocking { withContext(engineDispatcher) { engine.checkStorage() } }
         assertFalse(engine.isRecording)
         assertTrue(engine.isStreaming)
@@ -1085,7 +1186,7 @@ class PhoneStreamEngineTest {
         capture(2.0)
         finishGate = CountDownLatch(1)
         val gate = finishGate!!
-        free = 400_000_000
+        free = 1_900_000_000
         // The storage loop starts the part's finish, and Stop lands half-way through it.
         waitFor { videos.last().finishing }
         val stopping = concurrently { engine.stopRecording() }
@@ -1141,7 +1242,7 @@ class PhoneStreamEngineTest {
         runBlocking { engine.stopRecording() }
         // The take exports across its parts.
         runBlocking { engine.uploadRecording("s1", server.url("/").toString(), "token-0000", "Home Plate") }
-        assertTrue(runBlocking { engine.recordings() }.single().isUploaded)
+        assertTrue(runBlocking { engine.recordings() }.isEmpty())
     }
 
     @Test
@@ -1268,7 +1369,7 @@ class PhoneStreamEngineTest {
         waitFor { videos.size == 2 && device.attached.containsKey(PhoneProgramme.RECORDING_KEY) }
         capture(2.0)
         // Storage runs low: the part stops while the stream goes on, so the take no longer covers it.
-        free = 400_000_000
+        free = 1_900_000_000
         runBlocking { withContext(engineDispatcher) { engine.checkStorage() } }
         assertFalse(engine.isRecording)
         assertTrue(engine.isStreaming)
@@ -1371,7 +1472,7 @@ class PhoneStreamEngineTest {
         assertTrue(engine.telemetry.lastError!!.contains("something broke"))
         start(engine)
         capture(2.0)
-        free = 400_000_000
+        free = 1_900_000_000
         runBlocking { withContext(engineDispatcher) { engine.checkStorage() } }
         val id = runBlocking { engine.recordings() }.single().recordingID
         on { engine.publishStatus() }

@@ -2,9 +2,10 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
-  hevcInit,
+  configuredInit,
   hevcSegment,
   IDR_SLICE,
+  parameterSetNals,
   wallClockNal
 } from './frameWallFixture'
 import { timelineStartSec } from './segmentClock'
@@ -17,7 +18,7 @@ export function firstPublishOnDisk(
   init: Buffer
   listed: Buffer[]
 } {
-  const init = hevcInit()
+  const init = configuredInit(parameterSetNals(1))
   writeFileSync(join(dir, 'init.mp4'), init)
   const listed = [0, 4, 8].map(at =>
     hevcSegment(at, [wallClockNal(videoStartMs + at * 1000), IDR_SLICE])
