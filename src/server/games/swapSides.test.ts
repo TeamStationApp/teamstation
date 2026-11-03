@@ -569,7 +569,7 @@ describe('swapping a game’s home and away teams', function () {
     const session = await open('gam_replays', true)
     expect(session.problem).equals(null)
     const game = await row('gam_replays')
-    const availability = await gameAvailability(db, game)
+    const availability = await gameAvailability(db, game, { roster: true })
     const setup = reconcileRoster(
       setupOf(session.state),
       contextFor('gam_replays', true).teams,

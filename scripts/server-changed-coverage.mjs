@@ -5,10 +5,11 @@ import { resolve } from 'node:path'
 // Line coverage of the server, common and migration files this branch
 // changes, from the tests in those trees: the app's own `.ts` tests need the
 // DOM setup and are `app-changed-coverage.mjs`'s to run. The gate reads
-// `git diff origin/master...HEAD`, so it runs after the commit. Each step
-// runs whatever the one before it returned: a failing test never hides the
-// changed-line figure, and the failing tests are named so each can be held
-// against the base.
+// `git diff origin/master...HEAD`, or the diff from `TS_COVERAGE_BASE` when
+// that is set (a branch built on another unmerged one), so it runs after the
+// commit. Each step runs whatever the one before it returned: a failing test
+// never hides the changed-line figure, and the failing tests are named so
+// each can be held against the base.
 const report = resolve('coverage/changedServer')
 const temp = resolve(report, 'tmp')
 rmSync(report, { recursive: true, force: true })
@@ -70,6 +71,9 @@ const check = spawnSync(
   'node',
   [
     'scripts/changed-line-check.cjs',
+    ...(process.env.TS_COVERAGE_BASE
+      ? ['--base', process.env.TS_COVERAGE_BASE]
+      : []),
     '--coverage',
     resolve(report, 'coverage-final.json'),
     '--ext',
@@ -88,7 +92,9 @@ const check = spawnSync(
 )
 
 if (failing.length > 0) {
-  console.log('\nFailing tests (hold each against origin/master):')
+  console.log(
+    `\nFailing tests (hold each against ${process.env.TS_COVERAGE_BASE || 'origin/master'}):`
+  )
   for (const name of failing) console.log(`  - ${name}`)
 }
 if (coverage.status !== 0) process.exit(coverage.status ?? 1)

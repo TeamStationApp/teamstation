@@ -41,7 +41,7 @@ import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
-import { gameAvailability } from './rosterAvailability'
+import { type GameAvailability, gameAvailability } from './rosterAvailability'
 import { hasScoringEventsSql } from './scoringActivity'
 
 /** A switch and its lineup change commit together, serialized with scoring writes. */
@@ -74,7 +74,7 @@ export async function setRostered(
           throw badRequest('The player does not exist')
         throw error
       })
-    const availability = await gameAvailability(trx, game)
+    const availability = await gameAvailability(trx, game, { roster: true })
     const player = availability.roster[body.side].find(
       row => row.userId === userId && row.isPlayer
     )
@@ -154,7 +154,7 @@ async function applyAvailability(
   gameId: string,
   stored: Awaited<ReturnType<typeof resolveScoringGame>>,
   context: NonNullable<Awaited<ReturnType<typeof contextOf>>>,
-  availability: Awaited<ReturnType<typeof gameAvailability>>,
+  availability: GameAvailability<true>,
   unrostered: Unrostered
 ): Promise<void> {
   let failure: Error | undefined
@@ -246,7 +246,7 @@ export async function reconcileUnbegunLineup(
       return
     const context = await contextOf(trx, gameId, game, stored)
     if (context == null) return
-    const availability = await gameAvailability(trx, game)
+    const availability = await gameAvailability(trx, game, { roster: true })
     await applyAvailability(
       trx,
       gameId,
