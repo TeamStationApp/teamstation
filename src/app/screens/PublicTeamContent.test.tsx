@@ -111,6 +111,10 @@ describe('minimal public team information', () => {
     expect(document.querySelector('[role="button"], a, [tabindex="0"]')).equals(
       null
     )
+    await show('team', {
+      staff: [{ name: 'Mike T.', roles: ['coach'], isHeadCoach: true }]
+    })
+    expect(document.body.textContent).includes('Manager/Head Coach')
     await show('team', { staff: [] })
     expect(document.body.textContent).includes('No public staff listed')
     await show('videos', { games: [] })

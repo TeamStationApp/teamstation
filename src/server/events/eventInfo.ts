@@ -217,7 +217,7 @@ async function eventPeople(
     .execute()
   const staff = await db
     .selectFrom('scope_roles')
-    .select(['user_id', 'role'])
+    .select(['user_id', 'role', 'is_head_coach'])
     .where('scope_type', '=', 'team')
     .where('scope_id', '=', event.teamId)
     .execute()
@@ -258,8 +258,12 @@ async function eventPeople(
     if (member.role === 'owner' || member.role === 'manager')
       row.roles.add('admin')
   }
-  for (const member of staff)
-    participant((await identity(member.user_id)).userId).roles.add(member.role)
+  let headCoachId: string | undefined
+  for (const member of staff) {
+    const id = (await identity(member.user_id)).userId
+    participant(id).roles.add(member.role)
+    if (member.is_head_coach) headCoachId = id
+  }
   // Closed aliases are usable; disabled survivors are not rostered children.
   const playerIds = [...participants]
     .filter(([, row]) => row.isPlayer)
@@ -422,6 +426,7 @@ async function eventPeople(
           canReply: ownIds.has(user.id),
           isTeamParticipant: row != null,
           isPlayer: row?.isPlayer ?? false,
+          ...(user.id === headCoachId ? { isHeadCoach: true } : {}),
           staffRoles: ROLES.filter(role => row?.roles.has(role) === true),
           bats: user.bats,
           throws: user.throws,

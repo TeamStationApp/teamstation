@@ -9,6 +9,11 @@ export function adminLabel(scopeKind: 'league' | 'season' | 'team'): string {
 }
 
 /** `Coach`, `Assistant`, `Scorekeeper`, `Songkeeper`, `Videographer`. */
+export function positionLabel(flag: RoleFlag, isHeadCoach?: boolean): string {
+  return flag === 'coach' && isHeadCoach === true
+    ? lstrings.role_head_coach
+    : flagLabel(flag)
+}
 export function flagLabel(flag: RoleFlag): string {
   if (flag === 'coach') return lstrings.role_coach
   if (flag === 'assistant') return lstrings.role_assistant

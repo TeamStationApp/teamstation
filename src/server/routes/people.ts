@@ -12,6 +12,7 @@ import type { GroupRef } from '../../common/groupCreation'
 import { asRole, type Role, ROLE_FLAGS } from '../../common/roles'
 import { asUserId } from '../../common/userId'
 import { seesPeopleOf } from '../access'
+import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
@@ -42,7 +43,9 @@ import type { MediaContext } from '../media/mediaContext'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { noteScopeChange } from '../socket/syncRevision'
 import { personProfile } from '../teams/personProfile'
+import { teamHeadCoach } from '../teams/teamHeadCoach'
 import { levelPeople, onPeopleList } from '../teams/teamRoster'
 
 /**
@@ -126,16 +129,12 @@ export function peopleRoutes(
       const actor = await actorOf(req.actor)
       const ref = groupOf(req.params.scopeType, req.params.scopeId)
       const userId = userIdParam(req.params.userId)
-      const role = grantableParam(req.params.role)
-      await requirePeopleManager(db, actor, ref, role === 'admin')
-      if (!(await exists(db, userId))) throw notFound()
-      if (role !== 'member' && !(await canHoldRoles(db, userId)))
-        throw conflict(
-          'Only somebody who can sign in can hold a role. Add an email address to their account first.'
-        )
-      if (!(await onPeopleList(db, ref, userId, actor))) throw notFound()
+      const designation = req.params.role === 'headCoach' && ref.kind === 'team'
+      const role = designation ? 'coach' : grantableParam(req.params.role)
       const added = await atomic(db, async trx => {
         await lockKeys(trx, ['creation:parent-graph'])
+        await requirePeopleManager(trx, actor, ref, role === 'admin')
+        if (!(await onPeopleList(trx, ref, userId, actor))) throw notFound()
         await authorizePersonChange(
           trx,
           ref,
@@ -144,6 +143,10 @@ export function peopleRoutes(
           role === 'admin',
           role === 'admin' ? 'admin' : 'manager'
         )
+        if (role !== 'member' && !(await canHoldRoles(trx, userId)))
+          throw conflict(
+            'Only somebody who can sign in can hold a role. Add an email address to their account first.'
+          )
         if (role !== 'member')
           await refuseRoleWhileHeld(trx, ref, userId, actor.userId)
         const added = await grantAt(
@@ -153,6 +156,43 @@ export function peopleRoutes(
           role === 'member' ? ['member'] : [role, 'member'],
           actor.userId
         )
+        if (designation) {
+          const incumbent = await teamHeadCoach(trx, ref.id)
+          if (
+            incumbent?.userId !== userId &&
+            (req.body?.expectedHeadCoach ?? null) !==
+              (incumbent?.userId ?? null)
+          )
+            throw conflict(
+              'The team’s Manager/Head Coach changed. Refresh and confirm the replacement.'
+            )
+          if (incumbent != null && incumbent.grantUserId !== userId) {
+            await authorizePersonChange(
+              trx,
+              ref,
+              incumbent.userId,
+              actor.userId,
+              false,
+              'manager'
+            )
+            await trx
+              .updateTable('scope_roles')
+              .set({ is_head_coach: false })
+              .where('scope_id', '=', ref.id)
+              .where('is_head_coach', '=', true)
+              .execute()
+            noteScopeChange(trx, { userId: incumbent.userId, teamId: ref.id })
+          }
+          noteScopeChange(trx, { userId, teamId: ref.id })
+          await trx
+            .updateTable('scope_roles')
+            .set({ is_head_coach: true })
+            .where('scope_type', '=', 'team')
+            .where('scope_id', '=', ref.id)
+            .where('user_id', '=', userId)
+            .where('role', '=', 'coach')
+            .execute()
+        }
         const notificationId = await notifyGrant(trx, {
           ref,
           userId,
@@ -194,35 +234,59 @@ export function peopleRoutes(
       const actor = await actorOf(req.actor)
       const ref = groupOf(req.params.scopeType, req.params.scopeId)
       const userId = userIdParam(req.params.userId)
-      const role = grantableParam(req.params.role)
-      const before = await heldAt(db, ref, userId)
-      const touchesAdmin =
-        role === 'admin' ||
-        (role === 'member' && before.roles.includes('admin'))
-      await requirePeopleManager(db, actor, ref, touchesAdmin)
-      if (!(await exists(db, userId))) throw notFound()
-      const authority = touchesAdmin ? 'admin' : 'manager'
-      if (role === 'member')
-        await removeFromScope(
-          db,
-          ref.kind,
-          ref.id,
-          userId,
-          actor.userId,
-          authority,
-          true
-        )
-      else if (before.roles.includes(role))
-        await setScopeRoles(
-          db,
-          ref.kind,
-          ref.id,
-          userId,
-          without(before.roles, role),
-          actor.userId,
-          authority
-        )
-      const after = await heldAt(db, ref, userId)
+      const designation = req.params.role === 'headCoach' && ref.kind === 'team'
+      const role = designation ? 'coach' : grantableParam(req.params.role)
+      const { before, after } = await atomic(db, async trx => {
+        await lockKeys(trx, ['creation:parent-graph'])
+        const before = await heldAt(trx, ref, userId)
+        const touchesAdmin =
+          role === 'admin' ||
+          (role === 'member' && before.roles.includes('admin'))
+        await requirePeopleManager(trx, actor, ref, touchesAdmin)
+        if (!(await exists(trx, userId))) throw notFound()
+        const authority = touchesAdmin ? 'admin' : 'manager'
+        if (designation) {
+          if (!(await onPeopleList(trx, ref, userId, actor))) throw notFound()
+          await authorizePersonChange(
+            trx,
+            ref,
+            userId,
+            actor.userId,
+            false,
+            'manager'
+          )
+          await trx
+            .updateTable('scope_roles')
+            .set({ is_head_coach: false })
+            .where('scope_type', '=', 'team')
+            .where('scope_id', '=', ref.id)
+            .where('user_id', 'in', (await onePerson(trx, userId)).userIds)
+            .where('is_head_coach', '=', true)
+            .execute()
+          noteScopeChange(trx, { userId, teamId: ref.id })
+        } else if (role === 'member')
+          await removeFromScope(
+            trx,
+            ref.kind,
+            ref.id,
+            userId,
+            actor.userId,
+            authority,
+            true
+          )
+        else if (before.roles.includes(role))
+          await setScopeRoles(
+            trx,
+            ref.kind,
+            ref.id,
+            userId,
+            without(before.roles, role),
+            actor.userId,
+            authority
+          )
+        const after = await heldAt(trx, ref, userId)
+        return { before, after }
+      })
       setAudit(res.locals, {
         entityType: 'scopeRoles',
         entityId: userId,
@@ -277,18 +341,22 @@ export function peopleRoutes(
         throw badRequest('Choose one of your roles')
       }
       if (!(await groupExists(db, ref))) throw notFound()
-      const before = await heldAt(db, ref, actor.userId)
-      if (before.roles.includes(role))
-        await setScopeRoles(
-          db,
-          ref.kind,
-          ref.id,
-          actor.userId,
-          without(before.roles, role),
-          actor.userId,
-          'self'
-        )
-      const after = await heldAt(db, ref, actor.userId)
+      const { before, after } = await atomic(db, async trx => {
+        await lockKeys(trx, ['creation:parent-graph'])
+        const before = await heldAt(trx, ref, actor.userId)
+        if (before.roles.includes(role))
+          await setScopeRoles(
+            trx,
+            ref.kind,
+            ref.id,
+            actor.userId,
+            without(before.roles, role),
+            actor.userId,
+            'self'
+          )
+        const after = await heldAt(trx, ref, actor.userId)
+        return { before, after }
+      })
       setAudit(res.locals, {
         entityType: 'scopeRoles',
         entityId: actor.userId,

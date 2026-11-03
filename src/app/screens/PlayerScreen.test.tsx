@@ -1945,6 +1945,27 @@ describe('a player’s Team roles on Settings', function () {
     })
   }
 
+  it('reloads the player’s role switches after a competing manager assignment', async () => {
+    const calls: unknown[] = []
+    const client = rolesClient(true, calls)
+    client.addRole = async () => {
+      throw new HttpError('conflict', 'Manager changed')
+    }
+    await render(
+      <PlayerScreen
+        client={client}
+        userId={userIdOfGumbo(7)}
+        forTeam="t1"
+        initialTab="settings"
+        roles={coach}
+      />
+    )
+    await press('Manager/Head Coach')
+    expect(text()).includes('Manager changed')
+    expect(
+      calls.filter(c => Array.isArray(c) && c[0] === 'profile').length
+    ).equals(2)
+  })
   it('lists the team’s roles at the very bottom for a coach, with toggles, team level only', async function () {
     const asked: unknown[] = []
     await render(

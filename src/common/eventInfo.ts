@@ -302,6 +302,7 @@ const asAttendee = asObject({
 export interface EventAttendee extends ReturnType<typeof asAttendee> {
   isTeamParticipant?: boolean
   isPlayer?: boolean
+  isHeadCoach?: boolean
   staffRoles?: Role[]
   bats?: 'left' | 'right' | 'switch' | null
   throws?: 'left' | 'right' | null
@@ -314,6 +315,8 @@ export const asEventAttendee: Cleaner<EventAttendee> = raw => {
     if (raw.isTeamParticipant !== undefined)
       answer.isTeamParticipant = asBoolean(raw.isTeamParticipant)
     if (raw.isPlayer !== undefined) answer.isPlayer = asBoolean(raw.isPlayer)
+    if (raw.isHeadCoach !== undefined)
+      answer.isHeadCoach = asBoolean(raw.isHeadCoach)
     if (raw.staffRoles !== undefined)
       answer.staffRoles = asRoles(raw.staffRoles)
     if (raw.bats !== undefined)

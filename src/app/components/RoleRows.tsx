@@ -10,7 +10,7 @@ import { flagLabel } from './RolesModal'
 import { useConfirmedAction } from './useConfirmedAction'
 
 /** What a row of a person's roles can be given or lose. */
-export type RoleRowKind = Role | 'member'
+export type RoleRowKind = Role | 'member' | 'headCoach'
 
 export interface RoleRowsProps {
   section: ProfileSection
@@ -24,8 +24,9 @@ export interface RoleRowsProps {
    */
   player?: boolean
   busy?: boolean
-  onAdd: (role: RoleRowKind) => void
+  onAdd: (role: RoleRowKind, current?: () => boolean) => Promise<void> | void
   onRemove: (role: RoleRowKind, current?: () => boolean) => Promise<void> | void
+  userId?: string
   ownerLabel?: string
   ownerIdentity?: string
   owner?: unknown
@@ -33,7 +34,9 @@ export interface RoleRowsProps {
 
 /** `Admin`, `Coach`, … `Member`, `Follower`: one row each, in this order. */
 const ROWS: ReadonlyArray<RoleRowKind | 'follower'> = [
-  ...ROLES,
+  'admin',
+  'headCoach',
+  ...ROLES.filter(role => role !== 'admin'),
   'member',
   'follower'
 ]
@@ -66,7 +69,7 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
   const styles = getStyles(theme)
   const confirmation = useConfirmedAction(
     props.owner ?? props.section.level,
-    `${props.ownerIdentity ?? section.groups.map(g => g.id).join(',')}:${section.editable}:${viewer.manages}:${viewer.admin}:${section.roles.join(',')}:${section.member}`
+    `${props.ownerIdentity ?? section.groups.map(g => g.id).join(',')}:${section.editable}:${viewer.manages}:${viewer.admin}:${section.roles.join(',')}:${section.member}:${section.headCoach?.userId ?? ''}`
   )
   const holdsAdmin = section.roles.includes('admin')
   const implied = impliedRoles(section.roles)
@@ -74,14 +77,21 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
     <>
       <ListCard>
         {ROWS.map(row => {
+          if (row === 'headCoach' && section.level !== 'team') return null
           const held =
-            row === 'follower'
-              ? section.follower
-              : row === 'member'
-                ? section.member
-                : section.roles.includes(row)
+            row === 'headCoach'
+              ? section.headCoach != null &&
+                section.headCoach.userId === props.userId
+              : row === 'follower'
+                ? section.follower
+                : row === 'member'
+                  ? section.member
+                  : section.roles.includes(row)
           const impliedBy =
-            row === 'follower' || row === 'member' || row === 'admin'
+            row === 'follower' ||
+            row === 'member' ||
+            row === 'admin' ||
+            row === 'headCoach'
               ? undefined
               : implied.get(row)
           // Read as Player only while they are on the team; anybody else's
@@ -122,7 +132,17 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
                           await onRemove(row, current)
                         }
                       })
-                    else onAdd(row)
+                    else if (row === 'headCoach' && section.headCoach != null)
+                      confirmation.open({
+                        title: 'Replace Manager/Head Coach?',
+                        detail: `${props.ownerLabel ?? 'This person'} will replace ${section.headCoach.name}, who will remain a Coach.`,
+                        label: 'Replace',
+                        accessibilityLabel: 'Confirm replacement',
+                        run: async current => {
+                          await onAdd(row, current)
+                        }
+                      })
+                    else Promise.resolve(onAdd(row)).catch(() => undefined)
                   }}
                 />
               ) : (
@@ -229,6 +249,7 @@ const THUMB_CREAM = '#FBF6E9'
 const TOGGLE_SLOP = 8
 
 function labelOf(row: RoleRowKind | 'follower'): string {
+  if (row === 'headCoach') return lstrings.role_head_coach
   if (row === 'admin') return lstrings.profile_admin
   if (row === 'member') return lstrings.profile_member
   if (row === 'follower') return lstrings.profile_follower

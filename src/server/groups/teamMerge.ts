@@ -77,12 +77,35 @@ export async function mergeParents(
     for (const role of roles)
       await db
         .insertInto('scope_roles')
-        .values({ ...role, id: makeId('scopeRole'), scope_id: intoId })
+        .values({
+          ...role,
+          id: makeId('scopeRole'),
+          scope_id: intoId,
+          is_head_coach: false
+        })
         .onConflict(oc =>
           oc.columns(['user_id', 'scope_type', 'scope_id', 'role']).doNothing()
         )
         .execute()
   }
+  const managers = await db
+    .selectFrom('scope_roles')
+    .select(['scope_id', 'user_id'])
+    .where('scope_id', 'in', [fromId, intoId])
+    .where('is_head_coach', '=', true)
+    .execute()
+  const [source] = managers
+  // A placeholder grants no rights to the destination. It can pass its
+  // designation to someone already coaching there if the position is vacant.
+  if (managers.length === 1 && source.scope_id === fromId)
+    await db
+      .updateTable('scope_roles')
+      .set({ is_head_coach: true })
+      .where('scope_type', '=', 'team')
+      .where('scope_id', '=', intoId)
+      .where('role', '=', 'coach')
+      .where('user_id', '=', source.user_id)
+      .execute()
   await db
     .deleteFrom('scope_roles')
     .where('scope_type', '=', 'team')

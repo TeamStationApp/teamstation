@@ -143,15 +143,53 @@ const appSuites = [
   'src/app/components/pillGeometry.test.tsx'
 ]
 
+if (process.env.TS_MANAGER_COACH_COVERAGE === '1') {
+  tsSuites.splice(
+    0,
+    tsSuites.length,
+    'src/migrate/runner.test.ts',
+    'src/server/routes/people.test.ts',
+    'src/server/routes/follows.test.ts',
+    'src/server/teams/teamHeadCoach.test.ts',
+    'src/server/admin/people.test.ts',
+    'src/server/graphql/graphql.test.ts',
+    'src/server/groups/publicSummary.test.ts',
+    'src/server/routes/manage.test.ts',
+    'src/server/groups/teamMerge.test.ts',
+    'src/server/teams/teamRoster.test.ts',
+    'src/server/events/eventInfo.test.ts',
+    'src/server/routes/schedulingSetup.test.ts',
+    'src/server/routes/schedulePreviews.test.ts',
+    'src/server/autoScheduler/*.test.ts',
+    'src/server/openapi.test.ts',
+    'src/common/autoScheduler/*.test.ts',
+    'src/common/api.test.ts'
+  )
+  appSuites.splice(
+    0,
+    appSuites.length,
+    'src/app/screens/PersonProfileScreen.test.tsx',
+    'src/app/screens/PublicTeamContent.test.tsx',
+    'src/app/screens/PlayerScreen.test.tsx',
+    'src/app/screens/TeamScreen.test.tsx',
+    'src/app/screens/eventAttendance.test.tsx',
+    'src/app/screens/AutoSchedulerScreen.test.tsx'
+  )
+}
+
 const base = process.env.TS_COVERAGE_BASE
 if (base == null)
   throw new Error('Set TS_COVERAGE_BASE to the branch base (git merge-base)')
-const report = resolve('coverage/autoScheduler')
-const temp = resolve(report, 'tmp')
-rmSync(resolve(report, 'tmp'), { recursive: true, force: true })
+const manager = process.env.TS_MANAGER_COACH_COVERAGE === '1'
+const reuseUnitRuns = manager && process.argv.includes('--reuse-unit')
+const report = resolve(manager ? 'coverage/manager' : 'coverage/autoScheduler')
+const temp = resolve(report, reuseUnitRuns ? 'e2e-tmp' : 'tmp')
+rmSync(temp, { recursive: true, force: true })
 rmSync(resolve(report, 'coverage-final.json'), { force: true })
 mkdirSync(temp, { recursive: true })
-const bundles = resolve('lib/autoScheduler-tests')
+const bundles = resolve(
+  manager ? 'lib/manager-coach-tests' : 'lib/autoScheduler-tests'
+)
 rmSync(bundles, { recursive: true, force: true })
 mkdirSync(bundles, { recursive: true })
 
@@ -209,79 +247,86 @@ const added = lines(git(['diff', '--name-only', '--diff-filter=A', base]))
 const untracked = lines(git(['ls-files', '--others', '--exclude-standard']))
 const paths = [...new Set([...changed, ...untracked])].filter(eligible).sort()
 
-for (const [index, suite] of appSuites.entries()) {
-  await build({
-    ...webSettings,
-    alias: {
-      ...webSettings.alias,
-      'react-native-webview': './src/test/eventWebViewStub.tsx',
-      'react-native-maps': './src/test/eventNativeMapStub.tsx',
-      '@react-native-clipboard/clipboard': './src/test/eventClipboardStub.ts',
-      '@react-native-community/geolocation': './src/test/geolocationStub.ts',
-      '@react-native/assets-registry/registry':
-        'react-native-web/dist/modules/AssetRegistry'
-    },
-    stdin: {
-      contents: `import './${suite}'`,
-      resolveDir: process.cwd(),
-      sourcefile: `auto-scheduler-test-${index}.ts`
-    },
-    outfile: resolve(bundles, `${index}.cjs`),
-    bundle: true,
-    platform: 'node',
-    format: 'cjs',
-    sourcemap: true,
-    jsx: 'automatic',
-    external: [
-      'react',
-      'react-dom',
-      'three',
-      '@react-three/fiber',
-      '@react-three/test-renderer',
-      'jsdom',
-      'mocha',
-      'chai'
-    ],
-    define: {
-      __DEV__: 'true',
-      TS_API_BASE_URL: JSON.stringify('/api/v1'),
-      'process.env.TS_SENTRY_DSN': JSON.stringify(''),
-      'process.env.NODE_ENV': JSON.stringify('test')
-    },
-    loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
-  })
-}
+if (!reuseUnitRuns) {
+  for (const [index, suite] of appSuites.entries()) {
+    await build({
+      ...webSettings,
+      alias: {
+        ...webSettings.alias,
+        'react-native-webview': './src/test/eventWebViewStub.tsx',
+        'react-native-maps': './src/test/eventNativeMapStub.tsx',
+        '@react-native-clipboard/clipboard': './src/test/eventClipboardStub.ts',
+        '@react-native-community/geolocation': './src/test/geolocationStub.ts',
+        '@react-native/assets-registry/registry':
+          'react-native-web/dist/modules/AssetRegistry'
+      },
+      stdin: {
+        contents: `import './${suite}'`,
+        resolveDir: process.cwd(),
+        sourcefile: `auto-scheduler-test-${index}.ts`
+      },
+      outfile: resolve(bundles, `${index}.cjs`),
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      sourcemap: true,
+      jsx: 'automatic',
+      external: [
+        'react',
+        'react-dom',
+        'three',
+        '@react-three/fiber',
+        '@react-three/test-renderer',
+        'jsdom',
+        'mocha',
+        'chai'
+      ],
+      define: {
+        __DEV__: 'true',
+        TS_API_BASE_URL: JSON.stringify('/api/v1'),
+        'process.env.TS_SENTRY_DSN': JSON.stringify(''),
+        'process.env.NODE_ENV': JSON.stringify('test')
+      },
+      loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
+    })
+  }
 
-const mocha = 'node_modules/.bin/mocha'
-const setup = ['-r', 'sucrase/register', '-r', './src/test/scoringDomSetup.cjs']
-run(
-  mocha,
-  [
-    ...setup,
-    '--timeout',
-    '60000',
-    '--extension',
-    'ts',
-    '--exit',
-    ...tsSuites.flatMap(spec => ['--spec', spec])
-  ],
-  { NODE_V8_COVERAGE: temp }
-)
-for (const [index, suite] of appSuites.entries()) {
-  console.log(`\n${suite}`)
+  const mocha = 'node_modules/.bin/mocha'
+  const setup = [
+    '-r',
+    'sucrase/register',
+    '-r',
+    './src/test/scoringDomSetup.cjs'
+  ]
   run(
     mocha,
     [
       ...setup,
       '--timeout',
       '60000',
+      '--extension',
+      'ts',
       '--exit',
-      resolve(bundles, `${index}.cjs`)
+      ...tsSuites.flatMap(spec => ['--spec', spec])
     ],
-    {
-      NODE_V8_COVERAGE: temp
-    }
+    { NODE_V8_COVERAGE: temp }
   )
+  for (const [index, suite] of appSuites.entries()) {
+    console.log(`\n${suite}`)
+    run(
+      mocha,
+      [
+        ...setup,
+        '--timeout',
+        '60000',
+        '--exit',
+        resolve(bundles, `${index}.cjs`)
+      ],
+      {
+        NODE_V8_COVERAGE: temp
+      }
+    )
+  }
 }
 
 // The end-to-end server's counters join the unit ones before the report.
@@ -327,6 +372,13 @@ if (paths.length > 0) {
   map = createCoverageMap(
     JSON.parse(readFileSync(resolve(report, 'coverage-final.json'), 'utf8'))
   )
+}
+if (reuseUnitRuns) {
+  const unit = createCoverageMap(
+    JSON.parse(readFileSync(resolve(report, 'unit.json'), 'utf8'))
+  )
+  unit.merge(map)
+  map = unit
 }
 const browserCoverage = process.env.TS_AUTO_SCHEDULER_BROWSER_COVERAGE
 if (!unitOnly && browserCoverage != null)

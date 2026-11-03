@@ -854,6 +854,7 @@ const roleParam = {
     type: 'string',
     enum: [
       'admin',
+      'headCoach',
       'coach',
       'assistant',
       'scorekeeper',
@@ -2643,6 +2644,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'the team, its season or its league), `follower` (follows ' +
                 'the team, or a team merged into it).'
             },
+            isHeadCoach: {
+              type: 'boolean',
+              description:
+                'This person is the designated Manager/Head Coach on this team.'
+            },
             staffRoles: {
               type: 'array',
               items: { $ref: '#/components/schemas/RoleFlag' },
@@ -2797,6 +2803,16 @@ export function openApiDocument(version: string): OpenApiDocument {
                   roles: {
                     type: 'array',
                     items: { $ref: '#/components/schemas/Role' }
+                  },
+                  headCoach: {
+                    type: 'object',
+                    description:
+                      'The team’s current Manager/Head Coach, included when the viewer manages its people or the profile belongs to that coach.',
+                    required: ['userId', 'name'],
+                    properties: {
+                      userId: userIdSchema,
+                      name: { type: 'string' }
+                    }
                   },
                   member: { type: 'boolean' },
                   follower: { type: 'boolean' },
@@ -6803,7 +6819,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'with a direct `admin`, `coach`, `assistant`, `scorekeeper` or `songkeeper` ' +
             'role on the team, and its owners and managers as `admin`; ' +
             'roles on its season or league do not count. Each is ' +
-            '`{userId, shortName, avatarUrl, roles}`, administrators first.',
+            '`{userId, shortName, avatarUrl, roles, isHeadCoach?}`, administrators first. isHeadCoach marks the designated team Manager/Head Coach.',
           security: [{ bearer: [] }],
           parameters: [teamIdParam],
           responses: {
@@ -8946,7 +8962,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         put: {
           summary: 'Give one role at this level, or its membership, at once',
           description:
-            '`role` is `admin`, a flag, or `member`. A role brings the ' +
+            '`headCoach` designates a Coach on a team only. Other roles are admin, a flag, or member. A role brings the ' +
             'level\u2019s membership with it. Nothing waits for acceptance: ' +
             'the person is told in their inbox, and mailed when they were ' +
             'not in the level before. Its administrators, coaches and ' +
@@ -8955,6 +8971,22 @@ export function openApiDocument(version: string): OpenApiDocument {
             'gets 404. A role needs an account that signs in (409).',
           security: [{ bearer: [] }],
           parameters: [scopeTypeParam, scopeIdParam, userIdParam, roleParam],
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    expectedHeadCoach: {
+                      type: 'string',
+                      description:
+                        'For team headCoach replacement, the confirmed incumbent’s user ID. A mismatch returns 409.'
+                    }
+                  }
+                }
+              }
+            }
+          },
           responses: {
             200: heldAtResponse,
             400: errorResponse,

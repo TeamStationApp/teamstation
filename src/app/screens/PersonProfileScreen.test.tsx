@@ -88,7 +88,11 @@ interface Calls {
 
 async function render(
   answers: Array<PersonProfile | Error>,
-  options: { kind?: 'team' | 'season' | 'league'; failChange?: boolean } = {}
+  options: {
+    kind?: 'team' | 'season' | 'league'
+    failChange?: boolean
+    staleManager?: boolean
+  } = {}
 ): Promise<Calls> {
   const calls: Calls = { changes: [], players: [], loads: 0 }
   const kind = options.kind ?? 'team'
@@ -106,6 +110,8 @@ async function render(
     },
     addRole: async (k: string, id: string, userId: string, role: string) => {
       calls.changes.push(['add', k, id, userId, role])
+      if (options.staleManager === true)
+        throw new HttpError('conflict', 'Manager changed')
       if (options.failChange === true)
         throw new HttpError('forbidden', 'Only an administrator can')
       return { userId, roles: [], member: true }
@@ -239,6 +245,39 @@ describe('the person profile', function () {
     ])
     // Each change reads the profile again.
     expect(calls.loads).equals(3)
+  })
+
+  it('refreshes the incumbent when another manager has changed it', async () => {
+    const calls = await render([profile()], { staleManager: true })
+    await click(buttonIn(rowOf('team', 'headCoach'))!)
+    expect(calls.loads).equals(2)
+    expect(text()).includes('Manager changed')
+  })
+  it('asks before replacing the team head coach and keeps cancellation local', async () => {
+    const calls = await render([
+      profile({
+        sections: [
+          section('team', {
+            editable: true,
+            headCoach: { userId: userIdOfGumbo(202), name: 'Alex Young' }
+          })
+        ]
+      })
+    ])
+    const toggle = buttonIn(rowOf('team', 'headCoach'))!
+    await click(toggle)
+    expect(text()).includes('Alex Young')
+    await click(
+      document.querySelector<HTMLElement>('[aria-label="Cancel confirmation"]')!
+    )
+    expect(calls.changes).length(0)
+    await click(toggle)
+    await click(
+      document.querySelector<HTMLElement>('[aria-label="Confirm replacement"]')!
+    )
+    expect(calls.changes).deep.equals([
+      ['add', 'team', 'grp_one', userIdOfGumbo(203), 'headCoach']
+    ])
   })
 
   it('keeps Admin, and an administrator’s membership, from a coach or assistant', async function () {

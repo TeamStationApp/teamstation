@@ -250,6 +250,7 @@ export interface TeamFollowsTable {
 
 /** One role for one person on one league, season or team (043roleFlags). */
 export interface ScopeRolesTable {
+  is_head_coach: Generated<boolean>
   id: string
   user_id: string
   scope_type: 'league' | 'season' | 'team'

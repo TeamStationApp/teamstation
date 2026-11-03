@@ -247,6 +247,120 @@ describe('parent-safe team identity merging', function () {
     ).deep.equals([{ user_id: userIdOfGumbo(101) }])
     await rejects(mergeParents(f.h.db, f.teamA, into), 'conflict')
   })
+  for (const occupied of [true, false]) {
+    it(`merges manager designations into a ${occupied ? 'managed' : 'vacant'} team`, async () => {
+      const made = await f.h.request(
+        'POST',
+        '/teams',
+        {
+          name: 'Demo Combined',
+          locality: demoLocality,
+          parent: { kind: 'season', id: f.seasonA },
+          idempotencyKey: 'manager-merge'
+        },
+        101
+      )
+      const into = ((await made.json()) as { id: string }).id
+      await f.h.db
+        .insertInto('scope_roles')
+        .values([
+          {
+            id: 'sourceCoach',
+            scope_type: 'team',
+            scope_id: f.teamA,
+            role: 'coach',
+            user_id: userIdOfGumbo(103),
+            is_head_coach: true
+          },
+          {
+            id: 'existingCoach',
+            scope_type: 'team',
+            scope_id: into,
+            role: 'coach',
+            user_id: userIdOfGumbo(103),
+            is_head_coach: false
+          },
+          {
+            id: 'destinationCoach',
+            scope_type: 'team',
+            scope_id: into,
+            role: 'coach',
+            user_id: userIdOfGumbo(104),
+            is_head_coach: occupied
+          }
+        ])
+        .execute()
+      await mergeTeams(f.h.db, {
+        fromTeamId: f.teamA,
+        intoTeamId: into,
+        apply: true
+      })
+      const coaches = await f.h.db
+        .selectFrom('scope_roles')
+        .select(['user_id', 'is_head_coach'])
+        .where('role', '=', 'coach')
+        .where('scope_id', '=', into)
+        .execute()
+      expect(coaches.length).equals(2)
+      expect(
+        coaches.filter(c => c.is_head_coach).map(c => c.user_id)
+      ).deep.equals([userIdOfGumbo(occupied ? 104 : 103)])
+    })
+  }
+  for (const destinationCoach of [true, false]) {
+    it(`retains a placeholder's manager designation only on an existing Coach grant: ${destinationCoach}`, async () => {
+      const stub = 'managerPlaceholder'
+      const userId = userIdOfGumbo(103)
+      await f.h.db
+        .insertInto('teams')
+        .values({
+          id: stub,
+          name: 'Demo Placeholder',
+          kind: 'external',
+          custodian_type: 'season',
+          custodian_id: f.seasonB
+        })
+        .execute()
+      const teams = destinationCoach ? [stub, f.teamA] : [stub]
+      await f.h.db
+        .insertInto('scope_roles')
+        .values(
+          teams.map(team => ({
+            id: `role_${team}`,
+            user_id: userId,
+            scope_type: 'team' as const,
+            scope_id: team,
+            role: 'coach' as const
+          }))
+        )
+        .execute()
+      expect(
+        (
+          await f.h.request(
+            'PUT',
+            `/manage/team/${stub}/people/${userId}/roles/headCoach`,
+            {},
+            102
+          )
+        ).status
+      ).equals(200)
+      await mergeTeams(f.h.db, {
+        fromTeamId: stub,
+        intoTeamId: f.teamA,
+        apply: true
+      })
+      const rows = await f.h.db
+        .selectFrom('scope_roles')
+        .select('is_head_coach')
+        .where('scope_id', '=', f.teamA)
+        .where('user_id', '=', userId)
+        .where('role', '=', 'coach')
+        .execute()
+      expect(rows).deep.equals(
+        destinationCoach ? [{ is_head_coach: true }] : []
+      )
+    })
+  }
   it('keeps the full team lineage when an external duplicate is resolved and closes old placeholder requests', async () => {
     await f.h.db
       .insertInto('teams')

@@ -1,5 +1,5 @@
 import type { EventAttendee, RsvpChoice } from '../../common/eventInfo'
-import { flagLabel } from '../components/RolesModal'
+import { positionLabel } from '../components/roleLabels'
 
 export function attendanceSections(
   attendees: EventAttendee[]
@@ -47,7 +47,7 @@ export function attendanceSubtitle(
   staffOnly = false
 ): string {
   const roles = (row.staffRoles ?? []).map(role =>
-    role === 'admin' ? 'Admin' : flagLabel(role)
+    role === 'admin' ? 'Admin' : positionLabel(role, row.isHeadCoach)
   )
   if (staffOnly) return roles.join(' · ')
   if (row.isPlayer === true) {

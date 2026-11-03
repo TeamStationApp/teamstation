@@ -11,6 +11,7 @@ import type { Database } from '../db/database'
 import { directAdminIds, requireDirectAdmin } from '../groups/adminGuard'
 import { assertMergeScoringSafe } from '../scoring/mergeConflicts'
 import { noteScopeChange } from '../socket/syncRevision'
+import { rowsOfPeople } from '../teams/teamStaff'
 import { ensureGumboId } from '../users/insertUser'
 import { survivorsOf, UnresolvedAccount } from '../users/survivors'
 
@@ -284,6 +285,45 @@ export async function closeInto(
       .executeTakeFirst()
     if (inherited != null) await ensureGumboId(trx, final)
     const moved = await moveAndClose(trx, closing, keeping)
+    // Ordinary role grants stay on the account that held them. Carry the
+    // designation only where the surviving account already coaches the team.
+    // Redirecting an alias moves its descendants, while its previous survivor stays open.
+    const movedUsers =
+      user?.merged_into == null
+        ? closingIds
+        : await rowsOfPeople(trx, [closing])
+    const designated = await trx
+      .updateTable('scope_roles')
+      .set({ is_head_coach: false })
+      .where('user_id', 'in', movedUsers)
+      .where('is_head_coach', '=', true)
+      .returning('scope_id')
+      .execute()
+    if (designated.length > 0) {
+      await trx
+        .updateTable('scope_roles')
+        .set({ is_head_coach: true })
+        .where('scope_type', '=', 'team')
+        .where(
+          'scope_id',
+          'in',
+          designated.map(row => row.scope_id)
+        )
+        .where('role', '=', 'coach')
+        .where(
+          'user_id',
+          'in',
+          trx
+            .selectFrom('users')
+            .select('id')
+            .where('id', '=', final)
+            .where('disabled_at', 'is', null)
+            .where('login_enabled', '=', true)
+        )
+        .execute()
+      for (const row of designated)
+        noteScopeChange(trx, { teamId: row.scope_id })
+    }
     for (const ref of refs) await requireDirectAdmin(trx, ref)
     if (
       active &&

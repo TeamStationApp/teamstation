@@ -167,6 +167,7 @@ export function PublicTeamContent({
                   person={{
                     shortName: person.name,
                     section,
+                    isHeadCoach: person.isHeadCoach,
                     staffRoles: ROLE_FLAGS.filter(role =>
                       person.roles.includes(role)
                     ),

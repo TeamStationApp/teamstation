@@ -479,6 +479,7 @@ const RosterEntryType: GraphQLObjectType = new GraphQLObjectType({
     isPlayer: from(GraphQLBoolean),
     jersey: from(GraphQLString),
     positions: from(new GraphQLList(GraphQLString)),
+    isHeadCoach: from(GraphQLBoolean),
     staffRoles: from(new GraphQLList(GraphQLString))
   })
 })
