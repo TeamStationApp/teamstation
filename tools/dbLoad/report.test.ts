@@ -323,5 +323,13 @@ describe('the load report', function () {
     expect(short.postsDuring).equals(1)
     expect(short.postP95DuringMs).equals(20)
     expect(long.postP95DuringMs).equals(30)
+    // A post that waited out the whole event ends after it, and counts.
+    const [held] = eventFigures(
+      [{ event: 'teamMerge', startedAt: 100_000, ms: 40_000 }],
+      [41_000, 10],
+      [141_500, 150_000]
+    )
+    expect(held.postsDuring).equals(1)
+    expect(held.postP95DuringMs).equals(41_000)
   })
 })

@@ -31,6 +31,7 @@ import {
 } from '../access'
 import { lockPlayerEdits, onePerson } from '../admin/people'
 import type { ValkeyCache } from '../cache/valkeyCache'
+import { lockTeams } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import {
@@ -797,6 +798,7 @@ export function playerRoutes(
       const userId = userIdParam(req.params.userId)
       const { place, body } = await db.transaction().execute(async trx => {
         await lockPlayerEdits(trx)
+        await lockTeams(trx, [teamId])
         if (!(await mayManagePlayer(trx, actor, userId, teamId)))
           throw notFound()
         const place = await trx

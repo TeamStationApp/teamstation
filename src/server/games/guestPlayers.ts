@@ -14,6 +14,7 @@ import { listsByTeam, teamsOfRow } from '../../common/teamLists'
 import { canManageRoster, canScore, lineupTeams, roleScopes } from '../access'
 import { lockPlayerEdits } from '../admin/people'
 import type { Actor } from '../auth/sessions'
+import { lockGameTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, GamesTable } from '../db/database'
 import { lockPlayerAdds } from '../groups/noticePolicy'
@@ -84,6 +85,7 @@ export async function createGuestPlayer(
 ): Promise<RosterEntry> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockGameTeams(trx, gameId)
     const { game } = await guestGate(trx, actor, gameId, side, expectedTeamId)
     const fullName = [player.firstName, player.lastName]
       .filter(Boolean)
@@ -175,6 +177,7 @@ export async function renameGuestPlayer(
 ): Promise<GuestRenamed> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockGameTeams(trx, gameId)
     const game = await trx
       .selectFrom('games')
       .select(['home_team_id', 'away_team_id', 'guests'])
@@ -305,6 +308,7 @@ export async function addExistingGuest(
 ): Promise<ExistingGuest> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockGameTeams(trx, gameId)
     const { game, teamId } = await guestGate(
       trx,
       actor,

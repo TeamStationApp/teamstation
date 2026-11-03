@@ -33,6 +33,7 @@ import {
 } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { ValkeyCache } from '../cache/valkeyCache'
+import { lockGameTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
@@ -56,6 +57,7 @@ export async function setRostered(
 ): Promise<Unrostered> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockGameTeams(trx, gameId)
     const game = await trx
       .selectFrom('games')
       .selectAll()

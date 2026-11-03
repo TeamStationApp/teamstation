@@ -387,8 +387,10 @@ export const MERGE_LOCK = 'users.closeInto'
 
 /**
  * Roster writers take this before reading identities or locking any rows.
- * They may run together, but a merge must finish moving a person's rows
- * before another writer chooses their surviving account and membership.
+ * They may run together, but a person merge (`closeInto`) must finish moving
+ * a person's rows before another writer chooses their surviving account and
+ * membership. A team merge takes its own two teams' keys instead
+ * (`lockTeams`, `lockGameTeams`), which these writers take next.
  */
 export async function lockPlayerEdits(
   trx: Transaction<Database>

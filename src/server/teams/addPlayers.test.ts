@@ -12,6 +12,7 @@ import {
   type TeamPlayersResponse
 } from '../../common/teamMembers'
 import { scratchDatabase } from '../../test/scoreboardKit'
+import { mergeTeams } from '../admin/mergeTeams'
 import type { Database } from '../db/database'
 import { postGamePlays } from '../events/postPlays'
 import { insertUser } from '../users/insertUser'
@@ -239,6 +240,69 @@ describe('a team’s import of a full roster of new players', function () {
       one.release()
       two.release()
       await Promise.allSettled([one.done, two.done])
+    }
+  })
+
+  it('and a merge of two other teams wait for neither', async () => {
+    const teamA = await team('Import Beside Merge')
+    const from = await team('Merge From')
+    const into = await team('Merge Into')
+    await member(from, await person('On From'))
+    await member(into, await person('On Into'))
+    const gameOfFrom = await game(from, await team('Merge Opponent'))
+    // A play for the merge to move, where it is held below.
+    await db
+      .insertInto('events')
+      .values({
+        id: makeId('event'),
+        gameId: gameOfFrom,
+        battingTeamId: from,
+        source: 'external',
+        gumbo: onePlay('Before').plays[0]
+      })
+      .execute()
+    const imported = heldImport(teamA, TEAM_MEMBERS_MAX)
+    let release = (): void => {}
+    let reached = (): void => {}
+    const barrier = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const paused = new Promise<void>(resolve => {
+      reached = resolve
+    })
+    const updates = new Set<unknown>()
+    let merge: Promise<unknown> | undefined
+    try {
+      await within(imported.paused, 60_000)
+      // The merge moves both teams' memberships while the import is open,
+      // and is held after them, at its plays.
+      merge = mergeTeams(
+        db.withPlugin({
+          transformQuery(args) {
+            if (JSON.stringify(args.node).includes('update events set'))
+              updates.add(args.queryId)
+            return args.node
+          },
+          async transformResult(args) {
+            if (updates.has(args.queryId)) {
+              reached()
+              await barrier
+            }
+            return args.result
+          }
+        }),
+        { fromTeamId: from, intoTeamId: into, apply: true }
+      )
+      merge.catch(() => undefined)
+      await within(paused)
+      imported.release()
+      created(await within(imported.done, 60_000))
+      release()
+      expect(await within(merge)).includes({ applied: true })
+    } finally {
+      imported.release()
+      release()
+      await Promise.allSettled([imported.done, merge])
     }
   })
 })

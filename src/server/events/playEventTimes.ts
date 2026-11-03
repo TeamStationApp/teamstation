@@ -10,6 +10,7 @@ import {
   withoutNames
 } from '../../common/scoring/storedNames'
 import { lockPlayerEdits } from '../admin/people'
+import { lockGameTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
@@ -119,6 +120,7 @@ export async function addPlayEvents(
     throw badRequest('Two plays share an atBatIndex')
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockGameTeams(trx, gameId)
     const game = await trx
       .selectFrom('games')
       .select([

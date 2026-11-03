@@ -5,7 +5,7 @@ import {
   type PlayerNamePrivacy
 } from '../../common/playerNamePrivacy'
 import { settledTeams } from '../access'
-import { lockKeys } from '../db/advisoryLocks'
+import { lockKeys, teamKey } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
@@ -358,14 +358,23 @@ export async function mergeTeams(
   // `atomic`: its last statements tell the screens of both teams and of
   // every game moved, from the clock this transaction bumps.
   await atomic(db, async trx => {
+    // The two teams' keys, exclusively: their roster and game writers take
+    // them shared before any row, so they wait for this merge, and writers
+    // of every other team do not.
     await lockKeys(trx, [
       'creation:parent-graph',
       `group:team:${fromTeamId}`,
       `group:team:${intoTeamId}`,
-      // Player imports lock users before memberships; the allocation trigger
-      // does the reverse here. Finish those writers before moving their rows.
-      'users.closeInto'
+      teamKey(fromTeamId),
+      teamKey(intoTeamId)
     ])
+    // Both teams' people before any membership, in id order, as the
+    // membership allocation trigger (`ts_ensure_gumbo_id`) and the player
+    // imports lock them: a writer of another team holding one of them
+    // finishes first, and none waits on a membership this merge holds.
+    await sql`select id from users where id in (
+        select user_id from memberships where team_id in (${fromTeamId}, ${intoTeamId})
+      ) order by id for no key update`.execute(trx)
     // Again under the teams' locks: a game between them may have been
     // scheduled since the report.
     await refuseGamesBetween(trx, from, into)
@@ -538,12 +547,14 @@ export async function mergeTeams(
 
     // `memberships` and `season_teams` can now hold the same person or team
     // twice, and both have a unique constraint, so the duplicates go rather
-    // than being left to fail the next insert. Plain SQL: a delete keyed on a
+    // than being left to fail the next insert. Only the kept team gained
+    // rows, so only its rows are looked at. Plain SQL: a delete keyed on a
     // grouped minimum reads far better this way round than through the
     // builder, and it is the same statement either way.
     await sql`
-      delete from memberships where id not in (
-        select min(id) from memberships group by user_id, team_id
+      delete from memberships where team_id = ${intoTeamId} and id not in (
+        select min(id) from memberships where team_id = ${intoTeamId}
+        group by user_id
       )
     `.execute(trx)
     // A fan of the closed team follows the survivor: one row each, so a
