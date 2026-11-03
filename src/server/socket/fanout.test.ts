@@ -13,6 +13,7 @@ import { Client, Pool } from 'pg'
 import type { GameChange, PlayEditsData } from '../../common/gameSocket'
 import { asPostEventsBody, type GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
+import * as storedNames from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -21,14 +22,22 @@ import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { silentValkey, untilAsked } from '../../test/silentValkey'
 import type { GameScope } from '../access'
+import { createSession } from '../auth/sessions'
 import { makeValkeyCache, type ValkeyCache } from '../cache/valkeyCache'
 import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
 import { type Database, makeDatabase } from '../db/database'
 import { playsDigest, postGamePlays, readPlays } from '../events/postPlays'
+import { lineupsRead } from '../events/teamLineups'
 import { readWalkUpSong } from '../routes/walkUpSongs'
+import * as openRow from '../scoring/openRow'
 import { gameNamesDigest } from '../users/nameBook'
-import { type FanoutSubscriber, GameFanout } from './fanout'
+import {
+  type FanoutAuthorize,
+  type FanoutSubscriber,
+  GameFanout
+} from './fanout'
 import { asGameChangePayload, GAME_CHANGES_CHANNEL } from './gameChanges'
+import { authorizeSubscribers } from './gameSocket'
 
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_fanout_${Date.now()}_${process.pid}`
@@ -992,6 +1001,238 @@ describe('the game socket fan-out (U15)', function () {
       }
     })
 
+    /** M6: the delivery holds the game row only while it authorizes. */
+    describe('hold the game row only while they are authorized', function () {
+      const viewerId = userIdOfGumbo(first.userId)
+      const membership = makeId('membership')
+      let token = ''
+      /** The socket's own authorization, on the delivery's connection. */
+      const authorize: FanoutAuthorize = async (subscribers, game, source) =>
+        await authorizeSubscribers(subscribers, game, source, log)
+      /**
+       * A database whose `commit` waits for `release`, so a transaction is
+       * held open with everything before its commit done.
+       */
+      const heldAtCommit = (): {
+        db: Kysely<Database>
+        committing: () => boolean
+        release: () => void
+      } => {
+        let release: () => void = () => undefined
+        const released = new Promise<void>(resolve => {
+          release = resolve
+        })
+        let committing = false
+        const pool = new Pool({ connectionString: scratchUrl })
+        pool.on('connect', client => {
+          const query = client.query.bind(client) as (
+            ...args: unknown[]
+          ) => unknown
+          ;(client as unknown as { query: typeof query }).query = (
+            ...args: unknown[]
+          ) => {
+            if (args[0] !== 'commit') return query(...args)
+            committing = true
+            return released.then(() => query(...args))
+          }
+        })
+        return {
+          db: new Kysely<Database>({ dialect: new PostgresDialect({ pool }) }),
+          committing: () => committing,
+          release
+        }
+      }
+      const log = (message: string): void => {
+        logs.push(message)
+      }
+      const viewer = (): FanoutSubscriber & { sent: GameChange[] } => {
+        const sent: GameChange[] = []
+        return {
+          sent,
+          send: message => {
+            sent.push(message)
+          },
+          token,
+          userId: viewerId,
+          signedOut: () => undefined,
+          resync: () => undefined
+        }
+      }
+      /** The statements a transaction ran, after its `begin`, to its `commit`. */
+      const inTransaction = (statements: string[]): string[] => {
+        const begun = statements.indexOf('begin')
+        const committed = statements.indexOf('commit')
+        expect(begun).above(-1)
+        expect(committed).above(begun)
+        return statements.slice(begun + 1, committed)
+      }
+      /** What the authorization alone runs for one viewer of `id`. */
+      const authorizing = async (id: string): Promise<string[]> => {
+        const { db: loggedDb, statements } = logged()
+        try {
+          const game = await loggedDb
+            .selectFrom('games')
+            .selectAll()
+            .where('id', '=', id)
+            .executeTakeFirstOrThrow()
+          statements.length = 0
+          const seeing = await authorizeSubscribers(
+            [viewer()],
+            {
+              homeTeamId: game.home_team_id,
+              awayTeamId: game.away_team_id,
+              seasonId: game.season_id
+            },
+            loggedDb,
+            log
+          )
+          expect(seeing).deep.equals([true])
+          return [...statements]
+        } finally {
+          await loggedDb.destroy()
+        }
+      }
+      /** Counts calls of a module's export while the test runs. */
+      const counting = (
+        module: unknown,
+        name: string
+      ): { calls: () => number; restore: () => void } => {
+        const exports = module as Record<
+          string,
+          (...args: unknown[]) => unknown
+        >
+        const real = exports[name]
+        let calls = 0
+        exports[name] = (...args: unknown[]) => {
+          calls += 1
+          return real(...args)
+        }
+        return {
+          calls: () => calls,
+          restore: () => {
+            exports[name] = real
+          }
+        }
+      }
+      /** A notice of each kind for game `id`, the edits' frame lost. */
+      const notices = async (
+        id: string
+      ): Promise<Record<'playEdits' | 'lineups' | 'game', unknown>> => {
+        const cache = memoryCache()
+        const { notice } = await postAnother(id, { answer: 'edits', cache })
+        return {
+          playEdits: notice,
+          lineups: { game: id, kind: 'lineups' },
+          game: { game: id, kind: 'game' }
+        }
+      }
+
+      before(async function () {
+        await db!
+          .insertInto('memberships')
+          .values({
+            id: membership,
+            user_id: viewerId,
+            team_id: team,
+            role: 'member'
+          })
+          .execute()
+        token = (await createSession(db!, viewerId, 'fanout')).token
+      })
+
+      after(async function () {
+        await db!
+          .deleteFrom('memberships')
+          .where('id', '=', membership)
+          .execute()
+      })
+
+      for (const kind of ['playEdits', 'lineups', 'game'] as const)
+        it(`read only the game row and authorize in the transaction (${kind})`, async function () {
+          const id = await posted()
+          const notice = (await notices(id))[kind]
+          const authorization = await authorizing(id)
+          expect(authorization).not.deep.equals([])
+          const { db: loggedDb, statements } = logged()
+          const worker = fanout({ db: loggedDb, authorize })
+          try {
+            let lineupReads: string[] = []
+            if (kind === 'lineups') {
+              const game = await loggedDb
+                .selectFrom('games')
+                .selectAll()
+                .where('id', '=', id)
+                .executeTakeFirstOrThrow()
+              statements.length = 0
+              await lineupsRead(loggedDb, game)
+              lineupReads = [...statements]
+              expect(lineupReads).not.deep.equals([])
+            }
+            statements.length = 0
+            const heard = viewer()
+            worker.watch(id, scopeOf(team, rival), heard)
+            await worker.deliver(JSON.stringify(notice))
+            expect(heard.sent.map(message => message.kind)).deep.equals([kind])
+            const held = inTransaction(statements)
+            expect(held[0]).match(
+              /^select \* from "games" where "id" = \$1 for share$/
+            )
+            expect(held.slice(1)).deep.equals([
+              ...authorization,
+              ...lineupReads
+            ])
+            // The edits' plays, with no frame to send, are read once
+            // committed; the lineups' are read with the row.
+            const after = statements.slice(statements.indexOf('commit') + 1)
+            expect(after.some(sql => sql.includes('from "events"'))).equals(
+              kind === 'playEdits'
+            )
+          } finally {
+            await worker.close()
+            await loggedDb.destroy()
+          }
+        })
+
+      for (const kind of ['playEdits', 'lineups', 'game'] as const)
+        it(`name and build nothing while the transaction is open (${kind})`, async function () {
+          const id = await posted()
+          const notice = (await notices(id))[kind]
+          const counted = [
+            counting(openRow, 'resolveScoringPlays'),
+            counting(openRow, 'resolveScoringGame'),
+            counting(storedNames, 'withNames')
+          ]
+          const held = heldAtCommit()
+          const worker = fanout({ db: held.db, authorize })
+          try {
+            const heard = viewer()
+            worker.watch(id, scopeOf(team, rival), heard)
+            const delivered = worker.deliver(JSON.stringify(notice))
+            await until(held.committing, 'the commit')
+            await wait(50)
+            // Everything before the commit done, the row still held: nothing
+            // named, built or sent.
+            expect(counted.map(count => count.calls())).deep.equals([0, 0, 0])
+            expect(heard.sent).deep.equals([])
+            held.release()
+            await delivered
+            expect(heard.sent.map(message => message.kind)).deep.equals([kind])
+            const [plays, whole] = counted.map(count => count.calls())
+            expect({ plays, whole }).deep.equals(
+              kind === 'playEdits'
+                ? { plays: 1, whole: 0 }
+                : kind === 'lineups'
+                  ? { plays: 0, whole: 1 }
+                  : { plays: 0, whole: 0 }
+            )
+          } finally {
+            held.release()
+            for (const count of counted) count.restore()
+            await worker.close()
+            await held.db.destroy()
+          }
+        })
+    })
   })
 
   it("sends a game's notices in the order their data was read, one delivery at a time", async function () {
