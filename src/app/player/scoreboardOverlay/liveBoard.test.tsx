@@ -74,7 +74,7 @@ async function advance(
 
 const boardAsks = (server: ReturnType<typeof overlayServer>): number[] =>
   server.asked
-    .filter(one => one.path.endsWith('/scoreboard-timeline'))
+    .filter(one => one.path.endsWith('/box-score'))
     .map(one => Number(one.query.get('from')))
 
 describe('the live wall timeline (U36)', function () {
@@ -287,7 +287,7 @@ describe('the live board timeline (U36)', function () {
     const sockets = fakeSockets()
     const socketsAtAsk: number[] = []
     const fetchImpl: typeof fetch = async (input, init) => {
-      if (urlOf(input).includes('scoreboard-timeline'))
+      if (urlOf(input).includes('box-score'))
         socketsAtAsk.push(sockets.sockets.length)
       return await server.fetch(input, init)
     }
@@ -419,7 +419,7 @@ describe('the live board timeline (U36)', function () {
     h.sockets.latest().open()
     await flush()
     h.sockets.latest().drop(4404)
-    h.server.fail.add('/games/g1/scoreboard-timeline')
+    h.server.fail.add('/games/g1/box-score')
     const asks = boardAsks(h.server).length
     await advance(h.clock, BOARD_POLL_MS)
     expect(boardAsks(h.server).length).equals(asks + 1)

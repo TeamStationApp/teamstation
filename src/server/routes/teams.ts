@@ -70,6 +70,7 @@ import {
   type ScoreboardStore,
   ScoreboardUnavailable
 } from '../scoreboard/scoreboardStore'
+import { gameStatistics, statisticsQuery } from '../scoring/gameStatistics'
 import { highlightSettings } from '../settings'
 import { withRevision, withRevisionThen } from '../socket/syncRevision'
 import {
@@ -1081,6 +1082,12 @@ export function teamRoutes(
       // Anybody signed in reads the game, so it is no secret: the lines are
       // for members.
       if (!canSeeGame(scopes, scope)) throw membersOnly()
+
+      const historical = statisticsQuery(req.query)
+      if (historical !== null) {
+        res.json(await gameStatistics(db, gameId, historical))
+        return
+      }
 
       const rows = await statRows(db, { gameId })
       const names = await publicNames(

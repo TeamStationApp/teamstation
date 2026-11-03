@@ -124,7 +124,7 @@ export function useBoardTimeline(
         const whole = held == null
         const start = whole ? fromMs : from
         try {
-          const answer = await client.scoreboardTimeline(gameId, {
+          const { board: answer } = await client.gameStatistics(gameId, {
             fromMs: start
           })
           if (done) return

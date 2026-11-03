@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { BackHandler } from 'react-native'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
+import { nativeStatistics } from '../../test/gameStatisticsFixture'
 import { replayContext, scored } from '../../test/replayGameFixture'
 import { windowSize } from '../../test/tessTestKit'
 import {
@@ -70,7 +71,11 @@ const client = {
     }
   },
   wallTimeline: async () => timelineFor('2026-10-01T00:00:00Z'),
-  scoreboardTimeline: async () => ({ steps: [], version: 'fixture' }),
+  gameStatistics: async () =>
+    nativeStatistics(
+      await client.game('game'),
+      await client.gameEvents('game')
+    ),
   lineScore: async () => {
     throw new Error('TV must use replay state')
   },
@@ -781,12 +786,12 @@ describe('TV game playback entry', () => {
     await press('Close panel')
     await press('Box score')
     expect(document.body.textContent).contains(
-      'Replay statistics are not available for this game.'
+      'Statistics are not available in the recorded plays.'
     )
     await press('Team and player statistics')
     expect(
       document.body.textContent?.split(
-        'Replay statistics are not available for this game.'
+        'Statistics are not available in the recorded plays.'
       ).length
     ).equals(2)
     await press('Close panel')

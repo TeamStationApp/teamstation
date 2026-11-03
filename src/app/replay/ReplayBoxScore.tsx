@@ -82,8 +82,8 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
         </React.Fragment>
       ))}
       {text(side.runs, { strong: true })}
-      {text(side.hits)}
-      {text(side.errors)}
+      {text(side.hits ?? '—')}
+      {text(side.errors ?? '—')}
     </View>
   )
   const heading = (
@@ -227,7 +227,7 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
             text(line.er),
             text(line.bb),
             text(line.k),
-            text(line.pc)
+            text(line.pc ?? '—')
           ])
         )}
         {side.pitching.length > 0 &&
@@ -238,7 +238,7 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
             throwing.er,
             throwing.bb,
             throwing.k,
-            throwing.pc
+            throwing.pc ?? '—'
           ])}
       </View>
     )

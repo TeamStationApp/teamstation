@@ -1,16 +1,22 @@
-import type { GameDetail, TeamStationClient } from '../../common/api'
+import type {
+  BoardTimelineWindow,
+  LineScoreStep,
+  TeamStationClient
+} from '../../common/api'
 import type { ReplayBoxScore } from '../../common/replay/replayBoxScore'
-import { readReplaySource } from '../../common/replay/replaySource'
-import { startingBox } from '../../common/replay/startingBox'
 import type { BoardLine } from '../../common/scoring/boardLineTypes'
-import type { StoredGame } from '../../common/scoring/session'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
-import { type BoxStep, boxTimeline } from './playbackTimeline'
 
 export { startingBox } from '../../common/replay/startingBox'
 
 export interface ReplayStatistics {
-  boxes: BoxStep[]
+  boxes: Array<{
+    at: number
+    box: ReplayBoxScore | null
+    message?: string | null
+  }>
+  lines?: LineScoreStep[]
+  board?: BoardTimelineWindow | null
   message: string | null
 }
 
@@ -19,26 +25,19 @@ export function statisticsAt(
   statistics: ReplayStatistics,
   wall: number | null
 ): { box: ReplayBoxScore | undefined; message: string | null } {
-  const box = boardAt(statistics.boxes, wall)?.box
+  const step = boardAt(statistics.boxes, wall)
+  const box = step?.box ?? undefined
   return {
     box,
     message:
       box !== undefined
         ? null
-        : (statistics.message ??
+        : (step?.message ??
+          statistics.message ??
           (statistics.boxes.length > 0
             ? 'Statistics begin with the first recorded play.'
             : null))
   }
-}
-
-/** Only a game without any plays can use a present-day lineup supplement. */
-export function canSupplement(game: GameDetail, stored: StoredGame): boolean {
-  return (
-    (game.status === 'scheduled' || game.status === 'inProgress') &&
-    stored.plays.length === 0 &&
-    stored.currentPlay === null
-  )
 }
 
 export async function readTvStatistics(
@@ -46,29 +45,27 @@ export async function readTvStatistics(
   gameId: string
 ): Promise<ReplayStatistics> {
   try {
-    const { game, stored } = await readReplaySource(client, gameId)
-    const boxes = boxTimeline(game, stored)
-    if (boxes.length > 0) return { boxes, message: null }
-    if (!canSupplement(game, stored))
-      return {
-        boxes: [],
-        message: 'Replay statistics are not available for this game.'
-      }
-    const lineups = await client.gameLineups(gameId)
-    if (
-      lineups.generation !== undefined &&
-      stored.generation !== undefined &&
-      lineups.generation !== stored.generation
-    )
-      return { boxes: [], message: 'The game changed. Retry statistics.' }
-    const box = startingBox(game, lineups)
-    return box === null
-      ? { boxes: [], message: 'Starting lineups are not available yet.' }
-      : { boxes: [{ at: -Infinity, box }], message: null }
+    const data = await client.gameStatistics(gameId)
+    return {
+      boxes: [
+        ...(data.initial === null
+          ? []
+          : [{ at: -Infinity, box: data.initial }]),
+        ...data.boxes
+      ],
+      lines: data.line.steps,
+      board: data.board,
+      message:
+        data.boxes.length === 0 && data.initial === null
+          ? 'Statistics are not available in the recorded plays.'
+          : null
+    }
   } catch (error) {
     const status = (error as { status?: number }).status
     return {
       boxes: [],
+      lines: [],
+      board: null,
       message:
         status === 401 || status === 403
           ? 'You do not have access to these statistics.'
