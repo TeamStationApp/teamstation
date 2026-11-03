@@ -222,8 +222,10 @@ export function eventFigures(
 ): EventFigures[] {
   return events.map(event => {
     const end = event.startedAt + Math.max(event.ms, EVENT_EFFECT_MS)
+    // Every post in flight at some moment of it: one that waited out the
+    // event ends just after it, and counts too.
     const during = postMs.filter(
-      (_, i) => postAt[i] >= event.startedAt && postAt[i] <= end
+      (ms, i) => postAt[i] >= event.startedAt && postAt[i] - ms <= end
     )
     return {
       ...event,

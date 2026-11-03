@@ -16,7 +16,7 @@ import { asUserId } from '../../common/userId'
 import { heldByOpenAdd, teamsPlayedOnNow } from '../access'
 import { lockPlayerEdits, survivorsOf } from '../admin/people'
 import type { Actor } from '../auth/sessions'
-import { lockKeys } from '../db/advisoryLocks'
+import { lockKeys, lockTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { externalIdLockKey, recordExternalId } from '../db/externalIds'
@@ -178,6 +178,7 @@ export async function addPlayers(
 ): Promise<TeamPlayersResponse> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockTeams(trx, [teamId])
     // Adult and player batches can reach the same memberships through aliases.
     await lockKeys(trx, [`teamRoster:${teamId}`])
     await lockKeys(

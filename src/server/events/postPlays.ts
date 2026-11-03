@@ -27,6 +27,7 @@ import { withoutNames } from '../../common/scoring/storedNames'
 import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
 import type { ValkeyCache } from '../cache/valkeyCache'
+import { lockGameTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, EventsTable } from '../db/database'
 import { resolvedFenceDistance } from '../games/fenceDistance'
@@ -238,6 +239,7 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
 
   return await atomic(db, async (trx): Promise<PostedPlays | PostedEdits> => {
     await lockPlayerEdits(trx)
+    await lockGameTeams(trx, gameId)
     // The game row stays locked until this post commits, so a second
     // post to the same game waits and then sees the plays, the final
     // status and the scoring owner this one leaves behind.

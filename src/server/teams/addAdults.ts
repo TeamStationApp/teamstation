@@ -13,7 +13,7 @@ import type {
 import { guardiansOf, guardiansWhoCanAct, heldByOpenAdd } from '../access'
 import { lockPlayerEdits, onePerson, survivorsOf } from '../admin/people'
 import { addEmail } from '../auth/emails'
-import { lockKeys } from '../db/advisoryLocks'
+import { lockKeys, lockTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { externalIdLockKey } from '../db/externalIds'
@@ -59,6 +59,7 @@ export async function addAdults(
 ): Promise<TeamAdultsResponse> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockTeams(trx, [teamId])
     // Share the player import's ordering before either batch claims memberships.
     await lockKeys(trx, [`teamRoster:${teamId}`])
     await lockKeys(
