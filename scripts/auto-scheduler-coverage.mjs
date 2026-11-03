@@ -23,6 +23,7 @@
 // server's entry point (`src/server/index.ts`) are not. A milestone that
 // adds a suite adds it here.
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   cpSync,
   existsSync,
@@ -39,6 +40,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import ts from 'typescript'
 
+import { coverageSource } from './coverage-source.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const unitOnly = process.argv.includes('--unit')
@@ -144,9 +146,24 @@ const appSuites = [
 ]
 
 if (process.env.TS_MANAGER_COACH_COVERAGE === '1') {
-  tsSuites.splice(
-    0,
-    tsSuites.length,
+  const isolatedSuites = [
+    'src/migrate/managerMigrations.unit.test.ts',
+    'src/server/admin/headCoachMerges.unit.test.ts',
+    'src/server/scheduler/managerSetup.unit.test.ts',
+    'src/server/autoScheduler/managerDecisions.test.ts',
+    'src/server/autoScheduler/managerPreview.unit.test.ts',
+    'src/server/routes/headCoach.unit.test.ts',
+    'src/server/teams/headCoachViews.unit.test.ts',
+    'src/server/teams/onPeopleList.unit.test.ts',
+    'src/server/autoScheduler/rules.test.ts',
+    'src/server/openapi.test.ts',
+    'src/common/eventInfo.test.ts',
+    'src/common/autoScheduler/*.test.ts',
+    'src/common/api.scheduling.test.ts',
+    'src/common/seasonScheduling.test.ts',
+    'src/common/api.test.ts'
+  ]
+  const integrationSuites = [
     'src/migrate/runner.test.ts',
     'src/server/routes/people.test.ts',
     'src/server/routes/follows.test.ts',
@@ -160,11 +177,17 @@ if (process.env.TS_MANAGER_COACH_COVERAGE === '1') {
     'src/server/events/eventInfo.test.ts',
     'src/server/routes/schedulingSetup.test.ts',
     'src/server/routes/schedulePreviews.test.ts',
-    'src/server/autoScheduler/*.test.ts',
-    'src/server/openapi.test.ts',
-    'src/common/autoScheduler/*.test.ts',
-    'src/common/api.test.ts'
-  )
+    'src/server/autoScheduler/buildOffThread.test.ts',
+    'src/server/autoScheduler/publish.test.ts',
+    'src/server/autoScheduler/reschedule.test.ts',
+    'src/server/venues/gameFields.test.ts'
+  ]
+  const suites = unitOnly
+    ? isolatedSuites
+    : process.argv.includes('--reuse-unit')
+      ? integrationSuites
+      : [...isolatedSuites, ...integrationSuites]
+  tsSuites.splice(0, tsSuites.length, ...suites)
   appSuites.splice(
     0,
     appSuites.length,
@@ -183,6 +206,30 @@ if (base == null)
 const manager = process.env.TS_MANAGER_COACH_COVERAGE === '1'
 const reuseUnitRuns = manager && process.argv.includes('--reuse-unit')
 const report = resolve(manager ? 'coverage/manager' : 'coverage/autoScheduler')
+const source = manager ? coverageSource() : null
+function verifySource() {
+  if (
+    manager &&
+    (source !== coverageSource() ||
+      (process.env.TS_MANAGER_SOURCE != null &&
+        process.env.TS_MANAGER_SOURCE !== source))
+  )
+    throw new Error('Source changed during manager coverage collection')
+}
+function readUnitCounters() {
+  const proof = JSON.parse(
+    readFileSync(resolve(report, 'unit-source.json'), 'utf8')
+  )
+  const data = readFileSync(resolve(report, 'unit.json'))
+  if (
+    proof.source !== source ||
+    proof.hash !== createHash('sha256').update(data).digest('hex')
+  )
+    throw new Error('Unit coverage counters do not match this source revision')
+  return JSON.parse(data)
+}
+verifySource()
+const reusableUnit = reuseUnitRuns ? readUnitCounters() : null
 const temp = resolve(report, reuseUnitRuns ? 'e2e-tmp' : 'tmp')
 rmSync(temp, { recursive: true, force: true })
 rmSync(resolve(report, 'coverage-final.json'), { force: true })
@@ -290,27 +337,23 @@ if (!reuseUnitRuns) {
       loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
     })
   }
-
-  const mocha = 'node_modules/.bin/mocha'
-  const setup = [
-    '-r',
-    'sucrase/register',
-    '-r',
-    './src/test/scoringDomSetup.cjs'
-  ]
-  run(
-    mocha,
-    [
-      ...setup,
-      '--timeout',
-      '60000',
-      '--extension',
-      'ts',
-      '--exit',
-      ...tsSuites.flatMap(spec => ['--spec', spec])
-    ],
-    { NODE_V8_COVERAGE: temp }
-  )
+}
+const mocha = 'node_modules/.bin/mocha'
+const setup = ['-r', 'sucrase/register', '-r', './src/test/scoringDomSetup.cjs']
+run(
+  mocha,
+  [
+    ...setup,
+    '--timeout',
+    '60000',
+    '--extension',
+    'ts',
+    '--exit',
+    ...tsSuites.flatMap(spec => ['--spec', spec])
+  ],
+  { NODE_V8_COVERAGE: temp }
+)
+if (!reuseUnitRuns) {
   for (const [index, suite] of appSuites.entries()) {
     console.log(`\n${suite}`)
     run(
@@ -374,9 +417,7 @@ if (paths.length > 0) {
   )
 }
 if (reuseUnitRuns) {
-  const unit = createCoverageMap(
-    JSON.parse(readFileSync(resolve(report, 'unit.json'), 'utf8'))
-  )
+  const unit = createCoverageMap(reusableUnit)
   unit.merge(map)
   map = unit
 }
@@ -468,3 +509,18 @@ if (failures.length > 0) {
   process.exit(1)
 }
 console.log(`\n${summary}`)
+
+if (manager) {
+  verifySource()
+  if (unitOnly) {
+    const data = readFileSync(resolve(report, 'coverage-final.json'))
+    writeFileSync(resolve(report, 'unit.json'), data)
+    writeFileSync(
+      resolve(report, 'unit-source.json'),
+      JSON.stringify({
+        source,
+        hash: createHash('sha256').update(data).digest('hex')
+      })
+    )
+  }
+}

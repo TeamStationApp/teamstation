@@ -1,5 +1,6 @@
 import { fieldSizeLabel } from '../venues'
 import { openSlots, type RunContext, type SeasonContext } from './context'
+import { Occupancy, TeamAvailability } from './feasibility'
 import {
   buildMatchups,
   fixedCounts,
@@ -7,6 +8,7 @@ import {
   seasonNeeds,
   type Targets
 } from './matchups'
+import type { Placement } from './placement'
 import { mulberry32 } from './random'
 import { firstNonZero } from './score'
 import { alignUp, MINUTE } from './slots'
@@ -42,7 +44,9 @@ function fieldHolds(
   fieldId: string
 ): Array<{ start: number; end: number }> {
   return [
-    ...context.input.bookings.filter(booking => booking.fieldId === fieldId),
+    ...context.input.bookings.filter(
+      booking => booking.managerOnly !== true && booking.fieldId === fieldId
+    ),
     ...context.input.fixed.filter(game => game.fieldId === fieldId)
   ].map(hold => ({ start: hold.start, end: hold.end }))
 }
@@ -137,6 +141,68 @@ export function teamCapacity(
 const plural = (count: number, word: string): string =>
   `${count} ${word}${count === 1 ? '' : 's'}`
 
+// A manager is the blocker if a matchup has no usable slot but could play without that manager's hold.
+function blockedByManager(
+  context: RunContext,
+  season: SeasonContext,
+  matchups: readonly Matchup[],
+  occupied?: Occupancy
+): string | undefined {
+  const managers = context.input.headCoaches
+  if (managers == null) return
+  for (const { homeTeamId, awayTeamId } of matchups) {
+    if (managers[homeTeamId] == null && managers[awayTeamId] == null) continue
+    const home = season.teamFree.get(homeTeamId)
+    const away = season.teamFree.get(awayTeamId)
+    if (home == null || away == null) continue
+    let blockedTeam: string | undefined
+    for (const [i, slot] of season.slots.entries()) {
+      if (
+        season.fieldFree[i] === 0 ||
+        occupied?.fieldFits(season, slot) === false
+      )
+        continue
+      const h = occupied?.teamAvailability(season, homeTeamId, slot) ?? home[i]
+      const a = occupied?.teamAvailability(season, awayTeamId, slot) ?? away[i]
+      if (h === TeamAvailability.Busy || a === TeamAvailability.Busy) continue
+      if (h === TeamAvailability.Free && a === TeamAvailability.Free) {
+        blockedTeam = undefined
+        break
+      }
+      blockedTeam ??=
+        h === TeamAvailability.ManagerBusy ? homeTeamId : awayTeamId
+    }
+    if (blockedTeam != null)
+      return `${context.input.teamNames[blockedTeam] ?? blockedTeam}’s Manager/Head Coach is booked during otherwise available game times`
+  }
+}
+
+// Explanations for one option share its calendar. Build the index only if a matchup was left out.
+export function managerCauseOfOption(
+  context: RunContext,
+  placement: Placement
+): (season: SeasonContext, unplaced: Matchup[]) => string | undefined {
+  let occupied: Occupancy | undefined
+  return (season, unplaced) => {
+    if (context.input.headCoaches == null || unplaced.length === 0) return
+    if (occupied == null) {
+      occupied = new Occupancy(context)
+      for (const [i, slot] of placement.slots.entries()) {
+        if (slot == null) continue
+        const game = placement.matchups[i]
+        occupied.place(
+          i,
+          context.seasonById.get(game.seasonId)!,
+          game.homeTeamId,
+          game.awayTeamId,
+          slot
+        )
+      }
+    }
+    return blockedByManager(context, season, unplaced, occupied)
+  }
+}
+
 /**
  * Why a season can't have the count it asked for, phrased against that
  * count: not enough field time of its size, or a team whose own games
@@ -152,13 +218,10 @@ export function capacityCause(
   const what = kind === 'regular' ? 'game' : 'exhibition game'
   const fieldTime = `not enough ${fieldSizeLabel(settings.fieldSize)} field time to give every team ${plural(requested, what)}`
   const targets = requestedTargets(season)
-  const needed = seasonMatchups(
-    context,
-    season,
-    targets,
-    context.input.seed
-  ).length
-  if (needed > fieldCapacity(context, season)) return fieldTime
+  const matchups = seasonMatchups(context, season, targets, context.input.seed)
+  const manager = blockedByManager(context, season, matchups)
+  if (manager != null) return manager
+  if (matchups.length > fieldCapacity(context, season)) return fieldTime
 
   const own = context.input.fixed.filter(
     game => game.seasonId === season.season.id
@@ -181,6 +244,14 @@ export function capacityCause(
   }
   if (short == null) return fieldTime
   const name = context.input.teamNames[short.team] ?? short.team
+  const free = season.teamFree.get(short.team)
+  if (
+    free?.some(
+      (value, i) =>
+        value === TeamAvailability.ManagerBusy && season.fieldFree[i] === 1
+    ) === true
+  )
+    return `${name}’s Manager/Head Coach is booked during otherwise available game times`
   return `${name}’s existing games leave too few open dates`
 }
 
@@ -230,6 +301,8 @@ export function requiredCause(
     matchup => matchup.seasonId === season.season.id
   ).length
   const fieldTime = `not enough ${fieldSizeLabel(settings.fieldSize)} field time to place ${plural(required, 'game')} again`
+  const manager = blockedByManager(context, season, unplaced)
+  if (manager != null) return manager
   if (required > fieldCapacity(context, season)) return fieldTime
   const fieldOpen = season.fieldFree.reduce((sum, free) => sum + free, 0)
   for (const matchup of unplaced) {

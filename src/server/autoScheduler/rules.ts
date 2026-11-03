@@ -6,6 +6,8 @@ import { type FieldSize, fieldSizeLabel } from '../../common/venues'
 
 /** A game to check, or something already holding a field or teams. */
 export interface Holding {
+  /** Published or proposed interval retained only for the manager while another move is pending. */
+  managerOnly?: boolean
   key: string
   fieldId: string | null
   size: string | null
@@ -16,6 +18,7 @@ export interface Holding {
 }
 
 export interface RuleContext {
+  headCoaches?: Record<string, string>
   fields: Map<
     string,
     {
@@ -29,6 +32,26 @@ export interface RuleContext {
   seasons: Map<string, { bufferMinutes: number; doubleheaders: Doubleheaders }>
   /** Everything else holding the run's fields and teams. */
   others: Holding[]
+}
+
+type ManagerBooking = Pick<Holding, 'key' | 'start' | 'end' | 'teamIds'>
+
+export function managerConflict(
+  game: ManagerBooking,
+  other: ManagerBooking,
+  managers?: Record<string, string>
+): boolean {
+  return (
+    managers != null &&
+    game.key !== other.key &&
+    game.start < other.end &&
+    other.start < game.end &&
+    game.teamIds.some(
+      team =>
+        managers[team] != null &&
+        other.teamIds.some(id => managers[id] === managers[team])
+    )
+  )
 }
 
 /**
@@ -79,6 +102,9 @@ export function ruleProblem(
     )
   for (const other of context.others) {
     if (other.key === game.key) continue
+    if (managerConflict(game, other, context.headCoaches))
+      return 'A Manager/Head Coach already has a game at this time.'
+    if (other.managerOnly === true) continue
     if (other.fieldId === game.fieldId) {
       const switching =
         other.size != null && other.size !== game.size ? field.switchMs : 0

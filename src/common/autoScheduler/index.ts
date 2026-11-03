@@ -2,6 +2,7 @@ import {
   blockingCause,
   capacityCause,
   type GameKind,
+  managerCauseOfOption,
   requiredCause
 } from './capacity'
 import { buildContext, type SeasonContext } from './context'
@@ -65,7 +66,9 @@ export function buildOptions(input: EngineInput): EngineResult {
     const key = `${season.season.id}|${kind}`
     let cause = causes.get(key)
     if (cause == null) {
-      cause = capacityCause(context, season, kind, requested)
+      cause =
+        settled.reducedManagerCauses.get(key) ??
+        capacityCause(context, season, kind, requested)
       causes.set(key, cause)
     }
     return cause
@@ -73,17 +76,32 @@ export function buildOptions(input: EngineInput): EngineResult {
 
   const chosen = chooseOptions(candidates)
   const [best] = chosen
-  const options = chosen.map((placement): ScheduleOption => ({
-    games: plannedGames(placement),
-    fairness: fairnessRows(context, placement),
-    reasons: placement === best ? [] : optionReasons(context, placement, best),
-    unmet:
-      context.required == null
-        ? unmetLines(context, settled.targets, placement, causeOf)
-        : requiredLines(context, placement, (season, unplaced) =>
-            requiredCause(context, season, unplaced)
-          ),
-    score: storedScore(placement.score)
-  }))
+  const options = chosen.map((placement): ScheduleOption => {
+    const placedCause = managerCauseOfOption(context, placement)
+    return {
+      games: plannedGames(placement),
+      fairness: fairnessRows(context, placement),
+      reasons:
+        placement === best ? [] : optionReasons(context, placement, best),
+      unmet:
+        context.required == null
+          ? unmetLines(
+              context,
+              settled.targets,
+              placement,
+              (season, kind, requested, unplaced) =>
+                placedCause(season, unplaced) ??
+                causeOf(season, kind, requested)
+            )
+          : requiredLines(
+              context,
+              placement,
+              (season, unplaced) =>
+                placedCause(season, unplaced) ??
+                requiredCause(context, season, unplaced)
+            ),
+      score: storedScore(placement.score)
+    }
+  })
   return { options, blocking: null }
 }

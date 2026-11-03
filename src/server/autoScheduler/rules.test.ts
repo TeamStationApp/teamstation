@@ -70,6 +70,28 @@ const tooClose = (
 }
 
 describe('the scheduler’s hard rules', () => {
+  it('a manager-only interval holds the coach but leaves the field and other teams free', () => {
+    const outside = {
+      ...game('outside', 'sea_b', '10:00', '11:00', ['external', 'visitor']),
+      managerOnly: true
+    }
+    const rules = {
+      ...context([outside]),
+      headCoaches: { external: 'coach', home: 'coach' }
+    }
+    const overlap = game('home-game', 'sea_a', '10:30', '11:30', [
+      'visitor',
+      'home'
+    ])
+    expect(ruleProblem(overlap, rules)).equals(
+      'A Manager/Head Coach already has a game at this time.'
+    )
+    expect(
+      ruleProblem({ ...overlap, teamIds: ['visitor', 'other'] }, rules)
+    ).equals(null)
+    expect(ruleProblem({ ...overlap, start: outside.end }, rules)).equals(null)
+  })
+
   it('spaces games of two seasons on one field by the later game’s buffer, as the engine does', () => {
     // Season A asks 30 minutes between games, season B none.
     const a = game('a', 'sea_a', '10:30', '12:00', ['tem_one', 'tem_two'])

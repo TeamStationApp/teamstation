@@ -14,9 +14,10 @@ import { asFieldSize, type FieldSize } from '../../common/venues'
 import type { Database } from '../db/database'
 import type { Clock } from '../groups/requests'
 import { scheduleSetup } from '../scheduler/setup'
+import { rowsOfPeople, survivors } from '../teams/teamStaff'
 import { fieldFacts } from '../venues/fieldWarnings'
 import { occupancy } from '../venues/occupancy'
-import type { RuleContext } from './rules'
+import { managerConflict, type RuleContext } from './rules'
 
 type Db = Kysely<Database>
 
@@ -28,6 +29,7 @@ export interface RescheduleRef {
 
 /** What a preview stores beside the engine's input. */
 export interface Snapshot {
+  avoidHeadCoachConflicts?: boolean
   engine: EngineInput
   existing: ExistingGames
   teamIds: string[] | null
@@ -176,6 +178,49 @@ export async function pendingSchedulerProposals(
   return out
 }
 
+/** Every team coached by the same person as a team in the run, across all leagues. */
+export async function headCoachesOf(
+  db: Db,
+  teamIds: string[]
+): Promise<Record<string, string>> {
+  if (teamIds.length === 0) return {}
+  const query = db
+    .selectFrom('scope_roles')
+    .select(['scope_id', 'user_id'])
+    .where('is_head_coach', '=', true)
+  const own = await query.where('scope_id', 'in', teamIds).execute()
+  if (own.length === 0) return {}
+  const canonical = await survivors(
+    db,
+    own.map(row => row.user_id)
+  )
+  if (canonical.size === 0) return {}
+  const eligible = await db
+    .selectFrom('users')
+    .select('id')
+    .where('id', 'in', [...new Set(canonical.values())])
+    .where('merged_into', 'is', null)
+    .where('disabled_at', 'is', null)
+    .where('login_enabled', '=', true)
+    .execute()
+  const aliases = await rowsOfPeople(
+    db,
+    eligible.map(coach => coach.id)
+  )
+  if (aliases.length === 0) return {}
+  const related = await query.where('user_id', 'in', aliases).execute()
+  const identities = await survivors(
+    db,
+    related.map(row => row.user_id)
+  )
+  const managers: Record<string, string> = {}
+  for (const row of related) {
+    const id = identities.get(row.user_id)
+    if (id != null) managers[row.scope_id] = id
+  }
+  return managers
+}
+
 /**
  * Reads everything a build runs on: the league's chosen seasons with their
  * settings and teams, the chosen fields' availability, what already holds
@@ -189,6 +234,7 @@ export async function snapshot(
   request: {
     leagueId: string
     existing: ExistingGames
+    avoidHeadCoachConflicts?: boolean
     teamIds: string[] | null
     /** Games of an earlier preview's option to keep where they are. */
     keep?: PlannedGame[]
@@ -276,32 +322,6 @@ export async function snapshot(
     games.filter(game => !replaceGameIds.includes(game.id)).map(game => game.id)
   )
   const fieldIds = fields.map(field => field.id)
-  const bookings: EngineBooking[] = (
-    await occupancy(db, { fieldIds, teamIds: [...runTeams], from: now }, clock)
-  )
-    // A pending change to a counted game holds the time it proposes as
-    // well as the game's own; the game itself is already counted.
-    .filter(
-      booking =>
-        !replaceGameIds.includes(booking.key) &&
-        (!fixedKeys.has(booking.key) ||
-          (booking.pending && fixedGameIds.has(booking.key)))
-    )
-    .map(booking => ({
-      key: fixedKeys.has(booking.key) ? `pending:${booking.key}` : booking.key,
-      fieldId:
-        booking.fieldId != null && fieldIds.includes(booking.fieldId)
-          ? booking.fieldId
-          : null,
-      size: sizeOf(booking.size),
-      teamIds: [booking.homeTeamId, booking.awayTeamId].filter(id =>
-        runTeams.has(id)
-      ),
-      start: booking.start,
-      end: booking.end
-    }))
-    .filter(booking => booking.fieldId != null || booking.teamIds.length > 0)
-  bookings.push(...(request.avoid ?? []))
   const required =
     request.required == null
       ? undefined
@@ -324,9 +344,81 @@ export async function snapshot(
   const teamIds = [
     ...new Set([
       ...runTeams,
-      ...fixed.flatMap(game => [game.homeTeamId, game.awayTeamId])
+      ...fixed.flatMap(game => [game.homeTeamId, game.awayTeamId]),
+      ...(required ?? []).flatMap(game => [game.homeTeamId, game.awayTeamId])
     ])
   ]
+  const avoidHeadCoachConflicts =
+    request.avoidHeadCoachConflicts ?? setup.avoidHeadCoachConflicts ?? true
+  const headCoaches = avoidHeadCoachConflicts
+    ? await headCoachesOf(db, teamIds)
+    : {}
+  const busyTeams = new Set([...teamIds, ...Object.keys(headCoaches)])
+  const bookings: EngineBooking[] = (
+    await occupancy(
+      db,
+      {
+        fieldIds,
+        teamIds: [...busyTeams],
+        from: now,
+        keepScheduledFor: Object.keys(headCoaches)
+      },
+      clock
+    )
+  )
+    // A pending change to a counted game holds the time it proposes as
+    // well as the game's own; the game itself is already counted.
+    .filter(
+      booking =>
+        !replaceGameIds.includes(booking.key) &&
+        (!fixedKeys.has(booking.key) ||
+          (booking.pending && fixedGameIds.has(booking.key)))
+    )
+    .map(booking => ({
+      managerOnly: booking.managerOnly,
+      key: fixedKeys.has(booking.key) ? `pending:${booking.key}` : booking.key,
+      fieldId:
+        booking.fieldId != null && fieldIds.includes(booking.fieldId)
+          ? booking.fieldId
+          : null,
+      size: sizeOf(booking.size),
+      teamIds: [booking.homeTeamId, booking.awayTeamId].filter(id =>
+        busyTeams.has(id)
+      ),
+      start: booking.start,
+      end: booking.end
+    }))
+    .filter(booking => booking.fieldId != null || booking.teamIds.length > 0)
+  // A recalculation promises to keep these games. A newly busy manager can
+  // make that promise impossible even when the rejected games fit elsewhere.
+  if (
+    request.keep != null &&
+    request.keep.length > 0 &&
+    Object.keys(headCoaches).length > 0
+  ) {
+    const held = [
+      ...bookings,
+      ...fixed.map(game => ({
+        key: game.key,
+        start: game.start,
+        end: game.end,
+        teamIds: [game.homeTeamId, game.awayTeamId]
+      }))
+    ]
+    for (const kept of request.keep) {
+      const game = {
+        key: `kept:${kept.key}`,
+        start: Date.parse(kept.startAt),
+        end: Date.parse(kept.endAt),
+        teamIds: [kept.homeTeamId, kept.awayTeamId]
+      }
+      if (held.some(other => managerConflict(game, other, headCoaches)))
+        throw conflict(
+          'A Manager/Head Coach is now busy during a game this preview keeps. Build a new schedule.'
+        )
+    }
+  }
+  bookings.push(...(request.avoid ?? []))
   const teams = await db
     .selectFrom('teams')
     .select(['id', 'name'])
@@ -335,7 +427,9 @@ export async function snapshot(
     .orderBy('id')
     .execute()
   return {
+    avoidHeadCoachConflicts,
     engine: {
+      ...(Object.keys(headCoaches).length === 0 ? {} : { headCoaches }),
       seasons: seasons.map(season => ({
         id: season.id,
         name: season.name,
@@ -390,9 +484,11 @@ export async function snapshot(
 /** The hard rules' context for a snapshot's fields and seasons. */
 export function ruleContext(
   snap: Snapshot,
-  others: RuleContext['others']
+  others: RuleContext['others'],
+  headCoaches?: Record<string, string>
 ): RuleContext {
   return {
+    headCoaches,
     fields: new Map(
       snap.engine.fields.map(field => [
         field.id,

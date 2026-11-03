@@ -1,12 +1,22 @@
 import { expect } from 'chai'
+import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import type {
   Publication,
   SchedulePreview
 } from '../../common/schedulePreviews'
-import { G1 } from '../../test/autoSchedulerFixture'
+import { userIdOfGumbo } from '../../common/userId'
+import {
+  G1,
+  SEASON_A_SETTINGS,
+  seedHarborField
+} from '../../test/autoSchedulerFixture'
+import { demoLocality } from '../../test/groupFixtures'
 import { type SchedulerWorld, schedulerWorld } from '../../test/schedulerWorld'
+import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
+import { decideGameRequest } from '../schedule/gameApprovals'
 
 describe('publishing a schedule preview', function () {
   this.timeout(240000)
@@ -41,6 +51,608 @@ describe('publishing a schedule preview', function () {
   })
   afterEach(async () => {
     await w?.close()
+  })
+
+  for (const editPublished of [false, true]) {
+    it(`refuses a revoked administrator after acquiring the schedule lock (published edit=${editPublished})`, async () => {
+      const { f } = w.fx
+      const preview = (await build({ mode: 'full', existing: 'replace' })).body
+      const path = `/schedule-previews/${preview.id}`
+      const keys = preview.options[0].games.map(g => g.key)
+      if (editPublished) expect((await publish(preview.id)).status).equals(200)
+      else
+        expect(
+          (
+            await w.call(101, 'PUT', path, {
+              option: 0,
+              rejectedGameKeys: keys
+            })
+          ).status
+        ).equals(200)
+      const games = f.h.db
+        .selectFrom('games')
+        .select(['id', 'status'])
+        .orderBy('id')
+      const before = await games.execute()
+      await f.h.db
+        .insertInto('scope_roles')
+        .values({
+          id: 'backup_league_admin',
+          scope_type: 'league',
+          scope_id: f.leagueA,
+          role: 'admin',
+          user_id: userIdOfGumbo(104)
+        })
+        .execute()
+      let write: Promise<{ status: number }> | undefined
+      await f.h.db.transaction().execute(async trx => {
+        await lockKeys(trx, ['creation:parent-graph'])
+        write = editPublished
+          ? w.call(101, 'PUT', path, { option: 0, rejectedGameKeys: [keys[0]] })
+          : publish(preview.id)
+        const deadline = Date.now() + 5000
+        while (true) {
+          const waiting = await sql<{
+            waiting: boolean
+          }>`select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event='advisory') as waiting`.execute(
+            trx
+          )
+          if (waiting.rows[0].waiting) break
+          if (Date.now() >= deadline)
+            throw new Error('Scheduler did not wait for the authority change')
+          await new Promise(resolve => setTimeout(resolve, 10))
+        }
+        await trx
+          .deleteFrom('scope_roles')
+          .where('scope_type', '=', 'league')
+          .where('scope_id', '=', f.leagueA)
+          .where('role', '=', 'admin')
+          .where('user_id', '=', userIdOfGumbo(101))
+          .execute()
+      })
+      expect((await write)?.status).equals(403)
+      expect(await games.execute()).deep.equals(before)
+    })
+  }
+
+  it('rechecks outside-league manager bookings and honors the saved switch', async () => {
+    const { f } = w.fx
+    const preview = (await build({ mode: 'full', existing: 'workAround' })).body
+    const game = preview.options[0].games[0]
+    const userId = userIdOfGumbo(104)
+    await f.h.db
+      .updateTable('users')
+      .set({ merged_into: userId })
+      .where('id', '=', userIdOfGumbo(106))
+      .execute()
+    await f.h.db
+      .insertInto('scope_roles')
+      .values(
+        [game.homeTeamId, f.teamB].map(teamId => ({
+          id: `role_${teamId}`,
+          scope_type: 'team' as const,
+          scope_id: teamId,
+          role: 'coach' as const,
+          user_id: teamId === f.teamB ? userIdOfGumbo(106) : userId,
+          is_head_coach: true
+        }))
+      )
+      .execute()
+    await f.h.db
+      .insertInto('games')
+      .values({
+        id: 'externalManagerGame',
+        home_team_id: f.teamB,
+        away_team_id: 'tem_account',
+        season_id: f.seasonB,
+        start_at: new Date(game.startAt),
+        end_at: new Date(game.endAt),
+        status: 'scheduled'
+      })
+      .execute()
+    // The alias still carries the designation. Only the current account’s eligibility counts.
+    await f.h.db
+      .updateTable('users')
+      .set({ disabled_at: f.clock.now() })
+      .where('id', '=', userId)
+      .execute()
+    const suspended = (await build({ mode: 'full', existing: 'workAround' }))
+      .body
+    expect(
+      suspended.options[0].games.some(
+        next =>
+          next.startAt === game.startAt &&
+          [next.homeTeamId, next.awayTeamId].includes(game.homeTeamId)
+      )
+    ).equals(true)
+    await f.h.db
+      .updateTable('users')
+      .set({ disabled_at: null })
+      .where('id', '=', userId)
+      .execute()
+    const edit = await w.call(101, 'PUT', `/schedule-previews/${preview.id}`, {
+      option: 0,
+      rejectedGameKeys: [game.key],
+      addedGames: [game]
+    })
+    expect(edit.status).equals(400)
+    expect(JSON.stringify(edit.body)).includes('Manager/Head Coach')
+    const recalculated = await build({
+      mode: 'partial',
+      fromPreviewId: preview.id,
+      option: 0
+    })
+    expect(recalculated.status).equals(409)
+    expect(JSON.stringify(recalculated.body)).includes('Manager/Head Coach')
+    const denied = await publish(preview.id)
+    expect(denied.status).equals(409)
+    expect(JSON.stringify(denied.body)).includes('Manager/Head Coach')
+    const rebuilt = (await build({ mode: 'full', existing: 'workAround' })).body
+    for (const option of rebuilt.options) {
+      for (const next of option.games.filter(g =>
+        [g.homeTeamId, g.awayTeamId].includes(game.homeTeamId)
+      )) {
+        expect(
+          Date.parse(next.startAt) < Date.parse(game.endAt) &&
+            Date.parse(game.startAt) < Date.parse(next.endAt)
+        ).equals(false)
+      }
+    }
+    // The original slot becomes available in the open preview when the
+    // outside game is canceled. No league, season or field is shared.
+    const addOriginal = async (): Promise<{ status: number; body: unknown }> =>
+      await w.call(101, 'PUT', `/schedule-previews/${rebuilt.id}`, {
+        option: 0,
+        rejectedGameKeys: rebuilt.options[0].games.map(g => g.key),
+        addedGames: [game]
+      })
+    expect((await addOriginal()).status).equals(400)
+    await f.h.db
+      .updateTable('games')
+      .set({ status: 'cancelled' })
+      .where('id', '=', 'externalManagerGame')
+      .execute()
+    expect((await addOriginal()).status).equals(200)
+    await f.h.db
+      .updateTable('games')
+      .set({ status: 'scheduled' })
+      .where('id', '=', 'externalManagerGame')
+      .execute()
+    const path = `/leagues/${f.leagueA}/schedule-setup`
+    const old = await w.call<{
+      seasonIds: string[]
+      fieldIds: string[]
+      avoidHeadCoachConflicts: boolean
+    }>(101, 'GET', path)
+    expect(old.body.avoidHeadCoachConflicts).equals(true)
+    const choice = {
+      seasonIds: old.body.seasonIds,
+      fieldIds: old.body.fieldIds
+    }
+    const off = await w.call<typeof old.body>(101, 'PUT', path, {
+      ...choice,
+      avoidHeadCoachConflicts: false
+    })
+    expect(off.body.avoidHeadCoachConflicts).equals(false)
+    expect(
+      (await w.call<typeof old.body>(101, 'PUT', path, choice)).body
+        .avoidHeadCoachConflicts
+    ).equals(false)
+    const unchecked = (await build({ mode: 'full', existing: 'workAround' }))
+      .body
+    expect(
+      unchecked.options[0].games.some(
+        next =>
+          next.startAt === game.startAt &&
+          [next.homeTeamId, next.awayTeamId].includes(game.homeTeamId)
+      )
+    ).equals(true)
+    expect((await publish(unchecked.id)).status).equals(200)
+  })
+
+  it('avoids conflicts for a replacement team that left the selected season', async () => {
+    const { f, teams } = w.fx
+    await f.h.db
+      .deleteFrom('season_team_parents')
+      .where('team_id', '=', teams.Owls)
+      .where('season_id', '=', f.seasonA)
+      .execute()
+    await f.h.db
+      .updateTable('teams')
+      .set({ league_id: f.leagueA })
+      .where('id', '=', teams.Owls)
+      .execute()
+    await f.h.db
+      .updateTable('season_teams')
+      .set({ active: false })
+      .where('team_id', '=', teams.Owls)
+      .where('season_id', '=', f.seasonA)
+      .execute()
+    const request = {
+      mode: 'partial',
+      existing: 'replace',
+      teamIds: [teams.Owls, teams.Hawks]
+    }
+    const original = (await build(request)).body.options[0].games[0]
+    expect([original.homeTeamId, original.awayTeamId]).includes(teams.Owls)
+    const setupPath = `/leagues/${f.leagueA}/schedule-setup`
+    await w.call(101, 'PUT', setupPath, { avoidHeadCoachConflicts: false })
+    await f.h.db
+      .insertInto('games')
+      .values({
+        id: 'outside_team',
+        season_id: f.seasonB,
+        home_team_id: teams.Owls,
+        away_team_id: 'tem_account',
+        start_at: new Date(original.startAt),
+        end_at: new Date(original.endAt),
+        status: 'scheduled'
+      })
+      .execute()
+    const off = (await build(request)).body
+    for (const option of off.options) {
+      const replacement = option.games.find(g =>
+        [g.homeTeamId, g.awayTeamId].includes(teams.Owls)
+      )!
+      expect(
+        replacement.startAt < original.endAt &&
+          original.startAt < replacement.endAt
+      ).equals(false)
+    }
+    await f.h.db
+      .updateTable('games')
+      .set({ status: 'cancelled' })
+      .where('id', '=', 'outside_team')
+      .execute()
+    await w.call(101, 'PUT', setupPath, { avoidHeadCoachConflicts: true })
+    await f.h.db
+      .insertInto('scope_roles')
+      .values(
+        [teams.Owls, f.teamB].map(team => ({
+          id: 'partial_' + team,
+          scope_type: 'team' as const,
+          scope_id: team,
+          role: 'coach' as const,
+          is_head_coach: true,
+          user_id: userIdOfGumbo(104)
+        }))
+      )
+      .execute()
+    await f.h.db
+      .insertInto('games')
+      .values({
+        id: 'outside_partial',
+        season_id: f.seasonB,
+        home_team_id: f.teamB,
+        away_team_id: 'tem_account',
+        start_at: new Date(original.startAt),
+        end_at: new Date(original.endAt),
+        status: 'scheduled'
+      })
+      .execute()
+    const next = (await build(request)).body
+    for (const option of next.options) {
+      const game = option.games.find(g =>
+        [g.homeTeamId, g.awayTeamId].includes(teams.Owls)
+      )!
+      expect(
+        game.startAt < original.endAt && original.startAt < game.endAt
+      ).equals(false)
+    }
+    const recalculated = (
+      await build({
+        mode: 'partial',
+        fromPreviewId: next.id,
+        option: 0
+      })
+    ).body
+    const kept = recalculated.options[0].games.find(game =>
+      [game.homeTeamId, game.awayTeamId].includes(teams.Owls)
+    )!
+    await f.h.db
+      .updateTable('games')
+      .set({
+        start_at: new Date(kept.startAt),
+        end_at: new Date(kept.endAt)
+      })
+      .where('id', '=', 'outside_partial')
+      .execute()
+    const denied = await publish(recalculated.id)
+    expect(denied.status).equals(409)
+    expect(JSON.stringify(denied.body)).includes('Manager/Head Coach')
+    await f.h.db
+      .updateTable('games')
+      .set({ status: 'cancelled' })
+      .where('id', '=', 'outside_partial')
+      .execute()
+    expect((await publish(recalculated.id)).status).equals(200)
+  })
+
+  it('keeps an outside manager committed without reserving the old field', async () => {
+    const { f } = w.fx
+    const request = { mode: 'full', existing: 'workAround' }
+    const before = (await build(request)).body
+    const game = before.options[0].games[0]
+    const unrelated = participants().find(
+      team => ![game.homeTeamId, game.awayTeamId].includes(team)
+    )!
+    const coach = userIdOfGumbo(104)
+    await f.h.db
+      .insertInto('scope_roles')
+      .values(
+        [f.teamB, unrelated].map(team => ({
+          id: 'moving_' + team,
+          scope_type: 'team' as const,
+          scope_id: team,
+          role: 'coach' as const,
+          user_id: coach,
+          is_head_coach: true
+        }))
+      )
+      .execute()
+    const moved = 'outside_move'
+    await f.h.db
+      .insertInto('games')
+      .values({
+        id: moved,
+        season_id: f.seasonB,
+        home_team_id: f.teamB,
+        away_team_id: 'tem_account',
+        field_id: game.fieldId,
+        field_size: game.size,
+        status: 'scheduled',
+        start_at: new Date(game.startAt),
+        end_at: new Date(game.endAt)
+      })
+      .execute()
+    await f.h.db
+      .insertInto('group_requests')
+      .values(
+        ['2029-03-01', '2029-03-02'].map(day => ({
+          id: 'pending_move_' + day,
+          sender_scope_id: f.teamB,
+          sender_scope_type: 'team' as const,
+          kind: 'game' as const,
+          sender_id: coach,
+          game_id: moved,
+          sent_at: f.clock.now(),
+          expires_at: new Date('2030-01-01'),
+          terms: {
+            gameId: moved,
+            game: {
+              homeTeamId: f.teamB,
+              awayTeamId: 'tem_account',
+              seasonId: f.seasonB,
+              startAt: day + 'T10:00:00Z',
+              endAt: day + 'T11:30:00Z',
+              status: 'scheduled'
+            }
+          }
+        }))
+      )
+      .execute()
+    const next = (await build(request)).body
+    const input = await f.h.db
+      .selectFrom('schedule_previews')
+      .select('input')
+      .where('id', '=', next.id)
+      .executeTakeFirstOrThrow()
+    const snapshot = input.input as {
+      engine: {
+        bookings: Array<{
+          key: string
+          managerOnly?: boolean
+          fieldId: string
+          start: number
+        }>
+      }
+    }
+    expect(
+      snapshot.engine.bookings.find(
+        b => b.key === moved && b.managerOnly === true
+      )
+    ).includes({ fieldId: game.fieldId })
+    expect(
+      snapshot.engine.bookings.filter(b => b.key === moved).map(b => b.start)
+    ).to.have.members([
+      Date.parse(game.startAt),
+      Date.parse('2029-03-01T10:00:00Z'),
+      Date.parse('2029-03-02T10:00:00Z')
+    ])
+    // Keep only the unrelated matchup at the original time, then publish it.
+    const edited = await w.call(101, 'PUT', `/schedule-previews/${next.id}`, {
+      option: 0,
+      rejectedGameKeys: next.options[0].games.map(g => g.key),
+      addedGames: [game]
+    })
+    expect(edited.status, JSON.stringify(edited.body)).equals(200)
+    expect((await publish(next.id)).status).equals(200)
+  })
+
+  it('allows only one of two leagues publishing overlapping games for the same manager', async () => {
+    const { f } = w.fx
+    const first = (await build({ mode: 'full', existing: 'workAround' })).body
+    const game = first.options[0].games[0]
+    const fieldId = await seedHarborField(w.fx)
+    await f.h.db
+      .updateTable('venue_fields')
+      .set({
+        hours: JSON.stringify(
+          Array.from({ length: 7 }, (_, weekday) => ({
+            weekday,
+            start: '00:00',
+            end: '23:55'
+          }))
+        )
+      })
+      .where('id', '=', fieldId)
+      .execute()
+    const made = await w.call<{ id: string }>(102, 'POST', '/teams', {
+      name: 'Demo Sparrows',
+      locality: demoLocality,
+      parent: { kind: 'season', id: f.seasonB },
+      idempotencyKey: 'parallel-manager'
+    })
+    expect(made.status).equals(201)
+    await f.h.db
+      .insertInto('season_teams')
+      .values(
+        [f.teamB, made.body.id].map(teamId => ({
+          team_id: teamId,
+          season_id: f.seasonB,
+          active: true
+        }))
+      )
+      .onConflict(oc => oc.columns(['team_id', 'season_id']).doNothing())
+      .execute()
+    expect(
+      (
+        await w.call(102, 'PUT', `/seasons/${f.seasonB}/schedule-settings`, {
+          ...SEASON_A_SETTINGS,
+          regularGames: 1,
+          exhibitionGames: 0
+        })
+      ).status
+    ).equals(200)
+    expect(
+      (
+        await w.call(102, 'PUT', `/leagues/${f.leagueB}/schedule-setup`, {
+          seasonIds: [f.seasonB],
+          fieldIds: [fieldId]
+        })
+      ).status
+    ).equals(200)
+    const second = (
+      await w.call<SchedulePreview>(
+        102,
+        'POST',
+        `/leagues/${f.leagueB}/schedule-previews`,
+        { mode: 'full', existing: 'workAround' }
+      )
+    ).body
+    const edit = await w.call(102, 'PUT', `/schedule-previews/${second.id}`, {
+      option: 0,
+      rejectedGameKeys: second.options[0].games.map(g => g.key),
+      addedGames: [
+        {
+          ...game,
+          seasonId: f.seasonB,
+          fieldId,
+          homeTeamId: f.teamB,
+          awayTeamId: made.body.id,
+          exhibition: false
+        }
+      ]
+    })
+    expect(edit.status, JSON.stringify(edit.body)).equals(200)
+    await f.h.db
+      .insertInto('scope_roles')
+      .values(
+        [game.homeTeamId, f.teamB].map(teamId => ({
+          id: `coach_${teamId}`,
+          user_id: userIdOfGumbo(104),
+          scope_id: teamId,
+          scope_type: 'team' as const,
+          role: 'coach' as const,
+          is_head_coach: true
+        }))
+      )
+      .execute()
+    const results = await Promise.all([
+      publish(first.id),
+      publish(second.id, 0, 102)
+    ])
+    expect(results.map(r => r.status).sort((a, b) => a - b)).deep.equals([
+      200, 409
+    ])
+    expect(JSON.stringify(results.find(r => r.status === 409)?.body)).includes(
+      'Manager/Head Coach'
+    )
+  })
+
+  it('releases a replaced game and its pending change from manager commitments', async () => {
+    const { f, teams } = w.fx
+    const first = (await build({ mode: 'full', existing: 'replace' })).body
+    const game = first.options[0].games.find(g =>
+      [g.homeTeamId, g.awayTeamId].includes(teams.Hawks)
+    )!
+    const current = await w.call<{
+      version: string
+      game: Record<string, unknown>
+    }>(101, 'GET', `/games/${G1}/scheduling`)
+    await f.h.db
+      .updateTable('season_teams')
+      .set({ active: false })
+      .where('team_id', '=', teams.Visitors)
+      .where('season_id', '=', f.seasonA)
+      .execute()
+    const sent = await w.call<{ id: string; status: string }>(
+      101,
+      'POST',
+      '/game-requests',
+      {
+        sender: { kind: 'season', id: f.seasonA },
+        gameId: G1,
+        expected: current.body.version,
+        game: {
+          ...current.body.game,
+          homeTeamId: teams.Hawks,
+          awayTeamId: teams.Visitors,
+          startAt: game.startAt,
+          endAt: game.endAt
+        },
+        idempotencyKey: 'pending-manager-replacement'
+      }
+    )
+    expect(sent.body.status).equals('pending')
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: 'replacedManager',
+        user_id: userIdOfGumbo(104),
+        scope_type: 'team',
+        scope_id: teams.Hawks,
+        role: 'coach',
+        is_head_coach: true
+      })
+      .execute()
+    const replacing = (await build({ mode: 'full', existing: 'replace' })).body
+    const stored = await f.h.db
+      .selectFrom('schedule_previews')
+      .select('input')
+      .where('id', '=', replacing.id)
+      .executeTakeFirstOrThrow()
+    const snapshot = stored.input as {
+      replaceGameIds: string[]
+      engine: { bookings: Array<{ key: string }> }
+    }
+    expect(snapshot.replaceGameIds).includes(G1)
+    expect(
+      snapshot.engine.bookings.some(
+        booking => booking.key === G1 || booking.key === `pending:${G1}`
+      )
+    ).equals(false)
+    const edit = await w.call(
+      101,
+      'PUT',
+      `/schedule-previews/${replacing.id}`,
+      {
+        option: 0,
+        rejectedGameKeys: replacing.options[0].games.map(g => g.key),
+        addedGames: [game]
+      }
+    )
+    expect(edit.status, JSON.stringify(edit.body)).equals(200)
+    expect((await publish(replacing.id)).status).equals(200)
+    expect(
+      (
+        await f.h.db
+          .selectFrom('group_requests')
+          .select('status')
+          .where('id', '=', sent.body.id)
+          .executeTakeFirstOrThrow()
+      ).status
+    ).equals('superseded')
   })
 
   it('asks about existing games, works around them, and publishes every game at once', async () => {
@@ -329,6 +941,20 @@ describe('publishing a schedule preview', function () {
       }
     )
     expect(sent.body.status).equals('pending')
+    // The pending change reserves both intervals for another team this manager coaches.
+    await w.fx.f.h.db
+      .insertInto('scope_roles')
+      .values(
+        [w.fx.teams.Visitors, w.fx.teams.Hawks].map(teamId => ({
+          id: `coach_${teamId}`,
+          scope_type: 'team' as const,
+          scope_id: teamId,
+          user_id: userIdOfGumbo(104),
+          role: 'coach' as const,
+          is_head_coach: true
+        }))
+      )
+      .execute()
     const next = await build({ mode: 'full', existing: 'workAround' })
     expect(next.status).equals(201)
     const stored = await w.fx.f.h.db
@@ -464,6 +1090,59 @@ describe('publishing a schedule preview', function () {
       .execute()
     expect((await publish(built.body.id)).status).equals(200)
   })
+
+  for (const edit of [true, false]) {
+    it(`accepts a game while its preview waits for the graph lock (edit=${edit})`, async () => {
+      const { f, teams } = w.fx
+      const preview = (await build({ mode: 'full', existing: 'workAround' }))
+        .body
+      await f.h.db
+        .updateTable('season_teams')
+        .set({ active: false })
+        .where('season_id', '=', f.seasonA)
+        .where('team_id', '=', teams.Visitors)
+        .execute()
+      expect((await publish(preview.id)).status).equals(200)
+      const waiting = await f.h.db
+        .selectFrom('schedule_preview_games')
+        .select('request_id')
+        .where('preview_id', '=', preview.id)
+        .where('game_id', 'is', null)
+        .executeTakeFirstOrThrow()
+      let writer: Promise<{ status: number }> | undefined
+      await atomic(f.h.db, async trx => {
+        await lockKeys(trx, ['creation:parent-graph'])
+        writer = edit
+          ? w.call(101, 'PUT', `/schedule-previews/${preview.id}`, {
+              option: 0,
+              rejectedGameKeys: [],
+              addedGames: []
+            })
+          : publish(preview.id)
+        const deadline = Date.now() + 5000
+        while (true) {
+          const result = await sql<{
+            waiting: boolean
+          }>`select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event='advisory') as waiting`.execute(
+            trx
+          )
+          if (result.rows[0].waiting) break
+          if (Date.now() >= deadline)
+            throw new Error('Preview writer did not reach the graph lock')
+          await new Promise(resolve => setTimeout(resolve, 10))
+        }
+        const accepted = await decideGameRequest(
+          trx,
+          { userId: userIdOfGumbo(103), isAdmin: false, scopes: [] },
+          waiting.request_id!,
+          'accept',
+          f.clock
+        )
+        expect(accepted.game_id).not.equals(null)
+      })
+      expect((await writer)?.status).equals(200)
+    })
+  }
 
   it('leaves a game waiting when the approval rules say so, and its acceptance links it to the preview', async () => {
     const built = await build({ mode: 'full', existing: 'workAround' })

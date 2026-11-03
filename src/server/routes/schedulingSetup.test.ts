@@ -428,6 +428,26 @@ describe('scheduling setup routes', function () {
     expect(await chosen.text()).includes('Choose fields that exist')
   })
 
+  it('saves only the constraint after another administrator changes the run', async () => {
+    const path = `/leagues/${f.leagueA}/schedule-setup`
+    const field = await venue('new-selection', f.leagueA)
+    await json(
+      await f.h.request(
+        'PUT',
+        path,
+        { seasonIds: [f.seasonA], fieldIds: [field], addedFieldIds: [field] },
+        101
+      )
+    )
+    const saved = await json<ScheduleSetup>(
+      await f.h.request('PUT', path, { avoidHeadCoachConflicts: false }, 105)
+    )
+    expect(saved.avoidHeadCoachConflicts).equals(false)
+    expect(saved.seasonIds).deep.equals([f.seasonA])
+    expect(saved.fieldIds).deep.equals([field])
+    expect(saved.addedFieldIds).deep.equals([field])
+  })
+
   it('chooses the league’s seasons and any field in the registry, for a league admin only', async () => {
     const own = await venue('ven_own', f.leagueA)
     const other = await venue('ven_other', f.leagueB)

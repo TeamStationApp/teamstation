@@ -1,4 +1,4 @@
-import type { Kysely, Selectable } from 'kysely'
+import type { Kysely, Selectable, Transaction } from 'kysely'
 
 import type {
   EngineBooking,
@@ -33,8 +33,9 @@ import {
   publishedStates,
   rejectPublished
 } from './reschedule'
-import { type Holding, ruleProblem } from './rules'
+import { type Holding, managerConflict, ruleProblem } from './rules'
 import {
+  headCoachesOf,
   type RescheduleRef,
   ruleContext,
   runGames,
@@ -57,11 +58,22 @@ export async function previewFor(
     .selectFrom('schedule_previews')
     .selectAll()
     .where('id', '=', previewId)
-  if (options.forUpdate === true) query = query.forUpdate()
+  // Serialize preview writers without blocking a game that references this preview.
+  if (options.forUpdate === true) query = query.forNoKeyUpdate()
   const row = await query.executeTakeFirst()
   if (row == null) throw notFound()
   await requireGroupAdmin(db, actor, { kind: 'league', id: row.league_id })
   return row
+}
+
+/** Serialize calendar writes, then check the authority that still holds under the lock. */
+export async function lockScheduleForWrite(
+  trx: Transaction<Database>,
+  actor: Actor,
+  leagueId: string
+): Promise<void> {
+  await lockKeys(trx, ['creation:parent-graph', `schedule-league:${leagueId}`])
+  await requireGroupAdmin(trx, actor, { kind: 'league', id: leagueId })
 }
 
 export function snapshotOf(row: PreviewRow): Snapshot {
@@ -246,6 +258,10 @@ export async function buildPreview(
       trx,
       {
         leagueId,
+        avoidHeadCoachConflicts:
+          earlier == null
+            ? undefined
+            : (snapshotOf(earlier).avoidHeadCoachConflicts ?? true),
         existing,
         teamIds,
         keep,
@@ -374,7 +390,8 @@ export function requireKeepsRules(
   snap: Snapshot,
   game: PlannedGame,
   others: Holding[],
-  now: Date
+  now: Date,
+  headCoaches?: Record<string, string>
 ): void {
   const season = snap.engine.seasons.find(each => each.id === game.seasonId)
   if (season == null) throw badRequest('Choose a season of this run')
@@ -401,7 +418,7 @@ export function requireKeepsRules(
       size: game.size,
       seasonId: game.seasonId
     },
-    ruleContext(snap, others)
+    ruleContext(snap, others, headCoaches)
   )
   if (problem != null) throw badRequest(problem)
 }
@@ -412,21 +429,31 @@ export async function currentHoldings(
   snap: Snapshot,
   clock: Clock,
   leaveOut: string[]
-): Promise<Holding[]> {
+): Promise<{ holdings: Holding[]; headCoaches: Record<string, string> }> {
   const teamIds = [
-    ...new Set(
-      snap.engine.seasons.flatMap(season => [
+    ...new Set([
+      ...snap.engine.seasons.flatMap(season => [
         ...season.participants,
         ...season.exhibitionTeams
+      ]),
+      ...snap.engine.fixed.flatMap(game => [game.homeTeamId, game.awayTeamId]),
+      ...(snap.engine.required ?? []).flatMap(game => [
+        game.homeTeamId,
+        game.awayTeamId
       ])
-    )
+    ])
   ]
-  return (
+  const headCoaches =
+    snap.avoidHeadCoachConflicts === false
+      ? {}
+      : await headCoachesOf(db, teamIds)
+  const holdings = (
     await occupancy(
       db,
       {
         fieldIds: snap.engine.fields.map(field => field.id),
-        teamIds,
+        teamIds: [...new Set([...teamIds, ...Object.keys(headCoaches)])],
+        keepScheduledFor: Object.keys(headCoaches),
         from: clock.now()
       },
       clock
@@ -434,6 +461,7 @@ export async function currentHoldings(
   )
     .filter(booking => !leaveOut.includes(booking.key))
     .map(booking => ({
+      managerOnly: booking.managerOnly,
       key: booking.key,
       fieldId: booking.fieldId,
       size: booking.size,
@@ -442,6 +470,7 @@ export async function currentHoldings(
       start: booking.start,
       end: booking.end
     }))
+  return { headCoaches, holdings }
 }
 
 /**
@@ -488,8 +517,25 @@ export async function editPreview(
         ...option.games.filter(game => !rejected.has(game.key)),
         ...added
       ]
+      const live =
+        body.addedGames.length === 0 || snap.avoidHeadCoachConflicts === false
+          ? undefined
+          : await currentHoldings(trx, snap, clock, snap.replaceGameIds)
       for (const game of body.addedGames) {
         const next = planned(game, `added:${makeId('game')}`)
+        const optionHoldings = kept().map(holdingOf)
+        const candidate = holdingOf(next)
+        // Team and field rules retain the preview snapshot. A manager's
+        // calendar can change across leagues while this preview is open.
+        if (
+          live != null &&
+          [...live.holdings, ...optionHoldings].some(other =>
+            managerConflict(candidate, other, live.headCoaches)
+          )
+        )
+          throw badRequest(
+            'A Manager/Head Coach already has a game at this time.'
+          )
         requireKeepsRules(
           snap,
           next,
@@ -517,7 +563,7 @@ export async function editPreview(
                 start: fixed.start,
                 end: fixed.end
               })),
-            ...kept().map(holdingOf)
+            ...optionHoldings
           ],
           clock.now()
         )
@@ -538,19 +584,21 @@ export async function editPreview(
         .execute()
     } else {
       // Proposing at once, it waits for the league's other publications.
-      await lockKeys(trx, [`schedule-league:${row.league_id}`])
+      await lockScheduleForWrite(trx, actor, row.league_id)
       await rejectPublished(trx, actor, row, body.rejectedGameKeys, clock)
       const games: PlannedGame[] = []
+      const live =
+        body.addedGames.length === 0
+          ? { holdings: [], headCoaches: {} }
+          : await currentHoldings(trx, snap, clock, [])
       for (const game of body.addedGames) {
         const next = planned(game, `added:${makeId('game')}`)
         requireKeepsRules(
           snap,
           next,
-          [
-            ...(await currentHoldings(trx, snap, clock, [])),
-            ...games.map(holdingOf)
-          ],
-          clock.now()
+          [...live.holdings, ...games.map(holdingOf)],
+          clock.now(),
+          live.headCoaches
         )
         games.push(next)
       }

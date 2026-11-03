@@ -233,13 +233,15 @@ function fakeClient(
         )
       setup = {
         ...setup,
-        seasonIds: choice.seasonIds,
-        fieldIds: choice.fieldIds,
+        seasonIds: choice.seasonIds ?? setup.seasonIds,
+        fieldIds: choice.fieldIds ?? setup.fieldIds,
+        avoidHeadCoachConflicts:
+          choice.avoidHeadCoachConflicts ?? setup.avoidHeadCoachConflicts,
         addedFieldIds,
         fields: known.filter(
           item =>
             item.ours ||
-            choice.fieldIds.includes(item.id) ||
+            (choice.fieldIds ?? setup.fieldIds).includes(item.id) ||
             addedFieldIds.includes(item.id)
         )
       }
@@ -376,6 +378,48 @@ describe('the Auto-Scheduler setup', () => {
     await tapLabel('Demo Regular Teams: 7 teams and 2 exhibition teams')
     expect(calls.seasons).deep.equals(['sea_a', 'sea_a', 'sea_a', 'sea_a'])
   })
+
+  it('defaults the manager constraint on and writes only its change', async () => {
+    const fake = fakeClient(setupOf())
+    await show(fake.client, { fieldManager: 0, seasons: [], builds: 0 })
+    const button = document.querySelector<HTMLInputElement>(
+      '[aria-label="Avoid manager/head coach double bookings"]'
+    )!
+    expect(button.checked).equals(true)
+    await act(async () => {
+      button.click()
+      await settle(10)
+    })
+    expect(fake.choices.at(-1)).deep.equals({
+      avoidHeadCoachConflicts: false
+    })
+  })
+
+  for (const failChoice of [false, true]) {
+    it(`shows the new manager switch immediately when the save ${failChoice ? 'fails' : 'succeeds'}`, async () => {
+      let release = (): void => undefined
+      const fake = fakeClient(setupOf(), {
+        failChoice,
+        holdChoice: new Promise(resolve => {
+          release = resolve
+        })
+      })
+      await show(fake.client, { fieldManager: 0, seasons: [], builds: 0 })
+      const button = document.querySelector<HTMLInputElement>(
+        '[aria-label="Avoid manager/head coach double bookings"]'
+      )!
+      await act(async () => {
+        button.click()
+        await settle(5)
+      })
+      expect(button.checked).equals(false)
+      await act(async () => {
+        release()
+        await settle(10)
+      })
+      expect(button.checked).equals(failChoice)
+    })
+  }
 
   it('chooses seasons and fields, and blocks building without a field of the size', async () => {
     const fake = fakeClient(setupOf())

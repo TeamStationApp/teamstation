@@ -10,6 +10,8 @@ import type { Clock } from '../groups/requests'
  * still waiting for consent.
  */
 export interface Booking {
+  /** Published or proposed interval retained only for the manager while another move is pending. */
+  managerOnly?: boolean
   /**
    * The game it is or will be: a game row's id, or the id a pending
    * proposal reserves for its game. It stays the same once the proposal is
@@ -29,6 +31,8 @@ export interface Booking {
 
 /** Where to look: some fields, some teams, or both. */
 export interface OccupancyQuery {
+  /** Pending changes still leave these teams committed to the published game. */
+  keepScheduledFor?: string[]
   fieldIds?: string[]
   teamIds?: string[]
   /** Leave out bookings that end before this instant. */
@@ -112,6 +116,11 @@ export async function occupancy(
   // The proposals on the fields or of the teams, and the changes to a game
   // found above, which may move it away.
   const gameIds = [...bookings.keys()]
+  const keepTeams = new Set(query.keepScheduledFor)
+  const commitments = [...bookings.values()].filter(
+    booking =>
+      keepTeams.has(booking.homeTeamId) || keepTeams.has(booking.awayTeamId)
+  )
   const requests = await db
     .selectFrom('group_requests')
     .select(['terms'])
@@ -152,7 +161,7 @@ export async function occupancy(
     const start = new Date(game.startAt)
     const end = endOf(start, game.endAt == null ? null : new Date(game.endAt))
     if (end < from) continue
-    bookings.set(key, {
+    const proposal: Booking = {
       key,
       pending: true,
       fieldId: game.fieldId ?? null,
@@ -162,9 +171,20 @@ export async function occupancy(
       seasonId: game.seasonId,
       start: start.getTime(),
       end
-    })
+    }
+    bookings.set(key, proposal)
+    if (keepTeams.has(game.homeTeamId) || keepTeams.has(game.awayTeamId))
+      commitments.push(proposal)
   }
-  return [...bookings.values()].sort((a, b) => a.start - b.start)
+  // All intervals refer to the same underlying game. Callers replacing
+  // that game must be able to leave out its pending change as well.
+  const retained = commitments.filter(
+    booking => bookings.get(booking.key) !== booking
+  )
+  return [
+    ...bookings.values(),
+    ...retained.map(booking => ({ ...booking, managerOnly: true }))
+  ].sort((a, b) => a.start - b.start)
 }
 
 /**

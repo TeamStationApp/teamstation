@@ -375,7 +375,12 @@ export async function scheduleSetup(
 ): Promise<ScheduleSetup> {
   const chosen = await db
     .selectFrom('league_schedule_setups')
-    .select(['season_ids', 'field_ids', 'added_field_ids'])
+    .select([
+      'season_ids',
+      'field_ids',
+      'added_field_ids',
+      'avoid_head_coach_conflicts'
+    ])
     .where('league_id', '=', leagueId)
     .executeTakeFirst()
   const seasons = await db
@@ -411,6 +416,7 @@ export async function scheduleSetup(
   )
   return {
     leagueId,
+    avoidHeadCoachConflicts: chosen?.avoid_head_coach_conflicts ?? true,
     seasonIds,
     fieldIds: (chosen?.field_ids ?? []).filter(id =>
       fields.some(field => field.id === id)
@@ -455,7 +461,7 @@ export async function saveScheduleSetup(
   choice: ScheduleSetupChoice,
   clock: Clock = realClock
 ): Promise<ScheduleSetup> {
-  if (choice.seasonIds.length > 0) {
+  if (choice.seasonIds != null && choice.seasonIds.length > 0) {
     const own = await db
       .selectFrom('seasons')
       .select('id')
@@ -469,7 +475,7 @@ export async function saveScheduleSetup(
   // choice: their owners can delete them while the setup is open, and every
   // save resends the list, so a deleted or unknown one is dropped instead.
   const listed = [
-    ...new Set([...choice.fieldIds, ...(choice.addedFieldIds ?? [])])
+    ...new Set([...(choice.fieldIds ?? []), ...(choice.addedFieldIds ?? [])])
   ]
   const live = new Set(
     listed.length === 0
@@ -483,11 +489,15 @@ export async function saveScheduleSetup(
             .execute()
         ).map(field => field.id)
   )
-  if (choice.fieldIds.some(id => !live.has(id)))
+  if (choice.fieldIds?.some(id => !live.has(id)) === true)
     throw badRequest('Choose fields that exist')
   const values = {
-    season_ids: choice.seasonIds,
-    field_ids: choice.fieldIds,
+    ...(choice.seasonIds == null
+      ? {}
+      : { season_ids: choice.seasonIds, field_ids: choice.fieldIds }),
+    ...(choice.avoidHeadCoachConflicts == null
+      ? {}
+      : { avoid_head_coach_conflicts: choice.avoidHeadCoachConflicts }),
     ...(choice.addedFieldIds == null
       ? {}
       : {

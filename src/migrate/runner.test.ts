@@ -77,6 +77,93 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
+  it('upgrades and rolls back the two coach migrations without touching master’s camera data', async () => {
+    const current = ['103TeamHeadCoach', '104ManagerScheduling']
+    await migrateUp(pool, migrations)
+    await migrateDown(pool, migrations, 2)
+    const masterSchema = await schemaSnapshot(pool)
+    await pool.query(
+      `insert into users(id, display_name) values ($1, 'Ichiro Suzuki')`,
+      [userIdOfGumbo(702)]
+    )
+    await pool.query(`insert into teams(id, name) values ('tem_camera_home', 'Demo Hawks'), ('tem_camera_away', 'Demo Owls');
+      insert into games(id, home_team_id, away_team_id, start_at) values ('gam_camera_history', 'tem_camera_home', 'tem_camera_away', now())`)
+    await pool.query(
+      `insert into live_streams(id, game_id, team_id, user_id, slot, key_hash, key_prefix, key_cipher,
+      state, opens_at, created_at, updated_at, local_recording, local_copy_from)
+      values ('liv_camera_history', 'gam_camera_history', 'tem_camera_home', $1, 1, 'history_hash', 'ts_', 'v1.a.b.c',
+      'ended', now(), now(), now(), 'removed', now())`,
+      [userIdOfGumbo(702)]
+    )
+    const camera =
+      "select local_recording, local_copy_from from live_streams where id='liv_camera_history'"
+    const original = (await pool.query(camera)).rows
+    expect((await migrateUp(pool, migrations)).applied).deep.equals(current)
+    expect(await migrateDown(pool, migrations, 2)).deep.equals(
+      [...current].reverse()
+    )
+    expect(await schemaSnapshot(pool)).deep.equals(masterSchema)
+    expect((await pool.query(camera)).rows).deep.equals(original)
+    // Leave this shared scratch database ready for the runner's other rollback cases.
+    await pool.query("delete from live_streams where id='liv_camera_history'")
+    await migrateUp(pool, migrations)
+  })
+
+  it('adopts the earlier coach migration history without reinstalling either column', async () => {
+    const earlier = ['100TeamHeadCoach', '101ManagerScheduling']
+    const current = ['103TeamHeadCoach', '104ManagerScheduling']
+    // An existing feature checkout has the same schema and the earlier recorded names.
+    await migrateUp(pool, migrations)
+    await pool.query(
+      `insert into users(id, display_name) values ($1, 'Mookie Betts')`,
+      [userIdOfGumbo(701)]
+    )
+    await pool.query(`insert into leagues(id, name) values ('lea_history', 'Demo League');
+      insert into teams(id, name) values ('tem_history', 'Demo Hawks');
+      insert into league_schedule_setups(league_id, avoid_head_coach_conflicts) values ('lea_history', false)`)
+    await pool.query(
+      `insert into scope_roles(id, user_id, scope_type, scope_id, role, is_head_coach)
+      values ('role_history', $1, 'team', 'tem_history', 'coach', true)`,
+      [userIdOfGumbo(701)]
+    )
+    const before = await schemaSnapshot(pool)
+    for (const [index, name] of current.entries())
+      await pool.query(
+        'update schema_migrations set name = $1 where name = $2',
+        [earlier[index], name]
+      )
+    const adopted = await migrateUp(pool, migrations)
+    expect(adopted.applied).deep.equals(current)
+    expect(await schemaSnapshot(pool)).deep.equals(before)
+    expect(
+      (
+        await pool.query(
+          'select name from schema_migrations where name = any($1::text[])',
+          [earlier]
+        )
+      ).rowCount
+    ).equals(0)
+    expect(
+      (
+        await pool.query(
+          "select is_head_coach from scope_roles where id='role_history'"
+        )
+      ).rows
+    ).deep.equals([{ is_head_coach: true }])
+    expect(
+      (
+        await pool.query(
+          "select avoid_head_coach_conflicts from league_schedule_setups where league_id='lea_history'"
+        )
+      ).rows
+    ).deep.equals([{ avoid_head_coach_conflicts: false }])
+    expect((await migrateUp(pool, migrations)).applied).deep.equals([])
+    expect(await migrateDown(pool, migrations, 2)).deep.equals(
+      [...current].reverse()
+    )
+    expect((await migrateUp(pool, migrations)).applied).deep.equals(current)
+  })
+
   it('creates the tables the app expects', async function () {
     const { rows } = await pool.query<{ tablename: string }>(
       "select tablename from pg_tables where schemaname = 'public'"
@@ -416,7 +503,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '100streamManagement',
           '101videographerRequests',
           '102localCopyRemoved',
-          '103TeamHeadCoach'
+          '103TeamHeadCoach',
+          '104ManagerScheduling'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

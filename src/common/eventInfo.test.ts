@@ -77,6 +77,7 @@ describe('event information contracts', () => {
       ...row,
       isTeamParticipant: false,
       isPlayer: true,
+      isHeadCoach: true,
       staffRoles: ['coach', 'admin'],
       bats: 'switch',
       throws: 'right',
@@ -96,6 +97,7 @@ describe('event information contracts', () => {
       { throws: 'switch' },
       { staffRoles: ['parent'] },
       { isPlayer: 'yes' },
+      { isHeadCoach: 'yes' },
       { positions: [3] }
     ])
       expect(() => asEventAttendee({ ...profile, ...change })).throws()

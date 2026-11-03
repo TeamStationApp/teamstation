@@ -1192,6 +1192,7 @@ export interface SeasonScheduleSettingsTable {
 
 /** The seasons and fields a league's next schedule is built from. */
 export interface LeagueScheduleSetupsTable {
+  avoid_head_coach_conflicts: Generated<boolean>
   league_id: string
   season_ids: Generated<string[]>
   field_ids: Generated<string[]>

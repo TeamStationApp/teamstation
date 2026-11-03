@@ -6,11 +6,14 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer from 'puppeteer'
 
+import type { SchedulePreview } from '../common/schedulePreviews'
 import { userIdOfGumbo } from '../common/userId'
 import { googlePlaces } from '../server/location/googlePlaces'
 import {
+  api,
   autoSchedulerFixture,
   G1,
+  seedHarborField,
   seedThrough
 } from '../test/autoSchedulerFixture'
 import { googlePlacesStub } from '../test/googlePlacesStub'
@@ -21,13 +24,24 @@ async function main(): Promise<void> {
   if (dir == null) throw new Error('Set TS_MANAGER_ARTIFACTS')
   await mkdir(dir, { recursive: true })
   const places = await googlePlacesStub()
-  const fx = await autoSchedulerFixture(resolve('dist'), {
-    cityLookup: googlePlaces({ apiKey: 'test', baseUrl: places.baseUrl })
-  })
-  const { f } = fx
-  const browser = await puppeteer.launch({ headless: true })
+  const cleanup: Array<() => Promise<void>> = [places.close]
   try {
-    await seedThrough(fx, 'E7')
+    const fx = await autoSchedulerFixture(resolve('dist'), {
+      cityLookup: googlePlaces({ apiKey: 'test', baseUrl: places.baseUrl })
+    })
+    const { f } = fx
+    cleanup.push(async () => {
+      await f.h.close()
+    })
+    const browser = await puppeteer.launch({ headless: true })
+    cleanup.push(async () => {
+      await browser.close()
+    })
+    const { fieldId } = await seedThrough(fx, 'E7')
+    await api(fx, 101, 'PUT', `/leagues/${f.leagueA}/schedule-setup`, {
+      seasonIds: [f.seasonA],
+      fieldIds: [fieldId!, await seedHarborField(fx)]
+    })
     const first = userIdOfGumbo(104)
     const second = userIdOfGumbo(106)
     for (const userId of [first, second]) {
@@ -54,9 +68,7 @@ async function main(): Promise<void> {
       })
     const press = async (selector: string): Promise<void> => {
       await page.waitForSelector(selector, { visible: true })
-      await page.$eval(selector, el => {
-        ;(el as HTMLElement).click()
-      })
+      await page.locator(selector).click()
     }
     await page.setViewport({ width: 640, height: 980 })
     await browser.setCookie({
@@ -130,6 +142,11 @@ async function main(): Promise<void> {
     await shot('team-after', label)
     const publicContext = await browser.createBrowserContext()
     const publicPage = await publicContext.newPage()
+    if (coverage != null)
+      await publicPage.coverage.startJSCoverage({
+        resetOnNavigation: false,
+        includeRawScriptCoverage: true
+      })
     await publicPage.setViewport({ width: 640, height: 980 })
     await publicPage.goto(f.h.origin + `/teams/${f.teamA}?tab=team`, {
       waitUntil: 'networkidle0'
@@ -140,34 +157,174 @@ async function main(): Promise<void> {
       label
     )
     await publicPage.screenshot({ path: join(dir, 'people-after.png') })
-    await publicContext.close()
     await visit(`/games/${G1}?tab=info`)
     const teamChoice =
       '[data-testid="event-attendance-teams"] [aria-label="Demo Hawks"]'
     if ((await page.$(teamChoice)) != null) await press(teamChoice)
     await shot('attendance-after', label)
-    const log = ['$ node -r sucrase/register src/app/headCoach.e2e.ts']
-    for (const [method, user, body] of [
-      ['PUT', second, {}],
-      ['PUT', second, { expectedHeadCoach: first }],
-      ['DELETE', second, undefined]
-    ] as const) {
-      const path = `/manage/team/${f.teamA}/people/${user}/roles/headCoach`
-      const response = await f.h.request(method, path, body, 101)
-      log.push(
-        `${method} ${path} ${JSON.stringify(body) ?? ''}\n${response.status} ${await response.text()}`
+    await visit(`/groups/league/${f.leagueA}/scheduler`)
+    const constraint = '[aria-label="Avoid manager/head coach double bookings"]'
+    await page.waitForSelector(constraint)
+    const checked = async (): Promise<boolean> =>
+      await page.$eval(constraint, el => (el as HTMLInputElement).checked)
+    expect(await checked()).equals(true)
+    await shot('scheduler-after', 'Avoid manager/head coach double bookings')
+    await page.setViewport({ width: 375, height: 812 })
+    const readable = await page.evaluate(() => {
+      const label = [
+        ...document.querySelectorAll<HTMLElement>('div,span')
+      ].find(
+        el =>
+          el.firstChild !== null &&
+          el.firstChild.nodeType === Node.TEXT_NODE &&
+          el.textContent === 'Avoid manager/head coach double bookings'
       )
-      expect(response.status).equals(
-        method === 'PUT' && !('expectedHeadCoach' in (body ?? {})) ? 409 : 200
+      return label != null && label.scrollWidth <= label.clientWidth
+    })
+    expect(readable, 'The full constraint label fits at phone width').equals(
+      true
+    )
+    await press(constraint)
+    await page.waitForNetworkIdle()
+    await page.reload({ waitUntil: 'networkidle0' })
+    expect(await checked()).equals(false)
+    await page.setViewport({ width: 1100, height: 1100 })
+    const setupPath = `/groups/league/${f.leagueA}/scheduler`
+    const button = (text: string): string =>
+      `::-p-aria([role="button"][name="${text}"])`
+    const generate = async (): Promise<SchedulePreview> => {
+      await press(button('Build schedule'))
+      await press(button('Work around them'))
+      await page.waitForSelector('[data-testid="preview-game"]')
+      const id = new URL(page.url()).pathname.split('/').at(-1)!
+      const response = await f.h.request(
+        'GET',
+        `/schedule-previews/${id}`,
+        undefined,
+        101
+      )
+      expect(response.status).equals(200)
+      return (await response.json()) as SchedulePreview
+    }
+    const baseline = await generate()
+    const managed = (
+      g: SchedulePreview['options'][number]['games'][number]
+    ): boolean => [g.homeTeamId, g.awayTeamId].includes(f.teamA)
+    const firstGame = baseline.options[0].games.find(managed)!
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: 'outside_manager',
+        role: 'coach',
+        scope_type: 'team',
+        scope_id: f.teamB,
+        is_head_coach: true,
+        user_id: first
+      })
+      .execute()
+    const outsideGame = async (
+      id: string,
+      game: typeof firstGame
+    ): Promise<void> => {
+      await f.h.db
+        .insertInto('games')
+        .values({
+          id,
+          season_id: f.seasonB,
+          home_team_id: f.teamB,
+          away_team_id: 'tem_account',
+          start_at: new Date(game.startAt),
+          end_at: new Date(game.endAt),
+          status: 'scheduled'
+        })
+        .execute()
+    }
+    await outsideGame('browser_external', firstGame)
+    await visit(setupPath)
+    const unchecked = await generate()
+    expect(
+      unchecked.options[0].games.some(
+        g => managed(g) && g.startAt === firstGame.startAt
+      )
+    ).equals(true)
+    await visit(setupPath)
+    await press(constraint)
+    await page.waitForNetworkIdle()
+    expect(await checked()).equals(true)
+    const protectedPreview = await generate()
+    for (const option of protectedPreview.options)
+      for (const game of option.games.filter(managed))
+        expect(
+          game.startAt < firstGame.endAt && firstGame.startAt < game.endAt
+        ).equals(false)
+    // Edit the preview through the schedule screen before another league books the manager.
+    await press('[aria-label^="Reject "]')
+    await press(button('Reject'))
+    const notice = async (message: string): Promise<void> => {
+      await page.waitForFunction(
+        (text: string) => document.body.innerText.includes(text),
+        {},
+        message
       )
     }
+    await notice('Game rejected.')
+    const edited = (await (
+      await f.h.request(
+        'GET',
+        `/schedule-previews/${protectedPreview.id}`,
+        undefined,
+        101
+      )
+    ).json()) as SchedulePreview
+    const stale = edited.options[0].games.find(
+      g => managed(g) && !edited.edits.rejectedGameKeys.includes(g.key)
+    )!
+    await outsideGame('browser_stale', stale)
+    const [refusal] = await Promise.all([
+      page.waitForResponse(reply =>
+        reply
+          .url()
+          .endsWith(`/schedule-previews/${protectedPreview.id}/publications`)
+      ),
+      press(button('Publish this option'))
+    ])
+    expect(refusal.status()).equals(409)
+    expect(await refusal.text()).includes('Manager/Head Coach')
+    await shot(
+      'scheduler-stale-publication',
+      'Something changed since this preview was built. Build it again.'
+    )
+    expect(
+      await f.h.db
+        .selectFrom('games')
+        .select('id')
+        .where('schedule_preview_id', '=', protectedPreview.id)
+        .execute()
+    ).deep.equals([])
+
+    const log = ['$ node -r sucrase/register src/app/headCoach.e2e.ts']
+    for (const [method, user, actor, body, status] of [
+      ['PUT', second, 102, {}, 404],
+      ['PUT', second, 101, {}, 409],
+      ['PUT', second, 101, { expectedHeadCoach: first }, 200],
+      ['DELETE', second, 101, undefined, 200]
+    ] as const) {
+      const path = `/manage/team/${f.teamA}/people/${user}/roles/headCoach`
+      const response = await f.h.request(method, path, body, actor)
+      log.push(`${method} ${path} as ${userIdOfGumbo(actor)} ${JSON.stringify(body) ?? ''}
+${response.status} ${await response.text()}`)
+      expect(response.status).equals(status)
+    }
     if (coverage != null)
-      await recordBrowserCoverage([page], f.h.origin, coverage)
+      await recordBrowserCoverage([page, publicPage], f.h.origin, coverage)
+    await publicContext.close()
     await writeFile(join(dir, 'roles.log'), log.join('\n') + '\n')
   } finally {
-    await browser.close()
-    await f.h.close()
-    await places.close()
+    await Promise.all(
+      cleanup.reverse().map(async close => {
+        await close()
+      })
+    )
   }
 }
 main().catch((error: unknown) => {

@@ -1,11 +1,19 @@
-import { spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { copyFileSync, mkdirSync, rmSync } from 'node:fs'
+
+import { coverageSource } from './coverage-source.mjs'
 
 const base = process.argv.indexOf('--base')
 const env = {
   ...process.env,
   TS_MANAGER_COACH_COVERAGE: '1',
-  TS_COVERAGE_BASE: base < 0 ? 'origin/master' : process.argv[base + 1]
+  TS_MANAGER_SOURCE: coverageSource(),
+  TS_COVERAGE_BASE:
+    base < 0
+      ? execFileSync('git', ['merge-base', 'HEAD', 'origin/master'], {
+          encoding: 'utf8'
+        }).trim()
+      : process.argv[base + 1]
 }
 mkdirSync('coverage/manager', { recursive: true })
 // The unit and browser counters must come from the same checkout.
@@ -41,6 +49,36 @@ for (const mode of ['unit', 'combined']) {
   }
   const run = spawnSync(process.execPath, args, { env, stdio: 'inherit' })
   const report = 'coverage/manager/coverage-final.json'
-  if (existsSync(report)) copyFileSync(report, `coverage/manager/${mode}.json`)
-  if (run.status !== 0) process.exitCode = 1
+  if (run.status !== 0) process.exit(run.status ?? 1)
+  if (mode === 'combined') copyFileSync(report, `coverage/manager/${mode}.json`)
+  const check = spawnSync(
+    process.execPath,
+    [
+      'scripts/changed-line-check.cjs',
+      '--base',
+      env.TS_COVERAGE_BASE,
+      '--coverage',
+      `coverage/manager/${mode}.json`,
+      '--ext',
+      '.ts',
+      '--ext',
+      '.tsx',
+      '--min',
+      mode === 'unit' ? '90' : '95',
+      // Only interfaces changed in these two files.
+      '--exclude',
+      'src/common/autoScheduler/types.ts',
+      '--exclude',
+      'src/server/db/database.ts',
+      '--exclude',
+      'src/test',
+      '--exclude',
+      '**/*.test.*',
+      '--exclude',
+      '**/*.e2e.*',
+      'src'
+    ],
+    { stdio: 'inherit' }
+  )
+  if (check.status !== 0) process.exitCode = 1
 }

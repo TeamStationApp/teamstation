@@ -22,6 +22,8 @@ export interface ListRowProps {
   /** Opt-in muted text and navigation marks for unavailable rows. */
   muted?: boolean
   title: string
+  /** Defaults to one line; zero allows a setting label to wrap. */
+  titleNumberOfLines?: number
   subtitle?: string
   subtitleNumberOfLines?: number
   /** A short glyph or initials in the leading tile. */
@@ -94,7 +96,7 @@ export function ListRow(props: ListRowProps): React.ReactElement {
       <View style={styles.text}>
         <Text
           style={[styles.title, props.muted === true && styles.muted]}
-          numberOfLines={1}
+          numberOfLines={props.titleNumberOfLines ?? 1}
         >
           {title}
         </Text>

@@ -95,7 +95,10 @@ describe('api client scheduling setup', () => {
         { ...TEAM, id: 'tem_b' }
       ]
     ])
-    expect(await api.scheduleSetup('lea/a')).deep.equals(SETUP)
+    expect(await api.scheduleSetup('lea/a')).deep.equals({
+      ...SETUP,
+      avoidHeadCoachConflicts: true
+    })
     await api.saveScheduleSetup('lea/a', {
       seasonIds: [],
       fieldIds: ['fld_one']
@@ -120,6 +123,29 @@ describe('api client scheduling setup', () => {
         { exhibition: true }
       ],
       ['GET', '/api/v1/seasons/sea%2Fa/teams', undefined]
+    ])
+  })
+
+  it('reads an explicit off setting and sends a deliberate change', async () => {
+    const { api, calls } = client([
+      { ...SETUP, avoidHeadCoachConflicts: false },
+      { ...SETUP, avoidHeadCoachConflicts: true }
+    ])
+    expect((await api.scheduleSetup('lea/a')).avoidHeadCoachConflicts).equals(
+      false
+    )
+    const choice = {
+      seasonIds: SETUP.seasonIds,
+      fieldIds: SETUP.fieldIds,
+      avoidHeadCoachConflicts: true
+    }
+    expect(
+      (await api.saveScheduleSetup('lea/a', choice)).avoidHeadCoachConflicts
+    ).equals(true)
+    expect(calls[1]).deep.equals([
+      'PUT',
+      '/api/v1/leagues/lea%2Fa/schedule-setup',
+      choice
     ])
   })
 

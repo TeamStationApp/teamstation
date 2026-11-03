@@ -1,6 +1,7 @@
 import {
   fieldCapacity,
   type GameKind,
+  managerCauseOfOption,
   requestedTargets,
   seasonMatchups,
   teamCapacity
@@ -12,8 +13,10 @@ import {
   seasonNeeds,
   type Targets
 } from './matchups'
+import { SEEDS } from './options'
 import { place, type Placement } from './placement'
-import { firstNonZero } from './score'
+import { nthSeed } from './random'
+import { firstNonZero, UNPLACED } from './score'
 import type { UnmetConstraint } from './types'
 
 /**
@@ -148,6 +151,7 @@ export function runMatchups(
 export interface Settled {
   targets: Map<string, Targets>
   placement: Placement
+  reducedManagerCauses: Map<string, string>
 }
 
 /**
@@ -161,6 +165,7 @@ export function settleTargets(
   seed: number,
   order?: readonly number[]
 ): Settled {
+  const reducedManagerCauses = new Map<string, string>()
   // Required matchups are placed as they are, with no lowering.
   if (context.required != null)
     return {
@@ -170,6 +175,7 @@ export function settleTargets(
           requestedTargets(season)
         ])
       ),
+      reducedManagerCauses,
       placement: place(context, context.required, seed, order)
     }
   const targets = new Map(
@@ -178,22 +184,44 @@ export function settleTargets(
       startingTargets(context, season, seed)
     ])
   )
+  const managers = Object.values(context.input.headCoaches ?? {})
+  const sharesManager = new Set(managers).size < managers.length
   for (;;) {
-    const placement = place(
-      context,
-      runMatchups(context, targets, seed),
-      seed,
-      order
-    )
+    const attempt = (candidate: number): Placement =>
+      place(context, runMatchups(context, targets, candidate), candidate, order)
+    let placement = attempt(seed)
+    // Opponents who share a manager can play each other in the same slot.
+    const attempts = sharesManager ? SEEDS : 1
+    for (let k = 1; k < attempts && placement.score[UNPLACED] > 0; k++) {
+      const alternative = attempt(nthSeed(seed, k))
+      if (alternative.score[UNPLACED] < placement.score[UNPLACED])
+        placement = alternative
+    }
+    const causeOf = managerCauseOfOption(context, placement)
     let lowered = false
     for (const season of context.seasons) {
       const ledger = placement.ledgers.get(season.season.id)
       const current = targets.get(season.season.id)
       if (ledger == null || current == null || ledger.placed === ledger.games)
         continue
-      if (lowerTargets(context, season, current)) lowered = true
+      const before = { ...current }
+      if (!lowerTargets(context, season, current)) continue
+      lowered = true
+      if (!sharesManager) continue
+      for (const kind of ['regular', 'exhibition'] as const) {
+        if (current[kind] === before[kind]) continue
+        const missing = placement.matchups.filter(
+          (game, i) =>
+            game.seasonId === season.season.id &&
+            game.exhibition === (kind === 'exhibition') &&
+            placement.slots[i] == null
+        )
+        const cause = causeOf(season, missing)
+        if (cause != null)
+          reducedManagerCauses.set(`${season.season.id}|${kind}`, cause)
+      }
     }
-    if (!lowered) return { targets, placement }
+    if (!lowered) return { targets, placement, reducedManagerCauses }
   }
 }
 
@@ -255,7 +283,12 @@ export function unmetLines(
   context: RunContext,
   targets: Map<string, Targets>,
   placement: Placement,
-  causeOf: (season: SeasonContext, kind: GameKind, requested: number) => string
+  causeOf: (
+    season: SeasonContext,
+    kind: GameKind,
+    requested: number,
+    unplaced: Matchup[]
+  ) => string
 ): UnmetConstraint[] {
   const out: UnmetConstraint[] = []
   for (const season of context.seasons) {
@@ -268,7 +301,7 @@ export function unmetLines(
     for (const kind of ['regular', 'exhibition'] as const) {
       if (requested[kind] === 0) continue
       const exhibition = kind === 'exhibition'
-      let unplaced = 0
+      const unplaced: Matchup[] = []
       const totals = new Map(teams.map(team => [team, 0]))
       const count = (team: string): void => {
         const total = totals.get(team)
@@ -281,14 +314,14 @@ export function unmetLines(
         }
       placement.matchups.forEach((matchup, i) => {
         if (matchup.seasonId !== id || matchup.exhibition !== exhibition) return
-        if (placement.slots[i] == null) unplaced++
+        if (placement.slots[i] == null) unplaced.push(matchup)
         else {
           count(matchup.homeTeamId)
           count(matchup.awayTeamId)
         }
       })
       if (teams.length === 0) continue
-      if (unplaced === 0 && target[kind] >= requested[kind]) continue
+      if (unplaced.length === 0 && target[kind] >= requested[kind]) continue
       const message = totalsLine(
         kind,
         teams.map(team => ({
@@ -300,7 +333,7 @@ export function unmetLines(
       out.push({
         seasonId: id,
         message,
-        cause: causeOf(season, kind, requested[kind])
+        cause: causeOf(season, kind, requested[kind], unplaced)
       })
     }
   }
