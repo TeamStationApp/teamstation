@@ -30,6 +30,7 @@ import {
   visibleScopes
 } from '../access'
 import { lockPlayerEdits, onePerson } from '../admin/people'
+import type { ValkeyCache } from '../cache/valkeyCache'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import {
@@ -85,7 +86,12 @@ import { gameNames } from '../users/nameBook'
  */
 export function playerRoutes(
   db: Kysely<Database>,
-  media: MediaContext
+  media: MediaContext,
+  /**
+   * Where team rosters' cores are kept: read through after a write commits,
+   * never inside one.
+   */
+  rosterCache?: ValkeyCache
 ): Router {
   const router = Router()
 
@@ -668,7 +674,14 @@ export function playerRoutes(
               status: 202,
               body: { pending: { requestId: result.requestId } }
             }
-          const roster = await teamRoster(db, media.space, teamId)
+          const roster = await teamRoster(
+            db,
+            media.space,
+            teamId,
+            false,
+            undefined,
+            rosterCache
+          )
           const entry = roster.find(row => row.userId === result.userId)
           if (entry == null) throw notFound()
           return result.kind === 'unchanged'
@@ -718,7 +731,14 @@ export function playerRoutes(
       const player = asked.player
       // The entry as a roster manager reads it, after the player committed.
       const entryOf = async (userId: string): Promise<Answer> => {
-        const roster = await teamRoster(db, media.space, teamId, true)
+        const roster = await teamRoster(
+          db,
+          media.space,
+          teamId,
+          true,
+          undefined,
+          rosterCache
+        )
         const entry = roster.find(row => row.userId === userId)
         if (entry == null) throw notFound()
         return { status: 201, body: entry }
@@ -902,7 +922,14 @@ export function playerRoutes(
         }
       })
 
-      const roster = await teamRoster(db, media.space, teamId, true, actor)
+      const roster = await teamRoster(
+        db,
+        media.space,
+        teamId,
+        true,
+        actor,
+        rosterCache
+      )
       const entry = roster.find(row => row.userId === userId)
       if (entry == null) throw notFound()
       res.json(entry)

@@ -12,6 +12,7 @@ import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { type BackgroundJobs, startBackgroundJobs } from './backgroundJobs'
 import { versionOf } from './buildVersion'
+import { makeValkeyCache } from './cache/valkeyCache'
 import type { ChangeFeed } from './changeFeed/feed'
 import { makeChangeFeed } from './changeFeed/makeChangeFeed'
 import { type FeedRelay, startFeedRelay } from './changeFeed/relay'
@@ -130,6 +131,7 @@ import {
   superviseStatsBuilder
 } from './statsBuilder/supervisor'
 import { stopWorker } from './stopWorker'
+import { rosterCacheOn, startRosterBumpPrune } from './teams/rosterCore'
 import { loopbackOrigin } from './tess/loopback'
 
 /**
@@ -449,6 +451,11 @@ function jobsOn(
     startChatReconciler: () => {
       startChatReconciler(db, feed())
     },
+    startRosterBumpPrune: () => {
+      startRosterBumpPrune(db, message => {
+        console.log(message)
+      })
+    },
     startStatsBuilder: () =>
       startStatsBuilder({
         enabled: serverConfig.statsBuilder,
@@ -599,6 +606,17 @@ function runWorker(): void {
     databaseUrl: serverConfig.databaseUrl,
     log
   })
+  // Team rosters' cores, read through on every roster read outside a write;
+  // without Valkey they are read from Postgres, as before.
+  const rosterCache = rosterCacheOn(
+    makeValkeyCache({
+      redis: serverConfig.redis,
+      databaseUrl: serverConfig.databaseUrl,
+      log
+    }),
+    db,
+    { log }
+  )
   const app = express()
 
   app.set('trust proxy', 'loopback')
@@ -721,7 +739,10 @@ function runWorker(): void {
       geocoder: eventGeocoder(db, { googlePlaces: placesProvider })
     })
   )
-  app.use('/api/v1', teamRoutes(db, mediaContext, scoreboard.store))
+  app.use(
+    '/api/v1',
+    teamRoutes(db, mediaContext, scoreboard.store, rosterCache)
+  )
   app.use('/api/v1', chatRoutes(db, mediaContext))
   app.use('/api/v1', chatKeyRoutes(db))
   app.use('/api/v1', chatEpochRoutes(db))
@@ -760,7 +781,7 @@ function runWorker(): void {
   app.use('/api/v1', adminRoutes())
   const stopAnalytics = startAnalytics(app, db, serverConfig.analyticsReaderUrl)
   app.use('/api/v1', statsRoutes(db, mediaContext))
-  app.use('/api/v1', playerRoutes(db, mediaContext))
+  app.use('/api/v1', playerRoutes(db, mediaContext, rosterCache))
   app.use('/api/v1', walkUpSongRoutes(db))
   app.use('/api/v1', userRoutes(db, mediaContext.space))
   app.use('/api/v1', meRoutes(db, serverConfig.buildsUrl, mediaContext))
@@ -924,6 +945,7 @@ function runWorker(): void {
         await stopLogging()
         await stopRelay(relay)
         await feed.close()
+        await rosterCache.close()
         await db.destroy()
       },
       cutConnectionsMs: WORKER_CUT_CONNECTIONS_MS,

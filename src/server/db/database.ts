@@ -532,6 +532,21 @@ export interface GumboIdsTable {
   created_at: Timestamp
 }
 
+/**
+ * One bump of a team's roster version, added by the 109teamRosterVersions
+ * triggers; the team's version is its newest row's.
+ */
+export interface TeamRosterBumpsTable {
+  team_id: string
+  version: number
+  bumped_at: Generated<Timestamp>
+}
+
+/** One row: this database's id in every roster cache key. */
+export interface RosterCacheEpochTable {
+  epoch: string
+}
+
 export interface EventPlayersTable {
   id: string
   event_id: string
@@ -1627,6 +1642,8 @@ export interface Database {
   rate_events: RateEventsTable
   eventCredits: EventCreditsTable
   gumbo_ids: GumboIdsTable
+  team_roster_bumps: TeamRosterBumpsTable
+  roster_cache_epoch: RosterCacheEpochTable
   event_players: EventPlayersTable
   events: EventsTable
   external_ids: ExternalIdsTable

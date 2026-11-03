@@ -22,6 +22,7 @@ function recordingJobs(
     startLocalCopyWarnings: job('startLocalCopyWarnings'),
     startChatAttachmentPurge: job('startChatAttachmentPurge'),
     startChatReconciler: job('startChatReconciler'),
+    startRosterBumpPrune: job('startRosterBumpPrune'),
     startStatsBuilder: () => {
       ran.push('startStatsBuilder')
       return BUILDER
@@ -48,6 +49,7 @@ describe('startBackgroundJobs', function () {
       'startLocalCopyWarnings',
       'startChatAttachmentPurge',
       'startChatReconciler',
+      'startRosterBumpPrune',
       'startStatsBuilder'
     ])
     expect(said).deep.equals([])
@@ -63,6 +65,7 @@ describe('startBackgroundJobs', function () {
       'startLocalCopyWarnings',
       'startChatAttachmentPurge',
       'startChatReconciler',
+      'startRosterBumpPrune',
       'startStatsBuilder'
     ])
   })

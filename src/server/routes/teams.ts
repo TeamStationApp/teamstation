@@ -30,6 +30,7 @@ import {
   visibleScopes
 } from '../access'
 import { onePerson } from '../admin/people'
+import type { ValkeyCache } from '../cache/valkeyCache'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
@@ -137,7 +138,9 @@ function kindAsked(asked: unknown): TeamKindAsked {
 export function teamRoutes(
   db: Kysely<Database>,
   media: MediaContext,
-  store?: ScoreboardStore
+  store?: ScoreboardStore,
+  /** Where team rosters' cores are kept, outside write transactions. */
+  rosterCache?: ValkeyCache
 ): Router {
   const router = Router()
 
@@ -1003,13 +1006,27 @@ export function teamRoutes(
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       if (canSeeTeam(scopes, teamId)) {
         res.json(
-          await teamRoster(db, media.space, teamId, fullNames === 'true', actor)
+          await teamRoster(
+            db,
+            media.space,
+            teamId,
+            fullNames === 'true',
+            actor,
+            rosterCache
+          )
         )
         return
       }
       if (!(await nonMemberTeam(db, actor, scopes, teamId))) throw notFound()
       // Staff imagery is public; other people's faces and family links are not.
-      const roster = await teamRoster(db, media.space, teamId, false, actor)
+      const roster = await teamRoster(
+        db,
+        media.space,
+        teamId,
+        false,
+        actor,
+        rosterCache
+      )
       res.json(
         roster.map(entry => ({
           ...entry,

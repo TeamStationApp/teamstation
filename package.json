@@ -73,6 +73,7 @@
     "preview.field": "TS_FIELD_PREVIEW=1 node src/build.mjs --serve",
     "refold-scored-games": "node -r sucrase/register src/server/dev/refoldScoredGames.ts",
     "repair-people": "node -r sucrase/register src/server/dev/repairPeople.ts",
+    "roster-cache-epoch": "node -r sucrase/register src/server/dev/rosterCacheEpoch.ts",
     "same-person": "node -r sucrase/register src/server/dev/samePerson.ts",
     "sample-video": "node -r sucrase/register src/server/dev/makeSampleVideo.ts",
     "scoring-game": "node -r sucrase/register src/server/dev/scoringGame.ts",
