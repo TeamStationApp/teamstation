@@ -68,6 +68,7 @@ import {
   roleScopes,
   visibleScopes
 } from '../access'
+import type { ValkeyCache } from '../cache/valkeyCache'
 import type { Database } from '../db/database'
 import {
   type Answer,
@@ -122,6 +123,11 @@ export interface LineupRouteOptions {
    * where a test posts a scorer's play, as one arriving mid-save would.
    */
   beforeSave?: (gameId: string) => Promise<void>
+  /**
+   * Where a save's live post, and an unroster's, leaves the game socket's
+   * frame of its edits.
+   */
+  cache?: ValkeyCache
   /**
    * Called once a save has committed, before its answer is read: where a test
    * saves another device's change, as one landing in between would.
@@ -192,7 +198,7 @@ export function lineupRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asUnrosterBody, req.body)
-      res.json(await setRostered(db, actor, gameId, body))
+      res.json(await setRostered(db, actor, gameId, body, options.cache))
       tellGameWritten(options.onGameWritten, gameId)
     })
   )
@@ -660,7 +666,11 @@ async function saveSide(
                 })
               },
           // The replay reads every play the post leaves.
-          { expectedGeneration: body.generation, answer: 'all' }
+          {
+            expectedGeneration: body.generation,
+            answer: 'all',
+            cache: options.cache
+          }
         )
         // A live post always keeps one.
         wrote = posted.lineupsDigest ?? read.digest

@@ -276,10 +276,14 @@ describe('private socket access follows approved game revisions', function () {
             JSON.stringify({ game: published.gameId, kind: 'lineups' })
           )
           await socket.fanout.deliver(
-            JSON.stringify({ game: published.gameId, kind: 'plays' })
+            JSON.stringify({
+              game: published.gameId,
+              kind: 'playEdits',
+              generation: 0
+            })
           )
           await until(() =>
-            ['lineups', 'plays'].every(kind =>
+            ['lineups', 'playEdits'].every(kind =>
               [oldViewer.slice(from), currentViewer.slice(controlFrom)].every(
                 frames =>
                   frames.some(
@@ -363,10 +367,14 @@ describe('private socket access follows approved game revisions', function () {
           JSON.stringify({ game: published.gameId, kind: 'lineups' })
         )
         await socket.fanout.deliver(
-          JSON.stringify({ game: published.gameId, kind: 'plays' })
+          JSON.stringify({
+            game: published.gameId,
+            kind: 'playEdits',
+            generation: 0
+          })
         )
         await until(() =>
-          ['lineups', 'plays'].every(kind =>
+          ['lineups', 'playEdits'].every(kind =>
             currentViewer
               .slice(controlFrom)
               .some(frame => frame.type === 'change' && frame.kind === kind)
@@ -435,14 +443,18 @@ describe('private socket access follows approved game revisions', function () {
       ).status
     ).equals(401)
     await socket.fanout.deliver(
-      JSON.stringify({ game: accepted.gameId, kind: 'plays' })
+      JSON.stringify({
+        game: accepted.gameId,
+        kind: 'playEdits',
+        generation: 0
+      })
     )
     await until(
       () =>
         closed &&
         current
           .slice(currentFrom)
-          .some(frame => frame.type === 'change' && frame.kind === 'plays')
+          .some(frame => frame.type === 'change' && frame.kind === 'playEdits')
     )
     expect(revoked.slice(from).filter(frame => frame.type === 'change')).length(
       0

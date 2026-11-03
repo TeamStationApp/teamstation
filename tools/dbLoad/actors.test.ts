@@ -451,6 +451,32 @@ describe('the actors', function () {
       expect(parses).equals(0)
     })
 
+    it('counts the bytes of each change of the plays, either kind, and no other', function () {
+      const tally = new Tally()
+      const viewer = new SocketViewer(
+        'http://a.example.test',
+        { token: 't' },
+        'g',
+        tally
+      )
+      const inner = viewer as unknown as { onFrame: (data: Buffer) => void }
+      const change = (kind: string, data: string): Buffer =>
+        Buffer.from(
+          `{"type":"change","gameId":"gam_abcdefghijklmnop","at":"2026-11-03T12:00:00.000Z","kind":"${kind}","data":${data}}`
+        )
+      const edits = change('playEdits', '{"edits":[]}')
+      const whole = change('plays', `{"plays":[${'{},'.repeat(100)}{}]}`)
+      inner.onFrame(edits)
+      inner.onFrame(whole)
+      inner.onFrame(change('game', '{}'))
+      inner.onFrame(change('lineups', '{}'))
+      inner.onFrame(
+        Buffer.from('{"type":"changed","scope":"home","revision":"1"}')
+      )
+      expect(tally.framesDelivered).equals(5)
+      expect(tally.frameBytes).deep.equals([edits.length, whole.length])
+    })
+
     it('reconnects after a close, counting it', async function () {
       const tally = new Tally()
       const viewer = new SocketViewer(

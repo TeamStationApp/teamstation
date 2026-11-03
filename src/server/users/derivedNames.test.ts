@@ -212,12 +212,16 @@ describe('names derived from accounts', function () {
   const freeman = (): NamesFixture['players']['home'][number] =>
     f.players.home[1]
 
-  /** An events answer, without what only names the roster as it is now. */
+  /**
+   * An events answer, without what only names the roster as it is now, and
+   * the digest of the names its plays are read with, which a rename moves.
+   */
   const withoutModelNames = (answer: unknown): unknown => {
-    const { modelNames: _modelNames, ...rest } = answer as Record<
-      string,
-      unknown
-    >
+    const {
+      modelNames: _modelNames,
+      namesDigest: _namesDigest,
+      ...rest
+    } = answer as Record<string, unknown>
     return rest
   }
 

@@ -32,6 +32,7 @@ import {
   UnresolvedAccount
 } from '../admin/people'
 import type { Actor } from '../auth/sessions'
+import type { ValkeyCache } from '../cache/valkeyCache'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
@@ -49,7 +50,9 @@ export async function setRostered(
   db: Kysely<Database>,
   actor: Actor,
   gameId: string,
-  body: UnrosterBody
+  body: UnrosterBody,
+  /** Where the replay's live post leaves the game socket's frame. */
+  cache?: ValkeyCache
 ): Promise<Unrostered> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
@@ -136,7 +139,8 @@ export async function setRostered(
         stored,
         context,
         availability,
-        unrostered
+        unrostered,
+        cache
       )
     await notifyGameChange(trx, { game: gameId, kind: 'game' })
     noteScopeChange(trx, { gameId })
@@ -155,7 +159,8 @@ async function applyAvailability(
   stored: Awaited<ReturnType<typeof resolveScoringGame>>,
   context: NonNullable<Awaited<ReturnType<typeof contextOf>>>,
   availability: GameAvailability<true>,
-  unrostered: Unrostered
+  unrostered: Unrostered,
+  cache?: ValkeyCache
 ): Promise<void> {
   let failure: Error | undefined
   const session = await ScoringSession.open(
@@ -174,7 +179,7 @@ async function applyAvailability(
             undefined,
             undefined,
             // The replay reads every play the post leaves.
-            { answer: 'all' }
+            { answer: 'all', cache }
           )
           return {
             plays: posted.plays.map(row => row.gumbo as GumboPlay),

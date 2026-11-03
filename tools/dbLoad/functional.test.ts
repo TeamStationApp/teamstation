@@ -128,8 +128,12 @@ class StubApp {
     this.frames.push({
       type: 'change',
       gameId: 'gam_live',
-      kind: 'plays',
+      kind: 'playEdits',
       data: {
+        generation: 0,
+        fromDigest: `d${this.pitches - 1}`,
+        digest: `d${this.pitches}`,
+        edits: [],
         currentPlay: {
           about: { atBatIndex: this.atBat },
           playEvents: Array.from({ length: this.pitches }, () => ({
@@ -351,10 +355,15 @@ describe('the browser script', function () {
   })
 
   it('reads pitches in the order the tab heard them', function () {
-    const frame = (atBat: number, pitches: number, gameId = 'g'): unknown => ({
+    const frame = (
+      atBat: number,
+      pitches: number,
+      gameId = 'g',
+      kind = 'playEdits'
+    ): unknown => ({
       type: 'change',
       gameId,
-      kind: 'plays',
+      kind,
       data: {
         currentPlay: {
           about: { atBatIndex: atBat },
@@ -364,19 +373,36 @@ describe('the browser script', function () {
     })
     const marks = pitchMarks(
       [
+        // A pitch whose post had the game read again is heard too.
+        {
+          type: 'change',
+          gameId: 'g',
+          kind: 'playEdits',
+          data: { generation: 0, fromDigest: null, digest: null, edits: null }
+        },
         frame(0, 1),
         frame(0, 2),
+        {
+          type: 'change',
+          gameId: 'g',
+          kind: 'playEdits',
+          data: { generation: 0, fromDigest: null, digest: null, edits: null }
+        },
         frame(1, 1),
         frame(1, 1, 'another'),
         { type: 'subscribed' },
-        { type: 'change', gameId: 'g', kind: 'plays', data: {} },
+        { type: 'change', gameId: 'g', kind: 'playEdits', data: {} },
+        // An older server's whole list carries an at-bat too, and is not read.
+        frame(2, 1, 'g', 'plays'),
         { type: 'change', gameId: 'g', kind: 'game' }
       ],
       'g'
     )
     expect(marks).deep.equals([
+      { atBat: 0, pitches: 0, reread: true },
       { atBat: 0, pitches: 1 },
       { atBat: 0, pitches: 2 },
+      { atBat: 0, pitches: 2, reread: true },
       { atBat: 1, pitches: 1 }
     ])
     expect(outOfOrder(marks)).equals(undefined)

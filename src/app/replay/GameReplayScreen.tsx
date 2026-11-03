@@ -856,8 +856,11 @@ function useLiveGame(
         return
       }
       if (event.type === 'subscribed') setRefused(false)
-      // Fetch one coherent scoring revision after each change.
-      if (event.type === 'change' && event.kind === 'plays') {
+      // The plays changed: fetch one coherent scoring revision, which the
+      // statistics carry with the game itself. Each change re-reads them,
+      // because the server builds the box scores and the edits cannot be
+      // applied here: one statistics read per pitch for every viewer.
+      if (event.type === 'change' && event.kind === 'playEdits') {
         read().catch(() => undefined)
         return
       }

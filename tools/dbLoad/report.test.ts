@@ -82,6 +82,11 @@ describe('the load report', function () {
     const tally = new Tally()
     tally.postMs.push(10, 20, 30, 40)
     tally.framesDelivered = 8
+    // Four viewers' frames of the plays, two of them for one pitch.
+    tally.noteFrameBytes(100)
+    tally.noteFrameBytes(300)
+    tally.noteFrameBytes(200)
+    tally.noteFrameBytes(200)
     tally.fail('http-503')
     tally.fail('http-503')
     tally.fail('unreachable')
@@ -112,6 +117,9 @@ describe('the load report', function () {
     expect(data.peakLockWaiters).equals(4)
     const text = renderReport(data)
     expect(text).contains('per delivery (each scoring post): 30.0')
+    expect(text).contains(
+      'frame bytes per pitch: 200.0 over all viewers, 200.0 to each (4 frames of the plays)'
+    )
     expect(text).contains('http-503: 2')
     expect(text).contains('select 2')
     expect(text).contains('events: 2 scans of 5000 rows')
@@ -133,6 +141,9 @@ describe('the load report', function () {
     const text = renderReport(data)
     expect(text).contains('p95 no data')
     expect(text).contains('per delivery (each scoring post): no data')
+    expect(text).contains(
+      'frame bytes per pitch: no data over all viewers, no data to each (0 frames of the plays)'
+    )
   })
 
   it('writes a file to read and a file to parse', function () {

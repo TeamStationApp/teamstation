@@ -44,6 +44,7 @@ import { deleteSpacePrefix } from '../media/spacesVideo'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { notifyLiveGamesRenamed } from '../socket/gameChanges'
 import {
   asPictureBody,
   type PictureStore,
@@ -222,6 +223,8 @@ export function accountRoutes(
           })
           .where('id', '=', userId)
           .execute()
+        // The games they are playing in are named again for their viewers.
+        await notifyLiveGamesRenamed(tx, { users: [userId] })
       })
       setAudit(res.locals, { entityType: 'user', entityId: userId })
       res.json(await readAccount(db, userId, options))

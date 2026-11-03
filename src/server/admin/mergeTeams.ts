@@ -17,6 +17,7 @@ import { requireDirectAdmin } from '../groups/adminGuard'
 import { freeLabel, namesOnSide } from '../groups/noticePolicy'
 import { teamFormats } from '../groups/playerNamePrivacy'
 import { mergeParents } from '../groups/teamMerge'
+import { notifyLiveGamesRenamed } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { requestGamesStats } from '../statsBuilder/request'
 import { refreshFieldWarnings } from '../venues/fieldWarnings'
@@ -718,6 +719,10 @@ export async function mergeTeams(
     noteScopeChange(trx, { teamId: fromTeamId })
     noteScopeChange(trx, { teamId: intoTeamId })
     for (const game of movedGames) noteScopeChange(trx, { gameId: game.id })
+    // The games moved name their players by the survivor now, and its
+    // privacy may be the stricter one: the viewers of every game in progress
+    // that it plays read their plays again.
+    await notifyLiveGamesRenamed(trx, { teams: [intoTeamId] })
   })
 
   return report

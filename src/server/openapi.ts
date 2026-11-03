@@ -5411,17 +5411,29 @@ export function openApiDocument(version: string): OpenApiDocument {
             200: {
               description:
                 '{ plays: [{ id, gameId, gumbo }], currentPlay, ' +
-                'playsDigest, lineupsDigest }: `gumbo` is a `GumboPlay`, ' +
+                'playsDigest, namesDigest, lineupsDigest }: `gumbo` is a ' +
+                '`GumboPlay`, ' +
                 '`currentPlay` a `GumboCurrentPlay` or null, `playsDigest` a ' +
                 'digest of both, as a live post answers it and the game ' +
-                "socket's `plays` notices carry it, and `lineupsDigest` the " +
+                "socket's `playEdits` changes carry it, and `lineupsDigest` the " +
                 "digest the game keeps of both sides' lineups, which a live " +
                 'post names as its `lineupsBase`, `generation` the ' +
                 'game’s play generation, one more after each reset, and ' +
                 '`swap` what swapping home and away does: `swap` before the ' +
                 'first pitch, `reset` once TeamStation scored a play, and ' +
                 '`scoredElsewhere` for a game it cannot swap, and `withdrawn` ' +
-                'for a game a team withdrew from, which is never swapped',
+                'for a game a team withdrew from, which is never swapped. ' +
+                '`halves`, present only when not empty, lists the teams whose ' +
+                "players' first and last names this read carries (those whose " +
+                'lineups the reader may save); a read without it is named as ' +
+                "the game socket's `playEdits` are, and only such a read has " +
+                'them applied to it. `namesDigest` is a digest of the names ' +
+                'and formats the plays are named from, as every `playEdits` ' +
+                'change carries it (null on a change that says only to read ' +
+                'again and names none): a player can be named otherwise with ' +
+                'nothing written, as when an add holding them on another team ' +
+                'lapses, so a change naming another digest is not applied to ' +
+                'this read, and the game is read again',
               content: {
                 'application/json': {
                   schema: {
@@ -5452,12 +5464,14 @@ export function openApiDocument(version: string): OpenApiDocument {
                         ]
                       },
                       playsDigest: { type: 'string' },
+                      namesDigest: { type: 'string' },
                       lineupsDigest: { type: 'string' },
                       generation: { type: 'integer' },
                       swap: {
                         type: 'string',
                         enum: ['swap', 'reset', 'scoredElsewhere', 'withdrawn']
-                      }
+                      },
+                      halves: { type: 'array', items: { type: 'string' } }
                     }
                   }
                 }

@@ -27,6 +27,12 @@ export interface Measurements {
   postAt: number[]
   /** Each whole second, since the epoch, in which a frame arrived. */
   frameSeconds: number[]
+  /**
+   * The bytes of each game change of the plays a socket was sent: `plays`
+   * from a server that sends every play, `playEdits` from one that sends
+   * what a post wrote.
+   */
+  frameBytes: number[]
 }
 
 /** A worst-case event that ran during the load, in ms since the epoch. */
@@ -174,6 +180,12 @@ export interface ReportData {
   deliveryLagP50Ms: number | null
   deliveryLagP95Ms: number | null
   framesDelivered: number
+  /** How many of the frames were of the plays (`frameBytes`). */
+  playFrames: number
+  /** The bytes of one such frame, on average: what each viewer is sent a pitch. */
+  frameBytesPerViewer: number | null
+  /** Their bytes over all viewers, for each scoring post. */
+  frameBytesPerPitch: number | null
   /** The longest time no frame arrived at all, which a lost feed shows as. */
   longestDeliveryGapSeconds: number | null
   socketsOpened: number
@@ -265,6 +277,15 @@ export function buildReport(input: ReportInput): ReportData {
     deliveryLagP50Ms: percentile(m.deliveryLagMs, 50),
     deliveryLagP95Ms: percentile(m.deliveryLagMs, 95),
     framesDelivered: m.framesDelivered,
+    playFrames: m.frameBytes.length,
+    frameBytesPerViewer:
+      m.frameBytes.length === 0
+        ? null
+        : sum(m.frameBytes) / m.frameBytes.length,
+    frameBytesPerPitch:
+      m.postMs.length === 0 || m.frameBytes.length === 0
+        ? null
+        : sum(m.frameBytes) / m.postMs.length,
     longestDeliveryGapSeconds: longestGap(m.frameSeconds, input.finishedAt),
     socketsOpened: m.socketsOpened,
     peakSocketOpensPerSecond: Math.max(
@@ -285,6 +306,9 @@ export function buildReport(input: ReportInput): ReportData {
     sequentialScans: input.sequentialScans.slice(0, 10)
   }
 }
+
+const sum = (values: number[]): number =>
+  values.reduce((total, value) => total + value, 0)
 
 const ms = (value: number | null): string =>
   value == null ? 'no data' : `${value.toFixed(1)} ms`
@@ -316,6 +340,7 @@ export function renderReport(data: ReportData): string {
     data.rig == null
       ? 'rig: no data'
       : `rig: CPU ${data.rig.cpuPercent.toFixed(0)}% of one core, event loop delay p95 ${data.rig.loopDelayP95Ms.toFixed(1)} ms`,
+    `frame bytes per pitch: ${figure(data.frameBytesPerPitch)} over all viewers, ${figure(data.frameBytesPerViewer)} to each (${data.playFrames} frames of the plays)`,
     `longest time with no frame: ${data.longestDeliveryGapSeconds ?? 'no data'} s`,
     `sockets opened: ${data.socketsOpened}, peak ${data.peakSocketOpensPerSecond} a second`,
     `streams started: ${data.streamsStarted}`,

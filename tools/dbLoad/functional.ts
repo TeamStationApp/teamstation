@@ -164,6 +164,11 @@ function okBody(answer: Answer, what: string): any {
 export interface PitchMark {
   atBat: number
   pitches: number
+  /**
+   * The frame said only to read the game again: the tab heard the pitch,
+   * and the at-bat is the last one it was told.
+   */
+  reread?: true
 }
 
 /** The pitches a tab was told about, in the order it was told. */
@@ -175,6 +180,7 @@ export function pitchMarks(frames: unknown[], gameId: string): PitchMark[] {
       gameId?: string
       kind?: string
       data?: {
+        edits?: unknown
         currentPlay?: {
           about?: { atBatIndex?: number }
           playEvents?: Array<{ isPitch?: boolean }>
@@ -182,7 +188,19 @@ export function pitchMarks(frames: unknown[], gameId: string): PitchMark[] {
       }
     }
     if (frame.type !== 'change' || frame.gameId !== gameId) continue
-    if (frame.kind !== 'plays') continue
+    // The at-bat comes with the edits of each pitch; any older kind carries
+    // none. A frame saying only to read the game again carries none either,
+    // but tells of the pitch all the same.
+    if (frame.kind !== 'playEdits') continue
+    if (frame.data?.edits === null) {
+      const last = marks.at(-1)
+      marks.push({
+        atBat: last?.atBat ?? 0,
+        pitches: last?.pitches ?? 0,
+        reread: true
+      })
+      continue
+    }
     const play = frame.data?.currentPlay
     if (play == null) continue
     marks.push({

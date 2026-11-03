@@ -16,6 +16,7 @@ import { ScoringSession } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import { playsReadAgainDuring } from '../../test/playNotices'
 import { atomic } from '../db/atomic'
 import type { Database, GamesTable } from '../db/database'
 import { postGamePlays, readPlays } from '../events/postPlays'
@@ -616,7 +617,9 @@ describe('swapping home and away from the scoring screen', function () {
     const before = await gameRow(gameId)
     expect(before.status).equals('inProgress')
 
-    const answer = await swap(gameId, 104, read)
+    const { result: answer, games: readAgain } = await playsReadAgainDuring(
+      async () => await swap(gameId, 104, read)
+    )
     expect(answer.status).equals(200)
     expect(await json(answer)).deep.equals({
       homeTeamId: f.teamA,
@@ -624,6 +627,9 @@ describe('swapping home and away from the scoring screen', function () {
       generation: 1,
       reset: { atBats: 7, innings: 2 }
     })
+    // Every screen holding the plays reads them again.
+    expect(readAgain).not.deep.equals([])
+    expect(new Set(readAgain)).deep.equals(new Set([gameId]))
 
     const archive = await f.h.db
       .selectFrom('game_play_archives')

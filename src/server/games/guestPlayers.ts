@@ -18,6 +18,10 @@ import { atomic } from '../db/atomic'
 import type { Database, GamesTable } from '../db/database'
 import { lockPlayerAdds } from '../groups/noticePolicy'
 import { type Clock, realClock } from '../groups/requests'
+import {
+  notifyLiveGamesRenamed,
+  notifyPlaysChanged
+} from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import {
   addByPolicy,
@@ -237,7 +241,14 @@ export async function renameGuestPlayer(
         })
         .where('id', '=', userId)
         .execute()
-    if (changed) noteScopeChange(trx, { gameId })
+    if (changed) {
+      noteScopeChange(trx, { gameId })
+      // Its viewers hold plays named before: they read them again, as do
+      // those of every other game in progress the guest plays in. One
+      // notice per game: Postgres drops a payload repeated in a transaction.
+      await notifyPlaysChanged(trx, gameId)
+      await notifyLiveGamesRenamed(trx, { users: [userId] })
+    }
     return {
       changed,
       before: {

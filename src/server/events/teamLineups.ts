@@ -106,20 +106,54 @@ export async function gameLineups(
  */
 export async function lineupsAnswer(
   db: Trx,
-  game: {
-    id: string
-    home_team_id: string
-    away_team_id: string
-    currentPlay: unknown
-    pregame?: unknown
-    lineups_digest: string | null
-    play_generation: number
+  game: LineupsGame
+): Promise<LineupsAnswer> {
+  return await namedLineups(db, game, await lineupsRead(db, game))
+}
+
+/** The game row's fields `lineupsAnswer` reads the lineups from. */
+export interface LineupsGame {
+  id: string
+  home_team_id: string
+  away_team_id: string
+  currentPlay: unknown
+  pregame?: unknown
+  lineups_digest: string | null
+  play_generation: number
+}
+
+/** Both sides' lineups with their digest, as `lineupsAnswer` gives them. */
+export type LineupsAnswer = Record<Side, TeamSideLineups> & {
+  digest: string
+  generation: number
+}
+
+/** A game's lineups as stored, with its teams: what is read before naming. */
+export interface LineupsRead {
+  context: LineupContext
+  stored: StoredLineupGame
+}
+
+/**
+ * The reads `lineupsAnswer` makes of a game's teams and plays, and no naming,
+ * so a caller holding the game row can let it go before `namedLineups`.
+ */
+export async function lineupsRead(
+  db: Trx,
+  game: LineupsGame
+): Promise<LineupsRead> {
+  return {
+    context: await lineupContext(db, game),
+    stored: await storedOrPregame(db, game)
   }
-): Promise<
-  Record<Side, TeamSideLineups> & { digest: string; generation: number }
-> {
-  const context = await lineupContext(db, game)
-  const stored = await storedOrPregame(db, game)
+}
+
+/** The lineups `lineupsRead` read, named for everybody. */
+export async function namedLineups(
+  db: Trx,
+  game: LineupsGame,
+  { context, stored }: LineupsRead
+): Promise<LineupsAnswer> {
   const read = readLineups(
     await resolveScoringGame(db, stored, { gameId: game.id }),
     context

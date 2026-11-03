@@ -606,8 +606,9 @@ function runWorker(): void {
     databaseUrl: serverConfig.databaseUrl,
     log
   })
-  // Team rosters' cores, read through on every roster read outside a write;
-  // without Valkey they are read from Postgres, as before.
+  // Team rosters' cores, read through on every roster read outside a write,
+  // and the game socket's frames of a live post's edits; without Valkey they
+  // are read from Postgres, as before.
   const rosterCache = rosterCacheOn(
     makeValkeyCache({
       redis: serverConfig.redis,
@@ -770,11 +771,17 @@ function runWorker(): void {
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))
   app.use(
     '/api/v1',
-    eventRoutes(db, { onGameWritten: scoreboard.onGameWritten })
+    eventRoutes(db, {
+      onGameWritten: scoreboard.onGameWritten,
+      cache: rosterCache
+    })
   )
   app.use(
     '/api/v1',
-    lineupRoutes(db, { onGameWritten: scoreboard.onGameWritten })
+    lineupRoutes(db, {
+      onGameWritten: scoreboard.onGameWritten,
+      cache: rosterCache
+    })
   )
   app.use('/api/v1', narrationRoutes(db, speechSettings(serverConfig)))
   app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
@@ -889,6 +896,7 @@ function runWorker(): void {
   const gameSocket = attachGameSocket(server, db, serverConfig.databaseUrl, {
     feed,
     minimumProtocol: serverConfig.gameSocketMinimumProtocol,
+    fanout: { cache: rosterCache },
     listenForUpgrades: false
   })
   const closeScoreboard = attachScoreboard(server, scoreboard.hub, {

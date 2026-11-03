@@ -2501,6 +2501,17 @@ describe('api client', function () {
       plays: [],
       currentPlay: null
     })
+    // The teams whose players' halves the read carries, when there are any.
+    const managing = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { plays: [], halves: ['tem_home'] }).fetch
+    })
+    expect((await managing.gameEvents('g')).halves).deep.equals(['tem_home'])
+    const nobody = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { plays: [], halves: [] }).fetch
+    })
+    expect(await nobody.gameEvents('g')).not.to.have.property('halves')
   })
 
   it('scores into a game live, naming TeamStation and only what changed', async function () {

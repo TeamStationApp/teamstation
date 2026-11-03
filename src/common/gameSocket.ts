@@ -59,16 +59,47 @@ export type PlayEdit =
   { op: 'put'; play: WirePlayRow } | { op: 'remove'; atBatIndex: number }
 
 /** What a `change` is about. */
-export type GameChangeKind = 'plays' | 'lineups' | 'walkUpSong' | 'game'
+export type GameChangeKind = 'playEdits' | 'lineups' | 'walkUpSong' | 'game'
+
+/**
+ * How a game's stored plays changed, as a `playEdits` change carries it: the
+ * edits that take a holder of the game at `fromDigest` to `digest`
+ * (`applyPlayEdits`), or, with `edits` null, only that the plays changed, so
+ * a holder reads the game again: unless it holds `digest`, which a post's
+ * re-read form still names, as the post's own sender does.
+ */
+export interface PlayEditsData {
+  /** The game's play generation the edits were made in. */
+  generation: number
+  /** The `playsDigest` the edits apply to; null when `edits` is. */
+  fromDigest: string | null
+  /**
+   * The `playsDigest` once they are applied, or the write left; null when
+   * none was worked out.
+   */
+  digest: string | null
+  /**
+   * The digest of the book the edits' plays are named from, as `GET
+   * /games/:gameId/events` answers it for its public naming (`namesDigest`):
+   * edits apply only to a read made from the same book, since a player's
+   * public name can change with nothing written. Null when none was worked
+   * out, as on another writer's change.
+   */
+  namesDigest: string | null
+  /** Null: read the game again. */
+  edits: PlayEdit[] | null
+  /** The at-bat in progress, named, when `edits` is not null. */
+  currentPlay?: unknown
+}
 
 /** The `data` of each kind of change. */
 export interface GameChangeData {
   /**
-   * The stored plays and the at-bat in progress, as `GET /events` answers,
-   * with their `playsDigest`: a screen tells its own save's echo from
-   * another device's plays by it.
+   * What changed in the stored plays and the at-bat in progress, with the
+   * `playsDigest` it leaves: a screen tells its own save's echo from another
+   * device's plays by it.
    */
-  plays: { plays: unknown[]; currentPlay: unknown; digest: string }
+  playEdits: PlayEditsData
   /**
    * Both sides' lineups and their digest, as `GET /games/:gameId/lineups`
    * answers: a screen tells its own save's echo from another device's
@@ -403,13 +434,58 @@ const asChangeHead = asObject({
   type: asLiteral('change'),
   gameId: asString,
   kind: asLiteral(
-    'plays',
+    'playEdits',
     'lineups',
     'walkUpSong',
     'game'
   ) as Cleaner<GameChangeKind>,
   at: asString
 })
+
+/**
+ * A worker from before `playEdits` sends `kind: 'plays'` with the game's
+ * whole list of plays. During a rolling deploy a socket may land on one, so
+ * it is passed on as the re-read form, under a generation no game has (they
+ * count up from 0) and with the digest it names, as an echo is matched by:
+ * the screen reads the game again rather than hearing no pitch at all.
+ */
+// Remove once no worker older than `playEdits` runs: the release after it.
+const asLegacyPlays = (raw: unknown): GameChange => {
+  const { gameId, at, data } = asObject({
+    type: asLiteral('change'),
+    gameId: asString,
+    kind: asLiteral('plays'),
+    at: asString,
+    data: asMaybe(asObject({ digest: asMaybe(asString) }))
+  })(raw)
+  return {
+    type: 'change',
+    gameId,
+    kind: 'playEdits',
+    at,
+    data: {
+      generation: -1,
+      fromDigest: null,
+      digest: data?.digest ?? null,
+      namesDigest: null,
+      edits: null
+    }
+  }
+}
+
+/** A change frame as listeners hear it, or undefined when it does not read. */
+function changeOf(raw: unknown): GameChange | undefined {
+  try {
+    return asLegacyPlays(raw)
+  } catch {}
+  try {
+    const change = asChangeHead(raw)
+    const message = { ...change, data: (raw as { data?: unknown }).data }
+    return message as GameChange
+  } catch {
+    return undefined
+  }
+}
 
 const asScreenScopeName = asLiteral(
   'home',
@@ -956,14 +1032,8 @@ export class GameSocket {
       return
     }
     if (head.type === 'change') {
-      let change: ReturnType<typeof asChangeHead>
-      try {
-        change = asChangeHead(raw)
-      } catch {
-        return
-      }
-      const message = { ...change, data: (raw as { data?: unknown }).data }
-      this.emit(change.gameId, message as GameChange)
+      const change = changeOf(raw)
+      if (change != null) this.emit(change.gameId, change)
       return
     }
     if (head.type === 'subscribed' && head.id != null) {
