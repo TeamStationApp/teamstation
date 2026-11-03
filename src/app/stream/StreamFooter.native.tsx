@@ -7,8 +7,7 @@ export type { StreamFooterProps }
 
 /**
  * What the Videos tab ends with on a phone: its cameras on the game, with
- * Record Video to add one, or "No videos" while it has neither. The browser
- * keeps its stream-URL panel (`StreamFooter.tsx`).
+ * Record Video to add one, or "No videos" while it has neither.
  */
 export function StreamFooter(props: StreamFooterProps): React.ReactElement {
   const { client, gameId, onPublishing, hasVideo, onPlay } = props

@@ -1689,7 +1689,7 @@ async function guardian(run: Run): Promise<void> {
  * score, the records, the line score and the highlights' pictures. The rest
  * says it is for members, in the page's own text colour on the page, with no
  * empty player box, and the app never asks for what the server keeps for
- * members. A game nothing was recorded of says "No videos." with no player
+ * members. A game nothing was recorded of says "No videos" with no player
  * box. Hank Majeski, who follows nothing here, opens the Hawks from Search and
  * gets the same page, bar the Follow button.
  */
@@ -2078,7 +2078,7 @@ async function follower(run: Run): Promise<void> {
   await contains(hank.page, membersOnly)
   await readable(hank, membersOnly)
 
-  // A game nothing was recorded of: "No videos.", and no player box. Added
+  // A game nothing was recorded of: "No videos", and no player box. Added
   // last, so the team's record on every page above is the two games'.
   const unrecorded = 'guardian-game-unrecorded'
   await f.h.db
@@ -2096,10 +2096,12 @@ async function follower(run: Run): Promise<void> {
       timezone: 'UTC'
     })
     .execute()
-  await grace.m.openBrowser({ url: `${f.h.origin}/games/${unrecorded}` })
-  await contains(grace.page, 'No videos.')
+  await grace.m.openBrowser({
+    url: `${f.h.origin}/games/${unrecorded}?tab=watch`
+  })
+  await contains(grace.page, 'No videos')
   await settle(grace)
-  await readable(grace, 'No videos.')
+  await readable(grace, 'No videos')
   expect(await playerBox(grace)).equals(false)
   expect(await grace.page.$('video')).equals(null)
   expect(await text()).not.includes(videosMembersOnly)

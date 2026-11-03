@@ -13,13 +13,13 @@ export interface VideoDetailsSheetProps {
   visible: boolean
   stream: LiveStream
   /** This phone's copy of the camera, when it holds one. */
-  take: PhoneRecording | undefined
+  take?: PhoneRecording
   /** That copy is on its way up already. */
-  uploading: boolean
+  uploading?: boolean
   onPlay: (videoId: string) => void
   onDeleteVideo: () => void
-  onUpload: (take: PhoneRecording) => void
-  onDeleteCopy: () => void
+  onUpload?: (take: PhoneRecording) => void
+  onDeleteCopy?: () => void
   onClose: () => void
   onDismiss?: () => void
 }
@@ -66,16 +66,19 @@ export function VideoDetailsSheet(
             onPress={onDeleteVideo}
           />
         )}
-        {take != null && take.uploadedAt == null && !uploading && (
-          <ListRow
-            testID="video-details-upload"
-            title={lstrings.stream_details_upload}
-            onPress={() => {
-              onUpload(take)
-            }}
-          />
-        )}
-        {take != null && (
+        {take != null &&
+          onUpload != null &&
+          take.uploadedAt == null &&
+          uploading !== true && (
+            <ListRow
+              testID="video-details-upload"
+              title={lstrings.stream_details_upload}
+              onPress={() => {
+                onUpload(take)
+              }}
+            />
+          )}
+        {take != null && onDeleteCopy != null && (
           <ListRow
             testID="video-details-delete-copy"
             title={lstrings.stream_details_delete_copy}

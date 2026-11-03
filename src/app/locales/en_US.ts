@@ -162,7 +162,6 @@ export const enUs = {
   /** The title of the simplified scoreboard, the 1.0 override dashboard. */
   game_override_scoreboard: 'Override Scoreboard',
   /** The Videos tab of a game nothing was recorded of, in place of a player. */
-  game_no_video: 'No videos.',
   game_video_unavailable: 'This video is not available right now.',
   game_video_open: 'Watch full screen',
   /** Marks a video in the picker whose file is no longer on the server. */
@@ -1079,6 +1078,10 @@ export const enUs = {
   stream_empty_title: 'No videos',
   stream_empty_can_film:
     'Help bring this game to other fans by live streaming with this phone or external camera.',
+  stream_empty_external:
+    'Help bring this game to other fans by live streaming with an external camera.',
+  stream_show_url: 'Show stream URL',
+  stream_status_details: 'Stream status',
   stream_empty_can_request: 'Want to record video for this game?',
   stream_request_access: 'Request access',
   stream_request_sent: 'Request sent',
