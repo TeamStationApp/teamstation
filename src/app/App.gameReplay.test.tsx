@@ -11,6 +11,7 @@ import {
 } from '../common/api'
 import type { StoredGame } from '../common/scoring/session'
 import { userIdOfGumbo } from '../common/userId'
+import { nativeStatistics } from '../test/gameStatisticsFixture'
 import {
   finalGame,
   REPLAY_GAME_ID,
@@ -82,7 +83,7 @@ describe('the app’s game replay', function () {
     proto.teams = async () => []
     proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
     proto.game = async () => game
-    proto.gameEvents = async () => stored
+    proto.gameStatistics = async () => nativeStatistics(game, stored)
     host = document.createElement('div')
     document.body.append(host)
     root = createRoot(host)
@@ -129,7 +130,7 @@ describe('the app’s game replay', function () {
       root.render(<App />)
     })
     await settle()
-    proto.gameEvents = async () => {
+    proto.gameStatistics = async () => {
       throw new Error('offline')
     }
     await press('Replay')

@@ -44,7 +44,7 @@ export interface LineScoreHandle {
 
 /**
  * A game's line score at every moment, from its events alone
- * (`GET /games/:gameId/line-score`), kept up to date.
+ * (`GET /games/:gameId/box-score?view=line`), kept up to date.
  *
  * A game's line score is small, a step an action at most, so it is asked for
  * whole. While a take is live it is asked again on each change notice of
