@@ -13,6 +13,7 @@ import { requireDirectAdmin } from '../groups/adminGuard'
 import { groupName } from '../invites/grants'
 import { revokeStreams } from '../live/revokeStreams'
 import { eraseAnalytics } from '../observability/analytics'
+import { notifyLiveGamesRenamed } from '../socket/gameChanges'
 
 export { DELETED_NAME }
 
@@ -141,6 +142,8 @@ export async function deleteAccount(
       })
       .where('id', 'in', userIds)
       .execute()
+    // The games in progress they play in name them so for their viewers.
+    await notifyLiveGamesRenamed(trx, { users: userIds })
     await trx
       .deleteFrom('walk_up_songs')
       .where('user_id', 'in', userIds)

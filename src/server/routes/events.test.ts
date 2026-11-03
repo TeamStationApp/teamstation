@@ -43,6 +43,7 @@ import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import { playsReadAgainDuring } from '../../test/playNotices'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -62,6 +63,7 @@ import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { resolveScoringGame } from '../scoring/openRow'
 import { GAME_CHANGES_CHANNEL } from '../socket/gameChanges'
+import { gameNamesDigest } from '../users/nameBook'
 import {
   eventRoutes,
   statusAfterLivePost,
@@ -516,6 +518,8 @@ describe('posting and reading plays', function () {
     const read = await ask(`/games/${gameId}/events`)
     expect(read.status).equals(200)
     expect(read.body.plays).to.have.length(1)
+    // Its reader may save the lineups, so the read names their halves.
+    expect(read.body.halves).to.be.an('array').with.length(2)
 
     const halves = await ask(`/games/${gameId}/halves`)
     expect(halves.status).equals(200)
@@ -1902,7 +1906,10 @@ describe('posting and reading plays', function () {
     expect(players).deep.equals([])
     expect(await gameRow(liveAtBatId)).deep.include({ status: 'inProgress' })
     const read = await ask(`/games/${liveAtBatId}/events`)
-    const { lineupsDigest, playsDigest, ...events } = read.body
+    const { lineupsDigest, playsDigest, namesDigest, halves, ...events } =
+      read.body
+    // The reader may save both sides' lineups.
+    expect(halves).length(2)
     expect(withoutTagTargets(events)).deep.equals({
       plays: [],
       // Named from the batter's account.
@@ -1913,6 +1920,10 @@ describe('posting and reading plays', function () {
     })
     expect(lineupsDigest).equals(posted.body.lineupsDigest)
     expect(playsDigest).equals(posted.body.playsDigest)
+    // The book the plays are named from, as the game socket names it; a
+    // post's answer, named for its sender, carries none.
+    expect(namesDigest).equals(await gameNamesDigest(db!, liveAtBatId))
+    expect(posted.body).not.to.have.property('namesDigest')
     await live(liveAtBatId, { plays: [] })
     // Stored naming nobody, as every play is.
     expect(
@@ -2199,9 +2210,13 @@ describe('posting and reading plays', function () {
       )
       const first = targets[0]
       const last = targets[3]
-      await ask(`/games/${id}/tags/${first.id}`, 'PUT', {
-        tag: 'surviving pitch'
+      const { games: tagged } = await playsReadAgainDuring(async () => {
+        await ask(`/games/${id}/tags/${first.id}`, 'PUT', {
+          tag: 'surviving pitch'
+        })
       })
+      // Its viewers read the tagged plays again.
+      expect(tagged).deep.equals([id])
       await ask(`/games/${id}/tags/${last.id}`, 'PUT', { tag: 'removed pitch' })
       const undone = await live(id, {
         plays: [],

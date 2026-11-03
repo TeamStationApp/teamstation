@@ -10,6 +10,7 @@ import type { Database } from '../db/database'
 import { selectAccountCatalogPicture } from '../media/pictureCatalog'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { notifyLiveGamesRenamed } from '../socket/gameChanges'
 import type { PictureStore } from '../teams/storeTeamPictures'
 import { asPictureBody, storePlayerAvatar } from '../teams/storeTeamPictures'
 
@@ -70,6 +71,8 @@ export function onboardingRoutes(
           })
           .where('id', '=', actor.userId)
           .execute()
+        // The games they are playing in are named again for their viewers.
+        await notifyLiveGamesRenamed(trx, { users: [actor.userId] })
       })
       res.json({
         displayName: name,

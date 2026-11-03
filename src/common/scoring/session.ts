@@ -93,6 +93,12 @@ export interface StoredGame {
    */
   modelNames?: Record<string, string>
   /**
+   * The teams whose players' first and last names this read carries, as
+   * `GET /games/:gameId/events` answers it. Absent or empty: named as the
+   * public reads the game, as the game socket's `playEdits` are.
+   */
+  halves?: string[]
+  /**
    * The digest the server keeps of the game's lineups, as it read them or as
    * this save left them: what the next save names as its `lineupsBase`.
    * Absent from a store that keeps none.
@@ -100,6 +106,12 @@ export interface StoredGame {
   lineupsDigest?: string
   /** A digest of the stored plays and the at-bat in progress, as read or left. */
   playsDigest?: string
+  /**
+   * The digest of the book `GET /games/:gameId/events` named the plays from,
+   * which a `playEdits` change must name to apply to them. Absent from a
+   * store that keeps none, and from a save's answer.
+   */
+  namesDigest?: string
   /** On a save's answer, the same digest of the game as the save found it. */
   priorPlaysDigest?: string
   /**

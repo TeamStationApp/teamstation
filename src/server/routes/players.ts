@@ -59,6 +59,7 @@ import { withAsync } from '../middleware/withErrors'
 import { mayKeepBirthMonth } from '../people/guardians'
 import { gumboIdsOfUsers } from '../scoring/gumboIds'
 import { highlightSettings } from '../settings'
+import { notifyLiveGamesRenamed } from '../socket/gameChanges'
 import { playerFilterOf } from '../stats/rows'
 import {
   addExistingRosterPlayer,
@@ -889,6 +890,9 @@ export function playerRoutes(
             .where('id', '=', userId)
             .execute()
         }
+        // The games they are playing in are named again for their viewers.
+        if (body.name !== undefined)
+          await notifyLiveGamesRenamed(trx, { users: [userId] })
         return { place, body }
       })
 

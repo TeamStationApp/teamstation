@@ -1424,10 +1424,12 @@ const asStoredGame = asObject({
   currentPlay: asOptional(asNullable(asCurrentPlay), null),
   playsDigest: asOptional(asNullable(asString), null),
   priorPlaysDigest: asOptional(asNullable(asString), null),
+  namesDigest: asOptional(asNullable(asString), null),
   lineupsDigest: asOptional(asNullable(asString), null),
   generation: asOptional(asNullable(asNumber), null),
   swap: asSwapEffect,
-  modelNames: asOptional(asObject(asString))
+  modelNames: asOptional(asObject(asString)),
+  halves: asOptional(asArray(asString))
 })
 
 /** A game's plays as a session reads them, with the digests that were sent. */
@@ -1439,12 +1441,16 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
     ...(stored.priorPlaysDigest == null
       ? {}
       : { priorPlaysDigest: stored.priorPlaysDigest }),
+    ...(stored.namesDigest == null ? {} : { namesDigest: stored.namesDigest }),
     ...(stored.lineupsDigest == null
       ? {}
       : { lineupsDigest: stored.lineupsDigest }),
     ...(stored.generation == null ? {} : { generation: stored.generation }),
     ...(stored.swap === undefined ? {} : { swap: stored.swap }),
-    ...(stored.modelNames == null ? {} : { modelNames: stored.modelNames })
+    ...(stored.modelNames == null ? {} : { modelNames: stored.modelNames }),
+    ...(stored.halves == null || stored.halves.length === 0
+      ? {}
+      : { halves: stored.halves })
   }
 }
 

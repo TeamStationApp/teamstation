@@ -1910,12 +1910,17 @@ function ScoringPanel(props: {
     return listen(socket, gameId, event => {
       if (
         event.type === 'change' &&
-        (event.kind === 'plays' || event.kind === 'lineups')
+        (event.kind === 'playEdits' || event.kind === 'lineups')
       ) {
-        // An older server sends no digest.
+        // A change that says only to read the game again carries no digest,
+        // unless a post of this screen's own wrote it: then its digest is
+        // matched as an edits change's is.
         const digest: unknown = (event.data as { digest?: unknown }).digest
         if (typeof digest === 'string')
-          echoes.current?.push({ kind: event.kind, digest })
+          echoes.current?.push({
+            kind: event.kind === 'playEdits' ? 'plays' : 'lineups',
+            digest
+          })
         else echoes.current = null
       } else if (event.type === 'resync') echoes.current = null
       else if (event.type === 'change' && event.kind === 'game') {

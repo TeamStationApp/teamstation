@@ -20,6 +20,7 @@ import { teamsOfRow } from '../../common/teamLists'
 import { canScore, lineupTeams, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
 import { lockPlayerEdits } from '../admin/people'
+import type { ValkeyCache } from '../cache/valkeyCache'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -48,8 +49,8 @@ import { swapOrReset } from '../games/resetSwap'
 import { gameSwapEffect } from '../games/swapEffect'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
-import { resolveScoringGame } from '../scoring/openRow'
-import { notifyGameChange } from '../socket/gameChanges'
+import { namedScoringGame } from '../scoring/openRow'
+import { notifyPlaysChanged } from '../socket/gameChanges'
 import {
   noteScopeChange,
   readSyncClock,
@@ -61,6 +62,8 @@ import { tellGameWritten } from './gameWritten'
 
 export interface EventRouteOptions {
   onGameWritten?: (gameId: string) => void
+  /** Where a live post leaves the game socket's frame of its edits. */
+  cache?: ValkeyCache
 }
 
 /**
@@ -106,10 +109,13 @@ export interface EventRouteOptions {
  * { stale: true, generation }`: its sender opens the game again.
  *
  * `GET` answers the game's `generation`, and `GET` and each live post's answer carry `playsDigest`, a digest of the
- * stored plays and the at-bat in progress, as the game socket's `plays`
- * notices do; a live post's answer also carries `priorPlaysDigest`, the same
+ * stored plays and the at-bat in progress, as the game socket's `playEdits`
+ * changes do; a live post's answer also carries `priorPlaysDigest`, the same
  * of the game as the post found it. A sender whose last digest that is holds
- * everything stored, and can pass over the notice of its own post.
+ * everything stored, and can pass over the notice of its own post. `GET` also
+ * answers `namesDigest`, the digest of the book its plays are named from: a
+ * player's public name can change with nothing written, when a hold lapses,
+ * so a `playEdits` change naming another digest does not apply to this read.
  *
  * A post answers every stored play as `GET` does, as builds before the
  * edits answer read it and a phone's queue writes it over the game it holds.
@@ -190,7 +196,7 @@ export function eventRoutes(
             actor.userId,
             tag
           )
-          await notifyGameChange(trx, { game: gameId, kind: 'plays' })
+          await notifyPlaysChanged(trx, gameId)
           noteScopeChange(trx, { gameId })
           return result
         })
@@ -281,7 +287,8 @@ export function eventRoutes(
                   await roleScopes(trx, actor.userId, actor.isAdmin),
                   game
                 ),
-              answer: edits ? 'edits' : 'all'
+              answer: edits ? 'edits' : 'all',
+              cache: options.cache
             }
           )
           wrote = true
@@ -295,8 +302,13 @@ export function eventRoutes(
         // holds or takes up.
         rebuild: async held => {
           const kept = JSON.parse(held.resultId!) as LivePostDigests
-          // What a swap does is the read's, not a post's answer.
-          const { swap: _swap, ...current } = await folded(
+          // What a swap does, and the book's digest, are the read's, not a
+          // post's answer.
+          const {
+            swap: _swap,
+            namesDigest: _names,
+            ...current
+          } = await folded(
             await db
               .transaction()
               .setIsolationLevel('repeatable read')
@@ -362,7 +374,9 @@ export function eventRoutes(
       const spoken = isSpoken() ? {} : await modelNames(db, teams)
       res.json({
         ...(await folded(result)),
-        ...(Object.keys(spoken).length === 0 ? {} : { modelNames: spoken })
+        ...(Object.keys(spoken).length === 0 ? {} : { modelNames: spoken }),
+        // Named with these teams' halves, unlike the game socket's edits.
+        ...(teams.length === 0 ? {} : { halves: teams })
       })
     })
   )
@@ -501,6 +515,12 @@ interface StoredGameAnswer {
   plays: unknown[]
   currentPlay: unknown
   playsDigest: string
+  /**
+   * The digest of the book the plays are named from (`NameBook.digest`), as
+   * the game socket's `playEdits` give it: a frame naming another was named
+   * otherwise than this read.
+   */
+  namesDigest: string
   lineupsDigest: string | null
   generation: number
   swap: SwapEffect
@@ -542,7 +562,7 @@ async function storedGameRead(
     .executeTakeFirstOrThrow()
   const current = atBatOf(game, stored.length > 0)
   const lineups = await halves(game)
-  const resolved = await resolveScoringGame(
+  const { game: resolved, names } = await namedScoringGame(
     db,
     {
       plays: stored.map(row => row.gumbo as GumboPlay),
@@ -558,6 +578,7 @@ async function storedGameRead(
     })),
     currentPlay: playForWire(resolved.currentPlay, teams),
     playsDigest: playsDigest(stored, current),
+    namesDigest: names.digest,
     lineupsDigest: await storedLineupsDigest(db, {
       id: gameId,
       ...game

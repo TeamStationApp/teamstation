@@ -11,7 +11,7 @@ import { storedUnrostered } from '../../common/unroster'
 import type { Database } from '../db/database'
 import { changedLineupsDigest } from '../events/teamLineups'
 import { recordIn } from '../events/wireRecords'
-import { notifyGameChange } from '../socket/gameChanges'
+import { notifyGameChange, notifyPlaysChanged } from '../socket/gameChanges'
 import { noteGameFigures } from '../socket/syncRevision'
 import { gameHasPlays } from './fenceDistance'
 
@@ -121,7 +121,7 @@ export async function swapGameSides(
   await noteGameFigures(trx, gameId)
   await notifyGameChange(trx, { game: gameId, kind: 'game' })
   if (record != null) {
-    await notifyGameChange(trx, { game: gameId, kind: 'plays' })
+    await notifyPlaysChanged(trx, gameId)
     await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
   }
 }

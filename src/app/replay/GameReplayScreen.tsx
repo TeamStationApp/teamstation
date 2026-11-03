@@ -856,8 +856,9 @@ function useLiveGame(
         return
       }
       if (event.type === 'subscribed') setRefused(false)
-      // Fetch one coherent scoring revision after each change.
-      if (event.type === 'change' && event.kind === 'plays') {
+      // The plays changed: fetch one coherent scoring revision, which the
+      // statistics carry with the game itself.
+      if (event.type === 'change' && event.kind === 'playEdits') {
         read().catch(() => undefined)
         return
       }

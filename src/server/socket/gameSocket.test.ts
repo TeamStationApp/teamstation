@@ -13,7 +13,8 @@ import WebSocket from 'ws'
 import { asPostedEdits } from '../../common/api'
 import {
   GAME_SOCKET_PROTOCOL,
-  type GameSocketReply
+  type GameSocketReply,
+  type PlayEditsData
 } from '../../common/gameSocket'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
@@ -271,14 +272,14 @@ describe('the game socket (U14)', function () {
       .filter(frame => frame.type === 'change' && frame.gameId === scored)
       .map(frame => (frame.type === 'change' ? frame.kind : ''))
 
-  /** Waits until a post's `plays` and `game` have arrived, and a little more. */
+  /** Waits until a post's `playEdits` and `game` have arrived, and a little more. */
   async function settled(listener: Listener, from: number): Promise<string[]> {
     await listener.next(
       frame => frame.type === 'change' && frame.kind === 'game',
       from
     )
     await listener.next(
-      frame => frame.type === 'change' && frame.kind === 'plays',
+      frame => frame.type === 'change' && frame.kind === 'playEdits',
       from
     )
     await wait(150)
@@ -1108,7 +1109,7 @@ describe('the game socket (U14)', function () {
       for (const listener of listeners) listener.ws.terminate()
     })
 
-    it('delivers plays and game for a post, and lineups only when they change', async function () {
+    it('delivers play edits and game for a post, and lineups only when they change', async function () {
       const listener = await listen(VIEWER)
       const quiet = await listen(OTHER)
       await subscribed(listener, scored)
@@ -1122,21 +1123,53 @@ describe('the game socket (U14)', function () {
       expect(await settled(listener, from)).deep.equals([
         'game',
         'lineups',
-        'plays'
+        'playEdits'
       ])
-      const plays = listener.frames
-        .slice(from)
-        .find(frame => frame.type === 'change' && frame.kind === 'plays')
-      expect(plays?.type === 'change' && plays.data).to.have.keys(
-        'plays',
-        'currentPlay',
-        'digest'
-      )
+      // It brings the lineups' players into a game that named nobody, with no
+      // pregame lineups and no event_players, which can change how the book
+      // tells them apart: viewers read again.
+      const playsFrame = (): PlayEditsData | undefined => {
+        const plays = listener.frames
+          .slice(from)
+          .find(frame => frame.type === 'change' && frame.kind === 'playEdits')
+        return plays?.type === 'change' && plays.kind === 'playEdits'
+          ? plays.data
+          : undefined
+      }
+      expect(playsFrame()).deep.include({ edits: null })
 
-      // Another pitch leaves the lineups alone.
+      // Another pitch leaves the lineups alone, and names nobody new.
       from = listener.frames.length
       await apply(strike)
-      expect(await settled(listener, from)).deep.equals(['game', 'plays'])
+      expect(await settled(listener, from)).deep.equals(['game', 'playEdits'])
+      const edits = playsFrame()
+      expect(edits).to.have.keys(
+        'generation',
+        'fromDigest',
+        'digest',
+        'namesDigest',
+        'edits',
+        'currentPlay'
+      )
+      // No play is stored yet: only the at-bat, with the digest a read of
+      // the game gives now.
+      expect(edits?.edits).deep.equals([])
+      expect(edits?.currentPlay).to.have.nested.property('about.atBatIndex', 0)
+      const read = (await (
+        await fetch(`${base}/games/${scored}/events`, {
+          headers: { authorization: `Bearer ${SCORER}` }
+        })
+      ).json()) as {
+        playsDigest: string
+        namesDigest: string
+        currentPlay: unknown
+      }
+      expect(edits?.digest).equals(read.playsDigest)
+      // Named from the book a read of the game is named from.
+      expect(edits?.namesDigest).to.be.a('string').and.equal(read.namesDigest)
+      expect(edits?.fromDigest)
+        .to.be.a('string')
+        .and.not.equal(read.playsDigest)
 
       // Strike him out, then pinch-hit for the batter due.
       await apply(strike, strike, { type: 'gameFlow', kind: 'closePlay' })
@@ -1152,7 +1185,7 @@ describe('the game socket (U14)', function () {
       expect(await settled(listener, from)).deep.equals([
         'game',
         'lineups',
-        'plays'
+        'playEdits'
       ])
       const lineups = listener.frames
         .slice(from)
@@ -1165,6 +1198,9 @@ describe('the game socket (U14)', function () {
       expect(JSON.stringify(away?.current)).to.include(
         String(awayPlayers[9].userId)
       )
+      // He is on the roster the game's lineups were set from, though in no
+      // play yet: the book holds him already, and viewers are sent edits.
+      expect(playsFrame()?.edits).to.be.an('array')
 
       // Undone, it is announced once more.
       from = listener.frames.length
@@ -1173,13 +1209,13 @@ describe('the game socket (U14)', function () {
       expect(await settled(listener, from)).deep.equals([
         'game',
         'lineups',
-        'plays'
+        'playEdits'
       ])
 
       // And a pitch after it is not.
       from = listener.frames.length
       await apply(ball)
-      expect(await settled(listener, from)).deep.equals(['game', 'plays'])
+      expect(await settled(listener, from)).deep.equals(['game', 'playEdits'])
 
       expect(kindsHeard(quiet, 0)).deep.equals([])
       listener.ws.terminate()

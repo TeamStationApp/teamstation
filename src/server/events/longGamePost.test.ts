@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { type Kysely, type KyselyPlugin, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
-import { Pool } from 'pg'
+import { Client, Pool } from 'pg'
 
 import {
   type GameSides,
@@ -19,10 +19,13 @@ import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { closeInto } from '../admin/people'
+import type { ValkeyCache } from '../cache/valkeyCache'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import * as openRow from '../scoring/openRow'
 import { namesMergedAccounts } from '../scoring/openRow'
+import { GAME_CHANGES_CHANNEL } from '../socket/gameChanges'
+import { gameNamesDigest } from '../users/nameBook'
 import {
   gamePlaysDigest,
   type PostedEdits,
@@ -183,6 +186,51 @@ async function workOf(
   }
 }
 
+/**
+ * What a post told the game socket of `gameId`: its plays notice on
+ * `game_changes`, and each frame it left in Valkey, by key.
+ */
+interface Told<T> {
+  result: T
+  notice: Record<string, unknown>
+  frames: Map<string, string>
+}
+
+async function toldDuring<T>(
+  gameId: string,
+  act: (cache: ValkeyCache) => Promise<T>
+): Promise<Told<T>> {
+  const frames = new Map<string, string>()
+  const cache: ValkeyCache = {
+    get: async key => frames.get(key) ?? null,
+    set: async (key, value) => {
+      frames.set(key, value)
+    },
+    close: async () => undefined
+  }
+  const listener = new Client({ connectionString: scratchUrl })
+  await listener.connect()
+  const notices: Array<Record<string, unknown>> = []
+  listener.on('notification', message => {
+    const payload = JSON.parse(message.payload ?? 'null') as Record<
+      string,
+      unknown
+    > | null
+    if (payload?.game === gameId && payload.kind === 'playEdits')
+      notices.push(payload)
+  })
+  try {
+    await listener.query(`listen ${GAME_CHANGES_CHANNEL}`)
+    const result = await act(cache)
+    // A round trip after the commit: its notices have arrived.
+    await listener.query('select 1')
+    expect(notices).length(1)
+    return { result, notice: notices[0], frames }
+  } finally {
+    await listener.end()
+  }
+}
+
 describe('a post in a long game', function () {
   this.timeout(120_000)
 
@@ -325,7 +373,8 @@ describe('a post in a long game', function () {
     })
 
     const edits = async (
-      fields: Partial<PostEventsBody>
+      fields: Partial<PostEventsBody>,
+      cache?: ValkeyCache
     ): Promise<PostedEdits> => {
       const answer = await postGamePlays(
         db,
@@ -333,7 +382,7 @@ describe('a post in a long game', function () {
         live(fields),
         undefined,
         undefined,
-        { answer: 'edits' }
+        { answer: 'edits', cache }
       )
       expect(answer).not.to.have.property('plays')
       return answer as PostedEdits
@@ -378,13 +427,19 @@ describe('a post in a long game', function () {
     it('names the play it writes and the at-bat, and puts that play as a read gives it', async function () {
       const last = game.plays[game.plays.length - 1]
       const counting = namedOutsideWholeReads()
-      let answer: PostedEdits
+      let told: Told<PostedEdits>
       try {
-        answer = await edits({ plays: [last], currentPlay: game.currentPlay })
+        told = await toldDuring(
+          gameId,
+          async cache =>
+            await edits({ plays: [last], currentPlay: game.currentPlay }, cache)
+        )
       } finally {
         counting.restore()
       }
-      // Edited plus one: the play and the at-bat.
+      const answer = told.result
+      // Edited plus one: the play and the at-bat, once for the sender and
+      // the public alike.
       expect(counting.calls()).at.most(2)
       expect(answer.edits).length(1)
       const [put] = answer.edits
@@ -399,6 +454,31 @@ describe('a post in a long game', function () {
       expect(answer.currentPlay).deep.equals(read.currentPlay)
       expect(answer.playsDigest).equals(read.playsDigest)
       expect(answer.playsDigest).equals(await digestNow())
+
+      // The game socket is told the same play, named for everybody, from
+      // the book a read of the game is named from.
+      const namesDigest = await gameNamesDigest(db, gameId)
+      expect(told.notice).deep.equals({
+        game: gameId,
+        kind: 'playEdits',
+        generation: answer.generation,
+        fromDigest: answer.priorPlaysDigest,
+        digest: answer.playsDigest,
+        namesDigest,
+        indexes: [last.about.atBatIndex],
+        removed: []
+      })
+      expect([...told.frames.keys()]).deep.equals([
+        `playEdits:${gameId}:${answer.generation}:${answer.priorPlaysDigest}:${answer.playsDigest}:${namesDigest}`
+      ])
+      expect(JSON.parse([...told.frames.values()][0])).deep.equals({
+        generation: answer.generation,
+        fromDigest: answer.priorPlaysDigest,
+        digest: answer.playsDigest,
+        namesDigest,
+        edits: answer.edits,
+        currentPlay: answer.currentPlay
+      })
     })
 
     it('puts the plays its tag repair rewrote beside the ones it wrote', async function () {
@@ -410,10 +490,11 @@ describe('a post in a long game', function () {
         .where('id', 'in', [first.id, second.id])
         .execute()
       const last = game.plays[game.plays.length - 1]
-      const answer = await edits({
-        plays: [last],
-        currentPlay: game.currentPlay
-      })
+      const { result: answer, notice } = await toldDuring(
+        gameId,
+        async cache =>
+          await edits({ plays: [last], currentPlay: game.currentPlay }, cache)
+      )
       expect(
         answer.edits.map(edit =>
           edit.op === 'put'
@@ -432,32 +513,114 @@ describe('a post in a long game', function () {
           expect(edit.play).deep.equals(
             read.plays.find(row => row.id === edit.play.id)
           )
+      expect(notice.indexes).deep.equals([
+        first.atBatIndex,
+        second.atBatIndex,
+        last.about.atBatIndex
+      ])
     })
 
     it('answers a remove for a play it takes away, and every play when asked', async function () {
       const last = game.plays[game.plays.length - 1]
-      const answer = await edits({
-        plays: [],
-        remove: [last.about.atBatIndex],
-        currentPlay: game.currentPlay
-      })
+      const { result: answer, notice } = await toldDuring(
+        gameId,
+        async cache =>
+          await edits(
+            {
+              plays: [],
+              remove: [last.about.atBatIndex],
+              currentPlay: game.currentPlay
+            },
+            cache
+          )
+      )
       expect(answer.edits).deep.equals([
         { op: 'remove', atBatIndex: last.about.atBatIndex }
       ])
+      expect(notice.removed).deep.equals([last.about.atBatIndex])
       expect(answer.playsDigest).equals(await digestNow())
 
-      // Asked for every play, it answers them as before.
-      const all = await postGamePlays(
-        db,
-        gameId,
-        live({ plays: [last], currentPlay: game.currentPlay }),
-        undefined,
-        undefined,
-        { answer: 'all' }
-      )
-      expect(all.plays).length(game.plays.length)
-      expect(all.playsDigest).equals(await digestNow())
+      // Asked for every play, it answers them as before, and names what it
+      // wrote for the public in the same pass: nothing is named outside it.
+      const counting = namedOutsideWholeReads()
+      let all: Told<PostedPlays>
+      try {
+        all = await toldDuring(
+          gameId,
+          async cache =>
+            await postGamePlays(
+              db,
+              gameId,
+              live({ plays: [last], currentPlay: game.currentPlay }),
+              undefined,
+              undefined,
+              { answer: 'all', cache }
+            )
+        )
+      } finally {
+        counting.restore()
+      }
+      expect(counting.calls()).equals(0)
+      expect(all.result.plays).length(game.plays.length)
+      expect(all.result.playsDigest).equals(await digestNow())
+      expect(all.notice.indexes).deep.equals([last.about.atBatIndex])
+      expect(all.frames.size).equals(1)
     })
+
+    for (const asked of ['edits', 'all'] as const)
+      it(`leaves the game socket a frame with none of its sender's full names (answer ${asked})`, async function () {
+        const players = [...sides.away.players, ...sides.home.players].map(
+          player => userIdOfGumbo(player.gumboId)
+        )
+        await db
+          .updateTable('users')
+          .set({ first_name: 'Given', last_name: 'Family' })
+          .where('id', 'in', players)
+          .execute()
+        try {
+          const held = new Map<string, string>()
+          const cache: ValkeyCache = {
+            get: async key => held.get(key) ?? null,
+            set: async (key, value) => {
+              held.set(key, value)
+            },
+            close: async () => undefined
+          }
+          const last = game.plays[game.plays.length - 1]
+          const answer = await postGamePlays(
+            db,
+            gameId,
+            live({ plays: [last], currentPlay: game.currentPlay }),
+            undefined,
+            undefined,
+            // A scorer of both teams is answered their players' halves.
+            { answer: asked, cache, halves: async () => [HOME, AWAY] }
+          )
+          expect(JSON.stringify(answer)).includes('"firstName":"Given"')
+          expect(held.size).equals(1)
+          const [frame] = [...held.values()]
+          // Everybody reads the short names alone.
+          expect(frame).not.includes('"firstName"')
+          expect(frame).not.includes('"lastName"')
+          expect(frame).not.includes('Family')
+          const shared = JSON.parse(frame) as {
+            edits: Array<{ op: string; play: { id: string } }>
+          }
+          expect(shared).to.include({
+            generation: answer.generation,
+            fromDigest: answer.priorPlaysDigest,
+            digest: answer.playsDigest
+          })
+          // The play it wrote, and only that one.
+          expect(shared.edits.map(edit => edit.op)).deep.equals(['put'])
+        } finally {
+          await db
+            .updateTable('users')
+            .set({ first_name: null, last_name: null })
+            .where('id', 'in', players)
+            .execute()
+        }
+      })
   })
 
   it('answers every play to a post that is not live, whatever it asks', async function () {
@@ -468,15 +631,74 @@ describe('a post in a long game', function () {
       final: false,
       random: randomFrom(19)
     })
-    const answer = await postGamePlays(
-      db,
+    const {
+      result: answer,
+      notice,
+      frames
+    } = await toldDuring(
       gameId,
-      posted('manual', { mode: 'replace', plays: game.plays }),
-      undefined,
-      undefined,
-      { answer: 'edits' }
+      async cache =>
+        await postGamePlays(
+          db,
+          gameId,
+          posted('manual', { mode: 'replace', plays: game.plays }),
+          undefined,
+          undefined,
+          { answer: 'edits', cache }
+        )
     )
     expect(answer).to.have.property('plays').length(game.plays.length)
+    // Read again: no edits are named, only the digest it left.
+    expect(notice).deep.equals({
+      game: gameId,
+      kind: 'playEdits',
+      generation: 0,
+      digest: (answer as { playsDigest: string }).playsDigest,
+      namesDigest: await gameNamesDigest(db, gameId)
+    })
+    expect(frames.size).equals(0)
+  })
+
+  it('names nothing for the public when a live post leaves only the pregame lineups', async function () {
+    const gameId = 'gam_long_game_pregame'
+    await newGame(gameId)
+    // A reader is answered them folded into an at-bat, after the commit.
+    await db
+      .updateTable('games')
+      .set({
+        pregame: {
+          version: 3,
+          setupBefore: { players: {}, teams: {}, tagOrder: [] },
+          actions: []
+        }
+      })
+      .where('id', '=', gameId)
+      .execute()
+    const {
+      result: answer,
+      notice,
+      frames
+    } = await toldDuring(
+      gameId,
+      async cache =>
+        await postGamePlays(
+          db,
+          gameId,
+          live({ plays: [] }),
+          undefined,
+          undefined,
+          { answer: 'edits', cache }
+        )
+    )
+    expect(answer).to.have.property('edits').deep.equals([])
+    expect(notice).deep.equals({
+      game: gameId,
+      kind: 'playEdits',
+      generation: 0,
+      digest: (answer as { playsDigest: string }).playsDigest,
+      namesDigest: await gameNamesDigest(db, gameId)
+    })
+    expect(frames.size).equals(0)
   })
 
   it('reads a game naming a merged account as its reader would', async function () {

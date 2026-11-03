@@ -322,11 +322,55 @@ describe('GameSocket (U16)', function () {
       last().receive(new Uint8Array([1]))
       last().onmessage?.({ data: 7 })
       last().receive({ type: 'change', gameId: 'g1', kind: 'weather' })
-      last().receive({ kind: 'plays' })
+      last().receive({ kind: 'playEdits' })
+      last().receive({ type: 'change', gameId: 'g1', kind: 'plays' })
       last().receive({ type: 'error', code: 'unknown', message: 'x' })
       last().receive({ ...change, gameId: 'g9' })
       expect(one).deep.equals([change, { type: 'subscribed', gameId: 'g1' }])
       expect(two).deep.equals([])
+      socket.close()
+    })
+
+    it('passes on an older worker’s whole list of plays as the re-read form, with its digest', function () {
+      const { socket } = makeSocket()
+      const heard: GameSocketEvent[] = []
+      socket.subscribe('g1', event => heard.push(event))
+      last().open()
+      const reread = (digest: string | null): GameSocketEvent => ({
+        type: 'change',
+        gameId: 'g1',
+        kind: 'playEdits',
+        at: '2026-09-28T00:00:00.000Z',
+        data: {
+          generation: -1,
+          fromDigest: null,
+          digest,
+          namesDigest: null,
+          edits: null
+        }
+      })
+      const legacy = {
+        type: 'change',
+        gameId: 'g1',
+        kind: 'plays',
+        at: '2026-09-28T00:00:00.000Z',
+        data: { plays: [{}], currentPlay: null, digest: 'd0' }
+      }
+      last().receive(legacy)
+      // Without a digest, or with data that does not read, it still says
+      // to read again.
+      last().receive({ ...legacy, data: { plays: [] } })
+      last().receive({ ...legacy, data: 'garbled' })
+      last().receive({ ...legacy, data: { digest: 7 } })
+      // A frame that is not a change, or names no game, is still dropped.
+      last().receive({ ...legacy, gameId: 3 })
+      last().receive({ ...legacy, at: undefined })
+      expect(heard).deep.equals([
+        reread('d0'),
+        reread(null),
+        reread(null),
+        reread(null)
+      ])
       socket.close()
     })
 
@@ -341,9 +385,9 @@ describe('GameSocket (U16)', function () {
       const plays = {
         type: 'change',
         gameId: 'g1',
-        kind: 'plays',
+        kind: 'playEdits',
         at: 'x',
-        data: { plays: [], currentPlay: null }
+        data: { generation: 0, fromDigest: null, digest: null, edits: null }
       }
       last().receive(plays)
       expect(dj).deep.equals([plays])
@@ -374,7 +418,7 @@ describe('GameSocket (U16)', function () {
       last().receive({
         type: 'change',
         gameId: 'g1',
-        kind: 'plays',
+        kind: 'playEdits',
         at: 'x',
         data: {}
       })
@@ -799,9 +843,15 @@ describe('GameSocket (U16)', function () {
       const change = {
         type: 'change',
         gameId: 'g1',
-        kind: 'plays',
+        kind: 'playEdits',
         at: '2026-10-21T00:00:00.000Z',
-        data: { plays: [], currentPlay: null, digest: 'd1' }
+        data: {
+          generation: 0,
+          fromDigest: 'd0',
+          digest: 'd1',
+          edits: [],
+          currentPlay: null
+        }
       }
       last().receive(change)
       last().receive({ type: 'subscribed', gameId: 'g1', id: 'c1' })

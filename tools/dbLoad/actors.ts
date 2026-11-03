@@ -30,6 +30,15 @@ import { batterActions, contextOf, randomFrom } from './scoredGames'
  * counts, or its own queue reads as the server's delivery lag.
  */
 const FRAME_TYPE = /^\{"type":"([a-zA-Z]+)"/
+/**
+ * A game change's kind, from the head the server writes before its data:
+ * `type`, `gameId`, `at`, then `kind`.
+ */
+const CHANGE_KIND = /"kind":"([a-zA-Z]+)"/
+/** How far into a change its kind is written, at most. */
+const CHANGE_HEAD_BYTES = 160
+/** The kinds that carry the plays: an older server's, and edits. */
+const PLAY_KINDS = new Set(['plays', 'playEdits'])
 
 /** The rig's tally. Anything that goes wrong is counted here by kind. */
 export class Tally implements Measurements {
@@ -43,6 +52,7 @@ export class Tally implements Measurements {
   streamsStarted = 0
   postAt: number[] = []
   frameSeconds: number[] = []
+  frameBytes: number[] = []
   private lastFrameSecond = 0
   private readonly posted = new Map<string, number>()
   private readonly startedAt = Date.now()
@@ -78,6 +88,11 @@ export class Tally implements Measurements {
       this.lastFrameSecond = second
       this.frameSeconds.push(second)
     }
+  }
+
+  /** A frame of the plays (`PLAY_KINDS`), by its size. */
+  noteFrameBytes(bytes: number): void {
+    this.frameBytes.push(bytes)
   }
 
   noteSocketOpen(): void {
@@ -220,9 +235,18 @@ export class SocketViewer implements Actor {
 
   private onFrame(data: Buffer): void {
     const type = FRAME_TYPE.exec(data.toString('latin1', 0, 32))?.[1]
-    if (type === 'change' || type === 'changed')
+    if (type === 'change' || type === 'changed') {
       this.tally.noteFrame(this.gameId)
-    else if (type === 'resync') this.tally.fail('socket-resync')
+      if (
+        type === 'change' &&
+        PLAY_KINDS.has(
+          CHANGE_KIND.exec(
+            data.toString('latin1', 0, CHANGE_HEAD_BYTES)
+          )?.[1] ?? ''
+        )
+      )
+        this.tally.noteFrameBytes(data.length)
+    } else if (type === 'resync') this.tally.fail('socket-resync')
     else if (type == null || type === 'error') this.onUnusualFrame(data)
   }
 

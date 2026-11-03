@@ -13,7 +13,7 @@ import { lockPlayerEdits } from '../admin/people'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
-import { notifyGameChange } from '../socket/gameChanges'
+import { notifyPlaysChanged } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { gameNames } from '../users/nameBook'
 import { type PlaySource, withoutDescriptions } from './eventWrite'
@@ -224,7 +224,7 @@ export async function addPlayEvents(
       .set({ updated_at: now })
       .where('id', '=', gameId)
       .execute()
-    await notifyGameChange(trx, { game: gameId, kind: 'plays' })
+    await notifyPlaysChanged(trx, gameId)
     noteScopeChange(trx, { gameId })
     return {
       plays: writes.length,

@@ -579,7 +579,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         if (
           event.type === 'resync' ||
           (event.type === 'change' &&
-            (event.kind === 'plays' || event.kind === 'game'))
+            (event.kind === 'playEdits' || event.kind === 'game'))
         ) {
           // A play body is news of its own: read now, as before, without
           // waiting on the event's scope. The answer counts for the scope,

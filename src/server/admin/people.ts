@@ -10,6 +10,7 @@ import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { directAdminIds, requireDirectAdmin } from '../groups/adminGuard'
 import { assertMergeScoringSafe } from '../scoring/mergeConflicts'
+import { notifyLiveGamesRenamed } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { rowsOfPeople } from '../teams/teamStaff'
 import { ensureGumboId } from '../users/insertUser'
@@ -589,6 +590,9 @@ async function moveAndClose(
     .set({ merged_into: keeping })
     .where('id', '=', closing)
     .execute()
+  // Plays naming either now name the survivor, perhaps by the fuller name:
+  // the games in progress either plays in are read again by their viewers.
+  await notifyLiveGamesRenamed(db, { users: [closing, keeping] })
   await signOutEverywhere(db, closing)
   return moved
 }

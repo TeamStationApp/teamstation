@@ -750,9 +750,16 @@ describe('the event page’s screen scope', () => {
       listener?.({
         type: 'change',
         gameId: 'g1',
-        kind: 'plays',
+        kind: 'playEdits',
         at: new Date().toISOString(),
-        data: { plays: [], currentPlay: null, digest: 'd1' }
+        data: {
+          generation: 0,
+          fromDigest: 'd0',
+          digest: 'd1',
+          namesDigest: 'n0',
+          edits: [],
+          currentPlay: null
+        }
       })
     })
     expect(reads()).equals(3)
@@ -840,9 +847,16 @@ describe('the event page’s screen scope', () => {
       listener!({
         type: 'change',
         gameId: 'g1',
-        kind: 'plays',
+        kind: 'playEdits',
         at: new Date().toISOString(),
-        data: { plays: [], currentPlay: null, digest: 'd1' }
+        data: {
+          generation: 0,
+          fromDigest: 'd0',
+          digest: 'd1',
+          namesDigest: 'n0',
+          edits: [],
+          currentPlay: null
+        }
       })
     }
     // A play commits at 6: its frame reads the game, and the scope's notice

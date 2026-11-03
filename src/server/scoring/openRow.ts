@@ -225,8 +225,11 @@ interface GameNamer<T extends StoredGame> {
   projected: T
   names: NameBook
   scope: GameScope
-  /** A document as the reader is answered it. */
-  name: <D extends GumboDocument>(document: D) => { reader: D }
+  /**
+   * A document as the reader is answered it, and the way to name it as the
+   * public is, worked out only when asked for.
+   */
+  name: <D extends GumboDocument>(document: D) => { reader: D; public: () => D }
 }
 
 /**
@@ -280,16 +283,26 @@ async function gameNamer<T extends StoredGame>(
             teams
           )
         )
-  const name = <D extends GumboDocument>(document: D): { reader: D } => {
-    if (document == null) return { reader: document }
+  const nobody = new Set<string>()
+  const none = new Map<number, NameHalves>()
+  const name = <D extends GumboDocument>(
+    document: D
+  ): { reader: D; public: () => D } => {
+    if (document == null) return { reader: document, public: () => document }
     const named = withNames(document, names.nameOf)
     const record = (named as { teamStation?: unknown }).teamStation
-    if (record == null) return { reader: named }
+    if (record == null) return { reader: named, public: () => named }
     const reader = {
       ...named,
       teamStation: withHalves(record, teams, halves, names)
     }
-    return { reader }
+    return {
+      reader,
+      public: () =>
+        teams.size === 0
+          ? reader
+          : { ...named, teamStation: withHalves(record, nobody, none, names) }
+    }
   }
   return { projected, names, scope: scopeOf(stored, players), name }
 }
@@ -326,21 +339,38 @@ export interface NamedPlays {
   currentPlay: StoredGame['currentPlay']
 }
 
+/** What `resolveScoringPlays` names, and the book it named them from. */
+export interface ResolvedPlays extends NamedPlays {
+  public: NamedPlays
+  /**
+   * The digest of the book over the whole game (`NameBook.digest`), which
+   * names every play: it moves whenever any play's public name would.
+   */
+  namesDigest: string
+}
+
 /**
  * The plays of `stored` at the indexes `only` names (every one when it names
  * none), and the at-bat in progress, named exactly as `resolveScoringGame`
  * names them in the whole game: the book is made over the whole game's scope,
  * from the documents given, and only these documents are named from it. Each
- * comes as its reader is answered, with the halves of `options.halves`.
+ * comes as its reader is answered, with the halves of `options.halves`, and in
+ * `public` as everybody is answered, with none: one naming serves both.
+ * `public` holds those of them `publicOnly` names, when it names any, so a
+ * reader answered every play can be given the public form of a few. The
+ * book's digest comes with them, for whoever holds them to compare.
  */
 export async function resolveScoringPlays(
   db: Kysely<Database>,
   stored: StoredGame,
   options: ScoringReadOptions & {
     only?: Iterable<number>
+    publicOnly?: Iterable<number>
   }
-): Promise<NamedPlays> {
+): Promise<ResolvedPlays> {
   const only = options.only == null ? undefined : new Set(options.only)
+  const shown =
+    options.publicOnly == null ? undefined : new Set(options.publicOnly)
   const kept = (game: StoredGame): StoredGame =>
     only == null
       ? game
@@ -348,12 +378,19 @@ export async function resolveScoringPlays(
           ...game,
           plays: game.plays.filter(play => only.has(play.about.atBatIndex))
         }
-  const { projected, name } = await gameNamer(db, stored, options, kept)
+  const { projected, names, name } = await gameNamer(db, stored, options, kept)
   const plays = kept(projected).plays.map(play => ({ play, ...name(play) }))
   const current = name(projected.currentPlay)
   return {
     plays: plays.map(play => play.reader),
-    currentPlay: current.reader
+    currentPlay: current.reader,
+    public: {
+      plays: plays
+        .filter(({ play }) => shown == null || shown.has(play.about.atBatIndex))
+        .map(play => play.public()),
+      currentPlay: current.public()
+    },
+    namesDigest: names.digest
   }
 }
 

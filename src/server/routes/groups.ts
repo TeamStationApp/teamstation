@@ -86,6 +86,7 @@ import { withAsync } from '../middleware/withErrors'
 import { completionNotice } from '../notifications/completionNotice'
 import { gamesAround, rewriteTeamBoards } from '../scoreboard/gameSource'
 import type { ScoreboardStore } from '../scoreboard/scoreboardStore'
+import { notifyLiveGamesRenamed } from '../socket/gameChanges'
 import {
   groupScopeIds,
   noteScopeChange,
@@ -1188,6 +1189,8 @@ export function groupRoutes(
           // Everything below this level is named differently now.
           affected = await teamsFormattedBy(trx, ref)
           for (const teamId of affected) noteScopeChange(trx, { teamId })
+          // Their games in progress are named again for their viewers.
+          await notifyLiveGamesRenamed(trx, { teams: affected })
           // A game's screen hears only of its own game.
           for (const gameId of await gamesAround(trx, affected, clock.now()))
             noteScopeChange(trx, { gameId })

@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 
 import {
@@ -11,6 +11,7 @@ import { defaultRadarSettings } from '../../common/nodeSettings'
 import { NO_OVERRIDES } from '../../common/scoreboard'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { type EventStore, ScoringSession } from '../../common/scoring/session'
+import { playsReadAgainDuring } from '../../test/playNotices'
 import {
   addGame,
   addScorableTeams,
@@ -137,10 +138,27 @@ describe('persisted radar speeds', function () {
     const changed: any = (await f.load()).currentPlay
     expect(changed.about.atBatIndex).not.equals(before.about.atBatIndex)
     expect(pitches(changed)[2].pitchData.startSpeed).equals(82)
-    await refreshRadarSpeeds(db, f.id)
+    // Nothing changed: nobody is told.
+    const { games: unchanged } = await playsReadAgainDuring(async () => {
+      await refreshRadarSpeeds(db, f.id)
+    })
+    expect(unchanged).deep.equals([])
     expect(
       pitches((await f.load()).currentPlay)[2].pitchData.startSpeed
     ).equals(82)
+    // A speed the at-bat lost is put back, and its viewers read the plays
+    // again.
+    await db
+      .updateTable('games')
+      .set({
+        currentPlay: sql`"currentPlay" #- '{playEvents,2,pitchData,startSpeed}'`
+      })
+      .where('id', '=', f.id)
+      .execute()
+    const { games } = await playsReadAgainDuring(async () => {
+      await refreshRadarSpeeds(db, f.id)
+    })
+    expect(games).deep.equals([f.id])
   })
 
   for (const eventType of ['single', 'strikeout'] as const)

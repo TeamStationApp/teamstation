@@ -4,7 +4,11 @@ import { type Kysely, type Selectable, sql, type Transaction } from 'kysely'
 
 import { badRequest, conflict, notFound } from '../../common/errors'
 import { withPreviousTagIdentities } from '../../common/eventTags'
-import type { PlayEdit, WirePlayRow } from '../../common/gameSocket'
+import type {
+  PlayEdit,
+  PlayEditsData,
+  WirePlayRow
+} from '../../common/gameSocket'
 import type {
   CurrentPlay,
   GumboPlay,
@@ -17,10 +21,12 @@ import {
   withHalfOuts
 } from '../../common/scoring/linescore'
 import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
+import type { StoredGame } from '../../common/scoring/session'
 import { pregameRecord } from '../../common/scoring/sideSwap'
 import { withoutNames } from '../../common/scoring/storedNames'
 import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
+import type { ValkeyCache } from '../cache/valkeyCache'
 import { atomic } from '../db/atomic'
 import type { Database, EventsTable } from '../db/database'
 import { resolvedFenceDistance } from '../games/fenceDistance'
@@ -30,13 +36,19 @@ import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
 import {
   type NamedPlays,
   resolveScoringGame,
-  resolveScoringPlays
+  resolveScoringPlays,
+  scoringIdsIn
 } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { assertAuthoredRosters } from '../scoring/rosterWrites'
-import { notifyGameChange } from '../socket/gameChanges'
+import {
+  MAX_NOTICE_INDEXES,
+  notifyGameChange,
+  PLAY_EDITS_TTL_MS,
+  playEditsKey
+} from '../socket/gameChanges'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
-import { gamePlayers } from '../users/nameBook'
+import { type GamePlayerRow, gamePlayers } from '../users/nameBook'
 import { atBatOf, postedAtBat } from './atBatInProgress'
 import { pregameFold } from './currentPlay'
 import { repairEventTags } from './eventTags'
@@ -83,7 +95,7 @@ export interface PostedDigests {
   lineupsDigest: string | null
   /**
    * A digest of the stored plays and the at-bat in progress once this post
-   * is written, as `GET /events` and the game socket's `plays` give it.
+   * is written, as `GET /events` and the game socket's `playEdits` give it.
    */
   playsDigest: string
   /**
@@ -108,6 +120,27 @@ export interface PostedPlays extends PostedDigests {
  * of each index it took away, and the at-bat in progress.
  */
 export interface PostedEdits extends PostedDigests {
+  edits: PlayEdit[]
+  currentPlay: unknown
+}
+
+/**
+ * The plays a live post wrote, named as every viewer of the game is answered
+ * them (no player's halves): what the game socket may send each viewer of
+ * the post, as delivery would name it.
+ */
+interface PublicPlayEdits {
+  generation: number
+  /** The digest of the game as the post found it, which the edits apply to. */
+  fromDigest: string | null
+  /** The digest of the game once the edits are applied. */
+  digest: string
+  /** The digest of the book the edits are named from (`NameBook.digest`). */
+  namesDigest: string
+  /** The indexes of the plays put, in index order. */
+  indexes: number[]
+  /** The indexes taken away. */
+  removed: number[]
   edits: PlayEdit[]
   currentPlay: unknown
 }
@@ -139,6 +172,12 @@ export interface PostOptions {
    * inside the server reads `plays` whole.
    */
   answer?: PostAnswer
+  /**
+   * Where a live post leaves the game socket's frame of what it wrote, named
+   * as the public reads it (`playEditsKey`). Without one, each worker
+   * delivering the notice reads and names the plays itself.
+   */
+  cache?: ValkeyCache
 }
 
 /** The refusal of a post made against the game before its last reset. */
@@ -154,6 +193,12 @@ export const RESET_SINCE_READ = 'This game was reset since it was read'
  * answer last, in the post's transaction, before the clock: where a queued
  * post's `Idempotency-Key` keeps it. It sees a pregame at-bat as stored,
  * since the answer folds it only after the commit.
+ *
+ * A live post that leaves more than the pregame lineups names the plays it
+ * wrote as the public reads them too, in the same pass as its answer, and the
+ * game socket is sent those (`notifyPlayEdits`). One that names a person the
+ * game's plays and at-bat did not, which can change the short names of others
+ * on plays it did not write, has every viewer read the game again.
  */
 export async function postGamePlays<A extends PostAnswer = 'all'>(
   db: Kysely<Database>,
@@ -304,13 +349,19 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         live ? body.currentPlay : undefined
       ) as CurrentPlay | null
     }
+    // The game's `event_players` as this post finds them, read at most once.
+    let playersRead: Promise<GamePlayerRow[]> | undefined
+    const playersBefore = async (): Promise<GamePlayerRow[]> =>
+      await (playersRead ??= gamePlayers(trx, [gameId]).then(
+        read => read.get(gameId) ?? []
+      ))
     if (
       [...next.plays, next.currentPlay].some(
         play => storedRecordOf(play) != null
       )
     ) {
       // Nothing is written yet, so both reads name over the same players.
-      const players = (await gamePlayers(trx, [gameId])).get(gameId) ?? []
+      const players = await playersBefore()
       const projected = await resolveScoringGame(trx, next, { gameId, players })
       await assertStoredScoringRoles(
         trx,
@@ -325,6 +376,24 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         context
       )
     } else await assertStoredScoringRoles(trx, { id: gameId, ...game }, next)
+    // Everyone the game's book was made over before this post (`scopeOf`):
+    // its plays, its at-bat and its `event_players`. A post that leaves the
+    // plays and at-bat naming the same people, and rewrites or removes no
+    // stored play, leaves the `event_players` naming them too, since those
+    // are copied from each play's own people (`eventChildren`): the rows are
+    // read, before the writes, only for a post that may move the scope.
+    const idsBefore = new Set(live ? scoringIdsIn(previous) : [])
+    const storedBefore = new Set(
+      previous.plays.map(play => play.about.atBatIndex)
+    )
+    const mayMoveScope =
+      live &&
+      (!sameIds(idsBefore, new Set(scoringIdsIn(next))) ||
+        (body.remove ?? []).some(index => storedBefore.has(index)) ||
+        body.plays.some(play => storedBefore.has(play.about.atBatIndex)))
+    const scopeBefore = new Set(idsBefore)
+    if (mayMoveScope)
+      for (const row of await playersBefore()) scopeBefore.add(row.gumboId)
 
     const teams = {
       homeTeamId: game.home_team_id,
@@ -529,14 +598,12 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
     const taggedCurrent = atBatOf(taggedGame, taggedStored.length > 0)
-    // Told to the game socket when this commits. The lineups only when their
-    // digest moves from the one the game answered before: the digest is of
-    // their stored form, so a pitch leaves it alone and an undone change
-    // moves it.
-    await notifyGameChange(trx, { game: gameId, kind: 'plays' })
-    await notifyGameChange(trx, { game: gameId, kind: 'game' })
-    if ('lineups_digest' in lineups && lineups.lineups_digest !== lineupsBefore)
-      await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
+    // Before the first pitch a reader is answered the pregame lineups folded
+    // into an at-bat, which only a replay after the commit can give.
+    const folds =
+      taggedStored.length === 0 &&
+      taggedGame.currentPlay == null &&
+      taggedCurrent != null
     // And to the screens of that game: its event, and home and schedule,
     // from the clock this transaction bumps last. A post that makes the
     // game final, unmakes it, or changes a final score moves its teams'
@@ -573,11 +640,27 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       generation: game.play_generation
     }
     const senderHalves = (await options.halves?.(trx, game)) ?? []
+    // Every viewer of the game may be sent what this post wrote, named as
+    // they read it: never with the sender's halves. Not when the game's book
+    // is made over other people than before, someone brought in or the last
+    // play naming someone taken away, which can change how the book tells
+    // others apart on plays it did not write: then viewers read again.
+    const told =
+      live &&
+      !folds &&
+      !(await scopeMoved(trx, gameId, {
+        before: scopeBefore,
+        read: mayMoveScope,
+        idsBefore,
+        after: whole
+      }))
     // Only what this post wrote is named for an edits answer, every play for
-    // any other, over the whole game's book.
+    // any other, and in the same pass what it wrote for the public, over the
+    // whole game's book.
     const edits = live && options.answer === 'edits'
     const resolved = await resolveScoringPlays(trx, whole, {
       ...(edits ? { only: edited } : {}),
+      publicOnly: told ? edited : [],
       halves: senderHalves,
       gameId
     })
@@ -595,6 +678,40 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
           currentPlay: playForWire(resolved.currentPlay, sides),
           ...digests
         }
+    const everyone = resolved.public
+    const shared: PublicPlayEdits | undefined = told
+      ? {
+          generation: game.play_generation,
+          fromDigest: prior,
+          digest: digests.playsDigest,
+          namesDigest: resolved.namesDigest,
+          indexes: taggedStored
+            .filter(row => edited.has(row.atBatIndex))
+            .map(row => row.atBatIndex),
+          removed,
+          edits: editsOf(everyone),
+          currentPlay: playForWire(everyone.currentPlay, sides)
+        }
+      : undefined
+    // Told to the game socket when this commits: what this post wrote, or,
+    // when that cannot be told, that the plays are to be read again. The
+    // lineups only when their digest moves from the one the game answered
+    // before: the digest is of their stored form, so a pitch leaves it alone
+    // and an undone change moves it.
+    await notifyPlayEdits(
+      trx,
+      gameId,
+      {
+        generation: game.play_generation,
+        digest: digests.playsDigest,
+        namesDigest: resolved.namesDigest
+      },
+      shared,
+      options
+    )
+    await notifyGameChange(trx, { game: gameId, kind: 'game' })
+    if ('lineups_digest' in lineups && lineups.lineups_digest !== lineupsBefore)
+      await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
     await written?.(trx, answer)
     folding = {
       fold: await pregameFold(
@@ -622,6 +739,95 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       // Which user a failed post named reads the same in either record.
       throw unknownUser(error, withHalfOuts(sentBody.plays)) ?? error
     })
+}
+
+/**
+ * Tells the game socket how a post changed the game's plays. A live post that
+ * leaves more than the pregame lineups names the digests it took the game
+ * between and the indexes it put and took away, and leaves the frame each
+ * viewer is sent in Valkey, inside the post's transaction, so a worker
+ * delivering the notice reads no play. Any other post, and one that wrote
+ * too many plays to name, says only that the plays are to be read again,
+ * with the digest it left them at: a screen that holds that digest, as the
+ * post's own sender does, has nothing to read. Either names the digest of
+ * the book the post named its plays from, which every viewer compares with
+ * the one it read.
+ */
+async function notifyPlayEdits(
+  trx: Trx,
+  gameId: string,
+  left: { generation: number; digest: string | null; namesDigest: string },
+  shared: PublicPlayEdits | undefined,
+  options: { cache?: ValkeyCache }
+): Promise<void> {
+  const { generation } = left
+  if (
+    shared?.fromDigest == null ||
+    shared.indexes.length + shared.removed.length > MAX_NOTICE_INDEXES
+  ) {
+    await notifyGameChange(trx, {
+      game: gameId,
+      kind: 'playEdits',
+      generation,
+      ...(left.digest == null ? {} : { digest: left.digest }),
+      namesDigest: left.namesDigest
+    })
+    return
+  }
+  const notice = {
+    game: gameId,
+    kind: 'playEdits' as const,
+    generation,
+    fromDigest: shared.fromDigest,
+    digest: shared.digest,
+    namesDigest: shared.namesDigest,
+    indexes: shared.indexes,
+    removed: shared.removed
+  }
+  const frame: PlayEditsData = {
+    generation,
+    fromDigest: shared.fromDigest,
+    digest: shared.digest,
+    namesDigest: shared.namesDigest,
+    edits: shared.edits,
+    currentPlay: shared.currentPlay
+  }
+  await options.cache?.set(
+    playEditsKey(notice),
+    JSON.stringify(frame),
+    PLAY_EDITS_TTL_MS
+  )
+  await notifyGameChange(trx, notice)
+}
+
+/**
+ * Whether a post left the game's book made over other people than `before`,
+ * the scope it found: a newcomer, whose short name can make others' longer,
+ * or the last mention of someone gone, whose leaving can make them shorter.
+ * With `read` false the post could not move the `event_players`, so only
+ * the plays and at-bat are compared; `before` then holds just those, and a
+ * change there, which `read` would have foreseen, is a move.
+ */
+async function scopeMoved(
+  trx: Trx,
+  gameId: string,
+  scope: {
+    before: ReadonlySet<number>
+    read: boolean
+    idsBefore: ReadonlySet<number>
+    after: StoredGame
+  }
+): Promise<boolean> {
+  const after = new Set(scoringIdsIn(scope.after))
+  if (!scope.read) return !sameIds(scope.idsBefore, after)
+  for (const row of (await gamePlayers(trx, [gameId])).get(gameId) ?? [])
+    after.add(row.gumboId)
+  return !sameIds(scope.before, after)
+}
+
+/** Whether two sets of ids hold the same ids. */
+function sameIds(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
+  return a.size === b.size && [...a].every(id => b.has(id))
 }
 
 /**

@@ -365,7 +365,7 @@ describe('authorizing a delivery in one set of reads', function () {
         .deleteFrom('memberships')
         .where('user_id', '=', removed.userId)
         .execute()
-      said.say('game_changes', { game, kind: 'plays' })
+      said.say('game_changes', { game, kind: 'playEdits', generation: 0 })
       await until(() => changes(still.frames) === 2, 'the second change')
       expect(await out.closed).equals(1008)
       expect(changes(out.frames)).equals(1)

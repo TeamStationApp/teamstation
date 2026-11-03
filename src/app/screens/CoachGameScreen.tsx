@@ -520,7 +520,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       if (
         event.type === 'resync' ||
         (event.type === 'change' &&
-          (event.kind === 'plays' || event.kind === 'game'))
+          (event.kind === 'playEdits' || event.kind === 'game'))
       )
         refreshBox()
     })

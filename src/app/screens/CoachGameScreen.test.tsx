@@ -227,7 +227,7 @@ class FakeChanges implements GameChanges {
     await settle()
   }
 
-  async change(kind: 'lineups' | 'plays', digest = ''): Promise<void> {
+  async change(kind: 'lineups' | 'playEdits', digest = ''): Promise<void> {
     const event = {
       type: 'change',
       gameId: 'g1',
@@ -1234,8 +1234,8 @@ describe('Coach Game (U25)', function () {
     const socket = new FakeChanges()
     await coach(held, { socket, boxScoreEveryMs: 400 })
     expect(held.reads.boxScore).equals(1)
-    await socket.change('plays')
-    await socket.change('plays')
+    await socket.change('playEdits')
+    await socket.change('playEdits')
     await waitFor(() => held.reads.boxScore === 2, 'a second read')
     // The second change waits out the period, and is read once.
     await new Promise(resolve => setTimeout(resolve, 150))

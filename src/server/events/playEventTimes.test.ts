@@ -6,6 +6,7 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 
 import { asPostEventsBody, type GumboPlay } from '../../common/gumboPlay'
+import { playsReadAgainDuring } from '../../test/playNotices'
 import {
   addGame,
   addPerson,
@@ -205,10 +206,15 @@ describe('adding events to stored plays', function () {
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
 
-    const answer = await put(gameId, {
-      plays: [{ atBatIndex: 1, playEvents: [pitch(61), pitch(65)] }]
-    })
+    const { result: answer, games } = await playsReadAgainDuring(
+      async () =>
+        await put(gameId, {
+          plays: [{ atBatIndex: 1, playEvents: [pitch(61), pitch(65)] }]
+        })
+    )
     expect(answer).deep.equals({ status: 200, body: { plays: 1, events: 2 } })
+    // A viewer of the game reads its plays again.
+    expect(games).deep.equals([gameId])
 
     const after = (await stored(gameId)) as typeof before
     const events = after.plays[1].gumbo.playEvents as Array<

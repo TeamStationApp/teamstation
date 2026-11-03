@@ -10,7 +10,7 @@ import {
 } from '../../common/scoring/playsLost'
 import type { Database, GamesTable } from '../db/database'
 import { gamePlaysDigest, lineupsBefore } from '../events/postPlays'
-import { notifyGameChange } from '../socket/gameChanges'
+import { notifyGameChange, notifyPlaysChanged } from '../socket/gameChanges'
 import { requestGameStats } from '../statsBuilder/request'
 import { gameSwapEffect } from './swapEffect'
 import { SWAP_REFUSED, swapGameSides } from './swapSides'
@@ -163,7 +163,7 @@ export async function swapOrReset(
   await requestGameStats(trx, gameId)
   // Sent even when no lineups move: every screen holding the plays reads
   // them again. A notice the swap sent too is delivered once.
-  await notifyGameChange(trx, { game: gameId, kind: 'plays' })
+  await notifyPlaysChanged(trx, gameId)
   await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
 
   const after = await trx

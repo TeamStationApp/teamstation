@@ -4,7 +4,11 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { asGameDetail, type GameDetail } from '../../common/api'
-import type { GameSocketListener } from '../../common/gameSocket'
+import {
+  GameSocket,
+  type GameSocketListener,
+  type WebSocketLike
+} from '../../common/gameSocket'
 import { replayTimelineOf } from '../../common/replay/replayTimeline'
 import type { StoredGame } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
@@ -953,28 +957,72 @@ describe('the replay screen', function () {
     }
 
     const actions = replayActions()
-    /** A change as the server sends it: a `plays` change carries the game. */
+    /**
+     * A game as the server reads it, with a digest of its own, the digest of
+     * the book it names the plays from, and its generation.
+     */
+    let digests = 0
+    const book = 'names1'
+    const asRead = (stored: StoredGame, halves?: string[]): StoredGame => ({
+      ...stored,
+      playsDigest: `d${++digests}`,
+      namesDigest: book,
+      generation: 0,
+      ...(halves == null ? {} : { halves })
+    })
+    /**
+     * A change as the server sends it: a `playEdits` change takes the game
+     * from `from` to `next` (every play of `next` put, and the plays it no
+     * longer has removed), or with neither says only to read it again.
+     */
     const change = (
-      kind: 'plays' | 'walkUpSong',
-      stored?: StoredGame
+      kind: 'playEdits' | 'walkUpSong',
+      next?: StoredGame,
+      from?: StoredGame
     ): Parameters<GameSocketListener>[0] =>
-      kind === 'plays'
+      kind === 'playEdits'
         ? {
             type: 'change',
             gameId: REPLAY_GAME_ID,
             kind,
             at: '',
             data:
-              stored == null
-                ? { plays: [{ broken: true }], currentPlay: null, digest: 'd0' }
+              next == null || from == null
+                ? {
+                    generation: 0,
+                    fromDigest: null,
+                    digest: null,
+                    namesDigest: null,
+                    edits: null
+                  }
                 : {
-                    plays: stored.plays.map((gumbo, index) => ({
-                      id: `evt_${index}`,
-                      gameId: REPLAY_GAME_ID,
-                      gumbo
-                    })),
-                    currentPlay: stored.currentPlay,
-                    digest: `d${stored.plays.length}`
+                    generation: 0,
+                    fromDigest: from.playsDigest ?? null,
+                    digest: next.playsDigest ?? null,
+                    namesDigest: next.namesDigest ?? null,
+                    edits: [
+                      ...next.plays.map((gumbo, index) => ({
+                        op: 'put' as const,
+                        play: {
+                          id: `evt_${index}`,
+                          gameId: REPLAY_GAME_ID,
+                          gumbo
+                        }
+                      })),
+                      ...from.plays
+                        .map(play => play.about.atBatIndex)
+                        .filter(
+                          index =>
+                            !next.plays.some(
+                              play => play.about.atBatIndex === index
+                            )
+                        )
+                        .map(atBatIndex => ({
+                          op: 'remove' as const,
+                          atBatIndex
+                        }))
+                    ],
+                    currentPlay: next.currentPlay
                   }
           }
         : {
@@ -986,14 +1034,18 @@ describe('the replay screen', function () {
           }
 
     async function following(
-      socket?: FakeSocket,
-      pollMs?: number
+      socket?: ReplaySocket,
+      pollMs?: number,
+      /** The teams whose players' halves each read carries. */
+      halves?: string[]
     ): Promise<{
       setStored: (count: number) => Promise<StoredGame>
+      /** What the server answers a read of the game now. */
+      current: () => StoredGame
       reads: () => number
       setStatus: (status: GameDetail['status']) => void
     }> {
-      let stored = await scored(actions.slice(0, 10))
+      let stored = asRead(await scored(actions.slice(0, 10)), halves)
       let reads = 0
       let status: GameDetail['status'] = 'inProgress'
       const game = gameOf({ status: 'inProgress' })
@@ -1013,9 +1065,10 @@ describe('the replay screen', function () {
       reads = 0
       return {
         setStored: async count => {
-          stored = await scored(actions.slice(0, count))
+          stored = asRead(await scored(actions.slice(0, count)), halves)
           return stored
         },
+        current: () => stored,
         reads: () => reads,
         setStatus: value => {
           status = value
@@ -1030,14 +1083,14 @@ describe('the replay screen', function () {
       expect(socket.listeners.has(REPLAY_GAME_ID)).equals(true)
       const opened = card()
       // Each notice refreshes the canonical statistics revision.
-      await socket.emit(change('plays', await game.setStored(11)))
+      await socket.emit(change('playEdits', await game.setStored(11)))
       expect(game.reads()).equals(1)
       now = 100
       await wait(250)
       expect(card()).not.equals(opened)
       // A change that carries no game it can use: read the game instead.
       await game.setStored(12)
-      await socket.emit(change('plays'))
+      await socket.emit(change('playEdits'))
       expect(game.reads()).equals(2)
       // Nothing to read in a walk-up song.
       await socket.emit(change('walkUpSong'))
@@ -1049,6 +1102,83 @@ describe('the replay screen', function () {
       })
       expect(socket.listeners.size).equals(0)
       expect(socket.statuses.size).equals(0)
+    })
+
+    it('reads the game again on an older worker’s whole list of plays, heard through the app’s socket', async function () {
+      resize(402, 874)
+      /** The socket's wire, which the test speaks for. */
+      class Wire implements WebSocketLike {
+        static made: Wire[] = []
+        sent: Array<{ type?: string; id?: string }> = []
+        onopen: ((event: unknown) => void) | null = null
+        onmessage: ((event: { data: unknown }) => void) | null = null
+        onclose: ((event: unknown) => void) | null = null
+        onerror: ((event: unknown) => void) | null = null
+        constructor() {
+          Wire.made.push(this)
+        }
+
+        send(data: string): void {
+          this.sent.push(JSON.parse(data))
+        }
+
+        close(): void {}
+        async receive(frame: unknown): Promise<void> {
+          await act(async () => {
+            this.onmessage?.({ data: JSON.stringify(frame) })
+            await new Promise(resolve => setTimeout(resolve, 30))
+          })
+        }
+      }
+      const socket = new GameSocket({
+        baseUrl: 'http://api.test:9100/api/v1',
+        WebSocketImpl: Wire
+      })
+      try {
+        const game = await following(socket)
+        const wire = Wire.made[0]
+        await act(async () => {
+          wire.onopen?.({})
+        })
+        const subscribe = wire.sent.find(frame => frame.type === 'subscribe')
+        await wire.receive({
+          type: 'subscribed',
+          gameId: REPLAY_GAME_ID,
+          id: subscribe?.id
+        })
+        expect(game.reads()).equals(1)
+        const stored = await game.setStored(11)
+        await wire.receive({
+          type: 'change',
+          gameId: REPLAY_GAME_ID,
+          kind: 'plays',
+          at: '',
+          data: {
+            plays: stored.plays,
+            currentPlay: stored.currentPlay,
+            digest: stored.playsDigest
+          }
+        })
+        expect(game.reads()).equals(2)
+      } finally {
+        socket.close()
+      }
+    })
+
+    it('reads the game again for each change when its read carries somebody’s halves', async function () {
+      resize(402, 874)
+      const socket = new FakeSocket()
+      // A manager of the home team reads its players' whole names, which the
+      // edits, named for everybody, do not carry.
+      const game = await following(socket, undefined, ['tem_home'])
+      await socket.emit({ type: 'subscribed', gameId: REPLAY_GAME_ID })
+      expect(game.reads()).equals(1)
+      const held = game.current()
+      await socket.emit(change('playEdits', await game.setStored(11), held))
+      expect(game.reads()).equals(2)
+      const next = game.current()
+      await socket.emit(change('playEdits', await game.setStored(12), next))
+      expect(game.reads()).equals(3)
     })
 
     it('reads the game every few seconds while the socket is down or refused', async function () {

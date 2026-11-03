@@ -28,7 +28,7 @@ import { scoredInTeamStation } from '../games/opponentFixed'
 import { retargetGameTeams } from '../games/retargetTeams'
 import { maySwapSides, swapGameSides } from '../games/swapSides'
 import { currentActor, requireGroupAdmin } from '../groups/rights'
-import { notifyGameChange } from '../socket/gameChanges'
+import { notifyGameChange, notifyPlaysChanged } from '../socket/gameChanges'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
 import { requestGameStats } from '../statsBuilder/request'
 import { followMerges } from '../teams/followMerges'
@@ -1127,9 +1127,9 @@ async function repointOpponent(
     .where('team_id', '=', oldTeamId)
     .execute()
   await requestGameStats(trx, game.id)
-  for (const kind of ['game', 'lineups', 'plays'] as const) {
+  for (const kind of ['game', 'lineups'] as const)
     await notifyGameChange(trx, { game: game.id, kind })
-  }
+  await notifyPlaysChanged(trx, game.id)
   // The game leaves one team for another: both teams' records move.
   noteScopeChange(trx, { teamId: oldTeamId })
   await noteGameFigures(trx, game.id)

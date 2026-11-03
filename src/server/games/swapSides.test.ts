@@ -593,8 +593,12 @@ describe('swapping a game’s home and away teams', function () {
       base
     )
     await settle()
-    for (const kind of ['plays', 'game', 'lineups'])
+    for (const kind of ['playEdits', 'game', 'lineups'])
       expect(notices('gam_digest', kind), kind).above(0)
+    // The plays are read again, whatever they were.
+    expect(
+      heard.find(({ payload }) => payload.kind === 'playEdits')?.payload
+    ).deep.equals({ game: 'gam_digest', kind: 'playEdits', generation: 0 })
     const stale = await staleRoster('gam_digest', base)
     expect(stale).property('code', 'conflict')
     expect(stale).nested.property('details.stale', true)

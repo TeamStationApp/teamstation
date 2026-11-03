@@ -623,7 +623,7 @@ describe('naming a scoring game from the accounts', function () {
     })
   })
 
-  it('names only the plays asked for, as the whole read names them', async () => {
+  it('names only the plays asked for, as the whole read names them, for the reader and for the public', async () => {
     const { away, home } = REPLAY_TEAMS
     const whole = await resolveScoringGame(fixture.db, stored, {
       halves: [away.id, home.id]
@@ -646,14 +646,21 @@ describe('naming a scoring game from the accounts', function () {
     expect(some.plays.map(play => play.about.atBatIndex)).deep.equals(
       asked.slice(0, 2)
     )
+    // The reader's with the halves of his teams, the public's with none:
+    // each the same as a read of the whole game gives that reader.
     for (const index of asked.slice(0, 2)) {
       expect(at(some, index)).deep.equals(at(whole, index))
+      expect(at(some.public, index)).deep.equals(at(general, index))
     }
     expect(some.currentPlay).deep.equals(whole.currentPlay)
+    expect(some.public.currentPlay).deep.equals(general.currentPlay)
+    expect(JSON.stringify(some.public)).not.includes('Ichiro Suzuki')
     expect(JSON.stringify(some.currentPlay)).includes('Suzuki')
 
+    // Asked for no halves, both are the one naming.
     const plain = await resolveScoringPlays(fixture.db, stored, { only: [] })
     expect(plain.plays).deep.equals([])
+    expect(plain.public.currentPlay).equals(plain.currentPlay)
     expect(plain.currentPlay).deep.equals(general.currentPlay)
   })
 
