@@ -3,9 +3,11 @@ import type { TeamStationClient } from '../../common/api'
 export interface StreamFooterProps {
   client: TeamStationClient
   gameId: string
+  /** A public game can show its empty state without an authenticated read. */
+  signedIn?: boolean
   /** The videos this game's cameras are publishing to, each time that changes. */
   onPublishing?: (videoIds: string[]) => void
-  /** Whether the game has a video to play. Without one a phone says so here. */
+  /** Whether the game has a video to play. The camera area owns the empty state. */
   hasVideo: boolean
   /** Plays one of the game's videos in the player above. */
   onPlay?: (videoId: string) => void

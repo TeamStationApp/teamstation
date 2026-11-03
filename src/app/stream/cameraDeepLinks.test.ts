@@ -6,6 +6,7 @@ import {
   cameraLink,
   type CameraLinks,
   launchCamera,
+  launchWebCamera,
   type LinkedCamera,
   rtmpUrlParts,
   storePage
@@ -523,4 +524,28 @@ describe('launchCamera', function () {
     })
     expect(go.fired).deep.equals([])
   })
+})
+
+describe('web camera links', function () {
+  for (const source of ['gopro', 'mevo', 'mevoStudio'] as const) {
+    it(`opens the ${source} HTTPS link directly`, async function () {
+      const links: string[] = []
+      const client = {
+        addLiveStream: async () => ({ url: RTMP })
+      } as unknown as TeamStationClient
+      const result = await launchWebCamera(
+        {
+          client,
+          gameId: 'gam_1',
+          name: 'Home',
+          source,
+          onCreated: () => {},
+          signal: new AbortController().signal
+        },
+        url => links.push(url)
+      )
+      expect(result.kind).equals('opened')
+      expect(links).deep.equals([cameraLink(source, RTMP, 'Home', 'web')])
+    })
+  }
 })

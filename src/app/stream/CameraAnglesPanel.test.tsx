@@ -560,7 +560,7 @@ describe('Record Video on a phone', function () {
     expect(fake.added).deep.equals([])
   })
 
-  it('keeps the stream-URL panel in a browser, and the cameras panel on a phone', async function () {
+  it('offers the camera panel in a browser and on a phone', async function () {
     const fake = fakeClient()
     const host = document.createElement('div')
     document.body.appendChild(host)
@@ -573,7 +573,7 @@ describe('Record Video on a phone', function () {
       )
       await delay(20)
     })
-    expect(host.textContent).contains('STREAM TO THIS GAME')
+    expect(host.textContent).contains('Record Video')
     await act(async () => {
       root!.render(
         <ThemeProvider>
@@ -2837,5 +2837,350 @@ describe('camera rows on a phone', function () {
         configurable: true
       })
     }
+  })
+})
+
+describe('web camera management', function () {
+  async function renderWeb(fake: FakeClient, hasVideo = false): Promise<void> {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <StreamFooter
+            client={fake.client}
+            gameId="gam_1"
+            hasVideo={hasVideo}
+            onPlay={id => played.push(id)}
+          />
+        </ThemeProvider>
+      )
+      await delay(10)
+    })
+  }
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    played.length = 0
+    document.body.replaceChildren()
+  })
+  for (const role of ['viewer', 'pending', 'guest', 'nonmember', 'offline']) {
+    it(`shows the appropriate empty state for a ${role}`, async function () {
+      const fake = fakeClient()
+      fake.access =
+        role === 'guest' || role === 'offline'
+          ? async () => {
+              throw new HttpError(
+                role === 'guest' ? 'unauthorized' : 'offline',
+                'Cannot read'
+              )
+            }
+          : access({
+              canRequest: role === 'viewer' || role === 'pending',
+              requested: role === 'pending'
+            })
+      await renderWeb(fake)
+      expect(text()).contains('No videos')
+      expect(byTestId('record-video')).equals(null)
+      expect(fake.listed).equals(0)
+      if (role === 'viewer') {
+        await pressId('request-access')
+        expect(fake.requests.length).equals(1)
+        expect(text()).contains('Request sent')
+      } else if (role === 'pending') expect(text()).contains('Request sent')
+      else expect(byTestId('request-access')).equals(null)
+    })
+  }
+  it('omits controls when a spectator has a video', async function () {
+    const fake = fakeClient()
+    fake.allowed = false
+    await renderWeb(fake, true)
+    expect(text()).equals('')
+  })
+  it('sets up an external camera and reopens and revokes the URL', async function () {
+    const fake = fakeClient()
+    await renderWeb(fake)
+    expect(text()).contains('with an external camera')
+    await pressId('record-video')
+    expect(byTestId('record-with-phone')).equals(null)
+    await pressId('angle-suggestion-Home')
+    await pressId('use-external-camera')
+    expect(text()).contains('Mevo Studio')
+    await pressId('sheet-cancel')
+    await toRtmp(fake)
+    expect(text()).contains('HEVC')
+    await pressId('rtmp-copy')
+    expect(text()).contains('Copied')
+    await pressId('rtmp-done')
+    await pressId('angle-row-' + fake.mine[0].id)
+    await pressId('rtmp-revoke')
+    await press(button('Cancel'))
+    expect(text()).contains('Stream using RTMP')
+    await pressId('rtmp-revoke')
+    await pressId('revoke-confirm')
+    expect(fake.acted).includes('revoke ' + fake.mine[0].id)
+  })
+  it('uses the server’s game and personal limits and reports slots freed elsewhere', async function () {
+    const fake = fakeClient()
+    fake.gameCanAdd = 0
+    fake.maxGameCameras = 7
+    fake.canAdd = 0
+    await renderWeb(fake, true)
+    expect(text()).contains('7 cameras')
+    await act(async () => {
+      fake.gameCanAdd = 1
+      document.dispatchEvent(new window.Event('visibilitychange'))
+      await delay(10)
+    })
+    expect(text()).contains('4 cameras')
+    await act(async () => {
+      fake.canAdd = 1
+      document.dispatchEvent(new window.Event('visibilitychange'))
+      await delay(10)
+    })
+    expect(byTestId('record-video-limit')).equals(null)
+  })
+  for (const action of ['revoke', 'end', 'delete'] as const) {
+    it(`keeps a newer sheet open when a dismissed ${action} finishes`, async function () {
+      const fake = fakeClient()
+      fake.mine = [
+        stream({
+          id: 'old',
+          deviceId: action === 'end' ? DEVICE_ID : undefined,
+          state: action === 'delete' ? 'ended' : 'idle',
+          videoId: action === 'delete' ? 'vid_old' : null
+        }),
+        stream({ id: 'next', deviceId: undefined }),
+        stream({ id: 'next-ended', state: 'ended', videoId: 'vid_next' })
+      ]
+      let finish!: () => void
+      const pending = new Promise<void>(resolve => {
+        finish = resolve
+      })
+      fake.end = async () => {
+        await pending
+        return stream()
+      }
+      fake.discard = async () => {
+        await pending
+      }
+      await renderWeb(fake, true)
+      if (action === 'revoke') {
+        await pressId('angle-row-old')
+        await pressId('rtmp-revoke')
+      } else await pressId(`angle-${action}-old`)
+      const confirmation =
+        action === 'revoke'
+          ? 'revoke'
+          : action === 'end'
+            ? 'end-camera'
+            : 'delete-video'
+      await pressId(`${confirmation}-confirm`)
+      await press(
+        byTestId(
+          `${confirmation}-sheet`
+        )!.parentElement!.querySelector<HTMLElement>('[aria-label="Cancel"]')!
+      )
+      if (action === 'revoke') await pressId('rtmp-done')
+      if (action === 'revoke') {
+        await pressId('record-video')
+        await type('New angle')
+      } else
+        await pressId(`angle-row-${action === 'end' ? 'next' : 'next-ended'}`)
+      const newer =
+        action === 'revoke'
+          ? 'angle-name-prompt'
+          : action === 'end'
+            ? 'rtmp-url-sheet'
+            : 'video-details-sheet'
+      expect(byTestId(newer)).not.equals(null)
+      const reads = fake.listed
+      await act(async () => {
+        finish()
+        await delay(20)
+      })
+      expect(byTestId(newer)).not.equals(null)
+      expect(fake.listed).greaterThan(reads)
+      if (action === 'revoke')
+        expect(
+          document.querySelector<HTMLInputElement>(
+            'input[aria-label="Camera angle"]'
+          )?.value
+        ).equals('New angle')
+    })
+  }
+  it('shows remote phone controls and diagnostic data and confirms ending the camera', async function () {
+    const fake = fakeClient()
+    fake.mine = [
+      stream({
+        id: 'phone',
+        localRecording: 'recorded',
+        status: {
+          liveStreamId: 'phone',
+          ingress: {
+            receivingPackets: true,
+            publishing: true,
+            bytesReceived: 1024,
+            bytesPerSecond: 750000
+          },
+          outputs: [
+            {
+              label: 'broadcast',
+              kind: 'hls',
+              state: 'connected',
+              bytesWritten: 2048,
+              bytesPerSecond: 500000,
+              recordedSec: 12,
+              restartCount: 1,
+              lastError: 'Interrupted'
+            }
+          ]
+        }
+      })
+    ]
+    await renderWeb(fake)
+    expect(text()).contains('Receiving 6.0 Mbit/s')
+    expect(text()).contains('Interrupted')
+    await press(button('Show stream URL'))
+    expect(text()).contains('Stream using RTMP')
+    await pressId('rtmp-done')
+    await pressId('angle-end-phone')
+    await pressId('end-camera-confirm')
+    expect(fake.acted).includes('end phone')
+    await pressId('angle-more-phone')
+    await pressId('stream-action-rotate')
+    expect(fake.acted).includes('rotate phone')
+  })
+  it('plays somebody else’s ended video, restricts their live camera and deletes only an own ended row', async function () {
+    const fake = fakeClient()
+    fake.mine = [
+      stream({
+        id: 'mine',
+        state: 'ended',
+        playableVideoId: 'v1',
+        videoId: 'v1',
+        durationSec: 120
+      })
+    ]
+    fake.others = [
+      stream({
+        id: 'live',
+        state: 'publishing',
+        publishedAt: new Date().toISOString()
+      }),
+      stream({ id: 'ended', state: 'ended', playableVideoId: 'v2' })
+    ]
+    await renderWeb(fake, true)
+    expect(text()).contains('Live')
+    expect(text()).contains('0:02')
+    await pressId('angle-more-live')
+    expect(sheetActions()).deep.equals(['end'])
+    await press(button('Cancel'))
+    await pressId('angle-row-ended')
+    await pressId('angle-row-mine')
+    expect(byTestId('video-details-upload')).equals(null)
+    await pressId('video-details-play')
+    expect(played).deep.equals(['v2', 'v1'])
+    await pressId('angle-delete-mine')
+    await press(button('Cancel'))
+    await pressId('angle-row-mine')
+    await pressId('video-details-delete')
+    await press(button('Cancel'))
+    expect(byTestId('video-details-sheet')).not.equals(null)
+    await pressId('video-details-delete')
+    await pressId('delete-video-confirm')
+    expect(byTestId('angle-row-mine')).equals(null)
+    expect(fake.acted).includes('discard mine')
+  })
+  it('reports linked camera creation failures and allows another choice', async function () {
+    const fake = fakeClient()
+    fake.next = async () => {
+      throw new Error('Game is full')
+    }
+    await renderWeb(fake)
+    await toSources()
+    await pressId('camera-source-mevo')
+    expect(text()).contains('Game is full')
+    expect(fake.added[0].device).deep.equals({ source: 'mevo' })
+    await pressId('sheet-cancel')
+    expect(byTestId('camera-source-sheet')).equals(null)
+  })
+  it('shows an operator’s last stream error even without ingest diagnostics', async function () {
+    const fake = fakeClient()
+    fake.mine = [stream({ status: null, lastError: 'Lost connection' })]
+    await renderWeb(fake)
+    expect(text()).contains('Lost connection')
+  })
+  it('keeps the created camera and shows the RTMP sheet if its address cannot form a maker link', async function () {
+    const fake = fakeClient()
+    const camera = stream({
+      deviceId: undefined,
+      source: 'mevo',
+      url: 'invalid-address'
+    })
+    fake.next = async () => {
+      fake.mine = [camera]
+      return camera
+    }
+    await renderWeb(fake)
+    await toSources()
+    await pressId('camera-source-mevo')
+    expect(text()).contains('Stream using RTMP')
+    expect(fake.added.length).equals(1)
+    await pressId('rtmp-done')
+    expect(byTestId('angle-row-' + camera.id)).not.equals(null)
+  })
+  it('never navigates from an abandoned source setup when its server answer arrives', async function () {
+    const fake = fakeClient()
+    let finish: (camera: LiveStream) => void = () => {}
+    let signal: AbortSignal | undefined
+    fake.client.addLiveStream = async (_game, _name, _source, options) => {
+      signal = options?.signal
+      return await new Promise(resolve => {
+        finish = resolve
+      })
+    }
+    await renderWeb(fake)
+    await toSources()
+    await pressId('camera-source-gopro')
+    await act(async () => {
+      root!.unmount()
+      root = undefined
+    })
+    expect(signal?.aborted).equals(true)
+    await act(async () => {
+      finish(stream())
+      await delay(10)
+    })
+    expect(byTestId('camera-source-sheet')).equals(null)
+  })
+  it('discards a pending camera read when access is revoked', async function () {
+    const fake = fakeClient()
+    let finishRead: (rows: GameLiveStreams) => void = () => {}
+    fake.client.liveStreams = async () =>
+      await new Promise(resolve => {
+        finishRead = resolve
+      })
+    await renderWeb(fake, true)
+    fake.allowed = false
+    await act(async () => {
+      document.dispatchEvent(new window.Event('visibilitychange'))
+      await delay(10)
+      finishRead({
+        gameId: 'gam_1',
+        mine: [stream()],
+        others: [],
+        maxCameras: 4,
+        canAdd: 1,
+        gameCanAdd: 1,
+        maxGameCameras: 6,
+        discarded: []
+      })
+      await delay(10)
+    })
+    expect(text()).equals('')
   })
 })

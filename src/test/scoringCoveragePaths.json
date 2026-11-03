@@ -96,7 +96,7 @@
   "src/app/screens/AccountScreen.tsx",
   "src/app/screens/HomeScreen.tsx",
   "src/app/screens/SeasonScreen.tsx",
-  "src/app/components/StreamPanel.tsx",
+  "src/app/stream/CameraAnglesPanel.tsx",
   "src/app/platform/deviceStorage.ts",
   "src/app/platform/deviceStorage.native.ts",
   "src/app/walkup/*.ts",
