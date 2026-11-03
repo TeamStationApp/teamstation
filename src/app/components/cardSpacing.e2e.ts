@@ -126,6 +126,7 @@ async function main(): Promise<void> {
     await visible('Light / Normal / Babe Ruth')
     await tap('.*Comets.*')
     await visible('Light / Normal / Comets')
+    await tap('More teams')
     await scrollTo('Kites')
     await shot('home-scrolled')
     await tap('^Geometry$')

@@ -324,6 +324,13 @@ async function main(): Promise<void> {
       'WALKUP_TEAM and WALKUP_GAME are required'
     )
     await home()
+    for (let i = 0; i < 20 && !(await shows(team)); i++) {
+      if (await shows('More teams')) {
+        await tap('More teams', 500)
+        break
+      }
+      await sleep(400)
+    }
     await tap(team, 3000, true)
     // The team's own Schedule section, not the tab bar's Schedule.
     await tap('Schedule', 2500, false, TAB_BAR_TOP)

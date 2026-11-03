@@ -92,6 +92,14 @@ const walkUpLog = () =>
     .map(line => JSON.parse(line.slice(line.indexOf('{'))))
 
 async function openPlayer(name) {
+  const until = Date.now() + 8000
+  while (Date.now() < until && !(await texts()).includes('Tigers')) {
+    if ((await texts()).includes('More teams')) {
+      await button('More teams')
+      break
+    }
+    await sleep(400)
+  }
   await tap(node => node.type === 'Button' && node.text === 'Tigers')
   await tap(node => node.type === 'View' && node.text === 'Team')
   await m.scrollUntilVisible({
