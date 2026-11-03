@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
 import { onePerson } from '../admin/people'
 import type { CreditAssistRow, Database } from '../db/database'
@@ -68,7 +68,8 @@ async function creditsOf(
   const rows = await db
     .selectFrom('eventCredits')
     .select(CREDIT_COLUMNS)
-    .where('eventId', 'in', eventIds)
+    // One array parameter: a person's plays can outnumber a statement's 65535.
+    .where(sql<boolean>`"eventId" = any(${eventIds}::text[])`)
     .execute()
   return rows.map(row => ({ eventId: row.eventId, credit: asCredit(row) }))
 }

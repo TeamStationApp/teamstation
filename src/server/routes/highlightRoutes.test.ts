@@ -200,9 +200,70 @@ describe('the highlight routes', function () {
     return { status: response.status, body: await response.json() }
   }
 
+  /** A statement this test writes whole, on the scratch database. */
+  const adminDb = async (
+    text: string,
+    values?: unknown[]
+  ): Promise<{ rows: Array<Record<string, string>> }> => {
+    const pool = new Pool({ connectionString: scratchUrl })
+    try {
+      return await pool.query(text, values)
+    } finally {
+      await pool.end()
+    }
+  }
+
   const eventIdsOf = (body: {
     highlights: Array<{ eventId: string }>
   }): string[] => body.highlights.map(highlight => highlight.eventId)
+
+  it('answers for a player credited on more plays than a statement has parameters', async function () {
+    const copies = 65_600
+    const copy = async (
+      table: string,
+      fixed: string[],
+      values: string,
+      source: string
+    ): Promise<void> => {
+      const { rows } = await adminDb(
+        `select column_name as name from information_schema.columns
+         where table_schema = 'public' and table_name = '${table}'
+           and is_generated = 'NEVER' and column_name <> all($1)`,
+        [fixed]
+      )
+      const others = rows.map(row => `"${row.name}"`).join(', ')
+      await adminDb(
+        `insert into "${table}" (${fixed.map(name => `"${name}"`).join(', ')}, ${others})
+         select ${values}, ${others} from "${table}" source, generate_series(1, ${copies}) g
+         where ${source}`
+      )
+    }
+    await adminDb('alter table events disable trigger user')
+    await adminDb('alter table "eventCredits" disable trigger user')
+    try {
+      await copy(
+        'events',
+        ['id', 'gumbo'],
+        `'evt_bulk' || g, jsonb_set(gumbo, '{about,atBatIndex}', to_jsonb(100000 + g))`,
+        `source.id = 'evt_ada1'`
+      )
+      await copy(
+        'eventCredits',
+        ['id', 'eventId'],
+        `'cre_bulk' || g, 'evt_bulk' || g`,
+        `source."eventId" = 'evt_ada1' and source."creditGumboId" is not null limit ${copies}`
+      )
+      const answer = await get(
+        `/players/${userIdOfGumbo(ada.userId)}/highlights?limit=1`
+      )
+      expect(answer.status).equals(200)
+      expect(answer.body.highlights.length).equals(1)
+    } finally {
+      await adminDb(`delete from events where id like 'evt_bulk%'`)
+      await adminDb('alter table "eventCredits" enable trigger user')
+      await adminDb('alter table events enable trigger user')
+    }
+  })
 
   it("finds a player's plays by our own user id, newest first, a page at a time", async function () {
     const first = await get(
