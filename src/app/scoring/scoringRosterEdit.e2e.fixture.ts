@@ -73,7 +73,6 @@ export interface RosterEditFixture {
 }
 
 const stop = async (server: Server): Promise<void> => {
-  server.closeAllConnections()
   await new Promise<void>((resolve, reject) => {
     server.close(error => {
       error == null ? resolve() : reject(error)

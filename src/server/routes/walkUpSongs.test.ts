@@ -13,7 +13,10 @@ import { userIdOfGumbo } from '../../common/userId'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
-import { testDatabaseUrl } from '../../migrate/testDatabase'
+import {
+  dropScratchDatabase,
+  testDatabaseUrl
+} from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { GameScope } from '../access'
@@ -360,7 +363,7 @@ describe('walk-up songs', function () {
     })
     await pool?.end()
     if (admin != null) {
-      await admin.query(`drop database if exists ${scratchName} with (force)`)
+      await dropScratchDatabase(admin, scratchName)
       await admin.end()
     }
   })
