@@ -3,7 +3,10 @@ import { resolve } from 'node:path'
 
 import { WebSocket } from 'ws'
 
-import { RECONNECT_DELAYS_MS } from '../../src/common/gameSocket'
+import {
+  GAME_SOCKET_PROTOCOL,
+  RECONNECT_DELAYS_MS
+} from '../../src/common/gameSocket'
 import type { ScoringAction } from '../../src/common/scoring/actions'
 import {
   type SaveChange,
@@ -185,7 +188,8 @@ export class SocketViewer implements Actor {
           JSON.stringify({
             type: 'subscribe',
             gameId: this.gameId,
-            id: `s${this.frameId}`
+            id: `s${this.frameId}`,
+            protocol: GAME_SOCKET_PROTOCOL
           })
         )
       }

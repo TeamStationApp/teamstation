@@ -1,5 +1,6 @@
 import {
   asEither,
+  asMaybe,
   asNumber,
   asObject,
   asOptional,
@@ -29,6 +30,14 @@ import type { WalkUpSong } from './walkUpSong'
  * travels here: the hint says only what changed, and the app fetches it. A
  * `resync` means hints may have been missed: read every conversation again.
  */
+
+/**
+ * The version of the game socket's frames this app speaks, sent with every
+ * game subscribe. A server refuses a subscribe below its minimum as
+ * `forbidden` with the reason `updateRequired`, so an app too old to read what
+ * it would be sent stops following games instead of misreading them.
+ */
+export const GAME_SOCKET_PROTOCOL = 2
 
 /** What a `change` is about. */
 export type GameChangeKind = 'plays' | 'lineups' | 'walkUpSong' | 'game'
@@ -92,8 +101,19 @@ export type GameSocketErrorCode =
   | 'malformed'
   | 'tooMany'
   | 'internal'
-  /** A member who may not post (an Announcements reader) typed. */
+  /**
+   * A member who may not post (an Announcements reader) typed, or a game
+   * subscribe whose protocol is older than the server reads (with the reason
+   * `updateRequired`).
+   */
   | 'forbidden'
+
+/**
+ * Why a refusal was made, beyond its code: `updateRequired`, a game subscribe
+ * whose protocol is older than the server reads. It rides on a `forbidden`
+ * error, which apps older than the protocol already read.
+ */
+export type GameSocketErrorReason = 'updateRequired'
 
 /** What a subscriber hears. */
 export type GameSocketEvent =
@@ -102,6 +122,11 @@ export type GameSocketEvent =
   | { type: 'resync'; gameId: string }
   /** The server confirmed it hears this game now. */
   | { type: 'subscribed'; gameId: string }
+  /**
+   * The server will not send this game to an app this old: it is never
+   * asked for again. Heard instead of the `error`.
+   */
+  | { type: 'updateRequired'; gameId: string }
   | {
       type: 'error'
       gameId: string
@@ -190,7 +215,9 @@ export const TYPING_INTERVAL_MS = 3000
 
 /** A frame the client sends. */
 export type GameSocketRequest =
-  | { type: 'subscribe' | 'unsubscribe'; gameId: string; id: string }
+  /** `protocol` is `GAME_SOCKET_PROTOCOL`. */
+  | { type: 'subscribe'; gameId: string; id: string; protocol: number }
+  | { type: 'unsubscribe'; gameId: string; id: string }
   | {
       type: 'subscribe' | 'unsubscribe'
       scope: 'home' | 'schedule'
@@ -235,6 +262,7 @@ export type GameSocketReply =
       gameId?: string
       conversationId?: string
       code: GameSocketErrorCode
+      reason?: GameSocketErrorReason
       message: string
     }
 
@@ -313,6 +341,8 @@ const asErrorReply = asObject({
     'internal',
     'forbidden'
   ) as Cleaner<GameSocketErrorCode>,
+  // A reason this app does not know is left out: the code stands alone.
+  reason: asOptional(asMaybe(asLiteral('updateRequired'))),
   message: asString
 })
 
@@ -429,6 +459,10 @@ export interface GameSocketOptions {
  * closed with 1008, or when a REST call answers 401 (`authFailed`), until
  * the token changes (`setToken`); game subscriptions retry as they always
  * have.
+ *
+ * A game the server refuses as `updateRequired` is never asked for again,
+ * not even after a reconnect, while its listeners stay: they hear
+ * `updateRequired` once, as does `onUpdateRequired`.
  */
 export class GameSocket {
   private readonly baseUrl: string
@@ -449,6 +483,9 @@ export class GameSocket {
   private readonly requests = new Map<string, string>()
   /** Games waiting to be asked again after `internal`, by game. */
   private readonly retries = new Map<string, Retry>()
+  /** Games the server refused as `updateRequired`, while they are wanted. */
+  private readonly refused = new Set<string>()
+  private readonly updateListeners = new Set<() => void>()
   private screen: HeldScreen | undefined
   /** The ids of screen-scope requests still unanswered on this connection. */
   private readonly scopeRequests = new Set<string>()
@@ -506,6 +543,17 @@ export class GameSocket {
   }
 
   /**
+   * Hears the server refuse a game to an app this old. Returns the way to
+   * stop hearing.
+   */
+  onUpdateRequired(listener: () => void): () => void {
+    this.updateListeners.add(listener)
+    return () => {
+      this.updateListeners.delete(listener)
+    }
+  }
+
+  /**
    * Hears one game's changes. The first listener for a game subscribes it,
    * and removing the last one unsubscribes it.
    */
@@ -531,6 +579,11 @@ export class GameSocket {
       if (current.size > 0) return
       this.listeners.delete(gameId)
       this.stopRetry(gameId)
+      // Never subscribed, so there is nothing to undo.
+      if (this.refused.delete(gameId)) {
+        this.closeIfIdle()
+        return
+      }
       if (this.open) this.request('unsubscribe', gameId)
       this.closeIfIdle()
     }
@@ -640,6 +693,8 @@ export class GameSocket {
     const socket = this.socket
     this.socket = undefined
     this.listeners.clear()
+    this.refused.clear()
+    this.updateListeners.clear()
     this.screen = undefined
     this.chatListeners.clear()
     this.typing.clear()
@@ -711,7 +766,7 @@ export class GameSocket {
       this.typing.clear()
       this.setOpen(true)
       for (const gameId of this.listeners.keys())
-        this.request('subscribe', gameId)
+        if (!this.refused.has(gameId)) this.request('subscribe', gameId)
       if (this.screen != null && !this.scopeStopped)
         this.requestScope(this.screen)
       if (this.interrupted) {
@@ -806,8 +861,10 @@ export class GameSocket {
 
   private request(type: 'subscribe' | 'unsubscribe', gameId: string): void {
     const id = `c${this.nextId++}`
-    if (type === 'subscribe') this.requests.set(id, gameId)
-    this.send({ type, gameId, id })
+    if (type === 'subscribe') {
+      this.requests.set(id, gameId)
+      this.send({ type, gameId, id, protocol: GAME_SOCKET_PROTOCOL })
+    } else this.send({ type, gameId, id })
   }
 
   private requestScope(held: HeldScreen): void {
@@ -924,6 +981,10 @@ export class GameSocket {
       (error.id == null ? undefined : this.requests.get(error.id))
     const asked = error.id == null ? undefined : this.requests.get(error.id)
     if (error.id != null) this.requests.delete(error.id)
+    if (error.reason === 'updateRequired') {
+      if (asked != null) this.updateRequired(asked)
+      return
+    }
     if (error.code === 'internal' && asked != null) this.retryLater(asked)
     const games = gameId == null ? [...this.listeners.keys()] : [gameId]
     for (const game of games)
@@ -933,6 +994,15 @@ export class GameSocket {
         code: error.code,
         message: error.message
       })
+  }
+
+  /** The server refused a game to this app: it is not asked for again. */
+  private updateRequired(gameId: string): void {
+    if (!this.listeners.has(gameId) || this.refused.has(gameId)) return
+    this.refused.add(gameId)
+    this.stopRetry(gameId)
+    this.emit(gameId, { type: 'updateRequired', gameId })
+    for (const listener of [...this.updateListeners]) listener()
   }
 
   /** The answer to a scope request: only the held scope's subscribe counts. */

@@ -37,6 +37,10 @@ export const enUs = {
   error_fallback_body:
     'TeamStation hit a problem it could not recover from. It has been reported.',
   error_fallback_reload: 'Reload',
+  update_required_title: 'Update required',
+  update_required_body:
+    'This version of TeamStation can no longer follow games live. Update the app to continue.',
+  update_required_reload: 'Reload',
   oauth_title: 'Authorize access',
   oauth_request: '%s wants to use your TeamStation identity.',
   oauth_identity: 'Signed in as %s',

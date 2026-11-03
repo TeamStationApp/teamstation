@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 
 import WebSocket from 'ws'
 
+import { GAME_SOCKET_PROTOCOL } from '../common/gameSocket'
+
 /**
  * User API keys on the three channels that are not plain HTTP, against the
  * real server: the game socket, the scoreboard hub and dictation. Run it
@@ -95,7 +97,12 @@ async function main(): Promise<void> {
       resolve(JSON.parse((data as Buffer).toString('utf8')))
     })
     opened.ws.send(
-      JSON.stringify({ type: 'subscribe', gameId: game, id: 's1' })
+      JSON.stringify({
+        type: 'subscribe',
+        gameId: game,
+        id: 's1',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
     )
   })
   check('game events read: subscribe', reply, {

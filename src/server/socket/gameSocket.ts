@@ -1,7 +1,7 @@
 import type { IncomingMessage, Server } from 'node:http'
 import type { Duplex } from 'node:stream'
 
-import { asEither, asObject, asOptional, asString } from 'cleaners'
+import { asEither, asNumber, asObject, asOptional, asString } from 'cleaners'
 import type { Kysely } from 'kysely'
 import { type RawData, type WebSocket, WebSocketServer } from 'ws'
 
@@ -94,6 +94,12 @@ export interface GameSocketOptions {
     conversationId: string,
     check: () => Promise<PostingStanding>
   ) => Promise<PostingStanding>
+  /**
+   * The oldest `GAME_SOCKET_PROTOCOL` a game subscribe may name. One naming
+   * an older one, or none, is refused as `forbidden` with the reason
+   * `updateRequired`. 2 unless given.
+   */
+  minimumProtocol?: number
   /** Where a request that failed is reported. `console.error` unless given. */
   log?: (message: string) => void
   /**
@@ -131,7 +137,9 @@ const asRequest = asEither(
   asObject({
     type: asLiteral('subscribe', 'unsubscribe'),
     gameId: asString,
-    id: asString
+    id: asString,
+    /** A subscribe's `GAME_SOCKET_PROTOCOL`; an app older than it sends none. */
+    protocol: asOptional(asNumber)
   }),
   asObject({ type: asLiteral('ping'), id: asString }),
   asObject({
@@ -303,6 +311,7 @@ export function attachGameSocket(
   const checkTyping =
     options.checkTyping ?? (async (_conversationId, check) => await check())
   const resyncSpreadMs = options.resyncSpreadMs ?? RESYNC_SPREAD_MS
+  const minimumProtocol = options.minimumProtocol ?? 2
   /** A resync's closes and frames still to come. */
   const spreadTimers = new Set<ReturnType<typeof setTimeout>>()
   const connections = new Set<Connection>()
@@ -823,6 +832,24 @@ export function attachGameSocket(
     }
     const { gameId, type } = request
     const requestId = request.id
+    // Before it takes a place: an app this old is sent nothing of the game.
+    // `forbidden` is a code an app older than the protocol reads, so its
+    // socket hears the refusal as any refused subscribe rather than dropping a
+    // frame it cannot read; a newer app tells the person to update by the
+    // reason.
+    if (
+      type === 'subscribe' &&
+      (request.protocol == null || request.protocol < minimumProtocol)
+    ) {
+      reply(connection, {
+        type: 'error',
+        id: requestId,
+        code: 'forbidden',
+        reason: 'updateRequired',
+        message: 'Update TeamStation to keep following games.'
+      })
+      return
+    }
     // The cap is settled as each request arrives; its effect and its answer
     // wait their turn behind the game's earlier requests. One that throws is
     // still answered, and its turn still ends, so the next one runs.

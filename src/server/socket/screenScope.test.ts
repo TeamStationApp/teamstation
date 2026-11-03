@@ -7,7 +7,10 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 import WebSocket from 'ws'
 
-import type { GameSocketReply } from '../../common/gameSocket'
+import {
+  GAME_SOCKET_PROTOCOL,
+  type GameSocketReply
+} from '../../common/gameSocket'
 import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
@@ -322,7 +325,12 @@ describe('screen scopes on the game socket', function () {
     const listener = await listen(VIEWER)
     for (const gameId of many) {
       const from = listener.frames.length
-      listener.send({ type: 'subscribe', gameId, id: `g-${gameId}` })
+      listener.send({
+        type: 'subscribe',
+        gameId,
+        id: `g-${gameId}`,
+        protocol: GAME_SOCKET_PROTOCOL
+      })
       await listener.next(
         frame => 'id' in frame && frame.id === `g-${gameId}`,
         from
@@ -333,7 +341,11 @@ describe('screen scopes on the game socket', function () {
     ).deep.include({ type: 'subscribed', scope: 'event' })
     // The cap is still full for games.
     expect(
-      await ask(listener, { type: 'subscribe', gameId: seen })
+      await ask(listener, {
+        type: 'subscribe',
+        gameId: seen,
+        protocol: GAME_SOCKET_PROTOCOL
+      })
     ).deep.include({ type: 'error', code: 'tooMany' })
   })
 
@@ -346,7 +358,11 @@ describe('screen scopes on the game socket', function () {
       await ask(listener, { type: 'subscribe', scope: 'nowhere' })
     ).deep.include({ type: 'error', code: 'malformed' })
     expect(
-      await ask(listener, { type: 'subscribe', gameId: seen })
+      await ask(listener, {
+        type: 'subscribe',
+        gameId: seen,
+        protocol: GAME_SOCKET_PROTOCOL
+      })
     ).deep.include({ type: 'subscribed', gameId: seen })
   })
 
@@ -517,7 +533,11 @@ describe('screen scopes on the game socket', function () {
     const home = await listen(VIEWER)
     const games = await listen(VIEWER)
     await ask(home, { type: 'subscribe', scope: 'home' })
-    await ask(games, { type: 'subscribe', gameId: seen })
+    await ask(games, {
+      type: 'subscribe',
+      gameId: seen,
+      protocol: GAME_SOCKET_PROTOCOL
+    })
     const marks = [home.frames.length, games.frames.length]
     await admin.query(
       `select pg_terminate_backend(pid) from pg_stat_activity

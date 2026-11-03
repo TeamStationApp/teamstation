@@ -10,7 +10,10 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 import WebSocket from 'ws'
 
-import type { GameSocketReply } from '../../common/gameSocket'
+import {
+  GAME_SOCKET_PROTOCOL,
+  type GameSocketReply
+} from '../../common/gameSocket'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import type { ScoringAction } from '../../common/scoring/actions'
@@ -200,7 +203,12 @@ describe('the game socket (U14)', function () {
     id = makeId('game')
   ): Promise<GameSocketReply> {
     const from = listener.frames.length
-    listener.send({ type: 'subscribe', gameId, id })
+    listener.send({
+      type: 'subscribe',
+      gameId,
+      id,
+      protocol: GAME_SOCKET_PROTOCOL
+    })
     return await listener.next(frame => 'id' in frame && frame.id === id, from)
   }
 
@@ -654,11 +662,17 @@ describe('the game socket (U14)', function () {
       listener.send({ type: 'unsubscribe', gameId: many[0], id: 'u1' })
       await listener.next(frame => 'id' in frame && frame.id === 'u1')
       const from = listener.frames.length
-      listener.send({ type: 'subscribe', gameId: many[0], id: 'r1' })
+      listener.send({
+        type: 'subscribe',
+        gameId: many[0],
+        id: 'r1',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
       listener.send({
         type: 'subscribe',
         gameId: many[MAX_SUBSCRIPTIONS - 1],
-        id: 'r2'
+        id: 'r2',
+        protocol: GAME_SOCKET_PROTOCOL
       })
       const first = await listener.next(
         frame => 'id' in frame && frame.id === 'r1',
@@ -679,7 +693,12 @@ describe('the game socket (U14)', function () {
       const games = [scored, ...many]
       expect(games.length).equals(MAX_SUBSCRIPTIONS + 2)
       games.forEach((gameId, i) => {
-        listener.send({ type: 'subscribe', gameId, id: `s${i}` })
+        listener.send({
+          type: 'subscribe',
+          gameId,
+          id: `s${i}`,
+          protocol: GAME_SOCKET_PROTOCOL
+        })
       })
       const answers = []
       for (let i = 0; i < games.length; i++)
@@ -718,7 +737,12 @@ describe('the game socket (U14)', function () {
       failing.add(scored)
       try {
         // The last place, held while the check fails, and a request behind it.
-        listener.send({ type: 'subscribe', gameId: scored, id: 'x1' })
+        listener.send({
+          type: 'subscribe',
+          gameId: scored,
+          id: 'x1',
+          protocol: GAME_SOCKET_PROTOCOL
+        })
         listener.send({ type: 'unsubscribe', gameId: scored, id: 'x2' })
         await listener.next(frame => 'id' in frame && frame.id === 'x2', from)
       } finally {
@@ -761,8 +785,18 @@ describe('the game socket (U14)', function () {
         [scored, 'd'],
         [hidden, 'h']
       ] as const) {
-        listener.send({ type: 'subscribe', gameId, id: `${prefix}1` })
-        listener.send({ type: 'subscribe', gameId, id: `${prefix}2` })
+        listener.send({
+          type: 'subscribe',
+          gameId,
+          id: `${prefix}1`,
+          protocol: GAME_SOCKET_PROTOCOL
+        })
+        listener.send({
+          type: 'subscribe',
+          gameId,
+          id: `${prefix}2`,
+          protocol: GAME_SOCKET_PROTOCOL
+        })
       }
       const answer = async (id: string): Promise<GameSocketReply> =>
         await listener.next(frame => 'id' in frame && frame.id === id)
@@ -779,7 +813,12 @@ describe('the game socket (U14)', function () {
       const listener = await listen(VIEWER)
       // Never subscribed to by any other test, so no one else watches it.
       const gameId = many[MAX_SUBSCRIPTIONS]
-      listener.send({ type: 'subscribe', gameId, id: 'a1' })
+      listener.send({
+        type: 'subscribe',
+        gameId,
+        id: 'a1',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
       listener.send({ type: 'unsubscribe', gameId, id: 'a2' })
       await listener.next(frame => 'id' in frame && frame.id === 'a2')
       expect(
@@ -791,9 +830,19 @@ describe('the game socket (U14)', function () {
       ])
       expect(socket!.fanout.games()).not.to.include(gameId)
       // And a subscribe after that is the one that stands.
-      listener.send({ type: 'subscribe', gameId, id: 'a3' })
+      listener.send({
+        type: 'subscribe',
+        gameId,
+        id: 'a3',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
       listener.send({ type: 'unsubscribe', gameId, id: 'a4' })
-      listener.send({ type: 'subscribe', gameId, id: 'a5' })
+      listener.send({
+        type: 'subscribe',
+        gameId,
+        id: 'a5',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
       await listener.next(frame => 'id' in frame && frame.id === 'a5')
       expect(listener.frames.slice(2).map(frame => frame.type)).deep.equals([
         'subscribed',
@@ -811,7 +860,12 @@ describe('the game socket (U14)', function () {
       const listener = await listen(VIEWER)
       for (const gameId of many.slice(0, MAX_SUBSCRIPTIONS - 1))
         expect((await subscribed(listener, gameId)).type).equals('subscribed')
-      listener.send({ type: 'subscribe', gameId: scored, id: 'f1' })
+      listener.send({
+        type: 'subscribe',
+        gameId: scored,
+        id: 'f1',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
       listener.send({ type: 'unsubscribe', gameId: scored, id: 'f2' })
       await listener.next(frame => 'id' in frame && frame.id === 'f2')
       expect(
@@ -826,7 +880,12 @@ describe('the game socket (U14)', function () {
       const games = [scored, ...many, hidden]
       expect(games.length).greaterThan(MAX_SUBSCRIPTIONS + 1)
       games.forEach((gameId, i) => {
-        listener.send({ type: 'subscribe', gameId, id: `p${i}` })
+        listener.send({
+          type: 'subscribe',
+          gameId,
+          id: `p${i}`,
+          protocol: GAME_SOCKET_PROTOCOL
+        })
         listener.send({ type: 'unsubscribe', gameId, id: `q${i}` })
       })
       for (let i = 0; i < games.length; i++)
@@ -857,7 +916,12 @@ describe('the game socket (U14)', function () {
       // Nothing is left holding a place: a full burst is admitted after it.
       const from = listener.frames.length
       many.slice(0, MAX_SUBSCRIPTIONS + 1).forEach((gameId, i) => {
-        listener.send({ type: 'subscribe', gameId, id: `r${i}` })
+        listener.send({
+          type: 'subscribe',
+          gameId,
+          id: `r${i}`,
+          protocol: GAME_SOCKET_PROTOCOL
+        })
       })
       const burst = []
       for (let i = 0; i <= MAX_SUBSCRIPTIONS; i++)
@@ -920,6 +984,99 @@ describe('the game socket (U14)', function () {
       const listener = await listen(VIEWER)
       listener.send({ type: 'ping', id: 'x'.repeat(5000) })
       expect(await listener.closed).equals(1009)
+    })
+  })
+
+  describe('the protocol version', function () {
+    // `forbidden` is among the codes an app older than the protocol reads
+    // (`notFound`, `malformed`, `tooMany`, `internal` and `forbidden`), so it
+    // hears a refused subscribe and reads the game on its own.
+    const UPDATE_REQUIRED = {
+      type: 'error',
+      code: 'forbidden',
+      reason: 'updateRequired',
+      message: 'Update TeamStation to keep following games.'
+    }
+
+    it('subscribes protocol 2, refuses none or 1 with updateRequired, and sends the refused nothing later', async function () {
+      const current = await listen(VIEWER)
+      const unnamed = await listen(VIEWER)
+      const older = await listen(VIEWER)
+      expect((await subscribed(current, scored)).type).equals('subscribed')
+      unnamed.send({ type: 'subscribe', gameId: scored, id: 'n1' })
+      older.send({ type: 'subscribe', gameId: scored, id: 'o1', protocol: 1 })
+      expect(
+        await unnamed.next(frame => 'id' in frame && frame.id === 'n1')
+      ).deep.equals({ ...UPDATE_REQUIRED, id: 'n1' })
+      expect(
+        await older.next(frame => 'id' in frame && frame.id === 'o1')
+      ).deep.equals({ ...UPDATE_REQUIRED, id: 'o1' })
+      await db!.transaction().execute(async trx => {
+        await notifyGameChange(trx, { game: scored, kind: 'game' })
+      })
+      await current.next(frame => frame.type === 'change')
+      await wait(100)
+      for (const refused of [unnamed, older])
+        expect(
+          refused.frames.filter(
+            frame => frame.type === 'subscribed' || frame.type === 'change'
+          )
+        ).deep.equals([])
+      for (const listener of [current, unnamed, older]) listener.ws.terminate()
+    })
+
+    it('still subscribes a screen scope sent without a protocol', async function () {
+      const listener = await listen(VIEWER)
+      listener.send({ type: 'subscribe', scope: 'home', id: 'h1' })
+      expect(
+        await listener.next(frame => 'id' in frame && frame.id === 'h1')
+      ).deep.include({ type: 'subscribed', scope: 'home' })
+      listener.ws.terminate()
+    })
+
+    it('refuses protocol 2 where the server asks for 3', async function () {
+      const plain = createServer()
+      const strict = attachGameSocket(plain, db!, scratchUrl, {
+        feed: {
+          subscribe: () => ({
+            listening: Promise.resolve(),
+            stop: () => undefined
+          }),
+          publishEphemeral: async () => undefined,
+          close: async () => undefined
+        },
+        stopSignals: null,
+        minimumProtocol: 3
+      })
+      await new Promise<void>(resolve => plain.listen(0, '127.0.0.1', resolve))
+      const mainUrl = socketUrl
+      socketUrl = `ws://127.0.0.1:${(plain.address() as AddressInfo).port}/socket`
+      try {
+        const listener = await listen(VIEWER)
+        listener.send({
+          type: 'subscribe',
+          gameId: scored,
+          id: 'v2',
+          protocol: GAME_SOCKET_PROTOCOL
+        })
+        expect(
+          await listener.next(frame => 'id' in frame && frame.id === 'v2')
+        ).deep.equals({ ...UPDATE_REQUIRED, id: 'v2' })
+        listener.send({
+          type: 'subscribe',
+          gameId: scored,
+          id: 'v3',
+          protocol: 3
+        })
+        expect(
+          await listener.next(frame => 'id' in frame && frame.id === 'v3')
+        ).deep.include({ type: 'subscribed', gameId: scored })
+        listener.ws.terminate()
+      } finally {
+        socketUrl = mainUrl
+        await strict.close()
+        await new Promise(resolve => plain.close(resolve))
+      }
     })
   })
 

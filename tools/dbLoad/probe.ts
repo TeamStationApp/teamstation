@@ -1,6 +1,7 @@
 import { sql } from 'kysely'
 import { WebSocket } from 'ws'
 
+import { GAME_SOCKET_PROTOCOL } from '../../src/common/gameSocket'
 import { Scorekeeper, request, Tally } from './actors'
 import { type LoadDatabase } from './database'
 import type { SeededAccount, TokensFile } from './fixture'
@@ -86,7 +87,14 @@ export async function socketSubscribe(
       else reject(error)
     }
     ws.on('open', () => {
-      ws.send(JSON.stringify({ type: 'subscribe', gameId, id: 'probe' }))
+      ws.send(
+        JSON.stringify({
+          type: 'subscribe',
+          gameId,
+          id: 'probe',
+          protocol: GAME_SOCKET_PROTOCOL
+        })
+      )
     })
     ws.on('message', data => {
       const frame = JSON.parse(String(data)) as {

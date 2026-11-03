@@ -143,6 +143,13 @@ describe('the database addresses', function () {
     )
   })
 
+  it('refuses game subscribes below protocol 2 unless set otherwise', function () {
+    expect(asServerConfig({}).gameSocketMinimumProtocol).equals(2)
+    expect(
+      asServerConfig({ gameSocketMinimumProtocol: 3 }).gameSocketMinimumProtocol
+    ).equals(3)
+  })
+
   it('sizes each role, with defaults for what is left out', function () {
     expect(asServerConfig({}).databasePoolSizes).deep.equals({
       worker: 10,

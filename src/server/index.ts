@@ -888,6 +888,7 @@ function runWorker(): void {
   const feed = makeChangeFeed(serverConfig, logFeed)
   const gameSocket = attachGameSocket(server, db, serverConfig.databaseUrl, {
     feed,
+    minimumProtocol: serverConfig.gameSocketMinimumProtocol,
     listenForUpgrades: false
   })
   const closeScoreboard = attachScoreboard(server, scoreboard.hub, {
