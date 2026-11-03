@@ -43,6 +43,7 @@ import {
   type GameProposal,
   type GameScheduleProposal
 } from './gameApprovals'
+import type { GameStatistics, StatisticsQuery } from './gameStatistics'
 import {
   asGroupRef,
   type CreateGroup,
@@ -109,6 +110,7 @@ import {
   type PublicGroup,
   type SearchRow
 } from './publicGroups'
+import { asReplayBoxScore } from './replay/replayBoxSchema'
 import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
 import {
   type AddedGame,
@@ -3022,7 +3024,67 @@ export const asBoardTimelineWindow: Cleaner<BoardTimelineWindow> = asObject({
   steps: asArray(asObject({ at: asNumber, state: asScoreboardState }))
 })
 
+export const asGameStatistics: Cleaner<GameStatistics> = asObject({
+  version: asString,
+  board: asBoardTimelineWindow,
+  line: asLineScoreTimeline,
+  initial: asNullable(asReplayBoxScore),
+  boxes: asArray(
+    asObject({
+      at: asNumber,
+      position: asNullable(
+        asObject({ atBatIndex: asNumber, actionIndex: asNumber })
+      ),
+      box: asNullable(asReplayBoxScore),
+      message: asNullable(asString)
+    })
+  ),
+  source: asObject({
+    plays: asArray(asGumboPlay),
+    currentPlay: asNullable(asCurrentPlay),
+    generation: asNumber
+  })
+})
+
 export class TeamStationClient {
+  private readonly statisticsRequests = new Map<
+    string,
+    Promise<GameStatistics>
+  >()
+
+  /** Historical scores and replay documents, from one authorized revision. */
+  async gameStatistics(
+    gameId: string,
+    query: StatisticsQuery = {}
+  ): Promise<GameStatistics> {
+    const params = new URLSearchParams({ view: 'playback' })
+    for (const [key, value] of [
+      ['at', query.at],
+      ['from', query.fromMs],
+      ['to', query.toMs]
+    ] as const)
+      if (value !== undefined)
+        params.set(
+          key,
+          String(
+            Math.max(0, key === 'to' ? Math.ceil(value) : Math.floor(value))
+          )
+        )
+    const path = `/games/${encodeURIComponent(gameId)}/box-score?${params}`
+    // A client may sign out while a request is pending. Never share that response
+    // with a newly authenticated identity, even within the same client instance.
+    const key = `${this.token ?? ''}\u0000${path}`
+    const held = this.statisticsRequests.get(key)
+    if (held !== undefined) return await held
+    const request = this.request('GET', path, asGameStatistics)
+    this.statisticsRequests.set(key, request)
+    try {
+      return await request
+    } finally {
+      this.statisticsRequests.delete(key)
+    }
+  }
+
   async startTvLogin(platform: TvPlatform): Promise<TvLoginRequest> {
     return await this.request('POST', '/auth/tv/start', asTvLoginRequest, {
       platform

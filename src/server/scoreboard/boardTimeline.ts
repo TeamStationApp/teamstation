@@ -18,6 +18,7 @@ import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
 import type { GamePlay } from '../../common/scoring/state'
 import type { NameOf } from '../../common/scoring/storedNames'
 import type { Database } from '../db/database'
+import { readSnapshot } from '../db/readSnapshot'
 import { atBatOf } from '../events/atBatInProgress'
 import { namedScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
@@ -73,88 +74,85 @@ export async function computeBoardTimeline(
 ): Promise<BoardTimeline | undefined> {
   // One snapshot: the version and everything it stands for, read together, so
   // a timeline is never cached under a version newer or older than its data.
-  const read = await db
-    .transaction()
-    .setIsolationLevel('repeatable read')
-    .execute(async trx => {
-      const parts = await versionParts(trx, gameId)
-      if (parts == null) return undefined
-      const game = await trx
-        .selectFrom('games')
-        .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-        .innerJoin('teams as away', 'away.id', 'games.away_team_id')
-        .select([
-          'games.home_team_id',
-          'games.away_team_id',
-          'games.start_at',
-          'games.currentPlay',
-          'games.pregame',
-          'home.name as homeTeam',
-          'away.name as awayTeam'
-        ])
-        .where('games.id', '=', gameId)
-        .executeTakeFirst()
-      if (game == null) return undefined
-      const plays = await trx
-        .selectFrom('events')
-        .select([
-          'atBatIndex',
-          'gumbo',
-          'startTime',
-          'endTime',
-          'awayScore',
-          'homeScore'
-        ])
-        .where('gameId', '=', gameId)
-        .orderBy('atBatIndex')
-        .execute()
-      const {
-        game: stored,
-        names: book,
-        scope
-      } = await namedScoringGame(
-        trx,
-        {
-          plays: plays.map(row => row.gumbo as GumboPlay),
-          // Before the first pitch, the pregame lineups, as `gameScopes`
-          // reads them: the scope kept under the stamp is the one every
-          // other reader of the game keeps.
-          currentPlay: atBatOf(game, plays.length > 0) as CurrentPlay | null
-        },
-        { gameId }
+  const read = await readSnapshot(db, async trx => {
+    const parts = await versionParts(trx, gameId)
+    if (parts == null) return undefined
+    const game = await trx
+      .selectFrom('games')
+      .innerJoin('teams as home', 'home.id', 'games.home_team_id')
+      .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+      .select([
+        'games.home_team_id',
+        'games.away_team_id',
+        'games.start_at',
+        'games.currentPlay',
+        'games.pregame',
+        'home.name as homeTeam',
+        'away.name as awayTeam'
+      ])
+      .where('games.id', '=', gameId)
+      .executeTakeFirst()
+    if (game == null) return undefined
+    const plays = await trx
+      .selectFrom('events')
+      .select([
+        'atBatIndex',
+        'gumbo',
+        'startTime',
+        'endTime',
+        'awayScore',
+        'homeScore'
+      ])
+      .where('gameId', '=', gameId)
+      .orderBy('atBatIndex')
+      .execute()
+    const {
+      game: stored,
+      names: book,
+      scope
+    } = await namedScoringGame(
+      trx,
+      {
+        plays: plays.map(row => row.gumbo as GumboPlay),
+        // Before the first pitch, the pregame lineups, as `gameScopes`
+        // reads them: the scope kept under the stamp is the one every
+        // other reader of the game keeps.
+        currentPlay: atBatOf(game, plays.length > 0) as CurrentPlay | null
+      },
+      { gameId }
+    )
+    // The board's version holds the names it is named with, and the scope
+    // is kept under its stamp: the next check reads no play.
+    keepScope(gameId, parts.stamp, scope)
+    const version = versionOf(parts.base, book.digest)
+    const context =
+      stored.plays.length === 0 && stored.currentPlay == null
+        ? null
+        : await contextOf(trx, gameId, game, stored)
+    const rows = await trx
+      .selectFrom('scoreboard_log')
+      .select(['at', 'publisher', 'overrides'])
+      .where('game_id', '=', gameId)
+      // An older packet accepted only for radar does not replace historical
+      // board snapshots or invalidate the newest-version cache key.
+      .where(
+        sql<boolean>`radar -> 'measurementOnly' is distinct from 'true'::jsonb`
       )
-      // The board's version holds the names it is named with, and the scope
-      // is kept under its stamp: the next check reads no play.
-      keepScope(gameId, parts.stamp, scope)
-      const version = versionOf(parts.base, book.digest)
-      const context =
-        stored.plays.length === 0 && stored.currentPlay == null
-          ? null
-          : await contextOf(trx, gameId, game, stored)
-      const rows = await trx
-        .selectFrom('scoreboard_log')
-        .select(['at', 'publisher', 'overrides'])
-        .where('game_id', '=', gameId)
-        // An older packet accepted only for radar does not replace historical
-        // board snapshots or invalidate the newest-version cache key.
-        .where(
-          sql<boolean>`radar -> 'measurementOnly' is distinct from 'true'::jsonb`
-        )
-        .orderBy('version')
-        .execute()
-      return {
-        version,
-        game,
-        plays: plays.map((row, index) => ({
-          ...row,
-          gumbo: stored.plays[index]
-        })),
-        stored,
-        context,
-        rows,
-        names: book.nameOf
-      }
-    })
+      .orderBy('version')
+      .execute()
+    return {
+      version,
+      game,
+      plays: plays.map((row, index) => ({
+        ...row,
+        gumbo: stored.plays[index]
+      })),
+      stored,
+      context,
+      rows,
+      names: book.nameOf
+    }
+  })
   if (read == null) return undefined
   const { game, plays, stored, context, names } = read
 

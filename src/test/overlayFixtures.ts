@@ -119,6 +119,29 @@ export function overlayServer(): {
     const overlay = /^\/games\/([^/]+)\/scoreboard-overlay$/.exec(path)
     if (overlay != null)
       return json(overlays.get(decodeURIComponent(overlay[1])) ?? SHOWN_OVERLAY)
+    const statistics = /^\/games\/([^/]+)\/box-score$/.exec(path)
+    if (statistics != null) {
+      const id = decodeURIComponent(statistics[1])
+      const all = steps.get(id) ?? []
+      const from = url.searchParams.get('from')
+      let first = 0
+      if (from != null) {
+        while (first < all.length && all[first].at <= Number(from)) first++
+        first = Math.max(0, first - 1)
+      }
+      return json({
+        version: '1',
+        initial: null,
+        boxes: [],
+        source: { plays: [], currentPlay: null, generation: 0 },
+        board: { version: '1:0', steps: all.slice(first) },
+        line: {
+          version: '1',
+          teams: { away: 'Visitors', home: 'Hosts' },
+          steps: lines.get(id) ?? []
+        }
+      })
+    }
     const board = /^\/games\/([^/]+)\/scoreboard-timeline$/.exec(path)
     if (board != null) {
       const all = steps.get(decodeURIComponent(board[1])) ?? []

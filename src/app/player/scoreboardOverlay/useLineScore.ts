@@ -82,7 +82,7 @@ export function useLineScore(options: LineScoreOptions): LineScoreHandle {
       queue(async () => {
         if (done) return
         try {
-          const fetched = await client.lineScore(gameId)
+          const { line: fetched } = await client.gameStatistics(gameId)
           if (done) return
           setAnswer({ gameId, steps: fetched.steps, teams: fetched.teams })
         } catch {
