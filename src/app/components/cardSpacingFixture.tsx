@@ -6,6 +6,7 @@ import {
   asUserMatch,
   type TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { HomeScreen } from '../screens/HomeScreen'
 import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -129,7 +130,7 @@ const homeClient = {
   }),
   guardedPlayers: async () => [
     asUserMatch({
-      userId: 1,
+      userId: userIdOfGumbo(1),
       shortName: 'Babe Ruth',
       avatarUrl: null,
       externalIds: []
