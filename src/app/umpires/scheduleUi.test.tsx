@@ -865,8 +865,8 @@ describe('scheduleUi.test.tsx', () => {
     expect(document.body.textContent)
       .contains('Uma Lee')
       .and.contains('Go to profile page')
+      .and.contains('Remove assignment')
       .and.contains('Cancel')
-    expect(document.body.textContent).not.contains('Remove assignment')
     await press('Cancel')
     expect(f.saved.length).equals(1)
     await press('Schedule filters')
@@ -1001,6 +1001,65 @@ describe('scheduleUi.test.tsx', () => {
     ).equals('rgb(21, 101, 192)')
     await press('Go to profile page')
     expect(opened).deep.equals(['uma:Uma Lee'])
+  })
+  it('removes an assignment the viewer may revoke and hides it after the cutoff', async () => {
+    const f = fixture()
+    f.schedule.isAdmin = false
+    f.schedule.games[0].assignments['uty_plate:1'] = {
+      userId: 'uma',
+      name: 'Uma L',
+      displayName: 'Uma Lee',
+      assignedBy: 'uma',
+      canRemove: true
+    }
+    await mount(
+      <UmpireScheduleScreen
+        client={f.client}
+        route={{ name: 'umpireSchedule', id: 'demo' }}
+        leagues={[]}
+        onRoute={() => undefined}
+      />
+    )
+    await press('Uma L, uty_plate:1')
+    const remove = target('Remove assignment')
+    expect(
+      getComputedStyle(remove.querySelector('[dir="auto"]')!).color
+    ).equals('rgb(186, 26, 26)')
+    await press('Remove assignment')
+    expect(f.saved).deep.equals([['game', 'uty_plate:1']])
+    expect(document.querySelector('[aria-label="Uma L, uty_plate:1"]')).equals(
+      null
+    )
+    f.schedule.games[0].startAt = '2000-01-01T00:00:00Z'
+    f.schedule.games[0].assignments['uty_plate:1'] = {
+      userId: 'uma',
+      name: 'Uma L',
+      displayName: 'Uma Lee',
+      assignedBy: 'uma',
+      canRemove: true
+    }
+    await mount(
+      <UmpireScheduleScreen
+        client={f.client}
+        route={{ name: 'umpireSchedule', id: 'demo' }}
+        leagues={[]}
+        onRoute={() => undefined}
+      />
+    )
+    await press('Uma L, uty_plate:1')
+    expect(document.body.textContent).contains('Go to profile page')
+    expect(document.body.textContent).not.contains('Remove assignment')
+    f.schedule.isAdmin = true
+    await mount(
+      <UmpireScheduleScreen
+        client={f.client}
+        route={{ name: 'umpireSchedule', id: 'demo' }}
+        leagues={[]}
+        onRoute={() => undefined}
+      />
+    )
+    await press('Uma L, uty_plate:1')
+    expect(document.body.textContent).contains('Remove assignment')
   })
   it('leaves a choice sheet that omits link flags on the danger Cancel', async () => {
     await mount(

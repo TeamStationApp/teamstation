@@ -97,6 +97,18 @@ export function optionalPositionHeader(
       ? 'Optional'
       : 'Optional in some games'
 }
+/** An admin may always clear a slot. Anyone else may only before the cutoff. */
+export function assignmentRemovable(
+  assignment: { canRemove: boolean },
+  game: { startAt: string },
+  isAdmin: boolean
+): boolean {
+  return (
+    assignment.canRemove &&
+    (isAdmin || Date.now() < Date.parse(game.startAt) - 15 * 60000)
+  )
+}
+
 export function initialUmpireGame(
   games: UmpireGameRow[],
   now: number
@@ -777,7 +789,27 @@ export function UmpireScheduleScreen({
                 const assignment = opened.game.assignments[opened.slot]
                 onOpenPerson?.(assignment.userId, assignment.displayName)
               }
-            }
+            },
+            ...(assignmentRemovable(
+              opened.game.assignments[opened.slot],
+              opened.game,
+              schedule?.isAdmin === true
+            )
+              ? [
+                  {
+                    label: 'Remove assignment',
+                    destructive: true,
+                    onPress: () => {
+                      const gameId = opened.game.id
+                      const slot = opened.slot
+                      run(async () => {
+                        await client.removeUmpire(gameId, slot)
+                        if (live()) refresh()
+                      })
+                    }
+                  }
+                ]
+              : [])
           ]}
         />
       )}
