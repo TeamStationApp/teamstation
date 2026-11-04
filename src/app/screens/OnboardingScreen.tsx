@@ -7,6 +7,7 @@ import type { Onboarding } from '../../common/onboarding'
 import type { AvailablePicture } from '../../common/pictureCatalog'
 import { Button, Card, Screen } from '../components'
 import { PhotoGrid } from '../components/PhotoGrid'
+import { sportsPicturesEnabled } from '../components/sportsPictures'
 import { analyticsError, useAnalytics } from '../observability/AnalyticsContext'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -16,13 +17,15 @@ export interface OnboardingScreenProps {
   initialName: string
   initialState: Onboarding
   onComplete: () => Promise<void>
+  allowCatalog?: boolean
 }
 
 export function OnboardingScreen({
   client,
   initialName,
   initialState,
-  onComplete
+  onComplete,
+  allowCatalog = sportsPicturesEnabled
 }: OnboardingScreenProps): React.ReactElement {
   const analytics = useAnalytics()
   const styles = getStyles(useTheme())
@@ -40,6 +43,7 @@ export function OnboardingScreen({
     analytics?.emit('signup_step_viewed', { sp: step }).catch(() => {})
   }, [analytics, step])
   const loadPictures = useCallback(async (): Promise<void> => {
+    if (!allowCatalog) return
     try {
       setPictures(await client.pictures())
       setCatalogError('')
@@ -48,7 +52,7 @@ export function OnboardingScreen({
         'Sports pictures could not load. Retry, add a photo, or use your initials.'
       )
     }
-  }, [client])
+  }, [client, allowCatalog])
   useEffect(() => {
     loadPictures().catch(() => undefined)
   }, [loadPictures])
@@ -124,7 +128,9 @@ export function OnboardingScreen({
           <Text style={styles.subtitle}>
             {step === 'name'
               ? 'Add the name your teams will recognize.'
-              : 'Choose a sports picture or add one from your photo album.'}
+              : allowCatalog
+                ? 'Choose a sports picture or add one from your photo album.'
+                : 'Add a photo from your photo album or use your initials.'}
           </Text>
           {step === 'name' ? (
             <>
@@ -149,17 +155,28 @@ export function OnboardingScreen({
             </>
           ) : (
             <>
-              <PhotoGrid
-                entries={pictures}
-                selectedId={catalogId}
-                onSelect={id => {
-                  setCatalogId(id)
-                  setImage(undefined)
-                }}
-                onUpload={() => {
-                  upload().catch(() => undefined)
-                }}
-              />
+              {allowCatalog ? (
+                <PhotoGrid
+                  entries={pictures}
+                  selectedId={catalogId}
+                  onSelect={id => {
+                    setCatalogId(id)
+                    setImage(undefined)
+                  }}
+                  onUpload={() => {
+                    upload().catch(() => undefined)
+                  }}
+                />
+              ) : (
+                <Button
+                  label="Add Photo"
+                  kind="secondary"
+                  style={styles.addPhoto}
+                  onPress={() => {
+                    upload().catch(() => undefined)
+                  }}
+                />
+              )}
               {image != null && (
                 <Image
                   accessibilityLabel="Selected profile photo"
@@ -241,6 +258,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     marginBottom: 20
   },
   error: { color: theme.dangerColor, marginTop: 12 },
+  addPhoto: { marginBottom: 12 },
   preview: {
     width: 96,
     height: 96,
