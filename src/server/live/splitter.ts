@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'child_process'
 import { spawn } from 'child_process'
 import type { FSWatcher } from 'fs'
-import { readdirSync, readFileSync, watch, writeFileSync } from 'fs'
+import { readdirSync, readFileSync, statSync, watch, writeFileSync } from 'fs'
 import type { Server } from 'net'
 
 import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
@@ -294,6 +294,8 @@ interface OutputRuntime {
   placement?: WriterPlacement
   /** First number owned by the writer being prepared or currently running. */
   firstSegmentNumber?: number
+  /** What `finalSegments` last answered, and what that answer rested on. */
+  finalRead?: FinalRead
   /** Stops watching for those segments, after moving the last one. */
   stopStamp?: () => void
 }
@@ -337,6 +339,21 @@ interface WriterPlacement {
   settled: boolean
   /** The segments this writer has stamped, all at `offsetSec`. */
   stamped: Set<string>
+}
+
+/**
+ * The playlist's size and modification time when `finalSegments` last read
+ * it, the writer and placement it judged by, and its answer. While none of
+ * them has changed the answer stands, and the playlist is not read again.
+ */
+interface FinalRead {
+  size: number
+  mtimeMs: number
+  first: number
+  placement: WriterPlacement | undefined
+  /** `placement.stamped` only grows, so its size says whether it changed. */
+  stamped: number
+  names: ReadonlySet<string>
 }
 
 interface IngressRuntime {
@@ -2406,7 +2423,13 @@ export function ingestPort(): number | undefined {
     : undefined
 }
 
-/** Listed fragments that the current writer has placed on the timeline. */
+/**
+ * Listed fragments that the current writer has placed on the timeline.
+ *
+ * The uploader asks on every tick, for every stream. One `stat` answers while
+ * the playlist, the writer and its placement are as they were at the last
+ * read; only a change reads and parses the playlist again.
+ */
 export function finalSegments(
   liveStreamId: string
 ): ReadonlySet<string> | undefined {
@@ -2421,16 +2444,65 @@ export function finalSegments(
   )
     return undefined
   const first = output.firstSegmentNumber ?? 0
-  return new Set(
+  const placement = output.placement
+  const stamped = placement?.stamped.size ?? 0
+  let info: { size: number; mtimeMs: number } | undefined
+  try {
+    info = statSync(`${entry.hlsDir}/${LIVE_PLAYLIST_NAME}`)
+  } catch {
+    info = undefined
+  }
+  const held = output.finalRead
+  if (
+    info != null &&
+    held?.size === info.size &&
+    held.mtimeMs === info.mtimeMs &&
+    held.first === first &&
+    held.placement === placement &&
+    held.stamped === stamped
+  )
+    return held.names
+  // Read after the stat: a playlist written in between is newer than the
+  // stamp held for it, so the next call reads it again.
+  const names = new Set(
     listedSegments(readPlaylist(entry.hlsDir) ?? '')
       .filter(
         segment =>
           first === 0 ||
           Number(segment.name.slice(3, -4)) < first ||
-          output.placement?.stamped.has(segment.name) === true
+          placement?.stamped.has(segment.name) === true
       )
       .map(segment => segment.name)
   )
+  output.finalRead =
+    info == null
+      ? undefined
+      : {
+          size: info.size,
+          mtimeMs: info.mtimeMs,
+          first,
+          placement,
+          stamped,
+          names
+        }
+  return names
+}
+
+/**
+ * Listed fragments a continuing writer stamped before its frame wall clocks
+ * placed it. Placing it moves them (`restampSegments`) after they may have
+ * been uploaded, so an uploader must keep checking them until then.
+ */
+export function movableSegments(liveStreamId: string): ReadonlySet<string> {
+  const entry = [...entries.values()].find(
+    entry => entry.liveStreamId === liveStreamId
+  )
+  const placement = entry?.outputs.find(
+    output => output.kind === 'hls'
+  )?.placement
+  return placement == null || !placement.continuing || placement.settled
+    ? new Set()
+    : new Set(placement.stamped)
 }
 
 /**
