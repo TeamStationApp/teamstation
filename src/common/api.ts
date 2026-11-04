@@ -320,13 +320,21 @@ export const asScheduleEntry = asObject({
 export type ScheduleEntry = ReturnType<typeof asScheduleEntry>
 
 /** One of a team's staff, with the roles they hold directly on the team. */
-export const asStaffEntry = asObject({
+const cleanStaffEntry = asObject({
   userId: asUserId,
   shortName: asString,
   avatarUrl: asNullable(asString),
   roles: asArray(asRole)
 })
-export type StaffEntry = ReturnType<typeof asStaffEntry>
+export interface StaffEntry extends ReturnType<typeof cleanStaffEntry> {
+  isHeadCoach?: boolean
+}
+export const asStaffEntry: Cleaner<StaffEntry> = raw => {
+  const entry: StaffEntry = cleanStaffEntry(raw)
+  if (isRecord(raw) && raw.isHeadCoach !== undefined)
+    entry.isHeadCoach = asBoolean(raw.isHeadCoach)
+  return entry
+}
 
 /** The audience a chat is kept to, or `dm`. */
 export const asChatKind = asLiteral(
@@ -1357,6 +1365,7 @@ const cleanRosterEntry = asObject({
   section: asRosterSection,
   /** The flags they were given on the team or above it, in flag order. */
   staffRoles: asArray(asRoleFlag),
+  isHeadCoach: asOptional(asBoolean),
   /**
    * For somebody listed for a role given above the team, the highest level
    * that gives it ("League admin", "Season coach"), and for a spectator
@@ -1384,8 +1393,14 @@ const cleanRosterEntry = asObject({
 })
 export type RosterEntry = Omit<
   ReturnType<typeof cleanRosterEntry>,
-  'teamNames' | 'guardianOf' | 'nameFormat' | 'pool' | 'ownIdentity'
+  | 'teamNames'
+  | 'guardianOf'
+  | 'nameFormat'
+  | 'pool'
+  | 'ownIdentity'
+  | 'isHeadCoach'
 > & {
+  isHeadCoach?: boolean
   teamNames?: string[]
   guardianOf?: string[]
   nameFormat?: PlayerNamePrivacy
@@ -2326,6 +2341,7 @@ export const asPeopleLevel = asLiteral('league', 'season', 'team')
  * coaches and assistants.
  */
 export const asProfileSection = asObject({
+  headCoach: asOptional(asObject({ userId: asUserId, name: asString })),
   level: asPeopleLevel,
   groups: asArray(asNamed),
   roles: asArray(asRole),
@@ -2333,7 +2349,10 @@ export const asProfileSection = asObject({
   follower: asBoolean,
   editable: asBoolean
 })
-export type ProfileSection = ReturnType<typeof asProfileSection>
+export type ProfileSection = Omit<
+  ReturnType<typeof asProfileSection>,
+  'headCoach'
+> & { headCoach?: { userId: string; name: string } }
 
 /**
  * One person as a team, season or league's people see them, opened from its
@@ -2368,7 +2387,10 @@ export const asPersonProfile = asObject({
     admin: asBoolean
   })
 })
-export type PersonProfile = ReturnType<typeof asPersonProfile>
+export type PersonProfile = Omit<
+  ReturnType<typeof asPersonProfile>,
+  'sections'
+> & { sections: ProfileSection[] }
 
 /** A season's or league's people, and what this viewer may do with them. */
 export const asLevelPeople = asObject({
@@ -6553,13 +6575,14 @@ export class TeamStationClient {
     kind: 'league' | 'season' | 'team',
     id: string,
     userId: string,
-    role: Role | 'member'
+    role: Role | 'member' | 'headCoach',
+    expectedHeadCoach?: string
   ): Promise<HeldAt> {
     return await this.request(
       'PUT',
       `/manage/${kind}/${encodeURIComponent(id)}/people/${encodeURIComponent(userId)}/roles/${role}`,
       asHeldAt,
-      {}
+      expectedHeadCoach == null ? {} : { expectedHeadCoach }
     )
   }
 
@@ -6571,7 +6594,7 @@ export class TeamStationClient {
     kind: 'league' | 'season' | 'team',
     id: string,
     userId: string,
-    role: Role | 'member'
+    role: Role | 'member' | 'headCoach'
   ): Promise<HeldAt> {
     return await this.request(
       'DELETE',

@@ -1,25 +1,31 @@
 import { type Kysely, sql } from 'kysely'
 
 import type { RosterEntry, RosterSection } from '../../common/api'
+import type { GroupRef } from '../../common/groupCreation'
 import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import { type Role, ROLE_FLAGS } from '../../common/roles'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import {
   givenRoleLevelsAt,
+  guardedPlayers,
   guardiansOfEach,
   levelsAboveTeam,
   mayEditName,
   membersOfLevels,
   openAdds,
   openAddsOf,
+  openAddTeams,
   type RoleLevel,
+  teamsPlayedOnNow,
   teamsUnder
 } from '../access'
 import type { Database } from '../db/database'
 import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
+import { heldAt } from '../invites/grants'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { teamWalkUpSongs } from '../routes/walkUpSongs'
+import { teamHeadCoach } from './teamHeadCoach'
 
 /**
  * The rows held from this reader: not a site administrator, a guardian, the
@@ -306,8 +312,94 @@ export async function onPeopleList(
   userId: string,
   viewer?: { userId: string; isAdmin: boolean }
 ): Promise<boolean> {
-  const people = await peopleAt(db, undefined, ref, viewer)
-  return people?.some(person => person.userId === userId) === true
+  const person = await db
+    .selectFrom('users')
+    .select('disabled_at')
+    .where('id', '=', userId)
+    .where('merged_into', 'is', null)
+    .executeTakeFirst()
+  if (person == null) return false
+
+  // Check this person's direct and inherited places instead of projecting every roster row.
+  const levels: GroupRef[] = [ref]
+  if (ref.kind === 'team') {
+    const team = await db
+      .selectFrom('teams')
+      .select('id')
+      .where('id', '=', ref.id)
+      .where('merged_into', 'is', null)
+      .executeTakeFirst()
+    if (team == null) return false
+    const above = await levelsAboveTeam(db, ref.id)
+    levels.push(
+      ...above.seasonIds.map(id => ({ kind: 'season' as const, id })),
+      ...above.leagueIds.map(id => ({ kind: 'league' as const, id }))
+    )
+  } else if (ref.kind === 'season') {
+    const season = await db
+      .selectFrom('seasons')
+      .select('league_id')
+      .where('id', '=', ref.id)
+      .executeTakeFirst()
+    if (season == null) return false
+    if (season.league_id != null)
+      levels.push({ kind: 'league', id: season.league_id })
+  } else if (
+    (await db
+      .selectFrom('leagues')
+      .select('id')
+      .where('id', '=', ref.id)
+      .executeTakeFirst()) == null
+  )
+    return false
+  for (const level of levels) {
+    const held = await heldAt(db, level, userId)
+    if (held.member && level.kind === 'team') return true
+    if (person.disabled_at == null && (held.member || held.roles.length > 0))
+      return true
+  }
+  // A player belongs to the lists above their team even without a direct role there.
+  const reaches = async (teamId: string): Promise<boolean> => {
+    if (ref.kind === 'team') return teamId === ref.id
+    const above = await levelsAboveTeam(db, teamId)
+    return (ref.kind === 'season' ? above.seasonIds : above.leagueIds).includes(
+      ref.id
+    )
+  }
+  if (ref.kind !== 'team') {
+    for (const team of await teamsPlayedOnNow(db, [userId]))
+      if (await reaches(team)) return true
+  }
+  if (person.disabled_at != null) return false
+  if (ref.kind === 'team') {
+    if ((await followersOf(db, ref.id, userId)).length > 0) return true
+  } else if (
+    (await db
+      .selectFrom('follows')
+      .select('user_id')
+      .where('group_type', '=', ref.kind)
+      .where('group_id', '=', ref.id)
+      .where('user_id', '=', userId)
+      .executeTakeFirst()) != null
+  )
+    return true
+
+  // The team roster can show a held child's family to a viewer allowed to edit their name.
+  // Season and league lists only include family through a settled player.
+  for (const child of await guardedPlayers(db, userId)) {
+    const held = await openAddTeams(db, [child])
+    for (const team of await teamsPlayedOnNow(db, [child])) {
+      if (!(await reaches(team))) continue
+      if (
+        !held.includes(team) ||
+        (ref.kind === 'team' &&
+          viewer != null &&
+          (await mayEditName(db, viewer.userId, child, viewer)))
+      )
+        return true
+    }
+  }
+  return false
 }
 
 /** One person a people list is built from, before their section is known. */
@@ -392,6 +484,8 @@ async function sectionPeople(
     includeFullNames?: boolean
   }
 ): Promise<RosterEntry[]> {
+  const headCoach =
+    facts.teamId == null ? undefined : await teamHeadCoach(db, facts.teamId)
   const mappings =
     rows.length === 0
       ? []
@@ -515,6 +609,7 @@ async function sectionPeople(
         isPlayer: row.isPlayer,
         role: row.role,
         ...place,
+        ...(headCoach?.userId === row.userId ? { isHeadCoach: true } : {}),
         walkUpSong: songs?.get(row.userId) ?? null,
         ...(row.teamNames == null ? {} : { teamNames: row.teamNames }),
         ...guardianOf(row, place.section)
@@ -541,7 +636,8 @@ async function sectionPeople(
  */
 export async function followersOf(
   db: Kysely<Database>,
-  teamId: string
+  teamId: string,
+  userId?: string
 ): Promise<string[]> {
   const { rows } = await sql<{ user_id: string }>`
     with recursive merged(id) as (
@@ -555,6 +651,7 @@ export async function followersOf(
     inner join users on users.id = follows.user_id
     where follows.group_type = 'team'
       and follows.group_id in (select id from merged)
+      ${userId == null ? sql`` : sql`and follows.user_id = ${userId}`}
       and users.disabled_at is null
       and users.merged_into is null
   `.execute(db)

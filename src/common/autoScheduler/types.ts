@@ -42,6 +42,8 @@ export interface EngineField {
  * another season. It only blocks time.
  */
 export interface EngineBooking {
+  /** Published or proposed interval retained only for the manager while another move is pending. */
+  managerOnly?: boolean
   key: string
   /** The field it holds, if it is on a chosen field. */
   fieldId: string | null
@@ -71,6 +73,8 @@ export interface FixedGame {
 }
 
 export interface EngineInput {
+  /** Teams sharing a manager in this run, including their teams outside the league. */
+  headCoaches?: Record<string, string>
   seasons: EngineSeason[]
   fields: EngineField[]
   bookings: EngineBooking[]

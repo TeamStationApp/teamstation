@@ -49,7 +49,7 @@ import {
   PeopleList,
   peopleSubtitle
 } from '../components/PeopleList'
-import { flagLabel } from '../components/roleLabels'
+import { positionLabel } from '../components/roleLabels'
 import { StatisticsTable } from '../components/StatisticsTable'
 import { ActiveView, TabPages } from '../components/TabPages'
 import { useStableCallback } from '../hooks/useStableCallback'
@@ -1004,9 +1004,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
  * Tess's sitemap would read as the team's tabs.
  */
 export function staffSubtitle(person: StaffEntry): string {
-  return person.roles.map(roleLabel).join(' · ')
+  return person.roles
+    .map(role => roleLabel(role, person.isHeadCoach))
+    .join(' · ')
 }
 
-function roleLabel(role: Role): string {
-  return role === 'admin' ? 'Admin' : flagLabel(role)
+function roleLabel(role: Role, headCoach?: boolean): string {
+  return role === 'admin' ? 'Admin' : positionLabel(role, headCoach)
 }

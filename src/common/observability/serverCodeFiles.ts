@@ -362,6 +362,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/teams/resolveOpponent.js',
   'server/teams/storeTeamPictures.js',
   'server/teams/teamNames.js',
+  'server/teams/teamHeadCoach.js',
   'server/teams/teamRoster.js',
   'server/teams/teamStaff.js',
   'server/tess/agent.js',

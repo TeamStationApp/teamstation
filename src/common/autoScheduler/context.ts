@@ -53,7 +53,7 @@ export interface SeasonContext {
   fixed: FixedPoint[]
   /** Per slot, whether the field is free before any new game is placed. */
   fieldFree: Uint8Array
-  /** Per team and slot, whether the team is free before any new game. */
+  /** TeamAvailability per team and slot, before placement. Only Free has its low bit set. */
   teamFree: Map<string, Uint8Array>
 }
 
@@ -165,7 +165,7 @@ export function buildContext(input: EngineInput): RunContext {
     for (const team of teams) {
       const free = new Uint8Array(season.slots.length)
       season.slots.forEach((slot, i) => {
-        free[i] = occupancy.teamFits(season, team, slot) ? 1 : 0
+        free[i] = occupancy.teamAvailability(season, team, slot)
       })
       season.teamFree.set(team, free)
     }

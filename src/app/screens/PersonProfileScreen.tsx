@@ -143,14 +143,31 @@ export function PersonProfileScreen(
     setBusy(true)
     setError(undefined)
     try {
-      if (give) await client.addRole(kind, id, userId, role)
+      if (give)
+        await client.addRole(
+          kind,
+          id,
+          userId,
+          role,
+          role === 'headCoach'
+            ? profile?.sections.find(s => s.level === 'team')?.headCoach?.userId
+            : undefined
+        )
       else await client.removeRole(kind, id, userId, role)
       if (current()) {
         onChanged?.()
         await refreshSaved(sameOwner)
       }
     } catch (caught) {
-      if (current())
+      if (
+        role === 'headCoach' &&
+        caught instanceof HttpError &&
+        caught.code === 'conflict' &&
+        current()
+      ) {
+        await load().catch(() => undefined)
+      }
+      if (sameOwner())
         setError(
           caught instanceof Error ? caught.message : 'Something went wrong'
         )
@@ -293,8 +310,9 @@ export function PersonProfileScreen(
               canHoldRoles={person.canHoldRoles}
               viewer={viewer}
               busy={busy}
-              onAdd={role => {
-                change(role, true).catch(() => undefined)
+              userId={userId}
+              onAdd={async (role, current) => {
+                await change(role, true, current)
               }}
               onRemove={async (role, current) => {
                 await change(role, false, current)

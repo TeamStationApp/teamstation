@@ -76,27 +76,34 @@ export const asPublicGame = withEventMetadata(
   })
 )
 export type PublicGame = ReturnType<typeof asPublicGame>
+const cleanPublicStaff = asObject({
+  name: asString,
+  roles: asArray(asString),
+  avatarUrl: asOptional(nullable(asString), null),
+  inheritedFrom: asOptional(
+    nullable(
+      asObject({
+        level: asLiteral('season', 'league'),
+        role: asRole
+      })
+    )
+  )
+})
+function asPublicStaff(
+  raw: unknown
+): ReturnType<typeof cleanPublicStaff> & { isHeadCoach?: boolean } {
+  const person = cleanPublicStaff(raw)
+  if (typeof raw === 'object' && raw != null && 'isHeadCoach' in raw)
+    return { ...person, isHeadCoach: asBoolean(raw.isHeadCoach) }
+  return person
+}
 export const asGroupDetail = asObject({
   group: asPublicGroup,
   parents: asArray(asPublicGroup),
   children: asArray(asPublicGroup),
   participatingSeasons: asArray(asPublicGroup),
   competingTeams: asArray(asPublicGroup),
-  staff: asArray(
-    asObject({
-      name: asString,
-      roles: asArray(asString),
-      avatarUrl: asOptional(nullable(asString), null),
-      inheritedFrom: asOptional(
-        nullable(
-          asObject({
-            level: asLiteral('season', 'league'),
-            role: asRole
-          })
-        )
-      )
-    })
-  ),
+  staff: asArray(asPublicStaff),
   games: asArray(asPublicGame),
   custodian: asOptional(nullable(asPublicGroup), null),
   /** Placeholder teams this group keeps; a league's only. */

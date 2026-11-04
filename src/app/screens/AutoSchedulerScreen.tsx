@@ -1,5 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, type ScrollView, Text, View } from 'react-native'
+import {
+  ActivityIndicator,
+  type ScrollView,
+  Switch,
+  Text,
+  View
+} from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
@@ -204,7 +210,14 @@ export function AutoSchedulerScreen({
     )
   }
   const choose = useCallback(
-    async (choice: ScheduleSetupChoice) => {
+    async (choice: ScheduleSetupChoice, previousConstraint?: boolean) => {
+      const constraint = choice.avoidHeadCoachConflicts
+      if (constraint != null)
+        setSetup(current =>
+          current == null
+            ? current
+            : { ...current, avoidHeadCoachConflicts: constraint }
+        )
       setBusy(true)
       setError('')
       try {
@@ -219,6 +232,12 @@ export function AutoSchedulerScreen({
           })
         })
       } catch (failure) {
+        if (previousConstraint != null)
+          setSetup(current =>
+            current == null
+              ? current
+              : { ...current, avoidHeadCoachConflicts: previousConstraint }
+          )
         failed(failure)
       } finally {
         setBusy(false)
@@ -545,6 +564,26 @@ export function AutoSchedulerScreen({
             })}
           </ListCard>
         )}
+        <SectionHeader title="Other Constraints" />
+        <ListCard>
+          <ListRow
+            title="Avoid manager/head coach double bookings"
+            titleNumberOfLines={0}
+            end={
+              <Switch
+                accessibilityLabel="Avoid manager/head coach double bookings"
+                value={setup.avoidHeadCoachConflicts ?? true}
+                disabled={busy}
+                onValueChange={value => {
+                  choose(
+                    { avoidHeadCoachConflicts: value },
+                    setup.avoidHeadCoachConflicts ?? true
+                  ).catch(() => undefined)
+                }}
+              />
+            }
+          />
+        </ListCard>
         <SectionHeader title="Early warnings" note={String(checks.length)} />
         {checks.length === 0 ? (
           <Text style={styles.meta}>No early warnings.</Text>

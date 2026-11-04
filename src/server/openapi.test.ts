@@ -436,6 +436,14 @@ describe('the API document', function () {
     const document = openApiDocument('0.0.0')
     const schemas = (document.components as { schemas: Record<string, any> })
       .schemas
+    const section = schemas.PersonProfile.properties.sections.items
+    expect(section.required).not.includes('headCoach')
+    const designation = section.properties.headCoach
+    expect(designation.required).deep.equals(['userId', 'name'])
+    expect(designation.properties.userId).deep.equals(
+      schemas.PersonProfile.properties.person.properties.userId
+    )
+    expect(designation.properties.name).deep.equals({ type: 'string' })
     expect(schemas.Role.enum).deep.equals([...ROLES])
     expect(schemas.RoleFlag.enum).deep.equals([...ROLE_FLAGS])
     expect(schemas.Role.description).includes('`assistant`')

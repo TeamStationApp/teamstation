@@ -99,7 +99,7 @@ export function schedulingSetupPaths(
   const setup = {
     200: {
       description:
-        '{ leagueId, seasonIds, fieldIds, addedFieldIds, seasons, fields }: the chosen seasons and fields, the fields added from other venues, none deleted, every season of the league with its settings and team counts, and the fields of the league’s venues, every added field and any other chosen field; each field has ours, true when the league owns its venue, and ownerNames, the leagues whose claims on the venue count, by name'
+        '{ leagueId, seasonIds, fieldIds, addedFieldIds, avoidHeadCoachConflicts (default true), seasons, fields }: the chosen seasons and fields, the fields added from other venues, none deleted, every season of the league with its settings and team counts, and the fields of the league’s venues, every added field and any other chosen field; each field has ours, true when the league owns its venue, and ownerNames, the leagues whose claims on the venue count, by name'
     },
     ...errors
   }
@@ -145,7 +145,19 @@ export function schedulingSetupPaths(
         parameters: [pathId('leagueId')],
         requestBody: jsonBody({
           type: 'object',
-          required: ['seasonIds', 'fieldIds'],
+          oneOf: [
+            { required: ['seasonIds', 'fieldIds'] },
+            {
+              required: ['avoidHeadCoachConflicts'],
+              not: {
+                anyOf: [
+                  { required: ['seasonIds'] },
+                  { required: ['fieldIds'] },
+                  { required: ['addedFieldIds'] }
+                ]
+              }
+            }
+          ],
           properties: {
             seasonIds: {
               type: 'array',
@@ -156,6 +168,11 @@ export function schedulingSetupPaths(
               type: 'array',
               maxItems: 100,
               items: { type: 'string' }
+            },
+            avoidHeadCoachConflicts: {
+              type: 'boolean',
+              description:
+                'Prevent overlapping games for teams with the same manager/head coach. Defaults to true and is preserved when omitted.'
             },
             addedFieldIds: {
               type: 'array',

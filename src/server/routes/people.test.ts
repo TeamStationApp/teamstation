@@ -10,8 +10,10 @@ import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { canKeepSongs, roleScopes } from '../access'
 import { createSession } from '../auth/sessions'
+import { lockKeys } from '../db/advisoryLocks'
 import { rolesAt } from '../invites/people'
 import { notificationDetail } from '../notifications/inbox'
+import { onPeopleList, peopleAt } from '../teams/teamRoster'
 
 /**
  * People at a team, a season and a league, through the real routes: who may
@@ -195,6 +197,236 @@ describe('people at a team, a season and a league', function () {
       actor,
       method === 'PUT' ? {} : undefined
     )
+
+  it('matches the listed people when checking a single person at each level', async () => {
+    const viewer = { userId: userIdOfGumbo(101), isAdmin: false }
+    const candidates = [
+      101,
+      102,
+      105,
+      COACH,
+      ASSISTANT,
+      MEMBER,
+      SCOREKEEPER,
+      PLAYER,
+      GUARDIAN,
+      NO_LOGIN,
+      FOLLOWER,
+      SEASON_MEMBER,
+      LEAGUE_MEMBER
+    ].map(userIdOfGumbo)
+    for (const ref of [
+      { kind: 'team', id: f.teamA },
+      { kind: 'season', id: f.seasonA },
+      { kind: 'league', id: f.leagueA }
+    ] as const) {
+      const listed = new Set(
+        (await peopleAt(f.h.db, undefined, ref, viewer))!.map(row => row.userId)
+      )
+      for (const id of candidates)
+        expect(
+          await onPeopleList(f.h.db, ref, id, viewer),
+          `${ref.kind} ${id}`
+        ).equals(listed.has(id))
+    }
+  })
+  it('returns the same not-found error when clearing an unlisted ordinary or protected person', async () => {
+    for (const id of [102, 105]) {
+      const result = await call(
+        'DELETE',
+        `/manage/team/${f.teamA}/people/${userIdOfGumbo(id)}/roles/headCoach`,
+        101
+      )
+      expect(result.status).equals(404)
+      expect(result.body.code).equals('notFound')
+    }
+  })
+
+  it('assigns and replaces only the team head coach with current confirmation', async () => {
+    const target = 102
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        team_id: f.teamA,
+        user_id: userIdOfGumbo(target)
+      })
+      .execute()
+    const path = (id: number): string =>
+      `/manage/team/${f.teamA}/people/${userIdOfGumbo(id)}/roles/headCoach`
+    const profile = async (
+      id: number
+    ): Promise<{ roles: string[]; headCoach?: { userId: string } }> =>
+      (await call('GET', `/teams/${f.teamA}/people/${userIdOfGumbo(id)}`, 101))
+        .body.sections[0]
+    expect((await role('PUT', target, 'headCoach', target)).status).not.equals(
+      200
+    )
+    expect(
+      (await role('PUT', target, 'headCoach', 101, 'season', f.seasonA)).status
+    ).equals(400)
+    expect((await call('PUT', path(COACH), 101, {})).status).equals(200)
+    expect((await profile(COACH)).headCoach?.userId).equals(
+      userIdOfGumbo(COACH)
+    )
+    expect((await call('PUT', path(target), 101, {})).status).equals(409)
+    expect((await profile(target)).roles).not.includes('coach')
+    await f.h.db
+      .updateTable('users')
+      .set({ is_admin: true })
+      .where('id', '=', userIdOfGumbo(COACH))
+      .execute()
+    try {
+      expect(
+        (
+          await call('PUT', path(target), 101, {
+            expectedHeadCoach: userIdOfGumbo(COACH)
+          })
+        ).status
+      ).equals(403)
+      expect((await profile(COACH)).headCoach?.userId).equals(
+        userIdOfGumbo(COACH)
+      )
+      expect((await profile(target)).roles).not.includes('coach')
+    } finally {
+      await f.h.db
+        .updateTable('users')
+        .set({ is_admin: false })
+        .where('id', '=', userIdOfGumbo(COACH))
+        .execute()
+    }
+
+    expect(
+      (
+        await call('PUT', path(target), 101, {
+          expectedHeadCoach: userIdOfGumbo(COACH)
+        })
+      ).status
+    ).equals(200)
+    expect((await profile(target)).roles).includes('coach')
+    expect((await profile(COACH)).roles).includes('coach')
+    expect(
+      (
+        await call('PUT', path(ASSISTANT), 101, {
+          expectedHeadCoach: userIdOfGumbo(COACH)
+        })
+      ).status
+    ).equals(409)
+    expect((await call('DELETE', path(target), 101)).status).equals(200)
+    expect((await profile(target)).headCoach).equals(undefined)
+    expect((await profile(target)).roles).includes('coach')
+    const first = await Promise.all(
+      [COACH, target].map(async id => await call('PUT', path(id), 101, {}))
+    )
+    expect(first.map(r => r.status).sort((a, b) => a - b)).deep.equals([
+      200, 409
+    ])
+    const flag = await f.h.db
+      .selectFrom('scope_roles')
+      .select('user_id')
+      .where('scope_id', '=', f.teamA)
+      .where('is_head_coach', '=', true)
+      .executeTakeFirstOrThrow()
+    expect(
+      (
+        await call(
+          'DELETE',
+          `/manage/team/${f.teamA}/people/${flag.user_id}/roles/headCoach`,
+          101
+        )
+      ).status
+    ).equals(200)
+    await role('DELETE', target, 'member', 101)
+  })
+
+  for (const self of [false, true]) {
+    it(`preserves a queued appointment when removing Assistant (self=${self})`, async () => {
+      await role('PUT', ASSISTANT, 'assistant', 101)
+      const target = userIdOfGumbo(ASSISTANT)
+      const requests: Array<ReturnType<typeof role>> = []
+      try {
+        await f.h.db.transaction().execute(async trx => {
+          await lockKeys(trx, ['creation:parent-graph'])
+          for (let i = 0; i < 2; ++i) {
+            requests.push(
+              i === 0
+                ? role('PUT', ASSISTANT, 'headCoach', 101)
+                : self
+                  ? call(
+                      'DELETE',
+                      `/me/groups/team/${f.teamA}/roles/assistant`,
+                      ASSISTANT
+                    )
+                  : role('DELETE', ASSISTANT, 'assistant', 101)
+            )
+            const deadline = Date.now() + 5000
+            while (true) {
+              const state = await sql<{
+                n: number
+              }>`select count(*)::int as n from pg_locks where locktype='advisory' and not granted and database = (select oid from pg_database where datname=current_database())`.execute(
+                trx
+              )
+              if (state.rows[0].n >= i + 1) break
+              if (Date.now() >= deadline)
+                throw new Error('Role request did not queue')
+              await new Promise(resolve => setTimeout(resolve, 10))
+            }
+          }
+        })
+        const [appointment, removal] = await Promise.all(requests)
+        expect(appointment.status).equals(200)
+        expect(removal.status).equals(200)
+        expect(removal.body.roles).deep.equals(['coach'])
+        const grant = await f.h.db
+          .selectFrom('scope_roles')
+          .select('is_head_coach')
+          .where('scope_id', '=', f.teamA)
+          .where('user_id', '=', target)
+          .where('role', '=', 'coach')
+          .executeTakeFirst()
+        expect(grant?.is_head_coach).equals(true)
+      } finally {
+        await Promise.allSettled(requests)
+        await role('DELETE', ASSISTANT, 'coach', 101)
+        await role('PUT', ASSISTANT, 'assistant', 101)
+      }
+    })
+  }
+
+  it('refuses to appoint a coach suspended while the request waits', async () => {
+    let appointment: ReturnType<typeof role> | undefined
+    const target = userIdOfGumbo(MEMBER)
+    try {
+      await f.h.db.transaction().execute(async trx => {
+        await lockKeys(trx, ['creation:parent-graph'])
+        await trx
+          .updateTable('users')
+          .set({ disabled_at: new Date() })
+          .where('id', '=', target)
+          .execute()
+        appointment = role('PUT', MEMBER, 'headCoach', 101)
+        const deadline = Date.now() + 5000
+        while (Date.now() < deadline) {
+          const waiting = await sql<{ waiting: boolean }>`select exists(
+            select 1 from pg_stat_activity where datname = current_database()
+            and wait_event = 'advisory') as waiting`.execute(trx)
+          if (waiting.rows[0].waiting) return
+          await new Promise(resolve => setTimeout(resolve, 10))
+        }
+        throw new Error('The appointment did not wait for the suspension')
+      })
+      expect((await appointment)?.status).equals(409)
+      expect(await rolesAt(f.h.db, 'team', f.teamA, target)).not.includes(
+        'coach'
+      )
+    } finally {
+      await f.h.db
+        .updateTable('users')
+        .set({ disabled_at: null })
+        .where('id', '=', target)
+        .execute()
+    }
+  })
 
   describe('who may change roles', function () {
     it('persists explicit staff assignments beside Admin and removes only the selected role', async () => {

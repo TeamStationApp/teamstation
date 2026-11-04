@@ -8,7 +8,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { initialsOf } from './initials'
 import { ListCard } from './ListCard'
 import { ListRow } from './ListRow'
-import { flagLabel } from './RolesModal'
+import { positionLabel } from './roleLabels'
 import { SectionHeader } from './SectionHeader'
 
 /** The sections of a people list, in order, each with its heading. */
@@ -76,6 +76,7 @@ type PersonPresentation = Pick<
   | 'shortName'
   | 'section'
   | 'staffRoles'
+  | 'isHeadCoach'
   | 'positions'
   | 'teamNames'
   | 'guardianOf'
@@ -124,7 +125,7 @@ export function peopleSubtitle<T extends PersonPresentation>(
       : undefined
   const parts =
     person.section === 'admin' || person.section === 'staff'
-      ? person.staffRoles.map(flagLabel)
+      ? person.staffRoles.map(flag => positionLabel(flag, person.isHeadCoach))
       : person.teamNames != null && person.teamNames.length > 0
         ? person.teamNames
         : person.positions

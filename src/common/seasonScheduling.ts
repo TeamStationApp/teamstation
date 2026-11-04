@@ -323,6 +323,7 @@ function asNullableString(raw: unknown): string | null {
 
 /** A league's Auto-Scheduler setup: the seasons and fields of its next run. */
 export const asScheduleSetup = asObject({
+  avoidHeadCoachConflicts: asOptional(asBoolean, true),
   leagueId: asString,
   seasonIds: asArray(asString),
   fieldIds: asArray(asString),
@@ -339,7 +340,10 @@ export const asScheduleSetup = asObject({
    */
   fields: asArray(asSetupField)
 })
-export type ScheduleSetup = ReturnType<typeof asScheduleSetup>
+export type ScheduleSetup = Omit<
+  ReturnType<typeof asScheduleSetup>,
+  'avoidHeadCoachConflicts'
+> & { avoidHeadCoachConflicts?: boolean }
 
 function asIdList(what: string, max: number): Cleaner<string[]> {
   return raw => {
@@ -361,18 +365,35 @@ export const MAX_SETUP_FIELDS = 100
  * The seasons and fields chosen for a run, and, when it is sent, the whole
  * list of fields added from other venues; left out, that list is kept.
  */
-export interface ScheduleSetupChoice {
-  seasonIds: string[]
-  fieldIds: string[]
-  addedFieldIds?: string[]
-}
+export type ScheduleSetupChoice =
+  | {
+      avoidHeadCoachConflicts?: boolean
+      seasonIds: string[]
+      fieldIds: string[]
+      addedFieldIds?: string[]
+    }
+  | {
+      avoidHeadCoachConflicts: boolean
+      seasonIds?: never
+      fieldIds?: never
+      addedFieldIds?: never
+    }
 
 export function asScheduleSetupChoice(raw: unknown): ScheduleSetupChoice {
   if (!isRecord(raw)) throw new TypeError('Choose seasons and fields')
+  if (
+    raw.seasonIds === undefined &&
+    raw.fieldIds === undefined &&
+    raw.addedFieldIds === undefined &&
+    raw.avoidHeadCoachConflicts !== undefined
+  )
+    return { avoidHeadCoachConflicts: asBoolean(raw.avoidHeadCoachConflicts) }
   const choice: ScheduleSetupChoice = {
     seasonIds: asIdList('seasons', MAX_SETUP_SEASONS)(raw.seasonIds),
     fieldIds: asIdList('fields', MAX_SETUP_FIELDS)(raw.fieldIds)
   }
+  if (raw.avoidHeadCoachConflicts !== undefined)
+    choice.avoidHeadCoachConflicts = asBoolean(raw.avoidHeadCoachConflicts)
   if (raw.addedFieldIds != null)
     choice.addedFieldIds = asIdList(
       'added fields',

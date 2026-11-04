@@ -56,6 +56,12 @@ function last(hold: Hold): number {
 /** The first id of a placed game's holds; bookings and fixed games use less. */
 export const PLACED_ID = 1_000_000_000
 
+export const TeamAvailability = {
+  Busy: 0,
+  Free: 1,
+  ManagerBusy: 2
+} as const
+
 /**
  * The hard rules, as an index of what holds each field and team. A game can
  * take a slot when the field is free of bookings and games, with the next
@@ -66,6 +72,7 @@ export const PLACED_ID = 1_000_000_000
  */
 export class Occupancy {
   private readonly fields = new Map<string, DayBuckets>()
+  private readonly managers = new Map<string, DayBuckets>()
   private readonly teams = new Map<string, DayBuckets>()
   private readonly dayCounts = new Map<string, Map<number, number>>()
   private readonly switchMs = new Map<string, number>()
@@ -82,6 +89,8 @@ export class Occupancy {
         size: booking.size,
         bufferMs: null
       }
+      this.managerHolds(booking.teamIds, hold, true)
+      if (booking.managerOnly === true) continue
       if (booking.fieldId != null)
         this.bucketsOf(this.fields, booking.fieldId).add(hold)
       for (const team of booking.teamIds)
@@ -98,6 +107,7 @@ export class Occupancy {
       }
       if (game.fieldId != null)
         this.bucketsOf(this.fields, game.fieldId).add(hold)
+      this.managerHolds([game.homeTeamId, game.awayTeamId], hold, true)
       for (const team of [game.homeTeamId, game.awayTeamId])
         this.bucketsOf(this.teams, team).add(hold)
       if (season != null) {
@@ -108,6 +118,20 @@ export class Occupancy {
         this.count(season, game.homeTeamId, day, 1)
         this.count(season, game.awayTeamId, day, 1)
       }
+    }
+  }
+
+  private managerHolds(teams: string[], hold: Hold, add: boolean): void {
+    const managers = this.context.input.headCoaches
+    if (managers == null) return
+    const seen = new Set<string>()
+    for (const team of teams) {
+      const manager = managers[team]
+      if (manager == null || seen.has(manager)) continue
+      seen.add(manager)
+      const bucket = this.bucketsOf(this.managers, manager)
+      if (add) bucket.add(hold)
+      else bucket.remove(hold)
     }
   }
 
@@ -156,16 +180,32 @@ export class Occupancy {
     return true
   }
 
-  /** Whether the team is free for the slot, and not already playing that day in a never season. */
-  teamFits(season: SeasonContext, team: string, slot: Slot): boolean {
+  /** Keep a manager-only conflict distinct from a team's own commitments. */
+  teamAvailability(season: SeasonContext, team: string, slot: Slot): number {
     const buckets = this.teams.get(team)
     if (buckets != null)
       for (const hold of buckets.near(slot.start))
-        if (hold.start < slot.end && slot.start < hold.end) return false
-    return (
-      season.season.settings.doubleheaders !== 'never' ||
-      this.gamesOn(season, team, slot.day) === 0
+        if (hold.start < slot.end && slot.start < hold.end)
+          return TeamAvailability.Busy
+    if (
+      season.season.settings.doubleheaders === 'never' &&
+      this.gamesOn(season, team, slot.day) > 0
     )
+      return TeamAvailability.Busy
+    const manager = this.context.input.headCoaches?.[team]
+    if (
+      manager != null &&
+      this.managers
+        .get(manager)
+        ?.near(slot.start)
+        .some(hold => hold.start < slot.end && slot.start < hold.end) === true
+    )
+      return TeamAvailability.ManagerBusy
+    return TeamAvailability.Free
+  }
+
+  teamFits(season: SeasonContext, team: string, slot: Slot): boolean {
+    return this.teamAvailability(season, team, slot) === TeamAvailability.Free
   }
 
   /** Whether a game between the two teams can take the slot. */
@@ -201,6 +241,7 @@ export class Occupancy {
     slot: Slot
   ): void {
     const hold = this.holdOf(id, season, slot)
+    this.managerHolds([homeTeamId, awayTeamId], hold, true)
     this.bucketsOf(this.fields, slot.fieldId).add(hold)
     this.bucketsOf(this.teams, homeTeamId).add(hold)
     this.bucketsOf(this.teams, awayTeamId).add(hold)
@@ -217,6 +258,7 @@ export class Occupancy {
     slot: Slot
   ): void {
     const hold = this.holdOf(id, season, slot)
+    this.managerHolds([homeTeamId, awayTeamId], hold, false)
     this.bucketsOf(this.fields, slot.fieldId).remove(hold)
     this.bucketsOf(this.teams, homeTeamId).remove(hold)
     this.bucketsOf(this.teams, awayTeamId).remove(hold)

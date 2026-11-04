@@ -21,6 +21,7 @@ import { canAdminister, canManagePeople, currentActor } from '../groups/rights'
 import { canHoldRoles, groupName, heldAt } from '../invites/grants'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
+import { teamHeadCoach } from './teamHeadCoach'
 import { followersOf, onPeopleList } from './teamRoster'
 
 /**
@@ -272,7 +273,12 @@ async function sections(
               .where('group_id', '=', id)
               .executeTakeFirst()) != null
     }
+    const headCoach =
+      level === 'team' ? await teamHeadCoach(db, ref.id) : undefined
     found.push({
+      ...(headCoach != null && (manages || headCoach.userId === userId)
+        ? { headCoach: { userId: headCoach.userId, name: headCoach.name } }
+        : {}),
       level,
       groups: groups.sort((a, b) => a.name.localeCompare(b.name)),
       roles: ROLES.filter(role => roles.has(role)),

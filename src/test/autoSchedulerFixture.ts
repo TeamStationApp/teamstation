@@ -64,6 +64,17 @@ export async function autoSchedulerFixture(
       : { googleMapsApiKey: options.googleMapsApiKey },
     { googleMapsApiKey: options.googleMapsApiKey }
   )
+  try {
+    return await seedTeamsAndGames(f)
+  } catch (error) {
+    await f.h.close()
+    throw error
+  }
+}
+
+async function seedTeamsAndGames(
+  f: GroupFixture
+): Promise<AutoSchedulerFixture> {
   for (const [id, name] of [
     [101, 'Demo League Admin'],
     [102, 'Demo Neighbour Admin'],

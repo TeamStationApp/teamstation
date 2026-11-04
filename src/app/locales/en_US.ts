@@ -831,6 +831,7 @@ export const enUs = {
   role_league_admin: 'League admin',
   role_admin_detail:
     'Can invite people to %s, remove them, and change what everybody here is.',
+  role_head_coach: 'Manager/Head Coach',
   role_coach: 'Coach',
   role_coach_detail:
     'Edits the players\u2019 jerseys, positions, bats and throws in %s, and sees their full names.',

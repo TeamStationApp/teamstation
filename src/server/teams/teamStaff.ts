@@ -39,7 +39,7 @@ export async function teamStaff(
 ): Promise<StaffEntry[]> {
   const roleRows = await db
     .selectFrom('scope_roles')
-    .select(['user_id as userId', 'role'])
+    .select(['user_id as userId', 'role', 'is_head_coach'])
     .where('scope_type', '=', 'team')
     .where('scope_id', '=', teamId)
     .where('role', 'in', [...STAFF_ROLES])
@@ -60,6 +60,7 @@ export async function teamStaff(
     db,
     held.map(row => row.userId)
   )
+  const headCoach = roleRows.find(row => row.is_head_coach)
   const rolesOf = new Map<string, Set<Role>>()
   for (const row of held) {
     const userId = survivorOf.get(row.userId)
@@ -92,6 +93,9 @@ export async function teamStaff(
   return people
     .map(person => ({
       userId: person.id,
+      ...(headCoach != null && survivorOf.get(headCoach.userId) === person.id
+        ? { isHeadCoach: true }
+        : {}),
       shortName: names.get(person.id) ?? person.displayName,
       avatarUrl: imageUrl(space, person.avatarPath),
       roles: ROLES.filter(role => rolesOf.get(person.id)?.has(role) === true)

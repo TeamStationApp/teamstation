@@ -59,6 +59,137 @@ function hawksBooked(date: string): EngineBooking {
 }
 
 describe('capacityCause', () => {
+  it('names the manager whose outside game blocks the only open date', () => {
+    const run = saturdays(
+      { regularGames: 1, exhibitionGames: 0 },
+      { startsOn: '2027-03-06', endsOn: '2027-03-06' }
+    )
+    const [home, away] = run.seasons[0].participants
+    run.seasons[0].participants = [home, away]
+    run.headCoaches = { [home]: 'manager', outside: 'manager' }
+    run.bookings = [{ ...hawksBooked('2027-03-06'), teamIds: ['outside'] }]
+    const cause =
+      'Demo Hawks’s Manager/Head Coach is booked during otherwise available game times'
+    expect(buildOptions(run)).includes({ blocking: cause })
+    run.required = [
+      {
+        key: 'replace',
+        seasonId: run.seasons[0].id,
+        homeTeamId: home,
+        awayTeamId: away,
+        exhibition: false
+      }
+    ]
+    expect(buildOptions(run)).includes({ blocking: cause })
+    expect(buildOptions({ ...run, headCoaches: undefined }).blocking).equals(
+      null
+    )
+    run.bookings[0].teamIds = [home]
+    expect(buildOptions(run).blocking).equals(
+      'Demo Hawks’s existing games leave too few open dates'
+    )
+  })
+  it('names the manager held by a game placed in the selected option on another field', () => {
+    const run = saturdays(
+      { regularGames: 1, exhibitionGames: 0 },
+      {
+        startsOn: '2027-03-06',
+        endsOn: '2027-03-06',
+        hours: hoursOn([6], '08:00', '09:30')
+      }
+    )
+    run.fields.push({ ...run.fields[0], id: 'second' })
+    const [home, away, other, visitor] = run.seasons[0].participants
+    run.headCoaches = { [home]: 'coach', [other]: 'coach' }
+    run.seed = 1
+    run.seasons[0].participants = [home, away, other, visitor]
+    const ordinary = buildOptions(run).options[0]
+    expect(ordinary.games).length(2)
+    expect(
+      ordinary.games.some(
+        g =>
+          [g.homeTeamId, g.awayTeamId].includes(home) &&
+          [g.homeTeamId, g.awayTeamId].includes(other)
+      )
+    ).equals(true)
+    const allShare = buildOptions({
+      ...run,
+      headCoaches: Object.fromEntries(
+        run.seasons[0].participants.map(team => [team, 'coach'])
+      )
+    }).options[0]
+    expect(allShare.unmet[0].cause).includes('Manager/Head Coach')
+    run.required = [
+      [home, away],
+      [other, visitor]
+    ].map(([homeTeamId, awayTeamId], i) => ({
+      key: `required-${i}`,
+      seasonId: run.seasons[0].id,
+      homeTeamId,
+      awayTeamId,
+      exhibition: false
+    }))
+    const options = buildOptions(run).options
+    expect(options.length).greaterThan(0)
+    for (const option of options) {
+      expect(option.games).length(1)
+      expect(option.unmet[0].cause).includes('Manager/Head Coach')
+    }
+    expect(
+      buildOptions({ ...run, headCoaches: undefined }).options[0].games
+    ).length(2)
+  })
+
+  it('explains a reduced count when the manager still has one available date', () => {
+    const days = ['2027-03-06', '2027-03-13', '2027-03-20']
+    const run = saturdays(
+      { regularGames: 3, exhibitionGames: 0, doubleheaders: 'never' },
+      {},
+      {
+        bookings: days.map(day => ({
+          ...hawksBooked(day),
+          teamIds: ['outside']
+        }))
+      }
+    )
+    const [home, away] = run.seasons[0].participants
+    run.seasons[0].participants = [home, away]
+    run.headCoaches = { [home]: 'coach', outside: 'coach' }
+    const { options, blocking } = buildOptions(run)
+    expect(blocking).equals(null)
+    expect(options[0].games.length).equals(1)
+    expect(options[0].unmet[0].cause).equals(
+      'Demo Hawks’s Manager/Head Coach is booked during otherwise available game times'
+    )
+  })
+
+  it('leaves the old field at full capacity for a manager-only interval', () => {
+    const run = saturdays(
+      { regularGames: 1, exhibitionGames: 0 },
+      {
+        startsOn: '2027-03-06',
+        endsOn: '2027-03-06',
+        hours: hoursOn([6], '08:00', '11:10')
+      }
+    )
+    run.seasons[0].participants = run.seasons[0].participants.slice(0, 4)
+    const normal = buildOptions(run).options[0].games
+    expect(normal.length).equals(2)
+    const retained =
+      buildOptions({
+        ...run,
+        bookings: [
+          {
+            ...hawksBooked('2027-03-06'),
+            fieldId: run.fields[0].id,
+            teamIds: ['outside'],
+            managerOnly: true
+          }
+        ]
+      }).options[0]?.games ?? []
+    expect(retained).deep.equals(normal)
+  })
+
   it('phrases a lowered target’s cause against the requested count', () => {
     const { options, blocking } = buildOptions(saturdays({ regularGames: 8 }))
     expect(blocking).equals(null)

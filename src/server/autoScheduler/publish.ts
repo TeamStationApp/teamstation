@@ -13,6 +13,7 @@ import {
   currentHoldings,
   editsOf,
   holdingOf,
+  lockScheduleForWrite,
   optionsOf,
   previewFor,
   type PreviewRow,
@@ -134,8 +135,17 @@ async function recheck(
       gameKey: team.id,
       problem: 'A team in this preview has since been merged into another.'
     })
-  const holdings = await currentHoldings(trx, snap, clock, snap.replaceGameIds)
-  const context = ruleContext(snap, [...holdings, ...games.map(holdingOf)])
+  const { holdings, headCoaches } = await currentHoldings(
+    trx,
+    snap,
+    clock,
+    snap.replaceGameIds
+  )
+  const context = ruleContext(
+    snap,
+    [...holdings, ...games.map(holdingOf)],
+    headCoaches
+  )
   for (const game of games) {
     if (Date.parse(game.startAt) <= now.getTime()) {
       stale.push({ gameKey: game.key, problem: 'This game’s time has passed.' })
@@ -234,7 +244,7 @@ export async function publishPreview(
     await lockKeys(trx, [`schedule-preview:${previewId}`])
     const row = await previewFor(trx, actor, previewId, { forUpdate: true })
     // One publication of the league at a time, so each sees the last.
-    await lockKeys(trx, [`schedule-league:${row.league_id}`])
+    await lockScheduleForWrite(trx, actor, row.league_id)
     const counts = async (): Promise<Publication> => {
       const current = await trx
         .selectFrom('schedule_previews')

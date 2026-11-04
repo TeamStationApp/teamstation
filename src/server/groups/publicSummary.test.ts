@@ -196,6 +196,11 @@ describe('limited public organization profiles', function () {
       .insertInto('scope_roles')
       .values([
         given(106, 'team', f.teamA, 'scorekeeper'),
+        {
+          ...given(104, 'team', f.teamA, 'scorekeeper'),
+          role: 'coach',
+          is_head_coach: true
+        },
         given(103, 'season', f.seasonA, 'assistant')
       ])
       .execute()
@@ -206,6 +211,7 @@ describe('limited public organization profiles', function () {
         staff: Array<{
           name: string
           roles: string[]
+          isHeadCoach?: boolean
           inheritedFrom: { level: string; role: string } | null
         }>
       }
@@ -214,6 +220,11 @@ describe('limited public organization profiles', function () {
       )
       // The admin is admin alone, the scorekeeper is not also a songkeeper,
       // and an assistant set on the season is listed on its team.
+      expect(
+        detail.staff
+          .filter(row => row.isHeadCoach === true)
+          .map(row => row.roles)
+      ).deep.equals([['coach']])
       expect(byName['Babe R.']).deep.equals(['admin'])
       expect(byName['Tim R.']).deep.equals(['scorekeeper'])
       expect(byName['Mike T.']).deep.equals(['assistant'])

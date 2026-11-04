@@ -30,6 +30,7 @@ import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
 import { followMerges } from '../teams/followMerges'
+import { teamHeadCoach } from '../teams/teamHeadCoach'
 import { assignedUmpireGames } from '../umpires/presence'
 import { loadPlayerNamePrivacy } from './playerNamePrivacy'
 import { canAdminister, canManagePeople } from './rights'
@@ -479,6 +480,7 @@ export async function groupDetail(
   if (ref.kind === 'team') {
     // The roles each was given, never the ones implied: an administrator is
     // listed as admin alone, a scorekeeper as scorekeeper alone.
+    const headCoach = await teamHeadCoach(db, ref.id)
     const given = await givenRoleLevelsOnTeam(db, ref.id)
     const ids = [...given.keys()]
     const users =
@@ -502,6 +504,7 @@ export async function groupDetail(
       const placing = roles[0]
       const level = held.get(placing)
       staff.push({
+        ...(headCoach?.userId === user.id ? { isHeadCoach: true } : {}),
         name:
           user.onboarding_step === 'name'
             ? 'Staff member'

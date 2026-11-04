@@ -44,6 +44,60 @@ function booking(
 }
 
 describe('Occupancy', () => {
+  it('blocks shared managers across fields but permits a single matchup and adjacent games', () => {
+    const managers = {
+      home: 'same',
+      away: 'same',
+      external: 'same',
+      independent: 'other'
+    }
+    const { occupancy, season, slot } = setUp({
+      headCoaches: managers,
+      bookings: [
+        booking('10:00', '11:30', { fieldId: null, teamIds: ['external'] })
+      ]
+    })
+    expect(occupancy.fits(season, 'home', 'away', slot('10:30'))).equals(false)
+    expect(occupancy.fits(season, 'home', 'away', slot('11:30'))).equals(true)
+    const placed = slot('12:00')
+    occupancy.place(0, season, 'home', 'away', placed)
+    const elsewhere = { ...placed, fieldId: 'second' }
+    expect(occupancy.fits(season, 'external', 'independent', elsewhere)).equals(
+      false
+    )
+    expect(
+      occupancy.fits(season, 'independent', 'unassigned', elsewhere)
+    ).equals(true)
+    occupancy.unplace(0, season, 'home', 'away', placed)
+    expect(occupancy.fits(season, 'external', 'independent', elsewhere)).equals(
+      true
+    )
+    const off = setUp({
+      bookings: [
+        booking('10:00', '11:30', { fieldId: null, teamIds: ['external'] })
+      ]
+    })
+    expect(
+      off.occupancy.fits(off.season, 'home', 'away', off.slot('10:30'))
+    ).equals(true)
+  })
+
+  it('retains only the manager when a pending change moves a booking', () => {
+    const { occupancy, season, slot } = setUp({
+      headCoaches: { external: 'manager', home: 'manager' },
+      bookings: [
+        booking('10:00', '11:30', {
+          managerOnly: true,
+          teamIds: ['external', 'opponent']
+        })
+      ]
+    })
+    expect(occupancy.fits(season, 'opponent', 'away', slot('10:30'))).equals(
+      true
+    )
+    expect(occupancy.fits(season, 'home', 'away', slot('10:30'))).equals(false)
+  })
+
   it('keeps the field free of bookings, with the season’s buffer after them', () => {
     const { occupancy, season, slot } = setUp({
       bookings: [booking('10:00', '11:30')]
