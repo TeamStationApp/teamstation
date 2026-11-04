@@ -53,6 +53,10 @@ export class Tally implements Measurements {
   postAt: number[] = []
   frameSeconds: number[] = []
   frameBytes: number[] = []
+  screenReadMs: number[] = []
+  screenWatchers = 0
+  screenNotices = 0
+  screenReReads = 0
   private lastFrameSecond = 0
   private readonly posted = new Map<string, number>()
   private readonly startedAt = Date.now()
@@ -119,7 +123,13 @@ export async function request(
   account: Pick<SeededAccount, 'token' | 'kind'>,
   method: string,
   path: string,
-  options: { route?: string; body?: unknown; tally?: Tally } = {}
+  options: {
+    route?: string
+    /** What the tally names it, in place of the method and route. */
+    label?: string
+    body?: unknown
+    tally?: Tally
+  } = {}
 ): Promise<unknown> {
   const started = performance.now()
   const response = await fetch(`${server}/api/v1${path}`, {
@@ -134,7 +144,7 @@ export async function request(
   })
   const text = await response.text()
   options.tally?.requests.push({
-    route: `${method} ${options.route ?? path}`,
+    route: options.label ?? `${method} ${options.route ?? path}`,
     accountKind: account.kind,
     ms: performance.now() - started
   })
