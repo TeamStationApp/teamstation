@@ -11,38 +11,44 @@ const third =
   '#EXT-X-DISCONTINUITY\n#EXTINF:2.500000,\n#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:08.000Z\nseg000002.m4s\n'
 const whole = header + first + second + third + '#EXT-X-ENDLIST\n'
 const set = (...names: string[]): Set<string> => new Set(names)
+/** Published pieces, by sequence number. */
+const numbers = (...pieces: number[]): Set<number> => new Set(pieces)
 
 describe('the published live playlist', function () {
   it('publishes only the unbroken acknowledged prefix', function () {
     expect(
-      publishedPlaylist(whole, set('seg000000.m4s', 'seg000002.m4s'), set())
+      publishedPlaylist(whole, set('seg000000.m4s', 'seg000002.m4s'), numbers())
     ).equals(header + first)
-    expect(publishedPlaylist(whole, set(), set())).equals(header)
+    expect(publishedPlaylist(whole, set(), numbers())).equals(header)
     expect(
       publishedPlaylist(
         header + '#EXT-X-DISCONTINUITY-SEQUENCE:0\n' + first,
         set(),
-        set()
+        numbers()
       )
     ).equals(header + '#EXT-X-DISCONTINUITY-SEQUENCE:0\n')
     expect(
-      publishedPlaylist(whole, set('seg000000.m4s', 'seg000001.m4s'), set())
+      publishedPlaylist(whole, set('seg000000.m4s', 'seg000001.m4s'), numbers())
     ).equals(header + first + second)
   })
 
   it('keeps discontinuity and program time with their segment, and closes only after all acknowledgements', function () {
     const all = set('seg000000.m4s', 'seg000001.m4s', 'seg000002.m4s')
-    expect(publishedPlaylist(whole, all, set())).equals(whole)
+    expect(publishedPlaylist(whole, all, numbers())).equals(whole)
     expect(
-      publishedPlaylist(whole.replace('#EXT-X-ENDLIST\n', ''), all, all)
+      publishedPlaylist(
+        whole.replace('#EXT-X-ENDLIST\n', ''),
+        all,
+        numbers(0, 1, 2)
+      )
     ).equals(header + first + second + third)
     expect(
-      publishedPlaylist(whole.replaceAll('\n', '\r\n'), all, set())
+      publishedPlaylist(whole.replaceAll('\n', '\r\n'), all, numbers())
     ).equals(whole)
   })
 
   it('retains the previously exposed prefix while a restamped object awaits replacement', function () {
-    const published = set('seg000000.m4s', 'seg000001.m4s')
+    const published = numbers(0, 1)
     expect(publishedPlaylist(whole, set('seg000000.m4s'), published)).equals(
       header + first + second
     )
@@ -62,11 +68,11 @@ describe('the published live playlist', function () {
   })
 
   it('never exposes temporary or unexpected URIs, nor an empty end tag', function () {
-    expect(publishedPlaylist(header + '#EXT-X-ENDLIST\n', set(), set())).equals(
-      header
-    )
     expect(
-      publishedPlaylist(header + '\n' + first, set('seg000000.m4s'), set())
+      publishedPlaylist(header + '#EXT-X-ENDLIST\n', set(), numbers())
+    ).equals(header)
+    expect(
+      publishedPlaylist(header + '\n' + first, set('seg000000.m4s'), numbers())
     ).equals(header + '\n' + first)
     for (const name of [
       'seg000000.m4s.tmp',
@@ -74,7 +80,7 @@ describe('the published live playlist', function () {
       'https://elsewhere.example.test/seg000000.m4s'
     ]) {
       expect(() =>
-        publishedPlaylist(header + '#EXTINF:4,\n' + name, set(name), set())
+        publishedPlaylist(header + '#EXTINF:4,\n' + name, set(name), numbers())
       ).throws('Invalid live segment URI')
     }
   })
