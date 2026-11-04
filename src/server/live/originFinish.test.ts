@@ -14,6 +14,7 @@ import {
   drainLiveController,
   drainPublishForTest,
   finishStream,
+  localTickForTest,
   queueLiveWorkForTest,
   RECONNECT_GRACE_MS,
   stopLiveController,
@@ -474,11 +475,14 @@ describe('closing a live Space origin', function () {
     await writeLive(stamped, f.dir, { seconds: 2 })
     await f.begin()
     await sync(f.options)
+    await localTickForTest(f.options)
     await drainPublishForTest(f.videoId)
     await writeLive(plain, f.dir, { fromSec: 2, seconds: 2, startNumber: 2 })
     await sync(f.options)
+    await localTickForTest(f.options)
     await writeLive(stamped, f.dir, { fromSec: 5, seconds: 2, startNumber: 4 })
     await sync(f.options)
+    await localTickForTest(f.options)
     const init = await files.readFile(join(f.dir, 'init.mp4'))
     const playlist = parseMediaPlaylist(
       await files.readFile(join(f.dir, 'master.m3u8'), 'utf8')
