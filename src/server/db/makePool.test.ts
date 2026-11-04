@@ -5,7 +5,7 @@ import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
-import { sql } from 'kysely'
+import { Kysely, PostgresDialect, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
 
@@ -18,7 +18,8 @@ import {
   makeDatabase,
   makePool,
   poolSettings,
-  starvationCheck
+  starvationCheck,
+  waitLog
 } from './database'
 
 describe('the database pool', () => {
@@ -391,6 +392,170 @@ describe('starvationCheck', () => {
     f.clock.at += 270_000
     f.check()
     expect(f.reported).to.have.length(2)
+  })
+})
+
+describe('waitLog', () => {
+  const fixture = (): {
+    logged: string[]
+    clock: { at: number }
+    log: ReturnType<typeof waitLog>
+    wait: (ms: number) => void
+  } => {
+    const logged: string[] = []
+    const clock = { at: 5000 }
+    const log = waitLog(
+      'worker',
+      message => logged.push(message),
+      () => clock.at
+    )
+    const wait = (ms: number): void => {
+      const done = log.time()
+      clock.at += ms
+      done()
+    }
+    return { logged, clock, log, wait }
+  }
+  const line = (logged: string): unknown =>
+    JSON.parse(logged.replace(/^db-wait /, ''))
+
+  it('writes one line a minute, from the clock, of the waits since the last', () => {
+    const f = fixture()
+    for (const ms of [3, 1, 2, 10, 0.25, 4, 5, 6, 7, 8, 9.04, 2.5]) f.wait(ms)
+    f.log.check()
+    expect(f.logged).deep.equals([])
+    f.clock.at = 5000 + 59_999
+    f.log.check()
+    expect(f.logged).deep.equals([])
+    f.clock.at = 5000 + 60_000
+    f.log.check()
+    f.log.check()
+    expect(f.logged).to.have.length(1)
+    expect(f.logged[0]).to.match(/^db-wait \{"role":"worker","n":12,/)
+    expect(line(f.logged[0])).deep.equals({
+      role: 'worker',
+      n: 12,
+      p50: 4,
+      p95: 10,
+      max: 10
+    })
+    f.wait(1.26)
+    f.clock.at += 60_000
+    f.log.check()
+    expect(line(f.logged[1])).deep.equals({
+      role: 'worker',
+      n: 1,
+      p50: 1.3,
+      p95: 1.3,
+      max: 1.3
+    })
+  })
+
+  it('still writes its line in a minute with nothing asked', () => {
+    const f = fixture()
+    f.clock.at += 60_000
+    f.log.check()
+    expect(f.logged).deep.equals([
+      'db-wait {"role":"worker","n":0,"p50":0,"p95":0,"max":0}'
+    ])
+  })
+
+  it('reads the clock of the process when given none', () => {
+    const logged: string[] = []
+    const log = waitLog('primary', message => logged.push(message))
+    log.time()()
+    log.check()
+    expect(logged).deep.equals([])
+  })
+})
+
+describe('a pool that logs its wait', () => {
+  /** A clock that counts its readings and moves only when told. */
+  const counted = (): { at: number; reads: number; now: () => number } => {
+    const clock = {
+      at: 0,
+      reads: 0,
+      now: () => {
+        clock.reads += 1
+        return clock.at
+      }
+    }
+    return clock
+  }
+  const waitLines = (logged: string[]): string[] =>
+    logged.filter(message => message.startsWith('db-wait '))
+
+  it('times nothing and logs nothing with logDatabaseWait off', async function () {
+    this.timeout(5000)
+    expect(serverConfig.logDatabaseWait).equals(false)
+    for (const logWait of [false, undefined]) {
+      const logged: string[] = []
+      const clock = counted()
+      const pool = makePool(testDatabaseUrl, message => logged.push(message), {
+        role: 'worker',
+        logWait,
+        now: clock.now
+      })
+      const client = await pool.connect()
+      expect(Object.hasOwn(client, 'query')).equals(false)
+      await client.query('select 1')
+      client.release()
+      await pool.query('select 1')
+      clock.at += 60_000
+      await new Promise(resolve => setTimeout(resolve, 1200))
+      expect(clock.reads).equals(0)
+      expect(waitLines(logged)).deep.equals([])
+      await pool.end()
+    }
+  })
+
+  it('logs no wait for a pool with no role', async () => {
+    const logged: string[] = []
+    const clock = counted()
+    const pool = makePool(testDatabaseUrl, message => logged.push(message), {
+      logWait: true,
+      now: clock.now
+    })
+    await pool.query('select 1')
+    expect(clock.reads).equals(0)
+    await pool.end()
+  })
+
+  it('times only the first statement of each checkout, and logs them once a minute', async function () {
+    this.timeout(8000)
+    const logged: string[] = []
+    const clock = counted()
+    const pool = makePool(testDatabaseUrl, message => logged.push(message), {
+      role: 'worker',
+      logWait: true,
+      now: clock.now
+    })
+    const db = new Kysely<Record<string, never>>({
+      dialect: new PostgresDialect({ pool })
+    })
+    // One checkout of four statements: begin, two selects, commit.
+    await db.transaction().execute(async trx => {
+      await sql`select 1`.execute(trx)
+      await sql`select 2`.execute(trx)
+    })
+    // One of three, by hand, and two of one, through the pool's own query.
+    const client = await pool.connect()
+    for (const n of [1, 2, 3]) await client.query(`select ${n}`)
+    client.release()
+    await pool.query('select 1')
+    await new Promise<void>((resolve, reject) => {
+      pool.query('select 2', error => {
+        if (error == null) resolve()
+        else reject(error)
+      })
+    })
+    expect(waitLines(logged)).deep.equals([])
+    clock.at += 60_000
+    await waitFor(() => waitLines(logged).length > 0)
+    expect(waitLines(logged)).deep.equals([
+      'db-wait {"role":"worker","n":4,"p50":0,"p95":0,"max":0}'
+    ])
+    await db.destroy()
   })
 })
 

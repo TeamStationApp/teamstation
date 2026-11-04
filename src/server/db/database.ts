@@ -1696,6 +1696,10 @@ export type DatabaseRole = 'worker' | 'primary' | 'statsBuilder' | 'ingest'
 
 export interface PoolOptions {
   role?: DatabaseRole
+  /** Whether a role's pool logs its `db-wait` line; `logDatabaseWait` if unset. */
+  logWait?: boolean
+  /** Milliseconds, for the wait log's timing and its minute. */
+  now?: () => number
 }
 
 /** How long a request waits for a connection before it is told to try again. */
@@ -1704,6 +1708,8 @@ const CHECKOUT_TIMEOUT_MS = 5000
 const STARVATION_SAMPLE_MS = 1000
 const STARVATION_LOG_MS = 30_000
 const STARVATION_REPORT_MS = 5 * 60_000
+/** How often a pool's wait log writes its line. */
+const WAIT_LOG_MS = 60_000
 
 export function makeDatabase(
   connectionString: string,
@@ -1858,6 +1864,95 @@ export function starvationCheck(
   }
 }
 
+/** Nearest rank, so each figure is one that was measured. */
+function nearestRank(sorted: number[], p: number): number {
+  return sorted[Math.max(0, Math.ceil((p / 100) * sorted.length) - 1)]
+}
+
+/** A tenth of a millisecond is as fine as a wait is worth reading. */
+const tenths = (ms: number): number => Math.round(ms * 10) / 10
+
+/**
+ * The wait log `makePool` keeps on a role's pool when `logDatabaseWait` is on.
+ * `time` starts timing a checkout's first statement and returns what ends it.
+ * `check`, run with the pool's other checks, writes one line a minute of the
+ * times since the last, even when there were none, so a quiet process still
+ * says it was asked nothing:
+ * `db-wait {"role":"worker","n":120,"p50":0.4,"p95":2.1,"max":9.8}`, in ms.
+ * Each time is the first statement's round trip (`timeFirstStatements`): any
+ * wait at PgBouncer for a server connection plus that statement's own
+ * execution, and none of the time a request queued in Node for a client of
+ * the pool. A checkout that opens with a slow read rather than `begin` reads
+ * as a long wait.
+ */
+export function waitLog(
+  role: DatabaseRole,
+  log: (message: string) => void,
+  now: () => number = () => performance.now()
+): { time: () => () => void; check: () => void } {
+  let waits: number[] = []
+  let loggedAt = now()
+  return {
+    time() {
+      const startedAt = now()
+      return () => {
+        waits.push(now() - startedAt)
+      }
+    },
+    check() {
+      const at = now()
+      if (at - loggedAt < WAIT_LOG_MS) return
+      loggedAt = at
+      const sorted = waits.sort((a, b) => a - b)
+      waits = []
+      const figure = (p: number): number =>
+        sorted.length === 0 ? 0 : tenths(nearestRank(sorted, p))
+      log(
+        `db-wait ${JSON.stringify({
+          role,
+          n: sorted.length,
+          p50: figure(50),
+          p95: figure(95),
+          max: figure(100)
+        })}`
+      )
+    }
+  }
+}
+
+/**
+ * Times the first statement each checkout of `pool` sends, from the moment it
+ * is sent to its answer. In transaction pooling that is the statement that
+ * waits for PgBouncer's server connection, so the figure is that wait plus the
+ * statement's own execution; later statements of the same checkout already
+ * have the connection. The clock starts once Node's pool has handed the client
+ * over, so time spent queued for a client (`pool.connect`) is not in it. One
+ * sent as a submittable, such as a cursor, is not timed.
+ */
+function timeFirstStatements(pool: Pool, time: () => () => void): void {
+  const fresh = new WeakSet<object>()
+  pool.on('connect', client => {
+    const query = client.query.bind(client) as (...args: unknown[]) => unknown
+    ;(client as { query: unknown }).query = (...args: unknown[]): unknown => {
+      if (!fresh.delete(client)) return query(...args)
+      const done = time()
+      const last = args.length - 1
+      const callback = args[last]
+      if (typeof callback === 'function')
+        args[last] = (...answer: unknown[]): unknown => {
+          done()
+          return callback(...answer)
+        }
+      const result = query(...args)
+      if (result instanceof Promise) result.then(done, done)
+      return result
+    }
+  })
+  pool.on('acquire', client => {
+    fresh.add(client)
+  })
+}
+
 /**
  * A timer that does not hold the process open. The app's type check reads this
  * file too, and with the DOM's library in scope a timer is typed as a number.
@@ -1887,6 +1982,14 @@ export function makePool(
 ): Pool {
   const { role } = options
   const pool = new Pool({ connectionString, ...poolSettings(role) })
+  const waits =
+    role != null &&
+    (options.logWait ??
+      (require('../serverConfig') as typeof Config).serverConfig
+        .logDatabaseWait)
+      ? waitLog(role, log, options.now)
+      : undefined
+  if (waits != null) timeFirstStatements(pool, waits.time)
   pool.on('connect', client => {
     client.on('error', (error: Error) => {
       log(`database: connection lost: ${error.message}`)
@@ -1904,7 +2007,10 @@ export function makePool(
     )
     const sampling = setInterval(() => {
       if (pool.ended) clearInterval(sampling)
-      else check()
+      else {
+        check()
+        waits?.check()
+      }
     }, STARVATION_SAMPLE_MS)
     unrefTimer(sampling)
   }

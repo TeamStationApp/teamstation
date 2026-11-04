@@ -105,6 +105,15 @@ export const asServerConfig = asObject({
   ),
 
   /**
+   * Whether each process times the first statement of every checkout from its
+   * pool, which is where a transaction-mode pooler hands out a server
+   * connection, and logs a `db-wait` line of those times once a minute. Each
+   * time is that statement's round trip: the pooler's wait and the
+   * statement's execution, not Node's own queue for a pool client.
+   */
+  logDatabaseWait: asOptional(asBoolean, false),
+
+  /**
    * PeerTube's database, read-only, used only by the importer. Empty when
    * there is nothing to import.
    */

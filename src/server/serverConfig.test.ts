@@ -150,6 +150,13 @@ describe('the database addresses', function () {
     ).equals(3)
   })
 
+  it('logs no pool wait unless asked', function () {
+    expect(asServerConfig({}).logDatabaseWait).equals(false)
+    expect(asServerConfig({ logDatabaseWait: true }).logDatabaseWait).equals(
+      true
+    )
+  })
+
   it('sizes each role, with defaults for what is left out', function () {
     expect(asServerConfig({}).databasePoolSizes).deep.equals({
       worker: 10,
