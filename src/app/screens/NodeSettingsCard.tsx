@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Pressable, Text, TextInput, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import {
+  asDistributionSettings,
   type BoardPlacement,
+  defaultDistributionSettings,
   defaultNodeSettings,
   type NodeSettings
 } from '../../common/nodeSettings'
@@ -82,6 +84,7 @@ export function shownSettings(settings: NodeSettings): NodeSettings {
       portraitHeight: nearest(HEIGHTS, s.portraitHeight * 100) / 100,
       speedHoldSec: nearest(HOLDS, s.speedHoldSec)
     },
+    distribution: settings.distribution ?? defaultDistributionSettings,
     highlights: {
       ...h,
       lagSec: nearest(SECONDS, h.lagSec),
@@ -112,6 +115,12 @@ type Picker =
       choose: (option: number) => NodeSettings
     }
   | { kind: 'date' }
+  | {
+      kind: 'url'
+      title: string
+      value: string
+      choose: (value: string) => NodeSettings
+    }
 
 /**
  * The node's settings on the node administration screen, in two cards: the
@@ -264,6 +273,22 @@ export function NodeSettingsCard({
       },
       title
     )
+  const links = settings.distribution ?? defaultDistributionSettings
+  const urlRow = (
+    label: string,
+    key: 'betaBuildsUrl' | 'appStoreUrl'
+  ): React.ReactElement =>
+    row(label, links[key] === '' ? 'Not set' : links[key], () => {
+      setPicker({
+        kind: 'url',
+        title: label,
+        value: links[key],
+        choose: value => ({
+          ...settings,
+          distribution: { ...links, [key]: value }
+        })
+      })
+    })
   const placementRows = (
     name: string,
     key: 'single' | 'landscape' | 'tvLandscape'
@@ -465,6 +490,18 @@ export function NodeSettingsCard({
           )}
         </ListCard>
       </View>
+      <View style={styles.section}>
+        <SectionHeader title="App links" />
+        <Text style={styles.hint}>
+          The about screen&apos;s buttons. Leave one blank to hide it.
+          Android/iOS Beta Builds is where testers install a build. iOS
+          TestFlight is Apple&apos;s download.
+        </Text>
+        <ListCard>
+          {urlRow('Android/iOS Beta Builds', 'betaBuildsUrl')}
+          {urlRow('iOS TestFlight', 'appStoreUrl')}
+        </ListCard>
+      </View>
       {problem != null && (
         <Text accessibilityRole="alert" style={styles.error}>
           {problem}
@@ -494,7 +531,18 @@ export function NodeSettingsCard({
             setPicker(undefined)
           }}
         >
-          {picker.kind === 'date' ? (
+          {picker.kind === 'url' ? (
+            <UrlPicker
+              picker={picker}
+              onChoose={value => {
+                change(picker.choose(value))
+                setPicker(undefined)
+              }}
+              onCancel={() => {
+                setPicker(undefined)
+              }}
+            />
+          ) : picker.kind === 'date' ? (
             <CalendarPicker
               value={scoreboard.overlayStartDate}
               onChoose={date => {
@@ -523,6 +571,68 @@ export function NodeSettingsCard({
         </PickerDialog>
       )}
     </>
+  )
+}
+
+/** One about-screen URL, held until Use. Blank clears the button. */
+function UrlPicker({
+  picker,
+  onChoose,
+  onCancel
+}: {
+  picker: Extract<Picker, { kind: 'url' }>
+  onChoose: (value: string) => void
+  onCancel: () => void
+}): React.ReactElement {
+  const theme = useTheme()
+  const styles = getStyles(theme)
+  const [value, setValue] = useState(picker.value)
+  const [problem, setProblem] = useState<string>()
+  return (
+    <View style={styles.picker}>
+      <Text accessibilityRole="header" style={styles.name}>
+        {picker.title}
+      </Text>
+      <TextInput
+        accessibilityLabel={picker.title}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        placeholder="https://"
+        placeholderTextColor={theme.secondaryTextColor}
+        value={value}
+        onChangeText={next => {
+          setValue(next)
+          setProblem(undefined)
+        }}
+        style={styles.urlInput}
+      />
+      {problem != null && (
+        <Text accessibilityRole="alert" style={styles.error}>
+          {problem}
+        </Text>
+      )}
+      <Button
+        label="Use"
+        onPress={() => {
+          const field =
+            picker.title === 'iOS TestFlight' ? 'appStoreUrl' : 'betaBuildsUrl'
+          try {
+            const parsed = asDistributionSettings({
+              betaBuildsUrl: '',
+              appStoreUrl: '',
+              [field]: value
+            })
+            onChoose(parsed[field])
+          } catch (error) {
+            setProblem(
+              error instanceof Error ? error.message : 'Enter an HTTPS URL'
+            )
+          }
+        }}
+      />
+      <CancelAction onPress={onCancel} />
+    </View>
   )
 }
 
@@ -600,10 +710,20 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor
   },
   settingValue: {
+    flexShrink: 1,
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(1),
     fontWeight: '600' as const,
     color: theme.linkTextColor
+  },
+  urlInput: {
+    color: theme.primaryTextColor,
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(1),
+    minHeight: 48,
+    paddingHorizontal: theme.rem(0.75),
+    borderRadius: theme.rem(theme.radiusRem),
+    backgroundColor: theme.cardBackgroundColor
   },
   error: { color: theme.dangerColor, fontSize: theme.rem(0.875) },
   buttons: { flexDirection: 'row' as const, gap: theme.rem(0.5) },

@@ -1,3 +1,5 @@
+import { asHttpsUrl } from './distribution'
+
 /**
  * The settings a node administrator sets for the whole node: where the
  * scoreboard sits over video, how long a radar speed stays on the board, and
@@ -64,11 +66,25 @@ export interface HighlightTimings {
   tailSec: number
 }
 
+/** Where the about screen sends someone: Android and iOS beta builds, and iOS TestFlight. */
+export interface DistributionSettings {
+  /**
+   * Where beta builds are downloaded. Empty hides that button. A node
+   * administrator sets it; the server file is not involved.
+   */
+  betaBuildsUrl: string
+  /**
+   * The iOS TestFlight download. Empty hides that button.
+   */
+  appStoreUrl: string
+}
+
 export interface NodeSettings {
   scoreboard: ScoreboardSettings
   highlights: HighlightTimings
   radar: RadarSettings
   replay: ReplaySettings
+  distribution: DistributionSettings
 }
 
 /** The 3D replay's pacing. */
@@ -79,6 +95,11 @@ export interface ReplaySettings {
 
 export const defaultReplaySettings: ReplaySettings = {
   pitchSec: 5
+}
+
+export const defaultDistributionSettings: DistributionSettings = {
+  betaBuildsUrl: '',
+  appStoreUrl: ''
 }
 
 export interface RadarSettings {
@@ -113,7 +134,8 @@ export const defaultNodeSettings: NodeSettings = {
   scoreboard: defaultScoreboardSettings,
   highlights: defaultHighlightTimings,
   radar: defaultRadarSettings,
-  replay: defaultReplaySettings
+  replay: defaultReplaySettings,
+  distribution: defaultDistributionSettings
 }
 
 /** The longest any of the second-valued settings may be. */
@@ -150,7 +172,7 @@ export function asScoreboardOverlay(raw: unknown): ScoreboardOverlay {
  * messages name the field, for the screen to show beside it.
  */
 export function asNodeSettings(raw: unknown): NodeSettings {
-  const { replay, ...rest } = asNodeSettingsUpdate(raw)
+  const { replay, distribution, ...rest } = asNodeSettingsUpdate(raw)
   return {
     ...rest,
     scoreboard: {
@@ -158,16 +180,23 @@ export function asNodeSettings(raw: unknown): NodeSettings {
       tvLandscape:
         rest.scoreboard.tvLandscape ?? defaultScoreboardSettings.tvLandscape
     },
-    replay: replay ?? defaultReplaySettings
+    replay: replay ?? defaultReplaySettings,
+    distribution: distribution ?? defaultDistributionSettings
   }
 }
 
 /**
  * A save from the node administration screen. An app from before the replay
- * section sends no `replay`, and its save keeps the stored pitch delay.
+ * section sends no `replay`, and its save keeps the stored pitch delay. An
+ * app from before the about-screen links sends no `distribution`, and its
+ * save keeps the stored URLs.
  */
-export type NodeSettingsUpdate = Omit<NodeSettings, 'replay'> & {
+export type NodeSettingsUpdate = Omit<
+  NodeSettings,
+  'replay' | 'distribution'
+> & {
   replay?: ReplaySettings
+  distribution?: DistributionSettings
 }
 
 /** A save, checked as `asNodeSettings` checks a document, `replay` optional. */
@@ -178,6 +207,9 @@ export function asNodeSettingsUpdate(raw: unknown): NodeSettingsUpdate {
   return {
     radar: asRadarSettings(value.radar ?? defaultRadarSettings),
     ...(value.replay == null ? {} : { replay: asReplaySettings(value.replay) }),
+    ...(value.distribution == null
+      ? {}
+      : { distribution: asDistributionSettings(value.distribution) }),
     scoreboard: {
       overlayStartDate: asDate(
         scoreboard.overlayStartDate,
@@ -221,6 +253,31 @@ export function asNodeSettingsUpdate(raw: unknown): NodeSettingsUpdate {
         'highlights.tailSec'
       )
     }
+  }
+}
+
+/** An empty string hides the button. Anything else is an HTTPS URL with no credentials. */
+export function asDistributionSettings(raw: unknown): DistributionSettings {
+  const value = record(raw, 'distribution')
+  return {
+    betaBuildsUrl: asOptionalHttps(
+      value.betaBuildsUrl,
+      'distribution.betaBuildsUrl'
+    ),
+    appStoreUrl: asOptionalHttps(value.appStoreUrl, 'distribution.appStoreUrl')
+  }
+}
+
+function asOptionalHttps(raw: unknown, name: string): string {
+  if (raw == null || raw === '') return ''
+  if (typeof raw !== 'string')
+    throw new TypeError(`${name} must be an HTTPS URL`)
+  const trimmed = raw.trim()
+  if (trimmed === '') return ''
+  try {
+    return asHttpsUrl(trimmed)
+  } catch {
+    throw new TypeError(`${name} must be an HTTPS URL`)
   }
 }
 

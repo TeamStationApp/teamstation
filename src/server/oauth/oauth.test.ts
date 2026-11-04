@@ -1002,7 +1002,8 @@ describe('OAuth provider and native approval over HTTPS', function () {
           headers: { authorization: `Bearer ${session.token}` }
         })
         expect(await link.json()).deep.equals({
-          url: 'https://builds.example.test'
+          url: 'https://builds.example.test',
+          betaBuildsUrl: 'https://builds.example.test'
         })
         expect((await fetcher(`${origin}/api/v1/me/builds`)).status).equals(401)
         const discovered = await client.discovery(

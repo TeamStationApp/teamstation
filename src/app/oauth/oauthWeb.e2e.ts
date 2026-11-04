@@ -71,7 +71,7 @@ export async function verifyOAuthWeb(options: {
     await device.tapOn({ css: '[aria-label="About TeamStation"]' })
     console.log('Web acceptance: signed-out modal opened')
     await device.assertVisible({ text: '^Build number$' })
-    await device.assertNotVisible({ text: '^Download builds$' })
+    await device.assertNotVisible({ text: '^Android/iOS Beta Builds$' })
     await new Promise(resolve => setTimeout(resolve, 400))
     await writeFile(
       path.join(artifacts, 'teamstation-web-signed-out-after.png'),
@@ -101,7 +101,10 @@ export async function verifyOAuthWeb(options: {
       css: '[aria-label="About TeamStation"]',
       timeout: 20000
     })
-    await device.assertVisible({ text: '^Download builds$', timeout: 10000 })
+    await device.assertVisible({
+      text: '^Android/iOS Beta Builds$',
+      timeout: 10000
+    })
     await new Promise(resolve => setTimeout(resolve, 400))
     await writeFile(
       path.join(artifacts, 'teamstation-web-after.png'),

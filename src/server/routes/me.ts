@@ -9,6 +9,7 @@ import { homeLists } from '../home/homeLists'
 import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { distributionSettings } from '../nodeSettings'
 import { activeHuman } from '../oauth/provider'
 import { withRevision } from '../socket/syncRevision'
 
@@ -37,7 +38,19 @@ export function meRoutes(
     requireActor,
     withAsync(async (req, res) => {
       if ((await activeHuman(db, req.actor)) == null) throw unauthorized()
-      res.set('Cache-Control', 'no-store').json({ url: buildsUrl })
+      const links = await distributionSettings(db)
+      const beta = links.betaBuildsUrl !== '' ? links.betaBuildsUrl : buildsUrl
+      const body: {
+        url?: string
+        betaBuildsUrl?: string
+        appStoreUrl?: string
+      } = {}
+      if (beta != null && beta !== '') {
+        body.url = beta
+        body.betaBuildsUrl = beta
+      }
+      if (links.appStoreUrl !== '') body.appStoreUrl = links.appStoreUrl
+      res.set('Cache-Control', 'no-store').json(body)
     })
   )
 
