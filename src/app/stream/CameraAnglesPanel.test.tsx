@@ -1714,7 +1714,7 @@ describe('setting up a camera on a phone', function () {
     await press(button('Record with this phone'))
     await settle()
     expect(opened.at(-1)?.session.streamId).equals(stream().id)
-    expect(opened.at(-1)?.startOnOpen).equals(undefined)
+    expect(opened.at(-1)?.session.angleName).equals('Home Plate')
   })
 
   for (const [row, source] of [
