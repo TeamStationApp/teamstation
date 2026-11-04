@@ -10,6 +10,7 @@ import {
   ChatCryptoUnavailable,
   type CoreCall
 } from '../../../common/chatCrypto/coreCall'
+import { epochAad, hpkeSeal } from '../../../common/chatCrypto/hpke'
 import {
   newDeviceKeys,
   newIdentityKey,
@@ -25,7 +26,7 @@ import {
   type ConversationState,
   newConversationState
 } from './store'
-import { openPending } from './sync'
+import { openPending, syncEpochs } from './sync'
 
 // Fault injection at the platform boundary keeps the real crypto and engine
 // paths intact until the chosen operation fails.
@@ -232,5 +233,153 @@ describe('chat decryption when the crypto core stops', () => {
       expect(caught).equals(failure)
       expect(ctx.keys.record.epochKeys.cnv_test['1']).equals(undefined)
     })
+  })
+})
+
+describe('independent historical box delivery', () => {
+  function delivery(): ReturnType<typeof fixture> & {
+    cursors: Array<string | undefined>
+  } {
+    const f = fixture()
+    f.ctx.memory.conversations.set('cnv_test', f.state)
+    const cursors: Array<string | undefined> = []
+    f.ctx.client.chatEpochs = async (_id, _after, query) => {
+      cursors.push(query?.boxesAfter)
+      return {
+        latest: 1,
+        needsRotation: false,
+        noHolder: false,
+        epochs: [],
+        boxes: [],
+        historyRecoveryVersion: 1,
+        freshEpochsEnabled: true,
+        ...(query == null
+          ? {}
+          : { nextBoxesCursor: '9007199254740993', hasMoreBoxes: false })
+      }
+    }
+    return { ...f, cursors }
+  }
+  it('keeps metadata and bigint delivery cursors independent and serializes concurrent drains', async () => {
+    const { ctx, state, cursors } = delivery()
+    await Promise.all([
+      syncEpochs(ctx, 'cnv_test'),
+      syncEpochs(ctx, 'cnv_test')
+    ])
+    expect(cursors).deep.equals([undefined, '0'])
+    expect(state.boxesCursor).equals('9007199254740993')
+    expect(state.epochsAfter).equals(1)
+    await syncEpochs(ctx, 'cnv_test')
+    expect(cursors.slice(2)).deep.equals([undefined, '9007199254740993'])
+  })
+  it('keeps current sending available when the historical stream fails, and retries from its cursor', async () => {
+    const { ctx, state } = delivery()
+    const original = ctx.client.chatEpochs
+    let fail = true
+    ctx.client.chatEpochs = async (id, after, query) => {
+      if (query != null && fail) throw new Error('offline')
+      return await original(id, after, query)
+    }
+    await syncEpochs(ctx, 'cnv_test')
+    expect(state.latest).equals(1)
+    expect(state.freshEpochsEnabled).equals(true)
+    expect(state.historyError).equals(true)
+    expect(state.boxesCursor).equals('0')
+    fail = false
+    await syncEpochs(ctx, 'cnv_test')
+    expect(state.historyError).equals(false)
+    expect(state.boxesCursor).equals('9007199254740993')
+  })
+  it('replays a delivery after a failed key-store write', async () => {
+    const { ctx, state } = delivery()
+    const record = ctx.keys.record
+    let fail = true
+    ctx.keys = new KeyHolder(
+      {
+        load: async () => record,
+        exists: async () => true,
+        wipe: async () => {},
+        save: async () => {
+          if (fail) throw new Error('disk full')
+        }
+      },
+      record
+    )
+    const key = new Uint8Array(32).fill(42)
+    const box = {
+      epoch: 1,
+      identityId: record.identity!.id,
+      pukGeneration: 1,
+      grantedByUserId: ctx.userId,
+      box: b64(
+        hpkeSeal(
+          'grant',
+          record.puks[0].keys.publicKey,
+          epochAad({
+            conversationId: 'cnv_test',
+            epoch: 1,
+            recipientUserId: ctx.userId,
+            identityId: record.identity!.id,
+            generation: 1
+          }),
+          key
+        )
+      )
+    }
+    const original = ctx.client.chatEpochs
+    ctx.client.chatEpochs = async (id, after, query) => ({
+      ...(await original(id, after, query)),
+      boxes: query == null ? [] : [box]
+    })
+    await syncEpochs(ctx, 'cnv_test')
+    expect(state.boxesCursor).equals('0')
+    expect(ctx.keys.record.epochKeys.cnv_test).equals(undefined)
+    fail = false
+    await syncEpochs(ctx, 'cnv_test')
+    expect(state.boxesCursor).equals('9007199254740993')
+    expect(ctx.keys.record.epochKeys.cnv_test['1']).equals(b64(key))
+  })
+  it('does not advance for an unavailable PUK, and rejects a stalled page', async () => {
+    const { ctx, state } = delivery()
+    ctx.refreshKeys = async () => {}
+    const original = ctx.client.chatEpochs
+    ctx.client.chatEpochs = async (id, after, query) => ({
+      ...(await original(id, after, query)),
+      boxes:
+        query == null
+          ? []
+          : [
+              {
+                epoch: 1,
+                identityId: ctx.keys.record.identity!.id,
+                pukGeneration: 99,
+                box: '',
+                grantedByUserId: null
+              }
+            ]
+    })
+    await syncEpochs(ctx, 'cnv_test')
+    expect(state.boxesCursor).equals('0')
+    expect(state.historyError).equals(true)
+    ctx.client.chatEpochs = async (id, after, query) => ({
+      ...(await original(id, after, query)),
+      nextBoxesCursor: '0',
+      hasMoreBoxes: query != null
+    })
+    await syncEpochs(ctx, 'cnv_test')
+    expect(state.historyError).equals(true)
+    expect(state.boxesCursor).equals('0')
+  })
+  it('uses only the legacy endpoint shape on a server without the capability', async () => {
+    const { ctx, cursors } = delivery()
+    const original = ctx.client.chatEpochs
+    ctx.client.chatEpochs = async (id, after, query) => {
+      const result = await original(id, after, query)
+      delete result.historyRecoveryVersion
+      return result
+    }
+    await syncEpochs(ctx, 'cnv_test')
+    expect(cursors).deep.equals([undefined])
+    expect(ctx.memory.recoveryVersion).equals(undefined)
   })
 })
