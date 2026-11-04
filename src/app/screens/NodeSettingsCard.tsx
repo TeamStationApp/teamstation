@@ -493,13 +493,13 @@ export function NodeSettingsCard({
       <View style={styles.section}>
         <SectionHeader title="App links" />
         <Text style={styles.hint}>
-          The about screen&apos;s buttons. Leave one blank to hide it. Beta
-          Builds is where testers install a build. App Store is the Apple page,
-          or a TestFlight link.
+          The about screen&apos;s buttons. Leave one blank to hide it.
+          Android/iOS Beta Builds is where testers install a build. iOS
+          TestFlight is Apple&apos;s download.
         </Text>
         <ListCard>
-          {urlRow('Beta Builds', 'betaBuildsUrl')}
-          {urlRow('App Store', 'appStoreUrl')}
+          {urlRow('Android/iOS Beta Builds', 'betaBuildsUrl')}
+          {urlRow('iOS TestFlight', 'appStoreUrl')}
         </ListCard>
       </View>
       {problem != null && (
@@ -616,7 +616,7 @@ function UrlPicker({
         label="Use"
         onPress={() => {
           const field =
-            picker.title === 'App Store' ? 'appStoreUrl' : 'betaBuildsUrl'
+            picker.title === 'iOS TestFlight' ? 'appStoreUrl' : 'betaBuildsUrl'
           try {
             const parsed = asDistributionSettings({
               betaBuildsUrl: '',

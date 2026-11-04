@@ -472,7 +472,7 @@ describe('OAuth consent and loaded build information', () => {
       })
     } as unknown as TeamStationClient
     await show(<BuildInfoModal client={configured} onClose={() => undefined} />)
-    await press('Beta Builds')
+    await press('Android/iOS Beta Builds')
     expect(document.body.textContent).includes('Could not open')
   })
   it('requires explicit native approval and allows returning to the original browser', async () => {
@@ -642,7 +642,7 @@ describe('OAuth consent and loaded build information', () => {
     )
     expect(document.body.textContent).includes('feature/camera')
     expect(document.body.textContent).includes('abc123')
-    expect(document.body.textContent).not.includes('Beta Builds')
+    expect(document.body.textContent).not.includes('Android/iOS Beta Builds')
     await press('Close')
     expect(closed).equals(true)
     const unavailable = {
@@ -653,7 +653,7 @@ describe('OAuth consent and loaded build information', () => {
     await show(
       <BuildInfoModal client={unavailable} onClose={() => undefined} />
     )
-    expect(document.body.textContent).not.includes('Beta Builds')
+    expect(document.body.textContent).not.includes('Android/iOS Beta Builds')
   })
   it('opens the configured build service and keeps the header mounted', async () => {
     const opened: string[] = []
@@ -671,14 +671,14 @@ describe('OAuth consent and loaded build information', () => {
       <AppHeader showMark title="Your Home" buildsClient={configured} />
     )
     await press('About TeamStation')
-    await press('Beta Builds')
-    await press('App Store')
+    await press('Android/iOS Beta Builds')
+    await press('iOS TestFlight')
     expect(opened).deep.equals([
       'https://builds.example.test',
       'https://apps.example.test/app'
     ])
     await press('Close')
     expect(document.body.textContent).includes('Your Home')
-    expect(document.body.textContent).not.includes('Beta Builds')
+    expect(document.body.textContent).not.includes('Android/iOS Beta Builds')
   })
 })

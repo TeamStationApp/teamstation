@@ -3681,7 +3681,7 @@ export class TeamStationClient {
     return (await this.request('GET', '/me/builds', asBuildsLink)).url
   }
 
-  /** Beta builds and the App Store, as a node administrator stored them. */
+  /** Android and iOS beta builds, and iOS TestFlight, as a node administrator stored them. */
   async distributionLinks(): Promise<{
     betaBuildsUrl?: string
     appStoreUrl?: string

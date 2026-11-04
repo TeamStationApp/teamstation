@@ -1104,8 +1104,7 @@ const nodeSettingsSchema = {
         },
         appStoreUrl: {
           type: 'string',
-          description:
-            'HTTPS URL of the App Store page, or a TestFlight link, or empty.'
+          description: 'HTTPS URL of the iOS TestFlight download, or empty.'
         }
       }
     },
