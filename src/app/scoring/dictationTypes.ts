@@ -113,6 +113,11 @@ export interface UseDictationOptions extends DictationTopic, DictationListener {
   tailMs?: number
   openSocket?: (url: string) => DictationSocket
   openMicrophone?: OpenMicrophone
+  /**
+   * Each frame's loudness while the microphone is open, 0 to 1 (`pcmLevel`),
+   * for a screen that draws it.
+   */
+  onLevel?: (level: number) => void
 }
 
 export interface Dictation {

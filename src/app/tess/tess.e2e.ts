@@ -752,58 +752,177 @@ async function main(): Promise<void> {
     expect(String(blocks[3].text)).match(/^\(Sent .*Beside this chat/)
     console.log('W11 both attachments reached the model')
 
-    // W12: the microphone, twice.
-    const mic = '[role="button"][aria-label="Dictation"]'
+    // W12: the microphone, right of Send, closed until pressed. With "Hello
+    // world" typed and the caret after "Hello", a tap records: the field
+    // gains a line, the waveform runs in its right fifth, and the next tap
+    // ends it; the words go in after "Hello", spaced, and nothing is sent.
+    // Then a press held a second records while it is held, and no longer.
+    await open('/')
+    await openTess()
+    const mic = '[role="button"][aria-label="Dictate"]'
+    const sendButton12 = '[role="button"][aria-label="Send"]'
+    const wave = '[data-testid="Tess waveform"]'
     await waitFor(page, mic)
-    await page.waitForFunction(
-      () => {
-        const status = document.querySelector('[aria-label="Dictation status"]')
-        return status != null && status.textContent === 'Push to talk'
-      },
-      { timeout: 20000 }
-    )
-    const voice = await startVideo(s, out, 'wide-voice.mp4')
-    for (let time = 1; time <= 2; time++) {
-      const heardBefore = await userBubbles(HEARD)
-      const micBox = (await rectOf(page, mic))!
-      await page.mouse.move(
-        micBox.x + micBox.width / 2,
-        micBox.y + micBox.height / 2
-      )
-      await page.mouse.down()
+    const micState = async (): Promise<string | null> =>
+      await page.$eval(mic, node => node.getAttribute('aria-valuetext'))
+    const waitForMic = async (
+      state: string,
+      timeout = 10000
+    ): Promise<void> => {
       await page.waitForFunction(
-        () => {
-          const status = document.querySelector(
-            '[aria-label="Dictation status"]'
-          )
-          return status != null && status.textContent === 'Listening…'
+        (mic, state) => {
+          const node = document.querySelector(mic)
+          return node != null && node.getAttribute('aria-valuetext') === state
         },
-        { timeout: 10000 }
+        { timeout },
+        mic,
+        state
       )
-      await page.evaluate(async () => {
-        await (window as any).__playClip()
-      })
-      await pause(400)
-      await page.mouse.up()
-      await page.waitForFunction(
-        (words, count) =>
-          Array.from(
-            document.querySelectorAll('[data-testid="Tess user message"]')
-          ).filter(node => (node.textContent || '').includes(words)).length >
-          count,
-        { timeout: 30000 },
-        HEARD,
-        heardBefore
-      )
-      await page.waitForFunction(
-        () => document.querySelector('[data-testid="Tess thinking"]') == null,
-        { timeout: 20000 }
-      )
-      await pause(800)
-      console.log(`W12 hold ${time}: the transcript became a message`)
     }
-    await voice.stop()
-    expect(t.dictation.heard.filter(heard => heard === HEARD)).length(2)
+    const fieldValue = async (): Promise<string> =>
+      await page.$eval(field, node => (node as HTMLTextAreaElement).value)
+    // How often the page has opened a microphone, from here on.
+    await page.evaluate(() => {
+      const devices = navigator.mediaDevices
+      const open = devices.getUserMedia.bind(devices)
+      ;(window as any).__micOpens = 0
+      devices.getUserMedia = async constraints => {
+        ;(window as any).__micOpens++
+        return await open(constraints)
+      }
+    })
+    const micOpens = async (): Promise<number> =>
+      await page.evaluate(() => (window as any).__micOpens as number)
+    await pause(1500)
+    expect(await micState()).equals('Off')
+    expect(await micOpens(), 'opening Tess opens no microphone').equals(0)
+    const sendBox = (await rectOf(page, sendButton12))!
+    let micBox = (await rectOf(page, mic))!
+    expect(micBox.x, 'the mic right of Send').greaterThanOrEqual(
+      sendBox.x + sendBox.width
+    )
+    expect(
+      Math.abs(micBox.y + micBox.height / 2 - (sendBox.y + sendBox.height / 2))
+    ).lessThan(2)
+    await shot('web-composer-after.png')
+    const emptyField = (await rectOf(page, field))!
+    await page.click(field)
+    await page.type(field, 'Hello world')
+    // Six steps back from the end: the caret after "Hello".
+    for (let step = 0; step < 6; step++) await page.keyboard.press('ArrowLeft')
+    const typedField = (await rectOf(page, field))!
+    expect(typedField.width, 'the field keeps its width').equals(
+      emptyField.width
+    )
+    micBox = (await rectOf(page, mic))!
+    expect(micBox.x, 'the mic stays with text').greaterThanOrEqual(
+      sendBox.x + sendBox.width
+    )
+    const callsBefore12 = t.model.calls.length
+    const bubblesBefore = await userBubbles(HEARD)
+    const heardBefore = t.dictation.heard.length
+    const micVideo = await startVideo(s, out, 'web-mic.mp4')
+    await pause(600)
+    await m.tapOn({ css: mic, timeout: 15000 })
+    await waitForMic('Recording')
+    await waitFor(page, wave)
+    expect(await micOpens()).equals(1)
+    expect(await fieldValue(), 'a line added for the waveform').equals(
+      'Hello world\n'
+    )
+    const saying = page.evaluate(async () => {
+      await (window as any).__playClip()
+    })
+    await pause(700)
+    const box = (await rectOf(page, field))!
+    const waveBox = (await rectOf(page, wave))!
+    expect(waveBox.x, 'in the right fifth').greaterThanOrEqual(
+      box.x + box.width * 0.8 - 1
+    )
+    expect(waveBox.x + waveBox.width).lessThanOrEqual(box.x + box.width)
+    // The whole fifth, less the field's rounded end.
+    expect(waveBox.width).greaterThan(box.width * 0.2 - 16)
+    // The second of two lines: from the middle of the field down.
+    expect(waveBox.y, 'on the added, last line').greaterThanOrEqual(
+      box.y + box.height / 2 - 1
+    )
+    expect(waveBox.y + waveBox.height).lessThanOrEqual(box.y + box.height)
+    expect(
+      await page.$$eval(
+        `${wave} [data-testid="Tess wave bar"]`,
+        nodes => nodes.length
+      ),
+      'samples drawn'
+    ).greaterThan(2)
+    // Straight from the browser: the waveform never stops moving, so the
+    // page never settles as maestro-d's capture waits for.
+    await page.screenshot({ path: join(out, 'web-waveform.png') })
+    console.log('Saved web-waveform.png')
+    await saying
+    await m.tapOn({ css: mic, timeout: 15000 })
+    const inserted = `Hello ${HEARD} world`
+    await page.waitForFunction(
+      (field, inserted) =>
+        document.querySelector<HTMLTextAreaElement>(field)!.value === inserted,
+      { timeout: 30000 },
+      field,
+      inserted
+    )
+    await waitForMic('Off')
+    expect(await page.$(wave)).equals(null)
+    expect(
+      await page.$eval(field, node => [
+        (node as HTMLTextAreaElement).selectionStart,
+        (node as HTMLTextAreaElement).selectionEnd
+      ]),
+      'the caret after the words'
+    ).deep.equals([6 + HEARD.length, 6 + HEARD.length])
+    await pause(1000)
+    console.log(`W12 tap, tap: "${inserted}" in the field; nothing sent`)
+    // Held a second while speaking: recording from the press to the release.
+    await page.$eval(field, node => {
+      ;(node as HTMLTextAreaElement).select()
+    })
+    await page.keyboard.press('Backspace')
+    micBox = (await rectOf(page, mic))!
+    await page.mouse.move(
+      micBox.x + micBox.width / 2,
+      micBox.y + micBox.height / 2
+    )
+    const down = Date.now()
+    await page.mouse.down()
+    await waitForMic('Recording')
+    const held = page.evaluate(async () => {
+      await (window as any).__playClip()
+    })
+    await pause(Math.max(0, 1000 - (Date.now() - down)))
+    expect(await micState(), 'recording while held').equals('Recording')
+    await page.mouse.up()
+    await pause(150)
+    expect(await micState(), 'not recording once let go').not.equals(
+      'Recording'
+    )
+    await held
+    await page.waitForFunction(
+      (field, heard) =>
+        document.querySelector<HTMLTextAreaElement>(field)!.value === heard,
+      { timeout: 30000 },
+      field,
+      HEARD
+    )
+    await waitForMic('Off')
+    await pause(1000)
+    await micVideo.stop()
+    expect(await micOpens()).equals(2)
+    expect(t.dictation.heard.slice(heardBefore)).deep.equals([HEARD, HEARD])
+    expect(t.model.calls.length, 'nothing sent').equals(callsBefore12)
+    expect(await userBubbles(HEARD)).equals(bubblesBefore)
+    expect(await page.$('[data-testid="Tess thinking"]')).equals(null)
+    console.log('W12 held 1 s: recorded while held; the words in the field')
+    await page.$eval(field, node => {
+      ;(node as HTMLTextAreaElement).select()
+    })
+    await page.keyboard.press('Backspace')
 
     // W13: off topic, declined with no tool.
     await say('Write me a poem about cats', 'I can only help with finding')
@@ -921,8 +1040,9 @@ async function main(): Promise<void> {
     // W15c: Space is Tess's only when held. On the team's Schedule tab, long
     // enough to scroll, Tab reaches the pane's Team pill: a quick Space
     // activates it and scrolls nothing; a quick Space in her field types a
-    // space; and Space held 800 ms with the focus on the page listens from
-    // 500 ms, and what was heard becomes her next message.
+    // space; and Space held 800 ms, in the field and with the focus on the
+    // page, records from 500 ms, and what was heard goes into her field,
+    // with nothing sent.
     await page.evaluate(() => {
       history.back()
     })
@@ -934,13 +1054,7 @@ async function main(): Promise<void> {
     await waitFor(page, '[role="tab"][aria-label="Team"]')
     await tap('[role="tab"][aria-label="Schedule"]')
     await waitFor(page, column)
-    await page.waitForFunction(
-      () => {
-        const status = document.querySelector('[aria-label="Dictation status"]')
-        return status != null && status.textContent === 'Push to talk'
-      },
-      { timeout: 20000 }
-    )
+    await waitForMic('Off', 20000)
     await page.evaluate(() => {
       const seen = { prevented: [] as boolean[] }
       ;(window as any).__space = seen
@@ -1035,55 +1149,58 @@ async function main(): Promise<void> {
       field
     )
     console.log('W15c a quick Space in the field typed a space')
-    // Held 800 ms with nothing focused, while the microphone hears a sentence.
+    // Held 800 ms, while the microphone hears a sentence once it records:
+    // not recording at 300 ms, recording from 500, and the words go into
+    // the field at its cursor.
+    const holdSpace = async (): Promise<number> => {
+      const down = Date.now()
+      await page.keyboard.down('Space')
+      await pause(300)
+      expect(await micState(), 'not recording at 300 ms').equals('Off')
+      await waitFor(page, wave, 2000)
+      const recording = Date.now() - down
+      expect(recording, 'recording from 500 ms').greaterThanOrEqual(500)
+      const saying = page.evaluate(async () => {
+        await (window as any).__playClip()
+      })
+      await pause(Math.max(0, 800 - (Date.now() - down)))
+      await page.keyboard.up('Space')
+      await saying
+      await waitForMic('Off', 30000)
+      return recording
+    }
+    const callsBefore15c = t.model.calls.length
+    const bubblesBefore15c = await userBubbles(HEARD)
+    // In the field, after a word: the Space is not typed.
+    await page.click(field)
+    await page.type(field, 'Hi')
+    const inField = await holdSpace()
+    expect(await fieldValue()).equals(`Hi ${HEARD}`)
+    console.log(
+      `W15c Space held 800 ms in the field: recording after ${inField} ms; "Hi ${HEARD}" in the field`
+    )
+    await page.$eval(field, node => {
+      ;(node as HTMLTextAreaElement).select()
+    })
+    await page.keyboard.press('Backspace')
+    // On the page, nothing focused.
     await page.evaluate(() => {
       const active = document.activeElement
       if (active instanceof HTMLElement) active.blur()
     })
-    const heardBefore = await userBubbles(HEARD)
-    const down = Date.now()
-    await page.keyboard.down('Space')
-    const saying = page.evaluate(async () => {
-      await (window as any).__playClip()
-    })
-    await pause(300)
-    expect(
-      await page.$eval(
-        '[aria-label="Dictation status"]',
-        node => node.textContent
-      ),
-      'not listening at 300 ms'
-    ).equals('Push to talk')
-    await page.waitForFunction(
-      () => {
-        const status = document.querySelector('[aria-label="Dictation status"]')
-        return status != null && status.textContent === 'Listening…'
-      },
-      { timeout: 2000 }
-    )
-    const listening = Date.now() - down
-    expect(listening, 'listening from 500 ms').greaterThanOrEqual(500)
-    await pause(Math.max(0, 800 - (Date.now() - down)))
-    await page.keyboard.up('Space')
-    await saying
-    await page.waitForFunction(
-      (words, count) =>
-        Array.from(
-          document.querySelectorAll('[data-testid="Tess user message"]')
-        ).filter(node => (node.textContent || '').includes(words)).length >
-        count,
-      { timeout: 30000 },
-      HEARD,
-      heardBefore
-    )
-    await page.waitForFunction(
-      () => document.querySelector('[data-testid="Tess thinking"]') == null,
-      { timeout: 20000 }
-    )
-    expect(t.dictation.begun).equals(begun + 1)
+    const onPage = await holdSpace()
+    expect(await fieldValue()).equals(HEARD)
+    expect(await scrollTop(), 'the hold scrolled nothing').equals(0)
+    expect(t.dictation.begun).equals(begun + 2)
+    expect(t.model.calls.length, 'nothing sent').equals(callsBefore15c)
+    expect(await userBubbles(HEARD)).equals(bubblesBefore15c)
     console.log(
-      `W15c Space held 800 ms: listening after ${listening} ms; the transcript became a message`
+      `W15c Space held 800 ms on the page: recording after ${onPage} ms; the words in the field, nothing sent`
     )
+    await page.$eval(field, node => {
+      ;(node as HTMLTextAreaElement).select()
+    })
+    await page.keyboard.press('Backspace')
 
     // W16: the week's usage.
     const usage = await f.h.request('GET', '/me/tess/usage')
@@ -1835,6 +1952,9 @@ async function main(): Promise<void> {
     console.log('W17 no Ask Tess row where the server has none')
     console.log('Tess wide browser scenarios passed')
   } catch (error) {
+    // Said first: a clip still playing rejects once the browser goes, and
+    // that would end the process before the error is thrown on.
+    console.error('Failed:', error)
     // What the page showed when a step failed, kept beside the artifacts.
     if (s != null) {
       await s.page

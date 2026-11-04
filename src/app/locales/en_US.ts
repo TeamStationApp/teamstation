@@ -1231,6 +1231,12 @@ export const enUs = {
   tess_queue_edit: 'Edit queued message: %s',
   tess_queue_unsure:
     'This message may not have reached Tess. Send it again, or remove it.',
+  tess_mic: 'Dictate',
+  tess_mic_push: 'Push to talk',
+  tess_mic_off: 'Off',
+  tess_mic_opening: 'Starting',
+  tess_mic_recording: 'Recording',
+  tess_mic_transcribing: 'Transcribing',
   tess_attach: 'Attach a file',
   tess_attach_title: 'Attach',
   tess_attach_photo: 'Photo',

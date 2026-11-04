@@ -30,7 +30,7 @@ export { upcoming }
  * commands — goes to `onActions`: the scoring screen puts actions through its
  * reducer exactly as a tap would, and the roster screen stages commands on
  * its draft. Tess has no game: her scope ends at the transcript, which goes
- * to `onTranscript` and becomes the next chat message. Nothing here changes a
+ * to `onTranscript` and into her field at the cursor. Nothing here changes a
  * game.
  */
 
@@ -66,6 +66,18 @@ export const RELEASE_TAIL_MS = 250
 /** How much audio is kept while nobody talks, and one frame of it. */
 const PRE_ROLL_MS = 1000
 const FRAME_MS = 100
+
+/**
+ * How loud a frame of 16-bit PCM is, from 0 (silence) to 1 (full scale): the
+ * root mean square of its samples.
+ */
+export function pcmLevel(pcm: ArrayBuffer): number {
+  const samples = new Int16Array(pcm, 0, Math.floor(pcm.byteLength / 2))
+  if (samples.length === 0) return 0
+  let sum = 0
+  for (const sample of samples) sum += sample * sample
+  return Math.min(1, Math.sqrt(sum / samples.length) / 32768)
+}
 
 export function useDictation(options: UseDictationOptions): Dictation {
   const [enabled, setEnabledState] = useState(false)
@@ -237,6 +249,7 @@ export function useDictation(options: UseDictationOptions): Dictation {
         // An open that lost the race, or one that finished after dictation
         // went off, must not feed the utterance that replaced it.
         if (!live || generation !== openGeneration.current) return
+        latest.current.onLevel?.(pcmLevel(pcm))
         if (holdingNow.current && utterance.current != null) {
           send(pcm)
           return

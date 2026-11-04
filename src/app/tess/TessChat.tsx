@@ -25,14 +25,19 @@ import { QueuedMessages } from './QueuedMessages'
 import { TessLiveReply, TessMessage } from './TessMessage'
 import { useTessOverlay } from './TessOverlay'
 import type { TessChatState } from './useTess'
+import type { LevelSource } from './useTessMicrophone'
 
 export interface TessChatProps {
   tess: TessChatState
   onClose: () => void
   /** An app path from a link or a way bubble. */
   onNavigate: (path: string) => void
-  /** The push-to-talk button, under the field. */
+  /** The microphone, right of Send. */
   mic?: ReactNode
+  /** While the microphone records, its loudness, for the field's waveform. */
+  dictating?: LevelSource
+  /** Why the microphone heard nothing, under the field when Tess has no error. */
+  micMessage?: string | null
   /** Where the microphone's words go into the composer. */
   composer?: Ref<ComposerHandle>
   /** Asked once on opening: whether her field should take the focus. */
@@ -54,6 +59,8 @@ export function TessChat({
   onClose,
   onNavigate,
   mic,
+  dictating,
+  micMessage,
   composer,
   takesFocus
 }: TessChatProps): React.ReactElement {
@@ -67,8 +74,8 @@ export function TessChat({
   // microphone's.
   const field = useRef<ComposerHandle>(null)
   useImperativeHandle(composer, () => ({
-    dictate: text => {
-      field.current?.dictate(text)
+    insertDictation: text => {
+      field.current?.insertDictation(text)
     },
     edit: draft => {
       field.current?.edit(draft)
@@ -180,8 +187,11 @@ export function TessChat({
         handle={field}
         takesFocus={takesFocus}
         busy={tess.thinking}
-        error={tess.error}
+        error={
+          tess.error != null && tess.error !== '' ? tess.error : micMessage
+        }
         mic={mic}
+        dictating={dictating}
         onSend={send}
         onStop={() => {
           stop().catch(() => undefined)

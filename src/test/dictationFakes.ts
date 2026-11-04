@@ -53,6 +53,11 @@ export interface FakeDictation {
   sockets: FakeDictationSocket[]
   socket: () => FakeDictationSocket
   microphone: { opened: number; stopped: number }
+  /**
+   * A frame of audio from the microphone opened last, while it is open:
+   * `samples` as 16-bit PCM.
+   */
+  speak: (samples: number[]) => ArrayBuffer
   openSocket: (url: string) => DictationSocket
   openMicrophone: OpenMicrophone
 }
@@ -60,20 +65,28 @@ export interface FakeDictation {
 export function fakeDictation(): FakeDictation {
   const sockets: FakeDictationSocket[] = []
   const microphone = { opened: 0, stopped: 0 }
+  let hearing: ((pcm: ArrayBuffer) => void) | null = null
   return {
     sockets,
     socket: () => sockets[sockets.length - 1],
     microphone,
+    speak: samples => {
+      const pcm = Int16Array.from(samples).buffer
+      hearing?.(pcm)
+      return pcm
+    },
     openSocket: url => {
       const socket = new FakeDictationSocket(url)
       sockets.push(socket)
       return socket
     },
-    openMicrophone: async () => {
+    openMicrophone: async onPcm => {
       microphone.opened++
+      hearing = onPcm
       return {
         stop: () => {
           microphone.stopped++
+          if (hearing === onPcm) hearing = null
         }
       }
     }
