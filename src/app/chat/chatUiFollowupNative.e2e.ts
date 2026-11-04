@@ -912,7 +912,8 @@ async function main(): Promise<void> {
               value.startsWith('Conversation actions: ')
             )
           : nodes.some(
-              node => node.id?.startsWith('chat-conversation-') === true
+              // The open chat header is chat-conversation-identity, not a row.
+              node => node.id?.startsWith('chat-conversation-cnv_') === true
             )
       if (onList(flatten(await m.hierarchy()))) return
       if (platform === 'android') {
