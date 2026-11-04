@@ -5,7 +5,7 @@ export interface RecoveryFault {
   gateId: string
   userId: string
   conversationId: string
-  kind: 'send' | 'page' | 'history'
+  kind: 'send' | 'page' | 'history' | 'epoch'
   outcome: 'success' | 'failure' | 'empty'
   delayMs: number
   remaining: number
@@ -28,7 +28,7 @@ export class RecoveryFaults {
     assert(/^[a-zA-Z0-9_-]{1,120}$/.test(fault.gateId))
     assert(fault.userId.startsWith('usr_'))
     assert(/^cnv_[a-zA-Z0-9_-]+$/.test(fault.conversationId))
-    assert(['send', 'page', 'history'].includes(fault.kind))
+    assert(['send', 'page', 'history', 'epoch'].includes(fault.kind))
     assert(['success', 'failure', 'empty'].includes(fault.outcome))
     assert(
       Number.isInteger(fault.delayMs) &&
@@ -56,10 +56,14 @@ export class RecoveryFaults {
             ? method === 'GET' &&
               url.pathname === messages &&
               url.searchParams.has('before')
-            : method === 'GET' &&
-              url.pathname ===
-                `/api/v1/chat/conversations/${fault.conversationId}/epochs` &&
-              url.searchParams.has('boxesAfter')
+            : fault.kind === 'epoch'
+              ? method === 'POST' &&
+                url.pathname ===
+                  `/api/v1/chat/conversations/${fault.conversationId}/epochs`
+              : method === 'GET' &&
+                url.pathname ===
+                  `/api/v1/chat/conversations/${fault.conversationId}/epochs` &&
+                url.searchParams.has('boxesAfter')
       if (!match) continue
       fault.remaining--
       this.audit({ gateId: fault.gateId, remaining: fault.remaining })

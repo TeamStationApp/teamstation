@@ -16,6 +16,7 @@ import {
   controlRecovery,
   type RecoveryControl
 } from '../../test/chatRecoveryControl'
+import { recoveryServerControl } from '../../test/chatRecoveryServerControl'
 import { readSeedTable } from '../../test/chatSeedTable'
 import {
   draftRecovery,
@@ -35,7 +36,8 @@ interface Daemon {
 }
 
 export async function partialRecovery(
-  scenario: 'E3' | 'E4' | 'E5' | 'E6' | 'E7' = 'E4'
+  scenario:
+    'E3' | 'E4' | 'E5' | 'E6' | 'E7' | 'E9' | 'E11' | 'E12' | 'E13' = 'E4'
 ): Promise<void> {
   const file = process.env.CHAT_RECOVERY_FIXTURE
   assert(file != null)
@@ -60,6 +62,7 @@ export async function partialRecovery(
   const deviceId = process.env.CHAT_RECOVERY_DEVICE
   assert(name != null && deviceId != null)
   assert.equal(process.env.CHAT_RECOVERY_SURFACE, 'web')
+  const serverControl = scenario === 'E9' ? recoveryServerControl(f) : undefined
   const daemon = (await maestroClient().MaestroD.connect({
     name
   })) as unknown as Daemon
@@ -153,6 +156,7 @@ export async function partialRecovery(
         )
       : []
   try {
+    if (serverControl != null) await serverControl('baseline')
     console.log(`${scenario}: enrolling original recipient and first holder`)
     const old = await attach('Ha', 'recipient-old')
     const holderOne = await attach('Hs', 'first-holder')
@@ -189,6 +193,7 @@ export async function partialRecovery(
     const dm = await client.createDm([
       people.Hs.userId,
       people.Hk.userId,
+      ...(scenario === 'E12' || scenario === 'E9' ? [people.Hc.userId] : []),
       ...(scenario === 'E6' ? [people.P.userId] : [])
     ])
     await open(old, dm.id)
@@ -196,8 +201,412 @@ export async function partialRecovery(
     for (const text of olderBodies) await send(old, text)
     await open(holderOne, dm.id)
     await message(holderOne, olderBodies.at(-1) ?? first)
+    if (scenario === 'E13') {
+      await close(holderOne)
+      await (await asPerson('Hs')).leaveDm(dm.id)
+      const later = 'Later history in the original encryption segment'
+      await send(old, later)
+      await close(old)
+      await client.addDmMembers(dm.id, [people.Hs.userId])
+      const recipient = await attach('Hk', 'missing-original-segment')
+      await open(recipient, dm.id)
+      await send(recipient, third)
+      const before = await client.chatEpochs(dm.id, 0)
+      assert.deepEqual(
+        before.epochs.map(epoch => epoch.chainBreak),
+        [false, false, true]
+      )
+      assert(!(await body(recipient)).includes(first))
+      assert(!(await body(recipient)).includes(later))
+      console.log(
+        'E13: returning a rejoined holder with only the earlier segment key'
+      )
+      const prefixHolder = await attach('Hs', 'first-holder')
+      await open(prefixHolder, dm.id)
+      await message(recipient, first)
+      await message(recipient, third)
+      assert(!(await body(recipient)).includes(later))
+      await recipient.assertVisible({
+        text: 'Some older messages have been recovered.',
+        timeout: 30000
+      })
+      await recipient.assertVisible({ text: 'Locked message' })
+      assert(!(await body(prefixHolder)).includes('OLD SAFETY WORDS'))
+      const outstanding = (await client.chatHistoryGrants()).requests.find(
+        request =>
+          request.conversationId === dm.id &&
+          request.userId === people.Hk.userId
+      )
+      assert(outstanding != null, 'A missing suffix must remain requested')
+      assert.equal(outstanding.targetEpoch, 2)
+      assert.equal(outstanding.coveredThroughEpoch, 1)
+      writeFileSync(
+        join(f.artifacts, 'prefix-only-history.png'),
+        await recipient.screenshot()
+      )
+      await close(prefixHolder)
+      console.log('E13: returning the segment tip holder')
+      const tipHolder = await attach('Ha', 'recipient-old')
+      await open(tipHolder, dm.id)
+      for (const text of [first, later, third]) await message(recipient, text)
+      assert(!(await body(recipient)).includes('Locked message'))
+      assert(!(await body(tipHolder)).includes('OLD SAFETY WORDS'))
+      const after = await client.chatEpochs(dm.id, 0)
+      assert.deepEqual(after.epochs, before.epochs)
+      assert.equal(
+        (await client.chatMessages(dm.id)).filter(row => row.kind === 'post')
+          .length,
+        3
+      )
+      const counts = await recipient.evalBrowserScript({
+        script: `return JSON.stringify(${JSON.stringify([first, later, third])}.map(text=>[...document.querySelectorAll('[data-testid^="chat-message-row-"]')].filter(row=>row.textContent.includes(text)).length))`
+      })
+      assert.deepEqual(JSON.parse(String(counts.data)), [1, 1, 1])
+      writeFileSync(
+        join(f.artifacts, 'prefix-complete-history.png'),
+        await recipient.screenshot()
+      )
+      writeFileSync(
+        join(f.artifacts, 'prefix-results.json'),
+        JSON.stringify(
+          {
+            source: f.source,
+            targetEpoch: outstanding.targetEpoch,
+            prefix: outstanding.coveredThroughEpoch,
+            epochs: after.epochs.map(epoch => ({
+              epoch: epoch.epoch,
+              chainBreak: epoch.chainBreak
+            })),
+            duplicateRows: false,
+            manualApproval: false
+          },
+          null,
+          2
+        )
+      )
+      console.log(
+        'PASS E13 web: rejoined prefix holder unlocks only its known prefix; tip holder completes recovery with no new epoch, duplicate row or approval'
+      )
+      return
+    }
     await close(old)
     await close(holderOne)
+
+    if (scenario === 'E9') {
+      assert(serverControl != null)
+      const before = await client.chatEpochs(dm.id, 0)
+      assert.equal(before.historyRecoveryVersion, undefined)
+      const recipient = await attach('Hk', 'legacy-server-recipient')
+      await open(recipient, dm.id)
+      await recipient.assertVisible({
+        text: 'This server requires the current chat key before you can send.',
+        timeout: 30000
+      })
+      const writable = await recipient.evalBrowserScript({
+        script:
+          'return !!document.querySelector(\'textarea[aria-label="Message"]:not([readonly]):not([disabled])\')'
+      })
+      assert(writable.data === false || writable.data === 'false')
+      const requests = await recipient.evalBrowserScript({
+        script:
+          'return JSON.stringify(performance.getEntriesByType("resource").map(row => row.name))'
+      })
+      const paths = JSON.parse(String(requests.data)) as string[]
+      assert(paths.some(path => path.includes('/epochs')))
+      assert(
+        !paths.some(
+          path => path.includes('scope=history') || path.includes('boxesAfter=')
+        ),
+        'An unsupported server must never receive recovery-only requests'
+      )
+      assert.deepEqual(
+        (await client.chatEpochs(dm.id, 0)).epochs,
+        before.epochs
+      )
+      writeFileSync(
+        join(f.artifacts, 'baseline-server-limitation.png'),
+        await recipient.screenshot()
+      )
+      await close(recipient)
+      console.log(
+        'E9: baseline server limitation is visible and no recovery-only requests were made'
+      )
+
+      await serverControl('enabled')
+      const enabled = await attach('Hk', 'legacy-server-recipient')
+      await open(enabled, dm.id)
+      await send(enabled, second)
+      assert(!(await body(enabled)).includes(first))
+      const boundary = await client.chatEpochs(dm.id, 0)
+      assert.equal(boundary.historyRecoveryVersion, 1)
+      assert.equal(boundary.freshEpochsEnabled, true)
+      assert.deepEqual(
+        boundary.epochs.map(row => row.chainBreak),
+        [false, true]
+      )
+      await close(enabled)
+      await serverControl('disabled')
+      const disabled = await client.chatEpochs(dm.id, 0)
+      assert.equal(disabled.historyRecoveryVersion, 1)
+      assert.equal(disabled.freshEpochsEnabled, false)
+      const recovering = await attach('Hk', 'legacy-server-recipient')
+      await open(recovering, dm.id)
+      await message(recovering, second)
+      await send(recovering, during)
+      const holder = await attach('Hs', 'first-holder')
+      await open(holder, dm.id)
+      for (const text of [first, second, during]) await message(holder, text)
+      await message(recovering, first)
+      const heldReply =
+        'Reply with a retained key while fresh starts are disabled'
+      await send(holder, heldReply)
+      await message(recovering, heldReply)
+      writeFileSync(
+        join(f.artifacts, 'disabled-fresh-recovered-history.png'),
+        await recovering.screenshot()
+      )
+      await close(holder)
+      await close(recovering)
+      const missing = await attach('Hc', 'disabled-fresh-recipient')
+      await open(missing, dm.id)
+      await missing.assertVisible({
+        text: 'New messages need the current chat key while fresh messaging is unavailable.',
+        timeout: 30000
+      })
+      const blocked = await missing.evalBrowserScript({
+        script:
+          'return !!document.querySelector(\'textarea[aria-label="Message"]:not([readonly]):not([disabled])\')'
+      })
+      assert(blocked.data === false || blocked.data === 'false')
+      assert(!(await body(missing)).includes(first))
+      // A linked caller bypassing the disabled composer must still meet the
+      // server's rollout gate before any publication can be accepted.
+      const refused = await missing.evalBrowserScript({
+        script: `return (async () => { const response = await fetch(${JSON.stringify(f.apiUrl + '/chat/conversations/' + dm.id + '/epochs')}, {method:'POST', credentials:'include', headers:{'content-type':'application/json'}, body:JSON.stringify({mode:'fresh', epoch:3, previousKeyBox:null, signature:${JSON.stringify(Buffer.alloc(64).toString('base64url'))}, boxes:[]})}); return JSON.stringify({status:response.status, body:await response.json()}) })()`
+      })
+      const rejection = JSON.parse(String(refused.data)) as {
+        status: number
+        body: { details?: { reason?: string } }
+      }
+      assert.equal(rejection.status, 409)
+      assert.equal(rejection.body.details?.reason, 'freshDisabled')
+      assert.deepEqual(
+        (await client.chatEpochs(dm.id, 0)).epochs,
+        boundary.epochs
+      )
+      assert.equal(
+        (await client.chatMessages(dm.id)).filter(row => row.kind === 'post')
+          .length,
+        4
+      )
+      writeFileSync(
+        join(f.artifacts, 'disabled-fresh-blocked.png'),
+        await missing.screenshot()
+      )
+      writeFileSync(
+        join(f.artifacts, 'server-compatibility-results.json'),
+        JSON.stringify(
+          {
+            source: f.source,
+            unsupportedRecoveryRequests: 0,
+            recoverySurvivesDisable: true,
+            heldKeySends: true,
+            missingKeySendBlocked: true,
+            freshPublicationRejected: true,
+            epochs: 2,
+            posts: 4
+          },
+          null,
+          2
+        )
+      )
+      console.log(
+        'PASS E9 web: baseline server fallback is explicit; disabling fresh starts preserves recovery and held-key sending while blocking another fresh start'
+      )
+      return
+    }
+
+    if (scenario === 'E12') {
+      const relayFile = process.env.CHAT_RECOVERY_RELAY
+      const apiLog = process.env.CHAT_RECOVERY_API_LOG
+      assert(relayFile != null && apiLog != null)
+      const relay = JSON.parse(readFileSync(relayFile, 'utf8')) as {
+        disposable: true
+        source: string
+        upstream: string
+        endpoint: string
+        token: string
+        audit: string
+      }
+      assert.equal(relay.disposable, true)
+      assert.equal(relay.source, f.source)
+      assert.equal(relay.upstream, f.apiUrl)
+      faultControl = {
+        disposable: true,
+        endpoint: relay.endpoint,
+        token: relay.token,
+        actors: {
+          one: { userId: people.Hk.userId, conversationId: dm.id },
+          two: { userId: people.Hc.userId, conversationId: dm.id }
+        }
+      }
+      const one = await attach('Hk', 'racing-one')
+      const two = await attach('Hc', 'racing-two')
+      for (const m of [one, two]) {
+        await open(m, dm.id)
+        await m.assertVisible({ text: 'Locked message', timeout: 30000 })
+      }
+      async function claimed(ids: string[]): Promise<void> {
+        const until = Date.now() + 30000
+        while (Date.now() < until) {
+          const rows = readFileSync(relay.audit, 'utf8')
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .map(line => JSON.parse(line) as { gateId: string; event?: string })
+          if (
+            ids.every(id =>
+              rows.some(row => row.gateId === id && row.event == null)
+            )
+          )
+            return
+          await new Promise(resolve => setTimeout(resolve, 50))
+        }
+        throw Error(
+          'Both application requests must reach the deterministic barrier'
+        )
+      }
+      for (const actor of ['one', 'two'])
+        await controlRecovery(faultControl, [
+          actor,
+          'epoch-delay',
+          'epoch-' + actor,
+          '60000'
+        ])
+      const raceOne = 'First simultaneous fresh message'
+      const raceTwo = 'Second simultaneous fresh message'
+      console.log(
+        'E12: holding both actual fresh epoch publications before releasing them together'
+      )
+      const publication = Promise.all([send(one, raceOne), send(two, raceTwo)])
+      publication.catch(() => {})
+      await claimed(['epoch-one', 'epoch-two'])
+      assert.equal((await client.chatEpochs(dm.id, 0)).epochs.length, 1)
+      await controlRecovery(faultControl, ['clear'])
+      await publication
+      for (const m of [one, two]) {
+        await message(m, raceOne)
+        await message(m, raceTwo)
+        assert(!(await body(m)).includes(first))
+      }
+      const won = await client.chatEpochs(dm.id, 0)
+      assert.deepEqual(
+        won.epochs.map(row => row.chainBreak),
+        [false, true]
+      )
+      assert.equal(
+        (await client.chatMessages(dm.id)).filter(row => row.kind === 'post')
+          .length,
+        3
+      )
+      writeFileSync(
+        join(f.artifacts, 'concurrent-fresh-messages.png'),
+        await one.screenshot()
+      )
+
+      for (const actor of ['one', 'two'])
+        await controlRecovery(faultControl, [
+          actor,
+          'history-delay',
+          'history-' + actor,
+          '60000'
+        ])
+      const reopen = Promise.all([open(one, dm.id), open(two, dm.id)])
+      reopen.catch(() => {})
+      await claimed(['history-one', 'history-two'])
+      console.log(
+        'E12: returning history holder while current sends and recovery deliveries are pending'
+      )
+      const holder = await attach('Hs', 'first-holder')
+      await open(holder, dm.id)
+      for (const text of [first, raceOne, raceTwo]) await message(holder, text)
+      const duringOne = 'Current message during first recovery delivery'
+      const duringTwo = 'Current message during second recovery delivery'
+      for (const actor of ['one', 'two'])
+        await controlRecovery(faultControl, [
+          actor,
+          'pending-success',
+          'send-' + actor,
+          '60000'
+        ])
+      const sends = Promise.all([send(one, duringOne), send(two, duringTwo)])
+      sends.catch(() => {})
+      await claimed(['send-one', 'send-two'])
+      const heldAudit = readFileSync(relay.audit, 'utf8')
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line) as { gateId: string; event?: string })
+      assert(
+        !heldAudit.some(
+          row =>
+            ['history-one', 'history-two', 'send-one', 'send-two'].includes(
+              row.gateId
+            ) && row.event === 'delay-released'
+        ),
+        'Recovery and send barriers must still be held together'
+      )
+      await controlRecovery(faultControl, ['clear'])
+      await Promise.all([reopen, sends])
+      const texts = [first, raceOne, raceTwo, duringOne, duringTwo]
+      for (const m of [one, two, holder])
+        for (const text of texts) await message(m, text)
+      assert.deepEqual((await client.chatEpochs(dm.id, 0)).epochs, won.epochs)
+      assert.equal(
+        (await client.chatMessages(dm.id)).filter(row => row.kind === 'post')
+          .length,
+        5
+      )
+      for (const m of [one, two]) {
+        const counts = await m.evalBrowserScript({
+          script: `return JSON.stringify(${JSON.stringify(texts)}.map(text => [...document.querySelectorAll('[data-testid^="chat-message-row-"]')].filter(row => row.textContent.includes(text)).length))`
+        })
+        assert.deepEqual(JSON.parse(String(counts.data)), [1, 1, 1, 1, 1])
+      }
+      for (const text of texts) {
+        assert(
+          !readFileSync(apiLog, 'utf8').includes(text),
+          'Server log must not include message plaintext'
+        )
+        assert(
+          !readFileSync(relay.audit, 'utf8').includes(text),
+          'Fault audit must remain metadata only'
+        )
+      }
+      writeFileSync(
+        join(f.artifacts, 'concurrent-recovered-history.png'),
+        await one.screenshot()
+      )
+      writeFileSync(
+        join(f.artifacts, 'race-results.json'),
+        JSON.stringify(
+          {
+            source: f.source,
+            simultaneousPublications: 2,
+            freshEpochs: 1,
+            posts: 5,
+            duplicateRows: false,
+            historyRecovered: true,
+            plaintextLogged: false
+          },
+          null,
+          2
+        )
+      )
+      console.log(
+        'PASS E12 web: simultaneous fresh publications yield one epoch; both sends survive; concurrent history recovery preserves every message without duplicates or plaintext logs'
+      )
+      return
+    }
 
     console.log(
       `${scenario}: creating second segment with first holder offline`
@@ -207,6 +616,142 @@ export async function partialRecovery(
     await holderTwo.assertVisible({ text: 'Locked message', timeout: 30000 })
     await send(holderTwo, second)
     assert(!(await body(holderTwo)).includes(first))
+    if (scenario === 'E11') {
+      const recipientApi = await asPerson('Hk')
+      const beforeDevices = await recipientApi.chatDevices()
+      const originalDevice = beforeDevices.find(row => row.revokedAt == null)
+      assert(originalDevice != null)
+      const pending = (await client.chatHistoryGrants()).requests.find(
+        row => row.conversationId === dm.id && row.userId === people.Hk.userId
+      )
+      assert(pending != null, 'Recovery must be pending before removal')
+      await recipientApi.leaveDm(dm.id)
+      await holderTwo.openLink({ link: f.origin + '/chat/' + dm.id })
+      await holderTwo.assertVisible({
+        text: 'Chat could not be opened.',
+        timeout: 30000
+      })
+      await assert.rejects(
+        async () => await recipientApi.chatEpochs(dm.id, 0),
+        {
+          code: 'notFound'
+        }
+      )
+      const retained = await attach('Ha', 'recipient-old')
+      await open(retained, dm.id)
+      for (const text of [first, second]) await message(retained, text)
+      assert(
+        !(await client.chatHistoryGrants()).requests.some(
+          row => row.conversationId === dm.id && row.userId === people.Hk.userId
+        ),
+        'A removed recipient must have no fulfillable history request'
+      )
+      assert(!(await body(holderTwo)).includes(first))
+      writeFileSync(
+        join(f.artifacts, 'removed-during-recovery.png'),
+        await holderTwo.screenshot()
+      )
+      await close(retained)
+      await close(holderTwo)
+      await client.addDmMembers(dm.id, [people.Hk.userId])
+
+      console.log(
+        'E11: resetting the rejoined recipient before any holder returns'
+      )
+      const replacement = await attach('Hk', 'replacement-identity')
+      await replacement.assertVisible({
+        text: 'Link this device',
+        timeout: 30000
+      })
+      await replacement.tapOn({ text: 'I can’t reach my other devices' })
+      await replacement.tapOn({ text: 'Reset chat on this device' })
+      await replacement.assertVisible({
+        css: '[data-testid="chat-conversation-list"]',
+        timeout: 30000
+      })
+      await open(replacement, dm.id)
+      await send(replacement, third)
+      for (const text of [first, second])
+        assert(!(await body(replacement)).includes(text))
+      const devicesAfterReset = await recipientApi.chatDevices()
+      assert(
+        devicesAfterReset.find(row => row.id === originalDevice.id)
+          ?.revokedAt != null
+      )
+      const replacementDevice = devicesAfterReset.find(
+        row => row.revokedAt == null
+      )
+      assert(replacementDevice != null)
+      const replacementRequest = (
+        await client.chatHistoryGrants()
+      ).requests.find(
+        row => row.conversationId === dm.id && row.userId === people.Hk.userId
+      )
+      assert(replacementRequest != null)
+      assert.notEqual(replacementRequest.identityId, pending.identityId)
+
+      const returning = await attach('Ha', 'recipient-old')
+      await open(returning, dm.id)
+      for (const text of [first, second, third]) await message(returning, text)
+      for (const text of [first, second])
+        assert(!(await body(replacement)).includes(text))
+      await replacement.assertVisible({ text: 'Locked message' })
+      writeFileSync(
+        join(f.artifacts, 'reset-awaiting-approval.png'),
+        await replacement.screenshot()
+      )
+      await returning.tapOn({ text: 'Review', timeout: 30000 })
+      await returning.assertVisible({
+        text: 'OLD SAFETY WORDS',
+        timeout: 30000
+      })
+      await returning.tapOn({ text: 'Approve', timeout: 30000 })
+      for (const text of [first, second, third])
+        await message(replacement, text)
+      const revoked = await attach('Hk', 'second-holder')
+      await revoked.assertVisible({ text: 'Link this device', timeout: 30000 })
+      assert(!(await body(revoked)).includes(first))
+      writeFileSync(
+        join(f.artifacts, 'revoked-device-blocked.png'),
+        await revoked.screenshot()
+      )
+      const otherHolder = await attach('Hs', 'first-holder')
+      await open(otherHolder, dm.id)
+      for (const text of [first, second, third])
+        await message(otherHolder, text)
+      const epochs = await client.chatEpochs(dm.id, 0)
+      assert.deepEqual(
+        epochs.epochs.map(row => row.chainBreak),
+        [false, true, true]
+      )
+      assert.equal(
+        (await client.chatMessages(dm.id)).filter(row => row.kind === 'post')
+          .length,
+        3
+      )
+      writeFileSync(
+        join(f.artifacts, 'authorization-results.json'),
+        JSON.stringify(
+          {
+            source: f.source,
+            removedRequestId: pending.id,
+            oldIdentityId: pending.identityId,
+            currentIdentityId: replacementRequest.identityId,
+            removedReadDenied: true,
+            oldDeviceRevoked: true,
+            replacementRequiredApproval: true,
+            retainedHoldersReadable: true,
+            posts: 3
+          },
+          null,
+          2
+        )
+      )
+      console.log(
+        'PASS E11 web: removal cancels pending recovery; reset revokes the old device; replacement history requires approval; remaining holders retain all messages'
+      )
+      return
+    }
     if (scenario === 'E6') {
       const recipientApi = await asPerson('Hk')
       const posts = (await recipientApi.chatMessages(dm.id)).filter(
@@ -537,9 +1082,13 @@ export async function partialRecovery(
     try {
       if (faultControl != null) await controlRecovery(faultControl, ['clear'])
     } finally {
-      for (const m of devices) await m.detach().catch(() => {})
-      await daemon.shutdown({ wait: true })
-      await daemon.close()
+      try {
+        for (const m of devices) await m.detach().catch(() => {})
+        await daemon.shutdown({ wait: true })
+        await daemon.close()
+      } finally {
+        if (serverControl != null) await serverControl('enabled')
+      }
     }
   }
 }
