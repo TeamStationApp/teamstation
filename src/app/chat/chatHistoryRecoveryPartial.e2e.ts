@@ -35,7 +35,7 @@ interface Daemon {
 }
 
 export async function partialRecovery(
-  scenario: 'E3' | 'E4' | 'E5' | 'E6' | 'E7' = 'E4'
+  scenario: 'E3' | 'E4' | 'E5' | 'E6' | 'E7' | 'E13' = 'E4'
 ): Promise<void> {
   const file = process.env.CHAT_RECOVERY_FIXTURE
   assert(file != null)
@@ -196,6 +196,94 @@ export async function partialRecovery(
     for (const text of olderBodies) await send(old, text)
     await open(holderOne, dm.id)
     await message(holderOne, olderBodies.at(-1) ?? first)
+    if (scenario === 'E13') {
+      await close(holderOne)
+      await (await asPerson('Hs')).leaveDm(dm.id)
+      const later = 'Later history in the original encryption segment'
+      await send(old, later)
+      await close(old)
+      await client.addDmMembers(dm.id, [people.Hs.userId])
+      const recipient = await attach('Hk', 'missing-original-segment')
+      await open(recipient, dm.id)
+      await send(recipient, third)
+      const before = await client.chatEpochs(dm.id, 0)
+      assert.deepEqual(
+        before.epochs.map(epoch => epoch.chainBreak),
+        [false, false, true]
+      )
+      assert(!(await body(recipient)).includes(first))
+      assert(!(await body(recipient)).includes(later))
+      console.log(
+        'E13: returning a rejoined holder with only the earlier segment key'
+      )
+      const prefixHolder = await attach('Hs', 'first-holder')
+      await open(prefixHolder, dm.id)
+      await message(recipient, first)
+      await message(recipient, third)
+      assert(!(await body(recipient)).includes(later))
+      await recipient.assertVisible({
+        text: 'Some older messages have been recovered.',
+        timeout: 30000
+      })
+      await recipient.assertVisible({ text: 'Locked message' })
+      assert(!(await body(prefixHolder)).includes('OLD SAFETY WORDS'))
+      const outstanding = (await client.chatHistoryGrants()).requests.find(
+        request =>
+          request.conversationId === dm.id &&
+          request.userId === people.Hk.userId
+      )
+      assert(outstanding != null, 'A missing suffix must remain requested')
+      assert.equal(outstanding.targetEpoch, 2)
+      assert.equal(outstanding.coveredThroughEpoch, 1)
+      writeFileSync(
+        join(f.artifacts, 'prefix-only-history.png'),
+        await recipient.screenshot()
+      )
+      await close(prefixHolder)
+      console.log('E13: returning the segment tip holder')
+      const tipHolder = await attach('Ha', 'recipient-old')
+      await open(tipHolder, dm.id)
+      for (const text of [first, later, third]) await message(recipient, text)
+      assert(!(await body(recipient)).includes('Locked message'))
+      assert(!(await body(tipHolder)).includes('OLD SAFETY WORDS'))
+      const after = await client.chatEpochs(dm.id, 0)
+      assert.deepEqual(after.epochs, before.epochs)
+      assert.equal(
+        (await client.chatMessages(dm.id)).filter(row => row.kind === 'post')
+          .length,
+        3
+      )
+      const counts = await recipient.evalBrowserScript({
+        script: `return JSON.stringify(${JSON.stringify([first, later, third])}.map(text=>[...document.querySelectorAll('[data-testid^="chat-message-row-"]')].filter(row=>row.textContent.includes(text)).length))`
+      })
+      assert.deepEqual(JSON.parse(String(counts.data)), [1, 1, 1])
+      writeFileSync(
+        join(f.artifacts, 'prefix-complete-history.png'),
+        await recipient.screenshot()
+      )
+      writeFileSync(
+        join(f.artifacts, 'prefix-results.json'),
+        JSON.stringify(
+          {
+            source: f.source,
+            targetEpoch: outstanding.targetEpoch,
+            prefix: outstanding.coveredThroughEpoch,
+            epochs: after.epochs.map(epoch => ({
+              epoch: epoch.epoch,
+              chainBreak: epoch.chainBreak
+            })),
+            duplicateRows: false,
+            manualApproval: false
+          },
+          null,
+          2
+        )
+      )
+      console.log(
+        'PASS E13 web: rejoined prefix holder unlocks only its known prefix; tip holder completes recovery with no new epoch, duplicate row or approval'
+      )
+      return
+    }
     await close(old)
     await close(holderOne)
 
