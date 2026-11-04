@@ -13,6 +13,8 @@ import type { SpaceSettings } from './media/spacesHls'
 import { asOAuthConfig } from './oauth/config'
 
 export const asServerConfig = asObject({
+  /** Fresh publications only; history delivery remains enabled independently. */
+  chatHistoryRecoveryEnabled: asOptional(asBoolean, false),
   /** Separate restricted login; never substitute the application owner. */
   analyticsReaderUrl: asOptional(asString),
   logWriteToken: asOptional(asString),
