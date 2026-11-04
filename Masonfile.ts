@@ -3,10 +3,10 @@ import path from 'node:path'
 
 import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 
-// TeamStation for iOS on the Nomac pool and for Android on the DigitalOcean
-// Linux pool. The iOS archive signs an ad hoc build with the master's Apple
-// distribution certificate and publishes it, so a registered device can
-// install it. A master build then re-signs that IPA with the App Store
+// TeamStation for iOS on Bern or the Nomac pool, and for Android on the
+// DigitalOcean Linux pool. The iOS archive signs an ad hoc build with the
+// master's Apple distribution certificate and publishes it, so a registered
+// device can install it. A master build then re-signs that IPA with the App Store
 // profile and uploads it to TestFlight. Other branches leave that stage
 // skipped. The Android release is compiled on Linux, then signed on the node
 // labelled android-signing, which provides teamstation-sign-release-apk, and
@@ -18,7 +18,13 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // to TestFlight.
 
 const APP = 'app.teamstation.app'
-const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
+// Bern is macos-arm64. Nomac is the other Mac that can compile. The archive
+// pins Xcode 27.0, so the worker that runs it installs that version when it
+// is not already there.
+const IOS = [
+  { type: 'macos-arm64', os: 'macos', arch: 'arm64' },
+  { type: 'nomac', os: 'macos', arch: 'arm64' }
+] as const
 const ANDROID = { type: 'do-linux', os: 'linux', arch: 'x64' } as const
 const SIGN = {
   type: 'macos-arm64',
@@ -59,7 +65,8 @@ function buildStages(w: WorkflowBuilder): void {
         {
           name: 'archive',
           on: IOS,
-          // Nomac provides Xcode 27.0 and cannot install another version.
+          // Xcode 27.0 is pinned so a Mac that does not have it installs that
+          // version before compiling. Nomac cannot install another version.
           // Rust is installed into the worker tools directory; the archive
           // environment points the Xcode script phase at that cargo.
           tools: {

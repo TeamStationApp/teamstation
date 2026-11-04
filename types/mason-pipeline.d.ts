@@ -94,7 +94,7 @@ declare module '@mason/types' {
   }
   export interface StageOptions {
     name?: string
-    on: NodeSelector
+    on: NodeSelector | readonly NodeSelector[]
     tools?: Record<string, unknown>
     timeout?: string
     publishes?: string[]

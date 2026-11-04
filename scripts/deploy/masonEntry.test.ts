@@ -287,7 +287,7 @@ describe('TeamStation Mason entrypoint', () => {
 })
 
 describe('TeamStation pipeline Masonfile', () => {
-  it('builds iOS on Nomac and signs the Android release on the signing node', async () => {
+  it('builds iOS on Bern or Nomac and signs the Android release on the signing node', async () => {
     const stages: Record<string, unknown> = {}
     const workflows: Record<string, Record<string, unknown>> = {}
     setup({
@@ -319,7 +319,9 @@ describe('TeamStation pipeline Masonfile', () => {
     })
     const ios = stages.ios as Array<{
       name: string
-      on: { type: string }
+      on:
+        | { type: string; os?: string; arch?: string }
+        | Array<{ type: string; os?: string; arch?: string }>
       tools?: { node: string; xcode: string; rust: string }
       apple: { distribution: string; app: string }
       checkout?: boolean | { depth: number }
@@ -338,14 +340,20 @@ describe('TeamStation pipeline Masonfile', () => {
       publishes?: string[]
     }>
     assert.equal(ios[0]?.name, 'archive')
-    assert.equal(ios[0]?.on.type, 'nomac')
+    assert.deepEqual(ios[0]?.on, [
+      { type: 'macos-arm64', os: 'macos', arch: 'arm64' },
+      { type: 'nomac', os: 'macos', arch: 'arm64' }
+    ])
     assert.equal(ios[0]?.apple.distribution, 'adHoc')
     assert.equal(ios[0]?.apple.app, 'app.teamstation.app')
     assert.equal(ios[0]?.tools?.node, '24')
     assert.equal(ios[0]?.tools?.xcode, '27.0')
     assert.equal(ios[0]?.tools?.rust, '1.98.0')
     assert.equal(ios[1]?.name, 'release')
-    assert.equal(ios[1]?.on.type, 'macos-arm64')
+    const releaseOn = ios[1]?.on
+    assert.ok(releaseOn != null && !Array.isArray(releaseOn))
+    if (releaseOn != null && !Array.isArray(releaseOn))
+      assert.equal(releaseOn.type, 'macos-arm64')
     assert.equal(ios[1]?.apple.distribution, 'appStore')
     assert.deepEqual(ios[1]?.checkout, { depth: 1 })
     assert.deepEqual(ios[1]?.when, {
