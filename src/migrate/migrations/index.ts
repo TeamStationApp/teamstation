@@ -125,6 +125,7 @@ import { migration110DropSyncClock } from './110dropSyncClock'
 import { migration111LiveChanges } from './111liveChanges'
 import { migration111ScheduleWeekParts } from './111scheduleWeekParts'
 import { migration112VideoSpaceSecret } from './112videoSpaceSecret'
+import { migration113ChatHistoryRecovery } from './113chatHistoryRecovery'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -253,5 +254,6 @@ export const migrations: Migration[] = [
   migration110DropSyncClock,
   migration111LiveChanges,
   migration111ScheduleWeekParts,
-  migration112VideoSpaceSecret
+  migration112VideoSpaceSecret,
+  migration113ChatHistoryRecovery
 ]
