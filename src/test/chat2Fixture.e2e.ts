@@ -221,7 +221,9 @@ const asFixture = asObject({
                 identifier: asString,
                 type: asString,
                 label: asString,
-                value: asString
+                // The state as the OS exposes it: a value, or a selection.
+                value: asOptional(asString),
+                selected: asOptional(asBoolean)
               })
             )
           })
@@ -243,7 +245,9 @@ const asFixture = asObject({
                 identifier: asString,
                 type: asString,
                 label: asString,
-                value: asString
+                // The state as the OS exposes it: a value, or a selection.
+                value: asOptional(asString),
+                selected: asOptional(asBoolean)
               })
             )
           })
@@ -549,7 +553,16 @@ const CHAT2_HARNESS_FILES: ReadonlySet<string> = new Set([
   'src/test/chat2Fixture.e2e.ts',
   'src/app/chat/chat2Actions.test.ts',
   'src/test/chat2FixtureIdentity.test.ts',
-  'src/app/chat/engine/dmTitle.test.ts'
+  'src/app/chat/engine/dmTitle.test.ts',
+  // The fixture coordinator and its helpers: run from the command line,
+  // imported by no web, native or server entry.
+  'scripts/chat-history-recovery-chat2.ts',
+  'scripts/chat-history-recovery-fixtures.ts',
+  'scripts/chat-history-recovery-link.ts',
+  'scripts/chat-history-recovery-native-scenes.ts',
+  'scripts/chat-history-recovery-peer.ts',
+  'scripts/chat-history-recovery-relay.ts',
+  'scripts/chat-history-recovery-ui-scenes.ts'
 ])
 
 /**
