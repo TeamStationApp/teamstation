@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely'
 
+import { anyOf } from '../db/anyOf'
 import type { Database } from '../db/database'
 
 export class UnresolvedAccount extends Error {}
@@ -15,7 +16,8 @@ export async function survivorsOf(
     const rows = await db
       .selectFrom('users')
       .select(['id', 'merged_into'])
-      .where('id', 'in', pending)
+      // One array parameter: a read's rows can outnumber a statement's 65535.
+      .where('id', '=', anyOf(pending))
       .execute()
     if (rows.length !== pending.length)
       throw new UnresolvedAccount('Missing account in merge chain')

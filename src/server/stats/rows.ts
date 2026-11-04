@@ -3,6 +3,7 @@ import { type Kysely, sql } from 'kysely'
 import { asStatExtras } from '../../common/statExtras'
 import { visibleGamesWhere, type VisibleScopes } from '../access'
 import { survivorsOf } from '../admin/people'
+import { anyOf } from '../db/anyOf'
 import type { Database } from '../db/database'
 import { withdrawnKey, withdrawnPlayers } from '../games/withdrawn'
 import { DEFAULT_ERA_INNINGS, type StatRow } from '../stats'
@@ -200,7 +201,7 @@ export async function statRows(
               'last_name as lastName',
               'display_name as displayName'
             ])
-            .where('id', 'in', merged)
+            .where('id', '=', anyOf(merged))
             .execute()
         ).map(user => [user.id, user])
   )

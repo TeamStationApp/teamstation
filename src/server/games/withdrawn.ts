@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import type { Kysely } from 'kysely'
 
 import { type UserId, userIdOfValue } from '../../common/userId'
+import { anyOf } from '../db/anyOf'
 import type { Database } from '../db/database'
 
 /**
@@ -92,6 +93,8 @@ export async function withdrawnPlayers(
         .end()
         .as('teamId')
     ])
-    .where('game_withdrawn_players.game_id', 'in', [...new Set(gameIds)])
+    // One array parameter: a merged team's games can outnumber a statement's
+    // 65535.
+    .where('game_withdrawn_players.game_id', '=', anyOf([...new Set(gameIds)]))
     .execute()
 }
