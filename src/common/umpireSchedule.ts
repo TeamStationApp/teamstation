@@ -72,20 +72,29 @@ export interface UmpireGameBlock {
     }
   >
 }
+export interface UmpireRank {
+  userId: string
+  name: string
+  count: number
+  symbol: string
+}
 export interface UmpireLeaderboard {
-  completed: Array<{
-    userId: string
-    name: string
-    count: number
-    symbol: string
-  }>
-  scheduled: Array<{
-    userId: string
-    name: string
-    count: number
-    symbol: string
-  }>
+  completed: UmpireRank[]
+  scheduled: UmpireRank[]
   teams: Array<{ id: string; name: string; count: number }> | null
+  page?: {
+    order: 'asc' | 'desc'
+    limit: number
+    offset: number
+    total: number
+  }
+}
+/** The most people one read of the leaderboard's pages returns. */
+export const UMPIRE_LEADERBOARD_MAX_PAGE = 50
+export interface UmpireLeaderboardQuery {
+  order?: 'asc' | 'desc'
+  limit?: number
+  offset?: number
 }
 export const UMPIRE_RANK_SYMBOLS = [
   '🏆',

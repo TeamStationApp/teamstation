@@ -184,6 +184,7 @@ import type {
 } from './umpires'
 import type {
   UmpireLeaderboard,
+  UmpireLeaderboardQuery,
   UmpireLeague,
   UmpireSchedule
 } from './umpireSchedule'
@@ -3470,10 +3471,22 @@ export class TeamStationClient {
     )
   }
 
-  async umpireLeaderboard(league: string): Promise<UmpireLeaderboard> {
+  /** With `page`, a page of every umpire, for a league administrator. */
+  async umpireLeaderboard(
+    league: string,
+    page?: UmpireLeaderboardQuery
+  ): Promise<UmpireLeaderboard> {
+    const params = new URLSearchParams()
+    if (page != null) {
+      params.set('order', page.order ?? 'desc')
+      if (page.limit != null) params.set('limit', String(page.limit))
+      if (page.offset != null) params.set('offset', String(page.offset))
+    }
+    const search = params.toString()
+    const query = search === '' ? '' : `?${search}`
     return await this.request(
       'GET',
-      `/leagues/${encodeURIComponent(league)}/umpire-leaderboard`,
+      `/leagues/${encodeURIComponent(league)}/umpire-leaderboard${query}`,
       asUmpireLeaderboard
     )
   }
