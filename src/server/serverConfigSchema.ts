@@ -16,6 +16,12 @@ import { asOAuthConfig } from './oauth/config'
 /** How often the ingest syncs when nothing woke it sooner: `live.resyncMs`. */
 export const LIVE_RESYNC_MS = 15_000
 
+/**
+ * How many seconds of a live stream's newest pieces the ingest keeps on its
+ * own disk once the Space has them: `live.localTailSec`.
+ */
+export const LIVE_LOCAL_TAIL_SEC = 60
+
 export const asServerConfig = asObject({
   /** Separate restricted login; never substitute the application owner. */
   analyticsReaderUrl: asOptional(asString),
@@ -404,6 +410,16 @@ export const asServerConfig = asObject({
        */
       resyncMs: asOptional(asNumber, LIVE_RESYNC_MS),
       /**
+       * How much of a live stream stays on the ingest's disk during the
+       * game, in seconds of its newest pieces. A piece older than that goes
+       * once the Space holds it, the wall clock scan has read it, and its
+       * writer can no longer rewrite it; the playlist and the init file stay
+       * until the game closes. Only while the stream publishes to a
+       * configured Space: without one the whole recording stays here. 0
+       * keeps every piece.
+       */
+      localTailSec: asOptional(asNumber, LIVE_LOCAL_TAIL_SEC),
+      /**
        * Where the ingest process answers `GET /health`, on 127.0.0.1 only.
        *
        * Absent, it is `listenPort + 1000`: every deployment already has a
@@ -420,6 +436,7 @@ export const asServerConfig = asObject({
       segmentSeconds: 4,
       freeDiskFloorGb: 10,
       resyncMs: LIVE_RESYNC_MS,
+      localTailSec: LIVE_LOCAL_TAIL_SEC,
       healthPort: undefined
     }
   )
@@ -428,12 +445,14 @@ export type ServerConfig = ReturnType<typeof asServerConfig>
 export type SmtpSettings = ServerConfig['smtp']
 /**
  * `healthPort` is the ingest process's alone, and may be left out, as may
- * `resyncMs`, which the ingest then takes as its default.
+ * `resyncMs` and `localTailSec`, which the ingest then takes as their
+ * defaults.
  */
 export type LiveSettings = Omit<
   ServerConfig['live'],
-  'healthPort' | 'resyncMs'
+  'healthPort' | 'resyncMs' | 'localTailSec'
 > & {
   healthPort?: number
   resyncMs?: number
+  localTailSec?: number
 }
