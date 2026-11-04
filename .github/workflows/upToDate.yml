@@ -1,41 +1,49 @@
-# Fails a pull request that is not rebased onto the latest master: master's
-# tip must be an ancestor of the branch, and the branch must carry no merge
-# commits, so a branch that merged master in to catch up does not pass.
+# Fails a pull request that is not rebased onto its base. The base tip must
+# be an ancestor of the branch, and the branch must carry no merge commits,
+# so a branch that merged the base in to catch up does not pass.
 #
-# A pass goes stale the moment master moves. The ruleset that requires this
+# Pull requests land on develop. A pull request to master is a stable build.
+#
+# A pass goes stale the moment the base moves. The ruleset that requires this
 # check also requires branches to be up to date, which is what makes GitHub
 # ask for it again.
-name: Up to date with master
+name: Up to date with the base
 
 on:
   pull_request:
-    branches: [master]
+    branches: [develop, master]
 
 permissions:
   contents: read
 
 jobs:
   rebased:
-    name: Rebased onto master
+    name: Rebased onto the base
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-      - name: Check the branch is rebased onto master
+      - name: Check the branch is rebased onto its base
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git fetch --no-tags origin master
-          base=$(git rev-parse origin/master)
+          case "$BASE_REF" in
+            develop|master) ;;
+            *) echo "::error::This check only runs for develop and master."; exit 1 ;;
+          esac
+          git fetch --no-tags origin "$BASE_REF"
+          base=$(git rev-parse "origin/$BASE_REF")
           head=$(git rev-parse HEAD)
           if ! git merge-base --is-ancestor "$base" "$head"; then
-            echo "::error::This branch is not based on the latest master ($base). Rebase it onto master."
+            echo "::error::This branch is not based on the latest $BASE_REF ($base). Rebase it onto $BASE_REF."
             exit 1
           fi
           merges=$(git rev-list --merges "$base..$head")
           if [ -n "$merges" ]; then
-            echo "::error::This branch has merge commits. Rebase onto master instead of merging it in:"
+            echo "::error::This branch has merge commits. Rebase onto $BASE_REF instead of merging it in:"
             git log --oneline --merges "$base..$head"
             exit 1
           fi
-          echo "Rebased onto master $base"
+          echo "Rebased onto $BASE_REF $base"

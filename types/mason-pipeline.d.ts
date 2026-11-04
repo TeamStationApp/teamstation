@@ -132,6 +132,10 @@ declare module '@mason/types' {
     params?: Record<string, ChoiceParam>
   }
   export interface Setup {
+    /** The branch this run builds. A caller that omits it stands in for master. */
+    branch?: string
+    /** The run's parameters. A caller that omits them stands in for the defaults. */
+    params?: Readonly<Record<string, string | number | boolean>>
     apiVersion: (version: 1) => void
     buildNumber: (
       key: string,
