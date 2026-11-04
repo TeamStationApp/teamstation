@@ -117,7 +117,7 @@ async function signIn(device: Device, key: string): Promise<void> {
   await device.inputText({ text: credentials.password })
   await device.tapOn({ text: 'Sign in' })
   await device.assertVisible({
-    css: '[data-testid="chat-conversation-list"]',
+    text: 'Account,',
     timeout: 60000
   })
 }
@@ -1904,7 +1904,8 @@ async function historyFixture(daemon: Daemon): Promise<void> {
   }
   try {
     await signIn(m, 'Hc')
-    await m.openLink({ link: WEB + '/chat/new' })
+    await m.openLink({ link: WEB + '/chat' })
+    await m.tapOn({ text: 'New message', timeout: 60000 })
     const people: string[] = JSON.parse(required('CHAT_UI_FIXTURE_PEOPLE'))
     assert.equal(
       people.length,
@@ -2300,7 +2301,7 @@ async function lockedProvider(daemon: Daemon, phase: string): Promise<void> {
     }
   })
   try {
-    await signIn(m, 'S')
+    await signIn(m, process.env.CHAT_UI_LOCKED_ACTOR ?? 'S')
     if (phase === 'prepare') {
       await m.openLink({ link: WEB + '/chat/' + conversation })
       await m.assertVisible({
@@ -2379,6 +2380,9 @@ async function lockedProvider(daemon: Daemon, phase: string): Promise<void> {
         /^\d{6}$/.test(request.code),
         'A private six-digit native request is required'
       )
+      // A new sign-in can present the same pending request as a modal.
+      // Dismiss it without deciding, then match the exact code on Devices.
+      await m.tapOn({ text: 'Later', optional: true, timeout: 1000 })
       await m.openLink({ link: WEB + '/chat/devices' })
       await m.assertVisible({ text: 'Waiting for approval', timeout: 60000 })
       await m.evalBrowserScript({
