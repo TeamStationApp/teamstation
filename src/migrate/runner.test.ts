@@ -80,7 +80,11 @@ describe('migrations', function () {
   it('upgrades and rolls back the two coach migrations without touching master’s camera data', async () => {
     const current = ['103TeamHeadCoach', '104ManagerScheduling']
     await migrateUp(pool, migrations)
-    await migrateDown(pool, migrations, 2)
+    await migrateDown(
+      pool,
+      migrations,
+      migrations.filter(m => m.name > '102localCopyRemoved').length
+    )
     const masterSchema = await schemaSnapshot(pool)
     await pool.query(
       `insert into users(id, display_name) values ($1, 'Ichiro Suzuki')`,
@@ -98,7 +102,14 @@ describe('migrations', function () {
     const camera =
       "select local_recording, local_copy_from from live_streams where id='liv_camera_history'"
     const original = (await pool.query(camera)).rows
-    expect((await migrateUp(pool, migrations)).applied).deep.equals(current)
+    expect(
+      (
+        await migrateUp(
+          pool,
+          migrations.filter(m => m.name <= '104ManagerScheduling')
+        )
+      ).applied
+    ).deep.equals(current)
     expect(await migrateDown(pool, migrations, 2)).deep.equals(
       [...current].reverse()
     )
@@ -110,10 +121,18 @@ describe('migrations', function () {
   })
 
   it('adopts the earlier coach migration history without reinstalling either column', async () => {
+    const coachHistory = migrations.filter(
+      m => m.name <= '104ManagerScheduling'
+    )
+    await migrateDown(
+      pool,
+      migrations,
+      migrations.filter(m => m.name > '104ManagerScheduling').length
+    )
     const earlier = ['100TeamHeadCoach', '101ManagerScheduling']
     const current = ['103TeamHeadCoach', '104ManagerScheduling']
     // An existing feature checkout has the same schema and the earlier recorded names.
-    await migrateUp(pool, migrations)
+    await migrateUp(pool, coachHistory)
     await pool.query(
       `insert into users(id, display_name) values ($1, 'Mookie Betts')`,
       [userIdOfGumbo(701)]
@@ -132,7 +151,7 @@ describe('migrations', function () {
         'update schema_migrations set name = $1 where name = $2',
         [earlier[index], name]
       )
-    const adopted = await migrateUp(pool, migrations)
+    const adopted = await migrateUp(pool, coachHistory)
     expect(adopted.applied).deep.equals(current)
     expect(await schemaSnapshot(pool)).deep.equals(before)
     expect(
@@ -157,11 +176,12 @@ describe('migrations', function () {
         )
       ).rows
     ).deep.equals([{ avoid_head_coach_conflicts: false }])
-    expect((await migrateUp(pool, migrations)).applied).deep.equals([])
+    expect((await migrateUp(pool, coachHistory)).applied).deep.equals([])
     expect(await migrateDown(pool, migrations, 2)).deep.equals(
       [...current].reverse()
     )
-    expect((await migrateUp(pool, migrations)).applied).deep.equals(current)
+    expect((await migrateUp(pool, coachHistory)).applied).deep.equals(current)
+    await migrateUp(pool, migrations)
   })
 
   it('creates the tables the app expects', async function () {
@@ -504,7 +524,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '101videographerRequests',
           '102localCopyRemoved',
           '103TeamHeadCoach',
-          '104ManagerScheduling'
+          '104ManagerScheduling',
+          '105chatHistoryRecovery'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

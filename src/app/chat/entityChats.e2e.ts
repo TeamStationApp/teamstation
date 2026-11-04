@@ -10,7 +10,8 @@ async function main(): Promise<void> {
     MAESTRO_DEVICE,
     TS_CHAT_FIXTURE,
     TS_CHAT_ARTIFACTS,
-    TS_CHAT_WEB
+    TS_CHAT_WEB,
+    TS_CHAT_API
   } = process.env
   assert(MAESTRO_D_CLIENT_ROOT != null && MAESTRO_D_CLIENT_ROOT !== '')
   assert(MAESTRO_D != null && MAESTRO_D !== '')
@@ -31,6 +32,8 @@ async function main(): Promise<void> {
   )
   const m = await daemon.attach({ device: MAESTRO_DEVICE })
   const fixture = JSON.parse(readFileSync(TS_CHAT_FIXTURE, 'utf8'))
+  // The page's own API, or an explicit one when the web build is served apart.
+  const api = TS_CHAT_API ?? '/api/v1'
   const phase = process.argv[2] ?? 'after'
   const read = async <T = unknown>(expression: string): Promise<T> =>
     JSON.parse(
@@ -91,7 +94,7 @@ async function main(): Promise<void> {
       if (tabs.includes('People'))
         assert.equal(tabs[tabs.indexOf('Chats') + 1], 'People')
       const expected: Array<{ id: string; scopeName: string }> = await read(
-        `(async()=>{const r=await fetch('/api/v1/chat/conversations');const chats=await r.json();return chats.filter(c=>c.scope?.type===${JSON.stringify(kind)}&&c.scope.id===${JSON.stringify(id)})})()`
+        `(async()=>{const r=await fetch(${JSON.stringify(api + '/chat/conversations')},{credentials:'include'});const chats=await r.json();return chats.filter(c=>c.scope?.type===${JSON.stringify(kind)}&&c.scope.id===${JSON.stringify(id)})})()`
       )
       const rows: Array<{ id: string; text: string }> = await read(
         `Array.from(document.querySelectorAll('[data-testid^="entity-chat-cnv"]')).map(x=>({id:x.dataset.testid.slice('entity-chat-'.length),text:x.textContent}))`
