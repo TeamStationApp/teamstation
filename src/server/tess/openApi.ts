@@ -346,12 +346,23 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
                       'weekStart',
                       'inputTokens',
                       'outputTokens',
+                      'cacheReadTokens',
+                      'cacheWriteTokens',
                       'requests'
                     ],
                     properties: {
                       weekStart: { type: 'string', format: 'date' },
                       inputTokens: { type: 'integer' },
                       outputTokens: { type: 'integer' },
+                      cacheReadTokens: {
+                        type: 'integer',
+                        description:
+                          'Of the input, read from the cache: its share is the hit rate'
+                      },
+                      cacheWriteTokens: {
+                        type: 'integer',
+                        description: 'Of the input, written to the cache'
+                      },
                       requests: { type: 'integer' }
                     }
                   }

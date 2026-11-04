@@ -64,15 +64,29 @@ export interface FakeCall {
   stopReason?: string
   /** It was asked for as a stream. */
   stream?: boolean
-  usage?: { input_tokens: number; output_tokens: number }
+  usage?: {
+    input_tokens: number
+    output_tokens: number
+    cache_creation_input_tokens: number
+    cache_read_input_tokens: number
+  }
 }
 
 export interface FakeAnthropic {
   /** The `baseUrl` Tess's settings point at, ending in `/v1`. */
   baseUrl: string
   calls: FakeCall[]
-  /** Every `/messages` call's tokens, added up as the usage week stores them. */
-  totals: () => { input: number; output: number; requests: number }
+  /**
+   * Every `/messages` call's tokens, added up as the usage week stores them:
+   * input is fresh input and the cache's writes and reads together.
+   */
+  totals: () => {
+    input: number
+    output: number
+    cacheRead: number
+    cacheWrite: number
+    requests: number
+  }
   setScript: (entries: ScriptEntry[]) => void
   close: () => Promise<void>
 }
@@ -175,6 +189,8 @@ export async function fakeAnthropic(
     script?: ScriptEntry[]
     /** The wait before each streamed piece of thinking or text. */
     streamDelayMs?: number
+    /** What each answer says it wrote to and read from the cache; none by default. */
+    cacheTokens?: { write: number; read: number }
   } = {}
 ): Promise<FakeAnthropic> {
   let script = options.script ?? []
@@ -213,7 +229,9 @@ export async function fakeAnthropic(
         const answer = answerFor(script, request)
         const usage = {
           input_tokens: FAKE_INPUT_TOKENS,
-          output_tokens: FAKE_OUTPUT_TOKENS
+          output_tokens: FAKE_OUTPUT_TOKENS,
+          cache_creation_input_tokens: options.cacheTokens?.write ?? 0,
+          cache_read_input_tokens: options.cacheTokens?.read ?? 0
         }
         calls.push({
           path,
@@ -230,11 +248,7 @@ export async function fakeAnthropic(
           model: body.model,
           content: answer.content,
           stop_reason: answer.stopReason ?? 'end_turn',
-          usage: {
-            ...usage,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0
-          }
+          usage
         }
         if (body.stream !== true) {
           send(200, message)
@@ -267,16 +281,22 @@ export async function fakeAnthropic(
     baseUrl: `http://${host}:${port}/v1`,
     calls,
     totals: () => {
-      const answered = calls.filter(call => call.usage != null)
+      const answered = calls.flatMap(call =>
+        call.usage == null ? [] : [call.usage]
+      )
+      const sum = (
+        count: (usage: (typeof answered)[number]) => number
+      ): number => answered.reduce((total, usage) => total + count(usage), 0)
       return {
-        input: answered.reduce(
-          (sum, call) => sum + call.usage!.input_tokens,
-          0
+        input: sum(
+          usage =>
+            usage.input_tokens +
+            usage.cache_creation_input_tokens +
+            usage.cache_read_input_tokens
         ),
-        output: answered.reduce(
-          (sum, call) => sum + call.usage!.output_tokens,
-          0
-        ),
+        output: sum(usage => usage.output_tokens),
+        cacheRead: sum(usage => usage.cache_read_input_tokens),
+        cacheWrite: sum(usage => usage.cache_creation_input_tokens),
         requests: answered.length
       }
     },

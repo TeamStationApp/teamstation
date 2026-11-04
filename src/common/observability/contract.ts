@@ -200,6 +200,9 @@ const tess = {
   ms: system.ms,
   it: number(10000000),
   ot: number(10000000),
+  /** Of `it`, read from the cache and written to it. */
+  cr: number(10000000),
+  cw: number(10000000),
   ec: error
 }
 

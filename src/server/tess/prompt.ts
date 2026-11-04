@@ -75,11 +75,15 @@ export interface RequestContext {
   user: UserContext
 }
 
-/** The three system blocks, the first two cached. */
+/**
+ * The three system blocks. The first two, with the tools before them, are the
+ * same for every person, so they are cached for an hour: one person's turn
+ * keeps them warm for the next person's.
+ */
 export function systemBlocks(context: RequestContext): SystemBlock[] {
   return [
-    { text: instructions(), cached: true },
-    { text: sitemapText(), cached: true },
+    { text: instructions(), cached: '1h' },
+    { text: sitemapText(), cached: '1h' },
     { text: contextText(context) }
   ]
 }

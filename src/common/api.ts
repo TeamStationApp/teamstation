@@ -2987,6 +2987,9 @@ export const asTessUsageWeek = asObject({
   weekStart: asString,
   inputTokens: asNumber,
   outputTokens: asNumber,
+  /** Of the input, read from the cache and written to it; 0 from an older server. */
+  cacheReadTokens: asOptional(asNumber, 0),
+  cacheWriteTokens: asOptional(asNumber, 0),
   requests: asNumber
 })
 export type TessUsageWeek = ReturnType<typeof asTessUsageWeek>

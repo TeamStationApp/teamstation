@@ -89,10 +89,14 @@ export interface MessageParam {
   content: string | ContentBlock[]
 }
 
-/** A block of the system prompt. A cached one is the end of a cached prefix. */
+/**
+ * A block of the system prompt. A cached one is the end of a cached prefix,
+ * kept for an hour or for five minutes. The longer comes first, as the
+ * provider requires.
+ */
 export interface SystemBlock {
   text: string
-  cached?: boolean
+  cached?: '1h' | '5m'
 }
 
 export interface ToolDefinition {
@@ -263,13 +267,7 @@ async function logged(
   const log: Record<string, Property> = {}
   try {
     const response = await call(log)
-    const { usage } = response
-    log.it = tokens(
-      usage.inputTokens +
-        usage.cacheCreationInputTokens +
-        usage.cacheReadInputTokens
-    )
-    log.ot = tokens(usage.outputTokens)
+    usageLog(log, response.usage)
     return response
   } catch (error) {
     // Only an answer that is not a message gets here unclassified.
@@ -287,6 +285,20 @@ async function logged(
       options.actor
     )
   }
+}
+
+/** What a call used, as the log takes it. */
+function usageLog(log: Record<string, Property>, usage: MessagesUsage): void {
+  log.it = tokens(
+    usage.inputTokens +
+      usage.cacheCreationInputTokens +
+      usage.cacheReadInputTokens
+  )
+  log.ot = tokens(usage.outputTokens)
+  // Of the input: read from the cache, and written to it. The share read is
+  // the hit rate.
+  log.cr = tokens(usage.cacheReadInputTokens)
+  log.cw = tokens(usage.cacheCreationInputTokens)
 }
 
 /** `POST /messages/count_tokens`: what the request would take as input. */
@@ -318,13 +330,16 @@ function bodyOf(
     model: settings.model,
     thinking: THINKING,
     system: request.system.map(block =>
-      block.cached === true
-        ? {
+      block.cached == null
+        ? { type: 'text', text: block.text }
+        : {
             type: 'text',
             text: block.text,
-            cache_control: { type: 'ephemeral' }
+            cache_control:
+              block.cached === '1h'
+                ? { type: 'ephemeral', ttl: '1h' }
+                : { type: 'ephemeral' }
           }
-        : { type: 'text', text: block.text }
     ),
     messages:
       request.cacheMessages === true

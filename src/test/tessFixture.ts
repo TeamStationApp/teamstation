@@ -10,6 +10,7 @@ import { userIdOfGumbo } from '../common/userId'
 import { attachDictation, type Recogniser } from '../server/dictation/route'
 import { dictationScopes } from '../server/dictation/scopes'
 import type { SttHandlers } from '../server/dictation/stt'
+import { startServerLogging } from '../server/observability/logging'
 import { devMediaRoutes } from '../server/routes/devMedia'
 import { mediaRoutes } from '../server/routes/media'
 import { tessRoutes } from '../server/routes/tess'
@@ -78,6 +79,8 @@ export interface TessFixture {
   links: { teamSettings: string; firstBaseAngle: string }
   /** The players' user ids: one user 101 may see, and one they may not. */
   players: { visible: string; hidden: string }
+  /** Every `tess_request` the server logged, as the log would send it. */
+  tessRequests: () => Array<{ L: string; P: Record<string, unknown> }>
   close: () => Promise<void>
 }
 
@@ -370,7 +373,20 @@ export async function tessFixture(
 ): Promise<TessFixture> {
   const withTess = options.tess !== false
   const withVideos = options.videos !== false
-  const model = await fakeAnthropic()
+  // Each answer writes to the cache and reads from it, in counts unlike its
+  // fresh input, so a count stored in the wrong column shows.
+  const model = await fakeAnthropic({ cacheTokens: { write: 300, read: 900 } })
+  // The server's operational log, kept here rather than sent.
+  const logged: Array<{ E: string; L: string; P: Record<string, unknown> }> = []
+  const logDirectory = await mkdtemp(join(tmpdir(), 'tess-log-'))
+  const stopLogging = startServerLogging({
+    dsn: 'https://public@logs.example.test/1',
+    directory: logDirectory,
+    role: 'server',
+    send: message => {
+      logged.push((message as { event: (typeof logged)[number] }).event)
+    }
+  })
   let origin = ''
   const reads = await slowReads(() => origin)
   // No dot directory on the way, which `sendFile` would refuse.
@@ -635,8 +651,11 @@ export async function tessFixture(
       videos,
       links,
       players,
+      tessRequests: () => logged.filter(row => row.E === 'tess_request'),
       close: async () => {
         detach?.()
+        await stopLogging()
+        await rm(logDirectory, { recursive: true, force: true })
         await fixture.h.close()
         await model.close()
         reads.server.close()
@@ -646,6 +665,8 @@ export async function tessFixture(
     }
   } catch (error) {
     detach?.()
+    await stopLogging()
+    await rm(logDirectory, { recursive: true, force: true })
     await f?.h.close().catch(() => undefined)
     await model.close().catch(() => undefined)
     reads.server.close()

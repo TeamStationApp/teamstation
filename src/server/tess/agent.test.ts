@@ -89,8 +89,16 @@ describe("Tess's agent loop", function () {
     const [request] = model.messageCalls()
     expect(request.model).equals('claude-sonnet-5-5')
     expect(request.system).length(3)
-    expect(request.system[0].cache_control).deep.equals({ type: 'ephemeral' })
-    expect(request.system[1].cache_control).deep.equals({ type: 'ephemeral' })
+    // The tools, the instructions and the sitemap are every person's, kept
+    // for an hour.
+    expect(request.system[0].cache_control).deep.equals({
+      type: 'ephemeral',
+      ttl: '1h'
+    })
+    expect(request.system[1].cache_control).deep.equals({
+      type: 'ephemeral',
+      ttl: '1h'
+    })
     expect(request.system[2].cache_control).equals(undefined)
     expect(request.tools.map((tool: Block) => tool.name)).deep.equals([
       'api_get',

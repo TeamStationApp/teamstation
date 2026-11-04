@@ -139,7 +139,14 @@ describe("Tess's routes", function () {
       contextTokens: 0,
       answering: false
     })
-    w.model.reply(say('Hello!', { input_tokens: 1200, output_tokens: 7 }))
+    w.model.reply(
+      say('Hello!', {
+        input_tokens: 200,
+        cache_creation_input_tokens: 600,
+        cache_read_input_tokens: 400,
+        output_tokens: 7
+      })
+    )
     const sent = await api.sendTessMessage('Hi Tess', {
       screen: {
         path: '/teams/tem_account',
@@ -167,6 +174,8 @@ describe("Tess's routes", function () {
         weekStart: weekStartUtc(new Date()),
         inputTokens: 1200,
         outputTokens: 7,
+        cacheReadTokens: 400,
+        cacheWriteTokens: 600,
         requests: 1
       }
     ])

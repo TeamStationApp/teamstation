@@ -31,8 +31,8 @@ const SETTINGS: TessSettings = {
 
 const REQUEST: MessagesRequest = {
   system: [
-    { text: 'You are Tess.', cached: true },
-    { text: '{"routes":[]}', cached: true },
+    { text: 'You are Tess.', cached: '1h' },
+    { text: '{"routes":[]}', cached: '5m' },
     { text: 'The user is Tony Gwynn.' }
   ],
   messages: [{ role: 'user', content: 'Where is our schedule?' }],
@@ -139,7 +139,7 @@ describe('Tess Messages API client', function () {
         {
           type: 'text',
           text: 'You are Tess.',
-          cache_control: { type: 'ephemeral' }
+          cache_control: { type: 'ephemeral', ttl: '1h' }
         },
         {
           type: 'text',
@@ -514,7 +514,9 @@ describe('Tess Messages API client', function () {
         op: 'assistant',
         status: 200,
         it: 9520,
-        ot: 75
+        ot: 75,
+        cr: 400,
+        cw: 9000
       })
       expect(ok.P.ms).a('number')
       expect(ok.P).not.has.property('ec')
@@ -526,9 +528,15 @@ describe('Tess Messages API client', function () {
         ['error', 200, 'invalid'],
         ['error', undefined, 'offline']
       ])
-      expect(failed.every(row => row.P.it == null && row.P.ot == null)).equals(
-        true
-      )
+      expect(
+        failed.every(
+          row =>
+            row.P.it == null &&
+            row.P.ot == null &&
+            row.P.cr == null &&
+            row.P.cw == null
+        )
+      ).equals(true)
       const text = sent.join('')
       expect(text).not.contains('Where is our schedule?')
       expect(text).not.contains('Let me look.')

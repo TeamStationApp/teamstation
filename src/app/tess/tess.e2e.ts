@@ -991,6 +991,8 @@ async function main(): Promise<void> {
           weekStart: string
           inputTokens: number
           outputTokens: number
+          cacheReadTokens: number
+          cacheWriteTokens: number
           requests: number
         }>
       }
@@ -1000,15 +1002,36 @@ async function main(): Promise<void> {
     expect(weeks[0]).deep.include({
       inputTokens: totals.input,
       outputTokens: totals.output,
+      cacheReadTokens: totals.cacheRead,
+      cacheWriteTokens: totals.cacheWrite,
       requests: totals.requests
     })
+    expect(totals.cacheRead).above(0)
+    expect(totals.cacheWrite).above(0)
+    expect(totals.cacheRead).not.equals(totals.cacheWrite)
+    // The log has each call's cache reads and writes beside its input.
+    const logged = t.tessRequests().filter(row => row.P.it != null)
+    expect(logged).length(totals.requests)
+    for (const row of logged) {
+      expect(row.P.cr).equals(900)
+      expect(row.P.cw).equals(300)
+    }
+    const hitRate = totals.cacheRead / totals.input
     await writeFile(
       join(out, 'usage-week.log'),
       [
         '# W16, after W1–W15c. The fake model answered every Messages call with',
-        `# ${totals.requests} calls; their input and output tokens add up to ${totals.input} and ${totals.output}.`,
+        `# ${totals.requests} calls; their input and output tokens add up to ${totals.input} and ${totals.output},`,
+        `# of the input ${totals.cacheRead} read from the cache and ${totals.cacheWrite} written to it: a hit rate of ${(hitRate * 100).toFixed(1)}%.`,
         '$ curl -s -b ts_session=… <origin>/api/v1/me/tess/usage',
         JSON.stringify({ weeks }, null, 2),
+        '',
+        '# The server log: each Messages call as tess_request, its input (it), output (ot),',
+        '# cache reads (cr) and cache writes (cw). Never the text.',
+        '$ grep tess_request <server log>',
+        ...logged.map(row =>
+          JSON.stringify({ E: 'tess_request', L: row.L, P: row.P })
+        ),
         ''
       ].join('\n')
     )
