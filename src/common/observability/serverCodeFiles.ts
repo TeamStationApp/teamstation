@@ -8,6 +8,8 @@ export const SERVER_CODE_FILES = new Set([
   'server/admin/mergeTeams.js',
   'server/admin/nodeAdministration.js',
   'server/admin/people.js',
+  'server/aiKeyFallback.js',
+  'server/aiKeys.js',
   'server/appLinks/appOrigin.js',
   'server/appLinks/config.js',
   'server/auth/apiKeyFamilies.js',

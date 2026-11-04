@@ -59,6 +59,7 @@ run('node_modules/.bin/mocha', [
   'src/server/serverConfig.test.ts',
   'src/server/nodeSettings.test.ts',
   'src/common/nodeSettings.test.ts',
+  'src/common/observability/errors.test.ts',
   'src/server/tess/messagesApi.test.ts',
   'src/server/tess/denyList.test.ts',
   'src/server/dictation/*.test.ts',
