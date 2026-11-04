@@ -351,7 +351,7 @@ class FakeEngine implements ChatScreenEngine {
     return this.waiting
   }
 
-  async approve(requestId: number): Promise<void> {
+  async approve(requestId: number | string): Promise<void> {
     this.calls.push(`approve ${requestId}`)
     if (requestId === 99) throw new Error('refused')
     this.waiting = this.waiting.filter(
@@ -922,6 +922,39 @@ describe('a conversation', function () {
     expect(field.readOnly).equals(true)
     expect(field.placeholder).equals('Waiting for history to unlock…')
     expect(titles).deep.equals(['Hawks Members'])
+  })
+
+  it('keeps composition enabled while older messages await recovery and approval', async function () {
+    await open(
+      view({
+        historyLocked: true,
+        historyRecovery: 'awaitingApproval',
+        sendReadiness: 'canStartFresh',
+        composer: 'enabled',
+        messages: [message({ status: 'locked', body: '' })]
+      })
+    )
+    expect(text()).contains('Older messages need approval')
+    expect(text()).contains('Locked message')
+    expect((labelled('Message') as HTMLTextAreaElement).readOnly).equals(false)
+    expect((labelled('Message') as HTMLTextAreaElement).placeholder).equals(
+      'Message'
+    )
+  })
+
+  it('explains repair without confusing it with history approval', async function () {
+    await open(
+      view({
+        historyLocked: true,
+        historyRecovery: 'waitingForHolder',
+        sendReadiness: 'repairRequired',
+        composer: 'locked',
+        messages: [message({ status: 'locked', body: '' })]
+      })
+    )
+    expect(text()).contains('This device needs its encryption keys restored')
+    expect(text()).contains('They may unlock')
+    expect((labelled('Message') as HTMLTextAreaElement).readOnly).equals(true)
   })
 
   it('hides the composer from an Announcements reader, who may still react', async function () {
