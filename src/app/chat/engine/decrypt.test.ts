@@ -23,7 +23,9 @@ import { sealMessage } from '../../../common/chatCrypto/seal'
 import { userIdOfGumbo } from '../../../common/userId'
 import { b64, newRecord, unb64, withEpochKey } from '../keyRecord'
 import { type EngineContext, KeyHolder } from './context'
-import { IdentityCache, openEpochKeys } from './decrypt'
+import { IdentityCache, openEnvelope, openEpochKeys } from './decrypt'
+import { ChatEngine } from './engine'
+import { fillGrants } from './grants'
 import {
   approveHistoryGrant,
   fillHistoryGrants,
@@ -31,6 +33,7 @@ import {
   readHistoryGrants
 } from './historyRecovery'
 import { genesisHead } from './log'
+import { epochForSend } from './rotate'
 import {
   ChatMemory,
   type ConversationState,
@@ -675,5 +678,191 @@ describe('historical client grants', () => {
       expect((error as Error).message).contains('Non-advancing')
     }
     expect(await fillHistoryGrants(ctx)).equals(0)
+  })
+  it('continues historical grants when the current queue fails', async () => {
+    const { ctx, posted } = await grantFixture()
+    const failure = new Error('current queue unavailable')
+    ctx.client.chatGrants = async () => {
+      throw failure
+    }
+    try {
+      await fillGrants(ctx)
+      expect.fail('current queue failure must remain visible')
+    } catch (error) {
+      expect(error).equals(failure)
+    }
+    expect(posted).length(1)
+  })
+  it('projects independent history states and groups approvals around a locally held range', async () => {
+    const { ctx, state, request } = await grantFixture()
+    const engine = new ChatEngine({
+      client: ctx.client,
+      userId: ctx.userId,
+      device: { name: 'Unit device', platform: 'web' },
+      store: {
+        load: async () => ctx.keys.record,
+        save: async () => {},
+        exists: async () => true,
+        wipe: async () => {}
+      }
+    })
+    // Seed the in-memory boundary; these projection tests do not enroll or use HTTP.
+    Object.assign(engine, { context: ctx, memory: ctx.memory })
+    engine.status = 'ready'
+    state.latest = 2
+    state.historyRecoveryVersion = 1
+    state.freshEpochsEnabled = true
+    state.hasEarlier = true
+    await ctx.keys.update(record => ({ ...record, epochKeys: {} }))
+    expect(engine.view('cnv_test')).include({
+      composer: 'enabled',
+      sendReadiness: 'canStartFresh',
+      historyRecovery: 'waitingForHolder',
+      earlierLost: false
+    })
+    ctx.memory.historyGrants = [
+      { ...request, userId: ctx.userId, requiresApproval: true }
+    ]
+    expect(engine.view('cnv_test')!.historyRecovery).equals('awaitingApproval')
+    ctx.memory.historyGrants[0].requiresApproval = false
+    ctx.memory.historyGrants[0].coveredThroughEpoch = 1
+    expect(engine.view('cnv_test')!.historyRecovery).equals('partial')
+    state.historyError = true
+    expect(engine.view('cnv_test')!.historyRecovery).equals('retryableError')
+    state.historyError = false
+    state.hasEarlier = false
+    expect(engine.view('cnv_test')!.historyRecovery).equals('none')
+    ctx.memory.historyGrants = [
+      { ...request, requiresApproval: true, id: '1', targetEpoch: 9 },
+      { ...request, requiresApproval: true, id: '2' },
+      { ...request, requiresApproval: false, id: '3' },
+      { ...request, requiresApproval: true, canApprove: false, id: '4' },
+      { ...request, requiresApproval: true, userId: ctx.userId, id: '5' }
+    ]
+    expect(engine.approvals()).length(1)
+    expect(engine.approvals()[0]).include({
+      requestId: 'history:1',
+      canApprove: false
+    })
+    await ctx.keys.update(record =>
+      withEpochKey(record, 'cnv_test', 1, new Uint8Array(32).fill(7))
+    )
+    expect(engine.approvals()[0]).include({
+      requestId: 'history:2',
+      canApprove: true
+    })
+    const post = ctx.client.postChatHistoryGrants
+    ctx.client.postChatHistoryGrants = async boxes => ({
+      ...(await post(boxes)),
+      results: boxes.map(box => ({
+        requestId: box.requestId,
+        coveredThroughEpoch: box.epoch,
+        status: 'completed' as const
+      }))
+    })
+    await engine.approve('history:2')
+    expect(engine.approvals()).length(0)
+    try {
+      await engine.approve('2')
+      expect.fail('ambiguous approval')
+    } catch (error) {
+      expect((error as Error).message).contains('Unknown approval')
+    }
+    engine.stop()
+  })
+  it('keeps pre-boundary messages recoverable and never reopens cleared ciphertext', async () => {
+    const { ctx, state } = await grantFixture()
+    await ctx.keys.update(record => ({ ...record, epochKeys: {} }))
+    const envelope: ChatMessage = {
+      id: 'msg_locked',
+      seq: 1,
+      conversationId: 'cnv_test',
+      epoch: 1,
+      senderUserId: ctx.userId,
+      senderIdentityId: 'cid_test',
+      kind: 'post',
+      targetIds: null,
+      nonce: '',
+      signature: '',
+      attachmentIds: [],
+      createdAt: '2026-10-01T00:00:00Z',
+      ciphertext: 'unopened',
+      clearedAt: null
+    }
+    expect(await openEnvelope(ctx, state, envelope)).deep.equals({
+      status: 'lost'
+    })
+    state.historyRecoveryVersion = 1
+    expect(await openEnvelope(ctx, state, envelope)).deep.equals({
+      status: 'locked'
+    })
+    expect(
+      await openEnvelope(ctx, state, { ...envelope, ciphertext: '' })
+    ).deep.equals({ status: 'cleared' })
+  })
+  it('repairs existing server-box ownership before any fresh publication', async () => {
+    const { ctx, state } = await grantFixture()
+    state.latest = 2
+    state.latestHasServerBox = true
+    let refreshes = 0
+    let publications = 0
+    ctx.refreshKeys = async () => {
+      refreshes++
+    }
+    ctx.client.postChatEpoch = async () => {
+      publications++
+      throw new Error('must not rotate')
+    }
+    try {
+      await epochForSend(ctx, 'cnv_test')
+      expect.fail('missing local keys')
+    } catch (error) {
+      expect((error as Error).message).contains('repaired')
+    }
+    expect(refreshes).equals(1)
+    expect(publications).equals(0)
+    ctx.refreshKeys = async () => {
+      await ctx.keys.update(record =>
+        withEpochKey(record, 'cnv_test', 2, new Uint8Array(32).fill(8))
+      )
+    }
+    expect(await epochForSend(ctx, 'cnv_test')).equals(2)
+    expect(publications).equals(0)
+    expect(state.latest).equals(2)
+  })
+  it('publishes fresh encryption for verified current recipients without rewriting old keys', async () => {
+    const { ctx, request } = await grantFixture()
+    const original = ctx.client.chatEpochs
+    let latest = 2
+    ctx.client.chatEpochs = async (...args) => ({
+      ...(await original(...args)),
+      latest,
+      freshEpochsEnabled: true
+    })
+    ctx.client.chatMembers = async () => [
+      {
+        userId: request.userId,
+        shortName: 'Peer',
+        avatarUrl: null,
+        label: '',
+        isModerator: false,
+        isApprover: true,
+        eligible: false,
+        hasIdentity: true,
+        identityKey: request.identityKey,
+        generation: 1
+      }
+    ]
+    const old = ctx.keys.record.epochKeys.cnv_test['1']
+    ctx.client.postChatEpoch = async (id, body) => {
+      expect(id).equals('cnv_test')
+      expect(body).include({ mode: 'fresh', epoch: 3, previousKeyBox: null })
+      expect(body.boxes.map(box => box.userId)).deep.equals([request.userId])
+      latest = 3
+      return { epoch: 3, chainBreak: true, boxed: 1, grantRequests: 0 }
+    }
+    expect(await epochForSend(ctx, 'cnv_test')).equals(3)
+    expect(ctx.keys.record.epochKeys.cnv_test['1']).equals(old)
+    expect(ctx.keys.record.epochKeys.cnv_test['3']).not.equals(undefined)
   })
 })
