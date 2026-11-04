@@ -1,6 +1,26 @@
 import assert from 'node:assert/strict'
 import { isAbsolute } from 'node:path'
 
+export const RECOVERY_BROWSER_FOLLOWUP_SCENARIOS = [
+  'S1',
+  'S2',
+  'S4',
+  'S4full',
+  'S5',
+  'S6',
+  'S9',
+  'S10',
+  'composeFull',
+  'picker',
+  'reviewNavigation',
+  'currentHistoryReply',
+  'pendingSend',
+  'review2Browser',
+  'reader',
+  'boundedMedia',
+  'chat117Words'
+] as const
+
 export interface RecoveryFixtureOwner {
   disposable: true
   source: string

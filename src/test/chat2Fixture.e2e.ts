@@ -221,7 +221,9 @@ const asFixture = asObject({
                 identifier: asString,
                 type: asString,
                 label: asString,
-                value: asString
+                // The state as the OS exposes it: a value, or a selection.
+                value: asOptional(asString),
+                selected: asOptional(asBoolean)
               })
             )
           })
@@ -243,7 +245,9 @@ const asFixture = asObject({
                 identifier: asString,
                 type: asString,
                 label: asString,
-                value: asString
+                // The state as the OS exposes it: a value, or a selection.
+                value: asOptional(asString),
+                selected: asOptional(asBoolean)
               })
             )
           })
