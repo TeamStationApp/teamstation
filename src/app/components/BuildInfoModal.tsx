@@ -99,7 +99,7 @@ export function BuildInfoModal({
           )}
           {storeUrl != null && storeUrl !== '' && (
             <Button
-              label={lstrings.about_app_store}
+              label={lstrings.about_testflight}
               kind="secondary"
               onPress={() => {
                 setFailed(false)

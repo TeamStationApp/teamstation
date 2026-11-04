@@ -26,7 +26,7 @@ export const enUs = {
   about_time: 'Built',
   about_server: 'App server URL',
   about_builds: 'Beta Builds',
-  about_app_store: 'App Store',
+  about_testflight: 'TestFlight',
   about_close: 'Close',
   about_close_button: 'Close build information',
   about_open_failed: 'Could not open the download site. Please try again.',

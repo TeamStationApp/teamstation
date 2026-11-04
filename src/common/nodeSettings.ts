@@ -66,7 +66,7 @@ export interface HighlightTimings {
   tailSec: number
 }
 
-/** Where the about screen sends someone: beta builds, and the App Store. */
+/** Where the about screen sends someone: beta builds, and TestFlight. */
 export interface DistributionSettings {
   /**
    * Where beta builds are downloaded. Empty hides that button. A node
@@ -74,7 +74,7 @@ export interface DistributionSettings {
    */
   betaBuildsUrl: string
   /**
-   * The App Store page, or a TestFlight link. Empty hides that button.
+   * The TestFlight download. Empty hides that button.
    */
   appStoreUrl: string
 }

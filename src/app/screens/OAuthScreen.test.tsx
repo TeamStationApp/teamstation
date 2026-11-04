@@ -672,7 +672,7 @@ describe('OAuth consent and loaded build information', () => {
     )
     await press('About TeamStation')
     await press('Beta Builds')
-    await press('App Store')
+    await press('TestFlight')
     expect(opened).deep.equals([
       'https://builds.example.test',
       'https://apps.example.test/app'
