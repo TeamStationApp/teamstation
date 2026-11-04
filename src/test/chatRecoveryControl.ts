@@ -35,21 +35,29 @@ export function recoveryControlBody(
       'pending-failure',
       'history-delay',
       'history-failure',
-      'history-outage'
+      'history-outage',
+      'epoch-delay'
     ].includes(action),
     'Unsupported fault action'
   )
-  const kind = action.startsWith('history-')
-    ? 'history'
-    : ['page', 'empty', 'delay'].includes(action)
-      ? 'page'
-      : 'send'
+  const kind =
+    action === 'epoch-delay'
+      ? 'epoch'
+      : action.startsWith('history-')
+        ? 'history'
+        : ['page', 'empty', 'delay'].includes(action)
+          ? 'page'
+          : 'send'
   const outcome =
     action === 'empty'
       ? 'empty'
-      : ['success', 'pending-success', 'delay', 'history-delay'].includes(
-            action
-          )
+      : [
+            'success',
+            'pending-success',
+            'delay',
+            'history-delay',
+            'epoch-delay'
+          ].includes(action)
         ? 'success'
         : 'failure'
   const delayMs = delay == null ? 0 : Number(delay)
