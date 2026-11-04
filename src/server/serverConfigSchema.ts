@@ -13,6 +13,9 @@ import { asAppLinksConfig, asOrigin } from './appLinks/config'
 import type { SpaceSettings } from './media/spacesHls'
 import { asOAuthConfig } from './oauth/config'
 
+/** How often the ingest syncs when nothing woke it sooner: `live.resyncMs`. */
+export const LIVE_RESYNC_MS = 15_000
+
 export const asServerConfig = asObject({
   /** Separate restricted login; never substitute the application owner. */
   analyticsReaderUrl: asOptional(asString),
@@ -413,6 +416,13 @@ export const asServerConfig = asObject({
        */
       freeDiskFloorGb: asOptional(asNumber, 10),
       /**
+       * How often the ingest reads every stream's row when nothing told it
+       * to. A `live_changes` notice, a deadline it found on a row and a gap
+       * in the change feed each wake it sooner; this catches what no notice
+       * covers, such as an account disabled or a role removed.
+       */
+      resyncMs: asOptional(asNumber, LIVE_RESYNC_MS),
+      /**
        * Where the ingest process answers `GET /health`, on 127.0.0.1 only.
        *
        * Absent, it is `listenPort + 1000`: every deployment already has a
@@ -428,13 +438,21 @@ export const asServerConfig = asObject({
       app: 'live',
       segmentSeconds: 4,
       freeDiskFloorGb: 10,
+      resyncMs: LIVE_RESYNC_MS,
       healthPort: undefined
     }
   )
 })
 export type ServerConfig = ReturnType<typeof asServerConfig>
 export type SmtpSettings = ServerConfig['smtp']
-/** `healthPort` is the ingest process's alone, and may be left out. */
-export type LiveSettings = Omit<ServerConfig['live'], 'healthPort'> & {
+/**
+ * `healthPort` is the ingest process's alone, and may be left out, as may
+ * `resyncMs`, which the ingest then takes as its default.
+ */
+export type LiveSettings = Omit<
+  ServerConfig['live'],
+  'healthPort' | 'resyncMs'
+> & {
   healthPort?: number
+  resyncMs?: number
 }

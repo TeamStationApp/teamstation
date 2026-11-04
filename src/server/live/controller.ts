@@ -5,6 +5,7 @@ import { join } from 'path'
 
 import { canFilm, roleScopesForUsers } from '../access'
 import { hashToken } from '../auth/tokens'
+import type { ChangeFeed, FeedSubscription } from '../changeFeed/feed'
 import { anyOf } from '../db/anyOf'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -26,7 +27,9 @@ import {
   soundStepProblem
 } from '../media/trackStarts'
 import { storeWallPoints } from '../media/wallTimeline'
+import type { ScoreboardClient } from '../scoreboard/scoreboardStore'
 import type { LiveSettings } from '../serverConfig'
+import { LIVE_RESYNC_MS } from '../serverConfigSchema'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
 import {
   isRecordingShape,
@@ -36,7 +39,7 @@ import {
   toRecording
 } from './finishVideo'
 import { OriginPublisher } from './originPublisher'
-import { quietStreamCanEnd } from './quietStream'
+import { quietStreamCanEnd, quietStreamEndsAt } from './quietStream'
 import { openSecret } from './secrets'
 import {
   absorbWriterPlaylist,
@@ -57,7 +60,12 @@ import {
   unlistedWriterSegments
 } from './splitter'
 import { placeByFrameWall } from './streamKeys'
-import { resumeScan, type ScanCursor, scanNewSegments } from './wallAnchors'
+import {
+  resumeScan,
+  type ScanCursor,
+  scanNewSegments,
+  SEGMENTS_PER_SCAN
+} from './wallAnchors'
 
 /**
  * What keeps the ingest and the database in step.
@@ -66,16 +74,30 @@ import { resumeScan, type ScanCursor, scanNewSegments } from './wallAnchors'
  * publish and where their video goes, and it says what happened. Everything
  * else — who owns the key, whether the window is open, what the video row
  * should say — lives here, and reaches the ingest through one short
- * synchronisation every second.
+ * synchronisation, `sync()`.
  *
- * That loop is also how the API talks to a stream. Nothing calls the ingest
- * directly: an endpoint writes the row and the next tick acts on it. It means
- * rotating a key or revoking one behaves the same
- * whether the API is one process or eight, and there is no channel between
- * them to go wrong.
+ * That is also how the API talks to a stream. Nothing calls the ingest
+ * directly: an endpoint writes the row, the row's trigger sends a
+ * `live_changes` notice when the write commits, and the sync it wakes acts on
+ * it. It means rotating a key or revoking one behaves the same whether the
+ * API is one process or eight, and there is no channel between them to go
+ * wrong. A sync also runs at the earliest moment a row said something will
+ * change on its own (a window closing, the reconnect grace running out, a
+ * quiet stream's end), after a gap in the change feed, when notices may have
+ * gone unheard, and every `live.resyncMs` whatever happened, for what no
+ * notice covers: an account disabled, a role taken away.
+ *
+ * Between syncs, a local timer that reads no stream's row keeps the uploads
+ * going, scans each stream's new segments for their wall clock and writes the
+ * status reports the ingest gathered, all of them in one statement.
  */
 
-const SYNC_INTERVAL_MS = 1000
+/** The local timer's period. */
+const LOCAL_TICK_MS = 1000
+/** How long a sync waits after a notice, so a burst of them is one sync. */
+const NOTICE_COALESCE_MS = 100
+/** How far past a row's deadline its sync runs, so the deadline has passed. */
+const DEADLINE_SLACK_MS = 5
 /** Why a stream whose recording an upload replaced was closed. */
 export const REPLACED_BY_UPLOAD =
   'the recording uploaded from the phone replaced it'
@@ -139,6 +161,15 @@ export interface LiveControllerOptions {
    * that again.
    */
   freeBytes?: (path: string) => Promise<number>
+  /**
+   * Where `live_changes` notices come from. Without one (a test, a script)
+   * a sync runs only at a row's deadline and on the safety resync.
+   */
+  feed?: ChangeFeed
+  /** The Valkey connection the ingest's playlist sink writes through. */
+  playlistClient?: ScoreboardClient
+  /** The local timer's period: a test runs it faster. */
+  tickMs?: number
 }
 
 interface Tracked {
@@ -148,16 +179,47 @@ interface Tracked {
   lookedUpAt?: number
 }
 
+/** The local timer, which reads no stream's row. */
 let timer: NodeJS.Timeout | undefined
 let sweepTimer: NodeJS.Timeout | undefined
 let options: LiveControllerOptions | undefined
-/** The sync still running, so a slow one is never overlapped by the next tick. */
+/** The sync still running, so a slow one is never overlapped by the next. */
 let syncing: Promise<void> | undefined
+/** The local tick still running, which the next one skips for. */
+let ticking: Promise<void> | undefined
+/** When a local tick last wrote the status reports, which sets the next. */
+let statusWrittenAt = 0
+/** What runs a sync when nothing asked for one: present while started. */
+let scheduler: { log: (message: string) => void; resyncMs: number } | undefined
+/** The one timer waiting to run the next sync, and when it fires. */
+let syncTimer: NodeJS.Timeout | undefined
+let syncAt = Infinity
+/** Somebody asked for a sync while one was running: one more follows it. */
+let syncAgain = false
+/** The earliest moment the last sync's rows said something will change. */
+let nextDeadline = Infinity
+/** The videos the last sync's rows named, whose own notices wake a sync. */
+let syncedVideos = new Set<string>()
+let feedSubscription: FeedSubscription | undefined
 /** The local-copy sweep still running, for a stop to wait on. */
 let sweeping: Promise<void> | undefined
 /** Live stream id → what the ingest was last told, so it can be untold. */
 const tracked = new Map<string, Tracked>()
-const lastStatusWrite = new Map<string, number>()
+/**
+ * Live stream id → its newest status report since the last write, and when
+ * a report last said it was publishing.
+ */
+const pendingStatus = new Map<
+  string,
+  { status: LiveStatus; at: Date; publishedAt: Date | null }
+>()
+/**
+ * Video id → its playlist's size and modification time when its wall clock
+ * was last scanned to its end, so an unchanged playlist is not read again.
+ */
+const scannedPlaylists = new Map<string, { size: number; mtimeMs: number }>()
+/** How many wall-clock scans have run, for a test to see one did not. */
+let wallScans = 0
 /** Publisher events newer than a sync's database snapshot. */
 const publisherActivity = new Map<string, Date>()
 /** In-flight key lookups must not restore a key removed while they awaited. */
@@ -176,6 +238,8 @@ interface PublishingOrigin {
   publisher: OriginPublisher
   current: LiveControllerOptions
   queued: boolean
+  /** Its video has gone, and its objects are being removed. */
+  removing: boolean
   refreshFinal: () => void
 }
 const origins = new Map<string, PublishingOrigin>()
@@ -197,12 +261,6 @@ function startOrigin(
     dir: liveVideoDir(current.mediaRoot, videoId),
     ffmpegPath: current.ffmpegPath,
     isFinal: name => final?.has(name) ?? true,
-    rowExists: async () =>
-      (await db
-        .selectFrom('videos')
-        .select('id')
-        .where('id', '=', videoId)
-        .executeTakeFirst()) != null,
     onFirstSegment: async probe => {
       await db
         .updateTable('videos')
@@ -235,6 +293,7 @@ function startOrigin(
     publisher,
     current,
     queued: false,
+    removing: false,
     refreshFinal: () => {
       final = finalSegments(liveStreamId)
     }
@@ -255,21 +314,35 @@ function queueOrigin(videoId: string, origin: PublishingOrigin): void {
   queue(`publish:${videoId}`, async () => {
     try {
       if (generation !== originGeneration) return
-      const { current } = origin
-      const row = await current.db
-        .selectFrom('videos')
-        .select('id')
-        .where('id', '=', videoId)
-        .executeTakeFirst()
-      if (row == null) {
-        await removeDeletedOrigin(current, videoId)
-        return
-      }
-      if (origin.publisher.closing) return
+      if (origin.publisher.closing || origin.removing) return
       origin.refreshFinal()
       await origin.publisher.flush()
     } finally {
       origin.queued = false
+    }
+  })
+}
+
+/**
+ * A video the last sync found gone: its publisher stops now, and once any
+ * upload in flight has finished — the same queue — everything it put in the
+ * Space is removed. That runs after the last upload, so an object uploaded
+ * while the API was deleting the video goes too. A removal that fails leaves
+ * the origin held, and the next sync tries it again.
+ */
+function removeDeletedVideo(
+  current: LiveControllerOptions,
+  videoId: string
+): void {
+  const origin = origins.get(videoId)
+  if (origin == null || origin.removing) return
+  origin.removing = true
+  origin.publisher.stop()
+  queue(`publish:${videoId}`, async () => {
+    try {
+      await removeDeletedOrigin(current, videoId)
+    } finally {
+      origin.removing = false
     }
   })
 }
@@ -289,7 +362,7 @@ export function liveVideoDir(mediaRoot: string, videoId: string): string {
 const BIND_TIMEOUT_MS = 10_000
 
 /**
- * Starts the ingest and the loop that keeps it in step with the database.
+ * Starts the ingest and what keeps it in step with the database.
  *
  * Nothing is touched until this process holds the RTMP port. A port somebody
  * else holds — a leftover server, another seat — means somebody else's
@@ -318,6 +391,12 @@ export async function startLiveController(
     log,
     resolve: async key => await resolveKey(key),
     onEvent: event => {
+      // A report is only held for the next batched write: nothing to wait
+      // behind.
+      if (event.type === 'status') {
+        if (generation === originGeneration) gatherStatus(event.status)
+        return
+      }
       queue(event.key, async () => {
         if (generation === originGeneration) await handle(event)
       })
@@ -372,10 +451,27 @@ export async function startLiveController(
   }
 
   if (generation !== originGeneration) return false
+  // Listening before the first sync, so nothing committed between that
+  // sync's read and the channel being in place goes unheard.
+  if (next.feed != null) {
+    feedSubscription = next.feed.subscribe('live_changes', {
+      onPayload: payload => {
+        if (wantsSync(payload)) scheduleSync(Date.now() + NOTICE_COALESCE_MS)
+      },
+      onListening: first => {
+        if (!first) scheduleSync(Date.now())
+      }
+    })
+    await feedSubscription.listening
+    if (generation !== originGeneration) return false
+  }
+  scheduler = { log, resyncMs: next.live.resyncMs ?? LIVE_RESYNC_MS }
+  statusWrittenAt = Date.now()
   timer = setInterval(() => {
-    syncOnce(log).catch(() => {})
-  }, SYNC_INTERVAL_MS)
+    localTick(next, generation, log)
+  }, next.tickMs ?? LOCAL_TICK_MS)
   timer.unref?.()
+  scheduleSync(Date.now())
 
   // Once on the way up as well as on the timer: a machine that was off for a
   // day comes back with a day's worth of copies to let go of, and waiting five
@@ -410,7 +506,7 @@ export async function drainLiveController(): Promise<void> {
   // finish from a sync or a sweep, an event from a writer that has just
   // exited.
   const inHand = (): Array<Promise<void>> =>
-    [syncing, sweeping, ...work.values()].filter(
+    [syncing, ticking, sweeping, ...work.values()].filter(
       (p): p is Promise<void> => p != null
     )
   for (let pending = inHand(); pending.length > 0; pending = inHand()) {
@@ -418,17 +514,91 @@ export async function drainLiveController(): Promise<void> {
   }
 }
 
-/** Test seam: whether the sync or the sweep is on its timer. */
+/** Test seam: whether the local timer, a sync's or the sweep's is set. */
 export function liveTimersRunningForTest(): boolean {
-  return timer != null || sweepTimer != null
+  return timer != null || syncTimer != null || sweepTimer != null
 }
 
 /**
- * One tick of the controller's timer: a sync, unless the last one is still
- * running. Under load a sync can take longer than the tick, and two at once
- * each read the ingest before the other wrote — the second then took a stream
- * the first had just opened for one that was no longer open, and dropped its
- * first publisher. Skipping the tick lets the next one see the settled state.
+ * Whether a `live_changes` payload asks for a sync: any stream or game
+ * notice, and a video's only when that video is one of the last sync's rows
+ * or has an origin here. Every other video's change — a programme's, an
+ * upload's — is somebody else's business. A payload that does not read is
+ * taken as a reason to look.
+ */
+function wantsSync(payload: string | undefined): boolean {
+  let notice: unknown
+  try {
+    notice = JSON.parse(payload ?? '')
+  } catch {
+    return true
+  }
+  if (notice == null || typeof notice !== 'object') return true
+  const { s, g, v } = notice as { s?: unknown; g?: unknown; v?: unknown }
+  if (s !== undefined || g !== undefined) return true
+  if (typeof v !== 'string') return true
+  return syncedVideos.has(v) || origins.has(v)
+}
+
+/**
+ * Runs a sync at `at`, or sooner if one is already due sooner. One timer
+ * holds the earliest: a notice's, a deadline's or the safety resync's.
+ */
+function scheduleSync(at: number): void {
+  if (scheduler == null || at >= syncAt) return
+  clearTimeout(syncTimer)
+  syncAt = at
+  syncTimer = setTimeout(
+    () => {
+      syncTimer = undefined
+      syncAt = Infinity
+      runSync()
+    },
+    Math.max(0, at - Date.now())
+  )
+  syncTimer.unref?.()
+}
+
+/**
+ * A sync now, and then the next one at the earliest of the deadlines it found
+ * and the safety resync. Asked for while one runs, another follows it at
+ * once: the running one may have read before what it was asked about
+ * committed.
+ */
+function runSync(): void {
+  const running = scheduler
+  if (running == null) return
+  if (syncing != null) {
+    syncAgain = true
+    return
+  }
+  syncOnce(running.log)
+    .then(() => {
+      if (scheduler !== running) {
+        // Stopped while it ran, and started again without a drain: the new
+        // start's sync, asked for while this one ran, follows it now, since
+        // nothing else will ask without a feed.
+        if (scheduler != null && syncAgain) {
+          syncAgain = false
+          scheduleSync(Date.now())
+        }
+        return
+      }
+      if (syncAgain) {
+        syncAgain = false
+        scheduleSync(Date.now())
+      }
+      scheduleSync(Math.min(Date.now() + running.resyncMs, nextDeadline))
+    })
+    .catch(() => {})
+}
+
+/**
+ * One sync, unless the last one is still running. Under load a sync can take
+ * a while, and two at once each read the ingest before the other wrote — the
+ * second then took a stream the first had just opened for one that was no
+ * longer open, and dropped its first publisher. The caller asks again once
+ * the running one has settled.
  */
 export async function syncOnce(
   log: (message: string) => void,
@@ -437,6 +607,11 @@ export async function syncOnce(
   if (syncing != null) return
   syncing = run()
     .catch((error: unknown) => {
+      // A failed sync found no deadline. The one that woke it has passed, and
+      // kept, it would schedule the next sync at once, which fails the same
+      // way for as long as the database does: the next waits for the resync
+      // or a notice instead.
+      nextDeadline = Infinity
       log(`live: ${String(error)}`)
     })
     .finally(() => {
@@ -565,6 +740,17 @@ export function stopLiveController(): void {
   originGeneration++
   for (const origin of origins.values()) origin.publisher.stop()
   origins.clear()
+  scheduler = undefined
+  feedSubscription?.stop()
+  feedSubscription = undefined
+  if (syncTimer != null) {
+    clearTimeout(syncTimer)
+    syncTimer = undefined
+  }
+  syncAt = Infinity
+  syncAgain = false
+  nextDeadline = Infinity
+  syncedVideos = new Set()
   if (timer != null) {
     clearInterval(timer)
     timer = undefined
@@ -575,7 +761,8 @@ export function stopLiveController(): void {
   }
   stopIngest()
   tracked.clear()
-  lastStatusWrite.clear()
+  pendingStatus.clear()
+  scannedPlaylists.clear()
   publisherActivity.clear()
   anchorCursors.clear()
   closedAfterGrace.clear()
@@ -636,14 +823,7 @@ async function handle(
   const { db } = current
 
   if (event.type === 'status') {
-    const at = lastStatusWrite.get(event.key) ?? 0
-    const now = Date.now()
-    // Every tick of every stream would be a write a second for a whole game.
-    // A stale snapshot is only ever two seconds stale, which is well inside
-    // how long a person takes to read it.
-    if (now - at < STATUS_WRITE_MS) return
-    lastStatusWrite.set(event.key, now)
-    await writeStatus(db, event.status)
+    gatherStatus(event.status)
     return
   }
 
@@ -671,26 +851,147 @@ async function handle(
   await stoppedPublishing(current, event.liveStreamId, event.reason)
 }
 
-async function writeStatus(
-  db: Kysely<Database>,
-  status: LiveStatus
-): Promise<void> {
-  const now = new Date()
-  await db
-    .updateTable('live_streams')
-    .set({
-      status,
-      status_at: now,
-      // Moved every time video is arriving, not only when a publish starts and
-      // stops. It is what "this stream has been silent for ten minutes" is
-      // measured from, and a stamp that never moved meant any game longer than
-      // ten minutes looked silent the moment anything else made the row read
-      // `idle` — a restart, most of all. The recording was then closed under a
-      // game that was still being played.
-      ...(status.ingress.publishing ? { last_published_at: now } : {})
+/** Holds a stream's newest report for the next batched write. */
+function gatherStatus(status: LiveStatus): void {
+  const at = new Date()
+  const held = pendingStatus.get(status.liveStreamId)
+  pendingStatus.set(status.liveStreamId, {
+    status,
+    at,
+    publishedAt: status.ingress.publishing ? at : (held?.publishedAt ?? null)
+  })
+}
+
+/**
+ * Writes every report gathered since the last write, in one statement.
+ *
+ * Every report of every stream would be a write a second for a whole game.
+ * A snapshot is only ever two seconds stale, which is well inside how long a
+ * person takes to read it. These columns send no `live_changes` notice, so
+ * the ingest does not wake itself with them.
+ *
+ * `last_published_at` moves every time video is arriving, not only when a
+ * publish starts and stops. It is what "this stream has been silent for ten
+ * minutes" is measured from, and a stamp that never moved meant any game
+ * longer than ten minutes looked silent the moment anything else made the row
+ * read `idle` — a restart, most of all. The recording was then closed under a
+ * game that was still being played. It never moves back: a report gathered
+ * before the publisher left is written after the stop stamped the row.
+ */
+async function writeStatuses(db: Kysely<Database>): Promise<void> {
+  if (pendingStatus.size === 0) return
+  const reports = [...pendingStatus.entries()]
+  const values = reports.map(
+    ([, report]) =>
+      sql`(${report.status.liveStreamId}, ${JSON.stringify(report.status)}::jsonb, ${report.at}::timestamptz, ${report.publishedAt}::timestamptz)`
+  )
+  await sql`update live_streams set status = v.status, status_at = v.at,
+  last_published_at = greatest(v.published_at, live_streams.last_published_at)
+from (values ${sql.join(values)}) as v(id, status, at, published_at)
+where live_streams.id = v.id`.execute(db)
+  // Only once written, and only the reports this wrote: a write that failed
+  // leaves them for the next, and a report gathered while it ran is newer
+  // than the one it wrote and waits for the next write as well.
+  for (const [liveStreamId, report] of reports)
+    if (pendingStatus.get(liveStreamId) === report)
+      pendingStatus.delete(liveStreamId)
+}
+
+/**
+ * The local timer: no stream's row is read here. Each tick queues every
+ * origin's flush, writes the gathered status reports every
+ * `STATUS_WRITE_MS`, and scans the wall clock of every stream whose playlist
+ * has changed. A tick still running when the next is due is not overlapped.
+ */
+function localTick(
+  current: LiveControllerOptions,
+  generation: number,
+  log: (message: string) => void
+): void {
+  if (ticking != null || generation !== originGeneration) return
+  // Due by the time since the last write, not by which tick this is: a tick
+  // that outlasts its interval makes the next one skip, and every tick that
+  // runs could then be one a count of ticks says is not due. A write that
+  // came due during a skipped tick is the next running tick's. Half a tick
+  // early counts, for the timer's jitter. A test's faster tick writes as many
+  // ticks apart as production's.
+  const tickMs = current.tickMs ?? LOCAL_TICK_MS
+  const now = Date.now()
+  const statusDue =
+    now - statusWrittenAt >=
+    (STATUS_WRITE_MS / LOCAL_TICK_MS) * tickMs - tickMs / 2
+  if (statusDue) statusWrittenAt = now
+  ticking = (async () => {
+    for (const [videoId, origin] of origins) queueOrigin(videoId, origin)
+    if (statusDue) {
+      try {
+        await writeStatuses(current.db)
+      } catch (error) {
+        log(`live: status: ${String(error)}`)
+      }
+    }
+    await scanWallClocks(current, generation)
+  })()
+    .catch((error: unknown) => {
+      log(`live: ${String(error)}`)
     })
-    .where('id', '=', status.liveStreamId)
-    .execute()
+    .finally(() => {
+      ticking = undefined
+    })
+}
+
+/** Test seam: how many wall-clock scans have run in this process. */
+export function wallScansForTest(): number {
+  return wallScans
+}
+
+/** Test seam: one local tick, statuses included, settled. */
+export async function localTickForTest(
+  current: LiveControllerOptions
+): Promise<void> {
+  await ticking
+  for (const [videoId, origin] of origins) queueOrigin(videoId, origin)
+  await writeStatuses(current.db)
+  await scanWallClocks(current, originGeneration)
+}
+
+/**
+ * Scans the new segments of every stream the ingest holds a video for, with
+ * a Space or without one, whose playlist's size or modification time moved
+ * since its last scan to the end. A scan that failed, or stopped at
+ * `SEGMENTS_PER_SCAN` with more to read, is tried again on the next tick
+ * whatever the playlist says.
+ */
+async function scanWallClocks(
+  current: LiveControllerOptions,
+  generation: number
+): Promise<void> {
+  const seen = new Set<string>()
+  for (const { videoId } of [...tracked.values()]) {
+    if (videoId == null || seen.has(videoId)) continue
+    if (generation !== originGeneration) return
+    seen.add(videoId)
+    const dir = liveVideoDir(current.mediaRoot, videoId)
+    const info = await stat(join(dir, LIVE_PLAYLIST_NAME)).catch(
+      () => undefined
+    )
+    if (info == null) continue
+    const held = scannedPlaylists.get(videoId)
+    if (
+      held?.size === info.size &&
+      held.mtimeMs === info.mtimeMs &&
+      anchorCursors.has(videoId)
+    )
+      continue
+    scannedPlaylists.delete(videoId)
+    if (await recordWallPoints(current, videoId, dir))
+      scannedPlaylists.set(videoId, {
+        size: info.size,
+        mtimeMs: info.mtimeMs
+      })
+  }
+  for (const videoId of [...scannedPlaylists.keys()])
+    if (!seen.has(videoId)) scannedPlaylists.delete(videoId)
 }
 
 /**
@@ -845,12 +1146,12 @@ async function hasMedia(mediaRoot: string, videoId: string): Promise<boolean> {
 /**
  * One key, looked up the moment somebody tries to use it.
  *
- * The timer below keeps the ingest's set of keys current, but a stream created
- * seconds ago is not in it yet — and that is exactly when a URL gets used,
+ * The sync below keeps the ingest's set of keys current, but a stream created
+ * a moment ago may not be in it yet — and that is exactly when a URL gets used,
  * because the person was just handed it. So a key the ingest does not know is
  * checked against the database once, rather than refused.
  *
- * The check is the same one the timer makes: the key exists, it has not been
+ * The check is the same one the sync makes: the key exists, it has not been
  * revoked or finished, and now is inside its window.
  */
 export async function resolveKey(
@@ -947,8 +1248,10 @@ function millisOf(value: Date | string | null | undefined): number | undefined {
 }
 
 /**
- * Every second: hand the ingest the keys that may publish now, take away the
- * ones that may not, and close anything whose window has run out.
+ * Hands the ingest the keys that may publish now, takes away the ones that may
+ * not, and closes anything whose window has run out. Notes the earliest
+ * moment a row says that will change by itself, for the next sync to run
+ * then, and removes what a video that has gone left in the Space.
  */
 export async function sync(
   /** The running controller's, except in a test that has its own. */
@@ -994,7 +1297,7 @@ export async function sync(
     .orderBy('live_streams.id')
     .execute()
 
-  // One syscall a second, and only asked at all when there is something that
+  // One syscall a sync, and only asked at all when there is something that
   // might want to start.
   const measure = current.freeBytes ?? freeBytes
   const room =
@@ -1024,6 +1327,17 @@ export async function sync(
     )
   }
   let failure: { error: unknown } | undefined
+  // The moments a row says something will change with nobody writing it.
+  let soonest = Infinity
+  const changesAt = (at: number | undefined): void => {
+    if (at != null && at > now.getTime() && at < soonest) soonest = at
+  }
+  // A moment that has come but whose action waits on the ingest (work in
+  // flight, a publisher still reported) writes no row and sends no notice:
+  // asked again a tick from now, not at the next resync.
+  const deferred = (): void => {
+    soonest = Math.min(soonest, Date.now() + LOCAL_TICK_MS)
+  }
   try {
     const authorized = await publishingAuthority(
       db,
@@ -1068,6 +1382,11 @@ export async function sync(
                 )
               )
             }
+      changesAt(millisOf(row.opensAt))
+      changesAt(millisOf(row.closesAt))
+      changesAt(quietStreamEndsAt(quietRow))
+      if (row.state === 'idle' && row.lastPublishedAt != null)
+        changesAt((millisOf(row.lastPublishedAt) ?? 0) + RECONNECT_GRACE_MS + 1)
       if (quietStreamCanEnd(quietRow, now)) {
         const key = tracked.get(row.id)?.key
         if (
@@ -1077,9 +1396,10 @@ export async function sync(
           finish(row.id, 'the stream was quiet after the scheduled game end')
           continue
         }
+        deferred()
       }
       if (row.videoId == null) continue
-      await closeAfterGrace(current, row, now)
+      if (await closeAfterGrace(current, row, now)) deferred()
 
       // A stream already running is left alone: cutting a game off part way
       // through is worse than letting it use the last of the disk, and ffmpeg
@@ -1125,7 +1445,6 @@ export async function sync(
       })
       tracked.set(row.id, { key, videoId: row.videoId })
       wanted.add(key)
-      await recordWallPoints(current, row.videoId, hlsDir)
     }
 
     // Anything the ingest still holds that this pass did not ask for: a revoked
@@ -1138,6 +1457,9 @@ export async function sync(
       clearLive(entry.key, 'no longer open')
       tracked.delete(liveStreamId)
     }
+
+    await settleOrigins(current, rows, generation)
+    nextDeadline = soonest + DEADLINE_SLACK_MS
   } catch (error) {
     failure = { error }
   }
@@ -1148,10 +1470,37 @@ export async function sync(
   // finish's, as it was when they ran in turn.
   const finished = await Promise.all(finishing)
   failure ??= finished.find(one => one != null)
-  if (generation === originGeneration) {
-    for (const [videoId, origin] of origins) queueOrigin(videoId, origin)
-  }
   if (failure != null) throw failure.error
+}
+
+/**
+ * What a sync's rows say about the origins held here. A video not among them
+ * is looked up, all of them in one read, and one whose row has gone is
+ * removed from the Space. The rows' videos are the ones whose own notices
+ * wake a sync.
+ */
+async function settleOrigins(
+  current: LiveControllerOptions,
+  rows: ReadonlyArray<{ videoId: string | null }>,
+  generation: number
+): Promise<void> {
+  const listed = new Set<string>()
+  for (const row of rows) {
+    if (row.videoId == null) continue
+    listed.add(row.videoId)
+  }
+  syncedVideos = listed
+  const unlisted = [...origins.keys()].filter(videoId => !listed.has(videoId))
+  if (unlisted.length === 0 || generation !== originGeneration) return
+  const present = await current.db
+    .selectFrom('videos')
+    .select('id')
+    .where('id', '=', anyOf(unlisted))
+    .execute()
+  if (generation !== originGeneration) return
+  const still = new Set(present.map(row => row.id))
+  for (const videoId of unlisted)
+    if (!still.has(videoId)) removeDeletedVideo(current, videoId)
 }
 
 /**
@@ -1163,7 +1512,8 @@ export async function sync(
  * process too. A stream the ingest says is publishing again is left alone
  * whatever the row says: the row learns of a reconnect a moment after the
  * ingest does, and closing the playlist then would put an `ENDLIST` under a
- * writer that has just started appending to it.
+ * writer that has just started appending to it. Says whether the close is
+ * due and waits on that, so the sync asks again soon.
  */
 async function closeAfterGrace(
   current: LiveControllerOptions,
@@ -1174,19 +1524,20 @@ async function closeAfterGrace(
     lastPublishedAt: Date | string | null
   },
   now: Date
-): Promise<void> {
+): Promise<boolean> {
   if (row.state !== 'idle' || row.lastPublishedAt == null) {
     closedAfterGrace.delete(row.id)
-    return
+    return false
   }
   const leftAt = new Date(row.lastPublishedAt).getTime()
-  if (now.getTime() - leftAt <= RECONNECT_GRACE_MS) return
-  if (closedAfterGrace.get(row.id) === leftAt) return
+  if (now.getTime() - leftAt <= RECONNECT_GRACE_MS) return false
+  if (closedAfterGrace.get(row.id) === leftAt) return false
   const key = tracked.get(row.id)?.key
   const away = (): boolean =>
     key == null || statusFor(key)?.ingress.publishing !== true
-  if (!away()) return
-  if (row.videoId == null) return
+  // Due, but the ingest still reports the publisher: the caller asks again.
+  if (!away()) return true
+  if (row.videoId == null) return false
   closedAfterGrace.set(row.id, leftAt)
   await closePlaylist(
     current.mediaRoot,
@@ -1194,11 +1545,12 @@ async function closeAfterGrace(
     current.log ?? console.log,
     away
   )
+  return false
 }
 
 /**
  * Adds the wall-clock points of the segments the stream has written since the
- * last tick.
+ * last scan. Says whether the scan reached the end of the playlist.
  *
  * Idle streams too, not only publishing ones: the writer finishes the last
  * segment of a publish after the publisher has gone, and a segment found only
@@ -1211,15 +1563,16 @@ async function closeAfterGrace(
  * points already stored (`resumeScan`), and one look reads a few segments at
  * most (`SEGMENTS_PER_SCAN`), so neither a long stream nor a backlog holds the
  * tick up. The scan reads the clock itself, once it has read the playlist:
- * the tick's own `now` comes before its database and disk work, which can
- * take seconds on a busy machine.
+ * a `now` taken before the tick's disk work, which can take seconds on a busy
+ * machine, would date segments listed meanwhile too early.
  */
 async function recordWallPoints(
   current: LiveControllerOptions,
   videoId: string,
   hlsDir: string
-): Promise<void> {
+): Promise<boolean> {
   const say = current.log ?? console.log
+  wallScans++
   try {
     const cursor =
       anchorCursors.get(videoId) ??
@@ -1229,8 +1582,10 @@ async function recordWallPoints(
     anchorCursors.set(videoId, scanned.cursor)
     for (const problem of scanned.unreadable)
       say(`live: wall clock of ${videoId}: passed over ${problem}`)
+    return scanned.cursor.segments - cursor.segments < SEGMENTS_PER_SCAN
   } catch (error) {
     say(`live: wall clock of ${videoId}: ${String(error)}`)
+    return false
   }
 }
 
@@ -1245,7 +1600,7 @@ async function mayPublish(
 
 /**
  * The ids of those rows whose key may publish now, in one set of reads however
- * many rows there are: the sync loop asks about all of them once a second.
+ * many rows there are: each sync asks about all of them.
  */
 export async function publishingAuthority(
   db: Kysely<Database>,
@@ -1319,10 +1674,10 @@ async function revokePublishing(
 /**
  * Writes a reason on a stream's row, but only when it is news.
  *
- * This loop runs every second, and a condition it reports — no disk, a key it
- * cannot read — lasts until somebody does something about it. Writing the same
- * sentence eighty-six thousand times a day would say nothing new and would
- * move `updated_at` every second of it.
+ * The sync runs many times a day, and a condition it reports — no disk, a key
+ * it cannot read — lasts until somebody does something about it. Writing the
+ * same sentence every sync would say nothing new, and would move
+ * `updated_at` each time.
  */
 async function sayOnce(
   db: Kysely<Database>,

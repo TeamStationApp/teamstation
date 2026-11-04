@@ -19,3 +19,21 @@ export function quietStreamCanEnd(
     now.getTime() - gameEnd >= QUIET_END_DELAY_MS
   )
 }
+
+/**
+ * When an idle stream next becomes eligible to end, in milliseconds: ten
+ * minutes after the later of its last publish and its game's scheduled end.
+ * Undefined when nothing but a write can make it eligible: a stream that is
+ * not idle, or a game with no end.
+ */
+export function quietStreamEndsAt(row: {
+  state: string
+  lastPublishedAt: Date | string | null
+  opensAt: Date | string
+  gameEndAt: Date | string | null
+}): number | undefined {
+  if (row.state !== 'idle' || row.gameEndAt == null) return undefined
+  const quietSince = new Date(row.lastPublishedAt ?? row.opensAt).getTime()
+  const gameEnd = new Date(row.gameEndAt).getTime()
+  return Math.max(quietSince, gameEnd) + QUIET_END_DELAY_MS
+}
