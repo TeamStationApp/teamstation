@@ -53,7 +53,6 @@ export interface OriginPublisherOptions {
   dir: string
   ffmpegPath: string
   isFinal: (name: string) => boolean
-  rowExists: () => Promise<boolean>
   onFirstSegment: (probe: ProbedStream) => Promise<void>
   /** The recording's largest picture, when a later part has changed it. */
   onLargestPicture: (size: PictureSize) => Promise<void>
@@ -70,6 +69,10 @@ export interface OriginFlush {
 /**
  * One video's remote origin. Its caller serializes start, flush and close on
  * the video's own queue, so a slow store never holds the live controller tick.
+ *
+ * It asks the database nothing. Whether the video still exists is the
+ * controller's to know, from its own sync: a deleted video's publisher is
+ * stopped there, and a stopped publisher writes nothing more.
  */
 export class OriginPublisher {
   closing = false
@@ -92,7 +95,7 @@ export class OriginPublisher {
 
   /** Seed from remote checksums, never one GET per segment. */
   async start(): Promise<void> {
-    if (this.started || !(await this.active())) return
+    if (this.started || !this.active()) return
     const body = await this.localPlaylist()
     if (body == null) return
     const { space, videoId } = this.options
@@ -135,11 +138,11 @@ export class OriginPublisher {
   }
 
   async flush(options: { close?: boolean } = {}): Promise<OriginFlush> {
-    if ((this.closing && options.close !== true) || !(await this.active()))
+    if ((this.closing && options.close !== true) || !this.active())
       return { complete: false }
     await this.start()
     const onDisk = await this.localPlaylist()
-    if (onDisk == null || !(await this.active())) return { complete: false }
+    if (onDisk == null || !this.active()) return { complete: false }
     const playlist = parseMediaPlaylist(onDisk)
     if (playlist.segments.length === 0) return { complete: false }
     // Validate every name before performing any write.
@@ -180,7 +183,7 @@ export class OriginPublisher {
     }
     const body = publishedPlaylist(onDisk, acknowledged, this.published)
     const exposed = parseMediaPlaylist(body).segments
-    if (exposed.length > 0 && (await this.active())) {
+    if (exposed.length > 0 && this.active()) {
       if (body !== this.lastBody) {
         await this.putPlaylist('index.m3u8', body)
         this.lastBody = body
@@ -188,7 +191,7 @@ export class OriginPublisher {
       }
       if (!this.notified && acknowledged.size > 0) {
         this.metadata ??= await this.probe(body)
-        if (!this.masterWritten && (await this.active())) {
+        if (!this.masterWritten && this.active()) {
           const { width, height } = this.metadata
           await this.putPlaylist(
             'master.m3u8',
@@ -200,7 +203,7 @@ export class OriginPublisher {
           )
           this.masterWritten = true
         }
-        if (await this.active()) {
+        if (this.active()) {
           await this.options.onFirstSegment(this.metadata)
           this.notified = true
         }
@@ -283,9 +286,7 @@ export class OriginPublisher {
     }
   }
 
-  private async active(): Promise<boolean> {
-    if (this.stopped) return false
-    if (!(await this.options.rowExists())) this.stop()
+  private active(): boolean {
     return !this.stopped
   }
 
@@ -319,10 +320,10 @@ export class OriginPublisher {
 
   private async publishFile(name: string): Promise<boolean> {
     if (await this.unchanged(name, this.acknowledged.get(name))) return true
-    if (!(await this.active())) return false
+    if (!this.active()) return false
     this.acknowledged.delete(name)
     const held = await this.snapshot(name)
-    if (held == null || !(await this.active())) return false
+    if (held == null || !this.active()) return false
     // FFmpeg empties its init file as it starts and writes it when its first
     // segment closes. Only a recording's first writer, or one on a playlist
     // that lists nothing, does that to `init.mp4`: the next pass gets it.
@@ -343,7 +344,7 @@ export class OriginPublisher {
   }
 
   private async putPlaylist(name: string, body: string): Promise<void> {
-    if (!(await this.active())) return
+    if (!this.active()) return
     await putObject({
       space: this.options.space,
       key: objectKey(this.options.videoId, name),
