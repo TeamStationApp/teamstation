@@ -9,6 +9,7 @@ import {
   maestroClient,
   type MaestroDevice
 } from '../../test/chat117Maestro.e2e'
+import { mixedVersionRecovery } from './chatHistoryRecoveryCompatibility.e2e'
 import { partialRecovery } from './chatHistoryRecoveryPartial.e2e'
 
 interface Device extends MaestroDevice {
@@ -32,11 +33,19 @@ interface Fixture {
   artifacts: string
 }
 async function main(): Promise<void> {
+  if (process.argv[2] === 'E8' || process.argv[2] === 'E10') {
+    await mixedVersionRecovery(process.argv[2])
+    return
+  }
   if (
     process.argv[2] === 'E3' ||
     process.argv[2] === 'E4' ||
     process.argv[2] === 'E5' ||
     process.argv[2] === 'E6' ||
+    process.argv[2] === 'E9' ||
+    process.argv[2] === 'E11' ||
+    process.argv[2] === 'E12' ||
+    process.argv[2] === 'E13' ||
     process.argv[2] === 'E7'
   ) {
     await partialRecovery(process.argv[2])
@@ -74,7 +83,7 @@ async function main(): Promise<void> {
       driver: 'cdp',
       url: f.origin,
       extra: {
-        browser: executablePath(),
+        browser: await executablePath(),
         windowSize: '1280x900',
         userDataDir: profile
       }
