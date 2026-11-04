@@ -30,7 +30,8 @@ describe('existing chat runner fault command protocol', () => {
       ['pending-success', 'send', 'success'],
       ['pending-failure', 'send', 'failure'],
       ['history-delay', 'history', 'success'],
-      ['history-failure', 'history', 'failure']
+      ['history-failure', 'history', 'failure'],
+      ['epoch-delay', 'epoch', 'success']
     ]
     for (const [action, kind, outcome] of cases)
       assert.deepEqual(
