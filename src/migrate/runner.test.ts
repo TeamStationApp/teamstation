@@ -595,7 +595,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '107chatUserBlocks',
           '108eventChildrenHold',
           '109teamRosterVersions',
-          '110dropSyncClock'
+          '110dropSyncClock',
+          '111chatHistoryRecovery'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

@@ -67,7 +67,7 @@ export interface Chat2Device {
     args: Args,
     options?: { signal: AbortSignal }
   ) => Promise<unknown>
-  inputText: (args: Args) => Promise<unknown>
+  inputText: (args: Args, options?: { signal: AbortSignal }) => Promise<unknown>
   copyTextFrom: (
     args: Args
   ) => Promise<{ data?: unknown; element?: { bounds?: Bounds } }>
@@ -221,6 +221,14 @@ interface CaptureViewport {
   scrollX: number
   scrollY: number
 }
+
+/**
+ * The iOS simulator driver's snapshot holds at most this many nodes. It was
+ * 300, which a long chat history's off-screen mounted rows filled before the
+ * controls on screen; the lookups that read past the cap remain for a tree
+ * larger still.
+ */
+export const IOS_SIMULATOR_SNAPSHOT_CAP = 5000
 
 export interface PublicNode {
   id?: string
@@ -452,6 +460,187 @@ export async function pollNotVisible(
   }
 }
 
+/**
+ * The iOS simulator's snapshot stops at a node cap, so a long history can
+ * leave an exact-text element out, and the driver resolves only a selector
+ * without pattern characters through its uncapped element query. An exact
+ * pattern that was not found is asked once more as its literal text, and
+ * the answer counts only when the found element's label is that text.
+ */
+export async function queryExactVisible(
+  once: (args: Args, options?: { signal: AbortSignal }) => Promise<unknown>,
+  args: Args,
+  options?: { signal: AbortSignal }
+): Promise<unknown> {
+  try {
+    return await once(args, options)
+  } catch (error) {
+    return await queryExactLiteral(once, args, error, options)
+  }
+}
+
+/**
+ * A tap on an exact text that the capped snapshot left out lands on the
+ * element the literal query finds with exactly that label, at its centre.
+ */
+export async function queryExactTap(
+  tapOnce: (args: Args, options?: { signal: AbortSignal }) => Promise<unknown>,
+  visibleOnce: (
+    args: Args,
+    options?: { signal: AbortSignal }
+  ) => Promise<unknown>,
+  tapOnPoint: (
+    args: Args,
+    options?: { signal: AbortSignal }
+  ) => Promise<unknown>,
+  args: Args,
+  options?: { signal: AbortSignal }
+): Promise<unknown> {
+  try {
+    return await tapOnce(args, options)
+  } catch (error) {
+    const found = await queryExactLiteral(visibleOnce, args, error, options)
+    const box = bounds(object(object(found).element).bounds)
+    if (box == null || box.width <= 0 || box.height <= 0) throw error
+    return await tapOnPoint(
+      {
+        x: Math.round(box.x + box.width / 2),
+        y: Math.round(box.y + box.height / 2)
+      },
+      options
+    )
+  }
+}
+
+/**
+ * Text typed into a field named by its id. The iOS simulator driver finds an
+ * id by substring in its capped snapshot, so `chat-composer` can resolve to
+ * `chat-composer-band` when the field itself was capped out; it then taps
+ * the band's centre and checks the band for the text. A field the snapshot
+ * holds exactly is typed into as before; otherwise the field is found by its
+ * exact identifier query (a text selector, which the snapshot compares only
+ * with labels and values), tapped at its centre, and typed into there. The
+ * driver's own check needs the id again, so each caller reads the field back.
+ */
+export async function queryExactInput(
+  inputOnce: (
+    args: Args,
+    options?: { signal: AbortSignal }
+  ) => Promise<unknown>,
+  visibleOnce: (
+    args: Args,
+    options?: { signal: AbortSignal }
+  ) => Promise<unknown>,
+  tapOnPoint: (
+    args: Args,
+    options?: { signal: AbortSignal }
+  ) => Promise<unknown>,
+  args: Args,
+  options?: { signal: AbortSignal },
+  record: (step: Args) => void = () => {}
+): Promise<unknown> {
+  const id = args.id
+  if (
+    typeof id !== 'string' ||
+    id === '' ||
+    /[*+?^$\\(){}[\]|]/.test(id) ||
+    !Object.keys(args).every(key => key === 'id' || key === 'text')
+  )
+    return await inputOnce(args, options)
+  try {
+    await visibleOnce({ id: exactText(id), timeout: 1 }, options)
+    return await inputOnce(args, options)
+  } catch (error) {
+    if (code(error) !== 'COMMAND_FAILED') throw error
+  }
+  const element = object(
+    object(await visibleOnce({ text: id, timeout: 3000 }, options)).element
+  )
+  assert(
+    exactIdAnswer(element, id),
+    'Exact queried native input field required: ' + id
+  )
+  const box = need(
+    bounds(element.bounds),
+    'Queried input field bounds required'
+  )
+  assert(
+    box.width > 0 && box.height > 0,
+    'Positive queried input field required'
+  )
+  const point = {
+    x: Math.round(box.x + box.width / 2),
+    y: Math.round(box.y + box.height / 2)
+  }
+  await tapOnPoint(point, options)
+  record({
+    name: 'iOS input field found by its exact identifier query',
+    id,
+    point,
+    outcome: 'passed'
+  })
+  return await inputOnce({ text: args.text }, options)
+}
+
+/** The exact pattern's literal, asked once; rethrows `error` otherwise. */
+async function queryExactLiteral(
+  once: (args: Args, options?: { signal: AbortSignal }) => Promise<unknown>,
+  args: Args,
+  error: unknown,
+  options?: { signal: AbortSignal }
+): Promise<unknown> {
+  const pattern = args.text
+  const literal =
+    typeof pattern === 'string' &&
+    Object.keys(args).every(key => key === 'text' || key === 'timeout') &&
+    /^\^.*\$$/s.test(pattern)
+      ? pattern.slice(1, -1).replace(/\\(.)/gs, '$1')
+      : undefined
+  if (
+    code(error) !== 'COMMAND_FAILED' ||
+    literal == null ||
+    literal === '' ||
+    exactText(literal) !== pattern ||
+    /[*+?^$\\(){}[\]|]/.test(literal)
+  )
+    throw error
+  let found: unknown
+  try {
+    // One snapshot pass and one element query.
+    found = await once({ text: literal, timeout: 1 }, options)
+  } catch {
+    throw error
+  }
+  const element =
+    found != null && typeof found === 'object'
+      ? (found as { element?: Args }).element
+      : undefined
+  const label =
+    typeof element?.accessibilityLabel === 'string' &&
+    element.accessibilityLabel !== ''
+      ? element.accessibilityLabel
+      : element?.text
+  if (label !== literal) throw error
+  return found
+}
+
+/**
+ * Whether the iOS simulator driver's answer to an id lookup is that exact
+ * element. The capped snapshot matches an id as a substring and answers with
+ * the matched element's own identifier, so `chat-composer` can come back as
+ * `chat-composer-band`; the uncapped element query matches the identifier
+ * exactly and answers with XCTest's element UUID instead.
+ */
+export function exactIdAnswer(element: Args, id: string): boolean {
+  return (
+    element.id === id ||
+    (typeof element.id === 'string' &&
+      /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(
+        element.id
+      ))
+  )
+}
+
 /** The Android composer's placeholder, which an empty field reads as. */
 export const ANDROID_COMPOSER_PLACEHOLDER = 'Message'
 
@@ -474,7 +663,10 @@ export function phoneTyping(
 
 /** iOS exposes no focus flag: require the actual composer above an observed IME. */
 export async function readIosComposerKeyboard(
-  ui: Pick<Chat2UI, 'device'> & { physical?: boolean },
+  ui: Pick<Chat2UI, 'device'> & {
+    physical?: boolean
+    omitsEnabledTrue?: boolean
+  },
   signal: AbortSignal
 ): Promise<{
   nodes: PublicNode[]
@@ -497,6 +689,15 @@ export async function readIosComposerKeyboard(
     child.y >= parent.y - 1 &&
     child.x + child.width <= parent.x + parent.width + 1 &&
     child.y + child.height <= parent.y + parent.height + 1
+  const same = (a: Bounds, b: Bounds): boolean =>
+    Math.abs(a.x - b.x) < 1 &&
+    Math.abs(a.y - b.y) < 1 &&
+    Math.abs(a.width - b.width) < 1 &&
+    Math.abs(a.height - b.height) < 1
+  // The keyboard reports its final frame at once while the composer band is
+  // still moving with it: geometry that is not yet right is read again until
+  // it has settled, and only then judged.
+  let previous: { keyboard: Bounds; band: Bounds } | undefined
   for (;;) {
     signal.throwIfAborted()
     const nodes = flattenPublicHierarchy(await api.hierarchy({ signal }))
@@ -518,11 +719,12 @@ export async function readIosComposerKeyboard(
         'Unique exact public element required: ' + id
       )
       if (observed[0]?.bounds != null) {
-        // A phone's normalized hierarchy omits enabled:true, as Android's
-        // does; an explicit false is still refused.
+        // WebDriverAgent's normalized hierarchy, on a phone or a simulator,
+        // omits enabled:true, as Android's does; an explicit false is still
+        // refused.
         if (id === 'chat-composer')
           assert(
-            ui.physical === true
+            ui.omitsEnabledTrue === true || ui.physical === true
               ? observed[0].enabled !== false
               : observed[0].enabled === true,
             'Enabled iOS composer required'
@@ -537,10 +739,13 @@ export async function readIosComposerKeyboard(
         object(await api.assertVisible({ id, timeout: 120 }, { signal }))
           .element
       )
-      assert(element.id === id, 'Exact positive public element required: ' + id)
+      assert(
+        exactIdAnswer(element, id),
+        'Exact positive public element required: ' + id
+      )
       if (id === 'chat-composer')
         assert(
-          ui.physical === true
+          ui.omitsEnabledTrue === true || ui.physical === true
             ? element.enabled !== false
             : element.enabled === true,
           'Enabled iOS composer required'
@@ -558,6 +763,22 @@ export async function readIosComposerKeyboard(
     const history = await measure('chat-message-history')
     const band = await measure('chat-composer-band')
     const composer = await measure('chat-composer')
+    const valid =
+      inside(band, history) &&
+      inside(composer, band) &&
+      inside(keyboard, history) &&
+      band.y + band.height <= keyboard.y + 1
+    const settled =
+      previous != null &&
+      same(previous.keyboard, keyboard) &&
+      same(previous.band, band)
+    previous = { keyboard, band }
+    // Geometry that is already right needs no second read; wrong geometry
+    // is judged once it has stopped moving.
+    if (!valid && !settled) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      continue
+    }
     assert(
       inside(band, history) &&
         inside(composer, band) &&
@@ -794,7 +1015,10 @@ export async function dismissIosChatKeyboard(
         )
       ).element
     )
-    assert(found.id === id, 'Exact positive public element required: ' + id)
+    assert(
+      exactIdAnswer(found, id),
+      'Exact positive public element required: ' + id
+    )
     return need(bounds(found.bounds), 'Measured public bounds required: ' + id)
   }
   const geometry = async (
@@ -1623,17 +1847,36 @@ export function androidClosedCaptureGeometry(
 /** Verify an observed native value against one exact public raw-node identity. */
 export function observedNativeValue(
   raw: Uint8Array,
-  expected: { identifier: string; type: string; label: string; value: string }
-): { identifier: string; type: string; label: string; value: string } {
+  expected: {
+    identifier: string
+    type: string
+    label: string
+    value?: string
+    selected?: boolean
+  }
+): {
+  identifier: string
+  type: string
+  label: string
+  value?: string
+  selected?: boolean
+} {
   assert(
     expected != null && typeof expected === 'object',
     'Observed raw value predicate required'
   )
-  for (const field of ['identifier', 'type', 'label', 'value'] as const)
+  for (const field of ['identifier', 'type', 'label'] as const)
     assert(
       typeof expected[field] === 'string',
       'Exact observed raw strings required'
     )
+  // One observed state: a value, or (as an iOS 27 segment exposes its
+  // choice) a selection.
+  assert(
+    (typeof expected.value === 'string') !==
+      (typeof expected.selected === 'boolean'),
+    'Exactly one observed raw value or selection required'
+  )
   assert(
     expected.type !== '' &&
       (expected.identifier !== '' || expected.label !== ''),
@@ -1655,10 +1898,17 @@ export function observedNativeValue(
     matches.length === 1,
     'Unique exact observed native raw identity required'
   )
-  assert(
-    typeof matches[0].value === 'string' && matches[0].value === expected.value,
-    'Actual native raw value differs from observed predicate'
-  )
+  if (typeof expected.value === 'string')
+    assert(
+      typeof matches[0].value === 'string' &&
+        matches[0].value === expected.value,
+      'Actual native raw value differs from observed predicate'
+    )
+  else
+    assert(
+      (matches[0].selected === true) === expected.selected,
+      'Actual native raw selection differs from observed predicate'
+    )
   return { ...expected }
 }
 
@@ -1813,6 +2063,10 @@ export class Chat2UI {
   readonly native: boolean
   readonly steps: Args[] = []
   readonly captures: Args[] = []
+  /** Ids a running search reads past the iOS simulator's snapshot cap. */
+  private sought?: Set<string>
+  /** The whole snapshot the latest iOS element read came from. */
+  private lastIosReadNodes?: PublicNode[]
   readonly runDir: string
   readonly binding: ReturnType<typeof sourceBinding>
   readonly deadline: AbortSignal
@@ -1924,6 +2178,15 @@ export class Chat2UI {
       : await this.dom(
           'return {width:innerWidth,height:innerHeight,coarse:matchMedia("(pointer:coarse)").matches,fine:matchMedia("(pointer:fine)").matches,dpr:devicePixelRatio,userAgent:navigator.userAgent}'
         )
+  }
+
+  /** WebDriverAgent's normalized hierarchy leaves out enabled:true. */
+  get omitsEnabledTrue(): boolean {
+    const devices = this.fixture?.devices as Chat2Fixture['devices'] | undefined
+    return (
+      this.physical ||
+      (this.surface === 'ios' && devices?.ios?.driver === 'wda')
+    )
   }
 
   /** A connected phone rather than a simulator or emulator. */
@@ -2067,6 +2330,25 @@ export class Chat2UI {
       const device = this.device
       const once = device.assertNotVisible.bind(device)
       device.assertNotVisible = async args => await pollNotVisible(once, args)
+      if (!configured.physical) {
+        const visibleOnce = device.assertVisible.bind(device)
+        const tapOnce = device.tapOn.bind(device)
+        const tapOnPoint = device.tapOnPoint.bind(device)
+        device.assertVisible = async (args, options) =>
+          await queryExactVisible(visibleOnce, args, options)
+        device.tapOn = async (args, options) =>
+          await queryExactTap(tapOnce, visibleOnce, tapOnPoint, args, options)
+        const inputOnce = device.inputText.bind(device)
+        device.inputText = async (args, options) =>
+          await queryExactInput(
+            inputOnce,
+            visibleOnce,
+            tapOnPoint,
+            args,
+            options,
+            step => this.steps.push(step)
+          )
+      }
     }
     await this.device.launchApp({
       appId: this.fixture.appId,
@@ -3433,6 +3715,7 @@ export class Chat2UI {
     )
     writeFileSync(path, raw, { mode: 0o600, flag: 'wx' })
     const read = iosPublicRead(raw, selected, expectedType)
+    this.lastIosReadNodes = read.nodes
     this.steps.push({
       name: 'Passive iOS public element read',
       rawHierarchy: path,
@@ -3471,12 +3754,14 @@ export class Chat2UI {
     )
     if (typeof selected.id === 'string')
       assert(
-        element.id === selected.id,
+        exactIdAnswer(element, selected.id),
         'Exact returned native public identifier required'
       )
     else
+      // The element query answers with the label as its text alone.
       assert(
-        element.accessibilityLabel === literal,
+        element.accessibilityLabel === literal ||
+          (element.accessibilityLabel == null && element.text === literal),
         'Exact returned native public label required'
       )
     if (expectedType != null)
@@ -3496,7 +3781,9 @@ export class Chat2UI {
     )
     return {
       index: -1,
-      id: element.id as string,
+      // An exact id lookup may answer with XCTest's element UUID.
+      id:
+        typeof selected.id === 'string' ? selected.id : (element.id as string),
       type: nativeClass(element.class),
       text: typeof element.text === 'string' ? element.text : undefined,
       label:
@@ -3757,6 +4044,12 @@ export class Chat2UI {
           ].includes(String(action.args.appId)),
           'Settings recipe may launch only own app or OS Settings'
         )
+      if (
+        this.surface === 'ios' &&
+        action.command === 'tapOn' &&
+        typeof action.args.id === 'string'
+      )
+        await this.settingsSettled(action.args.id)
       const command =
         this.device[
           action.command as
@@ -3771,6 +4064,48 @@ export class Chat2UI {
         ]
       await command.call(this.device, action.args)
     }
+  }
+
+  /**
+   * Waits until a Settings row holds still. A fresh simulator's Settings
+   * inserts its "Optimizing Search and Siri" row after launch, moving every
+   * row below it: a tap aimed at Appearance then opens Accessibility.
+   */
+  private async settingsSettled(id: string): Promise<void> {
+    const device = this.device as unknown as {
+      hierarchyRaw: (options: { signal: AbortSignal }) => Promise<Uint8Array>
+    }
+    const frame = async (): Promise<string | undefined> => {
+      const tree = iosRawTree(
+        await device.hierarchyRaw({ signal: AbortSignal.timeout(10000) })
+      )
+      const found = tree.nodes.filter(
+        (n: unknown) =>
+          n != null && typeof n === 'object' && (n as Args).identifier === id
+      ) as Args[]
+      // A row's cell and its button can carry the same identifier.
+      return found.length > 0
+        ? JSON.stringify(found.map(node => node.rect))
+        : undefined
+    }
+    const reads: Array<string | undefined> = []
+    const deadline = Date.now() + 10000
+    let previous = await frame()
+    reads.push(previous)
+    for (;;) {
+      await new Promise(resolve => setTimeout(resolve, 500))
+      const current = await frame()
+      reads.push(current)
+      if (current != null && current === previous) break
+      assert(Date.now() < deadline, 'Settled Settings row required: ' + id)
+      previous = current
+    }
+    this.steps.push({
+      name: 'Settings row held still before its tap',
+      id,
+      reads: reads.length,
+      outcome: 'passed'
+    })
   }
 
   /** Raw-value predicates observe state; they do not use selector fallbacks. */
@@ -3798,37 +4133,81 @@ export class Chat2UI {
         hierarchyRaw: (options: { signal: AbortSignal }) => Promise<Uint8Array>
         screenshot: (options: { signal: AbortSignal }) => Promise<Uint8Array>
       }
-      const raw = await device.hierarchyRaw({
-        signal: AbortSignal.timeout(10000)
-      })
-      const file = join(
-        this.runDir,
-        'native-setting-' + randomUUID() + '.raw-hierarchy.json'
-      )
-      writeFileSync(file, raw, { flag: 'wx', mode: 0o600 })
       const evidence: Args = {
         name: 'Observed native raw value',
         source: this.binding.source,
         deviceId: this.deviceId,
         daemonName: this.daemonName,
-        rawPath: file,
-        rawSha256: digest(file),
         expected: check.rawValue,
-        observedAt: new Date().toISOString(),
         outcome: 'failed'
       }
       this.steps.push(evidence)
-      // Retain actual hierarchy even if parsing or equality fails. No error is inverted.
-      evidence.actual = observedNativeValue(raw, check.rawValue)
+      // A Settings page can show its stored state a moment after it opens:
+      // the predicate is read again, each hierarchy kept, until it holds or
+      // the deadline passes with its last mismatch. No error is inverted.
+      const reads: Args[] = []
+      evidence.reads = reads
+      const deadline = Date.now() + 8000
+      for (;;) {
+        const raw = await device.hierarchyRaw({
+          signal: AbortSignal.timeout(10000)
+        })
+        const file = join(
+          this.runDir,
+          'native-setting-' + randomUUID() + '.raw-hierarchy.json'
+        )
+        writeFileSync(file, raw, { flag: 'wx', mode: 0o600 })
+        Object.assign(evidence, {
+          rawPath: file,
+          rawSha256: digest(file),
+          observedAt: new Date().toISOString()
+        })
+        reads.push({ rawPath: file, observedAt: evidence.observedAt })
+        try {
+          evidence.actual = observedNativeValue(raw, check.rawValue)
+          break
+        } catch (error) {
+          if (Date.now() >= deadline) throw error
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+      }
       evidence.image = saveCapture(
         await device.screenshot({ signal: AbortSignal.timeout(10000) }),
-        file + '.png'
+        String(evidence.rawPath) + '.png'
       )
       evidence.outcome = 'passed'
     }
   }
 
-  async variant(name: string, sweep: () => Promise<void>): Promise<void> {
+  /**
+   * The lowest message body wholly on the screen, by its own id; undefined
+   * when none is.
+   */
+  async visibleMessageBody(): Promise<
+    { id: string; bounds: Bounds } | undefined
+  > {
+    const screen = await this.device.platformInfo()
+    const height = Number(screen.screenHeight)
+    const bodies = (await this.nodes()).filter(
+      (node): node is PublicNode & { id: string; bounds: Bounds } =>
+        node.id?.startsWith('chat-message-body-') === true &&
+        node.bounds != null &&
+        node.bounds.height > 0 &&
+        node.bounds.y >= 0 &&
+        node.bounds.y + node.bounds.height <= height
+    )
+    const lowest = bodies.sort((a, b) => b.bounds.y - a.bounds.y)[0]
+    return lowest == null ? undefined : { id: lowest.id, bounds: lowest.bounds }
+  }
+
+  async variant(
+    name: string,
+    sweep: () => Promise<void>,
+    // A font-scale change can relaunch the app on Home (Android always, an
+    // iPhone when it ended the app behind Settings): the scenario returns to
+    // its chat before the growth is measured.
+    resume?: () => Promise<void>
+  ): Promise<void> {
     assert(
       [
         'light',
@@ -3849,6 +4228,13 @@ export class Chat2UI {
     const nativeTextBefore = this.native
       ? await this.publicBounds('chat-composer')
       : undefined
+    // A one-line composer keeps its minimum height under a modest text size;
+    // a message body wholly on screen shows the same setting by its own
+    // line boxes, read again by its id afterwards.
+    const nativeBodyBefore =
+      this.native && name === 'large-text'
+        ? await this.visibleMessageBody()
+        : undefined
     const before = this.native
       ? undefined
       : await this.dom(
@@ -3877,7 +4263,20 @@ export class Chat2UI {
           // A physical iPhone has no driver-level appearance switch: its
           // observed Display & Brightness recipe sets it instead.
           if (!(this.surface === 'ios' && this.physical))
-            await this.device.setDarkMode({ enabled: name === 'dark' })
+            try {
+              await this.device.setDarkMode({ enabled: name === 'dark' })
+            } catch (error) {
+              // The simulator runner can time out its main thread while the
+              // device is busy; setting one appearance again is idempotent.
+              if (
+                !(
+                  error instanceof Error ? error.message : String(error)
+                ).includes('main thread execution timed out')
+              )
+                throw error
+              row.appearanceSetRetried = true
+              await this.device.setDarkMode({ enabled: name === 'dark' })
+            }
           await this.settingsActions(recipe.set)
           await this.settingsVerify(recipe.verify)
           await this.returnFromSettings()
@@ -3982,12 +4381,42 @@ export class Chat2UI {
         row.environment = actual
       }
       if (this.native && name === 'large-text') {
+        // A text-size change can relaunch the app on Home: Android always,
+        // iOS when it ended the app while Settings was in front.
+        if (
+          resume != null &&
+          !(await this.visible({ id: exactText('chat-composer') }, 2000))
+        ) {
+          row.resumedAfterSettings = true
+          await resume()
+        }
         const after = await this.publicBounds('chat-composer')
+        const bodyAfter =
+          nativeBodyBefore == null
+            ? undefined
+            : (await this.nodes()).find(
+                node => node.id === nativeBodyBefore.id && node.bounds != null
+              )?.bounds
+        // Kept before the judgment, so a refusal shows what was measured.
+        row.textGrowth = {
+          before: nativeTextBefore,
+          after,
+          body:
+            nativeBodyBefore == null
+              ? undefined
+              : {
+                  id: nativeBodyBefore.id,
+                  before: nativeBodyBefore.bounds,
+                  after: bodyAfter
+                }
+        }
         assert(
-          after.height > Number(nativeTextBefore?.height),
-          'Native OS large text must enlarge actual composer line-box'
+          after.height > Number(nativeTextBefore?.height) ||
+            (bodyAfter != null &&
+              nativeBodyBefore != null &&
+              bodyAfter.height > nativeBodyBefore.bounds.height),
+          'Native OS large text must enlarge actual composer or message line-boxes'
         )
-        row.textGrowth = { before: nativeTextBefore, after }
       }
       if (name === 'dark') {
         row.applicability = 'not-applicable'
@@ -4027,6 +4456,12 @@ export class Chat2UI {
     } catch (error) {
       row.outcome = error instanceof Chat2Blocked ? 'blocked' : 'failed'
       row.error = redact(this.fixture, String(error))
+      // Where it was raised: a bare assertion's message names no check.
+      if (error instanceof Error && typeof error.stack === 'string')
+        row.stack = redact(
+          this.fixture,
+          error.stack.split('\n').slice(1, 9).join('\n')
+        )
       throw error
     } finally {
       row.finishedAt = new Date().toISOString()
@@ -4037,8 +4472,14 @@ export class Chat2UI {
     parentId?: string,
     signal = this.deadline
   ): Promise<PublicNode[]> {
-    if (this.native)
-      return flattenPublicHierarchy(await this.device.hierarchy({ signal }))
+    if (this.native) {
+      const nodes = flattenPublicHierarchy(
+        await this.device.hierarchy({ signal })
+      )
+      return this.surface === 'ios' && !this.physical
+        ? await this.withChrome(nodes)
+        : nodes
+    }
     const result = await this.dom(
       'return {nodes:(' +
         publicWebNodes.toString() +
@@ -4048,6 +4489,100 @@ export class Chat2UI {
     )
     assert(Array.isArray(result.nodes), 'Observed public DOM nodes required')
     return result.nodes as PublicNode[]
+  }
+
+  /**
+   * The iOS simulator driver's snapshot stops at a node cap, and a long
+   * history can fill it before the screen's fixed chrome. Chrome that a full
+   * snapshot left out is measured by its own element lookup.
+   */
+  private async withChrome(nodes: PublicNode[]): Promise<PublicNode[]> {
+    if (nodes.length < IOS_SIMULATOR_SNAPSHOT_CAP) return nodes
+    const measured: PublicNode[] = []
+    // Each id is unique and carries no pattern characters, so the driver
+    // resolves it with an element query rather than the capped snapshot.
+    // A search adds the row it is looking for; the query finds it only while
+    // it is on the screen.
+    const chrome = [
+      'chat-message-history',
+      'chat-conversation-identity',
+      'chat-composer-band',
+      'chat-pinned-band'
+    ]
+    for (const id of [...chrome, ...(this.sought ?? [])])
+      if (!nodes.some(node => node.id === id)) {
+        // A sought row is often off the screen: one snapshot pass and one
+        // element query answer for it.
+        const queried = await this.iosQueried(
+          id,
+          chrome.includes(id) ? 3000 : 1
+        )
+        if (queried != null) measured.push(queried)
+      }
+    return measured.length === 0 ? nodes : [...nodes, ...measured]
+  }
+
+  /** Reads `id` past the snapshot cap until the returned release is called. */
+  seek(id: string): () => void {
+    const sought = (this.sought ??= new Set())
+    sought.add(id)
+    return () => {
+      sought.delete(id)
+    }
+  }
+
+  /**
+   * One id the iOS simulator's capped snapshot left out, from the driver's
+   * element query; undefined when it is not on the screen.
+   */
+  async iosQueried(
+    id: string,
+    timeout = 3000
+  ): Promise<IosReadNode | undefined> {
+    let element: Args
+    try {
+      element = object(
+        object(await this.device.assertVisible({ id, timeout })).element
+      )
+    } catch {
+      return undefined
+    }
+    // A substring hit in the snapshot is another element.
+    if (!exactIdAnswer(element, id)) return undefined
+    const box = bounds(element.bounds)
+    if (box == null) return undefined
+    const label =
+      typeof element.accessibilityLabel === 'string' &&
+      element.accessibilityLabel !== ''
+        ? element.accessibilityLabel
+        : typeof element.text === 'string'
+          ? element.text
+          : undefined
+    const kind =
+      typeof element.class === 'string'
+        ? element.class.replace(/^XCUIElementType/, '')
+        : undefined
+    const attributes =
+      element.attributes != null && typeof element.attributes === 'object'
+        ? (element.attributes as Record<string, unknown>)
+        : {}
+    const value =
+      typeof attributes.value === 'string'
+        ? attributes.value
+        : typeof element.text === 'string'
+          ? element.text
+          : undefined
+    return {
+      index: -1,
+      id,
+      type: kind == null ? undefined : kind[0].toUpperCase() + kind.slice(1),
+      label,
+      value,
+      text: label,
+      bounds: box,
+      enabled:
+        typeof element.enabled === 'boolean' ? element.enabled : undefined
+    }
   }
 
   async dom(script: string, signal = this.deadline): Promise<Args> {
@@ -4129,9 +4664,19 @@ export class Chat2UI {
       (path === '/chat' || /^\/chat\/cnv_[^/]+$/.test(path)) &&
       !(await this.visible({ id: routed }, 45000))
     ) {
+      // The screen the first link left, for a resend that also fails.
+      const unrouted = join(
+        this.runDir,
+        `unrouted-link-${this.steps.length}.png`
+      )
+      const evidence = await this.captureImage(unrouted).then(
+        () => unrouted,
+        () => undefined
+      )
       this.steps.push({
         name: 'Native chat link resent after an unrouted first delivery',
         path,
+        evidence,
         outcome: 'passed'
       })
       await this.openNativeLink(path)
@@ -4190,12 +4735,27 @@ export class Chat2UI {
       for (let i = 0; i < 10; i++) {
         const nodes = await this.nodes()
         if (nodes.some(n => /Open in .TeamStation/.test(n.text ?? ''))) {
-          await this.tapObserved(
-            need(
-              nodes.find(n => n.text === 'Open' && n.bounds != null),
-              'Observed native Open alert button required'
-            )
+          const open = need(
+            nodes.find(n => n.text === 'Open' && n.bounds != null),
+            'Observed native Open alert button required'
           )
+          await this.tapObserved(open)
+          // What the accepted link opened, beside the button's point.
+          const after = join(
+            this.runDir,
+            `link-alert-accepted-${this.steps.length}.png`
+          )
+          this.steps.push({
+            name: 'iOS link confirmation accepted',
+            path,
+            poll: i,
+            button: open.bounds,
+            evidence: await this.captureImage(after).then(
+              () => after,
+              () => undefined
+            ),
+            outcome: 'passed'
+          })
           break
         }
         await new Promise(resolve => setTimeout(resolve, 200))
@@ -4558,11 +5118,27 @@ export class Chat2UI {
     }
     this.steps.push(proof)
     const read = async (): Promise<PublicNode[]> => {
-      const nodes =
+      const nodes: PublicNode[] =
         this.surface === 'ios'
           ? iosPublicRead(await this.iosRaw(), { id: 'chat-picker-scene' })
               .nodes
           : await this.nodes()
+      // A long member list can pass the simulator snapshot's cap.
+      if (
+        this.surface === 'ios' &&
+        !this.physical &&
+        nodes.length >= IOS_SIMULATOR_SNAPSHOT_CAP
+      )
+        for (const key of ['chat-picker-header', id, 'chat-composer'])
+          if (!nodes.some(node => node.id === key)) {
+            const queried = await this.iosQueried(key)
+            // An unanchored id could reach the composer band instead.
+            if (
+              queried != null &&
+              (key !== 'chat-composer' || queried.type === 'TextView')
+            )
+              nodes.push(queried)
+          }
       ;(proof.samples as unknown[]).push(
         nodes.filter(
           node =>
@@ -4630,7 +5206,12 @@ export class Chat2UI {
       return row
     }
     try {
-      if (!clear(memberRow(nodes), nodes)) {
+      // Android leaves rows outside the list's window out of its tree: an
+      // absent row is searched for like one the keyboard covers.
+      if (
+        !nodes.some(node => node.id === id) ||
+        !clear(memberRow(nodes), nodes)
+      ) {
         const fields = nodes.filter(node =>
           this.surface === 'ios'
             ? node.type === 'TextField' &&
@@ -4758,6 +5339,11 @@ export class Chat2UI {
       this.steps.push(proof)
       const editorReads: IosReadNode[] = []
       proof.editorReads = editorReads
+      // The composer band each read's snapshot held: the band rides the
+      // keyboard, whose suggestion bar comes and goes while typing.
+      const bands = new Map<IosReadNode, Bounds>()
+      const editorBands: Array<Bounds | undefined> = []
+      proof.editorBands = editorBands
       const read = async (): Promise<IosReadNode> => {
         signal.throwIfAborted()
         const node = await this.iosRead(
@@ -4766,6 +5352,11 @@ export class Chat2UI {
           signal
         )
         editorReads.push(node)
+        const band = this.lastIosReadNodes?.find(
+          n => n.id === 'chat-composer-band'
+        )?.bounds
+        editorBands.push(band)
+        if (band != null) bands.set(node, band)
         assert(node.enabled === true, 'Actual enabled iOS editor required')
         return node
       }
@@ -4828,6 +5419,19 @@ export class Chat2UI {
         return raw
       }
       const remove = async (current?: string): Promise<void> => {
+        // Typing can leave the keyboard lowered, its keys reported below the
+        // screen: tapping the editor raises it before any key is pressed.
+        const screen = await this.device.platformInfo({ signal })
+        const height = Number(screen.screenHeight)
+        for (let attempt = 0; ; attempt++) {
+          const shown = iosPublicRead(await appRaw(), {}, 'Keyboard').element
+            ?.bounds
+          if (shown != null && shown.y + shown.height <= height + 1) break
+          assert(attempt < 3, 'Shown iOS Keyboard required for replacement')
+          proof.keyboardRaised = attempt + 1
+          await api.tapOn({ id: 'chat-composer' }, options)
+          await new Promise(resolve => setTimeout(resolve, 700))
+        }
         await api.longPressOn({ id: 'chat-composer', duration: 600 }, options)
         let raw = await appRaw()
         let menu = iosPublicRead(
@@ -4942,6 +5546,27 @@ export class Chat2UI {
               'Fresh exact sentinel must prove the previous clear'
             )
             await remove()
+            // A long press that put the caret before the sentinel leaves
+            // Delete nothing to remove: with the caret placed after it, one
+            // Delete per character does, and the fresh read below decides.
+            const left = await read()
+            if ((exact(left) ?? left.text ?? '').includes(sentinel)) {
+              proof.sentinelDeleteRetried = true
+              const field = need(left.bounds, 'Actual editor bounds required')
+              await api.tapOnPoint(
+                {
+                  point: `${Math.round(field.x + field.width - 12)},${Math.round(field.y + field.height - 10)}`
+                },
+                options
+              )
+              const key = need(
+                iosPublicRead(await appRaw(), { text: '^delete$' }, 'Key')
+                  .element,
+                'Observed Delete key required for replacement'
+              )
+              // One Delete per character of the sentinel.
+              for (let left = sentinel.length; left > 0; left--) await tap(key)
+            }
           }
           const baseLabel = need(
             reference.placeholderValue ?? reference.label,
@@ -4962,13 +5587,30 @@ export class Chat2UI {
               emptyLabels.includes(node.label ?? ''),
               'Empty editor label must equal the observed product label or exact label-plus-placeholder'
             )
+            // The editor grows upward with its lines: against a reference
+            // that held text, its bottom edge and width are what must stay.
+            // Both ride the keyboard with the composer band, so where both
+            // snapshots hold the band, the bottom edge is read against it.
+            const near = (a: number, b: number): boolean => Math.abs(a - b) <= 1
+            const band = bands.get(node)
+            const priorBand = bands.get(shape)
+            const lift = (b: Bounds | undefined): number =>
+              band != null && priorBand != null ? b!.y + b!.height : 0
+            proof.geometryCompared =
+              (rawEmpty(shape)
+                ? 'editor x, width, height and bottom edge'
+                : 'editor x, width and bottom edge') +
+              (band != null && priorBand != null
+                ? ', against the composer band'
+                : '')
             assert(
-              ['x', 'y', 'width', 'height'].every(
-                key =>
-                  Math.abs(
-                    box[key as keyof Bounds] - prior[key as keyof Bounds]
-                  ) <= 1
-              ),
+              near(box.x, prior.x) &&
+                near(box.width, prior.width) &&
+                (!rawEmpty(shape) || near(box.height, prior.height)) &&
+                near(
+                  box.y + box.height - lift(band),
+                  prior.y + prior.height - lift(priorBand)
+                ),
               'Same editor geometry required after deletion'
             )
             assert(
