@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,9 +9,17 @@ import { after, before, describe, it } from 'mocha'
 
 import { onePerson } from '../../src/server/admin/people'
 import { actorForToken } from '../../src/server/auth/sessions'
+import { PostgresFeed } from '../../src/server/changeFeed/postgresFeed'
+import { ChatReconciler } from '../../src/server/chat/reconciler'
+import {
+  runStatsBuilder,
+  type StatsBuilderHandle
+} from '../../src/server/statsBuilder/main'
+import { requestGamesStats } from '../../src/server/statsBuilder/request'
 import { amountsFor, SCALES } from './amounts'
 import {
   accountsForShard,
+  CLEANUP_ATTEMPTS,
   cleanupRun,
   describeShapes,
   gameOfViewer,
@@ -523,5 +532,283 @@ describe('a seed for a browser run', function () {
       .where('key', '=', 'creation.hierarchyReady')
       .executeTakeFirstOrThrow()
     expect(setting.value).equals(true)
+  })
+})
+
+describe('a cleanup beside a running server', function () {
+  this.timeout(600_000)
+
+  let scratch: Scratch
+  let feed: PostgresFeed
+  let reconciler: ChatReconciler
+  let builder: StatsBuilderHandle
+  let quiet: typeof console.log
+  let otherTokens: TokensFile
+  const errors: string[] = []
+  const kinds = ['user', 'team', 'season', 'league', 'game', 'conversation']
+
+  const deadlocks = async (): Promise<number> => {
+    const { rows } = await sql<{ deadlocks: string }>`
+      select deadlocks from pg_stat_database where datname = current_database()
+    `.execute(scratch.db)
+    return Number(rows[0].deadlocks)
+  }
+
+  /** Every row a run tagged that is still there, by kind. */
+  const tagged = async (runId: string): Promise<Record<string, number>> => {
+    const { rows } = await sql<{ kind: string; n: string }>`
+      select x.kind, count(*) as n from external_ids x
+      where x.system = ${systemOf(runId)} and (
+        exists (select 1 from users where id = x.entity_id)
+        or exists (select 1 from teams where id = x.entity_id)
+        or exists (select 1 from seasons where id = x.entity_id)
+        or exists (select 1 from leagues where id = x.entity_id)
+        or exists (select 1 from games where id = x.entity_id)
+        or exists (select 1 from chat_conversations where id = x.entity_id))
+      group by x.kind
+    `.execute(scratch.db)
+    return Object.fromEntries(rows.map(row => [row.kind, Number(row.n)]))
+  }
+
+  /** A deadlock (or another error) the next deletes of leagues raise. */
+  const failLeagueDeletes = async (times: number, code = '40P01') => {
+    await sql
+      .raw(
+        `create sequence league_delete_failures;
+        create function fail_league_delete() returns trigger
+        language plpgsql as $$
+        begin
+          if nextval('league_delete_failures') <= ${times} then
+            raise exception 'injected ${code}' using errcode = '${code}';
+          end if;
+          return null;
+        end
+        $$;
+        create trigger fail_league_delete before delete on leagues
+        for each statement execute function fail_league_delete();`
+      )
+      .execute(scratch.db)
+  }
+  const stopFailing = async () => {
+    await sql
+      .raw(
+        `drop trigger fail_league_delete on leagues;
+        drop function fail_league_delete();
+        drop sequence league_delete_failures;`
+      )
+      .execute(scratch.db)
+  }
+
+  before(async function () {
+    // The builder says each game it builds; what goes wrong is kept.
+    quiet = console.log
+    console.log = () => undefined
+    scratch = await openScratch('cleanup')
+    otherTokens = await seedFixture(scratch.db, {
+      runId: 'other',
+      scale: 'small',
+      overrides: TEST_AMOUNTS
+    })
+    const log = (line: string): void => {
+      errors.push(line)
+    }
+    feed = new PostgresFeed({ databaseUrl: scratch.url, log })
+    reconciler = new ChatReconciler({
+      db: scratch.db,
+      feed,
+      debounceMs: 20,
+      log
+    })
+    await reconciler.listening
+    builder = await runStatsBuilder({
+      databaseUrl: scratch.url,
+      feed: new PostgresFeed({ databaseUrl: scratch.url, log }),
+      signals: new EventEmitter(),
+      report: async error => {
+        log(String(error))
+      },
+      onStopped: async () => undefined
+    })
+  })
+  after(async function () {
+    await builder.stop()
+    await reconciler.close()
+    await feed.close()
+    console.log = quiet
+    await scratch.drop()
+  })
+
+  it('removes ten runs after a short load each, with no deadlock, leaving another run', async function () {
+    const other = await describeShapes(scratch.db, 'other', otherTokens)
+    const otherTagged = await tagged('other')
+    const before = await deadlocks()
+    for (let run = 0; run < 10; run += 1) {
+      const runId = `busy${run}`
+      await seedFixture(scratch.db, {
+        runId,
+        scale: 'small',
+        overrides: TEST_AMOUNTS
+      })
+      const games = [...(await taggedIn(scratch.db, runId, 'game')).values()]
+      const users = [...(await taggedIn(scratch.db, runId, 'user')).values()]
+      const scopes = [
+        ...(await taggedIn(scratch.db, runId, 'team')).values(),
+        ...(await taggedIn(scratch.db, runId, 'season')).values(),
+        ...(await taggedIn(scratch.db, runId, 'league')).values()
+      ]
+      // The load: every game of the run owed a build as the cleanup starts.
+      await requestGamesStats(scratch.db, games)
+      const { removed } = await cleanupRun(scratch.db, runId)
+      expect(removed.games).at.least(games.length)
+      expect(await tagged(runId)).deep.equals({})
+      const chats = await sql<{ n: string }>`
+        select count(*) as n from chat_conversations
+        where scope_id = any(${scopes}::text[])
+      `.execute(scratch.db)
+      expect(Number(chats.rows[0].n)).equals(0)
+      const joins = await sql<{ n: string }>`
+        select count(*) as n from chat_membership_log
+        where user_id = any(${users}::text[])
+      `.execute(scratch.db)
+      expect(Number(joins.rows[0].n)).equals(0)
+    }
+    await reconciler.drain()
+    expect(await tagged('other')).deep.equals(otherTagged)
+    expect(await describeShapes(scratch.db, 'other', otherTokens)).deep.equals(
+      other
+    )
+    // A deadlock is counted wherever it was found, the builder's or the cleanup's.
+    await new Promise(resolve => {
+      setTimeout(resolve, 1500)
+    })
+    expect(await deadlocks()).equals(before)
+    expect(errors.filter(line => line.includes('deadlock'))).deep.equals([])
+  })
+
+  it('removes the chats again before retrying the people when a chat made mid-cleanup joins one of them', async function () {
+    await seedFixture(scratch.db, {
+      runId: 'lateJoin',
+      scale: 'small',
+      overrides: TEST_AMOUNTS
+    })
+    const [team] = [
+      ...(await taggedIn(scratch.db, 'lateJoin', 'team')).values()
+    ]
+    const [user] = [
+      ...(await taggedIn(scratch.db, 'lateJoin', 'user')).values()
+    ]
+    // After the first chat removal, a reconcile commits a chat of a run team
+    // that joins a run person; the people's first delete then meets it.
+    await sql
+      .raw(
+        `create sequence late_join_made;
+        create sequence late_join_user_deletes;
+        create table late_join_saw (chat_left boolean not null);
+        create function late_join_chat() returns trigger
+        language plpgsql as $$
+        begin
+          if nextval('late_join_made') = 1 then
+            insert into chat_conversations (id, kind, scope_type, scope_id)
+            values ('cnv_lateJoin', 'teamMembers', 'team', '${team}');
+            insert into chat_membership_log
+              (conversation_id, seq, event, user_id, prev_hash, hash)
+            values ('cnv_lateJoin', 1, 'join', '${user}',
+              decode(repeat('00', 32), 'hex'), decode(repeat('11', 32), 'hex'));
+          end if;
+          return null;
+        end
+        $$;
+        create trigger late_join_chat after delete on chat_identities
+        for each statement execute function late_join_chat();
+        create function late_join_users() returns trigger
+        language plpgsql as $$
+        begin
+          if nextval('late_join_user_deletes') = 1 then
+            raise exception 'injected 23503' using errcode = '23503';
+          end if;
+          insert into late_join_saw
+          select exists (select from chat_conversations where id = 'cnv_lateJoin');
+          return null;
+        end
+        $$;
+        create trigger late_join_users before delete on users
+        for each statement execute function late_join_users();`
+      )
+      .execute(scratch.db)
+    try {
+      const { removed } = await cleanupRun(scratch.db, 'lateJoin')
+      expect(removed.conversations).above(0)
+      // The retry found the late chat gone, taken with the run's chats.
+      const saw = await sql<{ chat_left: boolean }>`
+        select chat_left from late_join_saw
+      `.execute(scratch.db)
+      expect(saw.rows).deep.equals([{ chat_left: false }])
+    } finally {
+      await sql
+        .raw(
+          `drop trigger late_join_users on users;
+          drop function late_join_users();
+          drop trigger late_join_chat on chat_identities;
+          drop function late_join_chat();
+          drop table late_join_saw;
+          drop sequence late_join_user_deletes;
+          drop sequence late_join_made;`
+        )
+        .execute(scratch.db)
+    }
+    expect(await tagged('lateJoin')).deep.equals({})
+    const left = await sql<{ n: string }>`
+      select count(*) as n from chat_membership_log where user_id = ${user}
+    `.execute(scratch.db)
+    expect(Number(left.rows[0].n)).equals(0)
+  })
+
+  it('runs a step again after a deadlock, and names its tables after three', async function () {
+    await seedFixture(scratch.db, {
+      runId: 'retried',
+      scale: 'small',
+      overrides: TEST_AMOUNTS
+    })
+    await failLeagueDeletes(1)
+    try {
+      await cleanupRun(scratch.db, 'retried')
+    } finally {
+      await stopFailing()
+    }
+    expect(await tagged('retried')).deep.equals({})
+
+    await seedFixture(scratch.db, {
+      runId: 'stuck',
+      scale: 'small',
+      overrides: TEST_AMOUNTS
+    })
+    await failLeagueDeletes(CLEANUP_ATTEMPTS)
+    let message = ''
+    try {
+      await cleanupRun(scratch.db, 'stuck').catch((error: Error) => {
+        message = error.message
+      })
+    } finally {
+      await stopFailing()
+    }
+    expect(message).equals(
+      'cleanup of leagues, league_members failed 3 times in a row: injected 40P01'
+    )
+    expect((await tagged('stuck')).league).above(0)
+    expect((await tagged('stuck')).team).equals(undefined)
+
+    // Anything else fails the cleanup at once, as it was.
+    await failLeagueDeletes(1, '22000')
+    message = ''
+    try {
+      await cleanupRun(scratch.db, 'stuck').catch((error: Error) => {
+        message = error.message
+      })
+    } finally {
+      await stopFailing()
+    }
+    expect(message).equals('injected 22000')
+    await cleanupRun(scratch.db, 'stuck')
+    expect(await tagged('stuck')).deep.equals({})
   })
 })

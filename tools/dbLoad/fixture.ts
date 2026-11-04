@@ -40,7 +40,7 @@ import { ownershipPreflight } from '../../src/server/groups/ownershipPreflight'
 import { addToScope } from '../../src/server/invites/people'
 import { sealSecret } from '../../src/server/live/secrets'
 import { linkGuardian } from '../../src/server/people/guardians'
-import { drain } from '../../src/server/statsBuilder/builder'
+import { drain, gameStatsLock } from '../../src/server/statsBuilder/builder'
 import { requestGameStats } from '../../src/server/statsBuilder/request'
 import { ensureGumboId, insertUser } from '../../src/server/users/insertUser'
 import { type Amounts, amountsFor } from './amounts'
@@ -1831,10 +1831,65 @@ async function deleteDependents(
   `.execute(db)
 }
 
+/** How many times a cleanup step runs before it gives up. */
+export const CLEANUP_ATTEMPTS = 3
+
+/** A cleanup step's games in one transaction, each holding an advisory lock. */
+const GAMES_PER_STEP = 100
+
 /**
- * Removes exactly the rows of one run: its conversations, the games of its
- * teams, its teams, seasons and leagues, its people, and its tags. Cascades
+ * Runs one step of a cleanup in a transaction of its own, again when a
+ * running server's writers met it: a deadlock (`40P01`), or a row a writer
+ * pointed at what the step deletes after the step looked for such rows
+ * (`23503`). After a `23503` it runs `beforeRetry`, if given, to take away
+ * what that writer made, then the step again. Once the step has failed
+ * `CLEANUP_ATTEMPTS` times in a row it fails the cleanup, naming the tables
+ * the step and those writers lock.
+ */
+async function cleanupStep(
+  db: Kysely<Database>,
+  tables: readonly string[],
+  work: (trx: Kysely<Database>) => Promise<void>,
+  beforeRetry?: () => Promise<void>
+): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await db.transaction().execute(work)
+      return
+    } catch (error) {
+      const code = (error as { code?: unknown }).code
+      if (code !== '40P01' && code !== '23503') throw error
+      if (attempt >= CLEANUP_ATTEMPTS)
+        throw new Error(
+          `cleanup of ${tables.join(', ')} failed ${attempt} times in a row: ${(error as Error).message}`,
+          { cause: error }
+        )
+      if (code === '23503') await beforeRetry?.()
+    }
+  }
+}
+
+/**
+ * Removes exactly the rows of one run: the games of its teams, its teams,
+ * seasons and leagues, its conversations, its people, and its tags. Cascades
  * take what hangs off them.
+ *
+ * A server may still be running, and its writers lock these rows in their own
+ * order, so each step is its own transaction, dependants before the table:
+ *
+ * - A game goes under the stats builder's lock on it (`gameStatsLock`). A
+ *   build deletes and rewrites the game's `game_player_stats`, whose foreign
+ *   key then shares the `games` row, while the game's delete cascades into
+ *   those same rows; without the lock each waits on the other. The builder
+ *   only tries the lock, so it skips a game being removed.
+ * - Teams, seasons and leagues go before the chats, since every membership
+ *   they cascade into marks its chats for the reconciler, which recreates a
+ *   scope chat whose audience is not yet empty and joins the run's people to
+ *   it. Once the scopes are gone their audiences are, and the chats are
+ *   removed before the people and again after, for one a reconcile already
+ *   under way made. A chat that joins the run's people after the first
+ *   removal holds them in its membership log, which the people's delete may
+ *   meet (`23503`): that step removes the chats again before it retries.
  */
 export async function cleanupRun(
   db: LoadDatabase,
@@ -1864,29 +1919,74 @@ export async function cleanupRun(
   `.execute(db)
   const gameIds = [
     ...new Set([...(await ids('game')), ...games.rows.map(row => row.id)])
-  ]
+  ].sort()
+
+  for (let at = 0; at < gameIds.length; at += GAMES_PER_STEP) {
+    const batch = gameIds.slice(at, at + GAMES_PER_STEP)
+    await cleanupStep(
+      db,
+      ['games', 'game_player_stats', 'plate_appearances', 'game_stats_state'],
+      async trx => {
+        await sql`
+          select pg_advisory_xact_lock(hashtext(key))
+          from unnest(${batch.map(gameStatsLock)}::text[]) as key
+        `.execute(trx)
+        await trx.deleteFrom('videos').where('game_id', 'in', batch).execute()
+        await deleteRows(trx, 'games', 'id', batch)
+      }
+    )
+  }
+  await cleanupStep(
+    db,
+    ['teams', 'memberships', 'team_roster_bumps'],
+    async trx => {
+      await deleteRows(trx, 'teams', 'id', teams)
+    }
+  )
+  await cleanupStep(
+    db,
+    ['seasons', 'season_teams', 'season_members'],
+    async trx => {
+      await deleteRows(trx, 'seasons', 'id', seasons)
+    }
+  )
+  await cleanupStep(db, ['leagues', 'league_members'], async trx => {
+    await deleteRows(trx, 'leagues', 'id', leagues)
+  })
 
   // The chats of the run's teams and people, tagged or made by a reconcile since.
-  const held = await sql<{ id: string }>`
-    select id from chat_conversations
-    where scope_id in (${sql.join([...teams, ...seasons, ...leagues, ''])})
-  `.execute(db)
-  const allConversations = [
-    ...new Set([...conversations, ...held.rows.map(row => row.id)])
-  ]
-  await deleteRows(db, 'chat_conversations', 'id', allConversations)
-  if (users.length > 0)
-    await sql`
-      delete from chat_conversations where created_by = any(${users}::text[])
-    `.execute(db)
-  await deleteRows(db, 'chat_identities', 'user_id', users)
-  if (gameIds.length > 0)
-    await db.deleteFrom('videos').where('game_id', 'in', gameIds).execute()
-  await deleteRows(db, 'games', 'id', gameIds)
-  await deleteRows(db, 'teams', 'id', teams)
-  await deleteRows(db, 'seasons', 'id', seasons)
-  await deleteRows(db, 'leagues', 'id', leagues)
-  await deleteRows(db, 'users', 'id', users)
+  const removedChats = new Set<string>()
+  const removeChats = async (): Promise<void> => {
+    await cleanupStep(
+      db,
+      ['chat_conversations', 'chat_members', 'chat_membership_log'],
+      async trx => {
+        const held = await sql<{ id: string }>`
+          select id from chat_conversations
+          where scope_id in (${sql.join([...teams, ...seasons, ...leagues, ''])})
+            or created_by = any(${users}::text[])
+        `.execute(trx)
+        const chats = [
+          ...new Set([...conversations, ...held.rows.map(row => row.id)])
+        ]
+        await deleteRows(trx, 'chat_conversations', 'id', chats)
+        for (const chat of chats) removedChats.add(chat)
+      }
+    )
+  }
+  await removeChats()
+  await cleanupStep(db, ['chat_identities', 'chat_user_keys'], async trx => {
+    await deleteRows(trx, 'chat_identities', 'user_id', users)
+  })
+  await cleanupStep(
+    db,
+    ['users', 'chat_members', 'chat_membership_log'],
+    async trx => {
+      await deleteRows(trx, 'users', 'id', users)
+    },
+    removeChats
+  )
+  await removeChats()
   await db
     .deleteFrom('external_ids')
     .where('system', '=', systemOf(runId))
@@ -1898,7 +1998,7 @@ export async function cleanupRun(
       seasons: seasons.length,
       leagues: leagues.length,
       games: gameIds.length,
-      conversations: allConversations.length
+      conversations: removedChats.size
     }
   }
 }

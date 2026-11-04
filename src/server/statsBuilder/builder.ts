@@ -86,6 +86,16 @@ export async function drain(
   }
 }
 
+/**
+ * The advisory key a build holds for its game's whole transaction, taken with
+ * `hashtext` before it touches any of the game's rows. Whoever else writes a
+ * game's stats rows takes it first too, so the two never lock them in
+ * opposite orders.
+ */
+export function gameStatsLock(gameId: string): string {
+  return `game_stats:${gameId}`
+}
+
 type BuildResult =
   | 'empty'
   | { kind: 'skipped'; gameId: string }
@@ -131,7 +141,7 @@ export async function buildNext(
 
       const lock = await sql<{ locked: boolean }>`
         select pg_try_advisory_xact_lock(
-          hashtext(${'game_stats:' + gameId})
+          hashtext(${gameStatsLock(gameId)})
         ) as locked
       `.execute(trx)
       if (!lock.rows[0]?.locked) {
