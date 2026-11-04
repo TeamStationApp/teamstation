@@ -109,6 +109,16 @@ extension PhoneStreamTests {
       camera.stop()
       camera.hidePreview(in: layer)
       await drain(camera)
+      // Other camera clients still use the horizon coordinator and start without a preview.
+      let legacy = CameraSession()
+      legacy.configure(position: .back, settings: CameramanCore.StreamSettings(audioEnabled: false))
+      legacy.start()
+      await drain(legacy)
+      #expect(legacy.captureSession.isRunning)
+      let legacyOutput = try #require(legacy.captureSession.outputs.first { $0 is AVCaptureVideoDataOutput })
+      #expect([CGFloat(0), 180].contains(try #require(legacyOutput.connection(with: .video)).videoRotationAngle))
+      legacy.stop()
+      await drain(legacy)
     }
     #endif
 
