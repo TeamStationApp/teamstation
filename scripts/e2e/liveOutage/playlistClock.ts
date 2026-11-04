@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -111,22 +112,27 @@ export function readMarkerGray(
 /**
  * The wall clock on the first frame of every segment, decoded with FFmpeg
  * from the files the live writer left in `dir`. Null for one it cannot read.
+ * `read` reads each file by its path in `dir`; the disk by default, and for
+ * a stream whose older pieces the ingest deleted once its Space held them,
+ * one that reads those from the Space.
  */
-export function firstMarkers(
+export async function firstMarkers(
   ffmpegPath: string,
   dir: string,
   segments: readonly Segment[],
   nearMs: number,
-  size = { width: 1280, height: 720 }
-): Array<number | null> {
+  size = { width: 1280, height: 720 },
+  read: (path: string) => Promise<Uint8Array> = readFile
+): Promise<Array<number | null>> {
   const work = mkdtempSync(join(tmpdir(), 'tsPlaylistClock-'))
   try {
-    const init = readFileSync(join(dir, 'init.mp4'))
-    return segments.map(segment => {
+    const init = await read(join(dir, 'init.mp4'))
+    const markers: Array<number | null> = []
+    for (const segment of segments) {
       const joined = join(work, 'one.mp4')
       writeFileSync(
         joined,
-        Buffer.concat([init, readFileSync(join(dir, segment.uri))])
+        Buffer.concat([init, await read(join(dir, segment.uri))])
       )
       try {
         const pixels = execFileSync(
@@ -152,11 +158,12 @@ export function firstMarkers(
           size.width,
           markerGeometry(size.height)
         )
-        return low == null ? null : unwrapMarker(low, nearMs)
+        markers.push(low == null ? null : unwrapMarker(low, nearMs))
       } catch {
-        return null
+        markers.push(null)
       }
-    })
+    }
+    return markers
   } finally {
     rmSync(work, { recursive: true, force: true })
   }

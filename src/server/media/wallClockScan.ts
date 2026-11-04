@@ -576,6 +576,12 @@ export function parseMediaPlaylist(text: string): MediaPlaylist {
   return playlist
 }
 
+/** How a recording's files are read: a whole file, or a byte range of one. */
+export type PartReader = (
+  path: string,
+  range?: { offset: number; length: number }
+) => Promise<Uint8Array>
+
 /** Reads a whole file, or the byte range of it a playlist names. */
 export async function readPart(
   path: string,
@@ -641,15 +647,24 @@ export async function scanRecording(
  */
 export async function readRecordingStamps(
   dir: string,
-  options: { onlyIfFirstStamped?: boolean; playlistFile?: string } = {}
+  options: {
+    onlyIfFirstStamped?: boolean
+    playlistFile?: string
+    /**
+     * Reads the init file and each piece; the disk by default. A live close
+     * passes one that reads a piece the disk no longer holds from the Space.
+     */
+    readPart?: PartReader
+  } = {}
 ): Promise<RecordingScan> {
+  const read = options.readPart ?? readPart
   const none: RecordingScan = { points: [], stamped: [], durationMs: 0 }
   const playlist = parseMediaPlaylist(
     await readFile(join(dir, options.playlistFile ?? MEDIA_PLAYLIST), 'utf8')
   )
   if (playlist.map == null) return none
   const track = videoTrackOf(
-    await readPart(join(dir, playlist.map.uri), playlist.map.range)
+    await read(join(dir, playlist.map.uri), playlist.map.range)
   )
   if (track == null) return none
   const points: WallPoint[] = []
@@ -659,7 +674,7 @@ export async function readRecordingStamps(
   let startMs = 0
   let placement: Placement | undefined
   for (const [index, segment] of playlist.segments.entries()) {
-    const bytes = await readPart(join(dir, segment.uri), segment.range)
+    const bytes = await read(join(dir, segment.uri), segment.range)
     const scanned = scanSegment(
       bytes,
       track,
