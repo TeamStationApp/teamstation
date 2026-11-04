@@ -104,7 +104,7 @@ async function signIn(device: Device): Promise<string> {
     await device.inputText({ text: who.password })
     await device.tapOn({ text: 'Sign in' })
     await device.assertVisible({
-      css: '[data-testid="chat-conversation-list"]',
+      text: 'Account,',
       timeout: 45000
     })
     auth = await evaluate(device, authScript)
