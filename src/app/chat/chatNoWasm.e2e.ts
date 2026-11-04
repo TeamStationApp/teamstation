@@ -8,7 +8,7 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
  * Chat without its crypto core, in a browser (S2, S3).
  *
  *   TS_CHAT_ARTIFACTS=<run dir> TS_CHAT_WEB_URL=<web app> \
- *     TS_CHAT_API_URL=<API> TS_CHAT_API_LOG=<API output file> \
+ *     TS_CHAT_API_URL=<API> \
  *     node -r sucrase/register src/app/chat/chatNoWasm.e2e.ts noWasm|badModule
  *
  * Parent B (from `<run dir>/seed.txt`) signs in on a fresh browser profile:
@@ -22,8 +22,8 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
  *   own Hc-1 profile, B's Chat tab shows the unread dot.
  * - `badModule`: the module arrives with one byte changed (its integrity
  *   fails), then not at all (404). Each time Chat says "Chat needs
- *   WebAssembly", the reason `fetchFailed` reaches the console and the API's
- *   log as `[client chatCore-web]`, and nothing is made.
+ *   WebAssembly", the reason `fetchFailed` reaches the console, the legacy
+ *   diagnostic POST tolerates the removed endpoint's 404, and nothing is made.
  *
  * Screenshots go to `<run dir>/shots/no-wasm-*.png`. It fails on the first
  * thing that is not so.
@@ -34,7 +34,6 @@ const WEB = (process.env.TS_CHAT_WEB_URL ?? 'http://127.0.0.1:8080').replace(
   ''
 )
 const API = (process.env.TS_CHAT_API_URL ?? `${WEB}/api/v1`).replace(/\/+$/, '')
-const API_LOG = process.env.TS_CHAT_API_LOG ?? ''
 const SHOTS = join(ARTIFACTS, 'shots')
 const NEEDS = 'Chat needs WebAssembly'
 
@@ -289,9 +288,20 @@ async function noWasm(): Promise<void> {
 async function badModule(): Promise<void> {
   const b = seedPerson('B')
   for (const how of ['altered', 'missing'] as const) {
-    // The last piece is the line still being written, or nothing.
-    const logLines = readFileSync(API_LOG, 'utf8').split('\n').length - 1
+    let diagnosticRefused = false
     const run = await freshBrowser(async page => {
+      page.on('response', response => {
+        if (response.url() !== `${API}/logs`) return
+        const request = response.request()
+        const body = JSON.parse(request.postData() ?? '{}') as {
+          source?: string
+          lines?: Array<{ data?: { reason?: string } }>
+        }
+        diagnosticRefused =
+          response.status() === 404 &&
+          body.source === 'chatCore-web' &&
+          body.lines?.some(line => line.data?.reason === 'fetchFailed') === true
+      })
       await page.setRequestInterception(true)
       page.on('request', request => {
         if (!request.url().includes('chat-crypto')) {
@@ -327,16 +337,14 @@ async function badModule(): Promise<void> {
         run.console.some(line => line.includes('fetchFailed')),
         `the ${how} module: fetchFailed in the console`
       )
-      await until(`the ${how} module's reason in the API log`, () =>
-        readFileSync(API_LOG, 'utf8')
-          .split('\n')
-          .slice(logLines)
-          .some(
-            line =>
-              line.includes('chatCore-web') && line.includes('fetchFailed')
-          )
+      await until(
+        `the ${how} module's diagnostic tolerates the removed endpoint`,
+        () => diagnosticRefused
       )
-      check(true, `the ${how} module: [client chatCore-web] fetchFailed logged`)
+      check(
+        true,
+        `the ${how} module: diagnostic 404 leaves the crypto gate intact`
+      )
       check(!(await hasKeyDatabase(page)), `the ${how} module: no keys`)
       check(
         liveDevices(await apiGet(page, '/chat/devices')) === devicesBefore,
@@ -355,9 +363,6 @@ async function main(): Promise<void> {
     throw new Error(
       'usage: TS_CHAT_ARTIFACTS=<run> chatNoWasm.e2e.ts noWasm|badModule'
     )
-  }
-  if (mode === 'badModule' && API_LOG === '') {
-    throw new Error('badModule reads the API log: set TS_CHAT_API_LOG')
   }
   mkdirSync(SHOTS, { recursive: true })
   if (mode === 'noWasm') await noWasm()
