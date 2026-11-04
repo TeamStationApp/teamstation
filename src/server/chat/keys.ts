@@ -14,6 +14,7 @@ import { makeId } from '../../common/ids'
 import { CHAT_DEVICE_APPROVAL } from '../../common/notifications'
 import type { Actor } from '../auth/sessions'
 import type { ChatDevicesTable, Database } from '../db/database'
+import { reconcileHistoryRequests } from './historyRequests'
 import {
   appendLog,
   inTransaction,
@@ -308,21 +309,28 @@ async function conversationIdsOf(
     .select(['conversation_id'])
     .where('user_id', '=', userId)
     .where('left_at', 'is', null)
-    .orderBy('conversation_id')
     .execute()
-  return rows.map(row => row.conversation_id)
+  // All multi-conversation writers use this bytewise order, including grants.
+  return rows.map(row => row.conversation_id).sort()
 }
 
 async function flagRotation(
   trx: Kysely<Database>,
   conversationIds: string[]
 ): Promise<void> {
-  if (conversationIds.length === 0) return
-  await trx
-    .updateTable('chat_conversations')
-    .set({ needs_rotation: true })
-    .where('id', 'in', conversationIds)
-    .execute()
+  for (const id of [...conversationIds].sort()) {
+    await trx
+      .selectFrom('chat_conversations')
+      .select('id')
+      .where('id', '=', id)
+      .forUpdate()
+      .executeTakeFirstOrThrow()
+    await trx
+      .updateTable('chat_conversations')
+      .set({ needs_rotation: true })
+      .where('id', '=', id)
+      .execute()
+  }
 }
 
 /** Opens a grant request in each conversation that has an epoch. */
@@ -330,11 +338,19 @@ async function openRequestsIn(
   trx: Kysely<Database>,
   conversationIds: string[],
   userId: string,
+  now: Date,
   identityReset = false
 ): Promise<number> {
   let opened = 0
   for (const id of conversationIds) {
+    await trx
+      .selectFrom('chat_conversations')
+      .select('id')
+      .where('id', '=', id)
+      .forUpdate()
+      .executeTakeFirstOrThrow()
     opened += await openGrantRequests(trx, id, [userId], identityReset)
+    await reconcileHistoryRequests(trx, id, now)
   }
   return opened
 }
@@ -729,7 +745,8 @@ export async function enrol(
     const grantRequests = await openRequestsIn(
       trx,
       await conversationIdsOf(trx, caller.userId),
-      caller.userId
+      caller.userId,
+      now
     )
     await notifyChatUser(trx, caller.userId, 'devices')
     return { identityId, generation: 1, grantRequests }
@@ -849,6 +866,7 @@ export async function resetIdentity(
         )
         .execute()
       await openGrantRequests(trx, id, [caller.userId], true)
+      await reconcileHistoryRequests(trx, id, now)
       await notifyChat(trx, id, 'members')
     }
     await flagRotation(trx, conversations)
@@ -951,12 +969,14 @@ export async function postPuk(
       (await openRequestsIn(
         trx,
         conversations.filter(id => !awaitingApproval.has(id)),
-        caller.userId
+        caller.userId,
+        now
       )) +
       (await openRequestsIn(
         trx,
         conversations.filter(id => awaitingApproval.has(id)),
         caller.userId,
+        now,
         true
       ))
     await notifyChatUser(trx, caller.userId, 'devices')

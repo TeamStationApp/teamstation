@@ -3,7 +3,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { isIdentityId } from '../../common/chatCrypto/messageIds'
-import { notFound } from '../../common/errors'
+import { badRequest, notFound } from '../../common/errors'
 import { asUserId } from '../../common/userId'
 import {
   createEpoch,
@@ -12,7 +12,17 @@ import {
   MAX_GRANTS,
   postGrants
 } from '../chat/epochs'
-import { asEpochMode } from '../chat/historyValidation'
+import {
+  historyGrantsFor,
+  postHistoryGrants,
+  reconcileUnreconciled
+} from '../chat/historyRecovery'
+import {
+  asEpochMode,
+  asHistoryGrantsBody,
+  boxDeliveryQuery,
+  historyQuery
+} from '../chat/historyValidation'
 import { chatCaller } from '../chat/keys'
 import { memberNow } from '../chat/reconciler'
 import { asBase64urlBytes } from '../chat/wire'
@@ -128,7 +138,27 @@ export function chatEpochRoutes(
       await mustBeMember(id, caller.userId)
       const raw = typeof req.query.after === 'string' ? req.query.after : '0'
       const after = /^\d{1,9}$/.test(raw) ? Number(raw) : 0
-      res.json(await epochsFor(db, caller, id, after))
+      const delivery = cleanBody(() => boxDeliveryQuery(req.query), req.query)
+      if (delivery != null) await reconcileUnreconciled(db, [id], clock())
+      const result =
+        delivery == null
+          ? await epochsFor(db, caller, id, after)
+          : await db.transaction().execute(async trx => {
+              const member = await trx
+                .selectFrom('chat_members')
+                .select('user_id')
+                .where('conversation_id', '=', id)
+                .where('user_id', '=', caller.userId)
+                .where('left_at', 'is', null)
+                .executeTakeFirst()
+              if (member == null) throw notFound()
+              return await epochsFor(trx, caller, id, after, delivery)
+            })
+      res.json({
+        ...result,
+        historyRecoveryVersion: 1,
+        freshEpochsEnabled: options.freshEpochsEnabled?.() ?? false
+      })
     })
   )
 
@@ -166,7 +196,18 @@ export function chatEpochRoutes(
     requireActor,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
-      res.json(await grantsFor(db, caller, clock()))
+      const query = cleanBody(() => historyQuery(req.query), req.query)
+      res.json(
+        query == null
+          ? await grantsFor(db, caller, clock())
+          : await historyGrantsFor(
+              db,
+              caller,
+              query.cursor,
+              query.limit,
+              clock()
+            )
+      )
     })
   )
 
@@ -175,6 +216,24 @@ export function chatEpochRoutes(
     requireActor,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
+      const query = cleanBody(() => historyQuery(req.query), req.query)
+      if (query != null) {
+        if (req.query.cursor != null || req.query.limit != null)
+          throw badRequest('History POST only accepts scope')
+        const body = cleanBody(asHistoryGrantsBody, req.body)
+        for (const id of [
+          ...new Set(body.boxes.map(box => box.conversationId))
+        ].sort())
+          await mustBeMember(id, caller.userId)
+        const result = await postHistoryGrants(db, caller, body.boxes, clock())
+        setAudit(res.locals, {
+          entityType: 'chatHistoryGrant',
+          entityId: caller.userId,
+          after: { filled: result.filled, processed: result.results.length }
+        })
+        res.json(result)
+        return
+      }
       const body = cleanBody(asGrantsBody, req.body)
       const ids = [...new Set(body.boxes.map(box => box.conversationId))]
       for (const id of ids) await mustBeMember(id, caller.userId)

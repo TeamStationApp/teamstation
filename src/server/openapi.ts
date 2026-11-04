@@ -8077,10 +8077,30 @@ export function openApiDocument(version: string): OpenApiDocument {
             'epoch keys under their current identity, from epoch `after` on, ' +
             'each `{epoch, identityId, pukGeneration, box, grantedByUserId}` ' +
             '(HPKE `epoch`, or `grant` when `grantedByUserId` is set). Bytes ' +
-            'are base64url.',
+            'are base64url. historyRecoveryVersion=1 advertises historical recovery independently of freshEpochsEnabled. With boxesAfter, boxes are independently paginated by delivery order, with nextBoxesCursor and hasMoreBoxes; the cursor is a decimal bigint string, not a number.',
           security: [{ bearer: [] }],
           parameters: [
             conversationIdParam,
+            {
+              name: 'boxesAfter',
+              in: 'query',
+              required: false,
+              description:
+                'Independent exclusive box delivery cursor. Omission keeps legacy epoch filtering; use 0 to begin.',
+              schema: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' }
+            },
+            {
+              name: 'boxLimit',
+              in: 'query',
+              required: false,
+              description: 'Requires boxesAfter.',
+              schema: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 100,
+                default: 100
+              }
+            },
             {
               name: 'after',
               in: 'query',
@@ -8159,8 +8179,42 @@ export function openApiDocument(version: string): OpenApiDocument {
             'the latest, the one to box; `identityReset` marks an identity ' +
             'that replaced one the chat had seen, which only an approver ' +
             '(`canApprove`) may fill; `canApprove` is false on the caller’s ' +
-            'own reset request.',
+            'own reset request. scope=history instead returns {requests,nextCursor}, with string IDs, segmentStartEpoch, fixed targetEpoch, coveredThroughEpoch, recipient identity/PUK, requiresApproval and canApprove. Legacy default remains an array.',
           security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'scope',
+              in: 'query',
+              required: false,
+              description:
+                'Omitted: current legacy requests. history: closed-segment requests.',
+              schema: { type: 'string', enum: ['history'] }
+            },
+            {
+              name: 'cursor',
+              in: 'query',
+              required: false,
+              description:
+                'Requires history scope; exclusive ascending request ID.',
+              schema: {
+                type: 'string',
+                default: '0',
+                pattern: '^(0|[1-9][0-9]*)$'
+              }
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              required: false,
+              description: 'Requires history scope.',
+              schema: {
+                type: 'integer',
+                default: 100,
+                minimum: 1,
+                maximum: 100
+              }
+            }
+          ],
           responses: {
             200: { description: 'The requests' },
             401: errorResponse,
@@ -8182,6 +8236,16 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`grant`. Answers `{filled, skipped: [{conversationId, userId, ' +
             'identityId, pukGeneration, reason}]}`. Audited.',
           security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'scope',
+              in: 'query',
+              required: false,
+              description:
+                'Omitted: legacy latest grants; history: fixed segment grants, maximum 100 boxes. Each adds requestId, targetEpoch, and optional approveHistory=false. epoch is the actual supplied prefix, not necessarily the target. Returns {filled,results}; results contain requestId, coveredThroughEpoch and completed/partial/alreadyCovered/skipped status. Explicit approval requires another current approver with a distribution path to the supplied key; malformed or unauthorized batches roll back.',
+              schema: { type: 'string', enum: ['history'] }
+            }
+          ],
           requestBody: keyBody({
             boxes: {
               type: 'array',

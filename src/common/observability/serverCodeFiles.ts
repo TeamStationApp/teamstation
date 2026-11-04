@@ -51,6 +51,8 @@ export const SERVER_CODE_FILES = new Set([
   'server/chat/dms.js',
   'server/chat/epochs.js',
   'server/chat/historyAccess.js',
+  'server/chat/historyRecovery.js',
+  'server/chat/historyRequests.js',
   'server/chat/historyValidation.js',
   'server/chat/keys.js',
   'server/chat/listing.js',
