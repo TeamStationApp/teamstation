@@ -14,9 +14,10 @@ import { ffprobeFor, probeDuration, VIDEO_FILE } from '../media/ffmpeg'
 import { posterSecond } from '../media/posters'
 import { presignGetUrl } from '../media/presign'
 import type { SpaceSettings } from '../media/spacesHls'
-import { spaceConfigured } from '../media/spacesHls'
+import { spaceConfigured, spaceKey } from '../media/spacesHls'
 import {
   deleteVideoFromSpace,
+  listSpaceObjects,
   uploadVideoDirectory,
   verifyVideoDirectory
 } from '../media/spacesVideo'
@@ -26,6 +27,7 @@ import {
   isSoundStepProblem,
   soundStepProblem
 } from '../media/trackStarts'
+import { newSpaceSecret, oldVideoPrefix } from '../media/videoPrefix'
 import { parseMediaPlaylist } from '../media/wallClockScan'
 import { storeWallPoints } from '../media/wallTimeline'
 import type { ScoreboardClient } from '../scoreboard/scoreboardStore'
@@ -234,6 +236,11 @@ const anchorCursors = new Map<string, ScanCursor>()
 interface OriginVideo {
   storage: string | null
   spacesVerifiedAt: Date | null
+  /**
+   * Where its objects go, fixed when the origin starts: one recording never
+   * spans two prefixes, so a secret the row gains later is not taken up.
+   */
+  spaceSecret: string | null
 }
 interface PublishingOrigin extends OriginVideo {
   publisher: OriginPublisher
@@ -250,7 +257,7 @@ function startOrigin(
   current: LiveControllerOptions,
   videoId: string,
   liveStreamId: string,
-  video: OriginVideo = { storage: null, spacesVerifiedAt: null }
+  video: OriginVideo
 ): PublishingOrigin | undefined {
   const { space, db } = current
   if (space == null || !spaceConfigured(space)) return undefined
@@ -261,6 +268,7 @@ function startOrigin(
   const publisher = new OriginPublisher({
     space,
     videoId,
+    spaceSecret: video.spaceSecret,
     dir: liveVideoDir(current.mediaRoot, videoId),
     ffmpegPath: current.ffmpegPath,
     isFinal: name => final?.has(name) ?? true,
@@ -296,6 +304,45 @@ function startOrigin(
   }
   origins.set(videoId, origin)
   return origin
+}
+
+/**
+ * The secret a video's origin publishes under. A row with one keeps it. A row
+ * from before secrets gets one here, only when nothing is listed under its
+ * old prefix `videos/<id>/`: one with objects there keeps publishing there,
+ * with no secret, so one recording never spans two prefixes, and the move
+ * script moves it later. A row that has gone, or a Space that cannot be
+ * asked, leaves it as it is.
+ */
+async function originSecret(
+  current: LiveControllerOptions,
+  videoId: string,
+  held: string | null
+): Promise<string | null> {
+  const { db, space } = current
+  if (held != null || space == null || !spaceConfigured(space)) return held
+  // A Space that cannot be listed leaves it on its old path, as it was.
+  const listed = await listSpaceObjects(space, oldVideoPrefix(videoId)).catch(
+    (error: unknown) => {
+      ;(current.log ?? console.log)(
+        `live: ${videoId} stays on its old path: ${String(error)}`
+      )
+      return undefined
+    }
+  )
+  if (listed == null || listed.length > 0) return null
+  const filled = await sql<{ space_secret: string | null }>`
+    update videos set space_secret = ${newSpaceSecret()}
+     where id = ${videoId} and space_secret is null
+    returning space_secret`.execute(db)
+  if (filled.rows.length > 0) return filled.rows[0].space_secret
+  // Somebody else gave it one first, or the row has gone.
+  const row = await db
+    .selectFrom('videos')
+    .select('space_secret')
+    .where('id', '=', videoId)
+    .executeTakeFirst()
+  return row?.space_secret ?? null
 }
 
 function stopOrigin(videoId: string): void {
@@ -432,7 +479,11 @@ export async function startLiveController(
   const restoring = await next.db
     .selectFrom('live_streams')
     .innerJoin('videos', 'videos.id', 'live_streams.video_id')
-    .select(['live_streams.id', 'videos.id as videoId'])
+    .select([
+      'live_streams.id',
+      'videos.id as videoId',
+      'videos.space_secret as spaceSecret'
+    ])
     .where('live_streams.ended_at', 'is', null)
     .where('videos.spaces_verified_at', 'is', null)
     .execute()
@@ -441,7 +492,13 @@ export async function startLiveController(
       (await hasMedia(next.mediaRoot, row.videoId)) &&
       generation === originGeneration
     ) {
-      const origin = startOrigin(next, row.videoId, row.id)
+      const spaceSecret = await originSecret(next, row.videoId, row.spaceSecret)
+      if (generation !== originGeneration) break
+      const origin = startOrigin(next, row.videoId, row.id, {
+        storage: null,
+        spacesVerifiedAt: null,
+        spaceSecret
+      })
       if (origin != null) queueOrigin(row.videoId, origin)
     }
   }
@@ -672,7 +729,7 @@ async function retryTheSpace(current: LiveControllerOptions): Promise<void> {
   // moves. Left in, five of them would fill this window for that month.
   const rows = await db
     .selectFrom('videos')
-    .select(['id'])
+    .select(['id', 'space_secret'])
     .where('kind', '=', 'live')
     .where('status', '=', 'ready')
     .where('storage', '=', 'local')
@@ -699,7 +756,7 @@ async function retryTheSpace(current: LiveControllerOptions): Promise<void> {
       unpacked ??= row.id
       continue
     }
-    await toTheSpace(current, row.id, dir, RECORDING_FILES)
+    await toTheSpace(current, row.id, row.space_secret, dir, RECORDING_FILES)
     return
   }
   if (unpacked == null) return
@@ -709,12 +766,12 @@ async function retryTheSpace(current: LiveControllerOptions): Promise<void> {
   queue(`publish:${videoId}`, async () => {
     const still = await db
       .selectFrom('videos')
-      .select('id')
+      .select(['id', 'space_secret'])
       .where('id', '=', videoId)
       .where('storage', '=', 'local')
       .where('replaced_by', 'is', null)
       .executeTakeFirst()
-    if (still != null) await putAway(current, videoId)
+    if (still != null) await putAway(current, videoId, still.space_secret)
   })
 }
 
@@ -979,14 +1036,16 @@ export async function beganPublishing(
   publisherActivity.set(liveStreamId, now)
   const row = await db
     .selectFrom('live_streams')
+    .leftJoin('videos', 'videos.id', 'live_streams.video_id')
     .select([
-      'video_id as videoId',
-      'first_published_at as firstPublishedAt',
-      'user_id as userId',
-      'game_id as gameId',
-      'team_id as teamId'
+      'live_streams.video_id as videoId',
+      'live_streams.first_published_at as firstPublishedAt',
+      'live_streams.user_id as userId',
+      'live_streams.game_id as gameId',
+      'live_streams.team_id as teamId',
+      'videos.space_secret as videoSpaceSecret'
     ])
-    .where('id', '=', liveStreamId)
+    .where('live_streams.id', '=', liveStreamId)
     .executeTakeFirst()
   if (row == null) return
   if (!(await mayPublish(db, row))) {
@@ -1039,8 +1098,17 @@ export async function beganPublishing(
     row.videoId != null &&
     generation === originGeneration
   ) {
-    const origin = startOrigin(current, row.videoId, liveStreamId)
-    if (origin != null) queueOrigin(row.videoId, origin)
+    const videoId = row.videoId
+    const spaceSecret = origins.has(videoId)
+      ? null
+      : await originSecret(current, videoId, row.videoSpaceSecret)
+    if (generation !== originGeneration) return
+    const origin = startOrigin(current, videoId, liveStreamId, {
+      storage: null,
+      spacesVerifiedAt: null,
+      spaceSecret
+    })
+    if (origin != null) queueOrigin(videoId, origin)
   }
 }
 
@@ -1249,7 +1317,8 @@ export async function sync(
       'games.end_at as gameEndAt',
       'videos.start_at as videoStartAt',
       'videos.storage as videoStorage',
-      'videos.spaces_verified_at as videoSpacesVerifiedAt'
+      'videos.spaces_verified_at as videoSpacesVerifiedAt',
+      'videos.space_secret as videoSpaceSecret'
     ])
     .where(eb =>
       eb.or([
@@ -1435,6 +1504,10 @@ export async function sync(
  * keeps what the row says of it on its origin; one that is not is looked up,
  * all of them in one read, and one whose row has gone is removed from the
  * Space. The rows' videos are the ones whose own notices wake a sync.
+ *
+ * The row's `space_secret` is not taken up by an origin already publishing:
+ * its objects stay under the prefix it started on (its `spaceSecret`), and
+ * only the move script, run while no game is live, moves a video.
  */
 async function settleOrigins(
   current: LiveControllerOptions,
@@ -1442,6 +1515,7 @@ async function settleOrigins(
     videoId: string | null
     videoStorage: string | null
     videoSpacesVerifiedAt: Date | null
+    videoSpaceSecret: string | null
   }>,
   generation: number
 ): Promise<void> {
@@ -1794,7 +1868,12 @@ async function finishStreamRecording(
     await checkTrackStarts(
       join(dir, LIVE_PLAYLIST_NAME),
       tailed && current.space != null
-        ? { readPart: spacePartReader(current.space, row.videoId) }
+        ? {
+            readPart: spacePartReader(current.space, {
+              id: row.videoId,
+              spaceSecret: await publishedSecret(current, row.videoId)
+            })
+          }
         : {}
     ).catch(() => undefined)
   )
@@ -1836,7 +1915,13 @@ function queueOriginClose(
     if (generation !== originGeneration) return
     const row = await current.db
       .selectFrom('videos')
-      .select(['storage', 'replaced_by', 'spaces_verified_at', 'duration_sec'])
+      .select([
+        'storage',
+        'replaced_by',
+        'spaces_verified_at',
+        'duration_sec',
+        'space_secret'
+      ])
       .where('id', '=', videoId)
       .executeTakeFirst()
     // Shutdown may have stopped and removed this publisher during the lookup.
@@ -1847,12 +1932,16 @@ function queueOriginClose(
     }
     if (row.storage === 'spaces') {
       if (row.spaces_verified_at == null)
-        await closeOrigin(current, videoId, liveStreamId, row.duration_sec ?? 0)
+        await closeOrigin(current, videoId, liveStreamId, {
+          durationSec: row.duration_sec ?? 0,
+          spaceSecret: row.space_secret
+        })
       return
     }
     stopOrigin(videoId)
     anchorCursors.delete(videoId)
-    if (row.replaced_by == null) await putAway(current, videoId)
+    if (row.replaced_by == null)
+      await putAway(current, videoId, row.space_secret)
   })
 }
 
@@ -1891,6 +1980,24 @@ export async function playlistDuration(path: string): Promise<number> {
   return micros / 1_000_000
 }
 
+/**
+ * The secret a live video's pieces were published under: its held origin's,
+ * or, with none held, the row's.
+ */
+async function publishedSecret(
+  current: LiveControllerOptions,
+  videoId: string
+): Promise<string | null> {
+  const held = origins.get(videoId)
+  if (held != null) return held.spaceSecret
+  const row = await current.db
+    .selectFrom('videos')
+    .select('space_secret')
+    .where('id', '=', videoId)
+    .executeTakeFirst()
+  return row?.space_secret ?? null
+}
+
 async function removeDeletedOrigin(
   current: LiveControllerOptions,
   videoId: string
@@ -1902,8 +2009,14 @@ async function removeDeletedOrigin(
     recursive: true,
     force: true
   })
+  // The row has gone, so the secret is the origin's. With no origin held (a
+  // close retried after a restart) nobody knows it, and the Space is asked.
   if (current.space != null && spaceConfigured(current.space))
-    await deleteVideoFromSpace({ space: current.space, videoId })
+    await deleteVideoFromSpace({
+      space: current.space,
+      videoId,
+      spaceSecret: origins.get(videoId)?.spaceSecret
+    })
   stopOrigin(videoId)
   anchorCursors.delete(videoId)
 }
@@ -1912,14 +2025,22 @@ async function closeOrigin(
   current: LiveControllerOptions,
   videoId: string,
   liveStreamId: string,
-  durationSec: number
+  closing: { durationSec: number; spaceSecret: string | null }
 ): Promise<void> {
   const { db, space } = current
+  const { durationSec } = closing
   const dir = liveVideoDir(current.mediaRoot, videoId)
   try {
-    const origin = startOrigin(current, videoId, liveStreamId)
+    // A held origin keeps the prefix it published under; one retried after a
+    // restart publishes under the row's.
+    const origin = startOrigin(current, videoId, liveStreamId, {
+      storage: null,
+      spacesVerifiedAt: null,
+      spaceSecret: closing.spaceSecret
+    })
     if (origin == null || space == null)
       throw new Error('No Space configured for live recording')
+    const video = { id: videoId, spaceSecret: origin.spaceSecret }
     origin.publisher.closing = true
     await closePlaylist(current.mediaRoot, videoId)
     // Each pass stays bounded. A failed scan advances nothing and ends the drain.
@@ -1936,7 +2057,7 @@ async function closeOrigin(
       videoId,
       dir,
       LIVE_PLAYLIST_NAME,
-      spacePartReader(space, videoId)
+      spacePartReader(space, video)
     )
     anchorCursors.delete(videoId)
     origin.refreshFinal()
@@ -1946,7 +2067,7 @@ async function closeOrigin(
     const response = await fetch(
       presignGetUrl({
         ...space,
-        key: `videos/${videoId}/index.m3u8`,
+        key: spaceKey(video, 'index.m3u8'),
         expiresSec: 300
       })
     )
@@ -1961,6 +2082,7 @@ async function closeOrigin(
       kind: 'space',
       space,
       videoId,
+      spaceSecret: origin.spaceSecret,
       verified: true
     })
     const row = await db
@@ -2041,7 +2163,9 @@ async function retryTheClose(
  */
 async function putAway(
   current: LiveControllerOptions,
-  videoId: string
+  videoId: string,
+  /** The row's: the recording goes under its prefix, and this never sets it. */
+  spaceSecret: string | null
 ): Promise<void> {
   const { db, ffmpegPath, mediaRoot, space } = current
   const log =
@@ -2056,7 +2180,7 @@ async function putAway(
   // recording, and doing it again would rewrite the file somebody may be
   // watching.
   if (await isRecordingShape(dir)) {
-    await toTheSpace(current, videoId, dir, RECORDING_FILES)
+    await toTheSpace(current, videoId, spaceSecret, dir, RECORDING_FILES)
     return
   }
 
@@ -2109,7 +2233,7 @@ async function putAway(
     return
   }
 
-  await toTheSpace(current, videoId, dir, recording.files)
+  await toTheSpace(current, videoId, spaceSecret, dir, recording.files)
 }
 
 /**
@@ -2156,6 +2280,7 @@ const RECORDING_FILES = ['master.m3u8', 'video.m3u8', 'video.mp4']
 async function toTheSpace(
   current: LiveControllerOptions,
   videoId: string,
+  spaceSecret: string | null,
   dir: string,
   files: string[]
 ): Promise<void> {
@@ -2168,10 +2293,17 @@ async function toTheSpace(
   if (space == null || !spaceConfigured(space)) return
 
   try {
-    const uploaded = await uploadVideoDirectory({ space, videoId, dir, files })
+    const uploaded = await uploadVideoDirectory({
+      space,
+      videoId,
+      spaceSecret,
+      dir,
+      files
+    })
     const verified = await verifyVideoDirectory({
       space,
       videoId,
+      spaceSecret,
       dir,
       files: uploaded.files
     })
