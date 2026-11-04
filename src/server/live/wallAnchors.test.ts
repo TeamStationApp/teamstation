@@ -32,6 +32,7 @@ import type { LiveControllerOptions } from './controller'
 import {
   finishStream,
   liveVideoDir,
+  localTickForTest,
   settleLiveWork,
   stopLiveController,
   sync
@@ -304,6 +305,15 @@ describe('the controller and the wall clock (U25, U26)', function () {
   let userId = ''
   const said: string[] = []
 
+  /**
+   * A sync, which hands the ingest the stream, then the local tick, which
+   * scans what its playlist lists.
+   */
+  async function syncAndScan(current: LiveControllerOptions): Promise<void> {
+    await sync(current)
+    await localTickForTest(current)
+  }
+
   before(async function () {
     if (!(await canEncode('libx265'))) this.skip()
     mediaRoot = await mkdtemp(join(tmpdir(), 'tsWallTick-'))
@@ -438,13 +448,13 @@ describe('the controller and the wall clock (U25, U26)', function () {
     const live = liveVideoDir(mediaRoot, videoId)
     await mkdir(live, { recursive: true })
     await writeLive(stamped, live, { seconds: 3 })
-    await sync(options)
+    await syncAndScan(options)
     expect((await anchors(videoId)).length).equals(6)
 
     await writeLive(stamped, live, { fromSec: 5, startNumber: 3 })
-    await sync(options)
+    await syncAndScan(options)
     // Twice over the same segments adds nothing.
-    await sync(options)
+    await syncAndScan(options)
     const live12 = await anchors(videoId)
     expect(
       live12.map(([mediaMs, wall]) => [mediaMs, wall - START])
@@ -489,7 +499,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
     const live = liveVideoDir(mediaRoot, videoId)
     await mkdir(live, { recursive: true })
     await writeLive(stamped, live, { seconds: 3 })
-    await sync(options)
+    await syncAndScan(options)
     await writeLive(stamped, live, { fromSec: 5, startNumber: 3 })
     const init = await readFile(join(live, 'init.mp4'))
     const listed = parseMediaPlaylist(
@@ -502,7 +512,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
       expect(placed, segment.uri).not.equals(undefined)
       await writeFile(path, placed!)
     }
-    await sync(options)
+    await syncAndScan(options)
     // Live, the return sits where a player puts it, after the media before
     // the discontinuity, and every point says the wall clock its frame
     // carries: the board at a position is the board when that frame was
@@ -553,9 +563,9 @@ describe('the controller and the wall clock (U25, U26)', function () {
     const live = liveVideoDir(mediaRoot, videoId)
     await mkdir(live, { recursive: true })
     await writeLive(plain, live, { seconds: 2 })
-    await sync(options)
+    await syncAndScan(options)
     await writeLive(plain, live, { fromSec: 5, startNumber: 2 })
-    await sync(options)
+    await syncAndScan(options)
     const before = await anchors(videoId)
     expect(before.map(([mediaMs, , source]) => [mediaMs, source])).deep.equals([
       [0, 'arrival'],
@@ -585,11 +595,11 @@ describe('the controller and the wall clock (U25, U26)', function () {
     const live = liveVideoDir(mediaRoot, videoId)
     await mkdir(live, { recursive: true })
     await writeLive(stamped, live, { seconds: 3 })
-    await sync(options)
+    await syncAndScan(options)
     await writeLive(plain, live, { fromSec: 5, startNumber: 3 })
-    await sync(options)
+    await syncAndScan(options)
     await writeLive(stamped, live, { fromSec: 3, seconds: 2, startNumber: 6 })
-    await sync(options)
+    await syncAndScan(options)
     const before = await anchors(videoId)
     const arrivals = before.filter(([, , source]) => source === 'arrival')
     expect(arrivals.map(([mediaMs]) => mediaMs)).deep.equals([3000, 4000, 5000])
@@ -647,7 +657,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
     const recording = liveVideoDir(mediaRoot, videoId)
     await mkdir(recording, { recursive: true })
     await writeLive(stamped, recording, { seconds: 3 })
-    await sync(options)
+    await syncAndScan(options)
     await finishStream(options, 'liv_rescanned', 'the stream was ended')
     await settleLiveWork()
     const scanned = await anchors(videoId)
@@ -697,14 +707,14 @@ describe('the controller and the wall clock (U25, U26)', function () {
     const live = liveVideoDir(mediaRoot, videoId)
     await mkdir(live, { recursive: true })
     await writeLive(stamped, live, { seconds: 3 })
-    await sync(options)
+    await syncAndScan(options)
     // The server restarts. A segment the scan read before is gone, so a scan
     // from the start would fail on it; the run's first segment, which places
     // the run, and the one holding the newest point are still there.
     stopLiveController()
     await rm(join(live, 'seg000001.m4s'))
     await writeLive(stamped, live, { fromSec: 5, startNumber: 3 })
-    await sync(options)
+    await syncAndScan(options)
     expect(saidAbout(videoId)).deep.equals([])
     expect(
       (await anchors(videoId)).map(([mediaMs, wall]) => [mediaMs, wall - START])
@@ -729,7 +739,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
     const live = liveVideoDir(mediaRoot, videoId)
     await mkdir(live, { recursive: true })
     await writeLive(stamped, live, { seconds: 3 })
-    await sync(options)
+    await syncAndScan(options)
     const before = await anchors(videoId)
     stopLiveController()
     await rm(join(live, 'seg000000.m4s'))
@@ -744,7 +754,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
     })
     await rm(join(live, 'init.mp4'))
     expect((await resumeScan(db, videoId, live)).placement).equals(undefined)
-    await sync(options)
+    await syncAndScan(options)
     expect(saidAbout(videoId)).deep.equals([])
     expect(await anchors(videoId)).deep.equals(before)
   })
@@ -755,7 +765,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
     await mkdir(live, { recursive: true })
     expect(await resumeScan(db, videoId, live)).deep.equals(SCAN_FROM_START)
     await writeLive(plain, live, { seconds: 2 })
-    await sync(options)
+    await syncAndScan(options)
     stopLiveController()
     const stored = await anchors(videoId)
     expect(await resumeScan(db, videoId, live)).deep.equals({
@@ -766,7 +776,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
     await rm(join(live, 'seg000000.m4s'))
     await rm(join(live, 'seg000001.m4s'))
     await writeLive(plain, live, { fromSec: 5, startNumber: 2 })
-    await sync(options)
+    await syncAndScan(options)
     expect(saidAbout(videoId)).deep.equals([])
     expect(
       (await anchors(videoId)).map(([mediaMs, , source]) => [mediaMs, source])
@@ -810,7 +820,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
         return 1_000_000_000_000
       }
     }
-    await sync(slow)
+    await syncAndScan(slow)
     const [first, second] = await anchors(videoId)
     expect(first[0]).equals(0)
     expect(second[0]).equals(1000)
@@ -823,7 +833,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
     // A prompt tick after the slow one: the next segment carries on from
     // where the one before it ends, not from a second before its own look.
     await writeLive(plain, live, { fromSec: 2, seconds: 1, startNumber: 2 })
-    await sync(options)
+    await syncAndScan(options)
     const third = (await anchors(videoId))[2]
     expect(third[0]).equals(2000)
     expect(third[1]).at.least(second[1] + 1000)
@@ -837,7 +847,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
     await writeLive(stamped, live, { seconds: 3 })
     const path = join(live, 'seg000001.m4s')
     await writeFile(path, withBrokenRun(await readFile(path)))
-    await sync(options)
+    await syncAndScan(options)
     expect(await anchors(videoId)).deep.equals([
       [0, START, 'sei'],
       [500, START + 500, 'sei'],
@@ -851,7 +861,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
     expect(passedOver()).has.length(1)
     expect(passedOver()[0]).includes('seg000001.m4s')
     await writeLive(stamped, live, { fromSec: 3, seconds: 1, startNumber: 3 })
-    await sync(options)
+    await syncAndScan(options)
     expect((await anchors(videoId)).at(-1)?.[2]).equals('sei')
     expect((await anchors(videoId)).at(-1)?.[0]).at.least(3000)
     expect(passedOver()).has.length(1)
@@ -863,7 +873,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
     await mkdir(live, { recursive: true })
     await writeLive(stamped, live, { seconds: 1 })
     await rm(join(live, 'seg000000.m4s'))
-    await sync(options)
+    await syncAndScan(options)
     expect(await anchors(videoId)).deep.equals([])
     expect(said.some(line => line.includes(`wall clock of ${videoId}`))).equals(
       true

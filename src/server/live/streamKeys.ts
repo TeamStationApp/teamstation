@@ -520,8 +520,9 @@ async function placeVideoStart(
 /**
  * Replaces the key, leaving everything else as it was.
  *
- * The old key stops working the moment this returns — the ingest re-reads the
- * row within the second — which is the point of rotating one.
+ * The old key stops working the moment this returns — the write's
+ * `live_changes` notice has the ingest re-read the row within about 100 ms —
+ * which is the point of rotating one.
  */
 export async function rotateLiveStreamKey(
   db: Kysely<Database>,
