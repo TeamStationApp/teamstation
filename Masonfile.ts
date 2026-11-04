@@ -42,9 +42,13 @@ const TESTFLIGHT_GROUP = 'TeamStation testers'
 const versionPattern = /^[0-9]+(\.[0-9]+){0,2}$/
 
 /** Which app id this run publishes. Master stays stable; every other branch and every seat does not. */
-export function appIdOf(input: { branch?: string; seat?: string } = {}): string {
-  const branch = input.branch == null || input.branch === '' ? 'master' : input.branch
-  const seat = input.seat == null || input.seat === '' ? 'production' : input.seat
+export function appIdOf(
+  input: { branch?: string; seat?: string } = {}
+): string {
+  const branch =
+    input.branch == null || input.branch === '' ? 'master' : input.branch
+  const seat =
+    input.seat == null || input.seat === '' ? 'production' : input.seat
   if (branch !== 'master' || seat !== 'production') return DEVELOP_APP
   return STABLE_APP
 }
@@ -57,7 +61,9 @@ function developRoot(ctx: { workspace?: string }): string {
   return root
 }
 
-function runApp(ctx: { run?: { branch?: string; params?: { seat?: unknown } } }): string {
+function runApp(ctx: {
+  run?: { branch?: string; params?: { seat?: unknown } }
+}): string {
   const seat = ctx.run?.params?.seat
   return appIdOf({
     branch: ctx.run?.branch,

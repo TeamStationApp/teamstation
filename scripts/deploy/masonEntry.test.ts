@@ -1,22 +1,28 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import {
-  DEVELOP_APP,
-  STABLE_APP,
   appIdOf,
   applyDevelopIdentity,
   buildIos,
   compileAndroid,
+  DEVELOP_APP,
   releaseIos,
   seatEnvironment,
   setup,
-  signAndroid
+  signAndroid,
+  STABLE_APP
 } from '../../Masonfile'
 import { app, fixtureSettings, testRoot } from './config.test'
 import { masonDeploy } from './mason'
@@ -579,15 +585,21 @@ describe('TeamStation pipeline Masonfile', () => {
       TS_APP_ORIGIN: 'https://develop.teamstation.app'
     }
     assert.deepEqual(
-      seatEnvironment({ run: { branch: 'develop', params: { seat: 'production' } } }),
+      seatEnvironment({
+        run: { branch: 'develop', params: { seat: 'production' } }
+      }),
       developServer
     )
     assert.deepEqual(
-      seatEnvironment({ run: { branch: 'paul/example', params: { seat: 'production' } } }),
+      seatEnvironment({
+        run: { branch: 'paul/example', params: { seat: 'production' } }
+      }),
       developServer
     )
     assert.deepEqual(
-      seatEnvironment({ run: { branch: 'paul/example', params: { seat: '3' } } }),
+      seatEnvironment({
+        run: { branch: 'paul/example', params: { seat: '3' } }
+      }),
       {
         TS_API_BASE_URL: 'https://develop3.teamstation.app/api/v1',
         TS_APP_ORIGIN: 'https://develop3.teamstation.app'
@@ -601,9 +613,15 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.equal(appIdOf({ branch: 'master', seat: 'production' }), STABLE_APP)
     assert.equal(appIdOf(), STABLE_APP)
     assert.equal(appIdOf({ branch: 'develop' }), DEVELOP_APP)
-    assert.equal(appIdOf({ branch: 'develop', seat: 'production' }), DEVELOP_APP)
+    assert.equal(
+      appIdOf({ branch: 'develop', seat: 'production' }),
+      DEVELOP_APP
+    )
     assert.equal(appIdOf({ branch: 'paul/example' }), DEVELOP_APP)
-    assert.equal(appIdOf({ branch: 'paul/example', seat: 'production' }), DEVELOP_APP)
+    assert.equal(
+      appIdOf({ branch: 'paul/example', seat: 'production' }),
+      DEVELOP_APP
+    )
     assert.equal(appIdOf({ branch: 'paul/example', seat: '2' }), DEVELOP_APP)
     assert.equal(appIdOf({ branch: 'master', seat: '1' }), DEVELOP_APP)
     assert.equal(appIdOf({ branch: '', seat: '' }), STABLE_APP)
@@ -622,8 +640,14 @@ describe('TeamStation pipeline Masonfile', () => {
         declare({
           stage() {},
           parallel(_group, members) {
-            const ios = (members as { ios: Array<{ apple: { app: string }; publishes?: string[] }> }).ios
-            const android = (members as { android: Array<{ publishes?: string[] }> }).android
+            const ios = (
+              members as {
+                ios: Array<{ apple: { app: string }; publishes?: string[] }>
+              }
+            ).ios
+            const android = (
+              members as { android: Array<{ publishes?: string[] }> }
+            ).android
             recorded.push(ios[0]?.apple.app ?? '')
             recorded.push((ios[0]?.publishes ?? []).join(','))
             recorded.push((android[1]?.publishes ?? []).join(','))
@@ -642,16 +666,15 @@ describe('TeamStation pipeline Masonfile', () => {
   })
 
   it('refuses a develop build whose workspace is missing', async () => {
-    await assert.rejects(
-      () =>
-        buildIos({
-          run: { branch: 'develop', params: { seat: 'production' } },
-          async sh() {
-            return { code: 0, stdout: '', stderr: '' }
-          }
-        } as never),
-      /needs its workspace/
-    )
+    const ctx = {
+      run: { branch: 'develop', params: { seat: 'production' } },
+      async sh() {
+        return { code: 0, stdout: '', stderr: '' }
+      }
+    }
+    await assert.rejects(async () => {
+      await buildIos(ctx)
+    }, /needs its workspace/)
   })
 
   it('rewrites the stable app id to the develop app, and only once', () => {
@@ -673,28 +696,42 @@ describe('TeamStation pipeline Masonfile', () => {
       }
       applyDevelopIdentity(root)
       applyDevelopIdentity(root)
-      const gradle = readFileSync(path.join(root, 'android/app/build.gradle'), 'utf8')
+      const gradle = readFileSync(
+        path.join(root, 'android/app/build.gradle'),
+        'utf8'
+      )
       const project = readFileSync(
         path.join(root, 'ios/TeamStation.xcodeproj/project.pbxproj'),
         'utf8'
       )
       assert.match(gradle, /applicationId "app\.teamstation\.develop"/)
-      assert.match(project, /PRODUCT_BUNDLE_IDENTIFIER = app\.teamstation\.app\.tests;/)
+      assert.match(
+        project,
+        /PRODUCT_BUNDLE_IDENTIFIER = app\.teamstation\.app\.tests;/
+      )
       assert.equal(
-        project.match(/PRODUCT_BUNDLE_IDENTIFIER = app\.teamstation\.develop;/g)?.length,
+        project.match(/PRODUCT_BUNDLE_IDENTIFIER = app\.teamstation\.develop;/g)
+          ?.length,
         2
       )
-      assert.equal(project.match(/PRODUCT_NAME = "TeamStation Develop";/g)?.length, 2)
-      assert.equal(project.includes('PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;'), false)
-      assert.throws(
-        () => applyDevelopIdentity(path.join(root, 'missing')),
-        /is missing/
+      assert.equal(
+        project.match(/PRODUCT_NAME = "TeamStation Develop";/g)?.length,
+        2
       )
+      assert.equal(
+        project.includes('PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;'),
+        false
+      )
+      assert.throws(() => {
+        applyDevelopIdentity(path.join(root, 'missing'))
+      }, /is missing/)
       writeFileSync(
         path.join(root, 'android/app/build.gradle'),
         'applicationId "app.example.other"\n'
       )
-      assert.throws(() => applyDevelopIdentity(root), /is missing/)
+      assert.throws(() => {
+        applyDevelopIdentity(root)
+      }, /is missing/)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
