@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 
 import type { RecoveryFault } from './chatRecoveryFaults'
 
@@ -35,21 +37,29 @@ export function recoveryControlBody(
       'pending-failure',
       'history-delay',
       'history-failure',
-      'history-outage'
+      'history-outage',
+      'epoch-delay'
     ].includes(action),
     'Unsupported fault action'
   )
-  const kind = action.startsWith('history-')
-    ? 'history'
-    : ['page', 'empty', 'delay'].includes(action)
-      ? 'page'
-      : 'send'
+  const kind =
+    action === 'epoch-delay'
+      ? 'epoch'
+      : action.startsWith('history-')
+        ? 'history'
+        : ['page', 'empty', 'delay'].includes(action)
+          ? 'page'
+          : 'send'
   const outcome =
     action === 'empty'
       ? 'empty'
-      : ['success', 'pending-success', 'delay', 'history-delay'].includes(
-            action
-          )
+      : [
+            'success',
+            'pending-success',
+            'delay',
+            'history-delay',
+            'epoch-delay'
+          ].includes(action)
         ? 'success'
         : 'failure'
   const delayMs = delay == null ? 0 : Number(delay)
@@ -91,5 +101,23 @@ export async function controlRecovery(
     response.status,
     204,
     'Fault controller rejected the scoped operation'
+  )
+}
+
+/**
+ * The runners' control executable (`scripts/chat-history-recovery-control.cjs`):
+ * the arguments as they pass them, and its private settings from `file`.
+ */
+export async function runRecoveryControl(
+  file: string | undefined,
+  args: string[]
+): Promise<void> {
+  assert(
+    file != null && isAbsolute(file),
+    'CHAT_RECOVERY_CONTROL_FILE must name the private control settings'
+  )
+  await controlRecovery(
+    JSON.parse(readFileSync(file, 'utf8')) as RecoveryControl,
+    args
   )
 }
