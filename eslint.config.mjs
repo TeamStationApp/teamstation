@@ -51,7 +51,11 @@ export default [
   },
 
   {
-    files: ['scripts/stampWallClockSei.ts', 'scripts/e2e/**/*.ts'],
+    files: [
+      'scripts/stampWallClockSei.ts',
+      'scripts/chat-history-recovery-fixtures.ts',
+      'scripts/e2e/**/*.ts'
+    ],
     languageOptions: {
       parserOptions: {
         projectService: false,
