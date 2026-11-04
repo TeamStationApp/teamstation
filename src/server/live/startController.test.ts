@@ -65,6 +65,8 @@ describe('starting the live controller', function () {
 
   afterEach(async function () {
     stopLiveController()
+    // The start's first sync may still be reading: the pool closes after it.
+    await drainLiveController()
     if (holder != null) {
       const closing = holder
       holder = undefined

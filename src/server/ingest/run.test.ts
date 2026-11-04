@@ -4,8 +4,10 @@ import { expect } from 'chai'
 import type { Kysely } from 'kysely'
 import { afterEach, describe, it } from 'mocha'
 
+import type { ChangeFeed } from '../changeFeed/feed'
 import type { Database } from '../db/database'
 import type { LiveControllerOptions } from '../live/controller'
+import type { ScoreboardClient } from '../scoreboard/scoreboardStore'
 import { asServerConfig, type ServerConfig } from '../serverConfig'
 import {
   type IngestDeps,
@@ -45,6 +47,10 @@ interface Fake {
   roles: Array<string | undefined>
   signals: Map<IngestSignal, () => void>
   bound: { value: boolean }
+  feeds: ChangeFeed[]
+  /** What each `makeValkey` call was given. */
+  valkeys: Array<{ url: string; name: string; caFile: string }>
+  valkeyClients: ScoreboardClient[]
 }
 
 function fake(
@@ -54,6 +60,8 @@ function fake(
     destroy?: () => Promise<void>
     drain?: () => Promise<void>
     stopTimeoutMs?: number
+    connectValkey?: () => Promise<void>
+    closeFeed?: () => Promise<void>
   } = {}
 ): Fake {
   const f: Fake = {
@@ -68,6 +76,9 @@ function fake(
     roles: [],
     signals: new Map(),
     bound: { value: true },
+    feeds: [],
+    valkeys: [],
+    valkeyClients: [],
     deps: undefined as unknown as IngestDeps
   }
   f.deps = {
@@ -82,6 +93,35 @@ function fake(
           await (options.destroy ?? (async () => undefined))()
         }
       } as unknown as Kysely<Database>
+    },
+    makeFeed: (_config, log) => {
+      log('made')
+      const feed = {
+        subscribe: () => {
+          throw new Error('the controller is faked')
+        },
+        publishEphemeral: async () => undefined,
+        close: async () => {
+          f.order.push('feed closed')
+          await (options.closeFeed ?? (async () => undefined))()
+        }
+      }
+      f.feeds.push(feed)
+      return feed
+    },
+    makeValkey: (url, log, name, caFile) => {
+      log('made')
+      f.valkeys.push({ url, name, caFile })
+      const client = {
+        isReady: true,
+        isOpen: true,
+        connect: options.connectValkey ?? (async () => undefined),
+        close: async () => {
+          f.order.push('valkey closed')
+        }
+      } as unknown as ScoreboardClient
+      f.valkeyClients.push(client)
+      return client
     },
     startLiveController: async next => {
       f.started.push(next)
@@ -235,6 +275,66 @@ describe('the ingest process', function () {
     expect(posted.status).equals(404)
   })
 
+  it('hands the controller one change feed and one Valkey client, and closes both after the drain', async function () {
+    const config = configWith({
+      redis: {
+        url: 'redis://valkey.example.test:6380',
+        prefix: '',
+        caFile: '/etc/valkey-ca.pem'
+      }
+    })
+    const f = fake(config)
+    const handle = await runIngest(f.deps)
+    expect(f.feeds).length(1)
+    expect(f.valkeys).deep.equals([
+      {
+        url: 'redis://valkey.example.test:6380',
+        name: 'live playlists',
+        caFile: '/etc/valkey-ca.pem'
+      }
+    ])
+    expect(f.logs).includes('live feed: made')
+    expect(f.logs).includes('live playlists: made')
+    const [options] = f.started
+    expect(options.feed).equals(f.feeds[0])
+    expect(options.playlistClient).equals(f.valkeyClients[0])
+    handle!.stop('SIGTERM')
+    await untilExited(f)
+    expect(f.order).deep.equals([
+      'stop',
+      'drained',
+      'feed closed',
+      'valkey closed',
+      'destroy'
+    ])
+    expect(f.exits).deep.equals([0])
+  })
+
+  it('closes the feed and Valkey when the controller does not start', async function () {
+    const f = fake(configWith(), { starts: false })
+    expect(await runIngest(f.deps)).equals(undefined)
+    expect(f.order).deep.equals(['feed closed', 'valkey closed', 'destroy'])
+  })
+
+  it('says so when Valkey cannot be reached or the feed will not close, and still stops', async function () {
+    const f = fake(configWith(), {
+      connectValkey: async () => {
+        throw new Error('refused')
+      },
+      closeFeed: async () => {
+        throw new Error('already gone')
+      }
+    })
+    const handle = await runIngest(f.deps)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(f.errors).includes('live playlists: Error: refused')
+    handle!.stop('SIGTERM')
+    await untilExited(f)
+    expect(f.errors).includes('closing the change feed: Error: already gone')
+    expect(f.order.at(-1)).equals('destroy')
+    expect(f.exits).deep.equals([0])
+  })
+
   it('answers 503 while its RTMP listener is not accepting', async function () {
     const f = fake(configWith())
     running = await runIngest(f.deps)
@@ -253,7 +353,13 @@ describe('the ingest process', function () {
     const f = fake(configWith({ live: { healthPort: taken } }))
     expect(await runIngest(f.deps)).equals(undefined)
     expect(f.errors[0]).matches(/^ingest health did not start: .*EADDRINUSE/)
-    expect(f.order).deep.equals(['stop', 'drained', 'destroy'])
+    expect(f.order).deep.equals([
+      'stop',
+      'drained',
+      'feed closed',
+      'valkey closed',
+      'destroy'
+    ])
     expect(f.stops).equals(1)
     expect(f.destroyed).equals(1)
     expect(f.exits).deep.equals([1])
@@ -271,7 +377,13 @@ describe('the ingest process', function () {
       expect(f.logs).includes(`${signal}: stopping live ingest`)
       expect(f.stops).equals(1)
       expect(f.destroyed).equals(1)
-      expect(f.order).deep.equals(['stop', 'drained', 'destroy'])
+      expect(f.order).deep.equals([
+        'stop',
+        'drained',
+        'feed closed',
+        'valkey closed',
+        'destroy'
+      ])
       expect(f.exits).deep.equals([0])
       expect(await refused(port)).equals(true)
     })
@@ -307,7 +419,12 @@ describe('the ingest process', function () {
     finishWork()
     await untilExited(f)
     expect(f.errors).deep.equals(['finishing live work: Error: a write failed'])
-    expect(f.order).deep.equals(['stop', 'destroy'])
+    expect(f.order).deep.equals([
+      'stop',
+      'feed closed',
+      'valkey closed',
+      'destroy'
+    ])
     expect(f.exits).deep.equals([0])
   })
 
