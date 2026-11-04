@@ -64,6 +64,13 @@ export interface PresignOptions {
    */
   pathStyle?: boolean
   readOnlySource?: ReadOnlySpaceSource
+  /**
+   * Request headers the signature covers besides `host`, by lowercase name.
+   * An S3-compatible store refuses or ignores an `x-amz-*` header that is not
+   * signed, so an upload's ACL and cache header go here, and the request must
+   * send each with exactly this value. None signs `host` alone.
+   */
+  signedHeaders?: Record<string, string>
 }
 
 export function isReadOnlySourceKey(
@@ -79,7 +86,8 @@ export function presignGetUrl(options: PresignOptions): string {
     key,
     expiresSec,
     query: extra = {},
-    now = new Date()
+    now = new Date(),
+    signedHeaders = {}
   } = options
   const readSource = options.readOnlySource
   const signingSpace =
@@ -99,6 +107,12 @@ export function presignGetUrl(options: PresignOptions): string {
   const host = pathStyle ? url.host : `${bucket}.${url.host}`
   const path = pathStyle ? `/${bucket}/${encodeKey(key)}` : `/${encodeKey(key)}`
 
+  const headers = new Map<string, string>([['host', host]])
+  for (const [name, value] of Object.entries(signedHeaders))
+    headers.set(name.toLowerCase(), value.trim())
+  const headerNames = [...headers.keys()].sort()
+  const signedHeaderList = headerNames.join(';')
+
   const amzDate = amzTimestamp(now)
   const dateStamp = amzDate.slice(0, 8)
   const scope = `${dateStamp}/${region}/s3/aws4_request`
@@ -109,7 +123,7 @@ export function presignGetUrl(options: PresignOptions): string {
     ['X-Amz-Credential', `${accessKeyId}/${scope}`],
     ['X-Amz-Date', amzDate],
     ['X-Amz-Expires', String(expiresSec)],
-    ['X-Amz-SignedHeaders', 'host'],
+    ['X-Amz-SignedHeaders', signedHeaderList],
     ...Object.entries(extra)
   ])
   const canonicalQuery = [...query.entries()]
@@ -122,8 +136,8 @@ export function presignGetUrl(options: PresignOptions): string {
     method,
     path,
     canonicalQuery,
-    `host:${host}\n`,
-    'host',
+    headerNames.map(name => `${name}:${headers.get(name)}\n`).join(''),
+    signedHeaderList,
     UNSIGNED_PAYLOAD
   ].join('\n')
 

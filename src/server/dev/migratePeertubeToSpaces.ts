@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { makeDatabase } from '../db/database'
+import type { Kysely } from 'kysely'
+
+import { type Database, makeDatabase } from '../db/database'
 import {
   MASTER_PLAYLIST,
   MEDIA_PLAYLIST,
@@ -12,11 +14,12 @@ import {
 } from '../media/ffmpeg'
 import { probeVideoFile, tagFor } from '../media/ingestFile'
 import { locateVideoFile } from '../media/locations'
-import { spaceConfigured } from '../media/spacesHls'
+import { spaceConfigured, type SpaceSettings } from '../media/spacesHls'
 import {
   uploadVideoDirectory,
   verifyVideoDirectory
 } from '../media/spacesVideo'
+import { newSpaceSecret } from '../media/videoPrefix'
 import { serverConfig } from '../serverConfig'
 import { slotOf, type VideoRow } from './auditVideos'
 
@@ -216,12 +219,34 @@ function fmtGiB(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GiB`
 }
 
-async function migrateOne(
+/**
+ * The secret a migrated video's objects go under: the row's, or, for a row
+ * with none, a new one written before the first upload. A PeerTube video has
+ * nothing in the Space yet, so its old prefix is empty and it never spans two.
+ */
+export async function secretForMigration(
+  db: Kysely<Database>,
+  videoId: string
+): Promise<string> {
+  const row = await db
+    .updateTable('videos')
+    .set(eb => ({
+      space_secret: eb.fn.coalesce('space_secret', eb.val(newSpaceSecret()))
+    }))
+    .where('id', '=', videoId)
+    .returning('space_secret')
+    .executeTakeFirst()
+  if (row?.space_secret == null) throw new Error(`no row for ${videoId}`)
+  return row.space_secret
+}
+
+export async function migrateOne(
   video: LibraryVideo,
   mediaRoot: string,
-  databaseUrl: string
+  databaseUrl: string,
+  settings: Pick<typeof serverConfig, 'space' | 'ffmpegPath'> = serverConfig
 ): Promise<{ bytes: number }> {
-  const { space, ffmpegPath } = serverConfig
+  const { space, ffmpegPath } = settings
   if (!spaceConfigured(space)) throw new Error('no Space is configured')
 
   const file = await locateVideoFile({
@@ -243,45 +268,59 @@ async function migrateOne(
       videoTag: tagFor(probed.codecName)
     })
     const files = [MASTER_PLAYLIST, MEDIA_PLAYLIST, VIDEO_FILE]
-    const uploaded = await uploadVideoDirectory({
-      space,
-      videoId: video.id,
-      dir: work,
-      files
-    })
-    const verified = await verifyVideoDirectory({
-      space,
-      videoId: video.id,
-      dir: work,
-      files: uploaded.files
-    })
-    if (!verified.ok) {
-      throw new Error(`the Space did not verify: ${verified.reason}`)
-    }
-
-    const now = new Date()
     const db = makeDatabase(databaseUrl)
     try {
-      await db
-        .updateTable('videos')
-        .set({
-          storage: 'spaces',
-          status: 'ready',
-          status_message: null,
-          size_bytes: String(uploaded.bytes),
-          spaces_verified_at: now,
-          local_delete_after: new Date(now.getTime() + LOCAL_GRACE_MS),
-          updated_at: now
-        })
-        .where('id', '=', video.id)
-        .execute()
+      const spaceSecret = await secretForMigration(db, video.id)
+      return await uploadMigrated(db, space, video.id, spaceSecret, work, files)
     } finally {
       await db.destroy()
     }
-    return { bytes: uploaded.bytes }
   } finally {
     await rm(work, { recursive: true, force: true })
   }
+}
+
+async function uploadMigrated(
+  db: Kysely<Database>,
+  space: SpaceSettings,
+  videoId: string,
+  spaceSecret: string,
+  work: string,
+  files: string[]
+): Promise<{ bytes: number }> {
+  const uploaded = await uploadVideoDirectory({
+    space,
+    videoId,
+    spaceSecret,
+    dir: work,
+    files
+  })
+  const verified = await verifyVideoDirectory({
+    space,
+    videoId,
+    spaceSecret,
+    dir: work,
+    files: uploaded.files
+  })
+  if (!verified.ok) {
+    throw new Error(`the Space did not verify: ${verified.reason}`)
+  }
+
+  const now = new Date()
+  await db
+    .updateTable('videos')
+    .set({
+      storage: 'spaces',
+      status: 'ready',
+      status_message: null,
+      size_bytes: String(uploaded.bytes),
+      spaces_verified_at: now,
+      local_delete_after: new Date(now.getTime() + LOCAL_GRACE_MS),
+      updated_at: now
+    })
+    .where('id', '=', videoId)
+    .execute()
+  return { bytes: uploaded.bytes }
 }
 
 async function main(): Promise<void> {

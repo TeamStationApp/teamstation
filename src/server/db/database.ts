@@ -440,6 +440,12 @@ export interface VideosTable {
   size_bytes: string | null
   sha256: string | null
   spaces_verified_at: Timestamp | null
+  /**
+   * 32 lowercase hex characters: the video's objects are under
+   * `videos/<id>-<secret>/`, public where their kind is. Null for a video
+   * still on `videos/<id>/` (from before secrets, or a read-only source).
+   */
+  space_secret: string | null
   local_delete_after: Timestamp | null
   /** When a replaced recording may be deleted, objects and all. */
   purge_after: Timestamp | null

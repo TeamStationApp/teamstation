@@ -18,6 +18,11 @@ import {
   verifyObjectLength
 } from '../media/spacesVideo'
 import {
+  uploadHeadersFor,
+  type VideoPath,
+  videoPrefix
+} from '../media/videoPrefix'
+import {
   parseMediaPlaylist,
   type PartReader,
   type PlaylistSegment,
@@ -94,7 +99,7 @@ const PIECE_READ_TIMEOUT_MS = 30_000
  */
 export function spacePartReader(
   space: SpaceSettings,
-  videoId: string,
+  video: VideoPath,
   timeoutMs = PIECE_READ_TIMEOUT_MS
 ): PartReader {
   return async (path, range) => {
@@ -107,7 +112,7 @@ export function spacePartReader(
     const response = await fetch(
       presignGetUrl({
         ...space,
-        key: objectKey(videoId, name),
+        key: objectKey(video, name),
         expiresSec: 300
       }),
       {
@@ -138,13 +143,21 @@ export const noPlaylistSink: PlaylistSink = {
 export interface OriginPublisherOptions {
   space: SpaceSettings
   videoId: string
+  /**
+   * The video's secret: its objects go under `videos/<id>-<secret>/`, pieces
+   * and init files public. Null keeps a video from before secrets on
+   * `videos/<id>/`, every object private, as it was.
+   */
+  spaceSecret: string | null
   dir: string
   ffmpegPath: string
   isFinal: (name: string) => boolean
   /**
    * A piece the writer may still rewrite in place (a continuation not yet
    * placed on the timeline). The cursor does not pass it, so it is checked
-   * again on each flush until the writer settles. None by default.
+   * again on each flush until the writer settles. It is listed all the same,
+   * so under a secret path it goes up `no-cache`: the copy that replaces it
+   * after a restamp must not meet the old bytes at the edge. None by default.
    */
   mayMove?: (name: string) => boolean
   onFirstSegment: (probe: ProbedStream) => Promise<void>
@@ -259,6 +272,11 @@ export class OriginPublisher {
 
   constructor(private readonly options: OriginPublisherOptions) {}
 
+  /** Where this video's objects go. */
+  private get video(): VideoPath {
+    return { id: this.options.videoId, spaceSecret: this.options.spaceSecret }
+  }
+
   stop(): void {
     this.stopped = true
   }
@@ -290,13 +308,14 @@ export class OriginPublisher {
     if (this.started || !this.active()) return
     const body = await this.localPlaylist()
     if (body == null) return
-    const { space, videoId } = this.options
-    const entries = await listSpaceObjectEntries(space, `videos/${videoId}/`)
+    const { space } = this.options
+    const video = this.video
+    const entries = await listSpaceObjectEntries(space, videoPrefix(video))
     const remote = new Map(entries.map(entry => [entry.key, entry]))
     const response = await fetch(
       presignGetUrl({
         ...space,
-        key: objectKey(videoId, 'index.m3u8'),
+        key: objectKey(video, 'index.m3u8'),
         expiresSec: 300
       })
     )
@@ -321,7 +340,7 @@ export class OriginPublisher {
     // does not was deleted after it was acknowledged, so it stays so.
     const onDisk: string[] = []
     for (const name of names) {
-      const entry = remote.get(objectKey(videoId, name))
+      const entry = remote.get(objectKey(video, name))
       if (entry == null) continue
       const local = await this.snapshot(name).catch((error: unknown) => {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
@@ -339,7 +358,7 @@ export class OriginPublisher {
     for (const name of onDisk)
       if (segmentNumber(name) < this.deletedNumber)
         this.kept.set(segmentNumber(name), -1)
-    this.masterWritten = remote.has(objectKey(videoId, 'master.m3u8'))
+    this.masterWritten = remote.has(objectKey(video, 'master.m3u8'))
     this.started = true
   }
 
@@ -365,10 +384,10 @@ export class OriginPublisher {
     const uri = (index: number): string => view.segment(index).uri
     // Validate every name before performing any write. A playlist whose
     // pieces are all piece names needs only the video checked.
-    if (view.publishedExact) objectKey(this.options.videoId, uri(0))
+    if (view.publishedExact) objectKey(this.video, uri(0))
     else
       for (let index = 0; index < count; index++)
-        objectKey(this.options.videoId, uri(index))
+        objectKey(this.video, uri(index))
     if (view.map?.uri !== 'init.mp4')
       throw new Error('Live playlist has no init.mp4 map')
     // A playlist that no longer holds the cursor's piece where it was is not
@@ -746,13 +765,17 @@ export class OriginPublisher {
     this.acknowledged.delete(pieceKey(name))
     const held = await this.snapshot(name)
     if (held == null || !this.active()) return false
-    const { space, videoId, dir } = this.options
-    const key = objectKey(videoId, name)
+    const { space, dir, spaceSecret } = this.options
+    const key = objectKey(this.video, name)
+    const headers = uploadHeadersFor(spaceSecret, name)
+    if (headers.cacheControl != null && this.options.mayMove?.(name) === true)
+      headers.cacheControl = 'no-cache'
     await putObjectFile({
       space,
       key,
       path: join(dir, name),
-      contentType: contentTypeFor(name)
+      contentType: contentTypeFor(name),
+      ...headers
     })
     const result = await verifyObjectLength({ space, key, size: held.size })
     if (!result.ok) throw new Error(result.reason)
@@ -765,7 +788,7 @@ export class OriginPublisher {
     if (!this.active()) return
     await putObject({
       space: this.options.space,
-      key: objectKey(this.options.videoId, name),
+      key: objectKey(this.video, name),
       body: Buffer.from(body),
       contentType: contentTypeFor(name)
     })

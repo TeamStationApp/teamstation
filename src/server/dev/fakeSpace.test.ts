@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { after, afterEach, before, describe, it } from 'mocha'
 
-import { deleteObject, putObject } from '../media/images'
+import { copyObject, deleteObject, putObject } from '../media/images'
 import { presignGetUrl } from '../media/presign'
 import type { SpaceSettings } from '../media/spacesHls'
 import { deleteSpacePrefix, listSpaceObjects } from '../media/spacesVideo'
@@ -400,10 +400,14 @@ describe('the live-origin Space fixture', function () {
       'videos/a/x\\y',
       'videos/a/x\0',
       'videos/a/x.content-type',
+      'videos/a/x.acl',
+      'videos/a/x.cache-control',
       'videos/a/.upload-x'
     ])
       expect(pathOfKey(dir, name)).equals(undefined)
-    expect((await fetch(sign('GET'), { method: 'POST' })).status).equals(405)
+    expect((await fetch(sign('GET'), { method: 'PATCH' })).status).equals(405)
+    // A URL signed for GET is no good for a POST.
+    expect((await fetch(sign('GET'), { method: 'POST' })).status).equals(403)
     await put()
     expect(
       (await fetch(sign('GET'), { headers: { range: 'bytes=100-200' } })).status
@@ -428,5 +432,275 @@ describe('the live-origin Space fixture', function () {
         'content-type'
       )
     ).equals('video/iso.segment')
+  })
+})
+
+describe('the stand-in Space’s access headers', function () {
+  let fixture: Awaited<ReturnType<typeof startFakeSpace>>
+  let dir: string
+  const space: SpaceSettings = {
+    endpoint: '',
+    region: 'test',
+    bucket: 'test',
+    accessKeyId: 'example',
+    secretAccessKey: 'example',
+    pathStyle: true
+  }
+  const prefix = 'videos/vid_acl-0123456789abcdef0123456789abcdef/'
+  const plain = (key: string): string =>
+    `${space.endpoint}/${space.bucket}/${key}`
+  before(async function () {
+    dir = await mkdtemp(join(tmpdir(), 'tsFakeSpaceAcl-'))
+    fixture = await startFakeSpace({ space, dir })
+    space.endpoint = fixture.url
+  })
+  after(async function () {
+    fixture.server.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('serves a public-read object unsigned, with its cache header, and refuses a private one', async function () {
+    await putObject({
+      space,
+      key: `${prefix}seg000000.m4s`,
+      body: Buffer.from('piece'),
+      contentType: 'video/iso.segment',
+      acl: 'public-read',
+      cacheControl: 'public, max-age=600'
+    })
+    await putObject({
+      space,
+      key: `${prefix}index.m3u8`,
+      body: Buffer.from('#EXTM3U\n'),
+      contentType: 'application/vnd.apple.mpegurl'
+    })
+    const piece = await fetch(plain(`${prefix}seg000000.m4s`))
+    expect(piece.status).equals(200)
+    expect(piece.headers.get('cache-control')).equals('public, max-age=600')
+    expect(piece.headers.get('content-type')).equals('video/iso.segment')
+    expect(await piece.text()).equals('piece')
+    const ranged = await fetch(plain(`${prefix}seg000000.m4s`), {
+      headers: { range: 'bytes=1-2' }
+    })
+    expect(ranged.status).equals(206)
+    expect(await ranged.text()).equals('ie')
+    expect(
+      (await fetch(plain(`${prefix}seg000000.m4s`), { method: 'HEAD' })).status
+    ).equals(200)
+    expect((await fetch(plain(`${prefix}index.m3u8`))).status).equals(403)
+    expect((await fetch(plain(`${prefix}missing.m4s`))).status).equals(403)
+    // Anonymous may only read.
+    expect(
+      (
+        await fetch(plain(`${prefix}seg000000.m4s`), {
+          method: 'PUT',
+          body: 'x'
+        })
+      ).status
+    ).equals(403)
+    // A signed read of a private object still works, and carries no cache header.
+    const signedRead = await fetch(
+      presignGetUrl({ ...space, key: `${prefix}index.m3u8`, expiresSec: 60 })
+    )
+    expect(signedRead.status).equals(200)
+    expect(signedRead.headers.get('cache-control')).equals(null)
+    // Written again with no ACL, the piece is private again.
+    await putObject({
+      space,
+      key: `${prefix}seg000000.m4s`,
+      body: Buffer.from('piece'),
+      contentType: 'video/iso.segment'
+    })
+    expect((await fetch(plain(`${prefix}seg000000.m4s`))).status).equals(403)
+  })
+
+  it('checks the headers X-Amz-SignedHeaders names, and refuses an unsigned x-amz-acl', async function () {
+    const key = `${prefix}seg000001.m4s`
+    const signedHeaders = {
+      'x-amz-acl': 'public-read',
+      'cache-control': 'public, max-age=600'
+    }
+    const url = presignGetUrl({
+      ...space,
+      method: 'PUT',
+      key,
+      expiresSec: 60,
+      signedHeaders
+    })
+    expect(new URL(url).searchParams.get('X-Amz-SignedHeaders')).equals(
+      'cache-control;host;x-amz-acl'
+    )
+    expect(
+      (await fetch(url, { method: 'PUT', body: 'x', headers: signedHeaders }))
+        .status
+    ).equals(200)
+    // A signed header sent with another value, or not sent at all.
+    expect(
+      (
+        await fetch(url, {
+          method: 'PUT',
+          body: 'x',
+          headers: { ...signedHeaders, 'cache-control': 'no-store' }
+        })
+      ).status
+    ).equals(403)
+    expect(
+      (
+        await fetch(url, {
+          method: 'PUT',
+          body: 'x',
+          headers: { 'cache-control': 'public, max-age=600' }
+        })
+      ).status
+    ).equals(403)
+    // An ACL the signature does not cover.
+    const bare = presignGetUrl({ ...space, method: 'PUT', key, expiresSec: 60 })
+    expect(
+      (
+        await fetch(bare, {
+          method: 'PUT',
+          body: 'x',
+          headers: { 'x-amz-acl': 'public-read' }
+        })
+      ).status
+    ).equals(403)
+  })
+
+  it('copies an object with the request’s headers, not the source’s', async function () {
+    const source = 'videos/vid_copied/video.mp4'
+    const target = `${prefix}video.mp4`
+    await putObject({
+      space,
+      key: source,
+      body: Buffer.from('recording'),
+      contentType: 'video/mp4'
+    })
+    await copyObject({
+      space,
+      sourceKey: source,
+      key: target,
+      contentType: 'video/mp4',
+      size: 9,
+      acl: 'public-read',
+      cacheControl: 'public, max-age=600'
+    })
+    const copied = await fetch(plain(target))
+    expect(copied.status).equals(200)
+    expect(await copied.text()).equals('recording')
+    expect(copied.headers.get('content-type')).equals('video/mp4')
+    expect(copied.headers.get('cache-control')).equals('public, max-age=600')
+    expect((await fetch(plain(source))).status, 'source unchanged').equals(403)
+    let message = ''
+    await copyObject({
+      space,
+      sourceKey: 'videos/vid_copied/none.mp4',
+      key: `${prefix}none.mp4`,
+      contentType: 'video/mp4',
+      size: 1
+    }).catch((error: unknown) => (message = (error as Error).message))
+    expect(message).contains('404')
+  })
+
+  it('copies an object over the copy limit as a multipart upload of ranged reads', async function () {
+    const source = 'videos/vid_big/video.mp4'
+    const target = `${prefix}big.mp4`
+    const bytes = Buffer.alloc(12 * 1024 * 1024)
+    for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251
+    await putObject({
+      space,
+      key: source,
+      body: bytes,
+      contentType: 'video/mp4'
+    })
+    const methods: string[] = []
+    const watch = (req: { method?: string; url?: string }): void => {
+      const query = new URL(req.url ?? '/', 'http://x').searchParams
+      methods.push(`${req.method} ${query.has('uploadId') ? 'part' : 'whole'}`)
+    }
+    fixture.server.on('request', watch)
+    try {
+      await copyObject({
+        space,
+        sourceKey: source,
+        key: target,
+        contentType: 'video/mp4',
+        size: bytes.length,
+        acl: 'public-read',
+        cacheControl: 'public, max-age=600',
+        copyLimitBytes: 5 * 1024 * 1024,
+        partSize: 5 * 1024 * 1024
+      })
+    } finally {
+      fixture.server.off('request', watch)
+    }
+    expect(methods.filter(line => line === 'PUT part')).length(3)
+    const copied = Buffer.from(await (await fetch(plain(target))).arrayBuffer())
+    expect(createHash('sha256').update(copied).digest('hex')).equals(
+      createHash('sha256').update(bytes).digest('hex')
+    )
+    expect(
+      (await fetch(plain(target), { method: 'HEAD' })).headers.get(
+        'cache-control'
+      )
+    ).equals('public, max-age=600')
+  })
+
+  it('aborts a multipart upload, and refuses parts of one it does not hold', async function () {
+    const key = `${prefix}abort.mp4`
+    const start = await fetch(
+      presignGetUrl({
+        ...space,
+        method: 'POST',
+        key,
+        query: { uploads: '' },
+        expiresSec: 60
+      }),
+      { method: 'POST' }
+    )
+    const uploadId = /<UploadId>([^<]+)</.exec(await start.text())![1]
+    const part = (id: string): string =>
+      presignGetUrl({
+        ...space,
+        method: 'PUT',
+        key,
+        query: { partNumber: '1', uploadId: id },
+        expiresSec: 60
+      })
+    expect(
+      (await fetch(part(uploadId), { method: 'PUT', body: 'abc' })).status
+    ).equals(200)
+    const abort = await fetch(
+      presignGetUrl({
+        ...space,
+        method: 'DELETE',
+        key,
+        query: { uploadId },
+        expiresSec: 60
+      }),
+      { method: 'DELETE' }
+    )
+    expect(abort.status).equals(204)
+    expect(
+      (await fetch(part(uploadId), { method: 'PUT', body: 'abc' })).status
+    ).equals(404)
+    const complete = await fetch(
+      presignGetUrl({
+        ...space,
+        method: 'POST',
+        key,
+        query: { uploadId },
+        expiresSec: 60
+      }),
+      { method: 'POST', body: '<CompleteMultipartUpload/>' }
+    )
+    expect(complete.status).equals(404)
+    expect(
+      (
+        await fetch(
+          presignGetUrl({ ...space, method: 'POST', key, expiresSec: 60 }),
+          { method: 'POST' }
+        )
+      ).status
+    ).equals(400)
   })
 })
