@@ -4,7 +4,8 @@ import { ownedAttachments, pruneAttachments } from './attachments'
 import {
   expirePendingChanges,
   restoreExpiredChanges,
-  runChange
+  runChange,
+  runChanges
 } from './changes'
 import {
   compact,
@@ -82,10 +83,11 @@ export interface TessUser {
  * summary of Tess's thinking and of her text, a separate block's starting
  * on a new paragraph; each tool call as a step, labelled (`stepLabels.ts`),
  * when it starts and when it ends; once the person's message (or the note
- * of the change they confirmed) is stored, the id it was stored with, and
- * the change as it ended; before the message is stored, `preparing`
+ * of the changes they confirmed) is stored, the id it was stored with, and
+ * the change, or the batch of changes, as each ended; before the message is stored, `preparing`
  * when the conversation is to be made fit for it first (pictures described,
- * or the conversation compacted), model calls that may take a while; and,
+ * or the conversation compacted), model calls that may take a while, and
+ * before a batch of changes runs, its requests one after another; and,
  * when the turn fails before anything of her answer is stored, `takenBack`
  * once the stored message is deleted again, just before the turn throws.
  */
@@ -99,7 +101,12 @@ export type TurnEvent =
       label: string
       status: 'running' | 'done' | 'failed'
     }
-  | { type: 'stored'; fromId: number; change?: TessChange }
+  | {
+      type: 'stored'
+      fromId: number
+      change?: TessChange
+      changes?: TessChange[]
+    }
   | { type: 'preparing' }
   | { type: 'takenBack' }
 
@@ -261,6 +268,53 @@ export async function confirmTurn(
       if (!(error instanceof HttpError)) throw error
     }
     return { change, fromId }
+  })
+}
+
+/**
+ * The person held Confirm under a reply's changes: the batch of them still
+ * pending, in the order the table shows them. As with one change, while
+ * another of their turns runs it is refused with 409 and nothing runs; the
+ * batch is checked whole before any of it runs (`runChanges`), so a change
+ * not theirs, or no longer pending, refuses it all. Each then runs once, one
+ * failing leaving the rest to run, and one message of the person's stores a
+ * confirmation note for each, so Tess is told them together and reports
+ * once. Her report failing, or being stopped, undoes none of them. It
+ * tells `preparing` once the turn is claimed, before the batch is checked,
+ * so a stream is open while the changes run, and a refusal of the batch is
+ * then its `error` event. Answers the changes as they ended, and the id the
+ * report's messages start from.
+ */
+export async function confirmAllTurn(
+  deps: TessDeps,
+  user: TessUser,
+  changeIds: readonly string[],
+  onEvent?: TurnEvents,
+  clientId?: string
+): Promise<{ changes: TessChange[]; fromId: number }> {
+  return await withTurn(deps.db, user.userId, clientId, async signal => {
+    // Up to `MAX_BATCH` requests run before the note is stored: the stream
+    // opens first, so its keep-alive covers them.
+    await onEvent?.({ type: 'preparing' })
+    const ran = await runChanges(deps, user.userId, user.credentials, changeIds)
+    const changes = ran.map(({ change }) => change)
+    const [fromId] = await appendMessages(deps.db, user.userId, [
+      {
+        role: 'user',
+        content: ran.map(({ change, note }) => ({
+          type: 'confirmation' as const,
+          changeId: change.id,
+          text: note
+        }))
+      }
+    ])
+    try {
+      await onEvent?.({ type: 'stored', fromId, changes })
+      await respond(deps, user, await systemFor(deps, user), signal, onEvent)
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error
+    }
+    return { changes, fromId }
   })
 }
 
@@ -445,6 +499,8 @@ async function respond(
     }
   }
   let last: MessagesResponse
+  // The changes the turn has proposed, which one hold confirms together.
+  const proposals = { count: 0 }
   try {
     for (let round = 1; ; round += 1) {
       const response = await call()
@@ -480,7 +536,8 @@ async function respond(
         userId,
         credentials: user.credentials,
         origin: deps.origin(),
-        now: deps.now?.() ?? new Date()
+        now: deps.now?.() ?? new Date(),
+        proposals
       }
       const outcomes: ToolOutcome[] = []
       for (const call of calls) {

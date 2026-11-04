@@ -4,7 +4,7 @@ import type { Kysely } from 'kysely'
 import { asLiteral } from '../../common/asLiteral'
 import type { Database } from '../db/database'
 import { graphqlOutline } from '../graphql/schema'
-import { proposeChange } from './changes'
+import { MAX_BATCH, proposeChange } from './changes'
 import { checkApiRequest, GRAPHQL_PATH } from './denyList'
 import { apiCall, type Credentials } from './loopback'
 import type {
@@ -24,9 +24,19 @@ import type {
 export const PROPOSED =
   'Shown to the user with a Confirm button. It runs only if they hold Confirm; do not say it has happened.'
 
+/**
+ * What Tess is told of a change past the most one Confirm takes: the
+ * person holds Confirm for these first.
+ */
+export const TOO_MANY_CHANGES = `This reply already proposes ${MAX_BATCH} changes, the most one Confirm takes. Propose no more now: tell the person you will propose the rest once they have confirmed these.`
+
 /** The largest body a proposed change may carry, as JSON. */
 const MAX_CHANGE_BODY = 100000
 const MAX_SUMMARY = 500
+/** A change's plain-language details: this many rows at most, each this long. */
+export const MAX_DETAILS = 8
+export const MAX_DETAIL_LABEL = 40
+export const MAX_DETAIL_VALUE = 120
 
 export const TOOLS: ToolDefinition[] = [
   {
@@ -76,8 +86,7 @@ export const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'confirmChange',
-    description:
-      'Proposes one change to TeamStation for the person to confirm. Nothing changes now: the person sees a card with this request and it runs only if they hold its Confirm button. Never use it for live scoring.',
+    description: `Proposes one change to TeamStation for the person to confirm. Nothing changes now: the person sees it as a row of a table, with the other changes of your reply, and it runs only if they hold Confirm. Propose one change per item: each game, each player, each date its own change, up to ${MAX_BATCH} in one reply. Never use it for live scoring.`,
     input_schema: {
       type: 'object',
       properties: {
@@ -93,7 +102,12 @@ export const TOOLS: ToolDefinition[] = [
         summary: {
           type: 'string',
           description:
-            'One sentence saying in plain words what the change does, such as "Schedule a game against Demo Eagles on Saturday at 10:00"'
+            'One sentence saying in plain words what the change does, such as "Schedule a game against Demo Eagles on Saturday at 10:00". No ids and no JSON.'
+        },
+        details: {
+          type: 'object',
+          description: `What the change sets, as the person would say it: up to ${MAX_DETAILS} label to value pairs of plain words, such as {"Opponent": "Demo Eagles", "Date": "Sat Nov 8", "Time": "10:00 AM", "Field": "Field 2"}. Each becomes a column of the table, so give changes of one kind the same labels in the same order. Labels up to ${MAX_DETAIL_LABEL} characters, values up to ${MAX_DETAIL_VALUE}. Never ids or JSON.`,
+          additionalProperties: { type: 'string' }
         }
       },
       required: ['method', 'path', 'summary']
@@ -113,8 +127,38 @@ const asConfirmChange = asObject({
   method: asLiteral('POST', 'PUT', 'PATCH', 'DELETE'),
   path: asString,
   body: asOptional(asUnknown),
-  summary: asString
+  summary: asString,
+  details: asOptional(asObject(asUnknown))
 })
+
+/**
+ * A change's details as stored, in the order the model wrote them, or a
+ * reason to ask again: at most `MAX_DETAILS`, each a short label and a
+ * short value, both strings. A label or value left blank is a mistake, too.
+ */
+export function detailsOf(
+  raw: Record<string, unknown> | undefined
+): Array<{ label: string; value: string }> | string | undefined {
+  if (raw == null) return undefined
+  const entries = Object.entries(raw)
+  const ask = `Give details as up to ${MAX_DETAILS} plain-language label to value strings, each label up to ${MAX_DETAIL_LABEL} characters and each value up to ${MAX_DETAIL_VALUE}, such as {"Opponent": "Demo Eagles", "Date": "Sat Nov 8"}`
+  if (entries.length > MAX_DETAILS) return ask
+  const details: Array<{ label: string; value: string }> = []
+  for (const [key, value] of entries) {
+    const label = key.trim()
+    if (typeof value !== 'string') return ask
+    const text = value.trim()
+    if (
+      label === '' ||
+      label.length > MAX_DETAIL_LABEL ||
+      text === '' ||
+      text.length > MAX_DETAIL_VALUE
+    )
+      return ask
+    details.push({ label, value: text })
+  }
+  return details.length === 0 ? undefined : details
+}
 
 export interface ToolContext {
   db: Kysely<Database>
@@ -122,6 +166,8 @@ export interface ToolContext {
   credentials: Credentials
   origin: string
   now: Date
+  /** How many changes this turn has proposed so far, over all its rounds. */
+  proposals: { count: number }
 }
 
 /** One tool call's result, and the change it proposed, if any. */
@@ -205,12 +251,14 @@ export async function runTool(
     }
   }
   if (call.name === 'confirmChange') {
+    // One hold confirms the turn's changes, and takes at most `MAX_BATCH`.
+    if (context.proposals.count >= MAX_BATCH) return fail(TOO_MANY_CHANGES)
     let input: ReturnType<typeof asConfirmChange>
     try {
       input = asConfirmChange(call.input)
     } catch {
       return fail(
-        'confirmChange takes {method: POST|PUT|PATCH|DELETE, path, body?, summary}'
+        'confirmChange takes {method: POST|PUT|PATCH|DELETE, path, body?, summary, details?}'
       )
     }
     const checked = checkApiRequest(input.method, input.path)
@@ -224,6 +272,8 @@ export async function runTool(
       )
     if (JSON.stringify(input.body ?? null).length > MAX_CHANGE_BODY)
       return fail('That body is too large to propose')
+    const details = detailsOf(input.details)
+    if (typeof details === 'string') return fail(details)
     const changeId = await proposeChange(
       context.db,
       context.userId,
@@ -231,10 +281,12 @@ export async function runTool(
         method: input.method,
         path: `${checked.path}${checked.search}`,
         body: input.body,
-        summary
+        summary,
+        ...(details == null ? {} : { details })
       },
       context.now
     )
+    context.proposals.count += 1
     return {
       result: { type: 'tool_result', tool_use_id: call.id, content: PROPOSED },
       changeId

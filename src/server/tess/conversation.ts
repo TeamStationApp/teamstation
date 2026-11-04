@@ -34,8 +34,11 @@ import { recordUsage } from './usage'
  * with five blocks of Tess's own that never reach the model as they are:
  * an attachment by id, expanded to its content when a request is built; a
  * change Tess proposed, by id, on the assistant message that proposed it,
- * which the app draws as a card and the model never sees; the note a
- * message of the person's was sent, with the page beside the chat, sent as
+ * which the app draws as a row of a table and the model never sees; the
+ * note a confirmed change leaves (one block per change, a batch's together
+ * in one message), sent as text and not shown; the moment a message of the
+ * person's was sent, with the page beside the chat, sent as text at its end
+ * and not shown; and the mark of a reply the person
  * stopped, the whole of the message Tess stores in its place, sent as a
  * note (`STOPPED_NOTE`) and shown as "Stopped". Stored with the message, the
  * moment reads the same in every later request, so the conversation stays
@@ -396,8 +399,8 @@ export function requestMessages(
 /**
  * The conversation as the app shows it. The person's messages show their
  * text and attachments. Tess's messages of one turn, which her tool calls
- * split, show as one reply: the text of each, then a card for each change
- * she proposed, with the summaries of her thinking (`thinking`) and the
+ * split, show as one reply: the text of each, then each change she
+ * proposed (which the app shows as a row of one table per turn), with the summaries of her thinking (`thinking`) and the
  * steps she took (`steps`: each tool call, labelled, and whether it
  * worked). Tool results and confirmation notes are not shown. A reply the
  * person stopped says so (`stopped`), after whatever of it was stored

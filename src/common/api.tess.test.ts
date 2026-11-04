@@ -157,6 +157,47 @@ describe('api client for Tess', () => {
     ])
   })
 
+  it('confirms a reply’s changes together, and reads their details', async () => {
+    const detailed = {
+      ...change,
+      status: 'done',
+      details: [
+        { label: 'Opponent', value: 'Demo Eagles' },
+        { label: 'Date', value: 'Sat May 15' }
+      ]
+    }
+    const pending = {
+      ...change,
+      status: 'pending',
+      expiresAt: '2026-05-02T15:30:00.000Z',
+      expiresInMs: 1800000
+    }
+    const answer = {
+      changes: [detailed, { ...change, details: [] }, pending],
+      messages: [reply]
+    }
+    const { api, calls } = client(answer)
+    const confirmed = await api.confirmTessChanges(['c1', 'c2'])
+    // Empty details are none; a pending one's expiry and time left are read.
+    expect(confirmed).deep.equals({
+      ...answer,
+      changes: [detailed, change, pending]
+    })
+    await api.confirmTessChanges(['c1'], { clientId: 'm-4' })
+    expect(calls).deep.equals([
+      {
+        url: '/api/v1/me/tess/changes/confirm',
+        method: 'POST',
+        body: { changeIds: ['c1', 'c2'] }
+      },
+      {
+        url: '/api/v1/me/tess/changes/confirm',
+        method: 'POST',
+        body: { changeIds: ['c1'], clientId: 'm-4' }
+      }
+    ])
+  })
+
   it('stops a turn by its client id, and reads a stopped reply', async () => {
     const calls: Call[] = []
     const api = new TeamStationClient({
@@ -453,6 +494,39 @@ describe('api client for Tess', () => {
       request.onload?.()
       expect(await answer).deep.equals({ change: done, messages: [reply] })
       expect(told).deep.equals([{ type: 'stored', messages: [], change: done }])
+    })
+
+    it('confirms a reply’s changes streamed, each told as it ended', async () => {
+      const { api, requests } = streaming()
+      const told: TessStreamEvent[] = []
+      const answer = api.streamTessConfirmAll(
+        ['c1', 'c2'],
+        event => told.push(event),
+        { clientId: 'm-6' }
+      )
+      api.streamTessConfirmAll(['c1'], () => undefined).catch(() => undefined)
+      const [request, plain] = requests
+      expect(request.url).equals('/api/v1/me/tess/changes/confirm')
+      expect(JSON.parse(request.body!)).deep.equals({
+        changeIds: ['c1', 'c2'],
+        clientId: 'm-6'
+      })
+      expect(JSON.parse(plain.body!)).deep.equals({ changeIds: ['c1'] })
+      const done = [
+        { ...change, status: 'done' },
+        { ...change, id: 'c2', status: 'failed' }
+      ]
+      request.answer(
+        200,
+        STREAM,
+        sse('stored', { messages: [], changes: done }),
+        sse('done', { changes: done, messages: [reply] })
+      )
+      request.onload?.()
+      expect(await answer).deep.equals({ changes: done, messages: [reply] })
+      expect(told).deep.equals([
+        { type: 'stored', messages: [], changes: done }
+      ])
     })
 
     it('fails as the server failed: an error event, or a refusal before the stream', async () => {

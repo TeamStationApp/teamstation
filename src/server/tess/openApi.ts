@@ -24,6 +24,32 @@ const change = {
       enum: ['pending', 'running', 'done', 'failed', 'expired', 'unknown'],
       description:
         'unknown: it began to run and the server gave no answer to it in time, or lost it; whether it happened has to be checked'
+    },
+    expiresAt: {
+      type: 'string',
+      format: 'date-time',
+      description:
+        "On a pending change: when it expires unconfirmed, by the server's clock. Absent otherwise"
+    },
+    expiresInMs: {
+      type: 'integer',
+      minimum: 0,
+      description:
+        'On a pending change: how long it has left, in milliseconds, as of this answer, after which it no longer waits for a hold. A client counts from when it received it, never comparing expiresAt with its own clock. Absent otherwise'
+    },
+    details: {
+      type: 'array',
+      description:
+        "What it sets in plain words, in Tess's order: a table's columns and this change's row. Absent when she gave none",
+      maxItems: 8,
+      items: {
+        type: 'object',
+        required: ['label', 'value'],
+        properties: {
+          label: { type: 'string', maxLength: 40 },
+          value: { type: 'string', maxLength: 120 }
+        }
+      }
     }
   }
 }
@@ -134,9 +160,9 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
         summary: "The caller's conversation with Tess",
         description:
           'One conversation per person. Tool calls and their results are not ' +
-          "shown; Tess's messages of one turn show as one reply, with a card " +
-          'for each change she proposed. A machine token gets 403; with no ' +
-          'Tess on the server, 503.',
+          "shown; Tess's messages of one turn show as one reply, with each " +
+          'change she proposed and its plain-language details. A machine ' +
+          'token gets 403; with no Tess on the server, 503.',
         security: [{ bearer: [] }],
         responses: {
           200: {
@@ -342,6 +368,63 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
               ...(eventStream('the same body as the JSON answer') as object)
             }
           },
+          404: errorResponse,
+          409: errorResponse,
+          ...refusals
+        }
+      }
+    },
+    '/me/tess/changes/confirm': {
+      post: {
+        summary: "Run a reply's changes, confirmed together",
+        description:
+          'Runs the changes one hold confirmed, in the order given, each ' +
+          'once, with the caller’s own credentials and permissions, then has ' +
+          'Tess report on them all at once. The batch is checked whole ' +
+          'first and nothing runs unless every change is the caller’s ' +
+          '(else 404) and still pending (else 409, as is any confirm while ' +
+          'Tess is still answering). One change failing does not stop the ' +
+          "rest. With `Accept: text/event-stream` Tess's report is streamed " +
+          'as it happens, its `stored` event carrying `changes`. `clientId` ' +
+          'names the turn, for `POST /me/tess/stop`, which stops only the ' +
+          'report: the changes have run.',
+        security: [{ bearer: [] }],
+        requestBody: {
+          required: true,
+          content: json({
+            type: 'object',
+            required: ['changeIds'],
+            properties: {
+              changeIds: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 50,
+                items: { type: 'string', format: 'uuid' }
+              },
+              clientId: {
+                type: 'string',
+                pattern: '^[A-Za-z0-9_-]{1,64}$',
+                description: "The client's id for this turn"
+              }
+            }
+          })
+        },
+        responses: {
+          200: {
+            description: "Each change as it ended, and Tess's report",
+            content: {
+              ...(json({
+                type: 'object',
+                required: ['changes', 'messages'],
+                properties: {
+                  changes: { type: 'array', items: change },
+                  messages: { type: 'array', items: message }
+                }
+              }) as object),
+              ...(eventStream('the same body as the JSON answer') as object)
+            }
+          },
+          400: errorResponse,
           404: errorResponse,
           409: errorResponse,
           ...refusals

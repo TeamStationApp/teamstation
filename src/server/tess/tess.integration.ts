@@ -14,7 +14,9 @@ import type { StoredBlock } from './conversation'
 /**
  * Tess against the real model, seven cases: an off-topic request is declined
  * with no tool call; "where are my team's settings" is answered with a path
- * link; adding a game ends in a proposed change, never a write; a stats
+ * link; adding a game ends in a proposed change, never a write, its details
+ * in plain words with no ids, and the turn's second request reading the
+ * cached prefix; a stats
  * question reads the API; a chart request draws one; recording a pitch is
  * refused; a fewest-first umpire question pages the leaderboard. Each case is
  * one message to a fresh conversation, through the real routes, the real API
@@ -38,12 +40,36 @@ interface Case {
   check: (turn: Turn) => string | null
 }
 
-/** What one message produced: Tess's blocks, and what she proposed. */
+/**
+ * What one message produced: Tess's blocks, what she proposed, and the cache
+ * reads of each of the turn's requests, in order.
+ */
 interface Turn {
   blocks: StoredBlock[]
   answer: string
-  changes: Array<{ method: string; path: string }>
+  changes: Array<{ method: string; path: string; details: unknown }>
   writes: number
+  cacheReads: number[]
+}
+
+/** Text that looks like one of TeamStation's ids, such as `tem_x1Y2`. */
+const ID_LIKE = /[a-z]{3}_[A-Za-z0-9]/
+
+/**
+ * Why a proposed game's details would not do as a row of the person's table,
+ * or null: there are none, or one is not a pair of strings, or a label or
+ * value carries an id.
+ */
+function detailsProblem(details: unknown): string | null {
+  if (!Array.isArray(details) || details.length === 0) return 'no details'
+  for (const detail of details as unknown[]) {
+    const { label, value } = (detail ?? {}) as Record<string, unknown>
+    if (typeof label !== 'string' || typeof value !== 'string')
+      return `a detail is not words: ${JSON.stringify(detail)}`
+    if (ID_LIKE.test(label) || ID_LIKE.test(value))
+      return `an id in the details: ${JSON.stringify(detail)}`
+  }
+  return null
 }
 
 const toolsUsed = (turn: Turn): string[] =>
@@ -87,17 +113,23 @@ const CASES: Case[] = [
         : 'no link titled "path"'
   },
   {
-    name: 'adding a game ends in confirmChange, never a write',
+    name: 'adding a game ends in confirmChange with plain details, never a write, the cache read',
     text: `Add a game against Demo Eagles on ${saturdayAhead()} at 10am.`,
-    check: turn =>
-      turn.writes > 0
-        ? 'something was written'
-        : turn.changes.some(
-              change =>
-                change.method === 'POST' && change.path.includes('/games')
-            )
-          ? null
-          : `no game proposed (${JSON.stringify(turn.changes)})`
+    check: turn => {
+      if (turn.writes > 0) return 'something was written'
+      const game = turn.changes.find(
+        change => change.method === 'POST' && change.path.includes('/games')
+      )
+      if (game == null)
+        return `no game proposed (${JSON.stringify(turn.changes)})`
+      const problem = detailsProblem(game.details)
+      if (problem != null) return problem
+      if (turn.cacheReads.length < 2)
+        return `one request only; nothing to read the cache`
+      return turn.cacheReads[1] > 0
+        ? null
+        : `the second request read nothing from the cache (${JSON.stringify(turn.cacheReads)})`
+    }
   },
   {
     name: 'a stats question reads the API',
@@ -177,13 +209,18 @@ async function main(): Promise<number> {
   console.log(`model ${settings.model}`)
 
   let requests = 0
+  // Each Messages request's cache reads, in order, as its answer told them.
+  const cacheReads: Array<Promise<number>> = []
   const counted = (async (url: unknown, init?: RequestInit) => {
-    if (String(url).endsWith('/messages')) {
+    const messages = String(url).endsWith('/messages')
+    if (messages) {
       if (requests >= budget)
         throw new Error(`more than ${budget} Messages requests`)
       requests += 1
     }
-    return await fetch(url as string, init)
+    const response = await fetch(url as string, init)
+    if (messages) cacheReads.push(cacheReadOf(response.clone()))
+    return response
   }) as typeof fetch
   let origin = ''
   const h = await accountHarness(
@@ -212,6 +249,7 @@ async function main(): Promise<number> {
       for (const table of ['tess_messages', 'tess_changes'] as const)
         await h.db.deleteFrom(table).execute()
       const before = requests
+      const readsBefore = cacheReads.length
       const writesBefore = await writes(h.db)
       const response = await h.request('POST', '/me/tess/messages', {
         text: each.text
@@ -237,9 +275,10 @@ async function main(): Promise<number> {
           .join('\n\n'),
         changes: await h.db
           .selectFrom('tess_changes')
-          .select(['method', 'path'])
+          .select(['method', 'path', 'details'])
           .execute(),
-        writes: (await writes(h.db)) - writesBefore
+        writes: (await writes(h.db)) - writesBefore,
+        cacheReads: await Promise.all(cacheReads.slice(readsBefore))
       }
       const problem = each.check(turn)
       if (problem != null) failed += 1
@@ -247,7 +286,7 @@ async function main(): Promise<number> {
       console.log(
         `${problem == null ? 'PASS' : 'FAIL'} ${at + 1} ${each.name}` +
           (problem == null ? '' : `: ${problem}`) +
-          ` (requests ${requests - before}; tools ${tools.length === 0 ? 'none' : tools.join(', ')})`
+          ` (requests ${requests - before}; tools ${tools.length === 0 ? 'none' : tools.join(', ')}; cache reads ${turn.cacheReads.join(', ')})`
       )
       console.log(
         `  Tess: ${turn.answer.replace(/\s+/g, ' ').slice(0, 300)}${turn.answer.length > 300 ? '…' : ''}`
@@ -255,15 +294,56 @@ async function main(): Promise<number> {
     }
     const usage = await h.db
       .selectFrom('tess_usage_weeks')
-      .select(['input_tokens', 'output_tokens', 'requests'])
+      .select([
+        'input_tokens',
+        'output_tokens',
+        'cache_read_tokens',
+        'requests'
+      ])
       .execute()
     console.log(
-      `${chosen.length - failed} of ${chosen.length} passed; ${requests} Messages requests; tokens in ${usage[0]?.input_tokens ?? 0}, out ${usage[0]?.output_tokens ?? 0}`
+      `${chosen.length - failed} of ${chosen.length} passed; ${requests} Messages requests; tokens in ${usage[0]?.input_tokens ?? 0} (cache reads ${usage[0]?.cache_read_tokens ?? 0}), out ${usage[0]?.output_tokens ?? 0}`
     )
     return failed === 0 ? 0 : 1
   } finally {
     await h.close()
   }
+}
+
+/**
+ * The tokens a Messages answer read from the cache: `usage` of a JSON
+ * answer, or of a stream's `message_start`. Nothing readable is 0.
+ */
+async function cacheReadOf(response: Response): Promise<number> {
+  let text: string
+  try {
+    text = await response.text()
+  } catch {
+    return 0
+  }
+  const read = (usage: unknown): number => {
+    const tokens = (usage as { cache_read_input_tokens?: unknown } | undefined)
+      ?.cache_read_input_tokens
+    return typeof tokens === 'number' ? tokens : 0
+  }
+  try {
+    return read((JSON.parse(text) as { usage?: unknown }).usage)
+  } catch {
+    // A stream: its first event carries the message, with its usage.
+  }
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('data:')) continue
+    try {
+      const event = JSON.parse(line.slice(5)) as {
+        type?: string
+        message?: { usage?: unknown }
+      }
+      if (event.type === 'message_start') return read(event.message?.usage)
+    } catch {
+      // Not JSON: a ping or a cut line.
+    }
+  }
+  return 0
 }
 
 type Db = Awaited<ReturnType<typeof accountHarness>>['db']

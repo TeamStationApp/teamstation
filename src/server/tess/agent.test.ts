@@ -15,6 +15,7 @@ import {
   TOO_LONG
 } from '../../test/tessFakes'
 import {
+  confirmAllTurn,
   confirmTurn,
   MAX_TOOL_ROUNDS,
   runTurn,
@@ -1320,6 +1321,122 @@ describe("Tess's agent loop", function () {
     expect(events[0]).deep.equals({ type: 'stored', fromId, change })
     expect(change.status).equals('done')
     expect(joined(events, 'text')).equals('You now follow Demo Hawks.')
+  })
+
+  it('confirms a reply’s changes in one turn: one note for each in one message, then one report', async () => {
+    const follow = (
+      id: string,
+      summary: string
+    ): { name: string; input: unknown } => ({
+      name: 'confirmChange',
+      input: {
+        method: 'PUT',
+        path: `/me/follows/team/${id}`,
+        summary,
+        details: { Team: summary.replace('Follow ', '') }
+      }
+    })
+    model.reply(
+      callTools([
+        follow('tem_account', 'Follow Demo Hawks'),
+        follow('tem_missing', 'Follow Demo Ghosts')
+      ]),
+      say('Hold Confirm to follow both.')
+    )
+    await runTurn(w.deps(), w.user(101), { text: 'Follow both teams' })
+    const ids = (
+      await w.h.db
+        .selectFrom('tess_changes')
+        .select('id')
+        .orderBy('created_at')
+        .execute()
+    ).map(row => row.id)
+    model.reply(say('You follow Demo Hawks; Demo Ghosts was not found.'))
+    const events: TurnEvent[] = []
+    const { changes, fromId } = await confirmAllTurn(
+      w.deps(),
+      w.user(101),
+      ids,
+      event => {
+        events.push(event)
+      },
+      'm-all'
+    )
+    expect(kinds(events)).deep.equals(['preparing', 'stored', 'text'])
+    expect(events[1]).deep.equals({ type: 'stored', fromId, changes })
+    expect(changes.map(change => [change.id, change.status])).deep.equals([
+      [ids[0], 'done'],
+      [ids[1], 'failed']
+    ])
+    expect(changes[0].details).deep.equals([
+      { label: 'Team', value: 'Demo Hawks' }
+    ])
+    const stored = await loadConversation(w.h.db, w.userId(101), fromId)
+    expect(stored.messages.map(message => message.role)).deep.equals([
+      'user',
+      'assistant'
+    ])
+    expect(
+      stored.messages[0].content.map(block =>
+        block.type === 'confirmation' ? block.changeId : block.type
+      )
+    ).deep.equals(ids)
+    // Told in one request, which the API takes.
+    const report = model.messageCalls().at(-1) as Block
+    expectValidRequest(report.messages as Message[])
+    expect(
+      (report.messages.at(-1).content as Block[]).filter(block =>
+        String(block.text).startsWith('The user confirmed')
+      )
+    ).length(2)
+  })
+
+  it('stores a note for every change of a batch when the last one’s run breaks off', async () => {
+    const follow = (id: string): { name: string; input: unknown } => ({
+      name: 'confirmChange',
+      input: {
+        method: 'PUT',
+        path: `/me/follows/team/${id}`,
+        summary: `Follow ${id}`
+      }
+    })
+    model.reply(
+      callTools([follow('tem_account'), follow('tem_other')]),
+      say('Hold Confirm to follow both.')
+    )
+    await runTurn(w.deps(), w.user(101), { text: 'Follow both teams' })
+    const ids = (
+      await w.h.db
+        .selectFrom('tess_changes')
+        .select('id')
+        .orderBy('created_at')
+        .execute()
+    ).map(row => row.id)
+    model.reply(say('One is done; check the other.'))
+    // The second change's run breaks off once it is running.
+    let origins = 0
+    const deps = w.deps()
+    const { changes, fromId } = await confirmAllTurn(
+      {
+        ...deps,
+        origin: () => {
+          if (++origins > 1) throw new Error('connection reset')
+          return deps.origin()
+        }
+      },
+      w.user(101),
+      ids
+    )
+    expect(changes.map(change => change.status)).deep.equals([
+      'done',
+      'unknown'
+    ])
+    const stored = await loadConversation(w.h.db, w.userId(101), fromId)
+    expect(
+      stored.messages[0].content.map(block =>
+        block.type === 'confirmation' ? block.changeId : block.type
+      )
+    ).deep.equals(ids)
   })
 
   describe('stopped by the person', () => {

@@ -81,6 +81,7 @@ describe("Tess's routes", function () {
       ['POST', '/me/tess/messages'],
       ['POST', '/me/tess/attachments'],
       ['POST', '/me/tess/changes/00000000-0000-4000-8000-000000000001/confirm'],
+      ['POST', '/me/tess/changes/confirm'],
       ['POST', '/me/tess/stop'],
       ['GET', '/me/tess/usage']
     ] as const) {
@@ -100,6 +101,7 @@ describe("Tess's routes", function () {
       ['POST', '/me/tess/messages'],
       ['POST', '/me/tess/attachments'],
       ['POST', '/me/tess/changes/00000000-0000-4000-8000-000000000001/confirm'],
+      ['POST', '/me/tess/changes/confirm'],
       ['POST', '/me/tess/stop'],
       ['GET', '/me/tess/usage']
     ] as const) {
@@ -284,6 +286,67 @@ describe("Tess's routes", function () {
       clientId: 'm-confirm-1'
     })
     expect(confirmed.change.status).equals('done')
+  })
+
+  it('confirms a reply’s changes by one request, as JSON and streamed, its client id naming the turn', async () => {
+    const follow = (id: string): { name: string; input: unknown } => ({
+      name: 'confirmChange',
+      input: {
+        method: 'PUT',
+        path: `/me/follows/team/${id}`,
+        summary: `Follow ${id}`,
+        details: { Team: 'Demo Hawks', When: 'Now' }
+      }
+    })
+    w.model.reply(
+      callTools([follow('tem_account'), follow('tem_account')]),
+      say('Hold Confirm to follow them.')
+    )
+    const sent = await client().sendTessMessage('Follow the Hawks twice')
+    const ids = sent[1].changes.map(change => change.id)
+    expect(sent[1].changes[1].details).deep.equals([
+      { label: 'Team', value: 'Demo Hawks' },
+      { label: 'When', value: 'Now' }
+    ])
+    // Malformed: no ids, or a client id that is not one.
+    for (const body of [
+      {},
+      { changeIds: 'all' },
+      { changeIds: ids, clientId: 'not an id' }
+    ])
+      expect(
+        (await w.h.request('POST', '/me/tess/changes/confirm', body, 101))
+          .status,
+        JSON.stringify(body)
+      ).equals(400)
+    w.model.reply(say('You follow Demo Hawks.'))
+    const confirmed = await client().confirmTessChanges([ids[0]], {
+      clientId: 'm-all-1'
+    })
+    expect(confirmed.changes.map(change => change.status)).deep.equals(['done'])
+    expect(confirmed.messages.map(message => message.text)).deep.equals([
+      'You follow Demo Hawks.'
+    ])
+    w.model.reply(say('Still following.'))
+    const events = await readTurnStream(
+      await streamed(w, '/me/tess/changes/confirm', {
+        changeIds: [ids[1]],
+        clientId: 'm-all-2'
+      })
+    )
+    // A comment opens the stream before the changes run.
+    expect(events[0].event).equals('comment')
+    expect(events[1].event).equals('stored')
+    // Pending, it said when it would expire; done, it no longer does.
+    const { expiresAt, expiresInMs, ...proposed } = sent[1].changes[1]
+    expect(Date.parse(expiresAt!)).greaterThan(Date.now())
+    expect(expiresInMs).greaterThan(0)
+    expect(events[1].data.changes).deep.equals([
+      { ...proposed, status: 'done' }
+    ])
+    expect(
+      events.at(-1)!.data.messages.map((m: { text: string }) => m.text)
+    ).deep.equals(['Still following.'])
   })
 
   it('stops a turn by its client id: 204 idle or running, and another person’s stop changes nothing', async () => {
@@ -875,6 +938,78 @@ describe("Tess's routes", function () {
       ).includes('keep-alive')
       expect(events.at(-1)!.event).equals('done')
     } finally {
+      await slow.close()
+    }
+  })
+
+  it('keeps a confirmed batch’s stream open with a comment while its changes run', async () => {
+    let release = (): void => undefined
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    // The change's request waits until the stream has commented.
+    const slow = await tessWorld({
+      keepAliveMs: 40,
+      mountExtra: app => {
+        app.use('/api/v1/me/follows', (req, _res, next) => {
+          if (req.method !== 'PUT') next()
+          else
+            held.then(() => {
+              next()
+            }, next)
+        })
+      }
+    })
+    try {
+      slow.model.reply(
+        callTools([
+          {
+            name: 'confirmChange',
+            input: {
+              method: 'PUT',
+              path: '/me/follows/team/tem_account',
+              summary: 'Follow Demo Hawks'
+            }
+          }
+        ]),
+        say('Hold Confirm to follow them.')
+      )
+      await readTurnStream(
+        await streamed(slow, '/me/tess/messages', { text: 'Follow the Hawks' })
+      )
+      const [{ id }] = await slow.h.db
+        .selectFrom('tess_changes')
+        .select('id')
+        .execute()
+      slow.model.reply(say('You follow Demo Hawks.'))
+      const seen: TurnStreamEvent[] = []
+      const events = await readTurnStream(
+        await streamed(slow, '/me/tess/changes/confirm', {
+          changeIds: [id],
+          clientId: 'm-slow-all'
+        }),
+        event => {
+          seen.push(event)
+          if (seen.filter(one => one.event === 'comment').length === 3)
+            release()
+        }
+      )
+      const before = events.slice(
+        0,
+        events.findIndex(event => event.event === 'stored')
+      )
+      expect(before.length).greaterThanOrEqual(3)
+      expect(new Set(before.map(event => event.event))).deep.equals(
+        new Set(['comment'])
+      )
+      expect(
+        events
+          .find(event => event.event === 'stored')!
+          .data.changes.map((change: { status: string }) => change.status)
+      ).deep.equals(['done'])
+      expect(events.at(-1)!.event).equals('done')
+    } finally {
+      release()
       await slow.close()
     }
   })

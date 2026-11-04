@@ -121,6 +121,23 @@ export const tool = (
   stopReason: 'tool_use'
 })
 
+/** An answer calling several tools at once, as the model may, with a sentence before them. */
+export const tools = (
+  calls: Array<{ name: string; input: Record<string, unknown> }>,
+  words = 'Let me check.'
+): FakeAnswer => ({
+  content: [
+    { type: 'text', text: words },
+    ...calls.map(call => ({
+      type: 'tool_use',
+      id: `toolu_fake_${(ids += 1)}`,
+      name: call.name,
+      input: call.input
+    }))
+  ],
+  stopReason: 'tool_use'
+})
+
 /** `answer` with a summary of her thinking before it, signed as the provider signs. */
 export const thought = (summary: string, answer: FakeAnswer): FakeAnswer => ({
   ...answer,

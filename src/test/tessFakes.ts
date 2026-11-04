@@ -260,6 +260,10 @@ export interface TessWorld {
 export async function tessWorld(
   options: {
     settings?: TessSettings | null
+    /**
+     * Mounted ahead of the group and Tess routes, so it can answer, or
+     * hold, a request on its way to them.
+     */
     mountExtra?: MountExtra
     /** How often a streamed turn sends its keep-alive comment. */
     keepAliveMs?: number
@@ -276,6 +280,7 @@ export async function tessWorld(
     '127.0.0.1',
     (app, fixture) => {
       const { db, media } = fixture
+      options.mountExtra?.(app, fixture)
       app.use('/api/v1', groupRoutes(db, media))
       app.use('/api/v1', graphqlRoutes({ db, origin: () => origin }))
       app.use(
@@ -288,7 +293,6 @@ export async function tessWorld(
           keepAliveMs: options.keepAliveMs
         })
       )
-      options.mountExtra?.(app, fixture)
     }
   )
   origin = h.origin

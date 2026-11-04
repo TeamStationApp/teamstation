@@ -2719,6 +2719,17 @@ export const asTessConfirmBody = asObject({
   clientId: asOptional(asTessClientId)
 })
 
+/**
+ * `POST /me/tess/changes/confirm`: the changes one hold confirms, a reply's
+ * still pending, in the order they are shown, and the app's id for the
+ * turn, so the person can stop Tess's report.
+ */
+export const asTessConfirmAllBody = asObject({
+  changeIds: asArray(asTextUpTo(64)),
+  clientId: asOptional(asTessClientId)
+})
+export type TessConfirmAllBody = ReturnType<typeof asTessConfirmAllBody>
+
 /** `POST /me/tess/stop`: the turn the app means to stop, by its id. */
 export const asTessStopBody = asObject({ clientId: asTessClientId })
 
@@ -2822,12 +2833,18 @@ export const asTessAttachment = asObject({
 })
 export type TessAttachment = ReturnType<typeof asTessAttachment>
 
+/** One thing a change sets, in plain words: a column and its cell. */
+export const asTessChangeDetail = asObject({ label: asString, value: asString })
+export type TessChangeDetail = ReturnType<typeof asTessChangeDetail>
+
 /**
  * A change Tess proposed: what the server will run, from the stored request
  * rather than her words, and where it stands. It runs only when the person
- * holds Confirm.
+ * holds Confirm. `details` is what it sets in plain words, in her order,
+ * which the app shows as its row of a table; a change without them shows
+ * its summary.
  */
-export const asTessChange = asObject({
+const asTessChangeShape = asObject({
   id: asString,
   summary: asString,
   method: asLiteral('POST', 'PUT', 'PATCH', 'DELETE'),
@@ -2844,9 +2861,34 @@ export const asTessChange = asObject({
     'failed',
     'expired',
     'unknown'
-  )
+  ),
+  details: asOptional(asArray(asTessChangeDetail)),
+  /** On a pending change: when it expires, unconfirmed, by the server's clock. */
+  expiresAt: asOptional(asString),
+  /**
+   * On a pending change: how long it has left as of the answer that carries
+   * it, in milliseconds. The app counts from when it received it, since its
+   * own clock need not agree with the server's.
+   */
+  expiresInMs: asOptional(asNumber)
 })
-export type TessChange = ReturnType<typeof asTessChange>
+export type TessChange = Omit<
+  ReturnType<typeof asTessChangeShape>,
+  'details' | 'expiresAt' | 'expiresInMs'
+> & { details?: TessChangeDetail[]; expiresAt?: string; expiresInMs?: number }
+/**
+ * A change, without `details` when it has none, nor `expiresAt` and
+ * `expiresInMs` when none is due.
+ */
+export const asTessChange: Cleaner<TessChange> = raw => {
+  const { details, expiresAt, expiresInMs, ...change } = asTessChangeShape(raw)
+  return {
+    ...change,
+    ...(details == null || details.length === 0 ? {} : { details }),
+    ...(expiresAt == null ? {} : { expiresAt }),
+    ...(expiresInMs == null ? {} : { expiresInMs })
+  }
+}
 
 /** How a step Tess took went: still going, worked, or failed. */
 export const asTessStepStatus = asLiteral('running', 'done', 'failed')
@@ -2951,17 +2993,32 @@ export const asTessConfirmation = asObject({
 export type TessConfirmation = ReturnType<typeof asTessConfirmation>
 
 /**
+ * `POST /me/tess/changes/confirm`: each change as it ended, in the order
+ * sent, and Tess's one report on them.
+ */
+export const asTessConfirmations = asObject({
+  changes: asArray(asTessChange),
+  messages: asArray(asTessMessage)
+})
+export type TessConfirmations = ReturnType<typeof asTessConfirmations>
+
+/**
  * What a streamed turn tells as it happens (`streamTessMessage`,
- * `streamTessConfirm`): pieces of Tess's thinking's summary and of her text;
- * each step as it starts and ends, by its tool call's id; and, once the turn
- * has begun, the person's message as stored (or, for a confirm, the change
- * as it ended).
+ * `streamTessConfirm`, `streamTessConfirmAll`): pieces of Tess's thinking's
+ * summary and of her text; each step as it starts and ends, by its tool
+ * call's id; and, once the turn has begun, the person's message as stored
+ * (or, for a confirm, the change as it ended, and for a batch, each change).
  */
 export type TessStreamEvent =
   | { type: 'thinking'; delta: string }
   | { type: 'text'; delta: string }
   | { type: 'step'; id: string; label: string; status: TessStepStatus }
-  | { type: 'stored'; messages: TessMessage[]; change?: TessChange }
+  | {
+      type: 'stored'
+      messages: TessMessage[]
+      change?: TessChange
+      changes?: TessChange[]
+    }
 
 const asTessDelta = asObject({ delta: asString })
 const asTessStepEvent = asObject({
@@ -2971,7 +3028,8 @@ const asTessStepEvent = asObject({
 })
 const asTessStored = asObject({
   messages: asArray(asTessMessage),
-  change: asOptional(asTessChange)
+  change: asOptional(asTessChange),
+  changes: asOptional(asArray(asTessChange))
 })
 
 /** One streamed event by its name, or null for one this app does not know. */
@@ -2986,10 +3044,13 @@ export function tessStreamEventOf(
     case 'step':
       return { type: 'step', ...asTessStepEvent(raw) }
     case 'stored': {
-      const { messages, change } = asTessStored(raw)
-      return change == null
-        ? { type: 'stored', messages }
-        : { type: 'stored', messages, change }
+      const { messages, change, changes } = asTessStored(raw)
+      return {
+        type: 'stored',
+        messages,
+        ...(change == null ? {} : { change }),
+        ...(changes == null ? {} : { changes })
+      }
     }
     default:
       return null
@@ -4252,6 +4313,27 @@ export class TeamStationClient {
   }
 
   /**
+   * Runs the changes one hold confirmed, a reply's still pending, in order:
+   * each once, and Tess reports on them together. Nothing runs when any of
+   * them is not the caller's or no longer pending. `clientId` names the
+   * turn, for `stopTess`.
+   */
+  async confirmTessChanges(
+    changeIds: string[],
+    options: { clientId?: string } = {}
+  ): Promise<TessConfirmations> {
+    return await this.request(
+      'POST',
+      '/me/tess/changes/confirm',
+      asTessConfirmations,
+      {
+        changeIds,
+        ...(options.clientId == null ? {} : { clientId: options.clientId })
+      }
+    )
+  }
+
+  /**
    * Stops Tess's turn for the message, or the confirm, sent with
    * `clientId`: her reply ends with what she had stored and says it was
    * stopped. Answers once the server has noted it, whether or not that turn
@@ -4306,6 +4388,23 @@ export class TeamStationClient {
       `/me/tess/changes/${encodeURIComponent(changeId)}/confirm`,
       asTessConfirmation,
       options.clientId == null ? undefined : { clientId: options.clientId },
+      onEvent
+    )
+  }
+
+  /** `confirmTessChanges`, streamed as `streamTessMessage` is. */
+  async streamTessConfirmAll(
+    changeIds: string[],
+    onEvent: (event: TessStreamEvent) => void,
+    options: { clientId?: string } = {}
+  ): Promise<TessConfirmations> {
+    return await this.streamTess(
+      '/me/tess/changes/confirm',
+      asTessConfirmations,
+      {
+        changeIds,
+        ...(options.clientId == null ? {} : { clientId: options.clientId })
+      },
       onEvent
     )
   }
