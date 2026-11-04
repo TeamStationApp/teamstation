@@ -21,6 +21,8 @@ import {
 import { passwordBytes } from '../../common/passwordProtocol'
 import { nativeArgon } from '../../server/auth/passwords'
 import { chatRowText, nativeRowInList } from '../../test/chatRows'
+import { nativeHistoryRecovery } from './chatHistoryRecoveryNative.e2e'
+import { nativeRecoveryPermissions } from './chatHistoryRecoveryPermissions.e2e'
 
 interface Bounds {
   x: number
@@ -185,6 +187,15 @@ function strings(nodes: Hierarchy[]): string[] {
     [node.text, node.label, node.value, node.hint].filter(
       (value): value is string => typeof value === 'string' && value !== ''
     )
+  )
+}
+
+// A quote of an original older than the loaded history names neither its
+// author nor its snippet until that original loads.
+function isQuoteJump(label: string | undefined): boolean {
+  return (
+    label?.startsWith('Jump to message from ') === true ||
+    label === 'Jump to the earlier message this replies to'
   )
 }
 
@@ -373,8 +384,7 @@ async function settleAndroidReplyContent(
       )?.bounds
       const quote = children.find(
         node =>
-          (node.text?.startsWith('Jump to message from ') === true ||
-            node.label?.startsWith('Jump to message from ') === true) &&
+          (isQuoteJump(node.text) || isQuoteJump(node.label)) &&
           node.bounds != null
       )?.bounds
       if (viewport == null) {
@@ -776,6 +786,20 @@ async function main(): Promise<void> {
         point: `${Math.round(tab.bounds.x + tab.bounds.width / 2)},${Math.round(tab.bounds.y + tab.bounds.height / 2)}`
       })
       await m.assertVisible({ text: 'Link this device', timeout: 60000 })
+      const recoveryFile = process.env.CHAT_UI_NATIVE_RECOVERY_FIXTURE
+      if (
+        recoveryFile != null &&
+        JSON.parse(readFileSync(recoveryFile, 'utf8')).scenario === 'E6'
+      ) {
+        const nodes = flatten(await m.hierarchy())
+        assert(!nodes.some(node => node.id === 'chat-composer'))
+        assert(!strings(nodes).includes('Send'))
+        results.unlinkedCompositionBlocked = true
+        writeFileSync(
+          join(resultDirectory, `${platform}-unlinked-blocked.png`),
+          await m.screenshot()
+        )
+      }
       const code = await until(
         'Normal new-device six-digit code must be visible',
         async () =>
@@ -816,6 +840,9 @@ async function main(): Promise<void> {
             : undefined,
         180000
       )
+      // The workspace heading can already exist behind the linking gate.
+      // Only its dismissal proves the provider actually completed approval.
+      await m.assertNotVisible({ text: 'Link this device', timeout: 180000 })
       results.identityLinked = {
         actorUserId: fixture.actor.userId,
         nativeDeviceId: deviceId,
@@ -1204,6 +1231,256 @@ async function main(): Promise<void> {
         ...((results.currentMessageMoreReceipts as object[] | undefined) ?? []),
         { messageId, childOf: rowId, namedNativeControl: true, at: Date.now() }
       ]
+    }
+    if (
+      process.argv[2] === 'intact-record' ||
+      process.argv[2] === 'intact-compare'
+    ) {
+      stage = 'retained-history-application-upgrade'
+      const input = JSON.parse(
+        readFileSync(required('CHAT_RECOVERY_INTACT_FIXTURE'), 'utf8')
+      ) as {
+        synthetic: true
+        actorUserId: string
+        conversationId: string
+        posts: Array<{ id: string; body: string }>
+        attachment: { messageId: string; fileName: string }
+      }
+      assert.equal(input.synthetic, true)
+      assert.equal(input.actorUserId, fixture.actor.userId)
+      assert.equal(input.conversationId, fixture.conversationId)
+      assert(input.posts.length >= 3)
+      const recordFile = required('CHAT_RECOVERY_INTACT_RECORD')
+      async function snapshot(): Promise<{
+        words: string[]
+        messages: Awaited<ReturnType<TeamStationClient['chatMessages']>>
+        epochs: Awaited<ReturnType<TeamStationClient['chatEpochs']>>['epochs']
+      }> {
+        await open()
+        for (const post of input.posts) {
+          await revealMessage(input.conversationId, post.id)
+          await m.assertVisible({ text: post.body, timeout: 30000 })
+        }
+        await revealMessage(input.conversationId, input.attachment.messageId)
+        await until(
+          'Retained encrypted image must render an actual native image',
+          async () => {
+            const nodes = flatten(await m.hierarchy())
+            return nodes.some(
+              node =>
+                node.type?.includes('Image') === true &&
+                (node.label === input.attachment.fileName ||
+                  node.text === input.attachment.fileName) &&
+                node.bounds != null &&
+                node.bounds.width > 0 &&
+                node.bounds.height > 0
+            )
+              ? true
+              : undefined
+          }
+        )
+        writeFileSync(
+          join(resultDirectory, `${platform}-intact-history.png`),
+          await m.screenshot()
+        )
+        await m.openLink({
+          link: `${fixture.scheme}://chat/${input.conversationId}/members`
+        })
+        const safetyLabel = await until(
+          'The real member safety action must be available',
+          async () => {
+            const labels = strings(flatten(await m.hierarchy()))
+            if (
+              platform === 'ios' &&
+              labels.includes('Open in “TeamStation”?')
+            ) {
+              await tapVisibleControl(m, 'Open')
+              return undefined
+            }
+            return labels.find(label => label.startsWith('Safety words with '))
+          }
+        )
+        await m.tapOn({ text: safetyLabel })
+        const words = await until(
+          'All sixteen safety words must be rendered',
+          async () => {
+            const groups = flatten(await m.hierarchy())
+              .filter(
+                node => node.id?.startsWith('chat-safety-group-') === true
+              )
+              .sort(
+                (a, b) =>
+                  Number(a.id!.split('-').at(-1)) -
+                  Number(b.id!.split('-').at(-1))
+              )
+              .map(node => node.text ?? node.label ?? node.value ?? '')
+            return groups.length === 16 &&
+              groups.every(word => word !== '' && word !== '—')
+              ? groups
+              : undefined
+          }
+        )
+        writeFileSync(
+          join(resultDirectory, `${platform}-intact-safety.png`),
+          await m.screenshot()
+        )
+        return {
+          words,
+          messages: await api.chatMessages(input.conversationId),
+          epochs: (await api.chatEpochs(input.conversationId, 0)).epochs
+        }
+      }
+      const before = await snapshot()
+      assert.equal(before.epochs.length, 1)
+      assert.equal(before.epochs[0].chainBreak, false)
+      if (process.argv[2] === 'intact-record') {
+        writeFileSync(
+          recordFile,
+          JSON.stringify(
+            {
+              platform,
+              conversationId: input.conversationId,
+              actorUserId: input.actorUserId,
+              snapshot: before,
+              bundleHash: results.bundleHash,
+              buildHash: results.buildHash
+            },
+            null,
+            2
+          ),
+          { mode: 0o600, flag: 'wx' }
+        )
+        pass(
+          'baseline retained messages, native image and safety words recorded before upgrade'
+        )
+        return
+      }
+      const baseline = JSON.parse(readFileSync(recordFile, 'utf8')) as {
+        platform: string
+        conversationId: string
+        actorUserId: string
+        snapshot: typeof before
+        bundleHash?: string
+        buildHash?: string
+      }
+      assert.equal(baseline.platform, platform)
+      assert.equal(baseline.conversationId, input.conversationId)
+      assert.equal(baseline.actorUserId, input.actorUserId)
+      assert.notEqual(
+        platform === 'ios' ? results.bundleHash : results.buildHash,
+        platform === 'ios' ? baseline.bundleHash : baseline.buildHash,
+        'The comparison must install the changed application build'
+      )
+      assert.deepEqual(before, baseline.snapshot)
+      await m.stopApp({ appId: fixture.appId })
+      await m.launchApp({
+        appId: fixture.appId,
+        ...(platform === 'ios'
+          ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+          : {})
+      })
+      await m.assertVisible({ text: 'Chat', timeout: 60000 })
+      assert.deepEqual(await snapshot(), baseline.snapshot)
+      results.intactUpgrade = {
+        platform,
+        baselineHash: baseline.bundleHash ?? baseline.buildHash,
+        currentHash: results.bundleHash ?? results.buildHash,
+        messagesUnchanged: true,
+        nativeImageRendered: true,
+        safetyWordsUnchanged: true,
+        restartReadable: true,
+        freshBoundaries: 0
+      }
+      pass(
+        'upgraded retained device and restart preserve exact messages, native image and safety words without a fresh boundary'
+      )
+      return
+    }
+    if (process.argv[2] === 'recovery-permissions') {
+      stage = 'native-recovery-permissions'
+      results.recoveryPermissions = await nativeRecoveryPermissions({
+        inputFile: required('CHAT_UI_NATIVE_RECOVERY_FIXTURE'),
+        linkReceipt: required('CHAT_RECOVERY_NATIVE_LINK_RECEIPT'),
+        results: resultDirectory,
+        platform,
+        actorUserId: fixture.actor.userId,
+        conversationId: fixture.conversationId,
+        apiUrl: fixture.apiUrl,
+        api,
+        device: m,
+        open,
+        openScope: async (id, expected) => {
+          await m.openLink({ link: `${fixture.scheme}://chat/${id}` })
+          await until('Native permission scope must open', async () => {
+            const labels = strings(flatten(await m.hierarchy()))
+            if (
+              platform === 'ios' &&
+              labels.includes('Open in “TeamStation”?')
+            ) {
+              await tapVisibleControl(m, 'Open')
+              return undefined
+            }
+            return labels.some(label => label.includes(expected))
+              ? true
+              : undefined
+          })
+        },
+        restart: async () => {
+          await m.stopApp({ appId: fixture.appId })
+          await m.launchApp({
+            appId: fixture.appId,
+            ...(platform === 'ios'
+              ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+              : {})
+          })
+          await m.assertVisible({ text: 'Chat', timeout: 60000 })
+        },
+        hold: async (id, body) => {
+          await physicalMessageHold(m, `chat-message-${id}`, body, 550)
+        }
+      })
+      pass(
+        'native recovery preserves unlinked, read-only, closed and removed gates'
+      )
+      return
+    }
+    if (
+      process.argv[2] === 'recovery-draft' ||
+      process.argv[2] === 'recovery-retry'
+    ) {
+      stage = 'native-history-recovery'
+      results.historyRecovery = await nativeHistoryRecovery({
+        inputFile: required('CHAT_UI_NATIVE_RECOVERY_FIXTURE'),
+        relayFile: required('CHAT_RECOVERY_RELAY'),
+        results: resultDirectory,
+        platform,
+        actorUserId: fixture.actor.userId,
+        conversationId: fixture.conversationId,
+        apiUrl: fixture.apiUrl,
+        api,
+        device: m,
+        open,
+        reveal: async id => {
+          await revealMessage(fixture.conversationId, id)
+        },
+        composerValue: async () => await composerValue(m),
+        stop: async () => {
+          await m.stopApp({ appId: fixture.appId })
+        },
+        restart: async () => {
+          await m.launchApp({
+            appId: fixture.appId,
+            ...(platform === 'ios'
+              ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+              : {})
+          })
+          await m.assertVisible({ text: 'Chat', timeout: 60000 })
+        }
+      })
+      pass(
+        'native historical recovery preserves current composition and retained messages'
+      )
+      return
     }
     if (process.argv[2] === 'list-terminal') {
       stage = 'native-list-terminal-offsets'
@@ -1820,8 +2097,10 @@ async function main(): Promise<void> {
           550
         )
         await tapStableControl(m, 'Reply')
-        const submitted = `${pending.submittedText}\n${outcome} ${Date.now()}`
-        const newer = `${pending.newerText}\n${outcome} ${Date.now()}`
+        // A line that starts with a capital: Android keyboards capitalize the
+        // first word after a typed newline, which would change the exact text.
+        const submitted = `${pending.submittedText}\nOutcome ${outcome} ${Date.now()}`
+        const newer = `${pending.newerText}\nOutcome ${outcome} ${Date.now()}`
         await m.tapOn({ id: 'chat-composer' })
         await clearNativeComposer(m, await composerValue(m))
         await m.inputText({ text: submitted })
@@ -2222,9 +2501,7 @@ async function main(): Promise<void> {
         const row = flatten(await m.hierarchy()).find(
           node => node.id === `chat-message-${deep.attachmentReplyId}`
         )
-        const quote = strings(row == null ? [] : flatten(row)).find(label =>
-          label.startsWith('Jump to message from ')
-        )
+        const quote = strings(row == null ? [] : flatten(row)).find(isQuoteJump)
         assert(
           quote != null,
           'The identified current attachment reply must expose its own short-jump control'
@@ -2560,11 +2837,7 @@ async function main(): Promise<void> {
           !nodes.some(node => node.id === `chat-message-${deep.originalId}`),
         'Actual cold >100 original absence required'
       )
-      const quote = strings(flatten(row)).find(
-        label =>
-          label.startsWith('Jump to message from ') ||
-          label === 'Jump to the earlier message this replies to'
-      )
+      const quote = strings(flatten(row)).find(isQuoteJump)
       assert(quote != null)
       if (platform === 'android') {
         await m.startRecording({
@@ -2686,9 +2959,7 @@ async function main(): Promise<void> {
         node => node.id === `chat-message-${deep.replyId}`
       )
       assert(reply?.bounds != null, 'Visible current reply required')
-      const quote = strings(flatten(reply)).find(label =>
-        label.startsWith('Jump to message from ')
-      )
+      const quote = strings(flatten(reply)).find(isQuoteJump)
       assert(quote != null)
       const gateId = `native-${platform}-cancel-${Date.now()}`
       execFileSync(
@@ -3050,11 +3321,7 @@ async function main(): Promise<void> {
       assert(row != null, 'Current reply must remain available')
       const anchorBefore = row.bounds
       const composerBefore = await composerValue(m)
-      const quote = strings(flatten(row)).find(
-        label =>
-          label.startsWith('Jump to message from ') ||
-          label === 'Jump to the earlier message this replies to'
-      )
+      const quote = strings(flatten(row)).find(isQuoteJump)
       assert(quote != null, 'Reply must expose a normal quote action')
       const errorsBefore = nodes.filter(
         node =>
@@ -3157,9 +3424,7 @@ async function main(): Promise<void> {
         return
       }
       assert(retryRow != null, 'Failed page must retain the current reply')
-      const retryQuote = strings(flatten(retryRow)).find(label =>
-        label.startsWith('Jump to message from ')
-      )
+      const retryQuote = strings(flatten(retryRow)).find(isQuoteJump)
       assert(
         retryQuote != null,
         'Failed quote remains available for normal retry'
@@ -3247,9 +3512,7 @@ async function main(): Promise<void> {
               ? undefined
               : flatten(identified).find(
                   node =>
-                    (node.text?.startsWith('Jump to message from ') === true ||
-                      node.label?.startsWith('Jump to message from ') ===
-                        true) &&
+                    (isQuoteJump(node.text) || isQuoteJump(node.label)) &&
                     node.bounds != null
                 )?.bounds
           assert(
@@ -3929,11 +4192,7 @@ async function main(): Promise<void> {
       )
       const row = initial.find(node => node.id === replyId)
       const quote =
-        row == null
-          ? undefined
-          : strings(flatten(row)).find(label =>
-              label.startsWith('Jump to message from ')
-            )
+        row == null ? undefined : strings(flatten(row)).find(isQuoteJump)
       assert(quote != null, 'Recorded exact reply must expose its quote')
       if (platform === 'android') {
         await m.startRecording({
@@ -4063,9 +4322,7 @@ async function main(): Promise<void> {
         reply != null,
         'Current reply must expose a normal route to older file history'
       )
-      const quote = strings(flatten(reply)).find(label =>
-        label.startsWith('Jump to message from ')
-      )
+      const quote = strings(flatten(reply)).find(isQuoteJump)
       assert(quote != null, 'Normal quote jump must be available')
       await m.tapOn({ text: quote })
       await m.assertVisible({
@@ -4196,9 +4453,7 @@ async function main(): Promise<void> {
         replyRow != null,
         'Deep quote must belong to the identified current reply row'
       )
-      const quote = strings(flatten(replyRow)).find(label =>
-        label.startsWith('Jump to message from ')
-      )
+      const quote = strings(flatten(replyRow)).find(isQuoteJump)
       assert(
         quote != null,
         'Current deep reply exposes an accessible quote jump'

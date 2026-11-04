@@ -192,10 +192,12 @@ async function main(): Promise<void> {
     await shot(a, `header-${size}-after`)
   } else if (mode === 'words') {
     const conversation = required('CHAT117_CONVERSATION')
+    const peer = process.env.CHAT117_PEER ?? 'Lou G'
+    assert(/^[A-Za-z ]+$/.test(peer))
     await a.openLink({ link: origin + '/chat/' + conversation + '/info' })
-    await visible(a, 'Safety words with Lou G.*')
+    await visible(a, `Safety words with ${peer}.*`)
     await shot(a, 'chat-info-after')
-    await tap(a, 'Safety words with Lou G.*')
+    await tap(a, `Safety words with ${peer}.*`)
     await visible(a, 'Compare these 16 words.*')
     const words = await read<Array<{ word: string; x: number; y: number }>>(
       a,
