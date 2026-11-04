@@ -17,6 +17,7 @@ import {
 } from '../common/api'
 import { asGroupDetail, asPublicGroup } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { pageOf, pageOfGames } from '../test/pageOf'
 import { App } from './App'
 
 const playerId = userIdOfGumbo(201)
@@ -99,8 +100,8 @@ describe('stack transitions in the actual app', () => {
     proto.follows = async () => []
     proto.recentGame = async () => null
     proto.liveNow = async () => []
-    proto.games = async () => [game]
-    proto.teamGames = async () => [game]
+    proto.gamesPage = async () => pageOf([game])
+    proto.teamGamesPage = async (_id, query) => pageOfGames([game], query)
     proto.game = async () => detail
     proto.roster = async () => [
       asRosterEntry({
@@ -360,7 +361,7 @@ describe('stack transitions in the actual app', () => {
         logoUrl: null
       }
     ]
-    proto.seasonGames = async () => [game]
+    proto.seasonGamesPage = async (_id, query) => pageOfGames([game], query)
     window.history.replaceState(null, '', '/seasons/sea_spring')
     const cleanup = await render()
     try {

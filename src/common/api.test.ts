@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import { asString } from 'cleaners'
 import { describe, it } from 'mocha'
 
 import { mintedRosterEntry } from '../test/mintedRosterEntry'
@@ -6,6 +7,7 @@ import { testPasswordParameters } from '../test/passwordFixtures'
 import {
   asHighlight,
   asManagePage,
+  asPage,
   asPlayerHighlight,
   asPlayerStats,
   asSaveLineupsBody,
@@ -2188,6 +2190,155 @@ describe('api client', function () {
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     await client.teamGames('a/b?c')
     expect(calls[0].url).equals('http://x/api/v1/teams/a%2Fb%3Fc/games')
+  })
+
+  it('reads schedule pages with what they asked for, escaped', async function () {
+    const page = {
+      items: [],
+      nextCursor: 'after',
+      prevCursor: null,
+      anchorId: null,
+      counts: null
+    }
+    const { fetch, calls } = stubFetch(200, page)
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    expect(await client.gamesPage()).deep.equals(page)
+    await client.gamesPage({
+      when: 'past',
+      order: 'desc',
+      hasVideo: true,
+      limit: 25,
+      cursor: 'a+b'
+    })
+    await client.gamesPage({ when: 'all' })
+    await client.seasonGamesPage('s/1', { when: 'upcoming' })
+    await client.seasonGamesPage('s/1')
+    await client.teamGamesPage('t/1', { around: 'next', order: 'asc' })
+    await client.teamGamesPage('t/1')
+    expect(
+      calls.map(call => call.url.replace('http://x/api/v1', ''))
+    ).deep.equals([
+      '/events?paged=1',
+      '/events?paged=1&when=past&order=desc&hasVideo=1&cursor=a%2Bb&limit=25',
+      '/events?paged=1',
+      '/events?season=s%2F1&paged=1&when=upcoming',
+      '/events?season=s%2F1&paged=1',
+      '/teams/t%2F1/games?paged=1&order=asc&around=next',
+      '/teams/t%2F1/games?paged=1'
+    ])
+  })
+
+  it('reads public pages of a team or a season, with their own rows', async function () {
+    const game = {
+      id: 'gam_1',
+      homeTeam: { id: 'tem_1', name: 'Demo Hawks' },
+      awayTeam: { id: 'tem_2', name: 'Demo Eagles' },
+      seasonId: null,
+      startAt: '2027-04-01T19:00:00.000Z',
+      venue: null,
+      status: 'scheduled',
+      homeScore: null,
+      awayScore: null,
+      cancellationReason: null,
+      withdrawnByTeamId: null
+    }
+    const { fetch, calls } = stubFetch(200, {
+      items: [game],
+      nextCursor: null,
+      prevCursor: null,
+      anchorId: null,
+      counts: null
+    })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const page = await client.publicGamesPage('team', 't/1', {
+      when: 'past',
+      order: 'asc',
+      hasVideo: true,
+      cursor: 'a+b',
+      limit: 5
+    })
+    expect(page.items[0].homeTeam.name).equals('Demo Hawks')
+    expect(page.items[0].videoCount).equals(0)
+    await client.publicGamesPage('season', 's/1')
+    expect(
+      calls.map(call => call.url.replace('http://x/api/v1', ''))
+    ).deep.equals([
+      '/teams/t%2F1/games?public=1&paged=1&when=past&order=asc&hasVideo=1&cursor=a%2Bb&limit=5',
+      '/seasons/s%2F1/games?public=1&paged=1'
+    ])
+  })
+
+  it('reads an umpire page with its columns, and its query as the whole one', async function () {
+    const page = {
+      settings: { management: true, credits: false },
+      levels: [],
+      types: [],
+      noteTypes: [],
+      viewerId: 'usr_1',
+      isAdmin: false,
+      view: 'schedule',
+      creditTeams: [],
+      items: [],
+      nextCursor: null,
+      prevCursor: null,
+      anchorId: null,
+      counts: null,
+      positions: [
+        {
+          slot: 'uty_field:2',
+          typeId: 'uty_field',
+          typeName: 'Field',
+          ordinal: 2,
+          required: false,
+          optionalHeader: 'Optional'
+        }
+      ]
+    }
+    const { fetch, calls } = stubFetch(200, page)
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const answer = await client.umpireSchedulePage(
+      'l/1',
+      'view=schedule&days=0,4&levels=',
+      { around: 'next', limit: 9 }
+    )
+    expect(answer.positions[0].optionalHeader).equals('Optional')
+    await client.umpireSchedulePage('l/1', 'view=schedule', { cursor: 'a+b' })
+    await client.umpireSchedulePage('l/1')
+    expect(
+      calls.map(call => call.url.replace('http://x/api/v1', ''))
+    ).deep.equals([
+      '/leagues/l%2F1/umpire-schedule?view=schedule&days=0&days=4&paged=1&around=next&limit=9',
+      '/leagues/l%2F1/umpire-schedule?view=schedule&paged=1&cursor=a%2Bb',
+      '/leagues/l%2F1/umpire-schedule?paged=1'
+    ])
+  })
+
+  it('cleans a page and refuses a bare array as one', function () {
+    const counts = {
+      total: 3,
+      upcoming: 1,
+      withVideo: 2,
+      videos: 4,
+      newestSeasonId: null
+    }
+    const clean = asPage(asString)
+    expect(
+      clean({
+        items: ['a'],
+        nextCursor: null,
+        prevCursor: 'before',
+        anchorId: 'a',
+        counts
+      })
+    ).deep.equals({
+      items: ['a'],
+      nextCursor: null,
+      prevCursor: 'before',
+      anchorId: 'a',
+      counts
+    })
+    expect(() => clean(['a'])).throws()
+    expect(() => clean({ items: [1] })).throws()
   })
 
   it('asks for people by each external id, escaped', async function () {

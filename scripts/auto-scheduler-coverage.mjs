@@ -41,6 +41,7 @@ import { build } from 'esbuild'
 import ts from 'typescript'
 
 import { coverageSource } from './coverage-source.mjs'
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const unitOnly = process.argv.includes('--unit')
@@ -298,6 +299,7 @@ if (!reuseUnitRuns) {
   for (const [index, suite] of appSuites.entries()) {
     await build({
       ...webSettings,
+      plugins: [...webSettings.plugins, pagedListStandInPlugin()],
       alias: {
         ...webSettings.alias,
         'react-native-webview': './src/test/eventWebViewStub.tsx',

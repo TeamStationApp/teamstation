@@ -365,6 +365,42 @@ describe('the pinned head in a browser', function () {
     }
   })
 
+  it('holds the head while a kept tab at its top is drawn, whatever the page does', async function () {
+    const watchers: Array<() => void> = []
+    const globals = globalThis as { ResizeObserver?: unknown }
+    const before = globals.ResizeObserver
+    globals.ResizeObserver = class {
+      constructor(callback: () => void) {
+        watchers.push(callback)
+      }
+
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    try {
+      await mount()
+      await setScroll(PIN_AT + 300)
+      props = { ...props, late: true }
+      await select('stats', false)
+      expect(named('scroller').scrollTop).equals(PIN_AT)
+      // Landed: a long list drawing has the page shorter for a moment, which
+      // pulls it to the top without anybody scrolling.
+      await act(async () => {
+        drawPage!()
+        scrollTop = 0
+        named('scroller').dispatchEvent(new window.Event('scroll'))
+      })
+      await act(async () => {
+        for (const watcher of watchers) watcher()
+      })
+      expect(named('scroller').scrollTop).equals(PIN_AT)
+      expect(named('pills').style.top).equals(`${HEADER}px`)
+    } finally {
+      globals.ResizeObserver = before
+    }
+  })
+
   it('reads where the pills pin again when the card changes height', async function () {
     // jsdom has no ResizeObserver: a stand-in that the test can fire.
     const watchers: Array<() => void> = []

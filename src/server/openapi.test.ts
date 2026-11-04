@@ -432,6 +432,56 @@ describe('the API document', function () {
       expect(game.description).includes(text)
   })
 
+  it('declares each parameter of an operation once', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const twice: string[] = []
+    for (const [route, operations] of Object.entries(paths))
+      for (const [method, operation] of Object.entries(
+        operations as Record<string, { parameters?: unknown[] }>
+      )) {
+        const seen = new Set<string>()
+        for (const parameter of (operation.parameters ?? []) as Array<{
+          name: string
+          in: string
+        }>) {
+          const key = `${parameter.in}:${parameter.name}`
+          if (seen.has(key)) twice.push(`${method} ${route} ${key}`)
+          seen.add(key)
+        }
+      }
+    expect(twice).deep.equals([])
+  })
+
+  it('says who may read public games, and what a public list takes', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const names = (route: string): string[] =>
+      paths[route].get.parameters.map(
+        (parameter: { name: string }) => parameter.name
+      )
+    for (const route of [
+      '/teams/{teamId}/games',
+      '/seasons/{seasonId}/games'
+    ]) {
+      expect(paths[route].get.security).deep.equals([{}, { bearer: [] }])
+      expect(names(route)).includes.members([
+        'when',
+        'order',
+        'limit',
+        'paged',
+        'cursor',
+        'hasVideo',
+        'public'
+      ])
+    }
+    expect(names('/seasons/{seasonId}/games')).not.include('around')
+    expect(names('/leagues/{leagueId}/umpire-schedule')).includes.members([
+      'paged',
+      'cursor',
+      'around',
+      'limit'
+    ])
+  })
+
   it('lists every role flag, the assistant included, wherever roles are named', function () {
     const document = openApiDocument('0.0.0')
     const schemas = (document.components as { schemas: Record<string, any> })

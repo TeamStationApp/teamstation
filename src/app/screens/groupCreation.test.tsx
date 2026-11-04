@@ -11,9 +11,15 @@ import {
 import { HttpError } from '../../common/errors'
 import type { NodeAccount } from '../../common/nodeAdministration'
 import type { Notification } from '../../common/notifications'
-import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
+import {
+  asGroupDetail,
+  asPublicGame,
+  asPublicGroup
+} from '../../common/publicGroups'
 import { seasonTimeFrames } from '../../common/seasonTimeFrames'
 import { userIdOfGumbo } from '../../common/userId'
+import { reachEnd } from '../../test/PagedListStandIn'
+import { pageOf, pageOfGames } from '../../test/pageOf'
 import { DateRangePicker } from '../components/DateRangePicker'
 import { GroupPictureChooser } from '../components/GroupPictureChooser'
 import { seasonParticipantDestination } from '../navigation/seasonParticipant'
@@ -97,6 +103,7 @@ function client(): TeamStationClient {
   api.ownGroups = async () => [group]
   api.discoverGroups = async () => [group]
   api.group = async () => detail
+  api.publicGamesPage = async (_kind, _id, query) => pageOf([], query)
   return api
 }
 const notification: Notification = {
@@ -180,7 +187,7 @@ describe('creation and organization interface behavior', () => {
       ...detail,
       group: { ...group, kind: 'season', id: 'sea_demo' }
     })
-    api.seasonGames = async () => []
+    api.seasonGamesPage = async (_id, query) => pageOfGames([], query)
     api.seasonTeams = async () => participants
     api.standings = async () =>
       participants.map(item => ({
@@ -251,36 +258,38 @@ describe('creation and organization interface behavior', () => {
       pendingApproval: false,
       pendingRequestId: null
     }
+    const games = [
+      {
+        ...base,
+        id: 'gam_approved',
+        status: 'final',
+        cancellationReason: null
+      },
+      {
+        ...base,
+        id: 'gam_withdrawn',
+        status: 'cancelled',
+        cancellationReason: 'withdrawal',
+        withdrawnByTeamName: 'Demo Guest'
+      },
+      {
+        ...base,
+        id: 'gam_replaced',
+        status: 'cancelled',
+        cancellationReason: 'replacement',
+        homeScore: null,
+        awayScore: null
+      }
+    ]
     api.group = async () =>
       asGroupDetail({
         ...detail,
         canViewPrivate: false,
         canManage: false,
-
-        games: [
-          {
-            ...base,
-            id: 'gam_approved',
-            status: 'final',
-            cancellationReason: null
-          },
-          {
-            ...base,
-            id: 'gam_withdrawn',
-            status: 'cancelled',
-            cancellationReason: 'withdrawal',
-            withdrawnByTeamName: 'Demo Guest'
-          },
-          {
-            ...base,
-            id: 'gam_replaced',
-            status: 'cancelled',
-            cancellationReason: 'replacement',
-            homeScore: null,
-            awayScore: null
-          }
-        ]
+        games
       })
+    api.publicGamesPage = async (_kind, _id, query) =>
+      pageOf(games.map(asPublicGame), query)
     const opened: Array<{ id: string; options: unknown }> = []
     await mount(
       <GroupScreen
@@ -314,25 +323,29 @@ describe('creation and organization interface behavior', () => {
         canViewPrivate: false,
         nonMemberView: true
       })
-    api.teamGames = async () => [
-      asGameSummary({
-        id: 'gam_reserved',
-        homeTeamId: group.id,
-        awayTeamId: 'tem_guest',
-        homeTeamName: group.name,
-        awayTeamName: 'Demo Guest',
-        seasonId: 'sea_host',
-        startAt: '2027-03-02T18:00:00Z',
-        venue: null,
-        status: 'scheduled',
-        homeScore: null,
-        awayScore: null,
-        ingestStatus: 'pending',
-        videoCount: 0,
-        pendingApproval: true,
-        pendingRequestId: 'req_host'
-      })
-    ]
+    api.teamGamesPage = async (_id, query) =>
+      pageOfGames(
+        [
+          asGameSummary({
+            id: 'gam_reserved',
+            homeTeamId: group.id,
+            awayTeamId: 'tem_guest',
+            homeTeamName: group.name,
+            awayTeamName: 'Demo Guest',
+            seasonId: 'sea_host',
+            startAt: '2027-03-02T18:00:00Z',
+            venue: null,
+            status: 'scheduled',
+            homeScore: null,
+            awayScore: null,
+            ingestStatus: 'pending',
+            videoCount: 0,
+            pendingApproval: true,
+            pendingRequestId: 'req_host'
+          })
+        ],
+        query
+      )
     api.roster = async () => []
     api.standings = async () => []
     api.follows = async () => []
@@ -1283,7 +1296,9 @@ describe('creation and organization interface behavior', () => {
       nextCursor: options?.cursor == null ? 'next' : null
     })
     await press('Retry notifications')
-    await press('Load more')
+    await act(async () => {
+      reachEnd()
+    })
     await act(async () => {
       window.dispatchEvent(new window.Event('focus'))
     })

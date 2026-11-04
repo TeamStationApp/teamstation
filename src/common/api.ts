@@ -104,9 +104,11 @@ import type {
 import { asStatSplit, asStatSplitBy } from './playerStatSplits'
 import {
   asGroupDetail,
+  asPublicGame,
   asPublicGroup,
   asSearchRow,
   type GroupDetail,
+  type PublicGame,
   type PublicGroup,
   type SearchRow
 } from './publicGroups'
@@ -162,12 +164,15 @@ import {
   type TvPlatform
 } from './tvLogin'
 import {
+  asUmpireColumn,
+  asUmpireGameRow,
   asUmpireLeaderboard,
   asUmpireLeagues,
   asUmpireLevel,
   asUmpireLevels,
   asUmpirePeople,
   asUmpireSchedule,
+  asUmpireScheduleHead,
   asUmpireSeasons,
   asUmpireSettings,
   asUmpireTypes
@@ -183,6 +188,8 @@ import type {
   UmpireTypeCount
 } from './umpires'
 import type {
+  UmpireColumn,
+  UmpireGameRow,
   UmpireLeaderboard,
   UmpireLeaderboardQuery,
   UmpireLeague,
@@ -1792,6 +1799,104 @@ function videoCollectionQuery(options: VideoCollectionOptions): string {
       .filter(([, value]) => value !== undefined)
       .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
   ].join('&')
+}
+
+/**
+ * What a paged list's hero and notes read, counted over the list's whole
+ * filter leaving out `when` and `hasVideo`, so they hold with one page loaded
+ * and across a screen's pills.
+ */
+export const asListCounts = asObject({
+  total: asNumber,
+  upcoming: asNumber,
+  /** Rows with a video, and the videos they hold between them. */
+  withVideo: asNumber,
+  videos: asNumber,
+  /** The first `seasonId` of the list, newest first. */
+  newestSeasonId: asNullable(asString)
+})
+export type ListCounts = ReturnType<typeof asListCounts>
+
+/** One page of a list, as every `paged=1` read answers. */
+export interface Page<T> {
+  items: T[]
+  /** Null at the end. */
+  nextCursor: string | null
+  /** On any page with rows before it, and null otherwise. */
+  prevCursor: string | null
+  /** The row `around` opened on. */
+  anchorId: string | null
+  /** On a first page only. */
+  counts: ListCounts | null
+}
+
+function pageShape<T>(asItem: Cleaner<T>): {
+  [Key in keyof Page<T>]: Cleaner<Page<T>[Key]>
+} {
+  return {
+    items: asArray(asItem),
+    nextCursor: asNullable(asString),
+    prevCursor: asNullable(asString),
+    anchorId: asNullable(asString),
+    counts: asNullable(asListCounts)
+  }
+}
+
+export function asPage<T>(asItem: Cleaner<T>): Cleaner<Page<T>> {
+  return asObject(pageShape(asItem))
+}
+
+/**
+ * The umpire schedule a page at a time. `positions` are the columns of the
+ * whole filtered list, so a table's columns and headers hold as rows arrive.
+ */
+export type UmpireSchedulePage = Omit<UmpireSchedule, 'games'> &
+  Page<UmpireGameRow> & { positions: UmpireColumn[] }
+
+const asUmpireSchedulePage: Cleaner<UmpireSchedulePage> = asObject({
+  ...asUmpireScheduleHead,
+  ...pageShape(asUmpireGameRow),
+  positions: asArray(asUmpireColumn)
+})
+
+/** What `paged=1` reads of a schedule take. */
+export interface GamesPageQuery {
+  when?: 'past' | 'upcoming' | 'all'
+  order?: 'asc' | 'desc'
+  /** Only games with a video. */
+  hasVideo?: boolean
+  /** Open on the list's next game, in `asc` order. Not with `cursor`. */
+  around?: 'next'
+  /**
+   * From the `nextCursor` or `prevCursor` of the same list. It carries the
+   * list's order, so `order` may be left out, and one that disagrees is a 400.
+   */
+  cursor?: string
+  limit?: number
+}
+
+function gamesPageParams(query: GamesPageQuery): string {
+  const params = ['paged=1']
+  if (query.when != null && query.when !== 'all')
+    params.push(`when=${query.when}`)
+  if (query.order != null) params.push(`order=${query.order}`)
+  if (query.hasVideo === true) params.push('hasVideo=1')
+  if (query.around != null) params.push(`around=${query.around}`)
+  if (query.cursor != null)
+    params.push(`cursor=${encodeURIComponent(query.cursor)}`)
+  if (query.limit != null) params.push(`limit=${query.limit}`)
+  return params.join('&')
+}
+
+/** A schedule query as the server takes it: one value to a repeated key. */
+function umpireScheduleParams(query: string): URLSearchParams {
+  const params = new URLSearchParams(query)
+  for (const key of ['days', 'levels']) {
+    const values = params.getAll(key).flatMap(value => value.split(','))
+    params.delete(key)
+    for (const value of values) if (value !== '') params.append(key, value)
+  }
+  return params
 }
 
 /** A player a roster manager may add, as the search card draws them. */
@@ -3480,16 +3585,29 @@ export class TeamStationClient {
   }
 
   async umpireSchedule(league: string, query = ''): Promise<UmpireSchedule> {
-    const params = new URLSearchParams(query)
-    for (const key of ['days', 'levels']) {
-      const values = params.getAll(key).flatMap(value => value.split(','))
-      params.delete(key)
-      for (const value of values) if (value !== '') params.append(key, value)
-    }
+    const params = umpireScheduleParams(query)
     return await this.request(
       'GET',
       `/leagues/${encodeURIComponent(league)}/umpire-schedule?${params.toString()}`,
       asUmpireSchedule
+    )
+  }
+
+  /** `umpireSchedule`, a page at a time. */
+  async umpireSchedulePage(
+    league: string,
+    query = '',
+    page: Pick<GamesPageQuery, 'around' | 'cursor' | 'limit'> = {}
+  ): Promise<UmpireSchedulePage> {
+    const params = umpireScheduleParams(query)
+    params.set('paged', '1')
+    if (page.around != null) params.set('around', page.around)
+    if (page.cursor != null) params.set('cursor', page.cursor)
+    if (page.limit != null) params.set('limit', String(page.limit))
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(league)}/umpire-schedule?${params.toString()}`,
+      asUmpireSchedulePage
     )
   }
 
@@ -4865,6 +4983,15 @@ export class TeamStationClient {
     )
   }
 
+  /** `games`, a page at a time. */
+  async gamesPage(query: GamesPageQuery = {}): Promise<Page<SeasonGame>> {
+    return await this.request(
+      'GET',
+      `/events?${gamesPageParams(query)}`,
+      asPage(asSeasonGame)
+    )
+  }
+
   /**
    * The people another service knows by these ids, as far as this person may
    * see them. A merged row answers as whoever it was merged into.
@@ -4896,6 +5023,18 @@ export class TeamStationClient {
       'GET',
       `/events?season=${encodeURIComponent(seasonId)}`,
       asArray(asSeasonGame)
+    )
+  }
+
+  /** `seasonGames`, a page at a time. */
+  async seasonGamesPage(
+    seasonId: string,
+    query: GamesPageQuery = {}
+  ): Promise<Page<SeasonGame>> {
+    return await this.request(
+      'GET',
+      `/events?season=${encodeURIComponent(seasonId)}&${gamesPageParams(query)}`,
+      asPage(asSeasonGame)
     )
   }
 
@@ -4944,6 +5083,36 @@ export class TeamStationClient {
       'GET',
       `/teams/${encodeURIComponent(teamId)}/games`,
       asArray(asGameSummary)
+    )
+  }
+
+  /**
+   * The games a team's or a season's public page shows, a page at a time, to
+   * anybody signed in or not. `PublicGame` is another shape from the member
+   * reads above.
+   */
+  async publicGamesPage(
+    kind: 'team' | 'season',
+    id: string,
+    query: Omit<GamesPageQuery, 'around'> = {}
+  ): Promise<Page<PublicGame>> {
+    const groups = kind === 'team' ? 'teams' : 'seasons'
+    return await this.request(
+      'GET',
+      `/${groups}/${encodeURIComponent(id)}/games?public=1&${gamesPageParams(query)}`,
+      asPage(asPublicGame)
+    )
+  }
+
+  /** `teamGames`, a page at a time. */
+  async teamGamesPage(
+    teamId: string,
+    query: GamesPageQuery = {}
+  ): Promise<Page<GameSummary>> {
+    return await this.request(
+      'GET',
+      `/teams/${encodeURIComponent(teamId)}/games?${gamesPageParams(query)}`,
+      asPage(asGameSummary)
     )
   }
 

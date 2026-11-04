@@ -399,11 +399,19 @@ async function main(): Promise<void> {
     const sample = await (
       await f.h.request(
         'GET',
-        `/leagues/${f.leagueA}/umpire-schedule?view=league`,
+        `/leagues/${f.leagueA}/umpire-schedule?view=schedule&paged=1`,
         undefined,
         101
       )
     ).json()
+    const noGames = {
+      ...sample,
+      items: [],
+      nextCursor: null,
+      prevCursor: null,
+      anchorId: null,
+      positions: []
+    }
     let mode = 'empty'
     let pending: HTTPRequest | undefined
     await page.setRequestInterception(true)
@@ -418,9 +426,7 @@ async function main(): Promise<void> {
             status: mode === 'error' ? 500 : 200,
             contentType: 'application/json',
             body: JSON.stringify(
-              mode === 'error'
-                ? { error: 'Fixture unavailable' }
-                : { ...sample, games: [] }
+              mode === 'error' ? { error: 'Fixture unavailable' } : noGames
             )
           })
           .catch((error: unknown) => {
@@ -449,7 +455,7 @@ async function main(): Promise<void> {
       await pending.respond({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ ...sample, games: [] })
+        body: JSON.stringify(noGames)
       })
     page.off('request', intercept)
     await page.setRequestInterception(false)

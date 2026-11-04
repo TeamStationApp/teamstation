@@ -10,6 +10,7 @@ import {
 } from '../common/api'
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { pageOfGames } from '../test/pageOf'
 import { App } from './App'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 
@@ -59,12 +60,12 @@ describe('entity chat app routing', () => {
         canManage: false,
         canSeePeople: true
       })
-    proto.teamGames = async () => []
+    proto.teamGamesPage = async (_id, query) => pageOfGames([], query)
     proto.teamSchedule = async () => []
     proto.teamStaff = async () => []
     proto.roster = async () => []
     proto.seasonTeams = async () => []
-    proto.seasonGames = async () => []
+    proto.seasonGamesPage = async (_id, query) => pageOfGames([], query)
     proto.standings = async () => []
     proto.seasons = async () => [
       asSeasonSummary({

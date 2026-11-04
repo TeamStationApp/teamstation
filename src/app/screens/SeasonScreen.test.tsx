@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import type {
+  GamesPageQuery,
   SeasonGame,
   SeasonSummary,
   StandingsRow,
@@ -17,6 +18,8 @@ import {
   type GroupDetail
 } from '../../common/publicGroups'
 import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
+import { listProps, reachEnd } from '../../test/PagedListStandIn'
+import { pageOfGames } from '../../test/pageOf'
 import { seasonParticipantDestination } from '../navigation/seasonParticipant'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { scheduleDate, shortDate, shortTime } from './format'
@@ -189,6 +192,8 @@ interface Setup {
   initialWhen?: When
   defaultTab?: boolean
   publicDetail?: GroupDetail
+  /** Reads of the client this test answers its own way. */
+  patch?: Record<string, unknown>
   stats?: () => Promise<{
     seasonId: string
     batting: Array<typeof battingFixture>
@@ -221,10 +226,18 @@ async function mount(setup: Setup = {}): Promise<Calls> {
     filters: []
   }
   const client = {
-    seasonGames: async (seasonId: string) => {
-      calls.loads.push(`games ${seasonId}`)
-      return await (setup.games ?? (async () => [PLAYED, LIVE, AHEAD]))()
+    seasonGamesPage: async (seasonId: string, query?: GamesPageQuery) => {
+      if (query?.cursor == null) calls.loads.push(`games ${seasonId}`)
+      return pageOfGames(
+        await (setup.games ?? (async () => [PLAYED, LIVE, AHEAD]))(),
+        query
+      )
     },
+    publicGamesPage: async (
+      _kind: 'season',
+      _id: string,
+      query?: GamesPageQuery
+    ) => pageOfGames(setup.publicDetail?.games ?? [], query),
     seasonTeams: async (seasonId: string) => {
       calls.loads.push(`teams ${seasonId}`)
       return await (setup.teams ?? (async () => TEAMS))()
@@ -250,7 +263,8 @@ async function mount(setup: Setup = {}): Promise<Calls> {
     // A public visitor's Follow asks what they follow; nothing here.
     follows: async () => [],
     // Whether the People tab shows; App.teamRoutes.test.tsx covers it.
-    group: async () => ({ canSeePeople: false })
+    group: async () => ({ canSeePeople: false }),
+    ...setup.patch
   } as unknown as TeamStationClient
   calls.client = client
   const host = document.createElement('div')
@@ -1006,7 +1020,8 @@ describe('the season screen', function () {
     expect(text()).includes('GAME VIDEOS')
     expect(text()).includes('2 games')
     expect(text()).not.includes('Comets @ Alta Hawks')
-    expect(calls.loads.filter(call => call.startsWith('games'))).has.lengthOf(1)
+    // The list the hero's counts came from, then the recorded games.
+    expect(calls.loads.filter(call => call.startsWith('games'))).has.lengthOf(2)
     await press(control('Rivals @ Comets'))
     expect(calls.games[0]).deep.equals({
       gameId: 'gam_live',
@@ -1133,6 +1148,7 @@ describe('the season screen', function () {
 
   it('shows the server’s reason when the season will not load', async function () {
     await mount({
+      games: async () => [],
       teams: async () => {
         throw new Error('Season not found')
       }
@@ -1375,5 +1391,162 @@ describe('the season screen', function () {
     const calls = await mount({ initialTab: 'unknown' })
     expect(calls.tabs).deep.equals([['standings', true]])
     expect(gameRows()).has.lengthOf(0)
+  })
+
+  describe('a page at a time', function () {
+    const counts = {
+      total: 345,
+      upcoming: 120,
+      withVideo: 65,
+      videos: 80,
+      newestSeasonId: 'sea_spring'
+    }
+    const page = {
+      nextCursor: 'more',
+      prevCursor: null,
+      anchorId: null,
+      counts
+    }
+    const visitor = (): GroupDetail =>
+      asGroupDetail({
+        nonMemberView: false,
+        group: asPublicGroup({
+          id: 'sea_spring',
+          kind: 'season',
+          name: 'Spring 2026',
+          imageUrl: null,
+          locality: null
+        }),
+        parents: [],
+        children: [],
+        competingTeams: [],
+        participatingSeasons: [],
+        staff: [],
+        canManage: false,
+        canViewPrivate: false,
+        games: []
+      })
+    /** Which reads came, each as its filter. */
+    const filterOf = (query?: GamesPageQuery): string =>
+      `${query?.when ?? 'all'} ${query?.order} ${query?.hasVideo === true ? 'video' : ''}`.trim()
+
+    it('reads each pill, and Videos, for itself, with the hero’s counts from the server', async function () {
+      const asked: string[] = []
+      await mount({
+        initialTab: 'schedule',
+        patch: {
+          seasonGamesPage: async (_id: string, query?: GamesPageQuery) => {
+            asked.push(filterOf(query))
+            return { ...page, nextCursor: null, items: [PLAYED] }
+          }
+        }
+      })
+      expect(text()).includes('GAMES345')
+      expect(text()).includes('VIDEOS80')
+      expect(text()).includes('225 games')
+      await press(control('Upcoming'))
+      expect(text()).includes('120 games')
+      await press(control('All'))
+      expect(text()).includes('345 games')
+      await press(control('Videos'))
+      expect(text()).includes('65 games')
+      expect(asked).deep.equals([
+        'past desc',
+        'upcoming asc',
+        'all desc',
+        'all desc video'
+      ])
+      await press(control('Schedule'))
+      await press(control('Past'))
+      expect(asked.length).equals(4)
+    })
+
+    it('reads the next page as the list reaches its end', async function () {
+      const cursors: Array<string | undefined> = []
+      const screen = Array.from({ length: 12 }, (_row, index) =>
+        game(`gam_screen_${index}`)
+      )
+      await mount({
+        initialTab: 'schedule',
+        patch: {
+          seasonGamesPage: async (_id: string, query?: GamesPageQuery) => {
+            cursors.push(query?.cursor)
+            return query?.cursor == null
+              ? { ...page, items: screen }
+              : { ...page, nextCursor: null, items: [LIVE] }
+          }
+        }
+      })
+      await act(async () => {
+        reachEnd()
+        await delay(10)
+      })
+      expect(cursors).deep.equals([undefined, 'more'])
+      expect(listProps().data.length).equals(13)
+    })
+
+    it('reads a visitor’s pills from the public list', async function () {
+      const asked: string[] = []
+      await mount({
+        publicDetail: visitor(),
+        initialTab: 'schedule',
+        patch: {
+          publicGamesPage: async (
+            kind: string,
+            _id: string,
+            query?: GamesPageQuery
+          ) => {
+            asked.push(`${kind} ${filterOf(query)}`)
+            return { ...page, nextCursor: null, items: [] }
+          }
+        }
+      })
+      expect(text()).includes('225 games')
+      await press(control('Upcoming'))
+      expect(asked).deep.equals(['season past desc', 'season upcoming asc'])
+    })
+
+    it('reads on through a visitor’s list as it reports its end', async function () {
+      const cursors: Array<string | undefined> = []
+      const screen = Array.from({ length: 12 }, (_row, index) => ({
+        ...game(`gam_screen_${index}`),
+        awayTeam: { name: 'Rivals' },
+        homeTeam: { name: 'Comets' }
+      }))
+      await mount({
+        publicDetail: visitor(),
+        initialTab: 'schedule',
+        patch: {
+          publicGamesPage: async (
+            _kind: string,
+            _id: string,
+            query?: GamesPageQuery
+          ) => {
+            cursors.push(query?.cursor)
+            return query?.cursor == null
+              ? { ...page, items: screen }
+              : { ...page, nextCursor: null, items: [] }
+          }
+        }
+      })
+      await act(async () => {
+        reachEnd()
+        await delay(10)
+      })
+      expect(cursors).deep.equals([undefined, 'more'])
+    })
+
+    it('says it cannot load when a list’s failure is not an error', async function () {
+      await mount({
+        initialTab: 'schedule',
+        patch: {
+          seasonGamesPage: async () => {
+            // eslint-disable-next-line @typescript-eslint/only-throw-error -- a rejection that is not an Error
+            throw 'offline'
+          }
+        }
+      })
+      expect(text()).includes('Cannot load season')
+    })
   })
 })

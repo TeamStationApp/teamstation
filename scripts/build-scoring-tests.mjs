@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { build } from 'esbuild'
 
 import { chatCoreResolvePlugin } from './chatCoreResolvePlugin.mjs'
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 mkdirSync('lib', { recursive: true })
@@ -39,6 +40,7 @@ for (const entry of entries)
     plugins: [
       ...webSettings.plugins,
       chatCoreResolvePlugin(),
+      pagedListStandInPlugin(),
       {
         name: 'native-initials-measurement-unit',
         setup(build) {

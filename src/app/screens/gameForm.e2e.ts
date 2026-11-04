@@ -865,9 +865,19 @@ async function scenes({ f, seeded, m, page, artifacts }: Scene): Promise<void> {
     url: `${f.h.origin}/teams/${encodeURIComponent(f.teamA)}?tab=schedule`
   })
   await see('Season party')
-  const firstLines = await evaluate<string[]>(
-    `Array.from(document.querySelectorAll('[data-testid="scheduleGame"]')).map(row=>Array.from(row.querySelectorAll('div')).filter(node=>node.childElementCount===0).map(node=>node.textContent).find(line=>line!=='' && !/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\\d+)$/.test(line)))`
-  )
+  // Rows mount near the screen, so they are gathered on the way down it.
+  const rowLines = new Map<string, string>()
+  for (let step = 0; step < 12; step++) {
+    const seen = await evaluate<Array<[string, string]>>(
+      `Array.from(document.querySelectorAll('[data-testid="scheduleGame"]')).map(row=>[row.textContent,Array.from(row.querySelectorAll('div')).filter(node=>node.childElementCount===0).map(node=>node.textContent).find(line=>line!=='' && !/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\\d+)$/.test(line))])`
+    )
+    for (const [row, line] of seen) rowLines.set(row, line)
+    await evaluate<boolean>(
+      `(()=>{const page=Array.from(document.querySelectorAll('*')).filter(node=>/auto|scroll/.test(getComputedStyle(node).overflowY)&&node.scrollHeight>node.clientHeight).sort((a,b)=>b.clientHeight-a.clientHeight)[0];if(page!=null)page.scrollTop+=page.clientHeight*0.8;return true})()`
+    )
+    await new Promise(resolve => setTimeout(resolve, 150))
+  }
+  const firstLines = [...rowLines.values()]
   assert.equal(
     firstLines.filter(line => line === 'Practice').length,
     2,

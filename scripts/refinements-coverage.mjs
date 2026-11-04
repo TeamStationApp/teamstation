@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import ts from 'typescript'
 
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const base = process.env.TS_COVERAGE_BASE
@@ -183,6 +184,7 @@ if (paths.length === 0) throw new Error('No changed runtime files to measure')
 if (!serverOnly)
   await build({
     ...webSettings,
+    plugins: [...webSettings.plugins, pagedListStandInPlugin()],
     stdin: {
       contents: uiSuites.map(path => `import './${path}'`).join('\n'),
       resolveDir: process.cwd(),

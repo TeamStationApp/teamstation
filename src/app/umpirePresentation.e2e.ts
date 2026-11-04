@@ -144,13 +144,8 @@ async function main(): Promise<void> {
           expect(target.shell).equals(24)
         }
         const headers = await b!.page.$eval(
-          '[data-testid="umpire-table-header-scroll"]',
-          el => {
-            const row = [...el.querySelectorAll<HTMLElement>('*')].find(node =>
-              [...node.children].some(cell => cell.textContent === 'Conflicts')
-            )!
-            return [...row.children].map(cell => cell.textContent)
-          }
+          '[data-testid="umpire-table-header"]',
+          el => [...el.children].map(cell => cell.textContent)
         )
         expect(headers.at(-1)).equals('Conflicts')
         expect(headers.at(-2)).equals('Jersey Color')

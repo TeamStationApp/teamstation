@@ -1,4 +1,6 @@
+import type { GamesPageQuery, Page } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
+import { pageOfGames } from './pageOf'
 /**
  * A team with a season either side of today, for the team screen's
  * end-to-end tests: the browser run answers the app's API from this, and the
@@ -307,6 +309,26 @@ export interface FixtureAnswer {
 }
 
 /**
+ * A list as the server answers it: the bare array, or a `Page` of it on
+ * `paged=1`, whose cursors walk the same rows.
+ */
+function listAnswer<T extends FixtureGame>(
+  games: T[],
+  query: URLSearchParams
+): T[] | Page<T> {
+  if (query.get('paged') !== '1') return games
+  const limit = query.get('limit')
+  return pageOfGames(games, {
+    when: (query.get('when') ?? 'all') as GamesPageQuery['when'],
+    order: (query.get('order') ?? undefined) as GamesPageQuery['order'],
+    hasVideo: query.get('hasVideo') === '1',
+    around: query.get('around') == null ? undefined : 'next',
+    cursor: query.get('cursor') ?? undefined,
+    limit: limit == null ? undefined : Number(limit)
+  })
+}
+
+/**
  * The answer to one API request, by path under `/api/v1`.
  *
  * Anything the team screen does not need — the home screen's lists, the
@@ -370,7 +392,10 @@ export function teamScheduleAnswer(
     case '/teams':
       return { status: 200, body: [TEAM] }
     case `/teams/${TEAM_ID}/games`:
-      return { status: 200, body: teamScheduleGames(now, season) }
+      return {
+        status: 200,
+        body: listAnswer(teamScheduleGames(now, season), url.searchParams)
+      }
     case `/teams/${TEAM_ID}/roster`:
       return { status: 200, body: ROSTER }
     case `/teams/${TEAM_ID}/stats`:
@@ -382,15 +407,18 @@ export function teamScheduleAnswer(
       // The nav bar's Schedule: the same season, as season games.
       return {
         status: 200,
-        body: teamScheduleGames(now, season).map(game => ({
-          ...game,
-          homeTeamExternal: false,
-          awayTeamExternal: false,
-          homeLogoUrl: null,
-          awayLogoUrl: null,
-          isLive: false,
-          externalIds: []
-        }))
+        body: listAnswer(
+          teamScheduleGames(now, season).map(game => ({
+            ...game,
+            homeTeamExternal: false,
+            awayTeamExternal: false,
+            homeLogoUrl: null,
+            awayLogoUrl: null,
+            isLive: false,
+            externalIds: []
+          })),
+          url.searchParams
+        )
       }
     case `/seasons/${SEASON_ID}/standings`:
       return {

@@ -256,7 +256,6 @@ export const enUs = {
   player_videos_empty: 'No highlights of this player yet.',
   player_videos_none_recorded:
     'None of this player\u2019s games were recorded, so there is nothing to watch yet.',
-  player_show_more: 'Show more',
   player_loading: 'Loading\u2026',
   player_stats_empty: 'No stats for this player yet.',
   player_batting: 'Batting',
@@ -407,6 +406,8 @@ export const enUs = {
   walkup_searching: 'Searching…',
   walkup_no_match: 'No songs match',
   walkup_retry: 'Retry',
+  paged_list_load_failed: 'Could not load more',
+  paged_list_retry: 'Retry',
   walkup_badge_catalog: 'Apple Music',
   walkup_badge_library: 'Library',
   walkup_badge_device: 'On this phone',
