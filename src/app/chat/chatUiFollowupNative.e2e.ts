@@ -21,6 +21,7 @@ import {
 import { passwordBytes } from '../../common/passwordProtocol'
 import { nativeArgon } from '../../server/auth/passwords'
 import { chatRowText, nativeRowInList } from '../../test/chatRows'
+import { nativeHistoryRecovery } from './chatHistoryRecoveryNative.e2e'
 
 interface Bounds {
   x: number
@@ -816,6 +817,9 @@ async function main(): Promise<void> {
             : undefined,
         180000
       )
+      // The workspace heading can already exist behind the linking gate.
+      // Only its dismissal proves the provider actually completed approval.
+      await m.assertNotVisible({ text: 'Link this device', timeout: 180000 })
       results.identityLinked = {
         actorUserId: fixture.actor.userId,
         nativeDeviceId: deviceId,
@@ -1204,6 +1208,208 @@ async function main(): Promise<void> {
         ...((results.currentMessageMoreReceipts as object[] | undefined) ?? []),
         { messageId, childOf: rowId, namedNativeControl: true, at: Date.now() }
       ]
+    }
+    if (
+      process.argv[2] === 'intact-record' ||
+      process.argv[2] === 'intact-compare'
+    ) {
+      stage = 'retained-history-application-upgrade'
+      const input = JSON.parse(
+        readFileSync(required('CHAT_RECOVERY_INTACT_FIXTURE'), 'utf8')
+      ) as {
+        synthetic: true
+        actorUserId: string
+        conversationId: string
+        posts: Array<{ id: string; body: string }>
+        attachment: { messageId: string; fileName: string }
+      }
+      assert.equal(input.synthetic, true)
+      assert.equal(input.actorUserId, fixture.actor.userId)
+      assert.equal(input.conversationId, fixture.conversationId)
+      assert(input.posts.length >= 3)
+      const recordFile = required('CHAT_RECOVERY_INTACT_RECORD')
+      async function snapshot(): Promise<{
+        words: string[]
+        messages: Awaited<ReturnType<TeamStationClient['chatMessages']>>
+        epochs: Awaited<ReturnType<TeamStationClient['chatEpochs']>>['epochs']
+      }> {
+        await open()
+        for (const post of input.posts) {
+          await revealMessage(input.conversationId, post.id)
+          await m.assertVisible({ text: post.body, timeout: 30000 })
+        }
+        await revealMessage(input.conversationId, input.attachment.messageId)
+        await until(
+          'Retained encrypted image must render an actual native image',
+          async () => {
+            const nodes = flatten(await m.hierarchy())
+            return nodes.some(
+              node =>
+                node.type?.includes('Image') === true &&
+                (node.label === input.attachment.fileName ||
+                  node.text === input.attachment.fileName) &&
+                node.bounds != null &&
+                node.bounds.width > 0 &&
+                node.bounds.height > 0
+            )
+              ? true
+              : undefined
+          }
+        )
+        writeFileSync(
+          join(resultDirectory, `${platform}-intact-history.png`),
+          await m.screenshot()
+        )
+        await m.openLink({
+          link: `${fixture.scheme}://chat/${input.conversationId}/members`
+        })
+        const safetyLabel = await until(
+          'The real member safety action must be available',
+          async () => {
+            const labels = strings(flatten(await m.hierarchy()))
+            if (
+              platform === 'ios' &&
+              labels.includes('Open in “TeamStation”?')
+            ) {
+              await tapVisibleControl(m, 'Open')
+              return undefined
+            }
+            return labels.find(label => label.startsWith('Safety words with '))
+          }
+        )
+        await m.tapOn({ text: safetyLabel })
+        const words = await until(
+          'All sixteen safety words must be rendered',
+          async () => {
+            const groups = flatten(await m.hierarchy())
+              .filter(
+                node => node.id?.startsWith('chat-safety-group-') === true
+              )
+              .sort(
+                (a, b) =>
+                  Number(a.id!.split('-').at(-1)) -
+                  Number(b.id!.split('-').at(-1))
+              )
+              .map(node => node.text ?? node.label ?? node.value ?? '')
+            return groups.length === 16 &&
+              groups.every(word => word !== '' && word !== '—')
+              ? groups
+              : undefined
+          }
+        )
+        writeFileSync(
+          join(resultDirectory, `${platform}-intact-safety.png`),
+          await m.screenshot()
+        )
+        return {
+          words,
+          messages: await api.chatMessages(input.conversationId),
+          epochs: (await api.chatEpochs(input.conversationId, 0)).epochs
+        }
+      }
+      const before = await snapshot()
+      assert.equal(before.epochs.length, 1)
+      assert.equal(before.epochs[0].chainBreak, false)
+      if (process.argv[2] === 'intact-record') {
+        writeFileSync(
+          recordFile,
+          JSON.stringify(
+            {
+              platform,
+              conversationId: input.conversationId,
+              actorUserId: input.actorUserId,
+              snapshot: before,
+              bundleHash: results.bundleHash,
+              buildHash: results.buildHash
+            },
+            null,
+            2
+          ),
+          { mode: 0o600, flag: 'wx' }
+        )
+        pass(
+          'baseline retained messages, native image and safety words recorded before upgrade'
+        )
+        return
+      }
+      const baseline = JSON.parse(readFileSync(recordFile, 'utf8')) as {
+        platform: string
+        conversationId: string
+        actorUserId: string
+        snapshot: typeof before
+        bundleHash?: string
+        buildHash?: string
+      }
+      assert.equal(baseline.platform, platform)
+      assert.equal(baseline.conversationId, input.conversationId)
+      assert.equal(baseline.actorUserId, input.actorUserId)
+      assert.notEqual(
+        platform === 'ios' ? results.bundleHash : results.buildHash,
+        platform === 'ios' ? baseline.bundleHash : baseline.buildHash,
+        'The comparison must install the changed application build'
+      )
+      assert.deepEqual(before, baseline.snapshot)
+      await m.stopApp({ appId: fixture.appId })
+      await m.launchApp({
+        appId: fixture.appId,
+        ...(platform === 'ios'
+          ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+          : {})
+      })
+      await m.assertVisible({ text: 'Chat', timeout: 60000 })
+      assert.deepEqual(await snapshot(), baseline.snapshot)
+      results.intactUpgrade = {
+        platform,
+        baselineHash: baseline.bundleHash ?? baseline.buildHash,
+        currentHash: results.bundleHash ?? results.buildHash,
+        messagesUnchanged: true,
+        nativeImageRendered: true,
+        safetyWordsUnchanged: true,
+        restartReadable: true,
+        freshBoundaries: 0
+      }
+      pass(
+        'upgraded retained device and restart preserve exact messages, native image and safety words without a fresh boundary'
+      )
+      return
+    }
+    if (
+      process.argv[2] === 'recovery-draft' ||
+      process.argv[2] === 'recovery-retry'
+    ) {
+      stage = 'native-history-recovery'
+      results.historyRecovery = await nativeHistoryRecovery({
+        inputFile: required('CHAT_UI_NATIVE_RECOVERY_FIXTURE'),
+        relayFile: required('CHAT_RECOVERY_RELAY'),
+        results: resultDirectory,
+        platform,
+        actorUserId: fixture.actor.userId,
+        conversationId: fixture.conversationId,
+        apiUrl: fixture.apiUrl,
+        api,
+        device: m,
+        open,
+        reveal: async id => {
+          await revealMessage(fixture.conversationId, id)
+        },
+        composerValue: async () => await composerValue(m),
+        stop: async () => {
+          await m.stopApp({ appId: fixture.appId })
+        },
+        restart: async () => {
+          await m.launchApp({
+            appId: fixture.appId,
+            ...(platform === 'ios'
+              ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+              : {})
+          })
+          await m.assertVisible({ text: 'Chat', timeout: 60000 })
+        }
+      })
+      pass(
+        'native historical recovery preserves current composition and retained messages'
+      )
+      return
     }
     if (process.argv[2] === 'list-terminal') {
       stage = 'native-list-terminal-offsets'
