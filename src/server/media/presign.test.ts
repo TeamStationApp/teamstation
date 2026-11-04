@@ -54,6 +54,52 @@ describe('presigned Spaces URLs', function () {
     expect(url).contains('%2Fsfo3%2Fs3%2Faws4_request')
   })
 
+  it('signs host alone without signedHeaders, as it always did', function () {
+    expect(presignGetUrl({ ...AWS_EXAMPLE, signedHeaders: {} })).equals(
+      presignGetUrl(AWS_EXAMPLE)
+    )
+  })
+
+  it('signs an upload’s ACL and cache header beside host', function () {
+    const plain = presignGetUrl({ ...AWS_EXAMPLE, method: 'PUT' })
+    const signedHeaders = {
+      'x-amz-acl': 'public-read',
+      'Cache-Control': ' public, max-age=600 '
+    }
+    const url = new URL(
+      presignGetUrl({ ...AWS_EXAMPLE, method: 'PUT', signedHeaders })
+    )
+    expect(url.searchParams.get('X-Amz-SignedHeaders')).equals(
+      'cache-control;host;x-amz-acl'
+    )
+    const signature = url.searchParams.get('X-Amz-Signature')
+    expect(signature).not.equals(
+      new URL(plain).searchParams.get('X-Amz-Signature')
+    )
+    // The values are signed, trimmed, so another value is another signature.
+    expect(
+      new URL(
+        presignGetUrl({
+          ...AWS_EXAMPLE,
+          method: 'PUT',
+          signedHeaders: {
+            'x-amz-acl': 'public-read',
+            'cache-control': 'public, max-age=600'
+          }
+        })
+      ).searchParams.get('X-Amz-Signature')
+    ).equals(signature)
+    expect(
+      new URL(
+        presignGetUrl({
+          ...AWS_EXAMPLE,
+          method: 'PUT',
+          signedHeaders: { 'x-amz-acl': 'private' }
+        })
+      ).searchParams.get('X-Amz-Signature')
+    ).not.equals(signature)
+  })
+
   it('can put the bucket in the path instead', function () {
     const url = presignGetUrl({ ...AWS_EXAMPLE, pathStyle: true })
     expect(url).contains('https://s3.amazonaws.com/examplebucket/test.txt?')
