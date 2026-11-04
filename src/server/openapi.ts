@@ -1090,6 +1090,25 @@ const nodeSettingsSchema = {
         }
       }
     },
+    distribution: {
+      type: 'object',
+      additionalProperties: false,
+      description:
+        'Where the about screen sends someone. A save from an older client omits it and keeps the stored URLs. An empty string hides that button. A read always has both.',
+      required: ['betaBuildsUrl', 'appStoreUrl'],
+      properties: {
+        betaBuildsUrl: {
+          type: 'string',
+          description:
+            'HTTPS URL of the beta builds page, or empty. Falls back to the server file only for older clients reading /me/builds.'
+        },
+        appStoreUrl: {
+          type: 'string',
+          description:
+            'HTTPS URL of the App Store page, or a TestFlight link, or empty.'
+        }
+      }
+    },
     radar: {
       type: 'object',
       additionalProperties: false,
