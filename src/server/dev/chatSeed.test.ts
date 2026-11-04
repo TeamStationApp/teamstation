@@ -22,7 +22,8 @@ import {
   type ChatSeed,
   chatSeed,
   describeSeed,
-  SEED_PEOPLE
+  SEED_PEOPLE,
+  unconfirmedKeys
 } from './chatSeed'
 
 /** U1: the chat fixture, built twice into one scratch database. */
@@ -264,6 +265,60 @@ describe('the chat seed', function () {
     expect(
       birthMonthOf(new Date('2027-01-15T00:00:00Z'), { years: 15, months: 1 })
     ).deep.equals({ year: 2011, month: 12 })
+  })
+
+  it('confirms everybody for chat, afresh each run, but the keys it is told to leave', async function () {
+    const now = new Date('2027-04-12T12:00:00Z')
+    const confirmations = async (): Promise<Record<string, string | null>> => {
+      const rows = await database()
+        .selectFrom('users')
+        .select(['id', 'chat_age_source', 'chat_age_confirmed_at'])
+        .execute()
+      const byId = new Map(rows.map(row => [String(row.id), row]))
+      const out: Record<string, string | null> = {}
+      for (const person of SEED_PEOPLE) {
+        const row = byId.get(String(second.people[person.key]?.userId))
+        expect(row?.chat_age_confirmed_at == null, person.key).equals(
+          row?.chat_age_source == null
+        )
+        out[person.key] = row?.chat_age_source ?? null
+      }
+      return out
+    }
+    const everybody = Object.fromEntries(
+      SEED_PEOPLE.map(person => [person.key, 'self'])
+    )
+    expect(await confirmations()).deep.equals(everybody)
+    await chatSeed(database(), {
+      password: 'same for all',
+      now,
+      unconfirmed: ['C', 'F']
+    })
+    expect(await confirmations()).deep.equals({
+      ...everybody,
+      C: null,
+      F: null
+    })
+    // Without the keys it confirms them again; with them it clears them again.
+    await chatSeed(database(), { password: 'same for all', now })
+    expect(await confirmations()).deep.equals(everybody)
+    await chatSeed(database(), {
+      password: 'same for all',
+      now,
+      unconfirmed: ['C']
+    })
+    expect(await confirmations()).deep.equals({ ...everybody, C: null })
+    // Run again without the keys, as the other cases found it.
+    await chatSeed(database(), { password: 'same for all', now })
+    expect(await confirmations()).deep.equals(everybody)
+    expect(await counts()).deep.equals(countsAfterFirst)
+  })
+
+  it('reads the keys to leave unconfirmed from a comma-separated list', function () {
+    expect(unconfirmedKeys(undefined)).deep.equals([])
+    expect(unconfirmedKeys('')).deep.equals([])
+    expect(unconfirmedKeys('C')).deep.equals(['C'])
+    expect(unconfirmedKeys(' C, ,F ,')).deep.equals(['C', 'F'])
   })
 
   it('prints every password beside its person', function () {

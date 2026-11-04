@@ -1,5 +1,7 @@
 import { asNumber } from 'cleaners'
 
+import { strictBody } from './strictBody'
+
 /**
  * A person's age from their birth month, which is all TeamStation keeps.
  *
@@ -49,16 +51,12 @@ const asWhole =
  */
 export function asBirthMonthBody(raw: unknown): BirthMonth | null {
   if (raw === null) return null
-  if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new TypeError('Expected { year, month }')
-  }
-  const extra = Object.keys(raw).filter(
-    key => key !== 'year' && key !== 'month'
+  const { year, month } = strictBody(
+    raw,
+    ['year', 'month'],
+    '{ year, month }',
+    'Only a year and a month'
   )
-  if (extra.length > 0) {
-    throw new TypeError(`Only a year and a month, not ${extra.join(', ')}`)
-  }
-  const { year, month } = raw as { year?: unknown; month?: unknown }
   if (year === null && month === null) return null
   return {
     year: asWhole(EARLIEST_BIRTH_YEAR, () => new Date().getUTCFullYear())(year),
