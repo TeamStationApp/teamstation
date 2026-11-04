@@ -192,6 +192,13 @@ function gameAgainstEagles(
   }
 }
 
+/** A newsletter in pieces of three words, about 170 of them. */
+const NEWSLETTER = Array.from(
+  { length: 50 },
+  (_, week) =>
+    `Week ${week + 1}: the team practised hard and played well together.`
+).join(' ')
+
 /** The scripted model's answers, by what the person said. */
 export function tessScript(fixture: {
   teamA: string
@@ -320,6 +327,15 @@ export function tessScript(fixture: {
       ]
     },
     {
+      match:
+        /^The user confirmed the change "Add a home game against Demo Eagles on Saturday 12 June/,
+      rounds: [
+        text(
+          'Done: the game against Demo Eagles on Saturday 12 June at 10:00 is on the schedule.'
+        )
+      ]
+    },
+    {
       match: /^The user confirmed the change/,
       rounds: [
         text(
@@ -360,6 +376,27 @@ export function tessScript(fixture: {
           delayMs: 400
         }
       ]
+    },
+    {
+      // Slower still, for the queue: a piece every 400 ms for over a minute,
+      // long enough to queue, remove and edit messages under it.
+      match: /write the season newsletter/i,
+      rounds: [{ ...text(NEWSLETTER), delayMs: 400 }]
+    },
+    {
+      match: /one more game against demo eagles/i,
+      rounds: [
+        tool(
+          'confirmChange',
+          gameAgainstEagles(teamA, seasonA, 12, 'June'),
+          'I can add that game for you.'
+        ),
+        text('Hold Confirm under the table to add the game on 12 June.')
+      ]
+    },
+    {
+      match: /which field do we use in june/i,
+      rounds: [text('In June the home games are on Demo Field.')]
     },
     {
       match: /and the playoffs too/i,

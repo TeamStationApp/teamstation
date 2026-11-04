@@ -1,4 +1,10 @@
-import React, { type ReactNode, type Ref, useMemo, useRef } from 'react'
+import React, {
+  type ReactNode,
+  type Ref,
+  useImperativeHandle,
+  useMemo,
+  useRef
+} from 'react'
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -15,6 +21,7 @@ import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { changeBatches } from './changeTable'
 import { Composer, type ComposerHandle } from './Composer'
+import { QueuedMessages } from './QueuedMessages'
 import { TessLiveReply, TessMessage } from './TessMessage'
 import { useTessOverlay } from './TessOverlay'
 import type { TessChatState } from './useTess'
@@ -39,6 +46,8 @@ export interface TessChatProps {
  * shows under the last message as it comes, or "Tess is thinking…" until
  * she has told anything of it. The changes her replies to one message
  * propose show together under the last of them, held once (`changeBatches`).
+ * Messages sent while she answers wait between the conversation and the
+ * composer (`QueuedMessages`), and one pressed to edit goes into the field.
  */
 export function TessChat({
   tess,
@@ -54,6 +63,18 @@ export function TessChat({
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const overlay = useTessOverlay()
   const { send, upload, stop, showError } = tess
+  // The composer's handle, which the queue edits through, shared with the
+  // microphone's.
+  const field = useRef<ComposerHandle>(null)
+  useImperativeHandle(composer, () => ({
+    dictate: text => {
+      field.current?.dictate(text)
+    },
+    edit: draft => {
+      field.current?.edit(draft)
+    },
+    draft: () => field.current?.draft() ?? { text: '', attachments: [] }
+  }))
   // A table or chart open over the pane would hide the page a link goes to,
   // so the link closes it first.
   const navigate = (path: string): void => {
@@ -141,8 +162,22 @@ export function TessChat({
             </View>
           ))}
       </ScrollView>
+      <QueuedMessages
+        queued={tess.queued}
+        onSendNow={id => {
+          tess.sendNow(id).catch(() => undefined)
+        }}
+        onRemove={id => {
+          tess.unqueue(id)
+        }}
+        onEdit={id => {
+          // The one out for editing, if any, goes back as the field has it.
+          const draft = tess.editQueued(id, field.current?.draft())
+          if (draft != null) field.current?.edit(draft)
+        }}
+      />
       <Composer
-        handle={composer}
+        handle={field}
         takesFocus={takesFocus}
         busy={tess.thinking}
         error={tess.error}

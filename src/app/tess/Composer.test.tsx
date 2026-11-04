@@ -12,12 +12,19 @@ import {
   settle,
   unmount
 } from '../../test/tessTestKit'
-import { Composer, type ComposerHandle, type ComposerProps } from './Composer'
+import {
+  Composer,
+  type ComposerHandle,
+  type ComposerProps,
+  STOP_GUARD_MS
+} from './Composer'
 import type { TessAttachmentRef, TessUpload } from './tessTypes'
 
 interface Sent {
   text: string
   attachments: TessAttachmentRef[]
+  /** An edited queued message's place. */
+  seq?: number
 }
 
 function field(): HTMLTextAreaElement {
@@ -58,8 +65,12 @@ function composer(overrides: Partial<ComposerProps> = {}): {
   const errors: string[] = []
   const props: ComposerProps = {
     busy: false,
-    onSend: async (text, attachments) => {
-      sent.push({ text, attachments })
+    onSend: async (text, attachments, options) => {
+      sent.push({
+        text,
+        attachments,
+        ...(options?.seq == null ? {} : { seq: options.seq })
+      })
       return true
     },
     onUpload: async upload => {
@@ -228,7 +239,7 @@ describe('Composer', function () {
     )
   })
 
-  it('sends with the button only when there is something to send and Tess is free', async function () {
+  it('sends with the button only when there is something to send', async function () {
     const { sent, props } = composer()
     await render(<Composer {...props} />)
     const send = byLabel('Send')
@@ -237,15 +248,105 @@ describe('Composer', function () {
     await key({ key: 'Enter' })
     expect(sent).deep.equals([])
     await type('Hello')
-    await rerender(<Composer {...props} busy />)
-    expect(byLabel('Send').getAttribute('aria-disabled')).equals('true')
-    await rerender(<Composer {...props} />)
     await click(byLabel('Send'))
     await settle()
     expect(sent).deep.equals([{ text: 'Hello', attachments: [] }])
   })
 
-  it('is Stop only while Tess answers and the draft is empty, and Send, disabled, once there is something', async function () {
+  it('sends while Tess answers, with the button or Enter, for the chat to queue', async function () {
+    const { sent, props } = composer({ busy: true, onStop: () => undefined })
+    await render(<Composer {...props} />)
+    await type('Then the playoffs')
+    const send = byLabel('Send')
+    expect(send.getAttribute('aria-disabled')).not.equals('true')
+    await click(send)
+    await settle()
+    expect(field().value).equals('')
+    await type('And the roster')
+    const enter = await key({ key: 'Enter' })
+    expect(enter.defaultPrevented).equals(true)
+    expect(sent).deep.equals([
+      { text: 'Then the playoffs', attachments: [] },
+      { text: 'And the roster', attachments: [] }
+    ])
+  })
+
+  it('edits a queued message in place of the draft, and sends it back to its place', async function () {
+    const handle = React.createRef<ComposerHandle>()
+    const { sent, props } = composer({ busy: true })
+    await render(<Composer {...props} handle={handle} />)
+    await attachCsv('draft.csv')
+    await type('An unsent draft')
+    const files = [
+      { id: 'a7', name: 'runs.csv', kind: 'csv' as const, described: false }
+    ]
+    await act(async () => {
+      handle.current!.edit({ text: 'Queued words', attachments: files, seq: 4 })
+    })
+    // The draft, its file too, is gone.
+    expect(field().value).equals('Queued words')
+    expect(
+      [
+        ...document.body.querySelectorAll('[data-testid="Tess attachment"]')
+      ].map(chip => chip.textContent)
+    ).deep.equals(['attach_fileruns.csvclose'])
+    await type('Queued words, edited')
+    // The draft as it is now, for the chat to put back if another is edited.
+    expect(handle.current!.draft()).deep.equals({
+      text: 'Queued words, edited',
+      attachments: files
+    })
+    await key({ key: 'Enter' })
+    // The next send is a plain one.
+    await type('Something new')
+    await key({ key: 'Enter' })
+    expect(sent).deep.equals([
+      { text: 'Queued words, edited', attachments: files, seq: 4 },
+      { text: 'Something new', attachments: [] }
+    ])
+  })
+
+  it('keeps an edited message’s place when its send is given back', async function () {
+    const handle = React.createRef<ComposerHandle>()
+    let answer = false
+    const seqs: Array<number | undefined> = []
+    const { props } = composer({
+      onSend: async (_text, _attachments, options) => {
+        seqs.push(options?.seq)
+        return answer
+      }
+    })
+    await render(<Composer {...props} handle={handle} />)
+    await act(async () => {
+      handle.current!.edit({ text: 'Queued words', attachments: [], seq: 2 })
+    })
+    await key({ key: 'Enter' })
+    expect(field().value).equals('Queued words')
+    answer = true
+    await key({ key: 'Enter' })
+    expect(seqs).deep.equals([2, 2])
+  })
+
+  it('keeps a queued message being edited through an emptied field, and sends what is typed next at its place', async function () {
+    const handle = React.createRef<ComposerHandle>()
+    const { sent, props } = composer({ busy: true })
+    await render(<Composer {...props} handle={handle} />)
+    await act(async () => {
+      handle.current!.edit({ text: 'Queued words', attachments: [], seq: 3 })
+    })
+    await type('')
+    await type('Reworded')
+    await key({ key: 'Enter' })
+    // The next send is a plain one.
+    await type('Something new')
+    await key({ key: 'Enter' })
+    expect(sent).deep.equals([
+      { text: 'Reworded', attachments: [], seq: 3 },
+      { text: 'Something new', attachments: [] }
+    ])
+  })
+
+  it('is Stop only while Tess answers and the draft is empty, and Send once there is something', async function () {
     let stops = 0
     const { sent, props } = composer({
       busy: true,
@@ -260,8 +361,10 @@ describe('Composer', function () {
     expect(labelled('Stop Tess')!.textContent).equals('stop')
     await click(byLabel('Stop Tess'))
     expect(stops).equals(1)
+    // A letter typed: Send, which the chat queues.
     await type('A')
     expect(labelled('Stop Tess')).equals(null)
+    expect(byLabel('Send').getAttribute('aria-disabled')).not.equals('true')
     expect(sent).deep.equals([])
     // Only white space is nothing to send.
     await type('  ')
@@ -270,6 +373,7 @@ describe('Composer', function () {
     await type('')
     await attachCsv('runs.csv')
     expect(labelled('Stop Tess')).equals(null)
+    expect(byLabel('Send').getAttribute('aria-disabled')).not.equals('true')
     // Free again, and empty: Send, disabled.
     await rerender(<Composer {...props} busy={false} />)
     await click(byLabel('Remove runs.csv'))
@@ -279,6 +383,36 @@ describe('Composer', function () {
     await rerender(<Composer {...props} onStop={undefined} />)
     expect(labelled('Stop Tess')).equals(null)
     expect(stops).equals(1)
+  })
+
+  it('sends once and stops nothing on a double press of Send while Tess answers', async function () {
+    let stops = 0
+    const { sent, props } = composer({
+      busy: true,
+      onStop: () => {
+        stops += 1
+      }
+    })
+    const realNow = Date.now
+    let now = 1000
+    Date.now = () => now
+    try {
+      await render(<Composer {...props} />)
+      await type('Then the playoffs')
+      await click(byLabel('Send'))
+      // The draft is empty: the second press lands on Stop, and is ignored.
+      await click(byLabel('Stop Tess'))
+      now += STOP_GUARD_MS - 1
+      await click(byLabel('Stop Tess'))
+      expect(sent).deep.equals([{ text: 'Then the playoffs', attachments: [] }])
+      expect(stops).equals(0)
+      // Pressed once the moment has passed, it stops her.
+      now += 1
+      await click(byLabel('Stop Tess'))
+      expect(stops).equals(1)
+    } finally {
+      Date.now = realNow
+    }
   })
 
   it('gives the draft and its files back when the send fails', async function () {

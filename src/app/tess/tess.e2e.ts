@@ -1179,6 +1179,7 @@ async function main(): Promise<void> {
 
     // W19: Stop. After W16, so its usage week adds up without the reply
     // stopped here. While she answers and the field is empty the button is
+    // Stop, and a letter typed makes it Send, which queues; Stop ends her
     // turn on the server, and the reply ends "Stopped" within 2 s. Her next
     // request carries the note that she was stopped.
     await open('/')
@@ -1202,7 +1203,7 @@ async function main(): Promise<void> {
     expect(await page.$(stopButton)).equals(null)
     expect(
       await page.$eval(sendButton, node => node.getAttribute('aria-disabled'))
-    ).equals('true')
+    ).not.equals('true')
     await page.keyboard.press('Backspace')
     await waitFor(page, stopButton)
     await shot('web-stop.png')
@@ -1245,6 +1246,176 @@ async function main(): Promise<void> {
       .find(block => String(block.text).startsWith('(Stopped by the person'))
     expect(note, 'the stopped note').not.equals(undefined)
     console.log(`W19 Stop ended the reply in ${stoppedMs} ms; the note went on`)
+
+    // W20: the queue. While a slow reply streams, A, B and C are sent and
+    // stack above the composer, staying put while the reply scrolls; B's X
+    // removes it; C tapped goes into the field, and edited and sent goes
+    // back after A; C's arrow stops the reply and sends C, A staying queued.
+    // C's answer proposes a game: A waits for the hold, then goes.
+    const queuedTexts = async (): Promise<string[]> =>
+      await page.$$eval('[data-testid="Tess queued text"]', nodes =>
+        nodes.map(node => node.textContent || '')
+      )
+    const queuedButton = (at: number, label: string): string =>
+      `[data-testid="Tess queued"]:nth-child(${at}) [role="button"][aria-label="${label}"]`
+    const queueA = 'Which field do we use in June?'
+    const queueB = 'Who brings the snacks on Saturday?'
+    const queueC = 'Add one more game'
+    const queueCEdited = `${queueC} against Demo Eagles on 12 June`
+    const gamesBeforeQueue = await gamesOfTeam()
+    const marksBeforeQueue = await stoppedMarks()
+    await page.click(field)
+    await page.type(field, 'Write the season newsletter')
+    await page.keyboard.press('Enter')
+    await waitFor(page, '[data-testid="Tess live text"]')
+    for (const words of [queueA, queueB, queueC]) {
+      await page.type(field, words)
+      await page.keyboard.press('Enter')
+    }
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll('[data-testid="Tess queued"]').length === 3,
+      { timeout: 5000 }
+    )
+    expect(await queuedTexts()).deep.equals([queueA, queueB, queueC])
+    expect(
+      await page.$eval(field, node => (node as HTMLTextAreaElement).value)
+    ).equals('')
+    // Pinned: the stack keeps its place over the composer while the reply
+    // grows and the conversation scrolls under it.
+    const queueBox = '[data-testid="Tess queue"]'
+    const liveLength = async (): Promise<number> =>
+      await page.$eval(
+        '[data-testid="Tess live text"]',
+        node => (node.textContent || '').length
+      )
+    // How far the conversation has scrolled: the scroll view the reply is in.
+    const scrolled = (): number => {
+      let at = document.querySelector('[data-testid="Tess live text"]')
+      while (at != null) {
+        if (
+          at.scrollHeight > at.clientHeight &&
+          /auto|scroll/.test(getComputedStyle(at).overflowY)
+        )
+          return at.scrollTop
+        at = at.parentElement
+      }
+      return 0
+    }
+    await page.waitForFunction(scrolled, { timeout: 30000 })
+    const stackBefore = (await rectOf(page, queueBox))!
+    const grownFrom = await liveLength()
+    const scrolledFrom = await page.evaluate(scrolled)
+    await pause(2500)
+    expect(await liveLength()).greaterThan(grownFrom)
+    expect(await page.evaluate(scrolled)).greaterThan(scrolledFrom)
+    expect(await rectOf(page, queueBox)).deep.equals(stackBefore)
+    const composerBox = (await rectOf(page, '[data-testid="Tess composer"]'))!
+    expect(stackBefore.y + stackBefore.height).lessThanOrEqual(
+      composerBox.y + 1
+    )
+    await shot('web-queue.png')
+    await tap(queuedButton(2, 'Remove from queue'))
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll('[data-testid="Tess queued"]').length === 2,
+      { timeout: 5000 }
+    )
+    expect(await queuedTexts()).deep.equals([queueA, queueC])
+    await tap(`[role="button"][aria-label="Edit queued message: ${queueC}"]`)
+    await page.waitForFunction(
+      (selector, words) => {
+        // No optional chaining: sucrase would call a helper the page lacks.
+        const node = document.querySelector<HTMLTextAreaElement>(selector)
+        return node != null && node.value === words
+      },
+      { timeout: 5000 },
+      field,
+      queueC
+    )
+    expect(await queuedTexts()).deep.equals([queueA])
+    await page.click(field)
+    await page.keyboard.press('End')
+    await page.type(field, ' against Demo Eagles on 12 June')
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll('[data-testid="Tess queued"]').length === 2,
+      { timeout: 5000 }
+    )
+    expect(await queuedTexts()).deep.equals([queueA, queueCEdited])
+    // Still answering the newsletter: nothing of the queue has gone.
+    expect(await page.$('[data-testid="Tess live text"]')).not.equals(null)
+    expect(await userBubbles(queueCEdited)).equals(0)
+    await tap(queuedButton(2, 'Send now'))
+    await page.waitForFunction(
+      before =>
+        document.querySelectorAll('[data-testid="Tess stopped"]').length >
+        before,
+      { timeout: 5000 },
+      marksBeforeQueue
+    )
+    await contains(
+      page,
+      'Hold Confirm under the table to add the game on 12 June.'
+    )
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="Tess thinking"]') == null,
+      { timeout: 20000 }
+    )
+    expect(await userBubbles(queueCEdited)).equals(1)
+    expect(await queuedTexts()).deep.equals([queueA])
+    // The change awaits its hold, and A with it.
+    const queueHold = '[role="button"][aria-label="Hold to confirm"]'
+    await waitFor(page, queueHold)
+    await pause(2000)
+    expect(await queuedTexts()).deep.equals([queueA])
+    expect(await userBubbles(queueA)).equals(0)
+    await page.$eval(queueHold, node => {
+      node.scrollIntoView({ block: 'center' })
+    })
+    await pause(500)
+    const queueHoldBox = (await rectOf(page, queueHold))!
+    await page.mouse.move(
+      queueHoldBox.x + queueHoldBox.width / 2,
+      queueHoldBox.y + queueHoldBox.height / 2
+    )
+    await page.mouse.down()
+    await pause(2400)
+    await page.mouse.up()
+    await contains(
+      page,
+      'Done: the game against Demo Eagles on Saturday 12 June at 10:00 is on the schedule.'
+    )
+    await contains(page, 'In June the home games are on Demo Field.')
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="Tess thinking"]') == null,
+      { timeout: 20000 }
+    )
+    await gone(page, queueBox)
+    expect(await userBubbles(queueA)).equals(1)
+    expect(await userBubbles(queueB)).equals(0)
+    expect(await gamesOfTeam()).equals(gamesBeforeQueue + 1)
+    // The model heard C, then the confirmation, then A, and never B.
+    const heard = t.model.calls
+      .map(call => call.request?.said ?? '')
+      .filter(said =>
+        [
+          queueA,
+          queueB,
+          queueC,
+          'The user confirmed the change "Add a home game against Demo Eagles on Saturday 12 June'
+        ].some(words => said.startsWith(words))
+      )
+    const firsts = heard.filter((said, at) => heard.indexOf(said) === at)
+    expect(firsts.map(said => said.slice(0, 20))).deep.equals([
+      queueCEdited.slice(0, 20),
+      'The user confirmed t',
+      queueA.slice(0, 20)
+    ])
+    console.log(
+      'W20 three queued and pinned; B removed; C edited back after A, sent now over the reply; A waited for the hold, then went'
+    )
 
     // L1: a reply that needs two reads, as it streams in: the "Thinking"
     // row and her summary before any of her text, each step with a spinner

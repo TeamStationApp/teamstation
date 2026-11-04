@@ -1225,6 +1225,12 @@ export const enUs = {
   tess_send: 'Send',
   tess_stop: 'Stop Tess',
   tess_stopped: 'Stopped',
+  tess_queued: 'queued',
+  tess_queue_send_now: 'Send now',
+  tess_queue_remove: 'Remove from queue',
+  tess_queue_edit: 'Edit queued message: %s',
+  tess_queue_unsure:
+    'This message may not have reached Tess. Send it again, or remove it.',
   tess_attach: 'Attach a file',
   tess_attach_title: 'Attach',
   tess_attach_photo: 'Photo',

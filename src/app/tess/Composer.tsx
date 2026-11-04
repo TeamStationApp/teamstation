@@ -36,11 +36,35 @@ export interface ComposerHandle {
    * while Tess is still answering or a file is still uploading.
    */
   dictate: (text: string) => void
+  /**
+   * A queued message to edit: its words and files replace the draft, which
+   * is discarded, and the next send puts it back at its place (`seq`).
+   */
+  edit: (draft: QueuedDraft) => void
+  /**
+   * The draft as it is now, words and files: what a queued message out to
+   * be edited has become, for it to go back to the queue as that.
+   */
+  draft: () => { text: string; attachments: TessAttachmentRef[] }
+}
+
+/** A queued message taken out to be edited. */
+export interface QueuedDraft {
+  text: string
+  attachments: TessAttachmentRef[]
+  seq: number
 }
 
 export interface ComposerProps {
-  /** Answers whether it was sent; a failed send gives the draft back. */
-  onSend: (text: string, attachments: TessAttachmentRef[]) => Promise<boolean>
+  /**
+   * Answers whether it was sent or queued; a failed send gives the draft
+   * back. `seq` is the place of a queued message being edited.
+   */
+  onSend: (
+    text: string,
+    attachments: TessAttachmentRef[],
+    options?: { seq?: number }
+  ) => Promise<boolean>
   onUpload: (upload: TessUpload) => Promise<TessAttachmentRef | null>
   onError: (message: string) => void
   /** Stops Tess's turn: Stop, shown while she answers and the draft is empty. */
@@ -88,11 +112,13 @@ export const FIELD_NATIVE_ID = 'tessComposerField'
  * the right, the attached files above, any error below, and the microphone
  * centered under it all. While Tess answers and the draft is empty (no
  * words, no files, none uploading) Send is Stop, which stops her turn; a
- * letter typed makes it Send again, disabled until she is done. For
- * `STOP_GUARD_MS` after a send Stop ignores a press, so a double press on
- * Send sends once and stops nothing. A message takes at most five files: a
- * sixth is refused with the reason, as soon as it is taken, and + says so
- * rather than open.
+ * letter typed makes it Send again, and what it sends then waits in the
+ * queue until she is done. For `STOP_GUARD_MS` after a send Stop ignores a
+ * press, so a double press on Send sends once and stops nothing. A queued
+ * message tapped to edit replaces the draft, and sent goes back to its
+ * place, though the field was emptied on the way. A message takes at most five
+ * files: a sixth is refused with the reason, as soon as it is taken, and +
+ * says so rather than open.
  *
  * The field is one line, and grows with what is in it up to six lines, then
  * scrolls. On the web Enter sends and Shift+Enter starts a new line; on a
@@ -166,16 +192,15 @@ export function Composer({
   // renders; a send empties it at once.
   const draft = useRef({ text, attachments, busy, uploading })
   draft.current = { text, attachments, busy, uploading }
+  // The place of the queued message being edited, for its next send.
+  const editing = useRef<number | undefined>(undefined)
   // When this composer last sent, for Stop to ignore a press soon after.
   const sentAt = useRef(-Infinity)
 
   const empty =
     text.trim() === '' && attachments.length === 0 && uploading === 0
   const ready =
-    !busy &&
-    uploading === 0 &&
-    attachments.length <= TESS_MAX_ATTACHMENTS &&
-    !empty
+    uploading === 0 && attachments.length <= TESS_MAX_ATTACHMENTS && !empty
   const stoppable = busy && empty && onStop != null
   const tooMany = (): void => {
     onError(
@@ -195,9 +220,17 @@ export function Composer({
     if (Platform.OS !== 'web') field.current?.clear()
     setText('')
     setAttachments([])
-    onSend(sent.text.trim(), sent.attachments).then(
+    const seq = editing.current
+    editing.current = undefined
+    onSend(
+      sent.text.trim(),
+      sent.attachments,
+      seq == null ? undefined : { seq }
+    ).then(
       delivered => {
         if (delivered) return
+        // Still the queued message's, unless another has been taken since.
+        editing.current ??= seq
         // Ahead of anything said or typed since, which stays.
         setText(current =>
           current === ''
@@ -238,7 +271,22 @@ export function Composer({
         return
       }
       deliver({ text: joined, attachments: now.attachments })
-    }
+    },
+    edit: queued => {
+      editing.current = queued.seq
+      draft.current = {
+        ...draft.current,
+        text: queued.text,
+        attachments: queued.attachments
+      }
+      setText(queued.text)
+      setAttachments(queued.attachments)
+      field.current?.focus()
+    },
+    draft: () => ({
+      text: draft.current.text,
+      attachments: draft.current.attachments
+    })
   }))
 
   /** Whether the draft holds, or is uploading, as many files as a message takes. */

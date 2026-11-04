@@ -26,6 +26,11 @@ export interface TessPanelProps {
   >
   /** Asked once on opening: whether her field should take the focus. */
   takesFocus?: () => boolean
+  /**
+   * The signed-in user: their queue outlives the panel, so what waits for
+   * Tess when it closes is there when it opens again.
+   */
+  owner?: string
 }
 
 /**
@@ -46,9 +51,10 @@ export function TessPanel({
   onNavigate,
   screen,
   dictation: replaced,
-  takesFocus
+  takesFocus,
+  owner
 }: TessPanelProps): React.ReactElement {
-  const tess = useTess(client, { screen })
+  const tess = useTess(client, { screen, owner })
   const composer = useRef<ComposerHandle>(null)
   const health = useCallback(async () => await client.health(), [client])
   const url = useMemo(() => dictationUrl(client.baseUrl), [client])

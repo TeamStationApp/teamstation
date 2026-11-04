@@ -50,6 +50,7 @@ export const iconCodepoints: Record<IconName, number> = {
   auto_awesome: 0xe65f,
   add: 0xe145,
   send: 0xe163,
+  arrow_upward: 0xe5d8,
   attach_file: 0xe226,
   chat: 0xe0b7,
   add_reaction: 0xe1d3,
