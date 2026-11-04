@@ -549,12 +549,14 @@ describe('publishing a live origin', function () {
     interface Held {
       acknowledged: Map<unknown, unknown>
       published: Set<unknown>
+      kept: Map<unknown, unknown>
       cursor: number
       cursorNumber?: unknown
     }
     const keys = (held: Held): unknown[] => [
       ...held.acknowledged.keys(),
       ...held.published,
+      ...held.kept.keys(),
       held.cursorNumber
     ]
     const held = publisher as unknown as Held

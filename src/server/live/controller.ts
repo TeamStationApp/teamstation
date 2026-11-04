@@ -20,23 +20,24 @@ import {
   uploadVideoDirectory,
   verifyVideoDirectory
 } from '../media/spacesVideo'
-import { ensureStill } from '../media/stills'
+import { ensureStill, type FrameSource } from '../media/stills'
 import {
   checkTrackStarts,
   isSoundStepProblem,
   soundStepProblem
 } from '../media/trackStarts'
+import { parseMediaPlaylist } from '../media/wallClockScan'
 import { storeWallPoints } from '../media/wallTimeline'
 import type { ScoreboardClient } from '../scoreboard/scoreboardStore'
 import type { LiveSettings } from '../serverConfig'
-import { LIVE_RESYNC_MS } from '../serverConfigSchema'
+import { LIVE_LOCAL_TAIL_SEC, LIVE_RESYNC_MS } from '../serverConfigSchema'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
 import {
   isRecordingShape,
   replaceAnchorsFromRecording,
   toRecording
 } from './finishVideo'
-import { OriginPublisher } from './originPublisher'
+import { OriginPublisher, spacePartReader } from './originPublisher'
 import { quietStreamCanEnd, quietStreamEndsAt } from './quietStream'
 import { openSecret } from './secrets'
 import {
@@ -264,6 +265,8 @@ function startOrigin(
     ffmpegPath: current.ffmpegPath,
     isFinal: name => final?.has(name) ?? true,
     mayMove: name => movable.has(name),
+    localTailSec: current.live.localTailSec ?? LIVE_LOCAL_TAIL_SEC,
+    scanned: () => anchorCursors.get(videoId),
     onFirstSegment: async probe => {
       await db
         .updateTable('videos')
@@ -1774,9 +1777,14 @@ async function finishStreamRecording(
 
   await closePlaylist(mediaRoot, row.videoId)
   const dir = liveVideoDir(mediaRoot, row.videoId)
-  const durationSec = await probeDuration(
-    ffprobeFor(ffmpegPath),
-    join(dir, LIVE_PLAYLIST_NAME)
+  // Once the disk tail has deleted pieces, what is left here cannot be
+  // probed: the closed playlist's own lengths are the duration, and the
+  // sound check reads the deleted pieces from the Space.
+  const tailed = await tailedRecording(current, dir)
+  const durationSec = await (
+    tailed
+      ? playlistDuration(join(dir, LIVE_PLAYLIST_NAME))
+      : probeDuration(ffprobeFor(ffmpegPath), join(dir, LIVE_PLAYLIST_NAME))
   ).catch(() => null)
 
   if (durationSec == null) {
@@ -1803,7 +1811,12 @@ async function finishStreamRecording(
   // step for the whole recording. The video is still ready — the picture is
   // whole — but the row and the log say so.
   const soundProblem = soundStepProblem(
-    await checkTrackStarts(join(dir, LIVE_PLAYLIST_NAME)).catch(() => undefined)
+    await checkTrackStarts(
+      join(dir, LIVE_PLAYLIST_NAME),
+      tailed && current.space != null
+        ? { readPart: spacePartReader(current.space, row.videoId) }
+        : {}
+    ).catch(() => undefined)
   )
   if (soundProblem != null) {
     ;(current.log ?? console.log)(`live: ${row.videoId}: ${soundProblem}`)
@@ -1863,6 +1876,41 @@ function queueOriginClose(
   })
 }
 
+/**
+ * Whether the disk tail has deleted pieces of this closed recording: a Space
+ * is configured and a piece the playlist lists is no longer here.
+ */
+async function tailedRecording(
+  current: LiveControllerOptions,
+  dir: string
+): Promise<boolean> {
+  if (current.space == null || !spaceConfigured(current.space)) return false
+  let text: string
+  try {
+    text = await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8')
+  } catch {
+    return false
+  }
+  for (const segment of parseMediaPlaylist(text).segments) {
+    const held = await stat(join(dir, segment.uri)).catch(() => undefined)
+    if (held == null) return true
+  }
+  return false
+}
+
+/**
+ * A closed playlist's length, the sum of its `EXTINF`s, as ffprobe adds them
+ * up: each to the microsecond, truncated.
+ */
+export async function playlistDuration(path: string): Promise<number> {
+  const playlist = parseMediaPlaylist(await readFile(path, 'utf8'))
+  if (playlist.segments.length === 0) throw new Error(`No duration in ${path}`)
+  let micros = 0
+  for (const segment of playlist.segments)
+    micros += Math.trunc(segment.durationSec * 1_000_000)
+  return micros / 1_000_000
+}
+
 async function removeDeletedOrigin(
   current: LiveControllerOptions,
   videoId: string
@@ -1901,7 +1949,15 @@ async function closeOrigin(
       const after = anchorCursors.get(videoId)?.segments ?? -1
       if (after <= before) break
     }
-    await replaceAnchorsFromRecording(db, videoId, dir, LIVE_PLAYLIST_NAME)
+    // Pieces the disk tail deleted are read back from the Space, so the
+    // anchors come from the whole recording.
+    await replaceAnchorsFromRecording(
+      db,
+      videoId,
+      dir,
+      LIVE_PLAYLIST_NAME,
+      spacePartReader(space, videoId)
+    )
     anchorCursors.delete(videoId)
     origin.refreshFinal()
     const result = await origin.publisher.flush({ close: true })
@@ -1920,7 +1976,13 @@ async function closeOrigin(
     }
     if ((await response.text()) !== result.body)
       throw new Error('Closed playlist came back different')
-    await keepAPicture(current, videoId, dir, durationSec, LIVE_PLAYLIST_NAME)
+    // The poster second is usually no longer on this disk.
+    await keepAPicture(current, videoId, durationSec, {
+      kind: 'space',
+      space,
+      videoId,
+      verified: true
+    })
     const row = await db
       .selectFrom('videos')
       .select('status_message')
@@ -2055,7 +2117,10 @@ async function putAway(
     .where('id', '=', videoId)
     .execute()
 
-  await keepAPicture(current, videoId, dir, recording.durationSec)
+  await keepAPicture(current, videoId, recording.durationSec, {
+    kind: 'file',
+    path: join(dir, VIDEO_FILE)
+  })
 
   if (space == null || !spaceConfigured(space)) {
     // Development, or a Space not configured yet. The recording stays here and
@@ -2078,15 +2143,14 @@ async function putAway(
 async function keepAPicture(
   current: LiveControllerOptions,
   videoId: string,
-  dir: string,
   durationSec: number,
-  sourceFile: string = VIDEO_FILE
+  source: FrameSource
 ): Promise<void> {
   try {
     if (current.space == null) return
     await ensureStill({
       ffmpegPath: current.ffmpegPath,
-      source: { kind: 'file', path: join(dir, sourceFile) },
+      source,
       space: current.space,
       videoId,
       atSec: posterSecond(durationSec)
