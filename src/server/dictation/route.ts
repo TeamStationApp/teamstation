@@ -429,7 +429,7 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
       return
     }
     const model = start.model ?? config.model
-    if (endpointFor(model, config) == null) {
+    if (scope.transcriptOnly !== true && endpointFor(model, config) == null) {
       fail(
         start.id,
         `${DICTATION_MODEL_NAMES[model as DictationModel] ?? model} is not set up on this server`

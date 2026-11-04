@@ -1440,6 +1440,25 @@ describe('dictation route', function () {
     const tess = (id: string): object =>
       start(id, { scope: 'tess', target: {}, context: 'tess' })
 
+    it('transcribes without a scoring credential for the selected model', async function () {
+      const client = await connect({ authorization: `Bearer ${STRANGER}` })
+      const recogniser = recognisers[recognisers.length - 1]
+      const asked = conversations.length
+      client.send({ ...tess('voice-only'), model: 'claude-haiku-5-5' })
+      await settled(recogniser, 'begin')
+      client.audio(4)
+      client.send({ kind: 'release', id: 'voice-only' })
+      await settled(recogniser, 'end')
+      recogniser.handlers.onFinal('Where is the schedule?')
+      expect(await client.next()).deep.equals({
+        kind: 'transcript',
+        id: 'voice-only',
+        text: 'Where is the schedule?'
+      })
+      expect(conversations).length(asked)
+      client.ws.close()
+    })
+
     it('sends a signed-in stranger the transcript alone, and takes the next start at once', async function () {
       const client = await connect({ authorization: `Bearer ${STRANGER}` })
       const recogniser = recognisers[recognisers.length - 1]

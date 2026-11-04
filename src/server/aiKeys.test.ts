@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events'
+
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
@@ -5,6 +7,7 @@ import { defaultNodeSettings } from '../common/nodeSettings'
 import { actor, type GroupFixture, groupFixture } from '../test/groupFixtures'
 import { aiKeys, aiSettings } from './aiKeys'
 import { endpointFor } from './dictation/models'
+import { SttSession } from './dictation/stt'
 import { nodeSettings, setNodeSettings } from './nodeSettings'
 import { asServerConfig } from './serverConfig'
 import { apiCall } from './tess/loopback'
@@ -23,6 +26,54 @@ describe('administrator API keys', function () {
   })
   afterEach(async () => {
     await f?.h.close()
+  })
+  it('prewarms and reuses the voice socket across holds with resolved legacy configuration', async () => {
+    const config = asServerConfig({ dictation: { apiKey: 'legacy-voice' } })
+    const resolved = (await aiSettings(f.h.db, config)).dictation!
+    expect(resolved.apiKey).equals('legacy-voice')
+    const sockets: EventEmitter[] = []
+    const finals: string[] = []
+    const session = new SttSession(
+      {
+        apiKey: resolved.apiKey,
+        connect: () => {
+          const socket = Object.assign(new EventEmitter(), {
+            send: (_frame: Buffer | string) => undefined,
+            close: () => undefined
+          })
+          sockets.push(socket)
+          return socket
+        }
+      },
+      {
+        onPartial: () => undefined,
+        onError: message => expect.fail(message),
+        onFinal: text => finals.push(text)
+      }
+    )
+    try {
+      session.retarget(['Trout'])
+      expect(sockets).length(1)
+      sockets[0].emit('open')
+      sockets[0].emit('message', JSON.stringify({ type: 'transcript.created' }))
+      for (const text of ['Ball one', 'Strike one']) {
+        session.begin()
+        session.write(Buffer.from([1, 0]))
+        session.end()
+        sockets[0].emit(
+          'message',
+          JSON.stringify({
+            type: 'transcript.partial',
+            speech_final: true,
+            text
+          })
+        )
+      }
+      expect(finals).deep.equals(['Ball one', 'Strike one'])
+      expect(sockets).length(1)
+    } finally {
+      session.close()
+    }
   })
   it('keeps credentials out of chatbot tool results and rejects nonhuman credential changes', async () => {
     await setNodeSettings(f.h.db, actor(105), {

@@ -65,10 +65,7 @@ export async function aiSettings(
         config.dictation == null ||
         normalizedKeys(config.dictation.apiKey).length === 0
           ? null
-          : {
-              ...config.dictation,
-              apiKey: normalizedKeys(config.dictation.apiKey)
-            }
+          : config.dictation
     }
   const dictation = {
     apiKey: stored.xaiVoice,
