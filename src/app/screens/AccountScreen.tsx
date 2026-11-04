@@ -26,6 +26,7 @@ import {
 } from '../components'
 import { NewPasswordFields } from '../components/NewPasswordFields'
 import { useSceneReveals } from '../components/sceneShown'
+import { sportsPicturesEnabled } from '../components/sportsPictures'
 import { lstrings } from '../locales/strings'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -267,7 +268,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
         <PictureSheet
           client={client}
           name={user.displayName}
-          allowCatalog
+          allowCatalog={sportsPicturesEnabled}
           pickPhoto={pickPhoto}
           onClose={() => {
             setPhotoOpen(false)

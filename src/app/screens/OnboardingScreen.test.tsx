@@ -26,7 +26,8 @@ async function press(label: string): Promise<void> {
 async function render(
   client: TeamStationClient,
   step: 'name' | 'photo',
-  done: () => Promise<void> = async () => {}
+  done: () => Promise<void> = async () => {},
+  allowCatalog?: boolean
 ): Promise<void> {
   const host = document.createElement('div')
   document.body.append(host)
@@ -39,6 +40,7 @@ async function render(
           initialName="Mike Trout"
           initialState={{ step, completedAt: null }}
           onComplete={done}
+          allowCatalog={allowCatalog}
         />
       </ThemeProvider>
     )
@@ -73,7 +75,7 @@ describe('resumable onboarding screen', () => {
     client.pictures = async () => {
       throw new Error('Unavailable')
     }
-    await render(client, 'photo')
+    await render(client, 'photo', undefined, true)
     expect(document.body.textContent).includes('could not load')
     client.pictures = async () => [
       {
@@ -105,5 +107,64 @@ describe('resumable onboarding screen', () => {
     expect(document.body.textContent).includes('✓')
     client.finishOnboarding = async () => {}
     await press('Continue')
+  })
+  it('offers only a photo or initials, without loading sports pictures', async () => {
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    let catalogRequests = 0
+    client.pictures = async () => {
+      catalogRequests++
+      return []
+    }
+    const finished: unknown[] = []
+    client.finishOnboarding = async choice => {
+      finished.push(choice)
+    }
+    await render(client, 'photo')
+    expect(catalogRequests).equals(0)
+    expect(
+      document.querySelector('[data-testid="sports-picture-grid"]')
+    ).equals(null)
+    expect(document.body.textContent).includes(
+      'Add a photo from your photo album or use your initials.'
+    )
+    expect(document.body.textContent).not.includes('sports picture')
+    const continueButton = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(node => node.textContent === 'Continue')!
+    expect(continueButton.getAttribute('aria-disabled')).equals('true')
+    await press('Add Photo')
+    const input =
+      document.querySelector<HTMLInputElement>('input[type="file"]')!
+    Object.defineProperty(input, 'files', {
+      value: [{ type: 'image/png', size: 3 }]
+    })
+    const original = globalThis.FileReader
+    class Reader {
+      result = 'data:image/png;base64,AAAA'
+      onload?: () => void
+      readAsDataURL(): void {
+        this.onload?.()
+      }
+    }
+    globalThis.FileReader = Reader as unknown as typeof FileReader
+    try {
+      await act(async () => {
+        input.dispatchEvent(new window.Event('change'))
+        await Promise.resolve()
+      })
+    } finally {
+      globalThis.FileReader = original
+    }
+    expect(
+      document.querySelector('[aria-label="Selected profile photo"]')
+    ).not.equals(null)
+    await press('Continue')
+    expect(finished).length(1)
+    expect(finished[0]).deep.equals({
+      image: { contentType: 'image/png', base64: 'AAAA' }
+    })
+    await press('Use my initials')
+    expect(finished[1]).deep.equals({ initials: true })
+    expect(catalogRequests).equals(0)
   })
 })

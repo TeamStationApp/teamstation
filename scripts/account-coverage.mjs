@@ -37,6 +37,7 @@ const required = [
   'src/app/screens/AccountScreen.tsx',
   'src/app/components/HeroCard.tsx',
   'src/app/components/PictureSheet.tsx',
+  'src/app/components/sportsPictures.ts',
   'src/app/components/DangerText.tsx',
   'src/app/platform/pickAccountPhoto.ts',
   'src/app/platform/accountPhotoNative.ts'

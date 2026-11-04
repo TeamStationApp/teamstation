@@ -140,27 +140,22 @@ async function accountVector(page: Page, h: AccountHarness): Promise<void> {
 }
 
 async function photoVector(page: Page, h: AccountHarness): Promise<void> {
-  await page.waitForSelector('[aria-label="Baseball"]')
-  const geometry = await page.evaluate(() => {
-    const labels = ['Add Photo', 'Baseball', 'American football']
-    return labels.map(label => {
-      const node = document.querySelector<HTMLElement>(
-        `[role="button"][aria-label="${label}"]`
-      )!
-      const box = node.getBoundingClientRect()
-      return { x: box.x, y: box.y, width: box.width, height: box.height }
-    })
-  })
-  expect(
-    Math.max(...geometry.map(rect => rect.y)) -
-      Math.min(...geometry.map(rect => rect.y))
-  ).lessThan(2)
-  expect(geometry[0].width).closeTo(geometry[0].height, 2)
+  await text(page, 'Add a photo from your photo album or use your initials.')
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('[role="button"]')].some(
+      node => node.textContent === 'Add Photo'
+    )
+  )
+  expect(await page.$('[aria-label="Baseball"]')).equals(null)
+  expect(await page.$('[data-testid="sports-picture-grid"]')).equals(null)
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('[role="button"]')].some(
+      node => node.textContent === 'Use my initials'
+    )
+  )
   const before = h.objects.size
-  await press(page, 'Baseball')
   await page.screenshot({ path: join(artifacts!, 'onboarding-photo.png') })
-  await page.screenshot({ path: join(artifacts!, 'photo-grid-after.png') })
-  await press(page, 'Continue')
+  await press(page, 'Use my initials')
   await page.waitForFunction(
     () => document.querySelector('[aria-label^="Account, Mike Trout"]') != null
   )
@@ -180,7 +175,7 @@ async function photoVector(page: Page, h: AccountHarness): Promise<void> {
       .select(['picture_catalog_id', 'onboarding_step'])
       .where('id', '=', user.user_id)
       .executeTakeFirstOrThrow()
-  ).deep.equals({ picture_catalog_id: 'baseball', onboarding_step: 'complete' })
+  ).deep.equals({ picture_catalog_id: null, onboarding_step: 'complete' })
   await page.$eval('[aria-label^="Account, Mike Trout"]', node => {
     ;(node as HTMLElement).click()
   })
@@ -211,7 +206,7 @@ async function main(): Promise<void> {
     )
     await photoVector(page, h)
     lines.push(
-      'E2 PASS: actual three-column square grid, Add Photo first, shared catalog reference, persistent completed profile'
+      'E2 PASS: photo step offers only Add Photo or initials, no sports pictures; initials complete a persistent profile'
     )
     const require = createRequire(resolve('package.json'))
     const convert = require('v8-to-istanbul') as (

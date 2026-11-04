@@ -321,13 +321,24 @@ describe('Account settings screen', () => {
     )
     expect(text()).includes('Chat devices')
   })
-  it('changes an existing account to a shared catalog picture and back to initials, while cancellation preserves the saved picture', async () => {
+  it('offers only a photo or initials, changes back to initials, and cancellation preserves the saved picture', async () => {
     const f = fixture()
-    await render(<AccountScreen {...f} onSignOut={() => {}} />)
+    await render(
+      <AccountScreen
+        {...f}
+        onSignOut={() => {}}
+        pickPhoto={async () => ({ contentType: 'image/png', base64: 'test' })}
+      />
+    )
     await press('Add photo')
-    await press('Baseball')
+    expect(button('Baseball')).equals(undefined)
+    expect(button('Retry pictures')).equals(undefined)
+    expect(button('Use initials')).not.equals(undefined)
+    expect(f.calls).not.includes('/pictures')
+    await press('Add Photo')
     await press('Save photo')
-    expect(f.calls).includes('/me/account/catalog-picture')
+    expect(f.calls).includes('/me/account/photo')
+    expect(f.calls).not.includes('/me/account/catalog-picture')
     await press('Change photo')
     await press('Use initials')
     await press('Cancel')

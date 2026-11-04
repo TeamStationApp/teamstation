@@ -1,5 +1,5 @@
-import { writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 import puppeteer, { type Page } from 'puppeteer'
@@ -10,6 +10,7 @@ import { SESSION_COOKIE } from '../server/auth/tokens'
 import { applyParents, previewParents } from '../server/groups/relationships'
 import { rolesAt } from '../server/invites/people'
 import { publishPictureCatalog } from '../server/media/pictureCatalog'
+import { accountTestPicture } from '../test/accountHarness'
 import { actor, demoLocality, groupFixture } from '../test/groupFixtures'
 import { recordBrowserCoverage } from './browserCoverage.e2e'
 import {
@@ -154,24 +155,33 @@ async function main(): Promise<void> {
     await league.goto(f.h.origin + '/account', {
       waitUntil: 'domcontentloaded'
     })
+    const picture = join(artifacts, 'support', 'profile.webp')
+    await mkdir(dirname(picture), { recursive: true })
+    await writeFile(picture, Buffer.from(accountTestPicture.base64, 'base64'))
     await press(league, 'Add photo')
-    await press(league, 'Baseball')
-    await press(league, 'Save profile picture')
-    await text(league, 'Profile picture saved')
-    expect(
-      (
-        await f.h.db
-          .selectFrom('users')
-          .select('picture_catalog_id')
-          .where('id', '=', userIdOfGumbo(101))
-          .executeTakeFirstOrThrow()
-      ).picture_catalog_id
-    ).equals('baseball')
+    await text(league, 'Save photo')
+    expect(await league.$('[aria-label="Baseball"]')).equals(null)
+    expect(await league.$('[data-testid="sports-picture-grid"]')).equals(null)
+    const [chooser] = await Promise.all([
+      league.waitForFileChooser(),
+      press(league, 'Add Photo')
+    ])
+    await chooser.accept([picture])
+    await text(league, 'Your photo is selected')
+    await press(league, 'Save photo')
+    await text(league, 'Photo saved')
+    const uploaded = await f.h.db
+      .selectFrom('users')
+      .select(['avatar_path', 'picture_catalog_id'])
+      .where('id', '=', userIdOfGumbo(101))
+      .executeTakeFirstOrThrow()
+    expect(uploaded.avatar_path).not.equals(null)
+    expect(uploaded.picture_catalog_id).equals(null)
     await league.reload({ waitUntil: 'domcontentloaded' })
     await press(league, 'Change photo')
     await press(league, 'Use initials')
-    await press(league, 'Save profile picture')
-    await text(league, 'Profile picture saved')
+    await press(league, 'Save photo')
+    await text(league, 'Photo saved')
     expect(
       await f.h.db
         .selectFrom('users')
@@ -180,7 +190,7 @@ async function main(): Promise<void> {
         .executeTakeFirstOrThrow()
     ).deep.equals({ avatar_path: null, picture_catalog_id: null })
     lines.push(
-      'E2 review PASS: an already-completed account uses the same sports grid to save a catalog picture, reload it, and return to initials without deleting shared catalog objects'
+      'E2 review PASS: an already-completed account is offered only a photo or initials, saves an uploaded photo, reloads it, and returns to initials'
     )
 
     // Reloaded creation resolves context rather than relying on navigation memory.
@@ -728,8 +738,12 @@ async function main(): Promise<void> {
     await press(imported, 'Sign in')
     await fill(imported, 'Name', 'Tim Raines')
     await press(imported, 'Continue')
-    await press(imported, 'Baseball')
-    await press(imported, 'Continue')
+    await text(
+      imported,
+      'Add a photo from your photo album or use your initials.'
+    )
+    expect(await imported.$('[aria-label="Baseball"]')).equals(null)
+    await press(imported, 'Use my initials')
     await text(imported, 'Your Home')
     // Proving the address applied the invitation waiting for it, with only
     // the role it named; nothing is left to accept.
@@ -899,30 +913,36 @@ async function main(): Promise<void> {
         ? 'Change photo'
         : 'Add photo'
     )
+    const sheetText = async (): Promise<string> =>
+      await navigation.evaluate(() => String(document.body.textContent))
     await press(navigation, photoLabel)
-    await text(navigation, 'Sports pictures could not load')
+    await text(navigation, 'Save photo')
+    expect(await sheetText()).not.includes('Sports pictures could not load')
+    expect(await navigation.$('[aria-label="Retry pictures"]')).equals(null)
     expect(await navigation.$('[aria-label="Baseball"]')).equals(null)
     await navigation.screenshot({
-      path: join(artifacts, 'catalog-unavailable.png')
+      path: join(artifacts, 'account-photo-sheet.png')
     })
     await press(navigation, 'Use initials')
-    await press(navigation, 'Save profile picture')
-    await text(navigation, 'Profile picture saved')
-    await press(navigation, 'Add photo')
-    await text(navigation, 'Sports pictures could not load')
+    await press(navigation, 'Save photo')
+    await text(navigation, 'Photo saved')
     await publishPictureCatalog(f.h.space, resolve('src/app/assets/sports'))
-    await press(navigation, 'Retry pictures')
-    await press(navigation, 'Baseball')
-    await press(navigation, 'Save profile picture')
-    await text(navigation, 'Profile picture saved')
+    await press(navigation, 'Add photo')
+    await text(navigation, 'Save photo')
+    expect(await sheetText()).not.includes('Sports pictures could not load')
+    expect(await navigation.$('[aria-label="Baseball"]')).equals(null)
+    await press(navigation, 'Cancel')
     const savedPicture = await f.h.db
       .selectFrom('users')
-      .select('avatar_path')
+      .select(['avatar_path', 'picture_catalog_id'])
       .where('id', '=', userIdOfGumbo(101))
       .executeTakeFirstOrThrow()
-    expect(savedPicture.avatar_path).not.equals(null)
+    expect(savedPicture).deep.equals({
+      avatar_path: null,
+      picture_catalog_id: null
+    })
     lines.push(
-      'E2 QA PASS: a configured empty image store shows Retry with no blank selectable pictures; initials remain usable and publishing then retrying restores the shared gallery'
+      'E2 QA PASS: with the image store empty and again once the catalog is published, the account sheet offers only a photo or initials, with no sports pictures, catalog error or Retry pictures'
     )
     await recordBrowserCoverage(
       pages,

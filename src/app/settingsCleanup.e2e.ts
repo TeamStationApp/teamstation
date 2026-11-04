@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
@@ -7,6 +7,7 @@ import { asLocality } from '../common/locality'
 import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { googlePlaces } from '../server/location/googlePlaces'
+import { accountTestPicture } from '../test/accountHarness'
 import { googlePlacesStub } from '../test/googlePlacesStub'
 import { groupFixture } from '../test/groupFixtures'
 import {
@@ -669,7 +670,24 @@ async function main(): Promise<void> {
     await tap(m, 'Add photo')
     await contains(page, 'Save photo')
     await capture(m, artifacts!, 'account-photo-sheet.png')
-    await tap(m, 'Baseball')
+    expect(await page.$('[aria-label="Baseball"]')).equals(null)
+    expect(
+      await page.evaluate(() =>
+        [...document.querySelectorAll('[role="button"]')].some(
+          node => node.textContent === 'Add Photo'
+        )
+      )
+    ).equals(true)
+    await contains(page, 'Use initials')
+    const picture = join(artifacts!, 'support', 'profile.webp')
+    await mkdir(dirname(picture), { recursive: true })
+    await writeFile(picture, Buffer.from(accountTestPicture.base64, 'base64'))
+    const [chooser] = await Promise.all([
+      page.waitForFileChooser(),
+      tap(m, 'Add Photo')
+    ])
+    await chooser.accept([picture])
+    await contains(page, 'Your photo is selected')
     await tap(m, 'Save photo')
     await contains(page, 'Photo saved')
     await tap(m, 'Change photo')
