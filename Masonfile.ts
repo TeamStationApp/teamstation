@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
@@ -12,12 +12,22 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // labelled android-signing, which provides teamstation-sign-release-apk, and
 // published from there. One platform failing leaves the other running.
 //
-// The `seat` parameter picks the server the app talks to: `production`, the
-// default and what every push builds, or a development seat N, which points
-// the app at https://developN.teamstation.app. Only a production build goes
+// The `seat` parameter picks the server the app talks to. A development seat
+// N points the app at https://developN.teamstation.app. Left at `production`,
+// a master build keeps the app's own server, and every other branch points
+// at https://develop.teamstation.app. Only a master build of production goes
 // to TestFlight.
+//
+// `master` publishes `app.teamstation.app`. Any other branch, and any build
+// aimed at a development seat, publishes `app.teamstation.develop` under the
+// name TeamStation Develop, so it installs beside the stable app. The source
+// tree keeps the stable id; the build rewrites it, the way Edge's develop
+// build does.
 
-const APP = 'app.teamstation.app'
+export const STABLE_APP = 'app.teamstation.app'
+export const DEVELOP_APP = 'app.teamstation.develop'
+export const DEVELOP_DISPLAY_NAME = 'TeamStation Develop'
+const DEVELOP_ORIGIN = 'https://develop.teamstation.app'
 const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
 const ANDROID = { type: 'do-linux', os: 'linux', arch: 'x64' } as const
 const SIGN = {
@@ -31,9 +41,89 @@ const TESTFLIGHT_GROUP = 'TeamStation testers'
 // The same shape ctx.apple.archive and ctx.apple.resign accept.
 const versionPattern = /^[0-9]+(\.[0-9]+){0,2}$/
 
+/** Which app id this run publishes. Master stays stable; every other branch and every seat does not. */
+export function appIdOf(input: { branch?: string; seat?: string } = {}): string {
+  const branch = input.branch == null || input.branch === '' ? 'master' : input.branch
+  const seat = input.seat == null || input.seat === '' ? 'production' : input.seat
+  if (branch !== 'master' || seat !== 'production') return DEVELOP_APP
+  return STABLE_APP
+}
+
+function developRoot(ctx: { workspace?: string }): string {
+  const root = ctx.workspace
+  if (root == null || root === '') {
+    throw new Error('A develop build needs its workspace to set the app id')
+  }
+  return root
+}
+
+function runApp(ctx: { run?: { branch?: string; params?: { seat?: unknown } } }): string {
+  const seat = ctx.run?.params?.seat
+  return appIdOf({
+    branch: ctx.run?.branch,
+    seat: typeof seat === 'string' ? seat : undefined
+  })
+}
+
+/**
+ * Rewrites the checked-in stable id to the develop app. A second call finds
+ * the develop id already written and leaves the tree alone. A stable build
+ * does not call this.
+ */
+export function applyDevelopIdentity(root: string): void {
+  const rewrite = (file: string, from: string, to: string): void => {
+    const full = path.join(root, file)
+    let text: string
+    try {
+      text = readFileSync(full, 'utf8')
+    } catch {
+      throw new Error(`${file} is missing ${from}`)
+    }
+    if (!text.includes(from)) {
+      if (text.includes(to)) return
+      throw new Error(`${file} is missing ${from}`)
+    }
+    writeFileSync(full, text.replaceAll(from, to))
+  }
+  rewrite(
+    'android/app/build.gradle',
+    'applicationId "app.teamstation.app"',
+    `applicationId "${DEVELOP_APP}"`
+  )
+  rewrite(
+    'android/app/src/main/res/values/strings.xml',
+    '<string name="app_name">TeamStation</string>',
+    `<string name="app_name">${DEVELOP_DISPLAY_NAME}</string>`
+  )
+  rewrite(
+    'ios/TeamStation.xcodeproj/project.pbxproj',
+    'PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;',
+    `PRODUCT_BUNDLE_IDENTIFIER = ${DEVELOP_APP};`
+  )
+  rewrite(
+    'ios/TeamStation.xcodeproj/project.pbxproj',
+    'PRODUCT_NAME = TeamStation;',
+    `PRODUCT_NAME = "${DEVELOP_DISPLAY_NAME}";`
+  )
+  rewrite(
+    'ios/TeamStation/Info.plist',
+    '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>',
+    `<key>CFBundleDisplayName</key>\n\t<string>${DEVELOP_DISPLAY_NAME}</string>`
+  )
+  rewrite(
+    'ios/TeamStation/Info.plist',
+    '<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>',
+    `<key>CFBundleURLName</key>\n\t\t\t<string>${DEVELOP_APP}</string>`
+  )
+}
+
 export function setup(m: Setup): void {
   m.apiVersion(1)
-  m.buildNumber(APP, { format: 'YYMMDDCC', timeZone: 'America/Los_Angeles' })
+  const app = appIdOf({
+    branch: m.branch,
+    seat: typeof m.params?.seat === 'string' ? m.params.seat : undefined
+  })
+  m.buildNumber(app, { format: 'YYMMDDCC', timeZone: 'America/Los_Angeles' })
   m.workflow(
     'build',
     {
@@ -46,12 +136,12 @@ export function setup(m: Setup): void {
       }
     },
     w => {
-      buildStages(w)
+      buildStages(w, app)
     }
   )
 }
 
-function buildStages(w: WorkflowBuilder): void {
+function buildStages(w: WorkflowBuilder, app: string): void {
   w.parallel(
     'build',
     {
@@ -69,9 +159,9 @@ function buildStages(w: WorkflowBuilder): void {
             rust: '1.98.0'
           },
           timeout: '6h',
-          apple: { distribution: 'adHoc', app: APP },
-          publishes: [APP],
-          buildNumbers: [APP],
+          apple: { distribution: 'adHoc', app },
+          publishes: [app],
+          buildNumbers: [app],
           cache: [{ key: 'npm', paths: ['~/.npm'] }],
           run: buildIos
         },
@@ -83,7 +173,7 @@ function buildStages(w: WorkflowBuilder): void {
           // this stage re-signs the stashed IPA and does not compile.
           checkout: { depth: 1 },
           when: { branch: ['master'], params: { seat: 'production' } },
-          apple: { distribution: 'appStore', app: APP },
+          apple: { distribution: 'appStore', app: STABLE_APP },
           run: releaseIos
         }
       ],
@@ -105,8 +195,8 @@ function buildStages(w: WorkflowBuilder): void {
             androidLicenses: 'accept'
           },
           timeout: '6h',
-          publishes: [APP],
-          buildNumbers: [APP],
+          publishes: [app],
+          buildNumbers: [app],
           cache: [{ key: 'npm', paths: ['~/.npm'] }],
           run: compileAndroid
         },
@@ -120,8 +210,8 @@ function buildStages(w: WorkflowBuilder): void {
             androidLicenses: 'accept'
           },
           timeout: '1h',
-          publishes: [APP],
-          buildNumbers: [APP],
+          publishes: [app],
+          buildNumbers: [app],
           run: signAndroid
         }
       ]
@@ -131,20 +221,32 @@ function buildStages(w: WorkflowBuilder): void {
 }
 
 /**
- * The environment that points the app at the run's seat. Babel inlines
- * `TS_API_BASE_URL` into the bundle (`src/app/native/config.ts`), so a
- * production build sets nothing and keeps the app's own default.
+ * The environment that points the app at this run's server. Babel inlines
+ * `TS_API_BASE_URL` into the bundle (`src/app/native/config.ts`). A master
+ * build of production sets nothing and keeps the app's own default. Any
+ * other branch, left on production, points at the standing develop server.
+ * A development seat points at that seat, and its sign-in links use the
+ * same host.
  */
 export function seatEnvironment(
   ctx: Pick<Stage, 'run'>
 ): Record<string, string> {
   const seat = ctx.run.params?.seat ?? 'production'
-  if (seat === 'production') return {}
+  const branch = ctx.run.branch
+  if (seat === 'production') {
+    if (branch == null || branch === '' || branch === 'master') return {}
+    return {
+      TS_API_BASE_URL: `${DEVELOP_ORIGIN}/api/v1`,
+      TS_APP_ORIGIN: DEVELOP_ORIGIN
+    }
+  }
   if (typeof seat !== 'string' || !/^[1-8]$/.test(seat)) {
     throw new Error(`Unknown seat ${String(seat)}`)
   }
+  const origin = `https://develop${seat}.teamstation.app`
   return {
-    TS_API_BASE_URL: `https://develop${seat}.teamstation.app/api/v1`
+    TS_API_BASE_URL: `${origin}/api/v1`,
+    TS_APP_ORIGIN: origin
   }
 }
 
@@ -188,11 +290,13 @@ async function install(ctx: Stage): Promise<void> {
 
 export async function buildIos(ctx: Stage): Promise<void> {
   await install(ctx)
+  const app = runApp(ctx)
+  if (app === DEVELOP_APP) applyDevelopIdentity(developRoot(ctx))
   // The ExpoModulesJSI slice is a nested xcodebuild with a clean environment,
   // so the archive setting below does not apply to it.
   await ctx.sh('node scripts/deploy/patchExpoModulesJsi.mjs')
   await ctx.sh('pod install', { cwd: 'ios' })
-  const build = ctx.getBuildNumber(APP)
+  const build = ctx.getBuildNumber(app)
   const version = appVersion(ctx)
   const rustRoot = `${process.env.HOME}/.mason/tools/rust/1.98.0`
   const archived = await ctx.apple.archive({
@@ -215,7 +319,7 @@ export async function buildIos(ctx: Stage): Promise<void> {
   await ctx.stash('ios-adhoc', relativeIpa(ctx, archived.ipa))
   await ctx.artifacts.save('ios-ipa', archived.ipa)
   await ctx.artifacts.save('ios-dsym', archived.dsyms)
-  await ctx.publish({ app: APP, platform: 'ios', path: archived.ipa })
+  await ctx.publish({ app, platform: 'ios', path: archived.ipa })
 }
 
 function relativeIpa(ctx: Stage, file: string): string {
@@ -254,7 +358,9 @@ export async function releaseIos(ctx: Stage): Promise<void> {
 
 export async function compileAndroid(ctx: Stage): Promise<void> {
   await install(ctx)
-  const build = ctx.getBuildNumber(APP)
+  const app = runApp(ctx)
+  if (app === DEVELOP_APP) applyDevelopIdentity(developRoot(ctx))
+  const build = ctx.getBuildNumber(app)
   const version = appVersion(ctx)
   await ctx.sh(
     [
@@ -314,5 +420,5 @@ export async function signAndroid(ctx: Stage): Promise<void> {
   const apk = apks[0]
   if (apk == null) throw new Error('No release APK was signed')
   await ctx.artifacts.save('android-apk', apk)
-  await ctx.publish({ app: APP, platform: 'android', path: apk })
+  await ctx.publish({ app: runApp(ctx), platform: 'android', path: apk })
 }

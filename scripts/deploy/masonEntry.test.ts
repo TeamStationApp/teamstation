@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import {
+  DEVELOP_APP,
+  STABLE_APP,
+  appIdOf,
+  applyDevelopIdentity,
   buildIos,
   compileAndroid,
   releaseIos,
@@ -492,7 +496,25 @@ describe('TeamStation pipeline Masonfile', () => {
 
   it('points both platforms at a development seat', async () => {
     const apis: string[] = []
+    const published: string[] = []
+    const workspace = mkdtempSync(path.join(tmpdir(), 'seat-app-'))
+    const files: Record<string, string> = {
+      'android/app/build.gradle': 'applicationId "app.teamstation.app"\n',
+      'android/app/src/main/res/values/strings.xml':
+        '<string name="app_name">TeamStation</string>\n',
+      'ios/TeamStation.xcodeproj/project.pbxproj':
+        'PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\n',
+      'ios/TeamStation/Info.plist':
+        '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>\n<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>\n',
+      'package.json': JSON.stringify({ version: '1.2.3' })
+    }
+    for (const [file, text] of Object.entries(files)) {
+      const full = path.join(workspace, file)
+      mkdirSync(path.dirname(full), { recursive: true })
+      writeFileSync(full, text)
+    }
     const ctx = {
+      workspace,
       run: { branch: 'paul/example', params: { seat: '3' } },
       async sh(
         _command: string,
@@ -502,14 +524,17 @@ describe('TeamStation pipeline Masonfile', () => {
           apis.push(`gradle:${options.env.TS_API_BASE_URL}`)
         return { code: 0, stdout: '', stderr: '' }
       },
-      getBuildNumber() {
+      getBuildNumber(key: string) {
+        published.push(key)
         return '26110301'
       },
       async stash() {},
       artifacts: {
         async save() {}
       },
-      async publish() {},
+      async publish(options: { app: string }) {
+        published.push(options.app)
+      },
       apple: {
         async archive(options: { env?: { TS_API_BASE_URL?: string } }) {
           apis.push(`xcode:${options.env?.TS_API_BASE_URL ?? ''}`)
@@ -521,12 +546,21 @@ describe('TeamStation pipeline Masonfile', () => {
         }
       }
     }
-    await buildIos(ctx)
-    await compileAndroid(ctx)
-    assert.deepEqual(apis, [
-      'xcode:https://develop3.teamstation.app/api/v1',
-      'gradle:https://develop3.teamstation.app/api/v1'
-    ])
+    try {
+      await buildIos(ctx)
+      await compileAndroid(ctx)
+      assert.deepEqual(apis, [
+        'xcode:https://develop3.teamstation.app/api/v1',
+        'gradle:https://develop3.teamstation.app/api/v1'
+      ])
+      assert.deepEqual(published, [DEVELOP_APP, DEVELOP_APP, DEVELOP_APP])
+      assert.match(
+        readFileSync(path.join(workspace, 'android/app/build.gradle'), 'utf8'),
+        /applicationId "app\.teamstation\.develop"/
+      )
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
   })
 
   it('names no server for production or a run with no seat, and refuses an unknown one', () => {
@@ -537,10 +571,133 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.deepEqual(seated({ seat: 'production' }), {})
     assert.deepEqual(seated(), {})
     assert.deepEqual(seated({ seat: '8' }), {
-      TS_API_BASE_URL: 'https://develop8.teamstation.app/api/v1'
+      TS_API_BASE_URL: 'https://develop8.teamstation.app/api/v1',
+      TS_APP_ORIGIN: 'https://develop8.teamstation.app'
     })
+    const developServer = {
+      TS_API_BASE_URL: 'https://develop.teamstation.app/api/v1',
+      TS_APP_ORIGIN: 'https://develop.teamstation.app'
+    }
+    assert.deepEqual(
+      seatEnvironment({ run: { branch: 'develop', params: { seat: 'production' } } }),
+      developServer
+    )
+    assert.deepEqual(
+      seatEnvironment({ run: { branch: 'paul/example', params: { seat: 'production' } } }),
+      developServer
+    )
+    assert.deepEqual(
+      seatEnvironment({ run: { branch: 'paul/example', params: { seat: '3' } } }),
+      {
+        TS_API_BASE_URL: 'https://develop3.teamstation.app/api/v1',
+        TS_APP_ORIGIN: 'https://develop3.teamstation.app'
+      }
+    )
     assert.throws(() => seated({ seat: '9' }), /Unknown seat 9/)
     assert.throws(() => seated({ seat: 3 }), /Unknown seat 3/)
+  })
+
+  it('publishes the develop app for the develop branch and for a seat', () => {
+    assert.equal(appIdOf({ branch: 'master', seat: 'production' }), STABLE_APP)
+    assert.equal(appIdOf(), STABLE_APP)
+    assert.equal(appIdOf({ branch: 'develop' }), DEVELOP_APP)
+    assert.equal(appIdOf({ branch: 'develop', seat: 'production' }), DEVELOP_APP)
+    assert.equal(appIdOf({ branch: 'paul/example' }), DEVELOP_APP)
+    assert.equal(appIdOf({ branch: 'paul/example', seat: 'production' }), DEVELOP_APP)
+    assert.equal(appIdOf({ branch: 'paul/example', seat: '2' }), DEVELOP_APP)
+    assert.equal(appIdOf({ branch: 'master', seat: '1' }), DEVELOP_APP)
+    assert.equal(appIdOf({ branch: '', seat: '' }), STABLE_APP)
+    const recorded: string[] = []
+    setup({
+      branch: 'develop',
+      params: { seat: 'production' },
+      apiVersion() {},
+      buildNumber(key) {
+        recorded.push(key)
+      },
+      parallel() {
+        assert.fail('the build stages belong to the build workflow')
+      },
+      workflow(_name, _options, declare) {
+        declare({
+          stage() {},
+          parallel(_group, members) {
+            const ios = (members as { ios: Array<{ apple: { app: string }; publishes?: string[] }> }).ios
+            const android = (members as { android: Array<{ publishes?: string[] }> }).android
+            recorded.push(ios[0]?.apple.app ?? '')
+            recorded.push((ios[0]?.publishes ?? []).join(','))
+            recorded.push((android[1]?.publishes ?? []).join(','))
+            recorded.push(ios[1]?.apple.app ?? '')
+          }
+        })
+      }
+    })
+    assert.deepEqual(recorded, [
+      DEVELOP_APP,
+      DEVELOP_APP,
+      DEVELOP_APP,
+      DEVELOP_APP,
+      STABLE_APP
+    ])
+  })
+
+  it('refuses a develop build whose workspace is missing', async () => {
+    await assert.rejects(
+      () =>
+        buildIos({
+          run: { branch: 'develop', params: { seat: 'production' } },
+          async sh() {
+            return { code: 0, stdout: '', stderr: '' }
+          }
+        } as never),
+      /needs its workspace/
+    )
+  })
+
+  it('rewrites the stable app id to the develop app, and only once', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'develop-app-'))
+    try {
+      const files: Record<string, string> = {
+        'android/app/build.gradle': 'applicationId "app.teamstation.app"\n',
+        'android/app/src/main/res/values/strings.xml':
+          '<string name="app_name">TeamStation</string>\n',
+        'ios/TeamStation.xcodeproj/project.pbxproj':
+          'PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app.tests;\nPRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\nPRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\n',
+        'ios/TeamStation/Info.plist':
+          '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>\n<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>\n'
+      }
+      for (const [file, text] of Object.entries(files)) {
+        const full = path.join(root, file)
+        mkdirSync(path.dirname(full), { recursive: true })
+        writeFileSync(full, text)
+      }
+      applyDevelopIdentity(root)
+      applyDevelopIdentity(root)
+      const gradle = readFileSync(path.join(root, 'android/app/build.gradle'), 'utf8')
+      const project = readFileSync(
+        path.join(root, 'ios/TeamStation.xcodeproj/project.pbxproj'),
+        'utf8'
+      )
+      assert.match(gradle, /applicationId "app\.teamstation\.develop"/)
+      assert.match(project, /PRODUCT_BUNDLE_IDENTIFIER = app\.teamstation\.app\.tests;/)
+      assert.equal(
+        project.match(/PRODUCT_BUNDLE_IDENTIFIER = app\.teamstation\.develop;/g)?.length,
+        2
+      )
+      assert.equal(project.match(/PRODUCT_NAME = "TeamStation Develop";/g)?.length, 2)
+      assert.equal(project.includes('PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;'), false)
+      assert.throws(
+        () => applyDevelopIdentity(path.join(root, 'missing')),
+        /is missing/
+      )
+      writeFileSync(
+        path.join(root, 'android/app/build.gradle'),
+        'applicationId "app.example.other"\n'
+      )
+      assert.throws(() => applyDevelopIdentity(root), /is missing/)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('installs with npm when Socket has no quota or no token', async () => {
