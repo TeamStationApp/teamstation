@@ -1,3 +1,4 @@
+import type { ApiKeyPool } from '../../common/aiKeys'
 import { MAX_ASK_OPTIONS } from '../../common/api'
 import {
   type BallInPlayAction,
@@ -27,6 +28,7 @@ import {
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
 import { DICTATION_VOCABULARY, heardAs } from '../../common/scoring/vocabulary'
+import { retryableStatus, shuffledKeys } from '../aiKeyFallback'
 import { placeSections, placeTools } from './placeInstructions'
 
 /**
@@ -125,7 +127,7 @@ export function withTags(context: string): string {
 }
 
 export interface InterpreterConfig {
-  apiKey: string
+  apiKey: ApiKeyPool
   model: string
   baseUrl?: string
   /** OpenAI's chat completions (xAI speaks it too), or Anthropic's messages. */
@@ -1750,6 +1752,22 @@ export class Interpretation {
   private async request(): Promise<
     { calls: ToolCall[]; said: string } | { error: string }
   > {
+    const keys = shuffledKeys(this.config.apiKey)
+    let latest = { error: 'No API keys are configured' }
+    for (const key of keys) {
+      const result = await this.requestOnce(key)
+      if (!('error' in result)) return result
+      latest = { error: result.error }
+      if (result.retryable !== true) break
+    }
+    return latest
+  }
+
+  private async requestOnce(
+    apiKey: string
+  ): Promise<
+    { calls: ToolCall[]; said: string } | { error: string; retryable?: boolean }
+  > {
     const baseUrl = this.config.baseUrl ?? DEFAULT_BASE_URL
     const provider = hostOf(baseUrl)
     const deadlineMs = this.config.deadlineMs ?? DEADLINE_MS
@@ -1761,8 +1779,8 @@ export class Interpretation {
     }, deadlineMs)
     const call =
       this.config.api === 'messages'
-        ? this.messagesCall(baseUrl)
-        : this.chatCall(baseUrl)
+        ? this.messagesCall(baseUrl, apiKey)
+        : this.chatCall(baseUrl, apiKey)
     try {
       const response = await (this.config.fetch ?? fetch)(call.url, {
         method: 'POST',
@@ -1772,30 +1790,30 @@ export class Interpretation {
       })
       const text = await response.text()
       if (!response.ok) {
-        const error = `${provider} answered ${response.status}: ${text.slice(0, 200)}`
+        const error = `${provider} answered ${response.status}`
         this.note({ error })
-        return { error }
+        return { error, retryable: retryableStatus(response.status) }
       }
       const read = call.read(parse(text))
       this.note(read)
       return read
-    } catch (error) {
+    } catch {
       const failure = timedOut
         ? `${provider} gave no answer within ${Math.round(deadlineMs / 1000)}s`
-        : `${provider} could not be reached: ${error instanceof Error ? error.message : String(error)}`
+        : `${provider} could not be reached`
       this.note({ error: failure })
-      return { error: failure }
+      return { error: failure, retryable: true }
     } finally {
       clearTimeout(timer)
     }
   }
 
   /** OpenAI's chat completions, which xAI and OpenAI both answer. */
-  private chatCall(baseUrl: string): LlmCall {
+  private chatCall(baseUrl: string, apiKey: string): LlmCall {
     return {
       url: `${baseUrl}/chat/completions`,
       headers: {
-        Authorization: `Bearer ${this.config.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         ...(this.config.cacheKey == null
           ? {}
           : { 'x-grok-conv-id': this.config.cacheKey })
@@ -1842,12 +1860,12 @@ export class Interpretation {
    * conversation is kept in the chat shape and translated here, and its
    * `tool_use` blocks are read back as the same tool calls.
    */
-  private messagesCall(baseUrl: string): LlmCall {
+  private messagesCall(baseUrl: string, apiKey: string): LlmCall {
     const [system, game, ...rest] = this.messages
     return {
       url: `${baseUrl}/messages`,
       headers: {
-        'x-api-key': this.config.apiKey,
+        'x-api-key': apiKey,
         'anthropic-version': '2023-06-01'
       },
       body: {

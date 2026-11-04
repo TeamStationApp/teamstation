@@ -8,6 +8,7 @@ import { createServer as createPortServer } from 'node:net'
 import path from 'node:path'
 
 import { Pool } from 'pg'
+import WebSocket from 'ws'
 
 import { asSeasonStats, asStandingsRow } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
@@ -315,6 +316,62 @@ async function startupSmoke(): Promise<void> {
       await new Promise(resolve => setTimeout(resolve, 100))
     }
     assert(healthy, 'The isolated entry point did not become healthy')
+    const auth = { authorization: `Bearer ${token}` }
+    assert.equal(
+      (await fetch(`${origin}/api/v1/me/tess`, { headers: auth })).status,
+      503
+    )
+    assert.equal(
+      (
+        await fetch(`${origin}/api/v1/games/gam_startup/narrations/0-0`, {
+          headers: auth
+        })
+      ).status,
+      503
+    )
+    const voiceStatus = await new Promise<number>((resolve, reject) => {
+      const socket = new WebSocket(
+        `${origin.replace(/^http/, 'ws')}/api/v1/dictation`,
+        { headers: auth }
+      )
+      socket.on('unexpected-response', (_request, response) => {
+        response.resume()
+        resolve(response.statusCode!)
+        socket.terminate()
+      })
+      socket.on('open', () => {
+        socket.close()
+        reject(new Error('Unconfigured voice must be unavailable'))
+      })
+      socket.on('error', () => undefined)
+    })
+    assert.equal(voiceStatus, 503)
+    await db
+      .insertInto('system_settings')
+      .values({
+        key: 'ai.keys',
+        value: JSON.stringify({
+          anthropicChatbot: ['chat-placeholder'],
+          anthropicScoring: ['score-placeholder'],
+          xaiVoice: ['voice-placeholder']
+        })
+      })
+      .execute()
+    const enabled = await (await fetch(`${origin}/api/v1/health`)).json()
+    assert.equal(enabled.tess, true)
+    assert.equal(enabled.narration, true)
+    assert.equal(enabled.dictation, true)
+    assert.equal(enabled.dictationModels.includes('claude-haiku-5-5'), true)
+    assert(!JSON.stringify(enabled).includes('placeholder'))
+    await db
+      .deleteFrom('system_settings')
+      .where('key', '=', 'ai.keys')
+      .execute()
+    const disabled = await (await fetch(`${origin}/api/v1/health`)).json()
+    assert.equal(disabled.tess, false)
+    assert.equal(disabled.narration, false)
+    assert.equal(disabled.dictation, false)
+
     const standingsResponse = await fetch(
       `${origin}/api/v1/seasons/sea_startup/standings?includeExhibitions=false`,
       { headers: { authorization: `Bearer ${token}` } }

@@ -81,7 +81,9 @@ describe('replay narration audio', function () {
   let server: ReturnType<express.Express['listen']> | undefined
   let offServer: ReturnType<express.Express['listen']> | undefined
 
-  function app(spoken: SpeechSettings | null): express.Express {
+  function app(
+    spoken: SpeechSettings | null | (() => Promise<SpeechSettings | null>)
+  ): express.Express {
     const made = express()
     made.use((req, _res, next) => {
       const id = req.header('x-test-actor')
@@ -418,6 +420,27 @@ describe('replay narration audio', function () {
           ...(actor == null ? {} : { 'x-test-actor': String(actor) })
         }
       })
+
+    it('resolves current voice settings per request, including disabling an existing route', async () => {
+      let enabled = false
+      const dynamic = listen(app(async () => (enabled ? settings : null)))
+      const path = `/games/${REPLAY_SEED.games.final}/narrations/0-0`
+      try {
+        expect(
+          (await get(dynamic.base, path, seeded.accounts.team)).status
+        ).equals(503)
+        enabled = true
+        expect(
+          (await get(dynamic.base, path, seeded.accounts.team)).status
+        ).equals(200)
+        enabled = false
+        expect(
+          (await get(dynamic.base, path, seeded.accounts.team)).status
+        ).equals(503)
+      } finally {
+        dynamic.server.close()
+      }
+    })
 
     it('answers each member the sentence as MP3, and 304 for one they hold', async function () {
       const path = `/games/${REPLAY_SEED.games.final}/narrations/0-0`
