@@ -64,7 +64,18 @@ export interface TessChatState {
   /** Answers whether the message reached Tess; false while she is answering. */
   send: (text: string, attachments: TessAttachmentRef[]) => Promise<boolean>
   upload: (upload: TessUpload) => Promise<TessAttachmentRef | null>
-  confirm: (changeId: string) => Promise<void>
+  /**
+   * Runs a turn's pending changes, held as one, in order, and Tess reports
+   * on them together.
+   */
+  confirmAll: (changeIds: string[]) => Promise<void>
+  /**
+   * Stops the turn this chat sent, a message or a confirm, or the one the
+   * server named as running when the chat opened: the server ends it, and
+   * her reply ends as far as it went, marked stopped. Nothing while no turn
+   * is known.
+   */
+  stop: () => Promise<void>
   showError: (message: string) => void
 }
 
@@ -159,18 +170,17 @@ function pendingAgain(
   )
 }
 
-function withChange(
+/** The messages with each of `changes` as it is now, by id. */
+function withChanges(
   messages: TessMessage[],
-  changeId: string,
-  update: (change: TessChange) => TessChange
+  changes: readonly TessChange[]
 ): TessMessage[] {
+  const byId = new Map(changes.map(change => [change.id, change]))
   return messages.map(message =>
-    message.changes.some(change => change.id === changeId)
+    message.changes.some(change => byId.has(change.id))
       ? {
           ...message,
-          changes: message.changes.map(change =>
-            change.id === changeId ? update(change) : change
-          )
+          changes: message.changes.map(change => byId.get(change.id) ?? change)
         }
       : message
   )
@@ -196,7 +206,14 @@ function withChange(
  * thinking, her steps and her text as they arrive, redrawn at most once a
  * frame, and her stored reply takes its place when she is done. Once the
  * server has stored the message it replaces the one shown, and a confirmed
- * change shows how it ended before her report on it.
+ * change, or a batch of them (`confirmAll`), shows how each ended before her
+ * report on them.
+ *
+ * Each message and confirm goes with an id of its own, and `stop` names the
+ * one out: the server stops that turn, and its stream ends as any answer
+ * does, her reply as far as it went and marked stopped. A chat opened while
+ * she answers names the turn by the id the server answers with it, so Stop
+ * works there too.
  */
 export function useTess(
   api: TessApi,
@@ -210,6 +227,8 @@ export function useTess(
   // Messages and confirms with the server, counted: the server takes one
   // turn at a time, so nothing more is sent while any is out.
   const working = useRef(0)
+  // The client id of the turn this chat has out, which a stop names.
+  const running = useRef<string | null>(null)
   const pendingId = useRef(0)
   const screen = useRef(options.screen)
   screen.current = options.screen
@@ -233,12 +252,19 @@ export function useTess(
         setMessages(current => merged(conversation.messages, current))
         setLoading(false)
         if (conversation.answering !== true) return
-        // Opened while she answers: her answer shows when she is done.
+        // Opened while she answers: her answer shows when she is done, and
+        // the turn the server names is this chat's to stop.
         begin()
+        const { turnClientId } = conversation
+        if (turnClientId != null) running.current = turnClientId
+        const ended = (): void => {
+          if (running.current === turnClientId) running.current = null
+          end()
+        }
         settledConversation(api, mounted, conversation).then(settled => {
           if (settled != null && mounted.current) setMessages(settled.messages)
-          end()
-        }, end)
+          ended()
+        }, ended)
       },
       (failure: unknown) => {
         if (!mounted.current) return
@@ -256,6 +282,7 @@ export function useTess(
       if (working.current > 0) return false
       begin()
       const clientId = newClientId()
+      running.current = clientId
       const optimistic: TessMessage = {
         id: `pending-${++pendingId.current}`,
         role: 'user',
@@ -365,6 +392,7 @@ export function useTess(
         return at >= 0
       } finally {
         if (answer != null) stopTelling(answer)
+        if (running.current === clientId) running.current = null
         end()
       }
     },
@@ -385,57 +413,75 @@ export function useTess(
     [api]
   )
 
-  const setStatus = (changeId: string, status: TessChangeStatus): void => {
-    setMessages(current =>
-      withChange(current, changeId, change => ({ ...change, status }))
-    )
-  }
-
-  const confirm = useCallback(
-    async (changeId: string) => {
-      if (working.current > 0) return
+  const confirmAll = useCallback(
+    async (changeIds: string[]) => {
+      if (working.current > 0 || changeIds.length === 0) return
       begin()
-      setStatus(changeId, 'running')
+      const clientId = newClientId()
+      running.current = clientId
+      const ids = new Set(changeIds)
+      const setStatuses = (status: TessChangeStatus): void => {
+        setMessages(current =>
+          withChanges(
+            current,
+            current.flatMap(message =>
+              message.changes.flatMap(change =>
+                ids.has(change.id) ? [{ ...change, status }] : []
+              )
+            )
+          )
+        )
+      }
+      setStatuses('running')
       setError(null)
       let answered: TessMessage[] | undefined
-      // How the change ended, as the server told it before she reports it.
+      // How the changes ended, as the server told it before she reports.
       let told = false
       try {
-        const answer = await api.streamTessConfirm(
-          changeId,
+        const answer = await api.streamTessConfirmAll(
+          changeIds,
           tell(stored => {
-            const { change } = stored
-            if (change == null) return
+            const { changes } = stored
+            if (changes == null) return
             told = true
-            setMessages(current => withChange(current, changeId, () => change))
-          })
+            setMessages(current => withChanges(current, changes))
+          }),
+          { clientId }
         )
         answered = answer.messages
         if (mounted.current)
           setMessages(current =>
-            merged(
-              withChange(current, changeId, () => answer.change),
-              answer.messages
-            )
+            merged(withChanges(current, answer.changes), answer.messages)
           )
       } catch (failure) {
         stopTelling()
         if (!mounted.current) return
         setError(messageOf(failure))
-        // The server knows whether it ran: show what it says once Tess is
-        // done, or what it already told, or let the user hold again when it
-        // can be asked neither.
+        // As for one change: what the server says once Tess is done, or
+        // what it already told, or the hold again when it can be asked
+        // neither.
         const conversation = await settledConversation(api, mounted)
         if (!mounted.current) return
         if (conversation != null) setMessages(conversation.messages)
-        else if (!told) setStatus(changeId, 'pending')
+        else if (!told) setStatuses('pending')
       } finally {
         if (answered != null) stopTelling(answered)
+        if (running.current === clientId) running.current = null
         end()
       }
     },
     [api, tell, stopTelling]
   )
+
+  const stop = useCallback(async () => {
+    const clientId = running.current
+    if (clientId == null) return
+    try {
+      await api.stopTess(clientId)
+    } catch (failure) {
+      if (mounted.current) setError(messageOf(failure))
+    }
+  }, [api])
 
   const showError = useCallback((message: string) => {
     setError(message)
@@ -450,7 +496,8 @@ export function useTess(
     error,
     send,
     upload,
-    confirm,
+    confirmAll,
+    stop,
     showError
   }
 }

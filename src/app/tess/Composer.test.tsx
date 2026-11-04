@@ -245,6 +245,42 @@ describe('Composer', function () {
     expect(sent).deep.equals([{ text: 'Hello', attachments: [] }])
   })
 
+  it('is Stop only while Tess answers and the draft is empty, and Send, disabled, once there is something', async function () {
+    let stops = 0
+    const { sent, props } = composer({
+      busy: true,
+      onStop: () => {
+        stops += 1
+      }
+    })
+    const labelled = (label: string): HTMLElement | null =>
+      document.body.querySelector<HTMLElement>(`[aria-label="${label}"]`)
+    await render(<Composer {...props} />)
+    expect(labelled('Send')).equals(null)
+    expect(labelled('Stop Tess')!.textContent).equals('stop')
+    await click(byLabel('Stop Tess'))
+    expect(stops).equals(1)
+    await type('A')
+    expect(labelled('Stop Tess')).equals(null)
+    expect(sent).deep.equals([])
+    // Only white space is nothing to send.
+    await type('  ')
+    expect(labelled('Stop Tess')).not.equals(null)
+    // A file is something to send.
+    await type('')
+    await attachCsv('runs.csv')
+    expect(labelled('Stop Tess')).equals(null)
+    // Free again, and empty: Send, disabled.
+    await rerender(<Composer {...props} busy={false} />)
+    await click(byLabel('Remove runs.csv'))
+    expect(labelled('Stop Tess')).equals(null)
+    expect(byLabel('Send').getAttribute('aria-disabled')).equals('true')
+    // With no way to stop, it stays Send while she answers.
+    await rerender(<Composer {...props} onStop={undefined} />)
+    expect(labelled('Stop Tess')).equals(null)
+    expect(stops).equals(1)
+  })
+
   it('gives the draft and its files back when the send fails', async function () {
     const { props } = composer({ onSend: async () => false })
     await render(<Composer {...props} />)

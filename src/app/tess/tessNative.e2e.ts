@@ -15,7 +15,7 @@ import type { TessNativeManifest } from '../../test/tessNativeFixture.e2e'
  * - `TS_TESS_LAYOUT=iphone` (the default): N1–N10 on the iPhone 13 Pro,
  *   narrow, `TS_TESS_IOS_DEVICE`. `TS_UI_BEFORE=1` runs N1 alone against
  *   the base app, asserting the umpire and Notifications buttons only.
- * - `TS_TESS_LAYOUT=ipad`: I1–I5 on the task's iPad simulator, wide in
+ * - `TS_TESS_LAYOUT=ipad`: I1–I6 on the task's iPad simulator, wide in
  *   landscape, `TS_TESS_IOS_DEVICE`.
  * - `TS_TESS_LAYOUT=android`: A1–A4 on the task's emulator,
  *   `TS_TESS_ANDROID_DEVICE`. Its build is `src/MOBILE.md`'s local release
@@ -487,24 +487,38 @@ async function main(): Promise<void> {
       await beacon('N5')
       console.log('N5 table full screen, beacon 0')
 
-      // N6: release early, then hold 3 s.
+      // N6: the change as a row of a table, its request folded; release
+      // early, then hold 2 s.
       const gamesBefore = await gamesOfTeam()
-      // The list ends at the card, whose body pushes the reply above it off
-      // a phone's screen, so the card's button is what shows the answer.
+      // The list ends at the batch, so the hold is what shows the answer.
       await say(
         'Add a game against Demo Eagles Saturday at 10',
         'Hold to confirm'
       )
+      for (const cell of ['Opponent', 'Sat May 15', '10:00 AM', 'Demo Field'])
+        await showExactly(cell)
+      await show('Request details')
+      // The request is folded away: no path, and no JSON.
+      expect(await find(`POST /teams/${manifest.team}/games`)).equals(undefined)
+      await hidden('.*"opponent".*')
+      await capture('narrow-change-table.png')
+      await tap('Request details')
+      await showExactly(`POST /teams/${manifest.team}/games`)
+      await capture('narrow-change-request.png')
+      await tap('Request details')
+      await hidden(`POST /teams/${manifest.team}/games`)
       const video = join(out, 'narrow-confirm-trace.mp4')
       await startRecording(video)
       await hold('Hold to confirm', 1000)
       await show('Hold to confirm')
       expect(await gamesOfTeam()).equals(gamesBefore)
-      await hold('Hold to confirm', 3500)
+      await hold('Hold to confirm', 2500)
       await show('Done', 30000)
       await stopRecording(video)
       expect(await gamesOfTeam()).equals(gamesBefore + 1)
-      console.log('N6 early release ran nothing; 3 s ran the change')
+      console.log(
+        'N6 one row, request folded; early release ran nothing; 2 s ran the change'
+      )
 
       // N7: + offers Photo and File; the document picker cancels cleanly.
       await tap('Attach a file')
@@ -697,6 +711,33 @@ async function main(): Promise<void> {
       await tap('Back')
       await show('Close Tess', 30000)
       console.log('I5 DJ hid Tess; leaving brought the column back')
+
+      // I6: a reply's changes, expanded over the pane, the chat beside it.
+      // Nothing is confirmed: Close leaves the three games pending.
+      const gamesBeforeI6 = await gamesOfTeam()
+      await say(
+        'Schedule three games against Demo Eagles on Saturdays at 10',
+        'Hold Confirm under the table to schedule all three games'
+      )
+      for (const cell of ['Opponent', 'Sat May 22', 'Sat May 29', 'Sat Jun 5'])
+        await showExactly(cell)
+      await tap('Expand the changes over the page')
+      const tableClose = (await exactly('Close'))!
+      expect(tableClose.bounds!.x, 'the viewer over the pane').greaterThan(400)
+      const besideField = (await find('Tess field'))!.bounds!
+      expect(
+        besideField.x + besideField.width,
+        'the chat beside it'
+      ).lessThanOrEqual(400)
+      await show('Ask Tess')
+      await capture('ipad-change-expanded.png')
+      await tap('Close')
+      expect(await exactly('Close', 3000), 'the viewer closed').equals(
+        undefined
+      )
+      await show('Hold to confirm')
+      expect(await gamesOfTeam()).equals(gamesBeforeI6)
+      console.log('I6 the change table expanded over the pane, then closed')
     }
 
     if (layout === 'android') {

@@ -5,28 +5,37 @@ import { Icon } from '../components/Icon'
 import { lstrings, sprintf } from '../locales/strings'
 import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { ChangeCard } from './ChangeCard'
+import { ChangeBatch } from './ChangeBatch'
 import { TessMarkdown } from './TessMarkdown'
 import { TessThinking } from './TessThinking'
-import type { TessAttachmentRef, TessMessage as Message } from './tessTypes'
+import type {
+  TessAttachmentRef,
+  TessChange,
+  TessMessage as Message
+} from './tessTypes'
 import type { TessLive } from './useTess'
 
 /**
  * One message: the user's words in a bubble on the right with the files they
  * attached, or Tess's reply on the left, under a row for her thinking and
- * her steps when she took any, with a card for each change it proposes.
+ * her steps when she took any. The last reply of a turn shows the changes
+ * every reply of that turn proposed, as one batch (`ChangeBatch`). A reply
+ * the person stopped ends with "Stopped", in italics.
  */
 export function TessMessage({
   message,
+  changes = [],
   onNavigate,
-  onConfirm,
+  onConfirmAll,
   holdDisabled = false,
   thoughtSeconds
 }: {
   message: Message
+  /** The turn's changes, on its last reply; none on any other message. */
+  changes?: TessChange[]
   onNavigate: (path: string) => void
-  onConfirm: (changeId: string) => void
-  /** Tess is answering: her cards take no hold until she has. */
+  onConfirmAll: (changeIds: string[]) => void
+  /** Tess is answering: the batch takes no hold until she has. */
   holdDisabled?: boolean
   /** How long she thought on this reply, when the chat saw her do it. */
   thoughtSeconds?: number
@@ -60,15 +69,21 @@ export function TessMessage({
           seconds={thoughtSeconds}
         />
       )}
-      <TessMarkdown text={message.text} onNavigate={onNavigate} />
-      {message.changes.map(change => (
-        <ChangeCard
-          key={change.id}
-          change={change}
-          onConfirm={onConfirm}
+      {message.text !== '' && (
+        <TessMarkdown text={message.text} onNavigate={onNavigate} />
+      )}
+      {changes.length > 0 && (
+        <ChangeBatch
+          changes={changes}
+          onConfirmAll={onConfirmAll}
           holdDisabled={holdDisabled}
         />
-      ))}
+      )}
+      {message.stopped === true && (
+        <Text testID="Tess stopped" style={styles.stopped}>
+          {lstrings.tess_stopped}
+        </Text>
+      )}
     </View>
   )
 }
@@ -146,6 +161,12 @@ const getStyles = cacheStyles((theme: Theme) => {
     reply: {
       alignSelf: 'stretch',
       gap: theme.rem(theme.spaceSmRem)
+    },
+    stopped: {
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(0.9375),
+      fontStyle: 'italic',
+      color: theme.secondaryTextColor
     },
     chips: {
       flexDirection: 'row',

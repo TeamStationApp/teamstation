@@ -43,6 +43,8 @@ export interface ComposerProps {
   onSend: (text: string, attachments: TessAttachmentRef[]) => Promise<boolean>
   onUpload: (upload: TessUpload) => Promise<TessAttachmentRef | null>
   onError: (message: string) => void
+  /** Stops Tess's turn: Stop, shown while she answers and the draft is empty. */
+  onStop?: () => void
   /** Tess is still answering the last message. */
   busy: boolean
   error?: string | null
@@ -69,6 +71,12 @@ type SizeWatcher = new (
 export const FIELD_MAX_LINES = 6
 
 /**
+ * How long after a send Stop, which takes Send's place as the draft empties,
+ * ignores a press: the second of a double press on Send is not a stop.
+ */
+export const STOP_GUARD_MS = 600
+
+/**
  * The field's `nativeID` on a phone or a tablet: iOS's Shift+Return newline
  * (`ios/TeamStation/TSShiftReturn.m`) acts on the field that carries it and
  * no other.
@@ -78,9 +86,13 @@ export const FIELD_NATIVE_ID = 'tessComposerField'
 /**
  * Where the user writes to Tess: a small + on the left, the field, send on
  * the right, the attached files above, any error below, and the microphone
- * centered under it all. A message takes at most five files: a sixth is
- * refused with the reason, as soon as it is taken, and + says so rather than
- * open.
+ * centered under it all. While Tess answers and the draft is empty (no
+ * words, no files, none uploading) Send is Stop, which stops her turn; a
+ * letter typed makes it Send again, disabled until she is done. For
+ * `STOP_GUARD_MS` after a send Stop ignores a press, so a double press on
+ * Send sends once and stops nothing. A message takes at most five files: a
+ * sixth is refused with the reason, as soon as it is taken, and + says so
+ * rather than open.
  *
  * The field is one line, and grows with what is in it up to six lines, then
  * scrolls. On the web Enter sends and Shift+Enter starts a new line; on a
@@ -92,6 +104,7 @@ export function Composer({
   onSend,
   onUpload,
   onError,
+  onStop,
   busy,
   error,
   mic,
@@ -153,12 +166,17 @@ export function Composer({
   // renders; a send empties it at once.
   const draft = useRef({ text, attachments, busy, uploading })
   draft.current = { text, attachments, busy, uploading }
+  // When this composer last sent, for Stop to ignore a press soon after.
+  const sentAt = useRef(-Infinity)
 
+  const empty =
+    text.trim() === '' && attachments.length === 0 && uploading === 0
   const ready =
     !busy &&
     uploading === 0 &&
     attachments.length <= TESS_MAX_ATTACHMENTS &&
-    (text.trim() !== '' || attachments.length > 0)
+    !empty
+  const stoppable = busy && empty && onStop != null
   const tooMany = (): void => {
     onError(
       sprintf(lstrings.tess_attach_too_many, String(TESS_MAX_ATTACHMENTS))
@@ -171,6 +189,7 @@ export function Composer({
     attachments: TessAttachmentRef[]
   }): void => {
     draft.current = { ...draft.current, text: '', attachments: [] }
+    sentAt.current = Date.now()
     // iOS keeps a grown field's height when only its value empties; the
     // native clear measures it again, back to one line.
     if (Platform.OS !== 'web') field.current?.clear()
@@ -349,21 +368,38 @@ export function Composer({
           onKeyPress={keyPress}
           style={[styles.field, grown != null && { height: grown }]}
         />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={lstrings.tess_send}
-          accessibilityState={{ disabled: !ready }}
-          disabled={!ready}
-          onPress={send}
-          style={({ pressed }) => [
-            styles.round,
-            styles.send,
-            !ready && styles.disabled,
-            pressed && styles.pressed
-          ]}
-        >
-          <Icon name="send" size={1.25} color={theme.buttonTextColor} />
-        </Pressable>
+        {stoppable ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={lstrings.tess_stop}
+            onPress={() => {
+              if (Date.now() - sentAt.current >= STOP_GUARD_MS) onStop?.()
+            }}
+            style={({ pressed }) => [
+              styles.round,
+              styles.send,
+              pressed && styles.pressed
+            ]}
+          >
+            <Icon name="stop" size={1.25} color={theme.buttonTextColor} />
+          </Pressable>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={lstrings.tess_send}
+            accessibilityState={{ disabled: !ready }}
+            disabled={!ready}
+            onPress={send}
+            style={({ pressed }) => [
+              styles.round,
+              styles.send,
+              !ready && styles.disabled,
+              pressed && styles.pressed
+            ]}
+          >
+            <Icon name="send" size={1.25} color={theme.buttonTextColor} />
+          </Pressable>
+        )}
       </View>
       {error != null && error !== '' && (
         <Text

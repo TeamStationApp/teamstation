@@ -14,6 +14,8 @@ import {
   settle,
   unmount
 } from '../../test/tessTestKit'
+import { STOP_GUARD_MS } from './Composer'
+import { HOLD_MS } from './HoldToConfirm'
 import { TessChat } from './TessChat'
 import type {
   TessApi,
@@ -88,10 +90,15 @@ class FakeTess implements TessApi {
   }> = []
 
   confirms: Array<{
-    id: string
-    answer: Deferred<{ change: TessChange; messages: TessMessage[] }>
+    ids: string[]
+    clientId?: string
+    answer: Deferred<{ changes: TessChange[]; messages: TessMessage[] }>
     tell: (event: TessStreamEvent) => void
   }> = []
+
+  /** The client ids each stop named, in order. */
+  stops: string[] = []
+  stopFails = false
 
   uploads: Array<Deferred<{ id: string; name: string; kind: 'csv' }>> = []
 
@@ -121,13 +128,23 @@ class FakeTess implements TessApi {
     return await answer.promise
   }
 
-  async streamTessConfirm(
-    id: string,
-    tell: (event: TessStreamEvent) => void
-  ): Promise<{ change: TessChange; messages: TessMessage[] }> {
-    const answer = deferred<{ change: TessChange; messages: TessMessage[] }>()
-    this.confirms.push({ id, answer, tell })
+  async streamTessConfirmAll(
+    ids: string[],
+    tell: (event: TessStreamEvent) => void,
+    options: { clientId?: string } = {}
+  ): Promise<{ changes: TessChange[]; messages: TessMessage[] }> {
+    const answer = deferred<{
+      changes: TessChange[]
+      messages: TessMessage[]
+    }>()
+    this.confirms.push({ ids, clientId: options.clientId, answer, tell })
     return await answer.promise
+  }
+
+  async stopTess(clientId: string): Promise<void> {
+    this.stops.push(clientId)
+    if (this.stopFails)
+      throw new HttpError('offline', 'Cannot reach TeamStation.')
   }
 
   async tessUsage(): Promise<[]> {
@@ -196,7 +213,7 @@ async function hold(): Promise<void> {
     )
     await new Promise(resolve => setTimeout(resolve, 80))
   })
-  await clock!.advance(3000)
+  await clock!.advance(HOLD_MS)
   await act(async () => {
     byLabel('Confirming…').dispatchEvent(
       new window.MouseEvent('mouseup', { bubbles: true })
@@ -211,7 +228,7 @@ describe('useTess and the chat', function () {
     clock = undefined
   })
 
-  it('loads the conversation: bubbles, attachments, the reply and its card', async function () {
+  it('loads the conversation: bubbles, attachments, the reply and its changes', async function () {
     const api = new FakeTess()
     const navigated: string[] = []
     let closed = 0
@@ -229,7 +246,9 @@ describe('useTess and the chat', function () {
       'attach_fileruns.csvattach_filephoto.png (described)Chart these'
     ])
     expect(texts('Tess reply')[0]).includes('See Comets.')
-    expect(texts('Tess change request')).deep.equals(['POST /teams/t1/games'])
+    expect(texts('Tess change')).deep.equals([CHANGE.summary])
+    // The request is folded away.
+    expect(texts('Tess change request')).deep.equals([])
     await click(
       [...document.body.querySelectorAll<HTMLElement>('[role="link"]')].find(
         node => node.textContent === 'Comets'
@@ -322,19 +341,20 @@ describe('useTess and the chat', function () {
       ])
     })
     await settle()
-    const cards = [
+    const batches = [
       ...document.body.querySelectorAll<HTMLElement>(
-        '[data-testid="Tess change"]'
+        '[data-testid="Tess changes"]'
       )
     ]
-    expect(cards.length).equals(2)
-    expect(cards[0].textContent).includes('Expired')
-    expect(cards[0].querySelector('[aria-label="Hold to confirm"]')).equals(
+    expect(batches.length).equals(2)
+    expect(texts('Tess change status')).deep.equals(['Expired'])
+    expect(batches[0].textContent).includes('Expired')
+    expect(batches[0].querySelector('[aria-label="Hold to confirm"]')).equals(
       null
     )
-    expect(cards[1].querySelector('[aria-label="Hold to confirm"]')).not.equals(
-      null
-    )
+    expect(
+      batches[1].querySelector('[aria-label="Hold to confirm"]')
+    ).not.equals(null)
     expect(holds()).equals(1)
   })
 
@@ -619,6 +639,25 @@ describe('useTess and the chat', function () {
     expect(closing.loads.length).equals(1)
   })
 
+  it('stops the turn under way when the chat opens by the id the server names', async function () {
+    const api = new FakeTess()
+    clock = manualClock()
+    await render(<Harness api={api} />)
+    const asked = message('3', 'user', 'Plan the season', { clientId: 'web1' })
+    await act(async () => {
+      api.loads[0].resolve({
+        available: true,
+        messages: [...HISTORY, asked],
+        contextTokens: 10,
+        answering: true,
+        turnClientId: 'web1'
+      })
+    })
+    await settle()
+    await click(byLabel('Stop Tess'))
+    expect(api.stops).deep.equals(['web1'])
+  })
+
   it('sends one message at a time, with the attachment ids', async function () {
     const api = new FakeTess()
     await render(<Harness api={api} />)
@@ -696,12 +735,12 @@ describe('useTess and the chat', function () {
     await render(<Harness api={api} />)
     await loaded(api)
     await hold()
-    expect(api.confirms.map(confirm => confirm.id)).deep.equals(['c1'])
+    expect(api.confirms.map(confirm => confirm.ids)).deep.equals([['c1']])
     expect(byLabel('Confirming…').getAttribute('aria-disabled')).equals('true')
     expect(byTestId('Tess thinking')).not.equals(null)
     await act(async () => {
       api.confirms[0].answer.resolve({
-        change: { ...CHANGE, status: 'done' },
+        changes: [{ ...CHANGE, status: 'done' }],
         messages: [message('5', 'assistant', 'The game is on the schedule.')]
       })
     })
@@ -709,6 +748,61 @@ describe('useTess and the chat', function () {
     expect(texts('Tess change status')).deep.equals(['Done'])
     expect(texts('Tess reply').at(-1)).includes('The game is on the schedule.')
     expect(byTestId('Tess thinking')).equals(null)
+  })
+
+  it('confirms a turn’s changes together: all running, each as told, then one report', async function () {
+    const api = new FakeTess()
+    clock = manualClock()
+    await render(<Harness api={api} />)
+    const more = [
+      { ...CHANGE, id: 'c2' },
+      { ...CHANGE, id: 'c3' }
+    ]
+    await loaded(api, [
+      HISTORY[0],
+      HISTORY[1],
+      message('3', 'assistant', 'And two more.', { changes: more })
+    ])
+    expect(texts('Tess hold')).length(1)
+    await hold()
+    expect(api.confirms.map(confirm => confirm.ids)).deep.equals([
+      ['c1', 'c2', 'c3']
+    ])
+    expect(
+      latest!.messages.flatMap(m => m.changes.map(c => c.status))
+    ).deep.equals(['running', 'running', 'running'])
+    // Nothing else is held or sent meanwhile.
+    await act(async () => {
+      await latest!.confirmAll(['c2'])
+      await latest!.confirmAll([])
+    })
+    expect(api.confirms).length(1)
+    const ended: TessChange[] = [
+      { ...CHANGE, status: 'done' },
+      { ...more[0], status: 'failed' },
+      { ...more[1], status: 'done' }
+    ]
+    await act(async () => {
+      api.confirms[0].tell({ type: 'stored', messages: [], changes: ended })
+    })
+    expect(texts('Tess change status')).deep.equals(['Done', 'Failed', 'Done'])
+    await act(async () => {
+      api.confirms[0].answer.resolve({
+        changes: ended,
+        messages: [message('5', 'assistant', 'Two of three are scheduled.')]
+      })
+    })
+    await settle()
+    expect(byTestId('Tess thinking')).equals(null)
+    // The batch moves under the report, its turn's last reply.
+    const replies = [
+      ...document.body.querySelectorAll('[data-testid="Tess reply"]')
+    ]
+    expect(replies.at(-1)!.textContent).includes('Two of three are scheduled.')
+    expect(
+      replies.at(-1)!.querySelectorAll('[data-testid="Tess change"]')
+    ).length(3)
+    expect(texts('Tess change status')).deep.equals(['Done', 'Failed', 'Done'])
   })
 
   it('holds no other change and sends nothing while Tess answers, until the last of it is answered', async function () {
@@ -720,9 +814,11 @@ describe('useTess and the chat', function () {
       id: 'c2',
       summary: 'Add a game against Demo Eagles on Sunday at 10'
     }
+    // Two turns: a batch under each.
     await loaded(api, [
-      HISTORY[0],
-      { ...HISTORY[1], changes: [CHANGE, second] }
+      ...HISTORY,
+      message('3', 'user', 'And on Sunday'),
+      message('4', 'assistant', 'Hold Confirm.', { changes: [second] })
     ])
     const pills = (): HTMLElement[] => [
       ...document.body.querySelectorAll<HTMLElement>(
@@ -730,8 +826,8 @@ describe('useTess and the chat', function () {
       )
     ]
     await hold()
-    expect(api.confirms.map(confirm => confirm.id)).deep.equals(['c1'])
-    // The other card keeps its label and takes no hold.
+    expect(api.confirms.map(confirm => confirm.ids)).deep.equals([['c1']])
+    // The other batch keeps its label and takes no hold.
     const other = byLabel('Hold to confirm')
     expect(pills().length).equals(2)
     expect(other.getAttribute('aria-disabled')).equals('true')
@@ -739,12 +835,12 @@ describe('useTess and the chat', function () {
       other.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }))
       await new Promise(resolve => setTimeout(resolve, 80))
     })
-    await clock.advance(3000)
+    await clock.advance(HOLD_MS)
     expect(api.confirms.length).equals(1)
     let sent: boolean | undefined
     await act(async () => {
       sent = await latest!.send('And the other one', [])
-      await latest!.confirm('c2')
+      await latest!.confirmAll(['c2'])
     })
     expect(sent).equals(false)
     expect(api.sends.length).equals(0)
@@ -752,7 +848,7 @@ describe('useTess and the chat', function () {
 
     await act(async () => {
       api.confirms[0].answer.resolve({
-        change: { ...CHANGE, status: 'done' },
+        changes: [{ ...CHANGE, status: 'done' }],
         messages: [message('5', 'assistant', 'The game is on the schedule.')]
       })
     })
@@ -762,14 +858,14 @@ describe('useTess and the chat', function () {
       pill.getAttribute('aria-disabled') === 'true'
     expect(pills().map(off)).deep.equals([false])
 
-    // A message out holds the cards too.
+    // A message out holds the batches too.
     await type('Is that all?')
     expect(pills().map(off)).deep.equals([true])
     await act(async () => {
       api.sends[0].answer.resolve([message('6', 'user', 'Is that all?')])
     })
     await settle()
-    // Answered, the card the message passed by has expired.
+    // Answered, the batch the message passed by has expired.
     expect(pills()).deep.equals([])
     expect(texts('Tess change status')).deep.equals(['Done', 'Expired'])
   })
@@ -858,7 +954,7 @@ describe('useTess and the chat', function () {
     await hold()
     await unmount()
     confirming.confirms[0].answer.resolve({
-      change: { ...CHANGE, status: 'done' },
+      changes: [{ ...CHANGE, status: 'done' }],
       messages: []
     })
     await settle()
@@ -1225,7 +1321,7 @@ describe('useTess and the chat', function () {
       api.confirms[0].tell({
         type: 'stored',
         messages: [],
-        change: { ...CHANGE, status: 'done' }
+        changes: [{ ...CHANGE, status: 'done' }]
       })
     })
     await act(async () => {
@@ -1253,7 +1349,7 @@ describe('useTess and the chat', function () {
       tell({
         type: 'stored',
         messages: [],
-        change: { ...CHANGE, status: 'done' }
+        changes: [{ ...CHANGE, status: 'done' }]
       })
       tell({ type: 'stored', messages: [] })
     })
@@ -1265,7 +1361,7 @@ describe('useTess and the chat', function () {
     expect(byTestId('Tess live reply')!.textContent).contains('The game is on')
     await act(async () => {
       api.confirms[0].answer.resolve({
-        change: { ...CHANGE, status: 'done' },
+        changes: [{ ...CHANGE, status: 'done' }],
         messages: [message('5', 'assistant', 'The game is on the schedule.')]
       })
     })
@@ -1274,6 +1370,70 @@ describe('useTess and the chat', function () {
     expect(texts('Tess reply').at(-1)).includes('The game is on the schedule.')
     // She told no thinking or step: no row, and no time kept.
     expect(latest!.thoughtSeconds).deep.equals({})
+  })
+
+  it('stops the running message by its client id, and ends thinking with the stopped reply', async function () {
+    const api = new FakeTess()
+    await render(<Harness api={api} />)
+    await loaded(api)
+    // Nothing is out: nothing to stop.
+    await act(async () => {
+      await latest!.stop()
+    })
+    expect(api.stops).deep.equals([])
+    await type('Schedule the whole season')
+    await act(async () => {
+      api.sends[0].tell({ type: 'text', delta: 'Let me start with' })
+    })
+    // The field is empty while she answers: the button is Stop, which
+    // takes a press once the moment after the send has passed.
+    expect(document.body.querySelector('[aria-label="Send"]')).equals(null)
+    await new Promise(resolve => setTimeout(resolve, STOP_GUARD_MS))
+    await click(byLabel('Stop Tess'))
+    expect(api.stops).deep.equals([api.sends[0].request.clientId])
+    await act(async () => {
+      api.sends[0].answer.resolve([
+        message('3', 'user', 'Schedule the whole season'),
+        message('4', 'assistant', '', { stopped: true })
+      ])
+    })
+    await settle()
+    expect(byTestId('Tess thinking')).equals(null)
+    expect(byTestId('Tess live reply')).equals(null)
+    expect(texts('Tess stopped')).deep.equals(['Stopped'])
+    expect(document.body.querySelector('[aria-label="Stop Tess"]')).equals(null)
+    // Once she is done there is nothing to stop.
+    await act(async () => {
+      await latest!.stop()
+    })
+    expect(api.stops).length(1)
+  })
+
+  it('stops a confirm by the client id it was sent with, and shows a stop that fails', async function () {
+    const api = new FakeTess()
+    clock = manualClock()
+    await render(<Harness api={api} />)
+    await loaded(api)
+    await hold()
+    const { clientId } = api.confirms[0]
+    expect(clientId).match(/^[A-Za-z0-9_-]{1,64}$/)
+    api.stopFails = true
+    await act(async () => {
+      await latest!.stop()
+    })
+    expect(api.stops).deep.equals([clientId])
+    expect(byTestId('Tess error')!.textContent).equals(
+      'Cannot reach TeamStation.'
+    )
+    await act(async () => {
+      api.confirms[0].answer.resolve({
+        changes: [{ ...CHANGE, status: 'done' }],
+        messages: [message('5', 'assistant', '', { stopped: true })]
+      })
+    })
+    await settle()
+    expect(texts('Tess change status')).deep.equals(['Done'])
+    expect(texts('Tess stopped')).deep.equals(['Stopped'])
   })
 
   it('draws nothing told after the chat has closed', async function () {

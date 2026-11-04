@@ -22,7 +22,8 @@ import {
   type ScriptEntry,
   text,
   thought,
-  tool
+  tool,
+  tools
 } from './fakeAnthropic'
 import { type GroupFixture, groupFixture } from './groupFixtures'
 import { insertFixtureUsers } from './insertFixtureUsers'
@@ -156,6 +157,41 @@ function standingsOf(origin: string): string {
   return `<table><tr><th>Team</th><th>W</th><th>L</th><th>T</th></tr><tr><td>Demo Hawks</td><td>${won}</td><td>${lost}</td><td>${tied}</td></tr><tr><td>Demo Eagles</td><td>${lost}</td><td>${won}</td><td>${tied}</td></tr><tr><td colspan="4"><img src="${origin}/__tess/beacon?from=table" alt="" width="1" height="1"></td></tr></table>`
 }
 
+/**
+ * The change proposing a home game of `teamA`'s against Demo Eagles at 10:00
+ * on a Saturday of 2027, with its details in plain words, as Tess gives them.
+ */
+function gameAgainstEagles(
+  teamA: string,
+  seasonA: string,
+  day: number,
+  month: 'May' | 'June'
+): Record<string, unknown> {
+  const date = `2027-${month === 'May' ? '05' : '06'}-${String(day).padStart(2, '0')}`
+  return {
+    method: 'POST',
+    path: `/teams/${teamA}/games`,
+    body: {
+      games: [
+        {
+          startAt: `${date}T10:00:00-07:00`,
+          opponent: { name: 'Demo Eagles' },
+          side: 'home',
+          seasonId: seasonA,
+          venue: 'Demo Field'
+        }
+      ]
+    },
+    summary: `Add a home game against Demo Eagles on Saturday ${day} ${month} at 10:00`,
+    details: {
+      Opponent: 'Demo Eagles',
+      Date: `Sat ${month.slice(0, 3)} ${day}`,
+      Time: '10:00 AM',
+      Field: 'Demo Field'
+    }
+  }
+}
+
 /** The scripted model's answers, by what the person said. */
 export function tessScript(fixture: {
   teamA: string
@@ -242,26 +278,45 @@ export function tessScript(fixture: {
       rounds: [
         tool(
           'confirmChange',
-          {
-            method: 'POST',
-            path: `/teams/${teamA}/games`,
-            body: {
-              games: [
-                {
-                  startAt: '2027-05-15T10:00:00-07:00',
-                  opponent: { name: 'Demo Eagles' },
-                  side: 'home',
-                  seasonId: seasonA,
-                  venue: 'Demo Field'
-                }
-              ]
-            },
-            summary:
-              'Add a home game against Demo Eagles on Saturday 15 May at 10:00'
-          },
+          gameAgainstEagles(teamA, seasonA, 15, 'May'),
           'I can add that game for you.'
         ),
-        text('Hold Confirm on the card to add the game.')
+        text('Hold Confirm under the table to add the game.')
+      ]
+    },
+    {
+      // Three changes in one round, each game its own, with the same labels:
+      // one table of three rows.
+      match: /schedule three games against demo eagles/i,
+      rounds: [
+        tools(
+          [
+            {
+              name: 'confirmChange',
+              input: gameAgainstEagles(teamA, seasonA, 22, 'May')
+            },
+            {
+              name: 'confirmChange',
+              input: gameAgainstEagles(teamA, seasonA, 29, 'May')
+            },
+            {
+              name: 'confirmChange',
+              input: gameAgainstEagles(teamA, seasonA, 5, 'June')
+            }
+          ],
+          'I can schedule those three games.'
+        ),
+        text('Hold Confirm under the table to schedule all three games.')
+      ]
+    },
+    {
+      // The batch's note for its first game comes first.
+      match:
+        /^The user confirmed the change "Add a home game against Demo Eagles on Saturday 22 May/,
+      rounds: [
+        text(
+          'Done: the three games against Demo Eagles, on 22 May, 29 May and 5 June at 10:00, are on the schedule.'
+        )
       ]
     },
     {
@@ -292,6 +347,24 @@ export function tessScript(fixture: {
         text(
           `Here is the scoring screen: [Score Demo Hawks vs Demo Eagles](/games/${scheduled}/score)`
         )
+      ]
+    },
+    {
+      // Slow enough to stop: a piece every 400 ms, for about ten seconds.
+      match: /plan the whole season/i,
+      rounds: [
+        {
+          ...text(
+            'Here is a plan for the whole season, week by week. In the first week the team practises fielding on Monday and batting on Wednesday, then plays Demo Eagles at home on Saturday. In the second week the team rests on Monday, practises base running on Wednesday and plays away on Saturday. In the third week the pitchers throw on Tuesday and the team scrimmages on Thursday before a double header.'
+          ),
+          delayMs: 400
+        }
+      ]
+    },
+    {
+      match: /and the playoffs too/i,
+      rounds: [
+        text('Both together: the regular season first, then the playoffs.')
       ]
     },
     {

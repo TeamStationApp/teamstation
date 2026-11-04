@@ -52,9 +52,10 @@ describe("Tess's panel", () => {
       uploadTessAttachment: async () => {
         throw new Error('no uploads here')
       },
-      streamTessConfirm: async () => {
+      streamTessConfirmAll: async () => {
         throw new Error('no changes here')
       },
+      stopTess: async () => undefined,
       tessUsage: async () => []
     }
     const fake = fakeDictation()
@@ -122,9 +123,10 @@ describe("Tess's panel", () => {
       uploadTessAttachment: async () => {
         throw new Error('no uploads here')
       },
-      streamTessConfirm: async () => {
+      streamTessConfirmAll: async () => {
         throw new Error('no changes here')
       },
+      stopTess: async () => undefined,
       tessUsage: async () => []
     }
     const fake = fakeDictation()
@@ -200,9 +202,10 @@ describe("Tess's panel", () => {
       uploadTessAttachment: async () => {
         throw new Error('no uploads here')
       },
-      streamTessConfirm: async () => {
+      streamTessConfirmAll: async () => {
         throw new Error('no changes here')
       },
+      stopTess: async () => undefined,
       tessUsage: async () => []
     }
     const fake = fakeDictation()

@@ -20,8 +20,8 @@ import { recordBrowserCoverage } from '../browserCoverage.e2e'
 /**
  * Tess on a wide browser window (Chromium, 1280 × 900), driven through
  * maestro-d with puppeteer beside it for what a test reads back: the split,
- * links into the pane, rich HTML that loads nothing remote, the 3-second
- * hold, attachments, the microphone, the narrow layout and Back, the
+ * links into the pane, rich HTML that loads nothing remote, a reply's
+ * changes as one table and the 2-second hold, attachments, the microphone, the narrow layout and Back, the
  * screens that hide her, the divider that resizes her column, the title and
  * the composer's field, the players she names, and a reply streaming in with
  * her thinking and her steps. The model is `fakeAnthropic`, streaming a
@@ -515,7 +515,7 @@ async function main(): Promise<void> {
     await openTess()
     await waitFor(page, column)
 
-    // W8–W10: the change card and the 3-second hold.
+    // W8–W10: a reply's changes as one table, and the 2-second hold.
     const gamesOfTeam = async (): Promise<number> => {
       const answer = await f.h.request('GET', `/teams/${f.teamA}/games`)
       expect(answer.status).equals(200)
@@ -526,21 +526,67 @@ async function main(): Promise<void> {
     }
     const gamesBefore = await gamesOfTeam()
     await say(
-      'Add a game against Demo Eagles Saturday at 10',
-      'Hold Confirm on the card to add the game.'
+      'Schedule three games against Demo Eagles on Saturdays at 10',
+      'Hold Confirm under the table to schedule all three games.'
     )
-    await waitFor(page, '[data-testid="Tess change"]')
-    const card = await page.$eval(
-      '[data-testid="Tess change"]',
-      node => node.textContent || ''
+    const batch = '[data-testid="Tess changes"]'
+    await waitFor(page, batch)
+    const tables = await page.$$eval(
+      `${batch} [data-testid="Tess change table"]`,
+      nodes =>
+        nodes.map(node => ({
+          head: node.firstElementChild
+            ? node.firstElementChild.textContent
+            : '',
+          rows: Array.from(
+            node.querySelectorAll('[data-testid="Tess change"]')
+          ).map(row => row.textContent || '')
+        }))
     )
-    expect(card).includes('Add a home game against Demo Eagles')
-    expect(card).includes(`POST /teams/${f.teamA}/games`)
-    expect(card).includes('"opponent"')
+    expect(tables).deep.equals([
+      {
+        head: 'OpponentDateTimeField',
+        rows: [
+          'Demo EaglesSat May 2210:00 AMDemo Field',
+          'Demo EaglesSat May 2910:00 AMDemo Field',
+          'Demo EaglesSat Jun 510:00 AMDemo Field'
+        ]
+      }
+    ])
+    // No request, and no JSON, until it is asked for.
+    const batchText = async (): Promise<string> =>
+      await page.$eval(batch, node => node.textContent || '')
+    expect(await batchText()).not.includes(`/teams/${f.teamA}/games`)
+    expect(await batchText()).not.includes('"opponent"')
     const hold = '[role="button"][aria-label="Hold to confirm"]'
     await waitFor(page, hold)
-    await shot('wide-change-card.png')
-    console.log('W8 change card passed')
+    expect(await page.$$eval(`${batch} ${hold}`, nodes => nodes.length)).equals(
+      1
+    )
+    await page.$eval(batch, node => {
+      node.scrollIntoView({ block: 'center' })
+    })
+    await pause(1000)
+    await shot('web-change-after.png')
+    const disclosure = `${batch} [role="button"][aria-expanded]`
+    await page.click(disclosure)
+    await page.waitForFunction(
+      selector => document.querySelectorAll(selector).length === 3,
+      { timeout: 5000 },
+      '[data-testid="Tess change body"]'
+    )
+    const requests = await page.$$eval(
+      '[data-testid="Tess change request"]',
+      nodes => nodes.map(node => node.textContent || '')
+    )
+    expect(requests).deep.equals(
+      Array.from({ length: 3 }, () => `POST /teams/${f.teamA}/games`)
+    )
+    expect(await batchText()).includes('"opponent"')
+    await shot('wide-change-requests.png')
+    await page.click(disclosure)
+    await gone(page, '[data-testid="Tess change body"]')
+    console.log('W8 one table of three games; the requests folded until asked')
 
     const video = await startVideo(s, out, 'wide-confirm-trace.mp4')
     const holdBox = (await rectOf(page, hold))!
@@ -565,31 +611,88 @@ async function main(): Promise<void> {
     expect(midway).lessThan(fullOffset)
     expect(await traceOffset()).equals(fullOffset)
     expect(await gamesOfTeam()).equals(gamesBefore)
-    console.log('W9 early release reset the trace; nothing ran')
+    console.log('W9 released at 1 s: the trace reset; nothing ran')
     await pause(600)
     await page.mouse.down()
-    await pause(1500)
+    await pause(1000)
     // The browser's own shot: maestro-d's waits for animation to end, and the
-    // trace is an animation that ends by running the change.
+    // trace is an animation that ends by running the changes.
     await page.screenshot({ path: join(out, 'wide-confirm-holding.png') })
     console.log('Saved wide-confirm-holding.png')
-    await pause(1900)
+    await pause(1400)
     await page.mouse.up()
-    await contains(page, 'Done: the game against Demo Eagles')
+    await contains(page, 'Done: the three games against Demo Eagles')
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="Tess thinking"]') == null,
+      { timeout: 20000 }
+    )
     await page.waitForFunction(
       () => {
-        const status = document.querySelector(
-          '[data-testid="Tess change status"]'
-        )
-        return status != null && status.textContent === 'Done'
+        const statuses = Array.from(
+          document.querySelectorAll('[data-testid="Tess change status"]')
+        ).map(node => node.textContent)
+        return statuses.length === 3 && statuses.every(text => text === 'Done')
       },
       { timeout: 20000 }
     )
-    expect(await gamesOfTeam()).equals(gamesBefore + 1)
+    expect(await gamesOfTeam()).equals(gamesBefore + 3)
+    // Tess was told of all three in one message, and reported once.
+    const reports = t.model.calls.filter(call =>
+      (call.request?.said ?? '').startsWith(
+        'The user confirmed the change "Add a home game against Demo Eagles on Saturday 22 May'
+      )
+    )
+    expect(reports).length(1)
+    const told = (reports[0].request?.messages.at(-1)?.content ?? []) as Array<
+      Record<string, unknown>
+    >
+    expect(
+      told.filter(
+        block =>
+          typeof block.text === 'string' &&
+          block.text.startsWith('The user confirmed the change')
+      )
+    ).length(3)
+    expect(
+      await page.$$eval(
+        '[data-testid="Tess reply"]',
+        nodes =>
+          nodes.filter(node =>
+            (node.textContent || '').includes('Done: the three games')
+          ).length
+      )
+    ).equals(1)
     await pause(800)
     await shot('wide-confirm-done.png')
     await video.stop()
-    console.log('W10 held 3 s: Done, and the game exists')
+
+    // Expanded over the pane, the chat beside it.
+    await tap('[role="button"][aria-label="Expand the changes over the page"]')
+    await waitFor(
+      page,
+      '[data-testid="Tess overlay"] [data-testid="Tess rich viewer"]'
+    )
+    expect(await rectOf(page, '[data-testid="Tess overlay"]')).deep.equals(
+      await paneRect(page)
+    )
+    expect(await rectOf(page, column)).deep.include({ x: 0, width: 400 })
+    const expandedPage = await page.$eval(
+      '[data-testid="Tess overlay"] iframe',
+      node => node.getAttribute('srcdoc') || ''
+    )
+    expect(expandedPage).includes(
+      '<th>Opponent</th><th>Date</th><th>Time</th><th>Field</th><th>Status</th>'
+    )
+    expect(expandedPage).includes('<td>Sat Jun 5</td>')
+    await pause(1000)
+    await shot('web-change-expanded.png')
+    await tap(
+      '[data-testid="Tess overlay"] [role="button"][aria-label="Close"]'
+    )
+    await gone(page, '[data-testid="Tess rich viewer"]')
+    console.log(
+      'W10 held 2 s: all three Done, the games exist, one report; expanded over the pane'
+    )
 
     // W11: drop a CSV, choose a PNG, send both.
     await tap('[role="button"][aria-label="Attach a file"]')
@@ -1073,6 +1176,75 @@ async function main(): Promise<void> {
     await goInApp(`/games/${t.games.scheduled}/dj`)
     await contains(page, 'Demo Hawks')
     console.log('W18 the DJ address on the web shows the game with Tess')
+
+    // W19: Stop. After W16, so its usage week adds up without the reply
+    // stopped here. While she answers and the field is empty the button is
+    // turn on the server, and the reply ends "Stopped" within 2 s. Her next
+    // request carries the note that she was stopped.
+    await open('/')
+    await openTess()
+    await waitFor(page, column)
+    const stopButton = '[role="button"][aria-label="Stop Tess"]'
+    const sendButton = '[role="button"][aria-label="Send"]'
+    const stoppedMarks = async (): Promise<number> =>
+      await page.$$eval('[data-testid="Tess stopped"]', nodes => nodes.length)
+    const marksBefore = await stoppedMarks()
+    await waitFor(page, field)
+    expect(await page.$(stopButton)).equals(null)
+    await page.click(field)
+    await page.type(field, 'Plan the whole season')
+    await page.keyboard.press('Enter')
+    await waitFor(page, '[data-testid="Tess live text"]')
+    await waitFor(page, stopButton)
+    expect(await page.$(sendButton)).equals(null)
+    await page.type(field, 'x')
+    await waitFor(page, sendButton)
+    expect(await page.$(stopButton)).equals(null)
+    expect(
+      await page.$eval(sendButton, node => node.getAttribute('aria-disabled'))
+    ).equals('true')
+    await page.keyboard.press('Backspace')
+    await waitFor(page, stopButton)
+    await shot('web-stop.png')
+    const pressed = Date.now()
+    await m.tapOn({ css: stopButton, timeout: 15000 })
+    await page.waitForFunction(
+      before =>
+        document.querySelectorAll('[data-testid="Tess stopped"]').length >
+        before,
+      { timeout: 2000 },
+      marksBefore
+    )
+    const stoppedMs = Date.now() - pressed
+    expect(stoppedMs).lessThan(2000)
+    await gone(page, '[data-testid="Tess thinking"]')
+    expect(await stoppedMarks()).equals(marksBefore + 1)
+    const lastReply = await page.$$eval(
+      '[data-testid="Tess reply"]',
+      nodes => nodes[nodes.length - 1].textContent || ''
+    )
+    expect(lastReply.endsWith('Stopped')).equals(true)
+    // Send again once a letter is typed and she is done.
+    await page.type(field, 'x')
+    expect(
+      await page.$eval(sendButton, node => node.getAttribute('aria-disabled'))
+    ).not.equals('true')
+    await page.keyboard.press('Backspace')
+    await say('And the playoffs too', 'Both together')
+    const playoffs = t.model.calls.filter(call =>
+      (call.request?.said ?? '').includes('And the playoffs too')
+    )
+    expect(playoffs).length(1)
+    const note = playoffs[0]
+      .request!.messages.filter(message => message.role === 'assistant')
+      .flatMap(message =>
+        Array.isArray(message.content)
+          ? message.content
+          : [{ type: 'text', text: message.content }]
+      )
+      .find(block => String(block.text).startsWith('(Stopped by the person'))
+    expect(note, 'the stopped note').not.equals(undefined)
+    console.log(`W19 Stop ended the reply in ${stoppedMs} ms; the note went on`)
 
     // L1: a reply that needs two reads, as it streams in: the "Thinking"
     // row and her summary before any of her text, each step with a spinner

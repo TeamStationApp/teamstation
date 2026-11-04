@@ -1,4 +1,4 @@
-import React, { type ReactNode, type Ref, useRef } from 'react'
+import React, { type ReactNode, type Ref, useMemo, useRef } from 'react'
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -13,6 +13,7 @@ import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { changeBatches } from './changeTable'
 import { Composer, type ComposerHandle } from './Composer'
 import { TessLiveReply, TessMessage } from './TessMessage'
 import { useTessOverlay } from './TessOverlay'
@@ -36,7 +37,8 @@ export interface TessChatProps {
  * the close X on the right, the conversation, which follows its newest
  * message, and the composer. While she answers, the reply she is working on
  * shows under the last message as it comes, or "Tess is thinking…" until
- * she has told anything of it.
+ * she has told anything of it. The changes her replies to one message
+ * propose show together under the last of them, held once (`changeBatches`).
  */
 export function TessChat({
   tess,
@@ -51,16 +53,17 @@ export function TessChat({
   const insets = useInsets()
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const overlay = useTessOverlay()
-  const { send, upload, showError } = tess
+  const { send, upload, stop, showError } = tess
   // A table or chart open over the pane would hide the page a link goes to,
   // so the link closes it first.
   const navigate = (path: string): void => {
     overlay?.dismiss()
     onNavigate(path)
   }
-  const confirm = (changeId: string): void => {
-    tess.confirm(changeId).catch(() => undefined)
+  const confirmAll = (changeIds: string[]): void => {
+    tess.confirmAll(changeIds).catch(() => undefined)
   }
+  const batches = useMemo(() => changeBatches(tess.messages), [tess.messages])
   return (
     <KeyboardAvoidingView
       testID="Tess chat"
@@ -116,8 +119,9 @@ export function TessChat({
           <TessMessage
             key={message.id}
             message={message}
+            changes={batches.get(message.id)}
             onNavigate={navigate}
-            onConfirm={confirm}
+            onConfirmAll={confirmAll}
             holdDisabled={tess.thinking}
             thoughtSeconds={tess.thoughtSeconds[message.id]}
           />
@@ -144,6 +148,9 @@ export function TessChat({
         error={tess.error}
         mic={mic}
         onSend={send}
+        onStop={() => {
+          stop().catch(() => undefined)
+        }}
         onUpload={upload}
         onError={showError}
       />
