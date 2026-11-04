@@ -21,6 +21,7 @@ import {
 } from '../access'
 import { onePerson } from '../admin/people'
 import type { ValkeyCache } from '../cache/valkeyCache'
+import { anyOf } from '../db/anyOf'
 import type { Database } from '../db/database'
 import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
 import { heldAt } from '../invites/grants'
@@ -444,7 +445,7 @@ async function outsiders(
       'throws',
       'avatar_path as avatarPath'
     ])
-    .where('id', 'in', ids)
+    .where('id', '=', anyOf(ids))
     .where('merged_into', 'is', null)
     .where('disabled_at', 'is', null)
     .orderBy('display_name')

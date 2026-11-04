@@ -11,7 +11,7 @@ import { IMPLIED_ROLES, type Role, ROLES } from '../common/roles'
 import { onePeople, type OnePerson, onePerson } from './admin/people'
 import { anyOf } from './db/anyOf'
 import type { Database } from './db/database'
-import { openAddTeams, peopleOf } from './openAdds'
+import { openAddTeams } from './openAdds'
 
 export {
   heldByOpenAdd,
@@ -173,8 +173,8 @@ export async function guardiansOfEach(
     .select(['user_id', 'related_user_id'])
     .where(
       'related_user_id',
-      'in',
-      players.flatMap(player => player.userIds)
+      '=',
+      anyOf(players.flatMap(player => player.userIds))
     )
     .where('kind', 'in', ['guardian', 'family'])
     .execute()
@@ -197,7 +197,7 @@ export async function guardiansOfEach(
   const enabled = await db
     .selectFrom('users')
     .select('id')
-    .where('id', 'in', [...guardians.keys()])
+    .where('id', '=', anyOf([...guardians.keys()]))
     .where('disabled_at', 'is', null)
     .$if(signsIn, query =>
       query.where('login_enabled', '=', true).where('merged_into', 'is', null)
