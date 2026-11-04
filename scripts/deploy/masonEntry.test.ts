@@ -287,7 +287,7 @@ describe('TeamStation Mason entrypoint', () => {
 })
 
 describe('TeamStation pipeline Masonfile', () => {
-  it('builds iOS on Nomac and signs the Android release on the signing node', async () => {
+  it('builds iOS on the macos-arm64 worker and signs the Android release on the signing node', async () => {
     const stages: Record<string, unknown> = {}
     const workflows: Record<string, Record<string, unknown>> = {}
     setup({
@@ -338,7 +338,11 @@ describe('TeamStation pipeline Masonfile', () => {
       publishes?: string[]
     }>
     assert.equal(ios[0]?.name, 'archive')
-    assert.equal(ios[0]?.on.type, 'nomac')
+    assert.deepEqual(ios[0]?.on, {
+      type: 'macos-arm64',
+      os: 'macos',
+      arch: 'arm64'
+    })
     assert.equal(ios[0]?.apple.distribution, 'adHoc')
     assert.equal(ios[0]?.apple.app, 'app.teamstation.app')
     assert.equal(ios[0]?.tools?.node, '24')

@@ -3,8 +3,8 @@ import path from 'node:path'
 
 import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 
-// TeamStation for iOS on the Nomac pool and for Android on the DigitalOcean
-// Linux pool. The iOS archive signs an ad hoc build with the master's Apple
+// TeamStation for iOS on the macos-arm64 worker and for Android on the
+// DigitalOcean Linux pool. The iOS archive signs an ad hoc build with the master's Apple
 // distribution certificate and publishes it, so a registered device can
 // install it. A master build then re-signs that IPA with the App Store
 // profile and uploads it to TestFlight. Other branches leave that stage
@@ -18,7 +18,9 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // to TestFlight.
 
 const APP = 'app.teamstation.app'
-const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
+// The archive runs only on the macos-arm64 worker. Xcode 27.0 is pinned, so
+// that worker installs it when the version is not already there.
+const IOS = { type: 'macos-arm64', os: 'macos', arch: 'arm64' } as const
 const ANDROID = { type: 'do-linux', os: 'linux', arch: 'x64' } as const
 const SIGN = {
   type: 'macos-arm64',
@@ -59,7 +61,8 @@ function buildStages(w: WorkflowBuilder): void {
         {
           name: 'archive',
           on: IOS,
-          // Nomac provides Xcode 27.0 and cannot install another version.
+          // Xcode 27.0 is pinned so the worker installs that version before
+          // compiling when it is not already there.
           // Rust is installed into the worker tools directory; the archive
           // environment points the Xcode script phase at that cargo.
           tools: {
