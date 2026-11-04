@@ -5,15 +5,23 @@ export interface RecoveryFault {
   gateId: string
   userId: string
   conversationId: string
-  kind: 'send' | 'page' | 'history'
+  kind: 'send' | 'page' | 'history' | 'epoch'
   outcome: 'success' | 'failure' | 'empty'
   delayMs: number
   remaining: number
 }
 
+/**
+ * One audit line. The existing runners order a request against their own
+ * actions by `at`, and recognize the request itself as the line with a
+ * `method` and `mode` and no `event`.
+ */
 export interface FaultAudit {
   gateId: string
   remaining: number
+  at: string
+  method?: string
+  mode?: RecoveryFault['outcome']
   event?: 'delay-released' | 'cleared'
 }
 
@@ -22,13 +30,16 @@ export class RecoveryFaults {
   private readonly gates = new Map<string, RecoveryFault>()
   private readonly releases = new Map<string, Set<() => void>>()
 
-  constructor(private readonly audit: (row: FaultAudit) => void) {}
+  constructor(
+    private readonly audit: (row: FaultAudit) => void,
+    private readonly now: () => Date = () => new Date()
+  ) {}
 
   set(fault: RecoveryFault): void {
     assert(/^[a-zA-Z0-9_-]{1,120}$/.test(fault.gateId))
     assert(fault.userId.startsWith('usr_'))
     assert(/^cnv_[a-zA-Z0-9_-]+$/.test(fault.conversationId))
-    assert(['send', 'page', 'history'].includes(fault.kind))
+    assert(['send', 'page', 'history', 'epoch'].includes(fault.kind))
     assert(['success', 'failure', 'empty'].includes(fault.outcome))
     assert(
       Number.isInteger(fault.delayMs) &&
@@ -56,13 +67,23 @@ export class RecoveryFaults {
             ? method === 'GET' &&
               url.pathname === messages &&
               url.searchParams.has('before')
-            : method === 'GET' &&
-              url.pathname ===
-                `/api/v1/chat/conversations/${fault.conversationId}/epochs` &&
-              url.searchParams.has('boxesAfter')
+            : fault.kind === 'epoch'
+              ? method === 'POST' &&
+                url.pathname ===
+                  `/api/v1/chat/conversations/${fault.conversationId}/epochs`
+              : method === 'GET' &&
+                url.pathname ===
+                  `/api/v1/chat/conversations/${fault.conversationId}/epochs` &&
+                url.searchParams.has('boxesAfter')
       if (!match) continue
       fault.remaining--
-      this.audit({ gateId: fault.gateId, remaining: fault.remaining })
+      this.audit({
+        gateId: fault.gateId,
+        remaining: fault.remaining,
+        at: this.now().toISOString(),
+        method,
+        mode: fault.outcome
+      })
       return { ...fault }
     }
     return undefined
@@ -80,6 +101,7 @@ export class RecoveryFaults {
         this.audit({
           gateId: fault.gateId,
           remaining: fault.remaining,
+          at: this.now().toISOString(),
           event: 'delay-released'
         })
         resolve()
@@ -94,6 +116,7 @@ export class RecoveryFaults {
       this.audit({
         gateId: fault.gateId,
         remaining: fault.remaining,
+        at: this.now().toISOString(),
         event: 'cleared'
       })
     this.gates.clear()
