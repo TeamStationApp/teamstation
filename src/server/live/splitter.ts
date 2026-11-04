@@ -3321,6 +3321,18 @@ export function publishGoneForTest(session: TestSession): void {
   publishGone(session as NmsSession)
 }
 
+/**
+ * Test seam: what the ingest reports of a key's publisher, and nothing else:
+ * no event, no writer. A controller deciding by the report sees this.
+ */
+export function reportPublishingForTest(
+  key: string,
+  publishing: boolean
+): void {
+  const entry = entries.get(key)
+  if (entry != null) entry.ingress.publishing = publishing
+}
+
 export function forcePublishForTest(key: string, publishing: boolean): void {
   const entry = entries.get(key)
   if (entry == null) return
