@@ -133,6 +133,7 @@ const specs = [
   'src/test/llvmChangedLineCounts.test.ts',
   'src/server/socket/chatFanout.test.ts',
   'src/server/serverStart.test.ts',
+  'src/server/chatHistoryWiring.test.ts',
   'src/server/socket/gameSocket.test.ts',
   'src/server/socket/fanout.test.ts',
   'src/common/api.test.ts',
