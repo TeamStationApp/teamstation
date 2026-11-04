@@ -177,12 +177,13 @@ Three things are worth knowing before changing any of it:
   | The API | `npm start` (`src/server/index.ts`) | HTTP, sockets, the stats builder; writes `live_streams` rows and mints playback and publish URLs |
   | The ingest | `npm run start.ingest` (`src/server/ingest/main.ts`) | the RTMP port and the ffmpeg children writing each game's HLS |
 
-  The API never calls the ingest: an endpoint writes the `live_streams` row
-  and the ingest's controller acts on it within the second. So an API that
-  crashes or is restarted for a deploy leaves every publisher connected and
-  every recording growing; viewers lose the picture until the API answers
-  again, and the playlist then has the gap in it. Locally, start both, in
-  either order.
+  The API never calls the ingest: an endpoint writes the `live_streams` row,
+  its trigger sends a `live_changes` notice on the change feed when the write
+  commits, and the ingest's controller acts on it within about 100 ms. So an
+  API that crashes or is restarted for a deploy leaves every publisher
+  connected and every recording growing; viewers lose the picture until the
+  API answers again, and the playlist then has the gap in it. Locally, start
+  both, in either order.
 
   The ingest starts nothing until it holds the RTMP port. Then — and only on
   its own cold start — it sets leftover `publishing` rows to `idle`, since the

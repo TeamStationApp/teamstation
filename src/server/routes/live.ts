@@ -57,8 +57,9 @@ import { withRevision } from '../socket/syncRevision'
  * One person may point up to four cameras at one game, which is four videos,
  * which is what the watch screen already calls angles.
  *
- * Nothing here talks to the ingest. These endpoints write rows; the ingest
- * reads them within the second and acts. See `server/live/controller.ts`.
+ * Nothing here talks to the ingest. These endpoints write rows; each write's
+ * `live_changes` notice wakes the ingest, which reads them and acts within
+ * about 100 ms. See `server/live/controller.ts`.
  */
 
 export interface LiveRouteOptions {
@@ -448,7 +449,7 @@ export function liveRoutes(
       // ingest holds the ffmpeg writing the playlist, and it is the only
       // thing that may close that playlist; ending it from an API worker
       // would write `EXT-X-ENDLIST` into a file another process is still
-      // appending to. It notices within the second.
+      // appending to. Its notice wakes the ingest within about 100 ms.
       await db
         .updateTable('live_streams')
         .set({ closes_at: new Date(), updated_at: new Date() })
