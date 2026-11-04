@@ -660,6 +660,7 @@ describe('a live origin publisher', function () {
       const publisher = new OriginPublisher({
         space,
         videoId: 'vid_nodb',
+        spaceSecret: null,
         dir,
         ffmpegPath: FFMPEG,
         isFinal: () => true,

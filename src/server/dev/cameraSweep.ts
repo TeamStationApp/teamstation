@@ -33,7 +33,14 @@ async function main(): Promise<void> {
   try {
     const candidates = await db
       .selectFrom('videos')
-      .select(['id', 'title', 'storage', 'num_cameras', 'duration_sec'])
+      .select([
+        'id',
+        'title',
+        'storage',
+        'space_secret',
+        'num_cameras',
+        'duration_sec'
+      ])
       .where(eb =>
         eb.or([eb('title', 'like', '%raw'), eb('title', 'like', '%combined')])
       )
@@ -52,7 +59,8 @@ async function main(): Promise<void> {
             mediaRoot: serverConfig.mediaDir,
             space: serverConfig.space,
             storage: video.storage,
-            videoId: video.id
+            videoId: video.id,
+            spaceSecret: video.space_secret
           })
           if (source != null) {
             still = await ensureStill({
