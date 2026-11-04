@@ -1,7 +1,10 @@
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import { defaultNodeSettings, type NodeSettings } from '../common/nodeSettings'
+import {
+  defaultNodeSettings as baseDefaults,
+  type NodeSettings
+} from '../common/nodeSettings'
 import { userIdOfGumbo } from '../common/userId'
 import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 import {
@@ -13,6 +16,8 @@ import {
   speedHoldMs
 } from './nodeSettings'
 import { forgetSettings, highlightSettings } from './settings'
+const emptyKeys = { anthropicChatbot: [], anthropicScoring: [], xaiVoice: [] }
+const defaultNodeSettings = { ...baseDefaults, aiKeys: emptyKeys }
 
 describe('node settings', function () {
   this.timeout(60000)
@@ -29,6 +34,7 @@ describe('node settings', function () {
   })
 
   const changed: NodeSettings = {
+    aiKeys: emptyKeys,
     radar: { pitchWindowSec: 4, inPlayWindowSec: 20 },
     replay: { pitchSec: 7 },
     scoreboard: {

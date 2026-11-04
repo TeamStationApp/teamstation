@@ -1,5 +1,8 @@
 import WebSocket from 'ws'
 
+import type { ApiKeyPool } from '../../common/aiKeys'
+import { retryableStatus, shuffledKeys } from '../aiKeyFallback'
+
 /**
  * Speech to text, streamed to xAI's dictation model.
  *
@@ -42,7 +45,10 @@ export interface SttSocket {
 }
 
 export interface SttOptions {
-  apiKey: string
+  apiKey: ApiKeyPool
+  handshakeTimeoutMs?: number
+  /** Pool attempts report a missing final answer as failure, not partial success. */
+  failOnTimeout?: boolean
   url?: string
   model?: string
   finalTimeoutMs?: number
@@ -132,7 +138,7 @@ interface Utterance {
  * whenever the client sends key terms, `begin`, `write` and `end` for each
  * hold, and `close` when the connection goes.
  */
-export class SttSession {
+class SingleKeySttSession {
   private current: Upstream | null = null
   private next: Upstream | null = null
   private terms: readonly string[] = []
@@ -196,7 +202,9 @@ export class SttSession {
     utterance.ended = true
     this.current.send(JSON.stringify({ type: 'finalize' }))
     utterance.timer = setTimeout(() => {
-      this.settle(utterance.segments.join(' '))
+      if (this.options.failOnTimeout === true)
+        this.fail('The recogniser timed out')
+      else this.settle(utterance.segments.join(' '))
     }, this.options.finalTimeoutMs ?? FINAL_TIMEOUT_MS)
   }
 
@@ -216,7 +224,7 @@ export class SttSession {
       this.options.model ?? DEFAULT_STT_MODEL,
       terms
     )
-    const headers = { Authorization: `Bearer ${this.options.apiKey}` }
+    const headers = { Authorization: `Bearer ${String(this.options.apiKey)}` }
     const connect =
       this.options.connect ??
       ((to: string, with_: Record<string, string>) =>
@@ -342,5 +350,175 @@ function parse(data: unknown): Record<string, unknown> | null {
       : null
   } catch {
     return null
+  }
+}
+
+/** A pooled voice request owns its audio and retries, never a completed hold. */
+export class SttSession {
+  private readonly legacy: SingleKeySttSession | undefined
+  private attempt: SingleKeySttSession | undefined
+  private terms: readonly string[] = []
+  private keys: string[] = []
+  private frames: Buffer[] = []
+  private bytes = 0
+  private ended = false
+  private active = false
+  private closed = false
+  private generation = 0
+  private handshake?: ReturnType<typeof setTimeout>
+
+  constructor(
+    private readonly options: SttOptions,
+    private readonly handlers: SttHandlers
+  ) {
+    if (typeof options.apiKey === 'string')
+      this.legacy = new SingleKeySttSession(options, handlers)
+  }
+
+  retarget(terms: readonly string[]): void {
+    if (this.closed) return
+    this.terms = terms
+    this.legacy?.retarget(terms)
+  }
+
+  begin(): void {
+    if (this.closed) return
+    if (this.legacy != null) {
+      this.legacy.begin()
+      return
+    }
+    this.stopAttempt()
+    this.frames = []
+    this.bytes = 0
+    this.ended = false
+    this.active = true
+    this.keys = shuffledKeys(this.options.apiKey)
+    this.startAttempt()
+  }
+
+  write(pcm: Buffer): void {
+    if (this.closed) return
+    if (this.legacy != null) {
+      this.legacy.write(pcm)
+      return
+    }
+    if (!this.active || this.ended) return
+    this.bytes += pcm.length
+    if (this.bytes > 4 * 1024 * 1024) {
+      this.exhaust('The voice request is too long')
+      return
+    }
+    this.frames.push(Buffer.from(pcm))
+    this.attempt?.write(pcm)
+  }
+
+  end(): void {
+    if (this.closed) return
+    if (this.legacy != null) {
+      this.legacy.end()
+      return
+    }
+    if (!this.active || this.ended) return
+    this.ended = true
+    this.attempt?.end()
+  }
+
+  close(): void {
+    this.closed = true
+    this.active = false
+    this.frames = []
+    this.legacy?.close()
+    this.stopAttempt()
+  }
+
+  private stopAttempt(): void {
+    this.generation++
+    clearTimeout(this.handshake)
+    this.attempt?.close()
+    this.attempt = undefined
+  }
+
+  private exhaust(message: string): void {
+    this.active = false
+    this.frames = []
+    this.stopAttempt()
+    this.handlers.onError(message)
+  }
+
+  private startAttempt(latest = 'No API keys are configured'): void {
+    if (!this.active || this.closed) return
+    const key = this.keys.shift()
+    if (key == null) {
+      this.exhaust(latest)
+      return
+    }
+    this.stopAttempt()
+    const generation = this.generation
+    const current = (): boolean =>
+      this.active && !this.closed && generation === this.generation
+    let showedPartial = false
+    const fail = (message: string): void => {
+      if (!current()) return
+      // Provider/transport text can contain an authorization header: never relay it.
+      const status = /(?:answered|response:?)\s+(\d{3})/i.exec(message)?.[1]
+      const safe =
+        status == null
+          ? message.toLowerCase().includes('timed out')
+            ? 'The recogniser timed out'
+            : 'The recogniser could not be reached'
+          : `The recogniser answered ${status}`
+      if (status != null && !retryableStatus(Number(status))) {
+        this.exhaust(safe)
+        return
+      }
+      if (showedPartial) this.handlers.onPartial('')
+      this.startAttempt(safe)
+    }
+    const connect =
+      this.options.connect ??
+      ((url: string, headers: Record<string, string>) =>
+        new WebSocket(url, { headers }))
+    this.handshake = setTimeout(() => {
+      fail('The recogniser timed out')
+    }, this.options.handshakeTimeoutMs ?? 10000)
+    this.attempt = new SingleKeySttSession(
+      {
+        ...this.options,
+        apiKey: key,
+        failOnTimeout: true,
+        connect: (url, headers) => {
+          const socket = connect(url, headers)
+          socket.on('message', data => {
+            if (current() && parse(data)?.type === 'transcript.created')
+              clearTimeout(this.handshake)
+          })
+          return socket
+        }
+      },
+      {
+        // Partial transcripts replace the previous preview, never append to it.
+        onPartial: text => {
+          if (!current()) return
+          showedPartial = true
+          this.handlers.onPartial(text)
+        },
+        onFinal: text => {
+          if (!current()) return
+          this.active = false
+          this.frames = []
+          this.stopAttempt()
+          this.handlers.onFinal(text)
+        },
+        onError: fail
+      }
+    )
+    try {
+      this.attempt.retarget(this.terms)
+      this.attempt.begin()
+      for (const frame of this.frames) this.attempt.write(frame)
+      if (this.ended) this.attempt.end()
+    } catch {
+      fail('The recogniser could not be reached')
+    }
   }
 }

@@ -46,6 +46,7 @@ import { usageWeeks } from '../tess/usage'
 export interface TessRouteOptions {
   /** Tess's key and model; null when the server has none, and she is off. */
   settings: TessSettings | null
+  resolveSettings?: () => Promise<TessSettings | null>
   /**
    * This server's own origin, for the requests Tess's tools send. Read on
    * each call, since the server may not be listening yet when the routes
@@ -83,26 +84,35 @@ export function tessRoutes(
   options: TessRouteOptions
 ): Router {
   const router = Router()
-  router.use('/me/tess', requireActor, (req, res, next) => {
-    if (req.actor?.viaTess === true) {
-      next(forbidden('Tess cannot use her own routes'))
-      return
-    }
-    if (req.actor != null && isMachine(req.actor)) {
-      next(forbidden('Sign in to talk to Tess'))
-      return
-    }
-    if (options.settings == null) {
-      next(unavailable('Tess is not available on this server'))
-      return
-    }
-    next()
-  })
+  router.use(
+    '/me/tess',
+    requireActor,
+    withAsync(async (req, res, next) => {
+      if (req.actor?.viaTess === true) {
+        next(forbidden('Tess cannot use her own routes'))
+        return
+      }
+      if (req.actor != null && isMachine(req.actor)) {
+        next(forbidden('Sign in to talk to Tess'))
+        return
+      }
+      const settings =
+        options.resolveSettings == null
+          ? options.settings
+          : await options.resolveSettings()
+      if (settings == null) {
+        next(unavailable('Tess is not available on this server'))
+        return
+      }
+      res.locals.tessSettings = settings
+      next()
+    })
+  )
 
   // Only ever built past the gate above, which answered 503 without settings.
-  const deps = (): TessDeps => ({
+  const deps = (res: Response): TessDeps => ({
     db,
-    settings: options.settings!,
+    settings: res.locals.tessSettings as TessSettings,
     origin: options.origin,
     fetch: options.fetch,
     now: options.now
@@ -144,7 +154,7 @@ export function tessRoutes(
         messages: await view(db, user.userId, id, options.now?.())
       })
       if (!streams(req)) {
-        res.json(await answer(await runTurn(deps(), user, input)))
+        res.json(await answer(await runTurn(deps(res), user, input)))
         return
       }
       await turnStream(
@@ -160,7 +170,7 @@ export function tessRoutes(
           )
         }),
         async onEvent =>
-          await answer(await runTurn(deps(), user, input, onEvent))
+          await answer(await runTurn(deps(res), user, input, onEvent))
       )
     })
   )
@@ -188,7 +198,7 @@ export function tessRoutes(
         onEvent?: TurnEvents
       ): Promise<Record<string, unknown>> => {
         const { change, fromId } = await confirmTurn(
-          deps(),
+          deps(res),
           user,
           changeId,
           onEvent

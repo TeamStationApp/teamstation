@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Pressable, Text, TextInput, View } from 'react-native'
 
+import { type AiKeys, normalizedKeys } from '../../common/aiKeys'
 import type { TeamStationClient } from '../../common/api'
 import {
   type BoardPlacement,
@@ -70,6 +71,7 @@ function shownPlacement(placement: BoardPlacement): BoardPlacement {
 export function shownSettings(settings: NodeSettings): NodeSettings {
   const { scoreboard: s, highlights: h } = settings
   return {
+    ...(settings.aiKeys == null ? {} : { aiKeys: settings.aiKeys }),
     radar: { ...settings.radar },
     replay: { pitchSec: nearest(PITCH_DELAYS, settings.replay.pitchSec) },
     scoreboard: {
@@ -137,6 +139,19 @@ export function NodeSettingsCard({
   const theme = useTheme()
   const styles = getStyles(theme)
   const [settings, setSettings] = useState<NodeSettings>()
+  const [keyText, setKeyText] = useState<Record<keyof AiKeys, string>>({
+    anthropicChatbot: '',
+    anthropicScoring: '',
+    xaiVoice: ''
+  })
+  const showKeys = (keys: AiKeys | undefined): void => {
+    if (keys == null) return
+    setKeyText({
+      anthropicChatbot: keys.anthropicChatbot.join('\n'),
+      anthropicScoring: keys.anthropicScoring.join('\n'),
+      xaiVoice: keys.xaiVoice.join('\n')
+    })
+  }
   const [picker, setPicker] = useState<Picker>()
   const [problem, setProblem] = useState<string>()
   const [loadFailed, setLoadFailed] = useState(false)
@@ -144,7 +159,9 @@ export function NodeSettingsCard({
   const [saved, setSaved] = useState(false)
   const load = useCallback(async (): Promise<void> => {
     try {
-      setSettings(shownSettings(await client.nodeSettings()))
+      const loaded = await client.nodeSettings()
+      setSettings(shownSettings(loaded))
+      showKeys(loaded.aiKeys)
       setProblem(undefined)
       setLoadFailed(false)
     } catch (error) {
@@ -199,7 +216,18 @@ export function NodeSettingsCard({
     setBusy(true)
     setProblem(undefined)
     try {
-      setSettings(shownSettings(await client.setNodeSettings(settings)))
+      const aiKeys = Object.fromEntries(
+        Object.entries(keyText).map(([name, text]) => [
+          name,
+          normalizedKeys(text.split(/\r?\n/))
+        ])
+      ) as unknown as AiKeys
+      const stored = await client.setNodeSettings({
+        ...settings,
+        ...(settings.aiKeys == null ? {} : { aiKeys })
+      })
+      setSettings(shownSettings(stored))
+      showKeys(stored.aiKeys)
       setSaved(true)
     } catch (error) {
       setProblem(
@@ -333,6 +361,45 @@ export function NodeSettingsCard({
 
   return (
     <>
+      {settings.aiKeys != null && (
+        <View style={styles.section}>
+          <SectionHeader title="AI API keys" />
+          <Text style={styles.hint}>
+            Enter one API key per line. Leave a field empty to turn that service
+            off.
+          </Text>
+          <Card style={styles.card}>
+            {(
+              [
+                ['anthropicChatbot', 'Anthropic chatbot'],
+                ['anthropicScoring', 'Anthropic scoring'],
+                ['xaiVoice', 'XAI voice model']
+              ] as const
+            ).map(([key, label]) => (
+              <View key={key} style={styles.group}>
+                <Text style={styles.groupTitle}>{label}</Text>
+                <TextInput
+                  accessibilityLabel={label}
+                  multiline
+                  numberOfLines={3}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  spellCheck={false}
+                  textAlignVertical="top"
+                  editable={!busy}
+                  style={styles.keyInput}
+                  value={keyText[key]}
+                  onChangeText={text => {
+                    setKeyText(current => ({ ...current, [key]: text }))
+                    setSaved(false)
+                    setProblem(undefined)
+                  }}
+                />
+              </View>
+            ))}
+          </Card>
+        </View>
+      )}
       <View style={styles.section}>
         <SectionHeader title="Scoreboard settings" />
         <Text style={styles.hint}>
@@ -484,7 +551,9 @@ export function NodeSettingsCard({
         textColor={theme.linkTextColor}
         disabled={busy}
         onPress={() => {
-          change(shownSettings(defaultNodeSettings))
+          change(
+            shownSettings({ ...defaultNodeSettings, aiKeys: settings.aiKeys })
+          )
         }}
       />
       {picker != null && (
@@ -565,6 +634,16 @@ function WheelPicker({
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  keyInput: {
+    height: theme.rem(5),
+    lineHeight: theme.rem(1.25),
+    padding: theme.rem(0.5),
+    borderWidth: 1,
+    borderColor: theme.secondaryTextColor,
+    borderRadius: theme.rem(0.375),
+    color: theme.primaryTextColor,
+    fontSize: theme.rem(0.875)
+  },
   card: { gap: theme.rem(0.5) },
   name: {
     color: theme.primaryTextColor,

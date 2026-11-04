@@ -33,6 +33,12 @@ export function healthRoutes(
   db: Kysely<Database>,
   version: string,
   options: {
+    resolveAi?: () => Promise<{
+      dictation: boolean
+      dictationModels: readonly string[]
+      narration: boolean
+      tess: boolean
+    }>
     dictation?: boolean
     dictationModels?: readonly string[]
     narration?: boolean
@@ -62,6 +68,10 @@ export function healthRoutes(
         database === 'ok'
           ? await replayPitchSec(db)
           : defaultReplaySettings.pitchSec
+      const ai =
+        database === 'ok' && options.resolveAi != null
+          ? await options.resolveAi()
+          : options
       const body: HealthBody = {
         status: database === 'ok' ? 'ok' : 'degraded',
         version,
@@ -69,10 +79,10 @@ export function healthRoutes(
         migrations,
         uptimeSec: Math.round(process.uptime()),
         pid: process.pid,
-        dictation: options.dictation ?? false,
-        dictationModels: [...(options.dictationModels ?? [])],
-        narration: options.narration ?? false,
-        tess: options.tess ?? false,
+        dictation: ai.dictation ?? false,
+        dictationModels: [...(ai.dictationModels ?? [])],
+        narration: ai.narration ?? false,
+        tess: ai.tess ?? false,
         replayPitchSec: pitchSec
       }
       res.status(database === 'ok' ? 200 : 503).json(body)
