@@ -18,6 +18,7 @@ import {
   buildIos,
   compileAndroid,
   DEVELOP_APP,
+  provenanceEnvironment,
   releaseIos,
   seatEnvironment,
   setup,
@@ -389,7 +390,11 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.deepEqual(android[1]?.publishes, ['app.teamstation.app'])
     const commands: string[] = []
     const ctx = {
-      run: { branch: 'master', params: { seat: 'production' } },
+      run: {
+        branch: 'master',
+        commit: '0123456789abcdef0123456789abcdef01234567',
+        params: { seat: 'production' }
+      },
       async sh(
         command: string,
         options?: {
@@ -397,6 +402,7 @@ describe('TeamStation pipeline Masonfile', () => {
             MASON_BUILD_NUMBER?: string
             MASON_APP_VERSION?: string
             TS_API_BASE_URL?: string
+            TS_BUILD_INFO?: string
           }
         }
       ) {
@@ -407,6 +413,8 @@ describe('TeamStation pipeline Masonfile', () => {
           commands.push(`app-version:${options.env.MASON_APP_VERSION}`)
         if (options?.env?.TS_API_BASE_URL != null)
           commands.push(`api:${options.env.TS_API_BASE_URL}`)
+        if (options?.env?.TS_BUILD_INFO != null)
+          commands.push(`info:${options.env.TS_BUILD_INFO}`)
         return { code: 0, stdout: '', stderr: '' }
       },
       getBuildNumber(key: string) {
@@ -440,7 +448,11 @@ describe('TeamStation pipeline Masonfile', () => {
           version?: string
           buildNumber?: string
           xcargs?: string[]
-          env?: { CARGO_HOME?: string; TS_API_BASE_URL?: string }
+          env?: {
+            CARGO_HOME?: string
+            TS_API_BASE_URL?: string
+            TS_BUILD_INFO?: string
+          }
         }) {
           commands.push(
             `archive:${options.scheme}:${options.version ?? ''}:${options.buildNumber ?? ''}`
@@ -449,6 +461,8 @@ describe('TeamStation pipeline Masonfile', () => {
           commands.push(`cargo:${options.env?.CARGO_HOME ?? ''}`)
           if (options.env?.TS_API_BASE_URL != null)
             commands.push(`api:${options.env.TS_API_BASE_URL}`)
+          if (options.env?.TS_BUILD_INFO != null)
+            commands.push(`info:${options.env.TS_BUILD_INFO}`)
           return {
             archive: 'build/TeamStation.xcarchive',
             ipa: 'build/TeamStation.ipa',
@@ -498,6 +512,28 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.match(log, /save:android-apk/)
     // A production build leaves the app's own server alone.
     assert.equal(log.includes('api:'), false)
+    const recorded = commands
+      .filter(line => line.startsWith('info:'))
+      .map(
+        line =>
+          JSON.parse(line.slice('info:'.length)) as {
+            app: string
+            version: string
+            buildNumber: string
+            branch: string
+            commit: string
+            builtAt: string
+          }
+      )
+    assert.equal(recorded.length, 2)
+    for (const info of recorded) {
+      assert.equal(info.app, 'TeamStation')
+      assert.equal(info.version, version)
+      assert.equal(info.buildNumber, '26103101')
+      assert.equal(info.branch, 'master')
+      assert.equal(info.commit, '0123456789abcdef0123456789abcdef01234567')
+      assert.equal(Number.isNaN(Date.parse(info.builtAt)), false)
+    }
   })
 
   it('points both platforms at a development seat', async () => {
@@ -521,7 +557,11 @@ describe('TeamStation pipeline Masonfile', () => {
     }
     const ctx = {
       workspace,
-      run: { branch: 'paul/example', params: { seat: '3' } },
+      run: {
+        branch: 'paul/example',
+        commit: '89abcdef0123456789abcdef0123456789abcdef',
+        params: { seat: '3' }
+      },
       async sh(
         _command: string,
         options?: { env?: { TS_API_BASE_URL?: string } }
@@ -567,6 +607,20 @@ describe('TeamStation pipeline Masonfile', () => {
     } finally {
       rmSync(workspace, { recursive: true, force: true })
     }
+  })
+
+  it('refuses a bundle that has no branch or commit to show', () => {
+    const run = { branch: 'master', commit: 'abc' }
+    assert.throws(
+      () =>
+        provenanceEnvironment({ run: { ...run, branch: '' } }, '1.0.0', '2'),
+      /no branch or commit/
+    )
+    assert.throws(
+      () =>
+        provenanceEnvironment({ run: { ...run, commit: '' } }, '1.0.0', '2'),
+      /no branch or commit/
+    )
   })
 
   it('names no server for production or a run with no seat, and refuses an unknown one', () => {
@@ -751,7 +805,10 @@ describe('TeamStation pipeline Masonfile', () => {
         }
         return { code: 0, stdout: '', stderr: '' }
       },
-      run: { branch: 'master' },
+      run: {
+        branch: 'master',
+        commit: '0123456789abcdef0123456789abcdef01234567'
+      },
       getBuildNumber() {
         return '26103101'
       },
@@ -810,7 +867,10 @@ describe('TeamStation pipeline Masonfile', () => {
       let archivedVersion = ''
       await buildIos({
         workspace,
-        run: { branch: 'master' },
+        run: {
+          branch: 'master',
+          commit: '0123456789abcdef0123456789abcdef01234567'
+        },
         async sh() {
           return { code: 0, stdout: '', stderr: '' }
         },
