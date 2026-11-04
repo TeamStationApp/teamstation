@@ -33,5 +33,5 @@ export function deployedVersion(): string | undefined {
  * checkout.
  */
 export function versionOf(): string {
-  return deployedVersion() ?? '0.1.0'
+  return deployedVersion() ?? '1.1.0'
 }
