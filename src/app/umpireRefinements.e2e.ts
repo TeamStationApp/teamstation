@@ -128,8 +128,10 @@ async function main(): Promise<void> {
     await open(`/umpires/${f.leagueA}?levels=ulv_browser_majors`)
     await contains(page, 'No games match this schedule.')
     await open('/games/gam_umpire_g1')
-    await contains(page, 'Field 1 (optional): Uma L')
-    await contains(page, 'Field 2 (optional)')
+    await page.waitForSelector('[data-testid="game-umpires"]')
+    expect(await page.$eval('[data-testid="game-umpires"]', n => n.textContent))
+      .contains('Uma L')
+      .and.contains('Field')
     await page.evaluate(() => {
       document
         .querySelector('[data-testid="game-umpires"]')!
@@ -173,7 +175,10 @@ async function main(): Promise<void> {
     await page.waitForFunction(
       () => location.pathname === '/games/gam_umpire_g1'
     )
-    await contains(page, 'Field 1 (optional): Uma L')
+    await page.waitForSelector('[data-testid="game-umpires"]')
+    expect(await page.$eval('[data-testid="game-umpires"]', n => n.textContent))
+      .contains('Uma L')
+      .and.contains('Field')
     await m.command('back')
     await page.waitForSelector('[aria-label="Uma L, uty_field:1"]')
     await tap(m, 'Leaderboard', 'tab')

@@ -3,15 +3,15 @@ import type { Kysely } from 'kysely'
 import type { GroupKind } from '../../common/groupCreation'
 import type { PublicGroup } from '../../common/publicGroups'
 import { ROLE_FLAGS } from '../../common/roles'
-import { onePerson } from '../admin/people'
 import { guardedRows, teamsPlayedOnNow, visibleScopes } from '../access'
+import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { publicGroup } from '../groups/publicSummary'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
-import { seasonParticipantCounts } from '../stats/seasonTeams'
 import { teamRecords } from '../stats/records'
+import { seasonParticipantCounts } from '../stats/seasonTeams'
 import { followMerges } from '../teams/followMerges'
 
 /**
@@ -160,7 +160,15 @@ async function seasonRows(
   if (ids.length === 0) return []
   return await db
     .selectFrom('seasons')
-    .select(['id', 'league_id', 'name', 'year', 'term', 'age_group', 'logo_path'])
+    .select([
+      'id',
+      'league_id',
+      'name',
+      'year',
+      'term',
+      'age_group',
+      'logo_path'
+    ])
     .where('id', 'in', ids)
     .execute()
 }
@@ -186,7 +194,7 @@ async function latestByTeam(
     .where('teams.id', 'in', ids)
     .groupBy('teams.id')
     .execute()
-  for (const row of rows) out.set(row.id, when(row.at as Date | string | null))
+  for (const row of rows) out.set(row.id, when(row.at))
   return out
 }
 
@@ -204,7 +212,7 @@ async function latestBySeason(
     .groupBy('season_id')
     .execute()
   for (const row of rows) {
-    if (row.id != null) out.set(row.id, when(row.at as Date | string | null))
+    if (row.id != null) out.set(row.id, when(row.at))
   }
   return out
 }
@@ -224,7 +232,7 @@ async function latestByLeague(
     .groupBy('seasons.league_id')
     .execute()
   for (const row of rows) {
-    if (row.id != null) out.set(row.id, when(row.at as Date | string | null))
+    if (row.id != null) out.set(row.id, when(row.at))
   }
   return out
 }
@@ -284,7 +292,9 @@ async function seasonCounts(
   return counts
 }
 
-function indexFollows(rows: Followed[]): Record<GroupKind, Map<string, PublicGroup>> {
+function indexFollows(
+  rows: Followed[]
+): Record<GroupKind, Map<string, PublicGroup>> {
   const out: Record<GroupKind, Map<string, PublicGroup>> = {
     team: new Map(),
     season: new Map(),
@@ -308,32 +318,39 @@ export async function homeLists(
     return empty()
 
   const actor = await onePerson(db, userId)
-  const [scopes, roles, memberships, seasonMembers, leagueMembers, follows, guardedTeams] =
-    await Promise.all([
-      visibleScopes(db, userId, false),
-      db
-        .selectFrom('scope_roles')
-        .select(['scope_type', 'scope_id', 'role'])
-        .where('user_id', '=', userId)
-        .execute(),
-      db
-        .selectFrom('memberships')
-        .select(['team_id', 'role', 'is_player'])
-        .where('user_id', '=', userId)
-        .execute(),
-      db
-        .selectFrom('season_members')
-        .select(['season_id'])
-        .where('user_id', 'in', actor.userIds)
-        .execute(),
-      db
-        .selectFrom('league_members')
-        .select(['league_id'])
-        .where('user_id', 'in', actor.userIds)
-        .execute(),
-      loadFollows(db, userId, space),
-      guardedRows(db, userId).then(ids => teamsPlayedOnNow(db, ids))
-    ])
+  const [
+    scopes,
+    roles,
+    memberships,
+    seasonMembers,
+    leagueMembers,
+    follows,
+    guardedTeams
+  ] = await Promise.all([
+    visibleScopes(db, userId, false),
+    db
+      .selectFrom('scope_roles')
+      .select(['scope_type', 'scope_id', 'role'])
+      .where('user_id', '=', userId)
+      .execute(),
+    db
+      .selectFrom('memberships')
+      .select(['team_id', 'role', 'is_player'])
+      .where('user_id', '=', userId)
+      .execute(),
+    db
+      .selectFrom('season_members')
+      .select(['season_id'])
+      .where('user_id', 'in', actor.userIds)
+      .execute(),
+    db
+      .selectFrom('league_members')
+      .select(['league_id'])
+      .where('user_id', 'in', actor.userIds)
+      .execute(),
+    loadFollows(db, userId, space),
+    guardedRows(db, userId).then(async ids => await teamsPlayedOnNow(db, ids))
+  ])
 
   const followed = indexFollows(follows)
   const directTeam = new Set<string>()

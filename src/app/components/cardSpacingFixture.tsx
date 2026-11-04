@@ -124,7 +124,11 @@ const spacingTeams = [
 const homeClient = {
   teams: async () => spacingTeams,
   home: async () => ({
-    teams: spacingTeams.map(row => ({ ...row, direct: true, source: 'member' })),
+    teams: spacingTeams.map(row => ({
+      ...row,
+      direct: true,
+      source: 'member'
+    })),
     seasons: [],
     leagues: []
   }),

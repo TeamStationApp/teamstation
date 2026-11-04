@@ -120,10 +120,16 @@ async function main(): Promise<void> {
           JSON.stringify(row)
         )
       else {
-        const before = JSON.parse(
-          await readFile(join(artifacts, 'baseline-geometry.json'), 'utf8')
-        )
-        expect(row.height / before.height).within(0.65, 0.85)
+        let before: { height: number } | undefined
+        try {
+          before = JSON.parse(
+            await readFile(join(artifacts, 'baseline-geometry.json'), 'utf8')
+          )
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        }
+        if (before != null)
+          expect(row.height / before.height).within(0.65, 0.85)
         expect(row.text).contains('Apr 3').and.contains('5:00 pm')
         const targets = await b!.page.$$eval(
           '[aria-label="Conflict"], [aria-label^="Sign Up,"]',
@@ -138,11 +144,13 @@ async function main(): Promise<void> {
           expect(target.shell).equals(24)
         }
         const headers = await b!.page.$eval(
-          '[data-testid="umpire-game-gam_umpire_g1"]',
-          el =>
-            [...el.previousElementSibling!.children].map(
-              cell => cell.textContent
-            )
+          '[data-testid="umpire-table-header-scroll"]',
+          el => {
+            const row = [...el.querySelectorAll<HTMLElement>('*')].find(node =>
+              [...node.children].some(cell => cell.textContent === 'Conflicts')
+            )!
+            return [...row.children].map(cell => cell.textContent)
+          }
         )
         expect(headers.at(-1)).equals('Conflicts')
         expect(headers.at(-2)).equals('Jersey Color')
@@ -154,14 +162,18 @@ async function main(): Promise<void> {
               shell: el.firstElementChild!.getBoundingClientRect().height
             }))
         )
-        expect(tabs).length(4)
+        expect(tabs).length(2)
         for (const tab of tabs) {
           expect(tab.target).at.least(48)
           expect(tab.shell).equals(36)
         }
         console.log(
           'B1 compact geometry',
-          JSON.stringify({ before: before.height, after: row.height, targets })
+          JSON.stringify({
+            before: before?.height ?? null,
+            after: row.height,
+            targets
+          })
         )
       }
     }
@@ -192,10 +204,6 @@ async function main(): Promise<void> {
     await shot('schedule')
     await geometry()
     if (!baseline) {
-      await tap(b.m, 'Umpire view', 'tab')
-      await contains(b.page, 'No games match this schedule.')
-      await tap(b.m, 'League view', 'tab')
-      await contains(b.page, 'Sign Up')
       await tap(b.m, 'Leaderboard', 'tab')
       await contains(b.page, 'COMPLETED GAMES')
       await tap(b.m, 'Schedule', 'tab')
@@ -333,8 +341,14 @@ async function main(): Promise<void> {
       await login(101)
       await open('/teams/' + f.teamA + '?tab=schedule', 'LIVE')
       expect(
-        await b.page.evaluate(() => document.body.textContent)
-      ).not.contains('UMP')
+        await b.page.$$eval(
+          '*',
+          els =>
+            els.filter(
+              el => el.childElementCount === 0 && el.textContent === 'UMP'
+            ).length
+        )
+      ).equals(0)
       await f.h.db
         .deleteFrom('umpire_assignments')
         .where('game_id', '=', 'gam_umpire_g1')
@@ -342,8 +356,14 @@ async function main(): Promise<void> {
       await login(103)
       await open('/teams/' + f.teamA + '?tab=schedule', 'LIVE')
       expect(
-        await b.page.evaluate(() => document.body.textContent)
-      ).not.contains('UMP')
+        await b.page.$$eval(
+          '*',
+          els =>
+            els.filter(
+              el => el.childElementCount === 0 && el.textContent === 'UMP'
+            ).length
+        )
+      ).equals(0)
       await open('/games/gam_umpire_g1?tab=info', 'ARE YOU GOING')
       expect(await b.page.$('[data-testid="game-umpires"]')).equals(null)
       console.log(

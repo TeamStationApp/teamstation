@@ -99,7 +99,10 @@ describe('api client home', () => {
     expect(calls).deep.equals([
       { url: '/api/v1/me/home', method: 'GET', body: undefined }
     ])
-    expect(home.teams.map(row => row.id)).deep.equals(['tem_member', 'tem_follow'])
+    expect(home.teams.map(row => row.id)).deep.equals([
+      'tem_member',
+      'tem_follow'
+    ])
     expect(home.teams[0]).deep.equals({
       id: 'tem_member',
       name: 'Hawks',
@@ -125,9 +128,19 @@ describe('api client home', () => {
       timezone: 'UTC',
       external: false
     })
-    expect(home.seasons.map(row => row.source)).deep.equals(['member', 'follow'])
+    expect(home.seasons.map(row => row.source)).deep.equals([
+      'member',
+      'follow'
+    ])
     expect(home.seasons[0]).include({ id: 'sea_member', games: 1, teams: 2 })
-    expect(home.leagues.map(row => row.source)).deep.equals(['member', 'follow'])
-    expect(home.leagues[0]).include({ id: 'lea_member', kind: 'league', direct: false })
+    expect(home.leagues.map(row => row.source)).deep.equals([
+      'member',
+      'follow'
+    ])
+    expect(home.leagues[0]).include({
+      id: 'lea_member',
+      kind: 'league',
+      direct: false
+    })
   })
 })

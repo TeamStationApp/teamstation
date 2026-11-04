@@ -176,6 +176,7 @@ import { GroupLocationPage } from './screens/GroupLocationPage'
 import { GroupPeoplePage } from './screens/GroupPeoplePage'
 import { GroupScreen } from './screens/GroupScreen'
 import { GroupSettingsScreen } from './screens/GroupSettingsScreen'
+import { clearHomeListExpanded } from './screens/homeListExpanded'
 import { HomeScreen } from './screens/HomeScreen'
 import { clearHomeListExpanded } from './screens/homeListExpanded'
 import { JoinScreen } from './screens/JoinScreen'
@@ -2862,6 +2863,11 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onOpenGame={gameId => {
           push({ name: 'game', gameId, title: '', tab: 'info' })
+        }}
+        onOpenPerson={(userId, name) => {
+          const leagueId = top.id === '' ? (umpireLeagues[0]?.id ?? '') : top.id
+          if (leagueId !== '')
+            openPerson({ kind: 'league', id: leagueId }, userId, name)
         }}
         onRoute={route => {
           writeTop(current => ({

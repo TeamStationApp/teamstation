@@ -166,9 +166,9 @@ describe('S3: Home waits for the home scope before it reads', function () {
     await settle()
     const count = (name: string): number =>
       log.filter(line => line === `client.${name}`).length
-    expect([count('home'), count('recentGame'), count('liveNow')]).deep.equals(
-      [1, 1, 1]
-    )
+    expect([count('home'), count('recentGame'), count('liveNow')]).deep.equals([
+      1, 1, 1
+    ])
     // A play: the game's score moved, and no team or season did.
     await act(async () => {
       socket.deliver({ type: 'changed', revision: '9', gameId: 'g1' })
@@ -229,7 +229,9 @@ describe('S3: Home waits for the home scope before it reads', function () {
     const { client } = homeClient(log)
     const stored: Record<string, unknown> = {
       'home.lists': {
-        teams: [{ ...hawks, name: 'Stored Hawks', direct: true, source: 'member' }],
+        teams: [
+          { ...hawks, name: 'Stored Hawks', direct: true, source: 'member' }
+        ],
         seasons: [],
         leagues: []
       },

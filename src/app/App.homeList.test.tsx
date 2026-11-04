@@ -9,8 +9,8 @@ import { mount, press, settle, unmount } from '../test/gameFormDom'
 import { App } from './App'
 import { showRoute } from './navigation/useAddressBar'
 import type { StoredUser } from './platform/storedUser'
-import type { DocumentStore, StoredDocument } from './sync/cacheStore'
 import { HOME_LIST_EXPANDED_KEY } from './screens/homeListExpanded'
+import type { DocumentStore, StoredDocument } from './sync/cacheStore'
 
 const ALEX: StoredUser = {
   id: userIdOfGumbo(18),
@@ -118,9 +118,7 @@ describe('the home list window on this device', () => {
       />
     )
     await settle(50)
-    expect(window.localStorage.getItem(HOME_LIST_EXPANDED_KEY)).not.equals(
-      null
-    )
+    expect(window.localStorage.getItem(HOME_LIST_EXPANDED_KEY)).not.equals(null)
     await press('Sign out')
     await settle(50)
     expect(window.localStorage.getItem(HOME_LIST_EXPANDED_KEY)).equals(null)
@@ -138,9 +136,7 @@ describe('the home list window on this device', () => {
       />
     )
     await settle(50)
-    expect(window.localStorage.getItem(HOME_LIST_EXPANDED_KEY)).not.equals(
-      null
-    )
+    expect(window.localStorage.getItem(HOME_LIST_EXPANDED_KEY)).not.equals(null)
     await press('Use a different account')
     await settle(50)
     expect(window.location.pathname).equals('/sign-in')

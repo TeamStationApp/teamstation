@@ -191,13 +191,13 @@ async function main(): Promise<void> {
       })
       expect(geometry.bodyHeight).equals(geometry.viewport)
       expect(
-        geometry.widths.slice(0, 5).every(w => w === geometry.widths[0])
+        geometry.widths.slice(0, 6).every(w => w === geometry.widths[0])
       ).equals(true)
       expect(geometry.widths[0]).closeTo(
         Math.ceil(Math.max(98, geometry.dates) + 16),
         1
       )
-      expect(geometry.widths[5]).closeTo(Math.ceil(geometry.pill + 32), 1)
+      expect(geometry.widths[6]).closeTo(Math.ceil(geometry.pill + 32), 1)
       expect(geometry.widths.at(-1)).closeTo(
         Math.ceil(geometry.conflict + 13),
         1

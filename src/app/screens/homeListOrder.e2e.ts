@@ -3,7 +3,11 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
-import puppeteer, { type Browser, type BrowserContext, type Page } from 'puppeteer'
+import puppeteer, {
+  type Browser,
+  type BrowserContext,
+  type Page
+} from 'puppeteer'
 
 /**
  * Home's five-row window, against the web app on :8080 with the API
@@ -183,10 +187,8 @@ async function open(): Promise<{ context: BrowserContext; page: Page }> {
 }
 
 async function textOf(page: Page): Promise<string> {
-  return await page.evaluate(() => {
-    const text = document.body.textContent
-    return text == null ? '' : text
-  })
+  const text = await page.evaluate(() => document.body.textContent)
+  return text ?? ''
 }
 
 async function waitForText(page: Page, needle: string): Promise<void> {
@@ -194,7 +196,8 @@ async function waitForText(page: Page, needle: string): Promise<void> {
     await page.waitForFunction(
       text => {
         const body = document.body.textContent
-        return body != null && body.indexOf(text) !== -1
+        // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
+        return body != null && body.includes(text)
       },
       {},
       needle
@@ -273,7 +276,8 @@ describe('the home list window', function () {
       await page.waitForFunction(
         text => {
           const body = document.body.textContent
-          return body == null || body.indexOf(text) === -1
+          // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
+          return body == null || !body.includes(text)
         },
         {},
         'Valley'
@@ -297,6 +301,7 @@ describe('the home list window', function () {
       expect(text).not.includes('Spring Six')
       await page.evaluate(() => {
         const nodes = document.querySelectorAll('*')
+        // eslint-disable-next-line @typescript-eslint/prefer-for-of -- Sucrase would compile for-of to a helper the browser does not have.
         for (let i = 0; i < nodes.length; i++) {
           const node = nodes[i]
           if (node.childNodes.length === 1 && node.textContent === 'SEASONS') {
@@ -318,6 +323,7 @@ describe('the home list window', function () {
       expect(text).not.includes('League Six')
       await page.evaluate(() => {
         const nodes = document.querySelectorAll('*')
+        // eslint-disable-next-line @typescript-eslint/prefer-for-of -- Sucrase would compile for-of to a helper the browser does not have.
         for (let i = 0; i < nodes.length; i++) {
           const node = nodes[i]
           if (

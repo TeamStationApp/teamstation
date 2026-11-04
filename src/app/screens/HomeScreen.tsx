@@ -19,7 +19,7 @@ import {
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
 import { windowHomeList } from '../../common/homeList'
 import { localityLabel } from '../../common/locality'
-import { type PublicGroup } from '../../common/publicGroups'
+import type { PublicGroup } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { creationIcons } from '../assets'
 import {
@@ -39,20 +39,16 @@ import { useSceneShown } from '../components/sceneShown'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { useScreenScope } from '../hooks/useScreenScope'
-import {
-  HOME_GUARDED,
-  HOME_LISTS,
-  HOME_RECENT
-} from '../sync/documentKeys'
+import { HOME_GUARDED, HOME_LISTS, HOME_RECENT } from '../sync/documentKeys'
 import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { UmpireMaskDrawing } from '../umpires/UmpireMaskDrawing'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 import type { GameListOpenOptions } from './gameListOptions'
 import {
+  type HomeListExpanded,
   readHomeListExpanded,
-  writeHomeListExpanded,
-  type HomeListExpanded
+  writeHomeListExpanded
 } from './homeListExpanded'
 import { recentGameIsCurrent } from './recentGameWindow'
 

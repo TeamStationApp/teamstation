@@ -304,7 +304,9 @@ describe('GET /me/home', function () {
     server?.close()
     if (db != null) await db.destroy()
     if (adminPool != null) {
-      await adminPool.query(`drop database if exists ${scratchName} with (force)`)
+      await adminPool.query(
+        `drop database if exists ${scratchName} with (force)`
+      )
       await adminPool.end()
     }
   })
@@ -528,11 +530,17 @@ describe('GET /me/home', function () {
       if (row.direct) expect(seenIndirect, row.name).equals(false)
       else seenIndirect = true
     }
-    expect(rows.filter(row => row.direct).map(row => row.id).sort()).deep.equals(
-      [...direct].sort()
-    )
     expect(
-      rows.filter(row => !row.direct).map(row => row.id).sort()
+      rows
+        .filter(row => row.direct)
+        .map(row => row.id)
+        .sort()
+    ).deep.equals([...direct].sort())
+    expect(
+      rows
+        .filter(row => !row.direct)
+        .map(row => row.id)
+        .sort()
     ).deep.equals([...indirect].sort())
   }
 
@@ -573,13 +581,13 @@ describe('GET /me/home', function () {
   it('orders a league by the latest game in any of its seasons', async () => {
     const home = await lists(fx.clocks)
     expect(ids(home.leagues)).deep.equals([fx.zuluLeague, fx.alphaLeague])
-    expect(home.leagues.every(row => row.direct && row.source === 'member')).equals(
-      true
-    )
+    expect(
+      home.leagues.every(row => row.direct && row.source === 'member')
+    ).equals(true)
     expect(ids(home.seasons)).deep.equals([fx.zuluSeason, fx.alphaSeason])
-    expect(home.seasons.every(row => !row.direct && row.source === 'member')).equals(
-      true
-    )
+    expect(
+      home.seasons.every(row => !row.direct && row.source === 'member')
+    ).equals(true)
     expect(home.teams).deep.equals([])
   })
 
@@ -629,7 +637,9 @@ describe('GET /me/home', function () {
     )
     expect(home.teams.filter(row => row.id === fx.bothT)).length(1)
     expect(home.teams.find(row => row.id === fx.bothT)?.source).equals('member')
-    expect(home.teams.find(row => row.id === fx.followT)?.source).equals('follow')
+    expect(home.teams.find(row => row.id === fx.followT)?.source).equals(
+      'follow'
+    )
     expect(home.teams.find(row => row.id === fx.followT)?.kind).equals('team')
     expect(home.teams.filter(row => row.id === fx.survivor)).length(1)
     expect(home.teams.find(row => row.id === fx.survivor)?.source).equals(
@@ -641,9 +651,9 @@ describe('GET /me/home', function () {
       t: 0,
       seasonName: 'Spring 2025'
     })
-    expect(home.teams.find(row => row.id === fx.memberT)?.externalIds).deep.equals(
-      ['ext-member']
-    )
+    expect(
+      home.teams.find(row => row.id === fx.memberT)?.externalIds
+    ).deep.equals(['ext-member'])
     expect(home.teams.find(row => row.id === fx.playerT)?.record).equals(null)
     expect(home.teams.find(row => row.id === fx.ownerT)?.direct).equals(false)
     expect(home.seasons).deep.equals([])
@@ -653,9 +663,9 @@ describe('GET /me/home', function () {
   it('counts a guardian or family link to a current player as a direct team', async () => {
     const home = await lists(fx.parent)
     partition(home.teams, [fx.guardTeam, fx.familyTeam], [])
-    expect(home.teams.every(row => row.source === 'member' && row.direct)).equals(
-      true
-    )
+    expect(
+      home.teams.every(row => row.source === 'member' && row.direct)
+    ).equals(true)
   })
 
   it('reads a season membership on a closed id onePerson still includes', async () => {
@@ -677,8 +687,12 @@ describe('GET /me/home', function () {
 
   it('gives a disabled, merged or missing account nothing', async () => {
     const none = { teams: [], seasons: [], leagues: [] }
-    expect(await homeLists(database(), fx.disabled, media.space)).deep.equals(none)
-    expect(await homeLists(database(), fx.merged, media.space)).deep.equals(none)
+    expect(await homeLists(database(), fx.disabled, media.space)).deep.equals(
+      none
+    )
+    expect(await homeLists(database(), fx.merged, media.space)).deep.equals(
+      none
+    )
     const made = mintUserId(id => taken.has(id))
     expect(
       await homeLists(database(), userIdOfGumbo(made.userId), media.space)

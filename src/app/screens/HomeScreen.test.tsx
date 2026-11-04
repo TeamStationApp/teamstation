@@ -286,55 +286,57 @@ async function mount(setup: Setup = {}): Promise<Calls> {
     home:
       setup.home ??
       (async () => {
-      const [loadedTeams, loadedSeasons, groups, follows] = await Promise.all([
-        (setup.teams ?? (async () => []))(),
-        (setup.seasons ?? (async () => []))(),
-        setup.groups == null ? [] : setup.groups(),
-        setup.follows == null ? [] : setup.follows()
-      ])
-      const member = <T extends { id: string }>(
-        row: T
-      ): T & { direct: true; source: 'member' } => ({
-        ...row,
-        direct: true,
-        source: 'member'
-      })
-      const follow = (
-        row: PublicGroup
-      ): PublicGroup & { direct: true; source: 'follow' } => ({
-        ...row,
-        direct: true,
-        source: 'follow'
-      })
-      const teamIds = new Set(loadedTeams.map(row => row.id))
-      const seasonIds = new Set(loadedSeasons.map(row => row.id))
-      const ownLeagues = groups.filter(group => group.kind === 'league')
-      const leagueIds = new Set(ownLeagues.map(row => row.id))
-      return {
-        teams: [
-          ...loadedTeams.map(member),
-          ...follows
-            .filter(group => group.kind === 'team' && !teamIds.has(group.id))
-            .map(follow)
-        ],
-        seasons: [
-          ...loadedSeasons.map(member),
-          ...follows
-            .filter(
-              group => group.kind === 'season' && !seasonIds.has(group.id)
-            )
-            .map(follow)
-        ],
-        leagues: [
-          ...ownLeagues.map(member),
-          ...follows
-            .filter(
-              group => group.kind === 'league' && !leagueIds.has(group.id)
-            )
-            .map(follow)
-        ]
-      }
-    }),
+        const [loadedTeams, loadedSeasons, groups, follows] = await Promise.all(
+          [
+            (setup.teams ?? (async () => []))(),
+            (setup.seasons ?? (async () => []))(),
+            setup.groups == null ? [] : setup.groups(),
+            setup.follows == null ? [] : setup.follows()
+          ]
+        )
+        const member = <T extends { id: string }>(
+          row: T
+        ): T & { direct: true; source: 'member' } => ({
+          ...row,
+          direct: true,
+          source: 'member'
+        })
+        const follow = (
+          row: PublicGroup
+        ): PublicGroup & { direct: true; source: 'follow' } => ({
+          ...row,
+          direct: true,
+          source: 'follow'
+        })
+        const teamIds = new Set(loadedTeams.map(row => row.id))
+        const seasonIds = new Set(loadedSeasons.map(row => row.id))
+        const ownLeagues = groups.filter(group => group.kind === 'league')
+        const leagueIds = new Set(ownLeagues.map(row => row.id))
+        return {
+          teams: [
+            ...loadedTeams.map(member),
+            ...follows
+              .filter(group => group.kind === 'team' && !teamIds.has(group.id))
+              .map(follow)
+          ],
+          seasons: [
+            ...loadedSeasons.map(member),
+            ...follows
+              .filter(
+                group => group.kind === 'season' && !seasonIds.has(group.id)
+              )
+              .map(follow)
+          ],
+          leagues: [
+            ...ownLeagues.map(member),
+            ...follows
+              .filter(
+                group => group.kind === 'league' && !leagueIds.has(group.id)
+              )
+              .map(follow)
+          ]
+        }
+      }),
     cached: async () => undefined,
     recentGame: setup.recent ?? (async () => null),
     liveNow: setup.live ?? (async () => []),
@@ -1276,21 +1278,23 @@ describe('a player opened from Home, through the app', function () {
         : path.endsWith('/me/home')
           ? { teams: [], seasons: [], leagues: [] }
           : path.endsWith('/me/roles')
-          ? { teams: {}, guardianOf: [userIdOfGumbo(7)] }
-          : url.endsWith('/users?guardedBy=me')
-            ? [
-                {
-                  userId: userIdOfGumbo(7),
-                  gumboId: 7,
-                  externalIds: [],
-                  shortName: 'Jorge P'
-                }
-              ]
-            : path.endsWith('/players/usr_1111111111111111111118')
-              ? { userId: userIdOfGumbo(7), name: 'Jorge P', teams: [] }
-              : path.endsWith('/players/usr_1111111111111111111118/highlights')
-                ? { highlights: [], nextBefore: null, withoutVideo: 0 }
-                : []
+            ? { teams: {}, guardianOf: [userIdOfGumbo(7)] }
+            : url.endsWith('/users?guardedBy=me')
+              ? [
+                  {
+                    userId: userIdOfGumbo(7),
+                    gumboId: 7,
+                    externalIds: [],
+                    shortName: 'Jorge P'
+                  }
+                ]
+              : path.endsWith('/players/usr_1111111111111111111118')
+                ? { userId: userIdOfGumbo(7), name: 'Jorge P', teams: [] }
+                : path.endsWith(
+                      '/players/usr_1111111111111111111118/highlights'
+                    )
+                  ? { highlights: [], nextBefore: null, withoutVideo: 0 }
+                  : []
       return new Response(JSON.stringify(data), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
@@ -1331,9 +1335,13 @@ describe('home list window', function () {
       teams: async () =>
         teamNames.map((name, index) => team(`tem_${index}`, name)),
       seasons: async () =>
-        seasonNames.map((name, index) => season(`sea_${index}`, `Spring ${name}`)),
+        seasonNames.map((name, index) =>
+          season(`sea_${index}`, `Spring ${name}`)
+        ),
       groups: async () =>
-        seasonNames.map((name, index) => league(`lea_${index}`, `League ${name}`)),
+        seasonNames.map((name, index) =>
+          league(`lea_${index}`, `League ${name}`)
+        ),
       follows: async () => [
         asPublicGroup({
           id: 'tem_follow',
