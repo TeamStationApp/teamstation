@@ -3,6 +3,7 @@ import type {
   ChatConversation,
   ChatEpoch,
   ChatGrantRequest,
+  ChatHistoryRequest,
   ChatMember,
   ChatMessage,
   ChatRead
@@ -36,6 +37,11 @@ export interface ConversationState {
   epochs: Map<number, EpochState>
   /** The highest epoch read: the `after` of the next epochs request. */
   epochsAfter: number
+  boxesCursor: string
+  historyRecoveryVersion?: 1
+  freshEpochsEnabled: boolean
+  latestHasServerBox: boolean
+  historyError: boolean
   /** From the last epochs request. */
   latest: number
   needsRotation: boolean
@@ -93,6 +99,10 @@ export function newConversationState(
     opened: new Map(),
     epochs: new Map(),
     epochsAfter: 0,
+    boxesCursor: '0',
+    freshEpochsEnabled: false,
+    latestHasServerBox: false,
+    historyError: false,
     latest: 0,
     needsRotation: false,
     noHolder: false,
@@ -118,6 +128,9 @@ export class ChatMemory {
   readonly conversations = new Map<string, ConversationState>()
   /** The last `GET /chat/grants`. */
   grants: ChatGrantRequest[] = []
+  historyGrants: ChatHistoryRequest[] = []
+  recoveryVersion: 1 | undefined
+  recoveryProbed = false
   /** The list has been read at least once. */
   listed = false
   /** Counts reads, to tell which of two was later. */

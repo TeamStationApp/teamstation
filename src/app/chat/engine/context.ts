@@ -1,4 +1,5 @@
 import type { TeamStationClient } from '../../../common/api'
+import { HttpError } from '../../../common/errors'
 import type { ChatKeyRecord, ChatKeyStore } from '../keyRecord'
 import type { IdentityCache } from './decrypt'
 import { type ChatKeysClient, StaleChatSetupError } from './links'
@@ -23,6 +24,8 @@ export type ChatEngineClient = ChatKeysClient &
     | 'chatIdentity'
     | 'chatEpochs'
     | 'postChatEpoch'
+    | 'chatHistoryGrants'
+    | 'postChatHistoryGrants'
     | 'chatGrants'
     | 'postChatGrants'
     | 'postChatMessage'
@@ -41,6 +44,8 @@ export type ChatEngineClient = ChatKeysClient &
 export type ChatEngineErrorCode =
   /** The device holds no key for the chat's latest epoch. */
   | 'locked'
+  | 'repairRequired'
+  | 'freshStartsDisabled'
   /** The chat's membership record failed to verify on this device. */
   | 'unverified'
   /** The server's box set names someone the verified record does not. */
@@ -68,6 +73,11 @@ export class ChatEngineError extends Error {
     this.name = 'ChatEngineError'
   }
 }
+
+/** Whether a refusal says the person is no longer in the chat. */
+export const isGone = (error: unknown): boolean =>
+  (error instanceof HttpError && error.code === 'notFound') ||
+  (error instanceof ChatEngineError && error.code === 'notMember')
 
 /**
  * The device's key record, written through to its store. Every change goes

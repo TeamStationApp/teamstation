@@ -2,30 +2,43 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  type ChatHistoryGrantBox,
+  type ChatHistoryRequest,
   type ChatIdentity,
   type ChatMessage,
   TeamStationClient
 } from '../../../common/api'
+import { signPuk } from '../../../common/chatCrypto/chain'
 import {
   ChatCryptoUnavailable,
   type CoreCall
 } from '../../../common/chatCrypto/coreCall'
+import { epochAad, hpkeOpen, hpkeSeal } from '../../../common/chatCrypto/hpke'
 import {
   newDeviceKeys,
   newIdentityKey,
   newPukKey
 } from '../../../common/chatCrypto/keys'
 import { sealMessage } from '../../../common/chatCrypto/seal'
+import { HttpError } from '../../../common/errors'
 import { userIdOfGumbo } from '../../../common/userId'
-import { b64, newRecord, withEpochKey } from '../keyRecord'
+import { b64, newRecord, unb64, withEpochKey } from '../keyRecord'
 import { type EngineContext, KeyHolder } from './context'
 import { IdentityCache, openEpochKeys } from './decrypt'
+import { ChatEngine } from './engine'
+import {
+  approveHistoryGrant,
+  fillHistoryGrants,
+  heldHistoryEpoch,
+  readHistoryGrants
+} from './historyRecovery'
+import { genesisHead } from './log'
 import {
   ChatMemory,
   type ConversationState,
   newConversationState
 } from './store'
-import { openPending } from './sync'
+import { openPending, syncEpochs, syncHistoryBoxes } from './sync'
 
 // Fault injection at the platform boundary keeps the real crypto and engine
 // paths intact until the chosen operation fails.
@@ -233,4 +246,683 @@ describe('chat decryption when the crypto core stops', () => {
       expect(ctx.keys.record.epochKeys.cnv_test['1']).equals(undefined)
     })
   })
+})
+
+describe('independent historical box delivery', () => {
+  function delivery(): ReturnType<typeof fixture> & {
+    cursors: Array<string | undefined>
+  } {
+    const f = fixture()
+    f.ctx.memory.conversations.set('cnv_test', f.state)
+    const cursors: Array<string | undefined> = []
+    f.ctx.client.chatEpochs = async (_id, _after, query) => {
+      cursors.push(query?.boxesAfter)
+      return {
+        latest: 1,
+        needsRotation: false,
+        noHolder: false,
+        epochs: [],
+        boxes: [],
+        historyRecoveryVersion: 1,
+        freshEpochsEnabled: true,
+        ...(query == null
+          ? {}
+          : { nextBoxesCursor: '9007199254740993', hasMoreBoxes: false })
+      }
+    }
+    return { ...f, cursors }
+  }
+  it('keeps metadata and bigint delivery cursors independent and serializes concurrent drains', async () => {
+    const { ctx, state, cursors } = delivery()
+    await Promise.all([
+      syncEpochs(ctx, 'cnv_test'),
+      syncEpochs(ctx, 'cnv_test')
+    ])
+    await syncHistoryBoxes(ctx, 'cnv_test')
+    expect(cursors).deep.equals([undefined, '0'])
+    expect(state.boxesCursor).equals('9007199254740993')
+    expect(state.epochsAfter).equals(1)
+    await syncEpochs(ctx, 'cnv_test')
+    await syncHistoryBoxes(ctx, 'cnv_test')
+    expect(cursors.slice(2)).deep.equals([undefined, '9007199254740993'])
+  })
+  it('keeps current sending available when the historical stream fails, and retries from its cursor', async () => {
+    const { ctx, state } = delivery()
+    const original = ctx.client.chatEpochs
+    let fail = true
+    ctx.client.chatEpochs = async (id, after, query) => {
+      if (query != null && fail) throw new Error('offline')
+      return await original(id, after, query)
+    }
+    await syncEpochs(ctx, 'cnv_test')
+    await syncHistoryBoxes(ctx, 'cnv_test')
+    expect(state.latest).equals(1)
+    expect(state.freshEpochsEnabled).equals(true)
+    expect(state.historyError).equals(true)
+    expect(state.boxesCursor).equals('0')
+    fail = false
+    await syncEpochs(ctx, 'cnv_test')
+    await syncHistoryBoxes(ctx, 'cnv_test')
+    expect(state.historyError).equals(false)
+    expect(state.boxesCursor).equals('9007199254740993')
+  })
+  it('replays a delivery after a failed key-store write', async () => {
+    const { ctx, state } = delivery()
+    const record = ctx.keys.record
+    let fail = true
+    ctx.keys = new KeyHolder(
+      {
+        load: async () => record,
+        exists: async () => true,
+        wipe: async () => {},
+        save: async () => {
+          if (fail) throw new Error('disk full')
+        }
+      },
+      record
+    )
+    const key = new Uint8Array(32).fill(42)
+    const box = {
+      epoch: 1,
+      identityId: record.identity!.id,
+      pukGeneration: 1,
+      grantedByUserId: ctx.userId,
+      box: b64(
+        hpkeSeal(
+          'grant',
+          record.puks[0].keys.publicKey,
+          epochAad({
+            conversationId: 'cnv_test',
+            epoch: 1,
+            recipientUserId: ctx.userId,
+            identityId: record.identity!.id,
+            generation: 1
+          }),
+          key
+        )
+      )
+    }
+    const original = ctx.client.chatEpochs
+    ctx.client.chatEpochs = async (id, after, query) => ({
+      ...(await original(id, after, query)),
+      boxes: query == null ? [] : [box]
+    })
+    await syncEpochs(ctx, 'cnv_test')
+    await syncHistoryBoxes(ctx, 'cnv_test')
+    expect(state.boxesCursor).equals('0')
+    expect(ctx.keys.record.epochKeys.cnv_test).equals(undefined)
+    fail = false
+    await syncEpochs(ctx, 'cnv_test')
+    await syncHistoryBoxes(ctx, 'cnv_test')
+    expect(state.boxesCursor).equals('9007199254740993')
+    expect(ctx.keys.record.epochKeys.cnv_test['1']).equals(b64(key))
+  })
+  it('does not advance for an unavailable PUK, and rejects a stalled page', async () => {
+    const { ctx, state } = delivery()
+    ctx.refreshKeys = async () => {}
+    const original = ctx.client.chatEpochs
+    ctx.client.chatEpochs = async (id, after, query) => ({
+      ...(await original(id, after, query)),
+      boxes:
+        query == null
+          ? []
+          : [
+              {
+                epoch: 1,
+                identityId: ctx.keys.record.identity!.id,
+                pukGeneration: 99,
+                box: '',
+                grantedByUserId: null
+              }
+            ]
+    })
+    await syncEpochs(ctx, 'cnv_test')
+    await syncHistoryBoxes(ctx, 'cnv_test')
+    expect(state.boxesCursor).equals('0')
+    expect(state.historyError).equals(true)
+    ctx.client.chatEpochs = async (id, after, query) => ({
+      ...(await original(id, after, query)),
+      nextBoxesCursor: '0',
+      hasMoreBoxes: query != null
+    })
+    await syncEpochs(ctx, 'cnv_test')
+    await syncHistoryBoxes(ctx, 'cnv_test')
+    expect(state.historyError).equals(true)
+    expect(state.boxesCursor).equals('0')
+  })
+  it('reads and sends on the current epochs while a historical delivery is held', async () => {
+    const { ctx, state } = delivery()
+    const original = ctx.client.chatEpochs
+    let release: () => void = () => {}
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    ctx.client.chatEpochs = async (id, after, query) => {
+      if (query != null) await held
+      return await original(id, after, query)
+    }
+    // The current epochs settle while the historical stream is still held.
+    const current = await syncEpochs(ctx, 'cnv_test')
+    expect(current.latest).equals(1)
+    expect(state.boxesCursor).equals('0')
+    expect(await syncEpochs(ctx, 'cnv_test')).equals(state)
+    release()
+    await syncHistoryBoxes(ctx, 'cnv_test')
+    expect(state.boxesCursor).equals('9007199254740993')
+  })
+  it('unlocks a locked message in place when a later historical delivery opens its key', async () => {
+    const { ctx, state, identityKeys } = delivery()
+    const record = ctx.keys.record
+    const key = new Uint8Array(32).fill(7)
+    const sealed = sealMessage({
+      conversationId: 'cnv_test',
+      epoch: 1,
+      messageId: 'msg_history',
+      senderUserId: userIdOfGumbo(1),
+      kind: 'post',
+      epochKey: key,
+      identitySecretKey: identityKeys.secretKey,
+      plaintext: new TextEncoder().encode(
+        JSON.stringify({
+          type: 'text',
+          body: 'older note',
+          mentions: [],
+          attachments: []
+        })
+      )
+    })
+    state.envelopes.set(1, {
+      id: 'msg_history',
+      conversationId: 'cnv_test',
+      seq: 1,
+      epoch: 1,
+      senderUserId: userIdOfGumbo(1),
+      senderIdentityId: 'cid_test',
+      kind: 'post',
+      targetIds: null,
+      nonce: b64(sealed.nonce),
+      ciphertext: b64(sealed.ciphertext),
+      signature: b64(sealed.signature),
+      attachmentIds: [],
+      clearedAt: null,
+      createdAt: '2027-04-10T12:00:00Z'
+    })
+    state.synced = true
+    await openPending(ctx, state)
+    expect(state.opened.get('msg_history')?.status).equals('locked')
+    const box = {
+      epoch: 1,
+      identityId: record.identity!.id,
+      pukGeneration: 1,
+      grantedByUserId: ctx.userId,
+      box: b64(
+        hpkeSeal(
+          'grant',
+          record.puks[0].keys.publicKey,
+          epochAad({
+            conversationId: 'cnv_test',
+            epoch: 1,
+            recipientUserId: ctx.userId,
+            identityId: record.identity!.id,
+            generation: 1
+          }),
+          key
+        )
+      )
+    }
+    const original = ctx.client.chatEpochs
+    ctx.client.chatEpochs = async (id, after, query) => ({
+      ...(await original(id, after, query)),
+      boxes: query == null ? [] : [box]
+    })
+    const events: string[] = []
+    ctx.memory.emit = event => {
+      events.push(event.type)
+    }
+    await syncEpochs(ctx, 'cnv_test')
+    await syncHistoryBoxes(ctx, 'cnv_test')
+    expect(state.opened.get('msg_history')?.status).equals('ok')
+    expect(events).includes('conversation')
+  })
+  it('pages the current epochs, and marks history when their box needs a key it cannot get', async () => {
+    const { ctx, state } = delivery()
+    let refreshed = 0
+    ctx.refreshKeys = async () => {
+      refreshed += 1
+    }
+    const original = ctx.client.chatEpochs
+    let current = 0
+    ctx.client.chatEpochs = async (id, after, query) => {
+      const answer = await original(id, after, query)
+      if (query != null) return answer
+      current += 1
+      return current === 1
+        ? { ...answer, hasMoreBoxes: true }
+        : {
+            ...answer,
+            boxes: [
+              {
+                epoch: 1,
+                identityId: ctx.keys.record.identity!.id,
+                pukGeneration: 99,
+                box: '',
+                grantedByUserId: null
+              }
+            ]
+          }
+    }
+    await syncEpochs(ctx, 'cnv_test')
+    expect(current).equals(2)
+    expect(refreshed).equals(1)
+    expect(state.historyError).equals(true)
+  })
+  it('pages the historical stream until it is complete', async () => {
+    const { ctx, state, cursors } = delivery()
+    const original = ctx.client.chatEpochs
+    ctx.client.chatEpochs = async (id, after, query) => {
+      const answer = await original(id, after, query)
+      return query?.boxesAfter === '0'
+        ? { ...answer, nextBoxesCursor: '5', hasMoreBoxes: true }
+        : answer
+    }
+    await syncEpochs(ctx, 'cnv_test')
+    await syncHistoryBoxes(ctx, 'cnv_test')
+    expect(cursors).deep.equals([undefined, '0', '5'])
+    expect(state.boxesCursor).equals('9007199254740993')
+  })
+  it('stops quietly when the person has left the chat while its history streams', async () => {
+    const { ctx, state } = delivery()
+    const original = ctx.client.chatEpochs
+    ctx.client.chatEpochs = async (id, after, query) => {
+      if (query != null) throw new HttpError('notFound', 'Not found')
+      return await original(id, after, query)
+    }
+    const events: string[] = []
+    ctx.memory.emit = event => {
+      events.push(event.type)
+    }
+    await syncEpochs(ctx, 'cnv_test')
+    await syncHistoryBoxes(ctx, 'cnv_test')
+    expect(events).not.includes('error')
+    expect(state.historyError).equals(false)
+  })
+  it('uses only the legacy endpoint shape on a server without the capability', async () => {
+    const { ctx, cursors } = delivery()
+    const original = ctx.client.chatEpochs
+    ctx.client.chatEpochs = async (id, after, query) => {
+      const result = await original(id, after, query)
+      delete result.historyRecoveryVersion
+      return result
+    }
+    await syncEpochs(ctx, 'cnv_test')
+    expect(cursors).deep.equals([undefined])
+    expect(ctx.memory.recoveryVersion).equals(undefined)
+  })
+})
+
+describe('historical client grants', () => {
+  async function grantFixture(): Promise<
+    ReturnType<typeof fixture> & {
+      request: ChatHistoryRequest
+      posted: ChatHistoryGrantBox[]
+      recipientPuk: ReturnType<typeof newPukKey>
+    }
+  > {
+    const f = fixture()
+    const { ctx, state } = f
+    ctx.memory.conversations.set('cnv_test', state)
+    const first = state.epochs.get(1)!
+    state.epochs.set(2, {
+      valid: true,
+      record: { ...first.record, epoch: 2, chainBreak: true }
+    })
+    state.epochsAfter = 2
+    const recipientIdentity = newIdentityKey()
+    const recipientPuk = newPukKey()
+    const userId = userIdOfGumbo(2)
+    const request: ChatHistoryRequest = {
+      id: '9007199254740993',
+      conversationId: 'cnv_test',
+      segmentStartEpoch: 1,
+      targetEpoch: 1,
+      coveredThroughEpoch: 0,
+      userId,
+      identityId: 'recipient',
+      identityKey: b64(recipientIdentity.publicKey),
+      pukGeneration: 1,
+      pukPublicKey: b64(recipientPuk.publicKey),
+      pukSignature: b64(
+        signPuk(
+          { userId, generation: 1, publicKey: recipientPuk.publicKey },
+          recipientIdentity.secretKey
+        )
+      ),
+      requiresApproval: false,
+      canApprove: true,
+      openedAt: '2026-10-01T00:00:00Z'
+    }
+    await ctx.keys.update(record => ({
+      ...withEpochKey(record, 'cnv_test', 1, new Uint8Array(32).fill(7)),
+      logs: { cnv_test: { ...genesisHead(), members: [ctx.userId, userId] } }
+    }))
+    ctx.client.chatLog = async () => []
+    ctx.client.chatUserKeys = async () => ({
+      userId,
+      identity: {
+        id: request.identityId,
+        publicKey: request.identityKey,
+        createdAt: request.openedAt
+      },
+      puk: {
+        generation: 1,
+        publicKey: request.pukPublicKey,
+        signature: request.pukSignature
+      }
+    })
+    ctx.client.chatEpochs = async (_id, _after, query) => ({
+      latest: 2,
+      needsRotation: false,
+      noHolder: false,
+      epochs: [],
+      boxes: [],
+      historyRecoveryVersion: 1,
+      freshEpochsEnabled: false,
+      ...(query == null ? {} : { nextBoxesCursor: '0', hasMoreBoxes: false })
+    })
+    const posted: ChatHistoryGrantBox[] = []
+    ctx.client.chatHistoryGrants = async () => ({
+      requests: posted.length > 0 ? [] : [request],
+      nextCursor: null
+    })
+    ctx.client.postChatHistoryGrants = async boxes => {
+      posted.push(...boxes)
+      return {
+        filled: 1,
+        results: [
+          { requestId: request.id, coveredThroughEpoch: 1, status: 'completed' }
+        ]
+      }
+    }
+    return { ...f, request, posted, recipientPuk }
+  }
+  it('supplies the actual historical key with the unchanged grant AAD and no implicit approval', async () => {
+    const { ctx, request, posted, recipientPuk } = await grantFixture()
+    expect(await fillHistoryGrants(ctx)).equals(1)
+    expect(posted).length(1)
+    expect(posted[0]).include({
+      epoch: 1,
+      targetEpoch: 1,
+      approveHistory: false
+    })
+    expect(
+      hpkeOpen(
+        'grant',
+        recipientPuk.secretKey,
+        epochAad({
+          conversationId: request.conversationId,
+          epoch: 1,
+          recipientUserId: request.userId,
+          identityId: request.identityId,
+          generation: 1
+        }),
+        unb64(posted[0].box)
+      )
+    ).deep.equals(new Uint8Array(32).fill(7))
+    expect(ctx.memory.historyGrants).deep.equals([])
+  })
+  it('grants an available prefix without claiming the segment tip or dropping remaining work', async () => {
+    const { ctx, state, request, posted } = await grantFixture()
+    const first = state.epochs.get(1)!
+    state.epochs.set(2, {
+      valid: true,
+      record: {
+        ...first.record,
+        epoch: 2,
+        chainBreak: false,
+        previousKeyBox: 'linked'
+      }
+    })
+    state.epochs.set(3, {
+      valid: true,
+      record: { ...first.record, epoch: 3, chainBreak: true }
+    })
+    request.targetEpoch = 2
+    ctx.client.postChatHistoryGrants = async boxes => {
+      posted.push(...boxes)
+      request.coveredThroughEpoch = 1
+      return {
+        filled: 0,
+        results: [
+          { requestId: request.id, coveredThroughEpoch: 1, status: 'partial' }
+        ]
+      }
+    }
+    let reads = 0
+    ctx.client.chatHistoryGrants = async () => {
+      reads++
+      return { requests: [request], nextCursor: null }
+    }
+    expect(await fillHistoryGrants(ctx)).equals(0)
+    expect(posted[0]).include({ epoch: 1, targetEpoch: 2 })
+    expect(reads).equals(2)
+    expect(ctx.memory.historyGrants[0].coveredThroughEpoch).equals(1)
+    expect(heldHistoryEpoch(ctx, request)).equals(undefined)
+  })
+
+  it('reopens loaded placeholders without notifying them as newly arrived messages', async () => {
+    const { ctx, state } = await grantFixture()
+    state.synced = true
+    state.envelopes.set(1, {
+      id: 'cleared',
+      conversationId: 'cnv_test',
+      seq: 1,
+      epoch: 1,
+      senderUserId: ctx.userId,
+      senderIdentityId: 'cid_test',
+      kind: 'post',
+      targetIds: null,
+      nonce: '',
+      ciphertext: '',
+      signature: '',
+      attachmentIds: [],
+      clearedAt: '2026-10-01T00:00:00Z',
+      createdAt: '2026-10-01T00:00:00Z'
+    })
+    state.opened.set('cleared', { status: 'lost' })
+    const events: string[] = []
+    ctx.memory.subscribe(event => events.push(event.type))
+    await fillHistoryGrants(ctx)
+    expect(state.opened.get('cleared')).deep.equals({ status: 'cleared' })
+    expect(events).includes('conversation')
+    expect(events).includes('conversations')
+    expect(events).not.includes('messageAlert')
+  })
+
+  it('defers reset requests until explicit approval and reports a stale refusal', async () => {
+    const { ctx, request, posted } = await grantFixture()
+    request.requiresApproval = true
+    expect(await fillHistoryGrants(ctx)).equals(0)
+    expect(posted).length(0)
+    await approveHistoryGrant(ctx, request.id)
+    expect(posted[0].approveHistory).equals(true)
+    ctx.memory.historyGrants = [request]
+    ctx.client.postChatHistoryGrants = async () => ({
+      filled: 0,
+      results: [
+        { requestId: request.id, coveredThroughEpoch: 0, status: 'skipped' }
+      ]
+    })
+    try {
+      await approveHistoryGrant(ctx, request.id)
+      expect.fail('stale approval succeeded')
+    } catch (error) {
+      expect((error as Error).message).contains('changed')
+    }
+  })
+  it('never approves its own identity or an absent target', async () => {
+    const { ctx, request } = await grantFixture()
+    for (const target of [
+      [],
+      [{ ...request, userId: ctx.userId }],
+      [{ ...request, canApprove: false }]
+    ]) {
+      ctx.memory.historyGrants = target
+      try {
+        await approveHistoryGrant(ctx, request.id)
+        expect.fail('unauthorized approval')
+      } catch (error) {
+        expect((error as Error).message).contains('no historical request')
+      }
+    }
+  })
+  it('refuses invalid epochs, gaps, wrong ranges, and unavailable actual keys', async () => {
+    const { ctx, state, request } = await grantFixture()
+    expect(heldHistoryEpoch(ctx, request)).equals(1)
+    expect(
+      heldHistoryEpoch(ctx, { ...request, conversationId: 'missing' })
+    ).equals(undefined)
+    expect(heldHistoryEpoch(ctx, { ...request, targetEpoch: 2 })).equals(
+      undefined
+    )
+    state.epochs.get(1)!.valid = false
+    expect(heldHistoryEpoch(ctx, request)).equals(undefined)
+    state.epochs.get(1)!.valid = true
+    const first = state.epochs.get(1)!
+    state.epochs.delete(1)
+    expect(heldHistoryEpoch(ctx, request)).equals(undefined)
+    state.epochs.set(1, first)
+    await ctx.keys.update(record => ({ ...record, epochKeys: {} }))
+    expect(await fillHistoryGrants(ctx)).equals(0)
+    ctx.memory.historyGrants = [request]
+    try {
+      await approveHistoryGrant(ctx, request.id)
+      expect.fail('no key')
+    } catch (error) {
+      expect((error as Error).message).contains('does not hold')
+    }
+  })
+  it('isolates a broken membership log and forged recipient PUK from sending', async () => {
+    const { ctx, request, posted } = await grantFixture()
+    const errors: unknown[] = []
+    ctx.memory.subscribe(event => {
+      if (event.type === 'error') errors.push(event.error)
+    })
+    ctx.keys.record.logs.cnv_test.broken = true
+    expect(await fillHistoryGrants(ctx)).equals(0)
+    ctx.keys.record.logs.cnv_test.broken = false
+    request.pukSignature = b64(new Uint8Array(64))
+    expect(await fillHistoryGrants(ctx)).equals(0)
+    expect(posted).length(0)
+    expect(errors).length(2)
+  })
+  it('bounds discovery, rejects stalled cursors, and never probes unsupported servers', async () => {
+    const { ctx, request } = await grantFixture()
+    ctx.memory.recoveryProbed = true
+    expect(await readHistoryGrants(ctx)).deep.equals([])
+    ctx.memory.recoveryVersion = 1
+    const seen: string[] = []
+    ctx.client.chatHistoryGrants = async cursor => {
+      seen.push(cursor ?? '0')
+      return {
+        requests: [request],
+        nextCursor: seen.length === 1 ? request.id : null
+      }
+    }
+    expect(await readHistoryGrants(ctx)).length(2)
+    expect(seen).deep.equals(['0', request.id])
+    ctx.client.chatHistoryGrants = async () => ({
+      requests: [],
+      nextCursor: '0'
+    })
+    try {
+      await readHistoryGrants(ctx)
+      expect.fail('stalled')
+    } catch (error) {
+      expect((error as Error).message).contains('Non-advancing')
+    }
+    expect(await fillHistoryGrants(ctx)).equals(0)
+  })
+  it('refreshes the recovering conversation when its approval changes or disappears', async () => {
+    const { ctx, request } = await grantFixture()
+    ctx.memory.recoveryProbed = true
+    ctx.memory.recoveryVersion = 1
+    let requests = [{ ...request, userId: ctx.userId, requiresApproval: true }]
+    ctx.client.chatHistoryGrants = async () => ({ requests, nextCursor: null })
+    const changed: string[] = []
+    ctx.memory.subscribe(event => {
+      if (event.type === 'conversation') changed.push(event.conversationId)
+    })
+    await readHistoryGrants(ctx)
+    expect(changed).deep.equals(['cnv_test'])
+    changed.length = 0
+    await readHistoryGrants(ctx)
+    expect(changed).length(0)
+    requests = [{ ...requests[0], requiresApproval: false }]
+    await readHistoryGrants(ctx)
+    expect(changed).deep.equals(['cnv_test'])
+    changed.length = 0
+    requests = []
+    await readHistoryGrants(ctx)
+    expect(changed).deep.equals(['cnv_test'])
+    changed.length = 0
+    requests = [{ ...request, requiresApproval: true }]
+    await readHistoryGrants(ctx)
+    expect(changed).length(0)
+  })
+
+  it('keeps partial recovery visible after a completed segment leaves discovery', async () => {
+    const { ctx, state } = await grantFixture()
+    const engine = new ChatEngine({
+      client: ctx.client,
+      userId: ctx.userId,
+      device: { name: 'Unit device', platform: 'web' },
+      store: {
+        load: async () => ctx.keys.record,
+        save: async () => {},
+        exists: async () => true,
+        wipe: async () => {}
+      }
+    })
+    Object.assign(engine, { context: ctx, memory: ctx.memory })
+    engine.status = 'ready'
+    state.latest = 3
+    state.historyRecoveryVersion = 1
+    state.hasEarlier = true
+    const second = state.epochs.get(2)!
+    state.epochs.set(3, {
+      valid: true,
+      record: { ...second.record, epoch: 3 }
+    })
+    ctx.memory.historyGrants = []
+    await ctx.keys.update(record =>
+      withEpochKey(
+        { ...record, epochKeys: {} },
+        'cnv_test',
+        3,
+        new Uint8Array(32)
+      )
+    )
+    expect(engine.view('cnv_test')!.historyRecovery).equals('waitingForHolder')
+    await ctx.keys.update(record =>
+      withEpochKey(record, 'cnv_test', 2, new Uint8Array(32))
+    )
+    expect(engine.view('cnv_test')).include({
+      historyRecovery: 'partial',
+      composer: 'enabled',
+      sendReadiness: 'ready'
+    })
+    const third = state.epochs.get(3)!
+    third.record.chainBreak = false
+    expect(engine.view('cnv_test')!.historyRecovery).equals('waitingForHolder')
+    third.record.chainBreak = true
+    second.valid = false
+    expect(engine.view('cnv_test')!.historyRecovery).equals('waitingForHolder')
+    second.valid = true
+    await ctx.keys.update(record =>
+      withEpochKey(record, 'cnv_test', 1, new Uint8Array(32))
+    )
+    expect(engine.view('cnv_test')!.historyRecovery).equals('none')
+    engine.stop()
+  })
+
 })
