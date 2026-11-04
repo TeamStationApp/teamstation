@@ -10,7 +10,11 @@ export function asHttpsUrl(value: unknown): string {
   return text
 }
 
-export const asBuildsLink = asObject({ url: asOptional(asHttpsUrl) })
+export const asBuildsLink = asObject({
+  url: asOptional(asHttpsUrl),
+  betaBuildsUrl: asOptional(asHttpsUrl),
+  appStoreUrl: asOptional(asHttpsUrl)
+})
 export const asApproval = asObject({
   clientName: asString,
   scopes: asArray(asString),
