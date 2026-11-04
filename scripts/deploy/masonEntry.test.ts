@@ -346,7 +346,7 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.equal(ios[0]?.apple.distribution, 'adHoc')
     assert.equal(ios[0]?.apple.app, 'app.teamstation.app')
     assert.equal(ios[0]?.tools?.node, '24')
-    assert.equal(ios[0]?.tools?.xcode, '27.0')
+    assert.equal(ios[0]?.tools?.xcode, '27')
     assert.equal(ios[0]?.tools?.rust, '1.98.0')
     assert.equal(ios[1]?.name, 'release')
     assert.equal(ios[1]?.on.type, 'macos-arm64')

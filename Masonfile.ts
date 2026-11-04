@@ -18,8 +18,8 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // to TestFlight.
 
 const APP = 'app.teamstation.app'
-// The archive runs only on the macos-arm64 worker. Xcode 27.0 is pinned, so
-// that worker installs it when the version is not already there.
+// The archive runs only on the macos-arm64 worker. Xcode 27 is pinned, so
+// that worker installs the newest 27 release when it is not already there.
 const IOS = { type: 'macos-arm64', os: 'macos', arch: 'arm64' } as const
 const ANDROID = { type: 'do-linux', os: 'linux', arch: 'x64' } as const
 const SIGN = {
@@ -61,13 +61,13 @@ function buildStages(w: WorkflowBuilder): void {
         {
           name: 'archive',
           on: IOS,
-          // Xcode 27.0 is pinned so the worker installs that version before
-          // compiling when it is not already there.
+          // Xcode 27 is pinned so the worker installs the newest 27 release
+          // before compiling when it is not already there.
           // Rust is installed into the worker tools directory; the archive
           // environment points the Xcode script phase at that cargo.
           tools: {
             node: '24',
-            xcode: '27.0',
+            xcode: '27',
             cocoapods: '1.16.2',
             rust: '1.98.0'
           },
