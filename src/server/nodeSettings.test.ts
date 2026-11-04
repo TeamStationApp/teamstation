@@ -5,6 +5,7 @@ import { defaultNodeSettings, type NodeSettings } from '../common/nodeSettings'
 import { userIdOfGumbo } from '../common/userId'
 import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 import {
+  distributionSettings,
   forgetScoreboardSettings,
   replayPitchSec,
   replaySettings,
@@ -45,6 +46,10 @@ describe('node settings', function () {
       leadSecByEventType: { strikeout: 8, walk: 4 },
       mergeWithinSec: 2,
       tailSec: 9
+    },
+    distribution: {
+      betaBuildsUrl: 'https://builds.example.test',
+      appStoreUrl: 'https://apps.example.test/app'
     }
   }
 
@@ -232,6 +237,31 @@ describe('node settings', function () {
       .where('key', '=', 'replay.pitchSec')
       .executeTakeFirstOrThrow()
     expect(row.value).equals(9)
+  })
+
+  it('stores both about-screen URLs and keeps them when an older save omits them', async () => {
+    expect(
+      (await f.h.request('PUT', '/node/settings', changed, 105)).status
+    ).equals(200)
+    expect(await distributionSettings(f.h.db, Date.now(), true)).deep.equals(
+      changed.distribution
+    )
+    const { distribution: _links, ...older } = changed
+    const set = await f.h.request('PUT', '/node/settings', older, 105)
+    expect(set.status).equals(200)
+    expect((await set.json()).distribution).deep.equals(changed.distribution)
+    const cleared = {
+      ...changed,
+      distribution: { betaBuildsUrl: '', appStoreUrl: 'http://insecure' }
+    }
+    const bad = await f.h.request('PUT', '/node/settings', cleared, 105)
+    expect(bad.status).equals(400)
+    expect(JSON.stringify(await bad.json())).contains(
+      'distribution.appStoreUrl must be an HTTPS URL'
+    )
+    expect(await distributionSettings(f.h.db, Date.now(), true)).deep.equals(
+      changed.distribution
+    )
   })
 
   it('falls back to the default for each value a row holds badly, and caches', async () => {
