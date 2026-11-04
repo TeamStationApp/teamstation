@@ -46,7 +46,6 @@ describe('publishing a live origin', function () {
   let options: OriginPublisherOptions
   let notifications: ProbedStream[]
   let requests: Array<{ method: string; key: string; range?: string }>
-  let exists: boolean
   let final: Set<string> | undefined
   beforeEach(async function () {
     folder = await mkdtemp(join(tmpdir(), 'tsOriginPublisher-'))
@@ -74,7 +73,6 @@ describe('publishing a live origin', function () {
       })
     )
     notifications = []
-    exists = true
     final = undefined
     options = {
       space,
@@ -82,7 +80,6 @@ describe('publishing a live origin', function () {
       dir,
       ffmpegPath: 'ffmpeg',
       isFinal: name => final == null || final.has(name),
-      rowExists: async () => exists,
       onFirstSegment: async probe => {
         notifications.push(probe)
       },
@@ -111,21 +108,17 @@ describe('publishing a live origin', function () {
       await writeFile(join(dir, segment(n)), `fragment ${n}`)
   }
 
-  it('does not query the video row once per historical segment on an unchanged tick', async () => {
+  it('sends nothing on an unchanged tick, and nothing at all once stopped', async () => {
     await stage(100)
     const publisher = new OriginPublisher(options)
     await publisher.flush()
-    let reads = 0
-    options.rowExists = async () => {
-      reads++
-      return exists
-    }
     requests.length = 0
     await publisher.flush()
-    expect(reads).at.most(3)
     expect(requests).length(0)
-    exists = false
-    await publisher.flush()
+    await writeFile(join(dir, 'master.m3u8'), playlist(101))
+    await writeFile(join(dir, segment(100)), 'fragment 100')
+    publisher.stop()
+    expect(await publisher.flush()).deep.equals({ complete: false })
     expect(requests).length(0)
   })
   async function rewrite(name: string, body: string): Promise<void> {
@@ -239,7 +232,7 @@ describe('publishing a live origin', function () {
     expect(notifications).length(1)
   })
 
-  it('stops before the next PUT if the row is deleted, and rejects tick flushes during close', async function () {
+  it('stops before the next PUT once stopped, and rejects tick flushes during close', async function () {
     await stage(1, true)
     const publisher = new OriginPublisher(options)
     publisher.closing = true
@@ -250,17 +243,20 @@ describe('publishing a live origin', function () {
     requests.length = 0
     await publisher.flush({ close: true })
     expect(requests).length(0)
-    exists = false
-    await new OriginPublisher(options).flush()
+    const stopped = new OriginPublisher(options)
+    stopped.stop()
+    await stopped.flush()
     expect(puts()).length(0)
   })
 
-  it('handles a deletion during upload without advertising media or notifying the controller', async function () {
+  it('handles a stop during upload, as for a deleted video, without advertising media or notifying the controller', async function () {
     await stage(1)
+    const publisher = new OriginPublisher(options)
     store.server.on('request', req => {
-      if (req.method === 'PUT' && req.url!.includes('init.mp4')) exists = false
+      if (req.method === 'PUT' && req.url!.includes('init.mp4'))
+        publisher.stop()
     })
-    await new OriginPublisher(options).flush()
+    await publisher.flush()
     expect(puts()).deep.equals(['init.mp4'])
     expect(notifications).length(0)
   })

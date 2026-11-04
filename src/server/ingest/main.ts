@@ -16,10 +16,12 @@
 import type * as NodePath from 'node:path'
 
 import type * as BuildVersion from '../buildVersion'
+import type * as MakeChangeFeed from '../changeFeed/makeChangeFeed'
 import type * as Database from '../db/database'
 import type * as Controller from '../live/controller'
 import type * as Splitter from '../live/splitter'
 import type * as Logging from '../observability/logging'
+import type * as ScoreboardStore from '../scoreboard/scoreboardStore'
 import type * as Config from '../serverConfig'
 import type * as Run from './run'
 
@@ -34,12 +36,16 @@ require('../sentry/instrument')
 
 const path = require('node:path') as typeof NodePath
 const { versionOf } = require('../buildVersion') as typeof BuildVersion
+const { makeChangeFeed } =
+  require('../changeFeed/makeChangeFeed') as typeof MakeChangeFeed
 const { makeDatabase } = require('../db/database') as typeof Database
 const { drainLiveController, startLiveController, stopLiveController } =
   require('../live/controller') as typeof Controller
 const { rtmpBound } = require('../live/splitter') as typeof Splitter
 const { startServerLogging } =
   require('../observability/logging') as typeof Logging
+const { makeScoreboardClient } =
+  require('../scoreboard/scoreboardStore') as typeof ScoreboardStore
 const { serverConfig } = require('../serverConfig') as typeof Config
 const { runIngest } = require('./run') as typeof Run
 
@@ -59,6 +65,8 @@ const exit = (code: number): void => {
 runIngest({
   config: serverConfig,
   makeDatabase,
+  makeFeed: makeChangeFeed,
+  makeValkey: makeScoreboardClient,
   startLiveController,
   stopLiveController,
   drainLiveController,
