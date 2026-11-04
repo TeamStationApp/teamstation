@@ -658,7 +658,7 @@ describe('E2E-3: unsigned media under the secret path (M5)', function () {
       ...(await listSpaceObjects(space, oldVideoPrefix(camera.videoId)))
     ]
     note(
-      `$ list ${prefix} and ${oldVideoPrefix(camera.videoId)} in the fake Space\n${left.length} objects`
+      `# listed in the fake Space: ${prefix} and ${oldVideoPrefix(camera.videoId)}: ${left.length} objects`
     )
     expect(left).deep.equals([])
     expect(await curl(piece)).equals('403')
