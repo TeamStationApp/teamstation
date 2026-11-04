@@ -833,6 +833,21 @@ export async function resetIdentity(
         ],
         now
       )
+      await trx
+        .insertInto('chat_history_access')
+        .values({
+          conversation_id: id,
+          user_id: caller.userId,
+          identity_id: identityId,
+          requires_approval: true,
+          approved_by_user_id: null,
+          approved_at: null,
+          created_at: now
+        })
+        .onConflict(oc =>
+          oc.columns(['conversation_id', 'user_id', 'identity_id']).doNothing()
+        )
+        .execute()
       await openGrantRequests(trx, id, [caller.userId], true)
       await notifyChat(trx, id, 'members')
     }
