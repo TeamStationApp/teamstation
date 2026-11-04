@@ -124,7 +124,7 @@ describe('replay speech', function () {
           )
         )
       ).message
-    ).equals('Speech failed: connection refused')
+    ).equals('Speech could not be reached')
     const hung: typeof fetch = async (
       _url: string | URL | Request,
       init?: RequestInit
@@ -178,5 +178,54 @@ describe('replay speech', function () {
         dictation: undefined
       })
     ).equals(null)
+  })
+})
+
+describe('voice API key fallback', () => {
+  it('uses distinct keys and returns the most recent provider error', async () => {
+    const seen: Array<{ url: string; init: RequestInit }> = []
+    let calls = 0
+    const error = await refusal(
+      synthesize(
+        { text: 'Ball.', emphasis: 'calm' },
+        { ...settings, apiKey: ['a', 'b', 'a'] },
+        fakeFetch(
+          () => new Response('', { status: ++calls === 1 ? 401 : 529 }),
+          seen
+        )
+      )
+    )
+    expect(error.message).equals('Speech answered 529')
+    expect(calls).equals(2)
+    expect(
+      new Set(
+        seen.map(call => new Headers(call.init.headers).get('authorization'))
+      ).size
+    ).equals(2)
+  })
+  it('recovers from server failure and does not retry an invalid request', async () => {
+    let calls = 0
+    const audio = await synthesize(
+      { text: 'Ball.', emphasis: 'calm' },
+      { ...settings, apiKey: ['a', 'b'] },
+      fakeFetch(() =>
+        ++calls === 1
+          ? new Response('', { status: 503 })
+          : new Response(new Uint8Array([1]))
+      )
+    )
+    expect([...audio]).deep.equals([1])
+    calls = 0
+    await refusal(
+      synthesize(
+        { text: 'Ball.', emphasis: 'calm' },
+        { ...settings, apiKey: ['a', 'b'] },
+        fakeFetch(() => {
+          calls++
+          return new Response('', { status: 400 })
+        })
+      )
+    )
+    expect(calls).equals(1)
   })
 })

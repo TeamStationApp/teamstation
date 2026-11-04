@@ -668,7 +668,7 @@ describe('dictation interpreter', function () {
       await new Interpretation(config(refused.fetch), 'c', 'x').start()
     ).deep.equals({
       kind: 'error',
-      message: 'api.x.ai answered 429: slow down'
+      message: 'api.x.ai answered 429'
     })
 
     const broken = provider({ status: 503, text: 'down' })
@@ -679,7 +679,7 @@ describe('dictation interpreter', function () {
     ).start()
     expect(five).deep.equals({
       kind: 'error',
-      message: 'llm.example answered 503: down'
+      message: 'llm.example answered 503'
     })
 
     const gone = provider(new Error('ECONNREFUSED'))
@@ -689,7 +689,7 @@ describe('dictation interpreter', function () {
       'x'
     ).start()
     expect(unreached.kind === 'error' && unreached.message).equals(
-      'not a url could not be reached: ECONNREFUSED'
+      'not a url could not be reached'
     )
 
     const hanging = (async (_url: unknown, init?: RequestInit) =>
@@ -2971,5 +2971,86 @@ describe('where the ball went and the pitch, in the prompt', function () {
       expect(PLACE_INSTRUCTIONS, word).includes(word)
     // No two-letter pitch code, which reads like a player tag.
     expect(PLACE_INSTRUCTIONS).not.match(/pitchType\s+[A-Z]{2}\b/)
+  })
+})
+
+describe('scoring API key fallback', () => {
+  for (const status of [401, 403, 408, 429, 500, 529])
+    it(`retries ${status} with another Anthropic key`, async () => {
+      const keys: string[] = []
+      const fetchImpl: typeof fetch = async (_url, init) => {
+        keys.push(new Headers(init?.headers).get('x-api-key')!)
+        return keys.length === 1
+          ? new Response('{}', { status })
+          : Response.json({
+              content: [
+                {
+                  type: 'tool_use',
+                  id: 'tool-1',
+                  name: 'pitch',
+                  input: { kind: 'ball' }
+                }
+              ]
+            })
+      }
+      await new Interpretation(
+        config(fetchImpl, {
+          api: 'messages',
+          model: 'claude-haiku-5-5',
+          apiKey: ['a', 'b', 'a']
+        }),
+        'ctx',
+        'ball'
+      ).start()
+      expect(keys).length(2)
+      expect(new Set(keys).size).equals(2)
+    })
+  it('returns the last error after exhaustion and does not retry invalid requests', async () => {
+    const p = provider(
+      { status: 401, text: 'first' },
+      { status: 503, text: 'last' }
+    )
+    const result = await new Interpretation(
+      config(p.fetch, { apiKey: ['a', 'b'] }),
+      'ctx',
+      'ball'
+    ).start()
+    expect(result.kind).equals('error')
+    expect(JSON.stringify(result)).contains('503')
+    const bad = provider({ status: 400, text: 'invalid' })
+    await new Interpretation(
+      config(bad.fetch, { apiKey: ['a', 'b'] }),
+      'ctx',
+      'ball'
+    ).start()
+    expect(bad.sent).length(1)
+  })
+  it('retries timeouts and stops when no key is configured', async () => {
+    let calls = 0
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      if (++calls === 2)
+        return Response.json({ choices: [{ message: { tool_calls: [] } }] })
+      return await new Promise((_resolve, reject) =>
+        init?.signal?.addEventListener(
+          'abort',
+          () => {
+            reject(new Error('aborted'))
+          },
+          { once: true }
+        )
+      )
+    }
+    await new Interpretation(
+      config(fetchImpl, { apiKey: ['a', 'b'], deadlineMs: 5 }),
+      'ctx',
+      'ball'
+    ).start()
+    expect(calls).equals(2)
+    await new Interpretation(
+      config(fetchImpl, { apiKey: [] }),
+      'ctx',
+      'ball'
+    ).start()
+    expect(calls).equals(2)
   })
 })

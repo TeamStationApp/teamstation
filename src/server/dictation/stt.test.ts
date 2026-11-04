@@ -403,3 +403,167 @@ describe('dictation recogniser', function () {
     })
   })
 })
+
+describe('pooled voice recognition', () => {
+  function pooled(
+    keys = ['a', 'b'],
+    timeout = 1000
+  ): {
+    session: SttSession
+    sockets: FakeSocket[]
+    finals: string[]
+    errors: string[]
+  } {
+    const sockets: FakeSocket[] = []
+    const finals: string[] = []
+    const errors: string[] = []
+    const session = new SttSession(
+      {
+        apiKey: keys,
+        finalTimeoutMs: timeout,
+        handshakeTimeoutMs: timeout,
+        connect: (url, headers) => {
+          const socket = new FakeSocket(url, headers)
+          sockets.push(socket)
+          return socket
+        }
+      },
+      {
+        onPartial: () => undefined,
+        onFinal: text => finals.push(text),
+        onError: error => errors.push(error)
+      }
+    )
+    return { session, sockets, finals, errors }
+  }
+  it('replays held audio once with another key and ignores stale sockets', () => {
+    const h = pooled(['a', 'b', 'a'])
+    h.session.retarget(['Trout'])
+    h.session.begin()
+    h.session.write(Buffer.from([1, 2, 3, 4]))
+    h.session.end()
+    h.sockets[0].emit(
+      'message',
+      JSON.stringify({
+        type: 'transcript.partial',
+        speech_final: false,
+        text: 'partial'
+      })
+    )
+    h.sockets[0].emit('error', new Error('Unexpected server response: 401'))
+    h.sockets[0].emit('close')
+    expect(h.sockets).length(2)
+    expect(h.sockets[0].headers.Authorization).not.equals(
+      h.sockets[1].headers.Authorization
+    )
+    h.sockets[1].ready()
+    expect(
+      h.sockets[1].sent.some(
+        frame =>
+          Buffer.isBuffer(frame) && frame.equals(Buffer.from([1, 2, 3, 4]))
+      )
+    ).equals(true)
+    h.sockets[0].emit(
+      'message',
+      JSON.stringify({
+        type: 'transcript.partial',
+        speech_final: true,
+        text: 'stale'
+      })
+    )
+    h.sockets[1].emit(
+      'message',
+      JSON.stringify({
+        type: 'transcript.partial',
+        speech_final: true,
+        text: 'Recovered'
+      })
+    )
+    expect(h.finals).deep.equals(['Recovered'])
+    expect(h.errors).deep.equals([])
+    h.session.close()
+  })
+  it('returns only the latest failure after exhausting distinct keys', () => {
+    const h = pooled()
+    h.session.begin()
+    h.sockets[0].emit('error', new Error('Unexpected server response: 401'))
+    h.sockets[0].emit('close')
+    h.sockets[1].emit('error', new Error('Unexpected server response: 529'))
+    h.sockets[1].emit('close')
+    expect(h.errors).deep.equals(['The recogniser answered 529'])
+    expect(h.sockets).length(2)
+    h.session.close()
+  })
+  it('does not retry nonretryable HTTP failures or canceled holds', () => {
+    const h = pooled()
+    h.session.begin()
+    h.sockets[0].emit('error', new Error('Unexpected server response: 400'))
+    h.sockets[0].emit('close')
+    expect(h.sockets).length(1)
+    expect(h.errors).deep.equals(['The recogniser answered 400'])
+    h.session.begin()
+    h.session.close()
+    h.sockets[1].emit('close')
+    h.session.begin()
+    h.session.retarget([])
+    h.session.write(Buffer.from([1, 2]))
+    h.session.end()
+    expect(h.sockets).length(2)
+  })
+  it('bounds handshake/final waits and reports timeouts, not incomplete transcript success', async () => {
+    const h = pooled(['a', 'b'], 5)
+    h.session.begin()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    expect(h.sockets).length(2)
+    expect(h.errors).deep.equals(['The recogniser timed out'])
+    h.session.close()
+    const final = pooled(['a', 'b'], 5)
+    final.session.begin()
+    final.sockets[0].ready()
+    final.session.end()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    expect(final.finals).deep.equals([])
+    expect(final.errors).deep.equals(['The recogniser timed out'])
+    final.session.close()
+  })
+  it('handles empty pools and bounded replay storage', () => {
+    const empty = pooled([])
+    empty.session.begin()
+    expect(empty.errors).deep.equals(['No API keys are configured'])
+    empty.session.close()
+    const full = pooled()
+    full.session.begin()
+    full.session.write(Buffer.alloc(4 * 1024 * 1024 + 1))
+    expect(full.errors).deep.equals(['The voice request is too long'])
+    full.session.close()
+  })
+})
+
+describe('pooled voice connection failures', () => {
+  it('bounds synchronous connection failures and rejects late audio', () => {
+    const errors: string[] = []
+    let calls = 0
+    const session = new SttSession(
+      {
+        apiKey: ['a', 'b'],
+        connect: () => {
+          calls++
+          throw new Error('private transport failure')
+        }
+      },
+      {
+        onPartial: () => undefined,
+        onFinal: () => expect.fail('no success'),
+        onError: message => errors.push(message)
+      }
+    )
+    session.write(Buffer.from([0, 0]))
+    session.end()
+    session.begin()
+    session.write(Buffer.from([0, 0]))
+    session.end()
+    expect(calls).equals(2)
+    expect(errors).deep.equals(['The recogniser could not be reached'])
+    session.close()
+  })
+})
