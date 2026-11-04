@@ -912,7 +912,8 @@ async function main(): Promise<void> {
               value.startsWith('Conversation actions: ')
             )
           : nodes.some(
-              node => node.id?.startsWith('chat-conversation-') === true
+              // The open chat header is chat-conversation-identity, not a row.
+              node => node.id?.startsWith('chat-conversation-cnv_') === true
             )
       if (onList(flatten(await m.hierarchy()))) return
       if (platform === 'android') {
@@ -2371,22 +2372,50 @@ async function main(): Promise<void> {
         'Keep the old personal pin through both locked phases'
       )
       if (process.argv[2] === 'locked-phase1') {
-        await m.assertVisible({
-          text: 'Waiting for history to unlock…',
-          timeout: 30000
-        })
-        await m.assertVisible({
-          text: 'History is locked — it unlocks when another member opens TeamStation',
-          timeout: 30000
-        })
+        const capabilities = await api.chatEpochs(locked.conversationId, 0)
+        const freshEnabled =
+          capabilities.historyRecoveryVersion === 1 &&
+          capabilities.freshEpochsEnabled === true
+        if (freshEnabled) {
+          await m.assertVisible({ id: 'chat-composer', timeout: 30000 })
+          const previousDraft = await composerValue(m)
+          assert.equal(
+            previousDraft,
+            '',
+            'Locked fixture must start with an empty draft'
+          )
+          await m.tapOn({ id: 'chat-composer' })
+          const draft = 'Draft while older messages remain locked'
+          await m.inputText({ text: draft })
+          assert.equal(await composerValue(m), draft)
+          await clearNativeComposer(m, draft)
+          await m.hideKeyboard()
+          assert.equal(
+            (await api.chatEpochs(locked.conversationId, 0)).epochs.length,
+            capabilities.epochs.length,
+            'Typing alone must not publish an epoch'
+          )
+        } else {
+          await m.assertVisible({
+            text: 'Waiting for history to unlock…',
+            timeout: 30000
+          })
+        }
         const raw = Buffer.from(await m.hierarchyRaw()).toString('utf8')
+        assert(
+          !raw.includes(locked.originalBody),
+          'Typing must not expose the locked original'
+        )
         writeFileSync(
           join(resultDirectory, `${platform}-locked-composer-raw.xml`),
           raw
         )
         await photo('locked-history-and-composer')
+        results.lockedFreshEnabled = freshEnabled
         pass(
-          'actual native old history and composer remain locked after normal identity reset and link'
+          freshEnabled
+            ? 'native old history remains locked while the composer accepts a draft after reset and link'
+            : 'native composer remains blocked under the legacy or disabled fresh-start policy'
         )
       } else if (process.argv[2] === 'locked-phase2') {
         const currentReply = JSON.parse(
