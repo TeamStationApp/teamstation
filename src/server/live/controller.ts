@@ -49,6 +49,7 @@ import {
   type LiveEvent,
   type LiveSpec,
   type LiveStatus,
+  movableSegments,
   setLive,
   startIngest,
   statusFor,
@@ -254,12 +255,14 @@ function startOrigin(
   const held = origins.get(videoId)
   if (held != null) return held
   let final: ReadonlySet<string> | undefined
+  let movable: ReadonlySet<string> = new Set()
   const publisher = new OriginPublisher({
     space,
     videoId,
     dir: liveVideoDir(current.mediaRoot, videoId),
     ffmpegPath: current.ffmpegPath,
     isFinal: name => final?.has(name) ?? true,
+    mayMove: name => movable.has(name),
     onFirstSegment: async probe => {
       await db
         .updateTable('videos')
@@ -284,6 +287,7 @@ function startOrigin(
     removing: false,
     refreshFinal: () => {
       final = finalSegments(liveStreamId)
+      movable = movableSegments(liveStreamId)
     }
   }
   origins.set(videoId, origin)

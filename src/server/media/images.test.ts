@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, type stat, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -423,6 +423,56 @@ describe('stored images', function () {
         framing.get(path)?.transferEncoding,
         'S3 refuses a chunked body against a presigned signature'
       ).equals(undefined)
+    })
+
+    it('sends an empty file as an empty PUT, leaving no request open', async function () {
+      const source = join(dir, 'empty.m4s')
+      await writeFile(source, '')
+      await putObjectFile({
+        space,
+        key: 'videos/vid_empty/seg000000.m4s',
+        path: source,
+        contentType: 'video/iso.segment'
+      })
+      const path = '/example-media-bkt/videos/vid_empty/seg000000.m4s'
+      expect(written.get(path)?.length).equals(0)
+      expect(framing.get(path)?.contentLength).equals('0')
+    })
+
+    it('fails at once, and leaves nothing to reject later, when the file is shorter than it was', async function () {
+      const source = join(dir, 'shrunk.m4s')
+      await writeFile(source, Buffer.alloc(1000, 5))
+      const files = require('node:fs/promises') as { stat: typeof stat }
+      const original = files.stat
+      // The stat sees the file before a writer truncated it.
+      files.stat = (async () => {
+        const info = await original(source)
+        return Object.assign(info, { size: 4000 })
+      }) as unknown as typeof stat
+      const unhandled: unknown[] = []
+      const onUnhandled = (reason: unknown): void => {
+        unhandled.push(reason)
+      }
+      process.on('unhandledRejection', onUnhandled)
+      let message = ''
+      const started = Date.now()
+      try {
+        await putObjectFile({
+          space,
+          key: 'videos/vid_shrunk/seg000000.m4s',
+          path: source,
+          contentType: 'video/iso.segment'
+        })
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error)
+      } finally {
+        files.stat = original
+      }
+      await new Promise(resolve => setTimeout(resolve, 50))
+      process.off('unhandledRejection', onUnhandled)
+      expect(message).contains('shorter')
+      expect(Date.now() - started, 'not the idle timeout').lessThan(2000)
+      expect(unhandled).deep.equals([])
     })
 
     it('reports what the Space said when it refuses mid-send', async function () {

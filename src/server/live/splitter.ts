@@ -2434,6 +2434,23 @@ export function finalSegments(
 }
 
 /**
+ * Listed fragments a continuing writer stamped before its frame wall clocks
+ * placed it. Placing it moves them (`restampSegments`) after they may have
+ * been uploaded, so an uploader must keep checking them until then.
+ */
+export function movableSegments(liveStreamId: string): ReadonlySet<string> {
+  const entry = [...entries.values()].find(
+    entry => entry.liveStreamId === liveStreamId
+  )
+  const placement = entry?.outputs.find(
+    output => output.kind === 'hls'
+  )?.placement
+  return placement == null || !placement.continuing || placement.settled
+    ? new Set()
+    : new Set(placement.stamped)
+}
+
+/**
  * Waits for the RTMP listener's bind: `true` once it is listening, `false` if
  * it failed, if it has not said within `timeoutMs`, or if nothing was started.
  */
