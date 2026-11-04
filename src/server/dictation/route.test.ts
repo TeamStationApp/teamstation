@@ -641,6 +641,57 @@ describe('dictation route', function () {
       guarded.close()
     })
 
+    it('resolves settings only for admitted actors and refuses disabled or failed resolution', async () => {
+      const dynamic = createServer()
+      let calls = 0
+      let mode: 'enabled' | 'disabled' | 'failed' = 'enabled'
+      const handle = attachDictation(dynamic, {
+        db: db!,
+        config: CONFIG,
+        resolveConfig: async () => {
+          calls++
+          if (mode === 'failed') throw new Error('settings unavailable')
+          return mode === 'disabled'
+            ? null
+            : { ...CONFIG, apiKey: ['one', 'two'] }
+        },
+        openRecogniser: handlers => new FakeRecogniser(handlers)
+      })
+      dynamic.listen(0, '127.0.0.1')
+      await new Promise<void>(resolve => dynamic.once('listening', resolve))
+      const url = `ws://127.0.0.1:${(dynamic.address() as AddressInfo).port}/api/v1/dictation`
+      const status = async (token?: string): Promise<number> =>
+        await new Promise(resolve => {
+          const socket = new WebSocket(url, {
+            headers: token == null ? {} : { authorization: `Bearer ${token}` }
+          })
+          socket.on('unexpected-response', (_request, response) => {
+            response.resume()
+            resolve(response.statusCode!)
+            socket.terminate()
+          })
+          socket.on('open', () => {
+            socket.close()
+            resolve(101)
+          })
+          socket.on('error', () => undefined)
+        })
+      try {
+        expect(await status()).equals(401)
+        expect(calls).equals(0)
+        expect(await status(MEMBER)).equals(101)
+        expect(calls).equals(1)
+        mode = 'disabled'
+        expect(await status(MEMBER)).equals(503)
+        mode = 'failed'
+        expect(await status(MEMBER)).equals(503)
+        expect(calls).equals(3)
+      } finally {
+        handle.close()
+        dynamic.close()
+      }
+    })
+
     it('answers 500 when the actor cannot be read', async function () {
       const broken = createServer()
       const handle = attachDictation(broken, {

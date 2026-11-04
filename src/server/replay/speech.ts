@@ -1,4 +1,6 @@
+import { type ApiKeyPool, normalizedKeys } from '../../common/aiKeys'
 import type { Narration } from '../../common/replay/narration'
+import { retryableStatus, withApiKeys } from '../aiKeyFallback'
 import type { ServerConfig } from '../serverConfig'
 
 /**
@@ -7,7 +9,7 @@ import type { ServerConfig } from '../serverConfig'
  */
 
 export interface SpeechSettings {
-  apiKey: string
+  apiKey: ApiKeyPool
   baseUrl: string
   voice: string
   speed: number
@@ -15,7 +17,10 @@ export interface SpeechSettings {
 }
 
 export class SpeechUnavailable extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly retryable = false
+  ) {
     super(message)
     this.name = 'SpeechUnavailable'
   }
@@ -28,7 +33,7 @@ export function speechSettings(
   config: Pick<ServerConfig, 'speech' | 'dictation'>
 ): SpeechSettings | null {
   const apiKey = config.speech?.apiKey ?? config.dictation?.apiKey
-  if (apiKey == null || apiKey === '') return null
+  if (apiKey == null || normalizedKeys(apiKey).length === 0) return null
   return {
     apiKey,
     baseUrl: config.speech?.baseUrl ?? 'https://api.x.ai/v1',
@@ -45,7 +50,7 @@ export function spokenText(narration: Narration): string {
     : narration.text
 }
 
-export async function synthesize(
+async function synthesizeOnce(
   narration: Narration,
   settings: SpeechSettings,
   fetchImpl: typeof fetch = fetch,
@@ -61,7 +66,7 @@ export async function synthesize(
       {
         method: 'POST',
         headers: {
-          authorization: `Bearer ${settings.apiKey}`,
+          authorization: `Bearer ${String(settings.apiKey)}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({
@@ -79,7 +84,10 @@ export async function synthesize(
       }
     )
     if (!response.ok)
-      throw new SpeechUnavailable(`Speech answered ${response.status}`)
+      throw new SpeechUnavailable(
+        `Speech answered ${response.status}`,
+        retryableStatus(response.status)
+      )
     const audio = Buffer.from(await response.arrayBuffer())
     if (audio.length === 0) throw new SpeechUnavailable('Speech was empty')
     return audio
@@ -88,9 +96,29 @@ export async function synthesize(
     throw new SpeechUnavailable(
       controller.signal.aborted
         ? 'Speech timed out'
-        : `Speech failed: ${error instanceof Error ? error.message : String(error)}`
+        : 'Speech could not be reached',
+      true
     )
   } finally {
     clearTimeout(timer)
   }
+}
+
+export async function synthesize(
+  narration: Narration,
+  settings: SpeechSettings,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = TIMEOUT_MS
+): Promise<Buffer> {
+  return await withApiKeys(
+    settings.apiKey,
+    async key =>
+      await synthesizeOnce(
+        narration,
+        { ...settings, apiKey: key },
+        fetchImpl,
+        timeoutMs
+      ),
+    error => error instanceof SpeechUnavailable && error.retryable
+  )
 }

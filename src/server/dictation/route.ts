@@ -64,6 +64,7 @@ export type Conversation = Pick<Interpretation, 'start' | 'answer'>
 export interface DictationOptions {
   db: Kysely<Database>
   config: DictationConfig
+  resolveConfig?: () => Promise<DictationConfig | null>
   scopes?: ReadonlyMap<string, Scope>
   /** Swapped out in tests. */
   openRecogniser?: (handlers: SttHandlers) => Recogniser
@@ -161,7 +162,7 @@ export function attachDictation(
       return true
     }
     admit(options.db, request).then(
-      actor => {
+      async actor => {
         if (actor == null) {
           refuse(socket, 401, 'Unauthorized')
           return
@@ -171,8 +172,23 @@ export function attachDictation(
           refuse(socket, 403, 'Forbidden')
           return
         }
+        let config: DictationConfig | null
+        try {
+          config =
+            options.resolveConfig == null
+              ? options.config
+              : await options.resolveConfig()
+        } catch {
+          refuse(socket, 503, 'Service Unavailable')
+          return
+        }
+        if (config == null) {
+          refuse(socket, 503, 'Service Unavailable')
+          return
+        }
+        if (socket.destroyed) return
         wss.handleUpgrade(request, socket, head, ws => {
-          serve(ws, actor, options)
+          serve(ws, actor, { ...options, config })
         })
       },
       (error: unknown) => {

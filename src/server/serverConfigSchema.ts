@@ -7,6 +7,7 @@ import {
   asString
 } from 'cleaners'
 
+import { asApiKeyPool } from '../common/aiKeys'
 import { asHttpsUrl } from '../common/distribution'
 import { asAppLinksConfig, asOrigin } from './appLinks/config'
 import type { SpaceSettings } from './media/spacesHls'
@@ -271,7 +272,7 @@ export const asServerConfig = asObject({
    */
   dictation: asOptional(
     asObject({
-      apiKey: asString,
+      apiKey: asApiKeyPool,
       baseUrl: asOptional(asString, 'https://api.x.ai/v1'),
       sttUrl: asOptional(asString, 'wss://api.x.ai/v1/stt'),
       sttModel: asOptional(asString, 'grok-voice-transcribe-2.0'),
@@ -279,13 +280,13 @@ export const asServerConfig = asObject({
       /** Keys for the GPT and Claude models; without one, those are not offered. */
       openai: asOptional(
         asObject({
-          apiKey: asString,
+          apiKey: asApiKeyPool,
           baseUrl: asOptional(asString, 'https://api.openai.com/v1')
         })
       ),
       anthropic: asOptional(
         asObject({
-          apiKey: asString,
+          apiKey: asApiKeyPool,
           baseUrl: asOptional(asString, 'https://api.anthropic.com/v1')
         })
       )
@@ -300,7 +301,7 @@ export const asServerConfig = asObject({
    */
   speech: asOptional(
     asObject({
-      apiKey: asOptional(asString),
+      apiKey: asOptional(asApiKeyPool),
       baseUrl: asOptional(asString, 'https://api.x.ai/v1'),
       voice: asOptional(asString, 'rex'),
       speed: asOptional(asNumber, 1.1),
@@ -315,7 +316,7 @@ export const asServerConfig = asObject({
    */
   tess: asOptional(
     asObject({
-      apiKey: asOptional(asString),
+      apiKey: asOptional(asApiKeyPool),
       baseUrl: asOptional(asString, 'https://api.anthropic.com/v1'),
       model: asOptional(asString, 'claude-sonnet-5-5')
     })

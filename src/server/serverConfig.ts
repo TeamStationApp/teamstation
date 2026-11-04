@@ -1,5 +1,6 @@
 import { makeConfig } from 'cleaner-config'
 
+import { type ApiKeyPool, normalizedKeys } from '../common/aiKeys'
 import {
   asAuthority,
   type Authority,
@@ -55,7 +56,7 @@ export function eventControlIssuerOf(
 
 /** What Tess calls the Messages API with. Never sent to a client. */
 export interface TessSettings {
-  apiKey: string
+  apiKey: ApiKeyPool
   baseUrl: string
   model: string
 }
@@ -65,7 +66,7 @@ export function tessSettings(
   config: Pick<ServerConfig, 'tess' | 'dictation'>
 ): TessSettings | null {
   const apiKey = config.tess?.apiKey ?? config.dictation?.anthropic?.apiKey
-  if (apiKey == null || apiKey === '') return null
+  if (apiKey == null || normalizedKeys(apiKey).length === 0) return null
   return {
     apiKey,
     baseUrl: config.tess?.baseUrl ?? 'https://api.anthropic.com/v1',

@@ -8,6 +8,7 @@ import path from 'node:path'
 
 import express from 'express'
 
+import { aiSettings } from './aiKeys'
 import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
@@ -564,6 +565,15 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     healthRoutes(db, VERSION, {
+      resolveAi: async () => {
+        const ai = await aiSettings(db)
+        return {
+          tess: ai.tess != null,
+          narration: ai.speech != null,
+          dictation: ai.dictation != null,
+          dictationModels: ai.dictation == null ? [] : modelsOf(ai.dictation)
+        }
+      },
       narration: speechSettings(serverConfig) != null,
       tess: tessSettings(serverConfig) != null,
       dictation: serverConfig.dictation != null,
@@ -691,7 +701,10 @@ function runWorker(): void {
     '/api/v1',
     lineupRoutes(db, { onGameWritten: scoreboard.onGameWritten })
   )
-  app.use('/api/v1', narrationRoutes(db, speechSettings(serverConfig)))
+  app.use(
+    '/api/v1',
+    narrationRoutes(db, async () => (await aiSettings(db)).speech)
+  )
   app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
   app.use('/api/v1', adminRoutes())
   const stopAnalytics = startAnalytics(app, db, serverConfig.analyticsReaderUrl)
@@ -705,6 +718,7 @@ function runWorker(): void {
     '/api/v1',
     tessRoutes(db, {
       settings: tessSettings(serverConfig),
+      resolveSettings: async () => (await aiSettings(db)).tess,
       origin: () => loopbackOrigin(serverConfig)
     })
   )
@@ -808,21 +822,23 @@ function runWorker(): void {
   })
   // Dictation is a WebSocket too, asked before the scoreboard, which takes
   // whatever is left.
-  const dictation =
-    serverConfig.dictation == null
-      ? null
-      : attachDictation(server, {
-          db,
-          config: serverConfig.dictation,
-          scopes: dictationScopes({
-            tess: tessSettings(serverConfig) != null
-          }),
-          allowedOrigins: [...serverConfig.corsOrigins, publicUrl],
-          listenForUpgrades: false
-        })
+  const dictation = attachDictation(server, {
+    db,
+    config: serverConfig.dictation ?? {
+      apiKey: [],
+      baseUrl: 'https://api.x.ai/v1',
+      sttUrl: 'wss://api.x.ai/v1/stt',
+      sttModel: 'grok-voice-transcribe-2.0',
+      model: 'claude-haiku-5-5'
+    },
+    resolveConfig: async () => (await aiSettings(db)).dictation,
+    scopes: dictationScopes({ tess: true }),
+    allowedOrigins: [...serverConfig.corsOrigins, publicUrl],
+    listenForUpgrades: false
+  })
   const unbindUpgrades = bindUpgrades(server, [
     (req, socket, head) => gameSocket.acceptUpgrade(req, socket, head),
-    (req, socket, head) => dictation?.acceptUpgrade(req, socket, head) === true,
+    (req, socket, head) => dictation?.acceptUpgrade(req, socket, head),
     (req, socket, head) => {
       scoreboard.hub.handleUpgrade(req, socket, head)
       return true

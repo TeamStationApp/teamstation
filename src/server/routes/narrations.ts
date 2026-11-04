@@ -18,7 +18,7 @@ import { type SpeechSettings, SpeechUnavailable } from '../replay/speech'
  */
 export function narrationRoutes(
   db: Kysely<Database>,
-  settings: SpeechSettings | null,
+  settings: SpeechSettings | null | (() => Promise<SpeechSettings | null>),
   fetchImpl: typeof fetch = fetch
 ): Router {
   const router = Router()
@@ -37,7 +37,9 @@ export function narrationRoutes(
       if (count != null && !(Number.isInteger(count) && count > 0))
         throw badRequest('count is a whole number of actions.')
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
-      if (settings == null) {
+      const effective =
+        typeof settings === 'function' ? await settings() : settings
+      if (effective == null) {
         res.status(503).json({ error: 'narrationUnavailable' })
         return
       }
@@ -46,7 +48,7 @@ export function narrationRoutes(
           db,
           gameId,
           stepKey,
-          settings,
+          effective,
           fetchImpl,
           count
         )
@@ -61,7 +63,9 @@ export function narrationRoutes(
       } catch (error) {
         if (error instanceof SpeechUnavailable) {
           console.error(`narration ${gameId} ${stepKey}: ${error.message}`)
-          res.status(503).json({ error: 'narrationUnavailable' })
+          res
+            .status(503)
+            .json({ error: 'narrationUnavailable', message: error.message })
           return
         }
         throw error
