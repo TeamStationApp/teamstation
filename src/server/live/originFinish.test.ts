@@ -66,11 +66,9 @@ describe('closing a live Space origin', function () {
     expect(row?.status).equals('ready')
     expect(await f.body()).contains('#EXT-X-ENDLIST')
     expect(await files.stat(f.dir).catch(() => undefined)).equals(undefined)
-    const names = await files.readdir(join(f.remote, 'videos', f.videoId))
+    const names = await files.readdir(f.remoteDir)
     expect(names).not.contains('video.mp4')
-    const stills = await files.readdir(
-      join(f.remote, 'videos', f.videoId, 'stills')
-    )
+    const stills = await files.readdir(join(f.oldRemoteDir, 'stills'))
     expect(stills.some(name => name.endsWith('.jpg'))).equals(true)
     expect(
       f.requests.filter(r => r.method === 'PUT' && r.key.endsWith('.m4s'))
@@ -227,9 +225,8 @@ describe('closing a live Space origin', function () {
     f.store.faults.clear()
     await sync(f.options)
     await drainPublishForTest(f.videoId)
-    expect(
-      await files.readdir(join(f.remote, 'videos', f.videoId))
-    ).deep.equals([])
+    expect(await files.readdir(f.remoteDir)).deep.equals([])
+    expect(await f.objects()).deep.equals([])
   })
 
   it('retries prefix deletion when a queued close finds its video already deleted', async () => {
@@ -248,16 +245,13 @@ describe('closing a live Space origin', function () {
       release()
       await drainPublishForTest(f.videoId)
       expect(await files.stat(f.dir).catch(() => undefined)).equals(undefined)
-      expect(
-        (await files.readdir(join(f.remote, 'videos', f.videoId))).length
-      ).greaterThan(0)
+      expect((await files.readdir(f.remoteDir)).length).greaterThan(0)
       f.store.faults.clear()
       await sync(f.options)
       await sweepLocalCopies(f.options)
       await drainPublishForTest(f.videoId)
-      expect(
-        await files.readdir(join(f.remote, 'videos', f.videoId))
-      ).deep.equals([])
+      expect(await files.readdir(f.remoteDir)).deep.equals([])
+      expect(await f.objects()).deep.equals([])
     } finally {
       release()
     }
@@ -393,16 +387,11 @@ describe('closing a live Space origin', function () {
     await finish()
     expect((await f.row())?.spaces_verified_at).not.equals(null)
     expect(
-      await files.readFile(
-        join(f.remote, 'videos', f.videoId, 'master.m3u8'),
-        'utf8'
-      )
+      await files.readFile(join(f.remoteDir, 'master.m3u8'), 'utf8')
     ).contains('video.m3u8')
-    expect(
-      (
-        await files.stat(join(f.remote, 'videos', f.videoId, 'video.mp4'))
-      ).isFile()
-    ).equals(true)
+    expect((await files.stat(join(f.remoteDir, 'video.mp4'))).isFile()).equals(
+      true
+    )
   })
 
   it('reconciles settled frame clocks at close and preserves unstamped arrival spans', async () => {
