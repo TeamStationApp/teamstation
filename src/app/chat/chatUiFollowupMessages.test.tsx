@@ -1588,6 +1588,54 @@ describe('chat follow-up conversation message integration', function () {
     await resetTimeouts()
   })
 
+  for (const status of ['locked', 'lost'] as const) {
+    it(`preserves the reader through ${status} history recovery before resized content catches up`, async function () {
+      const engine = new FakeEngine()
+      const reading = safeMessage({
+        id: 'msg_recovering_reader',
+        status,
+        body: ''
+      })
+      engine.current.messages = [reading]
+      await screen(engine, {
+        text: 'Keep the current draft',
+        picked: [],
+        scrollOffset: 400,
+        hasScrollPosition: true,
+        followNewest: false
+      })
+      const visible = readingGeometry(reading.id, 500, 1300)
+      Object.defineProperty(visible.scroller, 'clientHeight', {
+        value: 400,
+        configurable: true
+      })
+      await visible.layout()
+      await visible.userScroll(400)
+      expect(visible.row.getBoundingClientRect().top).equals(100)
+      await act(async () => {
+        engine.update({
+          ...engine.current,
+          messages: [
+            { ...reading, status: 'ok', body: 'Recovered practice notes' }
+          ]
+        })
+      })
+      visible.geometry.y = 1700
+      visible.geometry.height = 3500
+      // The list compensates first; RNW's new content-size event follows.
+      visible.scroller.scrollTop = 1600
+      visible.scroller.dispatchEvent(
+        new window.Event('scroll', { bubbles: true })
+      )
+      await visible.layout()
+      expect(visible.scroller.scrollTop).equals(1600)
+      expect(visible.row.getBoundingClientRect().top).equals(100)
+      expect(document.querySelector('textarea')!.value).equals(
+        'Keep the current draft'
+      )
+    })
+  }
+
   it('keeps the genuine scroll offset and measured-pane reading anchor when a scroll event carries stale viewport and content geometry', async function () {
     pointer(true)
     const engine = new FakeEngine()

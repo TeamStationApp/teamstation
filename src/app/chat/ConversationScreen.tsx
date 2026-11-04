@@ -93,6 +93,7 @@ import { EmojiPicker } from './EmojiPicker'
 import { type MessageView, reactionKey } from './engine/apply'
 import type { ConversationView, GrantApproval } from './engine/engine'
 import { findOriginal, replyExcerpt } from './engine/reply'
+import { historyStatusText, sendStatusText } from './historyStatus'
 import { MentionPicker } from './MentionPicker'
 import { MessageBubble } from './MessageBubble'
 import { MessageMenu } from './MessageMenu'
@@ -244,6 +245,37 @@ export function ConversationScreen(
   const refreshAttention = useRef<(manual?: boolean) => void>(() => {})
   const committed = useRef(0)
   const publishView = (next: ConversationView | undefined): void => {
+    const pending = new Set(
+      latestView.current?.messages
+        .filter(
+          message => message.status === 'locked' || message.status === 'lost'
+        )
+        .map(message => message.id)
+    )
+    if (
+      next?.messages.some(
+        message => message.status === 'ok' && pending.has(message.id)
+      ) === true &&
+      scrolled.current.hasPosition &&
+      !scrolled.current.followNewest &&
+      restoreAnchor.current == null &&
+      measuringJump.current == null &&
+      menuReading.current == null
+    ) {
+      // Decryption can resize every mounted row in one commit. Save the reader
+      // before that layout: its compensated offset can otherwise look like the
+      // end of the previous, shorter history before content-size catches up.
+      const physical = readMessageScrollPosition(
+        scroller.current,
+        messageRefs.current
+      )
+      const anchor = physical?.anchor ?? scrolled.current.anchor
+      if (anchor != null) {
+        restoreAnchor.current = { ...anchor }
+        restoreTarget.current = physical?.offset ?? scrolled.current.offset
+        atBottom.current = false
+      }
+    }
     setView(
       next == null
         ? undefined
@@ -323,6 +355,7 @@ export function ConversationScreen(
     draftOwner.failed(conversationId) ? lstrings.chat_send_failed : undefined
   )
   const [reported, setReported] = useState(false)
+  const [retryingHistory, setRetryingHistory] = useState(false)
   const [menu, setMenu] = useState<MessageView | undefined>(undefined)
   const [menuAnchor, setMenuAnchor] = useState<unknown>(undefined)
   const [menuSource, setMenuSource] = useState<MessageSource>()
@@ -2518,6 +2551,7 @@ export function ConversationScreen(
   ]
   const historyHeaderVisible =
     view.historyLocked ||
+    sendStatusText(view.sendReadiness) != null ||
     approvals.length > 0 ||
     view.unverified ||
     view.hasEarlier ||
@@ -2539,7 +2573,38 @@ export function ConversationScreen(
       {view.historyLocked && (
         <View style={[shared.banner, shared.bannerWarning]}>
           <Icon name="lock" color={theme.warningColor} />
-          <Text style={shared.bannerText}>{lstrings.chat_history_locked}</Text>
+          <Text style={shared.bannerText}>
+            {view.historyRecovery == null
+              ? lstrings.chat_history_locked
+              : historyStatusText(view)}
+          </Text>
+          {view.historyRecovery === 'retryableError' && (
+            <Button
+              label={lstrings.common_retry}
+              kind="secondary"
+              compact
+              busy={retryingHistory}
+              disabled={retryingHistory}
+              onPress={() => {
+                setRetryingHistory(true)
+                engine
+                  .refresh()
+                  .catch(() => {
+                    // The history warning remains visible; sending stays independent.
+                  })
+                  .finally(() => {
+                    setRetryingHistory(false)
+                  })
+              }}
+            />
+          )}
+        </View>
+      )}
+      {sendStatusText(view.sendReadiness) != null && (
+        <View style={[shared.banner, shared.bannerWarning]}>
+          <Text style={shared.bannerText}>
+            {sendStatusText(view.sendReadiness)}
+          </Text>
         </View>
       )}
       {approvals.map(approval => (
