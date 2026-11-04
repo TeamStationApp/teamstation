@@ -5,6 +5,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatActionOverlay } from './ChatActionOverlay'
 import { ChatListScreen } from './ChatListScreen'
@@ -130,6 +131,8 @@ const sample = (
   })
 
 describe('chat UI follow-up popup keyboard', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('cycles arrows and Tab inside the popup and supports Home, End and Escape', function () {
     const trigger = document.createElement('button')
     const panel = document.createElement('div')
@@ -266,6 +269,8 @@ describe('chat UI follow-up popup keyboard', function () {
 })
 
 describe('chat UI follow-up conversation menu', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('keeps the exact personal actions available on a locked read-only conversation', async function () {
     const calls: unknown[] = []
     let closed = 0
@@ -435,6 +440,8 @@ describe('chat UI follow-up conversation menu', function () {
 })
 
 describe('chat UI follow-up conversation hold', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   afterEach(async function () {
     // Suite cleanup runs before the shared root hooks, which await real timers.
     await resetTimeouts()

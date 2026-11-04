@@ -12,6 +12,7 @@ import {
 } from '../../common/api'
 import { NO_OVERRIDES, SAMPLE_SCOREBOARD } from '../../common/scoreboard'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { fakeSockets } from '../../test/fakeScoreboardSocket'
 import { testPasswordParameters } from '../../test/passwordFixtures'
 import { App } from '../App'
@@ -88,6 +89,8 @@ const { canScore: _canScore, ...unsaid } = gameFixture
 const silent = asGameDetail({ ...unsaid, scoreboard: runnable })
 
 describe('the Score Game pill', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('opens the separate scoring page through its hero action', async function () {
     let opened = 0
     await gameScreen({ canScore: true, scoreboard: runnable }, () => {
@@ -231,6 +234,8 @@ function shownText(): string {
 }
 
 describe('the app, the Score Game screen and the dashboard', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('opens the Score Game screen from the pill, and the dashboard from its Scoreboard button, each at its own address', async function () {
     const sockets = fakeSockets()
     globalThis.WebSocket = sockets.Impl as unknown as typeof WebSocket

@@ -20,6 +20,7 @@ import {
 import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import { listProps, reachEnd } from '../../test/PagedListStandIn'
 import { pageOfGames } from '../../test/pageOf'
+import type { TabCorrection } from '../chat/ChatAgeGate'
 import { seasonParticipantDestination } from '../navigation/seasonParticipant'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { scheduleDate, shortDate, shortTime } from './format'
@@ -205,7 +206,7 @@ interface Calls {
   client?: TeamStationClient
   games: Array<{ gameId: string; title: string; options?: unknown }>
   teams: TeamSummary[]
-  tabs: Array<[string, boolean | undefined]>
+  tabs: Array<[string, TabCorrection | undefined]>
   whens: When[]
   managed: number
   invites: string[]

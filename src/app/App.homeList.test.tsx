@@ -4,6 +4,7 @@ import React from 'react'
 
 import { asSessionUser, TeamStationClient } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { mount, press, settle, unmount } from '../test/gameFormDom'
 import { App } from './App'
@@ -52,6 +53,8 @@ function rememberOpen(): void {
 }
 
 describe('the home list window on this device', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   let originals: PropertyDescriptorMap
   const originalSocket = globalThis.WebSocket
   const originalFetch = globalThis.fetch

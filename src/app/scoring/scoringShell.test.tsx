@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { DICTATION_MODELS, TeamStationClient } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { pageOf } from '../../test/pageOf'
 import { scoringRoster } from '../../test/scoringSession'
 import { App, stackFor } from '../App'
@@ -148,6 +149,8 @@ async function openListedGame(): Promise<void> {
   await click(label!)
 }
 describe('scoring shell and exit', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   for (const path of [
     '/',
     '/videos',
@@ -728,6 +731,8 @@ describe('scoring shell and exit', function () {
 })
 
 describe('muting the game', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   const MUTE = 'Mute game sounds'
   const UNMUTE = 'Unmute game sounds'
   const song = {

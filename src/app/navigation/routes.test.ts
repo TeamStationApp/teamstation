@@ -6,7 +6,8 @@ import {
   parseRoute,
   type Route,
   routePath,
-  safeNext
+  safeNext,
+  withoutTab
 } from './routes'
 
 /** Every route survives being written down and read back. */
@@ -839,6 +840,19 @@ describe('a player', function () {
         tab: 'settings'
       })
     ).equals('/players/usr_1111111111111111111112?tab=settings')
+  })
+})
+
+describe('an address with no tab', function () {
+  it('takes out the tab and keeps the rest of the query', function () {
+    expect(withoutTab('/seasons/s1?tab=standings')).equals('/seasons/s1')
+    expect(withoutTab('/seasons/s1?tab=schedule&when=upcoming')).equals(
+      '/seasons/s1?when=upcoming'
+    )
+    expect(withoutTab('/groups/league/l1?when=all')).equals(
+      '/groups/league/l1?when=all'
+    )
+    expect(withoutTab('/teams/t1')).equals('/teams/t1')
   })
 })
 

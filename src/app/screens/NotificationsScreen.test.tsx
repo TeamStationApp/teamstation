@@ -7,6 +7,7 @@ import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { Notification } from '../../common/notifications'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { listProps, reachEnd } from '../../test/PagedListStandIn'
 import { App } from '../App'
 import { parseRoute } from '../navigation/routes'
@@ -92,6 +93,8 @@ const request: Notification = {
 }
 
 describe('guardian notifications', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('lists an invitation and a request by the words the server sent, each with Accept and Reject', async function () {
     const client = {
       notifications: async () => ({
@@ -388,6 +391,8 @@ describe('guardian notifications', function () {
 })
 
 describe('a notification that somebody added you', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   const grant: Notification = {
     id: 'aud_grant',
     requestId: 'aud_grant',
@@ -467,6 +472,8 @@ describe('a notification that somebody added you', function () {
 })
 
 describe('a reminder to upload a recording', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   const reminder: Notification = {
     id: 'evt_reminder',
     requestId: 'evt_reminder',
@@ -720,6 +727,8 @@ describe('a reminder to upload a recording', function () {
 })
 
 describe('a player added with a notice', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   const notice: Notification = {
     ...invitation,
     id: 'event_player_add',
@@ -847,6 +856,8 @@ describe('a player added with a notice', function () {
 })
 
 describe("a player's side removing them", function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   const removal: Notification = {
     ...invitation,
     id: 'evt_removed',
@@ -885,6 +896,8 @@ describe("a player's side removing them", function () {
 })
 
 describe('notifications a page at a time', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   type Mode = 'pending' | 'sent' | 'history'
   interface Query {
     history?: boolean

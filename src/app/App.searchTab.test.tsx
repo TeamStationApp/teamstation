@@ -6,10 +6,13 @@ import { createRoot } from 'react-dom/client'
 import { asRosterEntry, asSessionUser, TeamStationClient } from '../common/api'
 import { asGroupDetail, asPublicGroup } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { pageOfGames } from '../test/pageOf'
 import { App, stackFor } from './App'
 
 describe('the Search tab', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('is a stack of its own, with Discover at its root and no Back there', async () => {
     const proto = TeamStationClient.prototype
     const originals = Object.getOwnPropertyDescriptors(proto)

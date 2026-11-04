@@ -4,7 +4,7 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BackHandler, Linking, Platform } from 'react-native'
 
-import type { Route } from '../navigation/routes'
+import { isChatPath, type Route } from '../navigation/routes'
 import {
   currentRoute,
   finishChatChild,
@@ -13,6 +13,7 @@ import {
   seedRoute,
   showRoute,
   stepBackTo,
+  undoStep,
   useBrowserBack
 } from '../navigation/useAddressBar.native'
 
@@ -227,5 +228,46 @@ describe('Android Back from a chat opened by a link', function () {
     expect(scoringOriginHistory()).equals(2)
     popRoute()
     expect(currentRoute()).deep.equals({ name: 'chat' })
+  })
+})
+
+describe('Not Now on a chat opened by a link, on a phone', function () {
+  it('steps back over the chat list the link added, so Back does not reach it', async function () {
+    seedRoute(null)
+    const depth = scoringOriginHistory()
+    await androidBack(async ({ back, open, decide }) => {
+      open('/chat/cnv_linked')
+      decide(true)
+      expect(scoringOriginHistory()).equals(depth + 2)
+      undoStep({ name: 'home' }, isChatPath)
+      expect(scoringOriginHistory()).equals(depth)
+      expect(currentRoute()).deep.equals({ name: 'home' })
+      expect(back(), 'The bottom closes the app').equals(false)
+    })
+  })
+
+  it('puts the tab in the chat steps’ place when the app opened on the link', function () {
+    seedRoute(null)
+    showRoute({ name: 'chat' }, true)
+    showRoute({ name: 'conversation', conversationId: 'cnv_linked' })
+    undoStep({ name: 'home' }, isChatPath)
+    expect(scoringOriginHistory()).equals(1)
+    expect(currentRoute()).deep.equals({ name: 'home' })
+  })
+})
+
+describe('Not Now on a page’s Chats tab, on a phone', function () {
+  it('steps back to the page as it opened, with no tab, and writes the tab it shows', function () {
+    seedRoute(null)
+    showRoute({ name: 'season', seasonId: 'season_demo' })
+    const depth = scoringOriginHistory()
+    showRoute({ name: 'season', seasonId: 'season_demo', tab: 'chats' })
+    undoStep({ name: 'season', seasonId: 'season_demo', tab: 'standings' })
+    expect(scoringOriginHistory()).equals(depth)
+    expect(currentRoute()).deep.equals({
+      name: 'season',
+      seasonId: 'season_demo',
+      tab: 'standings'
+    })
   })
 })

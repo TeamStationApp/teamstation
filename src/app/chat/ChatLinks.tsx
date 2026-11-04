@@ -4,7 +4,7 @@ import { Text, View } from 'react-native'
 import { ListCard, ListRow, SectionHeader } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { useChatAllowed } from './DeclaredAgeGate'
+import { useChatAge } from './ChatAgeGate'
 
 /** An accessible conversation linked from its owning group. */
 export interface ChatLink {
@@ -23,7 +23,8 @@ export interface ChatLinksProps {
 /** One bounded collection, with previews supplied only after authentication. */
 export function ChatLinks(props: ChatLinksProps): React.ReactElement | null {
   const { chats, onOpen, onLoadPreview } = props
-  const chatOn = useChatAllowed()
+  // Rows and previews wait for the age confirmation; the screen asks for it.
+  const chatOn = useChatAge().access === 'allowed'
   const styles = getStyles(useTheme())
   useEffect(() => {
     if (!chatOn) return

@@ -6,22 +6,26 @@ export type DeclaredAgeAnswer =
   | { status: 'declined' }
   | { status: 'sharing'; lowerBound?: number; upperBound?: number }
 
-/** Whether chat may be drawn. `pending` is an answer that has not settled. */
-export type ChatGate = 'pending' | 'allowed' | 'denied'
+/**
+ * What this device's age answer says about chat. `pending` is an answer that
+ * has not settled; `none` is a platform that did not or could not answer.
+ */
+export type AppleAge = 'pending' | 'over13' | 'under13' | 'declined' | 'none'
 
 /**
- * Chat is removed only for a decline or a shared range under 13.
- * A missing lower bound is under 13. An answer the platform cannot give
- * leaves chat up. `unready` has not settled.
+ * A shared range of 13 or more is `over13`, and any other shared range — a
+ * missing lower bound included — is `under13`. A platform that cannot give
+ * an answer is `none`, and `unready` has not settled.
  */
-export function chatGate(answer: DeclaredAgeAnswer): ChatGate {
+export function appleAgeOf(answer: DeclaredAgeAnswer): AppleAge {
   if (answer.status === 'unready') return 'pending'
-  if (answer.status === 'declined') return 'denied'
+  if (answer.status === 'declined') return 'declined'
   if (answer.status === 'sharing') {
-    if (answer.lowerBound == null || answer.lowerBound < 13) return 'denied'
-    return 'allowed'
+    return answer.lowerBound != null && answer.lowerBound >= 13
+      ? 'over13'
+      : 'under13'
   }
-  return 'allowed'
+  return 'none'
 }
 
 const CHAT_FRAMES = new Set([

@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client'
 import { asSessionUser, TeamStationClient } from '../common/api'
 import { asGroupDetail, asSearchRow } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { press, settle } from '../test/gameFormDom'
 import { App } from './App'
 
@@ -13,6 +14,8 @@ const team = (id: string, name: string): ReturnType<typeof asSearchRow> =>
   asSearchRow({ id, kind: 'team', name, locality: null, imageUrl: null })
 
 describe('actual app Create Game navigation', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   for (const status of ['pending', 'accepted'])
     it(`opens the ${status === 'accepted' ? 'game' : 'request'} with its notice after Save`, async () => {
       const proto = TeamStationClient.prototype

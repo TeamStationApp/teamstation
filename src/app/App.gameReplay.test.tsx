@@ -11,6 +11,7 @@ import {
 } from '../common/api'
 import type { StoredGame } from '../common/scoring/session'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { nativeStatistics } from '../test/gameStatisticsFixture'
 import {
   finalGame,
@@ -42,6 +43,8 @@ const replayShown = (): boolean =>
   document.querySelector('[data-testid="game-replay"]') != null
 
 describe('the app’s game replay', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   this.timeout(30000)
   const proto = TeamStationClient.prototype
   const originals = Object.getOwnPropertyDescriptors(proto)

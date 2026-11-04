@@ -667,6 +667,18 @@ export const enUs = {
   chat_quote_show: 'Tap to show it',
   chat_pin_earlier: 'Earlier message. Tap to show it.',
   chat_delete_for_everyone: 'Delete for everyone',
+  chat_age_title: 'Before You Chat',
+  chat_age_body:
+    'Chat on TeamStation is for people 13 and older. Players under 13 can still follow their teams, schedules, stats and videos.',
+  chat_age_rules:
+    'By continuing, you confirm that you are at least 13 years old and agree to keep chat respectful: no bullying, harassment, hate speech, threats, or sexual or violent content. You can mute any chat and report any message to TeamStation’s site administrators, who review what is reported.',
+  chat_age_agree: 'I’m 13 or Older',
+  chat_age_decline: 'Not Now',
+  chat_age_under13_title: 'Chat Is for Ages 13 and Up',
+  chat_age_under13_body:
+    'The age range this device shares says you’re under 13, so chat isn’t available here. You can still follow your teams, schedules, stats and videos.',
+  chat_age_under13_ok: 'OK',
+  chat_age_failed: 'That didn’t save. Check your connection and try again.',
   chat_report: 'Report',
   chat_report_title: 'Report this message?',
   chat_report_detail:
