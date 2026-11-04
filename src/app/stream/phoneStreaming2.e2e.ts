@@ -21,6 +21,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
+import { serverLivePieceReader } from '../../test/livePieces'
+
 const run = promisify(execFile)
 const sleep = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
@@ -785,7 +787,10 @@ async function main(): Promise<void> {
     note('record 10s')
     await sleep(10000)
     const text = await readFile(playlist, 'utf8')
-    const initBytes = await readFile(path.join(hlsRoot, videoId, 'init.mp4'))
+    // With a Space, the ingest keeps only the newest minute on disk; an
+    // older piece is read back from the Space.
+    const readPiece = serverLivePieceReader(videoId)
+    const initBytes = await readPiece(path.join(hlsRoot, videoId, 'init.mp4'))
     const names = text
       .split('\n')
       .map(line => line.trim())
@@ -798,7 +803,7 @@ async function main(): Promise<void> {
         media,
         Buffer.concat([
           initBytes,
-          await readFile(path.join(hlsRoot, videoId, name))
+          await readPiece(path.join(hlsRoot, videoId, name))
         ])
       )
       try {
