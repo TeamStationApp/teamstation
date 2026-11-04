@@ -110,6 +110,7 @@ import { migration096RosterCandidateNames } from './096rosterCandidateNames'
 import { migration097NoticeRequests } from './097noticeRequests'
 import { migration098PlayerNamePrivacy } from './098playerNamePrivacy'
 import { migration099ChatLinkDecisions } from './099ChatLinkDecisions'
+import { migration099TvLogin } from './099tvLogin'
 import { migration100StreamManagement } from './100streamManagement'
 import { migration101VideographerRequests } from './101videographerRequests'
 import { migration102LocalCopyRemoved } from './102localCopyRemoved'
@@ -227,6 +228,7 @@ export const migrations: Migration[] = [
   migration097NoticeRequests,
   migration098PlayerNamePrivacy,
   migration099ChatLinkDecisions,
+  migration099TvLogin,
   migration100StreamManagement,
   migration101VideographerRequests,
   migration102LocalCopyRemoved

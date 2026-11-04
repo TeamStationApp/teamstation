@@ -43,6 +43,7 @@ import {
   type GameProposal,
   type GameScheduleProposal
 } from './gameApprovals'
+import type { GameStatistics, StatisticsQuery } from './gameStatistics'
 import {
   asGroupRef,
   type CreateGroup,
@@ -109,6 +110,7 @@ import {
   type PublicGroup,
   type SearchRow
 } from './publicGroups'
+import { asReplayBoxScore } from './replay/replayBoxSchema'
 import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
 import {
   type AddedGame,
@@ -152,6 +154,13 @@ import {
   type SeasonScheduleSettings
 } from './seasonScheduling'
 import { type ServerSentEvent, serverSentEvents } from './serverSentEvents'
+import {
+  asTvLoginPreview,
+  asTvLoginRequest,
+  type TvLoginPreview,
+  type TvLoginRequest,
+  type TvPlatform
+} from './tvLogin'
 import {
   asUmpireLeaderboard,
   asUmpireLeagues,
@@ -211,6 +220,13 @@ const asAbsentOr =
     raw === undefined ? undefined : cleaner(raw)
 
 export const asTeamSummary = asObject({
+  latestVideoAt: asOptional(asString),
+  videoRelationship: asOptional(
+    asLiteral('member', 'following', 'admin', 'other')
+  ),
+  videoSeason: asOptional(
+    asNullable(asObject({ name: asString, leagueName: asNullable(asString) }))
+  ),
   id: asString,
   name: asString,
   shortName: asNullable(asString),
@@ -259,9 +275,24 @@ export const asTeamSummary = asObject({
 type TeamSummaryFromList = ReturnType<typeof asTeamSummary>
 export type TeamSummary = Omit<
   TeamSummaryFromList,
-  'access' | 'following' | 'onTeam'
+  | 'access'
+  | 'following'
+  | 'onTeam'
+  | 'videoSeason'
+  | 'latestVideoAt'
+  | 'videoRelationship'
 > &
-  Partial<Pick<TeamSummaryFromList, 'access' | 'following' | 'onTeam'>>
+  Partial<
+    Pick<
+      TeamSummaryFromList,
+      | 'access'
+      | 'following'
+      | 'onTeam'
+      | 'videoSeason'
+      | 'latestVideoAt'
+      | 'videoRelationship'
+    >
+  >
 
 /** A team somebody may follow, from `GET /teams/search` or `/me/follows`. */
 export const asFollowableTeam = asObject({
@@ -1060,6 +1091,14 @@ export type HighlightsResponse = Omit<
   'highlights'
 > & { highlights: Highlight[] }
 
+export type TvHighlight = Highlight & { preferred: boolean }
+const asTvHighlights = asObject({
+  highlights: asArray((raw: unknown): TvHighlight => ({
+    ...asHighlight(raw),
+    ...asObject({ preferred: asBoolean })(raw)
+  }))
+})
+
 const asRates = asObject({
   avg: asOptional(asNumber),
   obp: asOptional(asNumber),
@@ -1714,6 +1753,31 @@ export const asSeasonGame = withEventMetadata(
 )
 export type SeasonGame = ReturnType<typeof asSeasonGame>
 
+export type VideoGame = SeasonGame & {
+  latestVideoId: string
+  latestVideoAt: string
+}
+export const asVideoGame: Cleaner<VideoGame> = raw => ({
+  ...asSeasonGame(raw),
+  ...asObject({ latestVideoId: asString, latestVideoAt: asString })(raw)
+})
+export interface VideoCollectionOptions {
+  team?: string
+  participant?: string
+  q?: string
+  offset?: number
+  limit?: number
+  sort?: 'date' | 'upload'
+}
+function videoCollectionQuery(options: VideoCollectionOptions): string {
+  return [
+    'hasVideo=1',
+    ...Object.entries(options)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
+  ].join('&')
+}
+
 /** A player a roster manager may add, as the search card draws them. */
 export interface RosterCandidate {
   userId: string
@@ -1780,7 +1844,10 @@ export function asExistingPlayerAnswer(raw: unknown): ExistingPlayerAnswer {
 }
 
 /** A person another service knows, and which of the asked ids are theirs. */
-export const asUserMatch = asObject({
+const cleanUserMatch = asObject({
+  recentVideoTeams: asOptional(
+    asArray(asObject({ id: asString, name: asString }))
+  ),
   userId: asUserId,
   gumboId: asOptional(asNullable(asGumboId), null),
   externalIds: asArray(asString),
@@ -1789,7 +1856,18 @@ export const asUserMatch = asObject({
   /** Their picture, signed and short-lived; null when they have none. */
   avatarUrl: asOptional(asNullable(asString), null)
 })
-export type UserMatch = ReturnType<typeof asUserMatch>
+/** Preserve the response shape for callers which did not request video details. */
+export const asUserMatch = (
+  raw: unknown
+): ReturnType<typeof cleanUserMatch> => {
+  const match = cleanUserMatch(raw)
+  if (match.recentVideoTeams === undefined) delete match.recentVideoTeams
+  return match
+}
+export type UserMatch = Omit<
+  ReturnType<typeof asUserMatch>,
+  'recentVideoTeams'
+> & { recentVideoTeams?: Array<{ id: string; name: string }> }
 
 /** How the ingest's `lastError` begins when it refused a camera's codec. */
 export const CODEC_REFUSAL = 'TeamStation takes HEVC.'
@@ -3080,7 +3158,104 @@ export const asBoardTimelineWindow: Cleaner<BoardTimelineWindow> = asObject({
   steps: asArray(asObject({ at: asNumber, state: asScoreboardState }))
 })
 
+export const asGameStatistics: Cleaner<GameStatistics> = asObject({
+  version: asString,
+  board: asBoardTimelineWindow,
+  line: asLineScoreTimeline,
+  initial: asNullable(asReplayBoxScore),
+  boxes: asArray(
+    asObject({
+      at: asNumber,
+      position: asNullable(
+        asObject({ atBatIndex: asNumber, actionIndex: asNumber })
+      ),
+      box: asNullable(asReplayBoxScore),
+      message: asNullable(asString)
+    })
+  ),
+  source: asObject({
+    plays: asArray(asGumboPlay),
+    currentPlay: asNullable(asCurrentPlay),
+    generation: asNumber
+  })
+})
+
+function statisticsPath(
+  gameId: string,
+  view: 'playback' | 'board' | 'line',
+  query: StatisticsQuery
+): string {
+  const params = new URLSearchParams({ view })
+  for (const [key, value] of [
+    ['at', query.at],
+    ['from', query.fromMs],
+    ['to', query.toMs]
+  ] as const)
+    if (value !== undefined)
+      params.set(
+        key,
+        String(Math.max(0, key === 'to' ? Math.ceil(value) : Math.floor(value)))
+      )
+  return `/games/${encodeURIComponent(gameId)}/box-score?${params}`
+}
+
 export class TeamStationClient {
+  private readonly statisticsRequests = new Map<
+    string,
+    Promise<GameStatistics>
+  >()
+
+  /** Historical scores and replay documents, from one authorized revision. */
+  async gameStatistics(
+    gameId: string,
+    query: StatisticsQuery = {}
+  ): Promise<GameStatistics> {
+    const path = statisticsPath(gameId, 'playback', query)
+    // A client may sign out while a request is pending. Never share that response
+    // with a newly authenticated identity, even within the same client instance.
+    const key = `${this.token ?? ''}\u0000${path}`
+    const held = this.statisticsRequests.get(key)
+    if (held !== undefined) return await held
+    const request = this.request('GET', path, asGameStatistics)
+    this.statisticsRequests.set(key, request)
+    try {
+      return await request
+    } finally {
+      this.statisticsRequests.delete(key)
+    }
+  }
+
+  async startTvLogin(platform: TvPlatform): Promise<TvLoginRequest> {
+    return await this.request('POST', '/auth/tv/start', asTvLoginRequest, {
+      platform
+    })
+  }
+
+  async claimTvLogin(
+    requestId: string,
+    clientSecret: string
+  ): Promise<Session | { ready: false }> {
+    return await this.request(
+      'POST',
+      '/auth/tv/claim',
+      asEither(asSession, asObject({ ready: asLiteral(false) })),
+      { requestId, clientSecret }
+    )
+  }
+
+  async inspectTvLogin(token: string): Promise<TvLoginPreview> {
+    return await this.request('POST', '/auth/tv/inspect', asTvLoginPreview, {
+      token
+    })
+  }
+
+  async approveTvLogin(input: {
+    code?: string
+    token?: string
+  }): Promise<void> {
+    await this.request('POST', '/auth/tv/approve', asUnknownOk, input)
+  }
+
   async umpireSettings(league: string): Promise<UmpireSettings> {
     return await this.request(
       'GET',
@@ -4627,6 +4802,34 @@ export class TeamStationClient {
     return await this.request('GET', `/events${query}`, asArray(asSeasonGame))
   }
 
+  async videoGames(options: VideoCollectionOptions = {}): Promise<VideoGame[]> {
+    return await this.request(
+      'GET',
+      `/events?${videoCollectionQuery(options)}`,
+      asArray(asVideoGame)
+    )
+  }
+
+  async videoTeams(
+    options: VideoCollectionOptions = {}
+  ): Promise<TeamSummary[]> {
+    return await this.request(
+      'GET',
+      `/teams?${videoCollectionQuery(options)}`,
+      asArray(asTeamSummary)
+    )
+  }
+
+  async videoPlayers(
+    options: VideoCollectionOptions = {}
+  ): Promise<UserMatch[]> {
+    return await this.request(
+      'GET',
+      `/users?${videoCollectionQuery(options)}`,
+      asArray(asUserMatch)
+    )
+  }
+
   /**
    * The people another service knows by these ids, as far as this person may
    * see them. A merged row answers as whoever it was merged into.
@@ -4777,6 +4980,19 @@ export class TeamStationClient {
     )
   }
 
+  async tvHighlights(
+    videoId: string,
+    participant?: string
+  ): Promise<TvHighlight[]> {
+    return (
+      await this.request(
+        'GET',
+        `/videos/${encodeURIComponent(videoId)}/highlights?personalized=1${participant === undefined ? '' : `&participant=${encodeURIComponent(participant)}`}`,
+        asTvHighlights
+      )
+    ).highlights
+  }
+
   /**
    * Where to play a video from, and for how long that answer is good.
    *
@@ -4814,17 +5030,9 @@ export class TeamStationClient {
     gameId: string,
     window: { fromMs?: number; toMs?: number } = {}
   ): Promise<BoardTimelineWindow> {
-    const query = new URLSearchParams()
-    if (window.fromMs != null)
-      query.set('from', String(Math.max(0, Math.floor(window.fromMs))))
-    if (window.toMs != null)
-      query.set('to', String(Math.max(0, Math.ceil(window.toMs))))
-    const text = query.toString()
     return await this.request(
       'GET',
-      `/games/${encodeURIComponent(gameId)}/scoreboard-timeline${
-        text === '' ? '' : `?${text}`
-      }`,
+      statisticsPath(gameId, 'board', window),
       asBoardTimelineWindow
     )
   }
@@ -4838,19 +5046,9 @@ export class TeamStationClient {
     gameId: string,
     query: { at?: number; fromMs?: number; toMs?: number } = {}
   ): Promise<LineScoreTimeline> {
-    const params = new URLSearchParams()
-    if (query.at != null)
-      params.set('at', String(Math.max(0, Math.floor(query.at))))
-    if (query.fromMs != null)
-      params.set('from', String(Math.max(0, Math.floor(query.fromMs))))
-    if (query.toMs != null)
-      params.set('to', String(Math.max(0, Math.ceil(query.toMs))))
-    const text = params.toString()
     return await this.request(
       'GET',
-      `/games/${encodeURIComponent(gameId)}/line-score${
-        text === '' ? '' : `?${text}`
-      }`,
+      statisticsPath(gameId, 'line', query),
       asLineScoreTimeline
     )
   }

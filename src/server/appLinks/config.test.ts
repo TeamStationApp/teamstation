@@ -65,7 +65,7 @@ describe('asAppLinksConfig', function () {
       apps: [app1, { origin: 'https://app2.example.test' }]
     })
     expect(config.knownServers).deep.equals(['https://seat.example.test'])
-    expect(config.apps[0]).deep.equals(app1)
+    expect(config.apps[0]).deep.equals({ ...app1, tvLogin: undefined })
     expect(config.apps[1].apple).equals(undefined)
     expect(config.apps[1].android).equals(undefined)
   })

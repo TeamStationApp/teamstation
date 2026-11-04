@@ -6,7 +6,7 @@ import express from 'express'
 import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 
-import { asLineScoreTimeline, TeamStationClient } from '../../common/api'
+import { asLineScoreTimeline } from '../../common/api'
 import { asPostEventsBody } from '../../common/gumboPlay'
 import {
   addGame,
@@ -143,16 +143,18 @@ describe('the line score route (U3)', function () {
   })
 
   it('answers the step in effect at one instant, and none before the first', async function () {
-    const client = new TeamStationClient({ baseUrl: base, token: owner.token })
-    const at = await client.lineScore(scored, { at: t0 + 25_000 })
+    const read = async (
+      query: string
+    ): Promise<ReturnType<typeof asLineScoreTimeline>> =>
+      asLineScoreTimeline(
+        (await ask(`/games/${scored}/line-score?${query}`)).json
+      )
+    const at = await read(`at=${t0 + 25_000}`)
     expect(at.steps).length(1)
     expect(at.steps[0].at).equals(t0 + 20_000)
     expect(at.steps[0].line.home.r).equals(2)
-    expect((await client.lineScore(scored, { at: t0 })).steps).deep.equals([])
-    const window = await client.lineScore(scored, {
-      fromMs: t0 + 15_000,
-      toMs: t0 + 25_000
-    })
+    expect((await read(`at=${t0}`)).steps).deep.equals([])
+    const window = await read(`from=${t0 + 15_000}&to=${t0 + 25_000}`)
     expect(window.steps.map(step => step.at)).deep.equals([
       t0 + 10_000,
       t0 + 20_000

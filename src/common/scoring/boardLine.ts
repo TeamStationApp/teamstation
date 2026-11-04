@@ -17,7 +17,10 @@ export const ZERO_LINE: BoardLine = {
  * less its earlier halves, and the totals the engine keeps. The plays a game
  * holds are the completed ones; the one being played is not among them.
  */
-export function boardLineOf(state: GameState): BoardLine {
+export function boardLineOf(
+  state: GameState,
+  imported: BoardLine = ZERO_LINE
+): BoardLine {
   const { linescore, plays } = state.liveData
   // Each half's last completed play: its scores close the half.
   const last = new Map<string, { index: number; away: number; home: number }>()
@@ -66,8 +69,9 @@ export function boardLineOf(state: GameState): BoardLine {
     return {
       innings: runs,
       r: totals.runs,
-      h: totals.hits,
-      e: totals.errors
+      // Replay restores the imported runs, but counts hits/errors only from native actions.
+      h: imported[which].h === null ? null : imported[which].h + totals.hits,
+      e: imported[which].e === null ? null : imported[which].e + totals.errors
     }
   }
   const away = side('away')

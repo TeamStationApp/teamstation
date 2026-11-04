@@ -37,7 +37,7 @@ export interface ReplayPitchingLine {
   er: number
   bb: number
   k: number
-  pc: number
+  pc: number | null
   /** On the mound now. */
   current: boolean
 }
@@ -49,8 +49,8 @@ export interface ReplaySide {
   /** Runs per inning, from the first; null for an inning not shown. */
   innings: Array<number | null>
   runs: number
-  hits: number
-  errors: number
+  hits: number | null
+  errors: number | null
 }
 
 export interface ReplayBoxScore {
@@ -267,7 +267,7 @@ export interface ReplayPitchingTotals {
   er: number
   bb: number
   k: number
-  pc: number
+  pc: number | null
 }
 
 /**
@@ -296,8 +296,9 @@ export function battingTotals(
 export function pitchingTotals(
   lines: readonly ReplayPitchingLine[]
 ): ReplayPitchingTotals {
-  const sum = (field: Exclude<keyof ReplayPitchingTotals, 'ip'>): number =>
-    lines.reduce((total, line) => total + line[field], 0)
+  const sum = (
+    field: Exclude<keyof ReplayPitchingTotals, 'ip' | 'pc'>
+  ): number => lines.reduce((total, line) => total + line[field], 0)
   const outs = sum('outs')
   return {
     outs,
@@ -307,7 +308,9 @@ export function pitchingTotals(
     er: sum('er'),
     bb: sum('bb'),
     k: sum('k'),
-    pc: sum('pc')
+    pc: lines.some(line => line.pc === null)
+      ? null
+      : lines.reduce((total, line) => total + (line.pc ?? 0), 0)
   }
 }
 

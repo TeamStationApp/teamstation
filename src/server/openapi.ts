@@ -40,6 +40,43 @@ import { venuePaths } from './venues/venuesOpenApi'
 const PUBLIC_NAME =
   "The public name: first name and last initial, unless the player's league, season or team chose another format."
 
+const videoCollectionParameters = [
+  {
+    name: 'hasVideo',
+    in: 'query',
+    schema: { type: 'string', enum: ['1', 'true'] },
+    description:
+      'Omitted: existing collection behavior. When set, only games with visible ready/live single-camera video, and their teams or recorded participants. Other legacy filters cannot be combined. Results contain no access-request candidates.'
+  },
+  {
+    name: 'team',
+    in: 'query',
+    schema: { type: 'string' },
+    description:
+      'With hasVideo: games involving this team; omitted: all accessible games.'
+  },
+  {
+    name: 'participant',
+    in: 'query',
+    schema: { type: 'string' },
+    description:
+      'With hasVideo: recorded game participant user ID, never current roster membership. Omitted: any participant.'
+  },
+  {
+    name: 'offset',
+    in: 'query',
+    schema: { type: 'integer', minimum: 0, maximum: 1000000, default: 0 },
+    description: 'With hasVideo: number of matching rows to skip.'
+  },
+  {
+    name: 'sort',
+    in: 'query',
+    schema: { type: 'string', enum: ['date', 'upload'], default: 'date' },
+    description:
+      'With hasVideo: event ordering by game date or latest video creation time; identities always sort by public name. Stable ID ties. Events include latestVideoId and latestVideoAt.'
+  }
+]
+
 const recordSchema = {
   type: 'object',
   required: ['w', 'l', 't'],
@@ -1134,6 +1171,18 @@ const nodeSettingsSchema = {
             }
           }
         },
+        tvLandscape: {
+          type: 'object',
+          description:
+            'Four-angle TV placement. Omitted updates preserve the stored value.',
+          additionalProperties: false,
+          required: ['x', 'y', 'height'],
+          properties: {
+            x: { type: 'number', minimum: 0, exclusiveMaximum: 1 },
+            y: { type: 'number', minimum: 0, exclusiveMaximum: 1 },
+            height: { type: 'number', exclusiveMinimum: 0, maximum: 1 }
+          }
+        },
         portraitHeight: {
           type: 'number',
           exclusiveMinimum: 0,
@@ -1670,6 +1719,243 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       schemas: {
         ...gumboSchemas,
+        HistoricalBox: {
+          type: 'object',
+          required: ['away', 'home', 'from'],
+          properties: {
+            ...Object.fromEntries(
+              ['away', 'home'].map(side => [
+                side,
+                {
+                  type: 'object',
+                  required: [
+                    'name',
+                    'innings',
+                    'runs',
+                    'hits',
+                    'errors',
+                    'batting',
+                    'pitching'
+                  ],
+                  properties: {
+                    name: { type: 'string' },
+                    innings: {
+                      type: 'array',
+                      items: { type: ['integer', 'null'] }
+                    },
+                    runs: { type: 'integer' },
+                    hits: { type: ['integer', 'null'] },
+                    errors: { type: ['integer', 'null'] },
+                    batting: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: [
+                          'id',
+                          'name',
+                          'ab',
+                          'r',
+                          'h',
+                          'rbi',
+                          'bb',
+                          'k',
+                          'sub',
+                          'current'
+                        ],
+                        properties: {
+                          id: { type: 'integer' },
+                          name: { type: 'string' },
+                          sub: { type: 'boolean' },
+                          current: { type: 'boolean' },
+                          ...Object.fromEntries(
+                            ['ab', 'r', 'h', 'rbi', 'bb', 'k'].map(key => [
+                              key,
+                              { type: 'integer' }
+                            ])
+                          )
+                        }
+                      }
+                    },
+                    pitching: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: [
+                          'id',
+                          'name',
+                          'outs',
+                          'ip',
+                          'h',
+                          'r',
+                          'er',
+                          'bb',
+                          'k',
+                          'pc',
+                          'current'
+                        ],
+                        properties: {
+                          id: { type: 'integer' },
+                          name: { type: 'string' },
+                          ip: { type: 'string' },
+                          current: { type: 'boolean' },
+                          pc: { type: ['integer', 'null'] },
+                          ...Object.fromEntries(
+                            ['outs', 'h', 'r', 'er', 'bb', 'k'].map(key => [
+                              key,
+                              { type: 'integer' }
+                            ])
+                          )
+                        }
+                      }
+                    }
+                  }
+                }
+              ])
+            ),
+            from: {
+              oneOf: [
+                { type: 'null' },
+                {
+                  type: 'object',
+                  required: ['inning', 'half'],
+                  properties: {
+                    inning: { type: 'integer' },
+                    half: { type: 'string', enum: ['top', 'bottom'] }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        GameStatistics: {
+          type: 'object',
+          required: ['version', 'board', 'line', 'initial', 'boxes', 'source'],
+          properties: {
+            version: { type: 'string' },
+            initial: {
+              oneOf: [
+                { type: 'null' },
+                { $ref: '#/components/schemas/HistoricalBox' }
+              ]
+            },
+            board: {
+              type: 'object',
+              required: ['version', 'steps'],
+              properties: {
+                version: { type: 'string' },
+                steps: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['at', 'state'],
+                    properties: {
+                      at: { type: 'number' },
+                      state: {
+                        type: 'object',
+                        description:
+                          'The scoreboard state, including publisher overrides, at this wall-clock millisecond.'
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            line: {
+              type: 'object',
+              required: ['version', 'teams', 'steps'],
+              properties: {
+                version: { type: 'string' },
+                teams: {
+                  type: 'object',
+                  required: ['away', 'home'],
+                  properties: {
+                    away: { type: 'string' },
+                    home: { type: 'string' }
+                  }
+                },
+                steps: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['at', 'line'],
+                    properties: {
+                      at: { type: 'number' },
+                      line: {
+                        type: 'object',
+                        required: ['away', 'home'],
+                        properties: Object.fromEntries(
+                          ['away', 'home'].map(side => [
+                            side,
+                            {
+                              type: 'object',
+                              required: ['innings', 'r', 'h', 'e'],
+                              properties: {
+                                innings: {
+                                  type: 'array',
+                                  items: { type: ['integer', 'null'] }
+                                },
+                                r: { type: 'integer' },
+                                h: { type: ['integer', 'null'] },
+                                e: { type: ['integer', 'null'] }
+                              }
+                            }
+                          ])
+                        )
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            boxes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['at', 'position', 'box', 'message'],
+                properties: {
+                  at: { type: 'number' },
+                  message: { type: ['string', 'null'] },
+                  box: {
+                    oneOf: [
+                      { type: 'null' },
+                      { $ref: '#/components/schemas/HistoricalBox' }
+                    ]
+                  },
+                  position: {
+                    oneOf: [
+                      { type: 'null' },
+                      {
+                        type: 'object',
+                        required: ['atBatIndex', 'actionIndex'],
+                        properties: {
+                          atBatIndex: { type: 'integer' },
+                          actionIndex: { type: 'integer' }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            source: {
+              type: 'object',
+              required: ['plays', 'currentPlay', 'generation'],
+              properties: {
+                plays: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/GumboPlay' }
+                },
+                currentPlay: {
+                  oneOf: [
+                    { type: 'null' },
+                    { $ref: '#/components/schemas/GumboCurrentPlay' }
+                  ]
+                },
+                generation: { type: 'integer' }
+              }
+            }
+          }
+        },
         BattingRow: battingSchema,
         PitchingRow: pitchingSchema,
         StandingsRow: standingsSchema,
@@ -3351,6 +3637,25 @@ export function openApiDocument(version: string): OpenApiDocument {
             'unchanged; an empty one is refused.',
           security: [{}, { bearer: [] }],
           parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              schema: { type: 'string', default: '' },
+              description:
+                'With hasVideo: case-insensitive public name substring; omitted: all. Results add optional videoSeason {name, leagueName}, null without a season, from the latest accessible recorded game; latestVideoAt is the newest visible upload time and videoRelationship is member (including guardian), following, admin, or other, in that priority order.'
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 100,
+                default: 50
+              },
+              description: 'With hasVideo: rows per page.'
+            },
+            ...videoCollectionParameters,
             {
               name: 'view',
               in: 'query',
@@ -5401,6 +5706,30 @@ export function openApiDocument(version: string): OpenApiDocument {
                           }
                         }
                       },
+                      tvLandscape: {
+                        type: 'object',
+                        description:
+                          'TV-only four-angle placement; older responses use the default.',
+                        additionalProperties: false,
+                        required: ['x', 'y', 'height'],
+                        properties: {
+                          x: {
+                            type: 'number',
+                            minimum: 0,
+                            exclusiveMaximum: 1
+                          },
+                          y: {
+                            type: 'number',
+                            minimum: 0,
+                            exclusiveMaximum: 1
+                          },
+                          height: {
+                            type: 'number',
+                            exclusiveMinimum: 0,
+                            maximum: 1
+                          }
+                        }
+                      },
                       portraitHeight: {
                         type: 'number',
                         exclusiveMinimum: 0,
@@ -5677,7 +6006,7 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/games/{gameId}/box-score': {
         get: {
-          summary: "A game's batting and pitching lines",
+          summary: "A game's totals or historical playback statistics",
           description:
             'Added up from the stored stat lines, one row per player per ' +
             "game. The stats builder writes them whenever the game's plays " +
@@ -5693,15 +6022,76 @@ export function openApiDocument(version: string): OpenApiDocument {
             'still names him shows the line instead; every other line has ' +
             '`standsFor` null. `gumboIds` are the ids a line goes by in the ' +
             "game's plays. Anybody signed in " +
-            'who is a member of neither team is answered 403 `membersOnly`.',
+            'who is a member of neither team is answered 403 `membersOnly`. ' +
+            '`view=playback` returns one coherent historical scoring revision: ' +
+            '`board` (version and timestamped scoreboard states), `line` ' +
+            '(version, team names and timestamped inning lines), `initial` ' +
+            '(the native pregame box or null), `boxes` (timestamped player ' +
+            'statistics or an availability message), and `source` (authorized ' +
+            'plays, currentPlay and generation for replay). Imported plays ' +
+            'are supported. Missing detail does not hide available inning ' +
+            'scores. Native box steps also identify their atBatIndex and ' +
+            'actionIndex so replay can distinguish actions at the same time. ' +
+            'Historical bounds select only steps already in effect; a window ' +
+            'includes its predecessor. Source documents remain whole for replay. ' +
+            'No query preserves the totals response used by installed clients.',
           security: [{ bearer: [] }],
-          parameters: [gameIdParam],
+          parameters: [
+            gameIdParam,
+            {
+              name: 'view',
+              in: 'query',
+              required: false,
+              description:
+                'Omitted: final/current totals. playback: full historical scoring revision. board or line: only that timeline for video overlays.',
+              schema: { type: 'string', enum: ['playback', 'board', 'line'] }
+            },
+            ...['at', 'from', 'to'].map(name => ({
+              name,
+              in: 'query',
+              required: false,
+              description:
+                'Optional non-negative integer wall-clock milliseconds; requires a historical view. at excludes from/to; to must be >= from. Omitted bounds return the whole timeline.',
+              schema: { type: 'integer', minimum: 0 }
+            }))
+          ],
           responses: {
             200: {
               description:
                 'A line per batter and pitcher, with rates, and `stats` for ' +
-                "the builder's status"
+                "the builder's status; view=playback returns the historical scoring revision",
+              content: {
+                'application/json': {
+                  schema: {
+                    anyOf: [
+                      { $ref: '#/components/schemas/GameStatistics' },
+                      {
+                        $ref: '#/components/schemas/GameStatistics/properties/board'
+                      },
+                      {
+                        $ref: '#/components/schemas/GameStatistics/properties/line'
+                      },
+                      {
+                        type: 'object',
+                        required: ['batting', 'pitching', 'stats'],
+                        properties: {
+                          batting: {
+                            type: 'array',
+                            items: { $ref: '#/components/schemas/BattingRow' }
+                          },
+                          pitching: {
+                            type: 'array',
+                            items: { $ref: '#/components/schemas/PitchingRow' }
+                          },
+                          stats: { type: 'object' }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
             },
+            400: errorResponse,
             403: errorResponse,
             404: errorResponse
           }
@@ -5722,6 +6112,20 @@ export function openApiDocument(version: string): OpenApiDocument {
             'nonmembers may read the list and signed stills; playback remains members-only.',
           security: [],
           parameters: [
+            {
+              name: 'personalized',
+              in: 'query',
+              schema: { type: 'string', enum: ['1'] },
+              description:
+                'Omitted: public preview behavior. 1 requires signed-in playback access (404 otherwise) and adds preferred, true when the viewer or a guarded player is credited, including assists.'
+            },
+            {
+              name: 'participant',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                'With personalized=1: return only highlights crediting this player, including assists and historical merged identities. Omitted: all highlights with viewer/family preference.'
+            },
             {
               name: 'videoId',
               in: 'path',
@@ -6218,6 +6622,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'see but may not add to is 403.',
           security: [{ bearer: [] }],
           parameters: [
+            ...videoCollectionParameters,
             {
               name: 'view',
               in: 'query',
@@ -6272,13 +6677,14 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', maxLength: 100, default: '' },
               description:
-                'With forTeam: every word must start a first, last or display name, ignoring case and accents.'
+                'With hasVideo: results add optional recentVideoTeams [{id,name}], up to two teams from actual participation in accessible recordings, newest first; case-insensitive public name substring (omitted: all); never private names. With forTeam: every word must start a first, last or display name, ignoring case and accents.'
             },
             {
               name: 'limit',
               in: 'query',
               schema: { type: 'integer', minimum: 1, maximum: 50, default: 30 },
-              description: 'With forTeam: rows per page.'
+              description:
+                'With hasVideo: default 50, maximum 100. With forTeam: default 30, maximum 50.'
             },
             {
               name: 'after',
@@ -9191,6 +9597,14 @@ export function openApiDocument(version: string): OpenApiDocument {
           security: [{ bearer: [] }],
           parameters: [
             {
+              name: 'q',
+              in: 'query',
+              schema: { type: 'string', default: '' },
+              description:
+                'With hasVideo: case-insensitive matchup substring; omitted: all.'
+            },
+            ...videoCollectionParameters,
+            {
               name: 'scope',
               in: 'query',
               schema: { type: 'string', enum: ['visible', 'run', 'film'] }
@@ -9240,6 +9654,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             {
               name: 'limit',
               in: 'query',
+              description:
+                'With hasVideo: default 50, maximum 100. Otherwise omitted means uncapped.',
               schema: { type: 'integer', minimum: 1 }
             },
             {
@@ -9616,6 +10032,273 @@ export function openApiDocument(version: string): OpenApiDocument {
             },
             401: errorResponse
           }
+        }
+      },
+      '/auth/tv/start': {
+        post: {
+          summary: 'Start a two-minute TV approval request',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    platform: {
+                      type: 'string',
+                      enum: ['Apple TV', 'Google TV']
+                    }
+                  },
+                  required: ['platform']
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description:
+                'Private TV request credentials; do not log or share clientSecret',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      requestId: {
+                        type: 'string',
+                        pattern: '^[A-Za-z0-9_-]{43}$'
+                      },
+                      clientSecret: {
+                        type: 'string',
+                        pattern: '^[A-Za-z0-9_-]{43}$'
+                      },
+                      displayCode: {
+                        type: 'string',
+                        description:
+                          'Eight uppercase letters grouped four\u2013four'
+                      },
+                      qrUrl: {
+                        type: 'string',
+                        format: 'uri'
+                      },
+                      expiresAt: {
+                        type: 'number',
+                        description: 'Unix milliseconds'
+                      }
+                    },
+                    required: [
+                      'requestId',
+                      'clientSecret',
+                      'displayCode',
+                      'qrUrl',
+                      'expiresAt'
+                    ]
+                  }
+                }
+              }
+            },
+            '400': {
+              description: 'Malformed request'
+            },
+            '401': {
+              description:
+                'Expired, consumed, invalid request or missing session'
+            },
+            '429': {
+              description: 'Rate limited'
+            }
+          }
+        }
+      },
+      '/auth/tv/claim': {
+        post: {
+          summary: 'Claim a TV session once approved',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    requestId: {
+                      type: 'string',
+                      pattern: '^[A-Za-z0-9_-]{43}$'
+                    },
+                    clientSecret: {
+                      type: 'string',
+                      pattern: '^[A-Za-z0-9_-]{43}$'
+                    }
+                  },
+                  required: ['requestId', 'clientSecret']
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description: 'One-time claim of a 180-day named TV session',
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/Session'
+                  }
+                }
+              }
+            },
+            '202': {
+              description: 'Waiting for approval',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      ready: {
+                        type: 'boolean',
+                        enum: [false]
+                      }
+                    },
+                    required: ['ready']
+                  }
+                }
+              }
+            },
+            '400': {
+              description: 'Malformed request'
+            },
+            '401': {
+              description:
+                'Expired, consumed, invalid request or missing session'
+            },
+            '429': {
+              description: 'Rate limited'
+            }
+          }
+        }
+      },
+      '/auth/tv/inspect': {
+        post: {
+          summary: 'Preview a QR request for a signed-in human',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    token: {
+                      type: 'string',
+                      pattern: '^[A-Za-z0-9_-]{43}$'
+                    }
+                  },
+                  required: ['token']
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description:
+                'Approximate device location, or null when unavailable; does not approve',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      platform: {
+                        type: 'string',
+                        enum: ['Apple TV', 'Google TV']
+                      },
+                      location: {
+                        type: ['string', 'null']
+                      },
+                      expiresAt: {
+                        type: 'number',
+                        description: 'Unix milliseconds'
+                      }
+                    },
+                    required: ['platform', 'location', 'expiresAt']
+                  }
+                }
+              }
+            },
+            '400': {
+              description: 'Malformed request'
+            },
+            '401': {
+              description:
+                'Expired, consumed, invalid request or missing session'
+            },
+            '429': {
+              description: 'Rate limited'
+            },
+            '403': {
+              description: 'Human session required'
+            },
+            '409': {
+              description: 'Approved by another account'
+            }
+          },
+          description:
+            'Requires a signed-in human session; API keys, machine tokens and delegated agents cannot approve.'
+        }
+      },
+      '/auth/tv/approve': {
+        post: {
+          summary: 'Approve a TV as the signed-in human',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  oneOf: [
+                    {
+                      type: 'object',
+                      properties: {
+                        code: {
+                          type: 'string',
+                          description:
+                            'Eight alphabetic letters, case insensitive; grouping optional'
+                        }
+                      },
+                      required: ['code']
+                    },
+                    {
+                      type: 'object',
+                      properties: {
+                        token: {
+                          type: 'string',
+                          pattern: '^[A-Za-z0-9_-]{43}$'
+                        }
+                      },
+                      required: ['token']
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          responses: {
+            '204': {
+              description: 'Approved; TV claims its own session'
+            },
+            '400': {
+              description: 'Malformed request'
+            },
+            '401': {
+              description:
+                'Expired, consumed, invalid request or missing session'
+            },
+            '429': {
+              description: 'Rate limited'
+            },
+            '403': {
+              description: 'Human session required'
+            },
+            '409': {
+              description: 'Approved by another account'
+            }
+          },
+          description:
+            'Requires a signed-in human session; API keys, machine tokens and delegated agents cannot approve.'
         }
       },
       '/auth/request/claim': {
