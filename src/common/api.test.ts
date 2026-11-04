@@ -3339,3 +3339,62 @@ describe('who is signed in, with no signal', function () {
     expect(aborting.offline).equals(false)
   })
 })
+
+describe('chat recovery API compatibility', () => {
+  it('keeps legacy epoch URLs and independently requests precise box delivery', async () => {
+    const answer = {
+      latest: 0,
+      needsRotation: false,
+      noHolder: false,
+      epochs: [],
+      boxes: []
+    }
+    const stub = stubFetch(200, answer)
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: stub.fetch
+    })
+    await client.chatEpochs('cnv_one', 2)
+    await client.chatEpochs('cnv_one', 2, {
+      boxesAfter: '9007199254740993',
+      boxLimit: 1
+    })
+    await client.chatEpochs('cnv_one', 2, { boxesAfter: '0' })
+    expect(stub.calls.map(call => call.url)).deep.equals([
+      'https://example.test/api/v1/chat/conversations/cnv_one/epochs?after=2',
+      'https://example.test/api/v1/chat/conversations/cnv_one/epochs?after=2&boxesAfter=9007199254740993&boxLimit=1',
+      'https://example.test/api/v1/chat/conversations/cnv_one/epochs?after=2&boxesAfter=0&boxLimit=100'
+    ])
+  })
+  it('uses scoped history queues with distinct typed responses', async () => {
+    const stub = stubFetch(200, { requests: [], nextCursor: null })
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: stub.fetch
+    })
+    expect(await client.chatHistoryGrants()).deep.equals({
+      requests: [],
+      nextCursor: null
+    })
+    await client.chatHistoryGrants('7', 2)
+    expect(stub.calls[1].url).equals(
+      'https://example.test/api/v1/chat/grants?scope=history&cursor=7&limit=2'
+    )
+    const posted = stubFetch(200, {
+      filled: 0,
+      results: [{ requestId: '7', status: 'partial', coveredThroughEpoch: 1 }]
+    })
+    const writer = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: posted.fetch
+    })
+    expect((await writer.postChatHistoryGrants([])).results[0].status).equals(
+      'partial'
+    )
+    expect(posted.calls[0].url).equals(
+      'https://example.test/api/v1/chat/grants?scope=history'
+    )
+    expect(posted.calls[0].method).equals('POST')
+    expect(JSON.parse(posted.calls[0].body!)).deep.equals({ boxes: [] })
+  })
+})
