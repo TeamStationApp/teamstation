@@ -1,10 +1,11 @@
+import { type ApiKeyPool, normalizedKeys } from '../../common/aiKeys'
 import { DICTATION_MODELS, type DictationModel } from '../../common/api'
 
 /** Where an LLM is reached, and in which of the two request shapes. */
 export interface LlmEndpoint {
   /** `chat`: OpenAI's chat completions, which xAI speaks too; `messages`: Anthropic's. */
   api: 'chat' | 'messages'
-  apiKey: string
+  apiKey: ApiKeyPool
   baseUrl: string
   /** Fields the provider needs on every request for this model. */
   body?: Record<string, unknown>
@@ -16,10 +17,10 @@ export interface LlmEndpoint {
 
 export interface ProviderKeys {
   /** xAI's, for the dictation model and the Grok LLMs. */
-  apiKey: string
+  apiKey: ApiKeyPool
   baseUrl: string
-  openai?: { apiKey: string; baseUrl: string }
-  anthropic?: { apiKey: string; baseUrl: string }
+  openai?: { apiKey: ApiKeyPool; baseUrl: string }
+  anthropic?: { apiKey: ApiKeyPool; baseUrl: string }
 }
 
 /**
@@ -33,9 +34,13 @@ export function endpointFor(
   model: string,
   keys: ProviderKeys
 ): LlmEndpoint | undefined {
-  if (model.startsWith('grok-'))
+  if (model.startsWith('grok-') && normalizedKeys(keys.apiKey).length > 0)
     return { api: 'chat', apiKey: keys.apiKey, baseUrl: keys.baseUrl }
-  if (model.startsWith('gpt-') && keys.openai != null)
+  if (
+    model.startsWith('gpt-') &&
+    keys.openai != null &&
+    normalizedKeys(keys.openai.apiKey).length > 0
+  )
     return {
       api: 'chat',
       ...keys.openai,
@@ -43,7 +48,11 @@ export function endpointFor(
       followUp: true,
       gameInUserMessage: true
     }
-  if (model.startsWith('claude-') && keys.anthropic != null)
+  if (
+    model.startsWith('claude-') &&
+    keys.anthropic != null &&
+    normalizedKeys(keys.anthropic.apiKey).length > 0
+  )
     return { api: 'messages', ...keys.anthropic }
   return undefined
 }

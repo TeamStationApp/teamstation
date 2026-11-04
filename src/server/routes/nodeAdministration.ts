@@ -99,7 +99,9 @@ export function nodeAdministrationRoutes(
     requireActor,
     withAsync(async (req, res) => {
       if (req.actor == null) throw unauthorized()
-      res.json(await nodeSettings(db, req.actor))
+      res
+        .set('Cache-Control', 'no-store')
+        .json(await nodeSettings(db, req.actor))
     })
   )
   router.put(
@@ -120,7 +122,9 @@ export function nodeAdministrationRoutes(
       const settings = cleanBody(asNodeSettingsUpdate, req.body)
       await setNodeSettings(db, req.actor, settings)
       // What is stored now, including a pitch delay the save left alone.
-      res.json(await nodeSettings(db, req.actor))
+      res
+        .set('Cache-Control', 'no-store')
+        .json(await nodeSettings(db, req.actor))
     })
   )
   return router

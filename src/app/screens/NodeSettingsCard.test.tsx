@@ -444,3 +444,55 @@ describe('NodeSettingsCard', function () {
     expect(text()).not.contains('Saved.')
   })
 })
+
+describe('NodeSettingsCard API keys', () => {
+  it('shows three multiline fields, normalizes pasted keys and preserves edits after a failed save and reset', async () => {
+    const initial = {
+      ...defaultNodeSettings,
+      aiKeys: {
+        anthropicChatbot: ['old'],
+        anthropicScoring: ['score'],
+        xaiVoice: ['voice']
+      }
+    }
+    const saves: NodeSettings[] = []
+    let fail = true
+    const client = {
+      nodeSettings: async () => initial,
+      setNodeSettings: async (value: NodeSettings) => {
+        saves.push(value)
+        if (fail) throw new Error('Save unavailable')
+        return value
+      }
+    } as unknown as TeamStationClient
+    await render(client)
+    const fields = document.querySelectorAll('textarea')
+    expect(fields).length(3)
+    expect(fields[0].rows).equals(3)
+    // The native setter is deliberately invoked with the textarea as its receiver.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLTextAreaElement.prototype,
+      'value'
+    )!.set!
+    await act(async () => {
+      setter.call(fields[0], ' a \n\nb\na')
+      fields[0].dispatchEvent(new window.Event('input', { bubbles: true }))
+      await delay()
+    })
+    await press('Save')
+    expect(text()).contains('Save unavailable')
+    expect(fields[0].value).equals(' a \n\nb\na')
+    await press('Reset to defaults')
+    expect(fields[0].value).equals(' a \n\nb\na')
+    fail = false
+    await press('Save')
+    expect(saves.at(-1)?.aiKeys).deep.equals({
+      anthropicChatbot: ['a', 'b'],
+      anthropicScoring: ['score'],
+      xaiVoice: ['voice']
+    })
+    expect(fields[0].value).equals('a\nb')
+    expect(text()).contains('Saved.')
+  })
+})

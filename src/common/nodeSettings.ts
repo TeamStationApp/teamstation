@@ -1,3 +1,5 @@
+import { type AiKeys, asAiKeys } from './aiKeys'
+
 /**
  * The settings a node administrator sets for the whole node: where the
  * scoreboard sits over video, how long a radar speed stays on the board, and
@@ -65,6 +67,8 @@ export interface HighlightTimings {
 }
 
 export interface NodeSettings {
+  /** Administrator-only secrets; omitted by older servers and clients. */
+  aiKeys?: AiKeys
   scoreboard: ScoreboardSettings
   highlights: HighlightTimings
   radar: RadarSettings
@@ -176,6 +180,7 @@ export function asNodeSettingsUpdate(raw: unknown): NodeSettingsUpdate {
   const scoreboard = record(value.scoreboard, 'scoreboard')
   const highlights = record(value.highlights, 'highlights')
   return {
+    ...(value.aiKeys === undefined ? {} : { aiKeys: asAiKeys(value.aiKeys) }),
     radar: asRadarSettings(value.radar ?? defaultRadarSettings),
     ...(value.replay == null ? {} : { replay: asReplaySettings(value.replay) }),
     scoreboard: {

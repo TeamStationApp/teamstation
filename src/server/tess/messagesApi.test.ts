@@ -1006,3 +1006,93 @@ describe('Tess Messages API client, streamed', function () {
     expect(down.message).equals("Tess's model could not be reached")
   })
 })
+
+describe('Tess API key fallback', () => {
+  const settings = {
+    ...SETTINGS,
+    apiKey: ['first-placeholder', 'second-placeholder', 'first-placeholder']
+  }
+  for (const status of [401, 403, 408, 429, 500, 529])
+    it(`retries ${status} with a distinct key`, async () => {
+      const p = provider(
+        () => new Response('{}', { status }),
+        () => Response.json(ANSWER)
+      )
+      expect(
+        (await createMessage(settings, REQUEST, { fetch: p.fetch })).stopReason
+      ).equals('tool_use')
+      expect(p.sent).length(2)
+      expect(p.sent[0].headers.get('x-api-key')).not.equals(
+        p.sent[1].headers.get('x-api-key')
+      )
+    })
+  it('returns the latest failure and leaves invalid requests unretried', async () => {
+    const p = provider(
+      () => new Response('{}', { status: 401 }),
+      () => new Response('{}', { status: 529 })
+    )
+    try {
+      await createMessage(settings, REQUEST, { fetch: p.fetch })
+      expect.fail('reject')
+    } catch (error) {
+      expect((error as HttpError).details).deep.equals({
+        status: 529,
+        type: 'unknown_error'
+      })
+    }
+    const bad = provider(() => new Response('{}', { status: 400 }))
+    try {
+      await createMessage(settings, REQUEST, { fetch: bad.fetch })
+      expect.fail('reject')
+    } catch {
+      expect(bad.sent).length(1)
+    }
+  })
+  it('falls back for token counts and interrupted streams without duplicated text', async () => {
+    const count = provider(
+      () => new Response('{}', { status: 429 }),
+      () => Response.json({ input_tokens: 12 })
+    )
+    expect(await countTokens(settings, REQUEST, { fetch: count.fetch })).equals(
+      12
+    )
+    const p = provider(
+      () =>
+        new Response(
+          'event: error\ndata: {"type":"error","error":{"type":"overloaded_error"}}\n\n'
+        ),
+      () =>
+        new Response(
+          sseText({ content: [{ type: 'text', text: 'Recovered' }] })
+        )
+    )
+    const events: MessagesStreamEvent[] = []
+    await streamMessage(settings, REQUEST, event => events.push(event), {
+      fetch: p.fetch
+    })
+    expect(
+      events
+        .filter(event => event.type === 'text')
+        .map(event => event.delta)
+        .join('')
+    ).equals('Recovered')
+    expect(p.sent).length(2)
+  })
+  it('retries a timed out attempt', async () => {
+    let calls = 0
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      if (++calls === 2) return Response.json(ANSWER)
+      return await new Promise((_resolve, reject) =>
+        init?.signal?.addEventListener(
+          'abort',
+          () => {
+            reject(new Error('aborted'))
+          },
+          { once: true }
+        )
+      )
+    }
+    await createMessage(settings, REQUEST, { fetch: fetchImpl, deadlineMs: 5 })
+    expect(calls).equals(2)
+  })
+})

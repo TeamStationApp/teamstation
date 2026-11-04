@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely'
 
+import { asAiKeys } from '../common/aiKeys'
 import {
   asDate,
   asHeight,
@@ -20,6 +21,7 @@ import {
   utcStartOf
 } from '../common/nodeSettings'
 import { requireNodeAdmin } from './admin/nodeAdministration'
+import { AI_KEYS_SETTING, aiKeys } from './aiKeys'
 import type { Actor } from './auth/sessions'
 import type { Database } from './db/database'
 import { forgetSettings, highlightSettings } from './settings'
@@ -153,6 +155,7 @@ export async function nodeSettings(
   )
   return {
     // Past this worker's cache: another may have taken the last save.
+    aiKeys: await aiKeys(db),
     scoreboard: await scoreboardSettings(db, Date.now(), true),
     radar: await radarSettings(db),
     highlights: await highlightSettings(db, true),
@@ -176,6 +179,9 @@ export async function setNodeSettings(
   )
   const { scoreboard, highlights, radar, replay } = settings
   const rows: Array<[string, unknown]> = [
+    ...(settings.aiKeys === undefined
+      ? []
+      : [[AI_KEYS_SETTING, asAiKeys(settings.aiKeys)] as [string, unknown]]),
     ...(replay == null
       ? []
       : [['replay.pitchSec', replay.pitchSec] as [string, unknown]]),
