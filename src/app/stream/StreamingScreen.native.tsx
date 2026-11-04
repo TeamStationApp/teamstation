@@ -93,8 +93,6 @@ export interface StreamingScreenProps {
   deviceId: string
   deviceModel: string
   onClose: () => void
-  /** The game hero's Start/Record action starts this take after opening the camera. */
-  startOnOpen?: boolean
   /** The engine; a test hands in one over a stand-in module. */
   phone?: PhoneStream
   /**
@@ -202,8 +200,7 @@ export function describeRefusal(error: unknown, angleName: string): string {
  * Android's back are held while either runs. A phone short of space streams
  * without recording, and says so. The first time a part ends, the server is
  * told this phone holds a recording, which starts the upload reminder. Opened
- * again after a kill on the stream whose take was rolling,
- * it carries that take on.
+ * again after a kill, it waits for Record before continuing the saved take.
  *
  * The gear opens the settings sheet (microphone, lenses, the angle's name,
  * radars). While a radar is paired, its readings go to the game's scoreboard.
@@ -279,7 +276,7 @@ function StreamingOverlay(
   const [front, setFront] = useState(false)
   const [recordingHere, setRecordingHere] = useState(false)
   const [confirmStop, setConfirmStop] = useState(false)
-  const [busy, setBusy] = useState(props.startOnOpen === true)
+  const [busy, setBusy] = useState(true)
   const [problem, setProblem] = useState<string | undefined>(undefined)
   /** The angle's name: Record video's, until the settings sheet renames it. */
   const [angleName, setAngleName] = useState(session.angleName)
@@ -394,9 +391,7 @@ function StreamingOverlay(
     }
   }, [])
   // The engine is open while the screen is up, and the phone held sideways.
-  // Opened again after a kill or a crash, within the hour, on the stream
-  // whose take was rolling, the take continues as its next part and the
-  // stream redials.
+  // Entry always opens a preview. Only the Record button starts or resumes a take.
   useEffect(() => {
     let live = true
     rotation.lockLandscape()
@@ -406,25 +401,6 @@ function StreamingOverlay(
       await phone.open(session.angleName)
       if (!live) return
       readScale()
-      const interrupted = await phone.interruptedSession()
-      if (!live) return
-      if (
-        interrupted?.liveStreamId === session.streamId &&
-        (await phone.resumeInterrupted(redialRequest))
-      ) {
-        if (live) setRecordingHere(true)
-        return
-      }
-      if (!live || props.startOnOpen !== true) return
-      analytics?.('recording_requested', {})
-      await phone.startRecording({
-        rtmpUrl: session.url,
-        liveStreamId: session.streamId,
-        gameId: session.gameId,
-        angleName: session.angleName,
-        request: redialRequest
-      })
-      if (live) setRecordingHere(true)
     })
     opened
       .catch((error: unknown) => {

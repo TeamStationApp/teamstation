@@ -11,6 +11,7 @@ import type {
 } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
+import type { CameraLinks } from './cameraDeepLinks'
 import { fakePhoneStreamModule, RECORDING } from './fakePhoneStreamModule'
 import { makePhoneStream } from './phoneStreamClient'
 import type { StreamingScreenProps } from './StreamingScreen.native'
@@ -91,7 +92,10 @@ function fixture(): {
   } as unknown as TeamStationClient
   return fake
 }
-async function mount(fake: ReturnType<typeof fixture>): Promise<void> {
+async function mount(
+  fake: ReturnType<typeof fixture>,
+  externalOptions: { links?: CameraLinks; launchLimitMs?: number } = {}
+): Promise<void> {
   const phone = makePhoneStream(fake.module)
   function Harness(): React.ReactElement {
     const recording = useGameRecording(
@@ -99,7 +103,8 @@ async function mount(fake: ReturnType<typeof fixture>): Promise<void> {
       'gam_1',
       phone,
       async () => DEVICE,
-      Camera
+      Camera,
+      externalOptions
     )
     return (
       <>
@@ -131,9 +136,21 @@ async function mount(fake: ReturnType<typeof fixture>): Promise<void> {
   })
 }
 async function press(label: string): Promise<void> {
-  const button = [
-    ...document.querySelectorAll<HTMLElement>('button,[role="button"]')
-  ].find(node => node.textContent?.replace(/chevron_right$/, '') === label)
+  const ids: Record<string, string> = {
+    GoPro: 'gopro',
+    Mevo: 'mevo',
+    'Mevo Studio': 'mevoStudio',
+    'Other camera': 'rtmp'
+  }
+  const button =
+    (ids[label] == null
+      ? undefined
+      : document.querySelector<HTMLElement>(
+          `[data-testid="camera-source-${ids[label]}"]`
+        )) ??
+    [...document.querySelectorAll<HTMLElement>('button,[role="button"]')].find(
+      node => node.textContent?.replace(/chevron_right$/, '') === label
+    )
   expect(button, label).not.equals(undefined)
   await act(async () => {
     button!.click()
@@ -160,8 +177,7 @@ describe('recording from the game hero', () => {
     await mount(fake)
     await press('Record')
     expect(prompt()).not.equals(null)
-    // The hero records with this phone: no external camera here.
-    expect(document.body.textContent).not.contains('Use external camera')
+    expect(document.body.textContent).contains('Use external camera')
     await press('Home')
     await press('Record with this phone')
     expect(fake.calls).deep.equals([
@@ -175,7 +191,240 @@ describe('recording from the game hero', () => {
       }
     ])
     expect(opened?.session.streamId).equals(held.id)
-    expect(opened?.startOnOpen).equals(true)
+    expect(
+      fake.module.calls.filter(call => call.name === 'startRecording')
+    ).has.length(0)
+  })
+
+  const links = (installed = true): CameraLinks => ({
+    canOpenURL: async () => installed,
+    openURL: async () => {},
+    appInstalled: async () => installed,
+    openInApp: async () => installed
+  })
+  const external = async (): Promise<void> => {
+    await press('Record')
+    await press('Home')
+    await press('Use external camera')
+  }
+  const dismiss = async (): Promise<void> => {
+    await act(async () => {
+      for (const node of document.body.querySelectorAll('div'))
+        for (const name of ['animationend', 'webkitAnimationEnd'])
+          node.dispatchEvent(new window.Event(name, { bubbles: true }))
+      await pause()
+    })
+  }
+
+  it('offers external RTMP with the supplied name and no phone device identity', async () => {
+    const fake = fixture()
+    await mount(fake)
+    await external()
+    await press('Other camera')
+    expect(fake.calls).deep.equals([
+      { name: 'Home', options: { source: 'rtmp' } }
+    ])
+    expect(document.body.textContent).contains(held.url)
+    expect(opened).equals(undefined)
+    await press('Done')
+    await dismiss()
+    await press('Record')
+    expect(
+      document.querySelector<HTMLInputElement>(
+        'input[aria-label="Camera angle"]'
+      )?.value
+    ).equals('')
+  })
+
+  for (const [label, source] of [
+    ['GoPro', 'gopro'],
+    ['Mevo', 'mevo'],
+    ['Mevo Studio', 'mevoStudio']
+  ]) {
+    it(`launches ${label} from the hero`, async () => {
+      Platform.OS = 'android'
+      const fake = fixture()
+      const openedLinks: string[] = []
+      await mount(fake, {
+        links: {
+          ...links(),
+          openURL: async url => {
+            openedLinks.push(url)
+          },
+          openInApp: async url => {
+            openedLinks.push(url)
+            return true
+          }
+        }
+      })
+      await external()
+      await press(label)
+      expect(fake.calls[0]).deep.equals({ name: 'Home', options: { source } })
+      expect(openedLinks).has.length(1)
+      expect(opened).equals(undefined)
+    })
+  }
+
+  it('waits for iOS dismissals through external RTMP and revoke cancellation', async () => {
+    Platform.OS = 'ios'
+    const fake = fixture()
+    await mount(fake)
+    await external()
+    expect(document.body.textContent).not.contains('Stream with your camera')
+    await dismiss()
+    expect(document.body.textContent).contains('Stream with your camera')
+    await press('Other camera')
+    expect(fake.calls).has.length(0)
+    await dismiss()
+    expect(fake.calls).has.length(1)
+    await press('Revoke')
+    await dismiss()
+    await press('Cancel')
+    await dismiss()
+    expect(document.body.textContent).contains(held.url)
+  })
+
+  it('ignores a revoked setup completing after a new hero prompt opens', async () => {
+    Platform.OS = 'android'
+    const fake = fixture()
+    let finish!: () => void
+    fake.client.revokeLiveStream = async () => {
+      await new Promise<void>(resolve => {
+        finish = resolve
+      })
+      return {
+        removed: true,
+        streams: await fake.client.liveStreams(held.gameId)
+      }
+    }
+    await mount(fake)
+    await external()
+    await press('Other camera')
+    await press('Revoke')
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[data-testid="revoke-confirm"]')!
+        .click()
+      await pause()
+    })
+    await act(async () => {
+      document
+        .querySelector('[data-testid="revoke-sheet"]')!
+        .parentElement!.querySelector<HTMLElement>('[aria-label="Cancel"]')!
+        .click()
+      await pause()
+    })
+    await press('Done')
+    await dismiss()
+    await press('Record')
+    expect(prompt()).not.equals(null)
+    await act(async () => {
+      finish()
+      await pause()
+    })
+    expect(prompt()).not.equals(null)
+    await press('Home')
+    await press('Record with this phone')
+    expect(opened).not.equals(undefined)
+  })
+
+  it('falls back to RTMP when an iOS maker app is missing', async () => {
+    Platform.OS = 'ios'
+    const fake = fixture()
+    await mount(fake, { links: links(false) })
+    await external()
+    await dismiss()
+    await press('GoPro')
+    await dismiss()
+    expect(document.body.textContent).contains(held.url)
+  })
+
+  it('opens the store without creating a camera on Android and permits retry', async () => {
+    Platform.OS = 'android'
+    const fake = fixture()
+    await mount(fake, { links: links(false) })
+    await external()
+    await press('GoPro')
+    expect(fake.calls).has.length(0)
+    await press('Other camera')
+    expect(fake.calls).has.length(1)
+  })
+
+  it('shows maker errors and retries', async () => {
+    Platform.OS = 'android'
+    const fake = fixture()
+    fake.next = async () => {
+      throw new Error('Camera refused')
+    }
+    await mount(fake, { links: links() })
+    await external()
+    await press('GoPro')
+    expect(document.body.textContent).contains('Camera refused')
+    fake.next = async () => held
+    await press('GoPro')
+    expect(fake.calls).has.length(2)
+  })
+
+  it('times out a maker launch and ignores its late response', async () => {
+    Platform.OS = 'android'
+    const fake = fixture()
+    let finish!: (value: LiveStream) => void
+    fake.next = async () =>
+      await new Promise(resolve => {
+        finish = resolve
+      })
+    let launched = 0
+    await mount(fake, {
+      launchLimitMs: 10,
+      links: {
+        ...links(),
+        openInApp: async () => {
+          launched++
+          return true
+        }
+      }
+    })
+    await external()
+    await press('GoPro')
+    expect(document.body.textContent).contains('too long')
+    await act(async () => {
+      finish(held)
+      await pause()
+    })
+    expect(launched).equals(0)
+  })
+
+  it('cancels an in-flight maker launch without opening its late result', async () => {
+    Platform.OS = 'android'
+    const fake = fixture()
+    let finish!: (value: LiveStream) => void
+    fake.next = async () =>
+      await new Promise(resolve => {
+        finish = resolve
+      })
+    let launched = 0
+    await mount(fake, {
+      links: {
+        ...links(),
+        openInApp: async () => {
+          launched++
+          return true
+        }
+      }
+    })
+    await external()
+    await press('GoPro')
+    await act(async () => {
+      root!.unmount()
+      await pause()
+    })
+    root = undefined
+    await act(async () => {
+      finish(held)
+      await pause()
+    })
+    expect(launched).equals(0)
+    expect(opened).equals(undefined)
   })
 
   it('asks for a stream that keeps no recording on a phone under the start floor', async () => {

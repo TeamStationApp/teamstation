@@ -4,8 +4,10 @@ import { Platform } from 'react-native'
 import type { LiveStream, TeamStationClient } from '../../common/api'
 import { lstrings, sprintf } from '../locales/strings'
 import { AngleNamePrompt } from './AngleNamePrompt'
+import type { CameraLinks } from './cameraDeepLinks'
 import { isEnded } from './cameraRowRules'
 import { deviceId as installId } from './deviceId'
+import { ExternalCameraSetup } from './ExternalCameraSetup'
 import type { GameRecording } from './gameRecording'
 import { type PhoneStream, phoneStream } from './phoneStream'
 import {
@@ -26,7 +28,8 @@ export function useGameRecording(
   gameId: string,
   phone: PhoneStream = phoneStream,
   deviceId: () => Promise<string> = installId,
-  Screen = StreamingScreen
+  Screen = StreamingScreen,
+  externalOptions: { links?: CameraLinks; launchLimitMs?: number } = {}
 ): GameRecording {
   const [available, setAvailable] = useState<{
     client: TeamStationClient
@@ -38,6 +41,11 @@ export function useGameRecording(
   const [promptKey, setPromptKey] = useState(0)
   const [pending, setPending] = useState<Camera>()
   const [camera, setCamera] = useState<Camera>()
+  const [external, setExternal] = useState<{ attempt: number; name: string }>()
+  const [pendingExternal, setPendingExternal] = useState<{
+    attempt: number
+    name: string
+  }>()
   const generation = useRef(0)
   const working = useRef(false)
   const scope = useRef({ client, gameId })
@@ -53,6 +61,8 @@ export function useGameRecording(
     setPrompt(undefined)
     setPending(undefined)
     setCamera(undefined)
+    setExternal(undefined)
+    setPendingExternal(undefined)
     setError(undefined)
     setBusy(false)
     working.current = false
@@ -78,6 +88,8 @@ export function useGameRecording(
     setPrompt(undefined)
     setPending(undefined)
     setCamera(undefined)
+    setExternal(undefined)
+    setPendingExternal(undefined)
   }
 
   const request = async (
@@ -141,7 +153,15 @@ export function useGameRecording(
   }
 
   const open = (): void => {
-    if (working.current || camera != null || prompt != null) return
+    if (
+      working.current ||
+      camera != null ||
+      prompt != null ||
+      pending != null ||
+      external != null ||
+      pendingExternal != null
+    )
+      return
     working.current = true
     const attempt = ++generation.current
     setBusy(true)
@@ -216,15 +236,35 @@ export function useGameRecording(
         <AngleNamePrompt
           key={promptKey}
           visible={prompt != null}
-          phoneOnly
           onCancel={cancel}
           onStart={start}
+          onExternal={name => {
+            if (prompt == null) return
+            const next = { attempt: prompt, name }
+            setPrompt(undefined)
+            if (Platform.OS === 'ios') setPendingExternal(next)
+            else setExternal(next)
+          }}
           onDismiss={() => {
+            if (pendingExternal != null && current(pendingExternal.attempt)) {
+              setExternal(pendingExternal)
+              setPendingExternal(undefined)
+            }
             if (pending == null || !current(pending.attempt)) return
             setCamera(pending)
             setPending(undefined)
           }}
         />
+        {external != null && current(external.attempt) && (
+          <ExternalCameraSetup
+            key={`external-${external.attempt}`}
+            client={client}
+            gameId={gameId}
+            name={external.name}
+            onClose={cancel}
+            {...externalOptions}
+          />
+        )}
         {camera != null && current(camera.attempt) && (
           <Screen
             client={client}
@@ -232,7 +272,6 @@ export function useGameRecording(
             deviceId={camera.deviceId}
             deviceModel={camera.deviceModel}
             phone={phone}
-            startOnOpen
             onClose={cancel}
           />
         )}
