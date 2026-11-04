@@ -8,9 +8,11 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // distribution certificate and publishes it, so a registered device can
 // install it. A master build then re-signs that IPA with the App Store
 // profile and uploads it to TestFlight. Other branches leave that stage
-// skipped. The Android release is compiled on Linux, then signed on the node
-// labelled android-signing, which provides teamstation-sign-release-apk, and
-// published from there. One platform failing leaves the other running.
+// skipped. The Android release APK is compiled on Linux, then signed on the
+// node labelled android-signing, which provides teamstation-sign-release-apk,
+// and published from there. A master production build also compiles a Play
+// bundle, signs it there with teamstation-sign-release-aab and saves it for
+// Google Play. One platform failing leaves the other running.
 //
 // The `seat` parameter picks the server the app talks to. A development seat
 // N points the app at https://developN.teamstation.app. Left at `production`,
@@ -609,6 +611,10 @@ export async function releaseIos(ctx: Stage): Promise<void> {
   await uploadAppStore(ctx, input)
 }
 
+const APK_GLOB = 'android/app/build/outputs/apk/release/*.apk'
+const AAB_GLOB = 'android/app/build/outputs/bundle/release/*.aab'
+const PLAY_ARCHITECTURES = 'arm64-v8a,armeabi-v7a'
+
 export async function compileAndroid(ctx: Stage): Promise<void> {
   await install(ctx)
   const app = runApp(ctx)
@@ -632,6 +638,13 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
     PATH: `${rustRoot}/cargo/bin:${process.env.PATH ?? ''}`
   }
   await ctx.sh('cargo install cargo-ndk', { env: rustEnv })
+  const gradleEnv = {
+    ...rustEnv,
+    ...seatEnvironment(ctx),
+    ...provenanceEnvironment(ctx, version, build),
+    MASON_BUILD_NUMBER: build,
+    MASON_APP_VERSION: version
+  }
   // The checked-in release config leaves versionCode at 1 and versionName
   // at 1.0. The init script sets this run's number and package.json's version.
   await ctx.sh(
@@ -648,33 +661,43 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
       'EOF',
       './gradlew --no-daemon --init-script mason-version.gradle :app:assembleRelease'
     ].join('\n'),
-    {
-      cwd: 'android',
-      env: {
-        ...rustEnv,
-        ...seatEnvironment(ctx),
-        ...provenanceEnvironment(ctx, version, build),
-        MASON_BUILD_NUMBER: build,
-        MASON_APP_VERSION: version
-      }
-    }
+    { cwd: 'android', env: gradleEnv }
   )
-  await ctx.stash(
-    'android-release',
-    'android/app/build/outputs/apk/release/*.apk'
+  if (app !== STABLE_APP) {
+    await ctx.stash('android-release', [APK_GLOB])
+    return
+  }
+  // Only the stable app has a Play listing. Its bundle carries 32-bit ARM as
+  // well, which the development default in android/gradle.properties leaves out.
+  await ctx.sh(
+    [
+      './gradlew --no-daemon --init-script mason-version.gradle :app:bundleRelease',
+      `-PreactNativeArchitectures=${PLAY_ARCHITECTURES}`
+    ].join(' '),
+    { cwd: 'android', env: gradleEnv }
   )
+  await ctx.stash('android-release', [APK_GLOB, AAB_GLOB])
 }
 
 export async function signAndroid(ctx: Stage): Promise<void> {
   await ctx.unstash('android-release')
   await ctx.sh(
-    '"$HOME/.local/bin/teamstation-sign-release-apk" android/app/build/outputs/apk/release'
+    `"$HOME/.local/bin/teamstation-sign-release-apk" ${path.dirname(APK_GLOB)}`
   )
-  const apks = await ctx.fs.glob('android/app/build/outputs/apk/release/*.apk')
+  const apks = await ctx.fs.glob(APK_GLOB)
   const apk = apks[0]
   if (apk == null) throw new Error('No release APK was signed')
+  const app = runApp(ctx)
   await ctx.artifacts.save('android-apk', apk)
-  await ctx.publish({ app: runApp(ctx), platform: 'android', path: apk })
+  await ctx.publish({ app, platform: 'android', path: apk })
+  if (app !== STABLE_APP) return
+  await ctx.sh(
+    `"$HOME/.local/bin/teamstation-sign-release-aab" ${path.dirname(AAB_GLOB)}`
+  )
+  const bundles = await ctx.fs.glob(AAB_GLOB)
+  const bundle = bundles[0]
+  if (bundle == null) throw new Error('No release bundle was signed')
+  await ctx.artifacts.save('android-aab', bundle)
 }
 
 /**
