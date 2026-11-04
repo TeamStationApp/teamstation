@@ -115,6 +115,41 @@ describe('disposable chat recovery fault gates', () => {
     await gates.wait(fault())
   })
 
+  it('holds only the named epoch publication while reads and other actors continue', async () => {
+    const audit: FaultAudit[] = []
+    const gates = new RecoveryFaults(row => audit.push(row))
+    gates.set(fault({ kind: 'epoch', outcome: 'success', delayMs: 60000 }))
+    const path = '/api/v1/chat/conversations/cnv_scene/epochs'
+    assert.equal(gates.claim('usr_actor', 'GET', url(path)), undefined)
+    assert.equal(gates.claim('usr_other', 'POST', url(path)), undefined)
+    assert.equal(gates.claim('usr_actor', 'POST', url()), undefined)
+    assert.equal(
+      gates.claim('usr_actor', 'POST', url(path + '/extra')),
+      undefined
+    )
+    assert.equal(
+      gates.claim(
+        'usr_actor',
+        'POST',
+        url(path.replace('cnv_scene', 'cnv_other'))
+      ),
+      undefined
+    )
+    const held = gates.claim('usr_actor', 'POST', url(path))
+    assert(held != null)
+    let released = false
+    const pending = gates.wait(held).then(() => {
+      released = true
+    })
+    await Promise.resolve()
+    assert.equal(released, false)
+    assert.equal(gates.claim('usr_actor', 'POST', url(path)), undefined)
+    gates.clear()
+    await pending
+    assert.equal(released, true)
+    assert.equal(audit.filter(row => row.event === 'delay-released').length, 1)
+  })
+
   it('releases a timed fault once', async () => {
     const audit: FaultAudit[] = []
     const gates = new RecoveryFaults(row => audit.push(row))
