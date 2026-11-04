@@ -1,9 +1,11 @@
+import { normalizedKeys } from '../../common/aiKeys'
 import { HttpError } from '../../common/errors'
 import type { Property } from '../../common/observability/contract'
 import {
   type ServerSentEvent,
   serverSentEvents
 } from '../../common/serverSentEvents'
+import { retryableStatus, withApiKeys } from '../aiKeyFallback'
 import { emitLog } from '../observability/logging'
 import type { TessSettings } from '../serverConfig'
 
@@ -177,7 +179,7 @@ export interface MessagesStreamEvent {
  * deadline is for the wait before each piece. A failure, before the stream
  * or in it, is the error `createMessage` would throw.
  */
-export async function streamMessage(
+async function streamMessageOnce(
   settings: TessSettings,
   request: MessagesRequest,
   onEvent: (event: MessagesStreamEvent) => void,
@@ -248,6 +250,37 @@ export async function streamMessage(
       wait.clear()
     }
   })
+}
+
+/** Failed attempts publish no partial response; tools are returned only once. */
+export async function streamMessage(
+  settings: TessSettings,
+  request: MessagesRequest,
+  onEvent: (event: MessagesStreamEvent) => void,
+  options: MessagesOptions = {}
+): Promise<MessagesResponse> {
+  if (normalizedKeys(settings.apiKey).length === 1)
+    return await streamMessageOnce(
+      { ...settings, apiKey: normalizedKeys(settings.apiKey)[0] },
+      request,
+      onEvent,
+      options
+    )
+  return await withApiKeys(
+    settings.apiKey,
+    async key => {
+      const events: MessagesStreamEvent[] = []
+      const response = await streamMessageOnce(
+        { ...settings, apiKey: key },
+        request,
+        event => events.push(event),
+        options
+      )
+      for (const event of events) onEvent(event)
+      return response
+    },
+    retryable
+  )
 }
 
 /**
@@ -406,7 +439,7 @@ async function send(
       signal,
       headers: {
         'content-type': 'application/json',
-        'x-api-key': settings.apiKey,
+        'x-api-key': String(settings.apiKey),
         'anthropic-version': ANTHROPIC_VERSION,
         'anthropic-beta': THINKING_BINDING_BETA
       },
@@ -422,7 +455,8 @@ function lost(wait: Deadline, log: Record<string, Property>): HttpError {
     'unavailable',
     wait.expired()
       ? `Tess's model gave no answer within ${Math.round(wait.ms / 1000)}s`
-      : "Tess's model could not be reached"
+      : "Tess's model could not be reached",
+    { retryable: true }
   )
 }
 
@@ -453,7 +487,7 @@ function refused(
  * One request, its answer parsed. Fills `log` with the status and, on a
  * failure, the error class the log takes.
  */
-async function post(
+async function postOnce(
   settings: TessSettings,
   path: string,
   body: Record<string, unknown>,
@@ -481,6 +515,38 @@ async function post(
   } finally {
     wait.clear()
   }
+}
+
+function retryable(error: unknown): boolean {
+  if (!(error instanceof HttpError)) return false
+  const status = (error.details as { status?: number } | undefined)?.status
+  return status == null
+    ? (error.details as { retryable?: boolean } | undefined)?.retryable === true
+    : retryableStatus(status)
+}
+
+async function post(
+  settings: TessSettings,
+  path: string,
+  body: Record<string, unknown>,
+  options: MessagesOptions,
+  log: Record<string, Property>
+): Promise<Record<string, unknown>> {
+  return await withApiKeys(
+    settings.apiKey,
+    async key => {
+      delete log.ec
+      delete log.status
+      return await postOnce(
+        { ...settings, apiKey: key },
+        path,
+        body,
+        options,
+        log
+      )
+    },
+    retryable
+  )
 }
 
 /**

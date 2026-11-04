@@ -1145,6 +1145,18 @@ const nodeSettingsSchema = {
   additionalProperties: false,
   required: ['scoreboard', 'highlights'],
   properties: {
+    aiKeys: {
+      type: 'object',
+      additionalProperties: false,
+      description:
+        'Administrator-only API key pools. Omission on save preserves stored credentials; empty arrays disable the service. Never returned by public settings or health.',
+      required: ['anthropicChatbot', 'anthropicScoring', 'xaiVoice'],
+      properties: {
+        anthropicChatbot: { type: 'array', items: { type: 'string' } },
+        anthropicScoring: { type: 'array', items: { type: 'string' } },
+        xaiVoice: { type: 'array', items: { type: 'string' } }
+      }
+    },
     replay: {
       type: 'object',
       additionalProperties: false,
