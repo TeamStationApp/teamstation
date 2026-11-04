@@ -305,6 +305,69 @@ describe('the load report', function () {
     })
   })
 
+  it('renders what the screen watchers heard and read, and no data when none ran', function () {
+    const report = (tally: Tally): string =>
+      renderReport(
+        buildReport({
+          title: 'screens',
+          startedAt: 0,
+          finishedAt: 1000,
+          measurements: tally,
+          samples: [],
+          statements: [],
+          sequentialScans: [],
+          hasStatements: false
+        })
+      )
+    const none = report(new Tally())
+    expect(none).includes(
+      [
+        '## Screen watchers',
+        'watchers: 0',
+        'notices: 0, re-reads: 0',
+        'reads: 0, p95 no data',
+        'notice to read: p95 no data',
+        ''
+      ].join('\n')
+    )
+
+    const tally = new Tally()
+    tally.screenWatchers = 3
+    tally.screenNotices = 7
+    tally.screenReReads = 5
+    tally.screenReadMs.push(...Array.from({ length: 20 }, (_, i) => i + 1))
+    for (let i = 1; i <= 20; i++)
+      tally.requests.push({
+        route: `screen:${i % 2 === 0 ? 'home' : 'event'} GET /live`,
+        accountKind: 'viewer',
+        ms: i * 10
+      })
+    // Only a watcher's reads count as its reads, however slow the rest.
+    tally.requests.push({
+      route: 'GET /games/:id',
+      accountKind: 'viewer',
+      ms: 9000
+    })
+    const text = report(tally)
+    const section = text.slice(
+      text.indexOf('## Screen watchers'),
+      text.indexOf('## Slowest requests')
+    )
+    expect(section).equals(
+      [
+        '## Screen watchers',
+        'watchers: 3',
+        'notices: 7, re-reads: 5',
+        'reads: 20, p95 190.0 ms',
+        'notice to read: p95 19.0 ms',
+        '',
+        ''
+      ].join('\n')
+    )
+    // It comes after the errors and before the slowest requests.
+    expect(text.indexOf('## Errors')).below(text.indexOf('## Screen watchers'))
+  })
+
   it('finds the longest gap in frames, up to the end of the run', function () {
     expect(longestGap([], 100_000)).equals(null)
     expect(longestGap([10, 80, 90], 95_000)).equals(70)

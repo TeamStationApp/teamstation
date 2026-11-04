@@ -44,6 +44,7 @@ import {
   writeReport
 } from './report'
 import { Sampler } from './sampler'
+import { screenWatchers } from './screenWatcher'
 
 /**
  * The load rig's command line. It seeds, drives, probes or cleans up, whichever
@@ -51,7 +52,8 @@ import { Sampler } from './sampler'
  *
  *   npm run start.dbLoad -- --database <url> --scale small --tokens tokens.json [--credentials credentials.json]
  *   npm run start.dbLoad -- --server <url> --database <url> --tokens tokens.json \
- *     --users 500 --games 5 --pitch-seconds 15 --rest-rate 50 --minutes 3 --report load.log \
+ *     --users 500 --games 5 --pitch-seconds 15 --rest-rate 50 --screen-watchers 100 \
+ *     --minutes 3 --report load.log \
  *     [--assert --pool-limit 97 --server-log api1.log]
  *   npm run start.dbLoad -- --database <url> --tokens tokens.json --event teamMerge
  *   npm run start.dbLoad -- --server <url> --database <url> --tokens tokens.json --probe
@@ -81,6 +83,7 @@ const OPTIONS = {
   games: { type: 'string' },
   'pitch-seconds': { type: 'string' },
   'rest-rate': { type: 'string' },
+  'screen-watchers': { type: 'string' },
   minutes: { type: 'string' },
   report: { type: 'string' },
   streams: { type: 'string' },
@@ -128,6 +131,8 @@ export interface RunOptions {
   games: number
   pitchSeconds: number
   restRate: number
+  /** Sockets holding a screen scope, each reading it on its notices. */
+  screenWatchers: number
   minutes: number
   streams: number
   scoreboards: number
@@ -232,6 +237,18 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
       )
       actors.push(readers)
       readers.start()
+
+      const screens = screenWatchers(
+        options.servers,
+        accounts,
+        games,
+        options.screenWatchers,
+        tally
+      )
+      actors.push(...screens)
+      await paced(screens, options.connectRate, screen => {
+        screen.start()
+      })
 
       if (options.streams > 0) {
         const publishers = new Publishers(
@@ -417,6 +434,7 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
     games: count(values.games, '--games', 1),
     pitchSeconds: count(values['pitch-seconds'], '--pitch-seconds', 15),
     restRate: count(values['rest-rate'], '--rest-rate', 0),
+    screenWatchers: count(values['screen-watchers'], '--screen-watchers', 0),
     minutes: count(values.minutes, '--minutes', 1),
     streams: count(values.streams, '--streams', 0),
     scoreboards: count(values.scoreboards, '--scoreboards', 0),

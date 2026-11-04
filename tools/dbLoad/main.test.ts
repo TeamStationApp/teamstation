@@ -99,6 +99,8 @@ describe('the command line', function () {
       '100',
       '--scoreboards',
       '1',
+      '--screen-watchers',
+      '3',
       '--streams',
       '1',
       '--event-schedule',
@@ -108,12 +110,15 @@ describe('the command line', function () {
     expect(code).equals(0)
     const text = readFileSync(report, 'utf8')
     expect(text).contains('4 users, 2 games, 1 server(s)')
+    expect(text).contains('## Screen watchers\nwatchers: 3\n')
     const data = JSON.parse(readFileSync(`${report}.json`, 'utf8'))
     expect(data.posts).above(0)
     expect(data.postP95Ms).above(0)
     expect(data.socketsOpened).at.least(4)
     expect(data.connections.peak).above(0)
     expect(data.streamsStarted).equals(1)
+    expect(data.screens.watchers).equals(3)
+    expect(data.screens.reads).above(0)
     expect(text).not.contains('socket-close-4403')
   })
 

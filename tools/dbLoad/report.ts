@@ -33,6 +33,17 @@ export interface Measurements {
    * what a post wrote.
    */
   frameBytes: number[]
+  /**
+   * From a screen watcher hearing its scope move (`changed`, `resync`) to
+   * its reads of the scope's routes all answering, in ms.
+   */
+  screenReadMs: number[]
+  /** Screen watchers whose socket opened at least once. */
+  screenWatchers: number
+  /** The `changed` frames screen watchers heard for their scopes. */
+  screenNotices: number
+  /** The rounds of reads screen watchers made after a notice. */
+  screenReReads: number
 }
 
 /** A worst-case event that ran during the load, in ms since the epoch. */
@@ -202,8 +213,47 @@ export interface ReportData {
   errors: Record<string, number>
   errorTotal: number
   slowestRequests: SlowRoute[]
+  screens: ScreenFigures
   topStatements: Statement[]
   sequentialScans: SequentialScan[]
+}
+
+/** What the screen watchers heard and read (`screenWatcher.ts`). */
+export interface ScreenFigures {
+  /** Screen watchers that opened a socket. */
+  watchers: number
+  notices: number
+  reReads: number
+  /** Of every `screen:` request, first reads and re-reads alike. */
+  reads: number
+  readP95Ms: number | null
+  noticeToReadP95Ms: number | null
+}
+
+/** Requests a screen watcher made are reported under this prefix. */
+export const SCREEN_ROUTE_PREFIX = 'screen:'
+
+export function screenFigures(
+  m: Pick<
+    Measurements,
+    | 'requests'
+    | 'screenReadMs'
+    | 'screenWatchers'
+    | 'screenNotices'
+    | 'screenReReads'
+  >
+): ScreenFigures {
+  const reads = m.requests
+    .filter(request => request.route.startsWith(SCREEN_ROUTE_PREFIX))
+    .map(request => request.ms)
+  return {
+    watchers: m.screenWatchers,
+    notices: m.screenNotices,
+    reReads: m.screenReReads,
+    reads: reads.length,
+    readP95Ms: percentile(reads, 95),
+    noticeToReadP95Ms: percentile(m.screenReadMs, 95)
+  }
 }
 
 /** A worst-case event, and how scoring went while it had its effect. */
@@ -304,6 +354,7 @@ export function buildReport(input: ReportInput): ReportData {
     errors: m.errors,
     errorTotal: Object.values(m.errors).reduce((sum, n) => sum + n, 0),
     slowestRequests: slowestRequests(m.requests),
+    screens: screenFigures(m),
     topStatements: input.statements.slice(0, 10),
     sequentialScans: input.sequentialScans.slice(0, 10)
   }
@@ -361,6 +412,12 @@ export function renderReport(data: ReportData): string {
     ...Object.entries(data.errors)
       .sort(([, a], [, b]) => b - a)
       .map(([kind, count]) => `  ${kind}: ${count}`),
+    '',
+    '## Screen watchers',
+    `watchers: ${data.screens.watchers}`,
+    `notices: ${data.screens.notices}, re-reads: ${data.screens.reReads}`,
+    `reads: ${data.screens.reads}, p95 ${ms(data.screens.readP95Ms)}`,
+    `notice to read: p95 ${ms(data.screens.noticeToReadP95Ms)}`,
     '',
     '## Slowest requests (p95)',
     ...data.slowestRequests.map(
