@@ -61,7 +61,7 @@ export async function requestDeclaredAge(): Promise<DeclaredAgeAnswer> {
     }
     if (answer.status !== 'unready') return answer
     if (attempt === UNREADY_TRIES) return { status: 'unavailable' }
-    await new Promise(resolve => setTimeout(resolve, UNREADY_WAIT_MS))
+    await new Promise<void>(resolve => setTimeout(resolve, UNREADY_WAIT_MS))
   }
   return { status: 'unavailable' }
 }
