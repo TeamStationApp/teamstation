@@ -257,8 +257,9 @@ async function p1(m: Device, run: string, shots: string): Promise<void> {
     await coach.page.goto(`${WEB}/chat/${members}`, {
       waitUntil: 'networkidle2'
     })
+    // The open chat's header names its audience ("Team Members").
     await until('Hc’s chat', async () =>
-      (await bodyText(coach.page)).includes('members') ? true : undefined
+      /members/i.test(await bodyText(coach.page)) ? true : undefined
     )
 
     const who = process.env.CHAT_P1_PERSON ?? 'N'
