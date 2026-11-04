@@ -67,7 +67,7 @@ export interface AngleNamePromptProps {
    * name. A rejection is shown under the field, as the server worded it: "You
    * already have a camera called Home Plate on this game".
    */
-  onStart: (name: string) => Promise<void>
+  onStart?: (name: string) => Promise<void>
   /** Use external camera, with the name. */
   onExternal?: (name: string) => void
   /** A phone that cannot record has no "Record with this phone". */
@@ -130,7 +130,7 @@ export function AngleNamePrompt(
   const problem = angleNameProblem(name)
   const toSend = angleNameToSend(name)
   const start = (): void => {
-    if (toSend == null || busy) return
+    if (toSend == null || busy || onStart == null) return
     setBusy(true)
     setRefused(undefined)
     onStart(toSend).then(
@@ -192,7 +192,7 @@ export function AngleNamePrompt(
         ))}
       </View>
       <ListCard>
-        {canRecord && (
+        {canRecord && onStart != null && (
           <ListRow
             testID="record-with-phone"
             leading={

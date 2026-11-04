@@ -1,14 +1,23 @@
 import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Pressable, Text } from 'react-native'
+import { Text } from 'react-native'
 
 import { GameScreen } from '../app/screens/GameScreen'
-import { fakePhoneStreamModule } from '../app/stream/fakePhoneStreamModule'
+import { CameraAnglesPanel } from '../app/stream/CameraAnglesPanel.native'
+import {
+  fakePhoneStreamModule,
+  RECORDING,
+  STATUS_EVENT
+} from '../app/stream/fakePhoneStreamModule'
 import { makePhoneStream } from '../app/stream/phoneStreamClient'
-import type { StreamingScreenProps } from '../app/stream/StreamingScreen.native'
+import {
+  StreamingScreen,
+  type StreamingScreenProps
+} from '../app/stream/StreamingScreen.native'
 import { useGameRecording } from '../app/stream/useGameRecording.native'
 import { ThemeProvider } from '../app/theme/ThemeContext'
 import { asGameDetail, type LiveStream, TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
 
 const DEVICE = '00000000-0000-4000-8000-000000000001'
 const game = asGameDetail({
@@ -33,6 +42,9 @@ const game = asGameDetail({
   nonMemberView: false
 })
 let streams: LiveStream[] = []
+const mode = new URLSearchParams(location.search)
+const interrupted = mode.get('interrupted')
+
 const native = fakePhoneStreamModule({
   capabilities: {
     supported: true,
@@ -41,7 +53,40 @@ const native = fakePhoneStreamModule({
   },
   recordings: []
 })
+const originalStart = native.startRecording
+native.startRecording = async (...args) => {
+  await originalStart(...args)
+  native.emitStatus(STATUS_EVENT)
+}
+const originalStop = native.stopRecording
+native.stopRecording = async () => {
+  await originalStop()
+  native.emitStatus({
+    ...STATUS_EVENT,
+    phase: 'idle',
+    isRecording: false,
+    recordingSeconds: 0
+  })
+  native.answers.recordings = [
+    {
+      ...RECORDING,
+      gameId: game.id,
+      liveStreamId: streams.find(s => s.deviceId === DEVICE)?.id
+    }
+  ]
+}
+const originalOpen = native.open
+native.open = async (...args) => {
+  await originalOpen(...args)
+  native.emitStatus({
+    ...STATUS_EVENT,
+    phase: 'idle',
+    isRecording: false,
+    recordingSeconds: 0
+  })
+}
 const phone = makePhoneStream(native)
+Object.assign(window, { recordingFixture: { native, streams: () => streams } })
 const client = new TeamStationClient({ baseUrl: '/api/v1' })
 client.game = async () => game
 client.teams = async () => []
@@ -53,15 +98,27 @@ client.liveStreams = async () => ({
   mine: streams,
   others: [],
   canAdd: 4,
-  maxCameras: 4
+  maxCameras: 4,
+  discarded: []
 })
+client.streamAccess = async () => ({
+  canFilm: true,
+  requested: false,
+  canRequest: false,
+  teamId: 'home'
+})
+client.updateLiveStream = async (_gameId, id) => streams.find(s => s.id === id)!
+client.revealLiveStream = async (_gameId, id) => streams.find(s => s.id === id)!
+client.revokeLiveStream = async (_gameId, id) => {
+  streams = streams.filter(s => s.id !== id)
+}
 client.addLiveStream = async (_gameId, name, options) => {
-  if (streams.length > 0 && options?.heldStreamId !== streams[0].id)
-    throw new Error('A continuation must keep its stream')
+  const held = streams.find(s => s.id === options?.heldStreamId)
+  if (held != null) return held
   const stream: LiveStream = {
-    id: 'liv_00000000000000000001',
+    id: `liv_${String(streams.length + 1).padStart(20, '0')}`,
     gameId: game.id,
-    userId: 7,
+    userId: userIdOfGumbo(7),
     ownerName: 'Mookie Betts',
     slot: 1,
     label: name ?? 'Home',
@@ -72,32 +129,27 @@ client.addLiveStream = async (_gameId, name, options) => {
     videoId: null,
     lastError: null,
     status: null,
-    deviceId: DEVICE,
-    deviceModel: 'Phone',
+    deviceId: options?.deviceId ?? null,
+    deviceModel: options?.deviceModel ?? null,
+    source: options?.source ?? null,
     localRecording: 'none',
     url: 'rtmp://ingest.example.test/live/ts_0000'
   }
-  streams = [stream]
+  streams = [...streams, stream]
+  if (interrupted != null && options?.deviceId != null) {
+    native.answers.interruptedSession = {
+      liveStreamId: interrupted === 'other' ? 'liv_other' : stream.id,
+      gameId: game.id,
+      angleName: stream.label,
+      streaming: true,
+      downtimeSeconds: 10
+    }
+    native.answers.resumeInterrupted = true
+  }
   return stream
 }
 function Camera(props: StreamingScreenProps): React.ReactElement {
-  return (
-    <>
-      <Text>Recording camera: {props.session.angleName}</Text>
-      <Text>
-        {props.startOnOpen === true
-          ? 'Automatic start requested'
-          : 'Waiting to start'}
-      </Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Close camera"
-        onPress={props.onClose}
-      >
-        <Text>Close camera</Text>
-      </Pressable>
-    </>
-  )
+  return <StreamingScreen {...props} />
 }
 function Fixture(): React.ReactElement {
   const [coach, setCoach] = useState(false)
@@ -111,15 +163,26 @@ function Fixture(): React.ReactElement {
   return (
     <>
       {coach && <Text>Coach opened</Text>}
-      <GameScreen
-        client={client}
-        gameId={game.id}
-        initialTab="watch"
-        recording={recording}
-        onCoachGame={() => {
-          setCoach(true)
-        }}
-      />
+      {mode.has('videos') ? (
+        <CameraAnglesPanel
+          client={client}
+          gameId={game.id}
+          phone={phone}
+          deviceId={async () => DEVICE}
+          Screen={Camera}
+          hasVideo={false}
+        />
+      ) : (
+        <GameScreen
+          client={client}
+          gameId={game.id}
+          initialTab="watch"
+          recording={recording}
+          onCoachGame={() => {
+            setCoach(true)
+          }}
+        />
+      )}
     </>
   )
 }

@@ -1417,7 +1417,7 @@ async function main(): Promise<void> {
     await open(`/games/${gameId}?tab=info`)
     assert.equal(await selected(), 'Info')
     await m.openBrowser({ url: f.h.origin + `/games/${gameId}?tab=watch` })
-    await m.assertVisible({ text: 'No videos.', timeout: 15000 })
+    await m.assertVisible({ text: 'No videos', timeout: 15000 })
     await m.openBrowser({ url: f.h.origin + `/games/${gameId}?tab=boxScore` })
     await m.assertVisible({
       css: '[role="tab"][aria-selected="true"][aria-label="Box score"]',
@@ -1429,7 +1429,7 @@ async function main(): Promise<void> {
       timeout: 15000
     })
     await tap({ css: '[role="tab"][aria-label="Videos"]' }, 'UP')
-    await m.assertVisible({ text: 'No videos.' })
+    await m.assertVisible({ text: 'No videos' })
     await m.back()
     await m.assertVisible({
       css: '[role="tab"][aria-selected="true"][aria-label="Box score"]',

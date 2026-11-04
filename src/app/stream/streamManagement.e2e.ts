@@ -106,6 +106,8 @@ import { promisify } from 'node:util'
 
 import puppeteer from 'puppeteer'
 
+import { waitForCameraLimit } from './webCameraLimit.e2e'
+
 interface Bounds {
   x: number
   y: number
@@ -1039,11 +1041,7 @@ async function setup(): Promise<void> {
         await page.goto(`${web}/games/${fullGame}?tab=watch`, {
           waitUntil: 'networkidle2'
         })
-        await page.waitForFunction(
-          (words: string) => document.body.innerText.includes(words),
-          { timeout: 20000 },
-          reason
-        )
+        await waitForCameraLimit(page, true)
         if (artifacts != null) {
           // A camera nothing streams to shows its URL whole: no key in the shot.
           await page.evaluate(() => {
@@ -1095,15 +1093,7 @@ async function setup(): Promise<void> {
         )
         await m.tapOn({ id: 'sheet-cancel' })
         assert(await gone(byId('angle-name-prompt')), 'Cancel closes it')
-        await page.reload({ waitUntil: 'networkidle2' })
-        await sleep(2000)
-        assert(
-          !(await page.evaluate(
-            (words: string) => document.body.innerText.includes(words),
-            reason
-          )),
-          'the web panel no longer says the game is full'
-        )
+        await waitForCameraLimit(page, false)
         const added = await request(
           'POST',
           `/games/${fullGame}/live-streams`,

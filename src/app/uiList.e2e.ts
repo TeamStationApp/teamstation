@@ -12,7 +12,7 @@ import { scheduleDate } from './screens/format'
  *   node_modules/.bin/mocha -r sucrase/register --extension ts \
  *     --timeout 180000 src/app/uiList.e2e.ts
  */
-const WEB = 'http://127.0.0.1:8080'
+const WEB = process.env.TS_E2E_WEB_URL ?? 'http://127.0.0.1:8080'
 
 interface Size {
   name: string
@@ -26,7 +26,7 @@ const SIZES: Size[] = [
 ]
 
 const USER = {
-  id: 7,
+  id: userIdOfGumbo(7),
   displayName: 'Pat Neshek',
   email: 'pat@example.com',
   isAdmin: false
@@ -258,6 +258,19 @@ async function open(path: string, size: Size): Promise<Page> {
             ingestMessage: null,
             nonMemberView: false,
             videos: []
+          })
+        )
+        .catch(() => undefined)
+      return
+    }
+    if (pathName === '/api/v1/games/gam_rtmp/stream-access') {
+      request
+        .respond(
+          cors(200, {
+            canFilm: true,
+            canRequest: false,
+            requested: false,
+            teamId: 'tem_home'
           })
         )
         .catch(() => undefined)
@@ -805,7 +818,7 @@ describe('list screens', function () {
     })
 
     it(`RTMP at ${size.width}×${size.height}`, async function () {
-      const page = await open('/games/gam_rtmp', size)
+      const page = await open('/games/gam_rtmp?tab=watch', size)
       await page.evaluate(() => {
         const recorded: string[] = []
         const view = window as { __copied?: string[] }
@@ -819,27 +832,16 @@ describe('list screens', function () {
           }
         })
       })
-      const before = await until('the stream address', async () => {
-        const read = await page.evaluate(address => {
-          const text = document.body.textContent
-          if (text == null) return undefined
-          if (!text.includes(address)) return undefined
-          if (!text.includes('Tap to copy')) return undefined
-          if (!text.includes('Sam Fuld')) return undefined
-          if (!text.includes('Third base')) return undefined
-          return { count: text.split('rtmp://').length - 1 }
-        }, RTMP_URL)
-        if (read == null) return undefined
-        if (read.count !== 1) return undefined
-        return read
-      })
-      expect(before.count).equals(1)
-      await page.evaluate(() => {
-        const found = document.querySelector(
-          '[aria-label="Copy the URL for Dugout"]'
-        )
-        if (found instanceof HTMLElement) found.click()
-      })
+      await page.waitForSelector('[data-testid="angle-row-lst_other"]')
+      const list = await page.evaluate(() => document.body.innerText)
+      expect(list).includes('Third base')
+      expect(list).not.includes(RTMP_URL)
+      await page.click('[data-testid="angle-row-lst_own"]')
+      await page.waitForSelector('[data-testid="rtmp-url"]')
+      expect(
+        await page.$eval('[data-testid="rtmp-url"]', node => node.textContent)
+      ).equals(RTMP_URL)
+      await page.locator('[data-testid="rtmp-copy"]').click()
       const copied = await until('copied', async () => {
         const read = await page.evaluate(() => {
           const text = document.body.textContent

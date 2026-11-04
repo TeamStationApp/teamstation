@@ -1945,11 +1945,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ? undefined
       : (game.videos.find(item => item.id === video.id) ?? video)
   const isLive = showVideoLivePill(playing, game, clockNow)
-  // A phone says "No videos" in the camera area under the tabs, which also
-  // holds the way to film the game. There is no player for it to sit beside.
-  const noVideoHere = video == null && Platform.OS !== 'web'
-  const notice =
-    video == null && !noVideoHere ? lstrings.game_no_video : undefined
+  // An empty game uses the camera area for both its message and its actions.
+  const noVideoHere = video == null
   const playVideo = (id: string): void => {
     const forGame = gameId
     playById(id, {
@@ -1986,16 +1983,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         }
   const player = (
     <View style={styles.playerBlock}>
-      {noVideoHere ? null : notice != null ? (
-        <View
-          testID="gameVideoNotice"
-          style={[styles.videoNotice, { width: layout.videoWidth }]}
-        >
-          <Text accessibilityRole="alert" style={styles.notice}>
-            {notice}
-          </Text>
-        </View>
-      ) : nonMemberView ? (
+      {noVideoHere ? null : nonMemberView ? (
         <Pressable
           testID="gameVideoPreview"
           accessibilityRole="button"
@@ -2430,16 +2418,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 highlightList={video == null ? null : highlightList}
                 footer={
                   <>
-                    {/*
-                    Under the highlights. A browser lists stream URLs for the
-                    people who run the team, and is answered `404` for anybody
-                    else. A phone sets up and watches over the game's cameras,
-                    and is where a game with no video says so.
-                  */}
                     <StreamFooter
                       client={client}
                       gameId={gameId}
                       onPublishing={setPublishing}
+                      signedIn={props.signedIn}
                       hasVideo={video != null}
                       onPlay={playVideo}
                     />
@@ -2801,21 +2784,6 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontSize: theme.rem(1.25),
       fontWeight: '600',
       textAlign: 'center'
-    },
-    // A notice the reader has to read, not a hint: the page's own text
-    // colour on the page's own background.
-    notice: {
-      color: theme.primaryTextColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(1),
-      lineHeight: theme.rem(1.4),
-      textAlign: 'center'
-    },
-    videoNotice: {
-      alignItems: 'center',
-      backgroundColor: theme.backgroundColor,
-      paddingHorizontal: theme.rem(1),
-      paddingVertical: theme.rem(1.25)
     },
     message: {
       color: theme.secondaryTextColor,

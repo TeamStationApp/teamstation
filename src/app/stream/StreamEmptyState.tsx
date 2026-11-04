@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react'
-import { Text, View } from 'react-native'
+import { Platform, Text, View } from 'react-native'
 
 import type { StreamAccess, TeamStationClient } from '../../common/api'
 import { Icon } from '../components/Icon'
@@ -11,6 +11,7 @@ export interface StreamEmptyStateProps {
   client: TeamStationClient
   /** Null when `streamAccess` failed, or nobody is signed in: no action. */
   access: StreamAccess | null
+  filmingHint?: string
   onRecord: () => void
   /** The request to film went: `access` should say so from here on. */
   onRequested: () => void
@@ -61,10 +62,17 @@ export function StreamEmptyState(
   return (
     <View style={styles.empty} testID="stream-empty-state">
       <Icon name="videocam" size={4.5} color={theme.secondaryTextColor} />
-      <Text style={styles.title}>{lstrings.stream_empty_title}</Text>
+      <Text
+        accessibilityRole={Platform.OS === 'web' ? 'alert' : undefined}
+        style={styles.title}
+      >
+        {lstrings.stream_empty_title}
+      </Text>
       {access?.canFilm === true && (
         <>
-          <Text style={styles.detail}>{lstrings.stream_empty_can_film}</Text>
+          <Text style={styles.detail}>
+            {props.filmingHint ?? lstrings.stream_empty_can_film}
+          </Text>
           <StreamPill
             label={lstrings.stream_record_video}
             testID="record-video"
