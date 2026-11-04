@@ -325,6 +325,8 @@ describe('closing a live Space origin', function () {
     expect((await f.row())?.spaces_verified_at).not.equals(null)
     expect((await f.row())?.local_delete_after).not.equals(null)
     expect((await files.stat(f.dir)).isDirectory()).equals(true)
+    // The sweep takes rows whose marker is strictly before its own now.
+    await new Promise(resolve => setTimeout(resolve, 5))
     await sweepLocalCopies(f.options)
     expect((await f.row())?.local_delete_after).equals(null)
     expect(await files.stat(f.dir).catch(() => undefined)).equals(undefined)
