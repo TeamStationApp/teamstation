@@ -97,6 +97,18 @@ export function optionalPositionHeader(
       ? 'Optional'
       : 'Optional in some games'
 }
+/** An admin may always clear a slot. Anyone else may only before the cutoff. */
+export function assignmentRemovable(
+  assignment: { canRemove: boolean },
+  game: { startAt: string },
+  isAdmin: boolean
+): boolean {
+  return (
+    assignment.canRemove &&
+    (isAdmin || Date.now() < Date.parse(game.startAt) - 15 * 60000)
+  )
+}
+
 export function initialUmpireGame(
   games: UmpireGameRow[],
   now: number
@@ -114,6 +126,7 @@ export function UmpireScheduleScreen({
   onRoute,
   onOpenTeam,
   onOpenGame,
+  onOpenPerson,
   onBeforeLeave
 }: {
   client: TeamStationClient
@@ -122,6 +135,7 @@ export function UmpireScheduleScreen({
   onRoute: (route: UmpireScheduleRoute) => void
   onOpenTeam?: (id: string) => void
   onOpenGame?: (id: string) => void
+  onOpenPerson?: (userId: string, name: string) => void
   onBeforeLeave?: (check: () => Promise<boolean>) => () => void
 }): React.ReactElement {
   const s = useUmpireStyles()
@@ -132,7 +146,7 @@ export function UmpireScheduleScreen({
   const [board, setBoard] = useState<UmpireLeaderboard>()
   const [revision, setRevision] = useState(0)
   const [signup, setSignup] = useState<{ game: UmpireGameRow; slot: string }>()
-  const [removing, setRemoving] = useState<{
+  const [opened, setOpened] = useState<{
     game: UmpireGameRow
     slot: string
   }>()
@@ -221,7 +235,7 @@ export function UmpireScheduleScreen({
   }
   const refresh = (): void => {
     setSignup(undefined)
-    setRemoving(undefined)
+    setOpened(undefined)
     setRevision(n => n + 1)
   }
   const openFilters = (): void => {
@@ -300,7 +314,7 @@ export function UmpireScheduleScreen({
   const conflictsWidth = Math.ceil(conflictWidth + theme.rem(0.75) + 1)
   const customWidth = Math.max(
     160,
-    tableWidth / (6 + positions.length + (schedule?.noteTypes.length ?? 0))
+    tableWidth / (7 + positions.length + (schedule?.noteTypes.length ?? 0))
   )
   const link = (
     text: string,
@@ -330,22 +344,16 @@ export function UmpireScheduleScreen({
     if (!required || (assignment == null && game.status === 'final'))
       return <Text style={s.tableHint}>—</Text>
     if (assignment != null) {
-      const removable =
-        assignment.canRemove &&
-        (schedule?.isAdmin === true ||
-          Date.now() < Date.parse(game.startAt) - 15 * 60000)
       return (
         <Pressable
-          disabled={!removable || busy}
-          accessibilityRole={removable ? 'button' : 'text'}
+          disabled={busy}
+          accessibilityRole="button"
           accessibilityLabel={`${assignment.name}, ${slot}`}
           onPress={() => {
-            setRemoving({ game, slot })
+            setOpened({ game, slot })
           }}
         >
-          <TickerText
-            style={[s.tableText, { color: removable ? '#1565C0' : '#212121' }]}
-          >
+          <TickerText style={[s.tableText, { color: '#1565C0' }]}>
             {assignment.name}
           </TickerText>
           {(assignment.teams?.length ?? 0) > 0 && (
@@ -485,13 +493,18 @@ export function UmpireScheduleScreen({
               }}
             >
               <View style={s.tableRow}>
-                {['Date', 'Home team', 'Away team', 'Venue', 'Notes'].map(
-                  label => (
-                    <UmpireCell divided compact key={label} width={columnWidth}>
-                      <Text style={[s.tableText, s.tableHeading]}>{label}</Text>
-                    </UmpireCell>
-                  )
-                )}
+                {[
+                  'Date',
+                  'Home team',
+                  'Away team',
+                  'Venue',
+                  'Field',
+                  'Notes'
+                ].map(label => (
+                  <UmpireCell divided compact key={label} width={columnWidth}>
+                    <Text style={[s.tableText, s.tableHeading]}>{label}</Text>
+                  </UmpireCell>
+                ))}
                 {positions.map(p => (
                   <UmpireCell divided compact key={p.slot} width={roleWidth}>
                     <Text style={[s.tableText, s.tableHeading]}>
@@ -617,6 +630,11 @@ export function UmpireScheduleScreen({
                               })
                             }
                       )}
+                    </UmpireCell>
+                    <UmpireCell divided compact width={columnWidth}>
+                      <Text numberOfLines={2} style={s.tableText}>
+                        {game.field}
+                      </Text>
                     </UmpireCell>
                     <UmpireCell divided compact width={columnWidth}>
                       {game.notes === '' ? (
@@ -756,23 +774,42 @@ export function UmpireScheduleScreen({
           onSaved={refresh}
         />
       )}
-      {removing != null && (
+      {opened != null && (
         <ChoiceSheet
-          title={`Remove ${removing.game.assignments[removing.slot].name} from this position?`}
+          linkCancel
+          title={opened.game.assignments[opened.slot].displayName}
           onClose={() => {
-            setRemoving(undefined)
+            setOpened(undefined)
           }}
           choices={[
             {
-              label: 'Remove assignment',
-              destructive: true,
+              label: 'Go to profile page',
+              link: true,
               onPress: () => {
-                run(async () => {
-                  await client.removeUmpire(removing.game.id, removing.slot)
-                  if (live()) refresh()
-                })
+                const assignment = opened.game.assignments[opened.slot]
+                onOpenPerson?.(assignment.userId, assignment.displayName)
               }
-            }
+            },
+            ...(assignmentRemovable(
+              opened.game.assignments[opened.slot],
+              opened.game,
+              schedule?.isAdmin === true
+            )
+              ? [
+                  {
+                    label: 'Remove assignment',
+                    destructive: true,
+                    onPress: () => {
+                      const gameId = opened.game.id
+                      const slot = opened.slot
+                      run(async () => {
+                        await client.removeUmpire(gameId, slot)
+                        if (live()) refresh()
+                      })
+                    }
+                  }
+                ]
+              : [])
           ]}
         />
       )}

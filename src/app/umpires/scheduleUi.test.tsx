@@ -11,6 +11,7 @@ import {
 } from '../../common/umpireSchedule'
 import { fixturePositions, fixtureTypes } from '../../test/umpireTypes'
 import { AppHeader } from '../components/AppHeader'
+import { ChoiceSheet } from '../components/ChoiceSheet'
 import { SceneShownProvider } from '../components/sceneShown'
 import type { UmpireScheduleRoute } from '../navigation/routes'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -351,6 +352,7 @@ describe('scheduleUi.test.tsx', () => {
           home: 'Demo Hawks',
           away: 'Demo Eagles',
           venue: 'Field 1',
+          field: '',
           notes: 'North diamond entrance',
           umpireNotes: {},
           positions: fixturePositions(),
@@ -397,6 +399,7 @@ describe('scheduleUi.test.tsx', () => {
       schedule.games[0].assignments[assignment.slot] = {
         userId: assignment.userId,
         name: 'Uma L',
+        displayName: 'Uma Lee',
         assignedBy: 'uma',
         canRemove: true
       }
@@ -422,6 +425,7 @@ describe('scheduleUi.test.tsx', () => {
     f.schedule.games[0].assignments['uty_plate:1'] = {
       userId: 'uma',
       name: 'Uma L',
+      displayName: 'Uma Lee',
       assignedBy: 'uma',
       canRemove: false,
       teams: [{ id: 'hawks', name: 'Demo Hawks' }]
@@ -819,7 +823,7 @@ describe('scheduleUi.test.tsx', () => {
     expect(document.body.textContent).contains('No eligible people')
     expect(target('Confirm').getAttribute('aria-disabled')).equals('true')
   })
-  it('opens notes, conflicts, signup, removal, filters and leaderboard', async () => {
+  it('opens notes, conflicts, signup, the profile sheet, filters and leaderboard', async () => {
     const f = fixture()
     function Harness(): React.ReactElement {
       const [route, setRoute] = useState<UmpireScheduleRoute>({
@@ -858,8 +862,13 @@ describe('scheduleUi.test.tsx', () => {
     await press('Demo Hawks')
     await press('Confirm')
     await press('Uma L, uty_plate:1')
-    await press('Remove assignment')
-    expect(f.saved.length).equals(2)
+    expect(document.body.textContent)
+      .contains('Uma Lee')
+      .and.contains('Go to profile page')
+      .and.contains('Remove assignment')
+      .and.contains('Cancel')
+    await press('Cancel')
+    expect(f.saved.length).equals(1)
     await press('Schedule filters')
     await press('Monday')
     await press('majors')
@@ -930,16 +939,9 @@ describe('scheduleUi.test.tsx', () => {
       .contains('Home team')
       .and.contains('Away team')
   })
-  it('keeps cutoff names black for a regular umpire and blue for an admin', async () => {
+  it('shows the event field in the column to the right of the venue', async () => {
     const f = fixture()
-    f.schedule.games[0].startAt = '2000-01-01T00:00:00Z'
-    f.schedule.games[0].assignments['uty_plate:1'] = {
-      userId: 'uma',
-      name: 'Uma L',
-      assignedBy: 'uma',
-      canRemove: true
-    }
-    f.schedule.isAdmin = false
+    f.schedule.games[0].field = 'North Diamond'
     await mount(
       <UmpireScheduleScreen
         client={f.client}
@@ -948,9 +950,105 @@ describe('scheduleUi.test.tsx', () => {
         onRoute={() => undefined}
       />
     )
-    expect(target('Uma L, uty_plate:1').getAttribute('aria-disabled')).equals(
-      'true'
+    const header = document.querySelector(
+      '[data-testid="umpire-table-header-scroll"]'
+    )!
+    expect(header.textContent).contains('VenueFieldNotes')
+    const cells = [
+      ...document.querySelector('[data-testid="umpire-game-game"]')!.children
+    ].map(node => node.textContent)
+    const venue = cells.indexOf('Field 1')
+    expect(venue).greaterThan(-1)
+    expect(cells[venue + 1]).equals('North Diamond')
+  })
+  it('opens every assigned umpire on a profile sheet titled with the display name', async () => {
+    const f = fixture()
+    const opened: string[] = []
+    f.schedule.games[0].startAt = '2000-01-01T00:00:00Z'
+    f.schedule.games[0].assignments['uty_plate:1'] = {
+      userId: 'uma',
+      name: 'Uma L',
+      displayName: 'Uma Lee',
+      assignedBy: 'uma',
+      canRemove: false
+    }
+    f.schedule.isAdmin = false
+    await mount(
+      <UmpireScheduleScreen
+        client={f.client}
+        route={{ name: 'umpireSchedule', id: 'demo' }}
+        leagues={[]}
+        onRoute={() => undefined}
+        onOpenPerson={(userId, name) => {
+          opened.push(`${userId}:${name}`)
+        }}
+      />
     )
+    const name = target('Uma L, uty_plate:1')
+    expect(name.getAttribute('aria-disabled')).not.equals('true')
+    const shown = name.querySelector('[data-testid="ticker-text-content"]')!
+    expect(getComputedStyle(shown).color).equals('rgb(21, 101, 192)')
+    await press('Uma L, uty_plate:1')
+    expect(document.body.textContent).contains('Uma Lee')
+    expect(document.body.textContent).not.contains('Remove assignment')
+    const profile = target('Go to profile page')
+    expect(getComputedStyle(profile).borderTopWidth).not.equals('0px')
+    expect(
+      getComputedStyle(profile.querySelector('[dir="auto"]')!).color
+    ).equals('rgb(21, 101, 192)')
+    expect(
+      getComputedStyle(target('Cancel').querySelector('[dir="auto"]')!).color
+    ).equals('rgb(21, 101, 192)')
+    await press('Go to profile page')
+    expect(opened).deep.equals(['uma:Uma Lee'])
+  })
+  it('removes an assignment the viewer may revoke and hides it after the cutoff', async () => {
+    const f = fixture()
+    f.schedule.isAdmin = false
+    f.schedule.games[0].assignments['uty_plate:1'] = {
+      userId: 'uma',
+      name: 'Uma L',
+      displayName: 'Uma Lee',
+      assignedBy: 'uma',
+      canRemove: true
+    }
+    await mount(
+      <UmpireScheduleScreen
+        client={f.client}
+        route={{ name: 'umpireSchedule', id: 'demo' }}
+        leagues={[]}
+        onRoute={() => undefined}
+      />
+    )
+    await press('Uma L, uty_plate:1')
+    const remove = target('Remove assignment')
+    expect(
+      getComputedStyle(remove.querySelector('[dir="auto"]')!).color
+    ).equals('rgb(186, 26, 26)')
+    await press('Remove assignment')
+    expect(f.saved).deep.equals([['game', 'uty_plate:1']])
+    expect(document.querySelector('[aria-label="Uma L, uty_plate:1"]')).equals(
+      null
+    )
+    f.schedule.games[0].startAt = '2000-01-01T00:00:00Z'
+    f.schedule.games[0].assignments['uty_plate:1'] = {
+      userId: 'uma',
+      name: 'Uma L',
+      displayName: 'Uma Lee',
+      assignedBy: 'uma',
+      canRemove: true
+    }
+    await mount(
+      <UmpireScheduleScreen
+        client={f.client}
+        route={{ name: 'umpireSchedule', id: 'demo' }}
+        leagues={[]}
+        onRoute={() => undefined}
+      />
+    )
+    await press('Uma L, uty_plate:1')
+    expect(document.body.textContent).contains('Go to profile page')
+    expect(document.body.textContent).not.contains('Remove assignment')
     f.schedule.isAdmin = true
     await mount(
       <UmpireScheduleScreen
@@ -960,9 +1058,24 @@ describe('scheduleUi.test.tsx', () => {
         onRoute={() => undefined}
       />
     )
+    await press('Uma L, uty_plate:1')
+    expect(document.body.textContent).contains('Remove assignment')
+  })
+  it('leaves a choice sheet that omits link flags on the danger Cancel', async () => {
+    await mount(
+      <ChoiceSheet
+        title="Create"
+        choices={[{ label: 'Make a team', onPress: () => undefined }]}
+        onClose={() => undefined}
+      />
+    )
     expect(
-      target('Uma L, uty_plate:1').getAttribute('aria-disabled')
-    ).not.equals('true')
+      getComputedStyle(target('Make a team').querySelector('[dir="auto"]')!)
+        .color
+    ).not.equals('rgb(21, 101, 192)')
+    expect(
+      getComputedStyle(target('Cancel').querySelector('[dir="auto"]')!).color
+    ).equals('rgb(186, 26, 26)')
   })
 
   it('holds its leave check only while its screen is on show', async () => {

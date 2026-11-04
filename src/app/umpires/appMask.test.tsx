@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client'
 import { asSessionUser, TeamStationClient } from '../../common/api'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
-import { fixtureTypes } from '../../test/umpireTypes'
+import { fixturePositions, fixtureTypes } from '../../test/umpireTypes'
 import { App } from '../App'
 import { UmpireMaskDrawing as NativeMask } from './UmpireMaskDrawing.native'
 it('mounts the shell with role-only mask visibility and preserves header order at both widths', async () => {
@@ -75,10 +75,19 @@ it('mounts the shell with role-only mask visibility and preserves header order a
         homeTeamId: 'hawks',
         awayTeamId: 'eagles',
         venue: '',
+        field: '',
         notes: '',
         umpireNotes: {},
-        positions: [],
-        assignments: {},
+        positions: fixturePositions(),
+        assignments: {
+          'uty_plate:1': {
+            userId: 'uma',
+            name: 'Uma L',
+            displayName: 'Uma Lee',
+            assignedBy: 'uma',
+            canRemove: true
+          }
+        },
         choices: {},
         conflicts: []
       }
@@ -298,6 +307,36 @@ it('mounts the shell with role-only mask visibility and preserves header order a
     expect(window.location.pathname).equals('/groups/league/demo/settings')
     await press('Back')
     expect(window.location.pathname).not.equals('/groups/league/demo/settings')
+    const openProfile = async (path: string): Promise<void> => {
+      window.history.replaceState(null, '', path)
+      await act(async () => {
+        root.render(<App key={path + String(Date.now())} />)
+      })
+      await settle()
+      await press('Uma L, uty_plate:1')
+      const profile = [
+        ...document.querySelectorAll<HTMLElement>(
+          '[aria-label],[role="button"]'
+        )
+      ].find(
+        n =>
+          (n.getAttribute('aria-label') ?? n.textContent) ===
+          'Go to profile page'
+      )
+      expect(profile, 'Go to profile page').not.equals(undefined)
+      await act(async () => {
+        profile!.click()
+      })
+      await settle()
+    }
+    await openProfile('/umpires/demo')
+    expect(window.location.pathname).equals('/leagues/demo/people/uma')
+    await openProfile('/umpires')
+    expect(window.location.pathname).equals('/leagues/demo/people/uma')
+    proto.umpireLeagues = async () => []
+    await openProfile('/umpires')
+    expect(window.location.pathname).equals('/umpires/')
+    expect(window.location.pathname).not.contains('/people/')
     window.history.replaceState(null, '', '/')
     proto.umpireLeagues = async () => []
     await act(async () => {

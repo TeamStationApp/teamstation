@@ -11,14 +11,18 @@ export interface ChoiceSheetProps {
     detail?: string
     /** Takes something away: its label in the danger colour. */
     destructive?: boolean
+    /** Label in the link colour, in the same outline as the other choices. */
+    link?: boolean
     onPress: () => void
   }>
+  /** Cancel stays in the link colour, as it does under a destructive choice. */
+  linkCancel?: boolean
   onClose: () => void
 }
 
 /** A short list of choices that slides up, e.g. what `Create` should make. */
 export function ChoiceSheet(props: ChoiceSheetProps): React.ReactElement {
-  const { title, choices, onClose } = props
+  const { title, choices, linkCancel, onClose } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   return (
@@ -48,6 +52,7 @@ export function ChoiceSheet(props: ChoiceSheetProps): React.ReactElement {
               <Text
                 style={[
                   styles.label,
+                  choice.link === true && styles.link,
                   choice.destructive === true && styles.destructive
                 ]}
               >
@@ -60,7 +65,8 @@ export function ChoiceSheet(props: ChoiceSheetProps): React.ReactElement {
           ))}
           <CancelAction
             destructivePrimary={
-              choices.length === 1 && choices[0].destructive === true
+              linkCancel === true ||
+              (choices.length === 1 && choices[0].destructive === true)
             }
             label="Cancel"
             onPress={onClose}
@@ -114,6 +120,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor
   },
   destructive: { color: theme.dangerColor },
+  link: { color: theme.linkTextColor },
   detail: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.8125),

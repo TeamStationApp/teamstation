@@ -8,6 +8,8 @@ import type {
 export interface UmpireAssignment {
   userId: string
   name: string
+  /** The account's display name, shown when the assignment is opened. */
+  displayName: string
   assignedBy: string
   canRemove: boolean
   teams?: Array<{ id: string; name: string }>
@@ -42,6 +44,8 @@ export interface UmpireGameRow {
   awayTeamId?: string
   location?: string
   venue: string
+  /** The registry field the game is on. Blank when the game has none. */
+  field: string
   notes: string
   umpireNotes: Record<string, string>
   positions: UmpirePosition[]
