@@ -42,26 +42,97 @@ export async function stateOf(
  * them, and opens every key they give. A box for a per-user key generation
  * this device lacks makes it fetch its keys once and try again.
  */
+const epochSyncs = new WeakMap<
+  EngineContext,
+  Map<string, Promise<ConversationState>>
+>()
+
 export async function syncEpochs(
   ctx: EngineContext,
   conversationId: string
 ): Promise<ConversationState> {
+  let pending = epochSyncs.get(ctx)
+  if (pending == null) {
+    pending = new Map()
+    epochSyncs.set(ctx, pending)
+  }
+  const existing = pending.get(conversationId)
+  if (existing != null) return await existing
+  const run = drainEpochs(ctx, conversationId)
+  pending.set(conversationId, run)
+  try {
+    return await run
+  } finally {
+    pending.delete(conversationId)
+  }
+}
+
+async function drainEpochs(
+  ctx: EngineContext,
+  conversationId: string
+): Promise<ConversationState> {
   const state = await stateOf(ctx, conversationId)
-  const answer = await ctx.client.chatEpochs(conversationId, state.epochsAfter)
-  await takeEpochs(ctx, conversationId, state, answer.epochs)
-  state.latest = answer.latest
-  state.needsRotation = answer.needsRotation
-  state.noHolder = answer.noHolder
-  state.epochsAfter = Math.max(
-    state.epochsAfter,
-    ...answer.epochs.map(epoch => epoch.epoch)
-  )
-  state.epochsSynced = true
-  state.epochsTick = ctx.memory.tick()
-  const first = await openEpochKeys(ctx, conversationId, state, answer.boxes)
-  if (first.needKeys) {
-    await ctx.refreshKeys()
-    await openEpochKeys(ctx, conversationId, state, answer.boxes)
+  let stream = false
+  for (let page = 0; page < 100; page++) {
+    try {
+      const answer = await ctx.client.chatEpochs(
+        conversationId,
+        state.epochsAfter,
+        stream ? { boxesAfter: state.boxesCursor, boxLimit: 100 } : undefined
+      )
+      await takeEpochs(ctx, conversationId, state, answer.epochs)
+      if (answer.latest !== state.latest) state.latestHasServerBox = false
+      state.latest = answer.latest
+      state.needsRotation = answer.needsRotation
+      state.noHolder = answer.noHolder
+      state.historyRecoveryVersion = answer.historyRecoveryVersion
+      state.freshEpochsEnabled = answer.freshEpochsEnabled === true
+      ctx.memory.recoveryVersion = answer.historyRecoveryVersion
+      ctx.memory.recoveryProbed = true
+      if (answer.boxes.some(box => box.epoch === answer.latest))
+        state.latestHasServerBox = true
+      state.epochsAfter = Math.max(
+        state.epochsAfter,
+        ...answer.epochs.map(epoch => epoch.epoch)
+      )
+      state.epochsSynced = true
+      state.epochsTick = ctx.memory.tick()
+      let opened = await openEpochKeys(ctx, conversationId, state, answer.boxes)
+      if (opened.needKeys) {
+        await ctx.refreshKeys()
+        opened = await openEpochKeys(ctx, conversationId, state, answer.boxes)
+      }
+      // A failed store save throws before this point. A missing PUK must be
+      // replayed too; cursor lifetime is this account/server/identity session.
+      if (opened.needKeys) {
+        state.historyError = true
+        break
+      }
+      if (stream) {
+        if (answer.nextBoxesCursor == null)
+          throw new Error('Missing box delivery cursor')
+        if (
+          BigInt(answer.nextBoxesCursor) < BigInt(state.boxesCursor) ||
+          (answer.hasMoreBoxes === true &&
+            answer.nextBoxesCursor === state.boxesCursor)
+        )
+          throw new Error('Non-advancing box delivery cursor')
+        state.boxesCursor = answer.nextBoxesCursor
+      }
+      state.historyError = false
+      if (!stream && answer.historyRecoveryVersion === 1) {
+        stream = true
+        continue
+      }
+      if (answer.hasMoreBoxes !== true) break
+      // Bound each drain. The next refresh continues at the last saved page.
+      await Promise.resolve()
+    } catch (error) {
+      if (!stream) throw error
+      state.historyError = true
+      ctx.memory.emit({ type: 'error', error })
+      break
+    }
   }
   return state
 }
@@ -104,7 +175,12 @@ export async function openPending(
   let changed = 0
   for (const envelope of state.envelopes.values()) {
     const opened = state.opened.get(envelope.id)
-    if (opened != null && opened.status !== 'locked') continue
+    if (
+      opened != null &&
+      opened.status !== 'locked' &&
+      opened.status !== 'lost'
+    )
+      continue
     const next = await openEnvelope(ctx, state, envelope)
     if (opened?.status !== next.status) changed += 1
     state.opened.set(envelope.id, next)
