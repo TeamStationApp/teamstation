@@ -22,6 +22,8 @@ export type ChatEngineClient = ChatKeysClient &
     | 'chatIdentity'
     | 'chatEpochs'
     | 'postChatEpoch'
+    | 'chatHistoryGrants'
+    | 'postChatHistoryGrants'
     | 'chatGrants'
     | 'postChatGrants'
     | 'postChatMessage'
@@ -40,6 +42,8 @@ export type ChatEngineClient = ChatKeysClient &
 export type ChatEngineErrorCode =
   /** The device holds no key for the chat's latest epoch. */
   | 'locked'
+  | 'repairRequired'
+  | 'freshStartsDisabled'
   /** The chat's membership record failed to verify on this device. */
   | 'unverified'
   /** The server's box set names someone the verified record does not. */

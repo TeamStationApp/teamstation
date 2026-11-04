@@ -672,7 +672,17 @@ const cleanChatEpochs = asObject({
     })
   )
 })
-export function asChatEpochs(raw: unknown): ReturnType<typeof cleanChatEpochs> {
+type ChatEpochsOptional =
+  | 'historyRecoveryVersion'
+  | 'freshEpochsEnabled'
+  | 'nextBoxesCursor'
+  | 'hasMoreBoxes'
+export type ChatEpochs = Omit<
+  ReturnType<typeof cleanChatEpochs>,
+  ChatEpochsOptional
+> &
+  Partial<Pick<ReturnType<typeof cleanChatEpochs>, ChatEpochsOptional>>
+export function asChatEpochs(raw: unknown): ChatEpochs {
   const result = cleanChatEpochs(raw)
   if (result.historyRecoveryVersion === undefined)
     delete result.historyRecoveryVersion
@@ -681,7 +691,6 @@ export function asChatEpochs(raw: unknown): ReturnType<typeof cleanChatEpochs> {
   if (result.hasMoreBoxes === undefined) delete result.hasMoreBoxes
   return result
 }
-export type ChatEpochs = ReturnType<typeof asChatEpochs>
 
 /** Epoch n+1, signed, boxed to the eligible members. Bytes are base64url. */
 export interface ChatEpochPublication {

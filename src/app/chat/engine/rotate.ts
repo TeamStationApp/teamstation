@@ -31,7 +31,7 @@ import { holdsLatest, syncEpochs, syncMembers } from './sync'
  * the current epoch when it holds one.
  */
 
-type Mode = 'first' | 'chained' | 'chainBreak'
+type Mode = 'first' | 'chained' | 'chainBreak' | 'fresh'
 
 /** A member's current per-user key, checked against their identity. */
 interface Recipient {
@@ -97,7 +97,9 @@ async function makeEpoch(
   const verified = new Set(head.members)
   const members = (await syncMembers(ctx, conversationId)).members ?? []
   const chosen = members.filter(member =>
-    mode === 'chainBreak' ? member.hasIdentity : member.eligible
+    mode === 'chainBreak' || mode === 'fresh'
+      ? member.hasIdentity
+      : member.eligible
   )
   const stranger = chosen.find(member => !verified.has(member.userId))
   if (stranger != null) {
@@ -126,6 +128,7 @@ async function makeEpoch(
         })
   try {
     await ctx.client.postChatEpoch(conversationId, {
+      ...(mode === 'fresh' ? { mode: 'fresh' as const } : {}),
       epoch,
       previousKeyBox: previousKeyBox == null ? null : b64(previousKeyBox),
       signature: b64(
@@ -192,6 +195,25 @@ export async function epochForSend(
   if (state.latest === 0) return await makeEpoch(ctx, state, 'first')
   if (!holdsLatest(ctx, state)) {
     if (state.noHolder) return await makeEpoch(ctx, state, 'chainBreak')
+    if (state.historyRecoveryVersion === 1) {
+      if (state.latestHasServerBox) {
+        await ctx.refreshKeys()
+        await syncEpochs(ctx, conversationId)
+        if (holdsLatest(ctx, state)) return state.latest
+        throw new ChatEngineError(
+          'repairRequired',
+          'This device needs its existing keys repaired'
+        )
+      }
+      if (!state.summary.canPost)
+        throw new ChatEngineError('readOnly', 'This chat is read-only')
+      if (!state.freshEpochsEnabled)
+        throw new ChatEngineError(
+          'freshStartsDisabled',
+          'Fresh chat encryption is disabled'
+        )
+      return await makeEpoch(ctx, state, 'fresh')
+    }
     throw new ChatEngineError('locked', 'History is locked')
   }
   if (!state.needsRotation) return state.latest

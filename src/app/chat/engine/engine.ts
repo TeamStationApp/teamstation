@@ -26,6 +26,12 @@ import {
 import { fieldsOf, IdentityCache } from './decrypt'
 import { approveGrant, fillGrants } from './grants'
 import {
+  type HistoryRecovery,
+  type SendReadiness,
+  sendReadinessOf
+} from './historyReadiness'
+import { approveHistoryGrant, heldHistoryEpoch } from './historyRecovery'
+import {
   type ChatSetup,
   type Enrolment,
   ensureEnrolled,
@@ -151,6 +157,8 @@ export interface ConversationView {
   typing: Array<{ userId: string; name: string | undefined }>
   /** "History is locked — it unlocks when another member opens TeamStation". */
   historyLocked: boolean
+  sendReadiness?: SendReadiness
+  historyRecovery?: HistoryRecovery
   /** "Earlier messages can't be opened". */
   earlierLost: boolean
   /** "Membership record could not be verified". */
@@ -175,7 +183,9 @@ export interface ConversationView {
 
 /** A reset identity's request, waiting for an approver to tap Approve. */
 export interface GrantApproval {
-  requestId: number
+  requestId: number | string
+  history?: boolean
+  canApprove?: boolean
   conversationId: string
   conversationTitle: string | undefined
   userId: string
@@ -462,6 +472,8 @@ export class ChatEngine {
         await this.serial(id, async () => {
           const state = this.memory.state(id)
           try {
+            await syncEpochs(this.ctx, id)
+            await openPending(this.ctx, await stateOf(this.ctx, id))
             await this.readPins(id)
           } catch (error) {
             if (!isGone(error)) throw error
@@ -476,6 +488,7 @@ export class ChatEngine {
         })
       }
     }
+    this.grants()
     this.memory.emit({ type: 'conversations' })
     return this.conversations()
   }
@@ -789,7 +802,48 @@ export class ChatEngine {
     }
     const head = record?.logs[conversationId]
     const now = this.now
-    const historyLocked = conversation.locked && !conversation.noHolder
+    const sendReadiness = sendReadinessOf({
+      linked: record?.identity != null,
+      closed: conversation.closed,
+      canPost: conversation.canPost,
+      verified: head?.broken !== true,
+      latest: state.latest,
+      holdsLatest:
+        record != null &&
+        epochKeyOf(record, conversationId, state.latest) != null,
+      noHolder: state.noHolder,
+      recoverySupported: state.historyRecoveryVersion === 1,
+      freshEnabled: state.freshEpochsEnabled,
+      hasServerBox: state.latestHasServerBox
+    })
+    const oldLocked =
+      messages.some(
+        message => message.status === 'locked' || message.status === 'lost'
+      ) || earlierLost
+    const historyLocked =
+      state.historyRecoveryVersion === 1
+        ? oldLocked
+        : conversation.locked && !conversation.noHolder
+    const historyRecovery: HistoryRecovery = state.historyError
+      ? 'retryableError'
+      : !historyLocked
+        ? 'none'
+        : this.memory.historyGrants.some(
+              r =>
+                r.conversationId === conversationId &&
+                r.userId === this.options.userId &&
+                r.requiresApproval
+            )
+          ? 'awaitingApproval'
+          : this.memory.historyGrants.some(
+                r =>
+                  r.conversationId === conversationId &&
+                  r.userId === this.options.userId &&
+                  r.coveredThroughEpoch >= r.segmentStartEpoch
+              )
+            ? 'partial'
+            : 'waitingForHolder'
+    if (state.historyRecoveryVersion === 1) earlierLost = false
     return {
       conversation,
       pins: (this.personalPins.get(conversationId) ?? []).filter(
@@ -808,13 +862,15 @@ export class ChatEngine {
         .filter(([, until]) => until > now)
         .map(([userId]) => ({ userId, name: names.get(userId) })),
       historyLocked,
+      sendReadiness,
+      historyRecovery,
       earlierLost,
       unverified: head?.broken === true,
       composer: conversation.closed
         ? 'closed'
         : !conversation.canPost
           ? 'readOnly'
-          : historyLocked
+          : sendReadiness !== 'ready' && sendReadiness !== 'canStartFresh'
             ? 'locked'
             : 'enabled',
       hasEarlier: state.hasEarlier,
@@ -1171,7 +1227,7 @@ export class ChatEngine {
     const record = this.context?.keys.record
     const mine = record?.identity?.keys.publicKey
     if (record == null || mine == null) return []
-    return this.memory.grants
+    const legacy: GrantApproval[] = this.memory.grants
       .filter(
         request =>
           request.identityReset &&
@@ -1199,13 +1255,55 @@ export class ChatEngine {
           )
         }
       })
+    const grouped = new Map<
+      string,
+      (typeof this.memory.historyGrants)[number]
+    >()
+    for (const request of this.memory.historyGrants) {
+      if (
+        !request.requiresApproval ||
+        !request.canApprove ||
+        request.userId === this.options.userId
+      )
+        continue
+      const key = `${request.conversationId}:${request.identityId}`
+      if (!grouped.has(key) || heldHistoryEpoch(this.ctx, request) != null)
+        grouped.set(key, request)
+    }
+    const historical: GrantApproval[] = [...grouped.values()].map(request => {
+      const state = this.memory.state(request.conversationId)
+      const old = record.previousPins[request.userId]
+      return {
+        requestId: `history:${request.id}`,
+        history: true,
+        canApprove: heldHistoryEpoch(this.ctx, request) != null,
+        conversationId: request.conversationId,
+        conversationTitle: state == null ? undefined : this.item(state).title,
+        userId: request.userId,
+        name: state?.members?.find(m => m.userId === request.userId)?.shortName,
+        oldSafetyNumber:
+          old == null || old === request.identityKey
+            ? undefined
+            : this.safetyWith(mine, request.userId, old),
+        newSafetyNumber: this.safetyWith(
+          mine,
+          request.userId,
+          request.identityKey
+        )
+      }
+    })
+    return [...legacy, ...historical]
   }
 
   /** Approves a reset identity's request: boxes it the history. */
-  async approve(requestId: number): Promise<void> {
+  async approve(requestId: number | string): Promise<void> {
     const ctx = this.ctx
     await this.serial('grants', async () => {
-      await approveGrant(ctx, requestId)
+      if (typeof requestId === 'string') {
+        if (!/^history:[1-9][0-9]*$/.test(requestId))
+          throw new ChatEngineError('target', 'Unknown approval reference')
+        await approveHistoryGrant(ctx, requestId.slice(8))
+      } else await approveGrant(ctx, requestId)
     })
   }
 
