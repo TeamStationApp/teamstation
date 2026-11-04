@@ -419,6 +419,12 @@ describe("Tess's compaction", function () {
         content: [
           { type: 'confirmation', changeId: 'chg_1', text: 'Confirmed' }
         ]
+      },
+      {
+        id: 5,
+        role: 'assistant',
+        createdAt: at,
+        content: [{ type: 'stopped' }]
       }
     ]
     const lines = transcriptOf(messages, new Map()).split('\n')
@@ -429,7 +435,8 @@ describe("Tess's compaction", function () {
     expect(lines.slice(3)).deep.equals([
       'Tool error: HTTP 404',
       'Tool result: rows [image]',
-      'Note: Confirmed'
+      'Note: Confirmed',
+      'Note: The person stopped Tess before she finished.'
     ])
     expect(
       responseText({

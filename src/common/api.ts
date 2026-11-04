@@ -2711,6 +2711,17 @@ export const asTessMessageBody = asObject({
 })
 export type TessMessageBody = ReturnType<typeof asTessMessageBody>
 
+/**
+ * `POST /me/tess/changes/:changeId/confirm`: the app's id for the turn, so
+ * the person can stop Tess's report. An older app sends no body.
+ */
+export const asTessConfirmBody = asObject({
+  clientId: asOptional(asTessClientId)
+})
+
+/** `POST /me/tess/stop`: the turn the app means to stop, by its id. */
+export const asTessStopBody = asObject({ clientId: asTessClientId })
+
 /** `POST /me/tess/attachments`: one file, its bytes in base64. */
 export const asTessAttachmentBody = asObject({
   name: asTextUpTo(1000),
@@ -2877,20 +2888,32 @@ const asTessMessageShape = asObject({
   /** On a reply: the summaries of Tess's thinking, joined. */
   thinking: asOptional(asString),
   /** On a reply: each step she took, in order. */
-  steps: asOptional(asArray(asTessStep))
+  steps: asOptional(asArray(asTessStep)),
+  /** On a reply: the person stopped her before she finished it. */
+  stopped: asOptional(asBoolean)
 })
 export type TessMessage = Omit<
   ReturnType<typeof asTessMessageShape>,
-  'clientId' | 'thinking' | 'steps'
-> & { clientId?: string; thinking?: string; steps?: TessStep[] }
-/** A message, without `clientId`, `thinking` or `steps` when it has none. */
+  'clientId' | 'thinking' | 'steps' | 'stopped'
+> & {
+  clientId?: string
+  thinking?: string
+  steps?: TessStep[]
+  stopped?: boolean
+}
+/**
+ * A message, without `clientId`, `thinking` or `steps` when it has none,
+ * and with `stopped` only on a reply that was.
+ */
 export const asTessMessage: Cleaner<TessMessage> = raw => {
-  const { clientId, thinking, steps, ...message } = asTessMessageShape(raw)
+  const { clientId, thinking, steps, stopped, ...message } =
+    asTessMessageShape(raw)
   return {
     ...message,
     ...(clientId == null ? {} : { clientId }),
     ...(thinking == null ? {} : { thinking }),
-    ...(steps == null ? {} : { steps })
+    ...(steps == null ? {} : { steps }),
+    ...(stopped === true ? { stopped } : {})
   }
 }
 
@@ -2903,14 +2926,22 @@ const asTessConversationShape = asObject({
    * Tess is answering a message or a confirmed change now; what she stores
    * shows on a later read.
    */
-  answering: asOptional(asBoolean)
+  answering: asOptional(asBoolean),
+  /**
+   * While she is answering: the client id the running turn was sent with,
+   * which `stopTess` names, so an app opened meanwhile can stop it.
+   */
+  turnClientId: asOptional(asString)
 })
 export type TessConversation = Omit<
   ReturnType<typeof asTessConversationShape>,
-  'answering'
-> & { answering?: boolean }
-export const asTessConversation: Cleaner<TessConversation> =
-  asTessConversationShape
+  'answering' | 'turnClientId'
+> & { answering?: boolean; turnClientId?: string }
+/** The conversation, without `turnClientId` when no turn names one. */
+export const asTessConversation: Cleaner<TessConversation> = raw => {
+  const { turnClientId, ...conversation } = asTessConversationShape(raw)
+  return turnClientId == null ? conversation : { ...conversation, turnClientId }
+}
 
 /** `POST /me/tess/changes/:changeId/confirm`: the change, and Tess's report. */
 export const asTessConfirmation = asObject({
@@ -4204,13 +4235,30 @@ export class TeamStationClient {
     )
   }
 
-  /** Runs a change Tess proposed, once the person has held Confirm. */
-  async confirmTessChange(changeId: string): Promise<TessConfirmation> {
+  /**
+   * Runs a change Tess proposed, once the person has held Confirm.
+   * `clientId` names the turn, for `stopTess`.
+   */
+  async confirmTessChange(
+    changeId: string,
+    options: { clientId?: string } = {}
+  ): Promise<TessConfirmation> {
     return await this.request(
       'POST',
       `/me/tess/changes/${encodeURIComponent(changeId)}/confirm`,
-      asTessConfirmation
+      asTessConfirmation,
+      options.clientId == null ? undefined : { clientId: options.clientId }
     )
+  }
+
+  /**
+   * Stops Tess's turn for the message, or the confirm, sent with
+   * `clientId`: her reply ends with what she had stored and says it was
+   * stopped. Answers once the server has noted it, whether or not that turn
+   * is still running; one that has ended is left as it was.
+   */
+  async stopTess(clientId: string): Promise<void> {
+    await this.request('POST', '/me/tess/stop', () => undefined, { clientId })
   }
 
   /**
@@ -4251,12 +4299,13 @@ export class TeamStationClient {
   /** `confirmTessChange`, streamed as `streamTessMessage` is. */
   async streamTessConfirm(
     changeId: string,
-    onEvent: (event: TessStreamEvent) => void
+    onEvent: (event: TessStreamEvent) => void,
+    options: { clientId?: string } = {}
   ): Promise<TessConfirmation> {
     return await this.streamTess(
       `/me/tess/changes/${encodeURIComponent(changeId)}/confirm`,
       asTessConfirmation,
-      undefined,
+      options.clientId == null ? undefined : { clientId: options.clientId },
       onEvent
     )
   }

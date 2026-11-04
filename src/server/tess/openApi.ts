@@ -67,6 +67,11 @@ const message = {
       description:
         "On Tess's reply, the summaries of her thinking, joined; absent when she showed none"
     },
+    stopped: {
+      type: 'boolean',
+      description:
+        "On Tess's reply, true when the person stopped her before she finished it; its text is what was stored before the stop. Absent otherwise"
+    },
     steps: {
       type: 'array',
       description:
@@ -151,6 +156,11 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
                   type: 'boolean',
                   description:
                     'Tess is answering a message or a confirmed change now. A client whose send lost its answer reads again until this is false, then looks for its clientId'
+                },
+                turnClientId: {
+                  type: 'string',
+                  description:
+                    'While Tess is answering: the clientId the running message or confirm was sent with, for POST /me/tess/stop to name. Absent otherwise, and for a turn sent without one'
                 }
               }
             })
@@ -292,7 +302,9 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
           'Tess is still answering, which does not run it. A change still ' +
           'running a minute after it was confirmed was lost mid-run: it ' +
           'shows as unknown, and is not run again. With `Accept: ' +
-          "text/event-stream` Tess's report is streamed as it happens.",
+          "text/event-stream` Tess's report is streamed as it happens. " +
+          '`clientId` names the turn, for `POST /me/tess/stop`, which stops ' +
+          'only the report: the change has run.',
         security: [{ bearer: [] }],
         parameters: [
           {
@@ -302,6 +314,19 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
             schema: { type: 'string', format: 'uuid' }
           }
         ],
+        requestBody: {
+          required: false,
+          content: json({
+            type: 'object',
+            properties: {
+              clientId: {
+                type: 'string',
+                pattern: '^[A-Za-z0-9_-]{1,64}$',
+                description: "The client's id for this turn"
+              }
+            }
+          })
+        },
         responses: {
           200: {
             description: "The change as it ended, and Tess's report",
@@ -319,6 +344,39 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
           },
           404: errorResponse,
           409: errorResponse,
+          ...refusals
+        }
+      }
+    },
+    '/me/tess/stop': {
+      post: {
+        summary: "Stop Tess's turn",
+        description:
+          'Stops the turn sent with `clientId` (a message, or a confirm): ' +
+          'at once while it runs, or as it begins when it has not yet. A ' +
+          'call to the model is given up, a tool already running finishes ' +
+          'and is kept, and her reply ends with what was stored, marked ' +
+          '`stopped`; the turn ends as one she answered, and its message is ' +
+          'kept. Answers 204 whether or not that turn is running: a stop ' +
+          'naming a turn that has ended changes nothing.',
+        security: [{ bearer: [] }],
+        requestBody: {
+          required: true,
+          content: json({
+            type: 'object',
+            required: ['clientId'],
+            properties: {
+              clientId: {
+                type: 'string',
+                pattern: '^[A-Za-z0-9_-]{1,64}$',
+                description: 'The clientId the turn was sent with'
+              }
+            }
+          })
+        },
+        responses: {
+          204: { description: 'Noted' },
+          400: errorResponse,
           ...refusals
         }
       }

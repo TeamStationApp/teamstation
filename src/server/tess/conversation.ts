@@ -17,6 +17,7 @@ import {
   type MessagesResponse,
   type MessagesStreamEvent,
   streamMessage,
+  TessStopped,
   type TextBlock,
   type ThinkingBlock
 } from './messagesApi'
@@ -30,14 +31,15 @@ import { recordUsage } from './usage'
  * the Messages API request it is sent as, and the messages the app shows.
  *
  * Messages are stored as Anthropic content blocks, as sent and received,
- * with four blocks of Tess's own that never reach the model as they are:
+ * with five blocks of Tess's own that never reach the model as they are:
  * an attachment by id, expanded to its content when a request is built; a
  * change Tess proposed, by id, on the assistant message that proposed it,
  * which the app draws as a card and the model never sees; the note a
- * confirmed change leaves, sent as text and not shown; and the moment a
  * message of the person's was sent, with the page beside the chat, sent as
- * text at its end and not shown. Stored with the message, the moment reads
- * the same in every later request, so the conversation stays cached.
+ * stopped, the whole of the message Tess stores in its place, sent as a
+ * note (`STOPPED_NOTE`) and shown as "Stopped". Stored with the message, the
+ * moment reads the same in every later request, so the conversation stays
+ * cached.
  */
 
 export interface AttachmentRef {
@@ -58,8 +60,24 @@ export interface MomentNote extends Moment {
   /** The id the app sent the message with, which the model never sees. */
   clientId?: string
 }
+/** Tess's reply, stopped by the person before she finished it. */
+export interface StoppedMark {
+  type: 'stopped'
+}
 export type StoredBlock =
-  ContentBlock | AttachmentRef | ChangeRef | ConfirmationNote | MomentNote
+  | ContentBlock
+  | AttachmentRef
+  | ChangeRef
+  | ConfirmationNote
+  | MomentNote
+  | StoppedMark
+
+/**
+ * What a stopped reply says to the model. The person often stops her to add
+ * to what they asked, so she is told to take the two together.
+ */
+export const STOPPED_NOTE =
+  '(Stopped by the person before finishing. If their next message adds to the one before, answer both together.)'
 
 export interface StoredMessage {
   id: number
@@ -86,20 +104,31 @@ export interface ModelDeps {
 /**
  * One Messages call for one person, its tokens added to their week. Every
  * call goes through here: the conversation's, streamed to `onStream`, and
- * compaction's summaries and attachment descriptions, which are not.
+ * compaction's summaries and attachment descriptions, which are not. A call
+ * the person stops (`signal`) is paid for as far as it went: what it had
+ * used is added to the week before `TessStopped` goes on.
  */
 export async function callModel(
   deps: ModelDeps,
   userId: string,
   request: MessagesRequest,
-  onStream?: (event: MessagesStreamEvent) => void
+  onStream?: (event: MessagesStreamEvent) => void,
+  signal?: AbortSignal
 ): Promise<MessagesResponse> {
-  const options = { fetch: deps.fetch, actor: userId }
-  const response =
-    onStream == null
-      ? await createMessage(deps.settings, request, options)
-      : await streamMessage(deps.settings, request, onStream, options)
-  await recordUsage(deps.db, userId, response.usage, deps.now?.() ?? new Date())
+  const options = { fetch: deps.fetch, actor: userId, signal }
+  const now = (): Date => deps.now?.() ?? new Date()
+  let response: MessagesResponse
+  try {
+    response =
+      onStream == null
+        ? await createMessage(deps.settings, request, options)
+        : await streamMessage(deps.settings, request, onStream, options)
+  } catch (error) {
+    if (error instanceof TessStopped)
+      await recordUsage(deps.db, userId, error.usage, now())
+    throw error
+  }
+  await recordUsage(deps.db, userId, response.usage, now())
   return response
 }
 
@@ -347,6 +376,8 @@ export function requestMessages(
           return [{ type: 'text', text: block.text }]
         if (block.type === 'moment')
           return [{ type: 'text', text: momentText(block) }]
+        if (block.type === 'stopped')
+          return [{ type: 'text', text: STOPPED_NOTE }]
         if (block.type === 'attachment') {
           const row = attachments.get(block.id)
           return [
@@ -368,8 +399,10 @@ export function requestMessages(
  * split, show as one reply: the text of each, then a card for each change
  * she proposed, with the summaries of her thinking (`thinking`) and the
  * steps she took (`steps`: each tool call, labelled, and whether it
- * worked). Tool results and confirmation notes are not shown, and a reply
- * with neither text nor a change is left out.
+ * worked). Tool results and confirmation notes are not shown. A reply the
+ * person stopped says so (`stopped`), after whatever of it was stored
+ * before the stop; any other reply with neither text nor a change is left
+ * out.
  *
  * Every player her text names is a link to their profile (`linkPlayers`),
  * by the names the API answered her with in `names`, by default those in
@@ -390,7 +423,10 @@ export function viewMessages(
         failed.set(block.tool_use_id, block.is_error === true)
   let reply: TessMessage | undefined
   const close = (): void => {
-    if (reply != null && (reply.text !== '' || reply.changes.length > 0))
+    if (
+      reply != null &&
+      (reply.text !== '' || reply.changes.length > 0 || reply.stopped === true)
+    )
       out.push(reply)
     reply = undefined
   }
@@ -442,6 +478,7 @@ export function viewMessages(
       reply.thinking =
         reply.thinking == null ? thinking : `${reply.thinking}\n\n${thinking}`
     for (const block of message.content) {
+      if (block.type === 'stopped') reply.stopped = true
       if (block.type === 'tool_use') {
         const result = failed.get(block.id)
         if (result != null)

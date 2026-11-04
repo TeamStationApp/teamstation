@@ -75,17 +75,29 @@ describe('api client for Tess', () => {
       available: true,
       messages: [{ ...asked, clientId: 'm-1' }, reply],
       contextTokens: 1200,
-      answering: true
+      answering: true,
+      turnClientId: 'm-1'
     })
     expect(await api.tess()).deep.equals({
       available: true,
       messages: [{ ...asked, clientId: 'm-1' }, reply],
       contextTokens: 1200,
-      answering: true
+      answering: true,
+      turnClientId: 'm-1'
     })
     expect(calls).deep.equals([
       { url: '/api/v1/me/tess', method: 'GET', body: undefined }
     ])
+  })
+
+  it('reads a conversation no turn holds without a running turn’s id', async () => {
+    const { api } = client({
+      available: true,
+      messages: [],
+      contextTokens: 0,
+      answering: false
+    })
+    expect(await api.tess()).not.to.have.property('turnClientId')
   })
 
   it('sends a message, with attachments and the screen only when there are any', async () => {
@@ -130,13 +142,49 @@ describe('api client for Tess', () => {
     const answer = { change: { ...change, status: 'done' }, messages: [reply] }
     const { api, calls } = client(answer)
     expect(await api.confirmTessChange('a b')).deep.equals(answer)
+    await api.confirmTessChange('a b', { clientId: 'm-3' })
     expect(calls).deep.equals([
       {
         url: '/api/v1/me/tess/changes/a%20b/confirm',
         method: 'POST',
         body: undefined
+      },
+      {
+        url: '/api/v1/me/tess/changes/a%20b/confirm',
+        method: 'POST',
+        body: { clientId: 'm-3' }
       }
     ])
+  })
+
+  it('stops a turn by its client id, and reads a stopped reply', async () => {
+    const calls: Call[] = []
+    const api = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: (async (
+        url: unknown,
+        init?: { method?: string; body?: string }
+      ) => {
+        calls.push({
+          url: String(url),
+          method: init?.method ?? 'GET',
+          body: init?.body == null ? undefined : JSON.parse(init.body)
+        })
+        return new Response(null, { status: 204 })
+      }) as unknown as typeof fetch
+    })
+    await api.stopTess('m-4')
+    expect(calls).deep.equals([
+      { url: '/api/v1/me/tess/stop', method: 'POST', body: { clientId: 'm-4' } }
+    ])
+    const stopped = { ...reply, text: '', changes: [], stopped: true }
+    const { api: reading } = client({
+      available: true,
+      messages: [stopped, { ...reply, stopped: false }],
+      contextTokens: 0
+    })
+    // Only a stopped reply says so.
+    expect((await reading.tess()).messages).deep.equals([stopped, reply])
   })
 
   it('reads the weekly usage', async () => {
@@ -147,7 +195,10 @@ describe('api client for Tess', () => {
       requests: 1
     }
     const { api, calls } = client({ weeks: [week] })
-    expect(await api.tessUsage()).deep.equals([week])
+    // An older server tells no cache counts: none, read as 0.
+    expect(await api.tessUsage()).deep.equals([
+      { ...week, cacheReadTokens: 0, cacheWriteTokens: 0 }
+    ])
     expect(calls[0].url).equals('/api/v1/me/tess/usage')
   })
 
@@ -382,10 +433,15 @@ describe('api client for Tess', () => {
       const { api, requests } = streaming()
       const told: TessStreamEvent[] = []
       const answer = api.streamTessConfirm('a b', event => told.push(event))
-      const [request] = requests
+      api
+        .streamTessConfirm('a b', () => undefined, { clientId: 'm-5' })
+        .catch(() => undefined)
+      const [request, named] = requests
       expect(request.url).equals('/api/v1/me/tess/changes/a%20b/confirm')
       expect(request.body).equals(undefined)
       expect(request.headers).deep.equals({ accept: 'text/event-stream' })
+      // A confirm with a client id names its turn, for a stop.
+      expect(JSON.parse(named.body!)).deep.equals({ clientId: 'm-5' })
       const done = { ...change, status: 'done' }
       request.answer(
         200,

@@ -86,6 +86,11 @@ export type Reply =
   | { status: number; error: string; message?: string }
   /** A streamed answer's body exactly as given, events and all. */
   | { sse: string }
+  /**
+   * A streamed answer's body that stops after `sse` and waits, until the
+   * request is given up (a stop), as a stream that is still coming does.
+   */
+  | { partial: string }
   | ((body: Record<string, any>) => Reply | Promise<Reply>)
 
 export interface FakeModel {
@@ -142,10 +147,35 @@ export function fakeModel(): FakeModel {
   const counts: number[] = []
   const answer = async (
     reply: Reply,
-    body: Record<string, any>
+    body: Record<string, any>,
+    signal?: AbortSignal | null
   ): Promise<Response> => {
     if (typeof reply === 'function')
-      return await answer(await reply(body), body)
+      return await answer(await reply(body), body, signal)
+    if ('partial' in reply) {
+      let given = false
+      const stream = new ReadableStream<Uint8Array>({
+        pull: async controller => {
+          if (!given) {
+            given = true
+            controller.enqueue(new TextEncoder().encode(reply.partial))
+            return
+          }
+          await new Promise<void>(resolve => {
+            const end = (): void => {
+              controller.error(new Error('aborted'))
+              resolve()
+            }
+            if (signal?.aborted === true) end()
+            else signal?.addEventListener('abort', end)
+          })
+        }
+      })
+      return new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      })
+    }
     if ('status' in reply)
       return new Response(
         JSON.stringify({
@@ -174,7 +204,12 @@ export function fakeModel(): FakeModel {
       })
     return new Response(JSON.stringify(message), { status: 200 })
   }
-  const fake = (async (url: unknown, init?: { body?: string }) => {
+  const fake = (async (
+    url: unknown,
+    init?: { body?: string; signal?: AbortSignal | null }
+  ) => {
+    // A request given up before it is sent never reaches the provider.
+    if (init?.signal?.aborted === true) throw new Error('aborted')
     const path = new URL(String(url)).pathname.replace(/^\/v1/, '')
     const body = JSON.parse(init?.body ?? '{}') as Record<string, any>
     calls.push({ path, body })
@@ -183,7 +218,11 @@ export function fakeModel(): FakeModel {
         JSON.stringify({ input_tokens: counts.shift() ?? 1000 }),
         { status: 200 }
       )
-    return await answer(replies.shift() ?? say('(no scripted reply)'), body)
+    return await answer(
+      replies.shift() ?? say('(no scripted reply)'),
+      body,
+      init?.signal
+    )
   }) as unknown as typeof fetch
   return {
     fetch: fake,

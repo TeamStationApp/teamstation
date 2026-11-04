@@ -17,8 +17,9 @@ import { sseOf, streamEvents } from './anthropicStream'
  *
  * A request with `stream: true`, as Tess's turns send, is answered as the
  * provider streams, with a short wait before each piece of thinking and
- * text, so an app shows them arriving; summaries and descriptions are not
- * streamed and are answered at once.
+ * text, so an app shows them arriving (an answer may set its own, to be
+ * slow enough to stop); summaries and descriptions are not streamed and are
+ * answered at once. A stream the server gives up is written no further.
  *
  * Every request is kept, without the system prompt and the tool
  * definitions, which are the same each time, and served at
@@ -47,6 +48,11 @@ export interface FakeRequest {
 export interface FakeAnswer {
   content: Block[]
   stopReason?: 'end_turn' | 'tool_use'
+  /**
+   * The wait before each streamed piece of this answer, in place of the
+   * server's: a slow one, for a test to stop while it streams.
+   */
+  delayMs?: number
 }
 
 export interface ScriptEntry {
@@ -258,10 +264,16 @@ export async function fakeAnthropic(
           'content-type': 'text/event-stream',
           'cache-control': 'no-cache'
         })
+        // The server gave the call up (a stop): nothing more is written.
+        let closed = false
+        res.on('close', () => {
+          closed = true
+        })
+        const wait = answer.delayMs ?? delayMs
         for (const event of streamEvents(message)) {
-          if (event.type === 'content_block_delta' && delayMs > 0)
-            await new Promise(resolve => setTimeout(resolve, delayMs))
-          if (res.destroyed) return
+          if (event.type === 'content_block_delta' && wait > 0)
+            await new Promise(resolve => setTimeout(resolve, wait))
+          if (closed || res.destroyed) return
           res.write(sseOf(event))
         }
         res.end()

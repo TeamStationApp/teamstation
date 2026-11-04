@@ -38,12 +38,13 @@ import {
   type MessagesResponse,
   type MessagesStreamEvent,
   type SystemBlock,
+  TessStopped,
   type ToolResultBlock,
   type ToolUseBlock
 } from './messagesApi'
 import { systemBlocks } from './prompt'
 import { stepLabel } from './stepLabels'
-import { runTool, TOOLS } from './tools'
+import { runTool, type ToolOutcome, TOOLS } from './tools'
 import { withTurn } from './turns'
 import { userContext } from './userContext'
 
@@ -61,6 +62,8 @@ export const MAX_TOOL_ROUNDS = 10
 export const TOOL_LIMIT = 'Tool limit reached; answer with what you have'
 export const TOO_LARGE_NOW =
   'That answer is too large for the conversation now. Ask for less, or answer with what you have.'
+/** The result of a tool call left unrun when the person stopped the turn. */
+export const STOPPED_BEFORE_RUN = 'Not run: the person stopped Tess first'
 
 export interface TessDeps extends ModelDeps {
   /** This server's own origin, read when a tool runs: see `loopback.ts`. */
@@ -127,7 +130,9 @@ export interface TurnInput {
  * answer (the model is down or out of time), the message is taken back and
  * the changes it expired are pending again, as the app shows them: the app
  * gives the draft back to send again, and a resend is then the only copy.
- * Answers the id of the stored message.
+ * A turn the person stops (by its `clientId`) is not a failure: the
+ * message stays, with the reply as far as it was stored and a note that it
+ * was stopped. Answers the id of the stored message.
  */
 export async function runTurn(
   deps: TessDeps,
@@ -146,7 +151,9 @@ export async function runTurn(
   return await withTurn(
     deps.db,
     user.userId,
-    async () => await turn(deps, user, input, text, attachments, onEvent)
+    input.clientId,
+    async signal =>
+      await turn(deps, user, input, text, attachments, signal, onEvent)
   )
 }
 
@@ -156,6 +163,7 @@ async function turn(
   input: TurnInput,
   text: string,
   attachments: ReadonlyArray<{ id: string }>,
+  signal: AbortSignal,
   onEvent?: TurnEvents
 ): Promise<number> {
   await pruneAttachments(
@@ -181,7 +189,7 @@ async function turn(
   ])
   try {
     await onEvent?.({ type: 'stored', fromId: id })
-    await respond(deps, user, system, onEvent)
+    await respond(deps, user, system, signal, onEvent)
   } catch (error) {
     if (await takeBack(deps, user.userId, id)) {
       await restoreExpiredChanges(deps.db, user.userId, expired)
@@ -222,16 +230,18 @@ async function takeBack(
  * The person held Confirm on a change. While another of their turns is
  * running it is refused with 409, and does not run. It runs once, then Tess
  * is told what the server answered and reports it. Her report failing does not undo the
- * change, which has run: the answer is still the change. Answers the change
- * and the id the report's messages start from.
+ * change, which has run: the answer is still the change. Stopping the turn
+ * (by its `clientId`) stops only her report: the change has run by then.
+ * Answers the change and the id the report's messages start from.
  */
 export async function confirmTurn(
   deps: TessDeps,
   user: TessUser,
   changeId: string,
-  onEvent?: TurnEvents
+  onEvent?: TurnEvents,
+  clientId?: string
 ): Promise<{ change: TessChange; fromId: number }> {
-  return await withTurn(deps.db, user.userId, async () => {
+  return await withTurn(deps.db, user.userId, clientId, async signal => {
     const { change, note } = await runChange(
       deps,
       user.userId,
@@ -246,7 +256,7 @@ export async function confirmTurn(
     ])
     try {
       await onEvent?.({ type: 'stored', fromId, change })
-      await respond(deps, user, await systemFor(deps, user), onEvent)
+      await respond(deps, user, await systemFor(deps, user), signal, onEvent)
     } catch (error) {
       if (!(error instanceof HttpError)) throw error
     }
@@ -372,11 +382,19 @@ async function guard(
  * fails after storing a round, the size it had is saved, so the next
  * message is measured against it. Each call is streamed, and what it tells
  * goes to `onEvent` with each step.
+ *
+ * The person can stop her (`signal`): a call out is given up at once, and
+ * the signal is looked at before each call and after each tool. A tool
+ * running finishes, and is stored with its result; the calls of its round
+ * not yet run are answered as not run. What she was saying when stopped is
+ * dropped, and a reply that is only the mark of a stop takes its place, so
+ * the turn ends as one that answered, and is never taken back.
  */
 async function respond(
   deps: TessDeps,
   user: TessUser,
   system: SystemBlock[],
+  signal: AbortSignal,
   onEvent?: TurnEvents
 ): Promise<void> {
   const { db, settings } = deps
@@ -397,18 +415,33 @@ async function respond(
   // What the stored conversation comes to, once a round of it is stored.
   let known = 0
   let compacted = false
+  const stopIfAsked = (): void => {
+    if (signal.aborted) throw new TessStopped()
+  }
+  const once = async (
+    toolChoice?: MessagesRequest['toolChoice']
+  ): Promise<MessagesResponse> => {
+    stopIfAsked()
+    return await callModel(
+      deps,
+      userId,
+      { ...request, toolChoice },
+      relay(),
+      signal
+    )
+  }
   const call = async (
     toolChoice?: MessagesRequest['toolChoice']
   ): Promise<MessagesResponse> => {
     try {
-      return await callModel(deps, userId, { ...request, toolChoice }, relay())
+      return await once(toolChoice)
     } catch (error) {
       if (compacted || !(isTooLong(error) || isTooLarge(error))) throw error
       compacted = true
       if (isTooLong(error)) known = await compact(deps, userId, measure)
       else await describeAttachments(deps, userId)
       request = await buildRequest(deps, userId, system)
-      return await callModel(deps, userId, { ...request, toolChoice }, relay())
+      return await once(toolChoice)
     }
   }
   let last: MessagesResponse
@@ -449,9 +482,23 @@ async function respond(
         origin: deps.origin(),
         now: deps.now?.() ?? new Date()
       }
-      const outcomes = []
+      const outcomes: ToolOutcome[] = []
       for (const call of calls) {
         const label = stepLabel(call)
+        if (signal.aborted) {
+          // Every call is answered, so the stored round stays one the model
+          // accepts.
+          outcomes.push({
+            result: {
+              type: 'tool_result',
+              tool_use_id: call.id,
+              content: STOPPED_BEFORE_RUN,
+              is_error: true
+            }
+          })
+          await step(call.id, label, 'failed')
+          continue
+        }
         await step(call.id, label, 'running')
         const outcome = await runTool(context, call)
         outcomes.push(outcome)
@@ -487,7 +534,11 @@ async function respond(
     // Still too long once compacted: the next message compacts again first.
     const size = isTooLong(error) ? Math.max(known, COMPACT_ABOVE + 1) : known
     if (size > 0) await saveContextTokens(db, userId, size)
-    throw error
+    if (!(error instanceof TessStopped)) throw error
+    await appendMessages(db, userId, [
+      { role: 'assistant', content: [{ type: 'stopped' }] }
+    ])
+    return
   }
   const tokens = inputOf(last) + last.usage.outputTokens
   await saveContextTokens(db, userId, tokens)

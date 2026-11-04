@@ -14,6 +14,7 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { sseOf, streamEvents } from '../../test/anthropicStream'
 import {
   callTools,
   readTurnStream,
@@ -80,6 +81,7 @@ describe("Tess's routes", function () {
       ['POST', '/me/tess/messages'],
       ['POST', '/me/tess/attachments'],
       ['POST', '/me/tess/changes/00000000-0000-4000-8000-000000000001/confirm'],
+      ['POST', '/me/tess/stop'],
       ['GET', '/me/tess/usage']
     ] as const) {
       const answer = await w.h.request(
@@ -98,6 +100,7 @@ describe("Tess's routes", function () {
       ['POST', '/me/tess/messages'],
       ['POST', '/me/tess/attachments'],
       ['POST', '/me/tess/changes/00000000-0000-4000-8000-000000000001/confirm'],
+      ['POST', '/me/tess/stop'],
       ['GET', '/me/tess/usage']
     ] as const) {
       const answer = await off.h.request(
@@ -204,17 +207,22 @@ describe("Tess's routes", function () {
       conversation = await client().tess()
     }
     expect(conversation.answering).equals(true)
+    // The running turn is named, for an app opened meanwhile to stop it.
+    expect(conversation.turnClientId).equals('msg-1')
     expect(conversation.messages).length(1)
     expect(conversation.messages[0]).deep.include({
       text: 'A long question',
       clientId: 'msg-1'
     })
     // Another person's conversation is not held.
-    expect((await client(102).tess()).answering).equals(false)
+    const other = await client(102).tess()
+    expect(other.answering).equals(false)
+    expect(other).not.to.have.property('turnClientId')
     answer()
     await sending
     conversation = await client().tess()
     expect(conversation.answering).equals(false)
+    expect(conversation).not.to.have.property('turnClientId')
     expect(conversation.messages.map(message => message.text)).deep.equals([
       'A long question',
       'Here it is.'
@@ -223,6 +231,22 @@ describe("Tess's routes", function () {
     expect(conversation.messages[1]).not.to.have.property('clientId')
     // The model never sees it.
     expect(JSON.stringify(w.model.messageCalls())).not.includes('msg-1')
+  })
+
+  it('names no running turn once its claim has lapsed', async () => {
+    // A worker that died mid-turn left its claim and its id behind.
+    await w.h.db
+      .insertInto('tess_conversations')
+      .values({
+        user_id: w.userId(101),
+        turn_owner: '00000000-0000-4000-8000-000000000009',
+        turn_until: new Date(Date.now() - 1000),
+        turn_client_id: 'm-lapsed'
+      })
+      .execute()
+    const conversation = await client().tess()
+    expect(conversation.answering).equals(false)
+    expect(conversation).not.to.have.property('turnClientId')
   })
 
   it('answers the new message and everything after it, Tess’s tool rounds as one reply', async () => {
@@ -247,8 +271,94 @@ describe("Tess's routes", function () {
     expect(sent[1].changes.map(change => change.summary)).deep.equals([
       'Follow Demo Hawks'
     ])
-    const confirmed = await client().confirmTessChange(sent[1].changes[0].id)
+    // A client id names the confirm's turn, for a stop; a malformed one is
+    // refused before the change runs.
+    const refused = await w.h.request(
+      'POST',
+      `/me/tess/changes/${sent[1].changes[0].id}/confirm`,
+      { clientId: 'not an id' },
+      101
+    )
+    expect(refused.status).equals(400)
+    const confirmed = await client().confirmTessChange(sent[1].changes[0].id, {
+      clientId: 'm-confirm-1'
+    })
     expect(confirmed.change.status).equals('done')
+  })
+
+  it('stops a turn by its client id: 204 idle or running, and another person’s stop changes nothing', async () => {
+    // Nothing running, and no conversation yet: noted all the same.
+    expect(
+      (await w.h.request('POST', '/me/tess/stop', { clientId: 'm-idle' }, 101))
+        .status
+    ).equals(204)
+    await client().stopTess('m-idle')
+    expect((await w.h.request('POST', '/me/tess/stop', {}, 101)).status).equals(
+      400
+    )
+
+    const running = async (): Promise<void> => {
+      for (let tries = 0; (await client().tess()).answering !== true; tries++) {
+        expect(tries).lessThan(200)
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+    }
+    // Another person naming the same id stops their own row, not this turn.
+    let answer: () => void = () => undefined
+    const answered = new Promise<void>(resolve => {
+      answer = resolve
+    })
+    w.model.reply(async () => {
+      await answered
+      return say('Here it is.')
+    })
+    const first = client().sendTessMessage('A long question', {
+      clientId: 'm-run-1'
+    })
+    await running()
+    await client(102).stopTess('m-run-1')
+    const stops = await w.h.db
+      .selectFrom('tess_conversations')
+      .select(['user_id', 'turn_stop'])
+      .orderBy('user_id')
+      .execute()
+    expect(stops).deep.equals(
+      [
+        { user_id: w.userId(101), turn_stop: 'm-idle' },
+        { user_id: w.userId(102), turn_stop: 'm-run-1' }
+      ].sort((a, b) => (a.user_id < b.user_id ? -1 : 1))
+    )
+    await new Promise(resolve => setTimeout(resolve, 700))
+    answer()
+    expect((await first).map(message => message.text)).deep.equals([
+      'A long question',
+      'Here it is.'
+    ])
+
+    // Stopped while she streams: the reply is the stopped one.
+    w.model.reply({
+      partial: streamEvents({ content: [{ type: 'text', text: 'Let me' }] })
+        .slice(0, 4)
+        .map(sseOf)
+        .join('')
+    })
+    const second = client().sendTessMessage('Another long one', {
+      clientId: 'm-run-2'
+    })
+    await running()
+    await client().stopTess('m-run-2')
+    const shown = await second
+    expect(
+      shown.map(({ role, text, stopped }) => ({ role, text, stopped }))
+    ).deep.equals([
+      { role: 'user', text: 'Another long one', stopped: undefined },
+      { role: 'assistant', text: '', stopped: true }
+    ])
+    expect((await client().tess()).messages.at(-1)).deep.include({
+      role: 'assistant',
+      text: '',
+      stopped: true
+    })
   })
 
   it('links the players Tess names by what the API told her, in every answer, and stores her words as they were', async () => {

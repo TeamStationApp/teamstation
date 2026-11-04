@@ -4,7 +4,9 @@ import type { Kysely } from 'kysely'
 
 import {
   asTessAttachmentBody,
+  asTessConfirmBody,
   asTessMessageBody,
+  asTessStopBody,
   type TessMessage
 } from '../../common/api'
 import {
@@ -40,7 +42,7 @@ import {
 } from '../tess/conversation'
 import { credentialsOf } from '../tess/loopback'
 import { playerNamesOf } from '../tess/playerLinks'
-import { turnRunning } from '../tess/turns'
+import { runningTurn, stopTurn } from '../tess/turns'
 import { usageWeeks } from '../tess/usage'
 
 export interface TessRouteOptions {
@@ -67,8 +69,8 @@ export const KEEP_ALIVE_MS = 15000
 
 /**
  * Tess, the assistant, under `/me/tess`: the caller's one conversation, the
- * files they give her, the changes she proposes and they confirm, and the
- * tokens it uses each week.
+ * files they give her, the changes she proposes and they confirm, a stop
+ * of the turn she is on, and the tokens it uses each week.
  *
  * Every route needs a person signed in themselves: a machine token is
  * refused, and so is a request Tess's own tools sent, which the deny list
@@ -120,11 +122,13 @@ export function tessRoutes(
     '/me/tess',
     withAsync(async (req, res) => {
       const { userId } = userOf(req)
+      const turn = await runningTurn(db, userId)
       res.set('Cache-Control', 'no-store').json({
         available: true,
         messages: await view(db, userId, 0, options.now?.()),
         contextTokens: await contextTokensOf(db, userId),
-        answering: await turnRunning(db, userId)
+        answering: turn != null,
+        ...(turn?.clientId == null ? {} : { turnClientId: turn.clientId })
       })
     })
   )
@@ -184,6 +188,8 @@ export function tessRoutes(
     withAsync(async (req, res) => {
       const user = userOf(req)
       const changeId = String(req.params.changeId)
+      // An older app sends no body.
+      const { clientId } = cleanBody(asTessConfirmBody, req.body ?? {})
       const answer = async (
         onEvent?: TurnEvents
       ): Promise<Record<string, unknown>> => {
@@ -191,7 +197,8 @@ export function tessRoutes(
           deps(),
           user,
           changeId,
-          onEvent
+          onEvent,
+          clientId
         )
         setAudit(res.locals, { entityType: 'tess_change', entityId: changeId })
         return {
@@ -225,6 +232,18 @@ export function tessRoutes(
         },
         answer
       )
+    })
+  )
+
+  // The turn the app sent with `clientId` stops, if it is running or once
+  // it claims; 204 either way, so a Stop that comes too late does no harm.
+  router.post(
+    '/me/tess/stop',
+    withAsync(async (req, res) => {
+      const { userId } = userOf(req)
+      const { clientId } = cleanBody(asTessStopBody, req.body)
+      await stopTurn(db, userId, clientId)
+      res.status(204).end()
     })
   )
 
