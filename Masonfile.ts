@@ -12,16 +12,17 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // labelled android-signing, which provides teamstation-sign-release-apk, and
 // published from there. One platform failing leaves the other running.
 //
-// The `seat` parameter picks the server the app talks to: `production`, the
-// default and what every push builds, or a development seat N, which points
-// the app at https://developN.teamstation.app. Only a master build of
-// production goes to TestFlight.
+// The `seat` parameter picks the server the app talks to. A development seat
+// N points the app at https://developN.teamstation.app. Left at `production`,
+// a master build keeps the app's own server, and every other branch points
+// at https://develop.teamstation.app. Only a master build of production goes
+// to TestFlight.
 //
-// `master` publishes `app.teamstation.app`. The `develop` branch, and any
-// build aimed at a development seat, publishes `app.teamstation.develop`
-// under the name TeamStation Develop, so it installs beside the stable app.
-// The source tree keeps the stable id; the build rewrites it, the way Edge's
-// develop build does.
+// `master` publishes `app.teamstation.app`. Any other branch, and any build
+// aimed at a development seat, publishes `app.teamstation.develop` under the
+// name TeamStation Develop, so it installs beside the stable app. The source
+// tree keeps the stable id; the build rewrites it, the way Edge's develop
+// build does.
 
 export const STABLE_APP = 'app.teamstation.app'
 export const DEVELOP_APP = 'app.teamstation.develop'
@@ -40,11 +41,11 @@ const TESTFLIGHT_GROUP = 'TeamStation testers'
 // The same shape ctx.apple.archive and ctx.apple.resign accept.
 const versionPattern = /^[0-9]+(\.[0-9]+){0,2}$/
 
-/** Which app id this run publishes. Master stays stable; develop and seats do not. */
+/** Which app id this run publishes. Master stays stable; every other branch and every seat does not. */
 export function appIdOf(input: { branch?: string; seat?: string } = {}): string {
   const branch = input.branch == null || input.branch === '' ? 'master' : input.branch
   const seat = input.seat == null || input.seat === '' ? 'production' : input.seat
-  if (branch === 'develop' || seat !== 'production') return DEVELOP_APP
+  if (branch !== 'master' || seat !== 'production') return DEVELOP_APP
   return STABLE_APP
 }
 
@@ -222,9 +223,10 @@ function buildStages(w: WorkflowBuilder, app: string): void {
 /**
  * The environment that points the app at this run's server. Babel inlines
  * `TS_API_BASE_URL` into the bundle (`src/app/native/config.ts`). A master
- * build of production sets nothing and keeps the app's own default. The
- * develop branch points at the standing develop server. A development seat
- * points at that seat, and its sign-in links use the same host.
+ * build of production sets nothing and keeps the app's own default. Any
+ * other branch, left on production, points at the standing develop server.
+ * A development seat points at that seat, and its sign-in links use the
+ * same host.
  */
 export function seatEnvironment(
   ctx: Pick<Stage, 'run'>
@@ -232,7 +234,7 @@ export function seatEnvironment(
   const seat = ctx.run.params?.seat ?? 'production'
   const branch = ctx.run.branch
   if (seat === 'production') {
-    if (branch !== 'develop') return {}
+    if (branch == null || branch === '' || branch === 'master') return {}
     return {
       TS_API_BASE_URL: `${DEVELOP_ORIGIN}/api/v1`,
       TS_APP_ORIGIN: DEVELOP_ORIGIN

@@ -574,11 +574,23 @@ describe('TeamStation pipeline Masonfile', () => {
       TS_API_BASE_URL: 'https://develop8.teamstation.app/api/v1',
       TS_APP_ORIGIN: 'https://develop8.teamstation.app'
     })
+    const developServer = {
+      TS_API_BASE_URL: 'https://develop.teamstation.app/api/v1',
+      TS_APP_ORIGIN: 'https://develop.teamstation.app'
+    }
     assert.deepEqual(
       seatEnvironment({ run: { branch: 'develop', params: { seat: 'production' } } }),
+      developServer
+    )
+    assert.deepEqual(
+      seatEnvironment({ run: { branch: 'paul/example', params: { seat: 'production' } } }),
+      developServer
+    )
+    assert.deepEqual(
+      seatEnvironment({ run: { branch: 'paul/example', params: { seat: '3' } } }),
       {
-        TS_API_BASE_URL: 'https://develop.teamstation.app/api/v1',
-        TS_APP_ORIGIN: 'https://develop.teamstation.app'
+        TS_API_BASE_URL: 'https://develop3.teamstation.app/api/v1',
+        TS_APP_ORIGIN: 'https://develop3.teamstation.app'
       }
     )
     assert.throws(() => seated({ seat: '9' }), /Unknown seat 9/)
@@ -590,6 +602,8 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.equal(appIdOf(), STABLE_APP)
     assert.equal(appIdOf({ branch: 'develop' }), DEVELOP_APP)
     assert.equal(appIdOf({ branch: 'develop', seat: 'production' }), DEVELOP_APP)
+    assert.equal(appIdOf({ branch: 'paul/example' }), DEVELOP_APP)
+    assert.equal(appIdOf({ branch: 'paul/example', seat: 'production' }), DEVELOP_APP)
     assert.equal(appIdOf({ branch: 'paul/example', seat: '2' }), DEVELOP_APP)
     assert.equal(appIdOf({ branch: 'master', seat: '1' }), DEVELOP_APP)
     assert.equal(appIdOf({ branch: '', seat: '' }), STABLE_APP)
