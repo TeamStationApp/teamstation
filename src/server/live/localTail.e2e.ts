@@ -21,6 +21,7 @@ import { createLiveHarness } from '../../app/player/liveHarness.e2e'
 import { signInTestAccount } from '../../test/passwordFixtures'
 import { scratchDatabase } from '../../test/scoreboardKit'
 import { startFakeSpace } from '../dev/fakeSpace'
+import { videoPrefix } from '../media/videoPrefix'
 import { parseMediaPlaylist } from '../media/wallClockScan'
 import { liveVideoDir } from './controller'
 import { isSegmentName } from './originPublish'
@@ -267,7 +268,18 @@ describe('E2E-2: sixty seconds on disk (M4)', function () {
     token = await signInTestAccount(api, admin)
     const camera = await helper.camera(gameId, 'Tail')
     const dir = liveVideoDir(mediaRoot, camera.videoId)
-    const remote = join(scratch, 'space', 'videos', camera.videoId)
+    const { space_secret: spaceSecret } = await database.db
+      .selectFrom('videos')
+      .select('space_secret')
+      .where('id', '=', camera.videoId)
+      .executeTakeFirstOrThrow()
+    const remote = join(
+      scratch,
+      'space',
+      videoPrefix({ id: camera.videoId, spaceSecret })
+    )
+    // Stills stay under the id alone.
+    const stillsDir = join(scratch, 'space', 'videos', camera.videoId, 'stills')
 
     const publish = (): Proc => {
       const proc = track(
@@ -403,7 +415,7 @@ describe('E2E-2: sixty seconds on disk (M4)', function () {
     expect(servedNames).deep.equals(listed.segments.map(s => s.uri))
     expect(served.match(/#EXT-X-DISCONTINUITY\n/g)).length(1)
 
-    const stills = (await readdir(join(remote, 'stills'))).filter(name =>
+    const stills = (await readdir(stillsDir)).filter(name =>
       name.endsWith('.jpg')
     )
     expect(stills.length).at.least(1)
