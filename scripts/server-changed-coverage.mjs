@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -9,6 +9,27 @@ import { resolve } from 'node:path'
 // runs whatever the one before it returned: a failing test never hides the
 // changed-line figure, and the failing tests are named so each can be held
 // against the base.
+//
+// `--base <ref>` measures against that ref instead, as `changed-line-check.cjs`
+// takes it: for a branch built on another that has not merged yet. Without
+// it, the lines are those since `git merge-base origin/master HEAD`.
+const args = process.argv.slice(2)
+let base
+for (let index = 0; index < args.length; index++) {
+  if (args[index] === '--base' && args[index + 1] != null) base = args[++index]
+  else {
+    console.error('usage: server-changed-coverage.mjs [--base <ref>]')
+    process.exit(2)
+  }
+}
+const since = execFileSync(
+  'git',
+  base == null
+    ? ['merge-base', 'origin/master', 'HEAD']
+    : ['rev-parse', '--verify', `${base}^{commit}`],
+  { encoding: 'utf8' }
+).trim()
+
 const report = resolve('coverage/changedServer')
 const temp = resolve(report, 'tmp')
 rmSync(report, { recursive: true, force: true })
@@ -66,10 +87,14 @@ const coverage = spawnSync(
   { stdio: 'inherit' }
 )
 
+console.log(
+  `\nChanged lines since ${since} (${base ?? 'merge-base of origin/master'})`
+)
 const check = spawnSync(
   'node',
   [
     'scripts/changed-line-check.cjs',
+    ...(base == null ? [] : ['--base', base]),
     '--coverage',
     resolve(report, 'coverage-final.json'),
     '--ext',
@@ -88,7 +113,7 @@ const check = spawnSync(
 )
 
 if (failing.length > 0) {
-  console.log('\nFailing tests (hold each against origin/master):')
+  console.log(`\nFailing tests (hold each against ${base ?? 'origin/master'}):`)
   for (const name of failing) console.log(`  - ${name}`)
 }
 if (coverage.status !== 0) process.exit(coverage.status ?? 1)

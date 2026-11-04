@@ -219,6 +219,32 @@ for (const transport of [postgresTransport(), valkeyTransport()]) {
       expect(chat.payloads).deep.equals(['a chat'])
     })
 
+    it('gives live_changes payloads unchanged, and only to their own channel', async function () {
+      const { feed, notify } = await fresh()
+      const live = hearer()
+      const games = hearer()
+      await Promise.all([
+        feed.subscribe('live_changes', live).listening,
+        feed.subscribe('game_changes', games).listening
+      ])
+      // As the triggers write them: a stream with and without its video, a
+      // video, a game, ids with the characters a video id can hold.
+      const sent = [
+        '{"s" : "liv_a-b_c", "v" : "vid_Ab-9_zZ"}',
+        '{"s" : "liv_d", "v" : null}',
+        '{"v" : "vid_-_-"}',
+        '{"g" : "gam_x"}'
+      ]
+      for (const payload of sent) await notify('live_changes', payload)
+      await notify('game_changes', 'a game')
+      await until(
+        () => live.payloads.length === 4 && games.payloads.length === 1,
+        'every notice'
+      )
+      expect(live.payloads).deep.equals(sent)
+      expect(games.payloads).deep.equals(['a game'])
+    })
+
     it('tells each handler once after a loss, says true to one who came during it, and hears again', async function () {
       const { feed, notify, outage } = await fresh()
       const games = hearer()
