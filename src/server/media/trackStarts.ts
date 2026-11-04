@@ -238,13 +238,23 @@ export function soundStepProblem(
  * playlist of segments and a recording's single-file playlist read the same.
  */
 export async function checkTrackStarts(
-  playlistPath: string
+  playlistPath: string,
+  options: {
+    /**
+     * Reads a whole piece; the disk by default. A live close passes one that
+     * reads a piece the disk no longer holds from the Space.
+     */
+    readPart?: (path: string) => Promise<Uint8Array>
+  } = {}
 ): Promise<SoundPlacement | undefined> {
   const playlist = await readFile(playlistPath, 'utf8')
   const dir = dirname(playlistPath)
   const map = /#EXT-X-MAP:.*URI="([^"]+)"/.exec(playlist)?.[1]
   if (map == null) return undefined
-  const moov = await firstBox(join(dir, map), 'moov')
+  const moov =
+    options.readPart == null
+      ? await firstBox(join(dir, map), 'moov')
+      : childBox(bufferOf(await options.readPart(join(dir, map))), 'moov')
   if (moov == null) return undefined
   const tracks = readTracks(moov)
   // A single-file recording names the same file once per byte range; it is
@@ -259,14 +269,29 @@ export async function checkTrackStarts(
   ]
   return await placeSound(
     tracks,
-    moofsOf(segments.map(name => join(dir, name)))
+    moofsOf(
+      segments.map(name => join(dir, name)),
+      options.readPart
+    )
   )
 }
 
-async function* moofsOf(paths: string[]): AsyncGenerator<Buffer> {
+async function* moofsOf(
+  paths: string[],
+  read?: (path: string) => Promise<Uint8Array>
+): AsyncGenerator<Buffer> {
   for (const path of paths) {
-    yield* boxesInFile(path, 'moof')
+    if (read == null) {
+      yield* boxesInFile(path, 'moof')
+      continue
+    }
+    for (const box of boxesIn(bufferOf(await read(path))))
+      if (box.type === 'moof') yield box.payload
   }
+}
+
+function bufferOf(bytes: Uint8Array): Buffer {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
 }
 
 async function firstBox(
