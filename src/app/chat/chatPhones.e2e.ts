@@ -38,7 +38,11 @@ import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
-import puppeteer, { type Browser, type Page } from 'puppeteer'
+import puppeteer, {
+  type Browser,
+  type ElementHandle,
+  type Page
+} from 'puppeteer'
 
 import { chatRowText } from '../../test/chatRows'
 import { readSeedTable } from '../../test/chatSeedTable'
@@ -119,15 +123,13 @@ async function browserOf(
 }
 
 /**
- * The Hawks Members row in the Chat tab's list. iOS names a row by all it
- * shows (`Hawks Members, hello 🎉, 1 unread`), so it is matched by its
- * title as the leading part of that name; Android keeps the title's own text.
+ * The Hawks Members row in the Chat tab's list. Both platforms name a row
+ * by all it shows (`Hawks Members, hello 🎉, 1 unread`), while its visible
+ * title is the team's name beside a "Team Members" pill, so it is matched by
+ * the chat's title as the leading part of that name.
  */
 function membersRow(): string {
-  return chatRowText(
-    'Hawks Members',
-    process.env.CHAT_PLATFORM === 'android' ? 'android' : 'ios'
-  )
+  return chatRowText('Hawks Members', 'ios')
 }
 
 async function bodyText(page: Page): Promise<string> {
@@ -257,8 +259,9 @@ async function p1(m: Device, run: string, shots: string): Promise<void> {
     await coach.page.goto(`${WEB}/chat/${members}`, {
       waitUntil: 'networkidle2'
     })
+    // The open chat's header names its audience ("Team Members").
     await until('Hc’s chat', async () =>
-      (await bodyText(coach.page)).includes('members') ? true : undefined
+      /members/i.test(await bodyText(coach.page)) ? true : undefined
     )
 
     const who = process.env.CHAT_P1_PERSON ?? 'N'
@@ -409,10 +412,23 @@ async function p2(m: Device, run: string, shots: string): Promise<void> {
     })
     console.log(`P2 six digits: phone ${phoneCode}, web ${webCode ?? '?'}`)
     assert.equal(webCode, phoneCode, 'The six digits differ')
-    const approve = await until(
-      'Approve',
-      async () => (await parent.page.$('[aria-label^="Approve "]')) ?? undefined
-    )
+    // The Approve a person can reach: another copy can sit beneath a panel.
+    // Page code: no syntax the test transpiler rewrites into a helper.
+    const approve = await until('Approve', async () => {
+      const handle = await parent.page.evaluateHandle(() =>
+        [...document.querySelectorAll('[aria-label^="Approve "]')].find(
+          node => {
+            const box = node.getBoundingClientRect()
+            const top = document.elementFromPoint(
+              box.x + box.width / 2,
+              box.y + box.height / 2
+            )
+            return box.width > 0 && top != null && node.contains(top)
+          }
+        )
+      )
+      return (handle.asElement() as ElementHandle | null) ?? undefined
+    })
     await approve.click()
 
     await m.assertVisible({ text: membersRow(), timeout: 60000 })
@@ -453,18 +469,37 @@ async function p4(m: Device, run: string, shots: string): Promise<void> {
     await words.scrollIntoView()
     const box = await words.boundingBox()
     assert(box != null, '“hello 🎉” is not on Hc’s screen')
+    // A desktop page offers a message's actions from its hover control.
     await coach.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-    await coach.page.mouse.down()
-    await new Promise(resolve => setTimeout(resolve, 900))
-    await coach.page.mouse.up()
-    const remove = await until('Delete for everyone', async () => {
-      for (const handle of await coach.page.$$('[role="button"]')) {
-        const said = await handle.evaluate(node => node.textContent)
-        if (said?.endsWith('Delete for everyone') === true) return handle
-      }
-      return undefined
+    const more = await until('the message hover actions', async () => {
+      const row = (
+        await words.evaluateHandle(node =>
+          node.parentElement?.closest('[data-testid^="chat-message-row-"]')
+        )
+      ).asElement() as ElementHandle | null
+      return (await row?.$('[aria-label="More message actions"]')) ?? undefined
     })
-    await remove.click()
+    await more.click()
+    // Delete, then its confirmation that it removes it for everyone.
+    const press = async (words: string): Promise<void> => {
+      const button = await until(words, async () => {
+        for (const handle of await coach.page.$$('[role="button"]')) {
+          const said = await handle.evaluate(node => node.textContent)
+          if (said?.endsWith(words) === true) return handle
+        }
+        return undefined
+      })
+      await button.click()
+    }
+    await press('Delete')
+    await until('the removal confirmation', async () =>
+      (await bodyText(coach.page)).includes(
+        'This message will be removed for everyone.'
+      )
+        ? true
+        : undefined
+    )
+    await press('Delete')
     await until('the removal on Hc’s page', async () =>
       (await bodyText(coach.page)).includes('Removed by a moderator')
         ? true
