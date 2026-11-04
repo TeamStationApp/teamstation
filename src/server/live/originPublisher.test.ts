@@ -1,14 +1,16 @@
 import { execFileSync } from 'node:child_process'
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from 'node:fs'
 import {
   mkdir,
   mkdtemp,
   readFile,
   rm,
+  stat,
   utimes,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
@@ -16,7 +18,12 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { startFakeSpace } from '../dev/fakeSpace'
 import type { ProbedStream } from '../media/ffmpeg'
 import type { SpaceSettings } from '../media/spacesHls'
-import { OriginPublisher, type OriginPublisherOptions } from './originPublisher'
+import {
+  OriginPublisher,
+  type OriginPublisherOptions,
+  type PlaylistSink
+} from './originPublisher'
+import { PlaylistTail } from './playlistTail'
 
 const header =
   '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-MAP:URI="init.mp4"\n'
@@ -26,6 +33,15 @@ const playlist = (count: number, ended = false): string =>
   Array.from({ length: count }, (_, n) => `#EXTINF:4,\n${segment(n)}\n`).join(
     ''
   ) +
+  (ended ? '#EXT-X-ENDLIST\n' : '')
+/** What `append_list` leaves after a reconnect: the old pieces, then more. */
+const reconnected = (before: number, count: number, ended = false): string =>
+  playlist(before) +
+  '#EXT-X-DISCONTINUITY\n' +
+  Array.from(
+    { length: count - before },
+    (_, n) => `#EXTINF:4,\n${segment(before + n)}\n`
+  ).join('') +
   (ended ? '#EXT-X-ENDLIST\n' : '')
 const failure = async (run: Promise<unknown>): Promise<string> => {
   try {
@@ -47,6 +63,8 @@ describe('publishing a live origin', function () {
   let notifications: ProbedStream[]
   let requests: Array<{ method: string; key: string; range?: string }>
   let final: Set<string> | undefined
+  let stats: string[]
+  let sunk: Array<{ kind: 'append' | 'replace'; text: string }>
   beforeEach(async function () {
     folder = await mkdtemp(join(tmpdir(), 'tsOriginPublisher-'))
     dir = join(folder, 'local')
@@ -74,6 +92,18 @@ describe('publishing a live origin', function () {
     )
     notifications = []
     final = undefined
+    stats = []
+    sunk = []
+    const sink: PlaylistSink = {
+      append: async (videoId, text) => {
+        expect(videoId).equals('vid_origin')
+        sunk.push({ kind: 'append', text })
+      },
+      replace: async (videoId, text) => {
+        expect(videoId).equals('vid_origin')
+        sunk.push({ kind: 'replace', text })
+      }
+    }
     options = {
       space,
       videoId: 'vid_origin',
@@ -88,7 +118,14 @@ describe('publishing a live origin', function () {
         codecTag: 'hvc1',
         width: 1280,
         height: 720
-      })
+      }),
+      playlistSink: sink,
+      files: {
+        stat: async path => {
+          stats.push(basename(path))
+          return await stat(path)
+        }
+      }
     }
   })
   afterEach(async function () {
@@ -174,19 +211,23 @@ describe('publishing a live origin', function () {
     console.log(
       'prefix after retry:\n' + (await readFile(object('index.m3u8'), 'utf8'))
     )
+    // A reconnect rewrites the init and appends; a piece before the cursor
+    // is not opened again, even when its file changed.
     await rewrite('init.mp4', 'another init segment')
     await rewrite(segment(0), 'restamped first fragment')
+    await rewrite('master.m3u8', reconnected(3, 4))
+    await writeFile(join(dir, segment(3)), 'fragment 3')
+    store.faults.set({ method: 'PUT', key: /seg000003/, status: 503 })
     requests.length = 0
-    await publisher.flush()
-    expect(puts()).deep.equals(['init.mp4', segment(0)])
-    store.faults.set({ method: 'PUT', key: /seg000000/, status: 503 })
-    await rewrite(segment(0), 'another restamped fragment')
     expect(await failure(publisher.flush())).contains('503')
+    expect(puts()).deep.equals(['init.mp4', segment(3), 'index.m3u8'])
     const held = await readFile(object('index.m3u8'), 'utf8')
     expect(held).contains(segment(2))
     expect(held).not.contains('#EXT-X-ENDLIST')
     store.faults.clear()
+    await rewrite('master.m3u8', reconnected(3, 4, true))
     expect((await publisher.flush()).complete).equals(true)
+    expect(await readFile(object(segment(0)), 'utf8')).equals('fragment 0')
   })
 
   it('resumes from ETags without per-segment reads or reuploads, and retains the remote prefix after a restamp', async function () {
@@ -323,6 +364,316 @@ describe('publishing a live origin', function () {
     expect(await failure(new OriginPublisher(options).flush())).contains(
       'Invalid published live segment'
     )
+  })
+
+  it('stats only the playlist file when it is unchanged and everything is published', async function () {
+    await stage(3)
+    const publisher = new OriginPublisher(options)
+    await publisher.flush()
+    stats.length = 0
+    requests.length = 0
+    const result = await publisher.flush()
+    expect(stats).deep.equals(['master.m3u8'])
+    expect(requests).length(0)
+    expect(result.body).equals(playlist(3))
+  })
+
+  it('stats the playlist, init.mp4 and only the new piece at 900, 1,800 and 2,700 acknowledged pieces', async function () {
+    this.timeout(300_000)
+    await writeFile(join(dir, 'init.mp4'), 'an init segment')
+    const publisher = new OriginPublisher(options)
+    const counts: Array<Record<string, number>> = []
+    let staged = 0
+    for (const acknowledged of [900, 1800, 2700]) {
+      for (; staged < acknowledged; staged++)
+        await writeFile(join(dir, segment(staged)), `fragment ${staged}`)
+      await writeFile(join(dir, 'master.m3u8'), playlist(acknowledged))
+      await publisher.flush()
+      expect(await readFile(object('index.m3u8'), 'utf8')).equals(
+        playlist(acknowledged)
+      )
+      // One more piece on top of the acknowledged ones.
+      await writeFile(join(dir, segment(staged)), `fragment ${staged}`)
+      await writeFile(join(dir, 'master.m3u8'), playlist(acknowledged + 1))
+      stats.length = 0
+      await publisher.flush()
+      const count: Record<string, number> = {}
+      for (const name of stats) count[name] = (count[name] ?? 0) + 1
+      console.log(
+        `${acknowledged} acknowledged pieces + 1: ${stats.length} stats ${JSON.stringify(count)}`
+      )
+      expect(count).deep.equals({
+        'master.m3u8': 1,
+        'init.mp4': 2,
+        [segment(acknowledged)]: 4
+      })
+      counts.push(
+        Object.fromEntries(
+          Object.entries(count).map(([name, n]) => [
+            name.startsWith('seg') ? 'new piece' : name,
+            n
+          ])
+        )
+      )
+      staged++
+    }
+    expect(counts[1]).deep.equals(counts[0])
+    expect(counts[2]).deep.equals(counts[0])
+  })
+
+  it('reads only the bytes a playlist added since the last flush, the same at 100 pieces as at 2,700', async function () {
+    this.timeout(300_000)
+    await writeFile(join(dir, 'init.mp4'), 'an init segment')
+    let calls: Record<string, number> = {}
+    const count = (call: string): void => {
+      calls[call] = (calls[call] ?? 0) + 1
+    }
+    const reader = new PlaylistTail(join(dir, 'master.m3u8'), {
+      readFileSync: path => {
+        count('readFileSync')
+        return readFileSync(path)
+      },
+      openSync: (path, flags) => {
+        count('openSync')
+        return openSync(path, flags)
+      },
+      fstatSync: fd => {
+        count('fstatSync')
+        return fstatSync(fd)
+      },
+      readSync: (fd, buffer, offset, length, position) => {
+        count('readSync')
+        return readSync(fd, buffer, offset, length, position)
+      },
+      closeSync: fd => {
+        count('closeSync')
+        closeSync(fd)
+      }
+    })
+    const publisher = new OriginPublisher({ ...options, playlist: reader })
+    const measured: Array<{ bytes: number; calls: Record<string, number> }> = []
+    let staged = 0
+    for (const pieces of [100, 2700]) {
+      for (; staged < pieces; staged++)
+        await writeFile(join(dir, segment(staged)), `fragment ${staged}`)
+      await writeFile(join(dir, 'master.m3u8'), playlist(pieces))
+      await publisher.flush()
+      // The writer adds one piece, and writes the playlist again whole.
+      await writeFile(join(dir, segment(staged)), `fragment ${staged}`)
+      staged++
+      await writeFile(join(dir, 'master.m3u8'), playlist(pieces + 1))
+      calls = {}
+      const before = reader.bytesRead
+      sunk.length = 0
+      await publisher.flush()
+      const bytes = reader.bytesRead - before
+      console.log(
+        `${pieces} pieces + 1: read ${bytes} bytes of ${playlist(pieces + 1).length}, ${JSON.stringify(calls)}`
+      )
+      expect(await readFile(object('index.m3u8'), 'utf8')).equals(
+        playlist(pieces + 1)
+      )
+      expect(sunk).deep.equals([
+        { kind: 'append', text: `#EXTINF:4,\n${segment(pieces)}\n` }
+      ])
+      // The first and last kilobyte before the old end, and the new piece.
+      expect(bytes).equals(2048 + `#EXTINF:4,\n${segment(pieces)}\n`.length)
+      measured.push({ bytes, calls: { ...calls } })
+    }
+    expect(measured[0].calls).deep.equals({
+      openSync: 1,
+      fstatSync: 1,
+      readSync: 2,
+      closeSync: 1
+    })
+    expect(measured[1]).deep.equals(measured[0])
+  })
+
+  it('holds every piece by sequence number across the flushes of a growing recording, so no playlist body stays alive', async function () {
+    // A piece's name parsed out of a playlist body is a slice of that body,
+    // and a slice keeps the whole body it was cut from. Names kept across
+    // flushes kept every body the recording had: n²/2 lines at n pieces.
+    this.timeout(120_000)
+    await writeFile(join(dir, 'init.mp4'), 'an init segment')
+    const pieces = 120
+    const publisher = new OriginPublisher(options)
+    for (let n = 0; n < pieces; n++) {
+      await writeFile(join(dir, segment(n)), `fragment ${n}`)
+      await writeFile(join(dir, 'master.m3u8'), playlist(n + 1))
+      await publisher.flush()
+    }
+    expect(await readFile(object('index.m3u8'), 'utf8')).equals(
+      playlist(pieces)
+    )
+    interface Held {
+      acknowledged: Map<unknown, unknown>
+      published: Set<unknown>
+      cursor: number
+      cursorNumber?: unknown
+    }
+    const keys = (held: Held): unknown[] => [
+      ...held.acknowledged.keys(),
+      ...held.published,
+      held.cursorNumber
+    ]
+    const held = publisher as unknown as Held
+    expect(held.published.size).equals(pieces)
+    expect(held.acknowledged.size).equals(pieces + 1)
+    expect(held.cursor).equals(pieces)
+    expect(held.cursorNumber).equals(pieces - 1)
+    expect(keys(held).filter(key => typeof key !== 'number')).deep.equals([])
+    // A restart seeds them from the published body it reads back.
+    const restarted = new OriginPublisher(options)
+    await restarted.flush()
+    const seeded = restarted as unknown as Held
+    expect(seeded.published.size).equals(pieces)
+    expect(keys(seeded).filter(key => typeof key !== 'number')).deep.equals([])
+  })
+
+  it('uploads again a piece rewritten after acknowledgement while it is after the cursor', async function () {
+    await stage(3)
+    store.faults.set({ method: 'PUT', key: /seg000002/, delayMs: 100 })
+    const arrived = new Promise<void>(resolve =>
+      store.server.on('request', req => {
+        if (req.method === 'PUT' && req.url!.includes('seg000002')) resolve()
+      })
+    )
+    const publisher = new OriginPublisher(options)
+    const flushing = publisher.flush()
+    await arrived
+    // seg000001 is already acknowledged; the cursor stops before it.
+    await rewrite(segment(1), 'changed  1')
+    await flushing
+    store.faults.clear()
+    expect(await readFile(object('index.m3u8'), 'utf8')).equals(playlist(1))
+    requests.length = 0
+    stats.length = 0
+    await publisher.flush()
+    expect(puts()).deep.equals([segment(1), 'index.m3u8'])
+    expect(stats).not.contains(segment(0))
+    expect(await readFile(object(segment(1)), 'utf8')).equals('changed  1')
+    expect(await readFile(object('index.m3u8'), 'utf8')).equals(playlist(3))
+  })
+
+  it('uploads no empty init or piece, and fails no flush over one, until it has bytes', async function () {
+    await stage(2)
+    await writeFile(join(dir, 'init.mp4'), '')
+    const publisher = new OriginPublisher(options)
+    expect(await publisher.flush()).deep.equals({ complete: false })
+    expect(puts()).deep.equals([])
+    await rewrite('init.mp4', 'an init segment')
+    await rewrite(segment(1), '')
+    await publisher.flush()
+    expect(puts()).deep.equals([
+      'init.mp4',
+      segment(0),
+      'index.m3u8',
+      'master.m3u8'
+    ])
+    expect(await readFile(object('index.m3u8'), 'utf8')).equals(playlist(1))
+    requests.length = 0
+    await rewrite(segment(1), 'fragment 1')
+    await publisher.flush()
+    expect(puts()).deep.equals([segment(1), 'index.m3u8'])
+    expect(await readFile(object('index.m3u8'), 'utf8')).equals(playlist(2))
+  })
+
+  it('keeps a piece the writer may still move after the cursor until it settles', async function () {
+    await stage(3)
+    let movable = new Set([segment(1), segment(2)])
+    options.mayMove = name => movable.has(name)
+    const publisher = new OriginPublisher(options)
+    await publisher.flush()
+    expect(await readFile(object('index.m3u8'), 'utf8')).equals(playlist(3))
+    // Placing the writer moves its pieces with no change to the playlist.
+    await rewrite(segment(1), 'placed  1')
+    movable = new Set()
+    requests.length = 0
+    stats.length = 0
+    await publisher.flush()
+    expect(puts()).deep.equals([segment(1)])
+    expect(stats).not.contains(segment(0))
+    expect(await readFile(object(segment(1)), 'utf8')).equals('placed  1')
+    stats.length = 0
+    await publisher.flush()
+    expect(stats).deep.equals(['master.m3u8'])
+  })
+
+  it("uploads a reconnect's rewritten init.mp4 before any piece after the cursor", async function () {
+    await stage(3)
+    const publisher = new OriginPublisher(options)
+    await publisher.flush()
+    await rewrite('init.mp4', 'a reconnected init')
+    await writeFile(join(dir, segment(3)), 'fragment 3')
+    await writeFile(join(dir, segment(4)), 'fragment 4')
+    await rewrite('master.m3u8', reconnected(3, 5))
+    requests.length = 0
+    stats.length = 0
+    await publisher.flush()
+    expect(puts()).deep.equals([
+      'init.mp4',
+      segment(3),
+      segment(4),
+      'index.m3u8'
+    ])
+    for (const n of [0, 1, 2]) expect(stats).not.contains(segment(n))
+    expect(await readFile(object('init.mp4'), 'utf8')).equals(
+      'a reconnected init'
+    )
+    expect(await readFile(object('index.m3u8'), 'utf8')).equals(
+      reconnected(3, 5)
+    )
+  })
+
+  it('hands the sink suffixes that add up to the published body, and a replacement for a body that does not extend', async function () {
+    const publisher = new OriginPublisher(options)
+    await stage(1)
+    await publisher.flush()
+    for (const [count, ended] of [
+      [2, false],
+      [3, true]
+    ] as const) {
+      await writeFile(join(dir, segment(count - 1)), `fragment ${count - 1}`)
+      await rewrite('master.m3u8', playlist(count, ended))
+      await publisher.flush()
+    }
+    expect(sunk.map(call => call.kind)).deep.equals([
+      'replace',
+      'append',
+      'append'
+    ])
+    const published = await readFile(object('index.m3u8'), 'utf8')
+    expect(published).equals(playlist(3, true))
+    expect(sunk.map(call => call.text).join('')).equals(published)
+    // Reopened after its end: the new body drops #EXT-X-ENDLIST.
+    await writeFile(join(dir, segment(3)), 'fragment 3')
+    await rewrite('master.m3u8', reconnected(3, 4))
+    await publisher.flush()
+    expect(sunk.at(-1)).deep.equals({
+      kind: 'replace',
+      text: await readFile(object('index.m3u8'), 'utf8')
+    })
+    await writeFile(join(dir, segment(4)), 'fragment 4')
+    await rewrite('master.m3u8', reconnected(3, 5))
+    await publisher.flush()
+    expect(sunk.at(-1)?.kind).equals('append')
+    expect(
+      sunk
+        .slice(-2)
+        .map(call => call.text)
+        .join('')
+    ).equals(await readFile(object('index.m3u8'), 'utf8'))
+    // A publisher without a sink publishes the same, into the no-op sink.
+    delete options.playlistSink
+    delete options.files
+    const plain = new OriginPublisher({
+      ...options,
+      videoId: 'vid_plain'
+    })
+    await plain.flush()
+    expect(
+      await readFile(join(remote, 'videos/vid_plain/index.m3u8'), 'utf8')
+    ).equals(reconnected(3, 5))
   })
 
   it('probes real fragments and writes their exact codec and resolution', async function () {

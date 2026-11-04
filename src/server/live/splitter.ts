@@ -1,11 +1,12 @@
 import type { ChildProcess } from 'child_process'
 import { spawn } from 'child_process'
 import type { FSWatcher } from 'fs'
-import { readdirSync, readFileSync, watch, writeFileSync } from 'fs'
+import { readdirSync, readFileSync, statSync, watch, writeFileSync } from 'fs'
 import type { Server } from 'net'
 
 import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
 import { segmentPictureSec } from '../media/trackStarts'
+import { playlistTail, type PlaylistView } from './playlistTail'
 import {
   firstProgramDateMs,
   type FrameWall,
@@ -294,6 +295,8 @@ interface OutputRuntime {
   placement?: WriterPlacement
   /** First number owned by the writer being prepared or currently running. */
   firstSegmentNumber?: number
+  /** What `finalSegments` last answered, and what that answer rested on. */
+  finalRead?: FinalRead
   /** Stops watching for those segments, after moving the last one. */
   stopStamp?: () => void
 }
@@ -337,6 +340,21 @@ interface WriterPlacement {
   settled: boolean
   /** The segments this writer has stamped, all at `offsetSec`. */
   stamped: Set<string>
+}
+
+/**
+ * The playlist's size and modification time when `finalSegments` last read
+ * it, the writer and placement it judged by, and its answer. While none of
+ * them has changed the answer stands, and the playlist is not read again.
+ */
+interface FinalRead {
+  size: number
+  mtimeMs: number
+  first: number
+  placement: WriterPlacement | undefined
+  /** `placement.stamped` only grows, so its size says whether it changed. */
+  stamped: number
+  names: FinalPieces
 }
 
 interface IngressRuntime {
@@ -2406,10 +2424,15 @@ export function ingestPort(): number | undefined {
     : undefined
 }
 
-/** Listed fragments that the current writer has placed on the timeline. */
-export function finalSegments(
-  liveStreamId: string
-): ReadonlySet<string> | undefined {
+/**
+ * Listed fragments that the current writer has placed on the timeline.
+ *
+ * The uploader asks on every tick, for every stream. One `stat` answers while
+ * the playlist, the writer and its placement are as they were at the last
+ * read; a change reads only what the playlist added (`playlistTail`), and the
+ * answer is a view of it, so no change costs more late in a game than early.
+ */
+export function finalSegments(liveStreamId: string): FinalPieces | undefined {
   const entry = [...entries.values()].find(
     entry => entry.liveStreamId === liveStreamId
   )
@@ -2421,16 +2444,122 @@ export function finalSegments(
   )
     return undefined
   const first = output.firstSegmentNumber ?? 0
-  return new Set(
-    listedSegments(readPlaylist(entry.hlsDir) ?? '')
-      .filter(
-        segment =>
-          first === 0 ||
-          Number(segment.name.slice(3, -4)) < first ||
-          output.placement?.stamped.has(segment.name) === true
-      )
-      .map(segment => segment.name)
+  const placement = output.placement
+  const stamped = placement?.stamped.size ?? 0
+  let info: { size: number; mtimeMs: number } | undefined
+  try {
+    info = statSync(`${entry.hlsDir}/${LIVE_PLAYLIST_NAME}`)
+  } catch {
+    info = undefined
+  }
+  const held = output.finalRead
+  if (
+    info != null &&
+    held?.size === info.size &&
+    held.mtimeMs === info.mtimeMs &&
+    held.first === first &&
+    held.placement === placement &&
+    held.stamped === stamped
   )
+    return held.names
+  // Read after the stat: a playlist written in between is newer than the
+  // stamp held for it, so the next call reads it again.
+  let view: PlaylistView | undefined
+  try {
+    view = playlistTail(`${entry.hlsDir}/${LIVE_PLAYLIST_NAME}`).read()
+  } catch {
+    view = undefined
+  }
+  const names = new FinalPieces(
+    view,
+    first,
+    placement == null ? undefined : stampedOrder(placement),
+    stamped
+  )
+  output.finalRead =
+    info == null
+      ? undefined
+      : {
+          size: info.size,
+          mtimeMs: info.mtimeMs,
+          first,
+          placement,
+          stamped,
+          names
+        }
+  return names
+}
+
+/**
+ * The order `placement.stamped` took each name in, read on from where it was
+ * last read: the set only grows, and its iterator goes on to the names added
+ * after it was made, so long as it is never run to its end.
+ */
+const stampOrders = new WeakMap<
+  WriterPlacement,
+  { names: Iterator<string>; order: Map<string, number> }
+>()
+
+function stampedOrder(placement: WriterPlacement): ReadonlyMap<string, number> {
+  let held = stampOrders.get(placement)
+  if (held == null) {
+    held = { names: placement.stamped.values(), order: new Map() }
+    stampOrders.set(placement, held)
+  }
+  while (held.order.size < placement.stamped.size) {
+    const next = held.names.next()
+    if (next.done === true) break
+    held.order.set(next.value, held.order.size)
+  }
+  return held.order
+}
+
+/**
+ * The listed pieces a writer had placed when `finalSegments` was asked: those
+ * of an earlier writer (numbered below `first`), and those this one had
+ * stamped by then, or every one for a first writer. Asking costs the same
+ * however long the playlist is, and the answer stays what it was when given.
+ */
+export class FinalPieces implements Iterable<string> {
+  constructor(
+    private readonly view: PlaylistView | undefined,
+    private readonly first: number,
+    private readonly stampOrder: ReadonlyMap<string, number> | undefined,
+    private readonly stamped: number
+  ) {}
+
+  has(name: string): boolean {
+    if (this.view?.listedAt(name) == null) return false
+    if (this.first === 0 || Number(name.slice(3, -4)) < this.first) return true
+    const at = this.stampOrder?.get(name)
+    return at != null && at < this.stamped
+  }
+
+  *[Symbol.iterator](): Iterator<string> {
+    const view = this.view
+    if (view == null) return
+    for (let index = 0; index < view.listedCount; index++) {
+      const { name } = view.listed(index)
+      if (view.listedAt(name) === index && this.has(name)) yield name
+    }
+  }
+}
+
+/**
+ * Listed fragments a continuing writer stamped before its frame wall clocks
+ * placed it. Placing it moves them (`restampSegments`) after they may have
+ * been uploaded, so an uploader must keep checking them until then.
+ */
+export function movableSegments(liveStreamId: string): ReadonlySet<string> {
+  const entry = [...entries.values()].find(
+    entry => entry.liveStreamId === liveStreamId
+  )
+  const placement = entry?.outputs.find(
+    output => output.kind === 'hls'
+  )?.placement
+  return placement == null || !placement.continuing || placement.settled
+    ? new Set()
+    : new Set(placement.stamped)
 }
 
 /**
