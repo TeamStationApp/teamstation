@@ -12,6 +12,7 @@ import {
   MAX_GRANTS,
   postGrants
 } from '../chat/epochs'
+import { asEpochMode } from '../chat/historyValidation'
 import { chatCaller } from '../chat/keys'
 import { memberNow } from '../chat/reconciler'
 import { asBase64urlBytes } from '../chat/wire'
@@ -44,6 +45,7 @@ const asPreviousKeyBoxOrNull: Cleaner<Uint8Array | null> = raw =>
   raw == null ? null : asPreviousKeyBox(raw)
 
 const asEpochBody = asObject({
+  mode: asEpochMode,
   epoch: asEpochNumber,
   previousKeyBox: asPreviousKeyBoxOrNull,
   signature: asSignature,
@@ -103,7 +105,8 @@ const asGrantsBody = asObject({
  */
 export function chatEpochRoutes(
   db: Kysely<Database>,
-  clock: () => Date = () => new Date()
+  clock: () => Date = () => new Date(),
+  options: { freshEpochsEnabled?: () => boolean } = {}
 ): Router {
   const router = Router()
 
@@ -137,7 +140,14 @@ export function chatEpochRoutes(
       const id = pathParam(req.params.conversationId)
       await mustBeMember(id, caller.userId)
       const body = cleanBody(asEpochBody, req.body)
-      const made = await createEpoch(db, caller, id, body, clock())
+      const made = await createEpoch(
+        db,
+        caller,
+        id,
+        body,
+        clock(),
+        options.freshEpochsEnabled?.() ?? false
+      )
       setAudit(res.locals, {
         entityType: 'chatEpoch',
         entityId: `${id}:${made.epoch}`,

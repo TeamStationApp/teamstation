@@ -4,8 +4,9 @@ import { verifyEpoch } from '../../common/chatCrypto/chain'
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
 import type { ChatKind, Database } from '../db/database'
 import { isEligible } from './audiences'
+import { approveHistoryAccess, ensureHistoryAccess } from './historyAccess'
 import { type ChatCaller, requireHolder } from './keys'
-import { isApprover } from './listing'
+import { isApprover, moderatorsOf } from './listing'
 import { notifyChat, openGrantRequests } from './membershipLog'
 import { b64 } from './wire'
 
@@ -47,6 +48,7 @@ export interface EpochBox {
 }
 
 export interface EpochBody {
+  mode?: 'continue' | 'fresh'
   epoch: number
   previousKeyBox: Uint8Array | null
   signature: Uint8Array
@@ -324,7 +326,8 @@ export async function createEpoch(
   caller: ChatCaller,
   conversationId: string,
   body: EpochBody,
-  now: Date
+  now: Date,
+  freshEnabled = false
 ): Promise<{
   epoch: number
   chainBreak: boolean
@@ -353,7 +356,26 @@ export async function createEpoch(
     }
     const standings = await standingsOf(trx, conversationId)
     const holders = await holdersOf(trx, conversationId, latest)
-    const chainBreak = latest > 0 && holders.size === 0
+    const fresh = body.mode === 'fresh'
+    if (fresh) {
+      if (!freshEnabled)
+        throw conflict('Fresh chat encryption is disabled', {
+          reason: 'freshDisabled'
+        })
+      if (latest === 0 || holders.has(caller.userId))
+        throw conflict('Refresh this device’s existing keys', {
+          reason: 'repairRequired'
+        })
+      if (
+        !(await isEligible(trx, caller.userId, now)) ||
+        (conversation.kind === 'seasonAnnouncements' &&
+          !(await moderatorsOf(trx, conversation, [caller.userId])).has(
+            caller.userId
+          ))
+      )
+        throw refuse('notStaff', 'This member cannot publish new messages')
+    }
+    const chainBreak = latest > 0 && (holders.size === 0 || fresh)
     if (latest === 0) {
       if (body.previousKeyBox != null) {
         throw badRequest('The first epoch has no previous key', {
@@ -408,6 +430,7 @@ export async function createEpoch(
       )
     }
 
+    await ensureHistoryAccess(trx, conversationId)
     if (chainBreak) {
       await trx
         .updateTable('chat_grant_requests')
@@ -607,6 +630,7 @@ export async function postGrants(
     for (const id of ids) {
       const conversation = await lockConversation(trx, id)
       if (!(await isMember(trx, id, caller.userId))) throw notFound()
+      await ensureHistoryAccess(trx, id)
       const latest = await latestEpoch(trx, id)
       const held = await trx
         .selectFrom('chat_epoch_boxes')
@@ -696,6 +720,15 @@ export async function postGrants(
           )
         }
       }
+      if (request.identity_reset)
+        await approveHistoryAccess(
+          trx,
+          box.conversationId,
+          box.userId,
+          box.identityId,
+          caller.userId,
+          now
+        )
       await trx
         .insertInto('chat_epoch_boxes')
         .values({
