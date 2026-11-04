@@ -1,16 +1,19 @@
+import { videoKey, type VideoPath } from '../media/videoPrefix'
+
 /** Object names emitted by the live writer; temporary files are never public. */
 export function isSegmentName(name: string): boolean {
   return /^seg\d{6,}\.m4s$/.test(name)
 }
 
-export function objectKey(videoId: string, name: string): string {
+/** A live object's key, under the video's prefix (`videoPrefix`). */
+export function objectKey(video: VideoPath, name: string): string {
   if (
-    !/^[a-zA-Z0-9_-]+$/.test(videoId) ||
+    !/^[a-zA-Z0-9_-]+$/.test(video.id) ||
     (!isSegmentName(name) &&
       !['init.mp4', 'index.m3u8', 'master.m3u8'].includes(name))
   )
     throw new Error('Invalid live object name')
-  return `videos/${videoId}/${name}`
+  return videoKey(video, name)
 }
 
 /**

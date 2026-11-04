@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import type { VideoPath } from '../media/videoPrefix'
 import { isSegmentName, objectKey, publishedPlaylist } from './originPublish'
 
 const header =
@@ -11,6 +12,9 @@ const third =
   '#EXT-X-DISCONTINUITY\n#EXTINF:2.500000,\n#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:08.000Z\nseg000002.m4s\n'
 const whole = header + first + second + third + '#EXT-X-ENDLIST\n'
 const set = (...names: string[]): Set<string> => new Set(names)
+
+/** A video on its old path, with no secret. */
+const old = (id: string): VideoPath => ({ id, spaceSecret: null })
 
 describe('the published live playlist', function () {
   it('publishes only the unbroken acknowledged prefix', function () {
@@ -87,7 +91,11 @@ describe('the published live playlist', function () {
       'seg000001.m4s',
       'seg1000000.m4s'
     ])
-      expect(objectKey('vid_one', name)).equals(`videos/vid_one/${name}`)
+      expect(objectKey(old('vid_one'), name)).equals(`videos/vid_one/${name}`)
+    const secret = '0123456789abcdef0123456789abcdef'
+    expect(
+      objectKey({ id: 'vid_one', spaceSecret: secret }, 'seg000001.m4s')
+    ).equals(`videos/vid_one-${secret}/seg000001.m4s`)
     for (const name of [
       'seg000001.m4s.tmp',
       'notes.txt',
@@ -95,12 +103,12 @@ describe('the published live playlist', function () {
       'seg1.m4s'
     ]) {
       expect(isSegmentName(name)).equals(false)
-      expect(() => objectKey('vid_one', name)).throws(
+      expect(() => objectKey(old('vid_one'), name)).throws(
         'Invalid live object name'
       )
     }
     expect(isSegmentName('seg000001.m4s')).equals(true)
-    expect(() => objectKey('../vid_one', 'init.mp4')).throws(
+    expect(() => objectKey(old('../vid_one'), 'init.mp4')).throws(
       'Invalid live object name'
     )
   })
