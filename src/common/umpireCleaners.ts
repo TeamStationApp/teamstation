@@ -109,6 +109,7 @@ export const asUmpireSchedule = asObject({
       awayTeamId: asOptional(asString),
       location: asOptional(asString),
       venue: asString,
+      field: asString,
       notes: asString,
       umpireNotes: asMap(asString),
       positions: asArray(asUmpirePosition),
@@ -116,6 +117,7 @@ export const asUmpireSchedule = asObject({
         asObject({
           userId: asString,
           name: asString,
+          displayName: asString,
           assignedBy: asString,
           canRemove: asBoolean,
           teams: asOptional(

@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { asUmpireSchedule } from '../../common/umpireCleaners'
 import {
   hardUmpireConflict,
   softUmpireConflict,
@@ -293,6 +294,86 @@ describe('umpire schedule involvement and availability', function () {
       .set({ umpire_management: true })
       .where('id', '=', f.leagueA)
       .execute()
+  })
+  it('names the registry field and the assigned umpire display name', async () => {
+    expect(asUmpireSchedule(await (await get()).json()).games[0].field).equals(
+      ''
+    )
+    await f.h.db
+      .insertInto('venues')
+      .values({
+        id: 'ven_umpire_schedule',
+        google_place_id: 'umpire-schedule-field',
+        name: 'Demo Park',
+        address: '1 Demo Way',
+        latitude: 40.05,
+        longitude: -75.18,
+        timezone: 'America/Los_Angeles'
+      })
+      .execute()
+    await f.h.db
+      .insertInto('venue_fields')
+      .values({
+        id: 'fld_umpire_schedule',
+        venue_id: 'ven_umpire_schedule',
+        name: 'North Diamond',
+        sizes: ['50/70']
+      })
+      .execute()
+    const userId = userIdOfGumbo(101)
+    await f.h.db
+      .updateTable('games')
+      .set({ field_id: 'fld_umpire_schedule', field_size: '50/70' })
+      .where('id', '=', 'gam_umpire')
+      .execute()
+    await f.h.db
+      .insertInto('umpire_assignments')
+      .values({
+        game_id: 'gam_umpire',
+        slot: 'uty_plate:1',
+        user_id: userId,
+        assigned_by: userId
+      })
+      .execute()
+    try {
+      const body = asUmpireSchedule(await (await get()).json())
+      expect(body.games[0].venue).equals('Demo Field')
+      expect(body.games[0].field).equals('North Diamond')
+      const user = await f.h.db
+        .selectFrom('users')
+        .select('display_name')
+        .where('id', '=', userId)
+        .executeTakeFirstOrThrow()
+      expect(body.games[0].assignments['uty_plate:1'].displayName).equals(
+        user.display_name
+      )
+      await f.h.db
+        .updateTable('venue_fields')
+        .set({ deleted_at: new Date() })
+        .where('id', '=', 'fld_umpire_schedule')
+        .execute()
+      expect(
+        asUmpireSchedule(await (await get()).json()).games[0].field
+      ).equals('North Diamond')
+    } finally {
+      await f.h.db
+        .deleteFrom('umpire_assignments')
+        .where('game_id', '=', 'gam_umpire')
+        .execute()
+      await f.h.db
+        .updateTable('games')
+        .set({ field_id: null, field_size: null })
+        .where('id', '=', 'gam_umpire')
+        .execute()
+      await f.h.db
+        .deleteFrom('venue_fields')
+        .where('id', '=', 'fld_umpire_schedule')
+        .execute()
+      await f.h.db
+        .deleteFrom('venues')
+        .where('id', '=', 'ven_umpire_schedule')
+        .execute()
+    }
   })
   it('omits zero needs, cancelled and withdrawn games, and keeps admin-only full visibility', async () => {
     await seedUmpireCounts(f.h.db, f.seasonA, false, 0)
