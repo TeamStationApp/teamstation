@@ -1,14 +1,21 @@
 import { expect } from 'chai'
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
-import { describe, it } from 'mocha'
+import { after, before, describe, it } from 'mocha'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
+import { startFakeSpace } from '../dev/fakeSpace'
+import { putObject } from './images'
+import type { SpaceSettings } from './spacesHls'
 import {
   contentTypeFor,
+  deleteVideoFromSpace,
   lengthFromContentRange,
+  listSpaceObjects,
+  uploadVideoDirectory,
   verifyVideoDirectory
 } from './spacesVideo'
+import { videoPrefix } from './videoPrefix'
 
 const SPACE = {
   endpoint: 'https://sfo3.digitaloceanspaces.com',
@@ -90,6 +97,7 @@ describe('a recording in the Space', function () {
       const result = await verifyVideoDirectory({
         space: SPACE,
         videoId: 'vid_test',
+        spaceSecret: null,
         dir,
         files: ['master.m3u8', 'video.m3u8', 'video.mp4'],
         fetch: honest
@@ -108,6 +116,7 @@ describe('a recording in the Space', function () {
       const result = await verifyVideoDirectory({
         space: SPACE,
         videoId: 'vid_test',
+        spaceSecret: null,
         dir,
         files: ['video.mp4'],
         fetch: fakeSpace({ size: 2047 })
@@ -126,6 +135,7 @@ describe('a recording in the Space', function () {
       const result = await verifyVideoDirectory({
         space: SPACE,
         videoId: 'vid_test',
+        spaceSecret: null,
         dir,
         files: ['master.m3u8'],
         fetch: fakeSpace({ playlist: '#EXTM3U\nsomething else\n' })
@@ -144,6 +154,7 @@ describe('a recording in the Space', function () {
       const result = await verifyVideoDirectory({
         space: SPACE,
         videoId: 'vid_test',
+        spaceSecret: null,
         dir,
         files: ['video.mp4'],
         fetch: fakeSpace({ status: 403 })
@@ -162,6 +173,7 @@ describe('a recording in the Space', function () {
       const result = await verifyVideoDirectory({
         space: SPACE,
         videoId: 'vid_test',
+        spaceSecret: null,
         dir,
         files: ['nothing-here.m4s'],
         fetch: fakeSpace({})
@@ -172,5 +184,143 @@ describe('a recording in the Space', function () {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('a video’s objects under its secret path', function () {
+  this.timeout(30000)
+  const SECRET = '0123456789abcdef0123456789abcdef'
+  const OTHER = 'fedcba9876543210fedcba9876543210'
+  let root: string
+  let fake: Awaited<ReturnType<typeof startFakeSpace>>
+  const space: SpaceSettings = {
+    endpoint: '',
+    region: 'test',
+    bucket: 'test',
+    accessKeyId: 'example',
+    secretAccessKey: 'example',
+    pathStyle: true
+  }
+  const plain = (key: string): string =>
+    `${space.endpoint}/${space.bucket}/${key}`
+  const put = async (key: string): Promise<void> => {
+    await putObject({
+      space,
+      key,
+      body: Buffer.from('x'),
+      contentType: 'video/mp4'
+    })
+  }
+
+  before(async function () {
+    root = await mkdtemp(join(tmpdir(), 'ts-secret-space-'))
+    fake = await startFakeSpace({ space, dir: root })
+    space.endpoint = fake.url
+  })
+  after(async function () {
+    fake.server.close()
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('uploads a finished recording public where its kind is, and verifies it there', async function () {
+    const dir = await stagedVideo()
+    try {
+      const video = { id: 'vid_up', spaceSecret: SECRET }
+      const uploaded = await uploadVideoDirectory({
+        space,
+        videoId: video.id,
+        spaceSecret: SECRET,
+        dir
+      })
+      expect(
+        await verifyVideoDirectory({
+          space,
+          videoId: video.id,
+          spaceSecret: SECRET,
+          dir,
+          files: uploaded.files
+        })
+      ).deep.equals({ ok: true, checked: 3 })
+      const prefix = videoPrefix(video)
+      const recording = await fetch(plain(`${prefix}video.mp4`))
+      expect(recording.status).equals(200)
+      expect(recording.headers.get('cache-control')).equals(
+        'public, max-age=600'
+      )
+      expect((await fetch(plain(`${prefix}video.m3u8`))).status).equals(403)
+      expect((await fetch(plain(`${prefix}master.m3u8`))).status).equals(403)
+
+      // With no secret: the old path, every object private.
+      await uploadVideoDirectory({
+        space,
+        videoId: 'vid_up',
+        spaceSecret: null,
+        dir,
+        files: ['video.mp4']
+      })
+      const old = await fetch(plain('videos/vid_up/video.mp4'))
+      expect(old.status).equals(403)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('deletes both of a video’s prefixes, and leaves a video whose id shares them', async function () {
+    await put(`videos/vid_a-${SECRET}/seg000000.m4s`)
+    await put('videos/vid_a/stills/3.jpg')
+    await put(`videos/vid_a-b-${OTHER}/seg000000.m4s`)
+    await put('videos/vid_a-b/stills/3.jpg')
+    expect(
+      await deleteVideoFromSpace({
+        space,
+        videoId: 'vid_a',
+        spaceSecret: SECRET
+      })
+    ).deep.equals({ deleted: 2 })
+    expect(await listSpaceObjects(space, 'videos/vid_a')).deep.equals([
+      `videos/vid_a-b-${OTHER}/seg000000.m4s`,
+      'videos/vid_a-b/stills/3.jpg'
+    ])
+    await deleteVideoFromSpace({
+      space,
+      videoId: 'vid_a-b',
+      spaceSecret: OTHER
+    })
+  })
+
+  it('finds a secret prefix nobody holds the secret of, by listing, exactly', async function () {
+    await put(`videos/vid_a-${SECRET}/seg000000.m4s`)
+    await put(`videos/vid_a-${OTHER}/init.mp4`)
+    await put('videos/vid_a/stills/3.jpg')
+    await put(`videos/vid_a-b-${OTHER}/seg000000.m4s`)
+    await put(`videos/vid_a-${SECRET}x/seg000000.m4s`)
+    expect(
+      await deleteVideoFromSpace({
+        space,
+        videoId: 'vid_a',
+        spaceSecret: undefined
+      })
+    ).deep.equals({ deleted: 3 })
+    expect(await listSpaceObjects(space, 'videos/vid_a')).deep.equals([
+      `videos/vid_a-${SECRET}x/seg000000.m4s`,
+      `videos/vid_a-b-${OTHER}/seg000000.m4s`
+    ])
+  })
+
+  it('deletes a video with no secret, and the copies a stopped move left under a secret prefix', async function () {
+    await put('videos/vid_c/video.mp4')
+    await put(`videos/vid_c-${SECRET}/video.mp4`)
+    await put(`videos/vid_c-d-${OTHER}/video.mp4`)
+    expect(
+      await deleteVideoFromSpace({ space, videoId: 'vid_c', spaceSecret: null })
+    ).deep.equals({ deleted: 2 })
+    expect(await listSpaceObjects(space, 'videos/vid_c')).deep.equals([
+      `videos/vid_c-d-${OTHER}/video.mp4`
+    ])
+    await deleteVideoFromSpace({
+      space,
+      videoId: 'vid_c-d',
+      spaceSecret: OTHER
+    })
   })
 })

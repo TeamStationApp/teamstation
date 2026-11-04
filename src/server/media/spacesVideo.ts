@@ -5,6 +5,12 @@ import { join } from 'node:path'
 import { putObjectFile } from './images'
 import { presignGetUrl } from './presign'
 import { spaceConfigured, spaceKey, type SpaceSettings } from './spacesHls'
+import {
+  isSecretKeyOf,
+  oldVideoPrefix,
+  uploadHeadersFor,
+  videoPrefix
+} from './videoPrefix'
 
 /**
  * Putting a finished recording in the Space, and proving it arrived.
@@ -40,6 +46,8 @@ export interface UploadedVideo {
 export async function uploadVideoDirectory(options: {
   space: SpaceSettings
   videoId: string
+  /** Under `videos/<id>-<secret>/`, public where its kind is; null for `videos/<id>/`. */
+  spaceSecret: string | null
   dir: string
   /**
    * Which files. Given by name because the directory holds more than the
@@ -49,7 +57,8 @@ export async function uploadVideoDirectory(options: {
    */
   files?: string[]
 }): Promise<UploadedVideo> {
-  const { space, videoId, dir } = options
+  const { space, dir } = options
+  const video = { id: options.videoId, spaceSecret: options.spaceSecret }
   if (!spaceConfigured(space)) throw new Error('No Space is configured')
 
   const names = (
@@ -62,9 +71,10 @@ export async function uploadVideoDirectory(options: {
     if (!info.isFile()) continue
     await putObjectFile({
       space,
-      key: spaceKey(videoId, name),
+      key: spaceKey(video, name),
       path,
-      contentType: contentTypeFor(name)
+      contentType: contentTypeFor(name),
+      ...uploadHeadersFor(video.spaceSecret, name)
     })
     bytes += info.size
   }
@@ -85,12 +95,14 @@ export type VerifyResult =
 export async function verifyVideoDirectory(options: {
   space: SpaceSettings
   videoId: string
+  spaceSecret: string | null
   dir: string
   files: string[]
   expiresSec?: number
   fetch?: typeof fetch
 }): Promise<VerifyResult> {
-  const { space, videoId, dir, files } = options
+  const { space, dir, files } = options
+  const video = { id: options.videoId, spaceSecret: options.spaceSecret }
   const doFetch = options.fetch ?? globalThis.fetch
   const expiresSec = options.expiresSec ?? 300
 
@@ -104,7 +116,7 @@ export async function verifyVideoDirectory(options: {
 
     const url = presignGetUrl({
       ...space,
-      key: spaceKey(videoId, name),
+      key: spaceKey(video, name),
       expiresSec
     })
 
@@ -126,7 +138,7 @@ export async function verifyVideoDirectory(options: {
 
     const result = await verifyObjectLength({
       space,
-      key: spaceKey(videoId, name),
+      key: spaceKey(video, name),
       size: local.size,
       expiresSec,
       fetch: doFetch
@@ -291,7 +303,18 @@ function decodeXml(value: string): string {
 }
 
 /**
- * Removes everything the Space holds for one video.
+ * Removes everything the Space holds for one video: its secret prefix
+ * `videos/<id>-<secret>/` and its old one `videos/<id>/`, which holds its
+ * stills (and, before the move, its media). The trailing slash keeps the
+ * second from matching the first.
+ *
+ * `spaceSecret` is the row's: null for a video with none, undefined for one
+ * whose row has gone and whose secret nobody holds. Without a secret,
+ * `videos/<id>-` is listed and only keys whose second segment is exactly
+ * `<id>-` and 32 hex characters are taken, since another video's id can start
+ * with this one's. A video with no secret can still have them: a move that
+ * copied its objects and stopped before storing the secret left public copies
+ * that nothing else will ever find.
  *
  * Individual signed deletes with bounded concurrency avoid a separate signed
  * batch-payload implementation while keeping large fragment sets practical.
@@ -299,8 +322,18 @@ function decodeXml(value: string): string {
 export async function deleteVideoFromSpace(options: {
   space: SpaceSettings
   videoId: string
+  spaceSecret: string | null | undefined
 }): Promise<{ deleted: number }> {
-  return await deleteSpacePrefix(options.space, `videos/${options.videoId}/`)
+  const { space, videoId, spaceSecret } = options
+  const secretKeys =
+    spaceSecret == null
+      ? (await listSpaceObjects(space, `videos/${videoId}-`)).filter(key =>
+          isSecretKeyOf(videoId, key)
+        )
+      : await listSpaceObjects(space, videoPrefix({ id: videoId, spaceSecret }))
+  const fromSecret = await deleteSpaceKeys(space, secretKeys)
+  const fromOld = await deleteSpacePrefix(space, oldVideoPrefix(videoId))
+  return { deleted: fromSecret.deleted + fromOld.deleted }
 }
 
 /** Removes a prefix with at most 32 requests in flight, draining before failure. */
@@ -308,7 +341,14 @@ export async function deleteSpacePrefix(
   space: SpaceSettings,
   prefix: string
 ): Promise<{ deleted: number }> {
-  const keys = await listSpaceObjects(space, prefix)
+  return await deleteSpaceKeys(space, await listSpaceObjects(space, prefix))
+}
+
+/** Removes these keys with at most 32 requests in flight, draining before failure. */
+export async function deleteSpaceKeys(
+  space: SpaceSettings,
+  keys: readonly string[]
+): Promise<{ deleted: number }> {
   let deleted = 0
   let next = 0
   let failure: unknown

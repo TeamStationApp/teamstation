@@ -107,6 +107,7 @@ describe('publishing a live origin', function () {
     options = {
       space,
       videoId: 'vid_origin',
+      spaceSecret: null,
       dir,
       ffmpegPath: 'ffmpeg',
       isFinal: name => final == null || final.has(name),
@@ -144,6 +145,64 @@ describe('publishing a live origin', function () {
     for (let n = 0; n < count; n++)
       await writeFile(join(dir, segment(n)), `fragment ${n}`)
   }
+
+  it('makes pieces and init files public under a secret path, and keeps playlists private', async () => {
+    const secret = '0123456789abcdef0123456789abcdef'
+    const sent = new Map<string, { acl?: string; cache?: string }>()
+    store.server.on('request', req => {
+      if (req.method !== 'PUT') return
+      sent.set(new URL(req.url!, store.url).pathname.split('/').at(-1)!, {
+        acl: req.headers['x-amz-acl'] as string | undefined,
+        cache: req.headers['cache-control']
+      })
+    })
+    await stage(2)
+    const publisher = new OriginPublisher({ ...options, spaceSecret: secret })
+    expect((await publisher.flush()).body).contains(segment(1))
+    const piece = { acl: 'public-read', cache: 'public, max-age=600' }
+    expect(Object.fromEntries(sent)).deep.equals({
+      'init.mp4': { acl: 'public-read', cache: 'no-cache' },
+      [segment(0)]: piece,
+      [segment(1)]: piece,
+      'index.m3u8': { acl: undefined, cache: undefined },
+      'master.m3u8': { acl: undefined, cache: undefined }
+    })
+    const plain = (name: string): string =>
+      `${store.url}/test/videos/vid_origin-${secret}/${name}`
+    const unsigned = await fetch(plain(segment(1)))
+    expect(unsigned.status).equals(200)
+    expect(await unsigned.text()).equals('fragment 1')
+    expect((await fetch(plain('init.mp4'))).status).equals(200)
+    expect((await fetch(plain('index.m3u8'))).status).equals(403)
+    expect((await fetch(plain('master.m3u8'))).status).equals(403)
+    // Nothing went to the old path.
+    expect(await stat(object('init.mp4')).catch(() => undefined)).equals(
+      undefined
+    )
+    // A restarted publisher reads the secret path back and sends nothing new.
+    requests.length = 0
+    const restarted = new OriginPublisher({ ...options, spaceSecret: secret })
+    expect((await restarted.flush()).body).contains(segment(1))
+    expect(puts()).deep.equals([])
+  })
+
+  it('uploads a video with no secret on its old path, private, with no access headers', async () => {
+    const acls: Array<string | undefined> = []
+    store.server.on('request', req => {
+      if (req.method === 'PUT')
+        acls.push(
+          (req.headers['x-amz-acl'] as string | undefined) ??
+            req.headers['cache-control']
+        )
+    })
+    await stage(1)
+    await new OriginPublisher(options).flush()
+    expect(acls.length).greaterThan(0)
+    expect(acls.every(header => header == null)).equals(true)
+    expect(
+      (await fetch(`${store.url}/test/videos/vid_origin/${segment(0)}`)).status
+    ).equals(403)
+  })
 
   it('sends nothing on an unchanged tick, and nothing at all once stopped', async () => {
     await stage(100)
