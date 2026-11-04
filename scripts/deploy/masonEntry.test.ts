@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import {
   buildIos,
+  buildTv,
   compileAndroid,
   releaseIos,
   seatEnvironment,
@@ -337,6 +338,22 @@ describe('TeamStation pipeline Masonfile', () => {
       }
       publishes?: string[]
     }>
+    const tv = stages.tvos as Array<{
+      name: string
+      when: { branch: string[] }
+      apple: { distribution: string; app: string }
+      publishes: string[]
+      run: typeof buildTv
+    }>
+    assert.equal(tv.length, 1)
+    assert.equal(tv[0]?.name, 'archive-tv')
+    assert.deepEqual(tv[0]?.when, { branch: ['master'] })
+    assert.deepEqual(tv[0]?.apple, {
+      distribution: 'adHoc',
+      app: 'app.teamstation.tv'
+    })
+    assert.deepEqual(tv[0]?.publishes, ['app.teamstation.tv'])
+    assert.equal(tv[0]?.run, buildTv)
     assert.equal(ios[0]?.name, 'archive')
     assert.equal(ios[0]?.on.type, 'nomac')
     assert.equal(ios[0]?.apple.distribution, 'adHoc')
@@ -448,6 +465,7 @@ describe('TeamStation pipeline Masonfile', () => {
       }
     }
     await buildIos(ctx)
+    await buildTv(ctx)
     await compileAndroid(ctx)
     await signAndroid(ctx)
     const log = commands.join('\n')
@@ -484,6 +502,13 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.match(log, /stash:android-release/)
     assert.match(log, /unstash:android-release/)
     assert.match(log, /teamstation-sign-release-apk/)
+    assert.match(
+      log,
+      new RegExp(`archive:TeamStationTV:${regexEscape(version)}:26103101`)
+    )
+    assert.match(log, /\.\.\/\.mason-tools\/node_modules\/\.bin\/socket npm ci/)
+    assert.match(log, /publish:tvos:build\/TeamStation\.ipa/)
+    assert.match(log, /save:tvos-ipa/)
     assert.match(log, /save:ios-ipa/)
     assert.match(log, /save:android-apk/)
     // A production build leaves the app's own server alone.
