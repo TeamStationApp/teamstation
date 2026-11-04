@@ -47,7 +47,7 @@ interface Device {
 }
 interface Daemon {
   attach: (options: object) => Promise<Device>
-  shutdown: (options: { wait: boolean }) => Promise<unknown>
+  shutdown: (options: { wait: number }) => Promise<unknown>
 }
 interface Fixture {
   conversationId: string
@@ -104,7 +104,7 @@ async function signIn(device: Device): Promise<string> {
     await device.inputText({ text: who.password })
     await device.tapOn({ text: 'Sign in' })
     await device.assertVisible({
-      css: '[data-testid="chat-conversation-list"]',
+      text: 'Account,',
       timeout: 45000
     })
     auth = await evaluate(device, authScript)
@@ -121,7 +121,7 @@ function row(id: string): string {
   return `[data-testid=${JSON.stringify('chat-message-' + id)}]`
 }
 function quote(id: string): string {
-  return `${row(id)} [role="button"][aria-label^="Jump to message from "]`
+  return `${row(id)} [role="button"][aria-label^="Jump to "]`
 }
 async function coldOpen(device: Device, fixture: Fixture): Promise<void> {
   await device.openLink({
@@ -144,6 +144,16 @@ async function state(
 }
 async function capture(device: Device, name: string): Promise<void> {
   writeFileSync(join(ARTIFACTS, `${name}.png`), await device.screenshot())
+}
+async function reveal(
+  device: Device,
+  messageId: string,
+  direction: 'up' | 'down'
+): Promise<void> {
+  await evaluate(
+    device,
+    `const pane=document.querySelector('[data-testid="chat-message-pane"]');const history=[...pane.querySelectorAll('div')].find(x=>getComputedStyle(x).overflowY==='auto');if(!history)throw new Error('History scroller missing');const delta=${direction === 'up' ? -800 : 800};for(let n=0;n<120;n++){history.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:delta}));const row=document.querySelector(${JSON.stringify(row(messageId))});if(row){row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,300));const target=document.querySelector(${JSON.stringify(row(messageId))});if(target){const box=target.getBoundingClientRect(),view=history.getBoundingClientRect();if(box.top>=view.top&&box.bottom<=view.bottom)return true}}else{history.scrollTop=Math.min(history.scrollHeight,Math.max(0,history.scrollTop+delta));history.dispatchEvent(new Event('scroll'))}await new Promise(r=>setTimeout(r,100))}throw new Error('Requested reply fixture bubble did not become visible');`
+  )
 }
 async function shared(device: Device, results: CaseResult[]): Promise<void> {
   const fixture = JSON.parse(
@@ -221,18 +231,13 @@ async function shared(device: Device, results: CaseResult[]): Promise<void> {
   const excerpt =
     Array.from(fixture.originalBody).slice(0, 200).join('') +
     (Array.from(fixture.originalBody).length > 200 ? '…' : '')
-  const resolvedScript = `const original=document.querySelector(${JSON.stringify(row(fixture.originalId))});const target=document.querySelector(${JSON.stringify(quote(fixture.replyId))});const name=target?.firstElementChild;const rect=original.getBoundingClientRect();return JSON.stringify({label:target?.getAttribute('aria-label')||'',quoteCount:document.querySelector(${JSON.stringify(row(fixture.replyId))}).querySelectorAll('[aria-label^="Jump to message from "]').length,bold:Number(getComputedStyle(name).fontWeight)>=600,visible:rect.top>=0&&rect.top<innerHeight});`
-  let resolved = await evaluate<{
-    label: string
-    quoteCount: number
-    bold: boolean
-    visible: boolean
-  }>(device, resolvedScript)
-  for (let attempt = 0; attempt < 30 && !resolved.visible; attempt += 1) {
+  const visibleScript = `const original=document.querySelector(${JSON.stringify(row(fixture.originalId))});const rect=original?.getBoundingClientRect();return JSON.stringify(rect!=null&&rect.top>=0&&rect.top<innerHeight);`
+  let visible = await evaluate<boolean>(device, visibleScript)
+  for (let attempt = 0; attempt < 30 && !visible; attempt += 1) {
     await new Promise(resolve => setTimeout(resolve, 100))
-    resolved = await evaluate(device, resolvedScript)
+    visible = await evaluate(device, visibleScript)
   }
-  if (!resolved.visible) {
+  if (!visible) {
     const geometry = await evaluate<object>(
       device,
       `const original=document.querySelector(${JSON.stringify(row(fixture.originalId))});const pane=document.querySelector('[data-testid="chat-message-pane"]');const scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');const box=original.getBoundingClientRect(),viewport=scroll.getBoundingClientRect();return JSON.stringify({original:{top:box.top,bottom:box.bottom,height:box.height},viewport:{top:viewport.top,bottom:viewport.bottom,height:viewport.height},scrollTop:scroll.scrollTop,scrollHeight:scroll.scrollHeight,windowScrollY:scrollY,errors:(document.body.textContent.match(/Message unavailable/g)||[]).length});`
@@ -240,7 +245,20 @@ async function shared(device: Device, results: CaseResult[]): Promise<void> {
     results.push({ case: 'old original jump', pass: false, geometry })
     await capture(device, 'reply-history-jump-failure')
   }
-  if (resolved.visible) results.push({ case: 'old original jump', pass: true })
+  assert(visible, 'Jump must bring the actual old original into view')
+  results.push({ case: 'old original jump', pass: true })
+  await capture(device, 'reply-old-original-jump')
+  // A virtual history can unmount the reply once its distant original is
+  // visible. Read each bubble while it is actually in the viewport.
+  await reveal(device, fixture.replyId, 'down')
+  const resolved = await evaluate<{
+    label: string
+    quoteCount: number
+    bold: boolean
+  }>(
+    device,
+    `const post=document.querySelector(${JSON.stringify(row(fixture.replyId))});const target=post.querySelector('[aria-label^="Jump to message from "]');return JSON.stringify({label:target?.getAttribute('aria-label')||'',quoteCount:post.querySelectorAll('[aria-label^="Jump to message from "]').length,bold:target!=null&&Number(getComputedStyle(target.firstElementChild).fontWeight)>=600});`
+  )
   assert(
     resolved.label.includes(`You: ${excerpt}`),
     'Accessible quote must resolve current original and 200-code-point excerpt'
@@ -257,6 +275,7 @@ async function shared(device: Device, results: CaseResult[]): Promise<void> {
     `const pane=document.querySelector('[data-testid="chat-message-pane"]');const scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:1}));document.querySelector(${JSON.stringify(row(fixture.replyId))}).scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,400));const quote=document.querySelector(${JSON.stringify(quote(fixture.replyId))}),box=quote.getBoundingClientRect(),view=scroll.getBoundingClientRect();if(box.top<view.top||box.bottom>view.bottom)throw new Error('Long quote evidence must actually be visible');return true;`
   )
   await capture(device, 'reply-long-self-resolved')
+  await reveal(device, fixture.attachmentReplyId, 'up')
   await evaluate(
     device,
     `const pane=document.querySelector('[data-testid="chat-message-pane"]');const scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:1}));document.querySelector(${JSON.stringify(row(fixture.attachmentReplyId))}).scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,400));const quote=document.querySelector(${JSON.stringify(quote(fixture.attachmentReplyId))}),box=quote.getBoundingClientRect(),view=scroll.getBoundingClientRect();if(box.top<view.top||box.bottom>view.bottom)throw new Error('Attachment quote evidence must actually be visible');return true;`
@@ -862,7 +881,7 @@ async function main(): Promise<void> {
   } finally {
     await device?.clearNetworkMocks().catch(() => undefined)
     await device?.detach()
-    await daemon.shutdown({ wait: true })
+    await daemon.shutdown({ wait: 15000 })
     writeFileSync(
       join(ARTIFACTS, 'reply-results.json'),
       `${JSON.stringify({ cases: results, viewport, released: true }, null, 2)}\n`
