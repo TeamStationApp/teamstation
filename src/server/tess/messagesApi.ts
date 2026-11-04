@@ -534,8 +534,17 @@ async function post(
 ): Promise<Record<string, unknown>> {
   return await withApiKeys(
     settings.apiKey,
-    async key =>
-      await postOnce({ ...settings, apiKey: key }, path, body, options, log),
+    async key => {
+      delete log.ec
+      delete log.status
+      return await postOnce(
+        { ...settings, apiKey: key },
+        path,
+        body,
+        options,
+        log
+      )
+    },
     retryable
   )
 }

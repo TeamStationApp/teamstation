@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import { asAiKeys } from '../common/aiKeys'
+import { forbidden } from '../common/errors'
 import {
   asDate,
   asHeight,
@@ -22,7 +23,7 @@ import {
 } from '../common/nodeSettings'
 import { requireNodeAdmin } from './admin/nodeAdministration'
 import { AI_KEYS_SETTING, aiKeys } from './aiKeys'
-import type { Actor } from './auth/sessions'
+import { type Actor, isHumanSession } from './auth/sessions'
 import type { Database } from './db/database'
 import { forgetSettings, highlightSettings } from './settings'
 
@@ -155,7 +156,8 @@ export async function nodeSettings(
   )
   return {
     // Past this worker's cache: another may have taken the last save.
-    aiKeys: await aiKeys(db),
+    // Tools can manage ordinary settings, but must never receive credentials.
+    ...(isHumanSession(actor) ? { aiKeys: await aiKeys(db) } : {}),
     scoreboard: await scoreboardSettings(db, Date.now(), true),
     radar: await radarSettings(db),
     highlights: await highlightSettings(db, true),
@@ -177,6 +179,8 @@ export async function setNodeSettings(
     actor,
     'Only a node administrator can change the node settings'
   )
+  if (settings.aiKeys !== undefined && !isHumanSession(actor))
+    throw forbidden('Sign in directly to change AI API keys')
   const { scoreboard, highlights, radar, replay } = settings
   const rows: Array<[string, unknown]> = [
     ...(settings.aiKeys === undefined

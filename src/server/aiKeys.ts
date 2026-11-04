@@ -70,8 +70,9 @@ export async function aiSettings(
               apiKey: normalizedKeys(config.dictation.apiKey)
             }
     }
-  const dictation: NonNullable<ServerConfig['dictation']> = {
+  const dictation = {
     apiKey: stored.xaiVoice,
+    grokApiKey: config.dictation?.apiKey ?? [],
     baseUrl: config.dictation?.baseUrl ?? 'https://api.x.ai/v1',
     sttUrl: config.dictation?.sttUrl ?? 'wss://api.x.ai/v1/stt',
     sttModel: config.dictation?.sttModel ?? 'grok-voice-transcribe-2.0',

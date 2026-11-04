@@ -60,6 +60,7 @@ run('node_modules/.bin/mocha', [
   'src/server/nodeSettings.test.ts',
   'src/common/nodeSettings.test.ts',
   'src/server/tess/messagesApi.test.ts',
+  'src/server/tess/denyList.test.ts',
   'src/server/dictation/*.test.ts',
   'src/server/replay/speech.test.ts',
   'src/server/routes/health.test.ts',
@@ -67,6 +68,9 @@ run('node_modules/.bin/mocha', [
   'src/server/routes/tess.test.ts',
   'src/server/openapi.test.ts'
 ])
+reportCoverage(false)
+// Always serve a web build made from this same source revision.
+run('npm', ['run', 'build.web'])
 // The browser and real entry point add counters from the same source revision.
 run('node_modules/.bin/mocha', [
   '-r',
@@ -79,87 +83,98 @@ run('node', ['-r', 'sucrase/register', 'src/test/refinementsStartup.e2e.ts'], {
   TS_REFINEMENTS_ARTIFACTS: artifacts,
   TS_REFINEMENTS_STARTUP_V8: temp
 })
-for (const file of readdirSync(temp)) {
-  if (!file.endsWith('.json')) continue
-  const path = resolve(temp, file)
-  const value = JSON.parse(readFileSync(path, 'utf8'))
-  for (const map of Object.values(value['source-map-cache'] ?? {}))
-    if (map.data?.sources != null)
-      map.data.sources = map.data.sources.map(source =>
-        source.startsWith('file://') ? fileURLToPath(source) : source
-      )
-  writeFileSync(path, JSON.stringify(value))
-}
-run('node_modules/.bin/c8', [
-  'report',
-  '--all',
-  '--temp-directory',
-  temp,
-  '--reporter=text',
-  '--reporter=json',
-  '--reports-dir',
-  report,
-  '--exclude-after-remap',
-  ...paths.flatMap(path => ['--include', path]),
-  '--exclude',
-  '**/*.test.*',
-  '--exclude',
-  '**/*.e2e.*',
-  '--exclude',
-  'src/test/**'
-])
-const map = require('istanbul-lib-coverage').createCoverageMap(
-  JSON.parse(readFileSync(resolve(report, 'coverage-final.json'), 'utf8'))
-)
-map.merge(
-  JSON.parse(readFileSync(resolve(artifacts, 'browser-coverage.json'), 'utf8'))
-)
-writeFileSync(
-  resolve(report, 'coverage-final.json'),
-  JSON.stringify(map.toJSON())
-)
-const {
-  changedLines,
-  istanbulCounts,
-  lineReportFromCounts,
-  withoutTypeOnlyLines
-} = require('./changed-line-coverage.cjs')
-let diff = git(['diff', '--unified=0', base, '--', ...paths])
-for (const path of untracked.filter(path => paths.includes(path))) {
-  const lines = readFileSync(path, 'utf8').trimEnd().split('\n')
-  diff += `\ndiff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lines.length} @@\n${lines.map(line => '+' + line).join('\n')}\n`
-}
-const counts = {}
-for (const path of paths)
-  if (map.files().includes(resolve(path)))
-    counts[path] = withoutTypeOnlyLines(
-      path,
-      readFileSync(path, 'utf8'),
-      istanbulCounts(map.fileCoverageFor(resolve(path)).toJSON())
+reportCoverage(true)
+
+function reportCoverage(combined) {
+  const stageReport = combined ? report : resolve(report, 'unit')
+  mkdirSync(stageReport, { recursive: true })
+  for (const file of readdirSync(temp)) {
+    if (!file.endsWith('.json')) continue
+    const path = resolve(temp, file)
+    const value = JSON.parse(readFileSync(path, 'utf8'))
+    for (const map of Object.values(value['source-map-cache'] ?? {}))
+      if (map.data?.sources != null)
+        map.data.sources = map.data.sources.map(source =>
+          source.startsWith('file://') ? fileURLToPath(source) : source
+        )
+    writeFileSync(path, JSON.stringify(value))
+  }
+  run('node_modules/.bin/c8', [
+    'report',
+    '--all',
+    '--temp-directory',
+    temp,
+    '--reporter=text',
+    '--reporter=json',
+    '--reports-dir',
+    stageReport,
+    '--exclude-after-remap',
+    ...paths.flatMap(path => ['--include', path]),
+    '--exclude',
+    '**/*.test.*',
+    '--exclude',
+    '**/*.e2e.*',
+    '--exclude',
+    'src/test/**'
+  ])
+  const map = require('istanbul-lib-coverage').createCoverageMap(
+    JSON.parse(
+      readFileSync(resolve(stageReport, 'coverage-final.json'), 'utf8')
     )
-const result = lineReportFromCounts(
-  changedLines(diff),
-  counts,
-  path => paths.includes(path),
-  { min: 95 }
-)
-writeFileSync(
-  resolve(report, 'changed-lines.json'),
-  JSON.stringify(result, null, 2)
-)
-const failures = []
-for (const [path, lines] of Object.entries(result.files)) {
-  const total = lines.covered.length + lines.uncovered.length
-  const percent = total === 0 ? 100 : (lines.covered.length / total) * 100
+  )
+  if (combined)
+    map.merge(
+      JSON.parse(
+        readFileSync(resolve(artifacts, 'browser-coverage.json'), 'utf8')
+      )
+    )
+  writeFileSync(
+    resolve(stageReport, 'coverage-final.json'),
+    JSON.stringify(map.toJSON())
+  )
+  const {
+    changedLines,
+    istanbulCounts,
+    lineReportFromCounts,
+    withoutTypeOnlyLines
+  } = require('./changed-line-coverage.cjs')
+  let diff = git(['diff', '--unified=0', base, '--', ...paths])
+  for (const path of untracked.filter(path => paths.includes(path))) {
+    const lines = readFileSync(path, 'utf8').trimEnd().split('\n')
+    diff += `\ndiff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lines.length} @@\n${lines.map(line => '+' + line).join('\n')}\n`
+  }
+  const counts = {}
+  for (const path of paths)
+    if (map.files().includes(resolve(path)))
+      counts[path] = withoutTypeOnlyLines(
+        path,
+        readFileSync(path, 'utf8'),
+        istanbulCounts(map.fileCoverageFor(resolve(path)).toJSON())
+      )
+  const result = lineReportFromCounts(
+    changedLines(diff),
+    counts,
+    path => paths.includes(path),
+    { min: combined ? 95 : 90 }
+  )
+  writeFileSync(
+    resolve(stageReport, 'changed-lines.json'),
+    JSON.stringify(result, null, 2)
+  )
+  const failures = []
+  for (const [path, lines] of Object.entries(result.files)) {
+    const total = lines.covered.length + lines.uncovered.length
+    const percent = total === 0 ? 100 : (lines.covered.length / total) * 100
+    console.log(
+      `${path}: ${percent.toFixed(2)}% uncovered ${lines.uncovered.join(',')}`
+    )
+    if (combined && percent < 95) failures.push(path)
+  }
   console.log(
-    `${path}: ${percent.toFixed(2)}% uncovered ${lines.uncovered.join(',')}`
+    `${combined ? 'Combined' : 'Unit-only'} changed executable-line coverage: ${result.percent.toFixed(2)}% (${result.covered}/${result.total})`
   )
-  if (percent < 95) failures.push(path)
+  if (failures.length > 0 || !result.pass || result.total === 0)
+    throw new Error(
+      `${combined ? '95% per file and overall' : '90% overall'} required: ${failures.join(', ')}; missing: ${result.missing.join(', ')}`
+    )
 }
-console.log(
-  `Combined changed executable-line coverage: ${result.percent.toFixed(2)}% (${result.covered}/${result.total})`
-)
-if (failures.length > 0 || !result.pass || result.total === 0)
-  throw new Error(
-    `95% required per file and overall: ${failures.join(', ')}; missing: ${result.missing.join(', ')}`
-  )

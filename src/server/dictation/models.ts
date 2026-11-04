@@ -19,6 +19,8 @@ export interface ProviderKeys {
   /** xAI's, for the dictation model and the Grok LLMs. */
   apiKey: ApiKeyPool
   baseUrl: string
+  /** Legacy Grok scoring keys, kept separate when voice keys are overridden. */
+  grokApiKey?: ApiKeyPool
   openai?: { apiKey: ApiKeyPool; baseUrl: string }
   anthropic?: { apiKey: ApiKeyPool; baseUrl: string }
 }
@@ -34,8 +36,9 @@ export function endpointFor(
   model: string,
   keys: ProviderKeys
 ): LlmEndpoint | undefined {
-  if (model.startsWith('grok-') && normalizedKeys(keys.apiKey).length > 0)
-    return { api: 'chat', apiKey: keys.apiKey, baseUrl: keys.baseUrl }
+  const grokApiKey = keys.grokApiKey ?? keys.apiKey
+  if (model.startsWith('grok-') && normalizedKeys(grokApiKey).length > 0)
+    return { api: 'chat', apiKey: grokApiKey, baseUrl: keys.baseUrl }
   if (
     model.startsWith('gpt-') &&
     keys.openai != null &&

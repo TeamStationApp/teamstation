@@ -499,6 +499,15 @@ describe('Tess Messages API client', function () {
           throw new TypeError('fetch failed')
         }
       }).catch(() => undefined)
+      const recovered = provider(json({ error: {} }, 429), json(ANSWER))
+      await createMessage(
+        { ...SETTINGS, apiKey: ['first', 'second'] },
+        REQUEST,
+        {
+          fetch: recovered.fetch,
+          actor
+        }
+      )
       await stop()
       const rows = sent
         .join('')
@@ -506,8 +515,11 @@ describe('Tess Messages API client', function () {
         .split('\n')
         .map(line => JSON.parse(line))
         .filter(row => row.E === 'tess_request')
-      expect(rows).length(7)
-      const [ok, ...failed] = rows
+      expect(rows).length(8)
+      const [ok, ...failed] = rows.slice(0, 7)
+      expect(rows[7].L).equals('info')
+      expect(rows[7].P.status).equals(200)
+      expect(rows[7].P).not.has.property('ec')
       expect(ok.L).equals('info')
       expect(ok.U).equals(actor)
       expect(ok.P).deep.include({
