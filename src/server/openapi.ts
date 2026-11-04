@@ -8076,10 +8076,15 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`needs_rotation`, fills the boxed members’ requests, opens ' +
             'requests for the rest, notifies `epoch`. A closed chat is 409 ' +
             '`closed`. Answers `{epoch, chainBreak, boxed, grantRequests}`. ' +
-            'Audited.',
+            'Optional mode=fresh is feature-gated and allows a current posting member whose identity has no latest box to publish a null-backlink epoch. Existing holders receive repairRequired; a disabled switch returns freshDisabled. Future recipients include reset identities, while historical approval remains pending. Omission or continue uses legacy rules. Audited.',
           security: [{ bearer: [] }],
           parameters: [conversationIdParam],
           requestBody: keyBody({
+            mode: {
+              type: 'string',
+              enum: ['continue', 'fresh'],
+              default: 'continue'
+            },
             epoch: { type: 'integer', minimum: 1 },
             previousKeyBox: { ...b64, nullable: true },
             signature: b64,
