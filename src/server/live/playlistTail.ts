@@ -27,7 +27,7 @@ import type { ListedSegment } from './segmentClock'
  * read whole again the next time.
  *
  * Every parse here is the same, line for line, as the whole-text parse it
- * stands in for: `parseMediaPlaylist`, `listedSegments` and
+ * stands in for: `parseMediaPlaylist`, `listedSegments`, `segmentEndsMs` and
  * the lines `publishedPlaylist` keeps.
  */
 
@@ -72,6 +72,8 @@ export interface PlaylistView {
   segment: (index: number) => PlaylistSegment
   /** Where segment `index` starts, in ms of `EXTINF`; `index` up to `count`. */
   startMs: (index: number) => number
+  /** Where segment `index` ends, as `segmentEndsMs` has it. */
+  endMs: (index: number) => number
   /** Segments as `listedSegments` lists them. */
   readonly listedCount: number
   listed: (index: number) => ListedSegment
@@ -121,6 +123,12 @@ class PlaylistParse {
   /** `startsMs[i]` is where segment `i` starts; one more than `segments`. */
   readonly startsMs: number[] = [0]
 
+  // As `segmentEndsMs`.
+  readonly ends: number[] = []
+  private dated: number | undefined
+  private endDuration: number | undefined
+  private end = 0
+
   // As `listedSegments`.
   readonly listed: ListedSegment[] = []
   /** Listed names numbered upwards, so found by their number. */
@@ -156,6 +164,7 @@ class PlaylistParse {
   private add(raw: string): void {
     const line = raw.trim()
     this.addMedia(line)
+    this.addEnd(line)
     this.addListed(line)
     this.addPublished(raw, line)
   }
@@ -196,6 +205,24 @@ class PlaylistParse {
       this.duration = undefined
       this.range = undefined
       this.discontinuity = false
+    }
+  }
+
+  private addEnd(line: string): void {
+    if (line.startsWith('#EXT-X-PROGRAM-DATE-TIME:')) {
+      const at = Date.parse(line.slice('#EXT-X-PROGRAM-DATE-TIME:'.length))
+      this.dated = Number.isNaN(at) ? undefined : at
+    } else if (line.startsWith('#EXTINF:')) {
+      this.endDuration = Number.parseFloat(line.slice('#EXTINF:'.length))
+    } else if (
+      line !== '' &&
+      !line.startsWith('#') &&
+      this.endDuration != null
+    ) {
+      this.end = (this.dated ?? this.end) + this.endDuration * 1000
+      this.ends.push(this.end)
+      this.dated = undefined
+      this.endDuration = undefined
     }
   }
 
@@ -288,6 +315,7 @@ class PlaylistParse {
       ended,
       segment: index => this.segments[index],
       startMs: index => this.startsMs[index],
+      endMs: index => this.ends[index],
       listedCount,
       listed: index => this.listed[index],
       listedAt: name => this.listedAt(name, listedCount),
