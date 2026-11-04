@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { Kysely } from 'kysely'
@@ -207,8 +207,52 @@ export async function scanNewSegments(
  * frames after it in that segment were under half a second from it. Its run
  * is placed again from the run's first segment, one read, as the scan placed
  * it the first time. With no point stored, the scan starts at the beginning.
+ *
+ * The ingest's disk tail deletes pieces the scan has read. When the piece it
+ * would carry on from is gone, which only happens once the newest point is
+ * older than the tail, it carries on from the first piece still on disk: the
+ * pieces between were read before they went, so no point is stored twice.
  */
 export async function resumeScan(
+  db: Kysely<Database>,
+  videoId: string,
+  directory: string
+): Promise<ScanCursor> {
+  const cursor = await resumeFrom(db, videoId, directory)
+  // With no point stored nothing was read, so nothing was deleted: a piece
+  // missing then is one the scan should say it could not read.
+  if (cursor.latest == null) return cursor
+  const playlist = await readPlaylist(directory)
+  if (playlist == null || cursor.segments >= playlist.segments.length)
+    return cursor
+  const onDisk = async (index: number): Promise<boolean> =>
+    (await stat(join(directory, playlist.segments[index].uri)).catch(
+      () => undefined
+    )) != null
+  if (await onDisk(cursor.segments)) return cursor
+  let next = cursor.segments + 1
+  while (next < playlist.segments.length && !(await onDisk(next))) next++
+  let startMs = 0
+  for (const segment of playlist.segments.slice(0, next))
+    startMs += segment.durationSec * 1000
+  // A run that began among the deleted pieces is placed again from the
+  // first piece read, as a run with its first piece unreadable is.
+  const sameRun = playlist.segments
+    .slice(cursor.segments + 1, next + 1)
+    .every(segment => !segment.discontinuity)
+  const placementOnDisk =
+    cursor.placementSegment != null && (await onDisk(cursor.placementSegment))
+  return {
+    ...cursor,
+    segments: next,
+    startMs,
+    placement: sameRun && placementOnDisk ? cursor.placement : undefined,
+    placementSegment:
+      sameRun && placementOnDisk ? cursor.placementSegment : undefined
+  }
+}
+
+async function resumeFrom(
   db: Kysely<Database>,
   videoId: string,
   directory: string
