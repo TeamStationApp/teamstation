@@ -21,6 +21,7 @@ import {
 import { type ApiKey, type ApiKeyCreate, asApiKey, asApiKeys } from './apiKeys'
 import { asLiteral } from './asLiteral'
 import { asChatAge, type ChatAge, type ChatAgeSource } from './chatAge'
+import { asChatBoxCursor } from './chatHistory'
 import { type Approval, asApproval, asBuildsLink } from './distribution'
 import { type ApiError, asApiError, HttpError } from './errors'
 import {
@@ -662,7 +663,11 @@ export const asChatEpoch = asObject({
 export type ChatEpoch = ReturnType<typeof asChatEpoch>
 
 /** A chat's epochs after `after`, and the caller's boxes from `after` on. */
-export const asChatEpochs = asObject({
+const cleanChatEpochs = asObject({
+  historyRecoveryVersion: asOptional(asLiteral(1)),
+  freshEpochsEnabled: asOptional(asBoolean),
+  nextBoxesCursor: asOptional(asChatBoxCursor),
+  hasMoreBoxes: asOptional(asBoolean),
   latest: asNumber,
   needsRotation: asBoolean,
   noHolder: asBoolean,
@@ -677,10 +682,29 @@ export const asChatEpochs = asObject({
     })
   )
 })
-export type ChatEpochs = ReturnType<typeof asChatEpochs>
+type ChatEpochsOptional =
+  | 'historyRecoveryVersion'
+  | 'freshEpochsEnabled'
+  | 'nextBoxesCursor'
+  | 'hasMoreBoxes'
+export type ChatEpochs = Omit<
+  ReturnType<typeof cleanChatEpochs>,
+  ChatEpochsOptional
+> &
+  Partial<Pick<ReturnType<typeof cleanChatEpochs>, ChatEpochsOptional>>
+export function asChatEpochs(raw: unknown): ChatEpochs {
+  const result = cleanChatEpochs(raw)
+  if (result.historyRecoveryVersion === undefined)
+    delete result.historyRecoveryVersion
+  if (result.freshEpochsEnabled === undefined) delete result.freshEpochsEnabled
+  if (result.nextBoxesCursor === undefined) delete result.nextBoxesCursor
+  if (result.hasMoreBoxes === undefined) delete result.hasMoreBoxes
+  return result
+}
 
 /** Epoch n+1, signed, boxed to the eligible members. Bytes are base64url. */
 export interface ChatEpochPublication {
+  mode?: 'continue' | 'fresh'
   epoch: number
   previousKeyBox: string | null
   signature: string
@@ -735,6 +759,48 @@ export const asChatGrantsPosted = asObject({
   )
 })
 export type ChatGrantsPosted = ReturnType<typeof asChatGrantsPosted>
+
+/** Fixed historical segment goal and the prefix already distributed. */
+export const asChatHistoryRequest = asObject({
+  id: asChatBoxCursor,
+  conversationId: asString,
+  segmentStartEpoch: asNumber,
+  targetEpoch: asNumber,
+  coveredThroughEpoch: asNumber,
+  userId: asUserId,
+  identityId: asString,
+  identityKey: asString,
+  pukGeneration: asNumber,
+  pukPublicKey: asString,
+  pukSignature: asString,
+  requiresApproval: asBoolean,
+  canApprove: asBoolean,
+  openedAt: asString
+})
+export type ChatHistoryRequest = ReturnType<typeof asChatHistoryRequest>
+export const asChatHistoryRequests = asObject({
+  requests: asArray(asChatHistoryRequest),
+  nextCursor: asNullable(asChatBoxCursor)
+})
+export type ChatHistoryRequests = ReturnType<typeof asChatHistoryRequests>
+export interface ChatHistoryGrantBox extends ChatGrantBox {
+  requestId: string
+  targetEpoch: number
+  approveHistory?: boolean
+}
+export const asChatHistoryGrantsPosted = asObject({
+  filled: asNumber,
+  results: asArray(
+    asObject({
+      requestId: asChatBoxCursor,
+      status: asLiteral('completed', 'partial', 'alreadyCovered', 'skipped'),
+      coveredThroughEpoch: asNumber
+    })
+  )
+})
+export type ChatHistoryGrantsPosted = ReturnType<
+  typeof asChatHistoryGrantsPosted
+>
 
 /** What the server sees of a message: its envelope `kind`. */
 export const asChatEnvelopeKind = asLiteral(
@@ -6488,10 +6554,18 @@ export class TeamStationClient {
   }
 
   /** A chat's epochs after `after` (0 for all), and the caller's boxes. */
-  async chatEpochs(conversationId: string, after = 0): Promise<ChatEpochs> {
+  async chatEpochs(
+    conversationId: string,
+    after = 0,
+    delivery?: { boxesAfter: string; boxLimit?: number }
+  ): Promise<ChatEpochs> {
+    const boxQuery =
+      delivery == null
+        ? ''
+        : `&boxesAfter=${encodeURIComponent(asChatBoxCursor(delivery.boxesAfter))}&boxLimit=${delivery.boxLimit ?? 100}`
     return await this.request(
       'GET',
-      `${chatPath(conversationId)}/epochs?after=${encodeURIComponent(after)}`,
+      `${chatPath(conversationId)}/epochs?after=${encodeURIComponent(after)}${boxQuery}`,
       asChatEpochs
     )
   }
@@ -6523,6 +6597,29 @@ export class TeamStationClient {
     return await this.request('POST', '/chat/grants', asChatGrantsPosted, {
       boxes
     })
+  }
+
+  /** Historical grants are a separate queue; old servers are probed first. */
+  async chatHistoryGrants(
+    cursor = '0',
+    limit = 100
+  ): Promise<ChatHistoryRequests> {
+    return await this.request(
+      'GET',
+      `/chat/grants?scope=history&cursor=${encodeURIComponent(asChatBoxCursor(cursor))}&limit=${limit}`,
+      asChatHistoryRequests
+    )
+  }
+
+  async postChatHistoryGrants(
+    boxes: ChatHistoryGrantBox[]
+  ): Promise<ChatHistoryGrantsPosted> {
+    return await this.request(
+      'POST',
+      '/chat/grants?scope=history',
+      asChatHistoryGrantsPosted,
+      { boxes }
+    )
   }
 
   /** Posts a sealed message; a repeat of its id answers the stored one. */

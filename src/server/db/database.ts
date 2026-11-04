@@ -1393,6 +1393,7 @@ export interface ChatLinksTable {
 
 /** A chat. A scope chat names its scope; a DM has none. */
 export interface ChatConversationsTable {
+  next_box_delivery_seq: Generated<string>
   id: string
   kind: ChatKind
   scope_type: 'team' | 'season' | 'league' | null
@@ -1445,6 +1446,8 @@ export interface ChatEpochsTable {
 
 /** An epoch key, wrapped to one member's per-user key. */
 export interface ChatEpochBoxesTable {
+  /** Read with an explicit text cast; the global int8 parser accepts only safe numbers. */
+  delivery_seq: Generated<string>
   conversation_id: string
   epoch: number
   user_id: string
@@ -1467,6 +1470,30 @@ export interface ChatGrantRequestsTable {
   filled_at: Timestamp | null
   superseded_at: Timestamp | null
   created_at: Generated<Date>
+}
+
+export interface ChatHistoryAccessTable {
+  conversation_id: string
+  user_id: string
+  identity_id: string
+  requires_approval: boolean
+  approved_by_user_id: string | null
+  approved_at: Timestamp | null
+  created_at: Generated<Date>
+}
+
+export interface ChatHistoryRequestsTable {
+  id: Generated<string>
+  conversation_id: string
+  user_id: string
+  identity_id: string
+  generation: number
+  segment_start_epoch: number
+  target_epoch: number
+  covered_through_epoch: number
+  opened_at: Generated<Date>
+  filled_at: Timestamp | null
+  superseded_at: Timestamp | null
 }
 
 /** One encrypted message. The server sees its envelope, never its content. */
@@ -1614,6 +1641,8 @@ export interface Database {
   chat_devices: ChatDevicesTable
   chat_dirty: ChatDirtyTable
   chat_epoch_boxes: ChatEpochBoxesTable
+  chat_history_access: ChatHistoryAccessTable
+  chat_history_requests: ChatHistoryRequestsTable
   chat_epochs: ChatEpochsTable
   chat_grant_requests: ChatGrantRequestsTable
   chat_identities: ChatIdentitiesTable
