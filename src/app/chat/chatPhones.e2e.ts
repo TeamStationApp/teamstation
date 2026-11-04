@@ -38,7 +38,11 @@ import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
-import puppeteer, { type Browser, type Page } from 'puppeteer'
+import puppeteer, {
+  type Browser,
+  type ElementHandle,
+  type Page
+} from 'puppeteer'
 
 import { chatRowText } from '../../test/chatRows'
 import { readSeedTable } from '../../test/chatSeedTable'
@@ -257,8 +261,9 @@ async function p1(m: Device, run: string, shots: string): Promise<void> {
     await coach.page.goto(`${WEB}/chat/${members}`, {
       waitUntil: 'networkidle2'
     })
+    // The open chat's header names its audience ("Team Members").
     await until('Hc’s chat', async () =>
-      (await bodyText(coach.page)).includes('members') ? true : undefined
+      /members/i.test(await bodyText(coach.page)) ? true : undefined
     )
 
     const who = process.env.CHAT_P1_PERSON ?? 'N'
@@ -409,10 +414,23 @@ async function p2(m: Device, run: string, shots: string): Promise<void> {
     })
     console.log(`P2 six digits: phone ${phoneCode}, web ${webCode ?? '?'}`)
     assert.equal(webCode, phoneCode, 'The six digits differ')
-    const approve = await until(
-      'Approve',
-      async () => (await parent.page.$('[aria-label^="Approve "]')) ?? undefined
-    )
+    // The Approve a person can reach: another copy can sit beneath a panel.
+    // Page code: no syntax the test transpiler rewrites into a helper.
+    const approve = await until('Approve', async () => {
+      const handle = await parent.page.evaluateHandle(() =>
+        [...document.querySelectorAll('[aria-label^="Approve "]')].find(
+          node => {
+            const box = node.getBoundingClientRect()
+            const top = document.elementFromPoint(
+              box.x + box.width / 2,
+              box.y + box.height / 2
+            )
+            return box.width > 0 && top != null && node.contains(top)
+          }
+        )
+      )
+      return (handle.asElement() as ElementHandle | null) ?? undefined
+    })
     await approve.click()
 
     await m.assertVisible({ text: membersRow(), timeout: 60000 })
