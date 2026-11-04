@@ -14,6 +14,7 @@ import {
 } from '../../test/tessTestKit'
 import {
   Composer,
+  composerBottom,
   type ComposerHandle,
   type ComposerProps,
   editAroundLine,
@@ -152,6 +153,18 @@ const TOO_MANY =
 describe('Composer', function () {
   afterEach(async () => {
     await unmount()
+  })
+
+  it('leaves a margin of at least 1 rem under itself in a browser', function () {
+    const theme = { rem: (size: number) => size * 16, spaceSmRem: 0.5 }
+    const bottom = (inset: number): number =>
+      composerBottom(
+        theme as unknown as Parameters<typeof composerBottom>[0],
+        inset
+      )
+    expect(bottom(0)).equals(16)
+    // A browser reports no inset; one given is not added.
+    expect(bottom(34)).equals(16)
   })
 
   it('sends on Enter and clears the field', async function () {

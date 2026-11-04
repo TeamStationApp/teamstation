@@ -105,10 +105,9 @@ export function TessChat({
             ? 'height'
             : undefined
       }
-      style={[
-        styles.chat,
-        { paddingTop: insets.top, paddingBottom: insets.bottom }
-      ]}
+      // The bottom inset is the composer's (`bottomInset`): iOS's keyboard
+      // avoidance sets this view's own bottom padding, and would drop it.
+      style={[styles.chat, { paddingTop: insets.top }]}
     >
       <View style={styles.titleBar}>
         <View style={styles.heading}>
@@ -186,6 +185,7 @@ export function TessChat({
       <Composer
         handle={field}
         takesFocus={takesFocus}
+        bottomInset={insets.bottom}
         busy={tess.thinking}
         error={
           tess.error != null && tess.error !== '' ? tess.error : micMessage

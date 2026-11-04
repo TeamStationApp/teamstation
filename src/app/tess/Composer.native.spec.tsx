@@ -6,6 +6,7 @@ import { Platform } from 'react-native'
 import { byLabel, render, settle, unmount } from '../../test/tessTestKit'
 import {
   Composer,
+  composerBottom,
   type ComposerHandle,
   type ComposerProps,
   FIELD_NATIVE_ID
@@ -46,6 +47,18 @@ function fieldProps(): Record<string, any> {
 }
 
 describe("Tess's composer on a phone or a tablet", () => {
+  it('keeps out of at least half of the home indicator’s area', () => {
+    const theme = { rem: (size: number) => size * 16, spaceSmRem: 0.5 }
+    const bottom = (inset: number): number =>
+      composerBottom(
+        theme as unknown as Parameters<typeof composerBottom>[0],
+        inset
+      )
+    // An iPhone's 34-point indicator: half of it, over the usual 8.
+    expect(bottom(34)).equals(8 + 17)
+    expect(bottom(0)).equals(8)
+  })
+
   it('sends on return, and keeps a line break a hardware Shift+Return puts in', async () => {
     const sent: string[] = []
     const props: ComposerProps = {

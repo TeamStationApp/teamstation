@@ -86,6 +86,8 @@ export interface ComposerProps {
   handle?: Ref<ComposerHandle>
   /** Asked once on mounting: whether this opening should take the focus. */
   takesFocus?: () => boolean
+  /** The height the home indicator takes at the bottom of a phone's screen. */
+  bottomInset?: number
 }
 
 /** What the field is on the web: react-native-web's textarea. */
@@ -221,7 +223,8 @@ export function Composer({
   mic,
   dictating,
   handle,
-  takesFocus
+  takesFocus,
+  bottomInset = 0
 }: ComposerProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -445,7 +448,13 @@ export function Composer({
   }
 
   return (
-    <View testID="Tess composer" style={styles.composer}>
+    <View
+      testID="Tess composer"
+      style={[
+        styles.composer,
+        { paddingBottom: composerBottom(theme, bottomInset) }
+      ]}
+    >
       {attaching && (
         <AttachPicker
           onAttach={attach}
@@ -605,6 +614,17 @@ function fieldHeight(theme: Theme, lines: number): number {
   return (
     theme.rem(FIELD_PADDING_REM) * 2 + theme.rem(FIELD_LINE_REM) * lines + 2
   )
+}
+
+/**
+ * The space under the composer. On a phone it keeps the field out of at least
+ * half of the home indicator's area, so it does not sit on the screen's
+ * rounded bottom edge; a browser has no inset, and gets a margin of 1 rem.
+ */
+export function composerBottom(theme: Theme, bottomInset: number): number {
+  const least = theme.rem(theme.spaceSmRem)
+  if (Platform.OS === 'web') return Math.max(least, theme.rem(1))
+  return least + Math.ceil(bottomInset / 2)
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
