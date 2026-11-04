@@ -14,7 +14,6 @@ describe('chat history recovery migration', function () {
     if (f == null) throw new Error('PostgreSQL 18 is required')
     const pool = new Pool({ connectionString: f.url })
     try {
-      await pool.query(migration.down)
       const d = new ChatDevices(f)
       const a = await d.enrol('Ha')
       await d.enrol('Hc')
@@ -40,6 +39,7 @@ describe('chat history recovery migration', function () {
         select epoch,signature,previous_key_box,chain_break from chat_epochs order by conversation_id,epoch
       `)
         ).rows
+      await pool.query(migration.down)
       const before = await snapshot()
       const boxes = (
         await pool.query('select * from chat_epoch_boxes order by user_id')
