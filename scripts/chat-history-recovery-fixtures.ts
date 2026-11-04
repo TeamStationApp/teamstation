@@ -1,9 +1,12 @@
 /** Disposable fixture preparation; private settings and outputs never enter git. */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
+
+import { Agent, fetch as undiciFetch } from 'undici'
 
 import { ChatEngine, dmTitle } from '../src/app/chat/engine/engine'
 import {
@@ -12,21 +15,132 @@ import {
   recordToJson
 } from '../src/app/chat/keyRecord'
 import { TeamStationClient } from '../src/common/api'
+import { makeId } from '../src/common/ids'
 import { passwordBytes } from '../src/common/passwordProtocol'
-import { nativeArgon } from '../src/server/auth/passwords'
+import { addEmail } from '../src/server/auth/emails'
+import { hashPassword, nativeArgon } from '../src/server/auth/passwords'
+import { drainDirty } from '../src/server/chat/reconciler'
+import { makeDatabase } from '../src/server/db/database'
+import { mintUserId } from '../src/server/users/mintUserId'
 import {
+  RECOVERY_BROWSER_FOLLOWUP_SCENARIOS,
   recoveryFixtureEnvironment,
   type RecoveryFixtureOwner,
   requireFixtureFields,
   validateRecoveryOwner
 } from '../src/test/chatRecoveryFixtureContract'
 import { readSeedTable } from '../src/test/chatSeedTable'
+import {
+  assembleChat2Fixtures,
+  prepareChat2Scene
+} from './chat-history-recovery-chat2'
+import {
+  NATIVE_SCENE_BRANCHES,
+  prepareNativeScene
+} from './chat-history-recovery-native-scenes'
+import {
+  prepareLockedScene,
+  preparePhonesScene
+} from './chat-history-recovery-ui-scenes'
+
+/**
+ * The fixture clients' requests, each on its own connection. A producer can
+ * hold the browser for minutes, the API then resets the idle pooled socket,
+ * and fetch never retries a POST that meets it.
+ */
+const freshConnections = new Agent({ pipelining: 0 })
+const fixtureFetch = (async (input: string, init?: object) =>
+  await undiciFetch(input, {
+    ...init,
+    dispatcher: freshConnections
+  })) as unknown as typeof fetch
 
 function privateJson(path: string, value: unknown): void {
   writeFileSync(path, JSON.stringify(value, null, 2), {
     mode: 0o600,
     flag: 'wx'
   })
+}
+
+interface OwnedRelay {
+  endpoint: string
+  token: string
+  audit: string
+}
+
+/** The owned relay `CHAT_RECOVERY_RELAY` names, checked against the owner. */
+function ownedRelay(owner: RecoveryFixtureOwner): OwnedRelay {
+  const relayFile = process.env.CHAT_RECOVERY_RELAY
+  assert(
+    relayFile != null &&
+      resolve(relayFile).startsWith(resolve(owner.artifacts) + '/'),
+    'CHAT_RECOVERY_RELAY must name the owned relay settings'
+  )
+  const ready = JSON.parse(readFileSync(relayFile, 'utf8')) as OwnedRelay & {
+    disposable: true
+    source: string
+    upstream: string
+  }
+  assert.equal(ready.disposable, true)
+  assert.equal(ready.source, owner.source)
+  assert.equal(ready.upstream, owner.apiUrl)
+  return ready
+}
+
+interface FixtureProvider {
+  client: TeamStationClient
+  engine: ChatEngine
+  keyFile: string
+  sessionFile: string
+}
+
+/**
+ * A signed-in synthetic person with a started chat engine whose keys stay in
+ * the fixture directory. It never replaces an identity.
+ */
+async function fixtureProvider(
+  apiUrl: string,
+  actor: { email: string; password: string; userId: string },
+  out: string,
+  key: string
+): Promise<FixtureProvider> {
+  assert(actor.email.endsWith('@chat.example.com'))
+  const client = new TeamStationClient({
+    baseUrl: apiUrl,
+    fetch: fixtureFetch,
+    passwordKdf: async (password, parameters) =>
+      await nativeArgon(passwordBytes(password), parameters)
+  })
+  const session = await client.signInWithPassword(actor.email, actor.password)
+  assert.equal(
+    (await client.whoAmI())?.id,
+    actor.userId,
+    'API and fixture database disagree'
+  )
+  const keyFile = join(out, key + '-keys.json')
+  const sessionFile = join(out, key + '-session.json')
+  privateJson(sessionFile, session)
+  const store: ChatKeyStore = {
+    exists: async () => existsSync(keyFile),
+    load: async () =>
+      existsSync(keyFile)
+        ? recordFromJson(readFileSync(keyFile, 'utf8'))
+        : undefined,
+    save: async record => {
+      writeFileSync(keyFile, recordToJson(record), { mode: 0o600 })
+    },
+    wipe: async () => {
+      throw new Error('Fixture provider identity replacement is prohibited')
+    }
+  }
+  const engine = new ChatEngine({
+    client,
+    store,
+    userId: actor.userId,
+    device: { name: 'Synthetic fixture provider', platform: 'web' }
+  })
+  assert.equal(await engine.start(), 'ready')
+  return { client, engine, keyFile, sessionFile }
 }
 
 export async function prepareRecoveryFixture(args: string[]): Promise<string> {
@@ -48,12 +162,44 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
     values.surface != null && ['web', 'ios', 'android'].includes(values.surface)
   )
   assert(values.out != null)
+  const browserFollowup =
+    (values.runner === 'web' &&
+      RECOVERY_BROWSER_FOLLOWUP_SCENARIOS.some(
+        name => name === values.scenario
+      )) ||
+    (values.runner === 'entity' && values.scenario === 'after')
   assert(
     (values.runner === 'native' &&
-      ['bands', 'core', 'default'].includes(values.scenario)) ||
+      (['default', 'intact'].includes(values.scenario) ||
+        NATIVE_SCENE_BRANCHES.some(name => name === values.scenario))) ||
+      (values.runner === 'reply' &&
+        values.surface === 'web' &&
+        ['shared', 'small', 'paging', 'incoming', 'incoming-send'].includes(
+          values.scenario
+        )) ||
+      (values.runner === 'entity' &&
+        values.surface === 'web' &&
+        browserFollowup) ||
+      (values.runner === 'chat2' &&
+        ['prepare', 'assemble'].includes(values.scenario)) ||
       (values.runner === 'web' &&
         values.surface === 'web' &&
-        ['E3', 'E4', 'E5', 'E6', 'E7'].includes(values.scenario)),
+        (browserFollowup ||
+          [
+            'E3',
+            'E4',
+            'E5',
+            'E6',
+            'E7',
+            'E8',
+            'E9',
+            'E10',
+            'E11',
+            'E12',
+            'E13',
+            'locked',
+            'phones'
+          ].includes(values.scenario))),
     'This scenario requires its specialized fixture producer'
   )
   const ownerFile = process.env.CHAT_RECOVERY_OWNER_FILE
@@ -69,6 +215,8 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
   const settings = JSON.parse(readFileSync('serverConfig.json', 'utf8')) as {
     databaseUrl: string
     listenPort: number
+    ffmpegPath: string
+    space: { endpoint: string }
   }
   validateRecoveryOwner(owner, {
     source: git('rev-parse', 'HEAD'),
@@ -90,9 +238,150 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
     out.startsWith(resolve(owner.artifacts) + '/'),
     'Fixture output must be inside the owned artifact directory'
   )
+  if (values.runner === 'chat2' && values.scenario === 'assemble') {
+    // The parts recorded on the devices join the existing scene; no reset.
+    assert(existsSync(join(out, 'chat2-scene.json')), 'Prepare chat2 first')
+    const partsFile = process.env.CHAT2_PARTS_FILE
+    assert(partsFile != null, 'CHAT2_PARTS_FILE must name the recorded parts')
+    const files = assembleChat2Fixtures({
+      out,
+      parts: JSON.parse(readFileSync(partsFile, 'utf8'))
+    })
+    return files[values.surface === 'web' ? 'web-wide' : values.surface]
+  }
   assert(!existsSync(out), 'Every scenario needs a new fixture directory')
   mkdirSync(out, { recursive: true, mode: 0o700 })
   privateJson(join(out, 'owner.json'), owner)
+  if (values.runner === 'native' && values.scenario === 'intact') {
+    assert(values.surface === 'ios' || values.surface === 'android')
+    const webFile = process.env.CHAT_RECOVERY_INTACT_WEB_FIXTURE
+    assert(
+      webFile != null &&
+        resolve(webFile).startsWith(resolve(owner.artifacts) + '/')
+    )
+    const web = JSON.parse(readFileSync(webFile, 'utf8')) as {
+      disposable: true
+      source: string
+      apiUrl: string
+      artifacts: string
+      seedFile: string
+    }
+    assert.equal(web.disposable, true)
+    assert.equal(web.source, owner.source)
+    assert.equal(web.apiUrl, owner.apiUrl)
+    assert(resolve(web.artifacts).startsWith(resolve(owner.artifacts) + '/'))
+    assert(resolve(web.seedFile).startsWith(resolve(web.artifacts) + '/'))
+    const receipt = JSON.parse(
+      readFileSync(join(web.artifacts, 'intact-upgrade-results.json'), 'utf8')
+    ) as {
+      current: { source: string }
+      conversationId: string
+      actorKey: string
+      posts: Array<{ id: string; body: string }>
+      attachment: { messageId: string; fileName: string }
+      safetyWordsUnchanged: boolean
+      encryptedMessagesUnchanged: boolean
+      imageDecodedOnBothVersionsAndRestart: boolean
+      freshBoundaries: number
+    }
+    assert.equal(receipt.current.source, owner.source)
+    assert(
+      receipt.safetyWordsUnchanged &&
+        receipt.encryptedMessagesUnchanged &&
+        receipt.imageDecodedOnBothVersionsAndRestart
+    )
+    assert.equal(receipt.freshBoundaries, 0)
+    assert.equal(receipt.posts.length, 4)
+    const people = readSeedTable(readFileSync(web.seedFile, 'utf8'))
+    const actor = people[receipt.actorKey]
+    assert(actor?.email.endsWith('@chat.example.com'))
+    const api = new TeamStationClient({
+      baseUrl: owner.apiUrl,
+      fetch: fixtureFetch,
+      passwordKdf: async (password, parameters) =>
+        await nativeArgon(passwordBytes(password), parameters)
+    })
+    await api.signInWithPassword(actor.email, actor.password)
+    const conversation = (await api.chatConversations()).find(
+      row => row.id === receipt.conversationId
+    )
+    assert(conversation != null)
+    const messages = await api.chatMessages(conversation.id)
+    assert.deepEqual(
+      messages.filter(row => row.kind === 'post').map(row => row.id),
+      receipt.posts.map(row => row.id)
+    )
+    const epochs = await api.chatEpochs(conversation.id, 0)
+    assert.equal(epochs.epochs.length, 1)
+    assert.equal(epochs.epochs[0].chainBreak, false)
+    const label = dmTitle(actor.userId, undefined, conversation.people ?? [])
+    const fixture = {
+      synthetic: true,
+      disposable: true,
+      appId: 'app.teamstation.app',
+      scheme: 'teamstation',
+      apiUrl: owner.apiUrl,
+      conversationId: conversation.id,
+      conversationLabel: label,
+      scopeName: label,
+      scopePill: 'Direct message',
+      targetText: receipt.posts[0].body,
+      replyText: receipt.posts[1].body,
+      originalMessageIds: receipt.posts.map(row => row.id),
+      draft: 'Retained history draft',
+      probePost: 'Retained history probe',
+      orientationPolicy: 'portrait-only',
+      actor,
+      peers: (conversation.people ?? [])
+        .filter(person => person.userId !== actor.userId)
+        .map(person => ({ userId: person.userId }))
+    }
+    requireFixtureFields(fixture, [
+      'actor.userId',
+      'actor.email',
+      'actor.password',
+      'conversationId',
+      'targetText',
+      'replyText',
+      'originalMessageIds'
+    ])
+    privateJson(join(out, 'fixture.json'), fixture)
+    privateJson(join(out, 'intact.json'), {
+      synthetic: true,
+      actorUserId: actor.userId,
+      conversationId: conversation.id,
+      posts: receipt.posts,
+      attachment: receipt.attachment
+    })
+    const link = join(out, 'link-request.json')
+    const env = {
+      TS_CHAT_WEB_URL: owner.webUrl,
+      TS_CHAT_API_URL: owner.apiUrl,
+      CHAT_UI_SEED_FILE: web.seedFile,
+      CHAT_UI_ARTIFACTS: out,
+      CHAT_UI_NATIVE_FIXTURE_FILE: join(out, 'fixture.json'),
+      CHAT_UI_NATIVE_RESULTS: join(out, 'results'),
+      CHAT_UI_NATIVE_LINK_REQUEST: link,
+      CHAT_UI_LOCKED_LINK_REQUEST: link,
+      CHAT_UI_NATIVE_STAGE: 'M4',
+      CHAT_UI_NATIVE_DISPOSABLE: '1',
+      CHAT_PLATFORM: values.surface,
+      CHAT_UI_LOCKED_ACTOR: receipt.actorKey,
+      CHAT_UI_LOCKED_CONVERSATION: conversation.id,
+      CHAT_UI_LOCKED_ORIGINAL: receipt.posts[0].id,
+      CHAT_UI_LOCKED_ORIGINAL_BODY: receipt.posts[0].body,
+      CHAT_UI_PROFILE_DIR: join(web.artifacts, 'profiles', 'holder'),
+      CHAT_RECOVERY_INTACT_FIXTURE: join(out, 'intact.json'),
+      CHAT_RECOVERY_INTACT_RECORD: join(out, 'baseline.json'),
+      CHAT_RECOVERY_FIXTURE_SOURCE: owner.source
+    }
+    const path = join(out, 'env.sh')
+    writeFileSync(path, recoveryFixtureEnvironment(env), {
+      mode: 0o600,
+      flag: 'wx'
+    })
+    return path
+  }
   const reset = execFileSync('/bin/bash', ['scripts/chat-e2e-reset.sh', out], {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024
@@ -103,6 +392,376 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
     { mode: 0o600 }
   )
   const people = readSeedTable(readFileSync(join(out, 'seed.txt'), 'utf8'))
+  if (values.runner === 'chat2') {
+    assert.equal(values.scenario, 'prepare')
+    const applicationSource = process.env.CHAT2_SOURCE
+    assert(
+      applicationSource != null && /^[a-f0-9]{40}$/.test(applicationSource),
+      'CHAT2_SOURCE must name the built application commit'
+    )
+    const db = makeDatabase(settings.databaseUrl)
+    try {
+      return await prepareChat2Scene({
+        ownershipId: 'chathistoryrecovery-chat2',
+        out,
+        apiUrl: owner.apiUrl,
+        webUrl: process.env.CHAT2_WEB_URL ?? 'http://127.0.0.1:8312',
+        mediaUrl: new URL(settings.space.endpoint).origin,
+        databaseUrl: settings.databaseUrl,
+        applicationSource,
+        ffmpeg: settings.ffmpegPath,
+        db,
+        people,
+        provider: async (person, key) =>
+          await fixtureProvider(owner.apiUrl, person, out, key)
+      })
+    } finally {
+      await db.destroy()
+    }
+  }
+  const signIn = async (person: {
+    email: string
+    password: string
+  }): Promise<TeamStationClient> => {
+    const client = new TeamStationClient({
+      baseUrl: owner.apiUrl,
+      fetch: fixtureFetch,
+      passwordKdf: async (password, parameters) =>
+        await nativeArgon(passwordBytes(password), parameters)
+    })
+    await client.signInWithPassword(person.email, person.password)
+    return client
+  }
+  if (values.runner === 'web' && values.scenario === 'locked')
+    return await prepareLockedScene({ owner, out, people, signIn })
+  if (values.runner === 'web' && values.scenario === 'phones') {
+    const coach = await signIn(people.Hc)
+    let room: string | undefined
+    const deadline = Date.now() + 30000
+    while (room == null && Date.now() < deadline) {
+      room = (await coach.chatConversations()).find(
+        row => row.title === 'Hawks Members'
+      )?.id
+      if (room == null) await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    assert(room != null, 'Seeded chat membership did not reconcile')
+    return await preparePhonesScene({
+      owner,
+      out,
+      conversationId: room,
+      ffmpeg: settings.ffmpegPath
+    })
+  }
+  if (values.runner === 'reply' || browserFollowup) {
+    // Only inspect membership here. The browser enrolls its own identity and
+    // creates every encrypted fixture message through the normal composer.
+    const actor = people.Hc
+    assert(actor.email.endsWith('@chat.example.com'))
+    const client = new TeamStationClient({
+      baseUrl: owner.apiUrl,
+      fetch: fixtureFetch,
+      passwordKdf: async (password, parameters) =>
+        await nativeArgon(passwordBytes(password), parameters)
+    })
+    await client.signInWithPassword(actor.email, actor.password)
+    let protectedRoom = (await client.chatConversations()).find(
+      room => room.title === 'Hawks Members'
+    )
+    const deadline = Date.now() + 30000
+    while (protectedRoom == null && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 200))
+      protectedRoom = (await client.chatConversations()).find(
+        room => room.title === 'Hawks Members'
+      )
+    }
+    assert(protectedRoom != null, 'Protected seeded membership is required')
+    const candidates = await client.dmCandidates()
+    const peers = ['Ha', 'Hs'].map(key => {
+      const person = candidates.find(row => row.userId === people[key].userId)
+      assert(person != null, 'History peers must be eligible adult candidates')
+      return person.shortName
+    })
+    const relayed =
+      browserFollowup &&
+      ['pendingSend', 'review2Browser'].includes(values.scenario)
+    let relay: OwnedRelay | undefined
+    if (relayed) {
+      // The browser reaches the API through the owned relay, whose gates
+      // hold only a named person's sends in the test conversation.
+      const ready = ownedRelay(owner)
+      const page = await (await fetch(owner.webUrl)).text()
+      assert(
+        page.includes(new URL(ready.endpoint).origin),
+        'The served web build must talk to the owned relay'
+      )
+      relay = ready
+    }
+    // A relayed web build's page may reach only the relay, so its own
+    // requests use the relay's address too.
+    const browserApi =
+      relay == null ? owner.apiUrl : new URL('/api/v1', relay.endpoint).href
+    const shared = join(out, 'shared-fixture.json')
+    const profile = join(out, 'profiles', 'actor')
+    const peerProfile = join(out, 'profiles', 'peer')
+    const setup = join(out, 'reply-setup.json')
+    const incoming = join(out, 'incoming-fixture.json')
+    privateJson(setup, {
+      synthetic: true,
+      source: owner.source,
+      origin: owner.webUrl,
+      apiUrl: browserApi,
+      seedFile: join(out, 'seed.txt'),
+      artifacts: out,
+      protectedConversation: protectedRoom.id,
+      profiles: {
+        Hc: profile,
+        Hs: peerProfile,
+        Ha: join(out, 'profiles', 'other-peer')
+      },
+      incoming,
+      small: join(out, 'small-fixture.json')
+    })
+    const path = join(out, 'env.sh')
+    const environment: Record<string, string> = {
+      TS_CHAT_WEB_URL: owner.webUrl,
+      TS_CHAT_API_URL: browserApi,
+      CHAT_UI_SEED_FILE: join(out, 'seed.txt'),
+      CHAT_UI_ARTIFACTS: join(out, 'producer-results'),
+      CHAT_UI_PROFILE_DIR: profile,
+      CHAT_UI_CONVERSATION: protectedRoom.id,
+      CHAT_UI_FIXTURE_PEOPLE: JSON.stringify(peers),
+      CHAT_UI_HISTORY_FIXTURE_FILE: shared,
+      CHAT_UI_REPLY_SEED_FILE: join(out, 'seed.txt'),
+      CHAT_UI_REPLY_ACTOR: values.scenario === 'incoming-send' ? 'Hs' : 'Hc',
+      CHAT_UI_REPLY_PEER: 'Hs',
+      CHAT_UI_REPLY_PROFILE_DIR:
+        values.scenario === 'incoming-send' ? peerProfile : profile,
+      CHAT_UI_REPLY_WEB_DEVICE: 'recovery-reply',
+      CHAT_UI_REPLY_ARTIFACTS: join(out, values.scenario + '-results'),
+      CHAT_UI_REPLY_SHARED_FIXTURE: shared,
+      CHAT_UI_REPLY_SMALL_FIXTURE: join(out, 'small-fixture.json'),
+      CHAT_UI_REPLY_INCOMING_FIXTURE: incoming,
+      CHAT_UI_REPLY_CREATE_OUTGOING: 'true',
+      CHAT_UI_REPLY_PROTECTED_CONVERSATION: protectedRoom.id,
+      CHAT_UI_REPLY_MODE: values.scenario,
+      CHAT_RECOVERY_REPLY_SETUP: setup,
+      CHAT_RECOVERY_FIXTURE_SOURCE: owner.source,
+      MAESTRO_D: 'recovery-reply-' + Date.now()
+    }
+    if (browserFollowup) {
+      const produce = (file: string, mode: string): void => {
+        let output = `$ node -r sucrase/register ${file} ${mode}\n`
+        try {
+          output += execFileSync(
+            process.execPath,
+            ['-r', 'sucrase/register', file, mode],
+            {
+              env: { ...process.env, ...environment },
+              encoding: 'utf8',
+              maxBuffer: 16 * 1024 * 1024,
+              stdio: ['ignore', 'pipe', 'pipe']
+            }
+          )
+        } catch (error) {
+          const failed = error as { stdout?: string; stderr?: string }
+          output += (failed.stdout ?? '') + (failed.stderr ?? '')
+          throw error
+        } finally {
+          writeFileSync(join(out, mode + '-producer.log'), output, {
+            flag: 'wx',
+            mode: 0o600
+          })
+        }
+      }
+      const helper = 'src/app/chat/chatHistoryRecoveryReplyFixture.e2e.ts'
+      produce(helper, 'enroll')
+      produce(helper, 'followup')
+      if (values.runner === 'entity') produce(helper, 'entity')
+      const group = JSON.parse(
+        readFileSync(join(out, 'followup-fixture.json'), 'utf8')
+      )
+      assert.equal(group.source, owner.source)
+      assert.equal(group.conversationId, protectedRoom.id)
+      requireFixtureFields(group, ['originalId', 'originalBody'])
+      environment.CHAT_UI_MESSAGE = group.originalId
+      environment.CHAT_UI_TARGET_TEXT = group.originalBody
+      environment.CHAT_UI_PEER_PROFILE_DIR = peerProfile
+      environment.CHAT_UI_PROFILE_DIR = ['S6', 'reader'].includes(
+        values.scenario
+      )
+        ? peerProfile
+        : profile
+      environment.CHAT_UI_ARTIFACTS = join(out, 'results')
+      mkdirSync(environment.CHAT_UI_ARTIFACTS, { mode: 0o700 })
+      if (values.scenario === 'reviewNavigation') {
+        const rooms = new Set<string>()
+        for (let index = 0; index < 20; index++) {
+          const room = await client.createDm([
+            people.Ha.userId,
+            people.Hs.userId
+          ])
+          assert.notEqual(room.id, protectedRoom.id)
+          assert(!rooms.has(room.id), 'Distinct list rows are required')
+          rooms.add(room.id)
+        }
+        privateJson(join(out, 'list-padding.json'), { ids: [...rooms] })
+      }
+      if (['S4full', 'currentHistoryReply'].includes(values.scenario)) {
+        produce('src/app/chat/chatUiFollowup.e2e.ts', 'historyFixture')
+        const history = JSON.parse(readFileSync(shared, 'utf8'))
+        requireFixtureFields(history, [
+          'conversationId',
+          'originalId',
+          'replyId'
+        ])
+        assert.notEqual(history.conversationId, protectedRoom.id)
+        environment.CHAT_UI_TEST_CONVERSATION = history.conversationId
+      } else {
+        produce(helper, 'paging-target')
+        const small = JSON.parse(
+          readFileSync(join(out, 'small-fixture.json'), 'utf8')
+        )
+        requireFixtureFields(small, ['conversationId', 'originalId'])
+        assert.notEqual(small.conversationId, protectedRoom.id)
+        environment.CHAT_UI_TEST_CONVERSATION = small.conversationId
+      }
+      if (relay != null) {
+        const control = join(out, 'control.json')
+        privateJson(control, {
+          disposable: true,
+          endpoint: relay.endpoint,
+          token: relay.token,
+          actors: Object.fromEntries(
+            ['Hc', 'Hs'].map(key => [
+              key,
+              {
+                userId: people[key].userId,
+                conversationId: environment.CHAT_UI_TEST_CONVERSATION
+              }
+            ])
+          )
+        })
+        environment.CHAT_RECOVERY_CONTROL_FILE = control
+        environment.CHAT_UI_PENDING_CONTROL = resolve(
+          'scripts/chat-history-recovery-control.cjs'
+        )
+        environment.CHAT_UI_PENDING_AUDIT = relay.audit
+      }
+      if (values.scenario === 'reader') {
+        // A season admin's announcement, which the reader may read but not
+        // answer. The admin is a fresh provider; the reader enrolled above.
+        const admin = await fixtureProvider(owner.apiUrl, people.S, out, 'S')
+        try {
+          const announcements = (await admin.client.chatConversations()).find(
+            row => row.kind === 'seasonAnnouncements'
+          )
+          assert(announcements != null, 'Season announcements are required')
+          await admin.engine.open(announcements.id)
+          const post = await admin.engine.sendText(
+            announcements.id,
+            'Practice notes: the field opens at five.'
+          )
+          assert(post != null)
+          privateJson(join(out, 'reader-fixture.json'), {
+            conversationId: announcements.id,
+            messageId: post.id
+          })
+        } finally {
+          admin.engine.stop()
+          await admin.engine.idle()
+        }
+      }
+      if (values.runner === 'entity') {
+        const entity = JSON.parse(
+          readFileSync(join(out, 'entity-fixture.json'), 'utf8')
+        )
+        assert.equal(entity.source, owner.source)
+        assert.equal(entity.conversationId, protectedRoom.id)
+        requireFixtureFields(entity, ['postId', 'teams.hawks', 'seasonId'])
+        environment.TS_CHAT_FIXTURE = join(out, 'entity-fixture.json')
+        environment.TS_CHAT_ARTIFACTS = environment.CHAT_UI_ARTIFACTS
+        environment.TS_CHAT_WEB = owner.webUrl
+        environment.TS_CHAT_API = owner.apiUrl
+      }
+      if (values.scenario === 'chat117Words') {
+        const small = JSON.parse(
+          readFileSync(join(out, 'small-fixture.json'), 'utf8')
+        )
+        requireFixtureFields(small, ['peerLabel'])
+        environment.CHAT117_CONVERSATION = environment.CHAT_UI_TEST_CONVERSATION
+        environment.CHAT117_PEER = small.peerLabel
+        environment.CHAT117_ARTIFACTS = environment.CHAT_UI_ARTIFACTS
+      }
+      if (values.scenario === 'boundedMedia') {
+        // A synthetic clip sent through the actual Attach and Send.
+        const clip = join(out, 'practice-clip.mp4')
+        execFileSync(
+          settings.ffmpegPath,
+          [
+            '-hide_banner',
+            '-loglevel',
+            'error',
+            '-f',
+            'lavfi',
+            '-i',
+            'testsrc=size=320x240:rate=10',
+            '-t',
+            '2',
+            '-c:v',
+            'libx264',
+            '-pix_fmt',
+            'yuv420p',
+            '-movflags',
+            '+faststart',
+            '-an',
+            clip
+          ],
+          { stdio: 'ignore' }
+        )
+        environment.CHAT_UI_VIDEO_FILE = clip
+        environment.CHAT_UI_HISTORY_FIXTURE_FILE = join(
+          out,
+          'small-fixture.json'
+        )
+        environment.CHAT_UI_VIDEO_FIXTURE_RESULT = join(
+          out,
+          'video-fixture.json'
+        )
+        produce('src/app/chat/chatUiFollowup.e2e.ts', 'videoFixture')
+        const video = JSON.parse(
+          readFileSync(environment.CHAT_UI_VIDEO_FIXTURE_RESULT, 'utf8')
+        )
+        requireFixtureFields(video, [
+          'conversationId',
+          'videoMessageId',
+          'fileName'
+        ])
+        assert.equal(
+          video.conversationId,
+          environment.CHAT_UI_TEST_CONVERSATION
+        )
+        environment.CHAT_UI_VIDEO_FIXTURE_FILE =
+          environment.CHAT_UI_VIDEO_FIXTURE_RESULT
+      }
+      const picker = join(out, 'picker-notes.txt')
+      writeFileSync(picker, 'Owned synthetic practice notes', {
+        flag: 'wx',
+        mode: 0o600
+      })
+      environment.CHAT_UI_PICK_FILE = picker
+      requireFixtureFields(environment, [
+        'CHAT_UI_MESSAGE',
+        'CHAT_UI_TARGET_TEXT',
+        'CHAT_UI_TEST_CONVERSATION',
+        'CHAT_UI_PEER_PROFILE_DIR'
+      ])
+    }
+    writeFileSync(path, recoveryFixtureEnvironment(environment), {
+      mode: 0o600,
+      flag: 'wx'
+    })
+    return path
+  }
   if (values.runner === 'web') {
     // These scenarios must first enroll through the actual browser UI.
     // A provider engine here would pre-enroll them and change the scenario.
@@ -136,58 +795,15 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
     )
     return path
   }
-  const providers: Record<
-    string,
-    {
-      client: TeamStationClient
-      engine: ChatEngine
-      keyFile: string
-      sessionFile: string
-    }
-  > = {}
+  const providers: Record<string, FixtureProvider> = {}
   try {
-    for (const key of ['Ha', 'Hc', 'Hs', 'A', 'B']) {
-      const actor = people[key]
-      assert(actor.email.endsWith('@chat.example.com'))
-      const client = new TeamStationClient({
-        baseUrl: owner.apiUrl,
-        passwordKdf: async (password, parameters) =>
-          await nativeArgon(passwordBytes(password), parameters)
-      })
-      const session = await client.signInWithPassword(
-        actor.email,
-        actor.password
+    for (const key of ['Ha', 'Hc', 'Hs', 'A', 'B'])
+      providers[key] = await fixtureProvider(
+        owner.apiUrl,
+        people[key],
+        out,
+        key
       )
-      assert.equal(
-        (await client.whoAmI())?.id,
-        actor.userId,
-        'API and fixture database disagree'
-      )
-      const keyFile = join(out, key + '-keys.json')
-      const sessionFile = join(out, key + '-session.json')
-      privateJson(sessionFile, session)
-      const store: ChatKeyStore = {
-        exists: async () => existsSync(keyFile),
-        load: async () =>
-          existsSync(keyFile)
-            ? recordFromJson(readFileSync(keyFile, 'utf8'))
-            : undefined,
-        save: async record => {
-          writeFileSync(keyFile, recordToJson(record), { mode: 0o600 })
-        },
-        wipe: async () => {
-          throw new Error('Fixture provider identity replacement is prohibited')
-        }
-      }
-      const engine = new ChatEngine({
-        client,
-        store,
-        userId: actor.userId,
-        device: { name: 'Synthetic fixture provider', platform: 'web' }
-      })
-      providers[key] = { client, engine, keyFile, sessionFile }
-      assert.equal(await engine.start(), 'ready')
-    }
     const actor = providers.Hc
     let conversation = (await actor.client.chatConversations()).find(
       row => row.title === 'Hawks Members'
@@ -218,7 +834,121 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
       'Independent chat for ' + values.scenario
     )
     assert(other != null)
+    const scene = await prepareNativeScene({
+      branch: values.scenario === 'default' ? 'core' : values.scenario,
+      platform: values.surface === 'android' ? 'android' : 'ios',
+      out,
+      ffmpeg: settings.ffmpegPath,
+      people,
+      providers,
+      admin: async () =>
+        await fixtureProvider(owner.apiUrl, people.S, out, 'S'),
+      chat117World: async () => {
+        const db = makeDatabase(settings.databaseUrl)
+        try {
+          await db
+            .updateTable('leagues')
+            .set({ name: 'Harbor League' })
+            .where('name', '=', 'QPLL')
+            .execute()
+          const hawks = (
+            await db
+              .selectFrom('teams')
+              .select(['id'])
+              .where('name', '=', 'Hawks')
+              .executeTakeFirstOrThrow()
+          ).id
+          const ids: string[] = []
+          const accounts: Array<{
+            userId: string
+            email: string
+            password: string
+            key: string
+          }> = []
+          for (const [first, last] of [
+            ['Lou', 'Gehrig'],
+            ['Willie', 'Mays']
+          ]) {
+            const id = mintUserId()
+            const password = randomBytes(24).toString('base64url')
+            const email = `chat117-${first.toLowerCase()}@chat.example.com`
+            await db
+              .insertInto('users')
+              .values({
+                id,
+                display_name: first + ' ' + last,
+                first_name: first,
+                last_name: last,
+                password_hash: await hashPassword(password),
+                login_enabled: true,
+                is_admin: false,
+                onboarding_step: 'complete',
+                onboarding_completed_at: new Date(),
+                birth_year: null,
+                birth_month: null
+              })
+              .execute()
+            await db
+              .insertInto('memberships')
+              .values({
+                id: makeId('membership'),
+                user_id: id,
+                team_id: hawks,
+                role: 'member',
+                is_player: false
+              })
+              .execute()
+            const added = await addEmail(db, id, email, {
+              isPrimary: true,
+              source: 'manual',
+              verifiedAt: new Date()
+            })
+            assert(added.heldBy == null, 'Synthetic address already taken')
+            ids.push(id)
+            accounts.push({ userId: id, email, password, key: first })
+          }
+          await drainDirty(db, new Date())
+          // Each has a chat identity, as a person with safety words does.
+          for (const account of accounts) {
+            const provider = await fixtureProvider(
+              owner.apiUrl,
+              account,
+              out,
+              account.key
+            )
+            provider.engine.stop()
+            await provider.engine.idle()
+          }
+          return { lou: ids[0], willie: ids[1] }
+        } finally {
+          await db.destroy()
+        }
+      },
+      setLao: async () => {
+        const league = /^QPLL (\S+)/m.exec(
+          readFileSync(join(out, 'seed.txt'), 'utf8')
+        )?.[1]
+        assert(league != null, 'The disposable fixture must name its league')
+        const admin = new TeamStationClient({
+          baseUrl: owner.apiUrl,
+          fetch: fixtureFetch,
+          passwordKdf: async (password, parameters) =>
+            await nativeArgon(passwordBytes(password), parameters)
+        })
+        await admin.signInWithPassword(people.L.email, people.L.password)
+        assert(await admin.setSafesport(league, true))
+      },
+      group: {
+        id: conversation.id,
+        replyId: reply.id,
+        replyBody: reply.body ?? ''
+      },
+      other: { id: dm.id },
+      relay:
+        process.env.CHAT_RECOVERY_RELAY == null ? undefined : ownedRelay(owner)
+    })
     const fixture = {
+      ...scene.fixture,
       synthetic: true,
       disposable: true,
       appId: 'app.teamstation.app',
@@ -309,7 +1039,8 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
       CHAT_UI_CONVERSATION: conversation.id,
       CHAT_UI_MESSAGE: original.id,
       CHAT_UI_TARGET_TEXT: original.body ?? '',
-      CHAT_RECOVERY_FIXTURE_SOURCE: owner.source
+      CHAT_RECOVERY_FIXTURE_SOURCE: owner.source,
+      ...scene.env
     }
     const path = join(out, 'env.sh')
     writeFileSync(path, recoveryFixtureEnvironment(env), {
@@ -335,8 +1066,24 @@ if (
     .then(path => {
       console.log(path)
     })
-    .catch(() => {
-      // Authentication and database exceptions may carry fixture credentials.
+    .catch((error: unknown) => {
+      // Authentication and database exceptions may carry fixture credentials:
+      // the cause goes to the private fixture directory, with the seed's
+      // passwords withheld, and never to the console.
+      const args = process.argv.slice(2)
+      const out = args[args.indexOf('--out') + 1]
+      if (out != null && existsSync(join(out, 'owner.json'))) {
+        let text = String((error as Error).stack ?? error)
+        const seed = join(out, 'seed.txt')
+        if (existsSync(seed))
+          for (const person of Object.values(
+            readSeedTable(readFileSync(seed, 'utf8'))
+          ))
+            text = text.split(person.password).join('[withheld]')
+        writeFileSync(join(out, 'prepare-error.txt'), text.slice(0, 4000), {
+          mode: 0o600
+        })
+      }
       console.error(
         'Fixture preparation failed; no runner should start. Inspect the private preparation log.'
       )
