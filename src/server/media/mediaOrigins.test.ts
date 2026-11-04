@@ -58,6 +58,45 @@ describe('mediaOrigins', function () {
     ])
   })
 
+  it('adds mediaBaseUrl’s origin, never its path, and only the bucket’s when it is empty', function () {
+    expect(
+      mediaOriginsOfJson({
+        space: {
+          ...keys,
+          mediaBaseUrl: 'https://media-bucket.sfo3.cdn.digitaloceanspaces.com/'
+        }
+      })
+    ).deep.equals([
+      'https://app.teamstation.app',
+      'https://media-bucket.sfo3.digitaloceanspaces.com',
+      'https://media-bucket.sfo3.cdn.digitaloceanspaces.com',
+      'https://*.mzstatic.com'
+    ])
+    expect(
+      mediaOriginsOfJson({
+        space: { ...keys, mediaBaseUrl: 'http://127.0.0.1:9199/test-bucket' }
+      })[2]
+    ).equals('http://127.0.0.1:9199')
+    expect(
+      mediaOriginsOfJson({ space: { ...keys, mediaBaseUrl: '' } })
+    ).deep.equals(mediaOriginsOfJson({ space: keys }))
+    // The fake Space's bucket base is its own path-style origin: listed once.
+    expect(
+      mediaOriginsOfJson({
+        space: {
+          ...keys,
+          endpoint: 'http://127.0.0.1:9199',
+          pathStyle: true,
+          mediaBaseUrl: 'http://127.0.0.1:9199/media-bucket'
+        }
+      })
+    ).deep.equals([
+      'https://app.teamstation.app',
+      'http://127.0.0.1:9199',
+      'https://*.mzstatic.com'
+    ])
+  })
+
   it('leaves the Space out without keys', function () {
     expect(
       mediaOriginsOfJson({ space: { accessKeyId: 'id', secretAccessKey: '' } })

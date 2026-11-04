@@ -17,6 +17,7 @@ import { after, before, describe, it } from 'mocha'
 
 import { serverConfig } from '../serverConfig'
 import { ffmpegEncoders, probeFfmpeg, remuxToHls } from './ffmpeg'
+import { videoFrameSource } from './locations'
 import { clearFragmentCache } from './spaceFrames'
 import { ensureStill, MAX_CONCURRENT_CUTS, stillInSpace } from './stills'
 
@@ -48,6 +49,8 @@ describe('a still from the Space', function () {
   /** What the stand-in Space was given, by key, and how many times. */
   const kept = new Map<string, Buffer>()
   let puts = 0
+  /** Every key read. */
+  const reads: string[] = []
 
   const space = {
     endpoint: '',
@@ -120,6 +123,7 @@ describe('a still from the Space', function () {
         })
         return
       }
+      reads.push(key)
       const stored = kept.get(key)
       if (stored != null) {
         res.writeHead(200, { 'content-length': String(stored.length) })
@@ -177,7 +181,7 @@ describe('a still from the Space', function () {
     })
     const fromSpace = await ensureStill({
       ffmpegPath,
-      source: { kind: 'space', space, videoId: 'vid_there' },
+      source: { kind: 'space', space, videoId: 'vid_there', spaceSecret: null },
       space,
       videoId: 'vid_there',
       atSec
@@ -192,6 +196,34 @@ describe('a still from the Space', function () {
     expect(there?.equals(here ?? Buffer.alloc(0))).equals(true)
     expect(await stillInSpace(space, 'vid_there', atSec)).equals(true)
     expect(await stillInSpace(space, 'vid_there', 21)).equals(false)
+  })
+
+  it('cuts a still of a secret-path video from its secret path, and keeps it with the other stills', async function () {
+    const secret = '0123456789abcdef0123456789abcdef'
+    const source = await videoFrameSource({
+      mediaRoot: workDir,
+      space,
+      storage: 'spaces',
+      videoId: 'vid_secret',
+      spaceSecret: secret
+    })
+    expect(source).deep.include({ kind: 'space', spaceSecret: secret })
+    reads.length = 0
+    const still = await ensureStill({
+      ffmpegPath,
+      source: source!,
+      space,
+      videoId: 'vid_secret',
+      atSec: 20
+    })
+    expect(still).equals('videos/vid_secret/stills/20.jpg')
+    const media = reads.filter(key => !key.includes('/stills/'))
+    expect(media.length).greaterThan(2)
+    for (const key of media)
+      expect(key.startsWith(`videos/vid_secret-${secret}/`), key).equals(true)
+    expect(
+      kept.get(still)?.equals(kept.get('videos/vid_here/stills/20.jpg')!)
+    ).equals(true)
   })
 
   it('cuts no more than a few stills at once, however many are asked for together', async function () {
@@ -282,14 +314,24 @@ describe('a still from the Space', function () {
     const again = await Promise.all([
       ensureStill({
         ffmpegPath,
-        source: { kind: 'space', space, videoId: 'vid_there' },
+        source: {
+          kind: 'space',
+          space,
+          videoId: 'vid_there',
+          spaceSecret: null
+        },
         space,
         videoId: 'vid_there',
         atSec: 20
       }),
       ensureStill({
         ffmpegPath,
-        source: { kind: 'space', space, videoId: 'vid_there' },
+        source: {
+          kind: 'space',
+          space,
+          videoId: 'vid_there',
+          spaceSecret: null
+        },
         space,
         videoId: 'vid_there',
         atSec: 20.3
@@ -313,7 +355,7 @@ describe('a still from the Space', function () {
     const before = puts
     const missing = await ensureStill({
       ffmpegPath,
-      source: { kind: 'space', space, videoId: 'vid_there' },
+      source: { kind: 'space', space, videoId: 'vid_there', spaceSecret: null },
       space,
       videoId: 'vid_there',
       atSec: 600
