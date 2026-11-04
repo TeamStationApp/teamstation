@@ -131,7 +131,8 @@ describe('NodeSettingsCard', function () {
       highlights: {
         ...defaultNodeSettings.highlights,
         leadSecByEventType: { strikeout: 10, walk: 90 }
-      }
+      },
+      distribution: defaultNodeSettings.distribution
     })
     await render(server.client)
     expect(text().toLowerCase()).contains('scoreboard settings')
