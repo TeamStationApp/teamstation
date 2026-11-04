@@ -4,6 +4,7 @@ import { epochAad, hpkeSeal } from '../../../common/chatCrypto/hpke'
 import { b64, epochKeyOf, unb64 } from '../keyRecord'
 import { ChatEngineError, type EngineContext } from './context'
 import { pinCurrent } from './decrypt'
+import { fillHistoryGrants } from './historyRecovery'
 import { reasonOf } from './links'
 import { syncLog } from './log'
 import { syncEpochs } from './sync'
@@ -91,6 +92,17 @@ export async function readGrants(
  * lets this device fill by itself. Answers how many were filled.
  */
 export async function fillGrants(ctx: EngineContext): Promise<number> {
+  let filled = 0
+  try {
+    filled = await fillCurrentGrants(ctx)
+  } catch (error) {
+    await fillHistoryGrants(ctx)
+    throw error
+  }
+  return filled + (await fillHistoryGrants(ctx))
+}
+
+async function fillCurrentGrants(ctx: EngineContext): Promise<number> {
   const requests = await readGrants(ctx)
   const boxes: ChatGrantBox[] = []
   const heads = new Map<string, Set<string> | undefined>()
