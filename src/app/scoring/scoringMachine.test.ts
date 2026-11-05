@@ -495,6 +495,14 @@ describe('local scoring sessions', function () {
       sequence: state.session.meta.sequence,
       revision: state.correctionWindow!.revision
     }
+    const refreshed = scoringReducer(state, {
+      type: 'RESET',
+      session: state.session,
+      log: state.log,
+      following: true
+    })
+    expect(refreshed.generation).equals(state.generation + 1)
+    expect(scoringReducer(refreshed, done)).equals(refreshed)
     for (const key of ['generation', 'sequence', 'revision'] as const)
       expect(scoringReducer(state, { ...done, [key]: done[key] + 1 })).equals(
         state

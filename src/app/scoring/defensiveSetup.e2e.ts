@@ -7,7 +7,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { PerspectiveCamera, Vector3 } from 'three'
 
-import { asGameDetail, asRosterEntry } from '../../common/api'
+import { asGameDetail, asRosterEntry, type RosterEntry } from '../../common/api'
 import { shortName } from '../../common/names'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { ScoringSession, type StoredGame } from '../../common/scoring/session'
@@ -231,7 +231,9 @@ class Page {
       if (await this.evaluate(fn, ...args)) return
       await new Promise(resolve => setTimeout(resolve, 100))
     } while (Date.now() < until)
-    throw new Error(`Browser condition timed out: ${fn.toString()}`)
+    throw new Error(
+      `Browser condition timed out: ${fn.toString()}; screen: ${await this.evaluate(() => document.body.innerText)}`
+    )
   }
 
   locator(css: string): { click: () => Promise<void> } {
@@ -305,6 +307,8 @@ async function open(fixture: Fixture = {}): Promise<{
   savedPlays: () => number
 }> {
   const unexpected: string[] = []
+  const added: Record<string, RosterEntry[]> = { home: [], away: [] }
+  const guests: Record<string, RosterEntry[]> = { home: [], away: [] }
   const held: StoredGame = { plays: [], currentPlay: null }
   const fixtureGame = asGameDetail(game)
   const context = {
@@ -346,8 +350,25 @@ async function open(fixture: Fixture = {}): Promise<{
       context,
       { requireCurrentSetup: true }
     )
-    for (const action of actions)
+    for (const action of actions) {
+      if (
+        action.type === 'lineup' &&
+        action.kind === 'addPlayer' &&
+        action.player != null &&
+        action.side != null
+      ) {
+        added[action.side].push(
+          asRosterEntry({
+            ...roster(action.side)[0],
+            userId: userIdOfGumbo(action.player),
+            gumboId: action.player,
+            shortName: action.name,
+            jersey: action.jersey
+          })
+        )
+      }
       expect(other.apply(action).problems).deep.equals([])
+    }
     await other.flush()
     return other.state
   }
@@ -374,7 +395,7 @@ async function open(fixture: Fixture = {}): Promise<{
           // Set browser preferences before the app starts and collect page errors.
           const preferences =
             fixture.animationsOff === true
-              ? `localStorage.setItem('teamstation:scoring:999:switch-hitter',${JSON.stringify(JSON.stringify({ help: false, shown: 0, animations: false }))});`
+              ? `localStorage.setItem('teamstation:scoring:${userIdOfGumbo(999)}:switch-hitter',${JSON.stringify(JSON.stringify({ help: false, shown: 0, animations: false }))});`
               : ''
           response.end(
             (await upstream.text()).replace(
@@ -387,11 +408,30 @@ async function open(fixture: Fixture = {}): Promise<{
       }
       let body: unknown
       if (u.pathname.endsWith('/auth/me'))
-        body = { id: 999, displayName: 'Scorer', isAdmin: false }
+        body = { id: userIdOfGumbo(999), displayName: 'Scorer', isAdmin: false }
       else if (u.pathname === '/api/v1/me/roles')
         body = { teams: [], players: [] }
       else if (u.pathname === '/api/v1/me/notifications/summary')
         body = { hasPending: false }
+      else if (u.pathname === '/api/v1/time') body = { now: Date.now() }
+      else if (u.pathname === '/api/v1/me/account/chat-age')
+        body = {
+          confirmed: true,
+          source: 'self',
+          confirmedAt: '2026-01-01T00:00:00Z'
+        }
+      else if (u.pathname === '/api/v1/me/home')
+        body = { teams: [], leagues: [], seasons: [] }
+      else if (
+        [
+          '/api/v1/live',
+          '/api/v1/chat/links',
+          '/api/v1/users',
+          '/api/v1/me/umpire-leagues',
+          '/api/v1/chat/conversations'
+        ].includes(u.pathname)
+      )
+        body = []
       else if (u.pathname === '/api/v1/health')
         body = {
           status: 'ok',
@@ -400,7 +440,17 @@ async function open(fixture: Fixture = {}): Promise<{
           dictation: false,
           dictationModels: []
         }
-      else if (u.pathname === '/api/v1/games/g1') body = game
+      else if (u.pathname === '/api/v1/games/g1')
+        body = {
+          ...game,
+          guestPlayers: guests,
+          guests: Object.fromEntries(
+            Object.entries(guests).map(([side, entries]) => [
+              side,
+              entries.map(entry => entry.gumboId)
+            ])
+          )
+        }
       else if (u.pathname.endsWith('/events')) {
         if (request.method === 'POST') {
           let bytes = ''
@@ -416,13 +466,16 @@ async function open(fixture: Fixture = {}): Promise<{
           currentPlay: held.currentPlay
         }
       } else if (u.pathname.endsWith('/roster'))
-        body = roster(
-          u.pathname.includes('/away/') ? 'away' : 'home',
-          u.pathname.includes('/home/')
-            ? (fixture.homeRoster ?? 10)
-            : (fixture.awayRoster ?? 10),
-          fixture.collisionNames
-        )
+        body = [
+          ...roster(
+            u.pathname.includes('/away/') ? 'away' : 'home',
+            u.pathname.includes('/home/')
+              ? (fixture.homeRoster ?? 10)
+              : (fixture.awayRoster ?? 10),
+            fixture.collisionNames
+          ),
+          ...added[u.pathname.includes('/away/') ? 'away' : 'home']
+        ]
       else if (u.pathname.endsWith('/default-lineup')) {
         const side = u.pathname.includes('/away/') ? 'away' : 'home'
         body =
@@ -452,11 +505,17 @@ async function open(fixture: Fixture = {}): Promise<{
         body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
       else if (
         request.method === 'POST' &&
-        u.pathname.endsWith('/roster-players')
+        (u.pathname.endsWith('/roster-players') ||
+          u.pathname.endsWith('/guest-players'))
       ) {
         let bytes = ''
         for await (const chunk of request) bytes += String(chunk)
         body = rosterEntryFromBody(JSON.parse(bytes === '' ? '{}' : bytes))
+        if (u.pathname.endsWith('/roster-players'))
+          added[u.pathname.includes('/away/') ? 'away' : 'home'].push(
+            body as RosterEntry
+          )
+        else guests[JSON.parse(bytes).side].push(body as RosterEntry)
         response.statusCode = 201
       } else {
         unexpected.push(`${request.method} ${u.pathname}`)
@@ -525,12 +584,12 @@ async function click(page: Page, label: string): Promise<void> {
     label === 'Create Player' &&
     (await page.$('[aria-label="First Name"]')) == null
   await page.waitForSelector(selector)
-  const point = await page.evaluate(s => {
-    const nodes = document.querySelectorAll(s)
-    const box = nodes[nodes.length - 1].getBoundingClientRect()
-    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
-  }, selector)
-  await page.mouse.click(point.x, point.y)
+  const count = await page.$$eval(selector, nodes => nodes.length)
+  await page.driver.tapOn({
+    css: selector,
+    index: String(count - 1),
+    timeout: 10000
+  })
   if (opening) await page.waitForSelector('[aria-label="First Name"]')
 }
 
@@ -984,6 +1043,7 @@ describe('current defensive scoring setup browser', function () {
           type: 'lineup',
           kind: 'addPlayer',
           side: 'home',
+          player: 210,
           name: 'Julio Rodriguez',
           jersey: '10'
         }
@@ -1001,6 +1061,10 @@ describe('current defensive scoring setup browser', function () {
       ])
       await click(page, 'Create')
       await page.waitForSelector('[aria-label*="2 balls"]')
+      await page.waitForFunction(
+        () =>
+          document.querySelectorAll('[aria-label^="Assign RF "]').length === 11
+      )
       expect(await page.$$('[aria-label^="Assign RF "]')).has.length(11)
       expect(await page.$('[aria-label="Create Player"]')).not.equals(null)
       expect(unexpected).deep.equals([])
@@ -1051,7 +1115,12 @@ describe('current defensive scoring setup browser', function () {
         await peer([{ type: 'gameFlow', kind: 'endGame' }])
         if (opening === 'completed') await page.reload()
         else await click(page, 'Create Player')
-        await page.waitForSelector('[aria-label="Game over"]')
+        await page
+          .waitForSelector('[aria-label="Game over"]')
+          .catch(async (error: unknown) => {
+            console.error(opening, await text(page))
+            throw error
+          })
         await tapField(page, 'P')
         expect(await page.$('[aria-label="Defensive roster"]')).equals(null)
         expect(await page.$('[aria-label="First Name"]')).equals(null)

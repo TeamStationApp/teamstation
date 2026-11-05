@@ -212,6 +212,22 @@ async function mount(
 }
 
 describe('scoring screen field wiring', function () {
+  it('announces occupied and empty bases in the current scoring summary', async () => {
+    const live = ScoringSession.start(
+      memoryStore(),
+      'g1',
+      scoringSession(gameFixture),
+      {
+        requireCurrentSetup: true
+      }
+    )
+    live.apply({ type: 'gameFlow', kind: 'placeRunner', runner: 2, base: '1B' })
+    live.apply({ type: 'gameFlow', kind: 'placeRunner', runner: 3, base: '2B' })
+    await mount({ persistent: false, open: async () => live })
+    expect(props().accessibilitySummary).includes('first base Player 2')
+    expect(props().accessibilitySummary).includes('second base Player 3')
+    expect(props().accessibilitySummary).includes('third base empty')
+  })
   for (const previous of [false, true])
     it(`limits passed-ball pitch entry to three controls, previous pitch ${previous}`, async () => {
       const initial = scoringSession(gameFixture)

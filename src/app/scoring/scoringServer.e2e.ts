@@ -8,6 +8,7 @@ import puppeteer, {
   type BrowserContext,
   type Page
 } from 'puppeteer'
+import { PerspectiveCamera, Vector3 } from 'three'
 
 import type { GameDetail, RosterEntry } from '../../common/api'
 import {
@@ -22,8 +23,11 @@ import {
   type StoredGame
 } from '../../common/scoring/session'
 import type { GameSetup, GameState } from '../../common/scoring/state'
+import { asUserId } from '../../common/userId'
 import { signInTestAccount } from '../../test/passwordFixtures'
-import { createDevelopmentSession, teamsOf } from './developmentSession'
+import { applyFieldCamera } from '../field/cameraModel'
+import { BASES } from '../field/fieldModel'
+import { teamsOf } from './developmentSession'
 
 /**
  * The scoring screen against the running API, with nothing intercepted: every
@@ -75,10 +79,23 @@ function scoringGame(games = 1): Fixture {
       .split('\n')
       .filter(line => line.startsWith(`${key}=`))
       .map(line => line.slice(key.length + 1))
+  // Administration alone no longer grants game scoring. Give this fixture's
+  // scorer the same explicit team role as the real concurrent clients.
+  for (const gameId of value('GAME_ID')) {
+    sql(`insert into scope_roles (id, user_id, scope_type, scope_id, role)
+      select 'sco_' || md5(random()::text), e.user_id, 'team', g.home_team_id, 'scorekeeper'
+      from games g cross join user_emails e
+      where g.id='${gameId}' and e.email='${SCORER.email.replace(/'/g, "''")}'
+      on conflict (user_id, scope_type, scope_id, role) do nothing`)
+  }
   return {
     games: value('GAME_ID'),
-    away: value('AWAY')[0].split(',').map(Number),
-    home: value('HOME')[0].split(',').map(Number)
+    away: value('AWAY')[0]
+      .split(',')
+      .map(id => Number(sql(`select ts_ensure_gumbo_id('${asUserId(id)}')`))),
+    home: value('HOME')[0]
+      .split(',')
+      .map(id => Number(sql(`select ts_ensure_gumbo_id('${asUserId(id)}')`)))
   }
 }
 function sql(query: string): string {
@@ -108,6 +125,7 @@ async function stored(token: string, gameId: string): Promise<Stored> {
 let browser: Browser
 let scorer = ''
 let viewer = ''
+const pendingWrites = new WeakMap<Page, Set<unknown>>()
 
 async function openAs(
   token: string,
@@ -115,6 +133,17 @@ async function openAs(
   context?: BrowserContext
 ): Promise<Page> {
   const page = await (context ?? browser).newPage()
+  const writes = new Set<unknown>()
+  pendingWrites.set(page, writes)
+  page.on('request', request => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname.endsWith('/events')
+    )
+      writes.add(request)
+  })
+  page.on('requestfinished', request => writes.delete(request))
+  page.on('requestfailed', request => writes.delete(request))
   page.setDefaultTimeout(15000)
   page.on('pageerror', error => {
     console.error('Browser error:', error)
@@ -134,21 +163,30 @@ async function click(page: Page, label: string): Promise<void> {
   const opening =
     label === 'Create Player' &&
     (await page.$('[aria-label="First Name"]')) == null
-  await page.waitForFunction(
-    selector =>
-      Array.from(document.querySelectorAll(selector)).some(node =>
-        node.checkVisibility()
-      ),
-    {},
-    selector
-  )
-  for (const match of (await page.$$(selector)).reverse()) {
-    if (!(await match.isVisible())) continue
-    await match.click()
-    // Let the sheet transition finish before targeting its next control.
-    await new Promise(resolve => setTimeout(resolve, 350))
+  await page
+    .waitForFunction(
+      selector =>
+        Array.from(document.querySelectorAll(selector)).some(node =>
+          node.checkVisibility()
+        ),
+      {},
+      selector
+    )
+    .catch(async error => {
+      console.error(
+        'Missing scoring control:',
+        label,
+        await page.evaluate(() => document.body.innerText)
+      )
+      throw error
+    })
+  const matches = await page.$$(selector)
+  for (const match of matches.reverse()) {
+    if (!(await match.evaluate(node => node.checkVisibility()))) continue
+    await match.asLocator().click()
     break
   }
+  await new Promise(resolve => setTimeout(resolve, 350))
   if (opening) await page.waitForSelector('[aria-label="First Name"]')
 }
 
@@ -167,7 +205,12 @@ async function waitReady(page: Page): Promise<void> {
  * status line can read saved for a play not yet sent.
  */
 async function waitSaved(page: Page): Promise<void> {
-  await page.waitForNetworkIdle({ idleTime: 300, timeout: 30000 })
+  const deadline = Date.now() + 30000
+  do {
+    await new Promise(resolve => setTimeout(resolve, 300))
+    if ((pendingWrites.get(page)?.size ?? 0) === 0) break
+    if (Date.now() >= deadline) throw new Error('Scoring writes did not settle')
+  } while (true)
   await page.waitForFunction(
     () => document.querySelector('[aria-label="Save status"]') == null,
     { timeout: 30000 }
@@ -232,7 +275,12 @@ async function hitTo(
     '[aria-label^="Tap or drag a player to where the ball was fielded"]'
   )
   await page.focus('[role="application"]')
-  for (let i = 0; i <= slot; i++) await page.keyboard.press(']')
+  await page.keyboard.press('Escape')
+  await frame(page)
+  for (let i = 0; i <= slot; i++) {
+    await page.keyboard.press(']')
+    await frame(page)
+  }
   await frame(page)
   await page.keyboard.press('Space')
   await page.keyboard.press('ArrowUp')
@@ -240,8 +288,10 @@ async function hitTo(
   await page.waitForSelector(
     '[aria-label^="Drag up and down for ball trajectory."]'
   )
-  for (let value = 45; value > angle; value--)
+  for (let value = 45; value > angle; value--) {
     await page.keyboard.press('ArrowDown')
+    await frame(page)
+  }
   await frame(page)
   await page.keyboard.press('Enter')
 }
@@ -267,19 +317,72 @@ async function placeWithKeyboard(page: Page, presses: number): Promise<void> {
   await frame(page)
   await frame(page)
   await page.focus('[role="application"]')
-  for (let i = 0; i < presses; i++) await page.keyboard.press(']')
+  await page.keyboard.press('Escape')
+  await frame(page)
+  for (let i = 0; i < presses; i++) {
+    await page.keyboard.press(']')
+    await frame(page)
+  }
   await frame(page)
   await page.keyboard.press('Space')
   await page.keyboard.press('ArrowUp')
   await page.keyboard.press('Enter')
 }
-async function dropRunnerWithKeyboard(
+async function dropRunner(
   page: Page,
   decision: 'Safe' | 'Out',
-  advance = false
+  advance = false,
+  runnerId?: number,
+  fromBase = 1
 ): Promise<void> {
   await page.waitForSelector('canvas[data-field-ready="true"]')
+  if (runnerId != null) {
+    const start = await page.$eval(
+      `[data-nameplate="offense-${runnerId}"]`,
+      node => {
+        const r = node.getBoundingClientRect()
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+      }
+    )
+    const rect = await page.$eval('canvas', node => {
+      const r = node.getBoundingClientRect()
+      return { x: r.x, y: r.y, width: r.width, height: r.height }
+    })
+    const camera = new PerspectiveCamera()
+    applyFieldCamera(camera, {
+      ...rect,
+      view: 'home',
+      zoom: 1.25,
+      tilt: (-11 * Math.PI) / 180,
+      heightOffset: 33,
+      bottomExtension: 112
+    })
+    const base = BASES[(fromBase + (advance ? 1 : 0)) % 4]
+    const p = new Vector3(base.x, 0, base.z).project(camera)
+    await page.mouse.move(start.x, start.y)
+    await page.mouse.down()
+    await page.mouse.move(
+      rect.x + ((p.x + 1) * rect.width) / 2,
+      rect.y + ((1 - p.y) * rect.height) / 2,
+      { steps: 12 }
+    )
+    const control = await page.waitForSelector(
+      `[aria-label="${decision} drag target"]`
+    )
+    const target = await control!.boundingBox()
+    if (target == null) throw new Error('Runner decision target has no bounds')
+    await page.mouse.move(
+      target.x + target.width / 2,
+      target.y + target.height / 2,
+      { steps: 5 }
+    )
+    await page.mouse.up()
+    return
+  }
   await page.focus('[role="application"]')
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('[')
+  await frame(page)
   await page.keyboard.press('Space')
   if (advance) for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
   await page.keyboard.press(decision === 'Safe' ? 's' : 'o')
@@ -310,8 +413,10 @@ async function reachOnError(page: Page): Promise<void> {
   await page.waitForSelector(
     '[aria-label^="Drag up and down for ball trajectory."]'
   )
-  for (let value = 45; value > -10; value--)
+  for (let value = 45; value > -10; value--) {
     await page.keyboard.press('ArrowDown')
+    await frame(page)
+  }
   await frame(page)
   await page.keyboard.press('Enter')
   await page.waitForSelector('[aria-label^="Tap or drag another defender"]', {
@@ -329,7 +434,13 @@ async function reachOnError(page: Page): Promise<void> {
  * continued, then the Score screen's Full game scoring.
  */
 async function openScoring(page: Page): Promise<void> {
-  await click(page, 'Score')
+  await click(page, 'Score').catch(async (error: unknown) => {
+    console.error(
+      'Score entry:',
+      await page.evaluate(() => document.body.innerText)
+    )
+    throw error
+  })
   await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
   await click(page, 'Full game scoring')
   await page.waitForFunction(() => location.pathname.endsWith('/score'))
@@ -340,9 +451,17 @@ async function openScoring(page: Page): Promise<void> {
 }
 
 /** A play as two scorings of the same game can be compared. */
-function comparable(play: unknown): unknown {
+function comparable(play: unknown, independentRecording = false): unknown {
   const copy = JSON.parse(JSON.stringify(play)) as Record<string, unknown>
   delete copy.source
+  if (independentRecording) {
+    const teamStation = copy.teamStation as Record<string, unknown> | undefined
+    if (teamStation != null) delete teamStation.actionTimes
+    const targets = copy.tagTargets as
+      { play?: { id?: string }; events?: Array<{ id?: string }> } | undefined
+    if (targets?.play != null) delete targets.play.id
+    for (const target of targets?.events ?? []) delete target.id
+  }
   const about = copy.about as Record<string, unknown> | undefined
   if (about != null) {
     delete about.startTime
@@ -509,11 +628,11 @@ describe('scoring into the server', function () {
       }
     }
     expect(reads[0].plays).length(1)
-    expect(reads[0].plays.map(row => comparable(row.gumbo))).deep.equals(
-      reads[1].plays.map(row => comparable(row.gumbo))
+    expect(reads[0].plays.map(row => comparable(row.gumbo, true))).deep.equals(
+      reads[1].plays.map(row => comparable(row.gumbo, true))
     )
-    expect(comparable(reads[0].currentPlay)).deep.equals(
-      comparable(reads[1].currentPlay)
+    expect(comparable(reads[0].currentPlay, true)).deep.equals(
+      comparable(reads[1].currentPlay, true)
     )
     // Opened again, both screens stand at the same place.
     const reopened: string[] = []
@@ -552,17 +671,12 @@ describe('scoring into the server', function () {
       await page.waitForSelector(
         '[aria-label^="Tap or drag the next defender"]'
       )
-      await page.focus('[role="application"]')
-      for (let i = 0; i < 3; i++) await page.keyboard.press(']')
-      await frame(page)
-      await page.keyboard.press('Space')
-      await page.keyboard.press('ArrowUp')
-      await page.keyboard.press('Enter')
+      await placeWithKeyboard(page, 3)
       await click(page, 'Finish defensive play')
       await page.waitForSelector('[aria-label="Time to edit play"]', {
         timeout: 30000
       })
-      await dropRunnerWithKeyboard(page, 'Safe', true)
+      await dropRunner(page, 'Safe', true)
       await finishAtBat(page)
       // A fly to left for the third out.
       await hitTo(page, 'Ball Caught', 6, 40)
@@ -586,20 +700,11 @@ describe('scoring into the server', function () {
 
     // The fixture names the players of a game built from empty rosters; the
     // same batting slot or position here is the same player.
-    const authored = createDevelopmentSession(detail, [], []).liveData.boxscore
     const idOf = new Map<number, number>()
     for (const side of ['away', 'home'] as const) {
-      authored.teams[side].battingOrder.forEach((id, slot) => {
-        idOf.set(id, setup.sides[side].battingOrder[slot])
+      setup.sides[side].battingOrder.forEach((id, slot) => {
+        idOf.set(slot + (side === 'away' ? 1 : 10), id)
       })
-      for (const [position, id] of Object.entries(authored.teams[side].defense))
-        if (id != null)
-          idOf.set(
-            id,
-            setup.sides[side].defense[
-              position as keyof typeof setup.sides.home.defense
-            ]!
-          )
     }
     const mapped = (id: number): number => {
       const found = idOf.get(id)
@@ -683,8 +788,10 @@ describe('scoring into the server', function () {
     expect(
       tapped.liveData.plays.allPlays.map(play => play.result.eventType)
     ).deep.equals(['single', 'strikeout', 'field_out', 'field_out'])
-    expect(tapped.liveData.plays.allPlays.map(comparable)).deep.equals(
-      dictated.liveData.plays.allPlays.map(comparable)
+    expect(
+      tapped.liveData.plays.allPlays.map(play => comparable(play, true))
+    ).deep.equals(
+      dictated.liveData.plays.allPlays.map(play => comparable(play, true))
     )
     expect(tapped.liveData.linescore).deep.equals(dictated.liveData.linescore)
     expect(tapped.liveData.boxscore).deep.equals(dictated.liveData.boxscore)
@@ -901,7 +1008,7 @@ describe('scoring into the server', function () {
           `select id from events where "gameId"='${gameId}' and "atBatIndex"=0`
         )
       ).equals(singleId)
-      await dropRunnerWithKeyboard(page, 'Safe', true)
+      await dropRunner(page, 'Safe', true)
       await click(page, 'Finish at-bat')
       await waitReady(page)
       await click(page, 'Open scoring menu')
@@ -950,7 +1057,7 @@ describe('scoring into the server', function () {
       // A steal of second, then a double that scores him.
       await pitch(page, 'Ball')
       await waitReady(page)
-      await dropRunnerWithKeyboard(page, 'Safe', true)
+      await dropRunner(page, 'Safe', true, b1, 1)
       await click(page, 'Steal')
       await waitReady(page)
       await hitTo(page, 'Double', 8, 20)
@@ -959,8 +1066,9 @@ describe('scoring into the server', function () {
       // A wild pitch takes the runner to third, and a strikeout.
       await pitch(page, 'Ball')
       await waitReady(page)
-      await dropRunnerWithKeyboard(page, 'Safe', true)
+      await dropRunner(page, 'Safe', true, b2, 2)
       await click(page, 'Wild Pitch')
+      await click(page, 'Use previous pitch as wild pitch')
       await waitReady(page)
       await pitch(page, 'Called Strike')
       await pitch(page, 'Swing and Miss')
@@ -1035,7 +1143,7 @@ describe('scoring into the server', function () {
     expect(status).equals('built')
     const figures = (userId: number): string =>
       sql(
-        `select concat_ws(' ', pa, ab, h, doubles, r, rbi, sb, k, pitch_bf, pitch_outs, pitch_k, pitch_r, pitch_er) from game_player_stats where game_id='${gameId}' and user_id=${userId}`
+        `select concat_ws(' ', pa, ab, h, doubles, r, rbi, sb, k, pitch_bf, pitch_outs, pitch_k, pitch_r, pitch_er) from game_player_stats where game_id='${gameId}' and gumbo_id=${userId}`
       )
     // pa ab h 2b r rbi sb k | bf outs k r er
     expect(figures(b1)).equals('1 1 1 0 1 0 1 0 0 0 0 0 0')
@@ -1180,8 +1288,8 @@ describe('scoring into the server', function () {
     console.log(`      walk: ${String(walk.details.description)}`)
 
     // Undoing the walk and the balk leaves what was stored before them.
-    expect(plays(undone).map(comparable)).deep.equals(
-      plays(before).map(comparable)
+    expect(plays(undone).map(play => comparable(play))).deep.equals(
+      plays(before).map(play => comparable(play))
     )
     expect(comparable(undone.currentPlay)).deep.equals(
       comparable(before.currentPlay)
@@ -1244,7 +1352,9 @@ describe('scoring into the server', function () {
       // A pinch hitter for him, and a new pitcher, saved together.
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Away Team')
       pinchPlayer = await createPlayer('Mookie', 'Betts')
+      await click(page, 'Lineup')
       await click(page, `Add ${pinchPlayer.shortName} to Lineup`)
       const order = await page.$$('[aria-label^="Reorder "]')
       await page.focus(`[aria-label="Reorder ${pinchPlayer.shortName}"]`)
@@ -1267,7 +1377,9 @@ describe('scoring into the server', function () {
       await click(page, `Remove ${dueBatter}`)
       await click(page, 'Home Team')
       await click(page, 'Defense')
+      await click(page, 'Roster')
       reliefPlayer = await createPlayer('Mariano', 'Rivera')
+      await click(page, 'Defense')
       // Held, then dragged onto the mound.
       const from = await page.waitForSelector(
         `[aria-label="${reliefPlayer.shortName}"]`
@@ -1340,11 +1452,7 @@ describe('scoring into the server', function () {
       battingOrder?: string
       replacedPlayer?: { id?: number; fullName: string }
     }
-    const play = JSON.parse(
-      sql(
-        `select gumbo from events where "gameId"='${gameId}' and "atBatIndex"=0`
-      )
-    ) as {
+    const play = (await stored(scorer, gameId)).plays[0].gumbo as {
       playEvents: Event[]
       matchup: Record<string, unknown>
       actionIndex: number[]
@@ -1366,7 +1474,7 @@ describe('scoring into the server', function () {
     const [pitching, pinch] = play.playEvents.slice(1, 3)
     expect(pitching).deep.include({
       isSubstitution: true,
-      player: { id: reliefPlayer.userId, fullName: reliefPlayer.shortName },
+      player: { id: reliefPlayer.gumboId, fullName: reliefPlayer.shortName },
       position: {
         code: '1',
         name: 'Pitcher',
@@ -1382,7 +1490,7 @@ describe('scoring into the server', function () {
     })
     expect(pinch).deep.include({
       isSubstitution: true,
-      player: { id: pinchPlayer.userId, fullName: pinchPlayer.shortName },
+      player: { id: pinchPlayer.gumboId, fullName: pinchPlayer.shortName },
       battingOrder: '101'
     })
     expect(pinch.position).deep.include({ code: '11', abbreviation: 'PH' })
@@ -1394,8 +1502,8 @@ describe('scoring into the server', function () {
     })
     // The reliever was created with a right arm, so the hand is known.
     expect(play.matchup).deep.include({
-      batter: { id: pinchPlayer.userId, fullName: pinchPlayer.shortName },
-      pitcher: { id: reliefPlayer.userId, fullName: reliefPlayer.shortName },
+      batter: { id: pinchPlayer.gumboId, fullName: pinchPlayer.shortName },
+      pitcher: { id: reliefPlayer.gumboId, fullName: reliefPlayer.shortName },
       pitchHand: { code: 'R', description: 'Right' }
     })
     console.log(`      pitching: ${String(pitching.details.description)}`)

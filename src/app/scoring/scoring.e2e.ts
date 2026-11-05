@@ -37,6 +37,7 @@ const game = asGameDetail({
   ingestStatus: 'pending',
   ingestMessage: null,
   canScore: true,
+  assignedRoles: { away: ['scorekeeper'], home: ['scorekeeper'] },
   videos: []
 })
 interface ProbeFiber {
@@ -52,6 +53,7 @@ interface SceneProbeWindow {
   qaCamera?: PerspectiveCamera
   __REACT_DEVTOOLS_GLOBAL_HOOK__: unknown
 }
+const preferenceKey = `teamstation:scoring:${userIdOfGumbo(100)}:switch-hitter`
 const base = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
 let browser: Browser
 /** Leaves every save unanswered, as a server that never replies would. */
@@ -69,8 +71,16 @@ async function open(
   uiAnimations = false
 ): Promise<{ page: Page; unexpected: string[] }> {
   const createdRoster: Record<string, RosterEntry[]> = {}
+  const guests: Record<string, RosterEntry[]> = { away: [], home: [] }
   const context = await browser.createBrowserContext()
   const page = await context.newPage()
+  await page.evaluateOnNewDocument(key => {
+    if (localStorage.getItem(key) == null)
+      localStorage.setItem(
+        key,
+        JSON.stringify({ help: false, shown: 0, animations: true })
+      )
+  }, preferenceKey)
   page.once('close', () => {
     context.close().catch(() => undefined)
   })
@@ -153,8 +163,15 @@ async function open(
       request.method() === 'POST' && url.pathname.endsWith('/events')
     if (saving && holdSaves) return
     const creatingPlayer =
-      request.method() === 'POST' && url.pathname.endsWith('/roster-players')
-    if (request.method() !== 'GET' && !saving && !creatingPlayer)
+      request.method() === 'POST' &&
+      (url.pathname.endsWith('/roster-players') ||
+        url.pathname.endsWith('/guest-players'))
+    if (
+      request.method() !== 'GET' &&
+      !saving &&
+      !creatingPlayer &&
+      url.pathname !== '/api/v1/analytics/events'
+    )
       unexpected.push(`${request.method()} ${url.pathname}`)
     if (uiAnimations && url.pathname.endsWith('/playback')) {
       body = {
@@ -176,7 +193,63 @@ async function open(
       }
     // What the app also asks of every server: who holds which team role, the
     // teams' saved default lineups (none here), and the server's health.
-    else if (url.pathname === '/api/v1/me/roles') body = { teams: {} }
+    else if (url.pathname === '/api/v1/me/roles')
+      body = {
+        teams: { away: ['scorekeeper'], home: ['scorekeeper'] },
+        guardianOf: []
+      }
+    else if (url.pathname === '/api/v1/games/g1/scheduling')
+      body = {
+        game: {
+          homeTeamId: 'home',
+          awayTeamId: 'away',
+          seasonId: null,
+          startAt: null,
+          venue: null,
+          outsideTournament: null,
+          status: game.status,
+          exhibition: false,
+          timezone: 'UTC'
+        },
+        version: 'a'.repeat(64),
+        canPropose: false,
+        withdrawTeamIds: [],
+        administeredTeamIds: [],
+        canSwap: false
+      }
+    else if (url.pathname === '/api/v1/events/g1/info')
+      body = {
+        id: 'g1',
+        eventKind: 'game',
+        title: null,
+        teamId: 'home',
+        teamName: 'Hawks',
+        startAt: null,
+        endAt: null,
+        timezone: 'UTC',
+        venue: null,
+        address: null,
+        latitude: null,
+        longitude: null,
+        status: game.status,
+        canManage: false,
+        attendees: [],
+        replyUserIds: []
+      }
+    else if (url.pathname === '/api/v1/me/home')
+      body = { teams: [], leagues: [], seasons: [] }
+    else if (
+      [
+        '/api/v1/events',
+        '/api/v1/live',
+        '/api/v1/users',
+        '/api/v1/me/umpire-leagues',
+        '/api/v1/chat/conversations',
+        '/api/v1/chat/links',
+        '/api/v1/analytics/events'
+      ].includes(url.pathname)
+    )
+      body = []
     else if (url.pathname === '/api/v1/time') body = { now: Date.now() }
     else if (url.pathname === '/api/v1/me/notifications/summary')
       body = { hasPending: false }
@@ -215,6 +288,14 @@ async function open(
         scored === false
           ? {
               ...game,
+              isGameLive: uiAnimations,
+              guestPlayers: guests,
+              guests: Object.fromEntries(
+                Object.entries(guests).map(([side, entries]) => [
+                  side,
+                  entries.map(entry => entry.gumboId)
+                ])
+              ),
               ...(awayTeamName == null ? {} : { awayTeamName }),
               videos: uiAnimations
                 ? [
@@ -255,7 +336,9 @@ async function open(
           const input = JSON.parse((await request.fetchPostData()) ?? '{}')
           const entry = rosterEntryFromBody(input)
           nextBody = entry
-          ;(createdRoster[url.pathname.split('/')[4]] ??= []).push(entry)
+          if (url.pathname.endsWith('/guest-players'))
+            guests[input.side].push(entry)
+          else (createdRoster[url.pathname.split('/')[4]] ??= []).push(entry)
         } catch (error) {
           nextStatus = 400
           nextBody = {
@@ -271,12 +354,15 @@ async function open(
       answer().catch(() => undefined)
       return
     } else if (url.pathname.endsWith('/roster')) {
-      if (failedRoster) status = 503
+      if (failedRoster) {
+        status = 503
+        failedRoster = false
+      }
       body = url.pathname.includes('/away/')
         ? [
             {
-              userId: userIdOfGumbo(101),
-              gumboId: 101,
+              userId: userIdOfGumbo(1),
+              gumboId: 1,
               shortName: 'Jordan K.',
               jersey: '00',
               positions: ['P'],
@@ -290,8 +376,8 @@ async function open(
             }
           ].concat(
             Array.from({ length: 8 }, (_, i) => ({
-              userId: userIdOfGumbo(102 + i),
-              gumboId: 102 + i,
+              userId: userIdOfGumbo(2 + i),
+              gumboId: 2 + i,
               shortName: `Player ${i + 2}`,
               jersey: String(i + 2),
               positions: [createPlayers()[i + 1].id],
@@ -305,8 +391,8 @@ async function open(
             }))
           )
         : Array.from({ length: 9 }, (_, i) => ({
-            userId: userIdOfGumbo(201 + i),
-            gumboId: 201 + i,
+            userId: userIdOfGumbo(10 + i),
+            gumboId: 10 + i,
             shortName: `Player ${i + 1}`,
             jersey: String(i + 1),
             positions: [createPlayers()[i].id],
@@ -406,32 +492,59 @@ async function addPlaceholders(page: Page, count: 1 | 16): Promise<void> {
     hidden: true
   })
   await new Promise(resolve => setTimeout(resolve, 400))
-  await page.keyboard.press('Escape')
   await page.waitForSelector('[aria-label="First Name"]', { hidden: true })
+  await click(page, 'Lineup')
 }
 async function click(page: Page, label: string): Promise<void> {
+  if (label.startsWith('Add ') && label.endsWith(' to Lineup'))
+    await click(page, 'Lineup')
+  if (
+    label === 'Create Player' &&
+    (await page.$('[aria-label="First Name"]')) == null &&
+    (await page.$('[aria-label="Roster"]')) != null
+  )
+    await click(page, 'Roster')
   const selector = `[aria-label="${label}"]:not([aria-disabled="true"]):not(:disabled)`
   const opening =
     label === 'Create Player' &&
     (await page.$('[aria-label="First Name"]')) == null
-  await page.waitForFunction(
-    selector =>
-      Array.from(document.querySelectorAll(selector)).some(node =>
-        node.checkVisibility()
-      ),
-    {},
-    selector
-  )
-  for (const match of (await page.$$(selector)).reverse()) {
-    if (!(await match.isVisible())) continue
-    await match.click()
-    // Let the sheet transition finish before targeting its next control.
-    await new Promise(resolve => setTimeout(resolve, 350))
+  await page
+    .waitForFunction(
+      selector =>
+        Array.from(document.querySelectorAll(selector)).some(node =>
+          node.checkVisibility()
+        ),
+      {},
+      selector
+    )
+    .catch(async (error: unknown) => {
+      console.error(
+        'Missing scoring browser control:',
+        label,
+        await page.evaluate(() => document.body.innerText)
+      )
+      throw error
+    })
+  const matches = await page.$$(selector)
+  for (const match of matches.reverse()) {
+    if (!(await match.evaluate(node => node.checkVisibility()))) continue
+    await match.asLocator().click()
     break
   }
+  await new Promise(resolve => setTimeout(resolve, 350))
   if (opening) await page.waitForSelector('[aria-label="First Name"]')
+  // These legacy roster cases exercise the lineup editor. Select it
+  // explicitly now that the dialog opens on the team roster.
+  if (label === 'Set Team Rosters') await click(page, 'Lineup')
 }
 
+async function pressFrame(
+  page: Page,
+  key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight'
+): Promise<void> {
+  await page.keyboard.press(key)
+  await page.evaluate(async () => await new Promise(requestAnimationFrame))
+}
 async function chooseHit(page: Page, outcome: string): Promise<void> {
   await click(page, 'Swing in Play')
   if (outcome === 'Batter Interference') await click(page, 'Batter Out')
@@ -444,7 +557,7 @@ async function chooseHit(page: Page, outcome: string): Promise<void> {
   )
   await page.focus('[role="application"]')
   await page.keyboard.press('Space')
-  await page.keyboard.press('ArrowUp')
+  await pressFrame(page, 'ArrowUp')
   await page.keyboard.press('Enter')
   await page.waitForSelector(
     '[aria-label^="Drag up and down for ball trajectory."]'
@@ -499,8 +612,10 @@ async function dropRunnerWithKeyboard(
 ): Promise<void> {
   await page.waitForSelector('canvas[data-field-ready="true"]')
   await page.focus('[role="application"]')
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('[')
   await page.keyboard.press('Space')
-  if (advance) for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
+  if (advance) for (let i = 0; i < 8; i++) await pressFrame(page, 'ArrowUp')
   await page.keyboard.press(decision === 'Safe' ? 's' : 'o')
   await page.keyboard.press('Enter')
 }
@@ -514,7 +629,7 @@ async function placeDefenderWithKeyboard(
     await page.keyboard.press(']')
   }
   await page.keyboard.press('Space')
-  await page.keyboard.press('ArrowUp')
+  await pressFrame(page, 'ArrowUp')
   await page.keyboard.press('Enter')
 }
 describe('scoring browser', function () {
@@ -745,12 +860,12 @@ describe('scoring browser', function () {
       await page.waitForSelector('canvas[data-field-ready="true"]')
       await page.focus('[role="application"]')
       await page.keyboard.press('Space')
-      for (let i = 0; i < 50; i++) await page.keyboard.press('ArrowUp')
+      for (let i = 0; i < 50; i++) await pressFrame(page, 'ArrowUp')
       await page.keyboard.press('Enter')
       await page.waitForSelector(
         '[aria-label^="Drag up and down for ball trajectory."]'
       )
-      for (let i = 0; i < 100; i++) await page.keyboard.press('ArrowDown')
+      for (let i = 0; i < 100; i++) await pressFrame(page, 'ArrowDown')
       await page.waitForSelector('[aria-label*="10° Line Drive"]')
       await page.keyboard.press('Enter')
       await page.waitForSelector('[aria-label*="Batter Player 2"]', {
@@ -1172,10 +1287,10 @@ describe('scoring browser', function () {
         const play = document.querySelector('[aria-label="Swing in Play"]')!
         return {
           select: getComputedStyle(play.parentElement!).userSelect,
-          chevrons: play.textContent!.includes('⌃')
+          contactIcon: play.querySelector('svg path') != null
         }
       })
-      expect(styles).deep.equals({ select: 'none', chevrons: true })
+      expect(styles).deep.equals({ select: 'none', contactIcon: true })
       await chooseHit(page, 'Single')
       await page.waitForSelector('[aria-label="Time to edit play"]', {
         timeout: 30000
@@ -1186,7 +1301,7 @@ describe('scoring browser', function () {
       await click(page, 'Finish at-bat')
       await page.waitForSelector('[aria-label*="Batter Player 2"]')
       expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
-      await click(page, 'Undo 45° Fly Ball')
+      await page.locator('[aria-label^="Undo "]').click()
       expect(unexpected).deep.equals([])
     } finally {
       await page.close()
@@ -1219,12 +1334,17 @@ describe('scoring browser', function () {
       expect(new URL(page.url()).pathname).equals('/games/g1/score-game')
       expect(await page.$('[aria-label="Discard and Exit"]')).equals(null)
       holdSaves = true
+      const heldSave = page.waitForRequest(
+        request =>
+          request.method() === 'POST' &&
+          request.url().endsWith('/games/g1/events')
+      )
       await click(page, 'Full game scoring')
       await page.waitForFunction(() => location.pathname === '/games/g1/score')
       await page.waitForSelector('canvas')
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label="Undo Ball"]')
-      await page.waitForSelector('[aria-label="Save status"]')
+      await heldSave
       const length = await page.evaluate(() => history.length)
       await page.evaluate(() => {
         history.back()
@@ -1382,10 +1502,12 @@ describe('scoring browser', function () {
             align: getComputedStyle(button.lastElementChild!).textAlign
           }))
           expect(copy.text).equals(
-            label + (scenario.startsWith('loaded') ? 'At Home' : 'At First')
+            label + (scenario.startsWith('loaded') ? '' : 'At First')
           )
-          expect(copy.subtitleSize).equals('10.5px')
-          expect(copy.align).equals('center')
+          if (!scenario.startsWith('loaded')) {
+            expect(copy.subtitleSize).equals('10.5px')
+            expect(copy.align).equals('center')
+          }
         }
         await page.screenshot({
           path: join(
@@ -1472,9 +1594,12 @@ describe('scoring browser', function () {
   it('shows real identities, switches the hitter before a pitch, and repeatedly undoes pitches', async function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {
-      await page.evaluate(() => {
-        localStorage.removeItem('teamstation:scoring:100:switch-hitter')
-      })
+      await page.evaluate(key => {
+        localStorage.setItem(
+          key,
+          JSON.stringify({ help: true, shown: 0, animations: true })
+        )
+      }, preferenceKey)
       await page.reload()
       await page.waitForSelector(
         '[aria-label*="Batter Jordan K. right handed"]'
@@ -1661,14 +1786,14 @@ describe('scoring browser', function () {
         })
       expect(await style()).deep.equals({
         border: 'solid',
-        color: 'rgb(64, 151, 84)',
-        fill: 'rgb(213, 236, 217)'
+        color: 'rgb(52, 211, 153)',
+        fill: 'rgb(29, 107, 66)'
       })
       await click(page, 'Clear P')
       expect(await style()).deep.equals({
         border: 'dashed',
-        color: 'rgb(183, 156, 156)',
-        fill: 'rgb(234, 223, 223)'
+        color: 'rgba(153, 27, 27, 0.6)',
+        fill: 'rgba(69, 10, 10, 0.8)'
       })
       for (const viewport of [
         { width: 844, height: 390 },
@@ -1775,7 +1900,7 @@ describe('scoring browser', function () {
           '[data-testid="Defense SS card"]',
           node => getComputedStyle(node).backgroundColor
         )
-      ).equals('rgb(213, 236, 217)')
+      ).equals('rgb(29, 107, 66)')
       expect(
         await page.$eval(
           '[data-roster-target="defense-1B"]',
@@ -1816,7 +1941,7 @@ describe('scoring browser', function () {
           '[data-testid="Defense SS card"]',
           node => getComputedStyle(node).backgroundColor
         )
-      ).equals('rgb(213, 236, 217)')
+      ).equals('rgb(29, 107, 66)')
     } finally {
       await page.close()
     }
@@ -2096,6 +2221,7 @@ describe('scoring browser', function () {
       await click(page, 'Defense')
       await page.waitForSelector('[aria-label="Clear P"]')
       await click(page, 'Create Player')
+      await page.focus('[aria-label="First Name"]')
       await page.waitForFunction(
         () =>
           document.activeElement!.getAttribute('aria-label') === 'First Name'
@@ -2190,6 +2316,7 @@ describe('scoring browser', function () {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       await click(page, 'Create Player')
+      await page.focus('[aria-label="First Name"]')
       await page.waitForFunction(
         () =>
           document.activeElement!.getAttribute('aria-label') === 'First Name'
@@ -2228,8 +2355,12 @@ describe('scoring browser', function () {
       await click(page, 'Undo Set team roster')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      // Undo removes the game-roster entry; the team player remains persisted.
-      expect(await page.$('[aria-label="Add Mookie B to Lineup"]')).equals(null)
+      // Undo removes the lineup change; the persisted team player remains
+      // available for a later lineup assignment.
+      expect(await page.$('[aria-label="Reorder Mookie B"]')).equals(null)
+      expect(await page.$('[aria-label="Add Mookie B to Lineup"]')).not.equals(
+        null
+      )
       await click(page, 'Cancel')
       expect(unexpected).deep.equals([])
     } finally {
@@ -2261,16 +2392,16 @@ describe('scoring browser', function () {
       }
       await add(1)
       await add(16)
-      expect(await page.$('[aria-label="Add Owls Q to Lineup"]')).not.equals(
+      expect(await page.$('[aria-label="Add OWLS Q to Lineup"]')).not.equals(
         null
       )
       expect(
         await page.$$('[data-roster-target="roster"] [data-roster-player]')
       ).length(17)
       await click(page, 'Home Team')
-      expect(await page.$('[aria-label="Add Owls A to Lineup"]')).equals(null)
+      expect(await page.$('[aria-label="Add OWLS A to Lineup"]')).equals(null)
       await add(1)
-      expect(await page.$('[aria-label="Add Hawks A to Lineup"]')).not.equals(
+      expect(await page.$('[aria-label="Add HAWKS A to Lineup"]')).not.equals(
         null
       )
       await click(page, 'Save Rosters')
@@ -2279,12 +2410,14 @@ describe('scoring browser', function () {
       await click(page, 'Set Team Rosters')
       expect(
         await page.$$('[data-roster-target="roster"] [data-roster-player]')
-      ).length(0)
+      ).length(17)
       await add(1)
       await click(page, 'Cancel')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      expect(await page.$('[aria-label="Add Owls A to Lineup"]')).equals(null)
+      expect(await page.$('[aria-label="Add OWLS A to Lineup"]')).not.equals(
+        null
+      )
       await click(page, 'Cancel')
       expect(unexpected).deep.equals([])
     } finally {
@@ -2590,7 +2723,7 @@ describe('scoring browser', function () {
       expect(before.slice(0, 3)).deep.equals(['4', '5', '1'])
       expect(before.slice(-2)).deep.equals(['3', '2'])
       await page.keyboard.press('Space')
-      await page.keyboard.press('ArrowDown')
+      await pressFrame(page, 'ArrowDown')
       await page.keyboard.press('Escape')
       await page.waitForSelector('[aria-label="Save Rosters"]')
       expect(await order()).deep.equals(before)
@@ -2776,12 +2909,12 @@ describe('scoring browser', function () {
         const field = '[role="application"]'
         await page.focus(field)
         await page.keyboard.press('Space')
-        await page.keyboard.press('ArrowRight')
+        await pressFrame(page, 'ArrowRight')
         await page.keyboard.press('Enter')
         await page.waitForSelector(
           '[aria-label^="Drag up and down for ball trajectory."]'
         )
-        for (let i = 0; i < 40; i++) await page.keyboard.press('ArrowDown')
+        for (let i = 0; i < 40; i++) await pressFrame(page, 'ArrowDown')
         const angle =
           out === 'Ball Caught' ? '10° Line Drive' : '5° Ground Ball'
         await page.waitForSelector(`[aria-label*="${angle}"]`)
@@ -2989,10 +3122,12 @@ describe('scoring browser', function () {
       await page.waitForSelector('[aria-label*="Batter Mike T"]')
       await click(page, 'Undo Set team roster')
       await page.waitForSelector('[aria-label^="Next batter is on base."]')
-      await click(page, 'Undo 45° Fly Ball')
-      await page.waitForSelector(
-        '[aria-label^="Drag up and down for ball trajectory."]'
-      )
+      await page.locator('[aria-label^="Undo "]').click()
+      await page.waitForSelector('[aria-label="Finish at-bat"]')
+      await page.locator('[aria-label^="Undo "]').click()
+      await page.waitForSelector('[aria-label*="Pitches 0"]')
+      await page.waitForSelector('[aria-label*="first base empty"]')
+      await waitReady(page)
     } finally {
       await page.close()
     }
@@ -3105,6 +3240,7 @@ describe('scoring browser', function () {
   it('opens More on upward drag and releases an action or escapes right', async function () {
     const { page } = await open('/games/g1/score')
     try {
+      await page.waitForSelector('[aria-label="More"]')
       const trigger = await page.$eval('[aria-label="More"]', node => {
         const r = node.getBoundingClientRect()
         return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
@@ -3177,7 +3313,7 @@ describe('scoring browser', function () {
         if (action === 'Batter Out — Other') {
           await page.focus('[role="application"]')
           await page.keyboard.press('Space')
-          await page.keyboard.press('ArrowUp')
+          await pressFrame(page, 'ArrowUp')
           await page.keyboard.press('Enter')
           await click(page, 'Finish defensive play')
         }
@@ -3220,6 +3356,8 @@ describe('scoring browser', function () {
       await click(page, 'First base')
       await click(page, 'Choose First base Player 6')
       await click(page, 'Apply Override')
+      await click(page, 'Ball')
+      await waitReady(page)
       await page.waitForSelector('canvas[data-field-ready="true"]')
       for (const width of [1200, 390]) {
         await page.setViewport({ width, height: 900 })
@@ -3232,8 +3370,10 @@ describe('scoring browser', function () {
           width
         )
         await page.focus('[role="application"]')
+        await page.keyboard.press('Escape')
+        await page.keyboard.press('[')
         await page.keyboard.press('Space')
-        for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
+        for (let i = 0; i < 8; i++) await pressFrame(page, 'ArrowUp')
         const rect = await page.$eval('canvas', node => {
           const r = node.getBoundingClientRect()
           return { x: r.x, y: r.y, width: r.width, height: r.height }
@@ -3305,8 +3445,10 @@ describe('scoring browser', function () {
         await click(page, 'Cancel')
         expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
         await page.focus('[role="application"]')
+        await page.keyboard.press('Escape')
+        await page.keyboard.press('[')
         await page.keyboard.press('Space')
-        await page.keyboard.press('ArrowUp')
+        await pressFrame(page, 'ArrowUp')
         await page.focus('[aria-label="Out drag target"]')
         await page.keyboard.press('Escape')
         expect(await page.$('[aria-label="Out drag target"]')).equals(null)
@@ -3327,8 +3469,10 @@ describe('scoring browser', function () {
       await waitReady(page)
       const propose = async (): Promise<void> => {
         await page.focus('[role="application"]')
+        await page.keyboard.press('Escape')
+        await page.keyboard.press('[')
         await page.keyboard.press('Space')
-        for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
+        for (let i = 0; i < 8; i++) await pressFrame(page, 'ArrowUp')
         await page.keyboard.press('s')
         await page.keyboard.press('Enter')
         await page.waitForSelector('[aria-label="Steal"]')
@@ -3401,8 +3545,16 @@ describe('scoring browser', function () {
         await captureScene(page)
         const from = BASES[base]
         const to = BASES[(base + 1) % 4]
-        await page.mouse.move(...project(from.x, 6, from.z))
+        const runner = await page.evaluate(() => {
+          const mesh = (
+            window as unknown as SceneProbeWindow
+          ).qaScene!.getObjectByName('player-offense-6')!
+          const point = mesh.getWorldPosition(mesh.position.clone())
+          return { x: point.x, y: point.y, z: point.z }
+        })
+        await page.mouse.move(...project(runner.x, runner.y + 6, runner.z))
         await page.mouse.down()
+        await new Promise(resolve => setTimeout(resolve, 750))
         const locations: number[] = []
         for (const progress of [0.25, 0.75, 0.25, 0]) {
           await page.mouse.move(
@@ -3623,7 +3775,7 @@ describe('scoring browser', function () {
         } else await click(page, 'Single')
         await page.focus('[role="application"]')
         await page.keyboard.press('Space')
-        for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowUp')
+        for (let i = 0; i < 10; i++) await pressFrame(page, 'ArrowUp')
         await page.keyboard.press('Enter')
         const target = await readGuide(page)
         const samplesPromise = page.evaluate(
@@ -3705,7 +3857,7 @@ describe('scoring browser', function () {
         expect(target.bearing).closeTo(outside ? 15 : -15, 0.01)
         await page.focus('[role="application"]')
         if (outside)
-          for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowUp')
+          for (let i = 0; i < 5; i++) await pressFrame(page, 'ArrowUp')
         await page.keyboard.press('Enter')
         await page.keyboard.press('Enter')
         await page.waitForFunction(
@@ -3715,6 +3867,9 @@ describe('scoring browser', function () {
             ) != null
         )
         expect(await page.$('[aria-label^="Ball trajectory:"]')).equals(null)
+        // The board builds its new text texture in a deferred task after
+        // mounting the celebration; sample the animation once it is drawn.
+        await new Promise(resolve => setTimeout(resolve, 500))
         const samples = (await page.evaluate(async () => {
           const scene = (window as unknown as SceneProbeWindow).qaScene!
           const sample = (): unknown => {
@@ -4383,6 +4538,15 @@ describe('scoring browser', function () {
           await waitReady(page)
           await dropRunnerWithKeyboard(page, decision, advance)
           await click(page, reason)
+          if (reason === 'Wild Pitch')
+            await click(page, `Use previous pitch as ${reason.toLowerCase()}`)
+          if (reason === 'Passed Ball') await click(page, 'YES')
+          if (reason === 'Throwing Error' || reason === 'Fielding Error') {
+            await page.focus('[role="application"]')
+            await page.keyboard.press('Escape')
+            await page.keyboard.press(']')
+            await placeDefenderWithKeyboard(page)
+          }
           if (decision === 'Out') {
             await page.waitForSelector(
               '[aria-label^="Tap or drag a player to where the ball was fielded."]'
@@ -4786,15 +4950,16 @@ describe('scoring browser', function () {
     }
     const { page } = await open('/games/g1/score', false, false, true)
     try {
+      await click(page, 'Retry loading scoring')
       await page.waitForSelector('[aria-label*="Owls 0 · Hawks 0"]')
-      await page.waitForSelector('[aria-label*="Batter Player 1"]')
+      await page.waitForSelector('[aria-label*="Batter Jordan K."]')
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label*="1 balls"]')
     } finally {
       await page.close()
     }
   })
-  it('rejects invalid lineups, pitchers and base occupants, and restores a moving play with Undo', async function () {
+  it('allows incomplete roster preparation, rejects duplicate base occupants, and restores a moving play with Undo', async function () {
     this.timeout(90000)
     const { page } = await open('/games/g1/score')
     try {
@@ -4806,7 +4971,7 @@ describe('scoring browser', function () {
         await page.$eval('[aria-label="Save Rosters"]', node =>
           node.getAttribute('aria-disabled')
         )
-      ).equals('true')
+      ).not.equals('true')
       await click(page, 'Add Jordan K. to Lineup')
       await click(page, 'Defense')
       await click(page, 'Clear P')
@@ -4814,7 +4979,7 @@ describe('scoring browser', function () {
         await page.$eval('[aria-label="Save Rosters"]', node =>
           node.getAttribute('aria-disabled')
         )
-      ).equals('true')
+      ).not.equals('true')
       await click(page, 'Cancel')
       await click(page, 'Open scoring menu')
       await click(page, 'Overrides')
@@ -4840,7 +5005,7 @@ describe('scoring browser', function () {
       await click(page, 'Choose First base Empty')
       await click(page, 'Apply Override')
       await chooseHit(page, 'Home Run')
-      await click(page, 'Undo 45° Fly Ball')
+      await page.locator('[aria-label^="Undo "]').click()
       await click(page, 'Undo Home-run landing')
       await new Promise(resolve => setTimeout(resolve, 11000))
       await page.waitForSelector('[aria-label^="Drag where the ball was hit"]')
@@ -4864,7 +5029,7 @@ describe('scoring browser', function () {
       await page.waitForSelector(
         '[aria-label^="Drag up and down for ball trajectory."]'
       )
-      for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowUp')
+      for (let i = 0; i < 5; i++) await pressFrame(page, 'ArrowUp')
       await page.waitForSelector('[aria-label*="50° Pop Fly"]')
       await page.keyboard.press('Enter')
       await page.waitForSelector('[aria-label*="Batter Player 2"]', {
@@ -5167,7 +5332,7 @@ describe('scoring browser', function () {
         await page.waitForSelector(`[aria-label="Undo Bunt: ${outcome}"]`)
         await page.focus('[role="application"]')
         await page.keyboard.press('Space')
-        await page.keyboard.press('ArrowUp')
+        await pressFrame(page, 'ArrowUp')
         await page.keyboard.press('Enter')
         await page.waitForSelector(
           '[aria-label^="Drag up and down for ball trajectory"]'
@@ -5314,7 +5479,7 @@ describe('scoring browser', function () {
           await page.waitForSelector('canvas[data-field-ready="true"]')
           await page.focus('[role="application"]')
           await page.keyboard.press('Space')
-          await page.keyboard.press('ArrowUp')
+          await pressFrame(page, 'ArrowUp')
           await page.keyboard.press('Enter')
           await page.waitForSelector('[aria-label^="Ball trajectory:"]')
           await captureScene(page)
@@ -5420,7 +5585,7 @@ describe('scoring browser', function () {
           await page.focus('[role="application"]')
           if (!homeRun) {
             await page.keyboard.press('Space')
-            await page.keyboard.press('ArrowUp')
+            await pressFrame(page, 'ArrowUp')
           }
           await page.keyboard.press('Enter')
           await page.waitForSelector('[aria-label^="Ball trajectory:"]')
@@ -5503,7 +5668,7 @@ describe('scoring browser', function () {
           await page.close()
         }
       })
-  it('animates the live badge with live reduced-motion changes', async () => {
+  it('keeps the browser live badge still across reduced-motion changes', async () => {
     const { page, unexpected } = await open(
       '/games/g1',
       false,
@@ -5540,8 +5705,7 @@ describe('scoring browser', function () {
           transform
         )
       const pulse = await sample('[aria-label="Live now"]')
-      expect(Math.min(...pulse)).within(0.71, 0.76)
-      expect(Math.max(...pulse)).within(0.96, 1)
+      expect(pulse.every(value => value === 1)).equals(true)
       await page.emulateMediaFeatures([
         { name: 'prefers-reduced-motion', value: 'reduce' }
       ])
@@ -5556,7 +5720,7 @@ describe('scoring browser', function () {
         { name: 'prefers-reduced-motion', value: 'no-preference' }
       ])
       const resumed = await sample('[aria-label="Live now"]')
-      expect(Math.min(...resumed)).within(0.71, 0.76)
+      expect(resumed.every(value => value === 1)).equals(true)
       await page.screenshot({
         path: join(
           process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp',
@@ -5571,9 +5735,12 @@ describe('scoring browser', function () {
   it('pulses the switch-hitter hint with Reanimated and stops it for reduced motion and dismissal', async () => {
     const { page } = await open('/games/g1/score')
     try {
-      await page.evaluate(() => {
-        localStorage.removeItem('teamstation:scoring:100:switch-hitter')
-      })
+      await page.evaluate(key => {
+        localStorage.setItem(
+          key,
+          JSON.stringify({ help: true, shown: 0, animations: true })
+        )
+      }, preferenceKey)
       await page.reload()
       const selector = '[aria-label="Drag to the other batter box"]'
       await page.waitForSelector(selector)
@@ -5641,7 +5808,7 @@ describe('scoring browser', function () {
             await page.keyboard.press(
               direction < 0 ? 'ArrowLeft' : 'ArrowRight'
             )
-          for (let n = 0; n < 10; n++) await page.keyboard.press('ArrowUp')
+          for (let n = 0; n < 10; n++) await pressFrame(page, 'ArrowUp')
         } else {
           await captureScene(page)
           expect(
@@ -5657,7 +5824,7 @@ describe('scoring browser', function () {
             })
           ).equals(11)
           if (direction > 0)
-            for (let n = 0; n < 5; n++) await page.keyboard.press('ArrowUp')
+            for (let n = 0; n < 5; n++) await pressFrame(page, 'ArrowUp')
         }
         await page.keyboard.press('Enter')
         await page.waitForSelector(
@@ -5847,10 +6014,7 @@ describe('scoring browser', function () {
         jersey: string
       ): Promise<void> => {
         await click(page, 'Create Player')
-        await page.waitForFunction(
-          () =>
-            document.activeElement!.getAttribute('aria-label') === 'First Name'
-        )
+        await page.focus('[aria-label="First Name"]')
         await page.locator('[aria-label="First Name"]').fill(first)
         await page.locator('[aria-label="Last Name"]').fill(last)
         if (jersey !== '')
@@ -5880,8 +6044,8 @@ describe('scoring browser', function () {
         { hidden: true }
       )
       await new Promise(resolve => setTimeout(resolve, 400))
-      await page.keyboard.press('Escape')
       await page.waitForSelector('[aria-label="First Name"]', { hidden: true })
+      await click(page, 'Lineup')
       const roster = async (): Promise<string[]> =>
         await page.$$eval(
           '[data-roster-target="roster"] [data-roster-player]',
@@ -6105,7 +6269,7 @@ describe('scoring browser', function () {
       // The dropped card lands in the gap the drag held open: full height,
       // one gap from each neighbour, drawn over neither.
       const landed = await rect('[data-roster-target="lineup-1"]')
-      expect(landed.height).closeTo(a.height, 1)
+      expect(landed.height).closeTo(destination.height, 1)
       expect(
         landed.y - (await rect('[data-roster-target="lineup-0"]')).bottom
       ).closeTo(ROSTER_CARD_GAP, 0.5)
@@ -6147,12 +6311,12 @@ describe('scoring browser', function () {
         await page.focus('[role="application"]')
         await page.keyboard.press('Space')
         // Pitcher starts 18.44m from home; five steps toward home leaves a short 3.44m landing.
-        for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowDown')
+        for (let i = 0; i < 5; i++) await pressFrame(page, 'ArrowDown')
         await page.keyboard.press('Enter')
         await page.waitForSelector(
           '[aria-label^="Drag up and down for ball trajectory."]'
         )
-        for (let i = 0; i < 50; i++) await page.keyboard.press('ArrowUp')
+        for (let i = 0; i < 50; i++) await pressFrame(page, 'ArrowUp')
         await page.waitForSelector(
           '[aria-label="Ball trajectory: 85° Pop Fly"]'
         )
