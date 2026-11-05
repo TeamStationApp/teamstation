@@ -61,6 +61,8 @@ describe('notices from the writes', function () {
     socket = attachGameSocket(server, f.h.db, await databaseUrlOf(f.h.db), {
       pingMs: 60_000,
       stopSignals: null,
+      // What each write tells, at once; the spread is screenScope.test's.
+      screenNoticeSpreadMs: 0,
       log: () => undefined,
       fanout: { log: () => undefined },
       screenScopes: { log: () => undefined }

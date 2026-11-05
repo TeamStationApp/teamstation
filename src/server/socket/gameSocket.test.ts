@@ -42,6 +42,7 @@ import {
   type GameSocketHandle,
   MAX_SUBSCRIPTIONS
 } from './gameSocket'
+import { SCREEN_NOTICE_SPREAD_MS } from './spread'
 
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_game_socket_${Date.now()}_${process.pid}`
@@ -1684,6 +1685,214 @@ describe('the game socket (U14)', function () {
       await handle.close()
       expect(await watcher.closed).equals(1001)
       await new Promise(resolve => other.close(resolve))
+    })
+  })
+
+  describe('a screen notice spread over a second (M8b)', function () {
+    const SCREENS = 200
+    let screenHandlers: FeedHandlers | undefined
+    let handle: GameSocketHandle
+    let other: Server
+    let parentUrl = ''
+
+    /** Its feed is in the test's hands; its notice spread is the default. */
+    before(async function () {
+      other = createServer()
+      handle = attachGameSocket(other, db!, scratchUrl, {
+        feed: {
+          subscribe: (channel, handlers) => {
+            if (channel === 'screen_scopes') screenHandlers = handlers
+            return { listening: Promise.resolve(), stop: () => undefined }
+          },
+          publishEphemeral: async () => undefined,
+          close: async () => undefined
+        },
+        stopSignals: null,
+        screenScopes: { coalesceMs: 5, log: () => undefined }
+      })
+      await new Promise<void>(resolve => other.listen(0, '127.0.0.1', resolve))
+      parentUrl = socketUrl
+      socketUrl = `ws://127.0.0.1:${(other.address() as AddressInfo).port}/socket`
+    })
+
+    after(async function () {
+      socketUrl = parentUrl
+      await handle.close()
+      other.closeAllConnections()
+      await new Promise(resolve => other.close(resolve))
+    })
+
+    interface Screen {
+      listener: Listener
+      /** When each `changed` frame arrived. */
+      changedAt: number[]
+    }
+
+    /** One of the viewer's sockets, holding home. */
+    const onHomeOnce = async (): Promise<Screen> => {
+      const listener = await listen(VIEWER)
+      const changedAt: number[] = []
+      listener.ws.on('message', data => {
+        const frame = JSON.parse((data as Buffer).toString('utf8')) as {
+          type: string
+        }
+        if (frame.type === 'changed') changedAt.push(Date.now())
+      })
+      await ask(listener, { type: 'subscribe', scope: 'home' })
+      return { listener, changedAt }
+    }
+
+    /** `count` of them, opened twenty at a time, as the backlog takes. */
+    const onHome = async (count: number): Promise<Screen[]> => {
+      const screens: Screen[] = []
+      while (screens.length < count)
+        screens.push(
+          ...(await Promise.all(
+            Array.from(
+              { length: Math.min(20, count - screens.length) },
+              onHomeOnce
+            )
+          ))
+        )
+      return screens
+    }
+
+    /** Sends a request and waits for the answer to its id. */
+    const ask = async (
+      listener: Listener,
+      frame: Record<string, unknown>
+    ): Promise<number> => {
+      const id = makeId('event')
+      listener.send({ ...frame, id, protocol: GAME_SOCKET_PROTOCOL })
+      await listener.next(reply => 'id' in reply && reply.id === id)
+      return listener.frames.findIndex(
+        reply => 'id' in reply && reply.id === id
+      )
+    }
+
+    /** The viewer's own change, which every home of theirs is told. */
+    const notice = (): number => {
+      const at = Date.now()
+      screenHandlers?.onPayload(
+        JSON.stringify({ userId: userIdOfGumbo(viewer.userId) })
+      )
+      return at
+    }
+
+    const close = (screens: Screen[]): void => {
+      for (const { listener } of screens) listener.ws.terminate()
+    }
+
+    it('tells 200 screens on one scope at their own moments within a second, none before the notice', async function () {
+      const screens = await onHome(SCREENS)
+      await wait(50)
+      expect(screens.filter(screen => screen.changedAt.length > 0)).deep.equals(
+        []
+      )
+      const noticeAt = notice()
+      await wait(SCREEN_NOTICE_SPREAD_MS + 300)
+      expect(screens.map(screen => screen.changedAt.length)).deep.equals(
+        screens.map(() => 1)
+      )
+      const offsets = screens.map(screen => screen.changedAt[0] - noticeAt)
+      expect(Math.min(...offsets)).at.least(0)
+      expect(Math.max(...offsets)).below(SCREEN_NOTICE_SPREAD_MS + 100)
+      // Spread over the window, not at once: told together, the 200 would
+      // all land in one tenth of it, where a spread puts about 20.
+      expect(Math.max(...offsets) - Math.min(...offsets)).above(
+        SCREEN_NOTICE_SPREAD_MS / 2
+      )
+      const tenths = new Map<number, number>()
+      for (const offset of offsets) {
+        const tenth = Math.floor(offset / (SCREEN_NOTICE_SPREAD_MS / 10))
+        tenths.set(tenth, (tenths.get(tenth) ?? 0) + 1)
+      }
+      expect(Math.max(...tenths.values())).below(SCREENS / 4)
+      close(screens)
+    })
+
+    it('sends no frame to a screen that left or moved on before its turn', async function () {
+      const screens = await onHome(SCREENS)
+      const [stayers, leavers, movers] = [
+        screens.slice(0, 50),
+        screens.slice(50, 125),
+        screens.slice(125)
+      ]
+      notice()
+      // The first frame heard: every turn is set by now, most still to come.
+      while (stayers.every(screen => screen.changedAt.length === 0))
+        await wait(1)
+      // Each answer marks when the server let home go: a frame for home after
+      // it was sent on the old screen's turn, which is what may not happen.
+      const gone = await Promise.all([
+        ...leavers.map(
+          async ({ listener }) =>
+            await ask(listener, { type: 'unsubscribe', scope: 'home' })
+        ),
+        ...movers.map(
+          async ({ listener }) =>
+            await ask(listener, { type: 'subscribe', scope: 'schedule' })
+        )
+      ])
+      await wait(SCREEN_NOTICE_SPREAD_MS + 300)
+      expect(stayers.map(screen => screen.changedAt.length)).deep.equals(
+        stayers.map(() => 1)
+      )
+      // A mover's new schedule may be told the notice; its home may not.
+      const homeChanges = (frames: GameSocketReply[]): GameSocketReply[] =>
+        frames.filter(
+          frame => frame.type === 'changed' && frame.scope === 'home'
+        )
+      const left = [...leavers, ...movers]
+      const late = left.filter(
+        ({ listener }, i) =>
+          homeChanges(listener.frames.slice(gone[i] + 1)).length > 0
+      )
+      expect(late).deep.equals([])
+      // Most left inside the window, so their turn came after and was skipped.
+      expect(
+        left.filter(({ listener }) => homeChanges(listener.frames).length === 0)
+          .length
+      ).above(left.length / 2)
+      close(screens)
+    })
+
+    it('logs a notice frame that throws as a screen notice, and still tells the other screens', async function () {
+      const screens = await onHome(2)
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const send = WebSocket.prototype.send
+      const failing = console.error
+      const errors: unknown[] = []
+      let thrown = false
+      // The server's first `changed` frame fails as it goes out.
+      WebSocket.prototype.send = function (
+        this: WebSocket,
+        ...args: unknown[]
+      ): void {
+        const [data] = args
+        if (
+          !thrown &&
+          Buffer.isBuffer(data) &&
+          data.toString('utf8').includes('"type":"changed"')
+        ) {
+          thrown = true
+          throw new Error('send failed')
+        }
+        Reflect.apply(send, this, args)
+      } as typeof send
+      console.error = (line: unknown) => errors.push(line)
+      try {
+        notice()
+        await wait(SCREEN_NOTICE_SPREAD_MS + 300)
+      } finally {
+        WebSocket.prototype.send = send
+        console.error = failing
+      }
+      expect(errors).deep.equals(['screen notice: Error: send failed'])
+      expect(
+        screens.map(screen => screen.changedAt.length).sort((a, b) => a - b)
+      ).deep.equals([0, 1])
+      close(screens)
     })
   })
 

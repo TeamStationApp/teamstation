@@ -45,7 +45,7 @@ import {
   ScreenScopeListener,
   type ScreenScopeListenerOptions
 } from './screenScope'
-import { RESYNC_SPREAD_MS, spread } from './spread'
+import { RESYNC_SPREAD_MS, SCREEN_NOTICE_SPREAD_MS, spread } from './spread'
 import type { ScreenScopePayload } from './syncRevision'
 
 /** The one path the socket answers on. */
@@ -80,6 +80,12 @@ export interface GameSocketOptions {
    * `RESYNC_SPREAD_MS` unless given; 0 acts at once.
    */
   resyncSpreadMs?: number
+  /**
+   * The window one screen notice's `changed` frames are spread over, so the
+   * screens following a scope do not all read at the same instant.
+   * `SCREEN_NOTICE_SPREAD_MS` unless given; 0 tells at once.
+   */
+  screenNoticeSpreadMs?: number
   fanout?: Omit<GameFanoutOptions, 'db' | 'feed' | 'authorize' | 'onResync'>
   screenScopes?: Omit<
     ScreenScopeListenerOptions,
@@ -314,8 +320,10 @@ export function attachGameSocket(
   const checkTyping =
     options.checkTyping ?? (async (_conversationId, check) => await check())
   const resyncSpreadMs = options.resyncSpreadMs ?? RESYNC_SPREAD_MS
+  const screenNoticeSpreadMs =
+    options.screenNoticeSpreadMs ?? SCREEN_NOTICE_SPREAD_MS
   const minimumProtocol = options.minimumProtocol ?? 3
-  /** A resync's closes and frames still to come. */
+  /** A resync's closes and frames, and notices' frames, still to come. */
   const spreadTimers = new Set<ReturnType<typeof setTimeout>>()
   const connections = new Set<Connection>()
   const wss = new WebSocketServer({
@@ -337,6 +345,7 @@ export function attachGameSocket(
     const due = targets.filter(connection => !connection.closeDue)
     for (const connection of due) connection.closeDue = true
     spread(
+      'resync',
       due,
       resyncSpreadMs,
       connection => {
@@ -355,6 +364,7 @@ export function attachGameSocket(
     )
     for (const connection of due) connection.screenResyncDue = true
     spread(
+      'resync',
       due,
       resyncSpreadMs,
       connection => {
@@ -698,15 +708,26 @@ export function attachGameSocket(
     // schedule too, so a list that shows no games can let it pass.
     const gameOnly =
       gameId != null && teamId == null && seasonId == null && userId == null
+    // Each screen hears it at its own moment within the window, so the
+    // screens following a scope do not all read at once. One that left, or
+    // moved to another screen, before its turn is not told.
     const tell = (connection: Connection, screen: HeldScreen): void => {
-      if (connection.screen !== screen) return
-      reply(connection, {
+      const frame: GameSocketReply = {
         type: 'changed',
         scope: screen.scope,
         ...(screen.scope === 'event' || gameOnly ? { gameId } : {}),
         // A post's own: its play frames already read the game's screen.
         ...(payload.byPost === true ? { byPost: true } : {})
-      })
+      }
+      spread(
+        'screen notice',
+        [connection],
+        screenNoticeSpreadMs,
+        () => {
+          if (connection.screen === screen) reply(connection, frame)
+        },
+        spreadTimers
+      )
     }
     const row =
       gameId == null

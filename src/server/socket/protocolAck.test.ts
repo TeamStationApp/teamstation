@@ -18,6 +18,7 @@ import { ScreenScopeGate } from '../../common/screenScope'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { attachGameSocket, type GameSocketHandle } from './gameSocket'
+import { SCREEN_NOTICE_SPREAD_MS } from './spread'
 import { announceNotedScopes } from './syncRevision'
 
 /**
@@ -173,14 +174,16 @@ describe('S1: subscribed comes before the schedule read, and a notice during it 
     gate.enter({ scope: 'schedule' })
     try {
       // The first read, and then a second for a read that would follow a
-      // notice and never comes.
+      // notice and never comes. The notice may come as late as its spread.
       await done
       done = new Promise<void>(resolve => {
         loaded = resolve
       })
       await Promise.race([
         done,
-        new Promise(resolve => setTimeout(resolve, 1000))
+        new Promise(resolve =>
+          setTimeout(resolve, SCREEN_NOTICE_SPREAD_MS + 1000)
+        )
       ])
       if (seen?.homeScore !== 3)
         throw new Error(`The score was missed: ${trace.join('\n')}`)

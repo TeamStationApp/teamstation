@@ -71,6 +71,8 @@ describe('S2: one changed for the committed play, none for the rolled-back post'
     socket = attachGameSocket(server, f.h.db, await databaseUrlOf(f.h.db), {
       pingMs: 60_000,
       stopSignals: null,
+      // What each write tells, at once; the spread is screenScope.test's.
+      screenNoticeSpreadMs: 0,
       log: () => undefined,
       fanout: { log: () => undefined }
     })

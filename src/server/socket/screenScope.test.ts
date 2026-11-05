@@ -27,6 +27,7 @@ import {
   MAX_SUBSCRIPTIONS
 } from './gameSocket'
 import { ScreenScopeListener } from './screenScope'
+import { SCREEN_NOTICE_SPREAD_MS } from './spread'
 import {
   announceNotedScopes,
   SCREEN_SCOPES_CHANNEL,
@@ -243,6 +244,8 @@ describe('screen scopes on the game socket', function () {
       pingMs: 60_000,
       stopSignals: null,
       resyncSpreadMs: 0,
+      // These cases time what a notice reaches; the spread has its own below.
+      screenNoticeSpreadMs: 0,
       fanout: { coalesceMs: 20, log: () => undefined },
       screenScopes: {
         coalesceMs: 80,
@@ -782,5 +785,104 @@ describe('screen scopes on the game socket', function () {
     await wait(250)
     expect(lines).deep.equals(['resync', 'resync', 'resync'])
     await feed.close()
+  })
+
+  describe('a committed notice spread over a second (M8b)', function () {
+    const SCREENS = 200
+    let spreading: GameSocketHandle
+    let plain: Server
+    let parentUrl = ''
+
+    /** Its own feed on the scratch database; its notice spread is the default. */
+    before(async function () {
+      plain = createServer()
+      spreading = attachGameSocket(plain, db, scratchUrl, {
+        stopSignals: null,
+        screenScopes: { coalesceMs: 5, log: () => undefined }
+      })
+      await spreading.screenScopes.listening
+      await new Promise<void>(resolve => {
+        plain.listen(0, '127.0.0.1', resolve)
+      })
+      parentUrl = socketUrl
+      socketUrl = `ws://127.0.0.1:${(plain.address() as AddressInfo).port}/socket`
+    })
+
+    after(async function () {
+      socketUrl = parentUrl
+      await spreading.close()
+      plain.closeAllConnections()
+      await new Promise<void>(resolve => {
+        plain.close(() => {
+          resolve()
+        })
+      })
+    })
+
+    it('tells 200 homes of a team’s committed write within a second, spread over it, and none that moved on before its turn', async function () {
+      const onHome = async (): Promise<{
+        listener: Listener
+        changedAt: number[]
+      }> => {
+        const listener = await listen(VIEWER)
+        const changedAt: number[] = []
+        listener.ws.on('message', data => {
+          const frame = JSON.parse((data as Buffer).toString('utf8')) as {
+            type: string
+          }
+          if (frame.type === 'changed') changedAt.push(Date.now())
+        })
+        await ask(listener, { type: 'subscribe', scope: 'home' })
+        return { listener, changedAt }
+      }
+      // Twenty at a time, as the listen backlog takes them.
+      const screens: Array<Awaited<ReturnType<typeof onHome>>> = []
+      while (screens.length < SCREENS)
+        screens.push(...(await Promise.all(Array.from({ length: 20 }, onHome))))
+      const stayers = screens.slice(0, 150)
+      const movers = screens.slice(150)
+      await wait(50)
+      expect(screens.filter(screen => screen.changedAt.length > 0)).deep.equals(
+        []
+      )
+      const noticeAt = Date.now()
+      await commit({ teamId: homeTeam })
+      // The first frame heard: every turn is set by now, most still to come.
+      while (stayers.every(screen => screen.changedAt.length === 0))
+        await wait(1)
+      // Each answer marks when the server let home go.
+      const moved = await Promise.all(
+        movers.map(async ({ listener }) => {
+          // A game's screen, which a team's notice does not reach.
+          await ask(listener, {
+            type: 'subscribe',
+            scope: 'event',
+            gameId: seen
+          })
+          return listener.frames.length - 1
+        })
+      )
+      await wait(SCREEN_NOTICE_SPREAD_MS + 300)
+      expect(stayers.map(screen => screen.changedAt.length)).deep.equals(
+        stayers.map(() => 1)
+      )
+      const offsets = stayers.map(screen => screen.changedAt[0] - noticeAt)
+      expect(Math.max(...offsets)).below(SCREEN_NOTICE_SPREAD_MS + 200)
+      expect(Math.max(...offsets) - Math.min(...offsets)).above(
+        SCREEN_NOTICE_SPREAD_MS / 2
+      )
+      expect(
+        movers.filter(({ listener }, i) =>
+          listener.frames
+            .slice(moved[i] + 1)
+            .some(frame => frame.type === 'changed')
+        )
+      ).deep.equals([])
+      // Most moved inside the window, so their turn came after and was skipped.
+      expect(
+        movers.filter(screen => screen.changedAt.length === 0).length
+      ).above(movers.length / 2)
+      for (const { listener } of screens) listener.ws.terminate()
+    })
   })
 })

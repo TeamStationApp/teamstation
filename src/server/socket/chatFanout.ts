@@ -294,6 +294,7 @@ export class ChatFanout {
       .filter(subscriber => !this.resyncDue.has(subscriber))
     for (const subscriber of due) this.resyncDue.add(subscriber)
     spread(
+      'resync',
       due,
       this.resyncSpreadMs,
       subscriber => {
