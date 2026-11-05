@@ -20,6 +20,7 @@ import { Badge } from '../components/Badge'
 import { PickerDialog } from '../components/PickerDialog'
 import { useSceneReveals } from '../components/sceneShown'
 import { Wheel } from '../components/Wheel'
+import { useTheme } from '../theme/ThemeContext'
 import {
   UmpireError,
   UmpireHeading,
@@ -40,6 +41,7 @@ export function UmpireRequirementsScreen({
   onApplied: () => void
 }): React.ReactElement {
   const s = useUmpireStyles()
+  const theme = useTheme()
   const { error, busy, run, live } = useUmpireWork(league)
   const [seasons, setSeasons] = useState<UmpireSeason[]>([])
   const [levels, setLevels] = useState<UmpireLevel[]>([])
@@ -109,7 +111,7 @@ export function UmpireRequirementsScreen({
                 title="Required umpire level"
                 disabled={busy || levels.length === 0}
                 end={
-                  <Text style={[s.text, { color: '#1565C0' }]}>
+                  <Text style={[s.text, { color: theme.linkTextColor }]}>
                     {levels.find(l => l.id === levelId)?.name ?? 'Choose level'}
                   </Text>
                 }
@@ -124,7 +126,7 @@ export function UmpireRequirementsScreen({
                     title={countTitle(t.id, kind)}
                     disabled={busy}
                     end={
-                      <Text style={[s.text, { color: '#1565C0' }]}>
+                      <Text style={[s.text, { color: theme.linkTextColor }]}>
                         {counts.find(c => c.typeId === t.id)?.[kind] ?? 0}
                       </Text>
                     }

@@ -69,6 +69,11 @@ describe('theme tokens', function () {
           `${theme.isDark ? 'dark' : 'light'} ${token} on card`
         ).at.least(4.5)
       }
+      const input = [
+        luminance(theme.inputTextColor),
+        luminance(theme.inputBackgroundColor)
+      ].sort((a, b) => a - b)
+      expect((input[1] + 0.05) / (input[0] + 0.05), 'input text').at.least(4.5)
     }
   })
 

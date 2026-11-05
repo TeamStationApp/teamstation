@@ -3,7 +3,8 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { ThemeProvider } from '../theme/ThemeContext'
+import { ScopedThemeProvider, ThemeProvider } from '../theme/ThemeContext'
+import { tsDark } from '../theme/tsDark'
 import { GameHeroCard } from './GameHeroCard'
 import { teamTint } from './teamTile'
 
@@ -62,6 +63,19 @@ const oct4 = {
 }
 
 describe('GameHeroCard', function () {
+  it('uses readable date text on a dark card', async function () {
+    const container = await render(
+      <ScopedThemeProvider theme={tsDark}>
+        <GameHeroCard {...oct4} dateLines={[oct4.date, '2:00 PM']} />
+      </ScopedThemeProvider>
+    )
+    expect(hex(getComputedStyle(leaf(container, oct4.date)!).color)).equals(
+      tsDark.primaryTextColor
+    )
+    expect(hex(getComputedStyle(leaf(container, '2:00 PM')!).color)).equals(
+      tsDark.primaryTextColor
+    )
+  })
   it('labels pending approval in the status position and suppresses final scores and winner treatment', async function () {
     const container = await render(
       <GameHeroCard
