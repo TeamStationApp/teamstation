@@ -72,6 +72,9 @@ import {
   placedAt as placedIn
 } from './splitterFixtures'
 
+// This process's own: another test run on the machine has its own.
+const LIVE_TMP = mkdtempSync(join(tmpdir(), 'ts-live-test-'))
+
 /**
  * The ingest's state machine, without an RTMP server and without ffmpeg.
  *
@@ -83,7 +86,7 @@ import {
  */
 
 /** Stands in for ffmpeg: takes any arguments, does nothing, waits to be killed. */
-const FAKE_FFMPEG = join(tmpdir(), 'ts-live-test-ffmpeg.sh')
+const FAKE_FFMPEG = join(LIVE_TMP, 'ffmpeg.sh')
 const KEY = 'ts_testkeytestkeytestkey'
 const OTHER_KEY = 'ts_otherkeyotherkeyother'
 
@@ -115,7 +118,7 @@ function spec(destinations: string[] = []): {
 } {
   return {
     liveStreamId: 'liv_test',
-    hlsDir: join(tmpdir(), 'ts-live-test-hls'),
+    hlsDir: join(LIVE_TMP, 'hls'),
     destinations
   }
 }
@@ -207,7 +210,7 @@ describe('live ingest', function () {
 
   it('keeps a late sound track at its stream time in the HLS it writes', async function () {
     // A stand-in that writes down what it was asked to do.
-    const argsFile = join(tmpdir(), 'ts-live-test-args.txt')
+    const argsFile = join(LIVE_TMP, 'args.txt')
     rmSync(argsFile, { force: true })
     writeFileSync(
       FAKE_FFMPEG,
@@ -772,7 +775,7 @@ describe('a stream that comes back', function () {
    * playlist, and the only account of what happened that survives a crash, a
    * drop, or this whole process restarting is what is on the disk.
    */
-  const dir = join(tmpdir(), 'ts-live-test-reconnect')
+  const dir = join(LIVE_TMP, 'reconnect')
 
   beforeEach(function () {
     rmSync(dir, { recursive: true, force: true })
@@ -2182,7 +2185,7 @@ describe('where the live HLS writer cuts', function () {
  */
 describe('signalling the live HLS writer', function () {
   this.timeout(15000)
-  const dir = join(tmpdir(), 'ts-live-test-signals')
+  const dir = join(LIVE_TMP, 'signals')
   // Every SIGTERM the ingest sends, by PID. Counted at the send, because the
   // kernel folds two pending SIGTERMs into one and a stand-in could not tell.
   const sent = new Map<number, number>()
@@ -2284,7 +2287,7 @@ describe('signalling the live HLS writer', function () {
 describe('a live publish that jumps (U19)', function () {
   this.timeout(30_000)
   const dir = spec().hlsDir
-  const spawns = join(tmpdir(), 'ts-live-test-jump-spawns.txt')
+  const spawns = join(LIVE_TMP, 'jump-spawns.txt')
 
   /** Stands in for FFmpeg, saying its pid and arguments as it starts. */
   function fake(stubborn = false): void {

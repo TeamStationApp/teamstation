@@ -2,6 +2,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -39,9 +40,12 @@ import {
 } from './splitter'
 import { firstPublishOnDisk } from './splitterFixtures'
 
+// This process's own: another test run on the machine has its own.
+const LIVE_TMP = mkdtempSync(join(tmpdir(), 'ts-live-test-'))
+
 const KEY = 'ts_mismatchkeymismatchkeymismatch'
 const FOURCC_HEVC = 0x68766331
-const ROOT = join(tmpdir(), 'ts-live-test-mismatch')
+const ROOT = join(LIVE_TMP, 'mismatch')
 const DIR = join(ROOT, 'recording')
 const FAKE = join(ROOT, 'ffmpeg.sh')
 const SPAWNS = join(ROOT, 'spawns.txt')
@@ -166,7 +170,7 @@ function writerClosed(init: Buffer, initName: string, numbers: number[]): void {
 }
 
 describe('a publish configured differently from the recording', function () {
-  this.timeout(10_000)
+  this.timeout(60_000)
   let events: LiveEvent[]
   let logs: string[]
 
@@ -178,8 +182,10 @@ describe('a publish configured differently from the recording', function () {
       videoStartMs: START_MS
     })
   }
+  // As long as a loaded machine's FFmpeg might need; a pass never waits it.
   const until = async (done: () => boolean): Promise<void> => {
-    for (let waited = 0; !done() && waited < 5000; waited += 10) await sleep(10)
+    for (let waited = 0; !done() && waited < 20_000; waited += 10)
+      await sleep(10)
     expect(done(), 'timed out').equals(true)
   }
 
