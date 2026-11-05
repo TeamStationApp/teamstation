@@ -142,7 +142,10 @@ describe('shared still ownership', function () {
             videoId: 'demo',
             atSec: 0,
             ffmpegPath: 'must-never-run',
-            source: { kind: 'file', path: 'must-never-read' }
+            source: { kind: 'file', path: 'must-never-read' },
+            // A source that never answers is given up on, as after the
+            // default wait, without the test sitting through it.
+            lookTimeoutMs: 200
           })
         } catch (e) {
           error = e
