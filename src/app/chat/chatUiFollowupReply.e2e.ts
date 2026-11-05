@@ -231,18 +231,13 @@ async function shared(device: Device, results: CaseResult[]): Promise<void> {
   const excerpt =
     Array.from(fixture.originalBody).slice(0, 200).join('') +
     (Array.from(fixture.originalBody).length > 200 ? '…' : '')
-  const resolvedScript = `const original=document.querySelector(${JSON.stringify(row(fixture.originalId))});const target=document.querySelector(${JSON.stringify(quote(fixture.replyId))});const name=target?.firstElementChild;const rect=original.getBoundingClientRect();return JSON.stringify({label:target?.getAttribute('aria-label')||'',quoteCount:document.querySelector(${JSON.stringify(row(fixture.replyId))}).querySelectorAll('[aria-label^="Jump to message from "]').length,bold:Number(getComputedStyle(name).fontWeight)>=600,visible:rect.top>=0&&rect.top<innerHeight});`
-  let resolved = await evaluate<{
-    label: string
-    quoteCount: number
-    bold: boolean
-    visible: boolean
-  }>(device, resolvedScript)
-  for (let attempt = 0; attempt < 30 && !resolved.visible; attempt += 1) {
+  const visibleScript = `const original=document.querySelector(${JSON.stringify(row(fixture.originalId))});const rect=original?.getBoundingClientRect();return JSON.stringify(rect!=null&&rect.top>=0&&rect.top<innerHeight);`
+  let visible = await evaluate<boolean>(device, visibleScript)
+  for (let attempt = 0; attempt < 30 && !visible; attempt += 1) {
     await new Promise(resolve => setTimeout(resolve, 100))
-    resolved = await evaluate(device, resolvedScript)
+    visible = await evaluate(device, visibleScript)
   }
-  if (!resolved.visible) {
+  if (!visible) {
     const geometry = await evaluate<object>(
       device,
       `const original=document.querySelector(${JSON.stringify(row(fixture.originalId))});const pane=document.querySelector('[data-testid="chat-message-pane"]');const scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');const box=original.getBoundingClientRect(),viewport=scroll.getBoundingClientRect();return JSON.stringify({original:{top:box.top,bottom:box.bottom,height:box.height},viewport:{top:viewport.top,bottom:viewport.bottom,height:viewport.height},scrollTop:scroll.scrollTop,scrollHeight:scroll.scrollHeight,windowScrollY:scrollY,errors:(document.body.textContent.match(/Message unavailable/g)||[]).length});`
@@ -250,7 +245,20 @@ async function shared(device: Device, results: CaseResult[]): Promise<void> {
     results.push({ case: 'old original jump', pass: false, geometry })
     await capture(device, 'reply-history-jump-failure')
   }
-  if (resolved.visible) results.push({ case: 'old original jump', pass: true })
+  assert(visible, 'Jump must bring the actual old original into view')
+  results.push({ case: 'old original jump', pass: true })
+  await capture(device, 'reply-old-original-jump')
+  // A virtual history can unmount the reply once its distant original is
+  // visible. Read each bubble while it is actually in the viewport.
+  await reveal(device, fixture.replyId, 'down')
+  const resolved = await evaluate<{
+    label: string
+    quoteCount: number
+    bold: boolean
+  }>(
+    device,
+    `const post=document.querySelector(${JSON.stringify(row(fixture.replyId))});const target=post.querySelector('[aria-label^="Jump to message from "]');return JSON.stringify({label:target?.getAttribute('aria-label')||'',quoteCount:post.querySelectorAll('[aria-label^="Jump to message from "]').length,bold:target!=null&&Number(getComputedStyle(target.firstElementChild).fontWeight)>=600});`
+  )
   assert(
     resolved.label.includes(`You: ${excerpt}`),
     'Accessible quote must resolve current original and 200-code-point excerpt'
@@ -262,7 +270,6 @@ async function shared(device: Device, results: CaseResult[]): Promise<void> {
     pass: true,
     rawPageSize: wire.length
   })
-  await reveal(device, fixture.replyId, 'down')
   await evaluate(
     device,
     `const pane=document.querySelector('[data-testid="chat-message-pane"]');const scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:1}));document.querySelector(${JSON.stringify(row(fixture.replyId))}).scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,400));const quote=document.querySelector(${JSON.stringify(quote(fixture.replyId))}),box=quote.getBoundingClientRect(),view=scroll.getBoundingClientRect();if(box.top<view.top||box.bottom>view.bottom)throw new Error('Long quote evidence must actually be visible');return true;`
