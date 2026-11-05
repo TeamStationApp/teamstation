@@ -55,6 +55,7 @@ export default [
       'scripts/stampWallClockSei.ts',
       'scripts/chat-history-recovery-fixtures.ts',
       'scripts/chat-history-recovery-link.ts',
+      'scripts/chat-history-recovery-relay.ts',
       'scripts/e2e/**/*.ts'
     ],
     languageOptions: {
