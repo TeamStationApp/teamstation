@@ -25,11 +25,16 @@ function git(args) {
   if (result.status !== 0) throw new Error(result.stderr)
   return result.stdout.trim()
 }
+// The fork point, so what develop changed since does not count as this branch's.
+const forkPoint = git(['merge-base', base, 'HEAD'])
 const untracked = git(['ls-files', '--others', '--exclude-standard'])
   .split('\n')
   .filter(Boolean)
 const paths = [
-  ...new Set([...git(['diff', '--name-only', base]).split('\n'), ...untracked])
+  ...new Set([
+    ...git(['diff', '--name-only', forkPoint]).split('\n'),
+    ...untracked
+  ])
 ].filter(
   path =>
     /^src\/.+\.tsx?$/.test(path) &&
@@ -139,7 +144,7 @@ function reportCoverage(combined) {
     lineReportFromCounts,
     withoutTypeOnlyLines
   } = require('./changed-line-coverage.cjs')
-  let diff = git(['diff', '--unified=0', base, '--', ...paths])
+  let diff = git(['diff', '--unified=0', forkPoint, '--', ...paths])
   for (const path of untracked.filter(path => paths.includes(path))) {
     const lines = readFileSync(path, 'utf8').trimEnd().split('\n')
     diff += `\ndiff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lines.length} @@\n${lines.map(line => '+' + line).join('\n')}\n`
