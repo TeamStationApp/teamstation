@@ -34,7 +34,7 @@ private final class StubEvents: TeamStationEventService {
     return true
   }
 
-  func claimChosen(cameraName: String) async -> Bool {
+  func claimChosen(cameraName: String) async throws -> Bool {
     asked.append("claim")
     claimedNames.append(cameraName)
     guard let current = chosen else { return false }
