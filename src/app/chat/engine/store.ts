@@ -1,4 +1,5 @@
 import type {
+  ChatBlock,
   ChatConversation,
   ChatEpoch,
   ChatGrantRequest,
@@ -53,6 +54,8 @@ export interface ConversationState {
   newestSeq: number
   /** The lowest `seq` read. */
   oldestSeq: number | undefined
+  /** Oldest loaded history to restore after a block-policy change. */
+  blockHistoryFloor?: number
   /** Older messages remain on the server. */
   hasEarlier: boolean
   reads: ChatRead[]
@@ -107,6 +110,10 @@ export function newConversationState(
 }
 
 export class ChatMemory {
+  blocks: ChatBlock[] = []
+  blockedUserIds = new Set<string>()
+  blockRevision = 0
+
   /** In the server's order. */
   readonly conversations = new Map<string, ConversationState>()
   /** The last `GET /chat/grants`. */

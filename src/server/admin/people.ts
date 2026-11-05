@@ -4,7 +4,9 @@ import { conflict } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import type { PlayerAddTerms } from '../../common/notifications'
 import { signOutEverywhere } from '../auth/sessions'
+import { lockBlockPolicy } from '../chat/blocks'
 import { mergeChats } from '../chat/dms'
+import { notifyChatUser } from '../chat/membershipLog'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -164,6 +166,7 @@ export async function closeInto(
       'node:administration',
       MERGE_LOCK
     ])
+    await lockBlockPolicy(trx, true)
     if (await closedInto(trx, keeping, closing)) return nothing
     const user = await trx
       .selectFrom('users')
@@ -347,6 +350,25 @@ export async function closeInto(
       noteScopeChange(trx, { userId: keeping })
       noteScopeChange(trx, { userId: closing })
     }
+    // A merge changes the historical sender ids covered by personal blocks.
+    // Refresh only their owners; the person being blocked receives no event.
+    const identities = await rowsOfPeople(trx, [final])
+    const blockOwners = await trx
+      .selectFrom('chat_user_blocks')
+      .select('blocker_user_id')
+      .where(eb =>
+        eb.or([
+          eb('blocker_user_id', 'in', identities),
+          eb('blocked_user_id', 'in', identities)
+        ])
+      )
+      .execute()
+    const ownersNow = await survivorsOf(
+      trx,
+      blockOwners.map(row => row.blocker_user_id)
+    )
+    for (const owner of new Set(ownersNow.values()))
+      await notifyChatUser(trx, owner, 'blocks')
     return { closed: true, moved }
   }
   // Opened here, the merge's last statements bump the clock; inside a

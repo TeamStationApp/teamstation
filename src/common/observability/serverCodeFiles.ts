@@ -35,6 +35,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/buildVersion.js',
   'server/chat/attachments.js',
   'server/chat/audiences.js',
+  'server/chat/blocks.js',
   'server/chat/chatTestDevices.js',
   'server/chat/chatTestFixture.js',
   'server/chat/dms.js',

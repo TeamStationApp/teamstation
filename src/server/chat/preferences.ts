@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 import type { ChatPin, ChatPreferences } from '../../common/api'
 import { badRequest, notFound } from '../../common/errors'
 import type { Database } from '../db/database'
+import { blockedSenderIds } from './blocks'
 import { lockConversation } from './epochs'
 import { notifyChatUser } from './membershipLog'
 
@@ -105,11 +106,20 @@ export async function pinsFor(
   userId: string,
   conversationId: string
 ): Promise<ChatPin[]> {
+  const hidden = await blockedSenderIds(db, userId)
   const rows = await db
     .selectFrom('chat_message_pins')
+    .innerJoin(
+      'chat_messages',
+      'chat_messages.id',
+      'chat_message_pins.message_id'
+    )
     .select(['message_id', 'pinned_at'])
     .where('user_id', '=', userId)
-    .where('conversation_id', '=', conversationId)
+    .where('chat_message_pins.conversation_id', '=', conversationId)
+    .$if(hidden.length > 0, query =>
+      query.where('chat_messages.sender_user_id', 'not in', hidden)
+    )
     .orderBy('pinned_at', 'desc')
     .orderBy('message_id')
     .execute()
@@ -127,6 +137,7 @@ export async function setMessagePin(
   pinned: boolean
 ): Promise<ChatPin[]> {
   return await db.transaction().execute(async trx => {
+    const hidden = await blockedSenderIds(trx, userId)
     await lockConversation(trx, conversationId)
     await lockMember(trx, userId, conversationId)
     if (pinned) {
@@ -136,6 +147,9 @@ export async function setMessagePin(
         .where('id', '=', messageId)
         .where('conversation_id', '=', conversationId)
         .where('kind', '=', 'post')
+        .$if(hidden.length > 0, query =>
+          query.where('sender_user_id', 'not in', hidden)
+        )
         .where('cleared_at', 'is', null)
         .forShare()
         .executeTakeFirst()

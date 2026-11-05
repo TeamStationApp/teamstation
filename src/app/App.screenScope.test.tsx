@@ -89,6 +89,7 @@ describe('the scope the visible route holds', () => {
     // marks the caching client offline and bypasses the scope's wait.
     api.chatConversations = async () => []
     api.chatLinks = async () => []
+    api.chatBlocks = async () => []
     api.home = async () => {
       reads.push('home')
       return { teams: [], seasons: [], leagues: [] }

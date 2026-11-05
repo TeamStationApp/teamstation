@@ -32,6 +32,8 @@ export interface ChatInfoScreenProps {
     | 'safetyNumber'
     | 'refresh'
     | 'setPreferences'
+    | 'setBlocked'
+    | 'isBlocked'
   >
   client: Pick<TeamStationClient, 'leaveDm'>
   conversationId: string

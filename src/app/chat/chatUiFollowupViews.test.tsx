@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import type { ChatPreferences } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
 import { SceneShownProvider } from '../components/sceneShown'
 import { lstrings } from '../locales/strings'
@@ -136,7 +137,7 @@ class FakeEngine implements ChatScreenEngine {
   typed: string[] = []
   previews: string[] = []
   failRefresh = false
-  failSend = false
+  failSend: Error | undefined
   async start(): Promise<'ready'> {
     return 'ready'
   }
@@ -185,12 +186,12 @@ class FakeEngine implements ChatScreenEngine {
   }
 
   async sendText(): Promise<undefined> {
-    if (this.failSend) throw new Error('Unavailable')
+    if (this.failSend != null) throw this.failSend
     return undefined
   }
 
   async attach(): Promise<undefined> {
-    if (this.failSend) throw new Error('Unavailable')
+    if (this.failSend != null) throw this.failSend
     return undefined
   }
 
@@ -725,51 +726,64 @@ describe('chat UI follow-up mounted reading session', function () {
     expect(document.body.textContent).not.contains('2 members')
   })
 
-  it('keeps draft text, reply context and prepared files when a send fails', async function () {
-    const engine = new FakeEngine()
-    engine.failSend = true
-    engine.add(item('Aurora'), {
-      messages: [
-        message({ senderName: 'Mookie Betts', body: 'Practice update' })
-      ]
+  for (const [error, expected] of [
+    [new Error('Unavailable'), lstrings.chat_send_failed],
+    [
+      new HttpError('forbidden', 'Unavailable', { reason: 'recipientBlocked' }),
+      lstrings.chat_send_blocked
+    ]
+  ] as const) {
+    it(`keeps draft text, reply context and prepared files when a send fails: ${expected}`, async function () {
+      const engine = new FakeEngine()
+      engine.failSend = error
+      engine.add(item('Aurora'), {
+        messages: [
+          message({ senderName: 'Mookie Betts', body: 'Practice update' })
+        ]
+      })
+      const state = newChatWorkspaceState()
+      state.drafts.set('Aurora', {
+        ...emptyChatDraft(),
+        text: 'Bring a glove',
+        replyTo: message({
+          senderName: 'Mookie Betts',
+          body: 'Practice update'
+        }),
+        picked: [
+          {
+            bytes: new Uint8Array([1]),
+            contentType: 'text/plain',
+            fileName: 'notes.txt'
+          }
+        ]
+      })
+      await render(
+        <ChatWorkspace
+          engine={engine}
+          userId={userIdOfGumbo(1)}
+          state={state}
+          conversationId="Aurora"
+          onOpen={() => {}}
+          onMembers={() => {}}
+          onNewMessage={() => {}}
+          onTitle={() => {}}
+        />
+      )
+      await press('Send')
+      expect(document.body.textContent).contains(expected)
+      expect((labelled('Message') as HTMLTextAreaElement).value).equals(
+        'Bring a glove'
+      )
+      expect(document.body.textContent)
+        .contains('Replying to Mookie Betts')
+        .and.contains('notes.txt')
+      expect(state.drafts.get('Aurora')?.text).equals('Bring a glove')
+      expect(state.drafts.get('Aurora')?.picked.length).equals(1)
+      expect(state.drafts.get('Aurora')?.replyTo?.body).equals(
+        'Practice update'
+      )
     })
-    const state = newChatWorkspaceState()
-    state.drafts.set('Aurora', {
-      ...emptyChatDraft(),
-      text: 'Bring a glove',
-      replyTo: message({ senderName: 'Mookie Betts', body: 'Practice update' }),
-      picked: [
-        {
-          bytes: new Uint8Array([1]),
-          contentType: 'text/plain',
-          fileName: 'notes.txt'
-        }
-      ]
-    })
-    await render(
-      <ChatWorkspace
-        engine={engine}
-        userId={userIdOfGumbo(1)}
-        state={state}
-        conversationId="Aurora"
-        onOpen={() => {}}
-        onMembers={() => {}}
-        onNewMessage={() => {}}
-        onTitle={() => {}}
-      />
-    )
-    await press('Send')
-    expect(document.body.textContent).contains(lstrings.chat_send_failed)
-    expect((labelled('Message') as HTMLTextAreaElement).value).equals(
-      'Bring a glove'
-    )
-    expect(document.body.textContent)
-      .contains('Replying to Mookie Betts')
-      .and.contains('notes.txt')
-    expect(state.drafts.get('Aurora')?.text).equals('Bring a glove')
-    expect(state.drafts.get('Aurora')?.picked.length).equals(1)
-    expect(state.drafts.get('Aurora')?.replyTo?.body).equals('Practice update')
-  })
+  }
 
   it('removes plaintext and the composer when the selected conversation is no longer accessible', async function () {
     const engine = new FakeEngine()

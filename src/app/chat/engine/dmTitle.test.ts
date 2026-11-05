@@ -177,12 +177,14 @@ describe('public chat engine list summaries', () => {
     }
   }
   function client(): TeamStationClient {
-    return new TeamStationClient({
+    const api = new TeamStationClient({
       baseUrl: 'https://api.example.test/api/v1',
       fetch: async () => {
         throw new Error('Unexpected network request')
       }
     })
+    api.chatBlocks = async () => []
+    return api
   }
   function engine(
     api: TeamStationClient,

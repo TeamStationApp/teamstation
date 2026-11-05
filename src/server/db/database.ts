@@ -1596,6 +1596,11 @@ export interface Database {
   game_play_archives: GamePlayArchivesTable
   tv_login_requests: TvLoginRequestsTable
   auth_sessions: AuthSessionsTable
+  chat_user_blocks: {
+    blocker_user_id: string
+    blocked_user_id: string
+    created_at: Generated<Date>
+  }
   chat_attachments: ChatAttachmentsTable
   chat_conversations: ChatConversationsTable
   chat_conversation_preferences: ChatConversationPreferencesTable

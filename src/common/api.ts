@@ -470,6 +470,15 @@ export const asChatPerson = asObject({
 })
 export type ChatPerson = ReturnType<typeof asChatPerson>
 
+export const asChatBlock = asObject({
+  userId: asUserId,
+  shortName: asString,
+  avatarUrl: asEither(asString, asValue(null)),
+  userIds: asArray(asUserId),
+  createdAt: asString
+})
+export type ChatBlock = ReturnType<typeof asChatBlock>
+
 /**
  * An adult who may be included beside a player, from `GET
  * /chat/included-adults`, with a label such as "Guardian" or "Coach · Hawks".
@@ -6154,6 +6163,18 @@ export class TeamStationClient {
   }
 
   /** Every chat the caller is in. */
+  async chatBlocks(): Promise<ChatBlock[]> {
+    return await this.request('GET', '/chat/blocks', asArray(asChatBlock))
+  }
+
+  async setChatBlock(userId: string, blocked: boolean): Promise<ChatBlock[]> {
+    return await this.request(
+      blocked ? 'PUT' : 'DELETE',
+      `/chat/blocks/${encodeURIComponent(userId)}`,
+      asArray(asChatBlock)
+    )
+  }
+
   async chatConversations(): Promise<ChatConversation[]> {
     return await this.request(
       'GET',
@@ -6528,14 +6549,19 @@ export class TeamStationClient {
 
   /** Reports one message, disclosing its text and its own key. */
   async reportChatMessage(report: {
+    blockSender?: boolean
     messageId: string
     plaintext: string
     messageKey: string
-  }): Promise<{ id: string; verified: boolean }> {
+  }): Promise<{ id: string; verified: boolean; blockedUserIds?: string[] }> {
     return await this.request(
       'POST',
       '/chat/reports',
-      asObject({ id: asString, verified: asBoolean }),
+      asObject({
+        id: asString,
+        verified: asBoolean,
+        blockedUserIds: asOptional(asArray(asUserId))
+      }),
       report
     )
   }

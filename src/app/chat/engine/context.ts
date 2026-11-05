@@ -12,6 +12,7 @@ import type { ChatMemory } from './store'
 
 /** Every API call the engine makes. */
 export type ChatEngineClient = ChatKeysClient &
+  Partial<Pick<TeamStationClient, 'chatBlocks' | 'setChatBlock'>> &
   Pick<
     TeamStationClient,
     | 'chatConversations'

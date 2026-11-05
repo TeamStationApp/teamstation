@@ -1917,13 +1917,27 @@ describe('api client', function () {
     const reported = client({ id: 'crp_1', verified: true })
     expect(await reported.client.reportChatMessage(disclosure)).deep.equals({
       id: 'crp_1',
-      verified: true
+      verified: true,
+      blockedUserIds: undefined
     })
     expect(reported.calls[0]).deep.include({
       method: 'POST',
       url: 'http://x/api/v1/chat/reports'
     })
     expect(JSON.parse(reported.calls[0].body ?? '')).deep.equals(disclosure)
+
+    const blockedUserIds = [userIdOfGumbo(7), userIdOfGumbo(9)]
+    const combined = client({ id: 'crp_2', verified: true, blockedUserIds })
+    expect(
+      await combined.client.reportChatMessage({
+        ...disclosure,
+        blockSender: true
+      })
+    ).deep.equals({ id: 'crp_2', verified: true, blockedUserIds })
+    expect(JSON.parse(combined.calls[0].body ?? '')).deep.equals({
+      ...disclosure,
+      blockSender: true
+    })
 
     const report = {
       id: 'crp_1',
