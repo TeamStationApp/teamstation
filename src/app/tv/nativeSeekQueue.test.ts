@@ -4,6 +4,23 @@ import { describe, it } from 'mocha'
 import { NativeSeekQueue } from './nativeSeekQueue'
 
 describe('TV native seek backpressure', () => {
+  it('does not settle a failed paused seek when its completion arrives late', () => {
+    let now = 0
+    let settled = 0
+    const queue = new NativeSeekQueue(
+      () => undefined,
+      () => {
+        settled++
+      },
+      () => now
+    )
+    queue.request(50)
+    now = 5001
+    expect(queue.timedOut()).equals(true)
+    now = 5500
+    queue.complete(50)
+    expect(settled).equals(0)
+  })
   it('acknowledges native no-ops even when playback moved beyond the last JS sample', () => {
     const sent: number[] = []
     let nativePosition = 10.25 // JS last saw 10; native has advanced.
@@ -25,6 +42,28 @@ describe('TV native seek backpressure', () => {
     expect(sent).deep.equals([10.25, 20.25, 10.25])
     expect(nativePosition).equals(10.25)
     expect(settled).equals(3)
+  })
+  it('reports a lost completion once and keeps late completions quarantined until replacement', () => {
+    let now = 0
+    const queue = new NativeSeekQueue(
+      () => undefined,
+      () => undefined,
+      () => now
+    )
+    expect(queue.timedOut()).equals(false)
+    queue.request(10)
+    now = 4999
+    expect(queue.timedOut()).equals(false)
+    queue.request(20)
+    now = 5000
+    expect(queue.timedOut()).equals(true)
+    expect(queue.timedOut()).equals(false)
+    queue.complete(10)
+    expect(queue.timedOut()).equals(false)
+    now = 10000
+    expect(queue.timedOut()).equals(false)
+    queue.complete(20)
+    expect(queue.timedOut()).equals(false)
   })
   it('coalesces requests and rejects stale acknowledgements including fractional targets', () => {
     const sent: number[] = []
