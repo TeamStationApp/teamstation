@@ -1,3 +1,6 @@
+require_relative '../scripts/patch-video-seekable'
+patch_video_seekable(File.expand_path('../node_modules/react-native-video', __dir__))
+
 # Resolve react_native_pods.rb with node to allow for hoisting
 require Pod::Executable.execute_command('node', ['-p',
   'require.resolve(

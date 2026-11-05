@@ -392,12 +392,14 @@ function MultiCamGrid(
             onAttaching={attaching}
             onAttached={attached}
             wantsToPlay={() => mc.intents.current.get(video.id) === true}
+            wantsRecovery={() => mc.playing}
             rect={mc.shownRects[index] ?? { x: 0, y: 0, w: 0, h: 0 }}
             dragging={mc.drag?.index === index ? mc.drag : null}
             armed={armed === index}
             name={mc.names.get(video.id) ?? video.title}
             parked={mc.tiles[video.id]?.parked ?? null}
             waiting={tileWaiting(video.id)}
+            crawling={mc.slow !== 0}
             unplaceable={video.startAt == null}
             takeRef={takeElement(video.id)}
             onWallMapping={mc.takeMapping(video.id)}
@@ -509,6 +511,7 @@ function Tile(props: {
   onAttaching: (id: string) => number | null
   onAttached: (id: string, element: TileHandle, toSec: number | null) => void
   wantsToPlay: () => boolean
+  wantsRecovery: () => boolean
   rect: Rect
   dragging: TileDrag | null
   /** Picked up, and waiting to be dropped. */
@@ -516,12 +519,15 @@ function Tile(props: {
   name: string
   parked: ParkReason | null
   waiting: boolean
+  crawling: boolean
   unplaceable: boolean
   takeRef: (node: TileHandle | null) => void
   /** Where its player says it has no dates of its own (`PlayIntent`). */
   onWallMapping: (mapping: WallMapping | null) => void
   heard: boolean
 }): React.ReactElement {
+  const recoveryIntent = useRef(props.wantsRecovery)
+  recoveryIntent.current = props.wantsRecovery
   const {
     videoId,
     url,
@@ -555,15 +561,30 @@ function Tile(props: {
   // Until its first picture the tile says it is loading, rather than leaving
   // a black square to explain itself.
   const [hasPicture, setHasPicture] = useState(false)
+  const [seeking, setSeeking] = useState(false)
   useEffect(() => {
     setHasPicture(handle != null && handle.readyState >= 2)
+    setSeeking(handle?.seeking === true)
     if (handle == null) return
     const drew = (): void => {
       setHasPicture(true)
     }
+    const seekingChanged = (): void => {
+      setSeeking(handle.seeking === true)
+    }
+    const emptied = (): void => {
+      setHasPicture(false)
+      setSeeking(false)
+    }
     handle.addEventListener('loadeddata', drew)
+    handle.addEventListener('seeking', seekingChanged)
+    handle.addEventListener('seeked', seekingChanged)
+    handle.addEventListener('emptied', emptied)
     return () => {
       handle.removeEventListener('loadeddata', drew)
+      handle.removeEventListener('seeking', seekingChanged)
+      handle.removeEventListener('seeked', seekingChanged)
+      handle.removeEventListener('emptied', emptied)
     }
   }, [handle, url])
 
@@ -580,7 +601,12 @@ function Tile(props: {
       () => {
         onGiveUp(videoId)
       },
-      { wantsToPlay, onWallMapping }
+      {
+        wantsToPlay,
+        onWallMapping,
+        buffer: TILE_BUFFER,
+        wantsRecovery: () => recoveryIntent.current()
+      }
     )
     const start = (): void => {
       onAttached(videoId, handle, toSec)
@@ -642,11 +668,16 @@ function Tile(props: {
       unavailable ||
       unplaceable ||
       waiting ||
+      (seeking && !props.crawling) ||
       !hasPicture ? (
         <View
           style={[
             styles.tileParked,
-            parked === 'gap' ? { backgroundColor: '#000' } : null
+            // A reloaded decoder can show frame zero while its seek is pending.
+            // Crawling deliberately presents successive seek frames.
+            parked === 'gap' || !hasPicture || (seeking && !props.crawling)
+              ? { backgroundColor: '#000' }
+              : null
           ]}
         >
           <Text style={styles.tileParkedText}>
