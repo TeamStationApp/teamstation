@@ -82,7 +82,7 @@ export async function partialRecovery(
       driver: 'cdp',
       url: f.origin,
       extra: {
-        browser: executablePath(),
+        browser: await executablePath(),
         windowSize: '1280x900',
         userDataDir: join(f.artifacts, 'profiles', profile)
       }

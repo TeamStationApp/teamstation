@@ -99,7 +99,7 @@ async function main(): Promise<void> {
       url: origin,
       artifacts: 'none',
       extra: {
-        browser: executablePath(),
+        browser: await executablePath(),
         windowSize: '1440x1000',
         userDataDir: setup.profiles[key]
       }

@@ -94,7 +94,7 @@ async function withHolder(
       driver: 'cdp',
       url: input.origin,
       extra: {
-        browser: executablePath(),
+        browser: await executablePath(),
         windowSize: '1280x900',
         userDataDir: input.holder.profile
       }
