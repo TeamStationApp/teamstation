@@ -341,12 +341,19 @@ export async function mixedVersionRecovery(
           {
             baseline: builds.baseline,
             current: builds.current,
+            conversationId: dm.id,
+            actorKey: 'Ha',
+            posts: posts.map((post, index) => ({
+              id: post.id,
+              body: [first, second, caption, continued][index]
+            })),
+            attachment: { messageId: posts[2].id, fileName },
             safetyWordsUnchanged: true,
             encryptedMessagesUnchanged: true,
             imageDecodedOnBothVersionsAndRestart: true,
             freshBoundaries: 0,
             epochs: 1,
-            posts: 4
+            postCount: 4
           },
           null,
           2

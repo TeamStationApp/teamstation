@@ -2300,7 +2300,7 @@ async function lockedProvider(daemon: Daemon, phase: string): Promise<void> {
     }
   })
   try {
-    await signIn(m, 'S')
+    await signIn(m, process.env.CHAT_UI_LOCKED_ACTOR ?? 'S')
     if (phase === 'prepare') {
       await m.openLink({ link: WEB + '/chat/' + conversation })
       await m.assertVisible({

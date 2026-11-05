@@ -50,7 +50,7 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
   assert(values.out != null)
   assert(
     (values.runner === 'native' &&
-      ['bands', 'core', 'default'].includes(values.scenario)) ||
+      ['bands', 'core', 'default', 'intact'].includes(values.scenario)) ||
       (values.runner === 'web' &&
         values.surface === 'web' &&
         [
@@ -105,6 +105,135 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
   assert(!existsSync(out), 'Every scenario needs a new fixture directory')
   mkdirSync(out, { recursive: true, mode: 0o700 })
   privateJson(join(out, 'owner.json'), owner)
+  if (values.runner === 'native' && values.scenario === 'intact') {
+    assert(values.surface === 'ios' || values.surface === 'android')
+    const webFile = process.env.CHAT_RECOVERY_INTACT_WEB_FIXTURE
+    assert(
+      webFile != null &&
+        resolve(webFile).startsWith(resolve(owner.artifacts) + '/')
+    )
+    const web = JSON.parse(readFileSync(webFile, 'utf8')) as {
+      disposable: true
+      source: string
+      apiUrl: string
+      artifacts: string
+      seedFile: string
+    }
+    assert.equal(web.disposable, true)
+    assert.equal(web.source, owner.source)
+    assert.equal(web.apiUrl, owner.apiUrl)
+    assert(resolve(web.artifacts).startsWith(resolve(owner.artifacts) + '/'))
+    assert(resolve(web.seedFile).startsWith(resolve(web.artifacts) + '/'))
+    const receipt = JSON.parse(
+      readFileSync(join(web.artifacts, 'intact-upgrade-results.json'), 'utf8')
+    ) as {
+      current: { source: string }
+      conversationId: string
+      actorKey: string
+      posts: Array<{ id: string; body: string }>
+      attachment: { messageId: string; fileName: string }
+      safetyWordsUnchanged: boolean
+      encryptedMessagesUnchanged: boolean
+      imageDecodedOnBothVersionsAndRestart: boolean
+      freshBoundaries: number
+    }
+    assert.equal(receipt.current.source, owner.source)
+    assert(
+      receipt.safetyWordsUnchanged &&
+        receipt.encryptedMessagesUnchanged &&
+        receipt.imageDecodedOnBothVersionsAndRestart
+    )
+    assert.equal(receipt.freshBoundaries, 0)
+    assert.equal(receipt.posts.length, 4)
+    const people = readSeedTable(readFileSync(web.seedFile, 'utf8'))
+    const actor = people[receipt.actorKey]
+    assert(actor?.email.endsWith('@chat.example.com'))
+    const api = new TeamStationClient({
+      baseUrl: owner.apiUrl,
+      passwordKdf: async (password, parameters) =>
+        await nativeArgon(passwordBytes(password), parameters)
+    })
+    await api.signInWithPassword(actor.email, actor.password)
+    const conversation = (await api.chatConversations()).find(
+      row => row.id === receipt.conversationId
+    )
+    assert(conversation != null)
+    const messages = await api.chatMessages(conversation.id)
+    assert.deepEqual(
+      messages.filter(row => row.kind === 'post').map(row => row.id),
+      receipt.posts.map(row => row.id)
+    )
+    const epochs = await api.chatEpochs(conversation.id, 0)
+    assert.equal(epochs.epochs.length, 1)
+    assert.equal(epochs.epochs[0].chainBreak, false)
+    const label = dmTitle(actor.userId, undefined, conversation.people ?? [])
+    const fixture = {
+      synthetic: true,
+      disposable: true,
+      appId: 'app.teamstation.app',
+      scheme: 'teamstation',
+      apiUrl: owner.apiUrl,
+      conversationId: conversation.id,
+      conversationLabel: label,
+      scopeName: label,
+      scopePill: 'Direct message',
+      targetText: receipt.posts[0].body,
+      replyText: receipt.posts[1].body,
+      originalMessageIds: receipt.posts.map(row => row.id),
+      draft: 'Retained history draft',
+      probePost: 'Retained history probe',
+      orientationPolicy: 'portrait-only',
+      actor,
+      peers: (conversation.people ?? [])
+        .filter(person => person.userId !== actor.userId)
+        .map(person => ({ userId: person.userId }))
+    }
+    requireFixtureFields(fixture, [
+      'actor.userId',
+      'actor.email',
+      'actor.password',
+      'conversationId',
+      'targetText',
+      'replyText',
+      'originalMessageIds'
+    ])
+    privateJson(join(out, 'fixture.json'), fixture)
+    privateJson(join(out, 'intact.json'), {
+      synthetic: true,
+      actorUserId: actor.userId,
+      conversationId: conversation.id,
+      posts: receipt.posts,
+      attachment: receipt.attachment
+    })
+    const link = join(out, 'link-request.json')
+    const env = {
+      TS_CHAT_WEB_URL: owner.webUrl,
+      TS_CHAT_API_URL: owner.apiUrl,
+      CHAT_UI_SEED_FILE: web.seedFile,
+      CHAT_UI_ARTIFACTS: out,
+      CHAT_UI_NATIVE_FIXTURE_FILE: join(out, 'fixture.json'),
+      CHAT_UI_NATIVE_RESULTS: join(out, 'results'),
+      CHAT_UI_NATIVE_LINK_REQUEST: link,
+      CHAT_UI_LOCKED_LINK_REQUEST: link,
+      CHAT_UI_NATIVE_STAGE: 'M4',
+      CHAT_UI_NATIVE_DISPOSABLE: '1',
+      CHAT_PLATFORM: values.surface,
+      CHAT_UI_LOCKED_ACTOR: receipt.actorKey,
+      CHAT_UI_LOCKED_CONVERSATION: conversation.id,
+      CHAT_UI_LOCKED_ORIGINAL: receipt.posts[0].id,
+      CHAT_UI_LOCKED_ORIGINAL_BODY: receipt.posts[0].body,
+      CHAT_UI_PROFILE_DIR: join(web.artifacts, 'profiles', 'holder'),
+      CHAT_RECOVERY_INTACT_FIXTURE: join(out, 'intact.json'),
+      CHAT_RECOVERY_INTACT_RECORD: join(out, 'baseline.json'),
+      CHAT_RECOVERY_FIXTURE_SOURCE: owner.source
+    }
+    const path = join(out, 'env.sh')
+    writeFileSync(path, recoveryFixtureEnvironment(env), {
+      mode: 0o600,
+      flag: 'wx'
+    })
+    return path
+  }
   const reset = execFileSync('/bin/bash', ['scripts/chat-e2e-reset.sh', out], {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024
