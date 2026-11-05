@@ -11,6 +11,9 @@ interface ClockPort {
   failed: boolean
   settling: boolean
   target: number | null
+  pendingWall: number | null
+  seekableEnd: number | null
+  seekableStart: number
 }
 /** Native ports stay registered until the entire player closes, including hidden angles. */
 export class PlaybackClock {
@@ -31,15 +34,25 @@ export class PlaybackClock {
       ended: false,
       failed: false,
       settling: false,
-      target: null
+      target: null,
+      pendingWall: null,
+      seekableEnd: null,
+      seekableStart: 0
     }
   }
 
   load(index: number, duration: number): void {
     const port = this.ports[index]
     port.loaded = true
+    port.failed = false
+    port.ended = false
+    port.settling = false
+    port.target = null
+    port.pendingWall = null
     port.duration = duration > 0 ? duration : Infinity
-    if (this.wall !== null) this.seekPort(port, this.wall)
+    port.seekableEnd = null
+    port.seekableStart = 0
+    if (this.wall !== null) this.seekPort(port, this.wall, true)
     if (!this.available(this.master) && this.available(index))
       this.master = index
   }
@@ -50,7 +63,7 @@ export class PlaybackClock {
 
   seek(wall: number): void {
     this.wall = wall
-    for (const port of this.ports) this.seekPort(port, wall)
+    for (const port of this.ports) this.seekPort(port, wall, true)
     if (!this.available(this.master)) {
       const next = this.ports.findIndex((_, i) => this.available(i))
       if (next >= 0) this.master = next
@@ -60,11 +73,16 @@ export class PlaybackClock {
   /** Full recording duration, without the seek guard before the final frame. */
   recordingExtent(): { start: number; end: number } | null {
     const ports = this.ports.filter(p => p.loaded && !p.failed)
-    if (ports.length === 0 || ports.some(p => !Number.isFinite(p.duration)))
+    const endOf = (p: ClockPort): number =>
+      Number.isFinite(p.duration) ? p.duration : (p.seekableEnd ?? NaN)
+    if (ports.length === 0 || ports.some(p => !Number.isFinite(endOf(p))))
       return null
     const ranges = ports.map(p => ({
-      start: wallAt(p.timeline.anchors, 0),
-      end: wallAt(p.timeline.anchors, p.duration * 1000)
+      start: wallAt(
+        p.timeline.anchors,
+        Number.isFinite(p.duration) ? 0 : p.seekableStart * 1000
+      ),
+      end: wallAt(p.timeline.anchors, endOf(p) * 1000)
     }))
     if (ranges.some(r => r.start === null || r.end === null)) return null
     const start = Math.min(...ranges.map(r => r.start!))
@@ -82,22 +100,11 @@ export class PlaybackClock {
 
   move(seconds: number): number | null {
     if (this.wall === null) return null
-    const ranges = this.ports
-      .filter(p => p.loaded && !p.failed)
-      .flatMap(p => {
-        const start = wallAt(p.timeline.anchors, 0)
-        const end = Number.isFinite(p.duration)
-          ? wallAt(p.timeline.anchors, p.duration * 1000)
-          : Infinity
-        return start === null || end === null ? [] : [{ start, end }]
-      })
-    if (ranges.length === 0) return null
+    const range = this.extent()
+    if (range === null) return null
     const next = Math.max(
-      Math.min(...ranges.map(r => r.start)),
-      Math.min(
-        Math.max(...ranges.map(r => r.end)) - 100,
-        this.wall + seconds * 1000
-      )
+      range.start,
+      Math.min(range.end, this.wall + seconds * 1000)
     )
     this.seek(next)
     return next
@@ -122,10 +129,24 @@ export class PlaybackClock {
     return false
   }
 
-  private seekPort(port: ClockPort, wall: number): void {
+  private seekPort(port: ClockPort, wall: number, requireBounds = false): void {
     const target = targetTime(port.timeline, wall, port.duration)
-    if (!port.loaded || port.failed || target === null) return
-    port.ended = !target.available
+    if (!port.loaded || target === null) return
+    // A failed seek beyond a short recording must not suppress recovery after
+    // the viewer returns to footage that this camera actually has.
+    port.ended =
+      Number.isFinite(port.duration) && target.seconds >= port.duration
+    if (port.failed) return
+    if (
+      ((requireBounds || port.pendingWall !== null) &&
+        !Number.isFinite(port.duration) &&
+        port.seekableEnd === null) ||
+      !this.inSeekableRange(port, target.seconds)
+    ) {
+      if (requireBounds || port.pendingWall !== null) port.pendingWall = wall
+      return
+    }
+    port.pendingWall = null
     port.position = target.seconds
     port.settling = true
     port.target = target.seconds
@@ -136,15 +157,41 @@ export class PlaybackClock {
     if (this.ports[index] !== undefined) this.ports[index].settling = false
   }
 
-  progress(index: number, seconds: number): number | null {
+  progress(
+    index: number,
+    seconds: number,
+    seekableEnd?: number,
+    seekableStart?: number
+  ): number | null {
     const port = this.ports[index]
-    if (port === undefined || port.settling || port.failed || port.ended)
+    if (
+      port !== undefined &&
+      seekableStart != null &&
+      Number.isFinite(seekableStart) &&
+      seekableStart >= 0
+    )
+      port.seekableStart = seekableStart
+    if (
+      port !== undefined &&
+      seekableEnd != null &&
+      Number.isFinite(seekableEnd) &&
+      seekableEnd > 0
+    )
+      port.seekableEnd = seekableEnd
+    if (port === undefined || port.failed || port.ended) return this.wall
+    // A replacement live source may open at the live edge. Restore the selected
+    // moment only once its new seekable bounds arrive, and ignore that first frame.
+    if (port.pendingWall !== null) {
+      this.seekPort(port, port.pendingWall, true)
       return this.wall
+    }
+    if (port.settling) return this.wall
     // Native progress queued before a seek can arrive after its completion callback.
     if (port.target !== null && Math.abs(seconds - port.target) > 1)
       return this.wall
     port.target = null
     port.position = seconds
+    if (!this.available(index)) return this.wall
     if (index === this.master) {
       this.wall = wallAt(port.timeline.anchors, seconds * 1000)
       if (this.wall !== null) {
@@ -175,12 +222,33 @@ export class PlaybackClock {
     return this.ports.every(p => p.loaded || p.failed)
   }
 
+  private inSeekableRange(port: ClockPort, seconds: number): boolean {
+    return (
+      Number.isFinite(port.duration) ||
+      port.seekableEnd === null ||
+      (seconds >= port.seekableStart && seconds < port.seekableEnd)
+    )
+  }
+
+  // Native playback can continue beyond AVPlayer's safe live seek limit.
+  // Keep those decoded frames available while transport still obeys that limit.
   available(index: number): boolean {
     const port = this.ports[index]
-    if (port === undefined || port.failed || port.ended) return false
+    if (
+      port === undefined ||
+      port.failed ||
+      port.ended ||
+      port.pendingWall !== null
+    )
+      return false
+    if (this.wall === null) return true
+    const target = targetTime(port.timeline, this.wall, port.duration)
     return (
-      this.wall === null ||
-      targetTime(port.timeline, this.wall, port.duration)?.available !== false
+      target === null ||
+      (target.available &&
+        (this.inSeekableRange(port, target.seconds) ||
+          (target.seconds >= Math.min(port.seekableStart, port.position) &&
+            target.seconds <= port.position + 0.75)))
     )
   }
 }
