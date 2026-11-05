@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   const sessions: BrowserSession[] = []
   await writeFile(
     join(artifacts, 'browser-qa.log'),
-    '$ node -r sucrase/register src/app/teamRestoration.e2e.ts\n'
+    `$ node -r sucrase/register src/app/teamRestoration.e2e.ts${process.argv.includes('--league-teams-only') ? ' --league-teams-only' : ''}\n`
   )
   const pass = async (text: string): Promise<void> => {
     await log(artifacts, 'browser-qa.log', text + ' PASS')
@@ -63,6 +63,38 @@ async function main(): Promise<void> {
   }
   try {
     const b = await make('restore-wide', 1440, 1000, true)
+    const visit = async (path: string): Promise<void> => {
+      await b.m.openBrowser({ url: f.h.origin + path })
+    }
+    const shell = async (): Promise<void> => {
+      await b.page.waitForSelector('[aria-label="Team sections"]', {
+        timeout: 15000
+      })
+      await contains(b.page, 'Demo Hawks')
+      await b.page.waitForFunction(() => {
+        const text = document.body.textContent
+        if (text === null) return true
+        return !text.includes('Loading…')
+      })
+      const tabs = await diagnostic(b.page, () =>
+        [
+          ...document.querySelectorAll(
+            '[aria-label="Team sections"] [role="tab"]'
+          )
+        ].map(n => n.textContent)
+      )
+      expect(tabs).deep.equals(['Videos', 'Schedule', 'Team', 'Stats', 'Chats'])
+      await absent(b.page, 'Open team videos and stats')
+      await absent(b.page, 'Create Game')
+    }
+    if (process.argv.includes('--league-teams-only')) {
+      await visit(`/groups/league/${f.leagueA}`)
+      await tap(b.m, 'Teams', 'tab')
+      await tap(b.m, 'Open Demo Hawks')
+      await shell()
+      await pass('B3 league Teams navigation preserves the team shell')
+      return
+    }
     const recentResponse = await f.h.request(
       'GET',
       '/events?played=1&limit=1',
@@ -132,30 +164,6 @@ async function main(): Promise<void> {
     await pass(
       'Home Watch and Box Score retain complete labels at 360 and 375 pixels with bundled fonts'
     )
-    const visit = async (path: string): Promise<void> => {
-      await b.m.openBrowser({ url: f.h.origin + path })
-    }
-    const shell = async (): Promise<void> => {
-      await b.page.waitForSelector('[aria-label="Team sections"]', {
-        timeout: 15000
-      })
-      await contains(b.page, 'Demo Hawks')
-      await b.page.waitForFunction(() => {
-        const text = document.body.textContent
-        if (text === null) return true
-        return !text.includes('Loading…')
-      })
-      const tabs = await diagnostic(b.page, () =>
-        [
-          ...document.querySelectorAll(
-            '[aria-label="Team sections"] [role="tab"]'
-          )
-        ].map(n => n.textContent)
-      )
-      expect(tabs).deep.equals(['Videos', 'Schedule', 'Team', 'Stats'])
-      await absent(b.page, 'Open team videos and stats')
-      await absent(b.page, 'Create Game')
-    }
     await capture(b.m, artifacts, 'home-nav-after.png')
     await tap(b.m, 'Demo Hawks, Demo Regular · 2–1–1')
     await shell()
