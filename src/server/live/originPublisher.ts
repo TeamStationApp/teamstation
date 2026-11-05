@@ -102,11 +102,12 @@ export interface ScannedThrough {
 
 /**
  * Where each published playlist body goes besides the Space. `append` gets
- * the text a body added to the one before it; `replace` gets a whole body
- * that does not extend it (the first, or one a reconnect rewrote).
+ * the text a body added to the one before it, with the whole body for a sink
+ * that has to start again; `replace` gets a whole body that does not extend
+ * it (the first, or one a reconnect rewrote).
  */
 export interface PlaylistSink {
-  append: (videoId: string, text: string) => Promise<void>
+  append: (videoId: string, text: string, body: string) => Promise<void>
   replace: (videoId: string, body: string) => Promise<void>
 }
 
@@ -456,7 +457,7 @@ export class OriginPublisher {
         built.expose()
         const sink = this.options.playlistSink ?? noPlaylistSink
         const added = built.after(before)
-        if (added != null) await sink.append(this.options.videoId, added)
+        if (added != null) await sink.append(this.options.videoId, added, body)
         else await sink.replace(this.options.videoId, body)
       }
       if (!this.notified && acknowledgedCount > 0) {
