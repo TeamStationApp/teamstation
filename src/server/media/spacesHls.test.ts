@@ -517,11 +517,11 @@ describe('live playlists through Valkey', function () {
       'subscribed',
       async () =>
         (
-          await client.sendCommand([
+          (await client.sendCommand([
             'PUBSUB',
             'NUMSUB',
             livePlaylistChannel(prefix)
-          ])
+          ])) as [string, number]
         )[1] > 0 && target.following != null
     )
     // The subscribe's own reply lands just after the server counts it.
