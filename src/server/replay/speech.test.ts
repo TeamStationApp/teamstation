@@ -228,4 +228,28 @@ describe('voice API key fallback', () => {
     )
     expect(calls).equals(1)
   })
+  it('does not retry a timeout on another key', async () => {
+    let calls = 0
+    const hung: typeof fetch = async (
+      _url: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      calls++
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new Error('aborted'))
+        })
+      })
+    }
+    const error = await refusal(
+      synthesize(
+        { text: 'Ball.', emphasis: 'calm' },
+        { ...settings, apiKey: ['a', 'b'] },
+        hung,
+        5
+      )
+    )
+    expect(error.message).equals('Speech timed out')
+    expect(calls).equals(1)
+  })
 })

@@ -31,12 +31,11 @@ export async function withApiKeys<T>(
 ): Promise<T> {
   const keys = shuffledKeys(pool)
   if (keys.length === 0) throw new Error('No API keys are configured')
-  for (let i = 0; i < keys.length; i++) {
+  for (let i = 0; ; i++) {
     try {
       return await attempt(keys[i])
     } catch (error) {
       if (i === keys.length - 1 || !retryable(error)) throw error
     }
   }
-  throw new Error('No API keys are configured')
 }

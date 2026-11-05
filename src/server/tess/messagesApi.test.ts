@@ -1090,7 +1090,7 @@ describe('Tess API key fallback', () => {
     ).equals('Recovered')
     expect(p.sent).length(2)
   })
-  it('retries a timed out attempt', async () => {
+  it('does not retry a timed out attempt on another key', async () => {
     let calls = 0
     const fetchImpl: typeof fetch = async (_url, init) => {
       if (++calls === 2) return Response.json(ANSWER)
@@ -1104,7 +1104,40 @@ describe('Tess API key fallback', () => {
         )
       )
     }
-    await createMessage(settings, REQUEST, { fetch: fetchImpl, deadlineMs: 5 })
-    expect(calls).equals(2)
+    const timedOut = await failure(
+      createMessage(settings, REQUEST, { fetch: fetchImpl, deadlineMs: 5 })
+    )
+    expect(timedOut.message).contains('gave no answer')
+    expect(calls).equals(1)
+  })
+  it('streams with several keys, and keeps to an answer it has begun to show', async () => {
+    const begun = streamEvents({
+      content: [{ type: 'text', text: 'Partly there' }]
+    })
+      .filter(
+        event => event.type !== 'message_delta' && event.type !== 'message_stop'
+      )
+      .map(sseOf)
+      .join('')
+    const p = provider(
+      () =>
+        new Response(
+          `${begun}event: error\ndata: {"type":"error","error":{"type":"overloaded_error"}}\n\n`
+        ),
+      () => Response.json(ANSWER)
+    )
+    const events: MessagesStreamEvent[] = []
+    await failure(
+      streamMessage(settings, REQUEST, event => events.push(event), {
+        fetch: p.fetch
+      })
+    )
+    expect(
+      events
+        .filter(event => event.type === 'text')
+        .map(event => event.delta)
+        .join('')
+    ).equals('Partly there')
+    expect(p.sent).length(1)
   })
 })

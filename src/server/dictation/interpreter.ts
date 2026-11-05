@@ -1791,18 +1791,26 @@ export class Interpretation {
       const text = await response.text()
       if (!response.ok) {
         const error = `${provider} answered ${response.status}`
-        this.note({ error })
+        // The server's log keeps why; the scorer is told only the status.
+        this.note({
+          error: `${error}: ${redacted(text, apiKey).slice(0, 200)}`
+        })
         return { error, retryable: retryableStatus(response.status) }
       }
       const read = call.read(parse(text))
       this.note(read)
       return read
-    } catch {
+    } catch (error) {
       const failure = timedOut
         ? `${provider} gave no answer within ${Math.round(deadlineMs / 1000)}s`
         : `${provider} could not be reached`
-      this.note({ error: failure })
-      return { error: failure, retryable: true }
+      this.note({
+        error: timedOut
+          ? failure
+          : `${failure}: ${redacted(error instanceof Error ? error.message : String(error), apiKey)}`
+      })
+      // Out of time is rarely one key's fault, and another key waits as long.
+      return { error: failure, retryable: !timedOut }
     } finally {
       clearTimeout(timer)
     }
@@ -2004,4 +2012,9 @@ function hostOf(url: string): string {
   } catch {
     return url
   }
+}
+
+/** `text` with every copy of the key it was sent with taken out. */
+function redacted(text: string, apiKey: string): string {
+  return apiKey === '' ? text : text.split(apiKey).join('[redacted]')
 }

@@ -1,4 +1,3 @@
-import { normalizedKeys } from '../../common/aiKeys'
 import { HttpError } from '../../common/errors'
 import type { Property } from '../../common/observability/contract'
 import {
@@ -252,34 +251,31 @@ async function streamMessageOnce(
   })
 }
 
-/** Failed attempts publish no partial response; tools are returned only once. */
+/**
+ * Each key in turn until one answers. Once a piece of an answer has reached
+ * the person, that answer is the one: a later failure ends the turn rather
+ * than repeat it on another key. Tool calls come only with a whole answer.
+ */
 export async function streamMessage(
   settings: TessSettings,
   request: MessagesRequest,
   onEvent: (event: MessagesStreamEvent) => void,
   options: MessagesOptions = {}
 ): Promise<MessagesResponse> {
-  if (normalizedKeys(settings.apiKey).length === 1)
-    return await streamMessageOnce(
-      { ...settings, apiKey: normalizedKeys(settings.apiKey)[0] },
-      request,
-      onEvent,
-      options
-    )
+  let shown = false
   return await withApiKeys(
     settings.apiKey,
-    async key => {
-      const events: MessagesStreamEvent[] = []
-      const response = await streamMessageOnce(
+    async key =>
+      await streamMessageOnce(
         { ...settings, apiKey: key },
         request,
-        event => events.push(event),
+        event => {
+          shown = true
+          onEvent(event)
+        },
         options
-      )
-      for (const event of events) onEvent(event)
-      return response
-    },
-    retryable
+      ),
+    error => !shown && retryable(error)
   )
 }
 
@@ -456,7 +452,8 @@ function lost(wait: Deadline, log: Record<string, Property>): HttpError {
     wait.expired()
       ? `Tess's model gave no answer within ${Math.round(wait.ms / 1000)}s`
       : "Tess's model could not be reached",
-    { retryable: true }
+    // Out of time is rarely one key's fault, and another key waits as long.
+    { retryable: !wait.expired() }
   )
 }
 

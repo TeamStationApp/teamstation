@@ -3025,7 +3025,36 @@ describe('scoring API key fallback', () => {
     ).start()
     expect(bad.sent).length(1)
   })
-  it('retries timeouts and stops when no key is configured', async () => {
+  it('logs why a provider refused, without the key, and tells the scorer only the status', async () => {
+    const logged: DictationExchange[] = []
+    const p = provider({ status: 400, text: 'model unknown for secret-a' })
+    const result = await new Interpretation(
+      config(p.fetch, {
+        apiKey: ['secret-a'],
+        log: exchange => logged.push(exchange)
+      }),
+      'ctx',
+      'ball'
+    ).start()
+    expect(result).deep.equals({
+      kind: 'error',
+      message: 'api.x.ai answered 400'
+    })
+    expect(logged.map(exchange => exchange.error)).deep.equals([
+      'api.x.ai answered 400: model unknown for [redacted]'
+    ])
+    const gone = provider(new Error('ECONNREFUSED'))
+    const unreached: DictationExchange[] = []
+    await new Interpretation(
+      config(gone.fetch, { log: exchange => unreached.push(exchange) }),
+      'ctx',
+      'ball'
+    ).start()
+    expect(unreached[0].error).equals(
+      'api.x.ai could not be reached: ECONNREFUSED'
+    )
+  })
+  it('does not retry a timeout on another key, and stops when no key is configured', async () => {
     let calls = 0
     const fetchImpl: typeof fetch = async (_url, init) => {
       if (++calls === 2)
@@ -3045,12 +3074,12 @@ describe('scoring API key fallback', () => {
       'ctx',
       'ball'
     ).start()
-    expect(calls).equals(2)
+    expect(calls).equals(1)
     await new Interpretation(
       config(fetchImpl, { apiKey: [] }),
       'ctx',
       'ball'
     ).start()
-    expect(calls).equals(2)
+    expect(calls).equals(1)
   })
 })

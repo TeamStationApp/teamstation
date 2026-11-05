@@ -2,6 +2,7 @@ import { type ApiKeyPool, normalizedKeys } from '../../common/aiKeys'
 import type { Narration } from '../../common/replay/narration'
 import { retryableStatus, withApiKeys } from '../aiKeyFallback'
 import type { ServerConfig } from '../serverConfig'
+import { AI_DEFAULTS } from '../serverConfigSchema'
 
 /**
  * xAI's text to speech, for the replay's announcer. One request per
@@ -36,10 +37,10 @@ export function speechSettings(
   if (apiKey == null || normalizedKeys(apiKey).length === 0) return null
   return {
     apiKey,
-    baseUrl: config.speech?.baseUrl ?? 'https://api.x.ai/v1',
-    voice: config.speech?.voice ?? 'rex',
-    speed: config.speech?.speed ?? 1.1,
-    bitRate: config.speech?.bitRate ?? 64000
+    baseUrl: config.speech?.baseUrl ?? AI_DEFAULTS.xaiBaseUrl,
+    voice: config.speech?.voice ?? AI_DEFAULTS.voice,
+    speed: config.speech?.speed ?? AI_DEFAULTS.speed,
+    bitRate: config.speech?.bitRate ?? AI_DEFAULTS.bitRate
   }
 }
 
@@ -93,11 +94,12 @@ async function synthesizeOnce(
     return audio
   } catch (error) {
     if (error instanceof SpeechUnavailable) throw error
+    // Out of time is rarely one key's fault, and another key waits as long.
     throw new SpeechUnavailable(
       controller.signal.aborted
         ? 'Speech timed out'
         : 'Speech could not be reached',
-      true
+      !controller.signal.aborted
     )
   } finally {
     clearTimeout(timer)
