@@ -9,6 +9,8 @@ import {
   type VideoSummary
 } from '../../../common/api'
 import { ThemeProvider } from '../../theme/ThemeContext'
+import { attachHls as attachNativeHls } from '../attachHls.native'
+import { NativeVideoHandle } from '../nativeVideoHandle'
 import { SLOW_RATE } from '../slowMotion'
 import type { VideoEventName } from '../videoHandle'
 import type { AngleVideo } from '../wallClock'
@@ -1214,6 +1216,79 @@ describe('useMultiCam on live angles', function () {
 })
 
 describe('useMultiCam buffering', function () {
+  it('preserves a paused grid rewind made while a network replacement opens', async function () {
+    this.timeout(5000)
+    const { mc } = await grid({
+      videos: [video('A', 0)],
+      order: ['A'],
+      atMs: T0 + 190_000
+    })
+    let loads = 0
+    let opening = false
+    const seeks: number[] = []
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.source = 'https://media/A.m3u8'
+    handle.attach({
+      pause: () => undefined,
+      resume: () => undefined,
+      seek: (seconds: number) => {
+        seeks.push(seconds)
+        if (!opening)
+          handle.handleSeek({ seekTime: seconds, currentTime: seconds })
+      },
+      setSource: () => {
+        opening = true
+        loads++
+      }
+    } as unknown as Parameters<NativeVideoHandle['attach']>[0])
+    const load = {
+      currentTime: 190,
+      duration: 600,
+      naturalSize: { width: 640, height: 360, orientation: 'landscape' },
+      audioTracks: [],
+      textTracks: [],
+      videoTracks: []
+    } as Parameters<NativeVideoHandle['handleLoad']>[0]
+    handle.handleLoad(load)
+    handle.handleReadyForDisplay()
+    handle.handleProgress({
+      currentTime: 190,
+      playableDuration: 600,
+      seekableDuration: 600
+    })
+    await act(async () => {
+      mc().takeElement('A')(handle)
+      mc().attached('A', handle, mc().attaching('A'))
+      if (mc().playing) mc().toggle()
+    })
+    const stop = attachNativeHls(handle, handle.source, () => undefined, {
+      wantsToPlay: () => mc().intents.current.get('A') === true,
+      wantsRecovery: () => mc().playing,
+      buffer: { aheadSec: 30 }
+    })
+    try {
+      await act(async () =>
+        handle.handleError({
+          error: { errorString: 'Temporary network interruption' }
+        })
+      )
+      await until(() => loads > 0, 2000)
+      expect(loads).equals(1)
+      await act(async () => mc().goTo(T0 + 80_000))
+      await act(async () => {
+        opening = false
+        handle.handleLoad({ ...load, currentTime: 0 })
+        handle.handleReadyForDisplay()
+      })
+      expect(seeks.at(-1)).equals(80)
+      expect(handle.currentTime).equals(80)
+      expect(mc().atWallMs).equals(T0 + 80_000)
+      expect(mc().playing).equals(false)
+      expect(handle.paused).equals(true)
+    } finally {
+      stop()
+    }
+  })
   // A is two minutes in at 120 s; B, which started a minute later, at 60 s.
 
   it('clears the ended notice when a paused viewer rewinds into the recording', async function () {

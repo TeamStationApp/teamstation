@@ -420,87 +420,94 @@ describe('a phone watching a live game whose camera is away', function () {
       }
     })
 
-  it('allows a healthy slow native reload to finish before supervising another attempt', () => {
-    const realNow = Date.now
-    let now = 10000
-    let sequence = 0
-    let next = 0
-    const scheduled = new Map<number, { run: () => void; at: number }>()
-    Date.now = () => now
-    globalThis.setTimeout = ((run: () => void, delay: number) => {
-      const id = ++next
-      scheduled.set(id, { run, at: now + delay })
-      return id
-    }) as unknown as typeof setTimeout
-    globalThis.clearTimeout = ((id: number) =>
-      scheduled.delete(id)) as unknown as typeof clearTimeout
-    const handle = new NativeVideoHandle(
-      () => undefined,
-      () => now
-    )
-    const sources: number[] = []
-    const completed: number[] = []
-    const load = {
-      duration: 200,
-      currentTime: 120,
-      naturalSize: { width: 640, height: 360, orientation: 'landscape' },
-      audioTracks: [],
-      textTracks: [],
-      videoTracks: []
-    } as Parameters<NativeVideoHandle['handleLoad']>[0]
-    handle.source = URL
-    handle.attach({
-      pause: () => undefined,
-      resume: () => undefined,
-      seek: (seconds: number) =>
-        handle.handleSeek({ seekTime: seconds, currentTime: seconds }),
-      setSource: () => {
-        const current = ++sequence
-        sources.push(now - 10000)
-        setTimeout(() => {
-          if (current !== sequence) return
-          completed.push(now - 10000)
-          handle.handleLoad(load)
-          handle.handleReadyForDisplay()
-          handle.handleProgress({
-            currentTime: 121,
-            playableDuration: 150,
-            seekableDuration: 200
-          })
-        }, 24000)
+  for (const rewind of [false, true])
+    it(`allows a healthy slow native reload to finish${rewind ? ' with a rewind while opening' : ''}`, () => {
+      const realNow = Date.now
+      let now = 10000
+      let sequence = 0
+      let opening = false
+      let next = 0
+      const scheduled = new Map<number, { run: () => void; at: number }>()
+      Date.now = () => now
+      globalThis.setTimeout = ((run: () => void, delay: number) => {
+        const id = ++next
+        scheduled.set(id, { run, at: now + delay })
+        return id
+      }) as unknown as typeof setTimeout
+      globalThis.clearTimeout = ((id: number) =>
+        scheduled.delete(id)) as unknown as typeof clearTimeout
+      const handle = new NativeVideoHandle(
+        () => undefined,
+        () => now
+      )
+      const sources: number[] = []
+      const completed: number[] = []
+      const load = {
+        duration: 200,
+        currentTime: 120,
+        naturalSize: { width: 640, height: 360, orientation: 'landscape' },
+        audioTracks: [],
+        textTracks: [],
+        videoTracks: []
+      } as Parameters<NativeVideoHandle['handleLoad']>[0]
+      handle.source = URL
+      handle.attach({
+        pause: () => undefined,
+        resume: () => undefined,
+        seek: (seconds: number) => {
+          if (!opening)
+            handle.handleSeek({ seekTime: seconds, currentTime: seconds })
+        },
+        setSource: () => {
+          opening = true
+          const current = ++sequence
+          sources.push(now - 10000)
+          setTimeout(() => {
+            if (current !== sequence) return
+            completed.push(now - 10000)
+            opening = false
+            handle.handleLoad(load)
+            handle.handleReadyForDisplay()
+            handle.handleProgress({
+              currentTime: rewind ? 80 : 121,
+              playableDuration: 150,
+              seekableDuration: 200
+            })
+          }, 24000)
+        }
+      } as unknown as VideoRef)
+      handle.handleLoad(load)
+      handle.handleReadyForDisplay()
+      handle.handleProgress({
+        currentTime: 120,
+        playableDuration: 150,
+        seekableDuration: 200
+      })
+      const stop = attachHls(handle, URL, () => undefined, {
+        wantsToPlay: () => true,
+        wantsRecovery: () => true,
+        buffer: { aheadSec: 30 }
+      })
+      try {
+        handle.handleError(serverDown)
+        if (rewind) setTimeout(() => seekTo(handle, 80), 2000)
+        while (true) {
+          const nearest = [...scheduled]
+            .filter(([, timer]) => timer.at <= 40000)
+            .sort((a, b) => a[1].at - b[1].at)[0]
+          if (nearest === undefined) break
+          now = nearest[1].at
+          scheduled.delete(nearest[0])
+          nearest[1].run()
+        }
+        expect(sources).deep.equals([1000])
+        expect(completed).deep.equals([25000])
+        expect(handle.reportedTime).equals(rewind ? 80 : 121)
+      } finally {
+        stop()
+        Date.now = realNow
       }
-    } as unknown as VideoRef)
-    handle.handleLoad(load)
-    handle.handleReadyForDisplay()
-    handle.handleProgress({
-      currentTime: 120,
-      playableDuration: 150,
-      seekableDuration: 200
     })
-    const stop = attachHls(handle, URL, () => undefined, {
-      wantsToPlay: () => true,
-      wantsRecovery: () => true,
-      buffer: { aheadSec: 30 }
-    })
-    try {
-      handle.handleError(serverDown)
-      while (true) {
-        const nearest = [...scheduled]
-          .filter(([, timer]) => timer.at <= 40000)
-          .sort((a, b) => a[1].at - b[1].at)[0]
-        if (nearest === undefined) break
-        now = nearest[1].at
-        scheduled.delete(nearest[0])
-        nearest[1].run()
-      }
-      expect(sources).deep.equals([1000])
-      expect(completed).deep.equals([25000])
-      expect(handle.reportedTime).equals(121)
-    } finally {
-      stop()
-      Date.now = realNow
-    }
-  })
   it('recovers a held grid tile after a silent reload and refreshes an exhausted source', async () => {
     const realNow = Date.now
     let now = realNow()

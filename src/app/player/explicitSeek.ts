@@ -17,10 +17,15 @@ export function onExplicitSeek(
   }
 }
 
-/** Shared by highlight selection and the player's seek gestures. */
-export function seekTo(video: { currentTime: number }, seconds: number): void {
+/** Preserve viewer intent even when an owner must defer the actual seek. */
+export function notifyExplicitSeek(video: object, seconds: number): void {
   listeners.get(video)?.forEach(listener => {
     listener(seconds)
   })
+}
+
+/** Shared by highlight selection and the player's seek gestures. */
+export function seekTo(video: { currentTime: number }, seconds: number): void {
+  notifyExplicitSeek(video, seconds)
   video.currentTime = seconds
 }

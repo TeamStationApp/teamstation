@@ -10,6 +10,7 @@ import {
 import type { TeamStationClient, VideoSummary } from '../../../common/api'
 import { lstrings } from '../../locales/strings'
 import { type SeekFlash, useFlash } from '../GestureFeedback'
+import { notifyExplicitSeek } from '../explicitSeek'
 import { livePlaybackRetryDelay } from '../liveRejoin'
 import type { PlayIntent } from '../playIntent'
 import {
@@ -1089,6 +1090,12 @@ export function useMultiCam(
       for (const video of chosen) {
         const element = elements.current.get(video.id)
         if (element == null) continue
+        // Preserve the grid's requested moment even when alignment must wait
+        // for native to open. Watchdog corrections are not viewer intent.
+        if (mode === 'exact') {
+          const seconds = secondsAt(video, wallMs)
+          if (seconds != null) notifyExplicitSeek(element, seconds)
+        }
         // Waiting for the game to reach it: left alone by the watchdog, and
         // overtaken by anything somebody asked for.
         if (joining.current.has(video.id)) {

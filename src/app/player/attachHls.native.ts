@@ -240,7 +240,9 @@ export function attachHls(
   let lastAdvance = Date.now()
   let supervision: ReturnType<typeof setTimeout> | undefined
   const supervise = (): void => {
-    handle.checkSeekTimeout()
+    // Native queues a seek until its replacement item is ready. The opening
+    // deadline bounds that wait; the seek deadline starts when putBack reissues it.
+    if (!awaitingLoad) handle.checkSeekTimeout()
     const now = Date.now()
     if (handle.reportedTime !== observed) {
       observed = handle.reportedTime
