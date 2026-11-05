@@ -1904,7 +1904,8 @@ async function historyFixture(daemon: Daemon): Promise<void> {
   }
   try {
     await signIn(m, 'Hc')
-    await m.openLink({ link: WEB + '/chat/new' })
+    await m.openLink({ link: WEB + '/chat' })
+    await m.tapOn({ text: 'New message', timeout: 60000 })
     const people: string[] = JSON.parse(required('CHAT_UI_FIXTURE_PEOPLE'))
     assert.equal(
       people.length,
