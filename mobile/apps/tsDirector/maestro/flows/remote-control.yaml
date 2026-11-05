@@ -1,5 +1,5 @@
 # Remote Control: Settings list/editor plus control-channel injected chords.
-# Targets the device/simulator UDID passed to maestro-runner. Does not boot or
+# Targets the device/simulator UDID passed to maestro-d. Does not boot or
 # shut down a simulator — run-maestro.js must not pass --start-simulator.
 appId: app.teamstation.director
 ---

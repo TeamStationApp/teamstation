@@ -3957,8 +3957,9 @@ public final class AppEnvironment {
 
   public func cutSourceLive(sourceIndex: Int) {
     guard router.pipeline(at: sourceIndex) != nil else { return }
-    selectProgram(sourceIndex: sourceIndex)
+    // Live first: a cut hands over only to a camera that is live when it is made.
     returnToLive(sourceIndex: sourceIndex)
+    selectProgram(sourceIndex: sourceIndex)
   }
 
   private func handleRemoteDown(_ id: ControlID, pressed: Set<ControlID>) {
