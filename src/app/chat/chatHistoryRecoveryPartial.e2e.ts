@@ -16,6 +16,7 @@ import {
   controlRecovery,
   type RecoveryControl
 } from '../../test/chatRecoveryControl'
+import { recoveryServerControl } from '../../test/chatRecoveryServerControl'
 import { readSeedTable } from '../../test/chatSeedTable'
 import {
   draftRecovery,
@@ -35,7 +36,8 @@ interface Daemon {
 }
 
 export async function partialRecovery(
-  scenario: 'E3' | 'E4' | 'E5' | 'E6' | 'E7' | 'E11' | 'E12' | 'E13' = 'E4'
+  scenario:
+    'E3' | 'E4' | 'E5' | 'E6' | 'E7' | 'E9' | 'E11' | 'E12' | 'E13' = 'E4'
 ): Promise<void> {
   const file = process.env.CHAT_RECOVERY_FIXTURE
   assert(file != null)
@@ -60,6 +62,7 @@ export async function partialRecovery(
   const deviceId = process.env.CHAT_RECOVERY_DEVICE
   assert(name != null && deviceId != null)
   assert.equal(process.env.CHAT_RECOVERY_SURFACE, 'web')
+  const serverControl = scenario === 'E9' ? recoveryServerControl(f) : undefined
   const daemon = (await maestroClient().MaestroD.connect({
     name
   })) as unknown as Daemon
@@ -153,6 +156,7 @@ export async function partialRecovery(
         )
       : []
   try {
+    if (serverControl != null) await serverControl('baseline')
     console.log(`${scenario}: enrolling original recipient and first holder`)
     const old = await attach('Ha', 'recipient-old')
     const holderOne = await attach('Hs', 'first-holder')
@@ -189,7 +193,7 @@ export async function partialRecovery(
     const dm = await client.createDm([
       people.Hs.userId,
       people.Hk.userId,
-      ...(scenario === 'E12' ? [people.Hc.userId] : []),
+      ...(scenario === 'E12' || scenario === 'E9' ? [people.Hc.userId] : []),
       ...(scenario === 'E6' ? [people.P.userId] : [])
     ])
     await open(old, dm.id)
@@ -287,6 +291,140 @@ export async function partialRecovery(
     }
     await close(old)
     await close(holderOne)
+
+    if (scenario === 'E9') {
+      assert(serverControl != null)
+      const before = await client.chatEpochs(dm.id, 0)
+      assert.equal(before.historyRecoveryVersion, undefined)
+      const recipient = await attach('Hk', 'legacy-server-recipient')
+      await open(recipient, dm.id)
+      await recipient.assertVisible({
+        text: 'This server requires the current chat key before you can send.',
+        timeout: 30000
+      })
+      const writable = await recipient.evalBrowserScript({
+        script:
+          'return !!document.querySelector(\'textarea[aria-label="Message"]:not([readonly]):not([disabled])\')'
+      })
+      assert(writable.data === false || writable.data === 'false')
+      const requests = await recipient.evalBrowserScript({
+        script:
+          'return JSON.stringify(performance.getEntriesByType("resource").map(row => row.name))'
+      })
+      const paths = JSON.parse(String(requests.data)) as string[]
+      assert(paths.some(path => path.includes('/epochs')))
+      assert(
+        !paths.some(
+          path => path.includes('scope=history') || path.includes('boxesAfter=')
+        ),
+        'An unsupported server must never receive recovery-only requests'
+      )
+      assert.deepEqual(
+        (await client.chatEpochs(dm.id, 0)).epochs,
+        before.epochs
+      )
+      writeFileSync(
+        join(f.artifacts, 'baseline-server-limitation.png'),
+        await recipient.screenshot()
+      )
+      await close(recipient)
+      console.log(
+        'E9: baseline server limitation is visible and no recovery-only requests were made'
+      )
+
+      await serverControl('enabled')
+      const enabled = await attach('Hk', 'legacy-server-recipient')
+      await open(enabled, dm.id)
+      await send(enabled, second)
+      assert(!(await body(enabled)).includes(first))
+      const boundary = await client.chatEpochs(dm.id, 0)
+      assert.equal(boundary.historyRecoveryVersion, 1)
+      assert.equal(boundary.freshEpochsEnabled, true)
+      assert.deepEqual(
+        boundary.epochs.map(row => row.chainBreak),
+        [false, true]
+      )
+      await close(enabled)
+      await serverControl('disabled')
+      const disabled = await client.chatEpochs(dm.id, 0)
+      assert.equal(disabled.historyRecoveryVersion, 1)
+      assert.equal(disabled.freshEpochsEnabled, false)
+      const recovering = await attach('Hk', 'legacy-server-recipient')
+      await open(recovering, dm.id)
+      await message(recovering, second)
+      await send(recovering, during)
+      const holder = await attach('Hs', 'first-holder')
+      await open(holder, dm.id)
+      for (const text of [first, second, during]) await message(holder, text)
+      await message(recovering, first)
+      const heldReply =
+        'Reply with a retained key while fresh starts are disabled'
+      await send(holder, heldReply)
+      await message(recovering, heldReply)
+      writeFileSync(
+        join(f.artifacts, 'disabled-fresh-recovered-history.png'),
+        await recovering.screenshot()
+      )
+      await close(holder)
+      await close(recovering)
+      const missing = await attach('Hc', 'disabled-fresh-recipient')
+      await open(missing, dm.id)
+      await missing.assertVisible({
+        text: 'New messages need the current chat key while fresh messaging is unavailable.',
+        timeout: 30000
+      })
+      const blocked = await missing.evalBrowserScript({
+        script:
+          'return !!document.querySelector(\'textarea[aria-label="Message"]:not([readonly]):not([disabled])\')'
+      })
+      assert(blocked.data === false || blocked.data === 'false')
+      assert(!(await body(missing)).includes(first))
+      // A linked caller bypassing the disabled composer must still meet the
+      // server's rollout gate before any publication can be accepted.
+      const refused = await missing.evalBrowserScript({
+        script: `return (async () => { const response = await fetch(${JSON.stringify(f.apiUrl + '/chat/conversations/' + dm.id + '/epochs')}, {method:'POST', credentials:'include', headers:{'content-type':'application/json'}, body:JSON.stringify({mode:'fresh', epoch:3, previousKeyBox:null, signature:${JSON.stringify(Buffer.alloc(64).toString('base64url'))}, boxes:[]})}); return JSON.stringify({status:response.status, body:await response.json()}) })()`
+      })
+      const rejection = JSON.parse(String(refused.data)) as {
+        status: number
+        body: { details?: { reason?: string } }
+      }
+      assert.equal(rejection.status, 409)
+      assert.equal(rejection.body.details?.reason, 'freshDisabled')
+      assert.deepEqual(
+        (await client.chatEpochs(dm.id, 0)).epochs,
+        boundary.epochs
+      )
+      assert.equal(
+        (await client.chatMessages(dm.id)).filter(row => row.kind === 'post')
+          .length,
+        4
+      )
+      writeFileSync(
+        join(f.artifacts, 'disabled-fresh-blocked.png'),
+        await missing.screenshot()
+      )
+      writeFileSync(
+        join(f.artifacts, 'server-compatibility-results.json'),
+        JSON.stringify(
+          {
+            source: f.source,
+            unsupportedRecoveryRequests: 0,
+            recoverySurvivesDisable: true,
+            heldKeySends: true,
+            missingKeySendBlocked: true,
+            freshPublicationRejected: true,
+            epochs: 2,
+            posts: 4
+          },
+          null,
+          2
+        )
+      )
+      console.log(
+        'PASS E9 web: baseline server fallback is explicit; disabling fresh starts preserves recovery and held-key sending while blocking another fresh start'
+      )
+      return
+    }
 
     if (scenario === 'E12') {
       const relayFile = process.env.CHAT_RECOVERY_RELAY
@@ -944,9 +1082,13 @@ export async function partialRecovery(
     try {
       if (faultControl != null) await controlRecovery(faultControl, ['clear'])
     } finally {
-      for (const m of devices) await m.detach().catch(() => {})
-      await daemon.shutdown({ wait: true })
-      await daemon.close()
+      try {
+        for (const m of devices) await m.detach().catch(() => {})
+        await daemon.shutdown({ wait: true })
+        await daemon.close()
+      } finally {
+        if (serverControl != null) await serverControl('enabled')
+      }
     }
   }
 }

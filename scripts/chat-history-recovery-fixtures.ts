@@ -53,9 +53,18 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
       ['bands', 'core', 'default'].includes(values.scenario)) ||
       (values.runner === 'web' &&
         values.surface === 'web' &&
-        ['E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E11', 'E12', 'E13'].includes(
-          values.scenario
-        )),
+        [
+          'E3',
+          'E4',
+          'E5',
+          'E6',
+          'E7',
+          'E8',
+          'E9',
+          'E11',
+          'E12',
+          'E13'
+        ].includes(values.scenario)),
     'This scenario requires its specialized fixture producer'
   )
   const ownerFile = process.env.CHAT_RECOVERY_OWNER_FILE

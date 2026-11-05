@@ -42,6 +42,7 @@ async function main(): Promise<void> {
     process.argv[2] === 'E4' ||
     process.argv[2] === 'E5' ||
     process.argv[2] === 'E6' ||
+    process.argv[2] === 'E9' ||
     process.argv[2] === 'E11' ||
     process.argv[2] === 'E12' ||
     process.argv[2] === 'E13' ||
