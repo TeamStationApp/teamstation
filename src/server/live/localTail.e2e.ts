@@ -363,9 +363,10 @@ describe('E2E-2: sixty seconds on disk (M4)', function () {
 
     // After the first stretch the disk never holds more than the tail and
     // the piece being written; the playlist, init.mp4 and each run's first
-    // piece (which the wall clock scan reads again) stay too.
+    // piece (which the wall clock scan reads again) stay too. The writer's
+    // pieces run a few milliseconds over SEGMENT_SEC, hence the 1%.
     for (const seen of samples.filter(s => s.at >= TAIL_SEC + 20))
-      expect(seen.seconds).at.most(TAIL_SEC + 2 * SEGMENT_SEC)
+      expect(seen.seconds).at.most((TAIL_SEC + 2 * SEGMENT_SEC) * 1.01)
     expect(samples.at(-1)!.pieces).below(
       Math.ceil((FIRST_SEC + SECOND_SEC) / SEGMENT_SEC) / 2
     )
