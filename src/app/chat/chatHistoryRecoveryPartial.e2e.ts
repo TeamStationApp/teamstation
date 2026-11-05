@@ -35,7 +35,7 @@ interface Daemon {
 }
 
 export async function partialRecovery(
-  scenario: 'E3' | 'E4' | 'E5' | 'E6' | 'E7' | 'E13' = 'E4'
+  scenario: 'E3' | 'E4' | 'E5' | 'E6' | 'E7' | 'E11' | 'E13' = 'E4'
 ): Promise<void> {
   const file = process.env.CHAT_RECOVERY_FIXTURE
   assert(file != null)
@@ -295,6 +295,142 @@ export async function partialRecovery(
     await holderTwo.assertVisible({ text: 'Locked message', timeout: 30000 })
     await send(holderTwo, second)
     assert(!(await body(holderTwo)).includes(first))
+    if (scenario === 'E11') {
+      const recipientApi = await asPerson('Hk')
+      const beforeDevices = await recipientApi.chatDevices()
+      const originalDevice = beforeDevices.find(row => row.revokedAt == null)
+      assert(originalDevice != null)
+      const pending = (await client.chatHistoryGrants()).requests.find(
+        row => row.conversationId === dm.id && row.userId === people.Hk.userId
+      )
+      assert(pending != null, 'Recovery must be pending before removal')
+      await recipientApi.leaveDm(dm.id)
+      await holderTwo.openLink({ link: f.origin + '/chat/' + dm.id })
+      await holderTwo.assertVisible({
+        text: 'Chat could not be opened.',
+        timeout: 30000
+      })
+      await assert.rejects(
+        async () => await recipientApi.chatEpochs(dm.id, 0),
+        {
+          code: 'notFound'
+        }
+      )
+      const retained = await attach('Ha', 'recipient-old')
+      await open(retained, dm.id)
+      for (const text of [first, second]) await message(retained, text)
+      assert(
+        !(await client.chatHistoryGrants()).requests.some(
+          row => row.conversationId === dm.id && row.userId === people.Hk.userId
+        ),
+        'A removed recipient must have no fulfillable history request'
+      )
+      assert(!(await body(holderTwo)).includes(first))
+      writeFileSync(
+        join(f.artifacts, 'removed-during-recovery.png'),
+        await holderTwo.screenshot()
+      )
+      await close(retained)
+      await close(holderTwo)
+      await client.addDmMembers(dm.id, [people.Hk.userId])
+
+      console.log(
+        'E11: resetting the rejoined recipient before any holder returns'
+      )
+      const replacement = await attach('Hk', 'replacement-identity')
+      await replacement.assertVisible({
+        text: 'Link this device',
+        timeout: 30000
+      })
+      await replacement.tapOn({ text: 'I can’t reach my other devices' })
+      await replacement.tapOn({ text: 'Reset chat on this device' })
+      await replacement.assertVisible({
+        css: '[data-testid="chat-conversation-list"]',
+        timeout: 30000
+      })
+      await open(replacement, dm.id)
+      await send(replacement, third)
+      for (const text of [first, second])
+        assert(!(await body(replacement)).includes(text))
+      const devicesAfterReset = await recipientApi.chatDevices()
+      assert(
+        devicesAfterReset.find(row => row.id === originalDevice.id)
+          ?.revokedAt != null
+      )
+      const replacementDevice = devicesAfterReset.find(
+        row => row.revokedAt == null
+      )
+      assert(replacementDevice != null)
+      const replacementRequest = (
+        await client.chatHistoryGrants()
+      ).requests.find(
+        row => row.conversationId === dm.id && row.userId === people.Hk.userId
+      )
+      assert(replacementRequest != null)
+      assert.notEqual(replacementRequest.identityId, pending.identityId)
+
+      const returning = await attach('Ha', 'recipient-old')
+      await open(returning, dm.id)
+      for (const text of [first, second, third]) await message(returning, text)
+      for (const text of [first, second])
+        assert(!(await body(replacement)).includes(text))
+      await replacement.assertVisible({ text: 'Locked message' })
+      writeFileSync(
+        join(f.artifacts, 'reset-awaiting-approval.png'),
+        await replacement.screenshot()
+      )
+      await returning.tapOn({ text: 'Review', timeout: 30000 })
+      await returning.assertVisible({
+        text: 'OLD SAFETY WORDS',
+        timeout: 30000
+      })
+      await returning.tapOn({ text: 'Approve', timeout: 30000 })
+      for (const text of [first, second, third])
+        await message(replacement, text)
+      const revoked = await attach('Hk', 'second-holder')
+      await revoked.assertVisible({ text: 'Link this device', timeout: 30000 })
+      assert(!(await body(revoked)).includes(first))
+      writeFileSync(
+        join(f.artifacts, 'revoked-device-blocked.png'),
+        await revoked.screenshot()
+      )
+      const otherHolder = await attach('Hs', 'first-holder')
+      await open(otherHolder, dm.id)
+      for (const text of [first, second, third])
+        await message(otherHolder, text)
+      const epochs = await client.chatEpochs(dm.id, 0)
+      assert.deepEqual(
+        epochs.epochs.map(row => row.chainBreak),
+        [false, true, true]
+      )
+      assert.equal(
+        (await client.chatMessages(dm.id)).filter(row => row.kind === 'post')
+          .length,
+        3
+      )
+      writeFileSync(
+        join(f.artifacts, 'authorization-results.json'),
+        JSON.stringify(
+          {
+            source: f.source,
+            removedRequestId: pending.id,
+            oldIdentityId: pending.identityId,
+            currentIdentityId: replacementRequest.identityId,
+            removedReadDenied: true,
+            oldDeviceRevoked: true,
+            replacementRequiredApproval: true,
+            retainedHoldersReadable: true,
+            posts: 3
+          },
+          null,
+          2
+        )
+      )
+      console.log(
+        'PASS E11 web: removal cancels pending recovery; reset revokes the old device; replacement history requires approval; remaining holders retain all messages'
+      )
+      return
+    }
     if (scenario === 'E6') {
       const recipientApi = await asPerson('Hk')
       const posts = (await recipientApi.chatMessages(dm.id)).filter(
