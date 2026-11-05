@@ -638,7 +638,12 @@ function Tile(props: {
       unplaceable ||
       waiting ||
       !hasPicture ? (
-        <View style={styles.tileParked}>
+        <View
+          style={[
+            styles.tileParked,
+            parked === 'gap' ? { backgroundColor: '#000' } : null
+          ]}
+        >
           <Text style={styles.tileParkedText}>
             {tileNotice({ unavailable, unplaceable, parked, waiting })}
           </Text>

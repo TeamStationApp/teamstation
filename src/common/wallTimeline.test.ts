@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { mediaAt, type WallAnchor, wallAt } from './wallTimeline'
+import { inWallGap, mediaAt, type WallAnchor, wallAt } from './wallTimeline'
 
 describe('the wall time of a position in a video (U21)', function () {
   const T0 = 1_791_800_000_000
@@ -12,6 +12,24 @@ describe('the wall time of a position in a video (U21)', function () {
     [500, T0 + 500],
     [60_000, T0 + 80_000]
   ]
+
+  it('distinguishes interior missing footage from unknown bounds and clock jitter', () => {
+    for (const offset of [-1, 0, 59999, 80000, 90000])
+      expect(inWallGap(anchors, T0 + offset)).equals(false)
+    for (const offset of [60000, 70000, 79999])
+      expect(inWallGap(anchors, T0 + offset)).equals(true)
+    expect(inWallGap([], T0)).equals(false)
+    expect(inWallGap([[0, T0]], T0)).equals(false)
+    expect(
+      inWallGap(
+        [
+          [0, T0],
+          [1000, T0 + 1100]
+        ],
+        T0 + 1050
+      )
+    ).equals(false)
+  })
 
   it('is the anchor itself on an anchor', function () {
     expect(wallAt(anchors, 0)).equals(T0)
