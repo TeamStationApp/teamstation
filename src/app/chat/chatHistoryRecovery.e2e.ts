@@ -9,6 +9,7 @@ import {
   maestroClient,
   type MaestroDevice
 } from '../../test/chat117Maestro.e2e'
+import { mixedVersionRecovery } from './chatHistoryRecoveryCompatibility.e2e'
 import { partialRecovery } from './chatHistoryRecoveryPartial.e2e'
 
 interface Device extends MaestroDevice {
@@ -32,6 +33,10 @@ interface Fixture {
   artifacts: string
 }
 async function main(): Promise<void> {
+  if (process.argv[2] === 'E8') {
+    await mixedVersionRecovery()
+    return
+  }
   if (
     process.argv[2] === 'E3' ||
     process.argv[2] === 'E4' ||
