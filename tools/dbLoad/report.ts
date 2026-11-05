@@ -2,6 +2,31 @@ import { writeFileSync } from 'node:fs'
 
 import type { Sample, SequentialScan, Statement } from './sampler'
 
+/**
+ * How far a connection had got when it was reset: not yet connected, inside its
+ * TLS handshake, its request sent with nothing answered, or partway through
+ * the answer (for a socket, once its upgrade was answered).
+ */
+export type ResetPhase = 'connect' | 'tls' | 'request-sent' | 'response-partial'
+export const RESET_PHASES: readonly ResetPhase[] = [
+  'connect',
+  'tls',
+  'request-sent',
+  'response-partial'
+]
+
+/** What a reset connection was to: a load balancer in front of the nodes, or a node. */
+export type ResetTarget = 'load balancer' | 'node'
+export const RESET_TARGETS: readonly ResetTarget[] = ['load balancer', 'node']
+
+/** An `ECONNRESET` the rig saw. */
+export interface ConnectionReset {
+  phase: ResetPhase
+  target: ResetTarget
+  /** Whole minutes from the start of the run. */
+  minute: number
+}
+
 /** One timed request, as the actors record them. */
 export interface RequestTiming {
   route: string
@@ -44,6 +69,10 @@ export interface Measurements {
   screenNotices: number
   /** The rounds of reads screen watchers made after a notice. */
   screenReReads: number
+  /** Each connection reset, of a request or a socket. */
+  resets: ConnectionReset[]
+  /** Why each server the run could not reach failed its health check. */
+  unreachableReasons?: Record<string, string>
 }
 
 /** A worst-case event that ran during the load, in ms since the epoch. */
@@ -212,8 +241,11 @@ export interface ReportData {
   statementsTotal: number | null
   errors: Record<string, number>
   errorTotal: number
+  /** Why each unreachable server failed its health check, by server. */
+  unreachable: Record<string, string>
   slowestRequests: SlowRoute[]
   screens: ScreenFigures
+  resets: ResetFigures
   topStatements: Statement[]
   sequentialScans: SequentialScan[]
 }
@@ -253,6 +285,36 @@ export function screenFigures(
     reads: reads.length,
     readP95Ms: percentile(reads, 95),
     noticeToReadP95Ms: percentile(m.screenReadMs, 95)
+  }
+}
+
+/** The connection resets, counted by phase, by target and by minute of the run. */
+export interface ResetFigures {
+  total: number
+  byPhase: Record<ResetPhase, number>
+  byTarget: Record<ResetTarget, number>
+  /** Only the minutes that had one. */
+  byMinute: Record<number, number>
+}
+
+export function resetFigures(resets: ConnectionReset[]): ResetFigures {
+  const counted = <Key extends string | number>(
+    keys: readonly Key[],
+    keyOf: (reset: ConnectionReset) => Key
+  ): Record<Key, number> => {
+    const counts = Object.fromEntries(keys.map(key => [key, 0])) as Record<
+      Key,
+      number
+    >
+    for (const reset of resets)
+      counts[keyOf(reset)] = (counts[keyOf(reset)] ?? 0) + 1
+    return counts
+  }
+  return {
+    total: resets.length,
+    byPhase: counted(RESET_PHASES, reset => reset.phase),
+    byTarget: counted(RESET_TARGETS, reset => reset.target),
+    byMinute: counted([], reset => reset.minute)
   }
 }
 
@@ -353,8 +415,10 @@ export function buildReport(input: ReportInput): ReportData {
     statementsTotal,
     errors: m.errors,
     errorTotal: Object.values(m.errors).reduce((sum, n) => sum + n, 0),
+    unreachable: m.unreachableReasons ?? {},
     slowestRequests: slowestRequests(m.requests),
     screens: screenFigures(m),
+    resets: resetFigures(m.resets),
     topStatements: input.statements.slice(0, 10),
     sequentialScans: input.sequentialScans.slice(0, 10)
   }
@@ -412,6 +476,19 @@ export function renderReport(data: ReportData): string {
     ...Object.entries(data.errors)
       .sort(([, a], [, b]) => b - a)
       .map(([kind, count]) => `  ${kind}: ${count}`),
+    ...Object.entries(data.unreachable).map(
+      ([server, reason]) => `  unreachable ${server}: ${reason}`
+    ),
+    '',
+    '## Connection resets',
+    `total: ${data.resets.total}`,
+    `  by phase: ${RESET_PHASES.map(phase => `${phase} ${data.resets.byPhase[phase]}`).join(', ')}`,
+    `  by target: ${RESET_TARGETS.map(target => `${target} ${data.resets.byTarget[target]}`).join(', ')}`,
+    `  by minute: ${
+      Object.entries(data.resets.byMinute)
+        .map(([minute, count]) => `${minute}:${count}`)
+        .join(' ') || 'none'
+    }`,
     '',
     '## Screen watchers',
     `watchers: ${data.screens.watchers}`,
@@ -455,17 +532,36 @@ export interface AssertOptions {
   poolLimit?: number
   /** Times `too many clients` appears in the servers' logs. */
   tooManyClients?: number
+  /**
+   * Whether this rig scores, as the first of two rigs on one set of games
+   * does. One that does not posts nothing, so it has no post to time and no
+   * post to time a frame from.
+   */
+  scores?: boolean
+}
+
+/** What a rig that does not score answers for its post limits. */
+export const NOT_SCORING = 'not held: this rig does not score'
+
+export interface Verdict {
+  /** Each limit the run missed, in words. */
+  missed: string[]
+  /** Each limit this rig is not held to, and why. */
+  notHeld: string[]
 }
 
 /**
  * Each limit a run missed, in words. Nothing measured misses: a figure with no
- * data never reads as a pass, so a run that scored nothing cannot succeed.
+ * data never reads as a pass, so a run that scored nothing cannot succeed. A
+ * rig that does not score is not held to the limits of its posts.
  */
 export function assertThresholds(
   data: ReportData,
   options: AssertOptions = {}
-): string[] {
+): Verdict {
   const missed: string[] = []
+  const notHeld: string[] = []
+  const scores = options.scores ?? true
   const limit = THRESHOLDS
   if (options.poolLimit == null)
     missed.push('server connections: no --pool-limit to hold them to')
@@ -488,12 +584,15 @@ export function assertThresholds(
     missed.push(
       `503 rate: ${unavailable} of ${data.answers}, not below ${limit.rate503 * 100}%`
     )
-  if (data.postP95Ms == null) missed.push('p95 POST: no data')
+  if (!scores) notHeld.push(`p95 POST: ${NOT_SCORING}`)
+  else if (data.postP95Ms == null) missed.push('p95 POST: no data')
   else if (data.postP95Ms >= limit.postP95Ms)
     missed.push(
       `p95 POST: ${data.postP95Ms.toFixed(0)} ms, not below ${limit.postP95Ms} ms`
     )
-  if (data.deliveryLagP95Ms == null) missed.push('p95 delivery lag: no data')
+  if (!scores) notHeld.push(`p95 delivery lag: ${NOT_SCORING}`)
+  else if (data.deliveryLagP95Ms == null)
+    missed.push('p95 delivery lag: no data')
   else if (data.deliveryLagP95Ms >= limit.deliveryLagP95Ms)
     missed.push(
       `p95 delivery lag: ${data.deliveryLagP95Ms.toFixed(0)} ms, not below ${limit.deliveryLagP95Ms} ms`
@@ -505,7 +604,9 @@ export function assertThresholds(
       `recovery: ${data.longestDeliveryGapSeconds} s with no frame, above ${limit.recoverySeconds} s`
     )
   for (const event of data.events) {
-    if (
+    if (!scores)
+      notHeld.push(`event ${event.event}: p95 scoring ${NOT_SCORING}`)
+    else if (
       event.postP95DuringMs != null &&
       event.postP95DuringMs > limit.eventPostP95Ms
     )
@@ -521,7 +622,7 @@ export function assertThresholds(
     missed.push(
       `oldest transaction: ${data.oldestTransactionSeconds.toFixed(0)} s, above ${limit.transactionSeconds} s`
     )
-  return missed
+  return { missed, notHeld }
 }
 
 /** Writes the report for people, and its figures beside it as JSON. */

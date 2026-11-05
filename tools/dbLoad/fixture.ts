@@ -271,6 +271,18 @@ interface ChatKeys {
   pukPublic: Uint8Array
 }
 
+/** A season of the run, and how full it is. */
+interface HeldSeason {
+  /** The label of the first season of its run of seasons. */
+  label: string
+  /** Which of that run of seasons it is: the first is 0. */
+  index: number
+  leagueId: string
+  games: number
+  /** The season it goes on in once full. */
+  next?: string
+}
+
 class Seeder {
   readonly accounts: SeededAccount[] = []
   readonly browserAccounts: BrowserAccount[] = []
@@ -288,6 +300,7 @@ class Seeder {
 
   private readonly chatKeys = new Map<string, ChatKeys>()
   private readonly sessions = new Map<string, string>()
+  private readonly seasons = new Map<string, HeldSeason>()
   readonly now: Date
 
   constructor(
@@ -438,7 +451,12 @@ class Seeder {
     return id
   }
 
-  async season(label: string, leagueId: string): Promise<string> {
+  /** A season, empty, or the next of a run of them after `continuing`. */
+  async season(
+    label: string,
+    leagueId: string,
+    continuing?: HeldSeason
+  ): Promise<string> {
     const id = makeId('season')
     await this.db
       .insertInto('seasons')
@@ -453,7 +471,54 @@ class Seeder {
       })
       .execute()
     await this.tag('season', label, id)
+    this.seasons.set(id, {
+      label: continuing?.label ?? label,
+      index: (continuing?.index ?? -1) + 1,
+      leagueId,
+      games: 0
+    })
     return id
+  }
+
+  /**
+   * The season of each of `count` games between `teams`, from `seasonId` on:
+   * as many as it has room for, then the season it goes on in, made in the
+   * same league once it fills, and so on. So no season holds more than
+   * `seasonGames`, and the history is all there however many seasons it takes.
+   * Each team joins a season it plays in.
+   */
+  async placeGames(
+    seasonId: string,
+    teams: string[],
+    count: number
+  ): Promise<string[]> {
+    const placed: string[] = []
+    let id = seasonId
+    for (;;) {
+      const season = this.seasons.get(id)
+      if (season == null) throw new Error(`${id} is not a season of this run`)
+      const taken = Math.min(
+        count - placed.length,
+        this.amounts.seasonGames - season.games
+      )
+      if (taken > 0) {
+        season.games += taken
+        placed.push(...new Array<string>(taken).fill(id))
+        if (id !== seasonId)
+          await this.db
+            .insertInto('season_teams')
+            .values(teams.map(team => ({ season_id: id, team_id: team })))
+            .onConflict(oc => oc.doNothing())
+            .execute()
+      }
+      if (placed.length === count) return placed
+      season.next ??= await this.season(
+        `${season.label}.after${pad(season.index + 1)}`,
+        season.leagueId,
+        season
+      )
+      id = season.next
+    }
   }
 
   async team(
@@ -504,29 +569,35 @@ class Seeder {
     return players
   }
 
-  async game(
+  /** A game, in `seasonId` or the season it goes on in (`placeGames`). */
+  async game<Season extends string | null>(
     label: string,
     home: string,
     away: string,
-    seasonId: string | null,
+    seasonId: Season,
     status: 'scheduled' | 'inProgress' | 'final',
     startAt: Date
-  ): Promise<string> {
+  ): Promise<{ id: string; seasonId: Season }> {
     const id = makeId('game')
+    const placed = (
+      seasonId == null
+        ? null
+        : (await this.placeGames(seasonId, [home, away], 1))[0]
+    ) as Season
     await this.db
       .insertInto('games')
       .values({
         id,
         home_team_id: home,
         away_team_id: away,
-        season_id: seasonId,
+        season_id: placed,
         start_at: startAt,
         venue: 'Load Field',
         status
       })
       .execute()
     await this.tag('game', label, id)
-    return id
+    return { id, seasonId: placed }
   }
 
   /** A team role, through the row the role screens write. */
@@ -597,7 +668,8 @@ class Seeder {
 
   /**
    * Copies of a written game, under the same teams at earlier dates: only the
-   * ids and dates differ. What the plays' triggers wrote for the source is
+   * ids, dates and, once the source's season fills, seasons differ
+   * (`placeGames`). What the plays' triggers wrote for the source is
    * copied with them, row for row, because running those triggers again for
    * every play of thousands of games is most of a full seed's time. Their table
    * is locked meanwhile, so this runs alone and with no server on the database.
@@ -613,7 +685,24 @@ class Seeder {
     const dates = ids.map(
       (_, i) => new Date(this.now.getTime() - (newestDaysAgo + i) * 86_400_000)
     )
-    const columns = await columnsOf(this.db, 'games', ['id', 'start_at'])
+    const from = await this.db
+      .selectFrom('games')
+      .select(['home_team_id', 'away_team_id', 'season_id'])
+      .where('id', '=', source)
+      .executeTakeFirstOrThrow()
+    const seasons =
+      from.season_id == null
+        ? ids.map(() => null)
+        : await this.placeGames(
+            from.season_id,
+            [from.home_team_id, from.away_team_id],
+            count
+          )
+    const columns = await columnsOf(this.db, 'games', [
+      'id',
+      'start_at',
+      'season_id'
+    ])
     const eventColumns = await columnsOf(this.db, 'events', ['id', 'gameId'])
     const playerColumns = await columnsOf(this.db, 'event_players', [
       'id',
@@ -626,11 +715,14 @@ class Seeder {
     await this.db.transaction().execute(async trx => {
       await sql`alter table events disable trigger user`.execute(trx)
       await sql`
-        insert into games (id, start_at, ${listOf(columns)})
-        select copy.id, copy.start_at, ${listOf(columns, 'g')}
+        insert into games (id, start_at, season_id, ${listOf(columns)})
+        select copy.id, copy.start_at, copy.season_id, ${listOf(columns, 'g')}
         from games g,
-          unnest(${ids}::text[], ${dates.map(date => date.toISOString())}::timestamptz[])
-            as copy(id, start_at)
+          unnest(
+            ${ids}::text[],
+            ${dates.map(date => date.toISOString())}::timestamptz[],
+            ${seasons}::text[]
+          ) as copy(id, start_at, season_id)
         where g.id = ${source}
       `.execute(trx)
       await sql`
@@ -907,12 +999,11 @@ async function seedLiveGames(seeder: Seeder, groups: Groups): Promise<void> {
     )
   for (let i = 0; i < amounts.liveGames; i++) {
     const sides = groups.sides[i]
-    const seasonId = groups.seasons[i % groups.seasons.length]
-    const id = await seeder.game(
+    const { id, seasonId } = await seeder.game(
       `live${pad(i)}`,
       sides.home.id,
       sides.away.id,
-      seasonId,
+      groups.seasons[i % groups.seasons.length],
       'inProgress',
       seeder.now
     )
@@ -1232,7 +1323,7 @@ async function writtenGame(
   daysAgo: number,
   innings = 9
 ): Promise<string> {
-  const id = await seeder.game(
+  const { id } = await seeder.game(
     label,
     sides.home.id,
     sides.away.id,
@@ -2050,6 +2141,8 @@ export interface Shapes {
   finishedGames: number
   statsBuilt: number
   historyGames: number
+  /** The most games any season of the run holds. */
+  largestSeason: number
   kinds: string[]
   copies: Record<string, number>
 }
@@ -2220,6 +2313,23 @@ export async function describeShapes(
             .where('status', '=', 'built')
         )
 
+  const seasonIds = [...seasons.values()]
+  const largestSeason =
+    seasonIds.length === 0
+      ? 0
+      : Number(
+          (
+            await db
+              .selectFrom('games')
+              .select(eb => eb.fn.countAll().as('n'))
+              .where('season_id', 'in', seasonIds)
+              .groupBy('season_id')
+              .orderBy('n', 'desc')
+              .limit(1)
+              .executeTakeFirst()
+          )?.n ?? 0
+        )
+
   const copyCounts: Record<string, number> = {}
   for (const key of copies.keys()) {
     const [kind] = key.split('.')
@@ -2261,6 +2371,7 @@ export async function describeShapes(
     finishedGames: finishedIds.length,
     statsBuilt,
     historyGames: labelled(games, 'history.').length - 1,
+    largestSeason,
     kinds: [...users.keys()]
       .filter(label => label.startsWith('person.'))
       .filter(label => !label.includes('.row'))
@@ -2327,6 +2438,10 @@ export function verifyShapes(shapes: Shapes, amounts: Amounts): void {
   expect('many chats', shapes.manyChats, amounts.manyChats)
   expect('many sessions', shapes.manySessions, amounts.manySessions)
   expect('history', shapes.historyGames, amounts.historyGames)
+  if (shapes.largestSeason > amounts.seasonGames)
+    wrong.push(
+      `largest season: ${shapes.largestSeason} games, above ${amounts.seasonGames}`
+    )
   if (shapes.crowdedViewers < amounts.crowdedViewers)
     wrong.push(`crowded game: ${shapes.crowdedViewers} viewers`)
   if (wrong.length > 0) throw new Error(`Shapes differ: ${wrong.join('; ')}`)

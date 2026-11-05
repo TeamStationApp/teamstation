@@ -4,7 +4,13 @@ import {
   RECONNECT_DELAYS_MS,
   type ScreenScopeName
 } from '../../src/common/gameSocket'
-import { type Actor, request, serverFor, type Tally } from './actors'
+import {
+  type Actor,
+  FollowedConnection,
+  request,
+  serverFor,
+  type Tally
+} from './actors'
 import type { SeededAccount, SeededGame } from './fixture'
 import { SCREEN_ROUTE_PREFIX } from './report'
 
@@ -103,10 +109,15 @@ export class ScreenWatcher implements Actor {
 
   start(): void {
     const url = `${this.server.replace(/^http/, 'ws')}/socket`
+    const connection = new FollowedConnection(this.server, this.tally)
     const ws = new WebSocket(url, {
-      headers: { authorization: `Bearer ${this.account.token}` }
+      headers: { authorization: `Bearer ${this.account.token}` },
+      createConnection: connection.connect
     })
     this.ws = ws
+    ws.on('upgrade', () => {
+      connection.answer()
+    })
     ws.on('open', () => {
       this.attempt = 0
       this.tally.noteSocketOpen()

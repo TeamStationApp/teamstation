@@ -1,5 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { type AddressInfo, connect, createServer } from 'node:net'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
@@ -144,9 +145,41 @@ describe('the command line', function () {
     expect(code).equals(1)
     const text = lines.join('\n')
     expect(text).contains('MISSED too many clients: seen 1 times')
-    expect(text).contains('MISSED p95 POST: no data')
+    // The second of two rigs does not score, so its posts hold no limit.
+    expect(text).contains('p95 POST: not held: this rig does not score')
+    expect(text).contains('p95 delivery lag: not held: this rig does not score')
+    expect(text).not.contains('MISSED p95 POST')
+    expect(text).not.contains('MISSED p95 delivery lag')
     expect(text).contains('thresholds missed')
     expect(text).matches(/rig: CPU \d+% of one core/)
+  })
+
+  it('still holds a rig that scores and posted nothing to its posts', async function () {
+    const report = join(dir, 'scoring.log')
+    const code = await run(
+      ...flags(),
+      '--server',
+      server.base,
+      '--load-balancer',
+      server.base,
+      '--users',
+      '4',
+      '--minutes',
+      '0.01',
+      '--assert',
+      '--pool-limit',
+      '10',
+      '--report',
+      report
+    )
+    expect(code).equals(1)
+    const text = lines.join('\n')
+    expect(text).contains('MISSED p95 POST: no data')
+    expect(text).not.contains('not held')
+    expect(text).contains('thresholds missed')
+    expect(readFileSync(report, 'utf8')).contains(
+      '## Connection resets\ntotal: 0\n'
+    )
   })
 
   it('leaves the scoring to the first of two rigs, and classes the pooler', async function () {
@@ -185,6 +218,61 @@ describe('the command line', function () {
     expect(data.errors.unreachable).equals(1)
     expect(data.postP95Ms).equals(null)
     expect(readFileSync(report, 'utf8')).contains('p95 no data')
+    // Why it could not be reached, in the report and on stdout.
+    const reason =
+      'GET /api/v1/health failed 5 time(s), the last with fetch failed: bad port'
+    expect(data.unreachable).deep.equals({ 'http://127.0.0.1:1': reason })
+    expect(readFileSync(report, 'utf8')).contains(
+      `## Errors\ntotal: 1\n  unreachable: 1\n  unreachable http://127.0.0.1:1: ${reason}\n`
+    )
+    expect(lines.join('\n')).contains(
+      `http://127.0.0.1:1 is unreachable: ${reason}`
+    )
+  })
+
+  it('runs its load when the first health check is reset', async function () {
+    // In front of the server, a proxy that resets its first connection.
+    let connections = 0
+    const target = Number(new URL(server.base).port)
+    const front = createServer(socket => {
+      connections += 1
+      if (connections === 1) {
+        socket.resetAndDestroy()
+        return
+      }
+      const upstream = connect(target, '127.0.0.1')
+      socket.pipe(upstream).pipe(socket)
+      const end = (): void => {
+        socket.destroy()
+        upstream.destroy()
+      }
+      socket.on('error', end).on('close', end)
+      upstream.on('error', end).on('close', end)
+    })
+    await new Promise<void>(resolve => front.listen(0, '127.0.0.1', resolve))
+    try {
+      const report = join(dir, 'reset.log')
+      const code = await run(
+        ...flags(),
+        '--server',
+        `http://127.0.0.1:${(front.address() as AddressInfo).port}`,
+        '--users',
+        '2',
+        '--minutes',
+        '0.02',
+        '--report',
+        report
+      )
+      expect(code).equals(0)
+      const data = JSON.parse(readFileSync(`${report}.json`, 'utf8'))
+      expect(data.errors.unreachable).equals(undefined)
+      expect(data.unreachable).deep.equals({})
+      expect(data.seconds).above(1)
+      expect(data.socketsOpened).at.least(1)
+      expect(lines.join('\n')).not.contains('is unreachable')
+    } finally {
+      await new Promise(resolve => front.close(resolve))
+    }
   })
 
   it('fails a run that needs statements where the extension is absent', async function () {

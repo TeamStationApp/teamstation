@@ -54,14 +54,16 @@ import { screenWatchers } from './screenWatcher'
  *   npm run start.dbLoad -- --server <url> --database <url> --tokens tokens.json \
  *     --users 500 --games 5 --pitch-seconds 15 --rest-rate 50 --screen-watchers 100 \
  *     --minutes 3 --report load.log \
- *     [--assert --pool-limit 97 --server-log api1.log]
+ *     [--assert --pool-limit 97 --server-log api1.log] [--load-balancer <url>]
  *   npm run start.dbLoad -- --database <url> --tokens tokens.json --event teamMerge
  *   npm run start.dbLoad -- --server <url> --database <url> --tokens tokens.json --probe
  *   npm run start.dbLoad -- --database <url> --tokens tokens.json --cleanup
  *
  * Every mode refuses a database not marked for load testing. `--stats-database`
  * is where `pg_stat_statements` is installed, when that is not `--database`: it
- * is only read, and only for the statements of `--database`.
+ * is only read, and only for the statements of `--database`. `--load-balancer`
+ * names a `--server` that is a load balancer, so the report can tell its
+ * connection resets from a node's.
  */
 
 export interface Io {
@@ -97,7 +99,8 @@ const OPTIONS = {
   probe: { type: 'boolean' },
   assert: { type: 'boolean' },
   'pool-limit': { type: 'string' },
-  'server-log': { type: 'string', multiple: true }
+  'server-log': { type: 'string', multiple: true },
+  'load-balancer': { type: 'string', multiple: true }
 } as const
 
 type Values = ReturnType<
@@ -141,7 +144,16 @@ export interface RunOptions {
   poolerAddress?: string
   connectRate: number
   eventSchedule: boolean
+  /** The servers that are load balancers, in front of the nodes. */
+  loadBalancers?: string[]
   log: (message: string) => void
+}
+
+/** Whether this rig scores: two rigs share one set of games, and only the first of them scores. */
+export function scoresOn(
+  options: Pick<RunOptions, 'shard' | 'games'>
+): boolean {
+  return (options.shard?.index ?? 0) === 0 && options.games > 0
 }
 
 /** Drives the run, then reports whatever it saw, even if every actor failed. */
@@ -176,6 +188,9 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
   statsClient?.on('error', () => undefined)
   let db: LoadDatabase | undefined
   const tally = new Tally()
+  tally.loadBalancers = new Set(
+    (options.loadBalancers ?? []).map(url => new URL(url).origin)
+  )
   const actors: Actor[] = []
   const startedAt = Date.now()
   const loopDelay = monitorEventLoopDelay({ resolution: 20 })
@@ -196,7 +211,11 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
     await sampler.start()
 
     const down = await reachable(options.servers)
-    for (const _ of down) tally.fail('unreachable')
+    for (const { server, reason } of down) {
+      tally.fail('unreachable')
+      tally.unreachableReasons[server] = reason
+      options.log(`${server} is unreachable: ${reason}`)
+    }
     if (down.length < options.servers.length) {
       const scorers = await startScorekeepers(options, tokens, games, tally)
       actors.push(...scorers)
@@ -304,8 +323,7 @@ async function startScorekeepers(
   games: ReturnType<typeof readTokens>['games'],
   tally: Tally
 ): Promise<Scorekeeper[]> {
-  // Two rigs share one set of games, and only the first of them scores.
-  if ((options.shard?.index ?? 0) !== 0) return []
+  if (!scoresOn(options)) return []
   const keepers: Scorekeeper[] = []
   for (const [index, game] of games.entries()) {
     const account = tokens.accounts.find(row => row.label === game.scorekeeper)
@@ -424,7 +442,7 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
     }
   }
 
-  const data = await runLoad({
+  const options: RunOptions = {
     servers,
     databaseUrl,
     statsDatabaseUrl: values['stats-database'],
@@ -443,16 +461,20 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
     poolerAddress: values['pooler-address'],
     connectRate: count(values['connect-rate'], '--connect-rate', 50),
     eventSchedule: values['event-schedule'] === true,
+    loadBalancers: values['load-balancer'],
     log: io.log
-  })
+  }
+  const data = await runLoad(options)
   if (values.assert === true) {
-    const missed = assertThresholds(data, {
+    const { missed, notHeld } = assertThresholds(data, {
       poolLimit:
         values['pool-limit'] == null
           ? undefined
           : count(values['pool-limit'], '--pool-limit'),
-      tooManyClients: countTooManyClients(values['server-log'] ?? [])
+      tooManyClients: countTooManyClients(values['server-log'] ?? []),
+      scores: scoresOn(options)
     })
+    for (const line of notHeld) io.log(line)
     for (const line of missed) io.log(`MISSED ${line}`)
     io.log(missed.length === 0 ? 'every threshold met' : 'thresholds missed')
     if (missed.length > 0) return 1

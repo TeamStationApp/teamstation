@@ -48,6 +48,7 @@ describe('the scale table', function () {
       accounts: 5000,
       leagues: 2,
       seasons: 6,
+      seasonGames: 400,
       teams: 100,
       liveGames: 50,
       finishedGames: 500,
@@ -74,6 +75,9 @@ describe('the scale table', function () {
       manySessions: 20,
       chatAddPeople: 50
     })
+    // A real season is about 200 games, and no scale holds more than double.
+    for (const amounts of Object.values(SCALES))
+      expect(amounts.seasonGames).equals(400)
   })
 })
 
@@ -84,7 +88,9 @@ describe('the fixture', function () {
   let dir: string
   let tokensPath: string
   let tokens: TokensFile
-  const amounts = amountsFor('small', TEST_AMOUNTS)
+  // Seasons small enough that the history fills several, as at full scale.
+  const overrides = { ...TEST_AMOUNTS, seasonGames: 20 }
+  const amounts = amountsFor('small', overrides)
 
   before(async function () {
     scratch = await openScratch('fixture')
@@ -93,7 +99,7 @@ describe('the fixture', function () {
     tokens = await seedFixture(scratch.db, {
       runId: 'first',
       scale: 'small',
-      overrides: TEST_AMOUNTS,
+      overrides,
       tokensPath
     })
   })
@@ -169,6 +175,54 @@ describe('the fixture', function () {
     })
   })
 
+  it('fills no season past its limit, and has every game of the history', async function () {
+    const shapes = await describeShapes(scratch.db, 'first', tokens)
+    expect(shapes.largestSeason).equals(amounts.seasonGames)
+    expect(shapes.historyGames).equals(amounts.historyGames)
+    const seasons = [...(await taggedIn(scratch.db, 'first', 'season')).keys()]
+    const after = seasons.filter(label => label.includes('.after')).sort()
+    // The first season's 49 games fill it and go on in two more of its
+    // league: 20, 20 and 9.
+    expect(after).deep.equals([
+      'season00000.after00001',
+      'season00000.after00002'
+    ])
+    const games = [...(await taggedIn(scratch.db, 'first', 'game')).values()]
+    // Live, the duplicate teams', finished, the history and its source, and
+    // each long team's: as many as with no limit at all.
+    expect(games.length).equals(
+      amounts.liveGames +
+        amounts.duplicateTeams +
+        amounts.finishedGames +
+        amounts.historyGames +
+        1 +
+        amounts.consumableCopies * amounts.longTeamGames
+    )
+    const { rows } = await sql<{ season: string; games: string }>`
+      select s.name as season, count(g.id) as games
+      from seasons s join games g on g.season_id = s.id
+      where g.id in (${sql.join(games)})
+      group by s.name order by s.name
+    `.execute(scratch.db)
+    expect(rows.reduce((sum, row) => sum + Number(row.games), 0)).equals(
+      games.length
+    )
+    expect(rows.every(row => Number(row.games) <= 20)).equals(true)
+    // Each team plays only in the seasons it is in.
+    const { rows: strays } = await sql<{ id: string }>`
+      select g.id from games g
+      where g.id in (${sql.join(games)})
+        and exists (
+          select 1 from (values (g.home_team_id), (g.away_team_id)) t(id)
+          where not exists (
+            select 1 from season_teams st
+            where st.season_id = g.season_id and st.team_id = t.id
+          )
+        )
+    `.execute(scratch.db)
+    expect(strays).deep.equals([])
+  })
+
   it('copies what the triggers wrote for a game with its copies', async function () {
     const count = async (table: string): Promise<number[]> => {
       const { rows } = await sql<{ n: string }>`
@@ -203,6 +257,9 @@ describe('the fixture', function () {
     expect(() => {
       verifyShapes({ ...shapes, crowdedViewers: 1 }, amounts)
     }).throws('crowded game: 1 viewers')
+    expect(() => {
+      verifyShapes({ ...shapes, largestSeason: 21 }, amounts)
+    }).throws('largest season: 21 games, above 20')
   })
 
   it('writes tokens that authenticate, at mode 0600, and dead ones that do not', async function () {
@@ -239,7 +296,7 @@ describe('the fixture', function () {
     const second = await seedFixture(scratch.db, {
       runId: 'second',
       scale: 'small',
-      overrides: TEST_AMOUNTS
+      overrides
     })
     const firstShapes = await describeShapes(scratch.db, 'first', tokens)
     const secondShapes = await describeShapes(scratch.db, 'second', second)
@@ -422,6 +479,9 @@ describe('the fixture', function () {
     expect(few.accounts).equals(7)
     expect(few.crowdedViewers).equals(7)
     expect(few.largeChatMembers).equals(7)
+    expect(() => amountsFor('small', { seasonGames: 0 })).throws(
+      'A season holds at least one game, not 0'
+    )
     expect(systemOf('abc')).equals('dbloadabc')
     expect(() => systemOf('not valid')).throws('A run id')
     expect(newRunId(35)).equals('z')

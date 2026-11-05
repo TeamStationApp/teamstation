@@ -15,6 +15,13 @@ export interface Amounts {
   videographers: number
   leagues: number
   seasons: number
+  /**
+   * The most games one season holds. A real season is about 20 teams playing
+   * 20 games each, 200 in all, and this is double that: a season that fills
+   * goes on in another of its league, so the history is all there however it
+   * is spread.
+   */
+  seasonGames: number
   teams: number
   liveGames: number
   /** Finished games written play by play, which the rest are cloned from. */
@@ -61,6 +68,7 @@ export const SCALES = {
     videographers: 5,
     leagues: 2,
     seasons: 6,
+    seasonGames: 400,
     teams: 100,
     liveGames: 50,
     writtenFinishedGames: 10,
@@ -99,6 +107,7 @@ export const SCALES = {
     videographers: 5,
     leagues: 2,
     seasons: 2,
+    seasonGames: 400,
     teams: 10,
     liveGames: 5,
     writtenFinishedGames: 3,
@@ -144,6 +153,10 @@ export function amountsFor(
       `Unknown --scale ${scale}. Scales: ${Object.keys(SCALES).join(', ')}`
     )
   const amounts = { ...SCALES[scale as Scale], ...overrides }
+  if (!(amounts.seasonGames >= 1))
+    throw new Error(
+      `A season holds at least one game, not ${amounts.seasonGames}`
+    )
   // A smaller population than the table has in mind still seeds every shape.
   return {
     ...amounts,

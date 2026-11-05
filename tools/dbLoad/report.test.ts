@@ -222,11 +222,14 @@ describe('the load report', function () {
     ): string[] => {
       const data = passing()
       change(data)
-      return assertThresholds(data, options)
+      return assertThresholds(data, options).missed
     }
 
     it('passes a run within every limit, not counting its own connections', function () {
-      expect(assertThresholds(passing(), limits)).deep.equals([])
+      expect(assertThresholds(passing(), limits)).deep.equals({
+        missed: [],
+        notHeld: []
+      })
     })
 
     it('fails each threshold on its own', function () {
@@ -287,9 +290,49 @@ describe('the load report', function () {
       expect(missed(() => undefined, {})).deep.equals([
         'server connections: no --pool-limit to hold them to'
       ])
-      expect(assertThresholds(passing())).deep.equals([
+      expect(assertThresholds(passing()).missed).deep.equals([
         'server connections: no --pool-limit to hold them to'
       ])
+    })
+
+    it('holds a rig that does not score to no post limit, and one that does to all', function () {
+      const posting = (data: ReportData): void => {
+        data.posts = 0
+        data.postP95Ms = null
+        data.deliveryLagP95Ms = null
+        data.events[0].postP95DuringMs = 1001
+      }
+      const idle = passing()
+      posting(idle)
+      expect(assertThresholds(idle, { ...limits, scores: false })).deep.equals({
+        missed: [],
+        notHeld: [
+          'p95 POST: not held: this rig does not score',
+          'p95 delivery lag: not held: this rig does not score',
+          'event teamMerge: p95 scoring not held: this rig does not score'
+        ]
+      })
+      // What is not about its posts still holds.
+      expect(
+        missed(
+          data => {
+            posting(data)
+            data.events[0].ms = 60_001
+            data.oldestTransactionSeconds = 61
+          },
+          { ...limits, scores: false }
+        )
+      ).deep.equals([
+        'event teamMerge: 60 s, above the 60 s limit',
+        'oldest transaction: 61 s, above 60 s'
+      ])
+      // A rig that scores and posted nothing misses, as it did before.
+      for (const options of [limits, { ...limits, scores: true }])
+        expect(missed(posting, options)).deep.equals([
+          'p95 POST: no data',
+          'p95 delivery lag: no data',
+          'event teamMerge: p95 scoring 1001 ms while it ran, above 1000 ms'
+        ])
     })
 
     it('reads the rig and each event in what it renders', function () {
@@ -366,6 +409,57 @@ describe('the load report', function () {
     )
     // It comes after the errors and before the slowest requests.
     expect(text.indexOf('## Errors')).below(text.indexOf('## Screen watchers'))
+  })
+
+  it('counts each reset by phase, target and minute, and none as none', function () {
+    const resets = (tally: Tally): string => {
+      const text = renderReport(
+        buildReport({
+          title: 'resets',
+          startedAt: 0,
+          finishedAt: 1000,
+          measurements: tally,
+          samples: [],
+          statements: [],
+          sequentialScans: [],
+          hasStatements: false
+        })
+      )
+      return text.slice(
+        text.indexOf('## Connection resets'),
+        text.indexOf('## Screen watchers')
+      )
+    }
+    expect(resets(new Tally())).equals(
+      [
+        '## Connection resets',
+        'total: 0',
+        '  by phase: connect 0, tls 0, request-sent 0, response-partial 0',
+        '  by target: load balancer 0, node 0',
+        '  by minute: none',
+        '',
+        ''
+      ].join('\n')
+    )
+
+    const tally = new Tally()
+    tally.resets.push(
+      { phase: 'request-sent', target: 'load balancer', minute: 20 },
+      { phase: 'connect', target: 'node', minute: 3 },
+      { phase: 'request-sent', target: 'load balancer', minute: 20 },
+      { phase: 'response-partial', target: 'load balancer', minute: 21 }
+    )
+    expect(resets(tally)).equals(
+      [
+        '## Connection resets',
+        'total: 4',
+        '  by phase: connect 1, tls 0, request-sent 2, response-partial 1',
+        '  by target: load balancer 3, node 1',
+        '  by minute: 3:1 20:2 21:1',
+        '',
+        ''
+      ].join('\n')
+    )
   })
 
   it('finds the longest gap in frames, up to the end of the run', function () {

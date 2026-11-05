@@ -1,6 +1,15 @@
 import { type ChildProcess, spawn } from 'node:child_process'
+import {
+  type createConnection,
+  isIP,
+  connect as netConnect,
+  type Socket,
+  type TcpNetConnectOpts
+} from 'node:net'
 import { resolve } from 'node:path'
+import { type ConnectionOptions, connect as tlsConnect } from 'node:tls'
 
+import { Agent, buildConnector, type Dispatcher } from 'undici'
 import { WebSocket } from 'ws'
 
 import { asPostedEdits, type PostedEdits } from '../../src/common/api'
@@ -16,7 +25,7 @@ import {
 } from '../../src/common/scoring/session'
 import type { GameState } from '../../src/common/scoring/state'
 import type { SeededAccount, SeededGame, TokensFile } from './fixture'
-import type { Measurements } from './report'
+import type { ConnectionReset, Measurements, ResetPhase } from './report'
 import { batterActions, contextOf, randomFrom } from './scoredGames'
 
 /**
@@ -57,17 +66,28 @@ export class Tally implements Measurements {
   screenWatchers = 0
   screenNotices = 0
   screenReReads = 0
+  resets: ConnectionReset[] = []
+  unreachableReasons: Record<string, string> = {}
+  /** The origins of the servers that are load balancers: any other is a node. */
+  loadBalancers = new Set<string>()
   private lastFrameSecond = 0
   private readonly posted = new Map<string, number>()
-  private readonly startedAt = Date.now()
+
+  constructor(private readonly startedAt = Date.now()) {}
 
   fail(kind: string): void {
     this.errors[kind] = (this.errors[kind] ?? 0) + 1
   }
 
-  /** Counts a failure by what it was: a status, a refused connection. */
+  /**
+   * Counts a failure by what it was: a status, a refused connection. A reset
+   * is placed too, by what `request` marked on it.
+   */
   failure(error: unknown): void {
-    const code = (error as { cause?: { code?: string } }).cause?.code
+    const failed = error as { cause?: { code?: string } } & Partial<Placed>
+    const code = failed.cause?.code
+    if (code === 'ECONNRESET' && failed.phase != null && failed.server != null)
+      this.noteReset(failed.phase, failed.server)
     if (code === 'ECONNREFUSED' || code === 'ENOTFOUND')
       this.fail('unreachable')
     else if (
@@ -105,6 +125,118 @@ export class Tally implements Measurements {
     this.socketOpensBySecond[second] =
       (this.socketOpensBySecond[second] ?? 0) + 1
   }
+
+  /** A connection to `server` reset at `phase`, in this minute of the run. */
+  noteReset(phase: ResetPhase, server: string): void {
+    this.resets.push({
+      phase,
+      target: this.loadBalancers.has(new URL(server).origin)
+        ? 'load balancer'
+        : 'node',
+      minute: Math.floor((Date.now() - this.startedAt) / 60_000)
+    })
+  }
+}
+
+/** Where a failed request's connection had got to, and the server it was to. */
+interface Placed {
+  phase: ResetPhase
+  server: string
+}
+
+/**
+ * How far a new connection has got, for a reset to be placed by: before its
+ * TCP connect, inside its TLS handshake, or ready, and so with its request sent.
+ */
+export function follow(socket: Socket, secure: boolean): () => ResetPhase {
+  let connected = false
+  let secured = !secure
+  socket.once('connect', () => {
+    connected = true
+  })
+  socket.once('secureConnect', () => {
+    secured = true
+  })
+  return () => (!connected ? 'connect' : !secured ? 'tls' : 'request-sent')
+}
+
+/**
+ * undici's connector, marking the error of a connection it could not make with
+ * how far that connection got (`follow`), which `request` reads off the cause.
+ */
+export function placingConnector(
+  connect: buildConnector.connector = buildConnector({})
+): buildConnector.connector {
+  // It answers the socket it makes, though its type does not say so.
+  const make = connect as (
+    ...args: Parameters<buildConnector.connector>
+  ) => Socket
+  return (options, callback) => {
+    let reached: (() => ResetPhase) | undefined
+    const socket = make(options, (...args) => {
+      if (args[0] != null) Object.assign(args[0], { phase: reached?.() })
+      callback(...args)
+    })
+    reached = follow(socket, options.protocol === 'https:')
+    return socket
+  }
+}
+
+/** Every request's connections, made so that a reset can say where it caught one. */
+const DISPATCHER = new Agent({ connect: placingConnector() })
+
+/**
+ * A failed request's error, marked with where its connection had got to, which
+ * the connector marked on its cause if it never connected, and its server.
+ */
+function placed(error: unknown, server: string, phase: ResetPhase): unknown {
+  const cause = (error as { cause?: Partial<Placed> }).cause
+  return Object.assign(error as object, {
+    server,
+    phase: cause?.phase ?? phase
+  })
+}
+
+/**
+ * A socket's connection, made as `ws` makes it and followed (`follow`), so a
+ * reset is counted at its phase against its server whenever it comes, before
+ * the socket opens or after: an open socket `ws` loses closes with no error.
+ */
+export class FollowedConnection {
+  private answered = false
+
+  constructor(
+    private readonly server: string,
+    private readonly tally: Tally
+  ) {}
+
+  /** For `ws`'s `createConnection`. */
+  readonly connect = ((options: TcpNetConnectOpts & ConnectionOptions) => {
+    const secure = this.server.startsWith('https:')
+    const socket = secure
+      ? tlsConnect({
+          ...options,
+          path: undefined,
+          servername:
+            options.servername ??
+            (isIP(options.host ?? '') === 0 ? options.host : '')
+        } as ConnectionOptions)
+      : netConnect({ ...options, path: undefined } as TcpNetConnectOpts)
+    const reached = follow(socket, secure)
+    socket.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ECONNRESET')
+        this.tally.noteReset(
+          this.answered ? 'response-partial' : reached(),
+          this.server
+        )
+    })
+    return socket
+  }) as typeof createConnection
+
+  /** The server has begun to answer: its upgrade was read. */
+  answer(): void {
+    this.answered = true
+  }
 }
 
 export class HttpError extends Error {
@@ -129,20 +261,34 @@ export async function request(
     label?: string
     body?: unknown
     tally?: Tally
+    /** How it connects: the rig's own pool, unless a test says otherwise. */
+    dispatcher?: Dispatcher
   } = {}
 ): Promise<unknown> {
   const started = performance.now()
-  const response = await fetch(`${server}/api/v1${path}`, {
-    method,
-    headers: {
-      authorization: `Bearer ${account.token}`,
-      ...(options.body === undefined
-        ? {}
-        : { 'content-type': 'application/json' })
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body)
-  })
-  const text = await response.text()
+  let response: Response
+  try {
+    response = await fetch(`${server}/api/v1${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${account.token}`,
+        ...(options.body === undefined
+          ? {}
+          : { 'content-type': 'application/json' })
+      },
+      body:
+        options.body === undefined ? undefined : JSON.stringify(options.body),
+      dispatcher: options.dispatcher ?? DISPATCHER
+    } as RequestInit)
+  } catch (error) {
+    throw placed(error, server, 'request-sent')
+  }
+  let text: string
+  try {
+    text = await response.text()
+  } catch (error) {
+    throw placed(error, server, 'response-partial')
+  }
   options.tally?.requests.push({
     route: options.label ?? `${method} ${options.route ?? path}`,
     accountKind: account.kind,
@@ -152,20 +298,70 @@ export async function request(
   return text === '' ? null : JSON.parse(text)
 }
 
-/** Each server's health, or which of them could not be reached. */
-export async function reachable(servers: string[]): Promise<string[]> {
-  const down: string[] = []
+/** A server that did not answer its health check, and why, from its last try. */
+export interface Unreachable {
+  server: string
+  reason: string
+}
+
+/** How hard `reachable` tries each server before calling it down. */
+export interface ReachableOptions {
+  attempts?: number
+  /** The wait after the first failure, doubling after each one after it. */
+  backoffMs?: number
+  /** How long one health check may take. */
+  timeoutMs?: number
+}
+
+/** Why a health check failed: its status, or the error and what caused it. */
+function healthFailure(error: unknown): string {
+  const failed = error as Error & {
+    cause?: { code?: string; message?: string }
+  }
+  const cause = failed.cause
+  const detail = cause?.message ?? cause?.code
+  return detail == null || detail === failed.message
+    ? failed.message
+    : `${failed.message}: ${detail}`
+}
+
+/**
+ * Each server's health, or which of them could not be reached and why. One
+ * failed check is tried again, after a short wait that doubles: a single
+ * reset at a load balancer must not leave a rig with nothing to do. With the
+ * defaults, a server is given up on within 30 s.
+ */
+export async function reachable(
+  servers: string[],
+  { attempts = 5, backoffMs = 250, timeoutMs = 5000 }: ReachableOptions = {}
+): Promise<Unreachable[]> {
+  const down: Unreachable[] = []
   await Promise.all(
     servers.map(async server => {
-      try {
-        const response = await fetch(`${server}/api/v1/health`)
-        if (!response.ok) down.push(server)
-      } catch {
-        down.push(server)
+      let reason = ''
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        if (attempt > 0)
+          await new Promise(resolve =>
+            setTimeout(resolve, backoffMs * 2 ** (attempt - 1))
+          )
+        try {
+          const response = await fetch(`${server}/api/v1/health`, {
+            signal: AbortSignal.timeout(timeoutMs)
+          })
+          await response.body?.cancel()
+          if (response.ok) return
+          reason = `HTTP ${response.status}`
+        } catch (error) {
+          reason = healthFailure(error)
+        }
       }
+      down.push({
+        server,
+        reason: `GET /api/v1/health failed ${attempts} time(s), the last with ${reason}`
+      })
     })
   )
-  return down.sort()
+  return down.sort((a, b) => a.server.localeCompare(b.server))
 }
 
 /** The n-th of anything dealt evenly across the servers. */
@@ -199,12 +395,17 @@ export class SocketViewer implements Actor {
 
   start(): void {
     const url = `${this.server.replace(/^http/, 'ws')}${this.path}`
+    const connection = new FollowedConnection(this.server, this.tally)
     const ws = new WebSocket(url, {
       headers: { authorization: `Bearer ${this.account.token}` },
       // A frame is counted and not read, so nothing checks what is in it.
-      skipUTF8Validation: true
+      skipUTF8Validation: true,
+      createConnection: connection.connect
     })
     this.ws = ws
+    ws.on('upgrade', () => {
+      connection.answer()
+    })
     ws.on('open', () => {
       this.attempt = 0
       this.tally.noteSocketOpen()

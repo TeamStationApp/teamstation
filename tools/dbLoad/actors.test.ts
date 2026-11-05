@@ -1,16 +1,22 @@
 import { spawn } from 'node:child_process'
+import { createServer as createHttpServer } from 'node:http'
+import { type AddressInfo, createServer, type Server, Socket } from 'node:net'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
+import { Agent } from 'undici'
+import { WebSocketServer } from 'ws'
 
 import type { ScoringSession } from '../../src/common/scoring/session'
 import type { GameState } from '../../src/common/scoring/state'
 import {
   CAMERAS_PER_PERSON,
   finishBatter,
+  follow,
   HttpError,
   mintStream,
   paced,
+  placingConnector,
   Publishers,
   requireServerHost,
   reachable,
@@ -24,6 +30,7 @@ import {
   Tally
 } from './actors'
 import { type SeededAccount, seedFixture, type TokensFile } from './fixture'
+import { buildReport, renderReport } from './report'
 import { TEST_AMOUNTS } from './testAmounts'
 import {
   openScratch,
@@ -31,6 +38,17 @@ import {
   startTestServer,
   type TestServer
 } from './testSupport'
+
+/** A server on a free local port, and its base URL. */
+const listening = async (
+  server: Pick<Server, 'listen' | 'address'>,
+  scheme = 'http'
+): Promise<string> => {
+  await new Promise<void>(resolve => {
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  return `${scheme}://127.0.0.1:${(server.address() as AddressInfo).port}`
+}
 
 const waitFor = async (
   check: () => boolean,
@@ -561,15 +579,216 @@ describe('the actors', function () {
     })
   })
 
+  describe('connection resets', function () {
+    const nobody = { token: 'tok_nobody', kind: 'viewer' as const }
+    const servers: Array<{ close: () => unknown }> = []
+    after(function () {
+      for (const each of servers) each.close()
+    })
+    /** Answers every connection by resetting it once `when` has happened. */
+    const resetting = async (
+      when: 'hello' | 'request' | 'partway' | 'upgrade' | 'open'
+    ): Promise<string> => {
+      if (when === 'hello') {
+        // A TLS server's side of a handshake that never finishes.
+        const tcp = createServer(socket => {
+          socket.once('data', () => socket.resetAndDestroy())
+        })
+        servers.push(tcp)
+        return await listening(tcp, 'https')
+      }
+      if (when === 'open') {
+        const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 })
+        servers.push(wss)
+        wss.on('connection', (_, upgrade) => {
+          setTimeout(() => upgrade.socket.resetAndDestroy(), 20)
+        })
+        await new Promise(resolve => wss.once('listening', resolve))
+        return `http://127.0.0.1:${(wss.address() as AddressInfo).port}`
+      }
+      const http = createHttpServer((incoming, answer) => {
+        if (when === 'request') incoming.socket.resetAndDestroy()
+        else {
+          answer.writeHead(200, { 'content-length': '100' })
+          answer.write('{"half":')
+          setTimeout(() => answer.socket?.resetAndDestroy(), 20)
+        }
+      })
+      http.on('upgrade', (_, socket: Socket) => socket.resetAndDestroy())
+      servers.push(http)
+      return await listening(http)
+    }
+    const failing = async (
+      tally: Tally,
+      server: string,
+      options: Parameters<typeof request>[4] = {}
+    ): Promise<void> => {
+      await request(server, nobody, 'GET', '/me/roles', options).then(
+        () => expect.fail('the request was answered'),
+        (error: unknown) => {
+          tally.failure(error)
+        }
+      )
+    }
+
+    it('places a reset of a request or a socket at its phase, target and minute, in the report', async function () {
+      // Started two minutes ago and a little more.
+      const tally = new Tally(Date.now() - 125_000)
+      const tls = await resetting('hello')
+      tally.loadBalancers.add(tls)
+
+      // A reset before the connection is made, as a connector would see it.
+      const neverConnected = new Agent({
+        connect: placingConnector((_, callback) => {
+          const socket = new Socket()
+          setImmediate(() => {
+            callback(
+              Object.assign(new Error('connect ECONNRESET'), {
+                code: 'ECONNRESET'
+              }),
+              null
+            )
+          })
+          return socket
+        })
+      })
+      // Never reached: the connector stands in for the connection.
+      await failing(tally, 'http://192.0.2.1:8080', {
+        dispatcher: neverConnected
+      })
+      await failing(tally, tls)
+      await failing(tally, await resetting('request'))
+      await failing(tally, await resetting('partway'))
+      expect(tally.errors).deep.equals({ ECONNRESET: 4 })
+      expect(tally.resets).deep.equals([
+        { phase: 'connect', target: 'node', minute: 2 },
+        { phase: 'tls', target: 'load balancer', minute: 2 },
+        { phase: 'request-sent', target: 'node', minute: 2 },
+        { phase: 'response-partial', target: 'node', minute: 2 }
+      ])
+
+      // A socket's, before and after it opens.
+      for (const server of [
+        tls,
+        await resetting('upgrade'),
+        await resetting('open')
+      ]) {
+        const viewer = new SocketViewer(server, nobody, 'game', tally)
+        const before = tally.resets.length
+        viewer.start()
+        await waitFor(() => tally.resets.length > before)
+        viewer.stop()
+      }
+      expect(tally.resets.slice(4)).deep.equals([
+        { phase: 'tls', target: 'load balancer', minute: 2 },
+        { phase: 'request-sent', target: 'node', minute: 2 },
+        { phase: 'response-partial', target: 'node', minute: 2 }
+      ])
+
+      const text = renderReport(
+        buildReport({
+          title: 'resets',
+          startedAt: 0,
+          finishedAt: 1000,
+          measurements: tally,
+          samples: [],
+          statements: [],
+          sequentialScans: [],
+          hasStatements: false
+        })
+      )
+      expect(text).contains(
+        [
+          '## Connection resets',
+          'total: 7',
+          '  by phase: connect 1, tls 2, request-sent 2, response-partial 2',
+          '  by target: load balancer 2, node 5',
+          '  by minute: 2:7',
+          ''
+        ].join('\n')
+      )
+    })
+
+    it('follows a connection from its connect through its handshake', function () {
+      const plain = new Socket()
+      const reached = follow(plain, false)
+      expect(reached()).equals('connect')
+      plain.emit('connect')
+      expect(reached()).equals('request-sent')
+      const secure = new Socket()
+      const handshake = follow(secure, true)
+      secure.emit('connect')
+      expect(handshake()).equals('tls')
+      secure.emit('secureConnect')
+      expect(handshake()).equals('request-sent')
+    })
+  })
+
   describe('the rest of it', function () {
-    it('reports which servers cannot be reached', async function () {
+    it('reports which servers cannot be reached, and why', async function () {
+      const quick = { attempts: 2, backoffMs: 1 }
       expect(await reachable([server.base])).deep.equals([])
-      expect(await reachable(['http://127.0.0.1:1'])).deep.equals([
-        'http://127.0.0.1:1'
+      expect(
+        await reachable([`${server.base}/nowhere`, 'http://127.0.0.1:1'], quick)
+      ).deep.equals([
+        {
+          server: 'http://127.0.0.1:1',
+          reason:
+            'GET /api/v1/health failed 2 time(s), the last with fetch failed: bad port'
+        },
+        {
+          server: `${server.base}/nowhere`,
+          reason: 'GET /api/v1/health failed 2 time(s), the last with HTTP 404'
+        }
       ])
-      expect(await reachable([`${server.base}/nowhere`])).deep.equals([
-        `${server.base}/nowhere`
-      ])
+    })
+
+    it('tries a failed health check again, within a bounded time', async function () {
+      let checks = 0
+      const flaky = createHttpServer((req, res) => {
+        checks += 1
+        // The first check is reset, as a load balancer's TLS can be; the
+        // second answers 502; then the server is healthy.
+        if (checks === 1) req.socket.resetAndDestroy()
+        else res.writeHead(checks === 2 ? 502 : 200).end('{}')
+      })
+      // A server that takes every connection and never answers.
+      const silent = createHttpServer(() => undefined)
+      await Promise.all(
+        [flaky, silent].map(
+          async listening =>
+            await new Promise<void>(resolve =>
+              listening.listen(0, '127.0.0.1', resolve)
+            )
+        )
+      )
+      const base = (listening: typeof flaky): string =>
+        `http://127.0.0.1:${(listening.address() as AddressInfo).port}`
+      try {
+        expect(
+          await reachable([base(flaky)], { attempts: 3, backoffMs: 1 })
+        ).deep.equals([])
+        expect(checks).equals(3)
+
+        const startedAt = Date.now()
+        const [down] = await reachable([base(silent)], {
+          attempts: 2,
+          backoffMs: 1,
+          timeoutMs: 50
+        })
+        expect(down.reason).matches(
+          /^GET \/api\/v1\/health failed 2 time\(s\), the last with .*timeout/
+        )
+        expect(Date.now() - startedAt).below(2000)
+      } finally {
+        silent.closeAllConnections()
+        await Promise.all(
+          [flaky, silent].map(
+            async listening =>
+              await new Promise(resolve => listening.close(resolve))
+          )
+        )
+      }
     })
 
     it('counts failures by kind', function () {
