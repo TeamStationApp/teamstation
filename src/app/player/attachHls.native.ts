@@ -241,7 +241,9 @@ export function attachHls(
       intent?.wantsRecovery?.() ?? intent?.wantsToPlay() ?? wantsToPlay
     if (!wanted && !failed) lastAdvance = now
     const silentReadyTile =
-      intent?.buffer != null && wanted && handle.readyState >= 3
+      wanted &&
+      handle.readyState >= 3 &&
+      (intent?.buffer != null || !handle.ended)
     if (
       !singleLive &&
       !gaveUp &&
