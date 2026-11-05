@@ -1,4 +1,4 @@
-import { wallAt, type WallTimeline } from '../../common/wallTimeline'
+import { inWallGap, wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { commonStart, targetTime } from './playbackTimeline'
 
 interface ClockPort {
@@ -161,7 +161,8 @@ export class PlaybackClock {
     index: number,
     seconds: number,
     seekableEnd?: number,
-    seekableStart?: number
+    seekableStart?: number,
+    playing = true
   ): number | null {
     const port = this.ports[index]
     if (
@@ -206,7 +207,23 @@ export class PlaybackClock {
       return this.wall
     port.target = null
     port.position = seconds
-    if (!this.available(index)) return this.wall
+    if (!this.available(index)) {
+      // With no camera covering this gap, no other master can advance the wall.
+      // Playing rejoins at a decoded post-gap moment; a paused selection stays
+      // covered, and any camera that still covers it keeps ownership of the clock.
+      const nextWall = wallAt(port.timeline.anchors, seconds * 1000)
+      if (
+        !playing ||
+        this.wall === null ||
+        !inWallGap(port.timeline.anchors, this.wall) ||
+        this.ports.some((p, i) => p.loaded && this.available(i)) ||
+        nextWall === null ||
+        nextWall < this.wall ||
+        inWallGap(port.timeline.anchors, nextWall)
+      )
+        return this.wall
+      this.master = index
+    }
     if (index === this.master) {
       this.wall = wallAt(port.timeline.anchors, seconds * 1000)
       if (this.wall !== null) {
