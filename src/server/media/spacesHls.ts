@@ -1,3 +1,4 @@
+import { type LivePlaylistOptions, LivePlaylists } from './livePlaylists'
 import {
   isReadOnlySourceKey,
   presignGetUrl,
@@ -118,6 +119,24 @@ export interface PlaylistSource {
   space: SpaceSettings
   /** How long a presigned URL lasts. */
   expiresSec: number
+  /** How long a playlist read from the Space may take, body included. */
+  timeoutMs?: number
+}
+
+/**
+ * A Space read that takes longer rejects, as a failed one does. One read of an
+ * open playlist is shared by every viewer of the video on a worker, so with no
+ * limit one that hung would hold them all.
+ */
+const SPACE_READ_TIMEOUT_MS = 5000
+
+async function spaceRead(
+  source: PlaylistSource,
+  url: string
+): Promise<Response> {
+  return await (source.fetch ?? globalThis.fetch)(url, {
+    signal: AbortSignal.timeout(source.timeoutMs ?? SPACE_READ_TIMEOUT_MS)
+  })
 }
 
 /**
@@ -145,10 +164,9 @@ export class PlaylistCache {
     if (held != null) return held
 
     const { space, expiresSec } = this.source
-    const doFetch = this.source.fetch ?? globalThis.fetch
     const url = presignGetUrl({ ...space, key, expiresSec })
 
-    const response = await doFetch(url)
+    const response = await spaceRead(this.source, url)
     if (!response.ok) {
       await response.body?.cancel()
       return undefined
@@ -176,9 +194,17 @@ export function mediaVariant(
 
 const SIGNING_WINDOW_MS = 15 * 60_000
 
-/** Shared by the viewers on one API worker, including their in-flight reads. */
+/**
+ * Shared by the viewers on one API worker, including their in-flight reads.
+ *
+ * An open `index.m3u8` comes from Valkey when the worker follows live
+ * playlists there (`LivePlaylists`), each line rewritten once; otherwise, or
+ * while Valkey cannot give it, from the Space, at most once a second.
+ */
 export class SpacePlayback {
   readonly playlists: PlaylistCache
+  /** The live playlists this worker follows in Valkey, when it does. */
+  readonly following?: LivePlaylists
   private window = -1
   private readonly signed = new Map<string, string>()
   private readonly open = new Map<
@@ -193,9 +219,31 @@ export class SpacePlayback {
 
   constructor(
     private readonly source: PlaylistSource,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    live?: LivePlaylistOptions
   ) {
     this.playlists = new PlaylistCache(source)
+    if (live != null) this.following = new LivePlaylists({ now, ...live })
+  }
+
+  /**
+   * An open video's `index.m3u8`, rewritten for a player: from Valkey when it
+   * has the list, or from the Space, read at most once a second.
+   */
+  async live(video: VideoPath): Promise<string | undefined> {
+    if (this.following != null) {
+      // A signed URL lasts its window: a copy signed in the last is redone.
+      const window = this.rotate()
+      const epoch = video.spaceSecret == null ? window : 0
+      const followed = await this.following.read(
+        video,
+        text => rewriteMediaPlaylist(text, uri => this.sign(video, uri)),
+        epoch
+      )
+      if (followed != null) return followed
+    }
+    const body = await this.get(video, 'index.m3u8', false)
+    return body == null ? undefined : this.rewrite(video, 'index.m3u8', body)
   }
 
   /**
@@ -276,7 +324,8 @@ export class SpacePlayback {
   }
 
   private async readOpen(video: VideoPath): Promise<string | undefined> {
-    const response = await (this.source.fetch ?? globalThis.fetch)(
+    const response = await spaceRead(
+      this.source,
       presignGetUrl({
         ...this.source.space,
         key: spaceKey(video, 'index.m3u8'),
