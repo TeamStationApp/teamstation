@@ -6,9 +6,12 @@ import { createRoot } from 'react-dom/client'
 import { asSessionUser, TeamStationClient } from '../../common/api'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
+import { CONFIRMED_CHAT_AGE } from '../../test/chatAgeTesting'
+import { pageOfUmpireSchedule } from '../../test/pageOf'
 import { fixturePositions, fixtureTypes } from '../../test/umpireTypes'
 import { App } from '../App'
 import { UmpireMaskDrawing as NativeMask } from './UmpireMaskDrawing.native'
+
 it('mounts the shell with role-only mask visibility and preserves header order at both widths', async () => {
   const proto = TeamStationClient.prototype
   const originals = Object.getOwnPropertyDescriptors(proto)
@@ -20,6 +23,8 @@ it('mounts the shell with role-only mask visibility and preserves header order a
     })
   proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
   proto.hasNotifications = async () => false
+  // The Shell reads the account's chat age on mount: confirmed here.
+  proto.chatAge = async () => CONFIRMED_CHAT_AGE
   proto.teams = async () => []
   proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
   proto.seasons = async () => []
@@ -49,50 +54,54 @@ it('mounts the shell with role-only mask visibility and preserves header order a
   proto.umpireNoteTypes = async () => []
   proto.umpireTypes = async () => fixtureTypes
   proto.setUmpireRequirements = async () => undefined
-  proto.umpireSchedule = async () => ({
-    settings: { management: true, credits: true },
-    levels: [],
-    types: fixtureTypes,
-    noteTypes: [{ id: 'color', name: 'Color', position: 0, inUse: false }],
-    viewerId: 'demo',
-    isAdmin: true,
-    view: 'league',
-    creditTeams: [],
-    games: [
+  proto.umpireSchedulePage = async (_league, _query, page) =>
+    pageOfUmpireSchedule(
       {
-        id: 'demo-game',
-        seasonId: 'spring',
-        seasonName: 'Spring',
-        levelId: 'majors',
-        levelName: 'majors',
-        startAt: '2099-04-01T12:00:00Z',
-        endAt: null,
-        timezone: 'UTC',
-        date: 'Apr 1, 12:00 pm',
-        status: 'scheduled',
-        home: 'Demo Hawks',
-        away: 'Demo Eagles',
-        homeTeamId: 'hawks',
-        awayTeamId: 'eagles',
-        venue: '',
-        field: '',
-        notes: '',
-        umpireNotes: {},
-        positions: fixturePositions(),
-        assignments: {
-          'uty_plate:1': {
-            userId: 'uma',
-            name: 'Uma L',
-            displayName: 'Uma Lee',
-            assignedBy: 'uma',
-            canRemove: true
+        settings: { management: true, credits: true },
+        levels: [],
+        types: fixtureTypes,
+        noteTypes: [{ id: 'color', name: 'Color', position: 0, inUse: false }],
+        viewerId: 'demo',
+        isAdmin: true,
+        view: 'league',
+        creditTeams: [],
+        games: [
+          {
+            id: 'demo-game',
+            seasonId: 'spring',
+            seasonName: 'Spring',
+            levelId: 'majors',
+            levelName: 'majors',
+            startAt: '2099-04-01T12:00:00Z',
+            endAt: null,
+            timezone: 'UTC',
+            date: 'Apr 1, 12:00 pm',
+            status: 'scheduled',
+            home: 'Demo Hawks',
+            away: 'Demo Eagles',
+            homeTeamId: 'hawks',
+            awayTeamId: 'eagles',
+            venue: '',
+            field: '',
+            notes: '',
+            umpireNotes: {},
+            positions: fixturePositions(),
+            assignments: {
+              'uty_plate:1': {
+                userId: 'uma',
+                name: 'Uma L',
+                displayName: 'Uma Lee',
+                assignedBy: 'uma',
+                canRemove: true
+              }
+            },
+            choices: {},
+            conflicts: []
           }
-        },
-        choices: {},
-        conflicts: []
-      }
-    ]
-  })
+        ]
+      },
+      page
+    )
   proto.umpireLeaderboard = async () => ({
     completed: [],
     scheduled: [],

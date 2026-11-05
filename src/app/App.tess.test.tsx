@@ -13,8 +13,10 @@ import {
 } from '../common/api'
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, mount, press, settle, unmount } from '../test/gameFormDom'
+import { pageOf, pageOfGames } from '../test/pageOf'
 import { manualClock, windowSize } from '../test/tessTestKit'
 import { App, screenTitle } from './App'
 import { ChatListNavigationCapture } from './chat/chatWorkspaceModel'
@@ -88,6 +90,8 @@ const breakpoint = (): string | null =>
     ?.getAttribute('data-breakpoint') ?? null
 
 describe("Tess in the app's shell", () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   let originals: PropertyDescriptorMap
   let healthAnswers: Array<Health | Error>
   let signedIn: boolean
@@ -128,7 +132,7 @@ describe("Tess in the app's shell", () => {
     api.guardedPlayers = async () => []
     api.recentGame = async () => null
     api.liveNow = async () => []
-    api.games = async () => []
+    api.gamesPage = async () => pageOf([])
     api.roster = async () => []
     api.defaultLineup = async () => ({
       lineup: null,
@@ -356,7 +360,8 @@ describe("Tess in the app's shell", () => {
       await settle(60)
       expect(currentRoute().name).equals('account')
       const index = window.history.state?.tsRouteIndex as number
-      restoreWindow = (await windowSize(1024, 900)).restore
+      // open's restore puts the document's own box back after the test.
+      await windowSize(1024, 900)
       await settle(60)
       expect(byTestId('Tess layer')).not.equals(null)
       await act(async () => {
@@ -616,7 +621,7 @@ describe("Tess in the app's shell", () => {
           canManage: false
         })
       api.gameProposals = async () => []
-      api.teamGames = async () => []
+      api.teamGamesPage = async (_id, query) => pageOfGames([], query)
       api.teamStats = async () => []
       api.teamPitchingStats = async () => []
       await openOver({ name: 'team', teamId: 't1', tab: 'schedule' })

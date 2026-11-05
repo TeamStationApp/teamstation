@@ -37,8 +37,13 @@
 //   TS_STREAM_FULL_GAME=<a game with 6 active cameras, some of the user's> \
 //   TS_STREAM_WEB=<the web app's origin> \
 //   TS_STREAM_MASK_PYTHON=<a Python with Pillow, to mask keys in screenshots> \
-//   [TS_STREAM_STEPS=E1,E3,E4,E11]
+//   [TS_STREAM_STEPS=E1,E3,E4,E11,E16]
 //
+//   E16, which runs first: the member taps Request access, and the manager
+//   declines it over the API while the member's game stays open. Request access
+//   comes back on that screen; a tap there is a new request the manager has
+//   waiting, and the pill still reads Request sent two polls later. The
+//   manager declines that one too, so E1 starts from nothing waiting.
 //   E1. The member taps Request access: it reads Request sent. Signed in as
 //   the manager, the request is in the bell inbox: Accept. The member, back on
 //   the game, has Record Video.
@@ -186,7 +191,7 @@ const game = required('TS_STREAM_GAME')
 const angle = process.env.TS_STREAM_ANGLE ?? 'Backstop'
 const wanted = (
   process.env.TS_STREAM_STEPS ??
-  (scenario === 'rows' ? 'E4,E5,E6,E7,E12' : 'E1,E3,E4,E11')
+  (scenario === 'rows' ? 'E4,E5,E6,E7,E12' : 'E1,E3,E4,E11,E16')
 ).split(',')
 const holdSeconds = Number(process.env.TS_STREAM_HOLD_SECONDS ?? '45')
 const artifacts = process.env.TS_STREAM_ARTIFACT_DIR
@@ -631,9 +636,17 @@ function driving(m: Driver) {
       node => node.text?.startsWith('Account, ') === true,
       10000
     )
-    assert(account?.text != null, 'the header has an account button')
+    assert(
+      account?.text != null && account.bounds != null,
+      'the header has an account button'
+    )
+    // By where it is: its label loses ", notifications waiting" as soon as
+    // the last request is decided, which can be between the read and the tap.
+    const { x, y, width, height } = account.bounds
     say(`$ tapOn ${account.text}`)
-    await m.tapOn({ text: account.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') })
+    await m.tapOn({
+      point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`
+    })
     say('$ tapOn Account')
     await m.tapOn({ text: '^Account$' })
     say('$ scrollUntilVisible Sign out')
@@ -734,6 +747,117 @@ async function setup(): Promise<void> {
   await m.launchApp({ appId: APP, stopApp: true })
   await sleep(3000)
   try {
+    if (wanted.includes('E16')) {
+      interface Item {
+        requestId: string
+        type: string
+        status: string
+      }
+      const inbox = async (route: string, as: string): Promise<string[]> => {
+        const answer = await request('GET', route, undefined, as)
+        assert.equal(answer.status, 200, `${route} answered`)
+        return ((await answer.json()) as { items: Item[] }).items
+          .filter(
+            item => item.type === 'videographer' && item.status === 'pending'
+          )
+          .map(item => item.requestId)
+      }
+      /** The manager's requests to film still waiting, by id. */
+      const managers = async (): Promise<string[]> =>
+        await inbox('/me/notifications?limit=100', token)
+      /**
+       * The member's own requests to film still waiting that this manager
+       * decides: those for the game's team, not another team's.
+       */
+      const mine = async (): Promise<string[]> => {
+        const theirs = new Set(await managers())
+        return (
+          await inbox('/me/notifications?sent=1&limit=100', viewerToken)
+        ).filter(id => theirs.has(id))
+      }
+      // Over the API, so the member's screen stays up through the decline.
+      const decline = async (id: string): Promise<void> => {
+        say(`$ POST /relationship-requests/${id}/decline (manager)`)
+        const answer = await request(
+          'POST',
+          `/relationship-requests/${id}/decline`,
+          undefined,
+          token
+        )
+        assert.equal(answer.status, 200, 'the manager declined')
+        const decided = (await answer.json()) as { status: string }
+        assert.equal(decided.status, 'declined', 'the request is declined')
+      }
+      /** Declines what an earlier run, or a failed step, left waiting. */
+      const sweep = async (): Promise<void> => {
+        for (const id of await mine()) await decline(id)
+      }
+
+      await sweep()
+      const before = await accessOf(viewerToken)
+      assert(
+        before.canRequest && !before.canFilm && !before.requested,
+        'a member who has not asked'
+      )
+      const reads = async (label: string): Promise<boolean> =>
+        (await find(byText(label), 0)) != null
+
+      try {
+        await become(viewerEmail)
+        await openGame()
+        assert(
+          (await find(byText('Request access'), 15000)) != null,
+          'Request access shows'
+        )
+        await tap('request-access')
+        assert(
+          (await find(byText('Request sent'))) != null,
+          'Request sent shows'
+        )
+        assert((await accessOf(viewerToken)).requested, 'the server has it')
+        const first = await mine()
+        assert.equal(
+          first.length,
+          1,
+          'one request of the member’s waits for the manager'
+        )
+        await decline(first[0])
+        assert(
+          (await find(byText('Request access'), 15000)) != null,
+          'Request access comes back on the same screen'
+        )
+        await verify('E16 the decline brought Request access back in place')
+
+        await tap('request-access')
+        assert(
+          (await find(byText('Request sent'))) != null,
+          'Request sent again'
+        )
+        const second = await mine()
+        assert(
+          second.length === 1 && second[0] !== first[0],
+          'a new request of the member’s waits for the manager'
+        )
+        assert((await accessOf(viewerToken)).requested, 'the server has it too')
+        say('$ wait 12 s, two polls')
+        await sleep(12000)
+        assert(
+          (await reads('Request sent')) && !(await reads('Request access')),
+          'it still reads Request sent after two polls'
+        )
+        await shot('request-again-after.png')
+        await verify(
+          `E16 passed: ${first[0]} declined, ${second[0]} waits, Request sent holds`
+        )
+      } finally {
+        // E1, and the next run, start from a member with nothing waiting. A
+        // failure here is said, not thrown over the step's own.
+        await sweep().catch((caught: unknown) => {
+          say(`cleanup failed: ${String(caught)}`)
+        })
+      }
+    }
+
     if (wanted.includes('E1')) {
       const before = await accessOf(viewerToken)
       assert(
@@ -752,6 +876,12 @@ async function setup(): Promise<void> {
       )
       assert(await gone(byId('record-video'), 1000), 'no Record Video')
       assert(await gone(byId('gameVideoNotice'), 1000), 'no notice beside it')
+      // After E16 the same screen can still read Request sent until its next
+      // read of what the member may do.
+      assert(
+        (await find(byText('Request access'), 15000)) != null,
+        'Request access shows'
+      )
       await shot('videos-nofilm-after.png')
       await tap('request-access')
       assert((await find(byText('Request sent'))) != null, 'Request sent shows')

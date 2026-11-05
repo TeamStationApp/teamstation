@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 
 import { build } from 'esbuild'
 
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const require = createRequire(import.meta.url)
@@ -76,6 +77,7 @@ for (const [index, suite] of appSuites.entries()) {
   const bundle = resolve(`lib/live-origin-tests/${index}.cjs`)
   await build({
     ...webSettings,
+    plugins: [...webSettings.plugins, pagedListStandInPlugin()],
     alias: {
       ...webSettings.alias,
       'react-native-webview': './src/test/eventWebViewStub.tsx',

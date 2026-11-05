@@ -42,6 +42,10 @@ import {
   revealAttentionEarlier,
   revealAttentionTarget
 } from './chatAttentionModel'
+import {
+  ChatBlockConfirmation,
+  type ChatSafetyAction
+} from './ChatBlockConfirmation'
 import { copyChatText } from './chatClipboard'
 import { attachmentProblem, sendAllowed } from './chatComposeModel'
 import { ChatConversationIdentity } from './ChatConversationIdentity'
@@ -320,9 +324,16 @@ export function ConversationScreen(
     }
   }, [conversationId, props.active])
   const [error, setError] = useState<string | undefined>(() =>
-    draftOwner.failed(conversationId) ? lstrings.chat_send_failed : undefined
+    draftOwner.failure(conversationId)
   )
   const [reported, setReported] = useState(false)
+  const [safetyAction, setSafetyAction] = useState<{
+    message: MessageView
+    action: ChatSafetyAction
+  }>()
+  useEffect(() => {
+    setSafetyAction(undefined)
+  }, [conversationId, engine])
   const [menu, setMenu] = useState<MessageView | undefined>(undefined)
   const [menuAnchor, setMenuAnchor] = useState<unknown>(undefined)
   const [menuSource, setMenuSource] = useState<MessageSource>()
@@ -514,11 +525,7 @@ export function ConversationScreen(
           setPicked(next.picked)
           sendingNow.current = draftOwner.isSending(conversationId)
           setSending(sendingNow.current)
-          setError(
-            draftOwner.failed(conversationId)
-              ? lstrings.chat_send_failed
-              : undefined
-          )
+          setError(draftOwner.failure(conversationId))
         }
       ),
     [draftOwner, conversationId, currentDraft]
@@ -2152,8 +2159,8 @@ export function ConversationScreen(
       }
       return await engine.sendText(conversationId, body, quote)
     }
-    const finish = (success: boolean): void => {
-      const next = draftOwner.finish(conversationId, submission, success)
+    const finish = (success: boolean, error?: unknown): void => {
+      const next = draftOwner.finish(conversationId, submission, success, error)
       // Standalone consumers retain their external draft callback; workspaces
       // reconcile directly in their persistent owner, never the old screen.
       if (props.draftOwner == null && next != null) props.onDraftChange?.(next)
@@ -2162,8 +2169,8 @@ export function ConversationScreen(
       () => {
         finish(true)
       },
-      () => {
-        finish(false)
+      (error: unknown) => {
+        finish(false, error)
       }
     )
   }
@@ -3188,6 +3195,9 @@ export function ConversationScreen(
       {currentMenu != null && (
         <MessageMenu
           message={currentMenu}
+          onSafetyAction={action => {
+            setSafetyAction({ message: currentMenu, action })
+          }}
           actions={actionsFor(currentMenu, view)}
           desktop={isFinePointer() && menuAnchor != null}
           anchor={menuAnchor}
@@ -3266,6 +3276,32 @@ export function ConversationScreen(
             run(async () => {
               await engine.moderatorDelete(conversationId, selected.id)
             })
+          }}
+        />
+      )}
+      {safetyAction != null && (
+        <ChatBlockConfirmation
+          key={`${conversationId}:${safetyAction.message.id}:${safetyAction.action}`}
+          name={safetyAction.message.senderName ?? lstrings.chat_former_member}
+          action={safetyAction.action}
+          onClose={() => {
+            setSafetyAction(undefined)
+          }}
+          onConfirm={async () => {
+            if (safetyAction.action === 'block') {
+              if (engine.setBlocked == null)
+                throw new Error('Blocking unavailable')
+              await engine.setBlocked(safetyAction.message.senderUserId, true)
+            } else {
+              await engine.report(
+                conversationId,
+                safetyAction.message.id,
+                safetyAction.action === 'reportAndBlock'
+              )
+            }
+          }}
+          onSuccess={() => {
+            if (safetyAction.action !== 'block') setReported(true)
           }}
         />
       )}

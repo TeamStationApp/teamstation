@@ -285,6 +285,8 @@ export function transcriptOf(
         )
       } else if (block.type === 'confirmation')
         lines.push(`Note: ${block.text}`)
+      else if (block.type === 'stopped')
+        lines.push('Note: The person stopped Tess before she finished.')
       else if (block.type === 'tool_use')
         lines.push(
           `Tess used ${block.name} ${clip(JSON.stringify(block.input))}`

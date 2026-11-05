@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import ts from 'typescript'
 
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const base = process.env.TS_COVERAGE_BASE
@@ -94,6 +95,7 @@ if (!reportOnly) {
     ...webSettings,
     plugins: [
       ...webSettings.plugins,
+      pagedListStandInPlugin(),
       {
         name: 'native-initials-measurement-unit',
         setup(build) {

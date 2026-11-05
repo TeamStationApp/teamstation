@@ -16,6 +16,7 @@ import type {
 import { asSeasonGame, asTeamSummary, asUserMatch } from '../../common/api'
 import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { playedFromStart } from '../../test/liveJoin'
 import { App } from '../App'
 import { SceneShownProvider } from '../components/sceneShown'
@@ -447,6 +448,8 @@ function startedAt(iso: string): string {
 }
 
 describe('the home screen', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   afterEach(async function () {
     await act(async () => {
       root?.unmount()
@@ -1003,6 +1006,8 @@ function largeCard(title: keyof typeof CARD_WORDS): HTMLElement {
 }
 
 describe('the home screen’s players', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   afterEach(async function () {
     await act(async () => {
       root?.unmount()
@@ -1163,6 +1168,8 @@ describe('the home screen’s players', function () {
 })
 
 describe('the home screen’s create cards', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   afterEach(async function () {
     await act(async () => {
       root?.unmount()
@@ -1251,6 +1258,8 @@ describe('the home screen’s create cards', function () {
 })
 
 describe('a player opened from Home, through the app', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   const originalFetch = globalThis.fetch
   afterEach(async function () {
     await act(async () => {
@@ -1320,6 +1329,8 @@ describe('a player opened from Home, through the app', function () {
 })
 
 describe('home list window', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   afterEach(async function () {
     await act(async () => {
       root?.unmount()
@@ -1390,6 +1401,8 @@ describe('home list window', function () {
 })
 
 describe('followed team identity on Home', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   afterEach(async () => {
     await act(async () => {
       root?.unmount()

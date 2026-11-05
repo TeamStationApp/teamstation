@@ -8,10 +8,14 @@ import { asAddedPerson, asSessionUser, TeamStationClient } from '../common/api'
 import { asNotification } from '../common/notifications'
 import { asGroupDetail, asPublicGroup } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fill, press, settle } from '../test/gameFormDom'
+import { pageOfGames } from '../test/pageOf'
 import { App } from './App'
 
 describe('direct action app completion navigation', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   for (const flow of [
     'relationship',
     'promotion',
@@ -37,7 +41,7 @@ describe('direct action app completion navigation', () => {
         proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
         proto.roster = async () => []
         proto.seasonTeams = async () => []
-        proto.seasonGames = async () => []
+        proto.seasonGamesPage = async (_id, query) => pageOfGames([], query)
         proto.gameProposals = async () => []
         proto.follows = async () => []
         proto.ownGroups = async () => [

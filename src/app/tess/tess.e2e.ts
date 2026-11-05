@@ -20,8 +20,8 @@ import { recordBrowserCoverage } from '../browserCoverage.e2e'
 /**
  * Tess on a wide browser window (Chromium, 1280 × 900), driven through
  * maestro-d with puppeteer beside it for what a test reads back: the split,
- * links into the pane, rich HTML that loads nothing remote, the 3-second
- * hold, attachments, the microphone, the narrow layout and Back, the
+ * links into the pane, rich HTML that loads nothing remote, a reply's
+ * changes as one table and the 2-second hold, attachments, the microphone, the narrow layout and Back, the
  * screens that hide her, the divider that resizes her column, the title and
  * the composer's field, the players she names, and a reply streaming in with
  * her thinking and her steps. The model is `fakeAnthropic`, streaming a
@@ -515,7 +515,7 @@ async function main(): Promise<void> {
     await openTess()
     await waitFor(page, column)
 
-    // W8–W10: the change card and the 3-second hold.
+    // W8–W10: a reply's changes as one table, and the 2-second hold.
     const gamesOfTeam = async (): Promise<number> => {
       const answer = await f.h.request('GET', `/teams/${f.teamA}/games`)
       expect(answer.status).equals(200)
@@ -526,21 +526,67 @@ async function main(): Promise<void> {
     }
     const gamesBefore = await gamesOfTeam()
     await say(
-      'Add a game against Demo Eagles Saturday at 10',
-      'Hold Confirm on the card to add the game.'
+      'Schedule three games against Demo Eagles on Saturdays at 10',
+      'Hold Confirm under the table to schedule all three games.'
     )
-    await waitFor(page, '[data-testid="Tess change"]')
-    const card = await page.$eval(
-      '[data-testid="Tess change"]',
-      node => node.textContent || ''
+    const batch = '[data-testid="Tess changes"]'
+    await waitFor(page, batch)
+    const tables = await page.$$eval(
+      `${batch} [data-testid="Tess change table"]`,
+      nodes =>
+        nodes.map(node => ({
+          head: node.firstElementChild
+            ? node.firstElementChild.textContent
+            : '',
+          rows: Array.from(
+            node.querySelectorAll('[data-testid="Tess change"]')
+          ).map(row => row.textContent || '')
+        }))
     )
-    expect(card).includes('Add a home game against Demo Eagles')
-    expect(card).includes(`POST /teams/${f.teamA}/games`)
-    expect(card).includes('"opponent"')
+    expect(tables).deep.equals([
+      {
+        head: 'OpponentDateTimeField',
+        rows: [
+          'Demo EaglesSat May 2210:00 AMDemo Field',
+          'Demo EaglesSat May 2910:00 AMDemo Field',
+          'Demo EaglesSat Jun 510:00 AMDemo Field'
+        ]
+      }
+    ])
+    // No request, and no JSON, until it is asked for.
+    const batchText = async (): Promise<string> =>
+      await page.$eval(batch, node => node.textContent || '')
+    expect(await batchText()).not.includes(`/teams/${f.teamA}/games`)
+    expect(await batchText()).not.includes('"opponent"')
     const hold = '[role="button"][aria-label="Hold to confirm"]'
     await waitFor(page, hold)
-    await shot('wide-change-card.png')
-    console.log('W8 change card passed')
+    expect(await page.$$eval(`${batch} ${hold}`, nodes => nodes.length)).equals(
+      1
+    )
+    await page.$eval(batch, node => {
+      node.scrollIntoView({ block: 'center' })
+    })
+    await pause(1000)
+    await shot('web-change-after.png')
+    const disclosure = `${batch} [role="button"][aria-expanded]`
+    await page.click(disclosure)
+    await page.waitForFunction(
+      selector => document.querySelectorAll(selector).length === 3,
+      { timeout: 5000 },
+      '[data-testid="Tess change body"]'
+    )
+    const requests = await page.$$eval(
+      '[data-testid="Tess change request"]',
+      nodes => nodes.map(node => node.textContent || '')
+    )
+    expect(requests).deep.equals(
+      Array.from({ length: 3 }, () => `POST /teams/${f.teamA}/games`)
+    )
+    expect(await batchText()).includes('"opponent"')
+    await shot('wide-change-requests.png')
+    await page.click(disclosure)
+    await gone(page, '[data-testid="Tess change body"]')
+    console.log('W8 one table of three games; the requests folded until asked')
 
     const video = await startVideo(s, out, 'wide-confirm-trace.mp4')
     const holdBox = (await rectOf(page, hold))!
@@ -565,31 +611,88 @@ async function main(): Promise<void> {
     expect(midway).lessThan(fullOffset)
     expect(await traceOffset()).equals(fullOffset)
     expect(await gamesOfTeam()).equals(gamesBefore)
-    console.log('W9 early release reset the trace; nothing ran')
+    console.log('W9 released at 1 s: the trace reset; nothing ran')
     await pause(600)
     await page.mouse.down()
-    await pause(1500)
+    await pause(1000)
     // The browser's own shot: maestro-d's waits for animation to end, and the
-    // trace is an animation that ends by running the change.
+    // trace is an animation that ends by running the changes.
     await page.screenshot({ path: join(out, 'wide-confirm-holding.png') })
     console.log('Saved wide-confirm-holding.png')
-    await pause(1900)
+    await pause(1400)
     await page.mouse.up()
-    await contains(page, 'Done: the game against Demo Eagles')
+    await contains(page, 'Done: the three games against Demo Eagles')
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="Tess thinking"]') == null,
+      { timeout: 20000 }
+    )
     await page.waitForFunction(
       () => {
-        const status = document.querySelector(
-          '[data-testid="Tess change status"]'
-        )
-        return status != null && status.textContent === 'Done'
+        const statuses = Array.from(
+          document.querySelectorAll('[data-testid="Tess change status"]')
+        ).map(node => node.textContent)
+        return statuses.length === 3 && statuses.every(text => text === 'Done')
       },
       { timeout: 20000 }
     )
-    expect(await gamesOfTeam()).equals(gamesBefore + 1)
+    expect(await gamesOfTeam()).equals(gamesBefore + 3)
+    // Tess was told of all three in one message, and reported once.
+    const reports = t.model.calls.filter(call =>
+      (call.request?.said ?? '').startsWith(
+        'The user confirmed the change "Add a home game against Demo Eagles on Saturday 22 May'
+      )
+    )
+    expect(reports).length(1)
+    const told = (reports[0].request?.messages.at(-1)?.content ?? []) as Array<
+      Record<string, unknown>
+    >
+    expect(
+      told.filter(
+        block =>
+          typeof block.text === 'string' &&
+          block.text.startsWith('The user confirmed the change')
+      )
+    ).length(3)
+    expect(
+      await page.$$eval(
+        '[data-testid="Tess reply"]',
+        nodes =>
+          nodes.filter(node =>
+            (node.textContent || '').includes('Done: the three games')
+          ).length
+      )
+    ).equals(1)
     await pause(800)
     await shot('wide-confirm-done.png')
     await video.stop()
-    console.log('W10 held 3 s: Done, and the game exists')
+
+    // Expanded over the pane, the chat beside it.
+    await tap('[role="button"][aria-label="Expand the changes over the page"]')
+    await waitFor(
+      page,
+      '[data-testid="Tess overlay"] [data-testid="Tess rich viewer"]'
+    )
+    expect(await rectOf(page, '[data-testid="Tess overlay"]')).deep.equals(
+      await paneRect(page)
+    )
+    expect(await rectOf(page, column)).deep.include({ x: 0, width: 400 })
+    const expandedPage = await page.$eval(
+      '[data-testid="Tess overlay"] iframe',
+      node => node.getAttribute('srcdoc') || ''
+    )
+    expect(expandedPage).includes(
+      '<th>Opponent</th><th>Date</th><th>Time</th><th>Field</th><th>Status</th>'
+    )
+    expect(expandedPage).includes('<td>Sat Jun 5</td>')
+    await pause(1000)
+    await shot('web-change-expanded.png')
+    await tap(
+      '[data-testid="Tess overlay"] [role="button"][aria-label="Close"]'
+    )
+    await gone(page, '[data-testid="Tess rich viewer"]')
+    console.log(
+      'W10 held 2 s: all three Done, the games exist, one report; expanded over the pane'
+    )
 
     // W11: drop a CSV, choose a PNG, send both.
     await tap('[role="button"][aria-label="Attach a file"]')
@@ -649,58 +752,177 @@ async function main(): Promise<void> {
     expect(String(blocks[3].text)).match(/^\(Sent .*Beside this chat/)
     console.log('W11 both attachments reached the model')
 
-    // W12: the microphone, twice.
-    const mic = '[role="button"][aria-label="Dictation"]'
+    // W12: the microphone, right of Send, closed until pressed. With "Hello
+    // world" typed and the caret after "Hello", a tap records: the field
+    // gains a line, the waveform runs in its right fifth, and the next tap
+    // ends it; the words go in after "Hello", spaced, and nothing is sent.
+    // Then a press held a second records while it is held, and no longer.
+    await open('/')
+    await openTess()
+    const mic = '[role="button"][aria-label="Dictate"]'
+    const sendButton12 = '[role="button"][aria-label="Send"]'
+    const wave = '[data-testid="Tess waveform"]'
     await waitFor(page, mic)
-    await page.waitForFunction(
-      () => {
-        const status = document.querySelector('[aria-label="Dictation status"]')
-        return status != null && status.textContent === 'Push to talk'
-      },
-      { timeout: 20000 }
-    )
-    const voice = await startVideo(s, out, 'wide-voice.mp4')
-    for (let time = 1; time <= 2; time++) {
-      const heardBefore = await userBubbles(HEARD)
-      const micBox = (await rectOf(page, mic))!
-      await page.mouse.move(
-        micBox.x + micBox.width / 2,
-        micBox.y + micBox.height / 2
-      )
-      await page.mouse.down()
+    const micState = async (): Promise<string | null> =>
+      await page.$eval(mic, node => node.getAttribute('aria-valuetext'))
+    const waitForMic = async (
+      state: string,
+      timeout = 10000
+    ): Promise<void> => {
       await page.waitForFunction(
-        () => {
-          const status = document.querySelector(
-            '[aria-label="Dictation status"]'
-          )
-          return status != null && status.textContent === 'Listening…'
+        (mic, state) => {
+          const node = document.querySelector(mic)
+          return node != null && node.getAttribute('aria-valuetext') === state
         },
-        { timeout: 10000 }
+        { timeout },
+        mic,
+        state
       )
-      await page.evaluate(async () => {
-        await (window as any).__playClip()
-      })
-      await pause(400)
-      await page.mouse.up()
-      await page.waitForFunction(
-        (words, count) =>
-          Array.from(
-            document.querySelectorAll('[data-testid="Tess user message"]')
-          ).filter(node => (node.textContent || '').includes(words)).length >
-          count,
-        { timeout: 30000 },
-        HEARD,
-        heardBefore
-      )
-      await page.waitForFunction(
-        () => document.querySelector('[data-testid="Tess thinking"]') == null,
-        { timeout: 20000 }
-      )
-      await pause(800)
-      console.log(`W12 hold ${time}: the transcript became a message`)
     }
-    await voice.stop()
-    expect(t.dictation.heard.filter(heard => heard === HEARD)).length(2)
+    const fieldValue = async (): Promise<string> =>
+      await page.$eval(field, node => (node as HTMLTextAreaElement).value)
+    // How often the page has opened a microphone, from here on.
+    await page.evaluate(() => {
+      const devices = navigator.mediaDevices
+      const open = devices.getUserMedia.bind(devices)
+      ;(window as any).__micOpens = 0
+      devices.getUserMedia = async constraints => {
+        ;(window as any).__micOpens++
+        return await open(constraints)
+      }
+    })
+    const micOpens = async (): Promise<number> =>
+      await page.evaluate(() => (window as any).__micOpens as number)
+    await pause(1500)
+    expect(await micState()).equals('Off')
+    expect(await micOpens(), 'opening Tess opens no microphone').equals(0)
+    const sendBox = (await rectOf(page, sendButton12))!
+    let micBox = (await rectOf(page, mic))!
+    expect(micBox.x, 'the mic right of Send').greaterThanOrEqual(
+      sendBox.x + sendBox.width
+    )
+    expect(
+      Math.abs(micBox.y + micBox.height / 2 - (sendBox.y + sendBox.height / 2))
+    ).lessThan(2)
+    await shot('web-composer-after.png')
+    const emptyField = (await rectOf(page, field))!
+    await page.click(field)
+    await page.type(field, 'Hello world')
+    // Six steps back from the end: the caret after "Hello".
+    for (let step = 0; step < 6; step++) await page.keyboard.press('ArrowLeft')
+    const typedField = (await rectOf(page, field))!
+    expect(typedField.width, 'the field keeps its width').equals(
+      emptyField.width
+    )
+    micBox = (await rectOf(page, mic))!
+    expect(micBox.x, 'the mic stays with text').greaterThanOrEqual(
+      sendBox.x + sendBox.width
+    )
+    const callsBefore12 = t.model.calls.length
+    const bubblesBefore = await userBubbles(HEARD)
+    const heardBefore = t.dictation.heard.length
+    const micVideo = await startVideo(s, out, 'web-mic.mp4')
+    await pause(600)
+    await m.tapOn({ css: mic, timeout: 15000 })
+    await waitForMic('Recording')
+    await waitFor(page, wave)
+    expect(await micOpens()).equals(1)
+    expect(await fieldValue(), 'a line added for the waveform').equals(
+      'Hello world\n'
+    )
+    const saying = page.evaluate(async () => {
+      await (window as any).__playClip()
+    })
+    await pause(700)
+    const box = (await rectOf(page, field))!
+    const waveBox = (await rectOf(page, wave))!
+    expect(waveBox.x, 'in the right fifth').greaterThanOrEqual(
+      box.x + box.width * 0.8 - 1
+    )
+    expect(waveBox.x + waveBox.width).lessThanOrEqual(box.x + box.width)
+    // The whole fifth, less the field's rounded end.
+    expect(waveBox.width).greaterThan(box.width * 0.2 - 16)
+    // The second of two lines: from the middle of the field down.
+    expect(waveBox.y, 'on the added, last line').greaterThanOrEqual(
+      box.y + box.height / 2 - 1
+    )
+    expect(waveBox.y + waveBox.height).lessThanOrEqual(box.y + box.height)
+    expect(
+      await page.$$eval(
+        `${wave} [data-testid="Tess wave bar"]`,
+        nodes => nodes.length
+      ),
+      'samples drawn'
+    ).greaterThan(2)
+    // Straight from the browser: the waveform never stops moving, so the
+    // page never settles as maestro-d's capture waits for.
+    await page.screenshot({ path: join(out, 'web-waveform.png') })
+    console.log('Saved web-waveform.png')
+    await saying
+    await m.tapOn({ css: mic, timeout: 15000 })
+    const inserted = `Hello ${HEARD} world`
+    await page.waitForFunction(
+      (field, inserted) =>
+        document.querySelector<HTMLTextAreaElement>(field)!.value === inserted,
+      { timeout: 30000 },
+      field,
+      inserted
+    )
+    await waitForMic('Off')
+    expect(await page.$(wave)).equals(null)
+    expect(
+      await page.$eval(field, node => [
+        (node as HTMLTextAreaElement).selectionStart,
+        (node as HTMLTextAreaElement).selectionEnd
+      ]),
+      'the caret after the words'
+    ).deep.equals([6 + HEARD.length, 6 + HEARD.length])
+    await pause(1000)
+    console.log(`W12 tap, tap: "${inserted}" in the field; nothing sent`)
+    // Held a second while speaking: recording from the press to the release.
+    await page.$eval(field, node => {
+      ;(node as HTMLTextAreaElement).select()
+    })
+    await page.keyboard.press('Backspace')
+    micBox = (await rectOf(page, mic))!
+    await page.mouse.move(
+      micBox.x + micBox.width / 2,
+      micBox.y + micBox.height / 2
+    )
+    const down = Date.now()
+    await page.mouse.down()
+    await waitForMic('Recording')
+    const held = page.evaluate(async () => {
+      await (window as any).__playClip()
+    })
+    await pause(Math.max(0, 1000 - (Date.now() - down)))
+    expect(await micState(), 'recording while held').equals('Recording')
+    await page.mouse.up()
+    await pause(150)
+    expect(await micState(), 'not recording once let go').not.equals(
+      'Recording'
+    )
+    await held
+    await page.waitForFunction(
+      (field, heard) =>
+        document.querySelector<HTMLTextAreaElement>(field)!.value === heard,
+      { timeout: 30000 },
+      field,
+      HEARD
+    )
+    await waitForMic('Off')
+    await pause(1000)
+    await micVideo.stop()
+    expect(await micOpens()).equals(2)
+    expect(t.dictation.heard.slice(heardBefore)).deep.equals([HEARD, HEARD])
+    expect(t.model.calls.length, 'nothing sent').equals(callsBefore12)
+    expect(await userBubbles(HEARD)).equals(bubblesBefore)
+    expect(await page.$('[data-testid="Tess thinking"]')).equals(null)
+    console.log('W12 held 1 s: recorded while held; the words in the field')
+    await page.$eval(field, node => {
+      ;(node as HTMLTextAreaElement).select()
+    })
+    await page.keyboard.press('Backspace')
 
     // W13: off topic, declined with no tool.
     await say('Write me a poem about cats', 'I can only help with finding')
@@ -818,8 +1040,9 @@ async function main(): Promise<void> {
     // W15c: Space is Tess's only when held. On the team's Schedule tab, long
     // enough to scroll, Tab reaches the pane's Team pill: a quick Space
     // activates it and scrolls nothing; a quick Space in her field types a
-    // space; and Space held 800 ms with the focus on the page listens from
-    // 500 ms, and what was heard becomes her next message.
+    // space; and Space held 800 ms, in the field and with the focus on the
+    // page, records from 500 ms, and what was heard goes into her field,
+    // with nothing sent.
     await page.evaluate(() => {
       history.back()
     })
@@ -831,13 +1054,7 @@ async function main(): Promise<void> {
     await waitFor(page, '[role="tab"][aria-label="Team"]')
     await tap('[role="tab"][aria-label="Schedule"]')
     await waitFor(page, column)
-    await page.waitForFunction(
-      () => {
-        const status = document.querySelector('[aria-label="Dictation status"]')
-        return status != null && status.textContent === 'Push to talk'
-      },
-      { timeout: 20000 }
-    )
+    await waitForMic('Off', 20000)
     await page.evaluate(() => {
       const seen = { prevented: [] as boolean[] }
       ;(window as any).__space = seen
@@ -932,55 +1149,58 @@ async function main(): Promise<void> {
       field
     )
     console.log('W15c a quick Space in the field typed a space')
-    // Held 800 ms with nothing focused, while the microphone hears a sentence.
+    // Held 800 ms, while the microphone hears a sentence once it records:
+    // not recording at 300 ms, recording from 500, and the words go into
+    // the field at its cursor.
+    const holdSpace = async (): Promise<number> => {
+      const down = Date.now()
+      await page.keyboard.down('Space')
+      await pause(300)
+      expect(await micState(), 'not recording at 300 ms').equals('Off')
+      await waitFor(page, wave, 2000)
+      const recording = Date.now() - down
+      expect(recording, 'recording from 500 ms').greaterThanOrEqual(500)
+      const saying = page.evaluate(async () => {
+        await (window as any).__playClip()
+      })
+      await pause(Math.max(0, 800 - (Date.now() - down)))
+      await page.keyboard.up('Space')
+      await saying
+      await waitForMic('Off', 30000)
+      return recording
+    }
+    const callsBefore15c = t.model.calls.length
+    const bubblesBefore15c = await userBubbles(HEARD)
+    // In the field, after a word: the Space is not typed.
+    await page.click(field)
+    await page.type(field, 'Hi')
+    const inField = await holdSpace()
+    expect(await fieldValue()).equals(`Hi ${HEARD}`)
+    console.log(
+      `W15c Space held 800 ms in the field: recording after ${inField} ms; "Hi ${HEARD}" in the field`
+    )
+    await page.$eval(field, node => {
+      ;(node as HTMLTextAreaElement).select()
+    })
+    await page.keyboard.press('Backspace')
+    // On the page, nothing focused.
     await page.evaluate(() => {
       const active = document.activeElement
       if (active instanceof HTMLElement) active.blur()
     })
-    const heardBefore = await userBubbles(HEARD)
-    const down = Date.now()
-    await page.keyboard.down('Space')
-    const saying = page.evaluate(async () => {
-      await (window as any).__playClip()
-    })
-    await pause(300)
-    expect(
-      await page.$eval(
-        '[aria-label="Dictation status"]',
-        node => node.textContent
-      ),
-      'not listening at 300 ms'
-    ).equals('Push to talk')
-    await page.waitForFunction(
-      () => {
-        const status = document.querySelector('[aria-label="Dictation status"]')
-        return status != null && status.textContent === 'Listening…'
-      },
-      { timeout: 2000 }
-    )
-    const listening = Date.now() - down
-    expect(listening, 'listening from 500 ms').greaterThanOrEqual(500)
-    await pause(Math.max(0, 800 - (Date.now() - down)))
-    await page.keyboard.up('Space')
-    await saying
-    await page.waitForFunction(
-      (words, count) =>
-        Array.from(
-          document.querySelectorAll('[data-testid="Tess user message"]')
-        ).filter(node => (node.textContent || '').includes(words)).length >
-        count,
-      { timeout: 30000 },
-      HEARD,
-      heardBefore
-    )
-    await page.waitForFunction(
-      () => document.querySelector('[data-testid="Tess thinking"]') == null,
-      { timeout: 20000 }
-    )
-    expect(t.dictation.begun).equals(begun + 1)
+    const onPage = await holdSpace()
+    expect(await fieldValue()).equals(HEARD)
+    expect(await scrollTop(), 'the hold scrolled nothing').equals(0)
+    expect(t.dictation.begun).equals(begun + 2)
+    expect(t.model.calls.length, 'nothing sent').equals(callsBefore15c)
+    expect(await userBubbles(HEARD)).equals(bubblesBefore15c)
     console.log(
-      `W15c Space held 800 ms: listening after ${listening} ms; the transcript became a message`
+      `W15c Space held 800 ms on the page: recording after ${onPage} ms; the words in the field, nothing sent`
     )
+    await page.$eval(field, node => {
+      ;(node as HTMLTextAreaElement).select()
+    })
+    await page.keyboard.press('Backspace')
 
     // W16: the week's usage.
     const usage = await f.h.request('GET', '/me/tess/usage')
@@ -991,6 +1211,8 @@ async function main(): Promise<void> {
           weekStart: string
           inputTokens: number
           outputTokens: number
+          cacheReadTokens: number
+          cacheWriteTokens: number
           requests: number
         }>
       }
@@ -1000,15 +1222,36 @@ async function main(): Promise<void> {
     expect(weeks[0]).deep.include({
       inputTokens: totals.input,
       outputTokens: totals.output,
+      cacheReadTokens: totals.cacheRead,
+      cacheWriteTokens: totals.cacheWrite,
       requests: totals.requests
     })
+    expect(totals.cacheRead).above(0)
+    expect(totals.cacheWrite).above(0)
+    expect(totals.cacheRead).not.equals(totals.cacheWrite)
+    // The log has each call's cache reads and writes beside its input.
+    const logged = t.tessRequests().filter(row => row.P.it != null)
+    expect(logged).length(totals.requests)
+    for (const row of logged) {
+      expect(row.P.cr).equals(900)
+      expect(row.P.cw).equals(300)
+    }
+    const hitRate = totals.cacheRead / totals.input
     await writeFile(
       join(out, 'usage-week.log'),
       [
         '# W16, after W1–W15c. The fake model answered every Messages call with',
-        `# ${totals.requests} calls; their input and output tokens add up to ${totals.input} and ${totals.output}.`,
+        `# ${totals.requests} calls; their input and output tokens add up to ${totals.input} and ${totals.output},`,
+        `# of the input ${totals.cacheRead} read from the cache and ${totals.cacheWrite} written to it: a hit rate of ${(hitRate * 100).toFixed(1)}%.`,
         '$ curl -s -b ts_session=… <origin>/api/v1/me/tess/usage',
         JSON.stringify({ weeks }, null, 2),
+        '',
+        '# The server log: each Messages call as tess_request, its input (it), output (ot),',
+        '# cache reads (cr) and cache writes (cw). Never the text.',
+        '$ grep tess_request <server log>',
+        ...logged.map(row =>
+          JSON.stringify({ E: 'tess_request', L: row.L, P: row.P })
+        ),
         ''
       ].join('\n')
     )
@@ -1050,6 +1293,246 @@ async function main(): Promise<void> {
     await goInApp(`/games/${t.games.scheduled}/dj`)
     await contains(page, 'Demo Hawks')
     console.log('W18 the DJ address on the web shows the game with Tess')
+
+    // W19: Stop. After W16, so its usage week adds up without the reply
+    // stopped here. While she answers and the field is empty the button is
+    // Stop, and a letter typed makes it Send, which queues; Stop ends her
+    // turn on the server, and the reply ends "Stopped" within 2 s. Her next
+    // request carries the note that she was stopped.
+    await open('/')
+    await openTess()
+    await waitFor(page, column)
+    const stopButton = '[role="button"][aria-label="Stop Tess"]'
+    const sendButton = '[role="button"][aria-label="Send"]'
+    const stoppedMarks = async (): Promise<number> =>
+      await page.$$eval('[data-testid="Tess stopped"]', nodes => nodes.length)
+    const marksBefore = await stoppedMarks()
+    await waitFor(page, field)
+    expect(await page.$(stopButton)).equals(null)
+    await page.click(field)
+    await page.type(field, 'Plan the whole season')
+    await page.keyboard.press('Enter')
+    await waitFor(page, '[data-testid="Tess live text"]')
+    await waitFor(page, stopButton)
+    expect(await page.$(sendButton)).equals(null)
+    await page.type(field, 'x')
+    await waitFor(page, sendButton)
+    expect(await page.$(stopButton)).equals(null)
+    expect(
+      await page.$eval(sendButton, node => node.getAttribute('aria-disabled'))
+    ).not.equals('true')
+    await page.keyboard.press('Backspace')
+    await waitFor(page, stopButton)
+    await shot('web-stop.png')
+    const pressed = Date.now()
+    await m.tapOn({ css: stopButton, timeout: 15000 })
+    await page.waitForFunction(
+      before =>
+        document.querySelectorAll('[data-testid="Tess stopped"]').length >
+        before,
+      { timeout: 2000 },
+      marksBefore
+    )
+    const stoppedMs = Date.now() - pressed
+    expect(stoppedMs).lessThan(2000)
+    await gone(page, '[data-testid="Tess thinking"]')
+    expect(await stoppedMarks()).equals(marksBefore + 1)
+    const lastReply = await page.$$eval(
+      '[data-testid="Tess reply"]',
+      nodes => nodes[nodes.length - 1].textContent || ''
+    )
+    expect(lastReply.endsWith('Stopped')).equals(true)
+    // Send again once a letter is typed and she is done.
+    await page.type(field, 'x')
+    expect(
+      await page.$eval(sendButton, node => node.getAttribute('aria-disabled'))
+    ).not.equals('true')
+    await page.keyboard.press('Backspace')
+    await say('And the playoffs too', 'Both together')
+    const playoffs = t.model.calls.filter(call =>
+      (call.request?.said ?? '').includes('And the playoffs too')
+    )
+    expect(playoffs).length(1)
+    const note = playoffs[0]
+      .request!.messages.filter(message => message.role === 'assistant')
+      .flatMap(message =>
+        Array.isArray(message.content)
+          ? message.content
+          : [{ type: 'text', text: message.content }]
+      )
+      .find(block => String(block.text).startsWith('(Stopped by the person'))
+    expect(note, 'the stopped note').not.equals(undefined)
+    console.log(`W19 Stop ended the reply in ${stoppedMs} ms; the note went on`)
+
+    // W20: the queue. While a slow reply streams, A, B and C are sent and
+    // stack above the composer, staying put while the reply scrolls; B's X
+    // removes it; C tapped goes into the field, and edited and sent goes
+    // back after A; C's arrow stops the reply and sends C, A staying queued.
+    // C's answer proposes a game: A waits for the hold, then goes.
+    const queuedTexts = async (): Promise<string[]> =>
+      await page.$$eval('[data-testid="Tess queued text"]', nodes =>
+        nodes.map(node => node.textContent || '')
+      )
+    const queuedButton = (at: number, label: string): string =>
+      `[data-testid="Tess queued"]:nth-child(${at}) [role="button"][aria-label="${label}"]`
+    const queueA = 'Which field do we use in June?'
+    const queueB = 'Who brings the snacks on Saturday?'
+    const queueC = 'Add one more game'
+    const queueCEdited = `${queueC} against Demo Eagles on 12 June`
+    const gamesBeforeQueue = await gamesOfTeam()
+    const marksBeforeQueue = await stoppedMarks()
+    await page.click(field)
+    await page.type(field, 'Write the season newsletter')
+    await page.keyboard.press('Enter')
+    await waitFor(page, '[data-testid="Tess live text"]')
+    for (const words of [queueA, queueB, queueC]) {
+      await page.type(field, words)
+      await page.keyboard.press('Enter')
+    }
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll('[data-testid="Tess queued"]').length === 3,
+      { timeout: 5000 }
+    )
+    expect(await queuedTexts()).deep.equals([queueA, queueB, queueC])
+    expect(
+      await page.$eval(field, node => (node as HTMLTextAreaElement).value)
+    ).equals('')
+    // Pinned: the stack keeps its place over the composer while the reply
+    // grows and the conversation scrolls under it.
+    const queueBox = '[data-testid="Tess queue"]'
+    const liveLength = async (): Promise<number> =>
+      await page.$eval(
+        '[data-testid="Tess live text"]',
+        node => (node.textContent || '').length
+      )
+    // How far the conversation has scrolled: the scroll view the reply is in.
+    const scrolled = (): number => {
+      let at = document.querySelector('[data-testid="Tess live text"]')
+      while (at != null) {
+        if (
+          at.scrollHeight > at.clientHeight &&
+          /auto|scroll/.test(getComputedStyle(at).overflowY)
+        )
+          return at.scrollTop
+        at = at.parentElement
+      }
+      return 0
+    }
+    await page.waitForFunction(scrolled, { timeout: 30000 })
+    const stackBefore = (await rectOf(page, queueBox))!
+    const grownFrom = await liveLength()
+    const scrolledFrom = await page.evaluate(scrolled)
+    await pause(2500)
+    expect(await liveLength()).greaterThan(grownFrom)
+    expect(await page.evaluate(scrolled)).greaterThan(scrolledFrom)
+    expect(await rectOf(page, queueBox)).deep.equals(stackBefore)
+    const composerBox = (await rectOf(page, '[data-testid="Tess composer"]'))!
+    expect(stackBefore.y + stackBefore.height).lessThanOrEqual(
+      composerBox.y + 1
+    )
+    await shot('web-queue.png')
+    await tap(queuedButton(2, 'Remove from queue'))
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll('[data-testid="Tess queued"]').length === 2,
+      { timeout: 5000 }
+    )
+    expect(await queuedTexts()).deep.equals([queueA, queueC])
+    await tap(`[role="button"][aria-label="Edit queued message: ${queueC}"]`)
+    await page.waitForFunction(
+      (selector, words) => {
+        // No optional chaining: sucrase would call a helper the page lacks.
+        const node = document.querySelector<HTMLTextAreaElement>(selector)
+        return node != null && node.value === words
+      },
+      { timeout: 5000 },
+      field,
+      queueC
+    )
+    expect(await queuedTexts()).deep.equals([queueA])
+    await page.click(field)
+    await page.keyboard.press('End')
+    await page.type(field, ' against Demo Eagles on 12 June')
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll('[data-testid="Tess queued"]').length === 2,
+      { timeout: 5000 }
+    )
+    expect(await queuedTexts()).deep.equals([queueA, queueCEdited])
+    // Still answering the newsletter: nothing of the queue has gone.
+    expect(await page.$('[data-testid="Tess live text"]')).not.equals(null)
+    expect(await userBubbles(queueCEdited)).equals(0)
+    await tap(queuedButton(2, 'Send now'))
+    await page.waitForFunction(
+      before =>
+        document.querySelectorAll('[data-testid="Tess stopped"]').length >
+        before,
+      { timeout: 5000 },
+      marksBeforeQueue
+    )
+    await contains(
+      page,
+      'Hold Confirm under the table to add the game on 12 June.'
+    )
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="Tess thinking"]') == null,
+      { timeout: 20000 }
+    )
+    expect(await userBubbles(queueCEdited)).equals(1)
+    expect(await queuedTexts()).deep.equals([queueA])
+    // The change awaits its hold, and A with it.
+    const queueHold = '[role="button"][aria-label="Hold to confirm"]'
+    await waitFor(page, queueHold)
+    await pause(2000)
+    expect(await queuedTexts()).deep.equals([queueA])
+    expect(await userBubbles(queueA)).equals(0)
+    await page.$eval(queueHold, node => {
+      node.scrollIntoView({ block: 'center' })
+    })
+    await pause(500)
+    const queueHoldBox = (await rectOf(page, queueHold))!
+    await page.mouse.move(
+      queueHoldBox.x + queueHoldBox.width / 2,
+      queueHoldBox.y + queueHoldBox.height / 2
+    )
+    await page.mouse.down()
+    await pause(2400)
+    await page.mouse.up()
+    await contains(
+      page,
+      'Done: the game against Demo Eagles on Saturday 12 June at 10:00 is on the schedule.'
+    )
+    await contains(page, 'In June the home games are on Demo Field.')
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="Tess thinking"]') == null,
+      { timeout: 20000 }
+    )
+    await gone(page, queueBox)
+    expect(await userBubbles(queueA)).equals(1)
+    expect(await userBubbles(queueB)).equals(0)
+    expect(await gamesOfTeam()).equals(gamesBeforeQueue + 1)
+    // The model heard C, then the confirmation, then A, and never B.
+    const heard = t.model.calls
+      .map(call => call.request?.said ?? '')
+      .filter(said =>
+        [
+          queueA,
+          queueB,
+          queueC,
+          'The user confirmed the change "Add a home game against Demo Eagles on Saturday 12 June'
+        ].some(words => said.startsWith(words))
+      )
+    const firsts = heard.filter((said, at) => heard.indexOf(said) === at)
+    expect(firsts.map(said => said.slice(0, 20))).deep.equals([
+      queueCEdited.slice(0, 20),
+      'The user confirmed t',
+      queueA.slice(0, 20)
+    ])
+    console.log(
+      'W20 three queued and pinned; B removed; C edited back after A, sent now over the reply; A waited for the hold, then went'
+    )
 
     // L1: a reply that needs two reads, as it streams in: the "Thinking"
     // row and her summary before any of her text, each step with a spinner
@@ -1469,6 +1952,9 @@ async function main(): Promise<void> {
     console.log('W17 no Ask Tess row where the server has none')
     console.log('Tess wide browser scenarios passed')
   } catch (error) {
+    // Said first: a clip still playing rejects once the browser goes, and
+    // that would end the process before the error is thrown on.
+    console.error('Failed:', error)
     // What the page showed when a step failed, kept beside the artifacts.
     if (s != null) {
       await s.page

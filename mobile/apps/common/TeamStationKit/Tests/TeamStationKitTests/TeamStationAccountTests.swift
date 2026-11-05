@@ -11,6 +11,15 @@ import Testing
 /// current stream, or a fresh one when that was ended.
 private final class StreamServer: URLProtocol, @unchecked Sendable {
   nonisolated(unsafe) static var refuse = false
+  /// A camera limit's sentence: a request that would make a stream is refused with it.
+  nonisolated(unsafe) static var full: String?
+  /// Every request fails before it reaches the server.
+  nonisolated(unsafe) static var offline = false
+  /// Holds every answer until signalled, so a test can act while a request is out.
+  nonisolated(unsafe) static var gate: DispatchSemaphore?
+  /// The live stream was renamed where this device never heard: a request that does not name it
+  /// does not find it.
+  nonisolated(unsafe) static var renamed = false
   nonisolated(unsafe) static var asked: [String] = []
   nonisolated(unsafe) static var bodies: [[String: String]] = []
   nonisolated(unsafe) static var current: [String: String] = [:]
@@ -19,6 +28,10 @@ private final class StreamServer: URLProtocol, @unchecked Sendable {
 
   static func reset() {
     refuse = false
+    full = nil
+    offline = false
+    gate = nil
+    renamed = false
     asked = []
     bodies = []
     current = [:]
@@ -33,6 +46,11 @@ private final class StreamServer: URLProtocol, @unchecked Sendable {
     let path = request.url!.path()
     let method = request.httpMethod ?? "GET"
     Self.asked.append("\(method) \(path)")
+    Self.gate?.wait()
+    if Self.offline {
+      client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+      return
+    }
     let bytes = Self.requestBody(request)
     let fields = (try? JSONSerialization.jsonObject(with: bytes) as? [String: Any]) ?? [:]
     if !fields.isEmpty { Self.bodies.append(fields.mapValues { "\($0)" }) }
@@ -67,8 +85,10 @@ private final class StreamServer: URLProtocol, @unchecked Sendable {
           return (410, #"{"code":"gone","message":"This camera was ended. Start streaming again to go live"}"#)
         }
         id = held
-      } else if let live = Self.current[gameId], !Self.ended.contains(live) {
+      } else if let live = Self.current[gameId], !Self.ended.contains(live), !Self.renamed {
         id = live
+      } else if let full = Self.full {
+        return (400, #"{"code":"badRequest","message":"\#(full)","details":{"reason":"cameraLimit"}}"#)
       } else {
         Self.made += 1
         id = "lst_\(Self.made)"
@@ -193,7 +213,7 @@ struct ChooseTests {
   @Test func claimPostsTheLabelWithTheInstallIdAndModel() async throws {
     let account = makeAccount()
     #expect(await account.choose(event: event("g1"), cameraName: "Center Field"))
-    #expect(await account.claimChosen(cameraName: ""))
+    #expect(try await account.claimChosen(cameraName: ""))
     try await account.refreshChosen(cameraName: "Left Field", reason: .start)
     let device = [ "deviceId": installId, "deviceModel": "iPad Pro" ]
     #expect(StreamServer.bodies == [
@@ -226,22 +246,22 @@ struct ChooseTests {
     #expect(account.lastError == "This game is not yours to stream")
   }
 
-  @Test func claimsTheChosenGameOnDemand() async {
+  @Test func claimsTheChosenGameOnDemand() async throws {
     let keychain = KeychainStore.inMemory()
     let account = makeAccount(keychain: keychain)
-    #expect(await account.claimChosen() == false)
+    #expect(try await account.claimChosen() == false)
     #expect(account.lastError == "Pick a TeamStation event first.")
     #expect(StreamServer.asked.isEmpty)
 
     await account.choose(event: event("g1"), claim: false)
-    #expect(await account.claimChosen())
+    #expect(try await account.claimChosen())
     #expect(account.lastError == nil)
     #expect(account.chosen?.streamURL == "rtmp://ingest/live/g1-lst_1")
     #expect(keychain.chosenEvent()?.streamURL == "rtmp://ingest/live/g1-lst_1")
     #expect(keychain.chosenEvent()?.streamId == "lst_1")
 
     StreamServer.refuse = true
-    #expect(await account.claimChosen() == false)
+    #expect(try await account.claimChosen() == false)
     #expect(account.lastError == "This game is not yours to stream")
     #expect(account.chosen?.streamURL == "rtmp://ingest/live/g1-lst_1")
   }
@@ -287,6 +307,152 @@ struct ChooseTests {
     }
     #expect(StreamServer.made == 1)
     #expect(account.chosen?.streamId == "lst_1")
+  }
+
+  @Test(arguments: [
+    "This game already has 6 cameras. End one to add another.",
+    "You already have 4 cameras on this game. End one to add another."
+  ])
+  func aStartOnAFullGameThrowsTheServersSentence(sentence: String) async throws {
+    let account = makeAccount()
+    #expect(await account.choose(event: event("g1")))
+    StreamServer.ended = [ "lst_1" ]
+    StreamServer.full = sentence
+    await #expect(throws: TeamStationError.cameraLimit(sentence)) {
+      try await account.refreshChosen(cameraName: "Center Field", reason: .start)
+    }
+    #expect(account.lastError == sentence)
+    // The stream held was asked for once more by its id, and is ended.
+    #expect(StreamServer.bodies.last?["heldStreamId"] == "lst_1")
+    // The address held stays, so the next Stream asks again.
+    #expect(account.chosen?.streamId == "lst_1")
+    #expect(account.chosen?.streamURL == "rtmp://ingest/live/g1-lst_1")
+    #expect(StreamServer.made == 1)
+  }
+
+  @Test func aClaimOfAFullGameThrowsTheServersSentence() async throws {
+    let sentence = "This game already has 6 cameras. End one to add another."
+    let account = makeAccount()
+    await account.choose(event: event("g1"), claim: false)
+    StreamServer.full = sentence
+    await #expect(throws: TeamStationError.cameraLimit(sentence)) {
+      try await account.claimChosen(cameraName: "Center Field")
+    }
+    #expect(account.lastError == sentence)
+    #expect(account.chosen?.gameId == "g1")
+    #expect(account.chosen?.streamURL == nil)
+  }
+
+  @Test func aStartOnAFullGameDialsTheStreamHeldWhenItIsStillLive() async throws {
+    let account = makeAccount()
+    #expect(await account.choose(event: event("g1")))
+    StreamServer.renamed = true
+    StreamServer.full = "This game already has 6 cameras. End one to add another."
+    try await account.refreshChosen(cameraName: "Center Field", reason: .start)
+    #expect(StreamServer.bodies.last?["heldStreamId"] == "lst_1")
+    #expect(account.lastError == nil)
+    #expect(account.chosen?.streamId == "lst_1")
+    #expect(account.chosen?.streamURL == "rtmp://ingest/live/g1-lst_1")
+    #expect(StreamServer.made == 1)
+  }
+
+  @Test func aStreamHeldThatComesBackForAGameNoLongerChosenIsNotKept() async throws {
+    let account = makeAccount()
+    #expect(await account.choose(event: event("g1")))
+    StreamServer.renamed = true
+    StreamServer.full = "This game already has 6 cameras. End one to add another."
+    let gate = DispatchSemaphore(value: 0)
+    StreamServer.gate = gate
+    let refresh = Task { try await account.refreshChosen(cameraName: "Center Field", reason: .start) }
+    while StreamServer.asked.count < 2 { try await Task.sleep(for: .milliseconds(5)) }
+    gate.signal()
+    // The limit came back; the stream held is asked for by its id.
+    while StreamServer.asked.count < 3 { try await Task.sleep(for: .milliseconds(5)) }
+    await account.choose(event: event("g2"), claim: false)
+    gate.signal()
+    try await refresh.value
+    #expect(StreamServer.bodies.last?["heldStreamId"] == "lst_1")
+    #expect(account.chosen?.gameId == "g2")
+    #expect(account.chosen?.streamURL == nil)
+    #expect(account.lastError == nil)
+  }
+
+  @Test func aStartOnAFullGameWhoseHeldStreamCannotBeAskedForDialsTheAddressKept() async throws {
+    let account = makeAccount()
+    #expect(await account.choose(event: event("g1")))
+    StreamServer.renamed = true
+    StreamServer.full = "This game already has 6 cameras. End one to add another."
+    let gate = DispatchSemaphore(value: 0)
+    StreamServer.gate = gate
+    let refresh = Task { try await account.refreshChosen(cameraName: "Center Field", reason: .start) }
+    while StreamServer.asked.count < 2 { try await Task.sleep(for: .milliseconds(5)) }
+    gate.signal()
+    // The limit came back; the network is gone before the stream held is asked for.
+    while StreamServer.asked.count < 3 { try await Task.sleep(for: .milliseconds(5)) }
+    StreamServer.offline = true
+    gate.signal()
+    try await refresh.value
+    #expect(account.lastError == nil)
+    #expect(account.chosen?.streamId == "lst_1")
+    #expect(account.chosen?.streamURL == "rtmp://ingest/live/g1-lst_1")
+  }
+
+  @Test func aFullGameRefusalForAGameNoLongerChosenIsDropped() async throws {
+    let account = makeAccount()
+    #expect(await account.choose(event: event("g1")))
+    StreamServer.ended = [ "lst_1" ]
+    StreamServer.full = "This game already has 6 cameras. End one to add another."
+    let gate = DispatchSemaphore(value: 0)
+    StreamServer.gate = gate
+    let refresh = Task { try await account.refreshChosen(cameraName: "Center Field", reason: .start) }
+    while StreamServer.asked.count < 2 { try await Task.sleep(for: .milliseconds(5)) }
+    await account.choose(event: event("g2"), claim: false)
+    gate.signal()
+    try await refresh.value
+    #expect(account.chosen?.gameId == "g2")
+    #expect(account.lastError == nil)
+  }
+
+  @Test func aClaimRefusedAfterAnotherGameWasPickedIsDropped() async throws {
+    let account = makeAccount()
+    await account.choose(event: event("g1"), claim: false)
+    StreamServer.full = "This game already has 6 cameras. End one to add another."
+    let gate = DispatchSemaphore(value: 0)
+    StreamServer.gate = gate
+    let claim = Task { try await account.claimChosen(cameraName: "Center Field") }
+    while StreamServer.asked.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+    await account.choose(event: event("g2"), claim: false)
+    gate.signal()
+    #expect(try await claim.value == false)
+    #expect(account.chosen?.gameId == "g2")
+    #expect(account.lastError == nil)
+  }
+
+  @Test func aStartWhileOfflineKeepsTheCachedAddressQuietly() async throws {
+    let account = makeAccount()
+    #expect(await account.choose(event: event("g1")))
+    StreamServer.offline = true
+    try await account.refreshChosen(cameraName: "Center Field", reason: .start)
+    #expect(StreamServer.asked.last == "POST /api/v1/games/g1/live-streams")
+    #expect(account.lastError == nil)
+    #expect(account.chosen?.streamId == "lst_1")
+    #expect(account.chosen?.streamURL == "rtmp://ingest/live/g1-lst_1")
+  }
+
+  @Test func aRedialWithoutAStreamIdOnAFullGameDialsTheAddressKept() async throws {
+    let keychain = KeychainStore.inMemory()
+    keychain.setChosenEvent(TeamStationAccount.ChosenEvent(
+      gameId: "g1",
+      title: "Visitors at Pioneers",
+      startAt: Date(timeIntervalSince1970: 1_790_000_000),
+      streamURL: "rtmp://ingest/live/old"
+    ))
+    let account = makeAccount(keychain: keychain)
+    StreamServer.full = "This game already has 6 cameras. End one to add another."
+    try await account.refreshChosen(cameraName: "Center Field", reason: .redial)
+    #expect(StreamServer.bodies.last?["heldStreamId"] == nil)
+    #expect(account.lastError == nil)
+    #expect(account.chosen?.streamURL == "rtmp://ingest/live/old")
   }
 
   @Test func aKeptChoiceWithoutAStreamIdIsFilledInByTheNextRefresh() async throws {

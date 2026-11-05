@@ -20,7 +20,9 @@ import {
   MAX_TOKENS,
   type MessagesRequest,
   type MessagesStreamEvent,
-  streamMessage
+  NO_USAGE,
+  streamMessage,
+  TessStopped
 } from './messagesApi'
 
 const SETTINGS: TessSettings = {
@@ -31,8 +33,8 @@ const SETTINGS: TessSettings = {
 
 const REQUEST: MessagesRequest = {
   system: [
-    { text: 'You are Tess.', cached: true },
-    { text: '{"routes":[]}', cached: true },
+    { text: 'You are Tess.', cached: '1h' },
+    { text: '{"routes":[]}', cached: '5m' },
     { text: 'The user is Tony Gwynn.' }
   ],
   messages: [{ role: 'user', content: 'Where is our schedule?' }],
@@ -139,7 +141,7 @@ describe('Tess Messages API client', function () {
         {
           type: 'text',
           text: 'You are Tess.',
-          cache_control: { type: 'ephemeral' }
+          cache_control: { type: 'ephemeral', ttl: '1h' }
         },
         {
           type: 'text',
@@ -514,7 +516,9 @@ describe('Tess Messages API client', function () {
         op: 'assistant',
         status: 200,
         it: 9520,
-        ot: 75
+        ot: 75,
+        cr: 400,
+        cw: 9000
       })
       expect(ok.P.ms).a('number')
       expect(ok.P).not.has.property('ec')
@@ -526,9 +530,15 @@ describe('Tess Messages API client', function () {
         ['error', 200, 'invalid'],
         ['error', undefined, 'offline']
       ])
-      expect(failed.every(row => row.P.it == null && row.P.ot == null)).equals(
-        true
-      )
+      expect(
+        failed.every(
+          row =>
+            row.P.it == null &&
+            row.P.ot == null &&
+            row.P.cr == null &&
+            row.P.cw == null
+        )
+      ).equals(true)
       const text = sent.join('')
       expect(text).not.contains('Where is our schedule?')
       expect(text).not.contains('Let me look.')
@@ -1004,5 +1014,127 @@ describe('Tess Messages API client, streamed', function () {
       })
     )
     expect(down.message).equals("Tess's model could not be reached")
+  })
+
+  it('gives up a call the person stops, as TessStopped with the usage so far, logged as cancelled at info', async function () {
+    this.timeout(15000)
+    const directory = await mkdtemp(join(tmpdir(), 'tess-stop-logs-'))
+    const sent: string[] = []
+    const stopLogging = startServerLogging({
+      directory,
+      role: 'server',
+      dsn: 'https://public@logs.example.test/1',
+      writeToken: 'fixture-write-token'.repeat(3),
+      request: async (_url, init) => {
+        sent.push(init?.body as string)
+        return new Response('', { status: 202 })
+      }
+    })
+    const actor = userIdOfGumbo(4502)
+    // The start of an answer, its usage told, then a wait that only an
+    // abort ends, as a body read does.
+    const begun = streamEvents(THOUGHT).slice(0, 5).map(sseOf).join('')
+    const halfway: typeof fetch = async (_url, init) => {
+      let given = false
+      const body = new ReadableStream<Uint8Array>({
+        pull: async controller => {
+          if (!given) {
+            given = true
+            controller.enqueue(new TextEncoder().encode(begun))
+            return
+          }
+          await new Promise<void>(resolve => {
+            init?.signal?.addEventListener('abort', () => {
+              controller.error(new Error('aborted'))
+              resolve()
+            })
+          })
+        }
+      })
+      return new Response(body, { status: 200 })
+    }
+    const hanging: typeof fetch = async (_url, init) =>
+      await new Promise<Response>((resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new Error('aborted'))
+        })
+      })
+    const stopped = async (promise: Promise<unknown>): Promise<TessStopped> => {
+      try {
+        await promise
+      } catch (error) {
+        expect(error).instanceOf(TessStopped)
+        return error as TessStopped
+      }
+      throw new Error('Expected a stop')
+    }
+    try {
+      const told: MessagesStreamEvent[] = []
+      const stop = new AbortController()
+      const streaming = streamMessage(
+        SETTINGS,
+        REQUEST,
+        event => {
+          told.push(event)
+          stop.abort()
+        },
+        { fetch: halfway, actor, signal: stop.signal }
+      )
+      const mid = await stopped(streaming)
+      expect(told.length).greaterThan(0)
+      // What message_start told: the input and cache counts, and output so far.
+      expect(mid.usage).deep.equals({
+        inputTokens: 120,
+        cacheCreationInputTokens: 9000,
+        cacheReadInputTokens: 400,
+        outputTokens: 1
+      })
+
+      // Stopped before the provider answered: nothing is known to be used.
+      const early = new AbortController()
+      const waiting = streamMessage(SETTINGS, REQUEST, () => undefined, {
+        fetch: hanging,
+        signal: early.signal
+      })
+      early.abort()
+      expect((await stopped(waiting)).usage).deep.equals(NO_USAGE)
+      const plain = new AbortController()
+      const asking = createMessage(SETTINGS, REQUEST, {
+        fetch: hanging,
+        signal: plain.signal
+      })
+      plain.abort()
+      expect((await stopped(asking)).usage).deep.equals(NO_USAGE)
+
+      // The deadline still runs out as before, a stop signal or not.
+      const late = await failure(
+        streamMessage(SETTINGS, REQUEST, () => undefined, {
+          fetch: hanging,
+          deadlineMs: 20,
+          signal: new AbortController().signal
+        })
+      )
+      expect(late.message).equals("Tess's model gave no answer within 0s")
+      await stopLogging()
+      const rows = sent
+        .join('')
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line))
+        .filter(row => row.E === 'tess_request')
+      expect(rows.map(row => [row.L, row.P.ec])).deep.equals([
+        ['info', 'cancelled'],
+        ['info', 'cancelled'],
+        ['info', 'cancelled'],
+        ['error', 'timeout']
+      ])
+      expect(rows[0].U).equals(actor)
+      expect(rows[0].P).deep.include({ it: 9520, ot: 1, cr: 400, cw: 9000 })
+      expect(rows[1].P).deep.include({ it: 0, ot: 0, cr: 0, cw: 0 })
+      expect(sent.join('')).not.contains('Let me look at both.')
+    } finally {
+      await stopLogging()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })

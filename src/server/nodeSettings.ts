@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely'
 
+import { asHttpsUrl } from '../common/distribution'
 import {
   asDate,
   asHeight,
@@ -11,6 +12,7 @@ import {
   defaultRadarSettings,
   defaultReplaySettings,
   defaultScoreboardSettings,
+  type DistributionSettings,
   type NodeSettings,
   type NodeSettingsUpdate,
   type RadarSettings,
@@ -37,10 +39,13 @@ let cache: { at: number; value: ScoreboardSettings } | undefined
 
 let replayCache: { at: number; value: ReplaySettings } | undefined
 
-/** Forgets the cached scoreboard and replay settings. Called after a write. */
+let distributionCache: { at: number; value: DistributionSettings } | undefined
+
+/** Forgets the cached scoreboard, replay and about-screen links. Called after a write. */
 export function forgetScoreboardSettings(): void {
   cache = undefined
   replayCache = undefined
+  distributionCache = undefined
 }
 
 /**
@@ -78,6 +83,47 @@ export async function replaySettings(
  * A read that fails answers the default and says nothing, so health still
  * answers what it would have.
  */
+/**
+ * The about screen's links. Anyone signed in may read them. A missing or
+ * malformed row is an empty string, which hides that button. Cached for 30 s.
+ */
+export async function distributionSettings(
+  db: Kysely<Database>,
+  now: number = Date.now(),
+  fresh = false
+): Promise<DistributionSettings> {
+  if (
+    !fresh &&
+    distributionCache != null &&
+    now - distributionCache.at < CACHE_MS
+  )
+    return distributionCache.value
+  const rows = await db
+    .selectFrom('system_settings')
+    .select(['key', 'value'])
+    .where('key', 'in', [
+      'distribution.betaBuildsUrl',
+      'distribution.appStoreUrl'
+    ])
+    .execute()
+  const byKey = new Map(rows.map(row => [row.key, row.value]))
+  const read = (key: string): string => {
+    const raw = byKey.get(key)
+    if (typeof raw !== 'string' || raw === '') return ''
+    try {
+      return asHttpsUrl(raw)
+    } catch {
+      return ''
+    }
+  }
+  const value: DistributionSettings = {
+    betaBuildsUrl: read('distribution.betaBuildsUrl'),
+    appStoreUrl: read('distribution.appStoreUrl')
+  }
+  distributionCache = { at: now, value }
+  return value
+}
+
 export async function replayPitchSec(db: Kysely<Database>): Promise<number> {
   try {
     return (await replaySettings(db)).pitchSec
@@ -156,7 +202,8 @@ export async function nodeSettings(
     scoreboard: await scoreboardSettings(db, Date.now(), true),
     radar: await radarSettings(db),
     highlights: await highlightSettings(db, true),
-    replay: await replaySettings(db, Date.now(), true)
+    replay: await replaySettings(db, Date.now(), true),
+    distribution: await distributionSettings(db, Date.now(), true)
   }
 }
 
@@ -174,11 +221,23 @@ export async function setNodeSettings(
     actor,
     'Only a node administrator can change the node settings'
   )
-  const { scoreboard, highlights, radar, replay } = settings
+  const { scoreboard, highlights, radar, replay, distribution } = settings
   const rows: Array<[string, unknown]> = [
     ...(replay == null
       ? []
       : [['replay.pitchSec', replay.pitchSec] as [string, unknown]]),
+    ...(distribution == null
+      ? []
+      : [
+          ['distribution.betaBuildsUrl', distribution.betaBuildsUrl] as [
+            string,
+            unknown
+          ],
+          ['distribution.appStoreUrl', distribution.appStoreUrl] as [
+            string,
+            unknown
+          ]
+        ]),
     ['radar.pitchWindowSec', radar.pitchWindowSec],
     ['radar.inPlayWindowSec', radar.inPlayWindowSec],
     ['scoreboard.overlayStartDate', scoreboard.overlayStartDate],

@@ -43,6 +43,7 @@ import {
   clearLiveSettled,
   configureIngest,
   finalSegments,
+  heldBackMessage,
   ingestBound,
   LIVE_PLAYLIST_NAME,
   type LiveEvent,
@@ -51,7 +52,8 @@ import {
   setLive,
   startIngest,
   statusFor,
-  stopIngest
+  stopIngest,
+  unlistedWriterSegments
 } from './splitter'
 import { placeByFrameWall } from './streamKeys'
 import { resumeScan, type ScanCursor, scanNewSegments } from './wallAnchors'
@@ -1181,7 +1183,12 @@ async function closeAfterGrace(
   if (!away()) return
   if (row.videoId == null) return
   closedAfterGrace.set(row.id, leftAt)
-  await closePlaylist(current.mediaRoot, row.videoId, away)
+  await closePlaylist(
+    current.mediaRoot,
+    row.videoId,
+    current.log ?? console.log,
+    away
+  )
 }
 
 /**
@@ -1411,7 +1418,7 @@ async function finishStreamRecording(
     return
   }
 
-  await closePlaylist(mediaRoot, row.videoId)
+  await closePlaylist(mediaRoot, row.videoId, current.log ?? console.log)
   const dir = liveVideoDir(mediaRoot, row.videoId)
   const probedSec = await probeDuration(
     ffprobeFor(ffmpegPath),
@@ -1558,7 +1565,7 @@ async function closeOrigin(
     if (origin == null || space == null)
       throw new Error('No Space configured for live recording')
     origin.publisher.closing = true
-    await closePlaylist(current.mediaRoot, videoId)
+    await closePlaylist(current.mediaRoot, videoId, current.log ?? console.log)
     // Each pass stays bounded. A failed scan advances nothing and ends the drain.
     for (;;) {
       const before = anchorCursors.get(videoId)?.segments ?? -1
@@ -1863,6 +1870,7 @@ async function toTheSpace(
 async function closePlaylist(
   mediaRoot: string,
   videoId: string,
+  log: (message: string) => void,
   /**
    * Whether the publisher is still away. Asked again at the last moment,
    * when it may have come back while the playlist was being read.
@@ -1878,7 +1886,12 @@ async function closePlaylist(
     return
   }
   // The last writer's segments, when one went down with this process.
-  if (stillAway()) absorbWriterPlaylist(dir)
+  if (stillAway() && !absorbWriterPlaylist(dir)) {
+    const unlisted = unlistedWriterSegments(dir)
+    if (unlisted.length > 0) {
+      log(`live: ${videoId}: ${heldBackMessage(unlisted)}`)
+    }
+  }
   if (playlist.includes('#EXT-X-ENDLIST')) return
   // The last look, the read and the write happen together, with nothing
   // awaited between them. A publisher coming back reopens the playlist the

@@ -6,7 +6,8 @@ import type { MessagesUsage } from './messagesApi'
 
 /**
  * Tess's tokens, per person per UTC week, from Monday 00:00 to Sunday 24:00.
- * Input and output are kept apart, since they are priced apart. Nothing is
+ * Input and output are kept apart, since they are priced apart, and so are
+ * the input's cache reads and writes, so the hit rate can be read. Nothing is
  * capped: the weeks are read, not enforced.
  */
 
@@ -16,8 +17,13 @@ const DAY_MS = 86400000
 export interface UsageWeek {
   /** The week's Monday, `YYYY-MM-DD`. */
   weekStart: string
+  /** Everything read: fresh input, cache writes and cache reads. */
   inputTokens: number
   outputTokens: number
+  /** Of the input, read from the cache. */
+  cacheReadTokens: number
+  /** Of the input, written to the cache. */
+  cacheWriteTokens: number
   requests: number
 }
 
@@ -54,6 +60,8 @@ export async function recordUsage(
       usage.cacheReadInputTokens
   )
   const output = Math.round(usage.outputTokens)
+  const read = Math.round(usage.cacheReadInputTokens)
+  const written = Math.round(usage.cacheCreationInputTokens)
   await whileLive(db, userId, async trx => {
     await trx
       .insertInto('tess_usage_weeks')
@@ -62,12 +70,16 @@ export async function recordUsage(
         week_start: weekStartUtc(at),
         input_tokens: input,
         output_tokens: output,
+        cache_read_tokens: read,
+        cache_write_tokens: written,
         requests: 1
       })
       .onConflict(conflict =>
         conflict.columns(['user_id', 'week_start']).doUpdateSet({
           input_tokens: sql`tess_usage_weeks.input_tokens + excluded.input_tokens`,
           output_tokens: sql`tess_usage_weeks.output_tokens + excluded.output_tokens`,
+          cache_read_tokens: sql`tess_usage_weeks.cache_read_tokens + excluded.cache_read_tokens`,
+          cache_write_tokens: sql`tess_usage_weeks.cache_write_tokens + excluded.cache_write_tokens`,
           requests: sql`tess_usage_weeks.requests + 1`
         })
       )
@@ -88,6 +100,8 @@ export async function usageWeeks(
       // Text, so a count reads the same with or without the int8 parser.
       sql<string>`input_tokens::text`.as('inputTokens'),
       sql<string>`output_tokens::text`.as('outputTokens'),
+      sql<string>`cache_read_tokens::text`.as('cacheReadTokens'),
+      sql<string>`cache_write_tokens::text`.as('cacheWriteTokens'),
       'requests'
     ])
     .where('user_id', '=', userId)
@@ -98,6 +112,8 @@ export async function usageWeeks(
     weekStart: row.weekStart,
     inputTokens: Number(row.inputTokens),
     outputTokens: Number(row.outputTokens),
+    cacheReadTokens: Number(row.cacheReadTokens),
+    cacheWriteTokens: Number(row.cacheWriteTokens),
     requests: row.requests
   }))
 }

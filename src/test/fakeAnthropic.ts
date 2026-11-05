@@ -17,8 +17,9 @@ import { sseOf, streamEvents } from './anthropicStream'
  *
  * A request with `stream: true`, as Tess's turns send, is answered as the
  * provider streams, with a short wait before each piece of thinking and
- * text, so an app shows them arriving; summaries and descriptions are not
- * streamed and are answered at once.
+ * text, so an app shows them arriving (an answer may set its own, to be
+ * slow enough to stop); summaries and descriptions are not streamed and are
+ * answered at once. A stream the server gives up is written no further.
  *
  * Every request is kept, without the system prompt and the tool
  * definitions, which are the same each time, and served at
@@ -47,6 +48,11 @@ export interface FakeRequest {
 export interface FakeAnswer {
   content: Block[]
   stopReason?: 'end_turn' | 'tool_use'
+  /**
+   * The wait before each streamed piece of this answer, in place of the
+   * server's: a slow one, for a test to stop while it streams.
+   */
+  delayMs?: number
 }
 
 export interface ScriptEntry {
@@ -64,15 +70,29 @@ export interface FakeCall {
   stopReason?: string
   /** It was asked for as a stream. */
   stream?: boolean
-  usage?: { input_tokens: number; output_tokens: number }
+  usage?: {
+    input_tokens: number
+    output_tokens: number
+    cache_creation_input_tokens: number
+    cache_read_input_tokens: number
+  }
 }
 
 export interface FakeAnthropic {
   /** The `baseUrl` Tess's settings point at, ending in `/v1`. */
   baseUrl: string
   calls: FakeCall[]
-  /** Every `/messages` call's tokens, added up as the usage week stores them. */
-  totals: () => { input: number; output: number; requests: number }
+  /**
+   * Every `/messages` call's tokens, added up as the usage week stores them:
+   * input is fresh input and the cache's writes and reads together.
+   */
+  totals: () => {
+    input: number
+    output: number
+    cacheRead: number
+    cacheWrite: number
+    requests: number
+  }
   setScript: (entries: ScriptEntry[]) => void
   close: () => Promise<void>
 }
@@ -97,6 +117,23 @@ export const tool = (
   content: [
     { type: 'text', text: words },
     { type: 'tool_use', id: `toolu_fake_${(ids += 1)}`, name, input }
+  ],
+  stopReason: 'tool_use'
+})
+
+/** An answer calling several tools at once, as the model may, with a sentence before them. */
+export const tools = (
+  calls: Array<{ name: string; input: Record<string, unknown> }>,
+  words = 'Let me check.'
+): FakeAnswer => ({
+  content: [
+    { type: 'text', text: words },
+    ...calls.map(call => ({
+      type: 'tool_use',
+      id: `toolu_fake_${(ids += 1)}`,
+      name: call.name,
+      input: call.input
+    }))
   ],
   stopReason: 'tool_use'
 })
@@ -175,6 +212,8 @@ export async function fakeAnthropic(
     script?: ScriptEntry[]
     /** The wait before each streamed piece of thinking or text. */
     streamDelayMs?: number
+    /** What each answer says it wrote to and read from the cache; none by default. */
+    cacheTokens?: { write: number; read: number }
   } = {}
 ): Promise<FakeAnthropic> {
   let script = options.script ?? []
@@ -213,7 +252,9 @@ export async function fakeAnthropic(
         const answer = answerFor(script, request)
         const usage = {
           input_tokens: FAKE_INPUT_TOKENS,
-          output_tokens: FAKE_OUTPUT_TOKENS
+          output_tokens: FAKE_OUTPUT_TOKENS,
+          cache_creation_input_tokens: options.cacheTokens?.write ?? 0,
+          cache_read_input_tokens: options.cacheTokens?.read ?? 0
         }
         calls.push({
           path,
@@ -230,11 +271,7 @@ export async function fakeAnthropic(
           model: body.model,
           content: answer.content,
           stop_reason: answer.stopReason ?? 'end_turn',
-          usage: {
-            ...usage,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0
-          }
+          usage
         }
         if (body.stream !== true) {
           send(200, message)
@@ -244,10 +281,16 @@ export async function fakeAnthropic(
           'content-type': 'text/event-stream',
           'cache-control': 'no-cache'
         })
+        // The server gave the call up (a stop): nothing more is written.
+        let closed = false
+        res.on('close', () => {
+          closed = true
+        })
+        const wait = answer.delayMs ?? delayMs
         for (const event of streamEvents(message)) {
-          if (event.type === 'content_block_delta' && delayMs > 0)
-            await new Promise(resolve => setTimeout(resolve, delayMs))
-          if (res.destroyed) return
+          if (event.type === 'content_block_delta' && wait > 0)
+            await new Promise(resolve => setTimeout(resolve, wait))
+          if (closed || res.destroyed) return
           res.write(sseOf(event))
         }
         res.end()
@@ -267,16 +310,22 @@ export async function fakeAnthropic(
     baseUrl: `http://${host}:${port}/v1`,
     calls,
     totals: () => {
-      const answered = calls.filter(call => call.usage != null)
+      const answered = calls.flatMap(call =>
+        call.usage == null ? [] : [call.usage]
+      )
+      const sum = (
+        count: (usage: (typeof answered)[number]) => number
+      ): number => answered.reduce((total, usage) => total + count(usage), 0)
       return {
-        input: answered.reduce(
-          (sum, call) => sum + call.usage!.input_tokens,
-          0
+        input: sum(
+          usage =>
+            usage.input_tokens +
+            usage.cache_creation_input_tokens +
+            usage.cache_read_input_tokens
         ),
-        output: answered.reduce(
-          (sum, call) => sum + call.usage!.output_tokens,
-          0
-        ),
+        output: sum(usage => usage.output_tokens),
+        cacheRead: sum(usage => usage.cache_read_input_tokens),
+        cacheWrite: sum(usage => usage.cache_creation_input_tokens),
         requests: answered.length
       }
     },

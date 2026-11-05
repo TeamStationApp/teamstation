@@ -9,12 +9,15 @@ export function CancelAction({
   label = 'Cancel',
   accessibilityLabel,
   disabled,
+  testID,
   onPress
 }: {
   destructivePrimary?: boolean
   label?: string
   accessibilityLabel?: string
   disabled?: boolean
+  /** For a device test that taps this action by id. */
+  testID?: string
   onPress: () => void
 }): React.ReactElement {
   const theme = useTheme()
@@ -26,6 +29,7 @@ export function CancelAction({
       textColor={destructivePrimary ? theme.linkTextColor : theme.dangerColor}
       style={{ alignSelf: 'center' }}
       disabled={disabled}
+      testID={testID}
       onPress={onPress}
     />
   )

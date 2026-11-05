@@ -30,13 +30,13 @@ const originalPointer = Object.getOwnPropertyDescriptor(
   'matchMedia'
 )
 let stop: (() => void) | undefined
-afterEach(function () {
+function restoreWindow(): void {
   stop?.()
   stop = undefined
   if (originalPointer != null)
     Object.defineProperty(globalThis, 'matchMedia', originalPointer)
   else Reflect.deleteProperty(globalThis, 'matchMedia')
-})
+}
 
 const prepared = (fileName = 'notes.pdf'): PickedFile => ({
   fileName,
@@ -55,6 +55,7 @@ function file(
 }
 
 describe('chat document visibility read adapter', function () {
+  afterEach(restoreWindow)
   it('reports current visibility changes and stops reporting after cleanup', function () {
     const original = Object.getOwnPropertyDescriptor(
       document,
@@ -144,6 +145,7 @@ describe('chat document visibility read adapter', function () {
 })
 
 describe('chat desktop send eligibility', function () {
+  afterEach(restoreWindow)
   const state = {
     enabled: true,
     sending: false,
@@ -205,6 +207,7 @@ describe('chat desktop send eligibility', function () {
 })
 
 describe('chat desktop composer keyboard adapter', function () {
+  afterEach(restoreWindow)
   function mount(fine = true): {
     input: HTMLTextAreaElement
     sends: () => number
@@ -289,6 +292,7 @@ describe('chat desktop composer keyboard adapter', function () {
 })
 
 describe('chat desktop file preparation', function () {
+  afterEach(restoreWindow)
   it('rejects excess count and existing-draft capacity before reading any bytes', async function () {
     let reads = 0
     const files = Array.from({ length: MAX_ATTACHMENTS + 1 }, (_, index) =>
@@ -394,6 +398,7 @@ describe('chat desktop file preparation', function () {
 })
 
 describe('physical history motion before RNW throttling', function () {
+  afterEach(restoreWindow)
   it('observes exact history X/Y changes without manufacturing read intent and ignores duplicate/child events', function () {
     const node = document.createElement('div')
     const child = document.createElement('div')

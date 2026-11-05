@@ -15,6 +15,12 @@ import {
 import { schemaSnapshot } from './schemaSnapshot'
 import { dropScratchDatabase, testDatabaseUrl } from './testDatabase'
 
+/** The catalog through 104, which the coach cases were written against. */
+const coachEnd =
+  migrations.findIndex(item => item.name === '104ManagerScheduling') + 1
+const throughCoach = migrations.slice(0, coachEnd)
+const afterCoach = migrations.slice(coachEnd)
+
 /**
  * Runs the real migrations against a scratch database, so the SQL itself is
  * tested and not just the runner's bookkeeping. Postgres 18 on port 5433 is
@@ -80,6 +86,8 @@ describe('migrations', function () {
   it('upgrades and rolls back the two coach migrations without touching master’s camera data', async () => {
     const current = ['103TeamHeadCoach', '104ManagerScheduling']
     await migrateUp(pool, migrations)
+    // Written with 104 last: the later migrations step aside until the end.
+    await migrateDown(pool, migrations, afterCoach.length)
     await migrateDown(pool, migrations, 2)
     const masterSchema = await schemaSnapshot(pool)
     await pool.query(
@@ -98,7 +106,7 @@ describe('migrations', function () {
     const camera =
       "select local_recording, local_copy_from from live_streams where id='liv_camera_history'"
     const original = (await pool.query(camera)).rows
-    expect((await migrateUp(pool, migrations)).applied).deep.equals(current)
+    expect((await migrateUp(pool, throughCoach)).applied).deep.equals(current)
     expect(await migrateDown(pool, migrations, 2)).deep.equals(
       [...current].reverse()
     )
@@ -114,6 +122,7 @@ describe('migrations', function () {
     const current = ['103TeamHeadCoach', '104ManagerScheduling']
     // An existing feature checkout has the same schema and the earlier recorded names.
     await migrateUp(pool, migrations)
+    await migrateDown(pool, migrations, afterCoach.length)
     await pool.query(
       `insert into users(id, display_name) values ($1, 'Mookie Betts')`,
       [userIdOfGumbo(701)]
@@ -132,7 +141,7 @@ describe('migrations', function () {
         'update schema_migrations set name = $1 where name = $2',
         [earlier[index], name]
       )
-    const adopted = await migrateUp(pool, migrations)
+    const adopted = await migrateUp(pool, throughCoach)
     expect(adopted.applied).deep.equals(current)
     expect(await schemaSnapshot(pool)).deep.equals(before)
     expect(
@@ -157,11 +166,51 @@ describe('migrations', function () {
         )
       ).rows
     ).deep.equals([{ avoid_head_coach_conflicts: false }])
-    expect((await migrateUp(pool, migrations)).applied).deep.equals([])
+    expect((await migrateUp(pool, throughCoach)).applied).deep.equals([])
     expect(await migrateDown(pool, migrations, 2)).deep.equals(
       [...current].reverse()
     )
-    expect((await migrateUp(pool, migrations)).applied).deep.equals(current)
+    expect((await migrateUp(pool, throughCoach)).applied).deep.equals(current)
+    await migrateUp(pool, migrations)
+  })
+
+  it('adds and removes the chat age confirmation columns', async () => {
+    await migrateUp(pool, migrations)
+    await migrateDown(pool, migrations, afterCoach.length)
+    const before = await schemaSnapshot(pool)
+    expect((await migrateUp(pool, migrations)).applied).deep.equals(
+      afterCoach.map(item => item.name)
+    )
+    const columns = await pool.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+      where table_name = 'users' and column_name like 'chat_age_%' order by 1`
+    )
+    expect(columns.rows.map(row => row.column_name)).deep.equals([
+      'chat_age_confirmed_at',
+      'chat_age_source'
+    ])
+    await pool.query(
+      `insert into users(id, display_name, chat_age_confirmed_at, chat_age_source)
+      values ($1, 'Ken Griffey', now(), 'apple')`,
+      [userIdOfGumbo(703)]
+    )
+    let refused = 0
+    for (const values of ["now(), 'adult'", "null, 'self'", 'now(), null'])
+      await pool
+        .query(
+          `update users set (chat_age_confirmed_at, chat_age_source) = (${values}) where id = $1`,
+          [userIdOfGumbo(703)]
+        )
+        .catch(() => {
+          refused++
+        })
+    expect(refused).equals(3)
+    await pool.query('delete from users where id = $1', [userIdOfGumbo(703)])
+    expect(await migrateDown(pool, migrations, afterCoach.length)).deep.equals(
+      afterCoach.map(item => item.name).reverse()
+    )
+    expect(await schemaSnapshot(pool)).deep.equals(before)
+    await migrateUp(pool, migrations)
   })
 
   it('creates the tables the app expects', async function () {
@@ -504,7 +553,10 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '101videographerRequests',
           '102localCopyRemoved',
           '103TeamHeadCoach',
-          '104ManagerScheduling'
+          '104ManagerScheduling',
+          '105chatAgeConfirmations',
+          '106tessCacheUsage',
+          '107chatUserBlocks'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

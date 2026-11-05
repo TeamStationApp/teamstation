@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { ChatGateOverride } from '../chat/DeclaredAgeGate'
+import { TestChatAge } from '../../test/chatAgeTesting'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { AppNav } from './AppNav'
 
@@ -48,38 +48,39 @@ describe('Search navigation', () => {
   }
 })
 
-describe('declared age navigation', () => {
-  for (const mode of ['header', 'floating'] as const) {
-    it(`drops Chat from the ${mode} navigation when the gate is denied`, async () => {
-      const host = document.createElement('div')
-      document.body.append(host)
-      const selected: string[] = []
-      root = createRoot(host)
-      await act(async () => {
-        root!.render(
-          <ThemeProvider>
-            <ChatGateOverride gate="denied">
-              <AppNav
-                selected="search"
-                mode={mode}
-                onSelect={id => selected.push(id)}
-              />
-            </ChatGateOverride>
-          </ThemeProvider>
-        )
+describe('chat in the navigation, whatever the age answer', () => {
+  for (const mode of ['header', 'floating'] as const)
+    for (const access of ['ask', 'blocked', 'pending', 'allowed'] as const)
+      it(`keeps Chat in the ${mode} navigation while chat is ${access}`, async () => {
+        const host = document.createElement('div')
+        document.body.append(host)
+        const selected: string[] = []
+        root = createRoot(host)
+        await act(async () => {
+          root!.render(
+            <ThemeProvider>
+              <TestChatAge access={access}>
+                <AppNav
+                  selected="search"
+                  mode={mode}
+                  onSelect={id => selected.push(id)}
+                />
+              </TestChatAge>
+            </ThemeProvider>
+          )
+        })
+        const tabs = [...host.querySelectorAll<HTMLElement>('[role="tab"]')]
+        expect(tabs.map(node => node.getAttribute('aria-label'))).deep.equals([
+          'Home',
+          'Videos',
+          'Schedule',
+          'Search',
+          'Chat'
+        ])
+        await act(async () => {
+          tabs[4].click()
+        })
+        // The tab press is the Shell's to gate; the bar only reports it.
+        expect(selected).deep.equals(['chat'])
       })
-      const tabs = [...host.querySelectorAll<HTMLElement>('[role="tab"]')]
-      expect(tabs.map(node => node.getAttribute('aria-label'))).deep.equals([
-        'Home',
-        'Videos',
-        'Schedule',
-        'Search'
-      ])
-      await act(async () => {
-        tabs[3].click()
-        tabs[2].click()
-      })
-      expect(selected).deep.equals(['search', 'schedule'])
-    })
-  }
 })

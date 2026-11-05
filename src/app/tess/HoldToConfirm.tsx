@@ -8,8 +8,8 @@ import { lightHaptic } from '../scoring/lightHaptic'
 import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
-/** How long Confirm is held before the change runs. */
-export const HOLD_MS = 3000
+/** How long Confirm is held before the changes run. */
+export const HOLD_MS = 2000
 
 /** With reduced motion the trace jumps a quarter at a time, as often. */
 const STEP_MS = HOLD_MS / 4
@@ -24,7 +24,7 @@ export function pillPerimeter(width: number, height: number): number {
 }
 
 /**
- * A pill that runs its action only after it has been held for three
+ * A pill that runs its action only after it has been held for two
  * seconds. The outline is traced round while it is held; letting go early,
  * or the press being taken away, wipes the trace and nothing runs.
  */
@@ -34,7 +34,7 @@ export function HoldToConfirm({
   disabled = false
 }: {
   onConfirm: () => void
-  /** The change is running: the pill says so and takes no hold. */
+  /** The changes are running: the pill says so and takes no hold. */
   busy?: boolean
   /** Tess is answering something else: the pill takes no hold until she has. */
   disabled?: boolean

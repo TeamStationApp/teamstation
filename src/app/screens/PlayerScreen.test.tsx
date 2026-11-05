@@ -26,10 +26,12 @@ import type {
 import type { StatSplit } from '../../common/playerStatSplits'
 import type { Role } from '../../common/roles'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks, TestChatAge } from '../../test/chatAgeTesting'
 import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
+import { reachEnd } from '../../test/PagedListStandIn'
 import { App } from '../App'
 import { chat } from '../chat/chatViews.test.helpers'
-import { ChatGateOverride } from '../chat/DeclaredAgeGate'
+import { lstrings } from '../locales/strings'
 import { parseRoute, routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -202,7 +204,9 @@ function playerClient(
   options: {
     teams?: PlayerTeam[]
     asked?: Asked
-    pages?: (asked: Record<string, unknown>) => PlayerHighlights
+    pages?: (
+      asked: Record<string, unknown>
+    ) => PlayerHighlights | Promise<PlayerHighlights>
     inviteAs?: 'guardian' | 'team' | null
   } = {}
 ): TeamStationClient {
@@ -222,13 +226,11 @@ function playerClient(
       asked: Record<string, unknown>
     ) => {
       options.asked?.highlights.push(asked)
-      return (
-        options.pages?.(asked) ?? {
-          highlights: [],
-          nextBefore: null,
-          withoutVideo: 0
-        }
-      )
+      return await (options.pages?.(asked) ?? {
+        highlights: [],
+        nextBefore: null,
+        withoutVideo: 0
+      })
     },
     playerStats: async (_userId: string, filter: unknown) => {
       options.asked?.stats.push(filter)
@@ -267,6 +269,8 @@ afterEach(async function () {
 })
 
 describe('a player’s tabs', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('opens an eligible player conversation from the hero Message action', async function () {
     const client = playerClient()
     client.dmCandidates = async () => [
@@ -300,24 +304,24 @@ describe('a player’s tabs', function () {
     expect(opened).deep.equals(['cnv_player'])
   })
 
-  it('draws no Message action when chat is denied', async function () {
+  it('draws its Message action before the age sheet is agreed to', async function () {
     const client = playerClient()
     client.dmCandidates = async () => [
       { userId: userIdOfGumbo(7), shortName: 'Jordan P', avatarUrl: null }
     ]
     await render(
-      <ChatGateOverride gate="denied">
+      <TestChatAge access="ask">
         <PlayerScreen
           client={client}
           userId={userIdOfGumbo(7)}
           onOpenChat={() => undefined}
         />
-      </ChatGateOverride>
+      </TestChatAge>
     )
     await act(async () => {
       await delay(30)
     })
-    expect(document.querySelector('[data-testid="person-message"]')).equals(
+    expect(document.querySelector('[data-testid="person-message"]')).not.equals(
       null
     )
     expect(text()).includes('Jordan P')
@@ -446,6 +450,8 @@ describe('a player’s tabs', function () {
 })
 
 describe('a player’s profile the viewer may not see', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   /** A client whose profile read fails with `error`. */
   const refusing = (error: Error): TeamStationClient => {
     const client = playerClient()
@@ -531,6 +537,8 @@ describe('a player’s profile the viewer may not see', function () {
 })
 
 describe('a player’s filters', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('start both tabs on the team the page was opened for', async function () {
     const asked: Asked = { highlights: [], stats: [] }
     await render(
@@ -630,7 +638,9 @@ describe('a player’s filters', function () {
     expect(chosen).deep.equals([{ seasonId: 's1' }])
     expect(find('Filter videos')?.textContent).equals('filter_altSpring 2026')
     expect(text()).includes('Single e1')
-    await press('Show more')
+    await act(async () => {
+      reachEnd()
+    })
     expect(asked.highlights).deep.equals([
       { before: undefined, teamId: 't1' },
       { before: undefined, seasonId: 's1' },
@@ -665,7 +675,226 @@ describe('a player’s filters', function () {
   })
 })
 
+describe('a player’s highlights (U25)', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
+  const highlight = (id: string): PlayerHighlights['highlights'][number] => ({
+    eventId: id,
+    gameId: 'g1',
+    videoId: 'v1',
+    teamId: 't1',
+    teamName: 'Hawks',
+    outcome: `Single ${id}`,
+    title: `Single ${id}`,
+    playAt: '2026-04-01T18:00:00Z',
+    startOffsetSec: 60,
+    playOffsetSec: 62,
+    stillUrl: '/still.jpg'
+  })
+  /** A page of `ids`, with a cursor to the next if there is one. */
+  const pageOf = (
+    ids: string[],
+    nextBefore: string | null,
+    withoutVideo = 0
+  ): PlayerHighlights => ({
+    highlights: ids.map(highlight),
+    nextBefore,
+    withoutVideo
+  })
+  /** Reads answered from the table, by the `before` asked for. */
+  const readsOf =
+    (table: Record<string, PlayerHighlights | Promise<PlayerHighlights>>) =>
+    async (request: Record<string, unknown>) =>
+      await table[(request.before as string | undefined) ?? 'first']
+  const settled = async (): Promise<void> => {
+    await act(async () => {
+      await delay(20)
+    })
+  }
+
+  it('reads on across short pages to the last highlight, with no Show more', async function () {
+    const asked: Asked = { highlights: [], stats: [] }
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], {
+          asked,
+          pages: readsOf({
+            first: pageOf(['e1'], 'c1'),
+            c1: pageOf([], 'c2'),
+            c2: pageOf(['e2'], 'c3'),
+            c3: pageOf(['e3'], null)
+          })
+        })}
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await settled()
+    for (const id of ['e1', 'e2', 'e3']) expect(text()).includes(`Single ${id}`)
+    expect(asked.highlights).deep.equals([
+      { before: undefined },
+      { before: 'c1' },
+      { before: 'c2' },
+      { before: 'c3' }
+    ])
+    expect(find('Show more')).equals(undefined)
+  })
+
+  it('adds up what had no video across pages to pick the empty message', async function () {
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], {
+          pages: readsOf({
+            first: pageOf([], 'c1'),
+            c1: pageOf([], 'c2', 2),
+            c2: pageOf([], null)
+          })
+        })}
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await settled()
+    expect(text()).includes(lstrings.player_videos_none_recorded)
+    expect(text()).not.includes(lstrings.player_videos_empty)
+  })
+
+  it('stays on loading while an empty page has a cursor, then says it is empty', async function () {
+    let last: (page: PlayerHighlights) => void = () => undefined
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], {
+          pages: readsOf({
+            first: pageOf([], 'c1'),
+            c1: new Promise(resolve => {
+              last = resolve
+            })
+          })
+        })}
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await settled()
+    expect(text()).includes(lstrings.player_loading)
+    expect(text()).not.includes(lstrings.player_videos_empty)
+    await act(async () => {
+      last(pageOf([], null))
+      await delay(20)
+    })
+    expect(text()).not.includes(lstrings.player_loading)
+    expect(text()).includes(lstrings.player_videos_empty)
+  })
+
+  it('counts nothing a late page of another filter says', async function () {
+    let late: (page: PlayerHighlights) => void = () => undefined
+    const career = new Promise<PlayerHighlights>(resolve => {
+      late = resolve
+    })
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], {
+          pages: async request =>
+            request.seasonId == null ? await career : pageOf([], null)
+        })}
+        userId={userIdOfGumbo(7)}
+        onFilter={() => undefined}
+      />
+    )
+    await press('Filter videos')
+    await press('Spring 2026')
+    await press('Show these')
+    await act(async () => {
+      late(pageOf(['e1'], null, 3))
+      await delay(20)
+    })
+    expect(text()).includes(lstrings.player_videos_filter_empty)
+    expect(text()).not.includes('Single e1')
+  })
+
+  it('keeps its rows and offers Retry when a later page fails', async function () {
+    let failing = true
+    const asked: Asked = { highlights: [], stats: [] }
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], {
+          asked,
+          pages: async request => {
+            if (request.before == null) return pageOf(['e1'], 'c1')
+            if (failing) throw new Error('offline')
+            return pageOf(['e2'], null)
+          }
+        })}
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await settled()
+    expect(text()).includes('Single e1')
+    failing = false
+    await press(lstrings.paged_list_retry)
+    expect(text()).includes('Single e1')
+    expect(text()).includes('Single e2')
+    expect(find(lstrings.paged_list_retry)).equals(undefined)
+  })
+
+  it('offers Retry, not the empty message, when nothing has come and a page fails', async function () {
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], {
+          pages: async request => {
+            if (request.before == null) return pageOf([], 'c1')
+            throw new Error('offline')
+          }
+        })}
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await settled()
+    expect(find(lstrings.paged_list_retry)).not.equals(undefined)
+    expect(text()).not.includes(lstrings.player_videos_empty)
+  })
+
+  it('still shows the page around a first page that cannot be read', async function () {
+    await render(
+      <PlayerScreen
+        client={playerClient([], [], {
+          pages: async () => {
+            throw new Error('offline')
+          }
+        })}
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await settled()
+    expect(text()).includes('Jordan P')
+    expect(text()).includes(lstrings.player_videos_empty)
+  })
+
+  it('opens a mounted row with the handler the page has now', async function () {
+    const client = playerClient([], [], {
+      pages: readsOf({ first: pageOf(['e1'], null) })
+    })
+    const opened: string[] = []
+    const page = (name: string): React.ReactElement => (
+      <ThemeProvider>
+        <PlayerScreen
+          client={client}
+          userId={userIdOfGumbo(7)}
+          onOpenMoment={() => {
+            opened.push(name)
+          }}
+        />
+      </ThemeProvider>
+    )
+    await render(page('first'))
+    await act(async () => {
+      root!.render(page('second'))
+    })
+    await press('Hawks')
+    expect(opened).deep.equals(['second'])
+  })
+})
+
 describe('a player’s Teams tab', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('lists each team and season with the number and positions worn there', async function () {
     const opened: Array<[string, string]> = []
     const tabs: PlayerTab[] = []
@@ -731,6 +960,8 @@ describe('a player’s Teams tab', function () {
 })
 
 describe('a player’s Settings tab', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('abbreviates collision-expanded roster names on ordinary tabs, including delayed profiles', async function () {
     for (const delayed of [false, true]) {
       const client = playerClient()
@@ -1097,6 +1328,8 @@ describe('a player’s Settings tab', function () {
 })
 
 describe('taking a player off the team from Settings', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   function removeClient(
     asked: unknown[],
     options: {
@@ -1371,6 +1604,8 @@ async function open(path: string, search = ''): Promise<void> {
 }
 
 describe('a player’s Settings address, through the app', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('opens Settings for a coach of the team, and keeps it on the address', async function () {
     fixtureFetch({ t1: ['coach'] })
     await open('/players/usr_1111111111111111111118', 'tab=settings&onTeam=t1')
@@ -1406,6 +1641,8 @@ describe('a player’s Settings address, through the app', function () {
 })
 
 describe('a player’s Teams and Videos addresses, through the app', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('reopens Teams, and opens a team from it', async function () {
     fixtureFetch({})
     await open('/players/usr_1111111111111111111118', 'tab=teams')
@@ -1442,6 +1679,8 @@ describe('a player’s Teams and Videos addresses, through the app', function ()
 })
 
 describe('a player’s Walk-up tab', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('shows for a keeper of the team’s songs, before Teams', async function () {
     const tabs: PlayerTab[] = []
     const rosters: string[] = []
@@ -1564,6 +1803,8 @@ describe('a player’s Walk-up tab', function () {
 })
 
 describe('a player’s Walk-up address, through the app', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('opens Walk-up for a songkeeper, with the short name and nothing to edit it', async function () {
     fixtureFetch({ t1: ['songkeeper'] })
     await open('/players/usr_1111111111111111111118', 'tab=walkup&onTeam=t1')
@@ -1631,6 +1872,8 @@ const requestButton = (): HTMLElement | undefined =>
   find('Request to be a guardian') ?? find('Guardian request sent')
 
 describe('inviting a guardian from a player’s Settings', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('is offered to a guardian anywhere, and beside the team to its staff while the server allows it', async function () {
     for (const [props, inviteAs, shown] of [
       [{ forTeam: 't1', roles: roles({ t1: ['coach'] }) }, 'team', true],
@@ -1753,6 +1996,8 @@ describe('inviting a guardian from a player’s Settings', function () {
 })
 
 describe('asking to be a player’s guardian', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('is offered to somebody signed in with no say over the player', async function () {
     for (const [props, shown] of [
       [{ viewer: stranger, roles: roles({}) }, true],
@@ -1894,6 +2139,8 @@ describe('asking to be a player’s guardian', function () {
 })
 
 describe('a player’s Team roles on Settings', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   function rolesClient(
     canHoldRoles: boolean,
     asked: unknown[],
@@ -2122,6 +2369,8 @@ describe('a player’s Team roles on Settings', function () {
 })
 
 describe('a player’s stats tables', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   const batting = (ab: number, h: number): BattingRow =>
     asBattingRow({
       userId: userIdOfGumbo(7),

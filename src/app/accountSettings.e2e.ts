@@ -81,6 +81,18 @@ async function settled(selector: string): Promise<void> {
 async function clearLimits(): Promise<void> {
   await h.resetLimits()
 }
+/**
+ * Signs out and waits for the signed-out screen, as a person would before
+ * going on: sign-out finishes chat's own leaving first, which for an account
+ * that never opened chat on this device loads chat's core, and a navigation
+ * before that ends would cut the sign-out short.
+ */
+async function signOut(): Promise<void> {
+  await press('Sign out')
+  await page.waitForSelector('input[aria-label="E-mail address"]', {
+    timeout: 30000
+  })
+}
 async function login(email: string, secret: string): Promise<void> {
   await page.goto(h.origin + '/sign-in', { waitUntil: 'networkidle0' })
   await press('Use a password instead')
@@ -186,7 +198,7 @@ describe('account settings in the finished desktop application', function () {
     await fill('Confirm new password', password)
     await press('Save password')
     await waitText('Password saved')
-    await press('Sign out')
+    await signOut()
     await login('alex@example.com', password)
     await press('Change password')
     await fill('Current password', 'wrong')
@@ -197,9 +209,9 @@ describe('account settings in the finished desktop application', function () {
     await fill('Current password', password)
     await press('Save password')
     await waitText('Password saved')
-    await press('Sign out')
+    await signOut()
     await login('alex@example.com', nextPassword)
-    await press('Sign out')
+    await signOut()
     await page.goto(h.origin + '/sign-in', { waitUntil: 'networkidle0' })
     await fill('E-mail address', 'alex@example.com')
     await press('Send me a sign-in code')
@@ -237,7 +249,7 @@ describe('account settings in the finished desktop application', function () {
     await fill('Confirm new password', nextPassword)
     await press('Save password')
     await waitText('Password saved')
-    await press('Sign out')
+    await signOut()
     await page.goto(h.origin + '/sign-in', { waitUntil: 'networkidle0' })
     await press('Use a password instead')
     await fill('E-mail address', 'alex@example.com')

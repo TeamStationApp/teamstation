@@ -10,9 +10,10 @@ import {
   type TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { chatAgeRecord, TestChatAge } from '../../test/chatAgeTesting'
+import { SceneShownProvider } from '../components/sceneShown'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { chat } from './chatViews.test.helpers'
-import { ChatGateOverride } from './DeclaredAgeGate'
 import { PersonMessageButton } from './PersonMessageButton'
 
 let root: Root | undefined
@@ -30,6 +31,14 @@ const delay = async (): Promise<void> => {
 const message = (): HTMLElement | null =>
   document.querySelector('[data-testid="person-message"]')
 const words = (): string => document.body.textContent ?? ''
+const sheet = (): HTMLElement | null =>
+  document.querySelector('[data-testid="chat-age-sheet"]')
+const agree = (): HTMLElement | null =>
+  document.querySelector('[data-testid="chat-age-agree"]')
+const decline = (): HTMLElement | null =>
+  document.querySelector('[data-testid="chat-age-decline"]')
+const ok = (): HTMLElement | null =>
+  document.querySelector('[data-testid="chat-age-ok"]')
 function deferred<T>(): {
   promise: Promise<T>
   resolve: (value: T) => void
@@ -293,32 +302,210 @@ describe('the person Message hero action', function () {
     expect(opened).equals(true)
   })
 
-  it('renders no Message action when chat is denied', async () => {
-    const host = document.createElement('div')
-    document.body.append(host)
-    root = createRoot(host)
-    let calls = 0
-    const client = {
-      dmCandidates: async () => {
-        calls += 1
-        return [person]
+  for (const blocked of [false, true])
+    it(`draws Message ${blocked ? 'under 13 and makes no DM past the notice' : 'before the age sheet and makes no DM until it is agreed to'}`, async () => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      root = createRoot(host)
+      const record = chatAgeRecord()
+      const made: string[][] = []
+      const opened: string[] = []
+      const client = {
+        dmCandidates: async () => [person],
+        createDm: async (ids: string[]) => {
+          made.push(ids)
+          return conversation
+        }
+      } as unknown as TeamStationClient
+      await settle(() => {
+        root!.render(
+          <ThemeProvider>
+            <TestChatAge access={blocked ? 'blocked' : 'ask'} record={record}>
+              <PersonMessageButton
+                client={client}
+                userId={person.userId}
+                onOpenChat={chat => {
+                  opened.push(chat.id)
+                }}
+              />
+            </TestChatAge>
+          </ThemeProvider>
+        )
+      })
+      expect(message()).not.equals(null)
+      await settle(() => {
+        message()!.click()
+      })
+      expect(sheet()).not.equals(null)
+      if (blocked) {
+        expect(words()).includes('Chat Is for Ages 13 and Up')
+        expect(agree()).equals(null)
+        await settle(() => {
+          ok()!.click()
+        })
+        expect(sheet()).equals(null)
+        expect(made).deep.equals([])
+        return
       }
-    } as unknown as TeamStationClient
-    await act(async () => {
-      root!.render(
+      expect(words()).includes('Before You Chat')
+      await settle(() => {
+        decline()!.click()
+      })
+      expect(sheet()).equals(null)
+      expect(made).deep.equals([])
+      expect(record.confirms).equals(0)
+      // Asked again on the next press.
+      await settle(() => {
+        message()!.click()
+      })
+      expect(sheet()).not.equals(null)
+      await settle(() => {
+        agree()!.click()
+      })
+      expect(record.confirms).equals(1)
+      expect(sheet()).equals(null)
+      expect(made).deep.equals([[person.userId]])
+      expect(opened).deep.equals(['cnv_direct'])
+      // Agreed once: the next press goes straight to the DM.
+      await settle(() => {
+        message()!.click()
+      })
+      expect(sheet()).equals(null)
+      expect(made.length).equals(2)
+    })
+
+  for (const settled of ['allowed', 'ask'] as const)
+    it(`holds a press made while the age answer is pending, then acts when it is ${settled}`, async () => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      root = createRoot(host)
+      const made: string[][] = []
+      const client = {
+        dmCandidates: async () => [person],
+        createDm: async (ids: string[]) => {
+          made.push(ids)
+          return conversation
+        }
+      } as unknown as TeamStationClient
+      const page = (
+        access: 'pending' | 'allowed' | 'ask'
+      ): React.ReactElement => (
         <ThemeProvider>
-          <ChatGateOverride gate="denied">
+          <TestChatAge access={access}>
             <PersonMessageButton
               client={client}
               userId={person.userId}
               onOpenChat={() => undefined}
             />
-          </ChatGateOverride>
+          </TestChatAge>
         </ThemeProvider>
       )
-      await delay()
+      await settle(() => {
+        root!.render(page('pending'))
+      })
+      await settle(() => {
+        message()!.click()
+      })
+      expect(sheet()).equals(null)
+      expect(made).deep.equals([])
+      expect(message()!.getAttribute('aria-disabled')).equals('true')
+      await settle(() => {
+        root!.render(page(settled))
+      })
+      if (settled === 'allowed') {
+        expect(made).deep.equals([[person.userId]])
+        expect(sheet()).equals(null)
+      } else {
+        expect(made).deep.equals([])
+        expect(sheet()).not.equals(null)
+        // Closed, so the shared teardown finds no sheet to take down.
+        await settle(() => {
+          decline()!.click()
+        })
+        expect(sheet()).equals(null)
+      }
     })
-    expect(message()).equals(null)
-    expect(calls).equals(0)
+
+  for (const settled of ['allowed', 'ask'] as const)
+    it(`drops a press held while pending once its screen is covered, doing nothing when it is ${settled}`, async () => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      root = createRoot(host)
+      const made: string[][] = []
+      const client = {
+        dmCandidates: async () => [person],
+        createDm: async (ids: string[]) => {
+          made.push(ids)
+          return conversation
+        }
+      } as unknown as TeamStationClient
+      const page = (
+        access: 'pending' | 'allowed' | 'ask',
+        shown: boolean
+      ): React.ReactElement => (
+        <ThemeProvider>
+          <TestChatAge access={access}>
+            <SceneShownProvider value={shown}>
+              <PersonMessageButton
+                client={client}
+                userId={person.userId}
+                onOpenChat={() => undefined}
+              />
+            </SceneShownProvider>
+          </TestChatAge>
+        </ThemeProvider>
+      )
+      await settle(() => {
+        root!.render(page('pending', true))
+      })
+      await settle(() => {
+        message()!.click()
+      })
+      // A frame pushed over the person page while the answer is pending.
+      await settle(() => {
+        root!.render(page('pending', false))
+      })
+      await settle(() => {
+        root!.render(page(settled, false))
+      })
+      await settle(() => {
+        root!.render(page(settled, true))
+      })
+      expect(made).deep.equals([])
+      expect(sheet()).equals(null)
+      expect(message()!.getAttribute('aria-disabled')).not.equals('true')
+    })
+
+  it('withdraws its sheet when the button goes', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    const client = {
+      dmCandidates: async () => [person]
+    } as unknown as TeamStationClient
+    const page = (shown: boolean): React.ReactElement => (
+      <ThemeProvider>
+        <TestChatAge access="ask">
+          {shown && (
+            <PersonMessageButton
+              client={client}
+              userId={person.userId}
+              onOpenChat={() => undefined}
+            />
+          )}
+        </TestChatAge>
+      </ThemeProvider>
+    )
+    await settle(() => {
+      root!.render(page(true))
+    })
+    await settle(() => {
+      message()!.click()
+    })
+    expect(sheet()).not.equals(null)
+    await settle(() => {
+      root!.render(page(false))
+    })
+    expect(sheet()).equals(null)
   })
 })

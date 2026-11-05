@@ -502,9 +502,14 @@ public final class TeamStationAccount: TeamStationEventService {
    * Unlike `refreshChosen` this is loud: it is asked for when somebody picks
    * the game as the stream's destination or presses Stream with no address
    * yet, and a refusal is something they need to read. `lastError` says why.
+   *
+   * A game with no camera place free is thrown as
+   * `TeamStationError.cameraLimit`, as `refreshChosen` throws it, so a Stream
+   * that asked stops on it rather than asking again until a place frees. Any
+   * other refusal is `false`.
    */
   @discardableResult
-  public func claimChosen(cameraName: String = "") async -> Bool {
+  public func claimChosen(cameraName: String = "") async throws -> Bool {
     guard let current = chosen else {
       lastError = "Pick a TeamStation event first."
       return false
@@ -518,6 +523,11 @@ public final class TeamStationAccount: TeamStationEventService {
       keep(claimed(taken, gameId: current.gameId, title: current.title, startAt: current.startAt))
       lastError = nil
       return true
+    } catch let TeamStationError.cameraLimit(message) {
+      // A refusal for a game no longer chosen is not this one's to report.
+      guard chosen?.gameId == current.gameId else { return false }
+      lastError = message
+      throw TeamStationError.cameraLimit(message)
     } catch {
       lastError = error.localizedDescription
       return false
@@ -585,6 +595,13 @@ public final class TeamStationAccount: TeamStationEventService {
    * and nothing new is made, so a drop never puts back a camera somebody
    * ended.
    *
+   * Only a `.start` on a game with no camera place free throws
+   * `TeamStationError.cameraLimit` with the server's sentence, also kept in
+   * `lastError`, unless the stream held is still live: it is asked for once
+   * more by its id, and dialled if it comes back. Otherwise the address
+   * cached is that of a camera already ended, and dialling it only earns the
+   * ingest's refusal. The cached address stays, so the next Stream asks again.
+   *
    * Every other failure is deliberately quiet. Out at a field with no signal
    * the cached address is the best thing anybody has, and it is usually still
    * right.
@@ -605,6 +622,33 @@ public final class TeamStationAccount: TeamStationEventService {
       lastError = nil
     } catch TeamStationError.streamEnded {
       throw TeamStationError.streamEnded
+    } catch let TeamStationError.cameraLimit(message) {
+      // A refusal for a game no longer chosen is not this one's to report.
+      // Nor is a redial's: one that met the limit asked without a stream id
+      // (a choice kept from before ids were), and its stream may only have
+      // dropped, so the cached address is dialled as for any other failure.
+      guard chosen?.gameId == current.gameId, reason == .start else { return }
+      // A start finds the stream by this device and name. The stream held can
+      // still be live under another one — a rename that never reached the
+      // server — and it holds a place: asked for by its id, as a redial asks,
+      // it comes back to be dialled. Only a 410 says it ended, and then the
+      // limit stands; a second answer that never came is as quiet as a first.
+      if let held = current.streamId {
+        do {
+          let kept = try await requestStream(gameId: current.gameId, cameraName: cameraName, held: held)
+          guard chosen?.gameId == current.gameId else { return }
+          keep(claimed(kept, gameId: current.gameId, title: current.title, startAt: current.startAt))
+          lastError = nil
+          return
+        } catch TeamStationError.streamEnded {
+          // Ended: the limit is what stops this start.
+        } catch {
+          return
+        }
+      }
+      guard chosen?.gameId == current.gameId else { return }
+      lastError = message
+      throw TeamStationError.cameraLimit(message)
     } catch {
       // Kept to itself: the cached address is what the Stream button is about
       // to use, and saying "could not reach TeamStation" over a stream that is
@@ -716,9 +760,11 @@ public protocol TeamStationEventService: AnyObject {
   var lastError: String? { get }
   @discardableResult
   func choose(event: TeamStationEvent, claim: Bool, cameraName: String) async -> Bool
+  /// Throws `TeamStationError.cameraLimit` when the game has no camera place free.
   @discardableResult
-  func claimChosen(cameraName: String) async -> Bool
-  /// Throws `TeamStationError.streamEnded` when a `.redial` finds the held stream ended.
+  func claimChosen(cameraName: String) async throws -> Bool
+  /// Throws `TeamStationError.streamEnded` when a `.redial` finds the held stream ended, and
+  /// `TeamStationError.cameraLimit` when a `.start` finds no camera place free.
   func refreshChosen(cameraName: String, reason: LiveStreamRequestReason) async throws
   /// Renames the held stream's camera on TeamStation.
   @discardableResult

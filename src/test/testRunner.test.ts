@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { globSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
@@ -53,6 +55,46 @@ describe('default rendered test runner', function () {
       expect(map.sources.some(source => source.endsWith('.test.tsx'))).equals(
         true
       )
+    }
+  })
+
+  it('splits the app tests into bundles of consecutive files by their bytes', () => {
+    // Not lib: the run this test is part of may be reading its bundles there.
+    const dir = mkdtempSync(join(tmpdir(), 'ts-chunks-'))
+    // Few bundles, each built at once beside the others: light enough to run
+    // beside the rest of the suite.
+    const most = 1_500_000
+    try {
+      execFileSync(process.execPath, [
+        'scripts/build-scoring-tests.mjs',
+        `--chunk-bytes=${most}`,
+        `--chunk-dir=${dir}`
+      ])
+      const chunks = JSON.parse(
+        readFileSync(join(dir, 'scoring-tests-chunks.json'), 'utf8')
+      ) as Array<{ file: string; bytes: number; files: string[] }>
+      expect(chunks.map(chunk => chunk.file)).deep.equals(
+        chunks.map((_, index) => `${dir}/scoring-tests-chunk-${index}.cjs`)
+      )
+      // Every app test file once, in path order, its bytes counted there.
+      const files = globSync('src/**/*.test.tsx').sort()
+      expect(chunks.flatMap(chunk => chunk.files)).deep.equals(files)
+      const size = (file: string): number => statSync(file).size
+      for (const [index, chunk] of chunks.entries()) {
+        expect(chunk.bytes).equals(
+          chunk.files.reduce((sum, file) => sum + size(file), 0)
+        )
+        // Full: the next file would have taken it past the bytes asked for,
+        // unless one file alone is more than that.
+        if (chunk.files.length > 1) expect(chunk.bytes).most(most)
+        const next = chunks[index + 1]?.files[0]
+        if (next != null) expect(chunk.bytes + size(next)).greaterThan(most)
+        expect(readFileSync(chunk.file, 'utf8')).includes(
+          'describe)("", () => {'
+        )
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })

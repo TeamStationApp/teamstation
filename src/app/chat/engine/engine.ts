@@ -1,4 +1,5 @@
 import type {
+  ChatBlock,
   ChatConversation,
   ChatDmPerson,
   ChatKindName,
@@ -262,9 +263,11 @@ export class ChatEngine {
   private unlisten: (() => void) | undefined
   private stopped = false
   private existingOnly = false
+  private blockPolicyPending = false
 
   constructor(options: ChatEngineOptions) {
     this.options = options
+    this.blockPolicyPending = options.client.chatBlocks != null
     this.identities = new IdentityCache(options.client)
   }
 
@@ -388,7 +391,68 @@ export class ChatEngine {
    * each DM not read yet, or whose count or people no longer match the
    * list's (one left and another joined since they were read).
    */
+  isBlocked(userId: string): boolean {
+    return this.memory.blockedUserIds.has(userId)
+  }
+
+  private applyBlocks(blocks: ChatBlock[]): void {
+    if (!this.live) return
+    this.blockPolicyPending = false
+    const ids = new Set(blocks.flatMap(block => block.userIds))
+    const changed =
+      ids.size !== this.memory.blockedUserIds.size ||
+      [...ids].some(id => !this.memory.blockedUserIds.has(id))
+    this.memory.blocks = blocks
+    if (!changed) return
+    this.memory.blockedUserIds = ids
+    this.memory.blockRevision += 1
+    this.personalPins.clear()
+    this.previewVersions.clear()
+    this.pendingAlerts.clear()
+    for (const [id, state] of this.memory.conversations) {
+      if (state.oldestSeq != null)
+        state.blockHistoryFloor = Math.min(
+          state.blockHistoryFloor ?? state.oldestSeq,
+          state.oldestSeq
+        )
+      for (const [seq, envelope] of state.envelopes) {
+        if (!ids.has(envelope.senderUserId)) continue
+        state.opened.delete(envelope.id)
+        if (envelope.kind !== 'delete' && envelope.kind !== 'moderatorDelete')
+          state.envelopes.delete(seq)
+      }
+      for (const userId of ids) state.typing.delete(userId)
+      // Re-read the loaded range so unblocking cannot leave cached history gaps.
+      state.synced = false
+      state.newestSeq = 0
+      state.oldestSeq = undefined
+      state.hasEarlier = true
+      state.summary = {
+        ...state.summary,
+        lastPostId: null,
+        lastPostSeq: 0,
+        lastPostAt: null
+      }
+      this.memory.emit({ type: 'conversation', conversationId: id })
+    }
+    this.memory.emit({ type: 'conversations' })
+  }
+
+  async setBlocked(userId: string, blocked: boolean): Promise<void> {
+    await this.serial('blocks', async () => {
+      const write = this.options.client.setChatBlock
+      if (write == null) throw new Error('Blocking is unavailable')
+      this.applyBlocks(await write.call(this.options.client, userId, blocked))
+    })
+    await this.refresh()
+  }
+
   async refresh(): Promise<ConversationListItem[]> {
+    await this.serial('blocks', async () => {
+      const blocks = await this.options.client.chatBlocks?.()
+      if (blocks != null) this.applyBlocks(blocks)
+      else this.blockPolicyPending = false
+    })
     await this.serial('list', async () => {
       await syncList({ client: this.options.client, memory: this.memory })
       for (const state of this.memory.conversations.values()) {
@@ -477,6 +541,9 @@ export class ChatEngine {
       }
     }
     this.memory.emit({ type: 'conversations' })
+    for (const id of this.active.keys()) {
+      if (this.memory.state(id)?.synced === false) this.want(id, ['messages'])
+    }
     return this.conversations()
   }
 
@@ -495,7 +562,11 @@ export class ChatEngine {
       at: summary.lastPostAt
     }
     for (const envelope of state.envelopes.values()) {
-      if (envelope.kind === 'post' && envelope.seq > lastPost.seq) {
+      if (
+        envelope.kind === 'post' &&
+        !this.isBlocked(envelope.senderUserId) &&
+        envelope.seq > lastPost.seq
+      ) {
         lastPost = {
           id: envelope.id,
           seq: envelope.seq,
@@ -506,6 +577,7 @@ export class ChatEngine {
     const latestMessage =
       lastPost.seq > 0 && state.synced
         ? foldMessages({
+            blockedUserIds: this.memory.blockedUserIds,
             envelopes: state.envelopes.values(),
             opened: state.opened,
             me: this.options.userId,
@@ -564,8 +636,9 @@ export class ChatEngine {
                   )
                   .map(person => ({ ...person, left: true, avatarUrl: null }))
               ],
-      preview:
-        lastPost.seq === 0
+      preview: this.blockPolicyPending
+        ? undefined
+        : lastPost.seq === 0
           ? ''
           : state.synced
             ? messagePreview(latestMessage)
@@ -714,6 +787,7 @@ export class ChatEngine {
     this.active.set(conversationId, holders)
     let opened: ConversationView
     try {
+      if (this.blockPolicyPending) await this.refresh()
       opened = await this.serial(conversationId, async () => {
         await syncMembers(ctx, conversationId)
         await syncLog(ctx, conversationId)
@@ -767,13 +841,16 @@ export class ChatEngine {
       members.map(member => [member.userId, member.shortName])
     )
     const conversation = this.item(state)
-    const messages = foldMessages({
-      envelopes: state.envelopes.values(),
-      opened: state.opened,
-      me: this.options.userId,
-      names,
-      reads: state.reads
-    })
+    const messages = this.blockPolicyPending
+      ? []
+      : foldMessages({
+          blockedUserIds: this.memory.blockedUserIds,
+          envelopes: state.envelopes.values(),
+          opened: state.opened,
+          me: this.options.userId,
+          names,
+          reads: state.reads
+        })
     let earlierLost = [...state.opened.values()].some(
       opened => opened.status === 'lost'
     )
@@ -792,21 +869,25 @@ export class ChatEngine {
     const historyLocked = conversation.locked && !conversation.noHolder
     return {
       conversation,
-      pins: (this.personalPins.get(conversationId) ?? []).filter(
-        pin =>
-          !messages.some(
-            message =>
-              message.id === pin.messageId && message.status === 'removed'
-          )
-      ),
+      pins: this.blockPolicyPending
+        ? []
+        : (this.personalPins.get(conversationId) ?? []).filter(
+            pin =>
+              !messages.some(
+                message =>
+                  message.id === pin.messageId && message.status === 'removed'
+              )
+          ),
       messages,
       members: members.map(member => ({
         ...member,
         safetyNumberChanged: record?.previousPins[member.userId] != null
       })),
-      typing: [...state.typing]
-        .filter(([, until]) => until > now)
-        .map(([userId]) => ({ userId, name: names.get(userId) })),
+      typing: this.blockPolicyPending
+        ? []
+        : [...state.typing]
+            .filter(([id, until]) => until > now && !this.isBlocked(id))
+            .map(([userId]) => ({ userId, name: names.get(userId) })),
       historyLocked,
       earlierLost,
       unverified: head?.broken === true,
@@ -1006,7 +1087,8 @@ export class ChatEngine {
    */
   async report(
     conversationId: string,
-    messageId: string
+    messageId: string,
+    blockSender = false
   ): Promise<{ id: string; verified: boolean }> {
     const ctx = this.ctx
     const state = await stateOf(ctx, conversationId)
@@ -1042,10 +1124,31 @@ export class ChatEngine {
         messageKey: key
       })
     )
-    return await ctx.client.reportChatMessage({
-      messageId,
-      plaintext,
-      messageKey: b64(key)
+    return await this.serial('blocks', async () => {
+      const result = await ctx.client.reportChatMessage({
+        messageId,
+        plaintext,
+        messageKey: b64(key),
+        blockSender
+      })
+      if (blockSender) {
+        if (result.blockedUserIds == null) {
+          this.awaitBlockPolicy()
+        } else {
+          this.applyBlocks([
+            ...this.memory.blocks,
+            {
+              userId: envelope.senderUserId,
+              userIds: result.blockedUserIds,
+              shortName: shown.senderName ?? '',
+              avatarUrl: null,
+              createdAt: new Date(this.now).toISOString()
+            }
+          ])
+        }
+        this.relist()
+      }
+      return result
     })
   }
 
@@ -1148,11 +1251,18 @@ export class ChatEngine {
 
   /** Fetches, checks and opens an attachment. */
   async openAttachment(ref: AttachmentRef): Promise<Uint8Array> {
-    return await downloadAttachment(
+    const revision = this.memory.blockRevision
+    const bytes = await downloadAttachment(
       this.ctx,
       ref,
       this.options.fetchBytes ?? fetchBytes
     )
+    if (!this.live || revision !== this.memory.blockRevision)
+      throw new ChatEngineError(
+        'attachment',
+        'Attachment is no longer available'
+      )
+    return bytes
   }
 
   // --- Keys and trust ---------------------------------------------------
@@ -1242,7 +1352,7 @@ export class ChatEngine {
   ): void {
     const pending = this.pendingAlerts.get(conversationId)
     const state = this.memory.state(conversationId)
-    if (pending == null || state == null) return
+    if (pending == null || state == null || this.blockPolicyPending) return
     const known =
       received == null
         ? state.envelopes
@@ -1260,6 +1370,7 @@ export class ChatEngine {
       this.alertedSeq.set(conversationId, seq)
       if (
         envelope.senderUserId !== this.options.userId &&
+        !this.isBlocked(envelope.senderUserId) &&
         !state.summary.preferences?.muted
       )
         announce = true
@@ -1272,6 +1383,11 @@ export class ChatEngine {
     if (this.stopped) return
     switch (event.type) {
       case 'chatUser':
+        if (event.kind === 'blocks') {
+          this.awaitBlockPolicy()
+          this.relist()
+          return
+        }
         if (event.kind === 'preferences') {
           this.relist()
           for (const id of this.active.keys())
@@ -1289,6 +1405,7 @@ export class ChatEngine {
         this.typed(event.conversationId, event.userId)
         return
       case 'resync':
+        this.awaitBlockPolicy()
         this.pendingAlerts.clear()
         this.relist()
         for (const id of this.active.keys()) {
@@ -1331,9 +1448,22 @@ export class ChatEngine {
     }
   }
 
+  private awaitBlockPolicy(): void {
+    if (this.options.client.chatBlocks == null) return
+    this.blockPolicyPending = true
+    for (const conversationId of this.memory.conversations.keys())
+      this.memory.emit({ type: 'conversation', conversationId })
+    this.memory.emit({ type: 'conversations' })
+  }
+
   private typed(conversationId: string, userId: string): void {
     const state = this.memory.state(conversationId)
-    if (state == null || userId === this.options.userId) return
+    if (
+      state == null ||
+      userId === this.options.userId ||
+      this.isBlocked(userId)
+    )
+      return
     const ms = this.options.typingMs ?? 6000
     state.typing.set(userId, this.now + ms)
     this.memory.emit({ type: 'conversation', conversationId })

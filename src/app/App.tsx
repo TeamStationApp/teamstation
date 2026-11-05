@@ -34,6 +34,13 @@ import { managesRoster } from '../common/roles'
 import type { UmpireLeague } from '../common/umpireSchedule'
 import type { WalkUpSong } from '../common/walkUpSong'
 import { tsLogoSource } from './assets'
+import {
+  ChatAgeContext,
+  ChatAgeHost,
+  ChatFrameKey,
+  type TabCorrection,
+  useChatAgeState
+} from './chat/ChatAgeGate'
 import { ChatCoreGate } from './chat/ChatCoreGate'
 import { chatCoreLog, chatStartLog } from './chat/chatCoreLog'
 import { ChatDevicesScreen } from './chat/ChatDevicesScreen'
@@ -50,7 +57,7 @@ import {
   newChatWorkspaceState
 } from './chat/chatWorkspaceModel'
 import { isChatSurface } from './chat/declaredAge'
-import { DeclaredAgeGateProvider, useChatAllowed } from './chat/DeclaredAgeGate'
+import { DeclaredAgeGateProvider, useAppleAge } from './chat/DeclaredAgeGate'
 import {
   DeviceApprovalContext,
   DeviceApprovalPrompt
@@ -91,6 +98,7 @@ import {
 import { takeHistoryMove } from './navigation/historyMotion'
 import {
   type CreationRoute,
+  isChatPath,
   isCreationRoute,
   parseRoute,
   type Route,
@@ -136,6 +144,7 @@ import {
   showRoute,
   stepBackTo,
   steppingBack,
+  undoStep,
   useBrowserBack
 } from './navigation/useAddressBar'
 import {
@@ -221,6 +230,7 @@ import { TessDivider } from './tess/TessDivider'
 import { usePaneAtLeast, useTessWide, useTessWidth } from './tess/tessLayout'
 import { TessOverlayHost, TessOverlayProvider } from './tess/TessOverlay'
 import { TessPanel } from './tess/TessPanel'
+import { forgetQueues as forgetTessQueues } from './tess/tessQueue'
 import type { TessScreen } from './tess/tessTypes'
 import { useTessAvailable } from './tess/useTessAvailable'
 import { useTessBack } from './tess/useTessBack'
@@ -450,7 +460,7 @@ export function App(props: AppProps): React.ReactElement {
 }
 
 function Shell(props: AppProps): React.ReactElement {
-  const chatOn = useChatAllowed()
+  const appleAge = useAppleAge()
   const analytics = useAnalytics()
   const apiBaseUrl = props.apiBaseUrl ?? '/api/v1'
   const theme = useTheme()
@@ -655,10 +665,14 @@ function Shell(props: AppProps): React.ReactElement {
       ...opened
     }
   })
-  /** Forgets the session and starts every tab over, for sign-out and deletion alike. */
+  /**
+   * Forgets the session, and what waits for Tess, and starts every tab over,
+   * for sign-out and deletion alike.
+   */
   const leaveSession = (): void => {
     rememberSession(undefined)
     clearHomeListExpanded().catch(() => undefined)
+    forgetTessQueues()
     setStacks({ home: [], videos: [], schedule: [], search: [], chat: [] })
     setTab('home')
   }
@@ -772,6 +786,25 @@ function Shell(props: AppProps): React.ReactElement {
    * can do is hide a tab.
    */
   const signedInAs = session?.user.id
+  /**
+   * Whether this account may see chat: confirmed for its age, or this
+   * device's Apple answer is 13 or more. Every chat surface stands behind it.
+   */
+  const chatAge = useChatAgeState(client, signedInAs, appleAge)
+  const chatOn = chatAge.access === 'allowed'
+  /**
+   * A chat surface for the person signed in: nothing signed out, and while
+   * chat is locked a stand-in the age sheet is up over (agreeing draws the
+   * surface in its place).
+   */
+  const locked = (
+    draw: (signedIn: Session) => React.ReactNode
+  ): React.ReactNode =>
+    session == null ? null : !chatOn ? (
+      <View style={styles.chatLocked} testID="chat-locked" />
+    ) : (
+      draw(session)
+    )
   const [roleSnapshot, setRoleSnapshot] = useState<{
     actor: string | number
     client: TeamStationClient
@@ -1256,23 +1289,6 @@ function Shell(props: AppProps): React.ReactElement {
 
   const stack = stacks[tab]
   const top = stack[stack.length - 1]
-  // A denied gate leaves a chat address on Home. The chat tab and the frames
-  // that draw a conversation are the surfaces; the rest of the stack stays.
-  useEffect(() => {
-    if (chatOn) return
-    if (!isChatSurface(tab, top?.name)) return
-    setTab('home')
-    setRoute({ name: 'home' })
-    setStacks(current => {
-      const next = { ...current, chat: [] as Pushed[] }
-      for (const key of ['home', 'videos', 'schedule', 'search'] as const) {
-        next[key] = current[key].filter(
-          frame => !isChatSurface('home', frame.name)
-        )
-      }
-      return next
-    })
-  }, [chatOn, tab, top])
   // One scorer per person and game, whether on top or kept beneath a child.
   const scoreKey = (gameId: string): string =>
     `score:${signedInAs ?? 'local'}:${gameId}`
@@ -1366,6 +1382,28 @@ function Shell(props: AppProps): React.ReactElement {
         : frameKey(tab, stack, index, screenIdentity)
   }
   const topKey = sceneKeyOf(stack.length - 1)
+  // The tab shown before Chat, where Not Now on the age sheet returns.
+  const beforeChat = useRef<NavTabId>('home')
+  useEffect(() => {
+    if (tab !== 'chat') beforeChat.current = tab
+  }, [tab])
+  /**
+   * Not Now on the age sheet: off the Chat tab to the tab before it, or the
+   * chat frames off this tab's stack, and the address with them.
+   */
+  const declineChat = (): void => {
+    const back = tab === 'chat' ? beforeChat.current : tab
+    const next = { ...stacks, chat: [] as Pushed[] }
+    for (const key of ['home', 'videos', 'schedule', 'search'] as const)
+      next[key] = stacks[key].filter(
+        frame => !isChatSurface('home', frame.name)
+      )
+    intend('back')
+    undoing.current = 'chat'
+    setTab(back)
+    setStacks(next)
+    setRoute(routeOf(back, next[back].at(-1), filters))
+  }
   const navigationRef = useRef({ tab, top, topKey })
   navigationRef.current = { tab, top, topKey }
   /** The last frame on top that draws the header (see `chromeFrame`). */
@@ -1496,6 +1534,10 @@ function Shell(props: AppProps): React.ReactElement {
    * adding one.
    */
   const inPlace = useRef(false)
+  // The next address takes back the step that opened a declined chat surface
+  // (`undoStep`) rather than adding one, so Back does not walk into it again:
+  // `'chat'` the chat steps under it too (a chat link's list), `'step'` one.
+  const undoing = useRef<false | 'chat' | 'step'>(false)
   useEffect(() => {
     // Not while signed out: rewriting the address to `/` before the password
     // field has even been typed into throws away the link that brought them.
@@ -1516,15 +1558,23 @@ function Shell(props: AppProps): React.ReactElement {
     // Nor while a step back is landing: it writes the address it lands on.
     if (steppingBack()) {
       inPlace.current = false
+      undoing.current = false
       return
     }
     const address = routeOf(tab, top, filters)
     const before = scoringOriginHistory()
-    showRoute(address, firstRender.current || inPlace.current)
+    if (undoing.current !== false)
+      undoStep(address, undoing.current === 'chat' ? isChatPath : undefined)
+    else showRoute(address, firstRender.current || inPlace.current)
     const position = scoringOriginHistory()
     // A new branch of browser history invalidates the old Forward visits.
     if (position > before) discardChatHistoryFrom(position)
-    if (tab !== 'chat' && stack.some(frame => frame.name === 'conversation'))
+    // A browser's step back lands later, and its entry is written then.
+    if (
+      !steppingBack() &&
+      tab !== 'chat' &&
+      stack.some(frame => frame.name === 'conversation')
+    )
       chatHistory.set(scoringOriginHistory(), {
         path: routePath(address),
         tab,
@@ -1532,6 +1582,7 @@ function Shell(props: AppProps): React.ReactElement {
       })
     firstRender.current = false
     inPlace.current = false
+    undoing.current = false
   }, [
     joining,
     session,
@@ -1922,9 +1973,14 @@ function Shell(props: AppProps): React.ReactElement {
       push({ name: 'notification', id: pendingRequestId })
     } else push({ name: 'game', gameId, title, ...presentation })
   }
-  /** A section change on the team or season screen, into the address. */
-  const setTopTab = (next: string, correcting = false): void => {
-    if (correcting) inPlace.current = true
+  /**
+   * A section change on the team or season screen, into the address:
+   * `correcting` replaces the step, `'undo'` takes back the step that chose
+   * the section being left (Not Now on Chats).
+   */
+  const setTopTab = (next: string, correcting: TabCorrection = false): void => {
+    if (correcting === true) inPlace.current = true
+    if (correcting === 'undo') undoing.current = 'step'
     const frame = stacks[tab].at(-1)
     if (frame?.name === 'player' && frame.tab !== next) {
       if (next === 'settings') freshSettings()
@@ -2165,18 +2221,20 @@ function Shell(props: AppProps): React.ReactElement {
    * platform, then this device set up for chat.
    */
   const gated = (screen: React.ReactNode): React.ReactNode =>
-    chatEngine == null || session == null ? null : (
-      <ChatCoreGate onUnavailable={reportChatCore}>
-        <ChatGate
-          engine={chatEngine}
-          client={client}
-          userId={session.user.id}
-          onFailure={reportChatStart}
-        >
-          {screen}
-        </ChatGate>
-      </ChatCoreGate>
-    )
+    chatEngine == null
+      ? null
+      : locked(signedIn => (
+          <ChatCoreGate onUnavailable={reportChatCore}>
+            <ChatGate
+              engine={chatEngine}
+              client={client}
+              userId={signedIn.user.id}
+              onFailure={reportChatStart}
+            >
+              {screen}
+            </ChatGate>
+          </ChatCoreGate>
+        ))
   /**
    * Somebody who has just signed in, back to where the sign-in was for.
    *
@@ -2256,6 +2314,7 @@ function Shell(props: AppProps): React.ReactElement {
                   client.token = undefined
                   rememberSession(undefined)
                   clearHomeListExpanded().catch(() => undefined)
+                  forgetTessQueues()
                   const destination: Route = {
                     name: 'signIn',
                     next: routePath(route)
@@ -2338,7 +2397,7 @@ function Shell(props: AppProps): React.ReactElement {
                 mode="header"
                 selected={tab}
                 onSelect={selectTab}
-                dots={{ chat: hasUnread(chatList) }}
+                dots={{ chat: chatOn && hasUnread(chatList) }}
               />
             ) : undefined
           }
@@ -2527,7 +2586,7 @@ function Shell(props: AppProps): React.ReactElement {
     const writeTop: typeof setStacks = update => {
       if (live()) setStacks(update)
     }
-    const topTab = (next: string, correcting?: boolean): void => {
+    const topTab = (next: string, correcting?: TabCorrection): void => {
       if (live()) setTopTab(next, correcting)
     }
     const markInPlace = (value: boolean): void => {
@@ -2545,10 +2604,7 @@ function Shell(props: AppProps): React.ReactElement {
     const pop = onTop(popFrame)
     const replace = onTop(replaceFrame)
     const push = onTop(pushFrame)
-    const drawn =
-      chatOn || top == null || !isChatSurface(tab, top.name) ? top : undefined
-    return chatOn &&
-      (drawn?.name === 'conversation' || (drawn == null && tab === 'chat')) ? (
+    return top?.name === 'conversation' || (top == null && tab === 'chat') ? (
       gated(
         <ChatWorkspace
           engine={chatEngine!}
@@ -2583,8 +2639,8 @@ function Shell(props: AppProps): React.ReactElement {
           }}
         />
       )
-    ) : drawn == null || top == null ? (
-      tab === 'home' || tab === 'chat' ? (
+    ) : top == null ? (
+      tab === 'home' ? (
         <HomeScreen
           client={client}
           onOpenTeam={openTeam}
@@ -3161,13 +3217,13 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'game', gameId, title: '', tab: 'watch' })
         }}
       />
-    ) : drawn.name === 'chatMembers' || drawn.name === 'chatInfo' ? (
+    ) : top.name === 'chatMembers' || top.name === 'chatInfo' ? (
       gated(
         <ChatInfoScreen
-          showMembers={drawn.name === 'chatMembers'}
+          showMembers={top.name === 'chatMembers'}
           engine={chatEngine!}
           client={client}
-          conversationId={drawn.conversationId}
+          conversationId={top.conversationId}
           userId={signedInAs!}
           onLeft={() => {
             // Out of the chat and its members, back to the list.
@@ -3183,7 +3239,7 @@ function Shell(props: AppProps): React.ReactElement {
           }}
         />
       )
-    ) : drawn.name === 'chatNew' ? (
+    ) : top.name === 'chatNew' ? (
       gated(
         <NewDmScreen
           client={client}
@@ -3257,22 +3313,22 @@ function Shell(props: AppProps): React.ReactElement {
           }}
         />
       )
-    ) : drawn.name === 'chatDevices' ? (
-      session == null ? null : (
+    ) : top.name === 'chatDevices' ? (
+      locked(signedIn => (
         <ChatCoreGate onUnavailable={reportChatCore}>
-          <ChatDevicesScreen client={client} userId={session.user.id} />
+          <ChatDevicesScreen client={client} userId={signedIn.user.id} />
         </ChatCoreGate>
-      )
-    ) : drawn.name === 'chatReports' ? (
-      session == null ? null : (
-        <ChatReportsScreen client={client} isAdmin={session.user.isAdmin} />
-      )
-    ) : drawn.name === 'chatLink' ? (
-      session == null ? null : (
+      ))
+    ) : top.name === 'chatReports' ? (
+      locked(signedIn => (
+        <ChatReportsScreen client={client} isAdmin={signedIn.user.isAdmin} />
+      ))
+    ) : top.name === 'chatLink' ? (
+      locked(signedIn => (
         <ChatCoreGate onUnavailable={reportChatCore}>
           <LinkDeviceScreen
             client={client}
-            userId={session.user.id}
+            userId={signedIn.user.id}
             onDone={() => {
               // Linked or reset: the devices list takes this screen's place,
               // so Back does not return to a finished link.
@@ -3283,7 +3339,7 @@ function Shell(props: AppProps): React.ReactElement {
             }}
           />
         </ChatCoreGate>
-      )
+      ))
     ) : top.name === 'apiKeyNew' ? (
       session == null ? null : (
         <NewApiKeyScreen client={client} onCreated={pop} />
@@ -3298,6 +3354,7 @@ function Shell(props: AppProps): React.ReactElement {
     ) : top.name === 'account' && session != null ? (
       <AccountScreen
         client={client}
+        socket={gameSocket}
         onTeamStationTv={() => {
           push({ name: 'teamStationTv' })
         }}
@@ -3313,20 +3370,12 @@ function Shell(props: AppProps): React.ReactElement {
           )
         }}
         session={session}
-        onChatDevices={
-          chatOn
-            ? () => {
-                push({ name: 'chatDevices' })
-              }
-            : undefined
-        }
-        onChatReports={
-          chatOn
-            ? () => {
-                push({ name: 'chatReports' })
-              }
-            : undefined
-        }
+        onChatDevices={() => {
+          push({ name: 'chatDevices' })
+        }}
+        onChatReports={() => {
+          push({ name: 'chatReports' })
+        }}
         onSignOut={leaveSession}
         onSignOutRequest={() => {
           // Unsent changes go with the phone's file: ask first.
@@ -3799,7 +3848,7 @@ function Shell(props: AppProps): React.ReactElement {
             mode="header"
             selected={tab}
             onSelect={selectTab}
-            dots={{ chat: hasUnread(chatList) }}
+            dots={{ chat: chatOn && hasUnread(chatList) }}
           />
         ) : undefined
       }
@@ -3887,6 +3936,7 @@ function Shell(props: AppProps): React.ReactElement {
         onNavigate={openTessLink}
         screen={tessScreen}
         takesFocus={takeTessFocus}
+        owner={signedInAs}
       />
     </TessFrame>
   )
@@ -3911,10 +3961,14 @@ function Shell(props: AppProps): React.ReactElement {
           selected={tab}
           chatActive={top?.name === 'conversation' || tab === 'chat'}
           onSelect={selectTab}
-          dots={{ chat: hasUnread(chatList) }}
+          dots={{ chat: chatOn && hasUnread(chatList) }}
         />
       )}
     </>
+  )
+  /** A scene's node, told which scene it is (see `useChatAgeAsk`). */
+  const framed = (key: string, node: React.ReactNode): React.ReactNode => (
+    <ChatFrameKey.Provider value={key}>{node}</ChatFrameKey.Provider>
   )
   const sceneOf = (index: number): StackScene => {
     const frame = stack[index] as Pushed | undefined
@@ -3925,7 +3979,7 @@ function Shell(props: AppProps): React.ReactElement {
       depth: index + 1,
       presentation: presentationOf(frame),
       immersive: isImmersive(frame),
-      node: renderFrame(frame, key)
+      node: framed(key, renderFrame(frame, key))
     }
   }
   const topScene: StackScene =
@@ -3954,10 +4008,12 @@ function Shell(props: AppProps): React.ReactElement {
           depth: Math.max(0, stack.length - 1),
           presentation: 'cover',
           immersive: true,
-          node: scoringBody
+          // Framed as `sceneOf` frames it on top, so the scorer keeps its
+          // place in the tree, and its state, between the two.
+          node: framed(scoreKey(scoringFrame.gameId), scoringBody)
         }
 
-  return withChatKeyboard(
+  const shell = withChatKeyboard(
     <GestureHandlerRootView style={styles.root}>
       <DeviceApprovalContext.Provider value={deviceApprovals}>
         <ChatOverlayHost>
@@ -4002,6 +4058,12 @@ function Shell(props: AppProps): React.ReactElement {
               </View>
               <SuccessToast notice={successNotice} />
               {chatOn && <DeviceApprovalPrompt />}
+              <ChatAgeHost
+                state={chatAge}
+                topKey={topKey}
+                chatSurface={isChatSurface(tab, top?.name)}
+                onLeaveChat={declineChat}
+              />
               {confirmingSignOut && (
                 <ChoiceSheet
                   title="Sign Out?"
@@ -4054,6 +4116,9 @@ function Shell(props: AppProps): React.ReactElement {
         </ChatOverlayHost>
       </DeviceApprovalContext.Provider>
     </GestureHandlerRootView>
+  )
+  return (
+    <ChatAgeContext.Provider value={chatAge}>{shell}</ChatAgeContext.Provider>
   )
 }
 
@@ -4626,6 +4691,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875)
   },
+  /** Where a chat surface stands while the age sheet is up over it. */
+  chatLocked: { flex: 1 },
   root: {
     flex: 1
   },

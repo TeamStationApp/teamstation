@@ -26,6 +26,7 @@ import {
   setupOf
 } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import {
   dictatingHealth,
   type FakeDictation,
@@ -355,6 +356,8 @@ async function say(
 }
 
 describe('Coach Game (U25)', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('disables availability switches until the lineup save finishes refreshing', async () => {
     const held = server()
     const save = held.client.saveLineups.bind(held.client)
@@ -1279,6 +1282,8 @@ describe('Coach Game (U25)', function () {
 })
 
 describe('a game swapped under the coach screen', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   /** The game after the swap: the Owls at home, his Hawks away. */
   const swappedGame = (held: Server): GameDetail => ({
     ...held.game,
@@ -1601,6 +1606,8 @@ describe('a game swapped under the coach screen', function () {
 })
 
 describe('a coach’s lineup save', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   const game = createDevelopmentSession(
     gameFixture,
     roster('away'),
@@ -1669,6 +1676,8 @@ describe('a coach’s lineup save', function () {
 })
 
 describe('the Coach Game pill', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   this.timeout(20000)
 
   async function gameScreen(
@@ -1718,6 +1727,8 @@ describe('the Coach Game pill', function () {
 })
 
 describe('Coach Game in the app', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   this.timeout(30000)
 
   function fixtureFetch(): void {

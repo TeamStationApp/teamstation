@@ -6,6 +6,7 @@ import { Linking, NativeModules, Platform } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { App } from '../App'
 import { AppHeader } from '../components/AppHeader'
 import { BuildInfoModal } from '../components/BuildInfoModal'
@@ -52,6 +53,8 @@ async function press(label: string): Promise<void> {
 }
 const client = {} as unknown as TeamStationClient
 describe('OAuth consent and loaded build information', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('restores the approval address after an email sign-in completes', async () => {
     window.history.replaceState(
       null,
@@ -467,10 +470,12 @@ describe('OAuth consent and loaded build information', () => {
       throw new Error('unavailable')
     }
     const configured = {
-      buildsLink: async () => 'https://builds.example.test'
+      distributionLinks: async () => ({
+        betaBuildsUrl: 'https://builds.example.test'
+      })
     } as unknown as TeamStationClient
     await show(<BuildInfoModal client={configured} onClose={() => undefined} />)
-    await press('Download builds')
+    await press('Android/iOS Beta Builds')
     expect(document.body.textContent).includes('Could not open')
   })
   it('requires explicit native approval and allows returning to the original browser', async () => {
@@ -640,18 +645,18 @@ describe('OAuth consent and loaded build information', () => {
     )
     expect(document.body.textContent).includes('feature/camera')
     expect(document.body.textContent).includes('abc123')
-    expect(document.body.textContent).not.includes('Download builds')
+    expect(document.body.textContent).not.includes('Android/iOS Beta Builds')
     await press('Close')
     expect(closed).equals(true)
     const unavailable = {
-      buildsLink: async () => {
+      distributionLinks: async () => {
         throw new Error('offline')
       }
     } as unknown as TeamStationClient
     await show(
       <BuildInfoModal client={unavailable} onClose={() => undefined} />
     )
-    expect(document.body.textContent).not.includes('Download builds')
+    expect(document.body.textContent).not.includes('Android/iOS Beta Builds')
   })
   it('opens the configured build service and keeps the header mounted', async () => {
     const opened: string[] = []
@@ -660,16 +665,23 @@ describe('OAuth consent and loaded build information', () => {
       return null
     }
     const configured = {
-      buildsLink: async () => 'https://builds.example.test'
+      distributionLinks: async () => ({
+        betaBuildsUrl: 'https://builds.example.test',
+        appStoreUrl: 'https://apps.example.test/app'
+      })
     } as unknown as TeamStationClient
     await show(
       <AppHeader showMark title="Your Home" buildsClient={configured} />
     )
     await press('About TeamStation')
-    await press('Download builds')
-    expect(opened).deep.equals(['https://builds.example.test'])
+    await press('Android/iOS Beta Builds')
+    await press('iOS TestFlight')
+    expect(opened).deep.equals([
+      'https://builds.example.test',
+      'https://apps.example.test/app'
+    ])
     await press('Close')
     expect(document.body.textContent).includes('Your Home')
-    expect(document.body.textContent).not.includes('Download builds')
+    expect(document.body.textContent).not.includes('Android/iOS Beta Builds')
   })
 })

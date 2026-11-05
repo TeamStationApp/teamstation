@@ -20,6 +20,7 @@ import {
 } from './accountSettings'
 import { type ApiKey, type ApiKeyCreate, asApiKey, asApiKeys } from './apiKeys'
 import { asLiteral } from './asLiteral'
+import { asChatAge, type ChatAge, type ChatAgeSource } from './chatAge'
 import { type Approval, asApproval, asBuildsLink } from './distribution'
 import { type ApiError, asApiError, HttpError } from './errors'
 import {
@@ -104,9 +105,11 @@ import type {
 import { asStatSplit, asStatSplitBy } from './playerStatSplits'
 import {
   asGroupDetail,
+  asPublicGame,
   asPublicGroup,
   asSearchRow,
   type GroupDetail,
+  type PublicGame,
   type PublicGroup,
   type SearchRow
 } from './publicGroups'
@@ -162,12 +165,15 @@ import {
   type TvPlatform
 } from './tvLogin'
 import {
+  asUmpireColumn,
+  asUmpireGameRow,
   asUmpireLeaderboard,
   asUmpireLeagues,
   asUmpireLevel,
   asUmpireLevels,
   asUmpirePeople,
   asUmpireSchedule,
+  asUmpireScheduleHead,
   asUmpireSeasons,
   asUmpireSettings,
   asUmpireTypes
@@ -183,6 +189,8 @@ import type {
   UmpireTypeCount
 } from './umpires'
 import type {
+  UmpireColumn,
+  UmpireGameRow,
   UmpireLeaderboard,
   UmpireLeaderboardQuery,
   UmpireLeague,
@@ -461,6 +469,15 @@ export const asChatPerson = asObject({
   avatarUrl: asNullable(asString)
 })
 export type ChatPerson = ReturnType<typeof asChatPerson>
+
+export const asChatBlock = asObject({
+  userId: asUserId,
+  shortName: asString,
+  avatarUrl: asEither(asString, asValue(null)),
+  userIds: asArray(asUserId),
+  createdAt: asString
+})
+export type ChatBlock = ReturnType<typeof asChatBlock>
 
 /**
  * An adult who may be included beside a player, from `GET
@@ -1794,6 +1811,104 @@ function videoCollectionQuery(options: VideoCollectionOptions): string {
   ].join('&')
 }
 
+/**
+ * What a paged list's hero and notes read, counted over the list's whole
+ * filter leaving out `when` and `hasVideo`, so they hold with one page loaded
+ * and across a screen's pills.
+ */
+export const asListCounts = asObject({
+  total: asNumber,
+  upcoming: asNumber,
+  /** Rows with a video, and the videos they hold between them. */
+  withVideo: asNumber,
+  videos: asNumber,
+  /** The first `seasonId` of the list, newest first. */
+  newestSeasonId: asNullable(asString)
+})
+export type ListCounts = ReturnType<typeof asListCounts>
+
+/** One page of a list, as every `paged=1` read answers. */
+export interface Page<T> {
+  items: T[]
+  /** Null at the end. */
+  nextCursor: string | null
+  /** On any page with rows before it, and null otherwise. */
+  prevCursor: string | null
+  /** The row `around` opened on. */
+  anchorId: string | null
+  /** On a first page only. */
+  counts: ListCounts | null
+}
+
+function pageShape<T>(asItem: Cleaner<T>): {
+  [Key in keyof Page<T>]: Cleaner<Page<T>[Key]>
+} {
+  return {
+    items: asArray(asItem),
+    nextCursor: asNullable(asString),
+    prevCursor: asNullable(asString),
+    anchorId: asNullable(asString),
+    counts: asNullable(asListCounts)
+  }
+}
+
+export function asPage<T>(asItem: Cleaner<T>): Cleaner<Page<T>> {
+  return asObject(pageShape(asItem))
+}
+
+/**
+ * The umpire schedule a page at a time. `positions` are the columns of the
+ * whole filtered list, so a table's columns and headers hold as rows arrive.
+ */
+export type UmpireSchedulePage = Omit<UmpireSchedule, 'games'> &
+  Page<UmpireGameRow> & { positions: UmpireColumn[] }
+
+const asUmpireSchedulePage: Cleaner<UmpireSchedulePage> = asObject({
+  ...asUmpireScheduleHead,
+  ...pageShape(asUmpireGameRow),
+  positions: asArray(asUmpireColumn)
+})
+
+/** What `paged=1` reads of a schedule take. */
+export interface GamesPageQuery {
+  when?: 'past' | 'upcoming' | 'all'
+  order?: 'asc' | 'desc'
+  /** Only games with a video. */
+  hasVideo?: boolean
+  /** Open on the list's next game, in `asc` order. Not with `cursor`. */
+  around?: 'next'
+  /**
+   * From the `nextCursor` or `prevCursor` of the same list. It carries the
+   * list's order, so `order` may be left out, and one that disagrees is a 400.
+   */
+  cursor?: string
+  limit?: number
+}
+
+function gamesPageParams(query: GamesPageQuery): string {
+  const params = ['paged=1']
+  if (query.when != null && query.when !== 'all')
+    params.push(`when=${query.when}`)
+  if (query.order != null) params.push(`order=${query.order}`)
+  if (query.hasVideo === true) params.push('hasVideo=1')
+  if (query.around != null) params.push(`around=${query.around}`)
+  if (query.cursor != null)
+    params.push(`cursor=${encodeURIComponent(query.cursor)}`)
+  if (query.limit != null) params.push(`limit=${query.limit}`)
+  return params.join('&')
+}
+
+/** A schedule query as the server takes it: one value to a repeated key. */
+function umpireScheduleParams(query: string): URLSearchParams {
+  const params = new URLSearchParams(query)
+  for (const key of ['days', 'levels']) {
+    const values = params.getAll(key).flatMap(value => value.split(','))
+    params.delete(key)
+    for (const value of values) if (value !== '') params.append(key, value)
+  }
+  return params
+}
+
 /** A player a roster manager may add, as the search card draws them. */
 export interface RosterCandidate {
   userId: string
@@ -2605,6 +2720,28 @@ export const asTessMessageBody = asObject({
 })
 export type TessMessageBody = ReturnType<typeof asTessMessageBody>
 
+/**
+ * `POST /me/tess/changes/:changeId/confirm`: the app's id for the turn, so
+ * the person can stop Tess's report. An older app sends no body.
+ */
+export const asTessConfirmBody = asObject({
+  clientId: asOptional(asTessClientId)
+})
+
+/**
+ * `POST /me/tess/changes/confirm`: the changes one hold confirms, a reply's
+ * still pending, in the order they are shown, and the app's id for the
+ * turn, so the person can stop Tess's report.
+ */
+export const asTessConfirmAllBody = asObject({
+  changeIds: asArray(asTextUpTo(64)),
+  clientId: asOptional(asTessClientId)
+})
+export type TessConfirmAllBody = ReturnType<typeof asTessConfirmAllBody>
+
+/** `POST /me/tess/stop`: the turn the app means to stop, by its id. */
+export const asTessStopBody = asObject({ clientId: asTessClientId })
+
 /** `POST /me/tess/attachments`: one file, its bytes in base64. */
 export const asTessAttachmentBody = asObject({
   name: asTextUpTo(1000),
@@ -2705,12 +2842,18 @@ export const asTessAttachment = asObject({
 })
 export type TessAttachment = ReturnType<typeof asTessAttachment>
 
+/** One thing a change sets, in plain words: a column and its cell. */
+export const asTessChangeDetail = asObject({ label: asString, value: asString })
+export type TessChangeDetail = ReturnType<typeof asTessChangeDetail>
+
 /**
  * A change Tess proposed: what the server will run, from the stored request
  * rather than her words, and where it stands. It runs only when the person
- * holds Confirm.
+ * holds Confirm. `details` is what it sets in plain words, in her order,
+ * which the app shows as its row of a table; a change without them shows
+ * its summary.
  */
-export const asTessChange = asObject({
+const asTessChangeShape = asObject({
   id: asString,
   summary: asString,
   method: asLiteral('POST', 'PUT', 'PATCH', 'DELETE'),
@@ -2727,9 +2870,34 @@ export const asTessChange = asObject({
     'failed',
     'expired',
     'unknown'
-  )
+  ),
+  details: asOptional(asArray(asTessChangeDetail)),
+  /** On a pending change: when it expires, unconfirmed, by the server's clock. */
+  expiresAt: asOptional(asString),
+  /**
+   * On a pending change: how long it has left as of the answer that carries
+   * it, in milliseconds. The app counts from when it received it, since its
+   * own clock need not agree with the server's.
+   */
+  expiresInMs: asOptional(asNumber)
 })
-export type TessChange = ReturnType<typeof asTessChange>
+export type TessChange = Omit<
+  ReturnType<typeof asTessChangeShape>,
+  'details' | 'expiresAt' | 'expiresInMs'
+> & { details?: TessChangeDetail[]; expiresAt?: string; expiresInMs?: number }
+/**
+ * A change, without `details` when it has none, nor `expiresAt` and
+ * `expiresInMs` when none is due.
+ */
+export const asTessChange: Cleaner<TessChange> = raw => {
+  const { details, expiresAt, expiresInMs, ...change } = asTessChangeShape(raw)
+  return {
+    ...change,
+    ...(details == null || details.length === 0 ? {} : { details }),
+    ...(expiresAt == null ? {} : { expiresAt }),
+    ...(expiresInMs == null ? {} : { expiresInMs })
+  }
+}
 
 /** How a step Tess took went: still going, worked, or failed. */
 export const asTessStepStatus = asLiteral('running', 'done', 'failed')
@@ -2771,20 +2939,32 @@ const asTessMessageShape = asObject({
   /** On a reply: the summaries of Tess's thinking, joined. */
   thinking: asOptional(asString),
   /** On a reply: each step she took, in order. */
-  steps: asOptional(asArray(asTessStep))
+  steps: asOptional(asArray(asTessStep)),
+  /** On a reply: the person stopped her before she finished it. */
+  stopped: asOptional(asBoolean)
 })
 export type TessMessage = Omit<
   ReturnType<typeof asTessMessageShape>,
-  'clientId' | 'thinking' | 'steps'
-> & { clientId?: string; thinking?: string; steps?: TessStep[] }
-/** A message, without `clientId`, `thinking` or `steps` when it has none. */
+  'clientId' | 'thinking' | 'steps' | 'stopped'
+> & {
+  clientId?: string
+  thinking?: string
+  steps?: TessStep[]
+  stopped?: boolean
+}
+/**
+ * A message, without `clientId`, `thinking` or `steps` when it has none,
+ * and with `stopped` only on a reply that was.
+ */
 export const asTessMessage: Cleaner<TessMessage> = raw => {
-  const { clientId, thinking, steps, ...message } = asTessMessageShape(raw)
+  const { clientId, thinking, steps, stopped, ...message } =
+    asTessMessageShape(raw)
   return {
     ...message,
     ...(clientId == null ? {} : { clientId }),
     ...(thinking == null ? {} : { thinking }),
-    ...(steps == null ? {} : { steps })
+    ...(steps == null ? {} : { steps }),
+    ...(stopped === true ? { stopped } : {})
   }
 }
 
@@ -2797,14 +2977,22 @@ const asTessConversationShape = asObject({
    * Tess is answering a message or a confirmed change now; what she stores
    * shows on a later read.
    */
-  answering: asOptional(asBoolean)
+  answering: asOptional(asBoolean),
+  /**
+   * While she is answering: the client id the running turn was sent with,
+   * which `stopTess` names, so an app opened meanwhile can stop it.
+   */
+  turnClientId: asOptional(asString)
 })
 export type TessConversation = Omit<
   ReturnType<typeof asTessConversationShape>,
-  'answering'
-> & { answering?: boolean }
-export const asTessConversation: Cleaner<TessConversation> =
-  asTessConversationShape
+  'answering' | 'turnClientId'
+> & { answering?: boolean; turnClientId?: string }
+/** The conversation, without `turnClientId` when no turn names one. */
+export const asTessConversation: Cleaner<TessConversation> = raw => {
+  const { turnClientId, ...conversation } = asTessConversationShape(raw)
+  return turnClientId == null ? conversation : { ...conversation, turnClientId }
+}
 
 /** `POST /me/tess/changes/:changeId/confirm`: the change, and Tess's report. */
 export const asTessConfirmation = asObject({
@@ -2814,17 +3002,32 @@ export const asTessConfirmation = asObject({
 export type TessConfirmation = ReturnType<typeof asTessConfirmation>
 
 /**
+ * `POST /me/tess/changes/confirm`: each change as it ended, in the order
+ * sent, and Tess's one report on them.
+ */
+export const asTessConfirmations = asObject({
+  changes: asArray(asTessChange),
+  messages: asArray(asTessMessage)
+})
+export type TessConfirmations = ReturnType<typeof asTessConfirmations>
+
+/**
  * What a streamed turn tells as it happens (`streamTessMessage`,
- * `streamTessConfirm`): pieces of Tess's thinking's summary and of her text;
- * each step as it starts and ends, by its tool call's id; and, once the turn
- * has begun, the person's message as stored (or, for a confirm, the change
- * as it ended).
+ * `streamTessConfirm`, `streamTessConfirmAll`): pieces of Tess's thinking's
+ * summary and of her text; each step as it starts and ends, by its tool
+ * call's id; and, once the turn has begun, the person's message as stored
+ * (or, for a confirm, the change as it ended, and for a batch, each change).
  */
 export type TessStreamEvent =
   | { type: 'thinking'; delta: string }
   | { type: 'text'; delta: string }
   | { type: 'step'; id: string; label: string; status: TessStepStatus }
-  | { type: 'stored'; messages: TessMessage[]; change?: TessChange }
+  | {
+      type: 'stored'
+      messages: TessMessage[]
+      change?: TessChange
+      changes?: TessChange[]
+    }
 
 const asTessDelta = asObject({ delta: asString })
 const asTessStepEvent = asObject({
@@ -2834,7 +3037,8 @@ const asTessStepEvent = asObject({
 })
 const asTessStored = asObject({
   messages: asArray(asTessMessage),
-  change: asOptional(asTessChange)
+  change: asOptional(asTessChange),
+  changes: asOptional(asArray(asTessChange))
 })
 
 /** One streamed event by its name, or null for one this app does not know. */
@@ -2849,10 +3053,13 @@ export function tessStreamEventOf(
     case 'step':
       return { type: 'step', ...asTessStepEvent(raw) }
     case 'stored': {
-      const { messages, change } = asTessStored(raw)
-      return change == null
-        ? { type: 'stored', messages }
-        : { type: 'stored', messages, change }
+      const { messages, change, changes } = asTessStored(raw)
+      return {
+        type: 'stored',
+        messages,
+        ...(change == null ? {} : { change }),
+        ...(changes == null ? {} : { changes })
+      }
     }
     default:
       return null
@@ -2881,6 +3088,9 @@ export const asTessUsageWeek = asObject({
   weekStart: asString,
   inputTokens: asNumber,
   outputTokens: asNumber,
+  /** Of the input, read from the cache and written to it; 0 from an older server. */
+  cacheReadTokens: asOptional(asNumber, 0),
+  cacheWriteTokens: asOptional(asNumber, 0),
   requests: asNumber
 })
 export type TessUsageWeek = ReturnType<typeof asTessUsageWeek>
@@ -3480,16 +3690,29 @@ export class TeamStationClient {
   }
 
   async umpireSchedule(league: string, query = ''): Promise<UmpireSchedule> {
-    const params = new URLSearchParams(query)
-    for (const key of ['days', 'levels']) {
-      const values = params.getAll(key).flatMap(value => value.split(','))
-      params.delete(key)
-      for (const value of values) if (value !== '') params.append(key, value)
-    }
+    const params = umpireScheduleParams(query)
     return await this.request(
       'GET',
       `/leagues/${encodeURIComponent(league)}/umpire-schedule?${params.toString()}`,
       asUmpireSchedule
+    )
+  }
+
+  /** `umpireSchedule`, a page at a time. */
+  async umpireSchedulePage(
+    league: string,
+    query = '',
+    page: Pick<GamesPageQuery, 'around' | 'cursor' | 'limit'> = {}
+  ): Promise<UmpireSchedulePage> {
+    const params = umpireScheduleParams(query)
+    params.set('paged', '1')
+    if (page.around != null) params.set('around', page.around)
+    if (page.cursor != null) params.set('cursor', page.cursor)
+    if (page.limit != null) params.set('limit', String(page.limit))
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(league)}/umpire-schedule?${params.toString()}`,
+      asUmpireSchedulePage
     )
   }
 
@@ -3677,8 +3900,33 @@ export class TeamStationClient {
     return await this.request('GET', '/me/account', asAccountSettings)
   }
 
+  /** Whether this account has unlocked chat, and how. */
+  async chatAge(): Promise<ChatAge> {
+    return await this.request('GET', '/me/account/chat-age', asChatAge)
+  }
+
+  /** Unlocks chat for this account; the first confirmation stands. */
+  async confirmChatAge(source: ChatAgeSource): Promise<ChatAge> {
+    return await this.request('PUT', '/me/account/chat-age', asChatAge, {
+      source
+    })
+  }
+
   async buildsLink(): Promise<string | undefined> {
     return (await this.request('GET', '/me/builds', asBuildsLink)).url
+  }
+
+  /** Android and iOS beta builds, and iOS TestFlight, as a node administrator stored them. */
+  async distributionLinks(): Promise<{
+    betaBuildsUrl?: string
+    appStoreUrl?: string
+  }> {
+    const body = await this.request('GET', '/me/builds', asBuildsLink)
+    const beta = body.betaBuildsUrl ?? body.url
+    return {
+      ...(beta == null ? {} : { betaBuildsUrl: beta }),
+      ...(body.appStoreUrl == null ? {} : { appStoreUrl: body.appStoreUrl })
+    }
   }
 
   async oauthApproval(handle: string): Promise<Approval> {
@@ -4057,13 +4305,51 @@ export class TeamStationClient {
     )
   }
 
-  /** Runs a change Tess proposed, once the person has held Confirm. */
-  async confirmTessChange(changeId: string): Promise<TessConfirmation> {
+  /**
+   * Runs a change Tess proposed, once the person has held Confirm.
+   * `clientId` names the turn, for `stopTess`.
+   */
+  async confirmTessChange(
+    changeId: string,
+    options: { clientId?: string } = {}
+  ): Promise<TessConfirmation> {
     return await this.request(
       'POST',
       `/me/tess/changes/${encodeURIComponent(changeId)}/confirm`,
-      asTessConfirmation
+      asTessConfirmation,
+      options.clientId == null ? undefined : { clientId: options.clientId }
     )
+  }
+
+  /**
+   * Runs the changes one hold confirmed, a reply's still pending, in order:
+   * each once, and Tess reports on them together. Nothing runs when any of
+   * them is not the caller's or no longer pending. `clientId` names the
+   * turn, for `stopTess`.
+   */
+  async confirmTessChanges(
+    changeIds: string[],
+    options: { clientId?: string } = {}
+  ): Promise<TessConfirmations> {
+    return await this.request(
+      'POST',
+      '/me/tess/changes/confirm',
+      asTessConfirmations,
+      {
+        changeIds,
+        ...(options.clientId == null ? {} : { clientId: options.clientId })
+      }
+    )
+  }
+
+  /**
+   * Stops Tess's turn for the message, or the confirm, sent with
+   * `clientId`: her reply ends with what she had stored and says it was
+   * stopped. Answers once the server has noted it, whether or not that turn
+   * is still running; one that has ended is left as it was.
+   */
+  async stopTess(clientId: string): Promise<void> {
+    await this.request('POST', '/me/tess/stop', () => undefined, { clientId })
   }
 
   /**
@@ -4104,12 +4390,30 @@ export class TeamStationClient {
   /** `confirmTessChange`, streamed as `streamTessMessage` is. */
   async streamTessConfirm(
     changeId: string,
-    onEvent: (event: TessStreamEvent) => void
+    onEvent: (event: TessStreamEvent) => void,
+    options: { clientId?: string } = {}
   ): Promise<TessConfirmation> {
     return await this.streamTess(
       `/me/tess/changes/${encodeURIComponent(changeId)}/confirm`,
       asTessConfirmation,
-      undefined,
+      options.clientId == null ? undefined : { clientId: options.clientId },
+      onEvent
+    )
+  }
+
+  /** `confirmTessChanges`, streamed as `streamTessMessage` is. */
+  async streamTessConfirmAll(
+    changeIds: string[],
+    onEvent: (event: TessStreamEvent) => void,
+    options: { clientId?: string } = {}
+  ): Promise<TessConfirmations> {
+    return await this.streamTess(
+      '/me/tess/changes/confirm',
+      asTessConfirmations,
+      {
+        changeIds,
+        ...(options.clientId == null ? {} : { clientId: options.clientId })
+      },
       onEvent
     )
   }
@@ -4865,6 +5169,15 @@ export class TeamStationClient {
     )
   }
 
+  /** `games`, a page at a time. */
+  async gamesPage(query: GamesPageQuery = {}): Promise<Page<SeasonGame>> {
+    return await this.request(
+      'GET',
+      `/events?${gamesPageParams(query)}`,
+      asPage(asSeasonGame)
+    )
+  }
+
   /**
    * The people another service knows by these ids, as far as this person may
    * see them. A merged row answers as whoever it was merged into.
@@ -4896,6 +5209,18 @@ export class TeamStationClient {
       'GET',
       `/events?season=${encodeURIComponent(seasonId)}`,
       asArray(asSeasonGame)
+    )
+  }
+
+  /** `seasonGames`, a page at a time. */
+  async seasonGamesPage(
+    seasonId: string,
+    query: GamesPageQuery = {}
+  ): Promise<Page<SeasonGame>> {
+    return await this.request(
+      'GET',
+      `/events?season=${encodeURIComponent(seasonId)}&${gamesPageParams(query)}`,
+      asPage(asSeasonGame)
     )
   }
 
@@ -4944,6 +5269,36 @@ export class TeamStationClient {
       'GET',
       `/teams/${encodeURIComponent(teamId)}/games`,
       asArray(asGameSummary)
+    )
+  }
+
+  /**
+   * The games a team's or a season's public page shows, a page at a time, to
+   * anybody signed in or not. `PublicGame` is another shape from the member
+   * reads above.
+   */
+  async publicGamesPage(
+    kind: 'team' | 'season',
+    id: string,
+    query: Omit<GamesPageQuery, 'around'> = {}
+  ): Promise<Page<PublicGame>> {
+    const groups = kind === 'team' ? 'teams' : 'seasons'
+    return await this.request(
+      'GET',
+      `/${groups}/${encodeURIComponent(id)}/games?public=1&${gamesPageParams(query)}`,
+      asPage(asPublicGame)
+    )
+  }
+
+  /** `teamGames`, a page at a time. */
+  async teamGamesPage(
+    teamId: string,
+    query: GamesPageQuery = {}
+  ): Promise<Page<GameSummary>> {
+    return await this.request(
+      'GET',
+      `/teams/${encodeURIComponent(teamId)}/games?${gamesPageParams(query)}`,
+      asPage(asGameSummary)
     )
   }
 
@@ -5808,6 +6163,18 @@ export class TeamStationClient {
   }
 
   /** Every chat the caller is in. */
+  async chatBlocks(): Promise<ChatBlock[]> {
+    return await this.request('GET', '/chat/blocks', asArray(asChatBlock))
+  }
+
+  async setChatBlock(userId: string, blocked: boolean): Promise<ChatBlock[]> {
+    return await this.request(
+      blocked ? 'PUT' : 'DELETE',
+      `/chat/blocks/${encodeURIComponent(userId)}`,
+      asArray(asChatBlock)
+    )
+  }
+
   async chatConversations(): Promise<ChatConversation[]> {
     return await this.request(
       'GET',
@@ -6182,14 +6549,19 @@ export class TeamStationClient {
 
   /** Reports one message, disclosing its text and its own key. */
   async reportChatMessage(report: {
+    blockSender?: boolean
     messageId: string
     plaintext: string
     messageKey: string
-  }): Promise<{ id: string; verified: boolean }> {
+  }): Promise<{ id: string; verified: boolean; blockedUserIds?: string[] }> {
     return await this.request(
       'POST',
       '/chat/reports',
-      asObject({ id: asString, verified: asBoolean }),
+      asObject({
+        id: asString,
+        verified: asBoolean,
+        blockedUserIds: asOptional(asArray(asUserId))
+      }),
       report
     )
   }

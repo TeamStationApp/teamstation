@@ -31,7 +31,8 @@ describe('Tess reads the umpire leaderboard', function () {
         userId: userIdOfGumbo(user),
         origin: f.h.origin,
         credentials: { authorization: `Bearer ${f.h.tokens.get(user)!}` },
-        now: new Date()
+        now: new Date(),
+        proposals: { count: 0 }
       },
       {
         type: 'tool_use',

@@ -23,6 +23,7 @@ export interface MessageMenuProps {
   onMoreEmoji: () => void
   onCopy?: () => Promise<void>
   onPin?: (pinned: boolean) => void
+  onSafetyAction?: (action: 'block' | 'report' | 'reportAndBlock') => void
   onDelete: () => void
   onDeleteForEveryone?: () => void
   onClose: () => void
@@ -229,6 +230,27 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
             if (!closingNow.current) setConfirming(true)
           }}
         />
+      )}
+      {(['report', 'block', 'reportAndBlock'] as const).map(action =>
+        has(action) && props.onSafetyAction != null ? (
+          <Button
+            key={action}
+            label={
+              action === 'block'
+                ? lstrings.chat_block
+                : action === 'report'
+                  ? lstrings.chat_report
+                  : lstrings.chat_report_and_block
+            }
+            kind="text"
+            textColor={theme.dangerColor}
+            onPress={() => {
+              dismiss(() => {
+                latest.current.onSafetyAction?.(action)
+              })
+            }}
+          />
+        ) : null
       )}
       {error && (
         <Text style={styles.error} accessibilityLiveRegion="polite">

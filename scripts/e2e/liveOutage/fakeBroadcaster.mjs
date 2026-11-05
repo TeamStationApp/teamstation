@@ -4,7 +4,7 @@
 //   node scripts/e2e/liveOutage/fakeBroadcaster.mjs \
 //     --url rtmp://127.0.0.1:1936/live/<key> [--duration 180] \
 //     [--outage <at>:<seconds>]... [--lead <seconds>] [--size 1280x720] \
-//     [--fps 30] [--ffmpeg /opt/homebrew/bin/ffmpeg]
+//     [--fps 30] [--sound] [--ffmpeg /opt/homebrew/bin/ffmpeg]
 //
 // 1. Plans the start, T0, `--lead` seconds ahead (by default long enough to
 //    encode), and says so: `{"event":"planned","t0":…}`.
@@ -14,6 +14,10 @@
 //    32 cells (mobile/apps/tsDirector/scripts/rtspLoopServer.js) at the
 //    picture's bottom-left. `readMarker.ts` reads them back. The same clock
 //    is written out in words at the top-left, for a person watching.
+//    `--sound` adds a 440 Hz tone as AAC, 48 kHz stereo, as the phones and
+//    TS Director send: a return then shares the recording's init segment,
+//    where one with no sound, on a recording the ingest gave a silent track,
+//    gets an init segment of its own.
 // 3. At T0 publishes it at real speed with `ffmpeg -re -c copy -f flv`, which
 //    FFmpeg sends as enhanced RTMP for HEVC. Never `-tag:v hvc1` on the
 //    publish.
@@ -46,6 +50,7 @@ const { values } = parseArgs({
     lead: { type: 'string' },
     size: { type: 'string', default: '1280x720' },
     fps: { type: 'string', default: '30' },
+    sound: { type: 'boolean', default: false },
     ffmpeg: { type: 'string', default: '/opt/homebrew/bin/ffmpeg' }
   }
 })
@@ -116,6 +121,22 @@ try {
     'lavfi',
     '-i',
     `testsrc2=size=${width}x${height}:rate=${fps}:duration=${duration}`,
+    ...(values.sound
+      ? [
+          '-f',
+          'lavfi',
+          '-i',
+          `sine=frequency=440:sample_rate=48000:duration=${duration}`,
+          '-map',
+          '0:v',
+          '-map',
+          '1:a',
+          '-c:a',
+          'aac',
+          '-ac',
+          '2'
+        ]
+      : []),
     '-vf',
     markerFilters(),
     '-c:v',

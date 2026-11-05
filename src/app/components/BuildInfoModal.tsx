@@ -29,16 +29,28 @@ export function BuildInfoModal({
   crash?: () => void
 }): React.ReactElement {
   const styles = getStyles(useTheme())
-  const [url, setUrl] = useState<string>()
+  const [betaUrl, setBetaUrl] = useState<string>()
+  const [storeUrl, setStoreUrl] = useState<string>()
   const [failed, setFailed] = useState(false)
   const [renderError, setRenderError] = useState(false)
   useEffect(() => {
     let active = true
-    setUrl(undefined)
-    client
-      ?.buildsLink()
-      .then(value => {
-        if (active) setUrl(value)
+    setBetaUrl(undefined)
+    setStoreUrl(undefined)
+    const load =
+      client == null
+        ? undefined
+        : client.distributionLinks != null
+          ? client.distributionLinks()
+          : client.buildsLink().then(url => ({
+              betaBuildsUrl: url,
+              appStoreUrl: undefined
+            }))
+    load
+      ?.then(value => {
+        if (!active) return
+        setBetaUrl(value.betaBuildsUrl)
+        setStoreUrl(value.appStoreUrl)
       })
       .catch(() => undefined)
     return () => {
@@ -74,12 +86,24 @@ export function BuildInfoModal({
               </Text>
             </View>
           ))}
-          {url != null && (
+          {betaUrl != null && betaUrl !== '' && (
             <Button
               label={lstrings.about_builds}
               onPress={() => {
                 setFailed(false)
-                openExternal(url).catch(() => {
+                openExternal(betaUrl).catch(() => {
+                  setFailed(true)
+                })
+              }}
+            />
+          )}
+          {storeUrl != null && storeUrl !== '' && (
+            <Button
+              label={lstrings.about_app_store}
+              kind="secondary"
+              onPress={() => {
+                setFailed(false)
+                openExternal(storeUrl).catch(() => {
                   setFailed(true)
                 })
               }}

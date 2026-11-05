@@ -66,11 +66,31 @@ export interface PresignOptions {
   readOnlySource?: ReadOnlySpaceSource
 }
 
+/**
+ * The names one configured list may be read from the shared Space.
+ *
+ * The list is an array in the config file. A page asks about it once per
+ * picture, and walking the array each time grows with every video segment.
+ * The set is built the first time that array is asked about and kept for the
+ * process. The array object is the set's identity, so an edit of it after
+ * that first question is not seen.
+ */
+const readOnlyKeySets = new WeakMap<readonly string[], ReadonlySet<string>>()
+
+function readOnlyKeySet(keys: readonly string[]): ReadonlySet<string> {
+  const cached = readOnlyKeySets.get(keys)
+  if (cached != null) return cached
+  const built = new Set(keys)
+  readOnlyKeySets.set(keys, built)
+  return built
+}
+
 export function isReadOnlySourceKey(
   options: Pick<PresignOptions, 'readOnlySource'>,
   key: string
 ): boolean {
-  return key !== '' && options.readOnlySource?.keys.includes(key) === true
+  const keys = options.readOnlySource?.keys
+  return key !== '' && keys != null && readOnlyKeySet(keys).has(key)
 }
 
 export function presignGetUrl(options: PresignOptions): string {

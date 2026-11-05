@@ -12,12 +12,23 @@ import {
   settle,
   unmount
 } from '../../test/tessTestKit'
-import { Composer, type ComposerHandle, type ComposerProps } from './Composer'
+import {
+  Composer,
+  composerBottom,
+  type ComposerHandle,
+  type ComposerProps,
+  editAroundLine,
+  insertWords,
+  STOP_GUARD_MS
+} from './Composer'
 import type { TessAttachmentRef, TessUpload } from './tessTypes'
+import type { LevelSource } from './useTessMicrophone'
 
 interface Sent {
   text: string
   attachments: TessAttachmentRef[]
+  /** An edited queued message's place. */
+  seq?: number
 }
 
 function field(): HTMLTextAreaElement {
@@ -32,6 +43,36 @@ async function type(value: string): Promise<void> {
     )!.set!.call(field(), value)
     field().dispatchEvent(new window.Event('input', { bubbles: true }))
   })
+}
+
+/**
+ * The cursor put at `start` to `end`, as a click or the arrow keys put it:
+ * the field reports it on the key's release.
+ */
+async function caret(start: number, end = start): Promise<void> {
+  await act(async () => {
+    field().focus()
+    field().setSelectionRange(start, end)
+    // A release of the mouse, which also ends any press an earlier test
+    // left down, after which the field reports no selection.
+    field().dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }))
+  })
+}
+
+/** A microphone's loudness that a test plays by hand. */
+function levels(): LevelSource & { play: (level: number) => void } {
+  const listeners = new Set<(level: number) => void>()
+  return {
+    subscribe: listener => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    play: level => {
+      for (const listener of listeners) listener(level)
+    }
+  }
 }
 
 async function key(init: KeyboardEventInit): Promise<KeyboardEvent> {
@@ -58,8 +99,12 @@ function composer(overrides: Partial<ComposerProps> = {}): {
   const errors: string[] = []
   const props: ComposerProps = {
     busy: false,
-    onSend: async (text, attachments) => {
-      sent.push({ text, attachments })
+    onSend: async (text, attachments, options) => {
+      sent.push({
+        text,
+        attachments,
+        ...(options?.seq == null ? {} : { seq: options.seq })
+      })
       return true
     },
     onUpload: async upload => {
@@ -108,6 +153,18 @@ const TOO_MANY =
 describe('Composer', function () {
   afterEach(async () => {
     await unmount()
+  })
+
+  it('leaves a margin of at least 1 rem under itself in a browser', function () {
+    const theme = { rem: (size: number) => size * 16, spaceSmRem: 0.5 }
+    const bottom = (inset: number): number =>
+      composerBottom(
+        theme as unknown as Parameters<typeof composerBottom>[0],
+        inset
+      )
+    expect(bottom(0)).equals(16)
+    // A browser reports no inset; one given is not added.
+    expect(bottom(34)).equals(16)
   })
 
   it('sends on Enter and clears the field', async function () {
@@ -228,7 +285,7 @@ describe('Composer', function () {
     )
   })
 
-  it('sends with the button only when there is something to send and Tess is free', async function () {
+  it('sends with the button only when there is something to send', async function () {
     const { sent, props } = composer()
     await render(<Composer {...props} />)
     const send = byLabel('Send')
@@ -237,12 +294,171 @@ describe('Composer', function () {
     await key({ key: 'Enter' })
     expect(sent).deep.equals([])
     await type('Hello')
-    await rerender(<Composer {...props} busy />)
-    expect(byLabel('Send').getAttribute('aria-disabled')).equals('true')
-    await rerender(<Composer {...props} />)
     await click(byLabel('Send'))
     await settle()
     expect(sent).deep.equals([{ text: 'Hello', attachments: [] }])
+  })
+
+  it('sends while Tess answers, with the button or Enter, for the chat to queue', async function () {
+    const { sent, props } = composer({ busy: true, onStop: () => undefined })
+    await render(<Composer {...props} />)
+    await type('Then the playoffs')
+    const send = byLabel('Send')
+    expect(send.getAttribute('aria-disabled')).not.equals('true')
+    await click(send)
+    await settle()
+    expect(field().value).equals('')
+    await type('And the roster')
+    const enter = await key({ key: 'Enter' })
+    expect(enter.defaultPrevented).equals(true)
+    expect(sent).deep.equals([
+      { text: 'Then the playoffs', attachments: [] },
+      { text: 'And the roster', attachments: [] }
+    ])
+  })
+
+  it('edits a queued message in place of the draft, and sends it back to its place', async function () {
+    const handle = React.createRef<ComposerHandle>()
+    const { sent, props } = composer({ busy: true })
+    await render(<Composer {...props} handle={handle} />)
+    await attachCsv('draft.csv')
+    await type('An unsent draft')
+    const files = [
+      { id: 'a7', name: 'runs.csv', kind: 'csv' as const, described: false }
+    ]
+    await act(async () => {
+      handle.current!.edit({ text: 'Queued words', attachments: files, seq: 4 })
+    })
+    // The draft, its file too, is gone.
+    expect(field().value).equals('Queued words')
+    expect(
+      [
+        ...document.body.querySelectorAll('[data-testid="Tess attachment"]')
+      ].map(chip => chip.textContent)
+    ).deep.equals(['attach_fileruns.csvclose'])
+    await type('Queued words, edited')
+    // The draft as it is now, for the chat to put back if another is edited.
+    expect(handle.current!.draft()).deep.equals({
+      text: 'Queued words, edited',
+      attachments: files
+    })
+    await key({ key: 'Enter' })
+    // The next send is a plain one.
+    await type('Something new')
+    await key({ key: 'Enter' })
+    expect(sent).deep.equals([
+      { text: 'Queued words, edited', attachments: files, seq: 4 },
+      { text: 'Something new', attachments: [] }
+    ])
+  })
+
+  it('keeps an edited message’s place when its send is given back', async function () {
+    const handle = React.createRef<ComposerHandle>()
+    let answer = false
+    const seqs: Array<number | undefined> = []
+    const { props } = composer({
+      onSend: async (_text, _attachments, options) => {
+        seqs.push(options?.seq)
+        return answer
+      }
+    })
+    await render(<Composer {...props} handle={handle} />)
+    await act(async () => {
+      handle.current!.edit({ text: 'Queued words', attachments: [], seq: 2 })
+    })
+    await key({ key: 'Enter' })
+    expect(field().value).equals('Queued words')
+    answer = true
+    await key({ key: 'Enter' })
+    expect(seqs).deep.equals([2, 2])
+  })
+
+  it('keeps a queued message being edited through an emptied field, and sends what is typed next at its place', async function () {
+    const handle = React.createRef<ComposerHandle>()
+    const { sent, props } = composer({ busy: true })
+    await render(<Composer {...props} handle={handle} />)
+    await act(async () => {
+      handle.current!.edit({ text: 'Queued words', attachments: [], seq: 3 })
+    })
+    await type('')
+    await type('Reworded')
+    await key({ key: 'Enter' })
+    // The next send is a plain one.
+    await type('Something new')
+    await key({ key: 'Enter' })
+    expect(sent).deep.equals([
+      { text: 'Reworded', attachments: [], seq: 3 },
+      { text: 'Something new', attachments: [] }
+    ])
+  })
+
+  it('is Stop only while Tess answers and the draft is empty, and Send once there is something', async function () {
+    let stops = 0
+    const { sent, props } = composer({
+      busy: true,
+      onStop: () => {
+        stops += 1
+      }
+    })
+    const labelled = (label: string): HTMLElement | null =>
+      document.body.querySelector<HTMLElement>(`[aria-label="${label}"]`)
+    await render(<Composer {...props} />)
+    expect(labelled('Send')).equals(null)
+    expect(labelled('Stop Tess')!.textContent).equals('stop')
+    await click(byLabel('Stop Tess'))
+    expect(stops).equals(1)
+    // A letter typed: Send, which the chat queues.
+    await type('A')
+    expect(labelled('Stop Tess')).equals(null)
+    expect(byLabel('Send').getAttribute('aria-disabled')).not.equals('true')
+    expect(sent).deep.equals([])
+    // Only white space is nothing to send.
+    await type('  ')
+    expect(labelled('Stop Tess')).not.equals(null)
+    // A file is something to send.
+    await type('')
+    await attachCsv('runs.csv')
+    expect(labelled('Stop Tess')).equals(null)
+    expect(byLabel('Send').getAttribute('aria-disabled')).not.equals('true')
+    // Free again, and empty: Send, disabled.
+    await rerender(<Composer {...props} busy={false} />)
+    await click(byLabel('Remove runs.csv'))
+    expect(labelled('Stop Tess')).equals(null)
+    expect(byLabel('Send').getAttribute('aria-disabled')).equals('true')
+    // With no way to stop, it stays Send while she answers.
+    await rerender(<Composer {...props} onStop={undefined} />)
+    expect(labelled('Stop Tess')).equals(null)
+    expect(stops).equals(1)
+  })
+
+  it('sends once and stops nothing on a double press of Send while Tess answers', async function () {
+    let stops = 0
+    const { sent, props } = composer({
+      busy: true,
+      onStop: () => {
+        stops += 1
+      }
+    })
+    const realNow = Date.now
+    let now = 1000
+    Date.now = () => now
+    try {
+      await render(<Composer {...props} />)
+      await type('Then the playoffs')
+      await click(byLabel('Send'))
+      // The draft is empty: the second press lands on Stop, and is ignored.
+      await click(byLabel('Stop Tess'))
+      now += STOP_GUARD_MS - 1
+      await click(byLabel('Stop Tess'))
+      expect(sent).deep.equals([{ text: 'Then the playoffs', attachments: [] }])
+      expect(stops).equals(0)
+      // Pressed once the moment has passed, it stops her.
+      now += 1
+      await click(byLabel('Stop Tess'))
+      expect(stops).equals(1)
+    } finally {
+      Date.now = realNow
+    }
   })
 
   it('gives the draft and its files back when the send fails', async function () {
@@ -346,7 +562,7 @@ describe('Composer', function () {
     expect(byLabel('Send').getAttribute('aria-disabled')).equals('true')
     // What is said waits in the field.
     await act(async () => {
-      handle.current!.dictate('Chart them')
+      handle.current!.insertDictation('Chart them')
     })
     expect(sent.length).equals(1)
     expect(field().value).equals('Chart them')
@@ -388,7 +604,7 @@ describe('Composer', function () {
     expect(byLabel('Send').getAttribute('aria-disabled')).not.equals('true')
   })
 
-  it('counts a dropped file as uploading while it is still being read, so neither Enter nor the microphone sends without it', async function () {
+  it('counts a dropped file as uploading while it is still being read, so Enter does not send without it', async function () {
     const { sent, uploads, errors, props } = composer()
     const handle = React.createRef<ComposerHandle>()
     await render(<Composer {...props} handle={handle} />)
@@ -416,8 +632,9 @@ describe('Composer', function () {
     expect(document.body.textContent).includes('Attaching…')
     expect(byLabel('Send').getAttribute('aria-disabled')).equals('true')
     await key({ key: 'Enter' })
+    await caret('Chart these'.length)
     await act(async () => {
-      handle.current!.dictate('by game')
+      handle.current!.insertDictation('by game')
     })
     expect(sent).deep.equals([])
     expect(field().value).equals('Chart these by game')
@@ -453,78 +670,200 @@ describe('Composer', function () {
     expect(sent).deep.equals([{ text: 'Chart these', attachments: [] }])
   })
 
-  it('sends what was said with the typed draft and its files, and gives it all back when that fails', async function () {
-    let delivered = false
-    const { sent, props } = composer({
-      onSend: async (text, attachments) => {
-        sent.push({ text, attachments })
-        return delivered
-      }
-    })
+  it('puts what was said at the cursor, a space from the words beside it, and sends nothing', async function () {
+    const { sent, props } = composer()
     const handle = React.createRef<ComposerHandle>()
     await render(<Composer {...props} handle={handle} />)
-    await attachCsv('runs.csv')
-    await type('Chart these')
+    // An empty field takes the words as they are.
     await act(async () => {
-      handle.current!.dictate('  for the Hawks  ')
+      handle.current!.insertDictation('  Hello world  ')
     })
-    await settle()
-    const runs = { id: 'a1', name: 'runs.csv', kind: 'csv', described: false }
-    expect(sent).deep.equals([
-      { text: 'Chart these for the Hawks', attachments: [runs] }
-    ])
-    expect(field().value).equals('Chart these for the Hawks')
-    expect(byTestId('Tess attachment')!.textContent).includes('runs.csv')
-    delivered = true
+    expect(field().value).equals('Hello world')
+    expect(field().selectionStart).equals('Hello world'.length)
+    // After "Hello": spaced both sides, the cursor after them.
+    await caret('Hello'.length)
     await act(async () => {
-      handle.current!.dictate(' ')
+      handle.current!.insertDictation('there')
     })
-    expect(sent.length, 'nothing was said').equals(1)
-    await click(byLabel('Send'))
-    await settle()
-    expect(sent.at(-1)).deep.equals({
-      text: 'Chart these for the Hawks',
-      attachments: [runs]
+    expect(field().value).equals('Hello there world')
+    expect([field().selectionStart, field().selectionEnd]).deep.equals([11, 11])
+    // A selection is replaced.
+    await caret('Hello '.length, 'Hello there'.length)
+    await act(async () => {
+      handle.current!.insertDictation('again')
     })
-    expect(field().value).equals('')
+    expect(field().value).equals('Hello again world')
+    // Nothing heard is nothing put in.
+    await act(async () => {
+      handle.current!.insertDictation(' ')
+    })
+    expect(field().value).equals('Hello again world')
+    expect(sent).deep.equals([])
+    await key({ key: 'Enter' })
+    expect(sent).deep.equals([{ text: 'Hello again world', attachments: [] }])
   })
 
-  it('keeps what was said in the field while Tess is answering or a file uploads', async function () {
-    let finish: (attachment: TessAttachmentRef) => void = () => undefined
-    const { sent, props } = composer({
-      onUpload: async () =>
-        await new Promise<TessAttachmentRef>(resolve => {
-          finish = resolve
-        })
-    })
+  it('puts what was said after a send given back at the end of its words, where the cursor shows', async function () {
+    const { props } = composer({ onSend: async () => false })
     const handle = React.createRef<ComposerHandle>()
-    await render(<Composer {...props} busy handle={handle} />)
-    await act(async () => {
-      handle.current!.dictate('And the schedule?')
-    })
-    expect(sent).deep.equals([])
-    expect(field().value).equals('And the schedule?')
-    await rerender(<Composer {...props} handle={handle} />)
-    await attachCsv('runs.csv')
-    await act(async () => {
-      handle.current!.dictate('for Saturday')
-    })
-    expect(sent).deep.equals([])
-    expect(field().value).equals('And the schedule? for Saturday')
-    await act(async () => {
-      finish({ id: 'a1', name: 'runs.csv', kind: 'csv', described: false })
-    })
+    await render(<Composer {...props} handle={handle} />)
+    await type('Plan the season')
+    await key({ key: 'Enter' })
     await settle()
-    await click(byLabel('Send'))
-    await settle()
-    expect(sent).deep.equals([
-      {
-        text: 'And the schedule? for Saturday',
-        attachments: [
-          { id: 'a1', name: 'runs.csv', kind: 'csv', described: false }
-        ]
-      }
+    expect(field().value).equals('Plan the season')
+    expect([field().selectionStart, field().selectionEnd]).deep.equals([
+      'Plan the season'.length,
+      'Plan the season'.length
     ])
+    await act(async () => {
+      handle.current!.insertDictation('and the playoffs')
+    })
+    expect(field().value).equals('Plan the season and the playoffs')
+  })
+
+  it('spaces inserted words from a word either side, and not from closing punctuation', function () {
+    const at = (
+      start: number,
+      end = start
+    ): { start: number; end: number } => ({
+      start,
+      end
+    })
+    expect(insertWords('', at(0), 'Hi')).deep.equals({ text: 'Hi', caret: 2 })
+    expect(insertWords('Hello', at(5), 'there')).deep.equals({
+      text: 'Hello there',
+      caret: 11
+    })
+    expect(insertWords('world', at(0), 'Hello')).deep.equals({
+      text: 'Hello world',
+      caret: 5
+    })
+    expect(insertWords('Hello world', at(6), 'big')).deep.equals({
+      text: 'Hello big world',
+      caret: 9
+    })
+    expect(insertWords('Hello world', at(5), 'there').text).equals(
+      'Hello there world'
+    )
+    for (const mark of ['.', ',', '?', '!', ';', ':', ')', '’'])
+      expect(insertWords(`Hello${mark}`, at(5), 'there').text).equals(
+        `Hello there${mark}`
+      )
+    expect(insertWords('Hello\nworld', at(5), 'there').text).equals(
+      'Hello there\nworld'
+    )
+    expect(insertWords('Hello (world)', at(6), 'big').text).equals(
+      'Hello big (world)'
+    )
+    // A cursor past the end, or backwards, is held within the text.
+    expect(insertWords('Hello', at(9), 'there').text).equals('Hello there')
+    expect(insertWords('Hello', at(4, 2), 'p').text).equals('Hell p o')
+  })
+
+  it('adds an empty line for the waveform while recording with text, and takes it away after', async function () {
+    const { sent, props } = composer()
+    const handle = React.createRef<ComposerHandle>()
+    const heard = levels()
+    await render(<Composer {...props} handle={handle} />)
+    await type('Hello world')
+    await caret('Hello'.length)
+    expect(byTestId('Tess waveform')).equals(null)
+    await rerender(<Composer {...props} handle={handle} dictating={heard} />)
+    // The field shows a line after the words for the waveform; the cursor
+    // stays after "Hello".
+    expect(field().value).equals('Hello world\n')
+    expect(field().selectionStart).equals(5)
+    const wave = byTestId('Tess waveform')!
+    expect(field().parentElement!.contains(wave)).equals(true)
+    const strip = getComputedStyle(wave.parentElement!)
+    expect([strip.position, strip.left]).deep.equals(['absolute', '80%'])
+    // Typed while it records, the words are the draft's, the line is not.
+    await type('Hello world!\n')
+    expect(field().value).equals('Hello world!\n')
+    await rerender(<Composer {...props} handle={handle} />)
+    expect(field().value).equals('Hello world!')
+    expect(byTestId('Tess waveform')).equals(null)
+    // Its words go in where the cursor was, and the line has gone.
+    await rerender(<Composer {...props} handle={handle} dictating={heard} />)
+    await caret('Hello'.length)
+    await act(async () => {
+      heard.play(0.2)
+    })
+    await rerender(<Composer {...props} handle={handle} />)
+    await act(async () => {
+      handle.current!.insertDictation('there')
+    })
+    expect(field().value).equals('Hello there world!')
+    expect(sent).deep.equals([])
+    await key({ key: 'Enter' })
+    expect(sent).deep.equals([{ text: 'Hello there world!', attachments: [] }])
+  })
+
+  it('tells the waveform’s line from the draft by where the edit is', function () {
+    // Within the draft.
+    expect(editAroundLine('Hello', 'Hallo\n')).deep.equals({
+      text: 'Hallo',
+      lineGone: false
+    })
+    expect(editAroundLine('Hello', 'Hello!\n')).deep.equals({
+      text: 'Hello!',
+      lineGone: false
+    })
+    // The line taken away: the draft's own newline stays.
+    expect(editAroundLine('hello\n', 'hello\n')).deep.equals({
+      text: 'hello\n',
+      lineGone: true
+    })
+    expect(editAroundLine('Hello', '')).deep.equals({
+      text: '',
+      lineGone: true
+    })
+    // Typed on the line: the draft's, at its end, without the line's newline.
+    expect(editAroundLine('hello\n', 'hello\n\nX')).deep.equals({
+      text: 'hello\nX',
+      lineGone: false,
+      caret: 7
+    })
+    expect(editAroundLine('hello', 'hello\nX')).deep.equals({
+      text: 'helloX',
+      lineGone: false,
+      caret: 6
+    })
+  })
+
+  it('keeps the draft’s own newline when the waveform’s line is taken away, and sends none of the line', async function () {
+    const { sent, props } = composer()
+    const heard = levels()
+    await render(<Composer {...props} />)
+    await type('hello\n')
+    await rerender(<Composer {...props} dictating={heard} />)
+    expect(field().value).equals('hello\n\n')
+    // Backspace on the line: it goes, and the draft keeps its newline.
+    await type('hello\n')
+    expect(field().value).equals('hello\n')
+    await type('hello\nthere')
+    expect(field().value).equals('hello\nthere')
+    await key({ key: 'Enter' })
+    expect(sent).deep.equals([{ text: 'hello\nthere', attachments: [] }])
+    // Gone until the next recording; typed on its line then, the words are
+    // the draft's and the line stays.
+    await type('hello')
+    expect(field().value).equals('hello')
+    await rerender(<Composer {...props} />)
+    await rerender(<Composer {...props} dictating={heard} />)
+    expect(field().value).equals('hello\n')
+    await type('hello\nX')
+    expect(field().value).equals('helloX\n')
+    expect(field().selectionStart).equals(6)
+    await key({ key: 'Enter' })
+    expect(sent.at(-1)).deep.equals({ text: 'helloX', attachments: [] })
+  })
+
+  it('records on the single line of an empty field, adding none', async function () {
+    const { props } = composer()
+    await render(<Composer {...props} dictating={levels()} />)
+    expect(field().value).equals('')
+    expect(byTestId('Tess waveform')).not.equals(null)
   })
 
   it('gives a failed draft back ahead of what was said since', async function () {
@@ -542,7 +881,7 @@ describe('Composer', function () {
     expect(field().value).equals('')
     await rerender(<Composer {...props} busy handle={handle} />)
     await act(async () => {
-      handle.current!.dictate('on Saturday')
+      handle.current!.insertDictation('on Saturday')
     })
     await act(async () => {
       fail(false)
@@ -551,7 +890,7 @@ describe('Composer', function () {
     expect(field().value).equals('Add a game on Saturday')
   })
 
-  it('shows the error under the field and the microphone centered below it', async function () {
+  it('shows the error under the field, and the microphone right of Send, with text too', async function () {
     const { props } = composer()
     await render(
       <Composer
@@ -563,10 +902,10 @@ describe('Composer', function () {
     expect(byTestId('Tess error')!.textContent).equals(
       'Tess could not answer. Please try again.'
     )
-    const mic = byTestId('mic')!
-    const slot = mic.parentElement!
-    expect(getComputedStyle(slot).alignItems).equals('center')
-    const parts = [...byTestId('Tess composer')!.children]
-    expect(parts.at(-1)).equals(slot)
+    const row = (): HTMLElement => byLabel('Send').parentElement!
+    expect(row().lastElementChild).equals(byTestId('mic'))
+    await type('Hello')
+    expect(row().lastElementChild).equals(byTestId('mic'))
+    expect(row().contains(field())).equals(true)
   })
 })

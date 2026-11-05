@@ -12,12 +12,16 @@ import {
 } from '../common/api'
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { candidate } from '../test/fakeCandidateClient'
 import { measureBoxes } from '../test/measureBoxes'
 import { mintedRosterEntry } from '../test/mintedRosterEntry'
+import { pageOfGames } from '../test/pageOf'
 import { App, stackFor } from './App'
 
 describe('team route frames', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('puts season settings under a season’s date-range screen opened by its address', () => {
     const route = {
       name: 'seasonTimeFrame' as const,
@@ -112,6 +116,8 @@ describe('team route frames', () => {
 })
 
 describe('team settings browser history', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   // Two visits of a dozen 60 ms settles each run past mocha's two seconds,
   // and a test that times out keeps acting under the ones after it.
   it('returns to the original section after Back and Forward while individual saves stay in settings', async () => {
@@ -322,6 +328,8 @@ describe('team settings browser history', () => {
 })
 
 describe("team settings' Create Player", () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('sits on team settings at its own address, as Add Player does', () => {
     const teamReturn = { id: 'alias', address: 'team' as const, tab: 'roster' }
     for (const name of ['teamCreatePlayer', 'teamAddPlayer'] as const) {
@@ -541,6 +549,8 @@ describe("team settings' Create Player", () => {
 })
 
 describe('a person’s profile, through the app', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('opens from the roster for the team’s coach at its own address, titled with their name, and the old manage address opens Settings', async () => {
     const proto = TeamStationClient.prototype
     const originals = Object.getOwnPropertyDescriptors(proto)
@@ -577,7 +587,7 @@ describe('a person’s profile, through the app', () => {
     proto.hasNotifications = async () => false
     proto.group = async () => detail
     proto.gameProposals = async () => []
-    proto.teamGames = async () => []
+    proto.teamGamesPage = async (_id, query) => pageOfGames([], query)
     proto.teamStats = async () => []
     proto.teamPitchingStats = async () => []
     proto.roster = async () => [
@@ -662,6 +672,8 @@ describe('a person’s profile, through the app', () => {
 })
 
 describe('roles given by somebody else, through the app', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('reads the signed-in person’s roles again when the inbox opens', async () => {
     const proto = TeamStationClient.prototype
     const originals = Object.getOwnPropertyDescriptors(proto)
@@ -726,6 +738,8 @@ describe('roles given by somebody else, through the app', () => {
 })
 
 describe('a season’s and a league’s People tab, however the page is opened', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   const people = [
     asRosterEntry({
       userId: userIdOfGumbo(203),
@@ -812,7 +826,7 @@ describe('a season’s and a league’s People tab, however the page is opened',
       asked.push(['update', ref.kind, ref.id, fields])
       return {}
     }) as unknown as typeof proto.updateGroup
-    proto.seasonGames = async () => []
+    proto.seasonGamesPage = async (_id, query) => pageOfGames([], query)
     proto.seasonTeams = async () => []
     proto.standings = async () => []
     proto.seasonStats = async seasonId => ({

@@ -57,6 +57,7 @@ export type IconName =
   | 'auto_awesome'
   | 'add'
   | 'send'
+  | 'arrow_upward'
   | 'attach_file'
   | 'chat'
   | 'add_reaction'

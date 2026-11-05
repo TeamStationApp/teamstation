@@ -14,6 +14,7 @@ import { takeCoverage } from 'node:v8'
 import { build } from 'esbuild'
 
 import { chatCoreResolvePlugin } from './chatCoreResolvePlugin.mjs'
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const directory = process.env.TS_CHAT_COVERAGE_DIR ?? 'coverage/chatUi'
@@ -44,6 +45,11 @@ await build({
       ...globSync('src/app/chat/**/*.test.tsx'),
       ...globSync('src/app/App.offline*.test.tsx'),
       'src/app/App.entityChats.test.tsx',
+      'src/app/App.chatAge.test.tsx',
+      'src/app/App.scoringRosterEdit.test.tsx',
+      'src/app/screens/LeaguePage.test.tsx',
+      'src/app/screens/PlayerScreen.test.tsx',
+      'src/app/screens/AccountScreen.test.tsx',
       'src/app/App.navbarPop.test.tsx',
       'src/app/App.tess.test.tsx',
       'src/app/dev/ChatBenchScreen.test.tsx',
@@ -86,7 +92,11 @@ await build({
     'mocha',
     'chai'
   ],
-  plugins: [...webSettings.plugins, chatCoreResolvePlugin()],
+  plugins: [
+    ...webSettings.plugins,
+    chatCoreResolvePlugin(),
+    pagedListStandInPlugin()
+  ],
   define: {
     __DEV__: 'true',
     TS_CHAT_NODE_ADDON: JSON.stringify(
@@ -102,6 +112,7 @@ const specs = [
   ...globSync('src/server/chat/*.test.ts'),
   ...globSync('src/server/notifications/*.test.ts'),
   ...globSync('src/server/routes/chat*.test.ts'),
+  'src/server/routes/account.chatAge.test.ts',
   ...globSync('src/migrate/chat*.test.ts'),
   ...globSync('src/common/chatCrypto/*.test.ts'),
   'src/app/dev/chatIdentityStoreProbe.test.ts',

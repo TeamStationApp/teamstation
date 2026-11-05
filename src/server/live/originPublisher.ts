@@ -323,8 +323,9 @@ export class OriginPublisher {
     this.acknowledged.delete(name)
     const held = await this.snapshot(name)
     if (held == null || !(await this.active())) return false
-    // FFmpeg empties an init segment as a writer continuing a recording starts,
-    // and writes it again moments later. The next pass gets it.
+    // FFmpeg empties its init file as it starts and writes it when its first
+    // segment closes. Only a recording's first writer, or one on a playlist
+    // that lists nothing, does that to `init.mp4`: the next pass gets it.
     if (held.size === 0) return false
     const { space, videoId, dir } = this.options
     const key = objectKey(videoId, name)

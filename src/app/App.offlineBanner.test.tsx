@@ -8,6 +8,7 @@ import React, { act } from 'react'
 
 import { asSessionUser, TeamStationClient } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, find, mount, press, settle, unmount } from '../test/gameFormDom'
 import legacyChatRecord from '../test/legacyChatKeyRecord.json'
@@ -60,6 +61,8 @@ const refusal = (): string | undefined =>
   undefined
 
 describe('the phone shell offline', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   const originalSocket = globalThis.WebSocket
   const originalFetch = globalThis.fetch
   let dir: string

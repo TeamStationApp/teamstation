@@ -59,7 +59,7 @@ function lanIPv4() {
 
 function rtspHosts() {
   const host = lanIPv4()
-  // Semicolon, not comma: maestro-runner `-e LAN_HOSTS=a,b` truncates after `a`.
+  // Semicolon, not comma: maestro-d's `-e LAN_HOSTS=a,b` truncates after `a`.
   return LOCAL_PORTS.map(port => `${host}:${port}`).join(';')
 }
 

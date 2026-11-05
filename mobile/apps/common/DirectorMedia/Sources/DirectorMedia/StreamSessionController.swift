@@ -164,8 +164,10 @@ public struct StreamStallWatch: Sendable, Equatable {
   }
 }
 
-/// Thrown by a host's URL request when the server has ended the stream this device holds (a 410):
-/// the controller stops redialling until its host starts streaming again.
+/// Thrown by a host's URL request when the server will not take this stream until somebody acts:
+/// it has ended the stream this device holds (a 410), or, for TS Director, the game has no camera
+/// place free. The controller stops redialling until its host starts streaming again, and hands
+/// `message` to the host's `ended`.
 public struct StreamEndedError: Error, Equatable, Sendable {
   public let message: String
 
@@ -189,7 +191,8 @@ public struct StreamEndedError: Error, Equatable, Sendable {
  * - The network coming back (`NWPathMonitor` reporting `satisfied`) redials at once, rather than at
  *   the end of a wait that began while there was no network at all.
  * - A host's URL request that throws `StreamEndedError` (the server's 410: somebody ended this
- *   camera) is terminal. The controller goes to `idle` with `lastError` "ended" and dials nothing
+ *   camera; or, for TS Director, a start refused because the game has no camera place free) is
+ *   terminal. The controller goes to `idle` with `lastError` "ended" and dials nothing
  *   until its host calls `start` again.
  *
  * - With `stallRedialSeconds` set, a live session whose socket has taken nothing for that long while
@@ -239,7 +242,8 @@ public final class StreamSessionController {
     public var redialing: @MainActor () -> Void
     /// The controller gave up on a failure it will not retry, while its host still wanted it.
     public var gaveUp: @MainActor (String) -> Void
-    /// The server ended the stream (`StreamEndedError`).
+    /// The server will not take the stream until the host starts again (`StreamEndedError`): it ended
+    /// it, or refused a start on a game with no camera place free.
     public var ended: @MainActor (String) -> Void
 
     public init(

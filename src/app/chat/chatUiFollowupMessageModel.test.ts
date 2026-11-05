@@ -29,11 +29,23 @@ describe('chat follow-up message permissions', function () {
       'reply',
       'react',
       'copy',
-      'pin'
+      'pin',
+      'report',
+      'block',
+      'reportAndBlock'
     ])
     expect(
       actionsFor(message(), view({ conversation: chat({ canModerate: true }) }))
-    ).deep.equals(['reply', 'react', 'copy', 'pin', 'deleteForEveryone'])
+    ).deep.equals([
+      'reply',
+      'react',
+      'copy',
+      'pin',
+      'deleteForEveryone',
+      'report',
+      'block',
+      'reportAndBlock'
+    ])
     expect(QUICK_REACTIONS).deep.equals(['❤️', '👍', '👎', '😂', '😮', '😢'])
   })
 
@@ -50,7 +62,10 @@ describe('chat follow-up message permissions', function () {
     expect(actionsFor(message({ body: '' }), view())).deep.equals([
       'reply',
       'react',
-      'pin'
+      'pin',
+      'report',
+      'block',
+      'reportAndBlock'
     ])
     expect(
       actionsFor(
@@ -59,7 +74,15 @@ describe('chat follow-up message permissions', function () {
           pins: [{ messageId: 'msg_1', pinnedAt: '2027-04-01T17:00:00Z' }]
         })
       )
-    ).deep.equals(['reply', 'react', 'copy', 'unpin'])
+    ).deep.equals([
+      'reply',
+      'react',
+      'copy',
+      'unpin',
+      'report',
+      'block',
+      'reportAndBlock'
+    ])
   })
 
   it('never copies or replies to unreadable content and keeps unavailable personal unpin available', function () {
@@ -67,13 +90,13 @@ describe('chat follow-up message permissions', function () {
       expect(actionsFor(message({ status, mine: true }), view())).deep.equals([
         'delete'
       ])
-      expect(actionsFor(message({ status }), view())).deep.equals([])
+      expect(actionsFor(message({ status }), view())).deep.equals(['block'])
       expect(
         actionsFor(
           message({ status }),
           view({ conversation: chat({ canModerate: true }) })
         )
-      ).deep.equals(['deleteForEveryone'])
+      ).deep.equals(['deleteForEveryone', 'block'])
       expect(
         actionsFor(
           message({ status, mine: true }),
@@ -90,7 +113,7 @@ describe('chat follow-up message permissions', function () {
         message({ status: 'locked' }),
         view({ pins, composer: 'closed' })
       )
-    ).deep.equals(['unpin'])
+    ).deep.equals(['unpin', 'block'])
     expect(actionsFor(message({ status: 'removed' }), view())).deep.equals([])
   })
 
@@ -117,10 +140,12 @@ describe('chat follow-up message permissions', function () {
       pins: [{ messageId: older.id, pinnedAt: '2027-04-01T17:00:00Z' }]
     })
     for (const mine of [true, false]) {
-      expect(actionsFor({ ...older, mine }, current)).deep.equals(['unpin'])
+      expect(actionsFor({ ...older, mine }, current)).deep.equals(
+        mine ? ['unpin'] : ['unpin', 'block']
+      )
       expect(
         actionsFor({ ...older, mine }, { ...current, pins: [] })
-      ).deep.equals([])
+      ).deep.equals(mine ? [] : ['block'])
     }
   })
 })

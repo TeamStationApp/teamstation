@@ -3,10 +3,12 @@ import { Platform, Pressable, Switch, Text, View } from 'react-native'
 
 import type { AccountSettings } from '../../common/accountSettings'
 import type { Session, SessionUser, TeamStationClient } from '../../common/api'
+import type { GameSocket } from '../../common/gameSocket'
 import {
   type ClientPasswordCosts,
   newPasswordRequirements
 } from '../../common/passwordProtocol'
+import { BlockedPeople } from '../chat/BlockedPeople'
 import { leaveChat } from '../chat/engine/links'
 import type { ChatKeyStore } from '../chat/keyRecord'
 import { keyStore } from '../chat/keyStore'
@@ -47,6 +49,7 @@ export interface AccountScreenProps {
    * and wipes its chat keys.
    */
   client: TeamStationClient
+  socket?: Pick<GameSocket, 'onChat'>
   onAccountChanged?: (user: SessionUser) => void
   /** This device's chat key store; the platform's own by default. */
   chatStore?: ChatKeyStore
@@ -92,6 +95,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   // Mounted once opened, so it can slide away; never on a visit without it.
   const [appleMusicSetupUsed, setAppleMusicSetupUsed] = useState(false)
   const [account, setAccount] = useState<AccountSettings>()
+  const [blockedPeople, setBlockedPeople] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [reload, setReload] = useState(0)
   const [name, setName] = useState(session.user.displayName)
@@ -671,28 +675,46 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           />
         </ListCard>
       )}
-      {onChatDevices != null && (
-        <View style={styles.section}>
-          <SectionHeader title={lstrings.account_chat} />
-          <ListCard>
+      <View style={styles.section}>
+        <SectionHeader title={lstrings.account_chat} />
+        <ListCard>
+          {onChatDevices != null && (
             <ListRow
               title={lstrings.account_chat_devices}
               subtitle={lstrings.account_chat_devices_detail}
               emblemIcon="settings"
               onPress={onChatDevices}
             />
-            {onChatReports != null && user.isAdmin && (
-              <>
-                <ListRow
-                  title={lstrings.chat_reports_title}
-                  subtitle={lstrings.account_chat_reports_detail}
-                  emblemIcon="star"
-                  onPress={onChatReports}
-                />
-              </>
-            )}
-          </ListCard>
-        </View>
+          )}
+          <ListRow
+            title={lstrings.chat_blocked_people}
+            subtitle={lstrings.chat_blocked_people_detail}
+            emblemIcon="settings"
+            onPress={() => {
+              setBlockedPeople(true)
+            }}
+          />
+          {onChatReports != null && user.isAdmin && (
+            <>
+              <ListRow
+                title={lstrings.chat_reports_title}
+                subtitle={lstrings.account_chat_reports_detail}
+                emblemIcon="star"
+                onPress={onChatReports}
+              />
+            </>
+          )}
+        </ListCard>
+      </View>
+      {blockedPeople && (
+        <BlockedPeople
+          key={session.user.id}
+          client={client}
+          socket={props.socket}
+          onClose={() => {
+            setBlockedPeople(false)
+          }}
+        />
       )}
       {Platform.OS === 'ios' && (
         <View style={styles.section}>

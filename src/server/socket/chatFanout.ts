@@ -5,6 +5,7 @@ import { Client } from 'pg'
 import { asLiteral } from '../../common/asLiteral'
 import type { ChatSocketFrame } from '../../common/gameSocket'
 import { asUserId } from '../../common/userId'
+import { blockingRecipientIds } from '../chat/blocks'
 import { CHAT_CHANGES_CHANNEL } from '../chat/membershipLog'
 import type { Database } from '../db/database'
 
@@ -20,7 +21,7 @@ export type ChatChangePayload =
       seq?: number
     }
   | { c: string; k: 'typing'; u: string }
-  | { u: string; k: 'link' | 'devices' | 'preferences' }
+  | { u: string; k: 'link' | 'devices' | 'preferences' | 'blocks' }
 
 export const asChatChangePayload = asEither(
   asObject({
@@ -29,7 +30,10 @@ export const asChatChangePayload = asEither(
     seq: asOptional(asNumber)
   }),
   asObject({ c: asString, k: asLiteral('typing'), u: asUserId }),
-  asObject({ u: asUserId, k: asLiteral('link', 'devices', 'preferences') })
+  asObject({
+    u: asUserId,
+    k: asLiteral('link', 'devices', 'preferences', 'blocks')
+  })
 )
 
 /** Somebody signed in on one socket of this worker. */
@@ -208,8 +212,11 @@ export class ChatFanout {
         conversationId: change.c,
         userId: change.u
       }
-      for (const userId of members)
-        if (userId !== change.u) this.sendTo(userId, frame)
+      const blocked = await blockingRecipientIds(this.db, change.u)
+      for (const userId of members) {
+        if (userId !== change.u && !blocked.has(userId))
+          this.sendTo(userId, frame)
+      }
       return
     }
     const frame: ChatSocketFrame = {

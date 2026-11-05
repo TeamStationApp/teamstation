@@ -9,6 +9,7 @@ import {
   TeamStationClient
 } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { App } from './App'
 import { phoneStream } from './stream/phoneStream'
 
@@ -18,6 +19,8 @@ import { phoneStream } from './stream/phoneStream'
  * app's own client and session.
  */
 describe('the app at launch', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('carries on cut-off recording uploads once somebody is signed in', async () => {
     const proto = TeamStationClient.prototype
     const originals = Object.getOwnPropertyDescriptors(proto)

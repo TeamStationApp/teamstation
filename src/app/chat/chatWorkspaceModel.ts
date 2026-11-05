@@ -1,3 +1,5 @@
+import { HttpError } from '../../common/errors'
+import { lstrings } from '../locales/strings'
 import {
   type ChatAttentionSession,
   newAttentionSession
@@ -85,7 +87,7 @@ export class ChatDraftOwner {
 
   private readonly revisions = new Map<string, Record<DraftField, number>>()
   private readonly pending = new Map<string, ChatSubmission>()
-  private readonly failures = new Set<string>()
+  private readonly failures = new Map<string, string>()
   private readonly readers = new Map<string, () => ChatDraft>()
   private readonly listeners = new Map<string, Set<() => void>>()
 
@@ -135,6 +137,10 @@ export class ChatDraftOwner {
     return this.failures.has(id)
   }
 
+  failure(id: string): string | undefined {
+    return this.failures.get(id)
+  }
+
   begin(id: string): ChatSubmission | undefined {
     if (!this.live || this.pending.has(id)) return undefined
     this.pull(id)
@@ -169,7 +175,8 @@ export class ChatDraftOwner {
   finish(
     id: string,
     token: ChatSubmission,
-    success: boolean
+    success: boolean,
+    error?: unknown
   ): ChatDraft | undefined {
     if (!this.live || this.pending.get(id) !== token) return undefined
     this.pull(id)
@@ -197,7 +204,21 @@ export class ChatDraftOwner {
           editing: undefined,
           picked: []
         })
-    } else this.failures.add(id)
+    } else {
+      const recipientBlocked =
+        error instanceof HttpError &&
+        error.code === 'forbidden' &&
+        typeof error.details === 'object' &&
+        error.details != null &&
+        'reason' in error.details &&
+        error.details.reason === 'recipientBlocked'
+      this.failures.set(
+        id,
+        recipientBlocked
+          ? lstrings.chat_send_blocked
+          : lstrings.chat_send_failed
+      )
+    }
     this.pending.delete(id)
     this.changed(id)
     return this.draft(id)

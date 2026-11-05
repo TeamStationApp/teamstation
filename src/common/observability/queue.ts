@@ -18,7 +18,14 @@ export interface QueueOptions {
   random?: () => number
   maxEvents?: number
   maxBytes?: number
+  /** How often a started queue flushes; `FLUSH_INTERVAL_MS` by default. */
+  flushIntervalMs?: number
+  /** How long a send may take before it is aborted; `SEND_TIMEOUT_MS`. */
+  sendTimeoutMs?: number
 }
+
+export const FLUSH_INTERVAL_MS = 5000
+export const SEND_TIMEOUT_MS = 10000
 
 /** One owner and identity per queue. Storage operations and sends are serialized. */
 export class EventQueue {
@@ -74,7 +81,7 @@ export class EventQueue {
     if (this.timer != null || this.stopped) return
     this.timer = setInterval(() => {
       this.flush().catch(() => {})
-    }, 5000)
+    }, this.options.flushIntervalMs ?? FLUSH_INTERVAL_MS)
   }
 
   /** False means not accepted; storage failure never escapes into the app. */
@@ -136,7 +143,7 @@ export class EventQueue {
           timeout = setTimeout(() => {
             controller.abort()
             resolve(0)
-          }, 10000)
+          }, this.options.sendTimeoutMs ?? SEND_TIMEOUT_MS)
         })
       ])
     } catch {

@@ -144,7 +144,8 @@ run(
       ...readdirSync('src/server/routes')
         .filter(name => name === 'publicGameAccess.test.ts')
         .map(name => 'src/server/routes/' + name)
-    ])
+    ]),
+    ...(process.env.TS_UI_TWEAKS_NODE_TESTS_EXTRA?.split(',') ?? [])
   ],
   { NODE_V8_COVERAGE: temp },
   true

@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Platform } from 'react-native'
@@ -11,6 +11,7 @@ import {
   type Playback,
   TeamStationClient
 } from '../../common/api'
+import { type ManualClock, manualClock } from '../../test/tessTestKit'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { GameScreen } from './GameScreen'
@@ -22,6 +23,8 @@ import { GameScreen } from './GameScreen'
  * segment lands instead of saying for good that it is not available.
  */
 let root: Root | undefined
+/** The page's waits of a second or more, when a suite runs them on a clock. */
+let clock: ManualClock | undefined
 
 const UNAVAILABLE = 'This video is not available right now.'
 
@@ -139,6 +142,10 @@ async function page(
 }
 
 async function wait(ms: number): Promise<void> {
+  if (clock != null) {
+    await clock.advance(ms)
+    ms = 0
+  }
   await act(async () => {
     await delay(ms)
   })
@@ -154,6 +161,14 @@ async function until(done: () => boolean, ms = 10000): Promise<void> {
 
 describe('a live video whose first segment is not written yet', function () {
   this.timeout(30000)
+  // The page asks again seconds apart; the clock runs those waits at once.
+  beforeEach(function () {
+    clock = manualClock()
+  })
+  afterEach(function () {
+    clock?.restore()
+    clock = undefined
+  })
 
   it('plays once its files are there, asking again meanwhile', async function () {
     const { asked } = await page('live', [missing, missing, there])

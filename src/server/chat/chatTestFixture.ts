@@ -10,8 +10,8 @@ import { Pool } from 'pg'
 import { makeId } from '../../common/ids'
 import { asUserId } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
-import { migrateUp } from '../../migrate/runner'
 import {
+  createMigratedDatabase,
   dropScratchDatabase,
   testDatabaseUrl
 } from '../../migrate/testDatabase'
@@ -126,16 +126,11 @@ export async function openChatFixture(
   }
   const name = `teamstation_chat_${label}_${Date.now()}_${process.pid}`
   const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
-  await adminPool.query(`create database ${name}`)
-  const pool = new Pool({ connectionString: url })
+  await createMigratedDatabase(adminPool, name, migrations)
   const uploadsDir = join(tmpdir(), `${name}_uploads`)
-  let closeDatabase = async (): Promise<void> => {
-    await pool.end()
-  }
+  let closeDatabase = async (): Promise<void> => {}
   let closeServer: (() => Promise<void>) | undefined
   try {
-    await migrateUp(pool, migrations)
-    await pool.end()
     const db = makeDatabase(url)
     closeDatabase = async () => {
       await db.destroy()

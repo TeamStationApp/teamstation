@@ -3,8 +3,10 @@ import { after, before } from 'mocha'
 import { Pool } from 'pg'
 
 import { migrations } from '../migrate/migrations'
-import { migrateUp } from '../migrate/runner'
-import { testDatabaseUrl } from '../migrate/testDatabase'
+import {
+  createMigratedDatabase,
+  testDatabaseUrl
+} from '../migrate/testDatabase'
 import type { Database } from '../server/db/database'
 import { attachInt8Parser } from '../server/db/int8'
 import { mintUserId } from './historicalUserIds'
@@ -26,11 +28,10 @@ export function statsDatabase(label: string): {
   before(async function () {
     attachInt8Parser()
     admin = new Pool({ connectionString: testDatabaseUrl })
-    await admin.query(`create database ${name}`)
+    await createMigratedDatabase(admin, name, migrations)
     const pool = new Pool({
       connectionString: testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
     })
-    await migrateUp(pool, migrations)
     db = new Kysely({ dialect: new PostgresDialect({ pool }) })
     await insertFixtureUsers(
       db,

@@ -154,7 +154,7 @@ export type ScreenScopeListener = (event: ScreenScopeEvent) => void
 export type ChatHintKind = 'message' | 'members' | 'epoch' | 'grant' | 'read'
 
 /** What changed about the person's own chat keys. */
-export type ChatUserHintKind = 'link' | 'devices' | 'preferences'
+export type ChatUserHintKind = 'link' | 'devices' | 'preferences' | 'blocks'
 
 /** A chat frame the server sends. */
 export type ChatSocketFrame =
@@ -335,7 +335,8 @@ const asChatFrame: Cleaner<ChatSocketFrame> = asEither(
     kind: asLiteral(
       'link',
       'devices',
-      'preferences'
+      'preferences',
+      'blocks'
     ) as Cleaner<ChatUserHintKind>
   }),
   asObject({

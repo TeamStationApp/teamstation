@@ -1,5 +1,6 @@
 import {
   asArray,
+  asBoolean,
   asNumber,
   asObject,
   asOptional,
@@ -126,6 +127,7 @@ const asReadBody = asObject({
 })
 
 const asReportBody = asObject({
+  blockSender: asOptional(asBoolean),
   messageId: asMessageId,
   plaintext: (raw: unknown) => {
     const text = asString(raw)
@@ -214,6 +216,7 @@ export function chatMessageRoutes(
       const limit = queryNumber(req.query.limit) ?? DEFAULT_PAGE
       res.json(
         await messagesOf(db, id, {
+          userId: caller.userId,
           after: queryNumber(req.query.after),
           before: queryNumber(req.query.before),
           limit: Math.min(Math.max(limit, 1), MAX_PAGE)

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   type NativeSyntheticEvent,
   Platform,
@@ -10,6 +10,7 @@ import {
 import type { TeamStationClient } from '../../common/api'
 import type { UmpireLevel } from '../../common/umpires'
 import type { UmpireGameRow } from '../../common/umpireSchedule'
+import { useStableCallback } from '../hooks/useStableCallback'
 import { useUmpireStyles } from './shared'
 import { useUnsavedWarning } from './UmpireSelector'
 
@@ -63,6 +64,8 @@ export function useUmpireNoteEditor({
   finish: () => Promise<boolean>
   discard: () => boolean
   error: string
+  /** The game whose row has the editor open. */
+  editing: string | undefined
 } {
   const s = useUmpireStyles()
   const [edit, setEdit] = useState<Edit>()
@@ -180,11 +183,19 @@ export function useUmpireNoteEditor({
       )
     ).catch(() => undefined)
   }
-  return {
-    finish,
-    discard,
-    error,
-    cell: (game, type) => {
+  // A row is drawn again only when what its cells show changes, so a cell
+  // reaches the editor's latest workings through these.
+  const moveTo = useStableCallback(move)
+  const navigateTo = useStableCallback(navigate)
+  const discardEdit = useStableCallback(discard)
+  const finishEdit = useStableCallback(finish)
+  const focused = useStableCallback(
+    (into: React.ComponentRef<typeof TextInput>): void => {
+      onFocus?.(into)
+    }
+  )
+  const cell = useCallback(
+    (game: UmpireGameRow, type: UmpireLevel): React.ReactElement => {
       const label = `${type.name}, ${game.home} vs ${game.away}, ${game.date}`
       if (edit?.game === game.id && edit.type === type.id && editable)
         return (
@@ -213,7 +224,7 @@ export function useUmpireNoteEditor({
             submitBehavior="submit"
             returnKeyType="next"
             onFocus={() => {
-              if (input.current != null) onFocus?.(input.current)
+              if (input.current != null) focused(input.current)
             }}
             onChangeText={value => {
               if (pending.current == null && active.current != null) {
@@ -222,10 +233,10 @@ export function useUmpireNoteEditor({
               }
             }}
             onBlur={() => {
-              if (error === '') finish().catch(() => undefined)
+              if (error === '') finishEdit().catch(() => undefined)
             }}
             onSubmitEditing={() => {
-              if (Platform.OS !== 'web') navigate('down')
+              if (Platform.OS !== 'web') navigateTo('down')
             }}
             {...(Platform.OS === 'web'
               ? {
@@ -242,9 +253,9 @@ export function useUmpireNoteEditor({
                     event.stopPropagation()
                     if (pending.current != null) return
                     if (key.key === 'Escape') {
-                      discard()
+                      discardEdit()
                     } else
-                      navigate(
+                      navigateTo(
                         key.key === 'Enter'
                           ? 'down'
                           : key.shiftKey === true
@@ -267,12 +278,31 @@ export function useUmpireNoteEditor({
           testID={`umpire-note-${game.id}-${type.id}`}
           style={{ minHeight: 48, justifyContent: 'center', width: '100%' }}
           onPress={() => {
-            move({ game: game.id, type: type.id }).catch(() => undefined)
+            moveTo({ game: game.id, type: type.id }).catch(() => undefined)
           }}
         >
           <Text style={s.tableText}>{game.umpireNotes[type.id] ?? ''}</Text>
         </Pressable>
       )
-    }
+    },
+    [
+      discardEdit,
+      edit,
+      editable,
+      error,
+      finishEdit,
+      focused,
+      moveTo,
+      navigateTo,
+      s,
+      saving
+    ]
+  )
+  return {
+    finish,
+    discard,
+    error,
+    editing: edit?.game,
+    cell
   }
 }

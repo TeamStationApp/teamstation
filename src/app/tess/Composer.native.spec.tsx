@@ -4,7 +4,13 @@ import React, { act } from 'react'
 import { Platform } from 'react-native'
 
 import { byLabel, render, settle, unmount } from '../../test/tessTestKit'
-import { Composer, type ComposerProps, FIELD_NATIVE_ID } from './Composer'
+import {
+  Composer,
+  composerBottom,
+  type ComposerHandle,
+  type ComposerProps,
+  FIELD_NATIVE_ID
+} from './Composer'
 
 const web = Platform.OS
 beforeEach(() => {
@@ -41,6 +47,18 @@ function fieldProps(): Record<string, any> {
 }
 
 describe("Tess's composer on a phone or a tablet", () => {
+  it('keeps out of at least half of the home indicator’s area', () => {
+    const theme = { rem: (size: number) => size * 16, spaceSmRem: 0.5 }
+    const bottom = (inset: number): number =>
+      composerBottom(
+        theme as unknown as Parameters<typeof composerBottom>[0],
+        inset
+      )
+    // An iPhone's 34-point indicator: half of it, over the usual 8.
+    expect(bottom(34)).equals(8 + 17)
+    expect(bottom(0)).equals(8)
+  })
+
   it('sends on return, and keeps a line break a hardware Shift+Return puts in', async () => {
     const sent: string[] = []
     const props: ComposerProps = {
@@ -102,5 +120,47 @@ describe("Tess's composer on a phone or a tablet", () => {
     expect(sent).deep.equals(['a\nb'])
     expect(cleared).equals(1)
     expect((byLabel('Ask Tess') as HTMLTextAreaElement).value).equals('')
+  })
+
+  it('puts dictated words at the cursor the field reports, and lets go of the cursor at its next report', async () => {
+    const sent: string[] = []
+    const handle = React.createRef<ComposerHandle>()
+    const props: ComposerProps = {
+      busy: false,
+      onSend: async text => {
+        sent.push(text)
+        return true
+      },
+      onUpload: async () => null,
+      onError: () => undefined
+    }
+    await render(<Composer {...props} handle={handle} />)
+    act(() => {
+      fieldProps().onChangeText('Hello world')
+    })
+    act(() => {
+      fieldProps().onSelectionChange({
+        nativeEvent: { selection: { start: 5, end: 5 } }
+      })
+    })
+    // Nothing is told to the field until words go in.
+    expect(fieldProps().selection).equals(undefined)
+    act(() => {
+      handle.current!.insertDictation('there')
+    })
+    expect(fieldProps().value).equals('Hello there world')
+    expect(fieldProps().selection).deep.equals({ start: 11, end: 11 })
+    // The field reports the cursor it took: from then on it is the field's.
+    act(() => {
+      fieldProps().onSelectionChange({
+        nativeEvent: { selection: { start: 11, end: 11 } }
+      })
+    })
+    // (Typed on, so the props read are the newest draw's.)
+    act(() => {
+      fieldProps().onChangeText('Hello there world!')
+    })
+    expect(fieldProps().selection).equals(undefined)
+    expect(sent).deep.equals([])
   })
 })

@@ -9,10 +9,13 @@ import {
   asPitchingRow,
   asPlayerDetail,
   asRosterEntry,
+  type GamesPageQuery,
   type PlayerStats,
   type TeamStationClient
 } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { reachEnd } from '../../test/PagedListStandIn'
+import { pageOfGames } from '../../test/pageOf'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { PlayerScreen } from './PlayerScreen'
 import { rosterSubtitle, TeamScreen } from './TeamScreen'
@@ -193,7 +196,9 @@ describe('a player’s whole name is never shown', function () {
     )
     expect(text()).includes('Jordan P')
     expect(text()).not.includes('Pacheco')
-    await press('Show more')
+    await act(async () => {
+      reachEnd()
+    })
     expect(text()).includes('Double')
     await press('Hawks')
     expect(moments.length).equals(1)
@@ -255,23 +260,27 @@ describe('a player’s whole name is never shown', function () {
     const opened: string[] = []
     const froms: unknown[] = []
     const client = {
-      teamGames: async () => [
-        asGameSummary({
-          id: 'g1',
-          homeTeamId: 'tem_hawks',
-          awayTeamId: 'tem_owls',
-          homeTeamName: 'Hawks',
-          awayTeamName: 'Owls',
-          seasonId: 'sea_1',
-          startAt: '2026-05-02T18:30:00.000Z',
-          venue: null,
-          status: 'final',
-          homeScore: 3,
-          awayScore: 2,
-          ingestStatus: 'ok',
-          videoCount: 1
-        })
-      ],
+      teamGamesPage: async (_id: string, query?: GamesPageQuery) =>
+        pageOfGames(
+          [
+            asGameSummary({
+              id: 'g1',
+              homeTeamId: 'tem_hawks',
+              awayTeamId: 'tem_owls',
+              homeTeamName: 'Hawks',
+              awayTeamName: 'Owls',
+              seasonId: 'sea_1',
+              startAt: '2026-05-02T18:30:00.000Z',
+              venue: null,
+              status: 'final',
+              homeScore: 3,
+              awayScore: 2,
+              ingestStatus: 'ok',
+              videoCount: 1
+            })
+          ],
+          query
+        ),
       roster: async () => [
         jordan,
         asRosterEntry({
@@ -341,7 +350,8 @@ describe('a player’s whole name is never shown', function () {
   it('is not on a non-member’s roster either, whose rows open nothing', async function () {
     const opened: string[] = []
     const client = {
-      teamGames: async () => [],
+      teamGamesPage: async (_id: string, query?: GamesPageQuery) =>
+        pageOfGames([], query),
       roster: async () => [jordan],
       standings: async () => [],
       follows: async () => []

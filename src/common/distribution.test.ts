@@ -37,6 +37,10 @@ describe('distribution metadata and client', () => {
     const replies = [
       { url: 'https://builds.example.test' },
       {},
+      {
+        betaBuildsUrl: 'https://beta.example.test',
+        appStoreUrl: 'https://apps.example.test/app'
+      },
       { clientName: 'Builds', scopes: ['openid'] },
       { approved: true }
     ]
@@ -58,11 +62,15 @@ describe('distribution metadata and client', () => {
     })
     expect(await client.buildsLink()).equals('https://builds.example.test')
     expect(await client.buildsLink()).equals(undefined)
+    expect(await client.distributionLinks()).deep.equals({
+      betaBuildsUrl: 'https://beta.example.test',
+      appStoreUrl: 'https://apps.example.test/app'
+    })
     expect((await client.oauthApproval('abc/def')).clientName).equals('Builds')
     await client.decideOAuth('handle', true)
-    expect(requests[2].url.endsWith('/oauth/approvals/abc%2Fdef')).equals(true)
-    expect(requests[3].init?.body).equals('{"approve":true}')
-    expect(new Headers(requests[3].init?.headers).get('authorization')).equals(
+    expect(requests[3].url.endsWith('/oauth/approvals/abc%2Fdef')).equals(true)
+    expect(requests[4].init?.body).equals('{"approve":true}')
+    expect(new Headers(requests[4].init?.headers).get('authorization')).equals(
       'Bearer fixture'
     )
   })

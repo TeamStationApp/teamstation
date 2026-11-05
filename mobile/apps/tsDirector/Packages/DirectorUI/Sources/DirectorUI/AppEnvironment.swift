@@ -2244,7 +2244,8 @@ public final class AppEnvironment {
   /// programme ends the publish in about twenty seconds — and before this the stream stayed off for
   /// the rest of the session, with the operator's only warning a toast they had to be watching for.
   /// The controller redials with backoff, at once when the network comes back, and stops for good
-  /// when TeamStation says the stream was ended.
+  /// when TeamStation says the stream was ended, or refuses a start because the game has no camera
+  /// place free.
   private func makeStreamSession() -> StreamSessionController {
     StreamSessionController(
       publisher: programStreamer,
@@ -2303,8 +2304,9 @@ public final class AppEnvironment {
     )
   }
 
-  /// TeamStation ended this camera (a 410 on a redial): what a deliberate stop does, so the Stream
-  /// button starts again and a later relaunch does not resume streaming. The recording carries on.
+  /// TeamStation ended this camera (a 410 on a redial), or refused a start on a game with no camera
+  /// place free: what a deliberate stop does, so the Stream button starts again and a later relaunch
+  /// does not resume streaming. The recording carries on, and `message` says which it was.
   private func streamEnded(_ message: String) {
     streamWanted = false
     isStreaming = false
@@ -3957,8 +3959,9 @@ public final class AppEnvironment {
 
   public func cutSourceLive(sourceIndex: Int) {
     guard router.pipeline(at: sourceIndex) != nil else { return }
-    selectProgram(sourceIndex: sourceIndex)
+    // Live first: a cut hands over only to a camera that is live when it is made.
     returnToLive(sourceIndex: sourceIndex)
+    selectProgram(sourceIndex: sourceIndex)
   }
 
   private func handleRemoteDown(_ id: ControlID, pressed: Set<ControlID>) {

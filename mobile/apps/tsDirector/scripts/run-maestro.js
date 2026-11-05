@@ -20,12 +20,7 @@ const { resolveDevice } = require('./deviceTarget')
 const ROOT = path.resolve(__dirname, '..')
 const FLOW_DIR = path.join(ROOT, 'maestro', 'flows')
 const REPORT_DIR = path.join(ROOT, 'maestro', 'reports')
-const RUNNER = path.join(
-  os.homedir(),
-  '.maestro-runner',
-  'bin',
-  'maestro-runner'
-)
+const RUNNER = path.join(os.homedir(), '.maestro-d', 'bin', 'maestro-d')
 /** The team that signs this app: its clientConfig.json's, checked by scripts/clientConfig.mjs; empty when there is none. */
 function clientTeam() {
   const result = spawnSync(
@@ -154,7 +149,7 @@ function main() {
 
   if (!fs.existsSync(RUNNER)) {
     throw new Error(
-      `maestro-runner not found at ${RUNNER} — install from open.devicelab.dev`
+      `maestro-d not found at ${RUNNER} — run make build in the EdgeApp/maestro-d checkout`
     )
   }
 

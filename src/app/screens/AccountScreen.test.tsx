@@ -7,6 +7,7 @@ import { Platform } from 'react-native'
 import type { AccountSettings } from '../../common/accountSettings'
 import { TeamStationClient } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import {
   testPasswordCosts,
   testPasswordParameters
@@ -280,6 +281,8 @@ afterEach(async () => {
 })
 
 describe('Account settings screen', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('opens node administration from the freshly loaded account even when the session predates the grant', async () => {
     const f = fixture(false, true)
     f.session.user = { ...f.session.user, isAdmin: false }
@@ -309,6 +312,22 @@ describe('Account settings screen', () => {
       />
     )
     expect(button('Node administration')).equals(undefined)
+  })
+  it('opens and closes blocked people without opening chat devices', async () => {
+    const f = fixture()
+    f.client.chatBlocks = async () => []
+    await render(<AccountScreen {...f} onSignOut={() => {}} />)
+    const entry = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"],button')
+    ].find(node => node.textContent?.includes('Blocked people') === true)!
+    expect(entry).not.equals(undefined)
+    await act(async () => {
+      entry.click()
+      await delay()
+    })
+    expect(text()).contains('You have not blocked anyone.')
+    await press('Done')
+    expect(text()).not.contains('You have not blocked anyone.')
   })
   it('shows chat devices only when the screen is given that action', async () => {
     const f = fixture()

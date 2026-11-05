@@ -16,6 +16,7 @@ import {
   seasonStaffIds,
   teamStaffIds
 } from './audiences'
+import { assertDmAllowed, lockBlockPolicy } from './blocks'
 import {
   closeConversation,
   currentMembers,
@@ -572,8 +573,10 @@ export async function createDm(
     )
   }
   return await inTransaction(db, async trx => {
+    await lockBlockPolicy(trx)
     const facts = new DmFacts(trx, now)
     const members = [creatorId, ...others]
+    await assertDmAllowed(trx, members)
     await facts.load(members)
     await mustName(facts, creatorId, others, members)
     const broken = await facts.ruleBreak(members)
@@ -647,6 +650,7 @@ export async function addDmMembers(
   now: Date = new Date()
 ): Promise<string[]> {
   return await inTransaction(db, async trx => {
+    await lockBlockPolicy(trx)
     const dm = await lockDm(trx, conversationId)
     const current = await currentMembers(trx, conversationId)
     if (!current.includes(adderId)) throw notFound()
@@ -664,6 +668,7 @@ export async function addDmMembers(
     }
     const facts = new DmFacts(trx, now)
     const members = [...current, ...added]
+    await assertDmAllowed(trx, members)
     await facts.load(members)
     await mustName(facts, adderId, added, members)
     const broken = await facts.ruleBreak(members)

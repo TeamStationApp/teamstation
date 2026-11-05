@@ -2,7 +2,11 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import type { GameSummary, TeamStationClient } from '../../common/api'
-import { type EventAttendee, playerRsvpCounts } from '../../common/eventInfo'
+import {
+  type EventAttendee,
+  type PlayerRsvpCounts as Counts,
+  playerRsvpCounts
+} from '../../common/eventInfo'
 import { Emblem, initialsOf } from '../components'
 import { RSVP_COLORS } from '../components/eventRsvpPosition'
 import { PlayerRsvpCounts } from '../components/PlayerRsvpCounts'
@@ -43,12 +47,18 @@ export function ScheduleRsvpControl({
   client,
   game,
   teamId,
-  label
+  label,
+  onAnswered
 }: {
   client: TeamStationClient
   game: GameSummary
   teamId: string
   label: string
+  /**
+   * The counts after an answer, for whoever holds the game: a row in a long
+   * list is drawn afresh from it when it scrolls back.
+   */
+  onAnswered?: (counts: Counts) => void
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -179,7 +189,9 @@ export function ScheduleRsvpControl({
             setOpen(false)
           }}
           onCounts={value => {
-            if (visit === modalVisit.current) setCounts(value)
+            if (visit !== modalVisit.current) return
+            setCounts(value)
+            onAnswered?.(value)
           }}
           onReplies={value => {
             if (visit === modalVisit.current) setRows(value)

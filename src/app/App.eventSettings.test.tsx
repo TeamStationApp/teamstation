@@ -8,6 +8,7 @@ import { asEventInfo } from '../common/eventInfo'
 import { asGameScheduling } from '../common/gameApprovals'
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { pressSchedule } from '../test/eventScheduleDom'
 import { App } from './App'
 
@@ -17,6 +18,8 @@ const settle = async (): Promise<void> => {
   })
 }
 describe('actual app event Settings navigation', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   for (const status of ['eventUpdated', 'accepted', 'pending'])
     it(`returns from ${status} settings with appropriate feedback`, async () => {
       const proto = TeamStationClient.prototype

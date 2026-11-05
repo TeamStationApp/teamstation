@@ -4,7 +4,10 @@ import type { Kysely } from 'kysely'
 
 import {
   asTessAttachmentBody,
+  asTessConfirmAllBody,
+  asTessConfirmBody,
   asTessMessageBody,
+  asTessStopBody,
   type TessMessage
 } from '../../common/api'
 import {
@@ -22,6 +25,7 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import type { TessSettings } from '../serverConfig'
 import {
+  confirmAllTurn,
   confirmTurn,
   runTurn,
   type TessDeps,
@@ -40,7 +44,7 @@ import {
 } from '../tess/conversation'
 import { credentialsOf } from '../tess/loopback'
 import { playerNamesOf } from '../tess/playerLinks'
-import { turnRunning } from '../tess/turns'
+import { runningTurn, stopTurn } from '../tess/turns'
 import { usageWeeks } from '../tess/usage'
 
 export interface TessRouteOptions {
@@ -67,14 +71,15 @@ export const KEEP_ALIVE_MS = 15000
 
 /**
  * Tess, the assistant, under `/me/tess`: the caller's one conversation, the
- * files they give her, the changes she proposes and they confirm, and the
- * tokens it uses each week.
+ * files they give her, the changes she proposes and they confirm, a stop
+ * of the turn she is on, and the tokens it uses each week.
  *
  * Every route needs a person signed in themselves: a machine token is
  * refused, and so is a request Tess's own tools sent, which the deny list
  * already keeps from here. With no key the routes answer 503.
  *
- * A message, and a confirmed change, stream Tess's turn when the request
+ * A message, a confirmed change, and a reply's changes confirmed together
+ * stream Tess's turn when the request
  * accepts `text/event-stream` (`turnStream`); without that they answer JSON
  * once she is done, as an older app expects.
  */
@@ -120,11 +125,13 @@ export function tessRoutes(
     '/me/tess',
     withAsync(async (req, res) => {
       const { userId } = userOf(req)
+      const turn = await runningTurn(db, userId)
       res.set('Cache-Control', 'no-store').json({
         available: true,
         messages: await view(db, userId, 0, options.now?.()),
         contextTokens: await contextTokensOf(db, userId),
-        answering: await turnRunning(db, userId)
+        answering: turn != null,
+        ...(turn?.clientId == null ? {} : { turnClientId: turn.clientId })
       })
     })
   )
@@ -184,6 +191,8 @@ export function tessRoutes(
     withAsync(async (req, res) => {
       const user = userOf(req)
       const changeId = String(req.params.changeId)
+      // An older app sends no body.
+      const { clientId } = cleanBody(asTessConfirmBody, req.body ?? {})
       const answer = async (
         onEvent?: TurnEvents
       ): Promise<Record<string, unknown>> => {
@@ -191,7 +200,8 @@ export function tessRoutes(
           deps(),
           user,
           changeId,
-          onEvent
+          onEvent,
+          clientId
         )
         setAudit(res.locals, { entityType: 'tess_change', entityId: changeId })
         return {
@@ -225,6 +235,74 @@ export function tessRoutes(
         },
         answer
       )
+    })
+  )
+
+  // A reply's changes, confirmed by one hold: run in the order given, then
+  // one report. The single change's path has one more segment, so neither
+  // route takes the other's requests.
+  router.post(
+    '/me/tess/changes/confirm',
+    withAsync(async (req, res) => {
+      const user = userOf(req)
+      const { changeIds, clientId } = cleanBody(asTessConfirmAllBody, req.body)
+      // The batch has run: the audit names its changes whatever Tess does next.
+      const audit = (): void => {
+        setAudit(res.locals, {
+          entityType: 'tess_change',
+          entityId: changeIds.join(',')
+        })
+      }
+      const answer = async (
+        onEvent?: TurnEvents
+      ): Promise<Record<string, unknown>> => {
+        const { changes, fromId } = await confirmAllTurn(
+          deps(),
+          user,
+          changeIds,
+          onEvent,
+          clientId
+        )
+        audit()
+        return {
+          changes,
+          messages: await view(db, user.userId, fromId, options.now?.())
+        }
+      }
+      if (!streams(req)) {
+        res.json(await answer())
+        return
+      }
+      await turnStream(
+        res,
+        options.keepAliveMs ?? KEEP_ALIVE_MS,
+        async event => {
+          audit()
+          return {
+            messages: await view(
+              db,
+              user.userId,
+              event.fromId,
+              options.now?.(),
+              false
+            ),
+            changes: event.changes
+          }
+        },
+        answer
+      )
+    })
+  )
+
+  // The turn the app sent with `clientId` stops, if it is running or once
+  // it claims; 204 either way, so a Stop that comes too late does no harm.
+  router.post(
+    '/me/tess/stop',
+    withAsync(async (req, res) => {
+      const { userId } = userOf(req)
+      const { clientId } = cleanBody(asTessStopBody, req.body)
+      await stopTurn(db, userId, clientId)
+      res.status(204).end()
     })
   )
 
@@ -274,7 +352,11 @@ function streams(req: Request): boolean {
 export async function turnStream(
   res: Response,
   keepAliveMs: number,
-  stored: (event: { fromId: number; change?: unknown }) => Promise<unknown>,
+  stored: (event: {
+    fromId: number
+    change?: unknown
+    changes?: unknown
+  }) => Promise<unknown>,
   run: (onEvent: TurnEvents) => Promise<unknown>
 ): Promise<void> {
   let keepAlive: ReturnType<typeof setInterval> | undefined

@@ -11,8 +11,10 @@ import {
   TeamStationClient
 } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { mount, settle, unmount } from '../test/gameFormDom'
+import { pageOfGames } from '../test/pageOf'
 import { App } from './App'
 import { lstrings } from './locales/strings'
 import { currentRoute, showRoute } from './navigation/useAddressBar'
@@ -24,6 +26,8 @@ import { gameFixture } from './scoring/isUnscoredGame.test'
  * the angle and never where it came from, and closing clears it.
  */
 describe('the full-screen player in the shell (U12)', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   let originals: PropertyDescriptorMap
   const originalSocket = globalThis.WebSocket
   const video = asVideoSummary({
@@ -52,7 +56,7 @@ describe('the full-screen player in the shell (U12)', () => {
     api.home = async () => ({ teams: [], seasons: [], leagues: [] })
     api.follows = async () => []
     api.ownGroups = async () => []
-    api.teamGames = async () => []
+    api.teamGamesPage = async (_id, query) => pageOfGames([], query)
     api.roster = async () => []
     api.game = async () => ({
       ...gameFixture,

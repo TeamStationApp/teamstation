@@ -10,7 +10,6 @@ import { fakeMicrophone } from '../../test/fakeMicrophone.e2e'
 import {
   type BrowserSession,
   browserSession,
-  contains,
   maestro
 } from '../../test/refinementsMaestro.e2e'
 import { HEARD, tessFixture } from '../../test/tessFixture'
@@ -20,14 +19,17 @@ import { recordBrowserCoverage } from '../browserCoverage.e2e'
  * Space held to talk to Tess, on a wide browser window (Chromium,
  * 1280 × 900), driven through maestro-d with puppeteer beside it:
  *
- *   L8   a quick Space in her field types a space, and nobody listens;
+ *   L8   a quick Space in her field types a space, and nothing records;
  *        "hello world" typed with Space rolled into the w comes out in
- *        order; held 800 ms there, it listens from 500 ms;
+ *        order; held 800 ms there after "hello", the Space is not typed,
+ *        it records from 500 ms, and what was heard goes in at the caret;
  *   L9   a quick Space on a focused tab in the pane activates it, and
  *        scrolls nothing;
- *   L10  Space held 800 ms on the pane's page listens from 500 ms, and what
- *        was heard becomes her next message; with push-to-talk switched
- *        off, the same hold is the page's and scrolls it.
+ *   L10  Space held 800 ms on the pane's page records from 500 ms, scrolls
+ *        nothing, and what was heard goes into her field at its caret.
+ *
+ * The microphone is closed until a hold begins, so the fake microphone
+ * speaks once the waveform shows. Nothing heard is ever sent.
  *
  * The whole run is recorded as `space-hold.mp4`. The model is
  * `fakeAnthropic` and the recogniser the fixture's; nothing is paid for.
@@ -71,25 +73,29 @@ async function waitFor(
   await page.waitForSelector(selector, { timeout })
 }
 
-/** The dictation status line's words, or null while push-to-talk is off. */
+const MIC = '[role="button"][aria-label="Dictate"]'
+const WAVE = '[data-testid="Tess waveform"]'
+
+/** What the microphone button says it is doing: Off, Recording, … */
 async function status(page: Page): Promise<string | null> {
-  return await page.evaluate(() => {
-    const node = document.querySelector('[aria-label="Dictation status"]')
-    return node == null ? null : node.textContent
-  })
+  return await page.evaluate(mic => {
+    const node = document.querySelector(mic)
+    return node == null ? null : node.getAttribute('aria-valuetext')
+  }, MIC)
 }
 
 async function waitForStatus(
   page: Page,
-  words: string | null,
+  words: string,
   timeout = 20000
 ): Promise<void> {
   await page.waitForFunction(
-    words => {
-      const node = document.querySelector('[aria-label="Dictation status"]')
-      return (node == null ? null : node.textContent) === words
+    (mic, words) => {
+      const node = document.querySelector(mic)
+      return node != null && node.getAttribute('aria-valuetext') === words
     },
     { timeout },
+    MIC,
     words
   )
 }
@@ -213,7 +219,9 @@ async function main(): Promise<void> {
     }
     const column = '[data-testid="Tess column"]'
     const field = '[aria-label="Ask Tess"]'
-    const mic = '[role="button"][aria-label="Dictation"]'
+    const mic = MIC
+    const fieldValue = async (): Promise<string> =>
+      await page.$eval(field, node => (node as HTMLTextAreaElement).value)
     const heardCount = async (): Promise<number> =>
       await page.evaluate(
         words =>
@@ -229,40 +237,39 @@ async function main(): Promise<void> {
       await page.keyboard.up('Space')
     }
     /**
-     * Space held 800 ms while the microphone hears a sentence: not listening
-     * at 300 ms, listening from 500, and what was heard sent as a message.
-     * Returns when it began listening.
+     * Space held 800 ms: not recording at 300 ms, recording from 500, when
+     * the waveform shows and the microphone speaks; the words go into the
+     * field as `expected`, and nothing is sent. Returns when it began
+     * recording.
      */
-    const holdAndHear = async (): Promise<number> => {
+    const holdAndHear = async (expected: string): Promise<number> => {
       const heardBefore = await heardCount()
+      const calls = t.model.calls.length
       const down = Date.now()
       await page.keyboard.down('Space')
+      await pause(300)
+      expect(await status(page), 'not yet at 300 ms').equals('Off')
+      await waitFor(page, WAVE, 2000)
+      const recording = Date.now() - down
+      expect(recording, 'recording from 500 ms').greaterThanOrEqual(500)
       const playing = page.evaluate(async () => {
         await (window as any).__playClip()
       })
-      await pause(300)
-      expect(await status(page), 'not yet at 300 ms').equals('Push to talk')
-      await waitForStatus(page, 'Listening…', 2000)
-      const listening = Date.now() - down
-      expect(listening, 'listening from 500 ms').greaterThanOrEqual(500)
       await pause(Math.max(0, 800 - (Date.now() - down)))
       await page.keyboard.up('Space')
       await playing
       await page.waitForFunction(
-        (words, count) =>
-          Array.from(
-            document.querySelectorAll('[data-testid="Tess user message"]')
-          ).filter(node => (node.textContent || '').includes(words)).length >
-          count,
+        (field, expected) =>
+          document.querySelector<HTMLTextAreaElement>(field)!.value ===
+          expected,
         { timeout: 30000 },
-        HEARD,
-        heardBefore
+        field,
+        expected
       )
-      await page.waitForFunction(
-        () => document.querySelector('[data-testid="Tess thinking"]') == null,
-        { timeout: 20000 }
-      )
-      return listening
+      await waitForStatus(page, 'Off', 10000)
+      expect(t.model.calls.length, 'nothing sent').equals(calls)
+      expect(await heardCount()).equals(heardBefore)
+      return recording
     }
     /**
      * The focus on the pane's page itself: a press on text in the pane's
@@ -325,7 +332,7 @@ async function main(): Promise<void> {
     await waitFor(page, paneTab('Team'))
     await tap(paneTab('Schedule'))
     await waitFor(page, mic)
-    await waitForStatus(page, 'Push to talk')
+    await waitForStatus(page, 'Off')
     await pause(600)
     expect(await paneScroll(page, 0), 'the pane can scroll').equals(0)
     await page.evaluate(spaceCaption)
@@ -353,7 +360,7 @@ async function main(): Promise<void> {
       field
     )
     await pause(600)
-    expect(await status(page)).equals('Push to talk')
+    expect(await status(page)).equals('Off')
     expect(t.dictation.begun, 'no utterance started').equals(begun)
     console.log('L8 a quick Space in the field typed a space; nothing heard')
     await pause(600)
@@ -391,24 +398,23 @@ async function main(): Promise<void> {
       field
     )
     await pause(600)
-    expect(await status(page)).equals('Push to talk')
+    expect(await status(page)).equals('Off')
     expect(t.dictation.begun, 'no utterance started').equals(begun)
     console.log('L8 "hello world" with Space rolled into the w typed in order')
     await pause(600)
-    // Cleared, so what is heard next is sent as a message of its own.
-    await clearField()
-    // Held there, it listens instead.
-    await step('L8: Space held 800 ms in the field')
+    // Held there with the caret after "hello", it records instead, and the
+    // Space is not typed.
+    await step('L8: Space held 800 ms in the field, after "hello"')
+    // Back over " world".
+    for (let back = 0; back < 6; back++) await page.keyboard.press('ArrowLeft')
     await pause(600)
-    const inField = await holdAndHear()
+    const inField = await holdAndHear(`hello ${HEARD} world`)
     expect(t.dictation.begun).equals(begun + 1)
-    expect(
-      await page.$eval(field, node => (node as HTMLTextAreaElement).value)
-    ).equals('')
     console.log(
-      `L8 held 800 ms in the field: listening after ${inField} ms; "${HEARD}" was sent`
+      `L8 held 800 ms in the field: recording after ${inField} ms; "${HEARD}" inserted after "hello", not sent`
     )
     await pause(800)
+    await clearField()
 
     // L9: a quick Space on the pane's focused Team tab activates it.
     await step('L9: a quick Space on the focused Team tab')
@@ -436,15 +442,15 @@ async function main(): Promise<void> {
     })
     // The Schedule list may have gone with its tab; if it stayed, it did not move.
     if (scrolled != null) expect(scrolled).equals(topBefore)
-    expect(await status(page)).equals('Push to talk')
+    expect(await status(page)).equals('Off')
     expect(t.dictation.begun, 'no utterance started').equals(begun + 1)
     console.log(
       'L9 a quick Space on the Team tab switched to it; nothing heard'
     )
     await pause(600)
 
-    // L10: held 800 ms on the pane's page, while the microphone hears a
-    // sentence, Space listens from 500 ms.
+    // L10: held 800 ms on the pane's page, Space records from 500 ms, and
+    // what was heard goes into her field.
     await tap(paneTab('Schedule'))
     await page.evaluate(() => {
       const node = document.querySelector('[data-space-scroller]')
@@ -455,39 +461,17 @@ async function main(): Promise<void> {
     await focusPage()
     await step('L10: Space held 800 ms on the page')
     await pause(600)
-    const listening = await holdAndHear()
+    const listening = await holdAndHear(HEARD)
     expect(t.dictation.begun).equals(begun + 2)
     expect(t.dictation.heard.at(-1)).equals(HEARD)
     expect(await paneScroll(page), 'the hold scrolled nothing').equals(0)
     console.log(
-      `L10 held 800 ms: listening after ${listening} ms; "${HEARD}" was sent`
-    )
-    await pause(800)
-
-    // Push-to-talk switched off: the same hold is the page's.
-    await waitForStatus(page, 'Push to talk')
-    const micBox = await page.$eval(mic, node => {
-      const box = node.getBoundingClientRect()
-      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
-    })
-    await step('L10: push-to-talk off')
-    await page.mouse.click(micBox.x, micBox.y)
-    await waitForStatus(page, null)
-    await focusPage()
-    await step('L10: push-to-talk off, Space held 800 ms')
-    await pause(600)
-    await press(800)
-    await pause(800)
-    const topOff = await paneScroll(page)
-    expect(topOff, 'Space scrolled the pane').greaterThan(0)
-    expect(t.dictation.begun, 'no utterance started').equals(begun + 2)
-    expect(await status(page)).equals(null)
-    console.log(
-      `L10 push-to-talk off: the hold scrolled the pane to ${topOff}; nothing heard`
+      `L10 held 800 ms on the page: recording after ${listening} ms; "${HEARD}" in the field, not sent`
     )
     await pause(1500)
     await video.stop()
-    await contains(page, HEARD)
+    expect(await fieldValue()).equals(HEARD)
+    expect(await heardCount(), 'never sent').equals(0)
 
     if (process.env.TS_DIRECT_BROWSER_COVERAGE != null)
       await recordBrowserCoverage(
