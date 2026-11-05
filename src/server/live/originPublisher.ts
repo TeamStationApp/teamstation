@@ -35,6 +35,11 @@ interface FileStamp {
   mtimeMs: number
   md5: string
 }
+
+/** A parsed URI may be a V8 slice holding its entire historical playlist. */
+function ownedName(name: string): string {
+  return Buffer.from(name, 'utf8').toString('utf8')
+}
 /** The init segments a playlist names, in order, each once. */
 function initsOf(playlist: MediaPlaylist): string[] {
   return [
@@ -88,6 +93,9 @@ export class OriginPublisher {
 
   stop(): void {
     this.stopped = true
+    this.acknowledged.clear()
+    this.published.clear()
+    this.lastBody = undefined
   }
 
   /** Seed from remote checksums, never one GET per segment. */
@@ -110,9 +118,9 @@ export class OriginPublisher {
       for (const segment of parseMediaPlaylist(held).segments) {
         if (!isSegmentName(segment.uri))
           throw new Error('Invalid published live segment URI')
-        this.published.add(segment.uri)
+        if (!this.stopped) this.published.add(ownedName(segment.uri))
       }
-      this.lastBody = held
+      if (!this.stopped) this.lastBody = held
     } else {
       await response.body?.cancel()
       if (response.status !== 404)
@@ -127,8 +135,12 @@ export class OriginPublisher {
       const entry = remote.get(objectKey(videoId, name))
       if (entry == null) continue
       const here = await this.snapshot(name)
-      if (here?.size === entry.size && here.md5 === entry.etag.toLowerCase())
-        this.acknowledged.set(name, here)
+      if (
+        !this.stopped &&
+        here?.size === entry.size &&
+        here.md5 === entry.etag.toLowerCase()
+      )
+        this.acknowledged.set(ownedName(name), here)
     }
     this.masterWritten = remote.has(objectKey(videoId, 'master.m3u8'))
     this.started = true
@@ -183,8 +195,12 @@ export class OriginPublisher {
     if (exposed.length > 0 && (await this.active())) {
       if (body !== this.lastBody) {
         await this.putPlaylist('index.m3u8', body)
+        if (this.stopped) return { complete: false }
         this.lastBody = body
-        for (const segment of exposed) this.published.add(segment.uri)
+        for (const segment of exposed) {
+          if (!this.published.has(segment.uri))
+            this.published.add(ownedName(segment.uri))
+        }
       }
       if (!this.notified && acknowledged.size > 0) {
         this.metadata ??= await this.probe(body)
@@ -336,8 +352,8 @@ export class OriginPublisher {
     })
     const result = await verifyObjectLength({ space, key, size: held.size })
     if (!result.ok) throw new Error(result.reason)
-    if (!(await this.unchanged(name, held))) return false
-    this.acknowledged.set(name, held)
+    if (!(await this.unchanged(name, held)) || this.stopped) return false
+    this.acknowledged.set(ownedName(name), held)
     return true
   }
 
