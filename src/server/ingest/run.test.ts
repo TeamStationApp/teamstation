@@ -298,6 +298,8 @@ describe('the ingest process', function () {
     const [options] = f.started
     expect(options.feed).equals(f.feeds[0])
     expect(options.playlistClient).equals(f.valkeyClients[0])
+    // The scoreboard store's prefix: `ts:<database name>` with none set.
+    expect(options.playlistPrefix).equals('ts:none')
     handle!.stop('SIGTERM')
     await untilExited(f)
     expect(f.order).deep.equals([
