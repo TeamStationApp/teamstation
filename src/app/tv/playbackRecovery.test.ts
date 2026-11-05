@@ -1,0 +1,49 @@
+import { expect } from 'chai'
+import { describe, it } from 'mocha'
+
+import { PlaybackRecovery } from './playbackRecovery'
+
+describe('TV per-camera playback recovery', () => {
+  it('retries errors while paused, backs off, and bounds a silent failure', () => {
+    const watch = new PlaybackRecovery(0)
+    watch.error(100)
+    expect(watch.retry(100, false, false)).equals(false)
+    expect(watch.retry(1100, false, false)).equals(true)
+    expect(watch.retry(1101, false, false)).equals(false)
+    expect(watch.retry(3100, false, false)).equals(true)
+    expect(watch.retry(300100, false, false)).equals(false)
+    expect(watch.exhausted).equals(true)
+    expect(watch.retry(310000, true, false)).equals(false)
+  })
+  it('ignores an ordinary pause and ending, but detects a silent stalled player', () => {
+    const watch = new PlaybackRecovery(0)
+    expect(watch.retry(100000, false, false)).equals(false)
+    expect(watch.retry(110000, true, false)).equals(false)
+    expect(watch.retry(120000, true, true)).equals(false)
+    expect(watch.retry(120000, true, false)).equals(true)
+  })
+  it('accepts a successfully reloaded paused frame without inventing playback', () => {
+    const watch = new PlaybackRecovery(0)
+    watch.error(100)
+    expect(watch.retry(1100, false, false)).equals(true)
+    watch.readyPaused(1200)
+    expect(watch.retry(40000, false, false)).equals(false)
+    expect(watch.retry(40001, true, false)).equals(false)
+    expect(watch.retry(60000, true, false)).equals(true)
+  })
+  it('requires advancement, rather than repeated ready or position reports, to recover', () => {
+    const watch = new PlaybackRecovery(0)
+    watch.progress(10, 1000)
+    watch.progress(10, 19000)
+    expect(watch.retry(20000, true, false)).equals(true)
+    watch.error(20001)
+    watch.progress(10, 21000)
+    expect(watch.retry(22000, true, false)).equals(true)
+    watch.progress(10.5, 22001)
+    expect(watch.retry(23000, true, false)).equals(false)
+    expect(watch.retry(42001, true, false)).equals(true)
+    watch.retry(342001, true, false)
+    watch.progress(11, 342002)
+    expect(watch.exhausted).equals(false)
+  })
+})
