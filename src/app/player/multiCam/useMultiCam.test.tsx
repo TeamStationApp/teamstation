@@ -9,6 +9,8 @@ import {
   type VideoSummary
 } from '../../../common/api'
 import { ThemeProvider } from '../../theme/ThemeContext'
+import { attachHls as attachNativeHls } from '../attachHls.native'
+import { NativeVideoHandle } from '../nativeVideoHandle'
 import { SLOW_RATE } from '../slowMotion'
 import type { VideoEventName } from '../videoHandle'
 import type { AngleVideo } from '../wallClock'
@@ -288,6 +290,18 @@ describe('useMultiCam', function () {
     })
     expect(tiles.A.paused).equals(false)
     expect(tiles.B.paused).equals(false)
+  })
+
+  it('applies rapid toggles before React renders the queued state updates', async () => {
+    const { mc, tiles } = await grid()
+    await act(async () => {
+      mc().toggle()
+      expect(tiles.A.paused).equals(true)
+      mc().toggle()
+      expect(tiles.A.paused).equals(false)
+      expect(tiles.B.paused).equals(false)
+    })
+    expect(mc().playing).equals(true)
   })
 
   it('moves every tile when the take is moved, and parks one that was not recording yet', async function () {
@@ -1202,7 +1216,118 @@ describe('useMultiCam on live angles', function () {
 })
 
 describe('useMultiCam buffering', function () {
+  it('preserves a paused grid rewind made while a network replacement opens', async function () {
+    this.timeout(5000)
+    const { mc } = await grid({
+      videos: [video('A', 0)],
+      order: ['A'],
+      atMs: T0 + 190_000
+    })
+    let loads = 0
+    let opening = false
+    const seeks: number[] = []
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.source = 'https://media/A.m3u8'
+    handle.attach({
+      pause: () => undefined,
+      resume: () => undefined,
+      seek: (seconds: number) => {
+        seeks.push(seconds)
+        if (!opening)
+          handle.handleSeek({ seekTime: seconds, currentTime: seconds })
+      },
+      setSource: () => {
+        opening = true
+        loads++
+      }
+    } as unknown as Parameters<NativeVideoHandle['attach']>[0])
+    const load = {
+      currentTime: 190,
+      duration: 600,
+      naturalSize: { width: 640, height: 360, orientation: 'landscape' },
+      audioTracks: [],
+      textTracks: [],
+      videoTracks: []
+    } as Parameters<NativeVideoHandle['handleLoad']>[0]
+    handle.handleLoad(load)
+    handle.handleReadyForDisplay()
+    handle.handleProgress({
+      currentTime: 190,
+      playableDuration: 600,
+      seekableDuration: 600
+    })
+    await act(async () => {
+      mc().takeElement('A')(handle)
+      mc().attached('A', handle, mc().attaching('A'))
+      if (mc().playing) mc().toggle()
+    })
+    const stop = attachNativeHls(handle, handle.source, () => undefined, {
+      wantsToPlay: () => mc().intents.current.get('A') === true,
+      wantsRecovery: () => mc().playing,
+      buffer: { aheadSec: 30 }
+    })
+    try {
+      await act(async () =>
+        handle.handleError({
+          error: { errorString: 'Temporary network interruption' }
+        })
+      )
+      await until(() => loads > 0, 2000)
+      expect(loads).equals(1)
+      await act(async () => mc().goTo(T0 + 80_000))
+      await act(async () => {
+        opening = false
+        handle.handleLoad({ ...load, currentTime: 0 })
+        handle.handleReadyForDisplay()
+      })
+      expect(seeks.at(-1)).equals(80)
+      expect(handle.currentTime).equals(80)
+      expect(mc().atWallMs).equals(T0 + 80_000)
+      expect(mc().playing).equals(false)
+      expect(handle.paused).equals(true)
+    } finally {
+      stop()
+    }
+  })
   // A is two minutes in at 120 s; B, which started a minute later, at 60 s.
+
+  it('clears the ended notice when a paused viewer rewinds into the recording', async function () {
+    this.timeout(8000)
+    const { mc } = await grid({ atMs: T0 + 660_000 }, {}, tiles => {
+      for (const tile of Object.values(tiles)) {
+        tile.currentTime = 600
+        tile.ended = true
+      }
+    })
+    await ticks(2)
+    expect(mc().ended).equals(true)
+    await act(async () => {
+      mc().toggle()
+    })
+    expect(mc().playing).equals(false)
+    await act(async () => {
+      mc().goTo(T0 + 120_000)
+    })
+    expect(mc().ended).equals(false)
+    expect(mc().playing).equals(false)
+  })
+
+  it('recognizes a native frozen picture despite an advancing optimistic clock', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({}, {}, tiles => {
+      Object.assign(tiles.A, { reportedTime: 120 })
+      Object.assign(tiles.B, { reportedTime: 60 })
+    })
+    await ticks(1)
+    // A's interpolation moves, but no native picture has advanced. B really
+    // reports another second; neither tile is seeking or buffering.
+    tiles.A.currentTime = 121
+    tiles.B.currentTime = 61
+    Object.assign(tiles.B, { reportedTime: 61 })
+    await ticks(1)
+    expect(mc().tiles.A?.stalledSince).a('number')
+    expect(mc().tiles.B?.stalledSince ?? null).equals(null)
+  })
 
   it('holds every tile until each holds five seconds, then plays them together', async function () {
     this.timeout(5000)
@@ -1589,6 +1714,65 @@ describe('useMultiCam buffering', function () {
     tiles.B.currentTime = 62
     await ticks(1)
     expect(tiles.B.currentTime).equals(62)
+  })
+})
+
+describe('useMultiCam bounded recovery', () => {
+  it('refreshes a follower that never completes its join without restarting healthy tiles', async () => {
+    const realNow = Date.now
+    const realSet = globalThis.setInterval
+    const realClear = globalThis.clearInterval
+    let now = T0
+    const intervals = new Map<unknown, () => void>()
+    Date.now = () => now
+    globalThis.setInterval = ((callback: () => void) => {
+      const id = {}
+      intervals.set(id, callback)
+      return id
+    }) as unknown as typeof setInterval
+    globalThis.clearInterval = (id: unknown) => {
+      if (!intervals.delete(id))
+        realClear(id as Parameters<typeof clearInterval>[0])
+    }
+    try {
+      const client = new TeamStationClient({ baseUrl: '/api/v1' })
+      const requests: Record<string, number> = {}
+      client.playback = async (id: string) => {
+        requests[id] = (requests[id] ?? 0) + 1
+        return {
+          videoId: id,
+          storage: 'spaces',
+          url: `https://media/${id}-${requests[id]}.m3u8`,
+          expiresAt: null,
+          durationSec: null,
+          unavailable: false
+        }
+      }
+      const { mc, tiles } = await grid({ client })
+      const tick = async (seconds: number): Promise<void> => {
+        now = T0 + seconds * 1000
+        tiles.A.currentTime = 120 + seconds
+        await act(async () => {
+          for (const callback of [...intervals.values()]) callback()
+        })
+      }
+      await tick(1)
+      tiles.B.currentTime = 58
+      await tick(2)
+      tiles.B.readyState = 2
+      Object.assign(tiles.B, { seeking: true })
+      for (let second = 3; second <= 13; second++) await tick(second)
+      expect(requests.B).equals(2)
+      expect(requests.A).equals(1)
+      expect(mc().urls.B).contains('B-2')
+      expect(tiles.A.paused).equals(false)
+    } finally {
+      await act(async () => root?.unmount())
+      root = undefined
+      Date.now = realNow
+      globalThis.setInterval = realSet
+      globalThis.clearInterval = realClear
+    }
   })
 })
 
