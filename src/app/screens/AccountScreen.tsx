@@ -9,7 +9,7 @@ import {
   newPasswordRequirements
 } from '../../common/passwordProtocol'
 import { BlockedPeople } from '../chat/BlockedPeople'
-import { leaveChat } from '../chat/engine/links'
+import { releaseChat } from '../chat/engine/links'
 import type { ChatKeyStore } from '../chat/keyRecord'
 import { keyStore } from '../chat/keyStore'
 import {
@@ -45,8 +45,8 @@ import { DeleteAccountSheet } from './DeleteAccountSheet'
 export interface AccountScreenProps {
   session: Session
   /**
-   * The signed-in client. Signing out first removes this device from chat
-   * and wipes its chat keys.
+   * The signed-in client. Signing out leaves this account's chat keys on
+   * the device and leaves the device linked.
    */
   client: TeamStationClient
   socket?: Pick<GameSocket, 'onChat'>
@@ -240,9 +240,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const [signingOut, setSigningOut] = useState(false)
 
   /**
-   * This device leaves chat before the session ends: the server revokes it
-   * (which ends the session too) and its keys are wiped, so whoever signs in
-   * on it next reads nothing of this person's chats.
+   * The session ends. This account's chat keys stay, and the device stays
+   * linked, so the same account opens chat on this device next time.
    */
   const signOut = (): void => {
     if (onSignOutRequest != null) {
@@ -250,9 +249,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       return
     }
     setSigningOut(true)
-    leaveChat({ client, store: chatStore, userId: session.user.id })
-      .finally(onSignOut)
-      .catch(() => undefined)
+    releaseChat(chatStore).finally(onSignOut).catch(() => undefined)
   }
 
   return (
@@ -795,6 +792,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       {deleteOpen && (
         <DeleteAccountSheet
           client={client}
+          userId={session.user.id}
+          store={chatStore}
           onCancel={() => {
             setDeleteOpen(false)
           }}

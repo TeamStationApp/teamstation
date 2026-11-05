@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import { IDBFactory } from 'fake-indexeddb'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -6,6 +7,7 @@ import { Platform } from 'react-native'
 
 import type { AccountSettings } from '../../common/accountSettings'
 import { TeamStationClient } from '../../common/api'
+import { newDeviceKeys } from '../../common/chatCrypto/keys'
 import { userIdOfGumbo } from '../../common/userId'
 import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import {
@@ -13,6 +15,9 @@ import {
   testPasswordParameters
 } from '../../test/passwordFixtures'
 import { App } from '../App'
+import { holdsStore } from '../chat/engine/links'
+import { newRecord } from '../chat/keyRecord'
+import { KEY_DATABASE, keyStore } from '../chat/keyStore'
 import { parseRoute } from '../navigation/routes'
 import { showRoute } from '../navigation/useAddressBar'
 import { SLIDE_TRAVEL } from '../stream/overlay/SlideToStop'
@@ -104,6 +109,13 @@ async function render(element: React.ReactElement): Promise<void> {
     await delay()
   })
 }
+/** A fresh IndexedDB, so a wipe in these cases can finish and `onLeave` runs. */
+function installChatDatabase(): IDBFactory {
+  const factory = new IDBFactory()
+  ;(globalThis as { indexedDB: IDBFactory }).indexedDB = factory
+  return factory
+}
+
 function fixture(
   legacy = false,
   node = false
@@ -837,8 +849,65 @@ describe('Account settings screen', () => {
     expect(text()).includes('Agent')
     expect(text()).includes('tsk_fixt…')
   })
+  it('signs out without revoking the device or wiping its chat keys', async () => {
+    installChatDatabase()
+    const f = fixture()
+    const mine = newRecord(f.session.user.id, 'cdv_keep', newDeviceKeys())
+    const other = newRecord(userIdOfGumbo(202), 'cdv_other', newDeviceKeys())
+    await keyStore.save(mine)
+    await keyStore.save(other)
+    let revoked = 0
+    f.client.revokeChatDevice = async () => {
+      revoked += 1
+      throw new Error('revoke was not expected')
+    }
+    let signedOut = false
+    await render(
+      <AccountScreen
+        client={f.client}
+        session={f.session}
+        onSignOut={() => {
+          signedOut = true
+        }}
+      />
+    )
+    await press('Sign out')
+    expect(signedOut).equals(true)
+    expect(revoked).equals(0)
+    expect((await keyStore.load(f.session.user.id))?.deviceId).equals('cdv_keep')
+    expect((await keyStore.load(userIdOfGumbo(202)))?.deviceId).equals(
+      'cdv_other'
+    )
+  })
+
+  it('signs out with no record and does not create the chat key database', async () => {
+    const factory = installChatDatabase()
+    const f = fixture()
+    let signedOut = false
+    await render(
+      <AccountScreen
+        client={f.client}
+        session={f.session}
+        onSignOut={() => {
+          signedOut = true
+        }}
+      />
+    )
+    await press('Sign out')
+    expect(signedOut).equals(true)
+    expect(
+      (await factory.databases()).some(found => found.name === KEY_DATABASE)
+    ).equals(false)
+  })
+
   it('puts Delete account last, behind a slide, with Cancel changing nothing', async () => {
+    installChatDatabase()
     const f = fixture(false, true)
+    const otherId = userIdOfGumbo(202)
+    await keyStore.save(
+      newRecord(f.session.user.id, 'cdv_delete', newDeviceKeys())
+    )
+    await keyStore.save(newRecord(otherId, 'cdv_kept', newDeviceKeys()))
     const methods: string[] = []
     // What the server answers the next delete with, when not success.
     let refuse: Response | undefined
@@ -922,6 +991,10 @@ describe('Account settings screen', () => {
     )
     expect(deleted).equals(0)
     expect(slider('knob')?.style.transform).includes('translateX(3px)')
+    expect((await keyStore.load(f.session.user.id))?.deviceId).equals(
+      'cdv_delete'
+    )
+    expect((await keyStore.load(otherId))?.deviceId).equals('cdv_kept')
 
     // Enter on the focused track is the keyboard's slide.
     const track = slider('track')!
@@ -937,11 +1010,15 @@ describe('Account settings screen', () => {
     expect(deletes()).length(2)
     expect(deleted).equals(1)
     expect(signedOut).equals(0)
+    expect(await keyStore.load(f.session.user.id)).equals(undefined)
+    expect((await keyStore.load(otherId))?.deviceId).equals('cdv_kept')
     // Signed out by deleting, not by asking the server to sign out too.
     expect(methods.filter(call => call.includes('/auth/logout'))).length(0)
   })
   it('asks for sign-in again, claiming nothing, when the session has ended', async () => {
+    installChatDatabase()
     const f = fixture()
+    await keyStore.save(newRecord(f.session.user.id, 'cdv_ended', newDeviceKeys()))
     let left = 0
     const client = new TeamStationClient({
       baseUrl: '/api/v1',
@@ -974,6 +1051,9 @@ describe('Account settings screen', () => {
     expect(text()).not.includes('could not be deleted')
     expect(slider('track')).equals(null)
     expect(left).equals(0)
+    expect((await keyStore.load(f.session.user.id))?.deviceId).equals(
+      'cdv_ended'
+    )
     const signIn = slider('sign-in', 'delete-account')!
     expect(signIn.textContent).equals('Sign in')
     await act(async () => {
@@ -981,9 +1061,16 @@ describe('Account settings screen', () => {
       await delay()
     })
     expect(left).equals(1)
+    expect((await keyStore.load(f.session.user.id))?.deviceId).equals(
+      'cdv_ended'
+    )
   })
   it('falls back to signing out, and leaves the app for sign-in once deleted', async () => {
+    installChatDatabase()
     const f = fixture()
+    const otherId = userIdOfGumbo(202)
+    await keyStore.save(newRecord(f.session.user.id, 'cdv_gone', newDeviceKeys()))
+    await keyStore.save(newRecord(otherId, 'cdv_kept', newDeviceKeys()))
     let signedOut = false
     await render(
       <AccountScreen
@@ -996,6 +1083,8 @@ describe('Account settings screen', () => {
     await press('Delete account')
     await drag(SLIDE_TRAVEL)
     expect(signedOut).equals(true)
+    expect(await keyStore.load(f.session.user.id)).equals(undefined)
+    expect((await keyStore.load(otherId))?.deviceId).equals('cdv_kept')
     await act(async () => {
       root?.unmount()
     })
@@ -1018,5 +1107,84 @@ describe('Account settings screen', () => {
     expect(calls.filter(call => call.includes('/auth/logout'))).length(0)
     expect(tokens).deep.equals([undefined])
     expect(button('Account, Babe Ruth')).equals(undefined)
+  })
+
+  it('drops the deleted account’s legacy record and keeps another account’s', async () => {
+    installChatDatabase()
+    const f = fixture()
+    const otherId = userIdOfGumbo(202)
+    await keyStore.save(
+      newRecord(f.session.user.id, 'cdv_legacy', newDeviceKeys())
+    )
+    await keyStore.save(newRecord(otherId, 'cdv_kept', newDeviceKeys()))
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(KEY_DATABASE)
+      request.onsuccess = () => {
+        resolve(request.result)
+      }
+      request.onerror = () => {
+        reject(request.error)
+      }
+    })
+    const transaction = db.transaction('keys', 'readwrite')
+    const rows = transaction.objectStore('keys')
+    const legacyKey = `record:${f.session.user.id}`
+    const sealed = await new Promise<unknown>((resolve, reject) => {
+      const request = rows.get(legacyKey)
+      request.onsuccess = () => {
+        resolve(request.result)
+      }
+      request.onerror = () => {
+        reject(request.error)
+      }
+    })
+    rows.put(sealed, 'record')
+    rows.delete(legacyKey)
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => {
+        resolve()
+      }
+      transaction.onerror = () => {
+        reject(transaction.error)
+      }
+    })
+    db.close()
+    const wipe = keyStore.wipe.bind(keyStore)
+    let released = false
+    keyStore.wipe = async userId => {
+      released = !holdsStore(keyStore, userId)
+      await wipe(userId)
+    }
+    try {
+      await render(<AccountScreen {...f} onSignOut={() => undefined} />)
+      await press('Delete account')
+      await drag(SLIDE_TRAVEL)
+      expect(released).equals(true)
+      expect(await keyStore.load(f.session.user.id)).equals(undefined)
+      expect((await keyStore.load(otherId))?.deviceId).equals('cdv_kept')
+      const after = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(KEY_DATABASE)
+        request.onsuccess = () => {
+          resolve(request.result)
+        }
+        request.onerror = () => {
+          reject(request.error)
+        }
+      })
+      const read = after.transaction('keys', 'readonly')
+      const left = await new Promise<unknown>((resolve, reject) => {
+        const request = read.objectStore('keys').get('record')
+        request.onsuccess = () => {
+          resolve(request.result)
+        }
+        request.onerror = () => {
+          reject(request.error)
+        }
+      })
+      after.close()
+      expect(left).equals(undefined)
+    } finally {
+      keyStore.wipe = wipe
+    }
   })
 })

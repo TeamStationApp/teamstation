@@ -403,6 +403,7 @@ describe('chat key store in the browser', function () {
     const factory = new IDBFactory()
     const store = webKeyStore({ indexedDB: factory })
     expect(await store.exists(userIdOfGumbo(12))).equals(false)
+    expect(await store.load(userIdOfGumbo(12))).equals(undefined)
     expect((await factory.databases()).map(found => found.name)).not.includes(
       KEY_DATABASE
     )
@@ -774,6 +775,7 @@ describe('chat key store in the browser', function () {
 
   it('surfaces a database that will not open', async function () {
     const broken = {
+      databases: async () => [{ name: KEY_DATABASE }],
       open: () => {
         const request: any = { error: new Error('blocked') }
         setTimeout(() => request.onerror())

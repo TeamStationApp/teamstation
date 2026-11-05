@@ -57,7 +57,7 @@ import {
   type ChatKeysClient,
   type ChatSetup,
   ensureEnrolled,
-  leaveChat,
+  releaseChat,
   readApprovalKeys,
   StaleChatSetupError,
   startLink
@@ -1903,16 +1903,12 @@ describe('chat setup through a change of user', function () {
       device: DEVICE
     })
     expect(await engine.start()).equals('link')
+    const kept = store.text
     const { context } = engine as unknown as { context: EngineContext }
     // Sign-out, while the engine is still running: its work saves nothing
-    // more, and enrols nothing.
-    await leaveChat({
-      client,
-      store,
-      userId: USER,
-      loadCore: async () => ({ ready: true })
-    })
-    expect(store.text).equals(undefined)
+    // more, and enrols nothing. The record stays.
+    await releaseChat(store)
+    expect(store.text).equals(kept)
     expect(
       await refusal(
         context.keys.update(record => ({ ...record, pendingLinkId: 'clk_x' }))
@@ -1920,9 +1916,10 @@ describe('chat setup through a change of user', function () {
     ).instanceOf(StaleChatSetupError)
     expect(await refusal(context.refreshKeys())).instanceOf(StaleChatSetupError)
     expect(await refusal(engine.start())).instanceOf(StaleChatSetupError)
-    expect(store.text).equals(undefined)
+    expect(store.text).equals(kept)
     expect(fake.calls.filter(name => name === 'registerChatDevice')).length(1)
-    // The next sign-in enrols again, with an engine of its own.
+    const deviceId = store.record().deviceId
+    // The next sign-in resumes the same record, with an engine of its own.
     const next = new ChatEngine({
       client: client as never,
       store,
@@ -1931,6 +1928,7 @@ describe('chat setup through a change of user', function () {
     })
     expect(await next.start()).equals('link')
     expect(store.record().userId).equals(USER)
+    expect(store.record().deviceId).equals(deviceId)
   })
 
   it('keeps the next user’s record from a stopped engine’s key work', async function () {
@@ -2058,11 +2056,12 @@ describe('the account screen’s chat', function () {
     )
     await press('Chat devices, The devices that can read your chats')
     expect(opened).equals(1)
+    const kept = store.text
     await press('Sign out')
     await until('the sign-out', () => log.includes('signOut'))
-    expect(log).deep.equals(['revokeChatDevice', 'wipe', 'signOut'])
-    expect(store.text).equals(undefined)
-    expect(fake.devices[0].revokedAt).not.equals(null)
+    expect(log).deep.equals(['signOut'])
+    expect(store.text).equals(kept)
+    expect(fake.devices[0].revokedAt).equals(null)
   })
 
   it('signs out at once with nothing stored, and offers Chat devices only with a way there', async function () {
@@ -2286,12 +2285,11 @@ describe('chat devices in the app', function () {
     await until('the account', () => text().includes('Sign out'))
     await press('Sign out')
     await until('signed out', () => asked.includes('POST /auth/logout'))
-    const revoke = asked.findIndex(call =>
-      call.startsWith('DELETE /chat/devices/')
-    )
-    expect(revoke).greaterThan(-1)
-    expect(revoke).lessThan(asked.indexOf('POST /auth/logout'))
-    expect(fake.devices[0].revokedAt).not.equals(null)
+    expect(
+      asked.some(call => call.startsWith('DELETE /chat/devices/'))
+    ).equals(false)
+    expect(await keyStore.exists(USER)).equals(true)
+    expect(fake.devices[0].revokedAt).equals(null)
   })
 
   it('clears chat before switching OAuth accounts even when revocation ends the session', async function () {
@@ -2320,13 +2318,12 @@ describe('chat devices in the app', function () {
     await until('approval', () => text().includes('Use a different account'))
     await press('Use a different account')
     await until('sign in', () => currentRoute().name === 'signIn')
-    expect(await keyStore.exists(USER)).equals(false)
-    expect(fake.devices[0].revokedAt).not.equals(null)
-    const revoke = asked.findIndex(call =>
-      call.startsWith('DELETE /chat/devices/')
-    )
-    expect(revoke).greaterThan(-1)
-    expect(revoke).lessThan(asked.indexOf('POST /auth/logout'))
+    expect(await keyStore.exists(USER)).equals(true)
+    expect(fake.devices[0].revokedAt).equals(null)
+    expect(
+      asked.some(call => call.startsWith('DELETE /chat/devices/'))
+    ).equals(false)
+    expect(asked.includes('POST /auth/logout')).equals(true)
   })
 
   /** The chat routes' answers: a list, an empty chat, and a new DM. */

@@ -208,6 +208,8 @@ export function webKeyStore(options: WebKeyStoreOptions = {}): ChatKeyStore {
 
   return {
     async load(userId: string): Promise<ChatKeyRecord | undefined> {
+      // Opening would create `ts-chat`. A browser with no record stays without one.
+      if (!(await listed())) return undefined
       const db = await open()
       try {
         const own = await read<unknown>(db, recordKey(userId))

@@ -6,11 +6,11 @@ import {
   type ChatKeysClient,
   type ChatSetup,
   ensureEnrolled,
-  leaveChat,
   ownLinkCode,
   pendingLinkCode,
   pollLink,
   reasonOf,
+  releaseChat,
   resetIdentity,
   resetUnreadableChat,
   revokeOtherDevice,
@@ -29,7 +29,6 @@ import {
   withEpochKey
 } from '../../app/chat/keyRecord'
 import { type ChatMyKeys, TeamStationClient } from '../../common/api'
-import type { ChatCoreStatus } from '../../common/chatCrypto/coreCall'
 import { newDeviceKeys } from '../../common/chatCrypto/keys'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
@@ -416,135 +415,114 @@ describe('chat keys on the device', function () {
   it('signs out: the device leaves chat and its keys are wiped', async function () {
     const one = deviceOf(await session('K~1', 'K'), 'K')
     const ready = await ensureEnrolled(one)
-    await leaveChat(one)
-    expect(one.store.text).equals(undefined)
+    await releaseChat(one.store)
+    expect((await one.store.load(one.userId))?.deviceId).equals(
+      ready.record.deviceId
+    )
     const device = await f()
       .db.selectFrom('chat_devices')
       .select(['revoked_at'])
       .where('id', '=', ready.record.deviceId)
       .executeTakeFirstOrThrow()
-    expect(device.revoked_at).not.equals(null)
-    expect(((await refusal(one.client.myChatKeys())) as HttpError).code).equals(
-      'unauthorized'
+    expect(device.revoked_at).equals(null)
+    expect((await one.client.myChatKeys()).deviceId).equals(
+      ready.record.deviceId
     )
-    // Nothing kept: nothing to remove, no call made, nothing wiped again.
-    await leaveChat(one)
-    expect(one.store.wipes).equals(1)
+    await releaseChat(one.store)
+    expect(one.store.wipes).equals(0)
   })
 
   it('signs out from a session the device was not bound to', async function () {
     const one = deviceOf(await session('Hs~1', 'Hs'), 'Hs')
     const ready = await ensureEnrolled(one)
     const later = deviceOf(await session('Hs~2', 'Hs'), 'Hs', one.store)
-    await leaveChat(later)
-    expect(later.store.text).equals(undefined)
+    await releaseChat(later.store)
+    expect((await later.store.load(later.userId))?.deviceId).equals(
+      ready.record.deviceId
+    )
     const device = await f()
       .db.selectFrom('chat_devices')
       .select(['revoked_at'])
       .where('id', '=', ready.record.deviceId)
       .executeTakeFirstOrThrow()
-    expect(device.revoked_at).not.equals(null)
+    expect(device.revoked_at).equals(null)
+    expect((await later.client.myChatKeys()).deviceId).equals(null)
   })
 
   describe('signing out where the chat crypto core is not', function () {
-    const unavailable = async (): Promise<ChatCoreStatus> => ({
-      ready: false,
-      reason: 'noWebAssembly'
-    })
-
-    it('with nothing stored, touches nothing and loads no core', async function () {
+    it('with nothing stored, touches nothing', async function () {
       const store = new MemoryStore()
-      let loads = 0
-      await leaveChat({
-        client: clientOf(await session('Ek~1', 'Ek')),
-        store,
-        userId: f().id('Ek'),
-        loadCore: async () => {
-          loads += 1
-          return await unavailable()
-        }
-      })
+      await releaseChat(store)
       expect(store.wipes).equals(0)
-      expect(loads).equals(0)
+      expect(await store.load(f().id('Ek'))).equals(undefined)
     })
 
-    it('revokes a device bound to this session, and wipes it', async function () {
+    it('leaves a device bound to this session linked, and keeps its record', async function () {
       const one = deviceOf(await session('Ek~2', 'Ek'), 'Ek')
       const ready = await ensureEnrolled(one)
-      await leaveChat({ ...one, loadCore: unavailable })
-      expect(one.store.text).equals(undefined)
-      const device = await f()
-        .db.selectFrom('chat_devices')
-        .select(['revoked_at'])
-        .where('id', '=', ready.record.deviceId)
-        .executeTakeFirstOrThrow()
-      expect(device.revoked_at).not.equals(null)
-    })
-
-    it('wipes a store that cannot say what it holds', async function () {
-      const store = new MemoryStore()
-      await store.save(newRecord(f().id('Es'), 'cdv_unknown', newDeviceKeys()))
-      store.exists = async () => {
-        throw new Error('no indexedDB.databases()')
-      }
-      await leaveChat({
-        client: clientOf(await session('Es~3', 'Es')),
-        store,
-        userId: f().id('Es'),
-        loadCore: unavailable
-      })
-      expect(store.text).equals(undefined)
-      expect(store.wipes).equals(1)
-    })
-
-    it('goes on without a core that never settles, or that throws', async function () {
-      const empty = new MemoryStore()
-      await leaveChat({
-        client: clientOf(await session('Ek~3', 'Ek')),
-        store: empty,
-        userId: f().id('Ek'),
-        loadCore: async () => await new Promise<never>(() => {}),
-        coreWaitMs: 20
-      })
-      expect(empty.wipes).equals(0)
-      const kept = new MemoryStore()
-      await kept.save(newRecord(f().id('Ek'), 'cdv_unknown', newDeviceKeys()))
-      await leaveChat({
-        client: clientOf(await session('Ek~4', 'Ek')),
-        store: kept,
-        userId: f().id('Ek'),
-        loadCore: async () => {
-          throw new Error('no module')
-        }
-      })
-      expect(kept.text).equals(undefined)
-    })
-
-    it('wipes a device it cannot prove to a new session, signing nothing', async function () {
-      const one = deviceOf(await session('Es~1', 'Es'), 'Es')
-      const ready = await ensureEnrolled(one)
-      const later = deviceOf(await session('Es~2', 'Es'), 'Es', one.store)
-      await leaveChat({ ...later, loadCore: unavailable })
-      expect(later.store.text).equals(undefined)
-      // No signed resume, so the server never bound it here to revoke it.
+      await releaseChat(one.store)
+      expect((await one.store.load(one.userId))?.deviceId).equals(
+        ready.record.deviceId
+      )
       const device = await f()
         .db.selectFrom('chat_devices')
         .select(['revoked_at'])
         .where('id', '=', ready.record.deviceId)
         .executeTakeFirstOrThrow()
       expect(device.revoked_at).equals(null)
+      expect((await one.client.myChatKeys()).deviceId).equals(
+        ready.record.deviceId
+      )
+    })
+
+    it('keeps a record when the store cannot say what it holds', async function () {
+      const store = new MemoryStore()
+      const kept = newRecord(f().id('Es'), 'cdv_unknown', newDeviceKeys())
+      await store.save(kept)
+      store.exists = async () => {
+        throw new Error('no indexedDB.databases()')
+      }
+      await releaseChat(store)
+      expect((await store.load(f().id('Es')))?.deviceId).equals('cdv_unknown')
+      expect(store.wipes).equals(0)
+    })
+
+    it('returns without waiting on a core', async function () {
+      const empty = new MemoryStore()
+      await releaseChat(empty)
+      expect(empty.wipes).equals(0)
+      const kept = new MemoryStore()
+      await kept.save(newRecord(f().id('Ek'), 'cdv_unknown', newDeviceKeys()))
+      await releaseChat(kept)
+      expect((await kept.load(f().id('Ek')))?.deviceId).equals('cdv_unknown')
+    })
+
+    it('leaves a device it was not bound to unrevoked, with its record', async function () {
+      const one = deviceOf(await session('Es~1', 'Es'), 'Es')
+      const ready = await ensureEnrolled(one)
+      const later = deviceOf(await session('Es~2', 'Es'), 'Es', one.store)
+      await releaseChat(later.store)
+      expect((await later.store.load(later.userId))?.deviceId).equals(
+        ready.record.deviceId
+      )
+      const device = await f()
+        .db.selectFrom('chat_devices')
+        .select(['revoked_at'])
+        .where('id', '=', ready.record.deviceId)
+        .executeTakeFirstOrThrow()
+      expect(device.revoked_at).equals(null)
+      expect((await later.client.myChatKeys()).deviceId).equals(null)
     })
   })
 
   it('wipes the keys even when the server cannot be reached', async function () {
     const store = new MemoryStore()
     await store.save(newRecord(f().id('C'), 'cdv_x', newDeviceKeys()))
-    const offline = new TeamStationClient({
-      baseUrl: 'http://127.0.0.1:9/api/v1',
-      token: 'nope'
-    })
-    await leaveChat({ client: offline, store, userId: f().id('C') })
-    expect(store.text).equals(undefined)
+    await releaseChat(store)
+    expect((await store.load(f().id('C')))?.deviceId).equals('cdv_x')
+    expect(store.wipes).equals(0)
+    const online = clientOf('C')
+    expect((await online.myChatKeys()).deviceId).not.equals(undefined)
   })
 
   describe('resetting chat on a device whose saved keys cannot be read', function () {
@@ -754,17 +732,21 @@ describe('chat keys on the device', function () {
       const one = deviceOf(await session('Rz~1', 'Rz'), 'Rz')
       const ready = await ensureEnrolled(one)
       const { client, revokes } = noting(one.client)
-      await leaveChat({ client, store: one.store, userId: one.userId })
-      expect(revokes).deep.equals([[ready.record.deviceId, undefined]])
-      expect(one.store.text).equals(undefined)
-      expect(((await refusal(client.myChatKeys())) as HttpError).code).equals(
-        'unauthorized'
+      await releaseChat(one.store)
+      expect(revokes).deep.equals([])
+      expect((await one.store.load(one.userId))?.deviceId).equals(
+        ready.record.deviceId
       )
+      expect((await client.myChatKeys()).deviceId).equals(ready.record.deviceId)
     })
   })
 
   it('goes straight to reset with no active device left, and the reset drops every old key', async function () {
-    // K signed out of the only device above.
+    // K's only device is still linked after sign-out. Revoke it here.
+    const first = deviceOf('K~1', 'K')
+    const mine = await first.client.myChatKeys()
+    expect(mine.deviceId).not.equals(null)
+    await first.client.revokeChatDevice(mine.deviceId!, { keepSession: true })
     const back = deviceOf(await session('K~2', 'K'), 'K')
     const asking = await ensureEnrolled(back)
     expect(asking.state).equals('reset')
