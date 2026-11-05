@@ -46,6 +46,31 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe('theme tokens', function () {
+  it('keeps shared card names, details, links and destructive actions readable', function () {
+    const luminance = (hex: string): number =>
+      [1, 3, 5]
+        .map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+        .map(v => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+        .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0)
+    for (const theme of [tsBallpark, tsDark]) {
+      for (const token of [
+        'primaryTextColor',
+        'secondaryTextColor',
+        'linkTextColor',
+        'dangerColor'
+      ] as const) {
+        const values = [
+          luminance(theme[token]),
+          luminance(theme.cardBackgroundColor)
+        ].sort((a, b) => a - b)
+        expect(
+          (values[1] + 0.05) / (values[0] + 0.05),
+          `${theme.isDark ? 'dark' : 'light'} ${token} on card`
+        ).at.least(4.5)
+      }
+    }
+  })
+
   it('never paints text with a surface or a button fill', function () {
     const offences: string[] = []
 
