@@ -22,6 +22,7 @@ import { passwordBytes } from '../../common/passwordProtocol'
 import { nativeArgon } from '../../server/auth/passwords'
 import { chatRowText, nativeRowInList } from '../../test/chatRows'
 import { nativeHistoryRecovery } from './chatHistoryRecoveryNative.e2e'
+import { nativeRecoveryPermissions } from './chatHistoryRecoveryPermissions.e2e'
 
 interface Bounds {
   x: number
@@ -777,6 +778,20 @@ async function main(): Promise<void> {
         point: `${Math.round(tab.bounds.x + tab.bounds.width / 2)},${Math.round(tab.bounds.y + tab.bounds.height / 2)}`
       })
       await m.assertVisible({ text: 'Link this device', timeout: 60000 })
+      const recoveryFile = process.env.CHAT_UI_NATIVE_RECOVERY_FIXTURE
+      if (
+        recoveryFile != null &&
+        JSON.parse(readFileSync(recoveryFile, 'utf8')).scenario === 'E6'
+      ) {
+        const nodes = flatten(await m.hierarchy())
+        assert(!nodes.some(node => node.id === 'chat-composer'))
+        assert(!strings(nodes).includes('Send'))
+        results.unlinkedCompositionBlocked = true
+        writeFileSync(
+          join(resultDirectory, `${platform}-unlinked-blocked.png`),
+          await m.screenshot()
+        )
+      }
       const code = await until(
         'Normal new-device six-digit code must be visible',
         async () =>
@@ -1370,6 +1385,31 @@ async function main(): Promise<void> {
       }
       pass(
         'upgraded retained device and restart preserve exact messages, native image and safety words without a fresh boundary'
+      )
+      return
+    }
+    if (process.argv[2] === 'recovery-permissions') {
+      stage = 'native-recovery-permissions'
+      results.recoveryPermissions = await nativeRecoveryPermissions({
+        inputFile: required('CHAT_UI_NATIVE_RECOVERY_FIXTURE'),
+        linkReceipt: required('CHAT_RECOVERY_NATIVE_LINK_RECEIPT'),
+        results: resultDirectory,
+        platform,
+        actorUserId: fixture.actor.userId,
+        conversationId: fixture.conversationId,
+        apiUrl: fixture.apiUrl,
+        api,
+        device: m,
+        open,
+        openScope: async id => {
+          await m.openLink({ link: `${fixture.scheme}://chat/${id}` })
+        },
+        hold: async (id, body) => {
+          await physicalMessageHold(m, `chat-message-${id}`, body, 550)
+        }
+      })
+      pass(
+        'native recovery preserves unlinked, read-only, closed and removed gates'
       )
       return
     }

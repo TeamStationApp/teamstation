@@ -55,7 +55,7 @@ export async function partialRecovery(
   const nativePreparation = process.env.CHAT_RECOVERY_PREPARE_NATIVE
   if (nativePreparation != null) {
     assert(['ios', 'android'].includes(nativePreparation))
-    assert(scenario === 'E5' || scenario === 'E7')
+    assert(['E5', 'E6', 'E7'].includes(scenario))
   }
   for (const value of [f.origin, f.apiUrl]) {
     const url = new URL(value)
@@ -624,6 +624,20 @@ export async function partialRecovery(
     await send(holderTwo, second)
     assert(!(await body(holderTwo)).includes(first))
     if (nativePreparation != null) {
+      const readOnly =
+        scenario === 'E6'
+          ? (await (await asPerson('Hk')).chatConversations()).find(
+              row =>
+                row.kind === 'seasonAnnouncements' &&
+                !row.canPost &&
+                !row.closed
+            )
+          : undefined
+      if (scenario === 'E6')
+        assert(
+          readOnly != null,
+          'Native permission fixture needs a real read-only scope'
+        )
       const posts = (await client.chatMessages(dm.id)).filter(
         row => row.kind === 'post'
       )
@@ -679,6 +693,9 @@ export async function partialRecovery(
             oldPosts,
             current: { id: current.id, body: second },
             anchor: oldPosts[Math.floor(oldPosts.length / 2)],
+            ...(scenario === 'E6'
+              ? { departing: [people.Ha, people.Hs], readOnlyId: readOnly!.id }
+              : {}),
             origin: f.origin,
             holder: {
               profile: join(f.artifacts, 'profiles', 'first-holder'),
@@ -706,6 +723,11 @@ export async function partialRecovery(
             'native-observer.json'
           ),
           CHAT_UI_NATIVE_LINK_REQUEST: linkFile,
+          CHAT_RECOVERY_NATIVE_LINK_RECEIPT: join(
+            f.artifacts,
+            'link-results',
+            `${nativePreparation}-m4-locked-link-results.json`
+          ),
           CHAT_UI_LOCKED_LINK_REQUEST: linkFile,
           CHAT_UI_NATIVE_STAGE: 'M4',
           CHAT_UI_NATIVE_DISPOSABLE: '1',
