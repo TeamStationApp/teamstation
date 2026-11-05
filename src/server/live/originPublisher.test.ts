@@ -10,6 +10,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { writeHeapSnapshot } from 'node:v8'
 
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
@@ -122,6 +123,97 @@ describe('publishing a live origin', function () {
     for (let n = 0; n < count; n++)
       await writeFile(join(dir, segment(n)), `fragment ${n}`)
   }
+
+  it('retains filenames without retaining historical playlist strings', async () => {
+    const publisher = new OriginPublisher(options)
+    for (let count = 1; count <= 40; count++) {
+      await stage(count)
+      await publisher.flush()
+    }
+    const resumed = new OriginPublisher(options)
+    await resumed.start()
+    // Follow the actual collection keys, not total heap size: test runners and
+    // HTTP buffers have independent lifetimes and are not publisher metadata.
+    const path = join(folder, 'publisher.heapsnapshot')
+    writeHeapSnapshot(path)
+    const snapshot = JSON.parse(await readFile(path, 'utf8'))
+    const { nodes, edges, strings } = snapshot
+    const meta = snapshot.snapshot.meta
+    const width = meta.node_fields.length
+    const edgeWidth = meta.edge_fields.length
+    const nodeField = (name: string): number => meta.node_fields.indexOf(name)
+    const edgeField = (name: string): number => meta.edge_fields.indexOf(name)
+    const kind = (node: number): string =>
+      meta.node_types[0][nodes[node + nodeField('type')]]
+    const name = (node: number): string =>
+      strings[nodes[node + nodeField('name')]]
+    const links = new Map<number, Array<{ name: string; to: number }>>()
+    let offset = 0
+    for (let node = 0; node < nodes.length; node += width) {
+      const held: Array<{ name: string; to: number }> = []
+      for (let n = 0; n < nodes[node + nodeField('edge_count')]; n++) {
+        const type = meta.edge_types[0][edges[offset + edgeField('type')]]
+        const key = edges[offset + edgeField('name_or_index')]
+        held.push({
+          name:
+            type === 'element' || type === 'hidden'
+              ? String(key)
+              : strings[key],
+          to: edges[offset + edgeField('to_node')]
+        })
+        offset += edgeWidth
+      }
+      links.set(node, held)
+    }
+    let collections = 0
+    let retainedPlaylists = 0
+    for (const [node, fields] of links) {
+      if (kind(node) !== 'object' || name(node) !== 'OriginPublisher') continue
+      for (const field of fields) {
+        if (!['published', 'acknowledged'].includes(field.name)) continue
+        collections++
+        const table = links.get(field.to)?.find(edge => edge.name === 'table')
+        for (const entry of links.get(table?.to ?? -1) ?? []) {
+          if (kind(entry.to) !== 'sliced string') continue
+          const parent = links
+            .get(entry.to)
+            ?.find(edge => edge.name === 'parent')
+          if (parent != null && name(parent.to).includes('#EXTM3U'))
+            retainedPlaylists++
+        }
+      }
+    }
+    expect(collections).at.least(4)
+    expect(
+      retainedPlaylists,
+      'playlist parents retained by persistent keys'
+    ).equals(0)
+    // Keep the instance alive through the snapshot, then verify it still closes.
+    await stage(40, true)
+    expect((await publisher.flush({ close: true })).complete).equals(true)
+    expect((await resumed.flush({ close: true })).complete).equals(true)
+  })
+
+  it('does not restore retained metadata when stopped during a playlist upload', async () => {
+    await stage(1)
+    store.faults.set({ method: 'PUT', key: /index.m3u8/, delayMs: 50 })
+    const publisher = new OriginPublisher(options)
+    store.server.on('request', req => {
+      if (req.method === 'PUT' && req.url!.includes('index.m3u8'))
+        publisher.stop()
+    })
+    expect((await publisher.flush()).complete).equals(false)
+    expect(notifications).length(0)
+    expect(puts()).not.contains('master.m3u8')
+    const retained = publisher as unknown as {
+      published: Set<string>
+      acknowledged: Map<string, unknown>
+      lastBody?: string
+    }
+    expect(retained.published.size).equals(0)
+    expect(retained.acknowledged.size).equals(0)
+    expect(retained.lastBody).equals(undefined)
+  })
 
   it('does not query the video row once per historical segment on an unchanged tick', async () => {
     await stage(100)
