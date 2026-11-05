@@ -74,7 +74,15 @@ for (const entry of entries)
         'react-native-web/dist/modules/AssetRegistry'
     },
     stdin: {
-      contents: entry.files.map(file => `import './${file}'`).join('\n'),
+      // Each file loads inside a suite of its own, untitled so test titles and
+      // --grep match as before. A hook a file declares outside its describe
+      // blocks then runs for that file's tests, not for every test bundled.
+      contents: [
+        "import { describe } from 'mocha'",
+        ...entry.files.map(
+          file => `describe('', () => {\n  require('./${file}')\n})`
+        )
+      ].join('\n'),
       resolveDir: process.cwd(),
       sourcefile: 'scoring-test-entry.ts'
     },

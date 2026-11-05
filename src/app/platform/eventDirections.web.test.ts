@@ -10,13 +10,14 @@ import {
 const originalOpen = window.open.bind(window)
 const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
 const originalCopy = document.execCommand?.bind(document)
-afterEach(() => {
+function restoreBrowser(): void {
   window.open = originalOpen
   if (clipboard == null) delete (navigator as { clipboard?: unknown }).clipboard
   else Object.defineProperty(navigator, 'clipboard', clipboard)
   document.execCommand = originalCopy
-})
+}
 describe('browser address actions', () => {
+  afterEach(restoreBrowser)
   it('opens the encoded destination directly with no opener or intermediate blank page', async () => {
     let url = ''
     let features = ''

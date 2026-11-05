@@ -70,7 +70,7 @@ const added: Element[] = []
 /** Whether the microphone refuses a hold: reconnecting, or still busy. */
 let refusing = false
 
-afterEach(async () => {
+async function cleanUp(): Promise<void> {
   clock?.restore()
   clock = undefined
   refusing = false
@@ -83,7 +83,7 @@ afterEach(async () => {
   host?.remove()
   host = undefined
   for (const node of added.splice(0)) node.remove()
-})
+}
 
 /** Mounts the hook, and returns its calls and a way to re-render it. */
 async function mount(
@@ -206,6 +206,7 @@ function scroller(): HTMLDivElement {
 const HOLD: Props = { active: true, talks: true, options: { holdMs: 500 } }
 
 describe('Space held to talk', function () {
+  afterEach(cleanUp)
   it('types a space at the caret on a short press in a text field', async function () {
     const { calls } = await mount(HOLD)
     const field = add(document.createElement('textarea'))
@@ -654,6 +655,7 @@ describe('Space held to talk', function () {
 })
 
 describe('Space to talk at once, as scoring has it', function () {
+  afterEach(cleanUp)
   it('talks the moment Space goes down and never types, clicks or scrolls', async function () {
     const { calls } = await mount({ active: true, talks: true })
     const button = add(document.createElement('button'))
