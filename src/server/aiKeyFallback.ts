@@ -2,53 +2,40 @@ import { createHash } from 'node:crypto'
 
 import { type ApiKeyPool, normalizedKeys } from '../common/aiKeys'
 
-/** A new random order for each request; a duplicate never buys another attempt. */
-export function shuffledKeys(
-  pool: ApiKeyPool,
-  random: () => number = Math.random
-): string[] {
-  const keys = normalizedKeys(pool)
-  for (let i = keys.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1))
-    ;[keys[i], keys[j]] = [keys[j], keys[i]]
-  }
-  return keys
-}
+/**
+ * The key each pool is on: its first until that one fails, then whichever
+ * took over. Providers cache prompts per account, so every request stays on
+ * one key for as long as it works. Kept per process, by the pool's keys.
+ */
+const current = new Map<string, string>()
 
-/** The key that last answered for each conversation, most recent last. */
-const answered = new Map<string, string>()
-const ANSWERED_LIMIT = 1000
+const poolId = (keys: readonly string[]): string =>
+  createHash('sha256').update(keys.join('\n')).digest('hex')
 
 /**
- * The order to try a pool in. Without `affinity`, random. With one (a
- * conversation, a scorer's connection), the same order for every request it
- * makes, starting at the key that last answered it: providers cache prompts
- * per account, so moving between keys mid-conversation pays for the prompt
- * again. Different conversations still spread across the pool.
+ * The order to try a pool in: the key it is on, then the keys after it in
+ * the pool's order, round to the ones before. A duplicate never buys another
+ * attempt.
  */
-export function orderedKeys(
-  pool: ApiKeyPool,
-  affinity?: string,
-  random: () => number = Math.random
-): string[] {
-  if (affinity == null) return shuffledKeys(pool, random)
-  const rank = (key: string): string =>
-    createHash('sha256').update(`${affinity}\0${key}`).digest('hex')
-  const keys = normalizedKeys(pool).sort((a, b) =>
-    rank(a) < rank(b) ? -1 : rank(a) > rank(b) ? 1 : 0
-  )
-  const last = answered.get(affinity)
-  return last == null || !keys.includes(last)
-    ? keys
-    : [last, ...keys.filter(key => key !== last)]
+export function orderedKeys(pool: ApiKeyPool): string[] {
+  const keys = normalizedKeys(pool)
+  const at = Math.max(0, keys.indexOf(current.get(poolId(keys)) ?? ''))
+  return [...keys.slice(at), ...keys.slice(0, at)]
 }
 
-function remember(affinity: string | undefined, key: string): void {
-  if (affinity == null) return
-  answered.delete(affinity)
-  answered.set(affinity, key)
-  if (answered.size > ANSWERED_LIMIT)
-    answered.delete(answered.keys().next().value!)
+/** `key` answered: the pool stays on it until it fails. */
+export function keyAnswered(pool: ApiKeyPool, key: string): void {
+  const id = poolId(normalizedKeys(pool))
+  if (current.get(id) === key) return
+  current.delete(id)
+  current.set(id, key)
+  // A pool edited many times leaves old entries; keep the newest.
+  if (current.size > 100) current.delete(current.keys().next().value!)
+}
+
+/** Every pool back on its first key. For tests. */
+export function forgetCurrentKeys(): void {
+  current.clear()
 }
 
 export function retryableStatus(status: number): boolean {
@@ -70,15 +57,14 @@ export function redacted(text: string, key: string): string {
 export async function withApiKeys<T>(
   pool: ApiKeyPool,
   attempt: (key: string) => Promise<T>,
-  retryable: (error: unknown) => boolean,
-  affinity?: string
+  retryable: (error: unknown) => boolean
 ): Promise<T> {
-  const keys = orderedKeys(pool, affinity)
+  const keys = orderedKeys(pool)
   if (keys.length === 0) throw new Error('No API keys are configured')
   for (let i = 0; ; i++) {
     try {
       const result = await attempt(keys[i])
-      remember(affinity, keys[i])
+      keyAnswered(pool, keys[i])
       return result
     } catch (error) {
       if (i === keys.length - 1 || !retryable(error)) throw error
@@ -94,8 +80,7 @@ export async function withApiKeys<T>(
 export async function untilAnswered<T>(
   pool: ApiKeyPool,
   attempt: (key: string) => Promise<T>,
-  failed: (answer: T) => 'retry' | 'final' | false,
-  affinity?: string
+  failed: (answer: T) => 'retry' | 'final' | false
 ): Promise<T | undefined> {
   class Failed extends Error {
     constructor(readonly answer: T) {
@@ -111,8 +96,7 @@ export async function untilAnswered<T>(
         if (failed(answer) !== false) throw new Failed(answer)
         return answer
       },
-      error => error instanceof Failed && failed(error.answer) === 'retry',
-      affinity
+      error => error instanceof Failed && failed(error.answer) === 'retry'
     )
   } catch (error) {
     if (error instanceof Failed) return error.answer

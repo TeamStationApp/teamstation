@@ -1,7 +1,12 @@
 import WebSocket from 'ws'
 
 import { type ApiKeyPool, normalizedKeys } from '../../common/aiKeys'
-import { redacted, retryableStatus, shuffledKeys } from '../aiKeyFallback'
+import {
+  keyAnswered,
+  orderedKeys,
+  redacted,
+  retryableStatus
+} from '../aiKeyFallback'
 
 /**
  * Speech to text, streamed to xAI's dictation model.
@@ -405,9 +410,10 @@ const MAX_REPLAY_BYTES = 4 * 1024 * 1024
  * attempt — a `SingleKeySttSession` on one key — for as long as that attempt
  * works, so holds reuse its socket and `retarget` still opens ahead. It keeps
  * each hold's audio, and when the key is refused or the socket is lost it
- * replays the hold on another key: the current key first, then the others in
- * a fresh random order, each at most once a hold. A timeout or an error from
- * xAI itself is not the key's fault and ends the hold.
+ * replays the hold on the next key in the pool's order, each at most once a
+ * hold. The pool starts on its current key (see `orderedKeys`), and a key
+ * that answers becomes it. A timeout or an error from xAI itself is not the
+ * key's fault and ends the hold.
  */
 export class SttSession {
   private readonly legacy: SingleKeySttSession | undefined
@@ -447,7 +453,7 @@ export class SttSession {
       return
     }
     if (this.attempt == null) {
-      this.key ??= shuffledKeys(this.options.apiKey)[0]
+      this.key ??= orderedKeys(this.options.apiKey)[0]
       if (this.key == null) return
       this.attempt = this.newAttempt(this.key)
     }
@@ -470,13 +476,15 @@ export class SttSession {
     this.ended = false
     this.showedPartial = false
     this.active = true
-    const keys = shuffledKeys(this.options.apiKey)
+    const keys = orderedKeys(this.options.apiKey)
     const key = (this.key ??= keys[0])
     if (key == null) {
       this.give('No API keys are configured')
       return
     }
-    this.untried = keys.filter(other => other !== key)
+    // The keys after this one in the pool's order, round to those before.
+    const at = keys.indexOf(key)
+    this.untried = [...keys.slice(at + 1), ...keys.slice(0, Math.max(0, at))]
     const attempt = this.attempt
     if (attempt == null) {
       this.replay(key)
@@ -536,6 +544,7 @@ export class SttSession {
         },
         onFinal: text => {
           if (!live()) return
+          keyAnswered(this.options.apiKey, key)
           this.settle()
           this.handlers.onFinal(text)
         },
@@ -592,7 +601,7 @@ export class SttSession {
     }
     const next = this.replayable ? this.untried.shift() : undefined
     if (next == null) {
-      // No key left for this hold: the next one starts from a fresh shuffle.
+      // No key left for this hold: the next starts at the pool's current key.
       this.key = undefined
       this.give(message)
       return

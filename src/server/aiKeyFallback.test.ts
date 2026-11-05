@@ -3,10 +3,11 @@ import { describe, it } from 'mocha'
 
 import { asAiKeys, asApiKeyPool, normalizedKeys } from '../common/aiKeys'
 import {
+  forgetCurrentKeys,
+  keyAnswered,
   orderedKeys,
   redacted,
   retryableStatus,
-  shuffledKeys,
   untilAnswered,
   withApiKeys
 } from './aiKeyFallback'
@@ -33,12 +34,11 @@ describe('API key pools', () => {
       xaiVoice: ['b']
     })
   })
-  it('can start at every key, without changing the input', () => {
-    const keys = ['a', 'b', 'c']
-    expect(shuffledKeys(keys, () => 0)).deep.equals(['b', 'c', 'a'])
-    expect(shuffledKeys(keys, () => 0.999)).deep.equals(keys)
-    expect(shuffledKeys(keys, () => 0.5)).deep.equals(['a', 'c', 'b'])
-    expect(keys).deep.equals(['a', 'b', 'c'])
+  it('tries the keys in the order given, without changing the input', () => {
+    const keys = ['a', 'b', 'a', 'c']
+    expect(orderedKeys(keys)).deep.equals(['a', 'b', 'c'])
+    expect(keys).deep.equals(['a', 'b', 'a', 'c'])
+    expect(orderedKeys([])).deep.equals([])
   })
   it('retries exactly credential, rate limit, timeout and server statuses', () => {
     for (const status of [401, 403, 408, 429, 500, 529, 599])
@@ -94,37 +94,50 @@ describe('API key pools', () => {
       expect(String(error)).contains('No API keys')
     }
   })
-  it('keeps one conversation on one key, starting at the key that last answered it', async () => {
-    const pool = ['a', 'b', 'c', 'd']
-    const first = orderedKeys(pool, 'conversation-1')
-    expect(orderedKeys([...pool].reverse(), 'conversation-1')).deep.equals(
-      first
-    )
-    const starts = new Set(
-      Array.from({ length: 40 }, (_, i) => orderedKeys(pool, `c${i}`)[0])
-    )
-    expect(starts.size).greaterThan(1)
+  it('stays on the key that answered until it fails, then on the next', async () => {
+    const pool = ['k1', 'k2', 'k3']
+    const refused = new Set<string>()
     const used: string[] = []
-    await withApiKeys(
-      pool,
-      async key => {
-        used.push(key)
-        if (key === first[0]) throw new Error('refused')
-        return key
-      },
-      () => true,
-      'conversation-1'
-    )
-    expect(used).deep.equals(first.slice(0, 2))
-    expect(orderedKeys(pool, 'conversation-1')[0]).equals(first[1])
-    for (let i = 0; i < 1001; i++)
+    const ask = async (): Promise<string> =>
       await withApiKeys(
         pool,
-        async key => key,
-        () => true,
-        `spread-${i}`
+        async key => {
+          used.push(key)
+          if (refused.has(key)) throw new Error('refused')
+          return key
+        },
+        () => true
       )
-    expect(orderedKeys(pool, 'conversation-1')).deep.equals(first)
+    expect([await ask(), await ask()]).deep.equals(['k1', 'k1'])
+    refused.add('k1')
+    expect(await ask()).equals('k2')
+    // k1 works again, but the pool stays where it moved to.
+    refused.clear()
+    expect([await ask(), await ask()]).deep.equals(['k2', 'k2'])
+    expect(used).deep.equals(['k1', 'k1', 'k1', 'k2', 'k2', 'k2'])
+    refused.add('k2')
+    refused.add('k3')
+    expect(await ask()).equals('k1')
+    expect(orderedKeys(pool)).deep.equals(['k1', 'k2', 'k3'])
+    // A failure that is not retried does not move the pool.
+    keyAnswered(pool, 'k3')
+    try {
+      await withApiKeys(
+        pool,
+        async () => {
+          throw new Error('bad request')
+        },
+        () => false
+      )
+    } catch {}
+    expect(orderedKeys(pool)).deep.equals(['k3', 'k1', 'k2'])
+    // An edited pool is a new pool, on its first key.
+    expect(orderedKeys([...pool, 'k4'])[0]).equals('k1')
+    for (let i = 0; i < 101; i++) keyAnswered([`p${i}`, `q${i}`], `q${i}`)
+    expect(orderedKeys(pool)[0]).equals('k1')
+    expect(orderedKeys(['p100', 'q100'])[0]).equals('q100')
+    forgetCurrentKeys()
+    expect(orderedKeys(['p100', 'q100'])[0]).equals('p100')
   })
   it('answers failures it may retry from the next key, and an empty pool with nothing', async () => {
     const seen: string[] = []

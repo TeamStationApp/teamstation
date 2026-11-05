@@ -1752,13 +1752,11 @@ export class Interpretation {
   private async request(): Promise<
     { calls: ToolCall[]; said: string } | { error: string }
   > {
-    // One scorer's sentences stay on one key, whose account caches the prompt.
     const result = await untilAnswered(
       this.config.apiKey,
       async key => await this.requestOnce(key),
       answer =>
-        'error' in answer && (answer.retryable === true ? 'retry' : 'final'),
-      this.config.cacheKey
+        'error' in answer && (answer.retryable === true ? 'retry' : 'final')
     )
     if (result == null) return { error: 'No API keys are configured' }
     return 'error' in result ? { error: result.error } : result

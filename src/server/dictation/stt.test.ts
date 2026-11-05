@@ -1,7 +1,8 @@
 import { expect } from 'chai'
 import { EventEmitter } from 'events'
-import { describe, it } from 'mocha'
+import { beforeEach, describe, it } from 'mocha'
 
+import { forgetCurrentKeys } from '../aiKeyFallback'
 import { keytermQuery, type SttHandlers, SttSession, sttUrl } from './stt'
 
 /** A recogniser socket the test drives by hand. */
@@ -405,6 +406,7 @@ describe('dictation recogniser', function () {
 })
 
 describe('pooled voice recognition', () => {
+  beforeEach(forgetCurrentKeys)
   function pooled(
     keys = ['a', 'b'],
     timeout = 1000
@@ -490,7 +492,7 @@ describe('pooled voice recognition', () => {
     h.sockets[0].partial('partial')
     refuse(h.sockets[0], 401)
     expect(h.sockets).length(2)
-    expect(key(h.sockets[1])).not.equals(key(h.sockets[0]))
+    expect([key(h.sockets[0]), key(h.sockets[1])]).deep.equals(['a', 'b'])
     expect(h.sockets[1].terms()).deep.equals(['Trout'])
     h.sockets[1].ready()
     expect([...h.sockets[1].audio]).deep.equals([1, 2, 3, 4])
@@ -509,6 +511,11 @@ describe('pooled voice recognition', () => {
     expect(h.sockets).length(2)
     expect(h.events.at(-1)).equals('final Again')
     h.session.close()
+    // The pool stays on the key that took over, for the next connection too.
+    const next = pooled(['a', 'b', 'a'])
+    next.session.begin()
+    expect(key(next.sockets[0])).equals('b')
+    next.session.close()
   })
 
   it('replays a hold whose socket drops, and never relays the transport text', () => {
@@ -530,7 +537,7 @@ describe('pooled voice recognition', () => {
     expect(h.sockets).length(2)
   })
 
-  it('reports only the latest failure once every key is spent, then reshuffles', () => {
+  it("reports only the latest failure once every key is spent, then starts again at the pool's key", () => {
     const h = pooled()
     h.session.begin()
     refuse(h.sockets[0], 401)

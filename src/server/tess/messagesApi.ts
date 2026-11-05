@@ -138,10 +138,7 @@ export interface MessagesResponse {
 export interface MessagesOptions {
   fetch?: typeof fetch
   deadlineMs?: number
-  /**
-   * Whose call it is, for the log. Also which key a pool tries first: one
-   * person's conversation stays on the account that caches its prompt.
-   */
+  /** Whose call it is, for the log. */
   actor?: string
 }
 
@@ -284,8 +281,7 @@ export async function streamMessage(
         },
         options
       ),
-    error => !shown && retryable(error),
-    options.actor
+    error => !shown && retryable(error)
   )
 }
 
@@ -551,8 +547,7 @@ async function post(
         log
       )
     },
-    retryable,
-    options.actor
+    retryable
   )
 }
 

@@ -3025,7 +3025,7 @@ describe('scoring API key fallback', () => {
     ).start()
     expect(bad.sent).length(1)
   })
-  it("keeps one scorer's sentences on one key", async () => {
+  it('keeps every sentence on the key that answered', async () => {
     const keys: string[] = []
     const fetchImpl: typeof fetch = async (_url, init) => {
       keys.push(new Headers(init?.headers).get('authorization')!)

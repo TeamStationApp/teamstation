@@ -1090,7 +1090,7 @@ describe('Tess API key fallback', () => {
     ).equals('Recovered')
     expect(p.sent).length(2)
   })
-  it("keeps one person's requests on one key, and keeps the retry flag private", async () => {
+  it('keeps every request on the key that answered, and keeps the retry flag private', async () => {
     const keys = ['k1', 'k2', 'k3', 'k4']
     const p = provider(...keys.map(() => () => Response.json(ANSWER)))
     for (let i = 0; i < 4; i++)
