@@ -138,9 +138,18 @@ export interface MessagesResponse {
 export interface MessagesOptions {
   fetch?: typeof fetch
   deadlineMs?: number
-  /** Whose call it is, for the log. */
+  /**
+   * Whose call it is, for the log. Also which key a pool tries first: one
+   * person's conversation stays on the account that caches its prompt.
+   */
   actor?: string
 }
+
+/** One attempt's settings: a single key from the pool. */
+type OneKey = Omit<TessSettings, 'apiKey'> & { apiKey: string }
+
+/** Losses worth another key: out of reach, but not out of time. */
+const retryableLosses = new WeakSet<HttpError>()
 
 /** `POST /messages`, logged as `tess_request` whatever its outcome. */
 export async function createMessage(
@@ -179,7 +188,7 @@ export interface MessagesStreamEvent {
  * or in it, is the error `createMessage` would throw.
  */
 async function streamMessageOnce(
-  settings: TessSettings,
+  settings: OneKey,
   request: MessagesRequest,
   onEvent: (event: MessagesStreamEvent) => void,
   options: MessagesOptions = {}
@@ -275,7 +284,8 @@ export async function streamMessage(
         },
         options
       ),
-    error => !shown && retryable(error)
+    error => !shown && retryable(error),
+    options.actor
   )
 }
 
@@ -422,7 +432,7 @@ function deadline(ms: number): Deadline {
 
 /** Sends one request; rejects only when it never reached the provider. */
 async function send(
-  settings: TessSettings,
+  settings: OneKey,
   path: string,
   body: Record<string, unknown>,
   options: MessagesOptions,
@@ -435,7 +445,7 @@ async function send(
       signal,
       headers: {
         'content-type': 'application/json',
-        'x-api-key': String(settings.apiKey),
+        'x-api-key': settings.apiKey,
         'anthropic-version': ANTHROPIC_VERSION,
         'anthropic-beta': THINKING_BINDING_BETA
       },
@@ -447,14 +457,15 @@ async function send(
 /** The provider gave no answer, or stopped answering: out of time, or out of reach. */
 function lost(wait: Deadline, log: Record<string, Property>): HttpError {
   log.ec = wait.expired() ? 'timeout' : 'offline'
-  return new HttpError(
+  const error = new HttpError(
     'unavailable',
     wait.expired()
       ? `Tess's model gave no answer within ${Math.round(wait.ms / 1000)}s`
-      : "Tess's model could not be reached",
-    // Out of time is rarely one key's fault, and another key waits as long.
-    { retryable: !wait.expired() }
+      : "Tess's model could not be reached"
   )
+  // Out of time is rarely one key's fault, and another key waits as long.
+  if (!wait.expired()) retryableLosses.add(error)
+  return error
 }
 
 /**
@@ -485,7 +496,7 @@ function refused(
  * failure, the error class the log takes.
  */
 async function postOnce(
-  settings: TessSettings,
+  settings: OneKey,
   path: string,
   body: Record<string, unknown>,
   options: MessagesOptions,
@@ -517,9 +528,7 @@ async function postOnce(
 function retryable(error: unknown): boolean {
   if (!(error instanceof HttpError)) return false
   const status = (error.details as { status?: number } | undefined)?.status
-  return status == null
-    ? (error.details as { retryable?: boolean } | undefined)?.retryable === true
-    : retryableStatus(status)
+  return status == null ? retryableLosses.has(error) : retryableStatus(status)
 }
 
 async function post(
@@ -542,7 +551,8 @@ async function post(
         log
       )
     },
-    retryable
+    retryable,
+    options.actor
   )
 }
 

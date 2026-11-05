@@ -1090,6 +1090,26 @@ describe('Tess API key fallback', () => {
     ).equals('Recovered')
     expect(p.sent).length(2)
   })
+  it("keeps one person's requests on one key, and keeps the retry flag private", async () => {
+    const keys = ['k1', 'k2', 'k3', 'k4']
+    const p = provider(...keys.map(() => () => Response.json(ANSWER)))
+    for (let i = 0; i < 4; i++)
+      await createMessage({ ...SETTINGS, apiKey: keys }, REQUEST, {
+        fetch: p.fetch,
+        actor: 'usr_same_person'
+      })
+    expect(
+      new Set(p.sent.map(sent => sent.headers.get('x-api-key'))).size
+    ).equals(1)
+    const down = await failure(
+      createMessage(settings, REQUEST, {
+        fetch: async () => {
+          throw new TypeError('fetch failed')
+        }
+      })
+    )
+    expect(down.details).equals(undefined)
+  })
   it('does not retry a timed out attempt on another key', async () => {
     let calls = 0
     const fetchImpl: typeof fetch = async (_url, init) => {

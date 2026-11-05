@@ -53,7 +53,7 @@ export function spokenText(narration: Narration): string {
 
 async function synthesizeOnce(
   narration: Narration,
-  settings: SpeechSettings,
+  settings: Omit<SpeechSettings, 'apiKey'> & { apiKey: string },
   fetchImpl: typeof fetch = fetch,
   timeoutMs = TIMEOUT_MS
 ): Promise<Buffer> {
@@ -67,7 +67,7 @@ async function synthesizeOnce(
       {
         method: 'POST',
         headers: {
-          authorization: `Bearer ${String(settings.apiKey)}`,
+          authorization: `Bearer ${settings.apiKey}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({

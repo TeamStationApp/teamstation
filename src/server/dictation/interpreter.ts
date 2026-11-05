@@ -28,7 +28,7 @@ import {
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
 import { DICTATION_VOCABULARY, heardAs } from '../../common/scoring/vocabulary'
-import { retryableStatus, shuffledKeys } from '../aiKeyFallback'
+import { redacted, retryableStatus, untilAnswered } from '../aiKeyFallback'
 import { placeSections, placeTools } from './placeInstructions'
 
 /**
@@ -1752,15 +1752,16 @@ export class Interpretation {
   private async request(): Promise<
     { calls: ToolCall[]; said: string } | { error: string }
   > {
-    const keys = shuffledKeys(this.config.apiKey)
-    let latest = { error: 'No API keys are configured' }
-    for (const key of keys) {
-      const result = await this.requestOnce(key)
-      if (!('error' in result)) return result
-      latest = { error: result.error }
-      if (result.retryable !== true) break
-    }
-    return latest
+    // One scorer's sentences stay on one key, whose account caches the prompt.
+    const result = await untilAnswered(
+      this.config.apiKey,
+      async key => await this.requestOnce(key),
+      answer =>
+        'error' in answer && (answer.retryable === true ? 'retry' : 'final'),
+      this.config.cacheKey
+    )
+    if (result == null) return { error: 'No API keys are configured' }
+    return 'error' in result ? { error: result.error } : result
   }
 
   private async requestOnce(
@@ -1793,7 +1794,7 @@ export class Interpretation {
         const error = `${provider} answered ${response.status}`
         // The server's log keeps why; the scorer is told only the status.
         this.note({
-          error: `${error}: ${redacted(text, apiKey).slice(0, 200)}`
+          error: `${error}: ${redacted(text, apiKey)}`
         })
         return { error, retryable: retryableStatus(response.status) }
       }
@@ -2012,9 +2013,4 @@ function hostOf(url: string): string {
   } catch {
     return url
   }
-}
-
-/** `text` with every copy of the key it was sent with taken out. */
-function redacted(text: string, apiKey: string): string {
-  return apiKey === '' ? text : text.split(apiKey).join('[redacted]')
 }

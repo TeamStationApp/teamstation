@@ -2,7 +2,14 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asAiKeys, asApiKeyPool, normalizedKeys } from '../common/aiKeys'
-import { retryableStatus, shuffledKeys, withApiKeys } from './aiKeyFallback'
+import {
+  orderedKeys,
+  redacted,
+  retryableStatus,
+  shuffledKeys,
+  untilAnswered,
+  withApiKeys
+} from './aiKeyFallback'
 
 describe('API key pools', () => {
   it('normalizes legacy strings and deduplicates trimmed keys', () => {
@@ -86,5 +93,79 @@ describe('API key pools', () => {
     } catch (error) {
       expect(String(error)).contains('No API keys')
     }
+  })
+  it('keeps one conversation on one key, starting at the key that last answered it', async () => {
+    const pool = ['a', 'b', 'c', 'd']
+    const first = orderedKeys(pool, 'conversation-1')
+    expect(orderedKeys([...pool].reverse(), 'conversation-1')).deep.equals(
+      first
+    )
+    const starts = new Set(
+      Array.from({ length: 40 }, (_, i) => orderedKeys(pool, `c${i}`)[0])
+    )
+    expect(starts.size).greaterThan(1)
+    const used: string[] = []
+    await withApiKeys(
+      pool,
+      async key => {
+        used.push(key)
+        if (key === first[0]) throw new Error('refused')
+        return key
+      },
+      () => true,
+      'conversation-1'
+    )
+    expect(used).deep.equals(first.slice(0, 2))
+    expect(orderedKeys(pool, 'conversation-1')[0]).equals(first[1])
+    for (let i = 0; i < 1001; i++)
+      await withApiKeys(
+        pool,
+        async key => key,
+        () => true,
+        `spread-${i}`
+      )
+    expect(orderedKeys(pool, 'conversation-1')).deep.equals(first)
+  })
+  it('answers failures it may retry from the next key, and an empty pool with nothing', async () => {
+    const seen: string[] = []
+    expect(
+      await untilAnswered(
+        ['a', 'b'],
+        async key => {
+          seen.push(key)
+          return seen.length === 1 ? { error: 'busy' } : { ok: key }
+        },
+        answer => ('error' in answer ? 'retry' : false)
+      )
+    ).deep.equals({ ok: seen[1] })
+    expect(
+      await untilAnswered(
+        ['a', 'b'],
+        async () => ({ error: 'bad' }),
+        () => 'final'
+      )
+    ).deep.equals({ error: 'bad' })
+    expect(
+      await untilAnswered(
+        [],
+        async () => 1,
+        () => false
+      )
+    ).equals(undefined)
+    try {
+      await untilAnswered(
+        ['a'],
+        async () => {
+          throw new Error('bug')
+        },
+        () => false
+      )
+      expect.fail('rethrow')
+    } catch (error) {
+      expect((error as Error).message).equals('bug')
+    }
+    expect(redacted(`k-1 ${'x'.repeat(300)}`, 'k-1')).length(200)
+    expect(redacted('k-1 said', 'k-1')).equals('[redacted] said')
+    expect(redacted('plain', '')).equals('plain')
   })
 })

@@ -3025,6 +3025,23 @@ describe('scoring API key fallback', () => {
     ).start()
     expect(bad.sent).length(1)
   })
+  it("keeps one scorer's sentences on one key", async () => {
+    const keys: string[] = []
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      keys.push(new Headers(init?.headers).get('authorization')!)
+      return Response.json({ choices: [{ message: { tool_calls: [] } }] })
+    }
+    for (let i = 0; i < 4; i++)
+      await new Interpretation(
+        config(fetchImpl, {
+          apiKey: ['k1', 'k2', 'k3', 'k4'],
+          cacheKey: 'scorer-connection'
+        }),
+        'ctx',
+        'ball'
+      ).start()
+    expect(new Set(keys).size).equals(1)
+  })
   it('logs why a provider refused, without the key, and tells the scorer only the status', async () => {
     const logged: DictationExchange[] = []
     const p = provider({ status: 400, text: 'model unknown for secret-a' })
