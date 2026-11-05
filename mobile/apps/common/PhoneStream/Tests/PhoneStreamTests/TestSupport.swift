@@ -114,6 +114,7 @@ func audioSample(at seconds: Double, frames: Int = 960) -> CMSampleBuffer {
 /// A capture device a test drives by hand: it records what it was told and delivers what the
 /// test hands it.
 final class FakeCaptureDevice: PhoneCaptureDevice, @unchecked Sendable {
+  var onCaptureRotationChange: (@Sendable () -> Void)?
   var onVideoFrame: (@Sendable (SampleBuffer) -> Void)?
   var onAudioFrame: (@Sendable (SampleBuffer) -> Void)?
   var onStateChange: (@MainActor @Sendable (CameraSession.State) -> Void)?
@@ -165,6 +166,7 @@ final class FakeCaptureDevice: PhoneCaptureDevice, @unchecked Sendable {
 /// stamped on the host clock as a capture session stamps them. Nothing is rendered or converted per
 /// frame, so the simulator's encoders get the processor to themselves.
 final class ReplayCaptureDevice: PhoneCaptureDevice, @unchecked Sendable {
+  var onCaptureRotationChange: (@Sendable () -> Void)?
   var onVideoFrame: (@Sendable (SampleBuffer) -> Void)?
   var onAudioFrame: (@Sendable (SampleBuffer) -> Void)?
   var onStateChange: (@MainActor @Sendable (CameraSession.State) -> Void)?
@@ -264,6 +266,7 @@ final class RotationFailingCaptureDevice: PhoneCaptureDevice, @unchecked Sendabl
     get { replay.onAudioFrame }
     set { replay.onAudioFrame = newValue }
   }
+  var onCaptureRotationChange: (@Sendable () -> Void)?
   var onVideoFrame: (@Sendable (SampleBuffer) -> Void)? {
     didSet {
       guard let deliver = onVideoFrame else {
