@@ -314,6 +314,53 @@ describe('a phone watching a live game whose camera is away', function () {
     }
   })
 
+  it('recovers a held grid tile after a silent reload and refreshes an exhausted source', async () => {
+    const realNow = Date.now
+    let now = realNow()
+    Date.now = () => now
+    const handle = new NativeVideoHandle(
+      () => undefined,
+      () => now
+    )
+    const player = androidPlayer()
+    handle.attach(player.ref)
+    handle.clearBeforeReload = true
+    handle.source = URL
+    let refreshes = 0
+    const detach = attachHls(
+      handle,
+      URL,
+      () => {
+        refreshes++
+      },
+      {
+        wantsToPlay: () => false,
+        wantsRecovery: () => true,
+        buffer: { aheadSec: 30 }
+      }
+    )
+    try {
+      handle.handleProgress({
+        currentTime: 120,
+        playableDuration: 130,
+        seekableDuration: 200
+      })
+      handle.handleError(serverDown)
+      for (let second = 0; second < 85; second++) {
+        now += 1000
+        for (const run of timers.splice(0)) run()
+      }
+      expect(player.loads()).greaterThan(1)
+      expect(refreshes).equals(1)
+      expect(handle.paused, 'a grid hold is not overridden').equals(true)
+      detach()
+      expect(timers).length(0)
+    } finally {
+      detach()
+      Date.now = realNow
+    }
+  })
+
   it('lets a seek made while the stream reopens stand', async function () {
     const { handle, player } = await watching()
     handle.handleProgress({
