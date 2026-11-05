@@ -184,6 +184,7 @@ export class PlaybackClock {
     // moment only once its new seekable bounds arrive, and ignore that first frame.
     if (port.pendingWall !== null) {
       const target = targetTime(port.timeline, port.pendingWall, port.duration)
+      const decodedWall = wallAt(port.timeline.anchors, seconds * 1000)
       // AVPlayer can decode live frames beyond its safe seek edge. A recovering
       // playing camera already at the shared moment needs no impossible seek.
       // Paused selections and cameras at a different moment still wait/restore.
@@ -193,7 +194,8 @@ export class PlaybackClock {
         port.seekableEnd !== null &&
         target?.available === true &&
         target.seconds >= port.seekableEnd &&
-        Math.abs(seconds - target.seconds) <= 0.25
+        decodedWall !== null &&
+        Math.abs(decodedWall - port.pendingWall) <= 500
       ) {
         port.pendingWall = null
       } else {
@@ -207,6 +209,8 @@ export class PlaybackClock {
       return this.wall
     port.target = null
     port.position = seconds
+    if (!this.available(this.master) && this.available(index))
+      this.master = index
     if (!this.available(index)) {
       // With no camera covering this gap, no other master can advance the wall.
       // Playing rejoins at a decoded post-gap moment; a paused selection stays

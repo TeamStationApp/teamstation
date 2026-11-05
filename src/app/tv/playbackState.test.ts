@@ -15,6 +15,61 @@ import { angleNeighbor, tvLayout } from './tvLayout'
 const timeline = (offset = 0): ReturnType<typeof timelineFor> =>
   timelineFor(new Date(100000 + offset).toISOString())
 describe('TV playback composition and remote state', () => {
+  it('rejoins a live follower within the required half-second wall tolerance', () => {
+    const clock = new PlaybackClock()
+    for (let i = 0; i < 2; i++) clock.register(i, timeline(), () => undefined)
+    clock.load(0, Infinity)
+    clock.progress(0, 108.3, 108, 0)
+    clock.load(1, Infinity)
+    for (let tick = 0; tick < 120; tick++) {
+      const edge = 108 + Math.floor(tick / 24) * 6
+      clock.progress(0, 108.3 + tick * 0.25, edge, 0)
+      clock.progress(1, 108 + tick * 0.25, edge, 0)
+      expect(clock.available(1)).equals(true)
+    }
+  })
+  it('keeps a nearby media frame covered across a wall timeline discontinuity', () => {
+    const clock = new PlaybackClock()
+    clock.register(0, timeline(), () => undefined)
+    clock.register(
+      1,
+      {
+        ...timeline(),
+        anchors: [
+          [0, 100000],
+          [40000, 160000]
+        ]
+      },
+      () => undefined
+    )
+    clock.load(0, Infinity)
+    clock.load(1, Infinity)
+    clock.progress(0, 39.9, 39.8, 0)
+    clock.fail(1)
+    clock.load(1, Infinity)
+    clock.progress(1, 40, 39.8, 0)
+    expect(clock.available(1)).equals(false)
+    expect(clock.wall).equals(139900)
+  })
+  it('hands the clock to a recovered live follower when its master remains failed', () => {
+    const clock = new PlaybackClock()
+    for (let i = 0; i < 2; i++) {
+      clock.register(i, timeline(), () => undefined)
+      clock.load(i, Infinity)
+    }
+    clock.progress(0, 108.001, 108, 0)
+    clock.settled(1)
+    clock.progress(1, 108.001, 108, 0)
+    clock.fail(1)
+    clock.fail(0)
+    clock.load(1, Infinity)
+    clock.progress(1, 108.002, 108, 0)
+    for (let seconds = 108.25; seconds < 112; seconds += 0.25)
+      clock.progress(1, seconds, 108, 0)
+    expect(clock.master).equals(1)
+    expect(clock.wall).equals(211750)
+    expect(clock.available(1)).equals(true)
+  })
   it('retries a failed ended angle when rewind returns to its footage', () => {
     const clock = new PlaybackClock()
     const recovery = new PlaybackRecovery(0)
