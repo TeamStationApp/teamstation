@@ -3092,7 +3092,7 @@ function ScoringPanel(props: {
       summary={summary}
       dictationControl={tiebreaker.active ? undefined : dictation.control}
       dictationLog={dictation.log}
-      accessibilitySummary={`${state.celebration == null ? '' : state.celebration.kind === 'in-park' ? 'IN THE PARK HOME RUN · ' : 'HOME RUN · '}${summary} · Batter ${line.offense.batter == null ? 'waiting' : (shownNames.get(line.offense.batter.id) ?? 'waiting')} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P == null ? 'unassigned' : (shownNames.get(line.defense.P.id) ?? 'unassigned')}`}
+      accessibilitySummary={`${state.celebration == null ? '' : state.celebration.kind === 'in-park' ? 'IN THE PARK HOME RUN · ' : 'HOME RUN · '}${summary} · Batter ${line.offense.batter == null ? 'waiting' : (shownNames.get(line.offense.batter.id) ?? 'waiting')} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P == null ? 'unassigned' : (shownNames.get(line.defense.P.id) ?? 'unassigned')}${(['first', 'second', 'third'] as const).map(base => ` · ${base} base ${line.offense[base] == null ? 'empty' : (shownNames.get(line.offense[base].id) ?? 'runner')}`).join('')}`}
     >
       {tiebreaker.mode === 'settings' && (
         <TiebreakerSetupSheet

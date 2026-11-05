@@ -102,8 +102,14 @@ export function initialScoringState(
   }
   // A game picked up in the middle of a play resumes at that play's step.
   if (owned.pending != null) {
+    const hit = owned.liveData.plays.currentPlay?.hitData
     state.pendingPlay = {
       outcome: owned.pending.outcome,
+      fielder: owned.pending.fielder ?? hit?.fielder?.id,
+      location: hit?.coordinates,
+      angle: hit?.launchAngle,
+      contactKind: owned.pending.contactKind,
+      homeRunKind: owned.pending.homeRunKind,
       trajectoryAccepted: true
     }
     state.phase = 'runnerMovement'

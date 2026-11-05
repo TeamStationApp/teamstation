@@ -249,13 +249,44 @@ describe('comparing logs', function () {
 })
 
 describe('the scoring screen on the game socket', function () {
+  it('accepts a pitch immediately after its own echoed save without waiting for a read', async function () {
+    const { changes, store, other, reloads } = await scoring({ digests: true })
+    await click('Ball')
+    await settle()
+    const digest = (await store.load('g1')).playsDigest!
+    await act(async () => {
+      for (const listener of changes.listeners)
+        listener({
+          type: 'change',
+          gameId: 'g1',
+          kind: 'plays',
+          at: '2026-11-05T12:00:00Z',
+          data: { plays: [], currentPlay: null, digest }
+        })
+      document
+        .querySelector<HTMLElement>('[aria-label="Called Strike"]')!
+        .click()
+    })
+    await settle()
+    expect(reloads).deep.equals([])
+    expect(document.body.textContent).not.includes(
+      'Check the play and try again'
+    )
+    expect((await other()).actions).deep.equals([
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'C' }
+    ])
+  })
+
   it('keeps a local appearance editable while an older read finishes', async function () {
     const { changes, other, store } = await scoring()
     await click('Ball')
     await settle()
     const load = store.load
     let release!: () => void
-    const held = new Promise<void>(resolve => { release = resolve })
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
     let first = true
     store.load = async id => {
       const snapshot = await load(id)
@@ -271,7 +302,8 @@ describe('the scoring screen on the game socket', function () {
     await settle()
     expect(document.body.textContent).includes('2 balls 0 strikes')
     expect((await other()).actions).deep.equals([
-      { type: 'pitch', call: 'B' }, { type: 'pitch', call: 'B' }
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' }
     ])
   })
 

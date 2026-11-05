@@ -216,3 +216,37 @@ describe('contextual batted-ball choices', function () {
     expect(startingAngle(initial())).equals(45)
   })
 })
+
+describe('remote batted-ball resumption', function () {
+  for (const outcome of ["Fielder's Choice", 'Error', 'Throw Out'] as const)
+    it(`resumes ${outcome} with the saved fielder and location`, function () {
+      const start = initial()
+      start.session.liveData.linescore.offense.first = playerRef(
+        start.session,
+        2
+      )
+      const chosen = scoringReducer(start, { type: 'OUTCOME', outcome })
+      const located = scoringReducer(chosen, {
+        type: 'FIELDER',
+        id: 15,
+        point: { x: -20, z: -35 },
+        generation: chosen.generation
+      })
+      const accepted = scoringReducer(located, {
+        type: 'TRAJECTORY',
+        angle: -10,
+        generation: located.generation
+      })
+      const resumed = initialScoringState(accepted.session, false, {
+        following: true
+      })
+      expect(resumed.phase).equals('chooseDefender')
+      expect(resumed.runnerAction?.defensiveRoute).deep.equals([
+        { id: 15, point: { x: -20, z: -35 } }
+      ])
+      expect(JSON.parse(JSON.stringify(resumed.session))).deep.equals(
+        JSON.parse(JSON.stringify(accepted.session))
+      )
+      expect(resumed.log).deep.equals([])
+    })
+})
