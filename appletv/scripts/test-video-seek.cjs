@@ -4,6 +4,7 @@ const { tmpdir } = require('node:os')
 const { join } = require('node:path')
 const { strict: assert } = require('node:assert')
 const sourcePath =
+  process.argv[2] ??
   'appletv/node_modules/react-native-video/ios/Video/Features/RCTPlayerOperations.swift'
 execFileSync('ruby', ['appletv/scripts/patch-video-seek.rb', sourcePath])
 const source = readFileSync(sourcePath, 'utf8')
