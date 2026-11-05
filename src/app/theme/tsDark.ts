@@ -73,7 +73,7 @@ export const tsDark: Theme = {
   primaryTextFontSizeRem: 1.25,
   primaryTextColor: palette.tsBeige,
   secondaryTextColor: palette.tsPaleGreen,
-  tertiaryTextColor: palette.tsDarkOlive,
+  tertiaryTextColor: palette.tsAccentGreen,
   placeholderTextColor: palette.tsMediumOlive,
   secondaryTextFont: palette.inter,
   regularTextFont: palette.quicksandRegular,

@@ -11,7 +11,13 @@ import {
 import { userIdOfGumbo } from '../../common/userId'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
-import { ThemeProvider } from '../theme/ThemeContext'
+import {
+  ScopedThemeProvider,
+  type Theme,
+  ThemeProvider
+} from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import webMusic, {
   type PlaybackState,
   WALK_UP_FADE,
@@ -30,22 +36,27 @@ const delay = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function render(props: Partial<WalkUpTabProps> = {}): Promise<void> {
+async function render(
+  props: Partial<WalkUpTabProps> = {},
+  theme: Theme = tsBallpark
+): Promise<void> {
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <CoverableScene>
-          <WalkUpTab
-            client={songClient()}
-            teamId="t1"
-            userId={userIdOfGumbo(7)}
-            music={webMusic}
-            {...props}
-          />
-        </CoverableScene>
+        <ScopedThemeProvider theme={theme}>
+          <CoverableScene>
+            <WalkUpTab
+              client={songClient()}
+              teamId="t1"
+              userId={userIdOfGumbo(7)}
+              music={webMusic}
+              {...props}
+            />
+          </CoverableScene>
+        </ScopedThemeProvider>
       </ThemeProvider>
     )
     await delay(20)
@@ -193,6 +204,33 @@ afterEach(async function () {
 })
 
 describe('the Walk-up tab’s song', function () {
+  it('keeps the provider label readable on a dark card', async function () {
+    await render({}, tsDark)
+    const label = [...document.querySelectorAll<HTMLElement>('*')].find(
+      node => node.children.length === 0 && node.textContent === 'Apple Music'
+    )!
+    let card: HTMLElement | null = label
+    while (
+      card != null &&
+      getComputedStyle(card).backgroundColor === 'rgba(0, 0, 0, 0)'
+    )
+      card = card.parentElement
+    expect(card).not.equals(null)
+    const luminance = (color: string): number =>
+      color
+        .match(/[\d.]+/g)!
+        .slice(0, 3)
+        .map(Number)
+        .map(n => n / 255)
+        .map(n => (n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4))
+        .reduce((sum, n, i) => sum + n * [0.2126, 0.7152, 0.0722][i], 0)
+    const values = [
+      luminance(getComputedStyle(label).color),
+      luminance(getComputedStyle(card!).backgroundColor)
+    ].sort((a, b) => a - b)
+    expect((values[1] + 0.05) / (values[0] + 0.05)).at.least(4.5)
+  })
+
   it('shows an Apple Music song with its artwork, clip and provider', async function () {
     await render()
     expect(text()).includes('Centerfield')

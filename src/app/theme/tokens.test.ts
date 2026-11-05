@@ -57,7 +57,8 @@ describe('theme tokens', function () {
         'primaryTextColor',
         'secondaryTextColor',
         'linkTextColor',
-        'dangerColor'
+        'dangerColor',
+        ...(theme.isDark ? (['tertiaryTextColor'] as const) : [])
       ] as const) {
         const values = [
           luminance(theme[token]),
