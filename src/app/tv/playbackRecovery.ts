@@ -38,7 +38,9 @@ export class PlaybackRecovery {
 
   /** A fetched URL starts a native attempt, which needs time to open and restore. */
   opening(now: number): void {
-    this.openingUntil = now + 20_000
+    // Native HLS can fetch the playlist twice before requesting its first segment.
+    // Allow both requests and restoration before declaring this attempt stuck.
+    this.openingUntil = now + 30_000
   }
 
   error(now: number): void {

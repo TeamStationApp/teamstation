@@ -303,7 +303,7 @@ describe('TV game playback entry', () => {
         'failed decoder is replaced'
       ).not.equals(before)
       const replacement = document.querySelector('video')!
-      for (let second = 0; second < 12; second++) {
+      for (let second = 0; second < 24; second++) {
         now += 1000
         await act(async () => {
           recover!()
@@ -314,7 +314,7 @@ describe('TV game playback entry', () => {
         )
       }
       // A decoder that never opens must still get another bounded attempt.
-      now += 8000
+      now += 6000
       await act(async () => {
         recover!()
         await pause()
