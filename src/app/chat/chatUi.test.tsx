@@ -653,7 +653,7 @@ describe('the chat gate', function () {
     const engine = new FakeEngine()
     engine.start = async () => {
       engine.calls.push('start')
-      await store.load()
+      await store.load(userIdOfGumbo(1))
       return 'ready'
     }
     const client = {
@@ -704,7 +704,7 @@ describe('the chat gate', function () {
     const engine = new FakeEngine()
     engine.start = async () => {
       engine.calls.push('start')
-      await store.load()
+      await store.load(userIdOfGumbo(1))
       return 'ready'
     }
     // The session is still bound to the device whose keys those were.
@@ -771,7 +771,7 @@ describe('the chat gate', function () {
     const engine = new FakeEngine()
     engine.start = async () => {
       engine.calls.push('start')
-      await store.load()
+      await store.load(userIdOfGumbo(1))
       return 'ready'
     }
     let online = false

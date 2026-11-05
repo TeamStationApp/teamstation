@@ -844,7 +844,7 @@ export async function fixturePeer(
     rotateUserKey: async () => {
       engine.stop()
       const current = need(
-        await store.load(),
+        await store.load(actor.userId),
         'Existing provider record required'
       )
       const rotated = await rotatePuk(setup, current)

@@ -210,7 +210,7 @@ export async function ensureEnrolled(setup: ChatSetup): Promise<Enrolment> {
 
 async function enrolOnce(setup: ChatSetup): Promise<Enrolment> {
   const { client, store, userId } = setup
-  let record = await store.load()
+  let record = await store.load(userId)
   if (
     setup.existingOnly === true &&
     (record?.userId !== userId ||
@@ -218,11 +218,9 @@ async function enrolOnce(setup: ChatSetup): Promise<Enrolment> {
       record.puks.length === 0)
   )
     throw new Error('Existing linked chat keys are unavailable')
-  if (record != null && record.userId !== userId) {
-    stillOwner(setup)
-    await store.wipe()
-    record = undefined
-  }
+  // Another account's record lives in its own slot. Enrolment here does
+  // not wipe it.
+  if (record != null && record.userId !== userId) record = undefined
   if (record != null) {
     const mine = await bindDevice(setup, record)
     if (mine != null) return await settle(setup, record, mine)
@@ -275,7 +273,7 @@ async function bindDevice(
     if (reason === 'deviceRevoked' || reason === 'unknownDevice') {
       if (setup.existingOnly === true) throw error
       stillOwner(setup)
-      await store.wipe()
+      await store.wipe(record.userId)
       return undefined
     }
     throw error
@@ -501,7 +499,7 @@ export async function readApprovalKeys(
   const current = (): boolean =>
     setup.current?.() !== false && holdsStore(setup.store, setup.userId)
   if (!current()) return
-  const record = await setup.store.load()
+  const record = await setup.store.load(setup.userId)
   if (!current() || record?.userId !== setup.userId || record.identity == null)
     return
   const core = await loadChatCore()
@@ -795,11 +793,11 @@ export async function revokeOtherDevice(
  * passes on with the record kept, as the gate's Try again does.
  */
 export async function resetUnreadableChat(
-  setup: Pick<ChatSetup, 'client' | 'store'>
+  setup: Pick<ChatSetup, 'client' | 'store' | 'userId'>
 ): Promise<void> {
-  const { client, store } = setup
+  const { client, store, userId } = setup
   try {
-    await store.load()
+    await store.load(userId)
     return
   } catch (error) {
     // A newer build wrote it: updating the app reads it, so nothing is reset.
@@ -813,7 +811,10 @@ export async function resetUnreadableChat(
   if (mine.deviceId != null) {
     await client.revokeChatDevice(mine.deviceId, { keepSession: true })
   }
-  await store.wipe()
+  await store.wipe(userId)
+  // The legacy slot goes when it is empty, unreadable, or this account.
+  // A readable record for someone else is their only copy and stays.
+  await store.discardLegacy?.(userId)
 }
 
 /** How long sign-out waits for the core (a module still on its way). */
@@ -861,24 +862,24 @@ async function coreWithin(
  * back after the wipe.
  */
 export async function leaveChat(
-  setup: Pick<ChatSetup, 'client' | 'store'> & {
+  setup: Pick<ChatSetup, 'client' | 'store' | 'userId'> & {
     /** This platform's core loader; the real one by default. */
     loadCore?: () => Promise<ChatCoreStatus>
     /** How long sign-out waits for the core before going on without it. */
     coreWaitMs?: number
   }
 ): Promise<void> {
-  const { client, store } = setup
+  const { client, store, userId } = setup
   owners.set(store, SIGNED_OUT)
   // Nothing stored, nothing to do, and no core to wait for. A store that
   // cannot say counts as one that may hold a record.
-  if (!(await store.exists().catch(() => true))) return
+  if (!(await store.exists(userId).catch(() => true))) return
   const core = await coreWithin(
     setup.loadCore ?? loadChatCore,
     setup.coreWaitMs ?? LEAVE_CORE_WAIT_MS
   )
   try {
-    const record = await store.load()
+    const record = await store.load(userId)
     if (record == null) return
     try {
       await client.revokeChatDevice(record.deviceId)
@@ -892,6 +893,6 @@ export async function leaveChat(
   } catch {
     // Offline, or the session already ended: the keys go all the same.
   } finally {
-    await store.wipe()
+    await store.wipe(userId)
   }
 }

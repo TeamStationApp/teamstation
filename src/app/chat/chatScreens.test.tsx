@@ -163,25 +163,44 @@ function labelled(label: string): HTMLElement | null {
 }
 
 class MemoryStore implements ChatKeyStore {
-  text: string | undefined
+  private readonly slots = new Map<string, string>()
+  private last: string | undefined
   wiped = 0
   constructor(private readonly log?: string[]) {}
-  async load(): Promise<ChatKeyRecord | undefined> {
-    return this.text == null ? undefined : recordFromJson(this.text)
+
+  get text(): string | undefined {
+    return this.last == null ? undefined : this.slots.get(this.last)
+  }
+
+  set text(value: string | undefined) {
+    this.slots.clear()
+    this.last = undefined
+    if (value == null) return
+    const parsed = JSON.parse(value) as { userId: string }
+    this.slots.set(parsed.userId, value)
+    this.last = parsed.userId
+  }
+
+  async load(userId: string): Promise<ChatKeyRecord | undefined> {
+    const text = this.slots.get(userId)
+    return text == null ? undefined : recordFromJson(text)
   }
 
   async save(record: ChatKeyRecord): Promise<void> {
-    this.text = recordToJson(record)
+    this.slots.set(record.userId, recordToJson(record))
+    this.last = record.userId
   }
 
-  async wipe(): Promise<void> {
+  async wipe(userId: string): Promise<void> {
+    if (!this.slots.has(userId)) return
     this.log?.push('wipe')
     this.wiped += 1
-    this.text = undefined
+    this.slots.delete(userId)
+    if (this.last === userId) this.last = [...this.slots.keys()].at(-1)
   }
 
-  async exists(): Promise<boolean> {
-    return this.text != null
+  async exists(userId: string): Promise<boolean> {
+    return this.slots.has(userId)
   }
 
   record(): ChatKeyRecord {
@@ -1662,7 +1681,7 @@ describe('chat setup through a change of user', function () {
     await render(screen(BEFORE))
     await until('the first code', () => text().includes('Waiting for'))
     // Signed out, which wipes the keys, and the next user signed in.
-    await store.wipe()
+    await store.wipe(BEFORE)
     signed.in = after
     await rerender(screen(USER))
     await until('their request', () => after.links.length === 1)
@@ -1695,7 +1714,7 @@ describe('chat setup through a change of user', function () {
     )
     await render(screen(BEFORE))
     await until('the first list', () => text().includes('YOUR DEVICES'))
-    await store.wipe()
+    await store.wipe(BEFORE)
     signed.in = after
     await rerender(screen(USER))
     await until('their list', () => after.calls.includes('enrolChat'))
@@ -1887,7 +1906,12 @@ describe('chat setup through a change of user', function () {
     const { context } = engine as unknown as { context: EngineContext }
     // Sign-out, while the engine is still running: its work saves nothing
     // more, and enrols nothing.
-    await leaveChat({ client, store, loadCore: async () => ({ ready: true }) })
+    await leaveChat({
+      client,
+      store,
+      userId: USER,
+      loadCore: async () => ({ ready: true })
+    })
     expect(store.text).equals(undefined)
     expect(
       await refusal(
@@ -1965,7 +1989,7 @@ describe('chat setup through a change of user', function () {
     // Something else moved this browser on to a device of its own, with a
     // request of its own, and the other device approved both.
     const shown = store.record()
-    await store.wipe()
+    await store.wipe(USER)
     const now = { client, store, userId: USER, device: DEVICE }
     const moved = await ensureEnrolled(now)
     await startLink(now, moved.record)
@@ -2287,7 +2311,7 @@ describe('chat devices in the app', function () {
     showRoute({ name: 'chatDevices' }, true)
     await render(<App />)
     await until('the list', () => text().includes('YOUR DEVICES'))
-    expect(await keyStore.exists()).equals(true)
+    expect(await keyStore.exists(USER)).equals(true)
     await act(async () => {
       root?.unmount()
     })
@@ -2296,7 +2320,7 @@ describe('chat devices in the app', function () {
     await until('approval', () => text().includes('Use a different account'))
     await press('Use a different account')
     await until('sign in', () => currentRoute().name === 'signIn')
-    expect(await keyStore.exists()).equals(false)
+    expect(await keyStore.exists(USER)).equals(false)
     expect(fake.devices[0].revokedAt).not.equals(null)
     const revoke = asked.findIndex(call =>
       call.startsWith('DELETE /chat/devices/')

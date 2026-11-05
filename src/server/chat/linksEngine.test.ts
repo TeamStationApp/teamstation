@@ -43,25 +43,57 @@ import { type ChatFixture, openChatFixture } from './chatTestFixture'
  * Each device is a session of the fixture and a store of its own.
  */
 
+/** One account's saved JSON, for a store that still speaks in a single `text`. */
+function storedUserId(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as { userId?: string | number }
+    if (typeof parsed.userId === 'number') return userIdOfGumbo(parsed.userId)
+    if (typeof parsed.userId === 'string') return parsed.userId
+  } catch {
+    // A stand-in string is not a record. It still has a slot to wipe.
+  }
+  return 'unparsed'
+}
+
 /** A store in memory, written through the same JSON the real ones keep. */
 class MemoryStore implements ChatKeyStore {
-  text: string | undefined
+  private readonly slots = new Map<string, string>()
+  private last: string | undefined
   wipes = 0
-  async load(): Promise<ChatKeyRecord | undefined> {
-    return this.text == null ? undefined : recordFromJson(this.text)
+
+  /** The record saved most recently, for a device that holds one. */
+  get text(): string | undefined {
+    return this.last == null ? undefined : this.slots.get(this.last)
+  }
+
+  set text(value: string | undefined) {
+    this.slots.clear()
+    this.last = undefined
+    if (value == null) return
+    const userId = storedUserId(value)
+    this.slots.set(userId, value)
+    this.last = userId
+  }
+
+  async load(userId: string): Promise<ChatKeyRecord | undefined> {
+    const text = this.slots.get(userId)
+    return text == null ? undefined : recordFromJson(text)
   }
 
   async save(record: ChatKeyRecord): Promise<void> {
-    this.text = recordToJson(record)
+    this.slots.set(record.userId, recordToJson(record))
+    this.last = record.userId
   }
 
-  async wipe(): Promise<void> {
+  async wipe(userId: string): Promise<void> {
+    if (!this.slots.has(userId)) return
     this.wipes += 1
-    this.text = undefined
+    this.slots.delete(userId)
+    if (this.last === userId) this.last = [...this.slots.keys()].at(-1)
   }
 
-  async exists(): Promise<boolean> {
-    return this.text != null
+  async exists(userId: string): Promise<boolean> {
+    return this.slots.has(userId)
   }
 }
 
@@ -120,7 +152,7 @@ describe('chat keys on the device', function () {
     expect(recordToJson(reopened.record)).equals(before)
     expect(setup.store.wipes).equals(0)
     expect(await counts()).deep.equals(saved)
-    expect((await setup.store.load())?.deviceId).equals(
+    expect((await setup.store.load(userIdOfGumbo(42)))?.deviceId).equals(
       enrolled.record.deviceId
     )
   })
@@ -254,7 +286,9 @@ describe('chat keys on the device', function () {
       expect(expired.state).equals('expired')
       if (expired.state !== 'expired') return
       expect(expired.record.pendingLinkId).equals(undefined)
-      expect((await four.store.load())?.pendingLinkId).equals(undefined)
+      expect((await four.store.load(f().id('B')))?.pendingLinkId).equals(
+        undefined
+      )
       // Asking again opens a new request with its own digits.
       const again = await startLink(four, expired.record)
       expect(again.link.id).not.equals(waiting.link.id)
@@ -354,7 +388,10 @@ describe('chat keys on the device', function () {
     const mine = await ensureEnrolled(
       deviceOf(await session('B~8', 'B'), 'B', theirs)
     )
-    expect(theirs.wipes).equals(1)
+    expect(theirs.wipes).equals(0)
+    expect((await theirs.load(other.record.userId))?.deviceId).equals(
+      other.record.deviceId
+    )
     expect(mine.record.userId).equals(f().id('B'))
     expect(mine.record.deviceId).not.equals(other.record.deviceId)
     expect(mine.state).equals('link')
@@ -421,6 +458,7 @@ describe('chat keys on the device', function () {
       await leaveChat({
         client: clientOf(await session('Ek~1', 'Ek')),
         store,
+        userId: f().id('Ek'),
         loadCore: async () => {
           loads += 1
           return await unavailable()
@@ -452,6 +490,7 @@ describe('chat keys on the device', function () {
       await leaveChat({
         client: clientOf(await session('Es~3', 'Es')),
         store,
+        userId: f().id('Es'),
         loadCore: unavailable
       })
       expect(store.text).equals(undefined)
@@ -463,6 +502,7 @@ describe('chat keys on the device', function () {
       await leaveChat({
         client: clientOf(await session('Ek~3', 'Ek')),
         store: empty,
+        userId: f().id('Ek'),
         loadCore: async () => await new Promise<never>(() => {}),
         coreWaitMs: 20
       })
@@ -472,6 +512,7 @@ describe('chat keys on the device', function () {
       await leaveChat({
         client: clientOf(await session('Ek~4', 'Ek')),
         store: kept,
+        userId: f().id('Ek'),
         loadCore: async () => {
           throw new Error('no module')
         }
@@ -502,7 +543,7 @@ describe('chat keys on the device', function () {
       baseUrl: 'http://127.0.0.1:9/api/v1',
       token: 'nope'
     })
-    await leaveChat({ client: offline, store })
+    await leaveChat({ client: offline, store, userId: f().id('C') })
     expect(store.text).equals(undefined)
   })
 
@@ -514,11 +555,11 @@ describe('chat keys on the device', function () {
     function unreadable(store: MemoryStore): void {
       const sealed = store.text
       const load = store.load.bind(store)
-      store.load = async () => {
+      store.load = async (userId: string) => {
         if (store.text != null && store.text === sealed) {
           throw new UnreadableKeyRecordError('undecryptable')
         }
-        return await load()
+        return await load(userId)
       }
     }
 
@@ -620,7 +661,11 @@ describe('chat keys on the device', function () {
         throw new HttpError('offline', 'The request never left')
       }
       const failed = await refusal(
-        resetUnreadableChat({ client: offline, store: one.store })
+        resetUnreadableChat({
+          client: offline,
+          store: one.store,
+          userId: one.userId
+        })
       )
       expect((failed as HttpError).code).equals('offline')
       const unreached = Object.create(one.client) as ChatKeysClient
@@ -628,7 +673,11 @@ describe('chat keys on the device', function () {
         throw new HttpError('offline', 'The request never left')
       }
       await refusal(
-        resetUnreadableChat({ client: unreached, store: one.store })
+        resetUnreadableChat({
+          client: unreached,
+          store: one.store,
+          userId: one.userId
+        })
       )
       expect(one.store.text).equals(text)
       expect(one.store.wipes).equals(0)
@@ -646,7 +695,11 @@ describe('chat keys on the device', function () {
       const later = deviceOf(await session('Rx~2', 'Rx'), 'Rx', one.store)
       unreadable(later.store)
       const { client, revokes } = noting(later.client)
-      await resetUnreadableChat({ client, store: later.store })
+      await resetUnreadableChat({
+        client,
+        store: later.store,
+        userId: later.userId
+      })
       expect(revokes).deep.equals([])
       expect(later.store.text).equals(undefined)
       // Nothing here could prove it, so it stays for another device to remove.
@@ -658,15 +711,23 @@ describe('chat keys on the device', function () {
       const one = deviceOf(await session('Ry~1', 'Ry'), 'Ry')
       const ready = await ensureEnrolled(one)
       const { client, revokes } = noting(one.client)
-      await resetUnreadableChat({ client, store: one.store })
-      await resetUnreadableChat({ client, store: new MemoryStore() })
+      await resetUnreadableChat({
+        client,
+        store: one.store,
+        userId: one.userId
+      })
+      await resetUnreadableChat({
+        client,
+        store: new MemoryStore(),
+        userId: one.userId
+      })
       const broken = new MemoryStore()
       broken.text = 'kept'
       broken.load = async () => {
         throw new Error('IndexedDB will not open')
       }
       const error = await refusal(
-        resetUnreadableChat({ client, store: broken })
+        resetUnreadableChat({ client, store: broken, userId: one.userId })
       )
       expect((error as Error).message).equals('IndexedDB will not open')
       // A newer version's record is still good: refused, never revoked or wiped.
@@ -675,7 +736,9 @@ describe('chat keys on the device', function () {
       newer.load = async () => {
         throw new UnreadableKeyRecordError('unknownVersion')
       }
-      const kept = await refusal(resetUnreadableChat({ client, store: newer }))
+      const kept = await refusal(
+        resetUnreadableChat({ client, store: newer, userId: one.userId })
+      )
       expect((kept as UnreadableKeyRecordError).reason).equals('unknownVersion')
       expect(newer.wipes).equals(0)
       expect(newer.text).equals('newer')
@@ -691,7 +754,7 @@ describe('chat keys on the device', function () {
       const one = deviceOf(await session('Rz~1', 'Rz'), 'Rz')
       const ready = await ensureEnrolled(one)
       const { client, revokes } = noting(one.client)
-      await leaveChat({ client, store: one.store })
+      await leaveChat({ client, store: one.store, userId: one.userId })
       expect(revokes).deep.equals([[ready.record.deviceId, undefined]])
       expect(one.store.text).equals(undefined)
       expect(((await refusal(client.myChatKeys())) as HttpError).code).equals(

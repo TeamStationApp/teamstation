@@ -678,11 +678,17 @@ function Shell(props: AppProps): React.ReactElement {
   }
   /** Sign Out, pressed: the server's session and the phone's file go. */
   const signOutNow = (): void => {
-    leaveChat({ client, store: keyStore })
-      .finally(() => {
-        client.signOut().catch(() => undefined)
-        leaveSession()
-      })
+    const userId = session?.user.id
+    const finish = (): void => {
+      client.signOut().catch(() => undefined)
+      leaveSession()
+    }
+    if (userId == null) {
+      finish()
+      return
+    }
+    leaveChat({ client, store: keyStore, userId })
+      .finally(finish)
       .catch(() => undefined)
   }
   const [confirmingSignOut, setConfirmingSignOut] = useState(false)
@@ -2305,9 +2311,11 @@ function Shell(props: AppProps): React.ReactElement {
             route.name !== 'oauthApprove'
               ? undefined
               : async () => {
-                  await leaveChat({ client, store: keyStore }).catch(
-                    () => undefined
-                  )
+                  const userId = session?.user.id
+                  if (userId != null)
+                    await leaveChat({ client, store: keyStore, userId }).catch(
+                      () => undefined
+                    )
                   // Removing the chat device may already have revoked this
                   // session, so logout can legitimately answer unauthorized.
                   await client.signOut().catch(() => undefined)

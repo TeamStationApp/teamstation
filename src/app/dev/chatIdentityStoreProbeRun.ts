@@ -1,4 +1,7 @@
 import { userIdOfGumbo } from '../../common/userId'
+
+/** The account the compatibility fixture's record belongs to. */
+export const FIXTURE_USER_ID = userIdOfGumbo(42)
 import legacy from '../../test/legacyChatKeyRecord.json'
 import { type ChatKeysClient, ensureEnrolled } from '../chat/engine/links'
 import {
@@ -40,16 +43,16 @@ export async function runIdentityStoreProbe(
     signal.throwIfAborted()
     const text = JSON.stringify(legacy)
     await storage.install(text)
-    const record = await storage.store.load()
+    const record = await storage.store.load(FIXTURE_USER_ID)
     requireProbe(record != null)
-    requireProbe(record.userId === userIdOfGumbo(42))
+    requireProbe(record.userId === FIXTURE_USER_ID)
     const expected = {
       ...legacy,
       version: 2,
       userId: userIdOfGumbo(42),
       pins: {
         [userIdOfGumbo(7)]: legacy.pins[7],
-        [userIdOfGumbo(42)]: legacy.pins[42]
+        [FIXTURE_USER_ID]: legacy.pins[42]
       },
       previousPins: { [userIdOfGumbo(7)]: legacy.previousPins[7] },
       logs: {
@@ -74,10 +77,14 @@ export async function runIdentityStoreProbe(
     })
     requireProbe(refused && (await storage.fingerprint()) === before)
     requireProbe(
-      recordToJson((await storage.store.load())!) === recordToJson(record)
+      recordToJson((await storage.store.load(FIXTURE_USER_ID))!) ===
+        recordToJson(record)
     )
     await storage.store.save(record)
-    requireProbe(recordToJson((await storage.store.load())!) === expectedText)
+    requireProbe(
+      recordToJson((await storage.store.load(FIXTURE_USER_ID))!) ===
+        expectedText
+    )
     let enrollmentAttempts = 0
     let wipeAttempts = 0
     const guardedStore: ChatKeyStore = {
@@ -127,7 +134,7 @@ export async function runIdentityStoreProbe(
       await ensureEnrolled({
         client,
         store: guardedStore,
-        userId: userIdOfGumbo(42),
+        userId: FIXTURE_USER_ID,
         device: { name: 'Compatibility fixture', platform: 'web' }
       }).catch(() => {
         blocked = true

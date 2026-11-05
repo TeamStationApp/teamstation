@@ -250,7 +250,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       return
     }
     setSigningOut(true)
-    leaveChat({ client, store: chatStore })
+    leaveChat({ client, store: chatStore, userId: session.user.id })
       .finally(onSignOut)
       .catch(() => undefined)
   }
