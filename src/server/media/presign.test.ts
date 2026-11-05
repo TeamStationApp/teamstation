@@ -153,6 +153,26 @@ describe('read-only object source selection', function () {
     expect(isReadOnlySourceKey({}, key)).equals(false)
   })
 
+  it('finds a name at the end of a long list and misses one that is absent', function () {
+    const names = Array.from(
+      { length: 5000 },
+      (_, index) => `videos/demo/seg-${index}.m4s`
+    )
+    const wanted = names[names.length - 1]
+    const listed = { ...source, keys: names }
+    expect(isReadOnlySourceKey({ readOnlySource: listed }, wanted)).equals(true)
+    expect(isReadOnlySourceKey({ readOnlySource: listed }, wanted)).equals(true)
+    expect(
+      isReadOnlySourceKey({ readOnlySource: listed }, 'videos/demo/missing.m4s')
+    ).equals(false)
+    expect(
+      isReadOnlySourceKey(
+        { readOnlySource: { ...source, keys: [...names] } },
+        wanted
+      )
+    ).equals(true)
+  })
+
   it('uses the source path-style setting independently of the primary', function () {
     expect(presignGetUrl({ ...options, pathStyle: true })).equals(
       presignGetUrl({
