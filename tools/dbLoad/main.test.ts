@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer as createHttpServer, request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { type AddressInfo, connect, createServer } from 'node:net'
 import { join } from 'node:path'
@@ -7,8 +8,8 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
-import { readTokens } from './fixture'
-import { runMain } from './main'
+import { type SeededAccount, readTokens, type TokensFile } from './fixture'
+import { liveViewersFor, runMain } from './main'
 import {
   fakeStatementsView,
   openScratch,
@@ -104,6 +105,8 @@ describe('the command line', function () {
       '3',
       '--streams',
       '1',
+      '--viewers',
+      '2',
       '--event-schedule',
       '--report',
       report
@@ -120,7 +123,129 @@ describe('the command line', function () {
     expect(data.streamsStarted).equals(1)
     expect(data.screens.watchers).equals(3)
     expect(data.screens.reads).above(0)
+    // Both viewers watch the one stream's video, which this server cannot play.
+    expect(data.streaming.viewers).equals(2)
+    expect(data.errors['http-404']).at.least(2)
+    expect(text).contains('## Streaming\nstreams started: 1\nlive viewers: 2')
     expect(text).not.contains('socket-close-4403')
+  })
+
+  it('watches the live videos another rig publishes, found through the API, with --watch-streams', async function () {
+    // What the first run's stream left, made live as the ingest would.
+    const minted = await scratch.db
+      .selectFrom('live_streams')
+      .select('video_id')
+      .where('video_id', 'is not', null)
+      .execute()
+    expect(minted.length).above(0)
+    await scratch.db
+      .updateTable('videos')
+      .set({ status: 'live', hidden: false })
+      .where(
+        'id',
+        'in',
+        minted.map(row => row.video_id ?? '')
+      )
+      .execute()
+    // The test server mounts no `GET /games/:id`, so this one answers it from
+    // the database, as the API does, and passes everything else through.
+    const proxy = createHttpServer((req, res) => {
+      const game = /^\/api\/v1\/games\/([^/?]+)$/.exec(req.url ?? '')?.[1]
+      if (req.method === 'GET' && game != null) {
+        void scratch.db
+          .selectFrom('videos')
+          .select(['id', 'status'])
+          .where('game_id', '=', game)
+          .where('hidden', '=', false)
+          .execute()
+          .then(videos => {
+            res.writeHead(200, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ id: game, videos }))
+          })
+        return
+      }
+      const target = new URL(server.base)
+      const forward = httpRequest(
+        {
+          host: target.hostname,
+          port: target.port,
+          method: req.method,
+          path: req.url,
+          headers: req.headers
+        },
+        answer => {
+          res.writeHead(answer.statusCode ?? 502, answer.headers)
+          answer.pipe(res)
+        }
+      )
+      forward.on('error', () => res.destroy())
+      req.pipe(forward)
+    })
+    await new Promise<void>(done => proxy.listen(0, '127.0.0.1', done))
+    const proxied = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`
+    const report = join(dir, 'watch.log')
+    const code = await run(
+      ...flags(),
+      '--server',
+      proxied,
+      '--users',
+      '2',
+      '--games',
+      '2',
+      '--pitch-seconds',
+      '0.2',
+      '--minutes',
+      '0.03',
+      '--connect-rate',
+      '100',
+      '--viewers',
+      '3',
+      '--watch-streams',
+      String(minted.length),
+      '--watch-timeout',
+      '20',
+      '--report',
+      report
+    )
+    expect(code).equals(0)
+    const data = JSON.parse(readFileSync(`${report}.json`, 'utf8'))
+    expect(data.streamsStarted).equals(0)
+    expect(data.streaming.viewers).equals(3)
+    expect(lines).contains(`live viewers: 3 on ${minted.length} live videos`)
+    proxy.closeAllConnections()
+    await new Promise(done => proxy.close(done))
+  })
+
+  it('gives up waiting for live videos after --watch-timeout, and starts no viewers on none', async function () {
+    await scratch.db
+      .updateTable('videos')
+      .set({ status: 'ready' })
+      .where('status', '=', 'live')
+      .execute()
+    const report = join(dir, 'nowatch.log')
+    const started = Date.now()
+    const code = await run(
+      ...flags(),
+      '--server',
+      server.base,
+      '--users',
+      '1',
+      '--minutes',
+      '0.02',
+      '--viewers',
+      '2',
+      '--watch-streams',
+      '1',
+      '--watch-timeout',
+      '1',
+      '--report',
+      report
+    )
+    expect(code).equals(0)
+    expect(Date.now() - started).below(30_000)
+    expect(lines).contains('live viewers: 2 on 0 live videos')
+    const data = JSON.parse(readFileSync(`${report}.json`, 'utf8'))
+    expect(data.streaming.viewers).equals(0)
   })
 
   it('holds a run to the thresholds when asked, counting the servers logs', async function () {
@@ -314,6 +439,30 @@ describe('the command line', function () {
     expect(
       await refusal('--database', scratch.url, '--scale', 'small')
     ).contains('--tokens')
+    expect(
+      await refusal(
+        ...flags(),
+        '--server',
+        server.base,
+        '--users',
+        '1',
+        '--viewers',
+        '3'
+      )
+    ).contains('--viewers needs --streams above 0, or --watch-streams N')
+    expect(
+      await refusal(
+        ...flags(),
+        '--server',
+        server.base,
+        '--users',
+        '1',
+        '--streams',
+        '1',
+        '--watch-streams',
+        '1'
+      )
+    ).contains('--watch-streams is for a rig that publishes nothing')
   })
 
   it('refuses a database not marked for load testing, in every mode', async function () {
@@ -401,6 +550,57 @@ describe('the command line', function () {
     } finally {
       await stats.drop()
     }
+  })
+
+  it('deals --viewers across the live games, then their cameras, as people on them', function () {
+    const person = (
+      label: string,
+      kind: SeededAccount['kind'],
+      gameIndex: number | null
+    ): SeededAccount => ({
+      label,
+      kind,
+      userId: label,
+      token: label,
+      teamId: null,
+      gameIndex
+    })
+    const tokens: Pick<TokensFile, 'accounts' | 'games'> = {
+      accounts: [
+        person('v0', 'viewer', 0),
+        person('w0', 'worstCase', 0),
+        person('v1', 'viewer', 1),
+        person('cam0', 'videographer', 0),
+        person('cam2', 'videographer', 2),
+        person('s0', 'scorekeeper', 0)
+      ],
+      games: ['g0', 'g1', 'g2'].map(id => ({
+        id,
+        sides: undefined as never,
+        seasonId: 's',
+        scorekeeper: 's0'
+      }))
+    }
+    const videos = [
+      { gameId: 'g0', videoId: 'a', videographer: 'cam0' },
+      { gameId: 'g0', videoId: 'b', videographer: 'cam0' },
+      // Nobody but its videographer was seeded on this game.
+      { gameId: 'g2', videoId: 'c', videographer: 'cam2' },
+      // Nobody at all who could watch it.
+      { gameId: 'g9', videoId: 'd', videographer: 'gone' }
+    ]
+    const dealt = liveViewersFor(tokens, videos, 5).map(
+      row => `${row.gameId}/${row.videoId}/${row.account.label}`
+    )
+    expect(dealt).deep.equals([
+      'g0/a/v0',
+      'g2/c/cam2',
+      'g0/b/w0',
+      'g2/c/cam2',
+      'g0/a/v0'
+    ])
+    expect(liveViewersFor(tokens, videos, 0)).deep.equals([])
+    expect(liveViewersFor(tokens, [], 4)).deep.equals([])
   })
 
   it('cleans up by the run the tokens name', async function () {
