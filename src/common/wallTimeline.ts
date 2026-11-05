@@ -100,3 +100,24 @@ export function mediaAt(
   }
   return anchorMs + (wallMs - anchorWall)
 }
+
+/** A snapped inverse points into the future when no footage covers this moment. */
+export function inWallGap(
+  anchors: readonly WallAnchor[],
+  wallMs: number
+): boolean {
+  if (anchors.length < 2) return false
+  let low = 0
+  let high = anchors.length - 1
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2)
+    if (anchors[middle][1] <= wallMs) low = middle
+    else high = middle - 1
+  }
+  const previous = anchors[low]
+  const next = anchors[low + 1]
+  if (next == null) return false
+  const end = previous[1] + next[0] - previous[0]
+  // Sub-frame clock corrections are not recording outages.
+  return next[1] - end > 250 && wallMs >= end && wallMs < next[1]
+}

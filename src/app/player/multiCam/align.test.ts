@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { AngleVideo } from '../wallClock'
+import { fromAnchors } from '../wallMapping'
 import {
   correctionFor,
   endFor,
@@ -29,6 +30,30 @@ const wall = (iso: string): number => Date.parse(iso)
 
 describe('keeping the tiles on one moment', function () {
   const video = at('2026-05-01T18:00:00.000Z')
+
+  it('parks a gap instead of presenting the first future frame as the requested moment', () => {
+    const start = wall(video.startAt!)
+    const mapped = {
+      ...video,
+      clock: () =>
+        fromAnchors([
+          [0, start],
+          [10000, start + 30000]
+        ])
+    }
+    expect(
+      correctionFor({
+        wallMs: start + 20000,
+        follower: { video: mapped, atSec: 10 }
+      })
+    ).deep.equals({ kind: 'park', reason: 'gap' })
+    expect(
+      correctionFor({
+        wallMs: start + 30000,
+        follower: { video: mapped, atSec: 10 }
+      })
+    ).deep.equals({ kind: 'hold' })
+  })
 
   it('holds a tile that is already there', function () {
     const correction = correctionFor({

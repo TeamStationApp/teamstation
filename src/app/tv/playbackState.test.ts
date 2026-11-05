@@ -119,6 +119,24 @@ describe('TV playback composition and remote state', () => {
     expect(clock.available(0)).equals(true)
   })
 
+  it('marks the snapped future frame unavailable inside a recording outage', () => {
+    const held = {
+      ...timeline(),
+      anchors: [
+        [0, 100000],
+        [10000, 130000]
+      ] as Array<[number, number]>
+    }
+    expect(targetTime(held, 120000, 60)).deep.equals({
+      seconds: 10,
+      available: false
+    })
+    expect(targetTime(held, 130000, 60)).deep.equals({
+      seconds: 10,
+      available: true
+    })
+  })
+
   it('makes a reloaded failed camera available at the shared moment', () => {
     const clock = new PlaybackClock()
     const seeks: number[] = []
