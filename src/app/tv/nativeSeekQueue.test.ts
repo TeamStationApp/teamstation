@@ -26,6 +26,28 @@ describe('TV native seek backpressure', () => {
     expect(nativePosition).equals(10.25)
     expect(settled).equals(3)
   })
+  it('reports a lost completion once, including a paused no-op, and resets after a new seek', () => {
+    let now = 0
+    const queue = new NativeSeekQueue(
+      () => undefined,
+      () => undefined,
+      () => now
+    )
+    expect(queue.timedOut()).equals(false)
+    queue.request(10)
+    now = 4999
+    expect(queue.timedOut()).equals(false)
+    queue.request(20)
+    now = 5000
+    expect(queue.timedOut()).equals(true)
+    expect(queue.timedOut()).equals(false)
+    queue.complete(10)
+    expect(queue.timedOut()).equals(false)
+    now = 10000
+    expect(queue.timedOut()).equals(true)
+    queue.complete(20)
+    expect(queue.timedOut()).equals(false)
+  })
   it('coalesces requests and rejects stale acknowledgements including fractional targets', () => {
     const sent: number[] = []
     let settled = 0
