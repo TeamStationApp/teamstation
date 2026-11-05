@@ -288,6 +288,94 @@ describe('live Space playback cache', function () {
   })
 })
 
+describe('a Space read that hangs', function () {
+  /** A fetch that answers only when its signal aborts it. */
+  const hanging =
+    (calls: { count: number }): typeof fetch =>
+    async (_url: unknown, init?: RequestInit) => {
+      calls.count++
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(init.signal?.reason)
+        })
+      })
+    }
+
+  it('rejects the shared open read at its timeout, and the next request reads again', async function () {
+    let time = 0
+    const calls = { count: 0 }
+    let fetcher = hanging(calls)
+    const cache = new SpacePlayback(
+      {
+        space: SPACE,
+        expiresSec: 3600,
+        timeoutMs: 50,
+        fetch: async (url, init) => await fetcher(url, init)
+      },
+      () => time
+    )
+    const started = Date.now()
+    const viewers = [
+      cache.live(old('live')),
+      cache.live(old('live')),
+      cache.get(old('live'), 'index.m3u8', false)
+    ]
+    const outcomes = await Promise.allSettled(viewers)
+    expect(Date.now() - started).below(1000)
+    expect(calls.count).equals(1)
+    for (const outcome of outcomes) {
+      expect(outcome.status).equals('rejected')
+      expect(String((outcome as PromiseRejectedResult).reason)).contains(
+        'TimeoutError'
+      )
+    }
+    // Retried as a failed read is: after the refresh interval.
+    time += 1000
+    fetcher = async () => new Response(MEDIA_PLAYLIST)
+    expect(await cache.get(old('live'), 'index.m3u8', false)).equals(
+      MEDIA_PLAYLIST
+    )
+    expect(calls.count).equals(1)
+  })
+
+  it('rejects a hung finished playlist at its timeout, caching nothing', async function () {
+    const calls = { count: 0 }
+    let fetcher = hanging(calls)
+    const playlists = new PlaylistCache({
+      space: SPACE,
+      expiresSec: 3600,
+      timeoutMs: 50,
+      fetch: async (url, init) => await fetcher(url, init)
+    })
+    try {
+      await playlists.get(old('done'), 'video.m3u8')
+      throw new Error('Expected failure')
+    } catch (error) {
+      expect(String(error)).contains('TimeoutError')
+    }
+    fetcher = async () => new Response(MEDIA_PLAYLIST)
+    expect(await playlists.get(old('done'), 'video.m3u8')).equals(
+      MEDIA_PLAYLIST
+    )
+    expect(calls.count).equals(1)
+  })
+
+  it('gives each read a deadline by default', async function () {
+    let signal: AbortSignal | undefined
+    const playlists = new PlaylistCache({
+      space: SPACE,
+      expiresSec: 3600,
+      fetch: async (_url, init) => {
+        signal = init?.signal ?? undefined
+        return new Response(MEDIA_PLAYLIST)
+      }
+    })
+    await playlists.get(old('done'), 'video.m3u8')
+    expect(signal).instanceOf(AbortSignal)
+    expect(signal?.aborted).equals(false)
+  })
+})
+
 describe('media under a secret path', function () {
   const LIVE_BODY =
     '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg000000.m4s\n#EXTINF:4,\nseg000001.m4s\n'
@@ -517,11 +605,11 @@ describe('live playlists through Valkey', function () {
       'subscribed',
       async () =>
         (
-          (await client.sendCommand([
+          await client.sendCommand([
             'PUBSUB',
             'NUMSUB',
             livePlaylistChannel(prefix)
-          ])) as [string, number]
+          ])
         )[1] > 0 && target.following != null
     )
     // The subscribe's own reply lands just after the server counts it.
@@ -775,5 +863,223 @@ describe('live playlists through Valkey', function () {
     const later = await clocked.live(unsecret)
     expect(later).not.equals(first)
     expect(reloads).equals(2)
+  })
+})
+
+describe('live playlists when Valkey stalls', function () {
+  this.timeout(10000)
+  const HEADER =
+    '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-MAP:URI="init.mp4"\n'
+  const piece = (n: number): string =>
+    `#EXTINF:4,\nseg${String(n).padStart(6, '0')}.m4s\n`
+  const body = (count: number): string =>
+    HEADER + Array.from({ length: count }, (_, n) => piece(n)).join('')
+  const video = { id: 'vid_stall', spaceSecret: SECRET }
+  const space = { ...SPACE, mediaBaseUrl: 'https://media.example.test' }
+  const prefix = 'ts:stall'
+
+  interface Pending<T> {
+    resolve: (value: T) => void
+    reject: (error: unknown) => void
+  }
+  /**
+   * A client that stays connected and never answers on its own: each MULTI
+   * and LRANGE waits until the test settles it.
+   */
+  function stalledValkey(): {
+    client: ScoreboardClient
+    subscriber: ScoreboardClient
+    reloads: Array<Pending<[string[], string | null]>>
+    ranges: Array<Pending<string[]>>
+    notify: (n: number, g: number) => void
+  } {
+    const reloads: Array<Pending<[string[], string | null]>> = []
+    const ranges: Array<Pending<string[]>> = []
+    let listener: (message: string) => void = () => {}
+    const multi = {
+      lRange: () => multi,
+      get: () => multi,
+      exec: async () =>
+        await new Promise((resolve, reject) => {
+          reloads.push({ resolve, reject })
+        })
+    }
+    const client = {
+      isReady: true,
+      multi: () => multi,
+      lRange: async () =>
+        await new Promise((resolve, reject) => {
+          ranges.push({ resolve, reject })
+        })
+    }
+    const subscriber = {
+      on: () => subscriber,
+      subscribe: async (_channel: string, heard: (message: string) => void) => {
+        listener = heard
+      }
+    }
+    return {
+      client: client as unknown as ScoreboardClient,
+      subscriber: subscriber as unknown as ScoreboardClient,
+      reloads,
+      ranges,
+      notify: (n, g) => {
+        listener(JSON.stringify({ v: video.id, n, g }))
+      }
+    }
+  }
+
+  let time: number
+  let spaceReads: number
+  let logged: string[]
+  let valkey: ReturnType<typeof stalledValkey>
+  let playback: SpacePlayback
+  beforeEach(async function () {
+    time = 0
+    spaceReads = 0
+    logged = []
+    valkey = stalledValkey()
+    playback = new SpacePlayback(
+      {
+        space,
+        expiresSec: 3600,
+        fetch: async () => {
+          spaceReads++
+          return new Response(body(1))
+        }
+      },
+      () => time,
+      {
+        client: valkey.client,
+        subscriber: valkey.subscriber,
+        prefix,
+        log: line => logged.push(line)
+      }
+    )
+    // The subscribe's reply.
+    await new Promise(resolve => setImmediate(resolve))
+  })
+  const fromSpace = (): string => playback.rewrite(video, 'index.m3u8', body(1))
+  const rewritten = (text: string): string =>
+    rewriteMediaPlaylist(text, uri => playback.sign(video, uri))
+
+  it('answers from the Space within about a second when Valkey does not', async function () {
+    const started = Date.now()
+    const viewers = await Promise.all([
+      playback.live(video),
+      playback.live(video)
+    ])
+    const took = Date.now() - started
+    expect(took).within(900, 1500)
+    expect(viewers).deep.equals([fromSpace(), fromSpace()])
+    expect(spaceReads).equals(1)
+    expect(valkey.reloads).length(1)
+    // The copy is gone, and Valkey is not asked again for a second.
+    expect(playback.following?.size).equals(0)
+    const quick = Date.now()
+    expect(await playback.live(video)).equals(fromSpace())
+    expect(Date.now() - quick).below(500)
+    expect(valkey.reloads).length(1)
+    expect(logged).deep.equals([
+      'live playlists: Valkey did not answer for vid_stall in 1000 ms; reading the Space'
+    ])
+  })
+
+  it('ignores a late answer, and serves what the next read finds', async function () {
+    const stalled = new SpacePlayback(
+      { space, expiresSec: 3600, fetch: async () => new Response(body(1)) },
+      () => time,
+      {
+        client: valkey.client,
+        subscriber: valkey.subscriber,
+        prefix,
+        readTimeoutMs: 20,
+        log: line => logged.push(line)
+      }
+    )
+    await new Promise(resolve => setImmediate(resolve))
+    expect(await stalled.live(video)).equals(fromSpace())
+    // A second on, the next request asks Valkey again, and it answers.
+    time += 1000
+    const next = stalled.live(video)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(valkey.reloads).length(2)
+    valkey.reloads[1].resolve([[body(2)], '2'])
+    expect(await next).equals(rewritten(body(2)))
+    // The first read's answer, stale, lands after it timed out.
+    valkey.reloads[0].resolve([[body(7)], '1'])
+    valkey.reloads.length = 0
+    await new Promise(resolve => setImmediate(resolve))
+    expect(await stalled.live(video)).equals(rewritten(body(2)))
+    expect(stalled.following?.size).equals(1)
+    expect(valkey.reloads).length(0)
+  })
+
+  it('drops a copy whose update stalls, and ignores its late entries', async function () {
+    const stalled = new SpacePlayback(
+      { space, expiresSec: 3600, fetch: async () => new Response(body(1)) },
+      () => time,
+      {
+        client: valkey.client,
+        subscriber: valkey.subscriber,
+        prefix,
+        readTimeoutMs: 20,
+        log: line => logged.push(line)
+      }
+    )
+    await new Promise(resolve => setImmediate(resolve))
+    const first = stalled.live(video)
+    await new Promise(resolve => setImmediate(resolve))
+    valkey.reloads[0].resolve([[body(2)], '3'])
+    expect(await first).equals(rewritten(body(2)))
+    valkey.notify(3, 3)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(valkey.ranges).length(1)
+    expect(await stalled.live(video)).equals(fromSpace())
+    expect(stalled.following?.size).equals(0)
+    // Its LRANGE answers late, on a copy nobody holds: not applied.
+    valkey.ranges[0].resolve([piece(2)])
+    await new Promise(resolve => setImmediate(resolve))
+    time += 1000
+    const again = stalled.live(video)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(valkey.reloads).length(2)
+    valkey.reloads[1].resolve([[body(4)], '4'])
+    expect(await again).equals(rewritten(body(4)))
+    // Logged once a minute per video, however many reads stall.
+    time += 1000
+    valkey.notify(5, 4)
+    await stalled.live(video)
+    expect(logged).length(1)
+    time += 60_000
+    await stalled.live(video)
+    await stalled.live({ id: 'vid_other', spaceSecret: SECRET })
+    expect(logged).length(3)
+  })
+
+  it('ignores a late failure of a copy it already dropped', async function () {
+    const stalled = new SpacePlayback(
+      { space, expiresSec: 3600, fetch: async () => new Response(body(1)) },
+      () => time,
+      {
+        client: valkey.client,
+        subscriber: valkey.subscriber,
+        prefix,
+        readTimeoutMs: 20,
+        log: line => logged.push(line)
+      }
+    )
+    await new Promise(resolve => setImmediate(resolve))
+    expect(await stalled.live(video)).equals(fromSpace())
+    time += 1000
+    const next = stalled.live(video)
+    await new Promise(resolve => setImmediate(resolve))
+    valkey.reloads[1].resolve([[body(3)], '1'])
+    expect(await next).equals(rewritten(body(3)))
+    valkey.reloads[0].reject(new Error('connection reset'))
+    await new Promise(resolve => setImmediate(resolve))
+    // Still served from the copy, with no second of Space reads.
+    expect(await stalled.live(video)).equals(rewritten(body(3)))
+    expect(logged).length(1)
   })
 })

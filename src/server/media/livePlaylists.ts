@@ -173,6 +173,8 @@ export interface LivePlaylistOptions extends LivePlaylistClients {
   enabled?: () => boolean
   log?: (message: string) => void
   now?: () => number
+  /** How long a read waits on Valkey before the Space is read instead. */
+  readTimeoutMs?: number
 }
 
 /** A rewritten copy is kept this long after its playlist closes. */
@@ -181,6 +183,14 @@ const CLOSED_KEEP_MS = 60_000
 const IDLE_KEEP_MS = 10 * 60_000
 /** How long a list found missing, or Valkey failing, is not asked again. */
 const RETRY_MS = 1000
+/**
+ * How long a viewer waits on Valkey. The client has no command timeout, so a
+ * connection that stalls while staying open would otherwise hold every viewer
+ * of the video on this worker.
+ */
+const READ_TIMEOUT_MS = 1000
+/** A video whose reads keep timing out is logged this often. */
+const STALL_LOG_MS = 60_000
 
 interface Followed {
   video: VideoPath
@@ -207,12 +217,16 @@ interface Followed {
  * copy changes only on a notice.
  *
  * `read` answers undefined whenever it cannot vouch for a copy (not
- * following, Valkey failing, no list), and the caller reads the Space.
+ * following, Valkey failing or slower than `readTimeoutMs`, no list), and the
+ * caller reads the Space. A read that times out drops the copy, so a late
+ * answer lands on a copy nobody holds and is ignored.
  */
 export class LivePlaylists {
   private readonly followed = new Map<string, Followed>()
   /** Videos whose list was missing, or whose read failed, and when. */
   private readonly missing = new Map<string, number>()
+  /** When each video's last stalled read was logged. */
+  private readonly stalls = new Map<string, number>()
   private following = false
   private down = false
   private readonly now: () => number
@@ -301,10 +315,46 @@ export class LivePlaylists {
       held = fresh
     }
     held.readAt = at
-    await held.chain
+    if (!(await this.settles(held.chain))) {
+      this.stalled(held)
+      return undefined
+    }
     if (this.followed.get(video.id) !== held || held.count === 0)
       return undefined
     return held.rewritten
+  }
+
+  /** Whether `chain` settles within the read timeout. */
+  private async settles(chain: Promise<void>): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        chain.then(() => true),
+        new Promise<boolean>(resolve => {
+          timer = setTimeout(() => {
+            resolve(false)
+          }, this.options.readTimeoutMs ?? READ_TIMEOUT_MS)
+        })
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /** Valkey did not answer a read in time: drop the copy, ask again in a second. */
+  private stalled(held: Followed): void {
+    const { id } = held.video
+    if (this.followed.get(id) === held) this.followed.delete(id)
+    const at = this.now()
+    this.missing.set(id, at)
+    const loggedAt = this.stalls.get(id)
+    if (loggedAt != null && at - loggedAt < STALL_LOG_MS) return
+    this.stalls.set(id, at)
+    this.options.log?.(
+      `live playlists: Valkey did not answer for ${id} in ${
+        this.options.readTimeoutMs ?? READ_TIMEOUT_MS
+      } ms; reading the Space`
+    )
   }
 
   private usable(): boolean {
@@ -343,6 +393,7 @@ export class LivePlaylists {
         held.count,
         notice.n - 1
       )
+      if (this.followed.get(held.video.id) !== held) return
       if (entries.length !== notice.n - held.count) {
         await this.reload(held)
         return
@@ -388,8 +439,9 @@ export class LivePlaylists {
   }
 
   private fail(held: Followed, error: unknown): void {
-    if (this.followed.get(held.video.id) === held)
-      this.followed.delete(held.video.id)
+    // A late failure of a copy already dropped says nothing about the next.
+    if (this.followed.get(held.video.id) !== held) return
+    this.followed.delete(held.video.id)
     this.missing.set(held.video.id, this.now())
     this.options.log?.(`live playlists: ${String(error)}`)
   }
@@ -403,5 +455,7 @@ export class LivePlaylists {
         this.followed.delete(id)
     for (const [id, failedAt] of this.missing)
       if (at - failedAt >= RETRY_MS) this.missing.delete(id)
+    for (const [id, loggedAt] of this.stalls)
+      if (at - loggedAt >= STALL_LOG_MS) this.stalls.delete(id)
   }
 }

@@ -119,6 +119,24 @@ export interface PlaylistSource {
   space: SpaceSettings
   /** How long a presigned URL lasts. */
   expiresSec: number
+  /** How long a playlist read from the Space may take, body included. */
+  timeoutMs?: number
+}
+
+/**
+ * A Space read that takes longer rejects, as a failed one does. One read of an
+ * open playlist is shared by every viewer of the video on a worker, so with no
+ * limit one that hung would hold them all.
+ */
+const SPACE_READ_TIMEOUT_MS = 5000
+
+async function spaceRead(
+  source: PlaylistSource,
+  url: string
+): Promise<Response> {
+  return await (source.fetch ?? globalThis.fetch)(url, {
+    signal: AbortSignal.timeout(source.timeoutMs ?? SPACE_READ_TIMEOUT_MS)
+  })
 }
 
 /**
@@ -146,10 +164,9 @@ export class PlaylistCache {
     if (held != null) return held
 
     const { space, expiresSec } = this.source
-    const doFetch = this.source.fetch ?? globalThis.fetch
     const url = presignGetUrl({ ...space, key, expiresSec })
 
-    const response = await doFetch(url)
+    const response = await spaceRead(this.source, url)
     if (!response.ok) {
       await response.body?.cancel()
       return undefined
@@ -307,7 +324,8 @@ export class SpacePlayback {
   }
 
   private async readOpen(video: VideoPath): Promise<string | undefined> {
-    const response = await (this.source.fetch ?? globalThis.fetch)(
+    const response = await spaceRead(
+      this.source,
       presignGetUrl({
         ...this.source.space,
         key: spaceKey(video, 'index.m3u8'),
