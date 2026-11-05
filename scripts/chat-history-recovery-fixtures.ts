@@ -370,6 +370,20 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
       environment.CHAT_UI_PROFILE_DIR =
         values.scenario === 'S6' ? peerProfile : profile
       environment.CHAT_UI_ARTIFACTS = join(out, 'results')
+      mkdirSync(environment.CHAT_UI_ARTIFACTS, { mode: 0o700 })
+      if (values.scenario === 'reviewNavigation') {
+        const rooms = new Set<string>()
+        for (let index = 0; index < 20; index++) {
+          const room = await client.createDm([
+            people.Ha.userId,
+            people.Hs.userId
+          ])
+          assert.notEqual(room.id, protectedRoom.id)
+          assert(!rooms.has(room.id), 'Distinct list rows are required')
+          rooms.add(room.id)
+        }
+        privateJson(join(out, 'list-padding.json'), { ids: [...rooms] })
+      }
       if (['S4full', 'currentHistoryReply'].includes(values.scenario)) {
         produce('src/app/chat/chatUiFollowup.e2e.ts', 'historyFixture')
         const history = JSON.parse(readFileSync(shared, 'utf8'))
