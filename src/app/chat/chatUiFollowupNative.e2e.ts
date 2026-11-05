@@ -1401,8 +1401,21 @@ async function main(): Promise<void> {
         api,
         device: m,
         open,
-        openScope: async id => {
+        openScope: async (id, expected) => {
           await m.openLink({ link: `${fixture.scheme}://chat/${id}` })
+          await until('Native permission scope must open', async () => {
+            const labels = strings(flatten(await m.hierarchy()))
+            if (
+              platform === 'ios' &&
+              labels.includes('Open in “TeamStation”?')
+            ) {
+              await tapVisibleControl(m, 'Open')
+              return undefined
+            }
+            return labels.some(label => label.includes(expected))
+              ? true
+              : undefined
+          })
         },
         hold: async (id, body) => {
           await physicalMessageHold(m, `chat-message-${id}`, body, 550)

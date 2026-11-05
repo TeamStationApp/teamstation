@@ -34,7 +34,7 @@ export async function nativeRecoveryPermissions(options: {
     tapOn: (options: object) => Promise<unknown>
   }
   open: () => Promise<void>
-  openScope: (id: string) => Promise<void>
+  openScope: (id: string, expected: string) => Promise<void>
   hold: (id: string, body: string) => Promise<void>
 }): Promise<object> {
   const input = JSON.parse(readFileSync(options.inputFile, 'utf8')) as {
@@ -106,7 +106,10 @@ export async function nativeRecoveryPermissions(options: {
       !readOnly.closed,
     'Actual native actor must have a read-only announcement scope'
   )
-  await options.openScope(readOnly.id)
+  await options.openScope(
+    readOnly.id,
+    'Only season staff post here. You can react.'
+  )
   await blocked(
     'Only season staff post here. You can react.',
     'read-only-blocked'
@@ -127,7 +130,10 @@ export async function nativeRecoveryPermissions(options: {
     row => row.id === input.conversationId
   )
   assert(closed?.closed === true && !closed.canPost)
-  await options.openScope(input.conversationId)
+  await options.openScope(
+    input.conversationId,
+    'This chat is closed. You can read it, but not post.'
+  )
   await blocked(
     'This chat is closed. You can read it, but not post.',
     'closed-blocked'
@@ -142,7 +148,7 @@ export async function nativeRecoveryPermissions(options: {
     posts
   )
   await api.leaveDm(input.conversationId)
-  await options.openScope(input.conversationId)
+  await options.openScope(input.conversationId, 'Chat could not be opened.')
   await blocked('Chat could not be opened.', 'removed-blocked')
   await assert.rejects(
     async () => await api.chatMessages(input.conversationId),
