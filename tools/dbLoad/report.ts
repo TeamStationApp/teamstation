@@ -27,6 +27,14 @@ export interface Measurements {
   postAt: number[]
   /** Each whole second, since the epoch, in which a frame arrived. */
   frameSeconds: number[]
+  /** Live viewers that began watching. */
+  viewersStarted: number
+  /** Playlists the viewers were sent, master and media alike. */
+  playlistRequests: number
+  /** Playlist bytes each viewer was sent over the wire, by its number. */
+  playlistBytesByViewer: number[]
+  /** Media answers by the CDN's cache status: `HIT`, `MISS`, `NONE` with no CDN. */
+  mediaRequestsByCache: Record<string, number>
 }
 
 /** A worst-case event that ran during the load, in ms since the epoch. */
@@ -161,6 +169,118 @@ export function slowestRequests(
     .slice(0, limit)
 }
 
+/** Whether a cache status is a hit at the edge: the last cache's, when several answer. */
+export function isCacheHit(status: string): boolean {
+  const edge = status.split(',').pop()?.trim() ?? ''
+  return /HIT/.test(edge)
+}
+
+/**
+ * The statements streaming sends, by their text in `pg_stat_statements`, so a
+ * run of the base build and one of this branch count the same things. Each
+ * statement goes to the first group it matches.
+ */
+export const STREAMING_QUERIES: ReadonlyArray<{
+  name: string
+  pattern: RegExp
+}> = [
+  {
+    name: "playlist route's videos select",
+    pattern:
+      /^select "hidden", "storage", "spaces_verified_at"(, "space_secret")? from "videos" where "id" = \$1$/
+  },
+  {
+    name: 'sync query',
+    pattern:
+      /"live_streams"\."key_cipher" as "keyCipher"[\s\S]* from "live_streams"/
+  },
+  {
+    name: 'status writes',
+    pattern: /^update "?live_streams"? set "?status"? =/
+  },
+  {
+    name: 'videos reads by id',
+    pattern: /^select [\s\S]* from "?videos"? where "?(videos"?\.)?"?id"? = \$1/
+  }
+]
+
+export interface StreamingQuery {
+  name: string
+  calls: number
+  perSecond: number
+  /** How many distinct statements the group's calls came from. */
+  statements: number
+}
+
+/** Each streaming query's calls over the run, and a second. */
+export function streamingQueries(
+  statements: Statement[],
+  seconds: number
+): StreamingQuery[] {
+  const groups = STREAMING_QUERIES.map(group => ({
+    name: group.name,
+    calls: 0,
+    perSecond: 0,
+    statements: 0
+  }))
+  for (const statement of statements) {
+    const at = STREAMING_QUERIES.findIndex(group =>
+      group.pattern.test(statement.query)
+    )
+    if (at < 0) continue
+    groups[at].calls += statement.calls
+    groups[at].statements += 1
+  }
+  for (const group of groups)
+    group.perSecond = seconds > 0 ? group.calls / seconds : 0
+  return groups
+}
+
+export interface StreamingFigures {
+  streamsStarted: number
+  viewers: number
+  playlistRequests: number
+  playlistBytes: number
+  /** Null with no viewers, rather than a zero that reads as a saving. */
+  playlistBytesPerViewer: number | null
+  mediaRequests: number
+  mediaByCache: Record<string, number>
+  /** The share of media answers the CDN served from its cache, 0 to 1. */
+  cacheHitShare: number | null
+  /** Null without `pg_stat_statements`. */
+  queries: StreamingQuery[] | null
+}
+
+export function streamingFigures(
+  m: Measurements,
+  statements: Statement[] | null,
+  seconds: number
+): StreamingFigures {
+  const playlistBytes = m.playlistBytesByViewer.reduce(
+    (sum, bytes) => sum + (bytes ?? 0),
+    0
+  )
+  const mediaRequests = Object.values(m.mediaRequestsByCache).reduce(
+    (sum, n) => sum + n,
+    0
+  )
+  const hits = Object.entries(m.mediaRequestsByCache)
+    .filter(([status]) => isCacheHit(status))
+    .reduce((sum, [, n]) => sum + n, 0)
+  return {
+    streamsStarted: m.streamsStarted,
+    viewers: m.viewersStarted,
+    playlistRequests: m.playlistRequests,
+    playlistBytes,
+    playlistBytesPerViewer:
+      m.viewersStarted === 0 ? null : playlistBytes / m.viewersStarted,
+    mediaRequests,
+    mediaByCache: m.mediaRequestsByCache,
+    cacheHitShare: mediaRequests === 0 ? null : hits / mediaRequests,
+    queries: statements == null ? null : streamingQueries(statements, seconds)
+  }
+}
+
 export interface ReportData {
   title: string
   seconds: number
@@ -179,7 +299,8 @@ export interface ReportData {
   socketsOpened: number
   peakSocketOpensPerSecond: number
   streamsStarted: number
-  /** Everything that could have answered 503: requests, and socket opens. */
+  streaming: StreamingFigures
+  /** Everything that could have answered 503: requests, playlists, and socket opens. */
   answers: number
   rig: RigLoad | null
   events: EventFigures[]
@@ -246,9 +367,10 @@ export function buildReport(input: ReportInput): ReportData {
     : null
   const per = (count: number): number | null =>
     statementsTotal == null || count === 0 ? null : statementsTotal / count
+  const seconds = (input.finishedAt - input.startedAt) / 1000
   return {
     title: input.title,
-    seconds: (input.finishedAt - input.startedAt) / 1000,
+    seconds,
     connections: connectionFigures(samples),
     peakLockWaiters: Math.max(0, ...samples.map(row => row.lockWaiters)),
     peakObjectLockWaiters: Math.max(
@@ -272,7 +394,12 @@ export function buildReport(input: ReportInput): ReportData {
       ...Object.values(m.socketOpensBySecond)
     ),
     streamsStarted: m.streamsStarted,
-    answers: m.requests.length + m.socketsOpened,
+    streaming: streamingFigures(
+      m,
+      hasStatements ? input.statements : null,
+      seconds
+    ),
+    answers: m.requests.length + m.playlistRequests + m.socketsOpened,
     rig: input.rig ?? null,
     events: eventFigures(input.events ?? [], m.postMs, m.postAt),
     statementsPerDelivery: per(m.postMs.length),
@@ -290,6 +417,58 @@ const ms = (value: number | null): string =>
   value == null ? 'no data' : `${value.toFixed(1)} ms`
 const figure = (value: number | null): string =>
   value == null ? 'no data' : value.toFixed(1)
+
+/**
+ * The streaming section. The devops stress report reads it from the rig's
+ * report by its heading and by its `playlist bytes`, `playlist requests` and
+ * `cache hits` lines, so those keep their names.
+ */
+function bytesDetail(data: StreamingFigures, minutes: number): string {
+  const parts: string[] = []
+  if (minutes > 0 && data.playlistBytesPerViewer != null)
+    parts.push(
+      `${(data.playlistBytesPerViewer / minutes).toFixed(0)} B a minute`
+    )
+  if (data.playlistRequests > 0)
+    parts.push(
+      `${(data.playlistBytes / data.playlistRequests).toFixed(0)} B a request`
+    )
+  parts.push(`${data.playlistBytes} B to ${data.viewers} viewers`)
+  return parts.join(', ')
+}
+
+export function renderStreaming(
+  data: StreamingFigures,
+  seconds: number
+): string[] {
+  const minutes = seconds / 60
+  const media = Object.entries(data.mediaByCache)
+    .sort(([, a], [, b]) => b - a)
+    .map(([status, n]) => `${status} ${n}`)
+    .join(', ')
+  return [
+    '## Streaming',
+    `streams started: ${data.streamsStarted}`,
+    `live viewers: ${data.viewers}`,
+    `playlist requests: ${data.playlistRequests}`,
+    data.playlistBytesPerViewer == null
+      ? 'playlist bytes per viewer: no viewers'
+      : `playlist bytes per viewer: ${data.playlistBytesPerViewer.toFixed(0)} B over the wire (${bytesDetail(data, minutes)})`,
+    `media requests: ${data.mediaRequests}${media === '' ? '' : ` (${media})`}`,
+    data.cacheHitShare == null
+      ? 'cache hits: no media requests'
+      : `cache hits: ${(data.cacheHitShare * 100).toFixed(1)}% of ${data.mediaRequests} media requests`,
+    ...(data.queries == null
+      ? ['streaming queries: no data (no pg_stat_statements)']
+      : [
+          'streaming queries:',
+          ...data.queries.map(
+            row =>
+              `  ${row.name}: ${row.calls} calls, ${row.perSecond.toFixed(2)} a second`
+          )
+        ])
+  ]
+}
 
 /** A report a person reads, one figure a line. */
 export function renderReport(data: ReportData): string {
@@ -328,6 +507,8 @@ export function renderReport(data: ReportData): string {
     `total: ${figure(data.statementsTotal)}`,
     `per delivery (each scoring post): ${figure(data.statementsPerDelivery)}`,
     `per frame sent: ${figure(data.statementsPerFrame)}`,
+    '',
+    ...renderStreaming(data.streaming, data.seconds),
     '',
     '## Errors',
     `total: ${data.errorTotal}`,
@@ -396,8 +577,9 @@ export function assertThresholds(
   const refused =
     (data.errors['too-many-clients'] ?? 0) + (options.tooManyClients ?? 0)
   if (refused > 0) missed.push(`too many clients: seen ${refused} times`)
+  // A media 503 is the CDN's or the Space's, not the servers'.
   const unavailable = Object.entries(data.errors)
-    .filter(([kind]) => /(^|-)503$/.test(kind))
+    .filter(([kind]) => /(^|-)503$/.test(kind) && !kind.startsWith('media-'))
     .reduce((sum, [, count]) => sum + count, 0)
   if (data.answers === 0) missed.push('503 rate: no requests answered')
   else if (unavailable / data.answers >= limit.rate503)
