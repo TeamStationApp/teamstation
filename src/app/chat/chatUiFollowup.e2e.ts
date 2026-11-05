@@ -55,9 +55,7 @@ interface Device {
   }) => Promise<unknown>
   scrollUntilVisible: (options: {
     element: { css: string }
-    from?: { css: string }
     direction: string
-    maxScrolls?: number
     centerElement?: boolean
     timeout?: number
   }) => Promise<unknown>
@@ -1897,16 +1895,8 @@ async function historyFixture(daemon: Daemon): Promise<void> {
   }
   const reply = async (id: string, body: string): Promise<string> => {
     const selector = `[data-testid="chat-message-${id}"]`
-    await m.scrollUntilVisible({
-      element: { css: selector },
-      from: { css: '[data-testid="chat-message-history"]' },
-      direction: 'UP',
-      maxScrolls: 50,
-      timeout: 60000,
-      centerElement: true
-    })
     await m.evalBrowserScript({
-      script: `const row=document.querySelector(${JSON.stringify(selector)});row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));await new Promise(r=>setTimeout(r,250));return true`
+      script: `const pane=document.querySelector('[data-testid="chat-message-pane"]');const history=[...pane.querySelectorAll('div')].find(x=>getComputedStyle(x).overflowY==='auto');if(!history)throw new Error('Message history scroller missing');for(let n=0;n<120;n++){history.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:-800}));const row=document.querySelector(${JSON.stringify(selector)});if(row){row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));await new Promise(r=>setTimeout(r,250));return true}history.scrollTop=Math.max(0,history.scrollTop-800);history.dispatchEvent(new Event('scroll'));await new Promise(r=>setTimeout(r,250))}throw new Error('Older fixture reply target did not load')`
     })
     await m.tapOn({ css: selector + ' [aria-label="Reply"]' })
     await m.assertVisible({ text: 'Replying to You' })
