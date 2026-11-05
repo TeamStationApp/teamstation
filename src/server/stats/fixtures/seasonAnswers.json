@@ -1,0 +1,2456 @@
+{
+  "GET /seasons/sea_seasonAnswers01/teams as 101": [
+    {
+      "id": "tem_seasonAnswers01",
+      "name": "Answers Aces",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 21,
+        "l": 21,
+        "t": 7,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers02",
+      "name": "Answers Bats",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 21,
+        "l": 19,
+        "t": 5,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers03",
+      "name": "Answers Cubs",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 16,
+        "l": 21,
+        "t": 7,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers04",
+      "name": "Answers Cubs",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": "Cub",
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 21,
+        "l": 21,
+        "t": 4,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers05",
+      "name": "Answers Dogs",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 20,
+        "l": 17,
+        "t": 6,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers06",
+      "name": "Answers Elks",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 24,
+        "l": 17,
+        "t": 4,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers07",
+      "name": "Answers Foxes",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 24,
+        "l": 16,
+        "t": 7,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers08",
+      "name": "Answers Gulls",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": "Gul",
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 21,
+        "l": 20,
+        "t": 5,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers09",
+      "name": "Answers Hens",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 20,
+        "l": 20,
+        "t": 5,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers10",
+      "name": "Answers Ibis",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 20,
+        "l": 19,
+        "t": 4,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers11",
+      "name": "Answers Jays",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 21,
+        "l": 20,
+        "t": 4,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers12",
+      "name": "Answers Kites",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": "Kit",
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 17,
+        "l": 21,
+        "t": 5,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers13",
+      "name": "Answers Lynx",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": true,
+      "seasonCategory": "exhibition",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 17,
+        "l": 24,
+        "t": 3,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers14",
+      "name": "Answers Moles",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "unscheduled",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_seasonAnswers15",
+      "name": "Answers Newts",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 18,
+        "l": 23,
+        "t": 6,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers16",
+      "name": "Answers Owls",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": "Owl",
+      "exhibition": false,
+      "seasonCategory": "unscheduled",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_seasonAnswers17",
+      "name": "Answers Pikes",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "exhibition",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 1,
+        "l": 0,
+        "t": 0,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers18",
+      "name": "Answers Quail",
+      "kind": "external",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": true,
+      "seasonCategory": "exhibition",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 0,
+        "l": 1,
+        "t": 1,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers19",
+      "name": "Answers Rams",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "exhibition",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": {
+        "w": 0,
+        "l": 1,
+        "t": 0,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers20",
+      "name": "Answers Seals",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": "Sea",
+      "exhibition": false,
+      "seasonCategory": "unscheduled",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_seasonAnswers21",
+      "name": "Answers Terns",
+      "kind": "external",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "exhibition",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_seasonAnswers23",
+      "name": "Answers Voles",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": false,
+      "logoUrl": null,
+      "record": null
+    }
+  ],
+  "GET /seasons/sea_seasonAnswers01/teams as 105": [
+    {
+      "id": "tem_seasonAnswers01",
+      "name": "Answers Aces",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 21,
+        "l": 21,
+        "t": 7,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers02",
+      "name": "Answers Bats",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 21,
+        "l": 19,
+        "t": 5,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers03",
+      "name": "Answers Cubs",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 16,
+        "l": 21,
+        "t": 7,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers04",
+      "name": "Answers Cubs",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": "Cub",
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 21,
+        "l": 21,
+        "t": 4,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers05",
+      "name": "Answers Dogs",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 20,
+        "l": 17,
+        "t": 6,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers06",
+      "name": "Answers Elks",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 24,
+        "l": 17,
+        "t": 4,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers07",
+      "name": "Answers Foxes",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 24,
+        "l": 16,
+        "t": 7,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers08",
+      "name": "Answers Gulls",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": "Gul",
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 21,
+        "l": 20,
+        "t": 5,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers09",
+      "name": "Answers Hens",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 20,
+        "l": 20,
+        "t": 5,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers10",
+      "name": "Answers Ibis",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 20,
+        "l": 19,
+        "t": 4,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers11",
+      "name": "Answers Jays",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 21,
+        "l": 20,
+        "t": 4,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers12",
+      "name": "Answers Kites",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": "Kit",
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 17,
+        "l": 21,
+        "t": 5,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers13",
+      "name": "Answers Lynx",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": true,
+      "seasonCategory": "exhibition",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 17,
+        "l": 24,
+        "t": 3,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers14",
+      "name": "Answers Moles",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "unscheduled",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_seasonAnswers15",
+      "name": "Answers Newts",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 18,
+        "l": 23,
+        "t": 6,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers16",
+      "name": "Answers Owls",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": "Owl",
+      "exhibition": false,
+      "seasonCategory": "unscheduled",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_seasonAnswers17",
+      "name": "Answers Pikes",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "exhibition",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 1,
+        "l": 0,
+        "t": 0,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers18",
+      "name": "Answers Quail",
+      "kind": "external",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": true,
+      "seasonCategory": "exhibition",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 0,
+        "l": 1,
+        "t": 1,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers19",
+      "name": "Answers Rams",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "exhibition",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": {
+        "w": 0,
+        "l": 1,
+        "t": 0,
+        "seasonName": null
+      }
+    },
+    {
+      "id": "tem_seasonAnswers20",
+      "name": "Answers Seals",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": "Sea",
+      "exhibition": false,
+      "seasonCategory": "unscheduled",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_seasonAnswers21",
+      "name": "Answers Terns",
+      "kind": "external",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "exhibition",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_seasonAnswers23",
+      "name": "Answers Voles",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    }
+  ],
+  "GET /seasons/sea_seasonAnswers01/standings as 101": [
+    {
+      "teamId": "tem_seasonAnswers17",
+      "teamName": "Answers Pikes",
+      "teamKind": "full",
+      "w": 1,
+      "l": 0,
+      "t": 0,
+      "runsFor": 4,
+      "runsAgainst": 2,
+      "played": 1,
+      "winningPct": 1,
+      "runDifferential": 2,
+      "gamesBehind": 0,
+      "streak": "W1",
+      "home": {
+        "w": 1,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers07",
+      "teamName": "Answers Foxes",
+      "teamKind": "full",
+      "w": 24,
+      "l": 16,
+      "t": 7,
+      "runsFor": 196,
+      "runsAgainst": 175,
+      "played": 47,
+      "winningPct": 0.585,
+      "runDifferential": 21,
+      "gamesBehind": -3.5,
+      "streak": "W4",
+      "home": {
+        "w": 12,
+        "l": 8,
+        "t": 3
+      },
+      "away": {
+        "w": 12,
+        "l": 8,
+        "t": 4
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers06",
+      "teamName": "Answers Elks",
+      "teamKind": "full",
+      "w": 24,
+      "l": 17,
+      "t": 4,
+      "runsFor": 191,
+      "runsAgainst": 172,
+      "played": 45,
+      "winningPct": 0.578,
+      "runDifferential": 19,
+      "gamesBehind": -3,
+      "streak": "W2",
+      "home": {
+        "w": 12,
+        "l": 8,
+        "t": 2
+      },
+      "away": {
+        "w": 12,
+        "l": 9,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers05",
+      "teamName": "Answers Dogs",
+      "teamKind": "full",
+      "w": 20,
+      "l": 17,
+      "t": 6,
+      "runsFor": 174,
+      "runsAgainst": 168,
+      "played": 43,
+      "winningPct": 0.535,
+      "runDifferential": 6,
+      "gamesBehind": -1,
+      "streak": "T1",
+      "home": {
+        "w": 10,
+        "l": 8,
+        "t": 4
+      },
+      "away": {
+        "w": 10,
+        "l": 9,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers02",
+      "teamName": "Answers Bats",
+      "teamKind": "full",
+      "w": 21,
+      "l": 19,
+      "t": 5,
+      "runsFor": 174,
+      "runsAgainst": 174,
+      "played": 45,
+      "winningPct": 0.522,
+      "runDifferential": 0,
+      "gamesBehind": -0.5,
+      "streak": "W5",
+      "home": {
+        "w": 11,
+        "l": 9,
+        "t": 3
+      },
+      "away": {
+        "w": 10,
+        "l": 10,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers10",
+      "teamName": "Answers Ibis",
+      "teamKind": "full",
+      "w": 20,
+      "l": 19,
+      "t": 4,
+      "runsFor": 180,
+      "runsAgainst": 174,
+      "played": 43,
+      "winningPct": 0.512,
+      "runDifferential": 6,
+      "gamesBehind": 0,
+      "streak": "L1",
+      "home": {
+        "w": 9,
+        "l": 11,
+        "t": 2
+      },
+      "away": {
+        "w": 11,
+        "l": 8,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers08",
+      "teamName": "Answers Gulls",
+      "teamKind": "full",
+      "w": 21,
+      "l": 20,
+      "t": 5,
+      "runsFor": 196,
+      "runsAgainst": 188,
+      "played": 46,
+      "winningPct": 0.511,
+      "runDifferential": 8,
+      "gamesBehind": 0,
+      "streak": "L1",
+      "home": {
+        "w": 10,
+        "l": 10,
+        "t": 2
+      },
+      "away": {
+        "w": 11,
+        "l": 10,
+        "t": 3
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers11",
+      "teamName": "Answers Jays",
+      "teamKind": "full",
+      "w": 21,
+      "l": 20,
+      "t": 4,
+      "runsFor": 171,
+      "runsAgainst": 177,
+      "played": 45,
+      "winningPct": 0.511,
+      "runDifferential": -6,
+      "gamesBehind": 0,
+      "streak": "W5",
+      "home": {
+        "w": 11,
+        "l": 10,
+        "t": 2
+      },
+      "away": {
+        "w": 10,
+        "l": 10,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers01",
+      "teamName": "Answers Aces",
+      "teamKind": "full",
+      "w": 21,
+      "l": 21,
+      "t": 7,
+      "runsFor": 191,
+      "runsAgainst": 190,
+      "played": 49,
+      "winningPct": 0.5,
+      "runDifferential": 1,
+      "gamesBehind": 0.5,
+      "streak": "W2",
+      "home": {
+        "w": 9,
+        "l": 11,
+        "t": 3
+      },
+      "away": {
+        "w": 12,
+        "l": 10,
+        "t": 4
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers04",
+      "teamName": "Answers Cubs",
+      "teamKind": "full",
+      "w": 21,
+      "l": 21,
+      "t": 4,
+      "runsFor": 195,
+      "runsAgainst": 195,
+      "played": 46,
+      "winningPct": 0.5,
+      "runDifferential": 0,
+      "gamesBehind": 0.5,
+      "streak": "L5",
+      "home": {
+        "w": 11,
+        "l": 9,
+        "t": 3
+      },
+      "away": {
+        "w": 10,
+        "l": 12,
+        "t": 1
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers09",
+      "teamName": "Answers Hens",
+      "teamKind": "full",
+      "w": 20,
+      "l": 20,
+      "t": 5,
+      "runsFor": 171,
+      "runsAgainst": 177,
+      "played": 45,
+      "winningPct": 0.5,
+      "runDifferential": -6,
+      "gamesBehind": 0.5,
+      "streak": "L5",
+      "home": {
+        "w": 11,
+        "l": 9,
+        "t": 2
+      },
+      "away": {
+        "w": 9,
+        "l": 11,
+        "t": 3
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers12",
+      "teamName": "Answers Kites",
+      "teamKind": "full",
+      "w": 17,
+      "l": 21,
+      "t": 5,
+      "runsFor": 178,
+      "runsAgainst": 179,
+      "played": 43,
+      "winningPct": 0.453,
+      "runDifferential": -1,
+      "gamesBehind": 2.5,
+      "streak": "W1",
+      "home": {
+        "w": 9,
+        "l": 12,
+        "t": 2
+      },
+      "away": {
+        "w": 8,
+        "l": 9,
+        "t": 3
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers15",
+      "teamName": "Answers Newts",
+      "teamKind": "full",
+      "w": 18,
+      "l": 23,
+      "t": 6,
+      "runsFor": 176,
+      "runsAgainst": 184,
+      "played": 47,
+      "winningPct": 0.447,
+      "runDifferential": -8,
+      "gamesBehind": 3,
+      "streak": "L3",
+      "home": {
+        "w": 8,
+        "l": 11,
+        "t": 3
+      },
+      "away": {
+        "w": 10,
+        "l": 12,
+        "t": 3
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers03",
+      "teamName": "Answers Cubs",
+      "teamKind": "full",
+      "w": 16,
+      "l": 21,
+      "t": 7,
+      "runsFor": 169,
+      "runsAgainst": 177,
+      "played": 44,
+      "winningPct": 0.443,
+      "runDifferential": -8,
+      "gamesBehind": 3,
+      "streak": "L1",
+      "home": {
+        "w": 9,
+        "l": 11,
+        "t": 3
+      },
+      "away": {
+        "w": 7,
+        "l": 10,
+        "t": 4
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers13",
+      "teamName": "Answers Lynx",
+      "teamKind": "full",
+      "w": 17,
+      "l": 24,
+      "t": 3,
+      "runsFor": 172,
+      "runsAgainst": 194,
+      "played": 44,
+      "winningPct": 0.42,
+      "runDifferential": -22,
+      "gamesBehind": 4,
+      "streak": "L4",
+      "home": {
+        "w": 8,
+        "l": 12,
+        "t": 2
+      },
+      "away": {
+        "w": 9,
+        "l": 12,
+        "t": 1
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers18",
+      "teamName": "Answers Quail",
+      "teamKind": "external",
+      "w": 0,
+      "l": 1,
+      "t": 1,
+      "runsFor": 5,
+      "runsAgainst": 7,
+      "played": 2,
+      "winningPct": 0.25,
+      "runDifferential": -2,
+      "gamesBehind": 1,
+      "streak": "T1",
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 1
+      },
+      "away": {
+        "w": 0,
+        "l": 1,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers19",
+      "teamName": "Answers Rams",
+      "teamKind": "full",
+      "w": 0,
+      "l": 1,
+      "t": 0,
+      "runsFor": 1,
+      "runsAgainst": 6,
+      "played": 1,
+      "winningPct": 0,
+      "runDifferential": -5,
+      "gamesBehind": 1,
+      "streak": "L1",
+      "home": {
+        "w": 0,
+        "l": 1,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers14",
+      "teamName": "Answers Moles",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers16",
+      "teamName": "Answers Owls",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers20",
+      "teamName": "Answers Seals",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers21",
+      "teamName": "Answers Terns",
+      "teamKind": "external",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers23",
+      "teamName": "Answers Voles",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    }
+  ],
+  "GET /seasons/sea_seasonAnswers01/standings?includeExhibitions=true as 101": [
+    {
+      "teamId": "tem_seasonAnswers17",
+      "teamName": "Answers Pikes",
+      "teamKind": "full",
+      "w": 1,
+      "l": 0,
+      "t": 0,
+      "runsFor": 4,
+      "runsAgainst": 2,
+      "played": 1,
+      "winningPct": 1,
+      "runDifferential": 2,
+      "gamesBehind": 0,
+      "streak": "W1",
+      "home": {
+        "w": 1,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers07",
+      "teamName": "Answers Foxes",
+      "teamKind": "full",
+      "w": 24,
+      "l": 16,
+      "t": 7,
+      "runsFor": 196,
+      "runsAgainst": 175,
+      "played": 47,
+      "winningPct": 0.585,
+      "runDifferential": 21,
+      "gamesBehind": -3.5,
+      "streak": "W4",
+      "home": {
+        "w": 12,
+        "l": 8,
+        "t": 3
+      },
+      "away": {
+        "w": 12,
+        "l": 8,
+        "t": 4
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers06",
+      "teamName": "Answers Elks",
+      "teamKind": "full",
+      "w": 24,
+      "l": 17,
+      "t": 4,
+      "runsFor": 191,
+      "runsAgainst": 172,
+      "played": 45,
+      "winningPct": 0.578,
+      "runDifferential": 19,
+      "gamesBehind": -3,
+      "streak": "W2",
+      "home": {
+        "w": 12,
+        "l": 8,
+        "t": 2
+      },
+      "away": {
+        "w": 12,
+        "l": 9,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers05",
+      "teamName": "Answers Dogs",
+      "teamKind": "full",
+      "w": 20,
+      "l": 17,
+      "t": 6,
+      "runsFor": 174,
+      "runsAgainst": 168,
+      "played": 43,
+      "winningPct": 0.535,
+      "runDifferential": 6,
+      "gamesBehind": -1,
+      "streak": "T1",
+      "home": {
+        "w": 10,
+        "l": 8,
+        "t": 4
+      },
+      "away": {
+        "w": 10,
+        "l": 9,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers02",
+      "teamName": "Answers Bats",
+      "teamKind": "full",
+      "w": 21,
+      "l": 19,
+      "t": 5,
+      "runsFor": 174,
+      "runsAgainst": 174,
+      "played": 45,
+      "winningPct": 0.522,
+      "runDifferential": 0,
+      "gamesBehind": -0.5,
+      "streak": "W5",
+      "home": {
+        "w": 11,
+        "l": 9,
+        "t": 3
+      },
+      "away": {
+        "w": 10,
+        "l": 10,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers10",
+      "teamName": "Answers Ibis",
+      "teamKind": "full",
+      "w": 20,
+      "l": 19,
+      "t": 4,
+      "runsFor": 180,
+      "runsAgainst": 174,
+      "played": 43,
+      "winningPct": 0.512,
+      "runDifferential": 6,
+      "gamesBehind": 0,
+      "streak": "L1",
+      "home": {
+        "w": 9,
+        "l": 11,
+        "t": 2
+      },
+      "away": {
+        "w": 11,
+        "l": 8,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers08",
+      "teamName": "Answers Gulls",
+      "teamKind": "full",
+      "w": 21,
+      "l": 20,
+      "t": 5,
+      "runsFor": 196,
+      "runsAgainst": 188,
+      "played": 46,
+      "winningPct": 0.511,
+      "runDifferential": 8,
+      "gamesBehind": 0,
+      "streak": "L1",
+      "home": {
+        "w": 10,
+        "l": 10,
+        "t": 2
+      },
+      "away": {
+        "w": 11,
+        "l": 10,
+        "t": 3
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers11",
+      "teamName": "Answers Jays",
+      "teamKind": "full",
+      "w": 21,
+      "l": 20,
+      "t": 4,
+      "runsFor": 171,
+      "runsAgainst": 177,
+      "played": 45,
+      "winningPct": 0.511,
+      "runDifferential": -6,
+      "gamesBehind": 0,
+      "streak": "W5",
+      "home": {
+        "w": 11,
+        "l": 10,
+        "t": 2
+      },
+      "away": {
+        "w": 10,
+        "l": 10,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers01",
+      "teamName": "Answers Aces",
+      "teamKind": "full",
+      "w": 21,
+      "l": 21,
+      "t": 7,
+      "runsFor": 191,
+      "runsAgainst": 190,
+      "played": 49,
+      "winningPct": 0.5,
+      "runDifferential": 1,
+      "gamesBehind": 0.5,
+      "streak": "W2",
+      "home": {
+        "w": 9,
+        "l": 11,
+        "t": 3
+      },
+      "away": {
+        "w": 12,
+        "l": 10,
+        "t": 4
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers04",
+      "teamName": "Answers Cubs",
+      "teamKind": "full",
+      "w": 21,
+      "l": 21,
+      "t": 4,
+      "runsFor": 195,
+      "runsAgainst": 195,
+      "played": 46,
+      "winningPct": 0.5,
+      "runDifferential": 0,
+      "gamesBehind": 0.5,
+      "streak": "L5",
+      "home": {
+        "w": 11,
+        "l": 9,
+        "t": 3
+      },
+      "away": {
+        "w": 10,
+        "l": 12,
+        "t": 1
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers09",
+      "teamName": "Answers Hens",
+      "teamKind": "full",
+      "w": 20,
+      "l": 20,
+      "t": 5,
+      "runsFor": 171,
+      "runsAgainst": 177,
+      "played": 45,
+      "winningPct": 0.5,
+      "runDifferential": -6,
+      "gamesBehind": 0.5,
+      "streak": "L5",
+      "home": {
+        "w": 11,
+        "l": 9,
+        "t": 2
+      },
+      "away": {
+        "w": 9,
+        "l": 11,
+        "t": 3
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers12",
+      "teamName": "Answers Kites",
+      "teamKind": "full",
+      "w": 17,
+      "l": 21,
+      "t": 5,
+      "runsFor": 178,
+      "runsAgainst": 179,
+      "played": 43,
+      "winningPct": 0.453,
+      "runDifferential": -1,
+      "gamesBehind": 2.5,
+      "streak": "W1",
+      "home": {
+        "w": 9,
+        "l": 12,
+        "t": 2
+      },
+      "away": {
+        "w": 8,
+        "l": 9,
+        "t": 3
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers15",
+      "teamName": "Answers Newts",
+      "teamKind": "full",
+      "w": 18,
+      "l": 23,
+      "t": 6,
+      "runsFor": 176,
+      "runsAgainst": 184,
+      "played": 47,
+      "winningPct": 0.447,
+      "runDifferential": -8,
+      "gamesBehind": 3,
+      "streak": "L3",
+      "home": {
+        "w": 8,
+        "l": 11,
+        "t": 3
+      },
+      "away": {
+        "w": 10,
+        "l": 12,
+        "t": 3
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers03",
+      "teamName": "Answers Cubs",
+      "teamKind": "full",
+      "w": 16,
+      "l": 21,
+      "t": 7,
+      "runsFor": 169,
+      "runsAgainst": 177,
+      "played": 44,
+      "winningPct": 0.443,
+      "runDifferential": -8,
+      "gamesBehind": 3,
+      "streak": "L1",
+      "home": {
+        "w": 9,
+        "l": 11,
+        "t": 3
+      },
+      "away": {
+        "w": 7,
+        "l": 10,
+        "t": 4
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers13",
+      "teamName": "Answers Lynx",
+      "teamKind": "full",
+      "w": 17,
+      "l": 24,
+      "t": 3,
+      "runsFor": 172,
+      "runsAgainst": 194,
+      "played": 44,
+      "winningPct": 0.42,
+      "runDifferential": -22,
+      "gamesBehind": 4,
+      "streak": "L4",
+      "home": {
+        "w": 8,
+        "l": 12,
+        "t": 2
+      },
+      "away": {
+        "w": 9,
+        "l": 12,
+        "t": 1
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers18",
+      "teamName": "Answers Quail",
+      "teamKind": "external",
+      "w": 0,
+      "l": 1,
+      "t": 1,
+      "runsFor": 5,
+      "runsAgainst": 7,
+      "played": 2,
+      "winningPct": 0.25,
+      "runDifferential": -2,
+      "gamesBehind": 1,
+      "streak": "T1",
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 1
+      },
+      "away": {
+        "w": 0,
+        "l": 1,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers19",
+      "teamName": "Answers Rams",
+      "teamKind": "full",
+      "w": 0,
+      "l": 1,
+      "t": 0,
+      "runsFor": 1,
+      "runsAgainst": 6,
+      "played": 1,
+      "winningPct": 0,
+      "runDifferential": -5,
+      "gamesBehind": 1,
+      "streak": "L1",
+      "home": {
+        "w": 0,
+        "l": 1,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers14",
+      "teamName": "Answers Moles",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers16",
+      "teamName": "Answers Owls",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers20",
+      "teamName": "Answers Seals",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers21",
+      "teamName": "Answers Terns",
+      "teamKind": "external",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers23",
+      "teamName": "Answers Voles",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    }
+  ],
+  "GET /seasons/sea_seasonAnswers01/standings?includeExhibitions=false as 101": [
+    {
+      "teamId": "tem_seasonAnswers06",
+      "teamName": "Answers Elks",
+      "teamKind": "full",
+      "w": 23,
+      "l": 15,
+      "t": 4,
+      "runsFor": 178,
+      "runsAgainst": 155,
+      "played": 42,
+      "winningPct": 0.595,
+      "runDifferential": 23,
+      "gamesBehind": 0,
+      "streak": "W2",
+      "home": {
+        "w": 11,
+        "l": 7,
+        "t": 2
+      },
+      "away": {
+        "w": 12,
+        "l": 8,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers07",
+      "teamName": "Answers Foxes",
+      "teamKind": "full",
+      "w": 21,
+      "l": 14,
+      "t": 7,
+      "runsFor": 173,
+      "runsAgainst": 153,
+      "played": 42,
+      "winningPct": 0.583,
+      "runDifferential": 20,
+      "gamesBehind": 0.5,
+      "streak": "W4",
+      "home": {
+        "w": 11,
+        "l": 7,
+        "t": 3
+      },
+      "away": {
+        "w": 10,
+        "l": 7,
+        "t": 4
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers05",
+      "teamName": "Answers Dogs",
+      "teamKind": "full",
+      "w": 19,
+      "l": 16,
+      "t": 4,
+      "runsFor": 164,
+      "runsAgainst": 157,
+      "played": 39,
+      "winningPct": 0.538,
+      "runDifferential": 7,
+      "gamesBehind": 2.5,
+      "streak": "L2",
+      "home": {
+        "w": 10,
+        "l": 7,
+        "t": 3
+      },
+      "away": {
+        "w": 9,
+        "l": 9,
+        "t": 1
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers02",
+      "teamName": "Answers Bats",
+      "teamKind": "full",
+      "w": 19,
+      "l": 17,
+      "t": 4,
+      "runsFor": 155,
+      "runsAgainst": 154,
+      "played": 40,
+      "winningPct": 0.525,
+      "runDifferential": 1,
+      "gamesBehind": 3,
+      "streak": "W5",
+      "home": {
+        "w": 10,
+        "l": 9,
+        "t": 2
+      },
+      "away": {
+        "w": 9,
+        "l": 8,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers11",
+      "teamName": "Answers Jays",
+      "teamKind": "full",
+      "w": 20,
+      "l": 18,
+      "t": 4,
+      "runsFor": 159,
+      "runsAgainst": 159,
+      "played": 42,
+      "winningPct": 0.524,
+      "runDifferential": 0,
+      "gamesBehind": 3,
+      "streak": "W4",
+      "home": {
+        "w": 10,
+        "l": 9,
+        "t": 2
+      },
+      "away": {
+        "w": 10,
+        "l": 9,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers08",
+      "teamName": "Answers Gulls",
+      "teamKind": "full",
+      "w": 18,
+      "l": 17,
+      "t": 4,
+      "runsFor": 164,
+      "runsAgainst": 154,
+      "played": 39,
+      "winningPct": 0.513,
+      "runDifferential": 10,
+      "gamesBehind": 3.5,
+      "streak": "L1",
+      "home": {
+        "w": 8,
+        "l": 9,
+        "t": 2
+      },
+      "away": {
+        "w": 10,
+        "l": 8,
+        "t": 2
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers04",
+      "teamName": "Answers Cubs",
+      "teamKind": "full",
+      "w": 21,
+      "l": 20,
+      "t": 3,
+      "runsFor": 190,
+      "runsAgainst": 188,
+      "played": 44,
+      "winningPct": 0.511,
+      "runDifferential": 2,
+      "gamesBehind": 3.5,
+      "streak": "L5",
+      "home": {
+        "w": 11,
+        "l": 9,
+        "t": 2
+      },
+      "away": {
+        "w": 10,
+        "l": 11,
+        "t": 1
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers09",
+      "teamName": "Answers Hens",
+      "teamKind": "full",
+      "w": 18,
+      "l": 19,
+      "t": 5,
+      "runsFor": 154,
+      "runsAgainst": 161,
+      "played": 42,
+      "winningPct": 0.488,
+      "runDifferential": -7,
+      "gamesBehind": 4.5,
+      "streak": "L5",
+      "home": {
+        "w": 9,
+        "l": 9,
+        "t": 2
+      },
+      "away": {
+        "w": 9,
+        "l": 10,
+        "t": 3
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers10",
+      "teamName": "Answers Ibis",
+      "teamKind": "full",
+      "w": 17,
+      "l": 19,
+      "t": 3,
+      "runsFor": 158,
+      "runsAgainst": 160,
+      "played": 39,
+      "winningPct": 0.474,
+      "runDifferential": -2,
+      "gamesBehind": 5,
+      "streak": "L1",
+      "home": {
+        "w": 8,
+        "l": 11,
+        "t": 2
+      },
+      "away": {
+        "w": 9,
+        "l": 8,
+        "t": 1
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers12",
+      "teamName": "Answers Kites",
+      "teamKind": "full",
+      "w": 15,
+      "l": 17,
+      "t": 5,
+      "runsFor": 151,
+      "runsAgainst": 152,
+      "played": 37,
+      "winningPct": 0.473,
+      "runDifferential": -1,
+      "gamesBehind": 5,
+      "streak": "W1",
+      "home": {
+        "w": 8,
+        "l": 10,
+        "t": 2
+      },
+      "away": {
+        "w": 7,
+        "l": 7,
+        "t": 3
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers01",
+      "teamName": "Answers Aces",
+      "teamKind": "full",
+      "w": 18,
+      "l": 21,
+      "t": 6,
+      "runsFor": 168,
+      "runsAgainst": 177,
+      "played": 45,
+      "winningPct": 0.467,
+      "runDifferential": -9,
+      "gamesBehind": 5.5,
+      "streak": "W2",
+      "home": {
+        "w": 7,
+        "l": 11,
+        "t": 3
+      },
+      "away": {
+        "w": 11,
+        "l": 10,
+        "t": 3
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers03",
+      "teamName": "Answers Cubs",
+      "teamKind": "full",
+      "w": 14,
+      "l": 18,
+      "t": 6,
+      "runsFor": 144,
+      "runsAgainst": 153,
+      "played": 38,
+      "winningPct": 0.447,
+      "runDifferential": -9,
+      "gamesBehind": 6,
+      "streak": "L1",
+      "home": {
+        "w": 8,
+        "l": 10,
+        "t": 2
+      },
+      "away": {
+        "w": 6,
+        "l": 8,
+        "t": 4
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers13",
+      "teamName": "Answers Lynx",
+      "teamKind": "full",
+      "w": 16,
+      "l": 21,
+      "t": 2,
+      "runsFor": 158,
+      "runsAgainst": 175,
+      "played": 39,
+      "winningPct": 0.436,
+      "runDifferential": -17,
+      "gamesBehind": 6.5,
+      "streak": "L4",
+      "home": {
+        "w": 7,
+        "l": 11,
+        "t": 2
+      },
+      "away": {
+        "w": 9,
+        "l": 10,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers15",
+      "teamName": "Answers Newts",
+      "teamKind": "full",
+      "w": 16,
+      "l": 22,
+      "t": 6,
+      "runsFor": 157,
+      "runsAgainst": 170,
+      "played": 44,
+      "winningPct": 0.432,
+      "runDifferential": -13,
+      "gamesBehind": 7,
+      "streak": "L3",
+      "home": {
+        "w": 6,
+        "l": 11,
+        "t": 3
+      },
+      "away": {
+        "w": 10,
+        "l": 11,
+        "t": 3
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers14",
+      "teamName": "Answers Moles",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers16",
+      "teamName": "Answers Owls",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers17",
+      "teamName": "Answers Pikes",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers19",
+      "teamName": "Answers Rams",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers20",
+      "teamName": "Answers Seals",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_seasonAnswers23",
+      "teamName": "Answers Voles",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "away": {
+        "w": 0,
+        "l": 0,
+        "t": 0
+      },
+      "logoUrl": null
+    }
+  ],
+  "schedulingTeams": [
+    {
+      "id": "tem_seasonAnswers01",
+      "name": "Answers Aces",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers02",
+      "name": "Answers Bats",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers03",
+      "name": "Answers Cubs",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers04",
+      "name": "Answers Cubs",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers05",
+      "name": "Answers Dogs",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers06",
+      "name": "Answers Elks",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers07",
+      "name": "Answers Foxes",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers08",
+      "name": "Answers Gulls",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers09",
+      "name": "Answers Hens",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers10",
+      "name": "Answers Ibis",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers11",
+      "name": "Answers Jays",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers12",
+      "name": "Answers Kites",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers13",
+      "name": "Answers Lynx",
+      "exhibition": true
+    },
+    {
+      "id": "tem_seasonAnswers14",
+      "name": "Answers Moles",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers16",
+      "name": "Answers Owls",
+      "exhibition": false
+    },
+    {
+      "id": "tem_seasonAnswers17",
+      "name": "Answers Pikes",
+      "exhibition": false
+    }
+  ]
+}

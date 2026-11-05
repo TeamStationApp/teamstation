@@ -15,7 +15,8 @@ import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
 import { teamRecords } from '../stats/records'
 import {
   seasonParticipantCounts,
-  seasonParticipants
+  seasonParticipants,
+  seasonResults
 } from '../stats/seasonTeams'
 import { scheduleOf } from './seasons'
 
@@ -185,10 +186,11 @@ describe('season reader projections and privacy', function () {
     expect(participants.teams.find(team => team.id === id)).deep.include({
       activeMember: false,
       parentMember: true,
-      seasonCategory: 'unscheduled'
+      seasonCategory: 'unscheduled',
+      playsInSeason: false
     })
     expect(
-      participants.games.some(
+      (await seasonResults(f.h.db, f.seasonA)).some(
         game => game.homeTeamId === id || game.awayTeamId === id
       )
     ).equals(false)

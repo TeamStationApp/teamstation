@@ -188,7 +188,7 @@ export function seasonRoutes(
       const records = await teamRecords(db, { seasonId })
 
       res.json(
-        teams.map(({ activeMember, parentMember, ...team }) => {
+        teams.map(({ activeMember, parentMember, playsInSeason, ...team }) => {
           const record = records.find(row => row.teamId === team.id)
           return {
             ...team,
