@@ -1216,6 +1216,23 @@ describe('useMultiCam on live angles', function () {
 describe('useMultiCam buffering', function () {
   // A is two minutes in at 120 s; B, which started a minute later, at 60 s.
 
+  it('recognizes a native frozen picture despite an advancing optimistic clock', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({}, {}, tiles => {
+      Object.assign(tiles.A, { reportedTime: 120 })
+      Object.assign(tiles.B, { reportedTime: 60 })
+    })
+    await ticks(1)
+    // A's interpolation moves, but no native picture has advanced. B really
+    // reports another second; neither tile is seeking or buffering.
+    tiles.A.currentTime = 121
+    tiles.B.currentTime = 61
+    Object.assign(tiles.B, { reportedTime: 61 })
+    await ticks(1)
+    expect(mc().tiles.A?.stalledSince).a('number')
+    expect(mc().tiles.B?.stalledSince ?? null).equals(null)
+  })
+
   it('holds every tile until each holds five seconds, then plays them together', async function () {
     this.timeout(5000)
     const { mc, tiles } = await grid({}, {}, tiles => {
