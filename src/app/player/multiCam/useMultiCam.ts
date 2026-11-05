@@ -1006,7 +1006,8 @@ export function useMultiCam(
   const joinAhead = (
     video: VideoSummary,
     element: TileHandle,
-    leadSec: number
+    leadSec: number,
+    attemptStarted = Date.now()
   ): void => {
     stopJoining(video.id)
     const fromMs = gameNow(video.id) ?? atWallRef.current
@@ -1033,6 +1034,11 @@ export function useMultiCam(
           stopJoining(video.id)
           return
         }
+        if (Date.now() - attemptStarted >= 10_000) {
+          stopJoining(video.id)
+          askAgain(video.id)
+          return
+        }
         const now = gameNow(video.id)
         const there = wallAt(video, element.currentTime)
         // Nothing to follow: as good a guess as any is the lead itself.
@@ -1045,7 +1051,12 @@ export function useMultiCam(
         if (ready) {
           start()
         } else if (now - there > 250) {
-          joinAhead(video, element, Math.min(leadSec * 2, JOIN_LEAD_SEC * 4))
+          joinAhead(
+            video,
+            element,
+            Math.min(leadSec * 2, JOIN_LEAD_SEC * 4),
+            attemptStarted
+          )
         }
       }, JOIN_POLL_MS)
     )
@@ -1569,7 +1580,10 @@ export function useMultiCam(
       // every tick, so a frozen picture reports a position that keeps
       // changing.
       const quality = tileElement.getVideoPlaybackQuality?.()
-      const drawn = quality?.totalVideoFrames ?? tileElement.currentTime
+      const drawn =
+        quality?.totalVideoFrames ??
+        tileElement.reportedTime ??
+        tileElement.currentTime
       const lastDrawn = frames.current.get(video.id)
       const progressed = lastDrawn == null || drawn !== lastDrawn
       frames.current.set(video.id, drawn)
