@@ -4,6 +4,39 @@ import { describe, it } from 'mocha'
 import { PlaybackRecovery } from './playbackRecovery'
 
 describe('TV per-camera playback recovery', () => {
+  it('lets a slow native replacement finish, but bounds an attempt that never opens', () => {
+    const watch = new PlaybackRecovery(0)
+    watch.error(100)
+    expect(watch.retry(1100, false, false)).equals(true)
+    watch.opening(1100)
+    for (let now = 2100; now < 21100; now += 1000)
+      expect(watch.retry(now, false, false)).equals(false)
+    expect(watch.retry(21100, false, false)).equals(true)
+    watch.opening(21100)
+    watch.progress(10, 33100)
+    watch.progress(10.25, 33350)
+    expect(watch.retry(34000, true, false)).equals(false)
+    expect(watch.retry(53350, true, false)).equals(true)
+  })
+  it('retries a replacement error without waiting out its opening deadline', () => {
+    const watch = new PlaybackRecovery(0)
+    watch.error(100)
+    expect(watch.retry(1100, false, false)).equals(true)
+    watch.opening(1100)
+    watch.error(1500)
+    expect(watch.retry(3100, false, false)).equals(true)
+    watch.opening(3100)
+    watch.readyPaused(3500)
+    expect(watch.retry(25000, false, false)).equals(false)
+  })
+  it('keeps the total retry budget bounded even while a decoder is opening', () => {
+    const watch = new PlaybackRecovery(0)
+    watch.error(100)
+    expect(watch.retry(299000, false, false)).equals(true)
+    watch.opening(299000)
+    expect(watch.retry(300100, false, false)).equals(false)
+    expect(watch.exhausted).equals(true)
+  })
   it('retries errors while paused, backs off, and bounds a silent failure', () => {
     const watch = new PlaybackRecovery(0)
     watch.error(100)

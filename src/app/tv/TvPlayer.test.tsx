@@ -257,7 +257,7 @@ afterEach(async () => {
   closed = false
 })
 describe('TV game playback entry', () => {
-  it('still retries when queued progress arrives after a source error', async () => {
+  it('retries after stale error progress and lets the replacement finish opening', async () => {
     count = 1
     const originalInterval = globalThis.setInterval
     const originalNow = Date.now
@@ -302,6 +302,24 @@ describe('TV game playback entry', () => {
         document.querySelector('video'),
         'failed decoder is replaced'
       ).not.equals(before)
+      const replacement = document.querySelector('video')!
+      for (let second = 0; second < 12; second++) {
+        now += 1000
+        await act(async () => {
+          recover!()
+          await pause()
+        })
+        expect(document.querySelector('video'), 'opening decoder survives').equals(
+          replacement
+        )
+      }
+      // A decoder that never opens must still get another bounded attempt.
+      now += 8000
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(document.querySelector('video')).not.equals(replacement)
     } finally {
       globalThis.setInterval = originalInterval
       Date.now = originalNow

@@ -377,6 +377,7 @@ export function TvPlayer({
           )
           setBuffering(previous => previous.filter(i => i !== index))
           setFailures(previous => [...new Set([...previous, index])])
+          recovery.current.get(index)?.opening(Date.now())
           setAngles([...loaded])
         } finally {
           if (active) refreshing.current.delete(index)

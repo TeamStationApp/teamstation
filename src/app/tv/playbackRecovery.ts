@@ -5,6 +5,7 @@ export class PlaybackRecovery {
   private failed = false
   private attempts = 0
   private due = 0
+  private openingUntil = 0
   private began: number | null = null
   exhausted = false
 
@@ -16,6 +17,7 @@ export class PlaybackRecovery {
     const advanced = this.position != null && seconds > this.position + 0.05
     if (advanced) {
       this.advancedAt = now
+      this.openingUntil = 0
       this.failed = false
       this.attempts = 0
       this.began = null
@@ -26,6 +28,7 @@ export class PlaybackRecovery {
   }
 
   readyPaused(now: number): void {
+    this.openingUntil = 0
     this.failed = false
     this.advancedAt = now
     this.began = null
@@ -33,7 +36,13 @@ export class PlaybackRecovery {
     this.exhausted = false
   }
 
+  /** A fetched URL starts a native attempt, which needs time to open and restore. */
+  opening(now: number): void {
+    this.openingUntil = now + 20_000
+  }
+
   error(now: number): void {
+    this.openingUntil = 0
     this.failed = true
     this.began ??= now
     if (this.due < now) this.due = now + 1000
@@ -52,7 +61,7 @@ export class PlaybackRecovery {
       this.exhausted = true
       return false
     }
-    if (now < this.due) return false
+    if (now < this.due || now < this.openingUntil) return false
     this.failed = true
     this.attempts++
     this.due = now + Math.min(10_000, 1000 * 2 ** this.attempts)
