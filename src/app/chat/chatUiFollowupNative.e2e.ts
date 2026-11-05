@@ -21,6 +21,7 @@ import {
 import { passwordBytes } from '../../common/passwordProtocol'
 import { nativeArgon } from '../../server/auth/passwords'
 import { chatRowText, nativeRowInList } from '../../test/chatRows'
+import { nativeHistoryRecovery } from './chatHistoryRecoveryNative.e2e'
 
 interface Bounds {
   x: number
@@ -1366,6 +1367,44 @@ async function main(): Promise<void> {
       }
       pass(
         'upgraded retained device and restart preserve exact messages, native image and safety words without a fresh boundary'
+      )
+      return
+    }
+    if (
+      process.argv[2] === 'recovery-draft' ||
+      process.argv[2] === 'recovery-retry'
+    ) {
+      stage = 'native-history-recovery'
+      results.historyRecovery = await nativeHistoryRecovery({
+        inputFile: required('CHAT_UI_NATIVE_RECOVERY_FIXTURE'),
+        relayFile: required('CHAT_RECOVERY_RELAY'),
+        results: resultDirectory,
+        platform,
+        actorUserId: fixture.actor.userId,
+        conversationId: fixture.conversationId,
+        apiUrl: fixture.apiUrl,
+        api,
+        device: m,
+        open,
+        reveal: async id => {
+          await revealMessage(fixture.conversationId, id)
+        },
+        composerValue: async () => await composerValue(m),
+        stop: async () => {
+          await m.stopApp({ appId: fixture.appId })
+        },
+        restart: async () => {
+          await m.launchApp({
+            appId: fixture.appId,
+            ...(platform === 'ios'
+              ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+              : {})
+          })
+          await m.assertVisible({ text: 'Chat', timeout: 60000 })
+        }
+      })
+      pass(
+        'native historical recovery preserves current composition and retained messages'
       )
       return
     }

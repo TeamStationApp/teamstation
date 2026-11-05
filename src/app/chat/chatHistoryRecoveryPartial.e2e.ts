@@ -16,12 +16,14 @@ import {
   controlRecovery,
   type RecoveryControl
 } from '../../test/chatRecoveryControl'
+import { recoveryFixtureEnvironment } from '../../test/chatRecoveryFixtureContract'
 import { recoveryServerControl } from '../../test/chatRecoveryServerControl'
 import { readSeedTable } from '../../test/chatSeedTable'
 import {
   draftRecovery,
   type RecoveryDraftDevice
 } from './chatHistoryRecoveryDraft.e2e'
+import { dmTitle } from './engine/engine'
 
 interface Device extends MaestroDevice {
   uploadFile: RecoveryDraftDevice['uploadFile']
@@ -50,6 +52,11 @@ export async function partialRecovery(
     artifacts: string
   }
   assert.equal(f.disposable, true)
+  const nativePreparation = process.env.CHAT_RECOVERY_PREPARE_NATIVE
+  if (nativePreparation != null) {
+    assert(['ios', 'android'].includes(nativePreparation))
+    assert(scenario === 'E5' || scenario === 'E7')
+  }
   for (const value of [f.origin, f.apiUrl]) {
     const url = new URL(value)
     assert.equal(url.protocol, 'http:')
@@ -616,6 +623,107 @@ export async function partialRecovery(
     await holderTwo.assertVisible({ text: 'Locked message', timeout: 30000 })
     await send(holderTwo, second)
     assert(!(await body(holderTwo)).includes(first))
+    if (nativePreparation != null) {
+      const posts = (await client.chatMessages(dm.id)).filter(
+        row => row.kind === 'post'
+      )
+      assert.equal(posts.length, olderBodies.length + 2)
+      const current = posts.at(-1)!
+      const oldPosts = posts.slice(0, -1).map((post, index) => ({
+        id: post.id,
+        body: [first, ...olderBodies][index]
+      }))
+      const nativeFile = join(f.artifacts, 'native-fixture.json')
+      const recoveryFile = join(f.artifacts, 'native-recovery.json')
+      const linkFile = join(f.artifacts, 'native-link-request.json')
+      writeFileSync(
+        nativeFile,
+        JSON.stringify(
+          {
+            synthetic: true,
+            disposable: true,
+            appId: 'app.teamstation.app',
+            scheme: 'teamstation',
+            apiUrl: f.apiUrl,
+            actor: people.Hk,
+            conversationId: dm.id,
+            conversationLabel: dmTitle(
+              people.Hk.userId,
+              undefined,
+              dm.people ?? []
+            ),
+            scopeName: 'Direct message',
+            scopePill: 'Direct message',
+            targetText: second,
+            replyText: second,
+            originalMessageIds: [current.id],
+            draft: 'Keep this draft while older history is recovered',
+            probePost: 'Current native message during history recovery',
+            orientationPolicy: 'portrait-only'
+          },
+          null,
+          2
+        ),
+        { mode: 0o600, flag: 'wx' }
+      )
+      writeFileSync(
+        recoveryFile,
+        JSON.stringify(
+          {
+            synthetic: true,
+            source: f.source,
+            scenario,
+            platform: nativePreparation,
+            actorUserId: people.Hk.userId,
+            conversationId: dm.id,
+            oldPosts,
+            current: { id: current.id, body: second },
+            anchor: oldPosts[Math.floor(oldPosts.length / 2)],
+            origin: f.origin,
+            holder: {
+              profile: join(f.artifacts, 'profiles', 'first-holder'),
+              email: people.Hs.email,
+              password: people.Hs.password
+            }
+          },
+          null,
+          2
+        ),
+        { mode: 0o600, flag: 'wx' }
+      )
+      writeFileSync(
+        join(f.artifacts, 'native-env.sh'),
+        recoveryFixtureEnvironment({
+          TS_CHAT_WEB_URL: f.origin,
+          TS_CHAT_API_URL: f.apiUrl,
+          CHAT_UI_SEED_FILE: f.seedFile,
+          CHAT_UI_ARTIFACTS: f.artifacts,
+          CHAT_UI_NATIVE_FIXTURE_FILE: nativeFile,
+          CHAT_UI_NATIVE_RECOVERY_FIXTURE: recoveryFile,
+          CHAT_UI_NATIVE_RESULTS: join(f.artifacts, 'native-results'),
+          CHAT_UI_NATIVE_OBSERVER_CACHE: join(
+            f.artifacts,
+            'native-observer.json'
+          ),
+          CHAT_UI_NATIVE_LINK_REQUEST: linkFile,
+          CHAT_UI_LOCKED_LINK_REQUEST: linkFile,
+          CHAT_UI_NATIVE_STAGE: 'M4',
+          CHAT_UI_NATIVE_DISPOSABLE: '1',
+          CHAT_PLATFORM: nativePreparation,
+          CHAT_UI_LOCKED_ACTOR: 'Hk',
+          CHAT_UI_LOCKED_CONVERSATION: dm.id,
+          CHAT_UI_LOCKED_ORIGINAL: current.id,
+          CHAT_UI_LOCKED_ORIGINAL_BODY: second,
+          CHAT_UI_PROFILE_DIR: join(f.artifacts, 'profiles', 'second-holder'),
+          CHAT_RECOVERY_FIXTURE_SOURCE: f.source
+        }),
+        { mode: 0o600, flag: 'wx' }
+      )
+      console.log(
+        `${scenario}: native fixture prepared with old holders offline and current access independent of history`
+      )
+      return
+    }
     if (scenario === 'E11') {
       const recipientApi = await asPerson('Hk')
       const beforeDevices = await recipientApi.chatDevices()
