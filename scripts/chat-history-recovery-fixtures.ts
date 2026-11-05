@@ -258,9 +258,16 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
         await nativeArgon(passwordBytes(password), parameters)
     })
     await client.signInWithPassword(actor.email, actor.password)
-    const protectedRoom = (await client.chatConversations()).find(
+    let protectedRoom = (await client.chatConversations()).find(
       room => room.title === 'Hawks Members'
     )
+    const deadline = Date.now() + 30000
+    while (protectedRoom == null && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 200))
+      protectedRoom = (await client.chatConversations()).find(
+        room => room.title === 'Hawks Members'
+      )
+    }
     assert(protectedRoom != null, 'Protected seeded membership is required')
     const candidates = await client.dmCandidates()
     const peers = ['Ha', 'Hs'].map(key => {
