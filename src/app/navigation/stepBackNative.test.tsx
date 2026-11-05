@@ -7,7 +7,8 @@ import {
   scoringOriginHistory,
   seedRoute,
   showRoute,
-  stepBackTo
+  stepBackTo,
+  undoStep
 } from './useAddressBar.native'
 
 describe('closing the full-screen player on a phone (U12)', function () {
@@ -55,5 +56,28 @@ describe('clearing a navbar tab on a phone', function () {
     )
     expect(currentRoute()).deep.equals({ name: 'home' })
     expect(scoringOriginHistory()).equals(1)
+  })
+})
+
+describe('Not Now on the chat age sheet, on a phone', function () {
+  it('steps back to the screen beneath when that is where it returns', function () {
+    seedRoute(null)
+    showRoute({ name: 'schedule', when: 'upcoming' })
+    showRoute({ name: 'chat' })
+    const depth = scoringOriginHistory()
+    undoStep({ name: 'schedule', when: 'upcoming' })
+    // Back from here leaves the schedule, not into the chat just declined.
+    expect(scoringOriginHistory()).equals(depth - 1)
+    expect(currentRoute()).deep.equals({ name: 'schedule', when: 'upcoming' })
+  })
+
+  it('takes the chat step’s place when it returns somewhere else', function () {
+    seedRoute(null)
+    showRoute({ name: 'schedule', when: 'upcoming' })
+    showRoute({ name: 'chat' })
+    const depth = scoringOriginHistory()
+    undoStep({ name: 'videos', when: 'all' })
+    expect(scoringOriginHistory()).equals(depth)
+    expect(currentRoute()).deep.equals({ name: 'videos', when: 'all' })
   })
 })

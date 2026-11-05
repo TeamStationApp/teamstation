@@ -7,6 +7,7 @@ import { takeCoverage } from 'node:v8'
 import { build } from 'esbuild'
 
 import { chatCoreResolvePlugin } from './chatCoreResolvePlugin.mjs'
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const directory = 'coverage/declaredAge'
@@ -26,6 +27,8 @@ run('node', ['scripts/chatCryptoBuild.mjs', 'node', 'wasm'])
 
 const specs = [
   'src/app/chat/declaredAgeGate.test.tsx',
+  'src/app/chat/ChatAgeGate.test.tsx',
+  'src/app/App.chatAge.test.tsx',
   'src/app/components/AppNav.test.tsx',
   'src/app/chat/PersonMessageButton.test.tsx',
   'src/app/chat/entityChats.test.tsx',
@@ -66,7 +69,11 @@ await build({
     'mocha',
     'chai'
   ],
-  plugins: [...webSettings.plugins, chatCoreResolvePlugin()],
+  plugins: [
+    ...webSettings.plugins,
+    chatCoreResolvePlugin(),
+    pagedListStandInPlugin()
+  ],
   define: {
     __DEV__: 'true',
     TS_CHAT_NODE_ADDON: JSON.stringify(

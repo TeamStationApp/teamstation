@@ -14,6 +14,8 @@ export const HOME_FOLLOWS = 'home.follows'
 export const HOME_GUARDED = 'home.guarded'
 export const HOME_RECENT = 'home.recent'
 export const ME_ROLES = 'me.roles'
+/** Whether this person has unlocked chat: kept, so a confirmed person stays so offline. */
+export const ME_CHAT_AGE = 'me.chatAge'
 export const GAMES_UPCOMING = 'games.upcoming'
 export const GAMES_PAST = 'games.past'
 export const GAMES_ALL = 'games.all'
@@ -51,6 +53,7 @@ const FIXED: Record<string, string> = {
   '/users?guardedBy=me': HOME_GUARDED,
   '/events?played=1&limit=1': HOME_RECENT,
   '/me/roles': ME_ROLES,
+  '/me/account/chat-age': ME_CHAT_AGE,
   '/events?when=upcoming': GAMES_UPCOMING,
   '/events?when=past': GAMES_PAST,
   '/events': GAMES_ALL,

@@ -12,7 +12,14 @@ import {
   type PublicGroup
 } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
-import { ChatGateOverride } from '../chat/DeclaredAgeGate'
+import {
+  chatAgeSheet,
+  clickPill,
+  pillTabs,
+  pressChatAge,
+  TestChatAge
+} from '../../test/chatAgeTesting'
+import type { ChatAccess } from '../chat/ChatAgeGate'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { GroupLinkChoice } from './GroupScreen'
 import { GroupScreen } from './GroupScreen'
@@ -459,44 +466,88 @@ describe('a league’s People tab', () => {
     ])
   })
 
-  it('shows a Chats pill, and drops it when chat is denied', async () => {
+  const leagueChats = (
+    api: TeamStationClient,
+    access: ChatAccess,
+    initialTab?: string
+  ): React.ReactElement => (
+    <TestChatAge access={access}>
+      <LeaguePage
+        client={api}
+        detail={detail}
+        onOpen={() => {}}
+        onCreate={() => {}}
+        onSettings={() => {}}
+        onLink={() => {}}
+        onChanged={() => {}}
+        initialTab={initialTab}
+        chats={[{ id: 'cnv_league', title: 'League chat' }]}
+        onOpenChat={() => {}}
+      />
+    </TestChatAge>
+  )
+  const settle = async (action: () => void): Promise<void> => {
+    await act(async () => {
+      action()
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+  }
+  const chatList = (): Element | null =>
+    document.querySelector('[data-testid="entity-chat-list"]')
+
+  it('always shows its Chats pill, and asks for the age sheet before listing chats', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
-    const page = (gate?: 'denied'): React.ReactElement => {
-      const screen = (
-        <LeaguePage
-          client={api}
-          detail={detail}
-          onOpen={() => {}}
-          onCreate={() => {}}
-          onSettings={() => {}}
-          onLink={() => {}}
-          onChanged={() => {}}
-          chats={[{ id: 'cnv_league', title: 'League chat' }]}
-          onOpenChat={() => {}}
-        />
-      )
-      return gate == null ? (
-        screen
-      ) : (
-        <ChatGateOverride gate={gate}>{screen}</ChatGateOverride>
-      )
-    }
-    await mount(page())
-    expect(
-      [...document.querySelectorAll('[role="tab"]')].map(
-        node => node.textContent
-      )
-    ).includes('Chats')
+    await mount(leagueChats(api, 'ask'))
+    expect(pillTabs().labels).includes('Chats')
+    await settle(() => {
+      clickPill('Teams')
+    })
+    await settle(() => {
+      clickPill('Chats')
+    })
+    expect(chatAgeSheet()).not.equals(null)
+    expect(chatList()).equals(null)
+    await settle(() => {
+      pressChatAge('decline')
+    })
+    // Back where it was, and the kept Chats page leaves no sheet behind.
+    expect(pillTabs().selected).equals('Teams')
+    expect(chatAgeSheet()).equals(null)
+    await settle(() => {
+      clickPill('Chats')
+    })
+    expect(chatAgeSheet()).not.equals(null)
+    await settle(() => {
+      pressChatAge('agree')
+    })
+    expect(chatAgeSheet()).equals(null)
+    expect(pillTabs().selected).equals('Chats')
+    expect(chatList()).not.equals(null)
+  })
+
+  it('sends a Chats address back to Seasons on Not Now, and under 13 shows only the notice', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    await mount(leagueChats(api, 'ask', 'chats'))
+    expect(chatAgeSheet()).not.equals(null)
+    await settle(() => {
+      pressChatAge('decline')
+    })
+    expect(pillTabs().selected).equals('Seasons')
     await act(async () => root?.unmount())
     document.body.replaceChildren()
-    await mount(page('denied'))
-    const labels = [...document.querySelectorAll('[role="tab"]')].map(
-      node => node.textContent
-    )
-    expect(labels).not.includes('Chats')
-    expect(labels).includes('Seasons')
-    expect(document.querySelector('[data-testid="entity-chat-list"]')).equals(
+    await mount(leagueChats(api, 'blocked'))
+    expect(pillTabs().labels).includes('Chats')
+    await settle(() => {
+      clickPill('Chats')
+    })
+    expect(document.body.textContent).includes('Chat Is for Ages 13 and Up')
+    expect(document.querySelector('[data-testid="chat-age-agree"]')).equals(
       null
     )
+    await settle(() => {
+      pressChatAge('ok')
+    })
+    expect(pillTabs().selected).equals('Seasons')
+    expect(chatList()).equals(null)
   })
 })

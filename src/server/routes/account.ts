@@ -9,6 +9,7 @@ import {
   asAccountPasswordBody,
   asAccountPrimaryBody
 } from '../../common/accountSettings'
+import { asChatAgeBody, type ChatAge } from '../../common/chatAge'
 import {
   badRequest,
   conflict,
@@ -125,6 +126,23 @@ async function lockAccount(
   return user.password_hash
 }
 
+/** Whether, how and when this account unlocked chat. */
+async function readChatAge(
+  db: Kysely<Database>,
+  userId: string
+): Promise<ChatAge> {
+  const row = await db
+    .selectFrom('users')
+    .select(['chat_age_confirmed_at', 'chat_age_source'])
+    .where('id', '=', userId)
+    .executeTakeFirstOrThrow()
+  return {
+    confirmed: row.chat_age_confirmed_at != null,
+    source: row.chat_age_source,
+    confirmedAt: row.chat_age_confirmed_at?.toISOString() ?? null
+  }
+}
+
 function accountId(req: Request): string {
   if (req.actor == null) throw unauthorized()
   if (isMachine(req.actor)) throw forbidden('Sign in to manage your account')
@@ -207,6 +225,33 @@ export function accountRoutes(
       })
       setAudit(res.locals, { entityType: 'user', entityId: userId })
       res.json(await readAccount(db, userId, options))
+    })
+  )
+  router.get(
+    '/me/account/chat-age',
+    withAsync(async (req, res) => {
+      res.json(await readChatAge(db, accountId(req)))
+    })
+  )
+  router.put(
+    '/me/account/chat-age',
+    withAsync(async (req, res) => {
+      const userId = accountId(req)
+      const { source } = cleanBody(asChatAgeBody, req.body)
+      // The first confirmation stands: a later one keeps its source and time.
+      const now = new Date()
+      await db
+        .updateTable('users')
+        .set({
+          chat_age_confirmed_at: now,
+          chat_age_source: source,
+          updated_at: now
+        })
+        .where('id', '=', userId)
+        .where('chat_age_confirmed_at', 'is', null)
+        .execute()
+      setAudit(res.locals, { entityType: 'user', entityId: userId })
+      res.json(await readChatAge(db, userId))
     })
   )
   router.put(

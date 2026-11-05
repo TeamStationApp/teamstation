@@ -11,6 +11,7 @@ import {
   TeamStationClient
 } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { mount, settle, unmount } from '../test/gameFormDom'
 import { pageOfGames } from '../test/pageOf'
@@ -25,6 +26,8 @@ import { gameFixture } from './scoring/isUnscoredGame.test'
  * the angle and never where it came from, and closing clears it.
  */
 describe('the full-screen player in the shell (U12)', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   let originals: PropertyDescriptorMap
   const originalSocket = globalThis.WebSocket
   const video = asVideoSummary({

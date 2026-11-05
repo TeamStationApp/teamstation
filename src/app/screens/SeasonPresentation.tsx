@@ -24,8 +24,8 @@ import type { GroupRef } from '../../common/groupCreation'
 import { localityLabel } from '../../common/locality'
 import type { GroupDetail, PublicGame } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
+import { type TabCorrection, useChatsTabGate } from '../chat/ChatAgeGate'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
-import { useChatAllowed } from '../chat/DeclaredAgeGate'
 import {
   Button,
   Card,
@@ -101,7 +101,7 @@ export interface SeasonPresentationProps {
   onOpenPerson?: (userId: string, name: string) => void
   onSettings?: () => void
   initialTab?: string
-  onTab?: (tab: string, correcting?: boolean) => void
+  onTab?: (tab: string, correcting?: TabCorrection) => void
   initialWhen?: When
   onWhen?: (when: When) => void
   /** Public callers supply the server's private-view permission. */
@@ -221,12 +221,11 @@ export function SeasonPresentation(
       : loadedPeople === true
   const waitingForPeople =
     initialTab === 'people' && publicDetail == null && loadedPeople == null
-  const chatOn = useChatAllowed()
   const tabs = [
     ...(mayView
       ? TABS
       : TABS.filter(item => item.id === 'schedule' || item.id === 'teams')),
-    ...(chatOn ? [{ id: 'chats' as const, label: 'Chats' }] : []),
+    { id: 'chats' as const, label: 'Chats' },
     ...(seesPeople ? [PEOPLE_TAB] : [])
   ]
   const defaultTab = mayView ? 'standings' : 'schedule'
@@ -291,7 +290,7 @@ export function SeasonPresentation(
     if (initialTab != null && initialTab !== next) onTab?.(next, true)
     // Tab validity changes when the server revokes private access.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialTab, mayView, seesPeople, waitingForPeople, chatOn])
+  }, [initialTab, mayView, seesPeople, waitingForPeople])
   useEffect(() => {
     if (initialWhen != null) setWhen(initialWhen)
   }, [initialWhen])
@@ -451,10 +450,12 @@ export function SeasonPresentation(
   const shownError = error !== '' ? error : listError
   // The first of the season's games are in, however its pills go after that.
   const opening = loading || (mayView && counts == null && shownList.loading)
-  const chooseTab = (next: TabId): void => {
+  const chooseTab = (next: TabId, correcting?: TabCorrection): void => {
     setTab(next)
-    onTab?.(next)
+    onTab?.(next, correcting)
   }
+  // Not Now on the age sheet returns to the tab chosen before Chats.
+  useChatsTabGate(tab, defaultTab, chooseTab)
   const chooseWhen = (next: When): void => {
     setWhen(next)
     onWhen?.(next)

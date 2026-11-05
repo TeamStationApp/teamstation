@@ -6,6 +6,7 @@ import { asDjGame, asSessionUser, TeamStationClient } from '../common/api'
 import { HttpError } from '../common/errors'
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, mount, press, settle, text, unmount } from '../test/gameFormDom'
 import { pageOfGames } from '../test/pageOf'
@@ -15,6 +16,8 @@ import { gameFixture } from './scoring/isUnscoredGame.test'
 import walkUpMusic from './walkup/walkUpMusic'
 
 describe('actual app membership sign-in return', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   let originals: PropertyDescriptorMap
   let signedIn: boolean
   let djSupported: boolean

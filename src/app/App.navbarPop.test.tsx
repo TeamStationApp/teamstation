@@ -14,6 +14,7 @@ import {
 } from '../common/api'
 import { asGroupDetail, asPublicGroup } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { pageOf, pageOfGames } from '../test/pageOf'
 import { App } from './App'
 
@@ -81,6 +82,8 @@ const season = asPublicGroup({
 })
 
 describe('a navbar press clears that tab', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   const proto = TeamStationClient.prototype
   const originals = Object.getOwnPropertyDescriptors(proto)
 

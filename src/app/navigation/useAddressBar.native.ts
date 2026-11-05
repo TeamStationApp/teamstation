@@ -5,7 +5,7 @@ import { appOrigin } from '../native/config'
 import { routeOfUrl } from './deepLink'
 import { type ClearedFrame, makeHistory } from './history'
 import { noteHistoryMove } from './historyMotion'
-import { type Route, routePath } from './routes'
+import { type Route, routePath, withoutTab } from './routes'
 
 /**
  * Keeps the app's idea of where it is, and a history to go back through.
@@ -112,6 +112,32 @@ export function popRoute(): void {
 export function stepBackTo(route: Route, origin?: number): void {
   const steps = origin == null ? 1 : Math.max(1, history.depth() - origin)
   for (let index = 0; index < steps; index++) history.back()
+  history.show(route, true)
+}
+
+/**
+ * Takes back the steps that opened a screen being declined — Not Now on the
+ * chat age sheet — leaving `route` on show: the step on top, and every step
+ * under it that `leaving` names (the chat list a chat link adds beneath the
+ * chat). Back a step more when the step beneath them is `route`, or its page
+ * with no tab (which shows the page's first tab), so Back does not walk into
+ * the screen just declined, otherwise `route` in the lowest one's place.
+ */
+export function undoStep(
+  route: Route,
+  leaving: (path: string) => boolean = () => false
+): void {
+  const pathOf = (step: Route | undefined): string | undefined =>
+    step == null ? undefined : routePath(step)
+  for (
+    let below = pathOf(history.previous());
+    below != null && leaving(below);
+    below = pathOf(history.previous())
+  )
+    history.back()
+  const path = routePath(route)
+  const beneath = pathOf(history.previous())
+  if (beneath === path || beneath === withoutTab(path)) history.back()
   history.show(route, true)
 }
 

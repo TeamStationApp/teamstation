@@ -45,6 +45,12 @@ describe('entity chat app routing', () => {
         isAdmin: false
       })
     proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
+    // Confirmed for chat, so the chat surfaces open without the age sheet.
+    proto.chatAge = async () => ({
+      confirmed: true,
+      source: 'self',
+      confirmedAt: '2027-04-10T12:00:00.000Z'
+    })
     proto.hasNotifications = async () => false
     proto.group = async ({ kind, id }) =>
       asGroupDetail({

@@ -13,6 +13,7 @@ import {
 } from '../common/api'
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, mount, press, settle, unmount } from '../test/gameFormDom'
 import { pageOf, pageOfGames } from '../test/pageOf'
@@ -89,6 +90,8 @@ const breakpoint = (): string | null =>
     ?.getAttribute('data-breakpoint') ?? null
 
 describe("Tess in the app's shell", () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   let originals: PropertyDescriptorMap
   let healthAnswers: Array<Health | Error>
   let signedIn: boolean

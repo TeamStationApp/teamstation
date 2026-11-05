@@ -239,6 +239,11 @@ export interface ChatSeedOptions {
   password?: string
   /** Historical migration fixtures can write the follow table of that era. */
   writeFollow?: typeof setFollow
+  /**
+   * People (by key) left without a chat age confirmation; everybody else is
+   * confirmed `self`, afresh on every run.
+   */
+  unconfirmed?: readonly string[]
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -313,7 +318,13 @@ export async function chatSeed(
         person.email == null
           ? null
           : (options.password ?? randomBytes(9).toString('base64url'))
-      const userId = await upsertPerson(trx, person, password, now)
+      const userId = await upsertPerson(
+        trx,
+        person,
+        password,
+        now,
+        options.unconfirmed?.includes(person.key) !== true
+      )
       const team = person.team
       if (team != null) {
         await trx
@@ -556,7 +567,8 @@ async function upsertPerson(
   trx: Trx,
   person: SeedPerson,
   password: string | null,
-  now: Date
+  now: Date,
+  chatAgeConfirmed: boolean
 ): Promise<string> {
   const born = person.born == null ? undefined : birthMonthOf(now, person.born)
   const values = {
@@ -568,6 +580,8 @@ async function upsertPerson(
     login_enabled: password != null,
     birth_year: born?.year ?? null,
     birth_month: born?.month ?? null,
+    chat_age_confirmed_at: chatAgeConfirmed ? now : null,
+    chat_age_source: chatAgeConfirmed ? ('self' as const) : null,
     merged_into: null,
     updated_at: new Date()
   }
@@ -623,6 +637,14 @@ export function describeSeed(seed: ChatSeed): string {
   return lines.join('\n')
 }
 
+/** `TS_CHAT_SEED_UNCONFIRMED`'s comma-separated keys, blanks dropped. */
+export function unconfirmedKeys(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map(key => key.trim())
+    .filter(key => key !== '')
+}
+
 async function main(): Promise<void> {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('The chat seed does not run in production')
@@ -634,7 +656,8 @@ async function main(): Promise<void> {
   try {
     const password = process.env.TS_CHAT_SEED_PASSWORD
     const seed = await chatSeed(db, {
-      password: password == null || password === '' ? undefined : password
+      password: password == null || password === '' ? undefined : password,
+      unconfirmed: unconfirmedKeys(process.env.TS_CHAT_SEED_UNCONFIRMED)
     })
     console.log(describeSeed(seed))
   } finally {

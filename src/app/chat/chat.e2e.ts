@@ -391,6 +391,18 @@ async function apiCall(
   )
 }
 
+/**
+ * Confirms the page's newly made account for chat, as agreeing to the age
+ * sheet does: the seed confirms its own people, and this one it never saw.
+ */
+async function confirmChatAge(page: Page): Promise<void> {
+  const answer = await apiCall(page, 'PUT', '/me/account/chat-age', {
+    source: 'self'
+  })
+  expect(answer.status).equals(200)
+  expect(answer.body?.confirmed).equals(true)
+}
+
 /** The id of the chat called `title` in the page's person's list. */
 async function chatIdOf(page: Page, title: string): Promise<string> {
   return await until(`the chat ${title}`, async () => {
@@ -646,6 +658,7 @@ describe('chat scenarios in the browser', function () {
       await typeInto(aunt, 'Sign-in code', code.split(/\s/)[0])
       await pressText(aunt, 'Join')
       await waitForText(aunt, 'You are in. Hawks is on your home screen.')
+      await confirmChatAge(aunt)
       await shot(aunt, 'e2-3-aunt-joined')
 
       // The uncle's invitation, opened by parent D signed in as D.
@@ -869,6 +882,8 @@ describe('chat scenarios in the browser', function () {
     await typeInto(newcomer, 'Sign-in code', signInCode.split(/\s/)[0])
     await pressText(newcomer, 'Join')
     await waitForText(newcomer, 'You are in.')
+    // Before any chat address, so the timings below start after it.
+    await confirmChatAge(newcomer)
 
     // Every appearance on J's screen, timed, from before the page loads.
     await newcomer.evaluateOnNewDocument(() => {

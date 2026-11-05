@@ -21,8 +21,8 @@ import { HttpError } from '../../common/errors'
 import { eventName, type PlayerRsvpCounts } from '../../common/eventInfo'
 import type { GroupDetail } from '../../common/publicGroups'
 import type { Role } from '../../common/roles'
+import { type TabCorrection, useChatsTabGate } from '../chat/ChatAgeGate'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
-import { useChatAllowed } from '../chat/DeclaredAgeGate'
 import {
   Badge,
   Card,
@@ -149,7 +149,7 @@ export interface TeamScreenProps {
    * honour: the address said one thing and the screen is showing another, so
    * the entry is corrected rather than a new one added.
    */
-  onTab?: (tab: string, correcting?: boolean) => void
+  onTab?: (tab: string, correcting?: TabCorrection) => void
   /** This team's chats the person is in, each opening from the page. */
   chats?: ChatLink[]
   onOpenChat?: (chat: ChatLink) => void
@@ -252,12 +252,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     )
   )
 
-  const chatOn = useChatAllowed()
-  const visibleTabs = chatOn ? TABS : TABS.filter(item => item.id !== 'chats')
-  const [tab, setTab] = useState<TabId>(() => {
-    const next = tabOf(initialTab)
-    return !chatOn && next === 'chats' ? 'videos' : next
-  })
+  const [tab, setTab] = useState<TabId>(tabOf(initialTab))
   const schedule = usePagedList<GameSummary>({
     listKey: `${team.id}:schedule`,
     auto: false,
@@ -296,13 +291,12 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
 
   // Browser/native Back can change the address while this team stays mounted.
   useEffect(() => {
-    const picked = tabOf(initialTab)
-    const next = !chatOn && picked === 'chats' ? 'videos' : picked
+    const next = tabOf(initialTab)
     setTab(next)
     if (initialTab != null && initialTab !== next) onTab?.(next, true)
     // React to the address, not the shell's freshly created callback.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialTab, chatOn])
+  }, [initialTab])
 
   useEffect(() => {
     let cancelled = false
@@ -427,8 +421,16 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     anchorOnRow: tab === 'schedule' && schedule.anchorId != null
   })
 
+  const chooseTab = (next: TabId, correcting?: TabCorrection): void => {
+    selectTab(next)
+    setTab(next)
+    onTab?.(next, correcting)
+  }
+  // Not Now on the age sheet returns to the tab chosen before Chats.
+  useChatsTabGate(tab, 'videos', chooseTab)
+
   // Which way a pill change slides the content.
-  const tabIndex = visibleTabs.findIndex(item => item.id === tab)
+  const tabIndex = TABS.findIndex(item => item.id === tab)
   // The latest handler under one identity: a season's cards, kept built
   // across pill changes, are drawn again only when their games change.
   const openGame = useStableCallback(onOpenGame)
@@ -506,12 +508,10 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
 
       <PillBand part={pinned.pillBand}>
         <PillTabs
-          tabs={visibleTabs}
+          tabs={TABS}
           selected={tab}
           onSelect={selected => {
-            selectTab(selected)
-            setTab(selected)
-            onTab?.(selected)
+            chooseTab(selected)
           }}
           size="compact"
           accessibilityLabel="Team sections"

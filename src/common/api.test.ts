@@ -16,6 +16,7 @@ import {
   type SaveLineupsBody,
   TeamStationClient
 } from './api'
+import { asChatAge, asChatAgeBody } from './chatAge'
 import { HttpError } from './errors'
 import { asGumboPlay } from './gumboPlay'
 import { halfOutcomes, lineScore } from './scoring/linescore'
@@ -229,6 +230,66 @@ describe('api client', function () {
       '/api/v1/users?view=administration&query=Aaron%20%26%20email%40example.com',
       '/api/v1/users?view=administration&query=&nodeAdmin=true'
     ])
+  })
+  it('reads and confirms the account\u2019s chat age, and cleans both answers', async function () {
+    const calls: Array<{ url: string; method?: string; body?: unknown }> = []
+    const answer = {
+      confirmed: true,
+      source: 'self',
+      confirmedAt: '2027-04-12T12:00:00.000Z'
+    }
+    const client = new TeamStationClient({
+      baseUrl: 'https://api.example.test/api/v1',
+      token: 'tok',
+      fetch: async (url: unknown, init?: RequestInit) => {
+        calls.push({
+          url: String(url),
+          method: init?.method,
+          body:
+            typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
+        })
+        return Response.json(
+          init?.method === 'PUT'
+            ? answer
+            : { confirmed: false, source: null, confirmedAt: null }
+        )
+      }
+    })
+    expect(await client.chatAge()).deep.equals({
+      confirmed: false,
+      source: null,
+      confirmedAt: null
+    })
+    expect(await client.confirmChatAge('self')).deep.equals(answer)
+    expect(calls).deep.equals([
+      {
+        url: 'https://api.example.test/api/v1/me/account/chat-age',
+        method: 'GET',
+        body: undefined
+      },
+      {
+        url: 'https://api.example.test/api/v1/me/account/chat-age',
+        method: 'PUT',
+        body: { source: 'self' }
+      }
+    ])
+    expect(() => asChatAge([])).throws(TypeError)
+    expect(() =>
+      asChatAge({ confirmed: true, source: 'adult', confirmedAt: null })
+    ).throws(TypeError)
+    expect(() =>
+      asChatAge({ confirmed: true, source: 'self', confirmedAt: 5 })
+    ).throws(TypeError)
+    expect(asChatAgeBody({ source: 'apple' })).deep.equals({ source: 'apple' })
+    for (const body of [
+      null,
+      [],
+      'self',
+      {},
+      { source: 'x' },
+      { source: 'self', age: 1 }
+    ])
+      expect(() => asChatAgeBody(body), JSON.stringify(body)).throws(TypeError)
   })
   it('fetches a replay step\u2019s narration with the client\u2019s session, and says where it is', async function () {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = []

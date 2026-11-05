@@ -17,8 +17,15 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import {
+  chatAgeSheet,
+  clickPill,
+  pillTabs,
+  pressChatAge,
+  TestChatAge
+} from '../../test/chatAgeTesting'
 import { pageOfGames } from '../../test/pageOf'
-import { ChatGateOverride } from '../chat/DeclaredAgeGate'
+import type { TabCorrection } from '../chat/ChatAgeGate'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { GameListOpenOptions } from './gameListOptions'
 import { staffSubtitle, TeamScreen } from './TeamScreen'
@@ -241,7 +248,7 @@ describe('TeamScreen for a fan', function () {
   it('opens public games without playback and keeps player pages and figures private', async function () {
     const { client, calls } = fakeClient()
     const opened: string[] = []
-    const tabsSaid: Array<[string, boolean | undefined]> = []
+    const tabsSaid: Array<[string, TabCorrection | undefined]> = []
     const options: Array<GameListOpenOptions | undefined> = []
     await render(
       <TeamScreen
@@ -575,7 +582,7 @@ describe('TeamScreen’s stat tables for a member', function () {
   })
 })
 
-describe('a team page with chat denied', function () {
+describe('a team page before the age sheet is agreed to', function () {
   afterEach(async function () {
     await act(async () => {
       root?.unmount()
@@ -583,10 +590,56 @@ describe('a team page with chat denied', function () {
     root = undefined
   })
 
-  it('drops the Chats pill and keeps Videos', async function () {
+  it('keeps the Chats pill, asks on it, and Not Now returns to the tab before', async function () {
     const { client } = fakeClient()
     await render(
-      <ChatGateOverride gate="denied">
+      <TestChatAge access="ask">
+        <TeamScreen
+          client={client}
+          team={hawks}
+          chats={[{ id: 'cnv_hawks', title: 'Hawks chat' }]}
+          onOpenGame={() => undefined}
+          onOpenChat={() => undefined}
+        />
+      </TestChatAge>
+    )
+    expect(tabs()).includes('Chats')
+    await act(async () => {
+      clickPill('Schedule')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    await act(async () => {
+      clickPill('Chats')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(chatAgeSheet()).not.equals(null)
+    expect(document.querySelector('[data-testid="entity-chat-list"]')).equals(
+      null
+    )
+    await act(async () => {
+      pressChatAge('decline')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(chatAgeSheet()).equals(null)
+    expect(pillTabs().selected).equals('Schedule')
+    await act(async () => {
+      clickPill('Chats')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    await act(async () => {
+      pressChatAge('agree')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(chatAgeSheet()).equals(null)
+    expect(
+      document.querySelector('[data-testid="entity-chat-list"]')
+    ).not.equals(null)
+  })
+
+  it('opens a Chats address under the sheet, and Not Now lands on Videos', async function () {
+    const { client } = fakeClient()
+    await render(
+      <TestChatAge access="ask">
         <TeamScreen
           client={client}
           team={hawks}
@@ -595,13 +648,14 @@ describe('a team page with chat denied', function () {
           onOpenGame={() => undefined}
           onOpenChat={() => undefined}
         />
-      </ChatGateOverride>
+      </TestChatAge>
     )
-    expect(tabs()).not.includes('Chats')
-    expect(document.querySelector('[data-testid="entity-chat-list"]')).equals(
-      null
-    )
-    expect(tabs()).includes('Videos')
+    expect(chatAgeSheet()).not.equals(null)
+    await act(async () => {
+      pressChatAge('decline')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(pillTabs().selected).equals('Videos')
   })
 })
 

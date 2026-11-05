@@ -6,6 +6,7 @@ import { Linking, NativeModules, Platform } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { App } from '../App'
 import { AppHeader } from '../components/AppHeader'
 import { BuildInfoModal } from '../components/BuildInfoModal'
@@ -52,6 +53,8 @@ async function press(label: string): Promise<void> {
 }
 const client = {} as unknown as TeamStationClient
 describe('OAuth consent and loaded build information', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('restores the approval address after an email sign-in completes', async () => {
     window.history.replaceState(
       null,

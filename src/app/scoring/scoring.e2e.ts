@@ -180,6 +180,13 @@ async function open(
     else if (url.pathname === '/api/v1/time') body = { now: Date.now() }
     else if (url.pathname === '/api/v1/me/notifications/summary')
       body = { hasPending: false }
+    // Confirmed for chat, as the Shell reads on sign-in.
+    else if (url.pathname === '/api/v1/me/account/chat-age')
+      body = {
+        confirmed: true,
+        source: 'self',
+        confirmedAt: '2027-04-10T12:00:00.000Z'
+      }
     else if (url.pathname === '/api/v1/games/g1/lineups') {
       status = 404
       body = { error: 'No saved lineup in this events-only fixture' }

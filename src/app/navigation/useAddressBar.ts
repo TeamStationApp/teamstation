@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 
 import { type ClearedFrame, frameMatchesPath, suffixDropCount } from './history'
 import { noteHistoryMove } from './historyMotion'
-import { parseRoute, type Route, routePath } from './routes'
+import { parseRoute, type Route, routePath, withoutTab } from './routes'
 
 let guard:
   | {
@@ -191,6 +191,46 @@ export function stepBackTo(route: Route, origin?: number): void {
   initializeHistory()
   landing = route
   window.history.go(origin == null ? -1 : origin - position)
+}
+
+/**
+ * Takes back the steps that opened a screen being declined — Not Now on the
+ * chat age sheet — leaving `route` on show: the step on top, and every step
+ * under it that `leaving` names (the chat list a chat link went over). When
+ * the step beneath them is `route`, or its page with no tab (which shows the
+ * page's first tab), this steps back to it, so Back does not walk into the
+ * screen just declined; otherwise `route` takes the lowest one's place. The
+ * shell has already drawn `route`.
+ */
+export function undoStep(
+  route: Route,
+  leaving: (path: string) => boolean = () => false
+): void {
+  if (typeof window === 'undefined') return
+  initializeHistory()
+  const path = routePath(route)
+  if (trail[position] !== locationPath()) {
+    showRoute(route, true)
+    return
+  }
+  let steps = 1
+  while (
+    position - steps >= 0 &&
+    trail[position - steps] != null &&
+    leaving(trail[position - steps])
+  )
+    steps += 1
+  const beneath = trail[position - steps]
+  if (
+    position - steps >= 0 &&
+    (beneath === path || beneath === withoutTab(path))
+  ) {
+    landing = route
+    window.history.go(-steps)
+  } else if (steps > 1) {
+    landing = route
+    window.history.go(1 - steps)
+  } else showRoute(route, true)
 }
 
 /** Replace a workspace and its completed New message child with one chat. */

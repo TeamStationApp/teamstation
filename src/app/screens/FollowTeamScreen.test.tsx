@@ -7,6 +7,7 @@ import type { FollowableTeam, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { App } from '../App'
 import { routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
@@ -136,6 +137,8 @@ function fakeClient(
 }
 
 describe('FollowTeamScreen', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   afterEach(async function () {
     await act(async () => {
       root?.unmount()
@@ -261,6 +264,8 @@ describe('FollowTeamScreen', function () {
 })
 
 describe('following a team in the app', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   const originalFetch = globalThis.fetch
 
   afterEach(async function () {

@@ -57,6 +57,13 @@ export interface UsersTable {
    */
   birth_year: number | null
   birth_month: number | null
+  /**
+   * When and how chat was unlocked for this account, both or neither
+   * (105chatAgeConfirmations): `apple` from a shared Declared Age Range of 13
+   * or more, `self` from the app's age sheet.
+   */
+  chat_age_confirmed_at: Timestamp | null
+  chat_age_source: 'apple' | 'self' | null
   created_at: Timestamp
   updated_at: Timestamp
 }

@@ -20,6 +20,7 @@ import {
 } from './accountSettings'
 import { type ApiKey, type ApiKeyCreate, asApiKey, asApiKeys } from './apiKeys'
 import { asLiteral } from './asLiteral'
+import { asChatAge, type ChatAge, type ChatAgeSource } from './chatAge'
 import { type Approval, asApproval, asBuildsLink } from './distribution'
 import { type ApiError, asApiError, HttpError } from './errors'
 import {
@@ -3793,6 +3794,18 @@ export class TeamStationClient {
 
   async accountSettings(): Promise<AccountSettings> {
     return await this.request('GET', '/me/account', asAccountSettings)
+  }
+
+  /** Whether this account has unlocked chat, and how. */
+  async chatAge(): Promise<ChatAge> {
+    return await this.request('GET', '/me/account/chat-age', asChatAge)
+  }
+
+  /** Unlocks chat for this account; the first confirmation stands. */
+  async confirmChatAge(source: ChatAgeSource): Promise<ChatAge> {
+    return await this.request('PUT', '/me/account/chat-age', asChatAge, {
+      source
+    })
   }
 
   async buildsLink(): Promise<string | undefined> {
