@@ -257,7 +257,9 @@ export async function nativeHistoryRecovery(options: {
       await m.tapOn({ id: 'chat-composer' })
       await m.inputText({ text: draft })
       await options.reveal(input.anchor.id)
+      let readerAnchor: Input['anchor'] | undefined
       async function snapshot(): Promise<{
+        anchor: string
         y: number
         draft: string
         focused: boolean
@@ -265,8 +267,39 @@ export async function nativeHistoryRecovery(options: {
         reads: unknown
       }> {
         const tree = await m.hierarchy()
-        const row = flatten(tree).find(
-          node => node.id === 'chat-message-' + input.anchor.id
+        const nodes = flatten(tree)
+        if (readerAnchor == null) {
+          const header = nodes.find(
+            node => node.id === 'chat-conversation-identity'
+          )?.bounds
+          const composer = nodes.find(
+            node => node.id === 'chat-composer'
+          )?.bounds
+          assert(
+            header != null && composer != null,
+            'Actual reading band must be measurable'
+          )
+          const candidates = nodes
+            .filter(
+              node =>
+                node.bounds != null &&
+                node.bounds.y >= header.y + header.height &&
+                node.bounds.y < composer.y &&
+                input.oldPosts.some(
+                  post => node.id === 'chat-message-' + post.id
+                )
+            )
+            .sort((a, b) => a.bounds!.y - b.bounds!.y)
+          readerAnchor = input.oldPosts.find(
+            post => candidates[0]?.id === 'chat-message-' + post.id
+          )
+          assert(
+            readerAnchor != null,
+            'First fully visible historical reader row must exist'
+          )
+        }
+        const row = nodes.find(
+          node => node.id === 'chat-message-' + readerAnchor!.id
         )
         assert(
           row?.bounds != null && row.bounds.height > 0,
@@ -285,6 +318,7 @@ export async function nativeHistoryRecovery(options: {
         )
         assert(conversation != null)
         return {
+          anchor: readerAnchor.id,
           y: row.bounds.y,
           draft: await options.composerValue(),
           focused,
@@ -295,6 +329,10 @@ export async function nativeHistoryRecovery(options: {
         }
       }
       const before = await snapshot()
+      writeFileSync(
+        join(options.results, 'draft-before-hierarchy.json'),
+        JSON.stringify(await m.hierarchy(), null, 2)
+      )
       assert.equal(before.draft, draft)
       assert(
         before.focused,
@@ -314,8 +352,13 @@ export async function nativeHistoryRecovery(options: {
         await picture('draft-before-history')
         await controlRecovery(control, ['clear'])
         // Do not scroll after release: assert the existing reader location.
-        await m.assertVisible({ text: input.anchor.body, timeout: 30000 })
+        await m.assertVisible({ text: readerAnchor!.body, timeout: 30000 })
         const after = await snapshot()
+        writeFileSync(
+          join(options.results, 'draft-history-measurements.json'),
+          JSON.stringify({ before, after, attachment }, null, 2)
+        )
+        await picture('draft-after-history')
         assert.equal(after.draft, before.draft)
         assert(
           after.focused,
@@ -327,11 +370,6 @@ export async function nativeHistoryRecovery(options: {
         )
         assert.equal(after.unread, before.unread)
         assert.deepEqual(after.reads, before.reads)
-        await picture('draft-after-history')
-        writeFileSync(
-          join(options.results, 'draft-history-measurements.json'),
-          JSON.stringify({ before, after, attachment }, null, 2)
-        )
       })
       assert.deepEqual(
         (await api.chatMessages(input.conversationId)).filter(
