@@ -23,7 +23,13 @@ import {
 import { HeaderSlotProvider } from '../components/headerSlot'
 import { ScreenScopeProvider } from '../hooks/useScreenScope'
 import { lstrings } from '../locales/strings'
-import { ThemeProvider } from '../theme/ThemeContext'
+import {
+  ScopedThemeProvider,
+  type Theme,
+  ThemeProvider
+} from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { GameScreen } from './GameScreen'
 
 let root: Root | undefined
@@ -106,7 +112,8 @@ function fixture(): { client: TeamStationClient; game: GameDetail } {
   return { client, game }
 }
 async function render(
-  props: React.ComponentProps<typeof GameScreen>
+  props: React.ComponentProps<typeof GameScreen>,
+  theme: Theme = tsBallpark
 ): Promise<void> {
   const host = document.createElement('div')
   document.body.append(host)
@@ -114,9 +121,11 @@ async function render(
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <GestureHandlerRootView>
-          <GameScreen {...props} />
-        </GestureHandlerRootView>
+        <ScopedThemeProvider theme={theme}>
+          <GestureHandlerRootView>
+            <GameScreen {...props} />
+          </GestureHandlerRootView>
+        </ScopedThemeProvider>
       </ThemeProvider>
     )
   })
@@ -132,6 +141,19 @@ async function choose(label: string): Promise<void> {
   })
 }
 describe('the event page’s automatic and explicit sections', () => {
+  for (const kind of ['game', 'event'] as const)
+    it(`keeps ${kind} date and time readable on dark cards`, async () => {
+      const { client, game } = fixture()
+      game.eventKind = kind
+      await render({ client, gameId: 'g1', initialTab: 'info' }, tsDark)
+      const details = document.querySelectorAll<HTMLElement>(
+        '[data-testid="event-hero-date"], [data-testid="event-hero-time"]'
+      )
+      expect(details).length(2)
+      const expected = `rgb(${[1, 3, 5].map(i => parseInt(tsDark.primaryTextColor.slice(i, i + 2), 16)).join(', ')})`
+      for (const detail of details)
+        expect(getComputedStyle(detail).color).equals(expected)
+    })
   it('keeps hero button dimensions fixed as capabilities change and opens DJ separately', async () => {
     const { client, game } = fixture()
     let dj = 0

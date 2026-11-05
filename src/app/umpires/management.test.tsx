@@ -17,7 +17,8 @@ import {
   fixtureTypes
 } from '../../test/umpireTypes'
 import { Checkbox } from '../components/Checkbox'
-import { ThemeProvider } from '../theme/ThemeContext'
+import { ScopedThemeProvider, ThemeProvider } from '../theme/ThemeContext'
+import { tsDark } from '../theme/tsDark'
 import {
   LeagueUmpiresScreen,
   selectedRange,
@@ -213,6 +214,26 @@ describe('management.test.tsx', () => {
     })
     expect(presses).equals(2)
   })
+  it('uses readable links for dark requirement values', async () => {
+    const f = fixture()
+    await mount(
+      <ScopedThemeProvider theme={tsDark}>
+        <UmpireRequirementsScreen
+          client={f.client}
+          league="demo"
+          seasonIds={['spring']}
+          onNext={() => undefined}
+          onApplied={() => undefined}
+        />
+      </ScopedThemeProvider>
+    )
+    const value = [
+      ...target('Required umpire level').querySelectorAll('*')
+    ].find(node => node.children.length === 0 && node.textContent === 'majors')!
+    const expected = `rgb(${[1, 3, 5].map(i => parseInt(tsDark.linkTextColor.slice(i, i + 2), 16)).join(', ')})`
+    expect(getComputedStyle(value).color).equals(expected)
+  })
+
   it('removes unused levels immediately and confirms used level removal', async () => {
     const f = fixture()
     await mount(<UmpireLevelsScreen client={f.client} league="demo" />)

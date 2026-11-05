@@ -2749,7 +2749,7 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontFamily: theme.regularTextFont,
       fontSize: theme.rem(0.875 * 1.25),
       lineHeight: theme.rem(0.875 * 1.25 * 1.4),
-      color: '#000000'
+      color: theme.isDark ? theme.primaryTextColor : '#000000'
     },
     playerBlock: {
       alignItems: 'center'

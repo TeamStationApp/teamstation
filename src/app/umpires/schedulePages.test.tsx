@@ -17,7 +17,8 @@ import {
 import { pageOfUmpireSchedule } from '../../test/pageOf'
 import { fixturePositions, fixtureTypes } from '../../test/umpireTypes'
 import type { UmpireScheduleRoute } from '../navigation/routes'
-import { ThemeProvider } from '../theme/ThemeContext'
+import { ScopedThemeProvider, ThemeProvider } from '../theme/ThemeContext'
+import { tsDark } from '../theme/tsDark'
 import { UmpireScheduleScreen } from './UmpireScheduleScreen'
 
 const LIMIT = 50
@@ -229,6 +230,81 @@ describe('umpire schedule pages', () => {
     await act(async () => root?.unmount())
     root = undefined
     document.body.replaceChildren()
+  })
+
+  it('keeps dark schedule highlights and filter controls readable', async () => {
+    const f = world(0, 2)
+    await f.client.assignUmpire('game-0', {
+      slot: 'uty_plate:1',
+      userId: 'uma'
+    })
+    f.schedule.games[0].assignments['uty_plate:1'].teams = [
+      { id: 'hawks', name: 'Demo Hawks' }
+    ]
+    f.schedule.games[1].status = 'final'
+    await mount(
+      <ScopedThemeProvider theme={tsDark}>
+        <UmpireScheduleScreen
+          client={f.client}
+          route={ROUTE}
+          leagues={[]}
+          onRoute={() => undefined}
+        />
+      </ScopedThemeProvider>
+    )
+    const readable = (node: Element): void => {
+      const luminance = (color: string): number => {
+        const rgb = color
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number)
+        return rgb
+          .map(v => v / 255)
+          .map(v => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+          .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0)
+      }
+      let surface: Element | null = node
+      while (
+        surface != null &&
+        ['transparent', 'rgba(0, 0, 0, 0)'].includes(
+          getComputedStyle(surface).backgroundColor
+        )
+      )
+        surface = surface.parentElement
+      expect(surface, node.textContent ?? '').not.equals(null)
+      const a = luminance(getComputedStyle(node).color)
+      const b = luminance(getComputedStyle(surface!).backgroundColor)
+      expect(
+        (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05),
+        node.textContent ?? ''
+      ).at.least(4.5)
+    }
+    const leaves = (node: Element): Element[] =>
+      [...node.querySelectorAll('*')].filter(
+        n => n.children.length === 0 && n.textContent !== ''
+      )
+    const assignment = target('Uma L, uty_plate:1')
+    expect(assignment.textContent).contains('Demo Hawks')
+    leaves(assignment).forEach(readable)
+    const finalRow = document.querySelector(
+      '[data-testid="umpire-game-game-1"]'
+    )!
+    const unavailable = leaves(finalRow).filter(
+      n =>
+        n.textContent === '—' &&
+        getComputedStyle(n.parentElement!).backgroundColor ===
+          'rgb(238, 238, 238)'
+    )
+    expect(unavailable.length).greaterThan(0)
+    unavailable.forEach(readable)
+    await press('Schedule filters')
+    for (const label of ['Monday', 'Start time', 'End time', 'majors']) {
+      leaves(target(label)).forEach(readable)
+    }
+    await press('Monday')
+    await press('majors')
+    leaves(target('Monday')).forEach(readable)
+    leaves(target('majors')).forEach(readable)
   })
 
   it('is as wide as its columns, which stay put as pages arrive', async () => {
