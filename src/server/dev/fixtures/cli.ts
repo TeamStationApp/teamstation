@@ -5,6 +5,7 @@ import { makeNonce } from './accounts'
 import { splitMailbox } from './address'
 import { runBaseline } from './baseline'
 import { runTeamWithRoster } from './teamWithRoster'
+import { runConcurrentScoring } from './concurrentScoring'
 
 /**
  * Builds a database from nothing:
@@ -19,6 +20,7 @@ export const WORLDS: Record<
   string,
   (context: WorldContext) => Promise<FixtureManifest>
 > = {
+  'concurrent-scoring': runConcurrentScoring,
   'team-with-roster': runTeamWithRoster
 }
 

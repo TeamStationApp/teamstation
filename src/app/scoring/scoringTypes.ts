@@ -375,6 +375,8 @@ export type ScoringEvent =
   | { type: 'PRESENTATION'; enabled: boolean }
   | {
       type: 'RESET'
+      /** Display a peer's progress without automatically closing their play. */
+      following?: boolean
       session: ScoringSessionState
       log: ScoringAction[]
       readOnly?: boolean

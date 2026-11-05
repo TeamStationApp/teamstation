@@ -82,7 +82,7 @@ export function copyState<T>(value: T): T {
 export function initialScoringState(
   session: ScoringSessionState,
   presentationEnabled = false,
-  options: { watching?: boolean } = {}
+  options: { watching?: boolean; following?: boolean } = {}
 ): ScoringState {
   const owned = copyGame(session)
   const state: ScoringState = {
@@ -107,7 +107,7 @@ export function initialScoringState(
       trajectoryAccepted: true
     }
     state.phase = 'runnerMovement'
-    settleRunners(state)
+    settleRunners(state, { closeAutomatically: options.following !== true })
     // A decided play picked up here waits for the scorer: no countdown
     // closes it, and so nothing is saved until they finish it or pitch.
     state.correctionWindow = null
@@ -122,9 +122,10 @@ export function initialScoringState(
 export function resumedScoringState(
   session: ScoringSessionState,
   log: ScoringState['log'],
-  presentationEnabled = false
+  presentationEnabled = false,
+  options: { following?: boolean } = {}
 ): ScoringState {
-  const state = initialScoringState(session, presentationEnabled)
+  const state = initialScoringState(session, presentationEnabled, options)
   return { ...state, log: [...log, ...state.log] }
 }
 
@@ -517,8 +518,10 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       ...resumedScoringState(
         event.session,
         event.log,
-        state.presentationEnabled
+        state.presentationEnabled,
+        { following: event.following }
       ),
+      generation: state.generation + 1,
       ...(event.readOnly === true ? { readOnly: true } : {})
     }
   if (event.type === 'CELEBRATION_DONE')

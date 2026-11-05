@@ -374,7 +374,7 @@ async function open(fixture: Fixture = {}): Promise<{
           // Set browser preferences before the app starts and collect page errors.
           const preferences =
             fixture.animationsOff === true
-              ? `localStorage.setItem('teamstation:scoring:999:switch-hitter',${JSON.stringify(JSON.stringify({ help: false, shown: 0, animations: false }))});`
+              ? `localStorage.setItem('teamstation:scoring:${userIdOfGumbo(999)}:switch-hitter',${JSON.stringify(JSON.stringify({ help: false, shown: 0, animations: false }))});`
               : ''
           response.end(
             (await upstream.text()).replace(
@@ -387,11 +387,25 @@ async function open(fixture: Fixture = {}): Promise<{
       }
       let body: unknown
       if (u.pathname.endsWith('/auth/me'))
-        body = { id: 999, displayName: 'Scorer', isAdmin: false }
+        body = { id: userIdOfGumbo(999), displayName: 'Scorer', isAdmin: false }
       else if (u.pathname === '/api/v1/me/roles')
         body = { teams: [], players: [] }
       else if (u.pathname === '/api/v1/me/notifications/summary')
         body = { hasPending: false }
+      else if (u.pathname === '/api/v1/time') body = { now: Date.now() }
+      else if (u.pathname === '/api/v1/me/account/chat-age')
+        body = { eligible: true }
+      else if (u.pathname === '/api/v1/me/home')
+        body = { teams: [], leagues: [], seasons: [] }
+      else if (
+        [
+          '/api/v1/live',
+          '/api/v1/users',
+          '/api/v1/me/umpire-leagues',
+          '/api/v1/chat/conversations'
+        ].includes(u.pathname)
+      )
+        body = []
       else if (u.pathname === '/api/v1/health')
         body = {
           status: 'ok',

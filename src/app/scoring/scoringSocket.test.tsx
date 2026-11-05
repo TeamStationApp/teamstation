@@ -249,6 +249,113 @@ describe('comparing logs', function () {
 })
 
 describe('the scoring screen on the game socket', function () {
+  it('keeps a local appearance editable while an older read finishes', async function () {
+    const { changes, other, store } = await scoring()
+    await click('Ball')
+    await settle()
+    const load = store.load
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    let first = true
+    store.load = async id => {
+      const snapshot = await load(id)
+      if (first) {
+        first = false
+        await held
+      }
+      return snapshot
+    }
+    await changes.plays()
+    await click('Ball')
+    release()
+    await settle()
+    expect(document.body.textContent).includes('2 balls 0 strikes')
+    expect((await other()).actions).deep.equals([
+      { type: 'pitch', call: 'B' }, { type: 'pitch', call: 'B' }
+    ])
+  })
+
+  it('rejects an obsolete pitch during a peer read and accepts a fresh tap afterward', async function () {
+    const { changes, other, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    const load = store.load
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    store.load = async id => {
+      await held
+      return await load(id)
+    }
+    await changes.plays()
+    await click('Called Strike')
+    expect(document.body.textContent).includes('Check the play and try again')
+    expect(document.body.textContent).includes('0 balls 0 strikes')
+    release()
+    await settle()
+    expect(document.body.textContent).includes('1 balls 0 strikes')
+    await click('Called Strike')
+    await settle()
+    expect((await other()).actions).deep.equals([
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'C' }
+    ])
+  })
+
+  it('retries a failed remote read without waiting for another pitch', async function () {
+    const { changes, other, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    const load = store.load
+    let fail = true
+    store.load = async id => {
+      if (fail) {
+        fail = false
+        throw new Error('Temporary connection loss')
+      }
+      return await load(id)
+    }
+    await changes.plays()
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1100))
+    })
+    await settle()
+    expect(document.body.textContent).includes('1 balls 0 strikes')
+  })
+
+  it('never saves a close synthesized while displaying a remote award', async function () {
+    const { changes, other, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    await peer.flush()
+    const before = JSON.stringify(await store.load('g1'))
+    await changes.plays()
+    await settle()
+    expect(JSON.stringify(await store.load('g1'))).equals(before)
+  })
+
+  it('keeps following after adopting a peer’s unfinished single', async function () {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    expect(shown('Finish at-bat')).equals(true)
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    expect(document.body.textContent).includes('0 balls 0 strikes 0 outs')
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+    expect(session().actions).deep.equals(peer.actions)
+  })
+
   it('reads another scorer’s plays in at rest, starting again from them', async function () {
     const { changes, other, reloads } = await scoring()
     expect(document.body.textContent).includes('0 balls 0 strikes')

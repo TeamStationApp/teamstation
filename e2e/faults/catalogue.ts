@@ -12,6 +12,7 @@ export interface Fault {
 }
 
 export const FAULTS: Record<string, Fault> = {
+  'scoring-observer-stall': { how: 'proxy', caughtBy: ['read-back'] },
   'api-500': { how: 'proxy', caughtBy: ['invariant', 'expect'] },
   'api-hang': { how: 'proxy', caughtBy: ['invariant', 'expect'] },
   'api-garbage': { how: 'proxy', caughtBy: ['invariant', 'expect'] },

@@ -739,6 +739,74 @@
       "manual": false,
       "spec": "schedule/rsvp/eligibility",
       "file": "e2e/tests/schedule/rsvp/eligibility.e2e.ts"
+    },
+    {
+      "id": "scoring/concurrency/follow#intermediate-phases",
+      "title": "Scoring observers follow intermediate plays and the next batter",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/app/scoring/scoringFollow.ts",
+        "src/common/scoring/session.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "concurrent-scoring"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/concurrency/follow",
+      "file": "e2e/tests/scoring/concurrency/follow.e2e.ts"
+    },
+    {
+      "id": "scoring/concurrency/lineups#handoff-and-conflicts",
+      "title": "Coach lineup changes reach both scorers before handoff",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/app/scoring/scoringFollow.ts",
+        "src/app/scoring/rosterLive.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "concurrent-scoring"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/concurrency/lineups",
+      "file": "e2e/tests/scoring/concurrency/lineups.e2e.ts"
     }
   ]
 }

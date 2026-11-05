@@ -130,7 +130,9 @@
     "coverage.gameStatistics": "node scripts/game-statistics-coverage.mjs",
     "coverage.tv": "node scripts/tv-coverage.mjs",
     "e2e": "node -r sucrase/register e2e/core/cli.ts",
-    "coverage.e2e": "c8 --all --check-coverage --lines 90 --reporter=text --include 'e2e/core/**/*.ts' --include 'e2e/faults/**/*.ts' --include src/buildWorker.mjs --exclude '**/*.test.ts' mocha --timeout 60000 --exit -r sucrase/register --extension ts --spec 'e2e/**/*.test.ts' --spec src/buildWorker.test.ts"
+    "coverage.e2e": "c8 --all --check-coverage --lines 90 --reporter=text --include 'e2e/core/**/*.ts' --include 'e2e/faults/**/*.ts' --include src/buildWorker.mjs --exclude '**/*.test.ts' mocha --timeout 60000 --exit -r sucrase/register --extension ts --spec 'e2e/**/*.test.ts' --spec src/buildWorker.test.ts",
+    "coverage.concurrentScoring.unit": "node scripts/concurrent-scoring-coverage.mjs --unit",
+    "coverage.concurrentScoring.combined": "node scripts/concurrent-scoring-coverage.mjs"
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "^18.2.5",
