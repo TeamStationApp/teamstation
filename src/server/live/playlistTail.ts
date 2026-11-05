@@ -61,12 +61,6 @@ const nodeFiles: TailFiles = {
   }
 }
 
-/** One piece as `publishedPlaylist` keeps it: its lines, ending with its name. */
-export interface PublishedPiece {
-  name: string
-  lines: string[]
-}
-
 /** A read playlist, as it was when it was read. */
 export interface PlaylistView {
   /** Changes whenever the playlist was parsed again from its start. */
@@ -86,16 +80,17 @@ export interface PlaylistView {
   /** The first place `name` is listed, if it is among the first `listedCount`. */
   listedAt: (name: string) => number | undefined
   /**
-   * Whether `publishedPlaylist` would keep exactly `header` and one piece
-   * per media segment, in order, with the lines `piece` gives: every name a
-   * piece name, none twice, each with an `EXTINF`, and the trimmed end of the
+   * Whether the body `publishedPlaylist` keeps of the first `end` pieces is
+   * the text up to the end of piece `end`'s name: one piece per media
+   * segment, each a piece name numbered above the one before, no carriage
+   * return and no `EXT-X-ENDLIST` before a piece, and the trimmed end of the
    * text taking nothing off a piece's line.
    */
   readonly publishedExact: boolean
-  readonly header: readonly string[]
-  piece: (index: number) => PublishedPiece
-  /** Where piece number `number` is, among the first `count`. */
-  pieceAt: (number: number) => number | undefined
+  /** The text of the header and the first `end` pieces, when exact. */
+  bodyText: (end: number) => string
+  /** The text pieces `from` to `to` add to `bodyText(from)`, when exact. */
+  bodyBetween: (from: number, to: number) => string
   /** The parsed playlist as `parseMediaPlaylist` gives it. */
   mediaPlaylist: () => MediaPlaylist
   /** The whole text that was read. */
@@ -113,8 +108,9 @@ let generations = 0
 /** Everything parsed out of a playlist so far, one line at a time. */
 class PlaylistParse {
   readonly generation = ++generations
-  /** Every line, as split on `\n`. */
-  readonly lines: string[] = []
+  /** The text parsed, and how much of it is whole lines. */
+  text = ''
+  private parsed = 0
 
   // As `parseMediaPlaylist`.
   map: MediaPlaylist['map']
@@ -135,28 +131,42 @@ class PlaylistParse {
 
   // As `listedSegments`.
   readonly listed: ListedSegment[] = []
-  readonly listedFirst = new Map<string, number>()
+  /** Listed names numbered upwards, so found by their number. */
+  private listedRising = true
+  /** Where each name is first listed, once they do not rise; built on asking. */
+  private listedFirst?: { at: Map<string, number>; through: number }
   private pendingSec: number | undefined
   private pendingPdt: number | undefined
 
-  // As `publishedPlaylist`.
-  readonly header: string[] = []
-  readonly pieces: PublishedPiece[] = []
-  readonly pieceFirst = new Map<number, number>()
-  private pending: string[] = []
+  // As `publishedPlaylist`: where in the text the header and each piece end.
+  private headerEnd = 0
+  readonly pieceEnds: number[] = []
   private media = false
-  /** A name that is not a piece's, or a piece listed twice. */
+  private lastNumber = -1
+  private endBeforePiece = false
+  /** Something the published body does not keep as the text has it. */
   irregular = false
   /** The last line with text is a piece's name with space after it. */
   spaceAfterLastName = false
 
-  add(raw: string): void {
-    this.lines.push(raw)
+  /** Parses `text`, read on from the text before it. */
+  addText(text: string): void {
+    this.text += text
+    const lines = text.split('\n')
+    // The last line goes on unless the text ended one.
+    if (lines[lines.length - 1] === '') lines.pop()
+    for (const line of lines) {
+      this.parsed += line.length + 1
+      this.add(line)
+    }
+  }
+
+  private add(raw: string): void {
     const line = raw.trim()
     this.addMedia(line)
     this.addEnd(line)
     this.addListed(line)
-    this.addPublished(raw.endsWith('\r') ? raw.slice(0, -1) : raw, line)
+    this.addPublished(raw, line)
   }
 
   private readRange(value: string): { offset: number; length: number } {
@@ -226,8 +236,9 @@ class PlaylistParse {
     if (duration != null) this.pendingSec = Number.parseFloat(duration[1])
     if (!LISTED_NAME.test(line)) return
     if (this.pendingSec != null) {
-      if (!this.listedFirst.has(line))
-        this.listedFirst.set(line, this.listed.length)
+      const last = this.listed.at(-1)
+      if (last != null && listedNumber(line) <= listedNumber(last.name))
+        this.listedRising = false
       this.listed.push({
         name: line,
         durationSec: this.pendingSec,
@@ -240,36 +251,63 @@ class PlaylistParse {
 
   private addPublished(raw: string, text: string): void {
     if (text !== '') this.spaceAfterLastName = false
-    if (text === '#EXT-X-ENDLIST') return
+    if (raw.endsWith('\r')) this.irregular = true
+    if (text === '#EXT-X-ENDLIST') {
+      this.endBeforePiece = true
+      return
+    }
     if (text !== '' && !text.startsWith('#')) {
-      if (isSegmentName(text)) {
+      if (!isSegmentName(text) || this.endBeforePiece) this.irregular = true
+      else {
         const number = segmentNumber(text)
-        if (this.pieceFirst.has(number)) this.irregular = true
-        else this.pieceFirst.set(number, this.pieces.length)
-      } else this.irregular = true
-      this.pieces.push({ name: text, lines: [...this.pending, raw] })
-      this.pending = []
+        if (number <= this.lastNumber) this.irregular = true
+        this.lastNumber = number
+      }
+      this.pieceEnds.push(this.parsed)
       this.media = true
       this.spaceAfterLastName = raw !== raw.trimEnd()
     } else {
       if (MEDIA_TAG.test(text)) this.media = true
-      if (this.media) this.pending.push(raw)
-      else this.header.push(raw)
+      if (!this.media) this.headerEnd = this.parsed
     }
+  }
+
+  /** Where `name` is first listed, among the first `count`. */
+  private listedAt(name: string, count: number): number | undefined {
+    if (this.listedRising) {
+      // Rising numbers: a binary search by number.
+      const number = listedNumber(name)
+      let low = 0
+      let high = count
+      while (low < high) {
+        const middle = (low + high) >> 1
+        if (listedNumber(this.listed[middle].name) < number) low = middle + 1
+        else high = middle
+      }
+      return low < count && this.listed[low].name === name ? low : undefined
+    }
+    this.listedFirst ??= { at: new Map(), through: 0 }
+    const first = this.listedFirst
+    for (; first.through < this.listed.length; first.through++) {
+      const listed = this.listed[first.through].name
+      if (!first.at.has(listed)) first.at.set(listed, first.through)
+    }
+    const at = first.at.get(name)
+    return at != null && at < count ? at : undefined
   }
 
   view(complete: boolean): PlaylistView {
     const count = this.segments.length
     const listedCount = this.listed.length
-    const pieces = this.pieces.length
-    const headerCount = this.header.length
-    const lineCount = this.lines.length
-    const { map, ended } = this
+    const text = this.text
+    const { map, ended, headerEnd } = this
     const publishedExact =
       complete &&
       !this.irregular &&
       !this.spaceAfterLastName &&
-      pieces === count
+      this.pieceEnds.length === count
+    const endOf = (end: number): number =>
+      end === 0 ? headerEnd : this.pieceEnds[end - 1]
     return {
       generation: this.generation,
       count,
@@ -280,34 +318,23 @@ class PlaylistParse {
       endMs: index => this.ends[index],
       listedCount,
       listed: index => this.listed[index],
-      listedAt: name => {
-        const at = this.listedFirst.get(name)
-        return at != null && at < listedCount ? at : undefined
-      },
+      listedAt: name => this.listedAt(name, listedCount),
       publishedExact,
-      header: this.header.slice(0, headerCount),
-      piece: index => this.pieces[index],
-      pieceAt: number => {
-        const at = this.pieceFirst.get(number)
-        return at != null && at < pieces ? at : undefined
-      },
+      bodyText: end => text.slice(0, endOf(end)),
+      bodyBetween: (from, to) => text.slice(endOf(from), endOf(to)),
       mediaPlaylist: () => ({
         ...(map == null ? {} : { map }),
         segments: this.segments.slice(0, count),
         ended
       }),
-      text: () =>
-        this.lines.slice(0, lineCount).join('\n') + (complete ? '\n' : '')
+      text: () => text
     }
   }
 }
 
-/** Whole lines of `text`, and whether it ended in a newline. */
-function linesOf(text: string): { lines: string[]; complete: boolean } {
-  const lines = text.split('\n')
-  const complete = lines[lines.length - 1] === ''
-  if (complete) lines.pop()
-  return { lines, complete }
+/** A listed name's number: `seg000042.m4s` is 42. */
+function listedNumber(name: string): number {
+  return Number(name.slice(3, -4))
 }
 
 /** One playlist file, read as it grows. */
@@ -351,8 +378,9 @@ export class PlaylistTail {
     const bytes = this.files.readFileSync(this.path)
     this.bytesRead += bytes.length
     const parse = new PlaylistParse()
-    const { lines, complete } = linesOf(bytes.toString('utf8'))
-    for (const line of lines) parse.add(line)
+    const text = bytes.toString('utf8')
+    const complete = text === '' || text.endsWith('\n')
+    parse.addText(text)
     const view = parse.view(complete)
     if (!complete) {
       this.forget()
@@ -405,8 +433,7 @@ export class PlaylistTail {
     } finally {
       this.files.closeSync(fd)
     }
-    const { lines } = linesOf(added.toString('utf8'))
-    for (const line of lines) parse.add(line)
+    parse.addText(added.toString('utf8'))
     this.current = parse.view(true)
     return this.current
   }

@@ -181,13 +181,6 @@ interface PublishedBody {
   after: (before: string | undefined) => string | undefined
 }
 
-/** Lines, each with its newline. */
-function linesText(lines: readonly string[]): string {
-  let text = ''
-  for (const line of lines) text += line + '\n'
-  return text
-}
-
 export interface OriginFlush {
   complete: boolean
   body?: string
@@ -216,12 +209,9 @@ export class OriginPublisher {
   private notified = false
   private metadata?: ProbedStream
   private lastBody?: string
-  /** The body `appendBody` is building on, for one parse of the playlist. */
+  /** What `appendBody` keeps of one parse of the playlist. */
   private built?: {
     generation: number
-    /** Pieces joined into `text`, after the header. */
-    end: number
-    text: string
     /** One past the last piece whose number is in `published`. */
     publishedEnd: number
     /** Pieces before this one are all in `published`. */
@@ -529,11 +519,11 @@ export class OriginPublisher {
   }
 
   /**
-   * The published body of a playlist `publishedPlaylist` would keep exactly,
-   * built on from the last one: only the pieces it adds are joined on, and
-   * only those are added to `published`. The pieces exposed before and the
-   * published end are kept for the playlist's parse, so a flush that adds a
-   * piece costs the same however many came before it.
+   * The published body of a playlist `publishedPlaylist` would keep exactly:
+   * the playlist's own text up to the end of the last piece it publishes,
+   * with the end tag once it is complete. Only the pieces it adds are added
+   * to `published`, and the published end is kept for the playlist's parse,
+   * so a flush that adds a piece costs the same however many came before it.
    */
   private appendBody(
     view: PlaylistView,
@@ -543,20 +533,18 @@ export class OriginPublisher {
     const count = view.count
     let held = this.built
     if (held?.generation !== view.generation) {
+      // A new parse: every published piece must still be listed.
+      const listed = new Map<number, number>()
+      for (let index = 0; index < count; index++)
+        listed.set(segmentNumber(view.segment(index).uri), index)
       let publishedEnd = 0
       for (const number of this.published) {
-        const at = view.pieceAt(number)
+        const at = listed.get(number)
         if (at == null)
           throw new Error('Local playlist lost a published segment')
         publishedEnd = Math.max(publishedEnd, at + 1)
       }
-      held = {
-        generation: view.generation,
-        end: 0,
-        text: linesText(view.header),
-        publishedEnd,
-        exposed: 0
-      }
+      held = { generation: view.generation, publishedEnd, exposed: 0 }
       this.built = held
     }
     // Every piece before the cursor is acknowledged.
@@ -564,22 +552,13 @@ export class OriginPublisher {
     while (acknowledgedEnd < count && isAcknowledged(acknowledgedEnd))
       acknowledgedEnd++
     const end = Math.max(acknowledgedEnd, held.publishedEnd)
-    const from = held.end
-    if (end < from) held.text = linesText(view.header)
-    const start = end < from ? 0 : from
-    let added = ''
-    for (let index = start; index < end; index++)
-      added += linesText(view.piece(index).lines)
-    held.text += added
-    held.end = end
     const closed = view.ended && acknowledgedEnd === count
-    const body =
-      held.text === '' && !closed
-        ? '\n'
-        : held.text + (closed ? '#EXT-X-ENDLIST\n' : '')
+    const closing = closed ? '#EXT-X-ENDLIST\n' : ''
+    const text = view.bodyText(end)
+    const body = text === '' && !closed ? '\n' : text + closing
     const last = this.lastBuilt
     const owner = held
-    const built: PublishedBody = {
+    return {
       body,
       exposed: end,
       segment: index => view.segment(index),
@@ -600,17 +579,11 @@ export class OriginPublisher {
           last.generation === view.generation &&
           !last.closed &&
           last.end <= end
-        ) {
-          let text = last.end === start ? added : ''
-          if (last.end !== start)
-            for (let index = last.end; index < end; index++)
-              text += linesText(view.piece(index).lines)
-          return text + (closed ? '#EXT-X-ENDLIST\n' : '')
-        }
+        )
+          return view.bodyBetween(last.end, end) + closing
         return body.startsWith(before) ? body.slice(before.length) : undefined
       }
     }
-    return built
   }
 
   /** The published body of any other playlist, from its whole text. */

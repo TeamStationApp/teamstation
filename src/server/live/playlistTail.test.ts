@@ -102,28 +102,29 @@ function expectParsedAs(view: PlaylistView, text: string): void {
   expect(
     Array.from({ length: view.listedCount }, (_, i) => view.listed(i))
   ).deep.equals(listed)
-  for (const [index, segment] of listed.entries())
+  for (const segment of listed)
     expect(view.listedAt(segment.name)).equals(
-      listed.findIndex(other => other.name === segment.name) <= index
-        ? listed.findIndex(other => other.name === segment.name)
-        : index
+      listed.findIndex(other => other.name === segment.name)
     )
+  expect(view.listedAt('seg999999.m4s')).equals(undefined)
   if (view.publishedExact) {
-    const all = new Set(media.map(segment => segment.uri))
-    const lines = [
-      ...view.header,
-      ...Array.from(
-        { length: view.count },
-        (_, i) => view.piece(i).lines
-      ).flat()
-    ]
-    const body = lines.join('\n') + '\n'
-    const ended = view.ended ? '#EXT-X-ENDLIST\n' : ''
-    expect(body + ended).equals(publishedPlaylist(text, all, new Set()))
-    for (let index = 0; index < view.count; index++)
-      expect(view.pieceAt(Number(view.piece(index).name.slice(3, -4)))).equals(
-        index
+    // The body of each acknowledged prefix, and what each piece adds to it.
+    const names = media.map(segment => segment.uri)
+    for (const end of new Set([0, 1, view.count >> 1, view.count - 1])) {
+      if (end < 0 || end >= view.count) continue
+      const prefix = new Set(names.slice(0, end))
+      const body = view.bodyText(end)
+      expect(body === '' ? '\n' : body).equals(
+        publishedPlaylist(text, prefix, new Set())
       )
+      expect(view.bodyText(end) + view.bodyBetween(end, view.count)).equals(
+        view.bodyText(view.count)
+      )
+    }
+    const ended = view.ended ? '#EXT-X-ENDLIST\n' : ''
+    expect(view.bodyText(view.count) + ended).equals(
+      publishedPlaylist(text, new Set(names), new Set())
+    )
   }
 }
 
@@ -179,12 +180,12 @@ describe('reading a live playlist as it grows', function () {
     expect(early.count).equals(3)
     expect(early.listedCount).equals(3)
     expect(early.listedAt(name(5))).equals(undefined)
-    expect(early.pieceAt(5)).equals(undefined)
+    expect(early.bodyText(3)).equals(HEADER + pieces(0, 3))
     expect(early.mediaPlaylist().segments).length(3)
     expect(early.text()).equals(HEADER + pieces(0, 3))
     expect(late.count).equals(9)
     expect(late.listedAt(name(5))).equals(5)
-    expect(late.pieceAt(5)).equals(5)
+    expect(late.bodyBetween(3, 9)).equals(pieces(3, 9))
   })
 
   it('reads it all again when it was rewritten, shrank, or a reconnect changed its header', function () {
@@ -271,10 +272,13 @@ describe('reading a live playlist as it grows', function () {
         '#EXTINF:4,\n#EXT-X-BYTERANGE:1200\nvideo.mp4\n',
       false
     )
+    // Carriage returns, which the published body leaves out.
     check(
       HEADER.replaceAll('\n', '\r\n') + pieces(0, 3).replaceAll('\n', '\r\n'),
-      true
+      false
     )
+    // An end tag with a piece after it, which the published body leaves out.
+    check(HEADER + pieces(0, 2) + '#EXT-X-ENDLIST\n' + piece(2), false)
     check(HEADER + pieces(0, 3) + '\n\n', true)
     // A name with space after it, last: the trimmed end would cut it.
     check(HEADER + pieces(0, 2) + '#EXTINF:4,\nseg000002.m4s  \n', false)
