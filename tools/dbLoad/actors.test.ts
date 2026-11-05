@@ -22,6 +22,8 @@ import {
   LiveViewer,
   masterVariant,
   mintStream,
+  mintWithRetry,
+  PATTERN_MARGIN_SEC,
   parseMediaPlaylist,
   paced,
   Publishers,
@@ -167,7 +169,8 @@ describe('the actors', function () {
       )
       expect(publishers.children.every(child => child.killed)).equals(true)
 
-      // The route refuses the fifth, and it is counted rather than thrown.
+      // The route refuses the fifth, which is not asked again, and it is
+      // counted rather than thrown.
       const over = new Tally()
       const more = new Publishers(
         [server.base],
@@ -180,7 +183,182 @@ describe('the actors', function () {
         }
       )
       await more.start()
-      expect(over.errors['http-400']).equals(1)
+      expect(over.errors['stream-mint']).equals(1)
+      expect(over.errors['stream-mint-retry']).equals(undefined)
+      expect(over.requests.length).equals(1)
+    })
+
+    describe('through a server that answers 5xx or drops the connection', function () {
+      let flaky: Server
+      let base: string
+      /** What the next answers to a create are, in order; then 201. */
+      let plan: Array<number | 'drop'>
+      let creates = 0
+      let reveals = 0
+
+      before(async function () {
+        flaky = createServer((req: IncomingMessage, res: ServerResponse) => {
+          req.resume()
+          req.on('end', () => {
+            if (req.url?.endsWith('/reveal') === true) {
+              reveals += 1
+              res.writeHead(200, { 'content-type': 'application/json' })
+              res.end(
+                JSON.stringify({ url: `rtmp://127.0.0.1/live/key${reveals}` })
+              )
+              return
+            }
+            creates += 1
+            const answer = plan.shift() ?? 201
+            if (answer === 'drop') {
+              req.socket.destroy()
+              return
+            }
+            res.writeHead(answer, { 'content-type': 'application/json' })
+            res.end(
+              answer === 201
+                ? JSON.stringify({
+                    id: `stream${creates}`,
+                    videoId: `video${creates}`
+                  })
+                : JSON.stringify({ error: 'unavailable' })
+            )
+          })
+        })
+        await new Promise<void>(done => flaky.listen(0, '127.0.0.1', done))
+        base = `http://127.0.0.1:${(flaky.address() as AddressInfo).port}`
+      })
+      after(async function () {
+        await new Promise(done => flaky.close(done))
+      })
+      beforeEach(function () {
+        plan = []
+        creates = 0
+        reveals = 0
+      })
+
+      const noWait = { backoffMs: 1, backoffMaxMs: 4, sleep: async () => {} }
+
+      it('ask again after a 503, a 502 and a dropped connection, then mint', async function () {
+        plan = [503, 'drop', 502]
+        const tally = new Tally()
+        const stream = await mintWithRetry(
+          base,
+          account('videographer00003'),
+          'game',
+          tally,
+          { ...noWait, retryMs: 60_000 }
+        )
+        expect(stream).deep.equals({
+          streamId: 'stream4',
+          url: 'rtmp://127.0.0.1/live/key1',
+          videoId: 'video4'
+        })
+        expect(creates).equals(4)
+        expect(tally.errors['stream-mint-retry']).equals(3)
+      })
+
+      it('wait twice as long each time, up to the most', async function () {
+        plan = [503, 503, 503, 503]
+        const waits: number[] = []
+        await mintWithRetry(
+          base,
+          account('videographer00003'),
+          'game',
+          new Tally(),
+          {
+            retryMs: 60_000,
+            backoffMs: 10,
+            backoffMaxMs: 30,
+            sleep: async ms => {
+              waits.push(ms)
+            }
+          }
+        )
+        expect(waits).deep.equals([10, 20, 30, 30])
+      })
+
+      it('wait for real between tries when given no sleep', async function () {
+        plan = [503]
+        const started = performance.now()
+        await mintWithRetry(
+          base,
+          account('videographer00003'),
+          'game',
+          new Tally(),
+          {
+            retryMs: 60_000,
+            backoffMs: 50
+          }
+        )
+        expect(performance.now() - started).at.least(45)
+      })
+
+      it('give up once the retry time is spent, and the stream counts as stream-mint', async function () {
+        plan = Array.from({ length: 1000 }, () => 503)
+        const tally = new Tally()
+        const started: string[] = []
+        const publishers = new Publishers(
+          [base],
+          { ...tokens, accounts: [account('videographer00003')] },
+          tally,
+          1,
+          5,
+          url => {
+            started.push(url)
+            throw new Error('not reached')
+          },
+          { retryMs: 30, backoffMs: 5, backoffMaxMs: 5 }
+        )
+        await publishers.start()
+        expect(started).deep.equals([])
+        expect(tally.streamsStarted).equals(0)
+        expect(tally.errors['stream-mint']).equals(1)
+        expect(tally.errors['stream-mint-retry']).at.least(1)
+        expect(tally.errors['http-503']).equals(undefined)
+      })
+
+      it('mint several at once, keep their order, and run each pattern past the load', async function () {
+        plan = [503, 503]
+        const tally = new Tally()
+        const started: Array<{ url: string; seconds: number }> = []
+        const publishers = new Publishers(
+          [base],
+          {
+            ...tokens,
+            accounts: [
+              account('videographer00003'),
+              account('videographer00004')
+            ]
+          },
+          tally,
+          6,
+          60,
+          (url, seconds) => {
+            started.push({ url, seconds })
+            return spawn(process.execPath, ['-e', ''])
+          },
+          { ...noWait, retryMs: 60_000, concurrency: 3 }
+        )
+        await publishers.start()
+        expect(tally.streamsStarted).equals(6)
+        expect(started.length).equals(6)
+        expect(
+          started.every(row => row.seconds === 60 + PATTERN_MARGIN_SEC)
+        ).equals(true)
+        expect(publishers.minted.length).equals(6)
+        // Dealt in turn across the two videographers, in the order asked.
+        expect(publishers.videos.map(row => row.videographer)).deep.equals([
+          'videographer00003',
+          'videographer00004',
+          'videographer00003',
+          'videographer00004',
+          'videographer00003',
+          'videographer00004'
+        ])
+        expect(tally.errors['stream-mint-retry']).equals(2)
+        publishers.stop()
+      })
     })
 
     it('refuse more streams than the seeded people may hold', async function () {

@@ -601,9 +601,72 @@ export const spawnTestPattern: SpawnPattern = (url, seconds) =>
     { stdio: 'ignore' }
   )
 
+/** How long a stream is asked for again after a 5xx or a lost connection. */
+export const MINT_RETRY_MS = 120_000
+/** The first wait between tries, doubled each time up to `MINT_BACKOFF_MAX_MS`. */
+export const MINT_BACKOFF_MS = 1000
+export const MINT_BACKOFF_MAX_MS = 15_000
+/** Streams asked for at once. */
+export const MINT_CONCURRENCY = 10
+/**
+ * What a pattern runs for beyond the load's minutes, since the patterns start
+ * before the rest of the load has connected. `stop()` ends them with the run.
+ */
+export const PATTERN_MARGIN_SEC = 1800
+
+export interface MintRetry {
+  retryMs?: number
+  backoffMs?: number
+  backoffMaxMs?: number
+  sleep?: (ms: number) => Promise<void>
+}
+
+/** A refusal that will not mend by asking again: any answer below 500. */
+function retryable(error: unknown): boolean {
+  return !(error instanceof HttpError) || error.status >= 500
+}
+
+/**
+ * `mintStream`, asked again after a 5xx or a lost connection, with a doubling
+ * wait, until `retryMs` has passed. Each try that is retried counts as
+ * `stream-mint-retry`; a refusal below 500 is not retried.
+ */
+export async function mintWithRetry(
+  server: string,
+  account: Pick<SeededAccount, 'token' | 'kind'>,
+  gameId: string,
+  tally: Tally,
+  options: MintRetry = {}
+): Promise<MintedStream> {
+  const retryMs = options.retryMs ?? MINT_RETRY_MS
+  const backoffMax = options.backoffMaxMs ?? MINT_BACKOFF_MAX_MS
+  const sleep =
+    options.sleep ??
+    (async (ms: number) => {
+      await new Promise(done => {
+        setTimeout(done, ms)
+      })
+    })
+  const deadline = performance.now() + retryMs
+  let wait = options.backoffMs ?? MINT_BACKOFF_MS
+  for (;;) {
+    try {
+      return await mintStream(server, account, gameId, tally)
+    } catch (error) {
+      if (!retryable(error) || performance.now() + wait > deadline) throw error
+      tally.fail('stream-mint-retry')
+      await sleep(wait)
+      wait = Math.min(wait * 2, backoffMax)
+    }
+  }
+}
+
 /**
  * `streams` publishers: each seeded videographer's cameras in turn, up to the
- * limit, pushing a test pattern until the run ends.
+ * limit, pushing a test pattern until the run ends. They are minted before the
+ * rest of the load starts, a few at a time, each retried through 5xx answers
+ * and lost connections. A stream that could not be minted counts once as
+ * `stream-mint`.
  */
 export class Publishers implements Actor {
   readonly children: ChildProcess[] = []
@@ -617,7 +680,8 @@ export class Publishers implements Actor {
     private readonly tally: Tally,
     private readonly streams: number,
     private readonly seconds: number,
-    private readonly spawnPattern: SpawnPattern = spawnTestPattern
+    private readonly spawnPattern: SpawnPattern = spawnTestPattern,
+    private readonly retry: MintRetry & { concurrency?: number } = {}
   ) {}
 
   async start(): Promise<void> {
@@ -629,23 +693,40 @@ export class Publishers implements Actor {
       throw new Error(
         `--streams ${this.streams} is above the ${most} that ${videographers.length} seeded videographers may hold`
       )
-    for (let i = 0; i < this.streams; i++) {
+    const wanted = Array.from({ length: this.streams }, (_, i) => {
       const account = videographers[i % videographers.length]
-      const game = this.tokens.games[account.gameIndex ?? 0]
-      let stream: MintedStream
-      try {
-        stream = await mintStream(
-          serverFor(this.servers, i),
-          account,
-          game.id,
-          this.tally
-        )
-      } catch (error) {
-        this.tally.failure(error)
-        continue
+      return { i, account, game: this.tokens.games[account.gameIndex ?? 0] }
+    })
+    const results: Array<MintedStream | undefined> = new Array(this.streams)
+    let next = 0
+    const worker = async (): Promise<void> => {
+      while (next < wanted.length) {
+        const { i, account, game } = wanted[next++]
+        try {
+          results[i] = await mintWithRetry(
+            serverFor(this.servers, i),
+            account,
+            game.id,
+            this.tally,
+            this.retry
+          )
+        } catch {
+          this.tally.fail('stream-mint')
+        }
       }
-      // Stops the run: every stream the server mints would go the same way.
-      requireServerHost(stream.url, this.servers)
+    }
+    const concurrency = Math.max(
+      1,
+      Math.min(this.retry.concurrency ?? MINT_CONCURRENCY, wanted.length)
+    )
+    await Promise.all(Array.from({ length: concurrency }, worker))
+    // Stops the run before any pattern starts: every stream the server mints
+    // would go the same way.
+    for (const stream of results)
+      if (stream != null) requireServerHost(stream.url, this.servers)
+    for (const { i, account, game } of wanted) {
+      const stream = results[i]
+      if (stream == null) continue
       this.minted.push(stream)
       if (stream.videoId != null)
         this.videos.push({
@@ -654,7 +735,10 @@ export class Publishers implements Actor {
           videographer: account.label
         })
       try {
-        const child = this.spawnPattern(stream.url, this.seconds)
+        const child = this.spawnPattern(
+          stream.url,
+          this.seconds + PATTERN_MARGIN_SEC
+        )
         child.on('error', () => {
           this.tally.fail('stream-spawn')
         })

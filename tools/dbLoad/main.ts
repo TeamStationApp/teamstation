@@ -199,6 +199,21 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
     const down = await reachable(options.servers)
     for (const _ of down) tally.fail('unreachable')
     if (down.length < options.servers.length) {
+      // Minted before anything else loads the servers, so a stream is not
+      // asked for at the peak of the crowd connecting.
+      let publishers: Publishers | undefined
+      if (options.streams > 0) {
+        publishers = new Publishers(
+          options.servers,
+          tokens,
+          tally,
+          options.streams,
+          Math.ceil(options.minutes * 60)
+        )
+        actors.push(publishers)
+        await publishers.start()
+      }
+
       const scorers = await startScorekeepers(options, tokens, games, tally)
       actors.push(...scorers)
 
@@ -239,16 +254,7 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
       actors.push(readers)
       readers.start()
 
-      if (options.streams > 0) {
-        const publishers = new Publishers(
-          options.servers,
-          tokens,
-          tally,
-          options.streams,
-          Math.ceil(options.minutes * 60)
-        )
-        actors.push(publishers)
-        await publishers.start()
+      if (publishers != null) {
         const watching = liveViewersFor(
           tokens,
           publishers.videos,
