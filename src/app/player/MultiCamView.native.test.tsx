@@ -149,6 +149,7 @@ async function grid(options: {
   for (const video of document.querySelectorAll('video'))
     Object.defineProperty(video, 'currentTime', {
       configurable: true,
+      writable: options.playable === true,
       value: 20
     })
   await settle()
@@ -213,6 +214,50 @@ function placed(): {
 
 describe('the board over the phone’s grid (C5)', function () {
   afterEach(unmount)
+
+  it('covers a decoder until its seek lands and covers a reloaded source again', async () => {
+    await grid({ Grid: PhoneGrid, width: 402, height: 874, playable: true })
+    const video = document.querySelector('video')!
+    const picture = video.closest('[role="img"]')!
+    const loading = (): Element | undefined =>
+      [...picture.querySelectorAll('div')].find(
+        node =>
+          node.children.length === 0 &&
+          node.textContent === lstrings.angles_tile_loading
+      )
+    await act(async () => {
+      Object.defineProperty(video, 'readyState', {
+        value: 4,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('loadeddata'))
+    })
+    expect(loading()).equals(undefined)
+    await act(async () => {
+      Object.defineProperty(video, 'seeking', {
+        value: true,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('seeking'))
+    })
+    expect(
+      window.getComputedStyle(loading()!.parentElement!).backgroundColor
+    ).equals('rgb(0, 0, 0)')
+    await act(async () => {
+      Object.defineProperty(video, 'seeking', {
+        value: false,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('seeked'))
+    })
+    expect(loading()).equals(undefined)
+    await act(async () => {
+      video.dispatchEvent(new window.Event('emptied'))
+    })
+    expect(
+      window.getComputedStyle(loading()!.parentElement!).backgroundColor
+    ).equals('rgb(0, 0, 0)')
+  })
 
   it('announces missing footage on the accessible picture and covers its future frame', async () => {
     await grid({

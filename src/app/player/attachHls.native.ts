@@ -91,15 +91,15 @@ export function attachHls(
    */
   let failed = false
   /**
-   * Where the player was when it last reported a failure, until it has played
-   * on from there. Kept apart from `failed`, which a `canplay` clears: iOS
+   * The native progress revision at the last failure, until another native
+   * sample advances. Kept apart from `failed`, which a `canplay` clears: iOS
    * sends that whenever AVPlayer changes its mind about keeping up, picture or
    * not, and a failed AVPlayer raises no second error to set it again.
    */
   let failedAt: number | null = null
   const hasFailed = (): boolean => {
     if (failedAt == null) return false
-    if (handle.currentTime > failedAt + 0.5) failedAt = null
+    if (handle.progressRevision > failedAt) failedAt = null
     return failedAt != null
   }
   /** Where to put the playhead once a reloaded stream has opened. */
@@ -149,13 +149,17 @@ export function attachHls(
     if (failed) restart()
   }
   const onPause = (): void => {
-    if (!recovering) wantsToPlay = false
+    wantsToPlay = false
   }
   handle.addEventListener('play', onPlay)
   handle.addEventListener('pause', onPause)
 
   /** Pictures again: the trouble has passed, and it may resume. */
   const recovered = (): void => {
+    failed = false
+    if (recovering && (intent?.wantsToPlay() ?? wantsToPlay) && handle.paused)
+      handle.play().catch(() => undefined)
+    if (hasFailed()) return
     failed = false
     // A reload still due belongs to trouble that has passed. Left to fire, it
     // would find no failure on the books and read that as patience run out.
@@ -170,6 +174,7 @@ export function attachHls(
     if (wanted) handle.play().catch(() => undefined)
   }
   handle.addEventListener('canplay', recovered)
+  handle.addEventListener('timeupdate', recovered)
 
   const giveUp = (): void => {
     if (gaveUp) return
@@ -189,7 +194,7 @@ export function attachHls(
       return
     }
     failed = true
-    failedAt ??= handle.currentTime
+    failedAt ??= handle.progressRevision
     const now = Date.now()
     if (firstFailureAt === 0) firstFailureAt = now
     if (now - firstFailureAt > patience) {
@@ -220,6 +225,43 @@ export function attachHls(
     }, wait)
   }
 
+  // Both grid and single players need a deadline when native reports one
+  // failure and then goes quiet. Read native samples, never our own seeks.
+  let observed = handle.reportedTime
+  let lastAdvance = Date.now()
+  let supervision: ReturnType<typeof setTimeout> | undefined
+  const supervise = (): void => {
+    handle.checkSeekTimeout()
+    const now = Date.now()
+    if (handle.reportedTime !== observed) {
+      observed = handle.reportedTime
+      lastAdvance = now
+    }
+    const wanted =
+      intent?.wantsRecovery?.() ?? intent?.wantsToPlay() ?? wantsToPlay
+    if (!wanted && !failed) lastAdvance = now
+    const silentReadyTile =
+      intent?.buffer != null && wanted && handle.readyState >= 3
+    if (
+      !singleLive &&
+      !gaveUp &&
+      now - lastAdvance >= 20_000 &&
+      (failed || hasFailed() || silentReadyTile)
+    ) {
+      lastAdvance = now
+      if (reloads >= MAX_RELOADS) giveUp()
+      else {
+        reloads++
+        recovering = true
+        failed = true
+        failedAt ??= handle.progressRevision
+        reloadKeepingPlace()
+      }
+    }
+    supervision = setTimeout(supervise, 1000)
+  }
+  supervision = setTimeout(supervise, 1000)
+
   // AVPlayer has no live offset to set, so it is moved there on its first
   // play. ExoPlayer is given the cushion as its offset where the source is
   // built (`VideoView.native.tsx`), and starts far enough back to be left.
@@ -233,10 +275,12 @@ export function attachHls(
     stopReloading?.()
     stopExplicitSeek()
     if (timer != null) clearTimeout(timer)
+    if (supervision != null) clearTimeout(supervision)
     handle.removeEventListener('loadedmetadata', putBack)
     handle.removeEventListener('play', onPlay)
     handle.removeEventListener('pause', onPause)
     handle.removeEventListener('canplay', recovered)
+    handle.removeEventListener('timeupdate', recovered)
     handle.onError = null
   }
 }
