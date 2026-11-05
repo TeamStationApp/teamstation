@@ -906,7 +906,9 @@ export function TvPlayer({
       index,
       seconds,
       seekableEnd,
-      seekableStart
+      seekableStart,
+      !(current.current.paused && transportState.rate === 1) &&
+        transport.current?.scrubbing !== true
     )
     if (index !== clock.current.master || next === null) return
     setWall(previous =>
@@ -1027,7 +1029,7 @@ export function TvPlayer({
                 }}
                 testID={`tv-angle-${index}`}
                 accessibilityRole="button"
-                accessibilityLabel={`Camera ${angle.name}`}
+                accessibilityLabel={`Camera ${angle.name}${!available || failures.includes(index) ? ': video unavailable at this moment' : ''}`}
                 accessibilityValue={{
                   text: `${clock.current.ports[index]?.position.toFixed(1)} seconds`
                 }}
