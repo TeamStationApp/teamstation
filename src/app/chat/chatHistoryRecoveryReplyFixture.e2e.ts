@@ -121,7 +121,7 @@ async function main(): Promise<void> {
     } else
       assert.equal(auth, person.userId, 'The profile belongs to another actor')
     await m.assertVisible({ text: 'Account,', timeout: 30000 })
-    await m.openLink({ link: origin + '/chat' })
+    await m.tapOn({ css: '[aria-label="Chat"]' })
     // Give the cold crypto module a rendering interval before the driver's
     // accessibility polling. The readiness assertion remains authoritative.
     await m.evalBrowserScript({
