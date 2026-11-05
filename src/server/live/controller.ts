@@ -11,6 +11,7 @@ import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { freeBytes, roomToRecord } from '../media/diskSpace'
 import { ffprobeFor, probeDuration, VIDEO_FILE } from '../media/ffmpeg'
+import { ValkeyPlaylistSink } from '../media/livePlaylists'
 import { posterSecond } from '../media/posters'
 import { presignGetUrl } from '../media/presign'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -168,6 +169,12 @@ export interface LiveControllerOptions {
   feed?: ChangeFeed
   /** The Valkey connection the ingest's playlist sink writes through. */
   playlistClient?: ScoreboardClient
+  /**
+   * The key prefix the playlist sink writes under,
+   * `scoreboardPrefix(redis.prefix, databaseUrl)`. With no client and prefix,
+   * playlists go to the Space alone.
+   */
+  playlistPrefix?: string
   /** The local timer's period: a test runs it faster. */
   tickMs?: number
 }
@@ -252,6 +259,22 @@ interface PublishingOrigin extends OriginVideo {
 }
 const origins = new Map<string, PublishingOrigin>()
 let originGeneration = 0
+/** One sink per Valkey client, so each list's expected length is known once. */
+const sinks = new WeakMap<ScoreboardClient, ValkeyPlaylistSink>()
+
+/** Where published bodies go besides the Space: Valkey, when configured. */
+function playlistSinkOf(
+  current: LiveControllerOptions
+): ValkeyPlaylistSink | undefined {
+  const { playlistClient: client, playlistPrefix: prefix } = current
+  if (client == null || prefix == null) return undefined
+  let sink = sinks.get(client)
+  if (sink == null) {
+    sink = new ValkeyPlaylistSink(client, prefix, current.log ?? console.log)
+    sinks.set(client, sink)
+  }
+  return sink
+}
 
 function startOrigin(
   current: LiveControllerOptions,
@@ -275,6 +298,7 @@ function startOrigin(
     mayMove: name => movable.has(name),
     localTailSec: current.live.localTailSec ?? LIVE_LOCAL_TAIL_SEC,
     scanned: () => anchorCursors.get(videoId),
+    playlistSink: playlistSinkOf(current),
     onFirstSegment: async probe => {
       await db
         .updateTable('videos')
@@ -2054,6 +2078,7 @@ async function removeDeletedOrigin(
     })
   stopOrigin(videoId)
   anchorCursors.delete(videoId)
+  await playlistSinkOf(current)?.forget(videoId)
 }
 
 async function closeOrigin(
@@ -2142,6 +2167,8 @@ async function closeOrigin(
       })
       .where('id', '=', videoId)
       .execute()
+    // Viewers read the closed body from the Space from here on.
+    await playlistSinkOf(current)?.forget(videoId)
     // The durable cleanup marker survives a crash or a failed removal.
     stopOrigin(videoId)
     await rm(dir, { recursive: true, force: true })
