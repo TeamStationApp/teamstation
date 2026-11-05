@@ -1,4 +1,9 @@
-import { mediaAt, type WallAnchor, wallAt } from '../../common/wallTimeline'
+import {
+  inWallGap,
+  mediaAt,
+  type WallAnchor,
+  wallAt
+} from '../../common/wallTimeline'
 import type { AngleVideo } from './wallClock'
 
 /**
@@ -20,6 +25,8 @@ export interface WallMapping {
   secAt: (wallMs: number) => number | null
   /** The wall time of the newest picture this player has been offered. */
   newestWall: () => number | null
+  /** True only for a known interior hole; unknown bounds are not missing footage. */
+  inGap?: (wallMs: number) => boolean
   source: 'pdt' | 'timeline' | 'start' | 'media'
 }
 
@@ -75,6 +82,19 @@ export function fromFragments(
     frags[lastAtOrBefore(frag => frag.start, sec)]
   return {
     source: 'pdt',
+    inGap: wallMs => {
+      if (frags.length === 0) return false
+      const index = lastAtOrBefore(frag => frag.programDateTime, wallMs)
+      const found = frags[index]
+      const next = frags[index + 1]
+      return (
+        next != null &&
+        next.programDateTime - (found.programDateTime + found.duration * 1000) >
+          250 &&
+        wallMs >= found.programDateTime + found.duration * 1000 &&
+        wallMs < next.programDateTime
+      )
+    },
     wallAt: sec => {
       const frag = at(sec)
       return frag == null
@@ -133,6 +153,7 @@ export function fromAnchors(
 ): WallMapping {
   return {
     source: 'timeline',
+    inGap: wallMs => inWallGap(anchors, wallMs),
     wallAt: sec => wallAt(anchors, sec * 1000),
     secAt: wallMs => {
       const ms = mediaAt(anchors, wallMs)
