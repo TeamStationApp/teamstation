@@ -1216,6 +1216,27 @@ describe('useMultiCam on live angles', function () {
 describe('useMultiCam buffering', function () {
   // A is two minutes in at 120 s; B, which started a minute later, at 60 s.
 
+  it('clears the ended notice when a paused viewer rewinds into the recording', async function () {
+    this.timeout(8000)
+    const { mc } = await grid({ atMs: T0 + 660_000 }, {}, tiles => {
+      for (const tile of Object.values(tiles)) {
+        tile.currentTime = 600
+        tile.ended = true
+      }
+    })
+    await ticks(2)
+    expect(mc().ended).equals(true)
+    await act(async () => {
+      mc().toggle()
+    })
+    expect(mc().playing).equals(false)
+    await act(async () => {
+      mc().goTo(T0 + 120_000)
+    })
+    expect(mc().ended).equals(false)
+    expect(mc().playing).equals(false)
+  })
+
   it('recognizes a native frozen picture despite an advancing optimistic clock', async function () {
     this.timeout(5000)
     const { mc, tiles } = await grid({}, {}, tiles => {

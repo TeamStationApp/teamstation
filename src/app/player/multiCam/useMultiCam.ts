@@ -1898,6 +1898,10 @@ export function useMultiCam(
           : Math.max(limit, Math.min(asked, here ?? limit))
       atWallRef.current = wallMs
       setAtWallMs(wallMs)
+      // A paused grid has no moving leader to update its ended notice.
+      // An explicit rewind owns the moment even while its pictures reload.
+      const end = takeRef.current?.toMs
+      if (end == null || wallMs < end - 1000) setEnded(false)
       shortSince.current.clear()
       if (flowing.current) {
         const held = awaited(wallMs).map(video =>
