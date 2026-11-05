@@ -15,6 +15,7 @@ import { TeamStationClient } from '../src/common/api'
 import { passwordBytes } from '../src/common/passwordProtocol'
 import { nativeArgon } from '../src/server/auth/passwords'
 import {
+  RECOVERY_BROWSER_FOLLOWUP_SCENARIOS,
   recoveryFixtureEnvironment,
   type RecoveryFixtureOwner,
   requireFixtureFields,
@@ -48,6 +49,9 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
     values.surface != null && ['web', 'ios', 'android'].includes(values.surface)
   )
   assert(values.out != null)
+  const browserFollowup =
+    values.runner === 'web' &&
+    RECOVERY_BROWSER_FOLLOWUP_SCENARIOS.some(name => name === values.scenario)
   assert(
     (values.runner === 'native' &&
       ['bands', 'core', 'default', 'intact'].includes(values.scenario)) ||
@@ -58,19 +62,20 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
         )) ||
       (values.runner === 'web' &&
         values.surface === 'web' &&
-        [
-          'E3',
-          'E4',
-          'E5',
-          'E6',
-          'E7',
-          'E8',
-          'E9',
-          'E10',
-          'E11',
-          'E12',
-          'E13'
-        ].includes(values.scenario)),
+        (browserFollowup ||
+          [
+            'E3',
+            'E4',
+            'E5',
+            'E6',
+            'E7',
+            'E8',
+            'E9',
+            'E10',
+            'E11',
+            'E12',
+            'E13'
+          ].includes(values.scenario))),
     'This scenario requires its specialized fixture producer'
   )
   const ownerFile = process.env.CHAT_RECOVERY_OWNER_FILE
@@ -249,7 +254,7 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
     { mode: 0o600 }
   )
   const people = readSeedTable(readFileSync(join(out, 'seed.txt'), 'utf8'))
-  if (values.runner === 'reply') {
+  if (values.runner === 'reply' || browserFollowup) {
     // Only inspect membership here. The browser enrolls its own identity and
     // creates every encrypted fixture message through the normal composer.
     const actor = people.Hc
@@ -299,36 +304,108 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
       small: join(out, 'small-fixture.json')
     })
     const path = join(out, 'env.sh')
-    writeFileSync(
-      path,
-      recoveryFixtureEnvironment({
-        TS_CHAT_WEB_URL: owner.webUrl,
-        TS_CHAT_API_URL: owner.apiUrl,
-        CHAT_UI_SEED_FILE: join(out, 'seed.txt'),
-        CHAT_UI_ARTIFACTS: join(out, 'producer-results'),
-        CHAT_UI_PROFILE_DIR: profile,
-        CHAT_UI_CONVERSATION: protectedRoom.id,
-        CHAT_UI_FIXTURE_PEOPLE: JSON.stringify(peers),
-        CHAT_UI_HISTORY_FIXTURE_FILE: shared,
-        CHAT_UI_REPLY_SEED_FILE: join(out, 'seed.txt'),
-        CHAT_UI_REPLY_ACTOR: values.scenario === 'incoming-send' ? 'Hs' : 'Hc',
-        CHAT_UI_REPLY_PEER: 'Hs',
-        CHAT_UI_REPLY_PROFILE_DIR:
-          values.scenario === 'incoming-send' ? peerProfile : profile,
-        CHAT_UI_REPLY_WEB_DEVICE: 'recovery-reply',
-        CHAT_UI_REPLY_ARTIFACTS: join(out, values.scenario + '-results'),
-        CHAT_UI_REPLY_SHARED_FIXTURE: shared,
-        CHAT_UI_REPLY_SMALL_FIXTURE: join(out, 'small-fixture.json'),
-        CHAT_UI_REPLY_INCOMING_FIXTURE: incoming,
-        CHAT_UI_REPLY_CREATE_OUTGOING: 'true',
-        CHAT_UI_REPLY_PROTECTED_CONVERSATION: protectedRoom.id,
-        CHAT_UI_REPLY_MODE: values.scenario,
-        CHAT_RECOVERY_REPLY_SETUP: setup,
-        CHAT_RECOVERY_FIXTURE_SOURCE: owner.source,
-        MAESTRO_D: 'recovery-reply-' + Date.now()
-      }),
-      { mode: 0o600, flag: 'wx' }
-    )
+    const environment: Record<string, string> = {
+      TS_CHAT_WEB_URL: owner.webUrl,
+      TS_CHAT_API_URL: owner.apiUrl,
+      CHAT_UI_SEED_FILE: join(out, 'seed.txt'),
+      CHAT_UI_ARTIFACTS: join(out, 'producer-results'),
+      CHAT_UI_PROFILE_DIR: profile,
+      CHAT_UI_CONVERSATION: protectedRoom.id,
+      CHAT_UI_FIXTURE_PEOPLE: JSON.stringify(peers),
+      CHAT_UI_HISTORY_FIXTURE_FILE: shared,
+      CHAT_UI_REPLY_SEED_FILE: join(out, 'seed.txt'),
+      CHAT_UI_REPLY_ACTOR: values.scenario === 'incoming-send' ? 'Hs' : 'Hc',
+      CHAT_UI_REPLY_PEER: 'Hs',
+      CHAT_UI_REPLY_PROFILE_DIR:
+        values.scenario === 'incoming-send' ? peerProfile : profile,
+      CHAT_UI_REPLY_WEB_DEVICE: 'recovery-reply',
+      CHAT_UI_REPLY_ARTIFACTS: join(out, values.scenario + '-results'),
+      CHAT_UI_REPLY_SHARED_FIXTURE: shared,
+      CHAT_UI_REPLY_SMALL_FIXTURE: join(out, 'small-fixture.json'),
+      CHAT_UI_REPLY_INCOMING_FIXTURE: incoming,
+      CHAT_UI_REPLY_CREATE_OUTGOING: 'true',
+      CHAT_UI_REPLY_PROTECTED_CONVERSATION: protectedRoom.id,
+      CHAT_UI_REPLY_MODE: values.scenario,
+      CHAT_RECOVERY_REPLY_SETUP: setup,
+      CHAT_RECOVERY_FIXTURE_SOURCE: owner.source,
+      MAESTRO_D: 'recovery-reply-' + Date.now()
+    }
+    if (browserFollowup) {
+      const produce = (file: string, mode: string): void => {
+        let output = `$ node -r sucrase/register ${file} ${mode}\n`
+        try {
+          output += execFileSync(
+            process.execPath,
+            ['-r', 'sucrase/register', file, mode],
+            {
+              env: { ...process.env, ...environment },
+              encoding: 'utf8',
+              maxBuffer: 16 * 1024 * 1024,
+              stdio: ['ignore', 'pipe', 'pipe']
+            }
+          )
+        } catch (error) {
+          const failed = error as { stdout?: string; stderr?: string }
+          output += (failed.stdout ?? '') + (failed.stderr ?? '')
+          throw error
+        } finally {
+          writeFileSync(join(out, mode + '-producer.log'), output, {
+            flag: 'wx',
+            mode: 0o600
+          })
+        }
+      }
+      const helper = 'src/app/chat/chatHistoryRecoveryReplyFixture.e2e.ts'
+      produce(helper, 'enroll')
+      produce(helper, 'followup')
+      const group = JSON.parse(
+        readFileSync(join(out, 'followup-fixture.json'), 'utf8')
+      )
+      assert.equal(group.source, owner.source)
+      assert.equal(group.conversationId, protectedRoom.id)
+      requireFixtureFields(group, ['originalId', 'originalBody'])
+      environment.CHAT_UI_MESSAGE = group.originalId
+      environment.CHAT_UI_TARGET_TEXT = group.originalBody
+      environment.CHAT_UI_PEER_PROFILE_DIR = peerProfile
+      environment.CHAT_UI_PROFILE_DIR =
+        values.scenario === 'S6' ? peerProfile : profile
+      environment.CHAT_UI_ARTIFACTS = join(out, 'results')
+      if (['S4full', 'currentHistoryReply'].includes(values.scenario)) {
+        produce('src/app/chat/chatUiFollowup.e2e.ts', 'historyFixture')
+        const history = JSON.parse(readFileSync(shared, 'utf8'))
+        requireFixtureFields(history, [
+          'conversationId',
+          'originalId',
+          'replyId'
+        ])
+        assert.notEqual(history.conversationId, protectedRoom.id)
+        environment.CHAT_UI_TEST_CONVERSATION = history.conversationId
+      } else {
+        produce(helper, 'paging-target')
+        const small = JSON.parse(
+          readFileSync(join(out, 'small-fixture.json'), 'utf8')
+        )
+        requireFixtureFields(small, ['conversationId', 'originalId'])
+        assert.notEqual(small.conversationId, protectedRoom.id)
+        environment.CHAT_UI_TEST_CONVERSATION = small.conversationId
+      }
+      const picker = join(out, 'picker-notes.txt')
+      writeFileSync(picker, 'Owned synthetic practice notes', {
+        flag: 'wx',
+        mode: 0o600
+      })
+      environment.CHAT_UI_PICK_FILE = picker
+      requireFixtureFields(environment, [
+        'CHAT_UI_MESSAGE',
+        'CHAT_UI_TARGET_TEXT',
+        'CHAT_UI_TEST_CONVERSATION',
+        'CHAT_UI_PEER_PROFILE_DIR'
+      ])
+    }
+    writeFileSync(path, recoveryFixtureEnvironment(environment), {
+      mode: 0o600,
+      flag: 'wx'
+    })
     return path
   }
   if (values.runner === 'web') {

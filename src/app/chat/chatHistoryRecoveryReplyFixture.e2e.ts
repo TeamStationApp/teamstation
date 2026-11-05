@@ -73,7 +73,7 @@ async function main(): Promise<void> {
   ])
     assert(resolve(path).startsWith(resolve(setup.artifacts) + '/'))
   const mode = process.argv[2]
-  assert(['enroll', 'incoming', 'paging-target'].includes(mode))
+  assert(['enroll', 'incoming', 'paging-target', 'followup'].includes(mode))
   privateErrorFile = join(setup.artifacts, mode + '-setup-error.log')
   const people = readSeedTable(readFileSync(setup.seedFile, 'utf8'))
   const origin = setup.origin.replace(/\/+$/, '')
@@ -175,14 +175,20 @@ async function main(): Promise<void> {
       `const r=await fetch(${JSON.stringify(setup.apiUrl + '/chat/dm-candidates')},{credentials:'include'});if(!r.ok)throw new Error('Candidate list unavailable');return JSON.stringify((await r.json()).find(p=>p.userId===${JSON.stringify(people.Hs.userId)})??null)`
     )
     assert(candidate != null)
-    await m.tapOn({ text: 'New message' })
-    await m.tapOn({
-      css:
-        '[role="button"][aria-label=' +
-        JSON.stringify('Pick ' + candidate.shortName) +
-        ']'
-    })
-    await m.tapOn({ text: 'Start conversation' })
+    if (mode === 'followup')
+      await m.openLink({
+        link: origin + '/chat/' + setup.protectedConversation
+      })
+    else {
+      await m.tapOn({ text: 'New message' })
+      await m.tapOn({
+        css:
+          '[role="button"][aria-label=' +
+          JSON.stringify('Pick ' + candidate.shortName) +
+          ']'
+      })
+      await m.tapOn({ text: 'Start conversation' })
+    }
     await m.assertVisible({
       css: '[data-testid="chat-composer"]',
       timeout: 30000
@@ -192,7 +198,9 @@ async function main(): Promise<void> {
       'return JSON.stringify(location.pathname.split("/")[2])'
     )
     assert(conversationId.startsWith('cnv_'))
-    assert.notEqual(conversationId, setup.protectedConversation)
+    if (mode === 'followup')
+      assert.equal(conversationId, setup.protectedConversation)
+    else assert.notEqual(conversationId, setup.protectedConversation)
     const posts = async (): Promise<Array<{ id: string }>> =>
       await read(
         m,
@@ -220,6 +228,22 @@ async function main(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 100))
       }
       throw new Error('Fixture message was not acknowledged')
+    }
+    if (mode === 'followup') {
+      const body = 'Practice update: please bring water and arrive at 5:30.'
+      const id = await send(body)
+      save(join(setup.artifacts, 'followup-fixture.json'), {
+        source: setup.source,
+        conversationId,
+        originalId: id,
+        originalBody: body
+      })
+      await close(m)
+      const peer = await attach('Hs')
+      await peer.openLink({ link: origin + '/chat/' + conversationId })
+      await peer.assertVisible({ text: body, timeout: 30000 })
+      console.log('Follow-up group post readable on both enrolled profiles')
+      return
     }
     const earlier = 'Earlier original for incoming reply'
     const originalId = await send(earlier)
