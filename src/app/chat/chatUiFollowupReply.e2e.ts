@@ -121,7 +121,7 @@ function row(id: string): string {
   return `[data-testid=${JSON.stringify('chat-message-' + id)}]`
 }
 function quote(id: string): string {
-  return `${row(id)} [role="button"][aria-label^="Jump to message from "]`
+  return `${row(id)} [role="button"][aria-label^="Jump to "]`
 }
 async function coldOpen(device: Device, fixture: Fixture): Promise<void> {
   await device.openLink({
