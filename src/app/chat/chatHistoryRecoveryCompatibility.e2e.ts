@@ -89,7 +89,7 @@ export async function mixedVersionRecovery(): Promise<void> {
   })
   app.use((req, res, next) => express.static(served.directory)(req, res, next))
   app.get(/.*/, (_req, res) => {
-    res.sendFile(join(served.directory, 'index.html'))
+    res.sendFile('index.html', { root: served.directory })
   })
   const server = createServer(app)
   await new Promise<void>((resolve, reject) => {
