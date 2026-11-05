@@ -322,7 +322,9 @@ export function TvPlayer({
       }
       if (!active) return
       loaded.forEach((angle, index) => {
-        recovery.current.set(index, new PlaybackRecovery(Date.now()))
+        const watch = new PlaybackRecovery(Date.now())
+        watch.opening(Date.now())
+        recovery.current.set(index, watch)
         const queue = new NativeSeekQueue(
           seconds => refs.current[index]?.seek(seconds, 0),
           () => {

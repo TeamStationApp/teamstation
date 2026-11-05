@@ -257,6 +257,45 @@ afterEach(async () => {
   closed = false
 })
 describe('TV game playback entry', () => {
+  it('allows a slow initial decoder to open before its bounded retry', async () => {
+    count = 1
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    try {
+      await render()
+      const initial = document.querySelector('video')!
+      for (let second = 0; second < 24; second++) {
+        now += 1000
+        await act(async () => {
+          recover!()
+          await pause()
+        })
+        expect(
+          document.querySelector('video'),
+          'initial opening decoder survives'
+        ).equals(initial)
+      }
+      now += 6001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(
+        document.querySelector('video'),
+        'never-opening initial decoder retries'
+      ).not.equals(initial)
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
   it('retries after stale error progress and lets the replacement finish opening', async () => {
     count = 1
     const originalInterval = globalThis.setInterval
@@ -309,9 +348,10 @@ describe('TV game playback entry', () => {
           recover!()
           await pause()
         })
-        expect(document.querySelector('video'), 'opening decoder survives').equals(
-          replacement
-        )
+        expect(
+          document.querySelector('video'),
+          'opening decoder survives'
+        ).equals(replacement)
       }
       // A decoder that never opens must still get another bounded attempt.
       now += 6000
