@@ -110,6 +110,10 @@ public final class EventCoordinator {
    * `reason` is the stream controller's: a `.redial` names the stream held,
    * and a stream ended on TeamStation is thrown as
    * `TeamStationError.streamEnded` rather than put back.
+   *
+   * A game with no camera place free throws `TeamStationError.cameraLimit`
+   * with the server's sentence, from the first claim and from the refresh
+   * alike: nothing is dialled.
    */
   public func streamURLForDial(
     destination: StreamDestination,
@@ -137,6 +141,12 @@ public final class EventCoordinator {
   /// The address for one dial of the stream controller: the event's, or the
   /// typed URL. A stream ended on TeamStation is thrown as `StreamEndedError`,
   /// which stops the controller redialling until the operator starts again.
+  ///
+  /// So is a game with no camera place free, with the server's sentence. Any
+  /// other failure the controller retries, and a retry would either name the
+  /// ended stream and be told so, over the sentence, or claim again and go
+  /// live by itself once a place frees. Ending a camera is somebody's
+  /// decision; streaming again after it is the operator's.
   public func streamURL(
     for reason: StreamSessionController.DialReason,
     destination: StreamDestination,
@@ -149,6 +159,8 @@ public final class EventCoordinator {
       ) ?? typed
     } catch TeamStationError.streamEnded {
       throw StreamEndedError(message: TeamStationError.streamEnded.localizedDescription)
+    } catch let TeamStationError.cameraLimit(message) {
+      throw StreamEndedError(message: message)
     }
   }
 

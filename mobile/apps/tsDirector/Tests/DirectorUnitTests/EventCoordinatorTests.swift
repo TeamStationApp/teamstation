@@ -12,6 +12,8 @@ private final class StubEvents: TeamStationEventService {
   var chosen: TeamStationAccount.ChosenEvent?
   var lastError: String?
   var refuse: String?
+  /// A camera limit's sentence: a start or a claim on the game is refused with it.
+  var full: String?
   var dropOnRefresh = false
   var asked: [String] = []
   /// Names passed into a call that claims. A pick that does not claim is absent.
@@ -38,6 +40,10 @@ private final class StubEvents: TeamStationEventService {
     asked.append("claim")
     claimedNames.append(cameraName)
     guard let current = chosen else { return false }
+    if let full {
+      lastError = full
+      throw TeamStationError.cameraLimit(full)
+    }
     if let refuse {
       lastError = refuse
       return false
@@ -62,6 +68,10 @@ private final class StubEvents: TeamStationEventService {
     asked.append("refresh \(reason.rawValue)")
     refreshedNames.append(cameraName)
     if dropOnRefresh { chosen = nil }
+    if reason == .start, let full {
+      lastError = full
+      throw TeamStationError.cameraLimit(full)
+    }
     guard ended, let current = chosen else { return }
     guard reason == .start else { throw TeamStationError.streamEnded }
     ended = false
@@ -115,6 +125,9 @@ private final class RecordingLinker: GameLinker {
     links.append(Link(take: take, gameId: gameId, title: title, replacing: replacing))
   }
 }
+
+private let gameFull = "This game already has 6 cameras. End one to add another."
+private let personFull = "You already have 4 cameras on this game. End one to add another."
 
 private func event(_ gameId: String) -> TeamStationEvent {
   TeamStationEvent(
@@ -271,6 +284,37 @@ struct EventCoordinatorTests {
     )
   }
 
+  @Test func aFullGameIsThrownAsAStopWithTheServersSentence() async {
+    let rig = Rig()
+    await rig.coordinator.pick(event: event("g1"), destination: .event)
+    rig.events.full = gameFull
+    await #expect(throws: StreamEndedError(message: gameFull)) {
+      _ = try await rig.coordinator.streamURL(for: .start, destination: .event, typed: "")
+    }
+    #expect(rig.events.asked == [ "choose+claim g1", "refresh start" ])
+  }
+
+  @Test func aFullGameNeverClaimedIsThrownAsAStop() async {
+    let rig = Rig()
+    await rig.coordinator.pick(event: event("g1"), destination: .url)
+    rig.events.full = personFull
+    await #expect(throws: StreamEndedError(message: personFull)) {
+      _ = try await rig.coordinator.streamURL(for: .start, destination: .event, typed: "")
+    }
+    #expect(rig.events.asked == [ "choose g1", "claim" ])
+    #expect(rig.events.chosen?.streamURL == nil)
+  }
+
+  @Test func choosingTheEventDestinationOnAFullGameKeepsTheSentence() async {
+    let rig = Rig()
+    await rig.coordinator.pick(event: event("g1"), destination: .url)
+    rig.events.full = gameFull
+    await rig.coordinator.destinationChanged(to: .event)
+    #expect(rig.events.asked.last == "claim")
+    #expect(rig.events.lastError == gameFull)
+    #expect(rig.events.chosen?.streamURL == nil)
+  }
+
   @Test func dialsAClaimedEventAfterRefreshingIt() async throws {
     let rig = Rig()
     await rig.coordinator.pick(event: event("g1"), destination: .event)
@@ -373,17 +417,29 @@ struct EventCoordinatorTests {
 @Suite("A stream ended on TeamStation", .serialized)
 @MainActor
 struct StreamEndedTests {
-  private func wire(_ rig: Rig, publisher: FakePublisher, scheduler: ManualScheduler) -> StreamSessionController {
+  private func wire(
+    _ rig: Rig,
+    publisher: FakePublisher,
+    scheduler: ManualScheduler,
+    ended: @escaping @MainActor (String) -> Void = { _ in }
+  ) -> StreamSessionController {
     StreamSessionController(
       publisher: publisher,
       host: .init(
         requestURL: { reason in
           try await rig.coordinator.streamURL(for: reason, destination: .event, typed: "")
         },
-        settings: { StreamSettings(config: .default) }
+        settings: { StreamSettings(config: .default) },
+        ended: ended
       ),
       scheduler: scheduler
     )
+  }
+
+  /// What the controller handed its host's `ended`.
+  @MainActor
+  private final class Said {
+    var messages: [String] = []
   }
 
   /// Waits, up to five seconds, for the controller's dial to get where the test needs it.
@@ -436,6 +492,40 @@ struct StreamEndedTests {
     #expect(rig.events.asked.suffix(2) == [ "refresh redial", "refresh start" ])
     #expect(rig.events.made == 1)
     #expect(publisher.dialled.last == "rtmp://ingest/live/g1-1")
+  }
+
+  @Test(
+    "Start on a full game shows why and dials nothing, claimed before or never",
+    arguments: [ true, false ]
+  )
+  func fullGame(claimedBefore: Bool) async {
+    let rig = Rig()
+    await rig.coordinator.pick(event: event("g1"), destination: claimedBefore ? .event : .url)
+    rig.events.full = gameFull
+    let publisher = FakePublisher()
+    let scheduler = ManualScheduler()
+    let said = Said()
+    let controller = wire(rig, publisher: publisher, scheduler: scheduler) { said.messages.append($0) }
+    controller.start()
+    await until { !said.messages.isEmpty }
+    #expect(said.messages == [ gameFull ])
+    #expect(controller.phase == .idle)
+    #expect(publisher.dialled.isEmpty)
+    #expect(rig.events.asked.last == (claimedBefore ? "refresh start" : "claim"))
+
+    // Nothing waits to ask again: the operator starts again, or nothing does.
+    let asked = rig.events.asked.count
+    scheduler.fire()
+    try? await Task.sleep(for: .milliseconds(100))
+    #expect(rig.events.asked.count == asked)
+    #expect(publisher.dialled.isEmpty)
+
+    // A camera ended elsewhere frees a place, and Stream goes live.
+    rig.events.full = nil
+    controller.start()
+    await until { controller.phase == .live }
+    #expect(controller.phase == .live)
+    #expect(publisher.dialled == [ "rtmp://ingest/live/g1" ])
   }
 
   @Test("A relaunch that resumes streaming redials, and an ended stream creates nothing")
