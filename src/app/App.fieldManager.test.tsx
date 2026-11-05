@@ -9,6 +9,7 @@ import { asGroupDetail } from '../common/publicGroups'
 import type { SchedulePreview } from '../common/schedulePreviews'
 import { userIdOfGumbo } from '../common/userId'
 import type { VenueSummary } from '../common/venues'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { press, settle } from '../test/gameFormDom'
 import { venueDetail, venueField } from '../test/venueDom'
 import { App } from './App'
@@ -122,6 +123,8 @@ afterEach(async () => {
 })
 
 describe('the Auto-Scheduler and Field Manager in the app', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('parses and writes the scheduler and venue addresses', () => {
     for (const path of [
       '/groups/league/lea_a/scheduler',

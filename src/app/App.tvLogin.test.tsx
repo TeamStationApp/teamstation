@@ -5,12 +5,15 @@ import React from 'react'
 import { asSessionUser, TeamStationClient } from '../common/api'
 import { HttpError } from '../common/errors'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fill, mount, press, settle, text, unmount } from '../test/gameFormDom'
 import { App } from './App'
 import type { Route } from './navigation/routes'
 import { currentRoute, showRoute } from './navigation/useAddressBar'
 
 describe('TeamStation TV signed-out QR return', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   let originals: PropertyDescriptorMap
   let requestedNext: string | undefined
   const inspected: string[] = []

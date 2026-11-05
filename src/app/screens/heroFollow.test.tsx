@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { TeamStationClient } from '../../common/api'
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
+import { pageOfGames } from '../../test/pageOf'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { GroupScreen } from './GroupScreen'
 
@@ -60,11 +61,11 @@ function client(
     calls.push(`unfollow:${ref.id}`)
   }
   // A member's private lists, which this test does not look at.
-  api.teamGames = async () => []
+  api.teamGamesPage = async (_id, query) => pageOfGames([], query)
   api.roster = async () => []
   api.teamStats = async () => []
   api.teamPitchingStats = async () => []
-  api.seasonGames = async () => []
+  api.seasonGamesPage = async (_id, query) => pageOfGames([], query)
   api.seasonTeams = async () => []
   api.standings = async () => []
   return { api, calls }

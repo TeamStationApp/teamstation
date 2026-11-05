@@ -11,6 +11,7 @@ import {
 import { HttpError } from '../../common/errors'
 import { asGroupDetail, type GroupDetail } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
+import { pageOf, pageOfGames } from '../../test/pageOf'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ManagementCard } from './ManagementCard'
 import { TeamPage } from './TeamPage'
@@ -65,7 +66,7 @@ describe('restored access-aware team presentation', () => {
       const api = new TeamStationClient({ baseUrl: '/api/v1' })
       api.group = async () =>
         detail({ canViewPrivate: true, canManagePeople: allowed })
-      api.teamGames = async () => []
+      api.teamGamesPage = async (_id, query) => pageOfGames([], query)
       api.roster = async () => []
       api.teamStats = async () => []
       api.teamPitchingStats = async () => []
@@ -101,29 +102,32 @@ describe('restored access-aware team presentation', () => {
         groups++
         return detail({ canViewPrivate: true })
       }
-      api.teamGames = async () => {
-        games++
+      api.teamGamesPage = async (_id, query) => {
+        if (query?.hasVideo !== true) games++
         if (refreshed && refused)
           throw new HttpError('forbidden', 'Team membership removed')
-        return [
-          asGameSummary({
-            id: 'demo-refresh-game',
-            homeTeamId: 'canonical',
-            awayTeamId: 'visitor',
-            homeTeamName: 'Demo Hawks',
-            awayTeamName: 'Demo Visitors',
-            seasonId: null,
-            startAt: '2099-01-01T18:00:00Z',
-            venue: null,
-            status: refreshed ? 'cancelled' : 'scheduled',
-            homeScore: null,
-            awayScore: null,
-            videoCount: 0,
-            ingestStatus: 'none',
-            pendingApproval: !refreshed,
-            pendingRequestId: refreshed ? null : 'demo-pending'
-          })
-        ]
+        return pageOfGames(
+          [
+            asGameSummary({
+              id: 'demo-refresh-game',
+              homeTeamId: 'canonical',
+              awayTeamId: 'visitor',
+              homeTeamName: 'Demo Hawks',
+              awayTeamName: 'Demo Visitors',
+              seasonId: null,
+              startAt: '2099-01-01T18:00:00Z',
+              venue: null,
+              status: refreshed ? 'cancelled' : 'scheduled',
+              homeScore: null,
+              awayScore: null,
+              videoCount: 0,
+              ingestStatus: 'none',
+              pendingApproval: !refreshed,
+              pendingRequestId: refreshed ? null : 'demo-pending'
+            })
+          ],
+          query
+        )
       }
       api.roster = async () => []
       api.teamStats = async () => []
@@ -169,9 +173,9 @@ describe('restored access-aware team presentation', () => {
               rejectNext = reject
             })
       let reads = 0
-      api.teamGames = async () => {
-        reads++
-        return []
+      api.teamGamesPage = async (_id, query) => {
+        if (query?.hasVideo !== true) reads++
+        return pageOfGames([], query)
       }
       api.roster = async () => []
       api.teamStats = async () => []
@@ -215,10 +219,11 @@ describe('restored access-aware team presentation', () => {
     })
   it('uses the original four-tab shell without private requests for somebody signed out', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.publicGamesPage = async (_kind, _id, query) => pageOf([], query)
     api.group = async () => detail()
     let privateReads = 0
     for (const method of [
-      'teamGames',
+      'teamGamesPage',
       'roster',
       'teamStats',
       'teamPitchingStats',
@@ -238,6 +243,10 @@ describe('restored access-aware team presentation', () => {
     expect(document.body.textContent).includes(
       'No game has a video attached yet.'
     )
+    // The pinned head waits for this, and would hold still with no tab in it.
+    expect(document.querySelector('[data-testid="teamTabContent"]')).not.equals(
+      null
+    )
     await press('Schedule')
     expect(document.body.textContent).includes('No games scheduled.')
     await press('Team')
@@ -247,6 +256,8 @@ describe('restored access-aware team presentation', () => {
       'You need to be a member of this team to see individual player stats.'
     )
     expect(document.body.textContent).not.includes('Create Game')
+    await press('Chats')
+    expect(document.body.textContent).includes('No chats available.')
     expect(privateReads).equals(0)
   })
   for (const following of [true, false])
@@ -254,9 +265,9 @@ describe('restored access-aware team presentation', () => {
       const api = new TeamStationClient({ baseUrl: '/api/v1' })
       api.group = async () => detail({ nonMemberView: true })
       const asked: string[] = []
-      api.teamGames = async id => {
-        asked.push(`teamGames ${id}`)
-        return []
+      api.teamGamesPage = async (id, query) => {
+        if (query?.hasVideo !== true) asked.push(`teamGames ${id}`)
+        return pageOfGames([], query)
       }
       api.roster = async id => {
         asked.push(`roster ${id}`)
@@ -321,9 +332,9 @@ describe('restored access-aware team presentation', () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     api.group = async () => detail({ canViewPrivate: true, canManage: true })
     const ids: string[] = []
-    api.teamGames = async id => {
-      ids.push(id)
-      return []
+    api.teamGamesPage = async (id, query) => {
+      if (query?.hasVideo !== true) ids.push(id)
+      return pageOfGames([], query)
     }
     api.roster = async () => []
     api.teamStats = async () => []
@@ -370,6 +381,7 @@ describe('restored access-aware team presentation', () => {
   })
   it('discards an older access answer and clears a private page after revocation', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.publicGamesPage = async (_kind, _id, query) => pageOf([], query)
     let first!: (value: GroupDetail) => void
     let calls = 0
     api.group = async () =>
@@ -379,9 +391,9 @@ describe('restored access-aware team presentation', () => {
           })
         : detail({ canViewPrivate: calls === 2 })
     let privateReads = 0
-    api.teamGames = async () => {
-      privateReads++
-      return []
+    api.teamGamesPage = async (_id, query) => {
+      if (query?.hasVideo !== true) privateReads++
+      return pageOfGames([], query)
     }
     api.roster = async () => []
     api.teamStats = async () => []
@@ -413,9 +425,9 @@ describe('restored access-aware team presentation', () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     api.group = async () => detail({ canViewPrivate: true })
     let reads = 0
-    api.teamGames = async () => {
-      reads++
-      return []
+    api.teamGamesPage = async (_id, query) => {
+      if (query?.hasVideo !== true) reads++
+      return pageOfGames([], query)
     }
     api.roster = async () => []
     api.teamStats = async () => []
@@ -458,6 +470,7 @@ describe('restored access-aware team presentation', () => {
   })
   it('keeps custodial settings available without granting private collections', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.publicGamesPage = async (_kind, _id, query) => pageOf([], query)
     api.group = async () => detail({ canManage: true })
     let settings = ''
     await mount(

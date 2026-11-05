@@ -11,26 +11,33 @@ export function nodeSqliteExecutor(path: string): SqlExecutor & {
   db: DatabaseSync
 } {
   const db = new DatabaseSync(path)
+  // One at a time, as op-sqlite queues them, for two stores on one file.
+  let tail: Promise<unknown> = Promise.resolve()
   return {
     db,
     transaction: async work => {
-      db.exec('BEGIN')
-      try {
-        const result = await work({
-          execute: async (sql, params = []) => {
-            const statement = db.prepare(sql)
-            const values = params as SQLInputValue[]
-            if (statement.columns().length > 0) return statement.all(...values)
-            statement.run(...values)
-            return []
-          }
-        })
-        db.exec('COMMIT')
-        return result
-      } catch (error: unknown) {
-        db.exec('ROLLBACK')
-        throw error
-      }
+      const run = tail.then(async () => {
+        db.exec('BEGIN')
+        try {
+          const result = await work({
+            execute: async (sql, params = []) => {
+              const statement = db.prepare(sql)
+              const values = params as SQLInputValue[]
+              if (statement.columns().length > 0)
+                return statement.all(...values)
+              statement.run(...values)
+              return []
+            }
+          })
+          db.exec('COMMIT')
+          return result
+        } catch (error: unknown) {
+          db.exec('ROLLBACK')
+          throw error
+        }
+      })
+      tail = run.catch(() => undefined)
+      return await run
     },
     close: () => {
       db.close()

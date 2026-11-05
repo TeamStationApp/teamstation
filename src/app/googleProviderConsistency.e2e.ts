@@ -10,7 +10,6 @@ import { createServer } from 'node:http'
 import { resolve } from 'node:path'
 
 import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
-import { inMapFrame, waitInMapFrame } from '../test/mapFrameProbe'
 import {
   browserSession,
   fill,
@@ -22,6 +21,7 @@ import { googlePlaces } from '../server/location/googlePlaces'
 import { serverConfig } from '../server/serverConfig'
 import { googlePlacesStub } from '../test/googlePlacesStub'
 import { groupFixture } from '../test/groupFixtures'
+import { inMapFrame, waitInMapFrame } from '../test/mapFrameProbe'
 
 type MapMode =
   'success' | 'authentication' | 'network' | 'initialization' | 'timeout'

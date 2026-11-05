@@ -5,6 +5,7 @@ import React, { act } from 'react'
 import { asSessionUser, asVideoSummary, TeamStationClient } from '../common/api'
 import { HttpError } from '../common/errors'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, mount, press, settle, text, unmount } from '../test/gameFormDom'
 import { App } from './App'
@@ -29,6 +30,8 @@ const videos = ['Home plate', 'Outfield'].map((angle, index) =>
 )
 
 describe('actual app game return navigation', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   let originals: PropertyDescriptorMap
   let signedIn: boolean
   let member: boolean

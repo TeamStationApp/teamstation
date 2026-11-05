@@ -9,16 +9,17 @@ const originalClipboard = Object.getOwnPropertyDescriptor(
 )
 const originalCommand = Object.getOwnPropertyDescriptor(document, 'execCommand')
 
-afterEach(function () {
+function restoreClipboard(): void {
   if (originalClipboard != null)
     Object.defineProperty(navigator, 'clipboard', originalClipboard)
   else Reflect.deleteProperty(navigator, 'clipboard')
   if (originalCommand != null)
     Object.defineProperty(document, 'execCommand', originalCommand)
   else Reflect.deleteProperty(document, 'execCommand')
-})
+}
 
 describe('chat decrypted text clipboard', function () {
+  afterEach(restoreClipboard)
   it('copies exact Unicode body or caption through the browser clipboard', async function () {
     const copies: string[] = []
     Object.defineProperty(navigator, 'clipboard', {

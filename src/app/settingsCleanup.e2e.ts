@@ -4,7 +4,6 @@ import { dirname, join, resolve } from 'node:path'
 import { expect } from 'chai'
 
 import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
-import { accountTestPicture } from '../test/accountHarness'
 import {
   browserSession,
   capture,
@@ -17,6 +16,7 @@ import { asLocality } from '../common/locality'
 import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { googlePlaces } from '../server/location/googlePlaces'
+import { accountTestPicture } from '../test/accountHarness'
 import { googlePlacesStub } from '../test/googlePlacesStub'
 import { groupFixture } from '../test/groupFixtures'
 

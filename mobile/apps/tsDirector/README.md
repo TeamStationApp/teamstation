@@ -17,7 +17,7 @@ operator names each one and the app remembers that name against the address it a
 
 - Xcode 26.4 or newer, iPadOS 18.0 deployment target
 - Node.js 22+ for the scripts
-- [maestro-runner](https://open.devicelab.dev) for UI flows
+- maestro-d for UI flows, built from `EdgeApp/maestro-d` into `~/.maestro-d/bin`
 
 ## Setup
 

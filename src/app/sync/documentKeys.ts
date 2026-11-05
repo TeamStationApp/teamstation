@@ -14,9 +14,15 @@ export const HOME_FOLLOWS = 'home.follows'
 export const HOME_GUARDED = 'home.guarded'
 export const HOME_RECENT = 'home.recent'
 export const ME_ROLES = 'me.roles'
+/** Whether this person has unlocked chat: kept, so a confirmed person stays so offline. */
+export const ME_CHAT_AGE = 'me.chatAge'
 export const GAMES_UPCOMING = 'games.upcoming'
 export const GAMES_PAST = 'games.past'
 export const GAMES_ALL = 'games.all'
+export const GAMES_UPCOMING_PAGE = 'games.upcoming.page'
+export const GAMES_PAST_PAGE = 'games.past.page'
+export const GAMES_ALL_PAGE = 'games.all.page'
+export const GAMES_VIDEOS_PAGE = 'games.videos.page'
 
 export const rosterKey = (teamId: string): string => `roster.${teamId}`
 export const fullRosterKey = (teamId: string): string => `roster.full.${teamId}`
@@ -26,13 +32,15 @@ export const eventsKey = (gameId: string): string => `events.${gameId}`
 export const defaultLineupKey = (teamId: string): string =>
   `defaultLineup.${teamId}`
 
-/** The key `GET /events` is stored under for one of the feed's filters. */
-export function gamesKey(when: 'past' | 'upcoming' | 'all'): string {
-  return when === 'past'
-    ? GAMES_PAST
-    : when === 'upcoming'
-      ? GAMES_UPCOMING
-      : GAMES_ALL
+/** The key the first page of one of the feed's lists is stored under. */
+export function gamesKey(list: 'past' | 'upcoming' | 'all' | 'videos'): string {
+  return list === 'past'
+    ? GAMES_PAST_PAGE
+    : list === 'upcoming'
+      ? GAMES_UPCOMING_PAGE
+      : list === 'videos'
+        ? GAMES_VIDEOS_PAGE
+        : GAMES_ALL_PAGE
 }
 
 /** Requests with no id in them, by path and query exactly as sent. */
@@ -45,9 +53,16 @@ const FIXED: Record<string, string> = {
   '/users?guardedBy=me': HOME_GUARDED,
   '/events?played=1&limit=1': HOME_RECENT,
   '/me/roles': ME_ROLES,
+  '/me/account/chat-age': ME_CHAT_AGE,
   '/events?when=upcoming': GAMES_UPCOMING,
   '/events?when=past': GAMES_PAST,
-  '/events': GAMES_ALL
+  '/events': GAMES_ALL,
+  // A list's first page: a page with a cursor has no document, so it is a
+  // network read, and offline a list ends at what is stored.
+  '/events?paged=1&when=upcoming': GAMES_UPCOMING_PAGE,
+  '/events?paged=1&when=past': GAMES_PAST_PAGE,
+  '/events?paged=1': GAMES_ALL_PAGE,
+  '/events?paged=1&hasVideo=1': GAMES_VIDEOS_PAGE
 }
 
 /** Requests naming one team or game: the pattern, and the key of its id. */

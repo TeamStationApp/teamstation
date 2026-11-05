@@ -42,7 +42,12 @@ export interface StillOptions {
   atSec: number
   /** Widest edge, in pixels. */
   width?: number
+  /** How long a look for the still in the Space may wait for an answer. */
+  lookTimeoutMs?: number
 }
+
+/** How long a look for a still in the Space waits for an answer. */
+export const STILL_LOOK_TIMEOUT_MS = 15000
 
 /** Whole seconds: a still a frame apart from another is the same picture. */
 export function stillSecond(atSec: number): number {
@@ -98,12 +103,13 @@ export function stillSpaceUrl(
 export async function stillInSpace(
   space: SpaceSettings,
   videoId: string,
-  atSec: number
+  atSec: number,
+  timeoutMs = STILL_LOOK_TIMEOUT_MS
 ): Promise<boolean> {
   try {
     const response = await fetch(stillSpaceUrl(space, videoId, atSec, 300), {
       headers: { range: 'bytes=0-0' },
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(timeoutMs)
     })
     await response.body?.cancel()
     return response.ok
@@ -164,7 +170,7 @@ async function inCutSlot<T>(run: () => Promise<T>): Promise<T> {
  * failure is retried rather than remembered.
  */
 export async function ensureStill(options: StillOptions): Promise<string> {
-  const { space, videoId, atSec } = options
+  const { space, videoId, atSec, lookTimeoutMs } = options
   if (!spaceConfigured(space)) {
     throw new Error('No Space is configured to keep stills in')
   }
@@ -173,13 +179,13 @@ export async function ensureStill(options: StillOptions): Promise<string> {
   if (running != null) return await running
 
   const work = (async () => {
-    if (await stillInSpace(space, videoId, atSec)) return key
+    if (await stillInSpace(space, videoId, atSec, lookTimeoutMs)) return key
     if (isReadOnlySourceKey(space, key)) {
       throw new Error('Read-only source still is not available')
     }
     await inCutSlot(async () => {
       // Another worker may have kept it while this one waited its turn.
-      if (await stillInSpace(space, videoId, atSec)) return
+      if (await stillInSpace(space, videoId, atSec, lookTimeoutMs)) return
       await cutAndKeep(options, key)
     })
     return key

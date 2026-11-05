@@ -1,4 +1,10 @@
-import React, { type ReactNode, type Ref, useRef } from 'react'
+import React, {
+  type ReactNode,
+  type Ref,
+  useImperativeHandle,
+  useMemo,
+  useRef
+} from 'react'
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -13,18 +19,25 @@ import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { changeBatches } from './changeTable'
 import { Composer, type ComposerHandle } from './Composer'
+import { QueuedMessages } from './QueuedMessages'
 import { TessLiveReply, TessMessage } from './TessMessage'
 import { useTessOverlay } from './TessOverlay'
 import type { TessChatState } from './useTess'
+import type { LevelSource } from './useTessMicrophone'
 
 export interface TessChatProps {
   tess: TessChatState
   onClose: () => void
   /** An app path from a link or a way bubble. */
   onNavigate: (path: string) => void
-  /** The push-to-talk button, under the field. */
+  /** The microphone, right of Send. */
   mic?: ReactNode
+  /** While the microphone records, its loudness, for the field's waveform. */
+  dictating?: LevelSource
+  /** Why the microphone heard nothing, under the field when Tess has no error. */
+  micMessage?: string | null
   /** Where the microphone's words go into the composer. */
   composer?: Ref<ComposerHandle>
   /** Asked once on opening: whether her field should take the focus. */
@@ -36,13 +49,18 @@ export interface TessChatProps {
  * the close X on the right, the conversation, which follows its newest
  * message, and the composer. While she answers, the reply she is working on
  * shows under the last message as it comes, or "Tess is thinking…" until
- * she has told anything of it.
+ * she has told anything of it. The changes her replies to one message
+ * propose show together under the last of them, held once (`changeBatches`).
+ * Messages sent while she answers wait between the conversation and the
+ * composer (`QueuedMessages`), and one pressed to edit goes into the field.
  */
 export function TessChat({
   tess,
   onClose,
   onNavigate,
   mic,
+  dictating,
+  micMessage,
   composer,
   takesFocus
 }: TessChatProps): React.ReactElement {
@@ -51,16 +69,29 @@ export function TessChat({
   const insets = useInsets()
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const overlay = useTessOverlay()
-  const { send, upload, showError } = tess
+  const { send, upload, stop, showError } = tess
+  // The composer's handle, which the queue edits through, shared with the
+  // microphone's.
+  const field = useRef<ComposerHandle>(null)
+  useImperativeHandle(composer, () => ({
+    insertDictation: text => {
+      field.current?.insertDictation(text)
+    },
+    edit: draft => {
+      field.current?.edit(draft)
+    },
+    draft: () => field.current?.draft() ?? { text: '', attachments: [] }
+  }))
   // A table or chart open over the pane would hide the page a link goes to,
   // so the link closes it first.
   const navigate = (path: string): void => {
     overlay?.dismiss()
     onNavigate(path)
   }
-  const confirm = (changeId: string): void => {
-    tess.confirm(changeId).catch(() => undefined)
+  const confirmAll = (changeIds: string[]): void => {
+    tess.confirmAll(changeIds).catch(() => undefined)
   }
+  const batches = useMemo(() => changeBatches(tess.messages), [tess.messages])
   return (
     <KeyboardAvoidingView
       testID="Tess chat"
@@ -74,10 +105,9 @@ export function TessChat({
             ? 'height'
             : undefined
       }
-      style={[
-        styles.chat,
-        { paddingTop: insets.top, paddingBottom: insets.bottom }
-      ]}
+      // The bottom inset is the composer's (`bottomInset`): iOS's keyboard
+      // avoidance sets this view's own bottom padding, and would drop it.
+      style={[styles.chat, { paddingTop: insets.top }]}
     >
       <View style={styles.titleBar}>
         <View style={styles.heading}>
@@ -116,8 +146,9 @@ export function TessChat({
           <TessMessage
             key={message.id}
             message={message}
+            changes={batches.get(message.id)}
             onNavigate={navigate}
-            onConfirm={confirm}
+            onConfirmAll={confirmAll}
             holdDisabled={tess.thinking}
             thoughtSeconds={tess.thoughtSeconds[message.id]}
           />
@@ -137,13 +168,34 @@ export function TessChat({
             </View>
           ))}
       </ScrollView>
+      <QueuedMessages
+        queued={tess.queued}
+        onSendNow={id => {
+          tess.sendNow(id).catch(() => undefined)
+        }}
+        onRemove={id => {
+          tess.unqueue(id)
+        }}
+        onEdit={id => {
+          // The one out for editing, if any, goes back as the field has it.
+          const draft = tess.editQueued(id, field.current?.draft())
+          if (draft != null) field.current?.edit(draft)
+        }}
+      />
       <Composer
-        handle={composer}
+        handle={field}
         takesFocus={takesFocus}
+        bottomInset={insets.bottom}
         busy={tess.thinking}
-        error={tess.error}
+        error={
+          tess.error != null && tess.error !== '' ? tess.error : micMessage
+        }
         mic={mic}
+        dictating={dictating}
         onSend={send}
+        onStop={() => {
+          stop().catch(() => undefined)
+        }}
         onUpload={upload}
         onError={showError}
       />

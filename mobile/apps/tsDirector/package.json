@@ -16,7 +16,8 @@
     "test:program-writer-death": "node scripts/testProgramWriterDeath.js",
     "test:ui": "node scripts/run-maestro.js",
     "verify:archives": "node scripts/verifyArchives.js",
-    "profile:load": "node scripts/loadProfile.js"
+    "profile:load": "node scripts/loadProfile.js",
+    "test:programme-cut": "cd ../../.. && CUT_SCENARIO=slow node -r sucrase/register mobile/apps/tsDirector/e2e/programmeCut.e2e.ts"
   },
   "engines": {
     "node": ">=20"

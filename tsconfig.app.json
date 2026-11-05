@@ -13,7 +13,10 @@
     // library. The server config deliberately does not.
     "lib": ["es2023", "dom", "dom.iterable"],
     // Unit tests import rigs and fixtures from `e2e/`.
-    "rootDir": "."
+    "rootDir": ".",
+    // A suite names the file it means in full, where a bare `./PagedList`
+    // would reach the bundled tests' stand-in for it. Nothing here is emitted.
+    "allowImportingTsExtensions": true
   },
   "include": [
     "src/app/**/*.ts",
@@ -23,6 +26,7 @@
     // browser page with the DOM's types. The rest of src/test is the
     // server's, in tsconfig.server.test.json.
     "src/test/fakeScoreboardSocket.ts",
+    "src/test/PagedListStandIn.tsx",
     "src/test/responderDrag.ts",
     "src/test/scoringHelpers.ts",
     "src/test/scoreboardServer.e2e.ts"

@@ -42,6 +42,9 @@ function lvh(px: number): void {
   })
 }
 
+// The page's own, put back after each test for the files that run after it.
+// eslint-disable-next-line @typescript-eslint/unbound-method
+const pageMatchMedia = window.matchMedia
 function coarse(isTouch: boolean): void {
   window.matchMedia = ((query: string) => ({
     matches: isTouch && query === '(pointer: coarse)'
@@ -109,6 +112,7 @@ describe('the multi-camera view’s full screen', function () {
     host = undefined
     takeApi()
     lvh(0)
+    window.matchMedia = pageMatchMedia
   })
 
   it('asks for full screen on opening, never locks the orientation, and leaves on closing', async function () {

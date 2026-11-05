@@ -680,17 +680,12 @@ async function main(): Promise<void> {
               const row = document.querySelector(
                 '[data-testid="umpire-game-gam_umpire_g1"]'
               )!
-              const scroll = document.querySelector(
-                '[data-testid="umpire-table-header-scroll"]'
+              const header = document.querySelector(
+                '[data-testid="umpire-table-header"]'
               )!
-              const header = [
-                ...scroll.querySelectorAll<HTMLElement>('*')
-              ].find(
-                node =>
-                  node.childElementCount === row.children.length &&
-                  [...node.children].some(cell => cell.textContent === 'Date')
+              const viewport = document.querySelector(
+                '[data-testid="umpire-table-body-scroll"]'
               )!
-              const viewport = row.parentElement!.parentElement!.parentElement!
               const funnel = document.querySelector(
                 '[aria-label="Schedule filters"]'
               )!

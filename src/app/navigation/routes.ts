@@ -714,6 +714,27 @@ function settingsChildPath(
   return `${base}/${child}${query == null ? '' : '?' + query}`
 }
 
+/**
+ * An address with its `tab` taken out: the same page on the tab it opens on,
+ * since a page writes no tab until one is chosen.
+ */
+export function withoutTab(path: string): string {
+  const at = path.indexOf('?')
+  if (at < 0) return path
+  const query = new URLSearchParams(path.slice(at + 1))
+  query.delete('tab')
+  return query.size === 0
+    ? path.slice(0, at)
+    : `${path.slice(0, at)}?${query.toString()}`
+}
+
+/** An address on a chat surface's own path: the list, a chat, its pages. */
+export function isChatPath(path: string): boolean {
+  return (
+    path === '/chat' || path.startsWith('/chat/') || path.startsWith('/chat?')
+  )
+}
+
 export function routePath(route: Route): string {
   switch (route.name) {
     case 'leagueUmpires':

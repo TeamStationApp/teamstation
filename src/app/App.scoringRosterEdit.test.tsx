@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client'
 import { rosterEditFixture } from '../../e2e/fixtures/scoringRosterEditFixture'
 import { TeamStationClient } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { App } from './App'
 import { currentRoute, showRoute } from './navigation/useAddressBar'
 import { ServerScoringSource } from './scoring/scoringSource'
@@ -98,6 +99,8 @@ const openEditor = async (): Promise<void> => {
 }
 
 describe('actual App scoring player Settings return', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   for (const role of ['scorekeeper', 'admin'] as const) {
     it(`defaults a home-only ${role} to the home roster and retains their chosen side after Settings`, async function () {
       await withScoringApp(

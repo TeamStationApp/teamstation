@@ -8,6 +8,8 @@ import {
   asGameSummary,
   asPitchingRow,
   asRosterEntry,
+  type GamesPageQuery,
+  type GameSummary,
   type ScheduleEntry,
   type StaffEntry,
   type TeamStationClient,
@@ -15,7 +17,15 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
-import { ChatGateOverride } from '../chat/DeclaredAgeGate'
+import {
+  chatAgeSheet,
+  clickPill,
+  pillTabs,
+  pressChatAge,
+  TestChatAge
+} from '../../test/chatAgeTesting'
+import { pageOfGames } from '../../test/pageOf'
+import type { TabCorrection } from '../chat/ChatAgeGate'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { GameListOpenOptions } from './gameListOptions'
 import { staffSubtitle, TeamScreen } from './TeamScreen'
@@ -172,42 +182,44 @@ function fakeClient(patch: Record<string, unknown> = {}): {
       calls.asked.push(name)
       return answer
     }
+  const gamesOnList = [
+    asGameSummary({
+      id: 'gam_final',
+      homeTeamId: 'tem_hawks',
+      awayTeamId: 'tem_owls',
+      homeTeamName: 'Hawks',
+      awayTeamName: 'Owls',
+      seasonId: 'sea_1',
+      startAt: '2027-04-03T17:00:00.000Z',
+      venue: 'Northpoint Field 1',
+      status: 'final',
+      homeScore: 6,
+      awayScore: 3,
+      ingestStatus: 'ok',
+      videoCount: 1
+    }),
+    asGameSummary({
+      id: 'gam_next',
+      homeTeamId: 'tem_owls',
+      awayTeamId: 'tem_hawks',
+      homeTeamName: 'Owls',
+      awayTeamName: 'Hawks',
+      seasonId: 'sea_1',
+      startAt: '2027-04-17T17:00:00.000Z',
+      venue: null,
+      status: 'scheduled',
+      homeScore: null,
+      awayScore: null,
+      ingestStatus: 'ok',
+      videoCount: 0
+    })
+  ]
   const client = {
     teamSchedule: asked('teamSchedule', schedule),
     teamStaff: asked('teamStaff', staff),
     roster: asked('roster', roster),
-    teamGames: asked('teamGames', [
-      asGameSummary({
-        id: 'gam_final',
-        homeTeamId: 'tem_hawks',
-        awayTeamId: 'tem_owls',
-        homeTeamName: 'Hawks',
-        awayTeamName: 'Owls',
-        seasonId: 'sea_1',
-        startAt: '2027-04-03T17:00:00.000Z',
-        venue: 'Northpoint Field 1',
-        status: 'final',
-        homeScore: 6,
-        awayScore: 3,
-        ingestStatus: 'ok',
-        videoCount: 1
-      }),
-      asGameSummary({
-        id: 'gam_next',
-        homeTeamId: 'tem_owls',
-        awayTeamId: 'tem_hawks',
-        homeTeamName: 'Owls',
-        awayTeamName: 'Hawks',
-        seasonId: 'sea_1',
-        startAt: '2027-04-17T17:00:00.000Z',
-        venue: null,
-        status: 'scheduled',
-        homeScore: null,
-        awayScore: null,
-        ingestStatus: 'ok',
-        videoCount: 0
-      })
-    ]),
+    teamGamesPage: async (_id: string, query?: GamesPageQuery) =>
+      await asked('teamGamesPage', pageOfGames(gamesOnList, query))(),
     teamStats: asked('teamStats', []),
     teamPitchingStats: asked('teamPitchingStats', []),
     standings: asked('standings', []),
@@ -236,7 +248,7 @@ describe('TeamScreen for a fan', function () {
   it('opens public games without playback and keeps player pages and figures private', async function () {
     const { client, calls } = fakeClient()
     const opened: string[] = []
-    const tabsSaid: Array<[string, boolean | undefined]> = []
+    const tabsSaid: Array<[string, TabCorrection | undefined]> = []
     const options: Array<GameListOpenOptions | undefined> = []
     await render(
       <TeamScreen
@@ -262,7 +274,8 @@ describe('TeamScreen for a fan', function () {
       'follows',
       'roster',
       'standings',
-      'teamGames'
+      'teamGamesPage',
+      'teamGamesPage'
     ])
 
     await press('Hawks vs Owls')
@@ -299,14 +312,16 @@ describe('TeamScreen for a fan', function () {
       'follows',
       'roster',
       'standings',
-      'teamGames'
+      'teamGamesPage',
+      'teamGamesPage'
     ])
   })
 
   it('opens on the Team tab when the address says roster', async function () {
     const { client } = fakeClient({
       teamSchedule: async () => [],
-      teamGames: async () => [],
+      teamGamesPage: async (_id: string, query?: GamesPageQuery) =>
+        pageOfGames([], query),
       roster: async () => [],
       teamStaff: async () => []
     })
@@ -345,7 +360,7 @@ describe('TeamScreen for a fan', function () {
 
   it('shows its chats while the team is still loading', async function () {
     const { client } = fakeClient({
-      teamGames: async () => await new Promise(() => undefined)
+      teamGamesPage: async () => await new Promise(() => undefined)
     })
     await render(
       <TeamScreen
@@ -427,7 +442,7 @@ describe('TeamScreen for the team’s own people', function () {
       ])
       expect(control('Follow Hawks')).equals(undefined)
       expect(control('Following Hawks')).equals(undefined)
-      expect(calls.asked).to.include('teamGames')
+      expect(calls.asked).to.include('teamGamesPage')
       expect(calls.asked).not.to.include('teamSchedule')
       await act(async () => {
         root?.unmount()
@@ -567,7 +582,7 @@ describe('TeamScreen’s stat tables for a member', function () {
   })
 })
 
-describe('a team page with chat denied', function () {
+describe('a team page before the age sheet is agreed to', function () {
   afterEach(async function () {
     await act(async () => {
       root?.unmount()
@@ -575,10 +590,56 @@ describe('a team page with chat denied', function () {
     root = undefined
   })
 
-  it('drops the Chats pill and keeps Videos', async function () {
+  it('keeps the Chats pill, asks on it, and Not Now returns to the tab before', async function () {
     const { client } = fakeClient()
     await render(
-      <ChatGateOverride gate="denied">
+      <TestChatAge access="ask">
+        <TeamScreen
+          client={client}
+          team={hawks}
+          chats={[{ id: 'cnv_hawks', title: 'Hawks chat' }]}
+          onOpenGame={() => undefined}
+          onOpenChat={() => undefined}
+        />
+      </TestChatAge>
+    )
+    expect(tabs()).includes('Chats')
+    await act(async () => {
+      clickPill('Schedule')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    await act(async () => {
+      clickPill('Chats')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(chatAgeSheet()).not.equals(null)
+    expect(document.querySelector('[data-testid="entity-chat-list"]')).equals(
+      null
+    )
+    await act(async () => {
+      pressChatAge('decline')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(chatAgeSheet()).equals(null)
+    expect(pillTabs().selected).equals('Schedule')
+    await act(async () => {
+      clickPill('Chats')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    await act(async () => {
+      pressChatAge('agree')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(chatAgeSheet()).equals(null)
+    expect(
+      document.querySelector('[data-testid="entity-chat-list"]')
+    ).not.equals(null)
+  })
+
+  it('opens a Chats address under the sheet, and Not Now lands on Videos', async function () {
+    const { client } = fakeClient()
+    await render(
+      <TestChatAge access="ask">
         <TeamScreen
           client={client}
           team={hawks}
@@ -587,13 +648,14 @@ describe('a team page with chat denied', function () {
           onOpenGame={() => undefined}
           onOpenChat={() => undefined}
         />
-      </ChatGateOverride>
+      </TestChatAge>
     )
-    expect(tabs()).not.includes('Chats')
-    expect(document.querySelector('[data-testid="entity-chat-list"]')).equals(
-      null
-    )
-    expect(tabs()).includes('Videos')
+    expect(chatAgeSheet()).not.equals(null)
+    await act(async () => {
+      pressChatAge('decline')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(pillTabs().selected).equals('Videos')
   })
 })
 
@@ -608,5 +670,161 @@ describe('staffSubtitle', function () {
         roles: ['songkeeper', 'videographer']
       })
     ).equals('Songkeeper · Videographer')
+  })
+})
+
+describe('a team’s page, from the first page of its lists', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+
+  const rows = (ids: string[], seasonId: string): GameSummary[] =>
+    ids.map(id =>
+      asGameSummary({
+        id,
+        homeTeamId: 'tem_hawks',
+        awayTeamId: 'tem_owls',
+        homeTeamName: 'Hawks',
+        awayTeamName: 'Owls',
+        seasonId,
+        startAt: '2027-04-03T17:00:00.000Z',
+        venue: 'Northpoint Field 1',
+        status: 'scheduled',
+        homeScore: null,
+        awayScore: null,
+        videoCount: 0,
+        ingestStatus: 'none',
+        pendingApproval: false,
+        pendingRequestId: null
+      })
+    )
+  const counts = {
+    total: 345,
+    upcoming: 120,
+    withVideo: 65,
+    videos: 80,
+    newestSeasonId: 'sea_newest'
+  }
+  const read = async (
+    tab: string
+  ): Promise<{
+    asked: Array<GamesPageQuery | undefined>
+    stats: unknown[]
+  }> => {
+    const asked: Array<GamesPageQuery | undefined> = []
+    const stats: unknown[] = []
+    const { client } = fakeClient({
+      teamGamesPage: async (_id: string, query?: GamesPageQuery) => {
+        asked.push(query)
+        return {
+          // Rows of an older season, which the list's counts see past.
+          items: rows(['gam_a'], 'sea_older'),
+          nextCursor: null,
+          prevCursor: null,
+          anchorId: query?.around == null ? null : 'gam_a',
+          counts
+        }
+      },
+      teamStats: async (_id: string, seasonId?: string) => {
+        stats.push(seasonId)
+        return []
+      },
+      teamPitchingStats: async () => [],
+      standings: async () => []
+    })
+    await render(
+      <TeamScreen
+        client={client}
+        team={hawks}
+        initialTab={tab}
+        onOpenGame={() => undefined}
+      />
+    )
+    return { asked, stats }
+  }
+
+  it('says what the whole list holds, and reads the newest season’s figures', async function () {
+    const { asked, stats } = await read('schedule')
+    expect(asked).deep.equals([
+      { around: 'next', order: 'asc' },
+      { hasVideo: true }
+    ])
+    expect(text()).contains('345 games, 120 to play')
+    expect(stats).deep.equals(['sea_newest'])
+  })
+
+  it('counts the library from the same answer', async function () {
+    await read('videos')
+    expect(text()).contains('65 with video')
+  })
+
+  it('says a team it could not read failed, with Retry, and no spinner', async function () {
+    let down = true
+    const asked: Array<GamesPageQuery | undefined> = []
+    const { client } = fakeClient({
+      teamGamesPage: async (_id: string, query?: GamesPageQuery) => {
+        asked.push(query)
+        if (down) throw new HttpError('internal', 'Something went wrong')
+        return {
+          items: rows(['gam_a'], 'sea_newest'),
+          nextCursor: null,
+          prevCursor: null,
+          anchorId: query?.around == null ? null : 'gam_a',
+          counts
+        }
+      },
+      teamStats: async () => [],
+      teamPitchingStats: async () => [],
+      standings: async () => []
+    })
+    await render(
+      <TeamScreen
+        client={client}
+        team={hawks}
+        initialTab="schedule"
+        onOpenGame={() => undefined}
+      />
+    )
+    expect(text()).contains('Something went wrong')
+    expect(document.querySelector('[aria-label="Loading games"]')).equals(null)
+    expect(text()).not.contains('No games scheduled.')
+    expect(control('Retry')).not.equals(undefined)
+    for (const tab of ['Videos', 'Schedule']) {
+      await act(async () => {
+        control(tab)!.click()
+        await delay(10)
+      })
+      expect(document.querySelector('[aria-label="Loading games"]')).equals(
+        null
+      )
+      expect(control('Retry')).not.equals(undefined)
+    }
+    down = false
+    asked.length = 0
+    await act(async () => {
+      control('Retry')!.click()
+      await delay(10)
+    })
+    await act(async () => {
+      await delay(10)
+    })
+    expect(asked).deep.equals([
+      { around: 'next', order: 'asc' },
+      { hasVideo: true }
+    ])
+    expect(text()).not.contains('Something went wrong')
+    expect(text()).contains('345 games, 120 to play')
+    // A page kept out of sight is drawn again as it comes on show.
+    await act(async () => {
+      control('Videos')!.click()
+      await delay(10)
+    })
+    expect(text()).contains('65 with video')
+    expect(
+      document.querySelector('[data-testid="paged-list-empty-failed"]')
+    ).equals(null)
   })
 })

@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import ts from 'typescript'
 
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 /** The app suites, each bundled alone. Later milestones append theirs. */
@@ -123,6 +124,7 @@ if (paths.length === 0) throw new Error('No changed runtime files to measure')
 for (const [index, suite] of appSuites.entries()) {
   await build({
     ...webSettings,
+    plugins: [...webSettings.plugins, pagedListStandInPlugin()],
     alias: {
       ...webSettings.alias,
       '@react-native/assets-registry/registry':

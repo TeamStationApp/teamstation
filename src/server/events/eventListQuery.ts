@@ -1,5 +1,10 @@
 import { badRequest } from '../../common/errors'
+import { UMPIRE_PAGE_MOST } from '../../common/umpireSchedule'
 import { externalIdsAsked } from '../routes/seasons'
+import {
+  decodeScheduleCursor,
+  type ScheduleCursor
+} from '../schedule/scheduleCursor'
 
 /**
  * `GET /api/v1/events`.
@@ -11,6 +16,8 @@ import { externalIdsAsked } from '../routes/seasons'
  */
 
 const HOUR_MS = 3_600_000
+const PAGE_LIMIT_DEFAULT = 50
+const PAGE_LIMIT_MOST = 100
 const WHENS = [
   'all',
   'upcoming',
@@ -35,6 +42,21 @@ export interface ParsedEventList {
   externalIds?: string[]
   played: boolean
   scoreboardOpen: boolean
+  /** Answer `Page<Event>` rather than the bare array. */
+  paged: boolean
+  cursor?: ScheduleCursor
+  /** Open a first page on the list's next game. */
+  around: boolean
+  hasVideo: boolean
+}
+
+/** A `paged` read of a schedule. */
+export interface SchedulePageAsk {
+  limit: number
+  cursor?: ScheduleCursor
+  around: boolean
+  /** The window `counts` read: the list's, leaving out `when`. */
+  whole: EventWindow
 }
 
 /** The time cut `scheduleOf` can apply, after `when` and `lookbackHours`. */
@@ -79,9 +101,19 @@ function dateOf(value: string, name: string): Date {
   return parsed
 }
 
+function flag(value: unknown, name: string): boolean {
+  const raw = scalar(value, name)
+  if (raw != null && raw !== '1' && raw !== 'true') {
+    throw badRequest(`${name} must be 1 or true`)
+  }
+  return raw != null
+}
+
 /** What the query string asked for. A bad value is a 400, not a silent default. */
 export function parseEventListQuery(
-  query: Record<string, unknown>
+  query: Record<string, unknown>,
+  /** The most a `paged` read's `limit` may be. */
+  most = PAGE_LIMIT_MOST
 ): ParsedEventList {
   const scopeRaw = scalar(query.scope, 'scope') ?? 'visible'
   if (scopeRaw !== 'visible' && scopeRaw !== 'run' && scopeRaw !== 'film') {
@@ -119,14 +151,38 @@ export function parseEventListQuery(
     throw badRequest('order must be asc or desc')
   }
 
-  const playedRaw = scalar(query.played, 'played')
-  if (playedRaw != null && playedRaw !== '1' && playedRaw !== 'true') {
-    throw badRequest('played must be 1 or true')
-  }
+  const played = flag(query.played, 'played')
 
   const scoreboardRaw = scalar(query.scoreboard, 'scoreboard')
   if (scoreboardRaw != null && scoreboardRaw !== 'open') {
     throw badRequest('scoreboard must be open')
+  }
+
+  const paged = flag(query.paged, 'paged')
+  const hasVideo = flag(query.hasVideo, 'hasVideo')
+  const cursorRaw = scalar(query.cursor, 'cursor')
+  const aroundRaw = scalar(query.around, 'around')
+  if (aroundRaw != null && aroundRaw !== 'next') {
+    throw badRequest('around must be next')
+  }
+  if (cursorRaw != null && !paged) throw badRequest('cursor needs paged')
+  if (aroundRaw != null && !paged) throw badRequest('around needs paged')
+  if (aroundRaw != null && cursorRaw != null) {
+    throw badRequest('around does not apply with cursor')
+  }
+  const cursor = cursorRaw == null ? undefined : decodeScheduleCursor(cursorRaw)
+  if (cursor != null && orderRaw != null && orderRaw !== cursor.order) {
+    throw badRequest(`order must be ${cursor.order} with this cursor`)
+  }
+  // A page around the next game runs forward, and its cursors with it.
+  if (aroundRaw != null && orderRaw === 'desc') {
+    throw badRequest('around reads order=asc')
+  }
+  if (paged && scoreboardRaw != null) {
+    throw badRequest('paged does not apply with scoreboard=open')
+  }
+  if (paged && limitRaw != null && Number(limitRaw) > most) {
+    throw badRequest(`limit must be at most ${most} with paged`)
   }
 
   const lookbackApplies =
@@ -153,11 +209,89 @@ export function parseEventListQuery(
     lookbackHours,
     since,
     until,
-    limit: limitRaw == null ? undefined : Number(limitRaw),
-    order: orderRaw,
+    limit:
+      limitRaw != null
+        ? Number(limitRaw)
+        : paged
+          ? PAGE_LIMIT_DEFAULT
+          : undefined,
+    order: cursor?.order ?? orderRaw,
     externalIds: externalIdsAsked(query.externalId),
-    played: playedRaw != null,
-    scoreboardOpen: scoreboardRaw != null
+    played,
+    scoreboardOpen: scoreboardRaw != null,
+    paged,
+    cursor,
+    around: aroundRaw != null,
+    hasVideo
+  }
+}
+
+/**
+ * `GET /teams/:teamId/games`: the parameters of the list above that a team's
+ * own list takes. `limit` waits for `paged`, because this list has never
+ * taken one without it.
+ */
+export function parseTeamGamesQuery(
+  query: Record<string, unknown>
+): ParsedEventList {
+  const { when, order, paged, cursor, around, hasVideo, limit } = query
+  return parseEventListQuery({
+    when,
+    order,
+    paged,
+    cursor,
+    around,
+    hasVideo,
+    limit: paged == null ? undefined : limit
+  })
+}
+
+/**
+ * `?public=1&paged=1` on a team's or a season's games: the parameters of a
+ * team's list, with no account behind them. It always answers a `Page`, and
+ * has no next game to open on.
+ */
+export function parsePublicGamesQuery(
+  query: Record<string, unknown>
+): ParsedEventList {
+  flag(query.public, 'public')
+  if (query.paged == null) throw badRequest('public needs paged')
+  if (query.around != null)
+    throw badRequest('around does not apply with public')
+  return parseTeamGamesQuery(query)
+}
+
+/**
+ * `GET /leagues/:leagueId/umpire-schedule`: the page parameters of the list
+ * above. Like a team's, `limit` waits for `paged`. It may be as large as
+ * `UMPIRE_PAGE_MOST`, since every page computes the whole schedule.
+ */
+export function parseUmpirePageQuery(
+  query: Record<string, unknown>
+): ParsedEventList {
+  const { paged, cursor, around, limit } = query
+  return parseEventListQuery(
+    {
+      paged,
+      cursor,
+      around,
+      limit: paged == null ? undefined : limit
+    },
+    UMPIRE_PAGE_MOST
+  )
+}
+
+/** How a `paged` read cuts the list, for `schedulePage`. */
+export function schedulePageAsk(
+  query: ParsedEventList,
+  now: Date
+): SchedulePageAsk {
+  return {
+    // `paged` always has one.
+    limit: query.limit!,
+    cursor: query.cursor,
+    around: query.around,
+    whole: eventWindow({ ...query, when: 'all', lookbackHours: undefined }, now)
   }
 }
 
@@ -198,7 +332,7 @@ export function eventWindow(query: ParsedEventList, now: Date): EventWindow {
     since,
     until,
     untilInclusive,
-    order,
+    order: query.around ? 'asc' : order,
     upcoming: query.when === 'upcoming',
     past: query.when === 'past',
     future: query.when === 'future',

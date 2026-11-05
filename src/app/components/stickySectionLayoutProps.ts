@@ -10,4 +10,5 @@ export interface StickySectionLayoutProps {
   wide?: boolean
   scrollRef?: ScreenProps['scrollRef']
   contentStyle?: ScreenProps['contentStyle']
+  pagedList?: boolean
 }

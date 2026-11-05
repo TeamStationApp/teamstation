@@ -46,7 +46,7 @@ const videoCollectionParameters = [
     in: 'query',
     schema: { type: 'string', enum: ['1', 'true'] },
     description:
-      'Omitted: existing collection behavior. When set, only games with visible ready/live single-camera video, and their teams or recorded participants. Other legacy filters cannot be combined. Results contain no access-request candidates.'
+      "Omitted: existing collection behavior. When set, only games with visible ready/live single-camera video, and their teams or recorded participants. Other legacy filters cannot be combined. Results contain no access-request candidates. With `paged`, it is instead one of the paged list's filters: games with a video that is not hidden, read with the list's other parameters."
   },
   {
     name: 'team',
@@ -456,6 +456,22 @@ const graphqlPaths = {
     }
   }
 }
+const chatAgeResponse = {
+  description: 'Whether, how and when chat was unlocked',
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: ['confirmed', 'source', 'confirmedAt'],
+        properties: {
+          confirmed: { type: 'boolean' },
+          source: { type: ['string', 'null'], enum: ['apple', 'self', null] },
+          confirmedAt: { type: ['string', 'null'], format: 'date-time' }
+        }
+      }
+    }
+  }
+}
 const accountPaths = {
   '/me/account': {
     get: {
@@ -496,6 +512,47 @@ const accountPaths = {
         }
       },
       responses: { 200: accountResponse }
+    }
+  },
+  '/me/account/chat-age': {
+    get: {
+      security: [{ bearer: [] }],
+      summary:
+        'Read whether your account has unlocked chat (signed-in sessions only)',
+      description:
+        'Chat is for people 13 and older. The app opens chat once the account is confirmed, by a shared Apple Declared Age Range of 13 or more (`apple`) or by agreeing to its age sheet (`self`); the chat routes do not read this. API keys and machine actors are refused.',
+      responses: {
+        200: chatAgeResponse,
+        401: { description: 'Not signed in' },
+        403: { description: 'An API key or a machine actor' }
+      }
+    },
+    put: {
+      security: [{ bearer: [] }],
+      summary: 'Confirm your age for chat (signed-in sessions only)',
+      description:
+        'Records how the account was confirmed. The first confirmation stands: a later call answers the source and time already recorded.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['source'],
+              additionalProperties: false,
+              properties: {
+                source: { type: 'string', enum: ['apple', 'self'] }
+              }
+            }
+          }
+        }
+      },
+      responses: {
+        200: chatAgeResponse,
+        400: { description: 'A missing or unknown source, or another field' },
+        401: { description: 'Not signed in' },
+        403: { description: 'An API key or a machine actor' }
+      }
     }
   },
   '/me/account/photo': {
@@ -711,6 +768,77 @@ const teamIdParam = {
   in: 'path',
   required: true,
   schema: { type: 'string' }
+}
+
+/** What a schedule list takes to answer a page at a time. */
+const schedulePageParams = [
+  {
+    name: 'paged',
+    in: 'query',
+    description:
+      'Answer `{items, nextCursor, prevCursor, anchorId, counts}`. Without it the list is the bare array.',
+    schema: { type: 'string', enum: ['1', 'true'] }
+  },
+  {
+    name: 'cursor',
+    in: 'query',
+    description:
+      "A `nextCursor` or `prevCursor`, with the filters of the query that gave it. It carries its list's order, so `order` may be left out, and an `order` that disagrees is a 400. Needs `paged`. A malformed one is a 400.",
+    schema: { type: 'string' }
+  },
+  {
+    name: 'around',
+    in: 'query',
+    description:
+      "`next` opens a first page on the list's next game, in `asc` order, with rows before it. Needs `paged`, and does not take `cursor` or `order=desc`.",
+    schema: { type: 'string', enum: ['next'] }
+  },
+  {
+    name: 'hasVideo',
+    in: 'query',
+    description: 'Keep only games with a video that is not hidden.',
+    schema: { type: 'string', enum: ['1', 'true'] }
+  }
+]
+
+/** What a schedule's rows take beside its page, on a team or a season. */
+const scheduleListParams = [
+  {
+    name: 'when',
+    in: 'query',
+    description: 'Which of the games, as on `GET /events`. Defaults to `all`.',
+    schema: {
+      type: 'string',
+      enum: ['all', 'upcoming', 'past', 'future', 'finished', 'recent'],
+      default: 'all'
+    }
+  },
+  {
+    name: 'order',
+    in: 'query',
+    description:
+      'Defaults to newest first, and to soonest first for `when=upcoming` or `when=future`.',
+    schema: { type: 'string', enum: ['asc', 'desc'] }
+  },
+  {
+    name: 'limit',
+    in: 'query',
+    description: 'Page size. Only with `paged`.',
+    schema: {
+      type: 'integer',
+      minimum: 1,
+      maximum: 100,
+      default: 50
+    }
+  }
+]
+
+const publicGamesParam = {
+  name: 'public',
+  in: 'query',
+  description:
+    'Answer what the public page shows, `Page<PublicGame>`, to anybody, signed in or not. Needs `paged`, and does not take `around`.',
+  schema: { type: 'string', enum: ['1', 'true'] }
 }
 
 const gameIdParam = {
@@ -1087,6 +1215,24 @@ const nodeSettingsSchema = {
           maximum: 600,
           default: 5,
           description: 'How long a replay holds each pitch, in seconds'
+        }
+      }
+    },
+    distribution: {
+      type: 'object',
+      additionalProperties: false,
+      description:
+        'Where the about screen sends someone. A save from an older client omits it and keeps the stored URLs. An empty string hides that button. A read always has both.',
+      required: ['betaBuildsUrl', 'appStoreUrl'],
+      properties: {
+        betaBuildsUrl: {
+          type: 'string',
+          description:
+            'HTTPS URL of the beta builds page, or empty. Falls back to the server file only for older clients reading /me/builds.'
+        },
+        appStoreUrl: {
+          type: 'string',
+          description: 'HTTPS URL of the iOS TestFlight download, or empty.'
         }
       }
     },
@@ -3903,14 +4049,23 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Answers 404 rather than 403 for a team the caller may not see, ' +
             'so that probing cannot reveal which teams exist. Anybody signed ' +
             'in who is not a member of the team (the non-member view) reads ' +
-            'its games too, with their video counts, posters and logos.',
-          security: [{ bearer: [] }],
-          parameters: [teamIdParam],
+            'its games too, with their video counts, posters and logos. ' +
+            'Only `public` admits anybody who is not signed in, and it reads ' +
+            'the team as `GET /teams/{id}` does, so any team answers.',
+          security: [{}, { bearer: [] }],
+          parameters: [
+            teamIdParam,
+            ...scheduleListParams,
+            ...schedulePageParams,
+            publicGamesParam
+          ],
           responses: {
             200: {
               description:
-                'Games, newest first, with a video count. Authorized team views also include playerRsvps {yes,unknown,no}, counting active current team players only; unknown combines Maybe and No reply. Pending proposals and non-member views omit playerRsvps.'
+                '`Page` of the same rows with `paged`. Games, newest first, with a video count. Authorized team views also include playerRsvps {yes,unknown,no}, counting active current team players only; unknown combines Maybe and No reply. Pending proposals and non-member views omit playerRsvps.'
             },
+            400: errorResponse,
+            401: errorResponse,
             404: errorResponse
           }
         },
@@ -6287,9 +6442,11 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'Every highlight a player is credited on, newest first',
           description:
-            'A page at a time: `nextBefore` is the play time to pass as ' +
-            '`before` for the next page, and `withoutVideo` counts plays on ' +
-            'the page no recording covers. `seasonId`, `teamId` and `year` ' +
+            'A page at a time: `nextBefore` is what to pass as `before` for ' +
+            'the next page, and `withoutVideo` counts plays read for the page ' +
+            'that no recording covers. A page is full unless the list ends ' +
+            'or 500 plays were read for it, so a short page can still have a ' +
+            '`nextBefore`, and only a null one ends the list. `seasonId`, `teamId` and `year` ' +
             'narrow the games the same way `/players/{userId}/stats` does, ' +
             'before the page is cut; `teamId` is the team the player played ' +
             'for. With none of them the answer is the career. Each highlight ' +
@@ -6300,8 +6457,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             {
               name: 'before',
               in: 'query',
-              schema: { type: 'string', format: 'date-time' },
-              description: 'Only plays before this moment'
+              schema: { type: 'string' },
+              description:
+                'A `nextBefore`, `<iso>|<id>`: only the plays after it. A bare date-time still reads, as only plays before that moment. Anything else is a 400'
             },
             {
               name: 'limit',
@@ -6333,6 +6491,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               description:
                 'Highlights, newest first, with `nextBefore` and `withoutVideo`'
             },
+            400: errorResponse,
             404: errorResponse
           }
         }
@@ -6441,6 +6600,33 @@ export function openApiDocument(version: string): OpenApiDocument {
               description:
                 'Season-owned child teams, active competition members and canonical committed game participants, including placeholders and canceled historical participants. TeamSummary adds seasonCategory inSeason/exhibition/unscheduled and canViewPrivate matching private team endpoint visibility; parent-only teams without games and canceled-only participants are unscheduled. Membership/management links are never created by this read.'
             },
+            404: errorResponse
+          }
+        }
+      },
+      '/seasons/{seasonId}/games': {
+        get: {
+          summary: "The games a season's public page shows",
+          description:
+            'To anybody, signed in or not, and only with `public` and ' +
+            '`paged`: a member reads a season through `GET /events?season=…`. ' +
+            '`counts` take in the whole public list. Without `public` the ' +
+            'path answers 404.',
+          security: [{}, { bearer: [] }],
+          parameters: [
+            {
+              name: 'seasonId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            },
+            ...scheduleListParams,
+            ...schedulePageParams.filter(param => param.name !== 'around'),
+            publicGamesParam
+          ],
+          responses: {
+            200: { description: '`Page<PublicGame>`' },
+            400: errorResponse,
             404: errorResponse
           }
         }
@@ -9618,7 +9804,20 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`limit` is a whole number of at least 1; omit it for no cap. ' +
             '`externalId` may be repeated. `played=1` keeps games that have ' +
             'a score. `scoreboard=open` keeps games whose scoreboard is ' +
-            'still open, and answers 503 while that store is away.\n\n' +
+            'still open, and answers 503 while that store is away. ' +
+            '`hasVideo=1` keeps games with a video that is not hidden.\n\n' +
+            '`paged=1` answers `{items, nextCursor, prevCursor, anchorId, ' +
+            'counts}` rather than the bare array, `limit` rows at a time ' +
+            '(50 by default, 100 at most), and does not take ' +
+            '`scoreboard=open`. `nextCursor` is null at the end, and ' +
+            '`prevCursor` is set on any page with rows before it; send either ' +
+            'back as `cursor` with the same query to read on. A first page ' +
+            'has `counts`: `total`, `upcoming`, `withVideo`, `videos` and ' +
+            '`newestSeasonId`, for the whole list leaving out `when` and ' +
+            '`hasVideo`. `around=next` opens a first page on the row the app ' +
+            'opens a schedule on, named by `anchorId`, with `limit / 2` rows ' +
+            'before it and `limit` from it, in `asc` order, and its cursors ' +
+            'read on with `order=asc`.\n\n' +
             'Pending schedules carry exhibition/timezone and pendingApproval, with pendingRequestId only for an actor authorized to read the request. Existing revisions retain approved fields, canceled originals remain canceled, and new proposals have a reserved event ID with no scoring access. Scope run/film and scoreboard=open omit unpublished proposals. No private request terms are returned. ' +
             'Each row is a schedule game plus `gameId`, both teams\u2019 logo ' +
             'URLs, `liveState`, and `opponentFixed`: true when a schedule ' +
@@ -9687,7 +9886,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               name: 'limit',
               in: 'query',
               description:
-                'With hasVideo: default 50, maximum 100. Otherwise omitted means uncapped.',
+                'Without `paged` or `hasVideo`, no cap. With `hasVideo` alone: 50 by default and 100 at most. With `paged`, 50 by default and 100 at most.',
               schema: { type: 'integer', minimum: 1 }
             },
             {
@@ -9706,7 +9905,9 @@ export function openApiDocument(version: string): OpenApiDocument {
               name: 'scoreboard',
               in: 'query',
               schema: { type: 'string', enum: ['open'] }
-            }
+            },
+            // `hasVideo` is in `videoCollectionParameters`, read either way.
+            ...schedulePageParams.filter(param => param.name !== 'hasVideo')
           ],
           responses: {
             200: { description: 'The games that match' },

@@ -89,10 +89,14 @@ export interface MessageParam {
   content: string | ContentBlock[]
 }
 
-/** A block of the system prompt. A cached one is the end of a cached prefix. */
+/**
+ * A block of the system prompt. A cached one is the end of a cached prefix,
+ * kept for an hour or for five minutes. The longer comes first, as the
+ * provider requires.
+ */
 export interface SystemBlock {
   text: string
-  cached?: boolean
+  cached?: '1h' | '5m'
 }
 
 export interface ToolDefinition {
@@ -139,6 +143,35 @@ export interface MessagesOptions {
   deadlineMs?: number
   /** Whose call it is, for the log. */
   actor?: string
+  /**
+   * Aborted when the person stops Tess's turn: the call is given up at
+   * once, and throws `TessStopped`.
+   */
+  signal?: AbortSignal
+}
+
+/** No tokens: a call stopped before the provider said what it used. */
+export const NO_USAGE: MessagesUsage = {
+  inputTokens: 0,
+  cacheCreationInputTokens: 0,
+  cacheReadInputTokens: 0,
+  outputTokens: 0
+}
+
+/**
+ * The person stopped Tess's turn while a call was out, or before it was
+ * sent. Not a failure of the provider's: the call is given up, and what it
+ * used is still paid for, so it carries the usage that had arrived (the
+ * input and cache counts `message_start` tells, and the output so far),
+ * for the week and the log to count.
+ */
+export class TessStopped extends Error {
+  readonly usage: MessagesUsage
+  constructor(usage: MessagesUsage = NO_USAGE) {
+    super('Stopped by the person')
+    this.name = 'TessStopped'
+    this.usage = usage
+  }
 }
 
 /** `POST /messages`, logged as `tess_request` whatever its outcome. */
@@ -175,7 +208,9 @@ export interface MessagesStreamEvent {
  * stream builds, exactly the ones `createMessage` would answer, signatures
  * and tool inputs included, so the conversation stores the same thing. The
  * deadline is for the wait before each piece. A failure, before the stream
- * or in it, is the error `createMessage` would throw.
+ * or in it, is the error `createMessage` would throw. The person stopping
+ * the turn (`signal`), before the stream or in it, is `TessStopped`, with
+ * what the stream had told of its usage.
  */
 export async function streamMessage(
   settings: TessSettings,
@@ -184,7 +219,13 @@ export async function streamMessage(
   options: MessagesOptions = {}
 ): Promise<MessagesResponse> {
   return await logged(options, async log => {
-    const wait = deadline(options.deadlineMs ?? DEADLINE_MS)
+    const wait = deadline(options.deadlineMs ?? DEADLINE_MS, options.signal)
+    // Until the stream says what the call used, nothing is known of it.
+    let answer: StreamedAnswer | undefined
+    const gone = (): Error =>
+      wait.stopped()
+        ? new TessStopped(answer?.usage() ?? NO_USAGE)
+        : lost(wait, log)
     try {
       let response: Response
       try {
@@ -200,7 +241,7 @@ export async function streamMessage(
           wait.signal
         )
       } catch {
-        throw lost(wait, log)
+        throw gone()
       }
       log.status = response.status
       if (!response.ok || response.body == null) {
@@ -208,27 +249,28 @@ export async function streamMessage(
         try {
           text = await response.text()
         } catch {
-          throw lost(wait, log)
+          throw gone()
         }
         if (!response.ok) throw refused(response.status, parse(text), log)
         log.ec = 'invalid'
         throw unreadable()
       }
-      const answer = streamedAnswer(onEvent, log)
+      const streamed = streamedAnswer(onEvent, log)
+      answer = streamed
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       const events = serverSentEvents()
       // Every whole event so far, in order; a part waits for the next chunk.
       const take = (text: string): void => {
-        for (const event of events.push(text)) answer.take(event)
+        for (const event of events.push(text)) streamed.take(event)
       }
       try {
-        while (!answer.finished()) {
+        while (!streamed.finished()) {
           let chunk: Awaited<ReturnType<typeof reader.read>>
           try {
             chunk = await reader.read()
           } catch {
-            throw lost(wait, log)
+            throw gone()
           }
           if (chunk.done) break
           wait.renew()
@@ -240,10 +282,10 @@ export async function streamMessage(
         reader.cancel().catch(() => undefined)
       }
       take(decoder.decode())
-      for (const event of events.end()) answer.take(event)
+      for (const event of events.end()) streamed.take(event)
       // The connection ended before the message did: cut, not unreadable.
-      if (!answer.finished()) throw lost(wait, log)
-      return answer.response()
+      if (!streamed.finished()) throw gone()
+      return streamed.response()
     } finally {
       wait.clear()
     }
@@ -253,7 +295,8 @@ export async function streamMessage(
 /**
  * One call, timed and logged as `tess_request` with what it used, whatever
  * its outcome. `call` fills the log with the status and, on a failure, the
- * error class.
+ * error class. A call the person stopped is no failure: it is logged at
+ * info, as `cancelled`, with what it used before it stopped.
  */
 async function logged(
   options: MessagesOptions,
@@ -263,15 +306,13 @@ async function logged(
   const log: Record<string, Property> = {}
   try {
     const response = await call(log)
-    const { usage } = response
-    log.it = tokens(
-      usage.inputTokens +
-        usage.cacheCreationInputTokens +
-        usage.cacheReadInputTokens
-    )
-    log.ot = tokens(usage.outputTokens)
+    usageLog(log, response.usage)
     return response
   } catch (error) {
+    if (error instanceof TessStopped) {
+      log.ec = 'cancelled'
+      usageLog(log, error.usage)
+    }
     // Only an answer that is not a message gets here unclassified.
     log.ec ??= 'invalid'
     throw error
@@ -283,10 +324,24 @@ async function logged(
         ms: Math.min(86400000, Math.max(0, performance.now() - start)),
         ...log
       },
-      log.ec == null ? 'info' : 'error',
+      log.ec == null || log.ec === 'cancelled' ? 'info' : 'error',
       options.actor
     )
   }
+}
+
+/** What a call used, as the log takes it. */
+function usageLog(log: Record<string, Property>, usage: MessagesUsage): void {
+  log.it = tokens(
+    usage.inputTokens +
+      usage.cacheCreationInputTokens +
+      usage.cacheReadInputTokens
+  )
+  log.ot = tokens(usage.outputTokens)
+  // Of the input: read from the cache, and written to it. The share read is
+  // the hit rate.
+  log.cr = tokens(usage.cacheReadInputTokens)
+  log.cw = tokens(usage.cacheCreationInputTokens)
 }
 
 /** `POST /messages/count_tokens`: what the request would take as input. */
@@ -318,13 +373,16 @@ function bodyOf(
     model: settings.model,
     thinking: THINKING,
     system: request.system.map(block =>
-      block.cached === true
-        ? {
+      block.cached == null
+        ? { type: 'text', text: block.text }
+        : {
             type: 'text',
             text: block.text,
-            cache_control: { type: 'ephemeral' }
+            cache_control:
+              block.cached === '1h'
+                ? { type: 'ephemeral', ttl: '1h' }
+                : { type: 'ephemeral' }
           }
-        : { type: 'text', text: block.text }
     ),
     messages:
       request.cacheMessages === true
@@ -357,17 +415,26 @@ function cachedLast(messages: MessageParam[]): unknown[] {
   ]
 }
 
-/** A wait that gives up after `ms` without progress; `renew` starts it again. */
+/**
+ * A wait that gives up after `ms` without progress; `renew` starts it again.
+ * Its `signal` is also aborted by `stop`, the person stopping the turn,
+ * which `stopped` tells apart from running out of time.
+ */
 interface Deadline {
   ms: number
   signal: AbortSignal
   expired: () => boolean
+  stopped: () => boolean
   renew: () => void
   clear: () => void
 }
 
-function deadline(ms: number): Deadline {
+function deadline(ms: number, stop?: AbortSignal): Deadline {
   const controller = new AbortController()
+  const signal =
+    stop == null
+      ? controller.signal
+      : AbortSignal.any([controller.signal, stop])
   let expired = false
   let timer: ReturnType<typeof setTimeout> | undefined
   const start = (): void => {
@@ -379,8 +446,9 @@ function deadline(ms: number): Deadline {
   start()
   return {
     ms,
-    signal: controller.signal,
+    signal,
     expired: () => expired,
+    stopped: () => stop?.aborted === true,
     renew: () => {
       clearTimeout(timer)
       start()
@@ -460,7 +528,7 @@ async function post(
   options: MessagesOptions,
   log: Record<string, Property>
 ): Promise<Record<string, unknown>> {
-  const wait = deadline(options.deadlineMs ?? DEADLINE_MS)
+  const wait = deadline(options.deadlineMs ?? DEADLINE_MS, options.signal)
   try {
     let response: Response
     let text: string
@@ -468,7 +536,8 @@ async function post(
       response = await send(settings, path, body, options, wait.signal)
       text = await response.text()
     } catch {
-      throw lost(wait, log)
+      // An answer not yet read is not known to have used anything.
+      throw wait.stopped() ? new TessStopped() : lost(wait, log)
     }
     log.status = response.status
     const parsed = parse(text)
@@ -513,6 +582,8 @@ interface StreamedAnswer {
   finished: () => boolean
   /** The answer the events made, once `finished`. */
   response: () => MessagesResponse
+  /** What the call has used so far, as the events have told it. */
+  usage: () => MessagesUsage
 }
 
 function streamedAnswer(
@@ -609,6 +680,7 @@ function streamedAnswer(
   return {
     take,
     finished: () => done,
+    usage: () => usageOf(usage),
     response: () => {
       try {
         return responseOf({
@@ -713,21 +785,26 @@ function responseOf(body: Record<string, unknown>): MessagesResponse {
     typeof usage !== 'object'
   )
     throw unreadable()
+  return {
+    content: content as ContentBlock[],
+    stopReason,
+    usage: usageOf(usage as Record<string, unknown>)
+  }
+}
+
+/** The provider's four counts, each 0 when it is missing or not a count. */
+function usageOf(usage: Record<string, unknown>): MessagesUsage {
   const count = (key: string): number => {
-    const value = (usage as Record<string, unknown>)[key]
+    const value = usage[key]
     return typeof value === 'number' && Number.isFinite(value) && value > 0
       ? value
       : 0
   }
   return {
-    content: content as ContentBlock[],
-    stopReason,
-    usage: {
-      inputTokens: count('input_tokens'),
-      cacheCreationInputTokens: count('cache_creation_input_tokens'),
-      cacheReadInputTokens: count('cache_read_input_tokens'),
-      outputTokens: count('output_tokens')
-    }
+    inputTokens: count('input_tokens'),
+    cacheCreationInputTokens: count('cache_creation_input_tokens'),
+    cacheReadInputTokens: count('cache_read_input_tokens'),
+    outputTokens: count('output_tokens')
   }
 }
 

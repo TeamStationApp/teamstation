@@ -2,8 +2,8 @@ import React, { createContext, useContext, useEffect, useState } from 'react'
 import { NativeModules, Platform } from 'react-native'
 
 import {
-  type ChatGate,
-  chatGate,
+  type AppleAge,
+  appleAgeOf,
   type DeclaredAgeAnswer,
   webDeclaredAge
 } from './declaredAge'
@@ -13,10 +13,11 @@ declare const TS_DECLARED_AGE_LOWER: string | undefined
 const UNREADY_TRIES = 10
 const UNREADY_WAIT_MS = 200
 
-const GateContext = createContext<ChatGate>('allowed')
-const OverrideContext = createContext<ChatGate | undefined>(undefined)
+const AgeContext = createContext<AppleAge>('none')
+const OverrideContext = createContext<AppleAge | undefined>(undefined)
 
-function standIn(): string {
+/** The build's stand-in for Apple's answer: `''` but on a dev serve. */
+function standInOf(): string {
   return typeof TS_DECLARED_AGE_LOWER === 'string' ? TS_DECLARED_AGE_LOWER : ''
 }
 
@@ -44,10 +45,14 @@ function normalize(raw: unknown): DeclaredAgeAnswer {
   return { status: 'unavailable' }
 }
 
-/** Apple's answer, the dev-server stand-in, or `unsupported` where the API is absent. */
-export async function requestDeclaredAge(): Promise<DeclaredAgeAnswer> {
-  if (Platform.OS !== 'ios') return webDeclaredAge(standIn())
-  const raw = standIn()
+/**
+ * Apple's answer, the dev-server stand-in, or `unsupported` where the API is
+ * absent. A test hands the stand-in in, whatever its bundle defines.
+ */
+export async function requestDeclaredAge(
+  raw: string = standInOf()
+): Promise<DeclaredAgeAnswer> {
+  if (Platform.OS !== 'ios') return webDeclaredAge(raw)
   if (/^-?\d+$/.test(raw)) return webDeclaredAge(raw)
   const native = NativeModules.TSDeclaredAge as
     { request?: () => Promise<unknown> } | undefined
@@ -61,62 +66,64 @@ export async function requestDeclaredAge(): Promise<DeclaredAgeAnswer> {
     }
     if (answer.status !== 'unready') return answer
     if (attempt === UNREADY_TRIES) return { status: 'unavailable' }
-    await new Promise(resolve => setTimeout(resolve, UNREADY_WAIT_MS))
+    await new Promise<void>(resolve => setTimeout(resolve, UNREADY_WAIT_MS))
   }
   return { status: 'unavailable' }
 }
 
-/** The settled gate. The first value is `allowed`, before the request starts. */
-export function useDeclaredAgeGate(): ChatGate {
-  return useContext(GateContext)
+/**
+ * This device's age answer: `none` at once on the web and Android without a
+ * stand-in, and on iOS `pending` until Apple answers.
+ */
+export function useAppleAge(): AppleAge {
+  return useContext(AgeContext)
 }
 
-/** Chat stays up until the gate is `denied`. */
-export function useChatAllowed(): boolean {
-  return useDeclaredAgeGate() !== 'denied'
-}
-
-/** A test, or a parent, that already knows the gate. */
-export function ChatGateOverride(props: {
-  gate: ChatGate
+/** A test, or a parent, that already knows the answer. */
+export function AppleAgeOverride(props: {
+  age: AppleAge
   children: React.ReactNode
 }): React.ReactElement {
   return (
-    <OverrideContext.Provider value={props.gate}>
-      <GateContext.Provider value={props.gate}>
+    <OverrideContext.Provider value={props.age}>
+      <AgeContext.Provider value={props.age}>
         {props.children}
-      </GateContext.Provider>
+      </AgeContext.Provider>
     </OverrideContext.Provider>
   )
 }
 
 /**
- * Asks once. Web and Android never call the native module. On iOS the first
- * render stays `allowed`, and `pending` is the in-flight value.
+ * Asks once. Web and Android never call the native module: they read the
+ * build's stand-in, `none` without one. On iOS the first value is `pending`.
  */
 export function DeclaredAgeGateProvider(props: {
   children: React.ReactNode
+  /** The stand-in, for a test; the build's own when absent. */
+  standIn?: string
 }): React.ReactElement {
   const override = useContext(OverrideContext)
-  const [gate, setGate] = useState<ChatGate>('allowed')
+  const { standIn } = props
+  const [age, setAge] = useState<AppleAge>(() =>
+    Platform.OS === 'ios' ? 'pending' : 'none'
+  )
   useEffect(() => {
     if (override != null) return
     let live = true
-    if (Platform.OS === 'ios') setGate('pending')
-    requestDeclaredAge()
+    requestDeclaredAge(standIn)
       .then(answer => {
-        if (live) setGate(chatGate(answer))
+        if (live) setAge(appleAgeOf(answer))
       })
       .catch(() => {
-        if (live) setGate('allowed')
+        if (live) setAge('none')
       })
     return () => {
       live = false
     }
-  }, [override])
+  }, [override, standIn])
   return (
-    <GateContext.Provider value={override ?? gate}>
+    <AgeContext.Provider value={override ?? age}>
       {props.children}
-    </GateContext.Provider>
+    </AgeContext.Provider>
   )
 }

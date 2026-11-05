@@ -10,8 +10,10 @@ import { Pool } from 'pg'
 import { makeId } from '../common/ids'
 import { userIdOfGumbo } from '../common/userId'
 import { migrations } from '../migrate/migrations'
-import { migrateUp } from '../migrate/runner'
-import { testDatabaseUrl } from '../migrate/testDatabase'
+import {
+  createMigratedDatabase,
+  testDatabaseUrl
+} from '../migrate/testDatabase'
 import { createSession } from '../server/auth/sessions'
 import { makeToken } from '../server/auth/tokens'
 import type { Database } from '../server/db/database'
@@ -67,10 +69,9 @@ export async function accountHarness(
   const name = `account_test_${Date.now()}_${Math.floor(Math.random() * 100000)}`
   const admin = new Pool({ connectionString: testDatabaseUrl })
   // Deliberately fail, never skip: this feature's coverage needs PostgreSQL.
-  await admin.query(`create database ${name}`)
+  await createMigratedDatabase(admin, name, schema)
   const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
   const pool = new Pool({ connectionString: url })
-  await migrateUp(pool, schema)
   const historical = !schema.some(m => m.name.startsWith('069'))
   const accountId = (id: number): string =>
     historical ? String(id) : userIdOfGumbo(id)

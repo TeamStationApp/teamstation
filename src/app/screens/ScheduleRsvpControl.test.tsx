@@ -82,6 +82,39 @@ async function click(id: string): Promise<void> {
   })
 }
 describe('compact upcoming schedule RSVP control', () => {
+  it('reports each answer to whoever holds the game', async () => {
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    const saved = info()
+    client.eventInfo = async () => structuredClone(saved)
+    client.saveRsvp = async (_id, id, response) => ({ userId: id, response })
+    const answered: unknown[] = []
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <ScheduleRsvpControl
+            client={client}
+            game={game()}
+            teamId="home"
+            label="vs Demo Eagles"
+            onAnswered={counts => {
+              answered.push(counts)
+            }}
+          />
+        </ThemeProvider>
+      )
+    })
+    await click('schedule-rsvp-control-game_demo')
+    await click('event-rsvp-usr_111111111111111111112n-0')
+    expect(answered.at(-1)).deep.equals({ yes: 1, unknown: 0, no: 0 })
+    await act(async () => {
+      ;[...document.querySelectorAll<HTMLElement>('[role="button"]')]
+        .find(row => row.textContent === 'Done')!
+        .click()
+    })
+  })
   it('excludes started, undated, canceled, live, final and pending events', () => {
     const row = game()
     expect(canScheduleRsvp(row)).equals(true)

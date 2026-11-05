@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 
 import { build } from 'esbuild'
 
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const suites = [
@@ -49,6 +50,7 @@ mkdirSync(temp, { recursive: true })
 mkdirSync('lib', { recursive: true })
 await build({
   ...webSettings,
+  plugins: [...webSettings.plugins, pagedListStandInPlugin()],
   stdin: {
     contents: suites.map(file => `import './${file}'`).join('\n'),
     resolveDir: process.cwd(),
@@ -88,6 +90,7 @@ run('node_modules/.bin/mocha', [
   '-r',
   './src/test/scoringDomSetup.cjs',
   'src/server/routes/account.test.ts',
+  'src/server/routes/account.chatAge.test.ts',
   'src/server/routes/password.test.ts',
   'src/server/auth/passwords.test.ts',
   'src/common/passwordProtocol.test.ts',

@@ -110,8 +110,11 @@ npm run precommit
 
 The commit gate runs lint, typecheck and `npm test`, stopping at the first
 failure. It clears Git's hook-local repository variables so fixtures can
-create their own repositories safely. Allow about twenty minutes for the
-full suite. It needs Node 24,
+create their own repositories safely. `npm test` runs the files in groups,
+each in a mocha process of its own, as many at once as there are cores but
+one (`TS_TEST_JOBS` sets how many; `TS_TEST_JOBS=1` runs one at a time), and
+prints each group's output as it ends. It takes about 17 minutes on a 4-core
+CI runner, and less on more cores. It needs Node 24,
 FFmpeg 9.0.1 (with libx264/libx265), Redis, and PostgreSQL 18 with permission
 to create disposable test databases. Set `ffmpegPath` in the gitignored
 `serverConfig.json` to that executable, set `TS_FFMPEG` to the same path

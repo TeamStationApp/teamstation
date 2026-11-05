@@ -6,6 +6,7 @@ import { build } from 'esbuild'
 
 import counters from './changed-line-coverage.cjs'
 import gateModule from './observability-line-gate.cjs'
+import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const { snapshot, gate } = gateModule
@@ -21,6 +22,7 @@ await build({
   },
   plugins: [
     ...webSettings.plugins,
+    pagedListStandInPlugin(),
     {
       name: 'native-sdk-host-test',
       setup(builder) {

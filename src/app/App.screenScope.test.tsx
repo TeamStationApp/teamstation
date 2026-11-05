@@ -5,8 +5,10 @@ import React, { act } from 'react'
 
 import { asSessionUser, TeamStationClient } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { type FakeSocket, fakeSockets } from '../test/fakeScoreboardSocket'
 import { mount, settle, unmount } from '../test/gameFormDom'
+import { pageOf } from '../test/pageOf'
 import { App, screenScopeOf } from './App'
 import { showRoute } from './navigation/useAddressBar'
 import { gameFixture } from './scoring/isUnscoredGame.test'
@@ -32,6 +34,8 @@ function acknowledge(socket: FakeSocket, revision: string): void {
 }
 
 describe('the scope the visible route holds', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   let originals: PropertyDescriptorMap
   const originalSocket = globalThis.WebSocket
   const originalFetch = globalThis.fetch
@@ -92,9 +96,9 @@ describe('the scope the visible route holds', () => {
     api.guardedPlayers = async () => []
     api.recentGame = async () => null
     api.liveNow = async () => []
-    api.games = async () => {
+    api.gamesPage = async () => {
       reads.push('games')
-      return []
+      return pageOf([])
     }
     api.game = async () => {
       reads.push('game')
@@ -240,6 +244,8 @@ describe('the scope the visible route holds', () => {
 })
 
 describe('which scope a route holds', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   type Top = Parameters<typeof screenScopeOf>[1]
   it('holds home and schedule as tabs, an event for a game, its scoring and Coach Game, and nothing else', () => {
     expect(screenScopeOf('home', undefined, false)).deep.equals({

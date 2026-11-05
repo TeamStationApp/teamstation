@@ -34,6 +34,7 @@ import { HttpError } from '../../common/errors'
 import type { ChatSocketEvent } from '../../common/gameSocket'
 import type { Notification } from '../../common/notifications'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { windowSize } from '../../test/tessTestKit'
 import { App } from '../App'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
@@ -514,6 +515,8 @@ class FakeKeys {
 const DEVICE = { name: 'Chrome on macOS', platform: 'web' as const }
 
 describe('shared chat device approvals', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   this.timeout(15000)
   const controllers: DeviceApprovals[] = []
   afterEach(async () => {
@@ -1043,6 +1046,8 @@ describe('shared chat device approvals', function () {
 })
 
 describe('Chat devices', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   this.timeout(15000)
 
   it('enrols a new user, then shows a request’s six digits, approves it, and removes the device', async function () {
@@ -1358,6 +1363,8 @@ describe('Chat devices', function () {
 })
 
 describe('Link this device', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   this.timeout(15000)
 
   it('offers I can’t reach my other devices, warns, and resets', async function () {
@@ -1630,6 +1637,8 @@ async function refusal(work: Promise<unknown>): Promise<unknown> {
 }
 
 describe('chat setup through a change of user', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   this.timeout(15000)
 
   it('starts Link this device again for the user signed in now, when the screen is kept', async function () {
@@ -1972,6 +1981,8 @@ describe('chat setup through a change of user', function () {
 })
 
 describe('the account screen’s chat', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   this.timeout(15000)
 
   const session: Session = {
@@ -2049,6 +2060,8 @@ describe('the account screen’s chat', function () {
 })
 
 describe('how a device names itself', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('reads the browser and system from the user agent', function () {
     const mac =
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36'
@@ -2108,6 +2121,8 @@ describe('how a device names itself', function () {
 })
 
 describe('chat devices in the app', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   this.timeout(15000)
   const originalFetch = globalThis.fetch
   const heldIndexedDB = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB')

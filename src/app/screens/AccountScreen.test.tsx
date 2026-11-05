@@ -7,6 +7,7 @@ import { Platform } from 'react-native'
 import type { AccountSettings } from '../../common/accountSettings'
 import { TeamStationClient } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import {
   testPasswordCosts,
   testPasswordParameters
@@ -280,6 +281,8 @@ afterEach(async () => {
 })
 
 describe('Account settings screen', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   it('opens node administration from the freshly loaded account even when the session predates the grant', async () => {
     const f = fixture(false, true)
     f.session.user = { ...f.session.user, isAdmin: false }

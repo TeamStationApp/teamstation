@@ -24,8 +24,10 @@ import {
 } from '../common/scoring/session'
 import { userIdOfGumbo } from '../common/userId'
 import { migrations } from '../migrate/migrations'
-import { migrateUp } from '../migrate/runner'
-import { testDatabaseUrl } from '../migrate/testDatabase'
+import {
+  createMigratedDatabase,
+  testDatabaseUrl
+} from '../migrate/testDatabase'
 import { hashToken } from '../server/auth/tokens'
 import { type Database, makeDatabase } from '../server/db/database'
 import { postGamePlays, readPlays } from '../server/events/postPlays'
@@ -106,11 +108,8 @@ export async function scratchDatabase(
 ): Promise<{ db: Kysely<Database>; url: string; drop: () => Promise<void> }> {
   const name = `teamstation_${label}_${process.pid}_${Date.now()}_${randomBytes(4).toString('hex')}`
   const admin = new Pool({ connectionString: testDatabaseUrl })
-  await admin.query(`create database ${name}`)
+  await createMigratedDatabase(admin, name, migrations)
   const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
-  const pool = new Pool({ connectionString: url })
-  await migrateUp(pool, migrations)
-  await pool.end()
   const db = makeDatabase(url)
   return {
     db,

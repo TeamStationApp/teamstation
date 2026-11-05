@@ -46,10 +46,12 @@ const row = (n: number): ReturnType<typeof sample> => ({
 
 describe('bounded event delivery', () => {
   it('times out a stalled sender while periodic flushes share the pending request', async function () {
-    this.timeout(15000)
     let signal: AbortSignal | undefined
     let calls = 0
     const t = setup({
+      // Shortened in proportion: many periodic flushes come while it hangs.
+      flushIntervalMs: 20,
+      sendTimeoutMs: 200,
       send: async (_body, pending) => {
         calls++
         signal = pending

@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
@@ -11,6 +11,7 @@ import {
   TeamStationClient,
   type VideoSummary
 } from '../../common/api'
+import { type ManualClock, manualClock } from '../../test/tessTestKit'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { GameScreen } from './GameScreen'
@@ -22,6 +23,8 @@ import { GameScreen } from './GameScreen'
  * position through.
  */
 let root: Root | undefined
+/** The page's list refreshes, seconds apart, run on this clock at once. */
+let clock: ManualClock | undefined
 
 const delay = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
@@ -126,6 +129,10 @@ async function page(
 }
 
 async function wait(ms: number): Promise<void> {
+  if (clock != null) {
+    await clock.advance(ms)
+    ms = 0
+  }
   await act(async () => {
     await delay(ms)
   })
@@ -144,6 +151,13 @@ const livePill = (): Element | null =>
 
 describe('the video a game page is playing, as its list refreshes', function () {
   this.timeout(40000)
+  beforeEach(function () {
+    clock = manualClock(600, { intervals: true })
+  })
+  afterEach(function () {
+    clock?.restore()
+    clock = undefined
+  })
 
   it('stops reading as live once the camera ends', async function () {
     const START = '2026-05-02T18:30:00Z'

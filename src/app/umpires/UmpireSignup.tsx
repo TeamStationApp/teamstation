@@ -18,7 +18,7 @@ export function UmpireSignup({
   client: TeamStationClient
   game: UmpireGameRow
   slot: string
-  schedule: UmpireSchedule
+  schedule: Pick<UmpireSchedule, 'viewerId' | 'settings' | 'creditTeams'>
   onClose: () => void
   onSaved: () => void
 }): React.ReactElement {

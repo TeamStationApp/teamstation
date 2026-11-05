@@ -10,9 +10,10 @@ import {
 } from '../../common/chatCrypto/keys'
 import { newIdentityId } from '../../common/chatCrypto/messageIds'
 import { userIdOfGumbo } from '../../common/userId'
+import { TestChatAge } from '../../test/chatAgeTesting'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { useChatAge } from './ChatAgeGate'
 import { ChatLinks } from './ChatLinks'
-import { ChatGateOverride } from './DeclaredAgeGate'
 import type { ChatEngine, ConversationListItem } from './engine/engine'
 import { entityChats, entityPreviewLoader } from './entityChats'
 import { type ChatKeyRecord, newRecord } from './keyRecord'
@@ -169,27 +170,47 @@ describe('entity chat scoped rows', () => {
     expect(document.body.textContent).contains('No chats available.')
   })
 
-  it('renders nothing when chat is denied', async () => {
-    const host = document.createElement('div')
-    document.body.append(host)
-    root = createRoot(host)
-    const requests: string[][] = []
-    await act(async () => {
-      root!.render(
-        <ThemeProvider>
-          <ChatGateOverride gate="denied">
-            <ChatLinks
-              chats={[{ id: 'cnv_staff', title: 'Staff' }]}
-              onOpen={() => {}}
-              onLoadPreview={ids => requests.push(ids)}
-            />
-          </ChatGateOverride>
-        </ThemeProvider>
+  for (const access of ['ask', 'blocked', 'pending'] as const)
+    it(`draws no rows and loads no previews while chat is ${access}`, async () => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      root = createRoot(host)
+      const requests: string[][] = []
+      let confirm: (() => Promise<void>) | undefined
+      function Agree(): null {
+        confirm = useChatAge().confirm
+        return null
+      }
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <TestChatAge access={access}>
+              <Agree />
+              <ChatLinks
+                chats={[{ id: 'cnv_staff', title: 'Staff' }]}
+                onOpen={() => {}}
+                onLoadPreview={ids => requests.push(ids)}
+              />
+            </TestChatAge>
+          </ThemeProvider>
+        )
+      })
+      expect(document.querySelector('[data-testid="entity-chats"]')).equals(
+        null
       )
+      expect(requests).deep.equals([])
+      // ChatLinks draws no sheet of its own; the screen asks for it.
+      expect(document.querySelector('[data-testid="chat-age-sheet"]')).equals(
+        null
+      )
+      await act(async () => {
+        await confirm?.()
+      })
+      expect(
+        document.querySelector('[data-testid="entity-chat-list"]')
+      ).not.equals(null)
+      expect(requests).deep.equals([['cnv_staff']])
     })
-    expect(document.querySelector('[data-testid="entity-chats"]')).equals(null)
-    expect(requests).deep.equals([])
-  })
 })
 
 describe('entity chat preview restoration', () => {

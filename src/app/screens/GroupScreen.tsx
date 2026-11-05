@@ -4,6 +4,7 @@ import { Text, View } from 'react-native'
 import type { TeamStationClient, TeamSummary } from '../../common/api'
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
 import type { GroupDetail, PublicGroup } from '../../common/publicGroups'
+import type { TabCorrection } from '../chat/ChatAgeGate'
 import type { ChatLink } from '../chat/ChatLinks'
 import { Button, Screen } from '../components'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
@@ -56,7 +57,7 @@ export interface GroupScreenProps {
   onOpenChat?: (chat: ChatLink) => void
   onLoadChatPreview?: (ids: string[]) => void
   initialTab?: string
-  onTab?: (tab: string, correcting?: boolean) => void
+  onTab?: (tab: string, correcting?: TabCorrection) => void
   initialWhen?: When
   onWhen?: (when: When) => void
 }

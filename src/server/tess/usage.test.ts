@@ -96,7 +96,7 @@ describe('Tess usage', function () {
       }
     })
 
-    it('adds a week’s calls up, input and output apart', async () => {
+    it('adds a week’s calls up, input, output and the cache apart', async () => {
       expect(await usageWeeks(db, first)).deep.equals([])
       // Input is fresh input, cache writes and cache reads together.
       await recordUsage(
@@ -116,6 +116,8 @@ describe('Tess usage', function () {
           weekStart: '2026-10-19',
           inputTokens: 4750,
           outputTokens: 280,
+          cacheReadTokens: 500,
+          cacheWriteTokens: 3000,
           requests: 2
         }
       ])
@@ -139,12 +141,16 @@ describe('Tess usage', function () {
           weekStart: '2026-10-26',
           inputTokens: 30,
           outputTokens: 5,
+          cacheReadTokens: 20,
+          cacheWriteTokens: 0,
           requests: 1
         },
         {
           weekStart: '2026-10-19',
           inputTokens: 4750,
           outputTokens: 280,
+          cacheReadTokens: 500,
+          cacheWriteTokens: 3000,
           requests: 2
         }
       ])
@@ -153,6 +159,8 @@ describe('Tess usage', function () {
           weekStart: '2026-10-26',
           inputTokens: 30,
           outputTokens: 5,
+          cacheReadTokens: 20,
+          cacheWriteTokens: 0,
           requests: 1
         }
       ])
@@ -161,6 +169,8 @@ describe('Tess usage', function () {
           weekStart: '2026-10-19',
           inputTokens: 7,
           outputTokens: 3,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
           requests: 1
         }
       ])
@@ -168,12 +178,19 @@ describe('Tess usage', function () {
 
     it('counts past what a 32-bit integer holds, and dates a call made now', async () => {
       const big = 3_000_000_000
-      await recordUsage(db, second, usage(big, big), new Date('2027-01-01'))
-      await recordUsage(db, second, usage(big, 1), new Date('2027-01-02'))
+      await recordUsage(
+        db,
+        second,
+        usage(big, big, 0, big),
+        new Date('2027-01-01')
+      )
+      await recordUsage(db, second, usage(big, 1, big), new Date('2027-01-02'))
       expect((await usageWeeks(db, second))[0]).deep.equals({
         weekStart: '2026-12-28',
-        inputTokens: 2 * big,
+        inputTokens: 4 * big,
         outputTokens: big + 1,
+        cacheReadTokens: big,
+        cacheWriteTokens: big,
         requests: 2
       })
       const before = await usageWeeks(db, second)

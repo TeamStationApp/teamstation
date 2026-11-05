@@ -18,8 +18,11 @@ import os
 /// millisecond it waits here is one it no longer has. When a camera's drain hands over a burst with
 /// time to spare, every picture of it is composed and shown on its own tick; when the compositor is
 /// behind, the older pictures run out of time and are dropped, counted, and the newest goes on. A
-/// camera's pictures wait apart from every other camera's, so at a cut the camera going off air
-/// cannot crowd out the new one's, and its leftovers are passed over rather than counted as lost.
+/// camera's pictures wait apart from every other camera's. During a handover the camera on program
+/// goes first, and the camera it is leaving gets the time left, except for a picture the programme
+/// has nothing else for. When that is not enough the leaving camera's oldest pictures are passed over
+/// and counted as skipped, not as lost: they would show only on a cut back, which then finds a gap
+/// in that camera's run. After a cut a camera cut away from is passed over the same way.
 /// Each picture held is one from the converter's pool every camera shares, so each camera keeps at
 /// most `waitingLimit` waiting.
 public final class ProgrammeComposer: @unchecked Sendable {
@@ -75,6 +78,10 @@ public final class ProgrammeComposer: @unchecked Sendable {
   private let isOnAir: (Job) -> Bool
   /// Whether a picture can still make its moment if delivered the given number of seconds from now.
   private let isStillDue: (Job, Double) -> Bool
+  /// Whether a picture of the camera a cut is leaving is the only one the programme has for its moment.
+  private let fillsGap: (Job) -> Bool
+  /// Whether a picture is of the camera a cut is leaving, whose overflow is skipped rather than lost.
+  private let isLeaving: (Job) -> Bool
   private let deliver: (Job, CVPixelBuffer) -> Void
   private let onMiss: () -> Void
   private let signposter = OSSignposter(subsystem: "app.teamstation.director", category: "programme")
@@ -104,12 +111,16 @@ public final class ProgrammeComposer: @unchecked Sendable {
     compose: @escaping Compose,
     isOnAir: @escaping (Job) -> Bool,
     isStillDue: @escaping (Job, Double) -> Bool = { _, _ in true },
+    fillsGap: @escaping (Job) -> Bool = { _ in false },
+    isLeaving: @escaping (Job) -> Bool = { _ in false },
     deliver: @escaping (Job, CVPixelBuffer) -> Void,
     onMiss: @escaping () -> Void
   ) {
     self.compose = compose
     self.isOnAir = isOnAir
     self.isStillDue = isStillDue
+    self.fillsGap = fillsGap
+    self.isLeaving = isLeaving
     self.deliver = deliver
     self.onMiss = onMiss
   }
@@ -135,14 +146,23 @@ public final class ProgrammeComposer: @unchecked Sendable {
     queued.removeAll { $0.generation < job.generation }
     skippedPictures &+= UInt64(before - queued.count)
     queued.append(job)
+    var overflow: [Job] = []
     if queued.count > Self.waitingLimit {
-      droppedPictures &+= UInt64(queued.count - Self.waitingLimit)
-      queued.removeFirst(queued.count - Self.waitingLimit)
+      overflow = Array(queued.prefix(queued.count - Self.waitingLimit))
+      queued.removeFirst(overflow.count)
     }
     waiting[job.sourceID] = queued
     let schedule = !scheduled
     scheduled = true
     lock.unlock()
+    if !overflow.isEmpty {
+      // Judged outside the lock: the router's check takes its own.
+      let leaving = UInt64(overflow.filter(isLeaving).count)
+      lock.lock()
+      skippedPictures &+= leaving
+      droppedPictures &+= UInt64(overflow.count) - leaving
+      lock.unlock()
+    }
     if schedule { queue.async { [weak self] in self?.run() } }
   }
 
@@ -212,9 +232,13 @@ public final class ProgrammeComposer: @unchecked Sendable {
       lock.unlock()
       guard !queues.isEmpty else { return }
 
-      // The camera on air's pictures; any other camera's are from a camera cut away from. Judged
-      // outside the lock: the router's checks take its own.
-      let onAir = queues.first { _, queued in queued.last.map(isOnAir) ?? false }?.key
+      // The camera on program's pictures, and during a handover the time left goes to those of the
+      // camera it is taking over from, ahead of it only for a picture the programme has nothing else
+      // for; any other camera's are from a camera cut away from. Judged outside the lock: the
+      // router's checks take its own.
+      let live = queues.filter { _, queued in queued.last.map(isOnAir) ?? false }
+      let needed = live.first { _, queued in queued.first.map(fillsGap) ?? false }?.key
+      let onAir = needed ?? live.max { ($0.value.last?.generation ?? 0) < ($1.value.last?.generation ?? 0) }?.key
       var chosen: Job?
       if let onAir, let snapshot = queues[onAir] {
         // The oldest picture that can still make its moment. The newest goes regardless: it is the
@@ -226,7 +250,7 @@ public final class ProgrammeComposer: @unchecked Sendable {
       var taken: Job?
       lock.lock()
       // Only what was looked at: a picture handed over since stays for the next pass.
-      for (sourceID, snapshot) in queues where sourceID != onAir {
+      for (sourceID, snapshot) in queues where live[sourceID] == nil {
         let seen = Set(snapshot.map(\.sequence))
         let before = waiting[sourceID]?.count ?? 0
         waiting[sourceID]?.removeAll { seen.contains($0.sequence) }

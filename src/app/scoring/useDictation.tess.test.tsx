@@ -15,6 +15,7 @@ import { manualClock } from '../../test/tessTestKit'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { useDictationControls } from './DictationButton'
 import type { DictationControls } from './dictationControls'
+import { pcmLevel } from './dictationHook'
 import type {
   Dictation,
   DictationControlsProps,
@@ -79,7 +80,7 @@ async function settle(): Promise<void> {
   })
 }
 
-/** Tess's controls, mounted as her composer mounts them. */
+/** The shared controls with no game, for the `tess` scope. */
 function Tess(props: {
   fake: FakeDictation
   heard: string[]
@@ -91,7 +92,7 @@ function Tess(props: {
   return <>{controls.control}</>
 }
 
-/** The call Tess makes: no game, the `tess` scope, and Space held to talk. */
+/** No game, the `tess` scope, and Space held to talk. */
 function tessOptions(
   fake: FakeDictation,
   heard: string[]
@@ -316,6 +317,65 @@ function Probe(props: {
   props.seen.dictation = useDictation(props.options)
   return null
 }
+
+describe("each frame's level", function () {
+  it('is the root mean square of its samples, from 0 to 1', function () {
+    expect(pcmLevel(new ArrayBuffer(0))).equals(0)
+    expect(pcmLevel(Int16Array.from([0, 0]).buffer)).equals(0)
+    expect(pcmLevel(Int16Array.from([-32768, -32768]).buffer)).equals(1)
+    expect(pcmLevel(Int16Array.from([16384, -16384]).buffer)).equals(0.5)
+    expect(pcmLevel(Int16Array.from([3, 4]).buffer)).closeTo(
+      Math.sqrt(12.5) / 32768,
+      1e-12
+    )
+    // An odd byte at the end is no sample.
+    expect(pcmLevel(new Uint8Array([0, 64, 9]).buffer)).equals(0.5)
+  })
+
+  it('goes to onLevel for the tess scope while the microphone is open, held or not', async function () {
+    const fake = fakeDictation()
+    const seen: { dictation?: Dictation } = {}
+    const levels: number[] = []
+    await render(
+      <Probe
+        seen={seen}
+        options={{
+          url: 'ws://host/api/v1/dictation',
+          scope: 'tess',
+          target: {},
+          contextOf: () => 'tess',
+          onTranscript: () => undefined,
+          onLevel: level => levels.push(level),
+          openSocket: fake.openSocket,
+          openMicrophone: fake.openMicrophone,
+          tailMs: 0
+        }}
+      />
+    )
+    // Closed: nothing heard, nothing reported.
+    fake.speak([16384])
+    expect(levels).deep.equals([])
+    await act(async () => {
+      seen.dictation!.setEnabled(true)
+    })
+    await settle()
+    const socket = fake.socket()
+    fake.speak([16384, -16384])
+    await opened(socket)
+    await act(async () => {
+      seen.dictation!.hold(0)
+    })
+    fake.speak([0, 0])
+    expect(levels).deep.equals([0.5, 0])
+    // The frames still go where they went: the pre-roll, then the hold's.
+    expect(socket.audio).has.length(2)
+    await act(async () => {
+      seen.dictation!.setEnabled(false)
+    })
+    fake.speak([32767])
+    expect(levels).has.length(2)
+  })
+})
 
 describe('useDictation without Tess', function () {
   it('still sends a game its key terms, and its actions back', async function () {

@@ -6,14 +6,18 @@ import { asDjGame, asSessionUser, TeamStationClient } from '../common/api'
 import { HttpError } from '../common/errors'
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, mount, press, settle, text, unmount } from '../test/gameFormDom'
+import { pageOfGames } from '../test/pageOf'
 import { App } from './App'
 import { currentRoute, showRoute } from './navigation/useAddressBar'
 import { gameFixture } from './scoring/isUnscoredGame.test'
 import walkUpMusic from './walkup/walkUpMusic'
 
 describe('actual app membership sign-in return', () => {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   let originals: PropertyDescriptorMap
   let signedIn: boolean
   let djSupported: boolean
@@ -39,7 +43,7 @@ describe('actual app membership sign-in return', () => {
     api.home = async () => ({ teams: [], seasons: [], leagues: [] })
     api.follows = async () => []
     api.ownGroups = async () => []
-    api.teamGames = async () => []
+    api.teamGamesPage = async (_id, query) => pageOfGames([], query)
     api.roster = async () => []
     api.game = async () => ({
       ...gameFixture,

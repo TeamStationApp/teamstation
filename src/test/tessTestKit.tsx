@@ -70,14 +70,23 @@ export interface ManualClock {
 /**
  * Takes over timers of at least `fromMs`, leaving the short ones React and
  * react-native-web use to the real clock: a press starts 50 ms after the
- * pointer goes down, and the long-press timer runs at 500.
+ * pointer goes down, and the long-press timer runs at 500. With `intervals`,
+ * it takes over repeating timers of at least `fromMs` as well.
  */
-export function manualClock(fromMs = 600): ManualClock {
+export function manualClock(
+  fromMs = 600,
+  options: { intervals?: boolean } = {}
+): ManualClock {
   const realSet = globalThis.setTimeout
   const realClear = globalThis.clearTimeout
+  const realSetInterval = globalThis.setInterval
+  const realClearInterval = globalThis.clearInterval
   let now = 0
   let next = 1
-  const timers = new Map<number, { at: number; run: () => void }>()
+  const timers = new Map<
+    number,
+    { at: number; run: () => void; every?: number }
+  >()
   globalThis.setTimeout = ((run: () => void, ms = 0, ...args: unknown[]) => {
     if (ms < fromMs) return realSet(run, ms, ...args)
     const id = next++
@@ -88,6 +97,18 @@ export function manualClock(fromMs = 600): ManualClock {
     if (typeof id === 'number' && timers.delete(id)) return
     realClear(id)
   }) as typeof clearTimeout
+  if (options.intervals === true) {
+    globalThis.setInterval = ((run: () => void, ms = 0, ...args: unknown[]) => {
+      if (ms < fromMs) return realSetInterval(run, ms, ...args)
+      const id = next++
+      timers.set(id, { at: now + ms, run, every: ms })
+      return id as unknown as ReturnType<typeof setInterval>
+    }) as typeof setInterval
+    globalThis.clearInterval = ((id: ReturnType<typeof setInterval>) => {
+      if (typeof id === 'number' && timers.delete(id)) return
+      realClearInterval(id)
+    }) as typeof clearInterval
+  }
   return {
     advance: async ms => {
       const until = now + ms
@@ -96,10 +117,14 @@ export function manualClock(fromMs = 600): ManualClock {
           .filter(([, timer]) => timer.at <= until)
           .sort((a, b) => a[1].at - b[1].at)[0]
         if (due == null) break
-        timers.delete(due[0])
-        now = due[1].at
+        const [id, timer] = due
+        timers.delete(id)
+        now = timer.at
+        // An interval is due again a period on, unless its run clears it.
+        if (timer.every != null)
+          timers.set(id, { ...timer, at: timer.at + timer.every })
         await act(async () => {
-          due[1].run()
+          timer.run()
         })
       }
       now = until
@@ -108,6 +133,8 @@ export function manualClock(fromMs = 600): ManualClock {
     restore: () => {
       globalThis.setTimeout = realSet
       globalThis.clearTimeout = realClear
+      globalThis.setInterval = realSetInterval
+      globalThis.clearInterval = realClearInterval
     }
   }
 }

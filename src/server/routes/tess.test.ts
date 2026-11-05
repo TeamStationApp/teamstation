@@ -14,6 +14,7 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { sseOf, streamEvents } from '../../test/anthropicStream'
 import {
   callTools,
   readTurnStream,
@@ -80,6 +81,8 @@ describe("Tess's routes", function () {
       ['POST', '/me/tess/messages'],
       ['POST', '/me/tess/attachments'],
       ['POST', '/me/tess/changes/00000000-0000-4000-8000-000000000001/confirm'],
+      ['POST', '/me/tess/changes/confirm'],
+      ['POST', '/me/tess/stop'],
       ['GET', '/me/tess/usage']
     ] as const) {
       const answer = await w.h.request(
@@ -98,6 +101,8 @@ describe("Tess's routes", function () {
       ['POST', '/me/tess/messages'],
       ['POST', '/me/tess/attachments'],
       ['POST', '/me/tess/changes/00000000-0000-4000-8000-000000000001/confirm'],
+      ['POST', '/me/tess/changes/confirm'],
+      ['POST', '/me/tess/stop'],
       ['GET', '/me/tess/usage']
     ] as const) {
       const answer = await off.h.request(
@@ -139,7 +144,14 @@ describe("Tess's routes", function () {
       contextTokens: 0,
       answering: false
     })
-    w.model.reply(say('Hello!', { input_tokens: 1200, output_tokens: 7 }))
+    w.model.reply(
+      say('Hello!', {
+        input_tokens: 200,
+        cache_creation_input_tokens: 600,
+        cache_read_input_tokens: 400,
+        output_tokens: 7
+      })
+    )
     const sent = await api.sendTessMessage('Hi Tess', {
       screen: {
         path: '/teams/tem_account',
@@ -167,6 +179,8 @@ describe("Tess's routes", function () {
         weekStart: weekStartUtc(new Date()),
         inputTokens: 1200,
         outputTokens: 7,
+        cacheReadTokens: 400,
+        cacheWriteTokens: 600,
         requests: 1
       }
     ])
@@ -195,17 +209,22 @@ describe("Tess's routes", function () {
       conversation = await client().tess()
     }
     expect(conversation.answering).equals(true)
+    // The running turn is named, for an app opened meanwhile to stop it.
+    expect(conversation.turnClientId).equals('msg-1')
     expect(conversation.messages).length(1)
     expect(conversation.messages[0]).deep.include({
       text: 'A long question',
       clientId: 'msg-1'
     })
     // Another person's conversation is not held.
-    expect((await client(102).tess()).answering).equals(false)
+    const other = await client(102).tess()
+    expect(other.answering).equals(false)
+    expect(other).not.to.have.property('turnClientId')
     answer()
     await sending
     conversation = await client().tess()
     expect(conversation.answering).equals(false)
+    expect(conversation).not.to.have.property('turnClientId')
     expect(conversation.messages.map(message => message.text)).deep.equals([
       'A long question',
       'Here it is.'
@@ -214,6 +233,22 @@ describe("Tess's routes", function () {
     expect(conversation.messages[1]).not.to.have.property('clientId')
     // The model never sees it.
     expect(JSON.stringify(w.model.messageCalls())).not.includes('msg-1')
+  })
+
+  it('names no running turn once its claim has lapsed', async () => {
+    // A worker that died mid-turn left its claim and its id behind.
+    await w.h.db
+      .insertInto('tess_conversations')
+      .values({
+        user_id: w.userId(101),
+        turn_owner: '00000000-0000-4000-8000-000000000009',
+        turn_until: new Date(Date.now() - 1000),
+        turn_client_id: 'm-lapsed'
+      })
+      .execute()
+    const conversation = await client().tess()
+    expect(conversation.answering).equals(false)
+    expect(conversation).not.to.have.property('turnClientId')
   })
 
   it('answers the new message and everything after it, Tess’s tool rounds as one reply', async () => {
@@ -238,8 +273,155 @@ describe("Tess's routes", function () {
     expect(sent[1].changes.map(change => change.summary)).deep.equals([
       'Follow Demo Hawks'
     ])
-    const confirmed = await client().confirmTessChange(sent[1].changes[0].id)
+    // A client id names the confirm's turn, for a stop; a malformed one is
+    // refused before the change runs.
+    const refused = await w.h.request(
+      'POST',
+      `/me/tess/changes/${sent[1].changes[0].id}/confirm`,
+      { clientId: 'not an id' },
+      101
+    )
+    expect(refused.status).equals(400)
+    const confirmed = await client().confirmTessChange(sent[1].changes[0].id, {
+      clientId: 'm-confirm-1'
+    })
     expect(confirmed.change.status).equals('done')
+  })
+
+  it('confirms a reply’s changes by one request, as JSON and streamed, its client id naming the turn', async () => {
+    const follow = (id: string): { name: string; input: unknown } => ({
+      name: 'confirmChange',
+      input: {
+        method: 'PUT',
+        path: `/me/follows/team/${id}`,
+        summary: `Follow ${id}`,
+        details: { Team: 'Demo Hawks', When: 'Now' }
+      }
+    })
+    w.model.reply(
+      callTools([follow('tem_account'), follow('tem_account')]),
+      say('Hold Confirm to follow them.')
+    )
+    const sent = await client().sendTessMessage('Follow the Hawks twice')
+    const ids = sent[1].changes.map(change => change.id)
+    expect(sent[1].changes[1].details).deep.equals([
+      { label: 'Team', value: 'Demo Hawks' },
+      { label: 'When', value: 'Now' }
+    ])
+    // Malformed: no ids, or a client id that is not one.
+    for (const body of [
+      {},
+      { changeIds: 'all' },
+      { changeIds: ids, clientId: 'not an id' }
+    ])
+      expect(
+        (await w.h.request('POST', '/me/tess/changes/confirm', body, 101))
+          .status,
+        JSON.stringify(body)
+      ).equals(400)
+    w.model.reply(say('You follow Demo Hawks.'))
+    const confirmed = await client().confirmTessChanges([ids[0]], {
+      clientId: 'm-all-1'
+    })
+    expect(confirmed.changes.map(change => change.status)).deep.equals(['done'])
+    expect(confirmed.messages.map(message => message.text)).deep.equals([
+      'You follow Demo Hawks.'
+    ])
+    w.model.reply(say('Still following.'))
+    const events = await readTurnStream(
+      await streamed(w, '/me/tess/changes/confirm', {
+        changeIds: [ids[1]],
+        clientId: 'm-all-2'
+      })
+    )
+    // A comment opens the stream before the changes run.
+    expect(events[0].event).equals('comment')
+    expect(events[1].event).equals('stored')
+    // Pending, it said when it would expire; done, it no longer does.
+    const { expiresAt, expiresInMs, ...proposed } = sent[1].changes[1]
+    expect(Date.parse(expiresAt!)).greaterThan(Date.now())
+    expect(expiresInMs).greaterThan(0)
+    expect(events[1].data.changes).deep.equals([
+      { ...proposed, status: 'done' }
+    ])
+    expect(
+      events.at(-1)!.data.messages.map((m: { text: string }) => m.text)
+    ).deep.equals(['Still following.'])
+  })
+
+  it('stops a turn by its client id: 204 idle or running, and another person’s stop changes nothing', async () => {
+    // Nothing running, and no conversation yet: noted all the same.
+    expect(
+      (await w.h.request('POST', '/me/tess/stop', { clientId: 'm-idle' }, 101))
+        .status
+    ).equals(204)
+    await client().stopTess('m-idle')
+    expect((await w.h.request('POST', '/me/tess/stop', {}, 101)).status).equals(
+      400
+    )
+
+    const running = async (): Promise<void> => {
+      for (let tries = 0; (await client().tess()).answering !== true; tries++) {
+        expect(tries).lessThan(200)
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+    }
+    // Another person naming the same id stops their own row, not this turn.
+    let answer: () => void = () => undefined
+    const answered = new Promise<void>(resolve => {
+      answer = resolve
+    })
+    w.model.reply(async () => {
+      await answered
+      return say('Here it is.')
+    })
+    const first = client().sendTessMessage('A long question', {
+      clientId: 'm-run-1'
+    })
+    await running()
+    await client(102).stopTess('m-run-1')
+    const stops = await w.h.db
+      .selectFrom('tess_conversations')
+      .select(['user_id', 'turn_stop'])
+      .orderBy('user_id')
+      .execute()
+    expect(stops).deep.equals(
+      [
+        { user_id: w.userId(101), turn_stop: 'm-idle' },
+        { user_id: w.userId(102), turn_stop: 'm-run-1' }
+      ].sort((a, b) => (a.user_id < b.user_id ? -1 : 1))
+    )
+    await new Promise(resolve => setTimeout(resolve, 700))
+    answer()
+    expect((await first).map(message => message.text)).deep.equals([
+      'A long question',
+      'Here it is.'
+    ])
+
+    // Stopped while she streams: the reply is the stopped one.
+    w.model.reply({
+      partial: streamEvents({ content: [{ type: 'text', text: 'Let me' }] })
+        .slice(0, 4)
+        .map(sseOf)
+        .join('')
+    })
+    const second = client().sendTessMessage('Another long one', {
+      clientId: 'm-run-2'
+    })
+    await running()
+    await client().stopTess('m-run-2')
+    const shown = await second
+    expect(
+      shown.map(({ role, text, stopped }) => ({ role, text, stopped }))
+    ).deep.equals([
+      { role: 'user', text: 'Another long one', stopped: undefined },
+      { role: 'assistant', text: '', stopped: true }
+    ])
+    expect((await client().tess()).messages.at(-1)).deep.include({
+      role: 'assistant',
+      text: '',
+      stopped: true
+    })
   })
 
   it('links the players Tess names by what the API told her, in every answer, and stores her words as they were', async () => {
@@ -756,6 +938,78 @@ describe("Tess's routes", function () {
       ).includes('keep-alive')
       expect(events.at(-1)!.event).equals('done')
     } finally {
+      await slow.close()
+    }
+  })
+
+  it('keeps a confirmed batch’s stream open with a comment while its changes run', async () => {
+    let release = (): void => undefined
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    // The change's request waits until the stream has commented.
+    const slow = await tessWorld({
+      keepAliveMs: 40,
+      mountExtra: app => {
+        app.use('/api/v1/me/follows', (req, _res, next) => {
+          if (req.method !== 'PUT') next()
+          else
+            held.then(() => {
+              next()
+            }, next)
+        })
+      }
+    })
+    try {
+      slow.model.reply(
+        callTools([
+          {
+            name: 'confirmChange',
+            input: {
+              method: 'PUT',
+              path: '/me/follows/team/tem_account',
+              summary: 'Follow Demo Hawks'
+            }
+          }
+        ]),
+        say('Hold Confirm to follow them.')
+      )
+      await readTurnStream(
+        await streamed(slow, '/me/tess/messages', { text: 'Follow the Hawks' })
+      )
+      const [{ id }] = await slow.h.db
+        .selectFrom('tess_changes')
+        .select('id')
+        .execute()
+      slow.model.reply(say('You follow Demo Hawks.'))
+      const seen: TurnStreamEvent[] = []
+      const events = await readTurnStream(
+        await streamed(slow, '/me/tess/changes/confirm', {
+          changeIds: [id],
+          clientId: 'm-slow-all'
+        }),
+        event => {
+          seen.push(event)
+          if (seen.filter(one => one.event === 'comment').length === 3)
+            release()
+        }
+      )
+      const before = events.slice(
+        0,
+        events.findIndex(event => event.event === 'stored')
+      )
+      expect(before.length).greaterThanOrEqual(3)
+      expect(new Set(before.map(event => event.event))).deep.equals(
+        new Set(['comment'])
+      )
+      expect(
+        events
+          .find(event => event.event === 'stored')!
+          .data.changes.map((change: { status: string }) => change.status)
+      ).deep.equals(['done'])
+      expect(events.at(-1)!.event).equals('done')
+    } finally {
+      release()
       await slow.close()
     }
   })

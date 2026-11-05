@@ -7,6 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { ChatReport } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { App } from '../App'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -119,6 +120,8 @@ class FakeReports {
 }
 
 describe('reported chat messages (site administrators)', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   this.timeout(10000)
 
   it('shows verified and unverified reports, and resolves one', async function () {
@@ -265,6 +268,8 @@ describe('reported chat messages (site administrators)', function () {
 })
 
 describe('reported chat messages in the app', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
   this.timeout(15000)
   const originalFetch = globalThis.fetch
   const heldIndexedDB = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB')
