@@ -49,8 +49,11 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
   )
   assert(values.out != null)
   assert(
-    values.runner === 'native' &&
-      ['bands', 'core', 'default'].includes(values.scenario),
+    (values.runner === 'native' &&
+      ['bands', 'core', 'default'].includes(values.scenario)) ||
+      (values.runner === 'web' &&
+        values.surface === 'web' &&
+        ['E3', 'E4'].includes(values.scenario)),
     'This scenario requires its specialized fixture producer'
   )
   const ownerFile = process.env.CHAT_RECOVERY_OWNER_FILE
@@ -100,6 +103,39 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
     { mode: 0o600 }
   )
   const people = readSeedTable(readFileSync(join(out, 'seed.txt'), 'utf8'))
+  if (values.runner === 'web') {
+    // These scenarios must first enroll through the actual browser UI.
+    // A provider engine here would pre-enroll them and change the scenario.
+    const fixture = {
+      disposable: true,
+      source: owner.source,
+      origin: owner.webUrl,
+      apiUrl: owner.apiUrl,
+      seedFile: join(out, 'seed.txt'),
+      artifacts: out
+    }
+    requireFixtureFields(fixture, [
+      'source',
+      'origin',
+      'apiUrl',
+      'seedFile',
+      'artifacts'
+    ])
+    privateJson(join(out, 'fixture.json'), fixture)
+    const path = join(out, 'env.sh')
+    writeFileSync(
+      path,
+      recoveryFixtureEnvironment({
+        CHAT_RECOVERY_FIXTURE: join(out, 'fixture.json'),
+        CHAT_RECOVERY_SURFACE: 'web',
+        CHAT_RECOVERY_DEVICE: 'recovery-' + values.scenario,
+        CHAT_RECOVERY_FIXTURE_SOURCE: owner.source,
+        MAESTRO_D: 'recovery-' + values.scenario + '-' + Date.now()
+      }),
+      { mode: 0o600, flag: 'wx' }
+    )
+    return path
+  }
   const providers: Record<
     string,
     {
