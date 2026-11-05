@@ -1,3 +1,5 @@
+import assert from 'node:assert/strict'
+
 import { defineE2e } from '../../../core/spec'
 import { ConcurrentScoringRig } from '../../../rigs/concurrentScoring'
 
@@ -30,7 +32,7 @@ export default defineE2e({
       if (ctx.fault === 'scoring-observer-stall') {
         // External transport failure on the passive client only; scoring and
         // authentication on the other two sessions remain available.
-        await rig.clients[1].page.setOfflineMode(true)
+        await rig.clients[1].page!.setOfflineMode(true)
       }
       await rig.tap(0, '^Called Strike$')
       await rig.agree(0, '0 balls 1 strikes')
@@ -47,11 +49,8 @@ export default defineE2e({
       await rig.expectText(1, '1 balls 0 strikes')
       await rig.capture('observer-after')
       const events = await rig.api.gameEvents(rig.fixture.ids.game)
-      if (
-        events.plays.length !== 1 ||
-        events.plays[0].result?.description !== 'Dropped Third Strike'
-      )
-        throw new Error('Dropped third strike was not saved exactly once')
+      assert.equal(events.plays.length, 1, 'Dropped third strike saved once')
+      assert.equal(events.plays[0].result.description, 'Dropped Third Strike')
       // The former watcher now scores. Both stay on their original routes.
       await rig.strikeout(1)
       await rig.agree(1, '0 balls 0 strikes 1 outs')
@@ -60,6 +59,49 @@ export default defineE2e({
       await rig.finish(0)
       await rig.pitch(0, 'Ball')
       await rig.agree(0, '1 balls 0 strikes 1 outs')
+      await rig.clients[1].page!.setOfflineMode(true)
+      await rig.pitch(0, 'Ball')
+      await rig.expectText(0, '2 balls 0 strikes 1 outs', 15000)
+      await rig.clients[1].page!.setOfflineMode(false)
+      await rig.expectText(1, '2 balls 0 strikes 1 outs', 15000)
+      await rig.capture('observer-reconnected')
+      await rig.strikeout(0)
+      await rig.agree(0, '0 balls 0 strikes 2 outs')
+      await rig.strikeout(1)
+      await rig.agree(1, '0 balls 0 strikes 0 outs')
+      await rig.hit(1, 'Single', 5)
+      await rig.expectText(0, 'Finish at-bat')
+      await rig.finish(1)
+      await rig.hit(1, "Fielder's Choice", 5)
+      await rig.expectText(0, 'Finish defensive play')
+      await rig.defender(1, 4, 2)
+      await rig.tap(1, '^Finish defensive play$')
+      // Relay calls are a local draft until committed; the saved fielder remains visible.
+      await rig.expectText(0, 'Finish defensive play')
+      await rig.tap(1, '^Out$')
+      await rig.finish(1)
+      await rig.agree(1, '0 balls 0 strikes 1 outs')
+      await rig.hit(0, 'Error', 5)
+      await rig.expectText(1, 'Finish defensive play')
+      await rig.tap(0, '^Finish defensive play$')
+      await rig.expectText(1, 'Finish defensive play')
+      await rig.tap(0, '^Error by .*')
+      await rig.finish(0)
+      // First is occupied, so a dropped third strike is eligible at two outs.
+      await rig.strikeout(1)
+      await rig.agree(1, '0 balls 0 strikes 2 outs')
+      await rig.pitch(0, 'Called Strike')
+      await rig.pitch(0, 'Called Strike')
+      await rig.more(0, 'Dropped Third Strike')
+      await rig.expectText(1, '3 strikes')
+      await rig.tap(0, '^Out$')
+      await rig.defender(0, 3, 1)
+      await rig.expectText(1, '3 strikes')
+      await rig.tap(0, '^Finish defensive play$')
+      await rig.finish(0)
+      await rig.agree(0, '0 balls 0 strikes 0 outs')
+      await rig.capture('all-intermediate-phases-followed')
+      await rig.recordCoverage()
     }
   }
 })

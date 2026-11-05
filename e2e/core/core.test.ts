@@ -1041,10 +1041,14 @@ describe('the isolated stack', function () {
 
   it('starts a real API behind the front, with its store and catalog', async function () {
     this.timeout(180000)
-    const stack = await startStack({ services: ['web', 'api'] })
+    const stack = await startStack({ services: ['web', 'api', 'stats'] })
     try {
       const health = await fetch(`${stack.origin}/api/v1/health`)
       expect(health.status).equals(200)
+      expect(
+        JSON.parse(readFileSync(join(stack.dir, 'serverConfig.json'), 'utf8'))
+          .statsBuilder
+      ).equals(true)
       expect(existsSync(join(stack.webDir ?? '', 'index.html'))).equals(true)
       const page = await fetch(`${stack.origin}/games/1`)
       expect(await page.text()).includes('<html')

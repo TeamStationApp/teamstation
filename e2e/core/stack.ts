@@ -217,7 +217,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
           listenHost: '127.0.0.1',
           listenPort: apiPort,
           clusterWorkers: 1,
-          statsBuilder: false,
+          statsBuilder: options.services.includes('stats'),
           workDir: join(dir, 'work'),
           mediaDir: join(dir, 'media'),
           uploadsDir: join(dir, 'uploads'),

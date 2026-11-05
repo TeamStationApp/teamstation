@@ -768,11 +768,68 @@
       "costUsd": 0,
       "minutes": 5,
       "guards": [],
-      "faults": [],
+      "faults": [
+        "scoring-observer-stall"
+      ],
       "manual": false,
       "sendsNoMail": true,
       "spec": "scoring/concurrency/follow",
       "file": "e2e/tests/scoring/concurrency/follow.e2e.ts"
+    },
+    {
+      "id": "scoring/concurrency/game#six-innings",
+      "title": "Six innings with alternating scorers and a live coaching lineup",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/app/scoring/scoringFollow.ts",
+        "src/common/scoring/session.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "concurrent-scoring"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "scorer-a",
+              "needs": [
+                "ios-phone",
+                "safari"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "scorer-b",
+              "needs": [
+                "ios-phone",
+                "safari"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web",
+        "stats"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/concurrency/game",
+      "file": "e2e/tests/scoring/concurrency/game.e2e.ts"
     },
     {
       "id": "scoring/concurrency/lineups#handoff-and-conflicts",
@@ -781,7 +838,8 @@
       "covers": [
         "src/app/scoring/ScoringScreen.tsx",
         "src/app/scoring/scoringFollow.ts",
-        "src/app/scoring/rosterLive.ts"
+        "src/app/scoring/rosterLive.tsx",
+        "src/app/screens/CoachGameScreen.tsx"
       ],
       "stack": "isolated",
       "fixtures": [

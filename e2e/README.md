@@ -91,3 +91,52 @@ The script refuses unless `serverConfig.testSettings` is true, which production 
 - `ctx.mail(address, from)` waits up to three minutes for what the app really sent, with one targeted, time-bounded search at a time. Nothing it reads goes to the run directory.
 
 `test.rateLimitScale` in `system_settings` multiplies every rate limit except a paid provider's, read only where `testSettings` is true. `baseline` sets it to 100, so ordinary scenarios never hit a limit.
+
+## Concurrent scoring
+
+The concurrency scenarios use three separate signed-in sessions: two scorers
+and one coach. They seed synthetic teams and players, then score and edit
+lineups through the UI. Database/API reads corroborate the screens; they do
+not perform scoring actions.
+
+```sh
+npm run -s e2e -- run scoring/concurrency/follow#intermediate-phases --surface web-chromium
+npm run -s e2e -- run scoring/concurrency/lineups#handoff-and-conflicts --surface web-chromium
+npm run -s e2e -- run scoring/concurrency/game#six-innings --surface web-chromium
+```
+
+The six-inning journey alternates scorer each half inning, includes dropped
+third strikes, a fielder's choice, an error, walks, home runs and undos, and
+changes the coaching lineup while both scorers remain open. Its expected
+result is 44 completed plays, 36 outs and a 1–2 score. It checks individual
+credits and pitching totals as well as the score. Observer convergence has
+a three-second deadline after an acknowledged action. Screenshots and JSON
+readbacks accompany checkpoints; a reconnect or test retry does not erase
+the original failure.
+
+For the physical Safari run, claim two different iOS phones through
+agent-resources before supplying their IDs. The coach uses an owned Chromium
+window. Renew leases before expiry and release both phones in cleanup.
+
+```sh
+npm run -s e2e -- run scoring/concurrency/game#six-innings \
+  --surface web-safari-ios --device scorer-a="$SCORER_A" --device scorer-b="$SCORER_B"
+```
+
+Set `TS_IOS_TEAM_ID` to the development signing team when the device driver
+needs it. Missing hardware must report blocked; it must not substitute an
+emulated scorer. `TS_CONCURRENT_DELAY_SEED` accepts an unsigned 32-bit seed
+for reproducible short delays between actions. The run records that seed.
+`TS_CONCURRENT_BROWSER_COVERAGE=1` collects browser coverage with the tested
+revision on an isolated stack containing source maps.
+
+All three Chromium scenarios are required by the nightly sweep selector on
+a ref containing this suite. Insufficient budget or missing prerequisites
+must leave the night incomplete. Physical Safari availability is reported
+separately. The observer-stall fault deliberately disconnects the watching
+client; this command must detect stale state at a convergence checkpoint:
+
+```sh
+npm run -s e2e -- detect scoring/concurrency/follow#intermediate-phases \
+  --fault scoring-observer-stall --surface web-chromium
+```
