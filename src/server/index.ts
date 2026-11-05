@@ -8,7 +8,7 @@ import path from 'node:path'
 
 import express from 'express'
 
-import { aiSettings } from './aiKeys'
+import { aiSettings, dictationConfig } from './aiKeys'
 import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
@@ -717,7 +717,6 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     tessRoutes(db, {
-      settings: tessSettings(serverConfig),
       resolveSettings: async () => (await aiSettings(db)).tess,
       origin: () => loopbackOrigin(serverConfig)
     })
@@ -824,15 +823,13 @@ function runWorker(): void {
   // whatever is left.
   const dictation = attachDictation(server, {
     db,
-    config: serverConfig.dictation ?? {
-      apiKey: [],
-      baseUrl: 'https://api.x.ai/v1',
-      sttUrl: 'wss://api.x.ai/v1/stt',
-      sttModel: 'grok-voice-transcribe-2.0',
-      model: 'claude-haiku-5-5'
-    },
+    config:
+      serverConfig.dictation ??
+      dictationConfig(serverConfig, { anthropicScoring: [], xaiVoice: [] }),
     resolveConfig: async () => (await aiSettings(db)).dictation,
-    scopes: dictationScopes({ tess: true }),
+    scopes: dictationScopes({
+      tess: async () => (await aiSettings(db)).tess != null
+    }),
     allowedOrigins: [...serverConfig.corsOrigins, publicUrl],
     listenForUpgrades: false
   })

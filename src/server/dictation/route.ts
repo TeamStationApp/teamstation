@@ -5,6 +5,7 @@ import type { Duplex } from 'node:stream'
 import type { Kysely } from 'kysely'
 import { type RawData, type WebSocket, WebSocketServer } from 'ws'
 
+import { normalizedKeys } from '../../common/aiKeys'
 import {
   asDictationUp,
   DICTATION_MODEL_NAMES,
@@ -108,6 +109,8 @@ interface InFlight {
   transcript: string
   conversation?: Conversation
   options?: AskOption[]
+  /** The settings read for this hold, which its LLM call uses. */
+  config: DictationConfig
 }
 
 /**
@@ -252,7 +255,8 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
   // One scorer's sentences reach the provider server holding the cached
   // prompt; different scorers are spread across servers.
   const cacheKey = randomUUID()
-  const { config } = options
+  let { config } = options
+  let keyterms: readonly string[] | undefined
   const scopes = options.scopes ?? SCOPES
   const log =
     options.log ??
@@ -275,14 +279,16 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
     )
   }
 
-  const recogniser = (
-    options.openRecogniser ??
-    (handlers =>
-      new SttSession(
-        { apiKey: config.apiKey, url: config.sttUrl, model: config.sttModel },
-        handlers
-      ))
-  )({
+  const open = (): Recogniser =>
+    (
+      options.openRecogniser ??
+      (handlers =>
+        new SttSession(
+          { apiKey: config.apiKey, url: config.sttUrl, model: config.sttModel },
+          handlers
+        ))
+    )(handlers)
+  const handlers: SttHandlers = {
     onPartial: text => {
       if (
         current != null &&
@@ -319,7 +325,7 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
         ((c, context, t) => new Interpretation(c, context, t))
       )(
         {
-          ...endpointFor(flight.model, config)!,
+          ...endpointFor(flight.model, flight.config)!,
           model: flight.model,
           tools: flight.scope.tools,
           rosterTools: flight.scope.rosterTools,
@@ -355,7 +361,23 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
       fail(flight.start.id, message)
       finish(flight, `recogniser failed: ${message}`)
     }
-  })
+  }
+  let recogniser = open()
+
+  /**
+   * The settings as they are now. A save that changed the voice keys gets a
+   * new recogniser, so a removed key is not used past the next hold.
+   */
+  const adopt = (fresh: DictationConfig): void => {
+    const voice = (c: DictationConfig): string =>
+      JSON.stringify([normalizedKeys(c.apiKey), c.sttUrl, c.sttModel])
+    const changed = voice(fresh) !== voice(config)
+    config = fresh
+    if (!changed) return
+    recogniser.close()
+    recogniser = open()
+    if (keyterms != null) recogniser.retarget(keyterms)
+  }
 
   /** What the LLM came back with, for an utterance still waiting on it. */
   const answered = (flight: InFlight, turn: Turn): void => {
@@ -428,26 +450,50 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
       fail(start.id, `Dictation cannot talk about ${start.scope}`)
       return
     }
-    const model = start.model ?? config.model
-    if (scope.transcriptOnly !== true && endpointFor(model, config) == null) {
-      fail(
-        start.id,
-        `${DICTATION_MODEL_NAMES[model as DictationModel] ?? model} is not set up on this server`
-      )
-      return
-    }
     const flight: InFlight = {
       start,
-      model,
+      model: start.model ?? config.model,
       scope,
       phase: 'authorising',
       held: [],
       releasedEarly: false,
       audioBytes: 0,
       transcript: '',
-      startedAt: Date.now()
+      startedAt: Date.now(),
+      config
     }
     current = flight
+    if (options.resolveConfig != null) {
+      let fresh: DictationConfig | null
+      try {
+        fresh = await options.resolveConfig()
+      } catch (error) {
+        log(
+          `dictation ${start.id} could not read its settings: ${String(error)}`
+        )
+        fresh = null
+      }
+      if (current !== flight || closed) return
+      if (fresh == null) {
+        fail(start.id, 'Dictation is not available on this server')
+        finish(flight, 'unavailable')
+        return
+      }
+      adopt(fresh)
+      flight.config = config
+      flight.model = start.model ?? config.model
+    }
+    if (
+      scope.transcriptOnly !== true &&
+      endpointFor(flight.model, config) == null
+    ) {
+      fail(
+        start.id,
+        `${DICTATION_MODEL_NAMES[flight.model as DictationModel] ?? flight.model} is not set up on this server`
+      )
+      finish(flight, 'model not set up')
+      return
+    }
     try {
       await scope.authorise(options.db, actor, start.target)
     } catch (error) {
@@ -477,6 +523,7 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
   const onControl = (frame: DictationUp): void => {
     switch (frame.kind) {
       case 'keyterms':
+        keyterms = frame.keyterms
         recogniser.retarget(frame.keyterms)
         return
       case 'start':

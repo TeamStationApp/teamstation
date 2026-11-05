@@ -81,7 +81,8 @@ async function authoriseRoster(
  * never to a machine token.
  */
 export function dictationScopes(options: {
-  tess: boolean
+  /** Asked for each hold, since an administrator can turn Tess off at any time. */
+  tess: boolean | (() => Promise<boolean>)
 }): ReadonlyMap<string, Scope> {
   return new Map<string, Scope>([
     ...SCOPES_BUT_TESS,
@@ -93,8 +94,11 @@ export function dictationScopes(options: {
         tools: [],
         transcriptOnly: true,
         authorise: async (_db, actor) => {
-          if (!options.tess)
-            throw unavailable('Tess is not available on this server')
+          const tess =
+            typeof options.tess === 'function'
+              ? await options.tess()
+              : options.tess
+          if (!tess) throw unavailable('Tess is not available on this server')
           if (!isHumanSession(actor)) throw forbidden('Sign in to talk to Tess')
         }
       }

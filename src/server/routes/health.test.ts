@@ -147,6 +147,47 @@ describe('health', function () {
     }
   })
 
+  it('answers with the stored pools, and with the file flags when they cannot be read', async () => {
+    const stored = await serve({
+      tess: false,
+      resolveAi: async () => ({
+        dictation: true,
+        dictationModels: ['claude-haiku-5-5'],
+        narration: true,
+        tess: true
+      })
+    })
+    expect(await stored.health()).deep.include({
+      dictation: true,
+      dictationModels: ['claude-haiku-5-5'],
+      narration: true,
+      tess: true
+    })
+    const logged: unknown[] = []
+    const error = console.error
+    console.error = (...args: unknown[]) => {
+      logged.push(args[0])
+    }
+    try {
+      const broken = await serve({
+        tess: true,
+        resolveAi: async () => {
+          throw new Error('unreadable')
+        }
+      })
+      const response = await fetch(`${broken.baseUrl}/health`)
+      expect(response.status).equals(200)
+      expect(await response.json()).deep.include({
+        status: 'ok',
+        tess: true,
+        dictation: false
+      })
+      expect(logged).deep.equals(['health: AI settings unreadable'])
+    } finally {
+      console.error = error
+    }
+  })
+
   it('still reports the flag when the database is unreachable', async () => {
     const away = makeDatabase('postgres://127.0.0.1:1/absent')
     const logged: unknown[] = []

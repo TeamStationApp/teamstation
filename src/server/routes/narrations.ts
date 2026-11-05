@@ -63,9 +63,7 @@ export function narrationRoutes(
       } catch (error) {
         if (error instanceof SpeechUnavailable) {
           console.error(`narration ${gameId} ${stepKey}: ${error.message}`)
-          res
-            .status(503)
-            .json({ error: 'narrationUnavailable', message: error.message })
+          res.status(503).json({ error: 'narrationUnavailable' })
           return
         }
         throw error

@@ -33,12 +33,14 @@ export function healthRoutes(
   db: Kysely<Database>,
   version: string,
   options: {
+    /** What the stored key pools turn on, read on each request. */
     resolveAi?: () => Promise<{
       dictation: boolean
       dictationModels: readonly string[]
       narration: boolean
       tess: boolean
     }>
+    // The file's own answer, for when the stored pools cannot be read.
     dictation?: boolean
     dictationModels?: readonly string[]
     narration?: boolean
@@ -68,10 +70,13 @@ export function healthRoutes(
         database === 'ok'
           ? await replayPitchSec(db)
           : defaultReplaySettings.pitchSec
-      const ai =
-        database === 'ok' && options.resolveAi != null
-          ? await options.resolveAi()
-          : options
+      let ai: Omit<typeof options, 'resolveAi'> = options
+      if (database === 'ok' && options.resolveAi != null)
+        try {
+          ai = await options.resolveAi()
+        } catch (error) {
+          console.error('health: AI settings unreadable', error)
+        }
       const body: HealthBody = {
         status: database === 'ok' ? 'ok' : 'degraded',
         version,

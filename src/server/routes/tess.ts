@@ -45,7 +45,8 @@ import { usageWeeks } from '../tess/usage'
 
 export interface TessRouteOptions {
   /** Tess's key and model; null when the server has none, and she is off. */
-  settings: TessSettings | null
+  settings?: TessSettings | null
+  /** The same, read on each request; the server's stored pools win over `settings`. */
   resolveSettings?: () => Promise<TessSettings | null>
   /**
    * This server's own origin, for the requests Tess's tools send. Read on

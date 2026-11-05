@@ -692,6 +692,102 @@ describe('dictation route', function () {
       }
     })
 
+    it('reads its settings again for each hold, and changes recogniser when the voice keys change', async function () {
+      const dynamic = createServer()
+      let voice: DictationConfig | null = { ...CONFIG, apiKey: ['one'] }
+      const opened: FakeRecogniser[] = []
+      const handle = attachDictation(dynamic, {
+        db: db!,
+        config: CONFIG,
+        resolveConfig: async () => voice,
+        scopes: dictationScopes({ tess: async () => true }),
+        openRecogniser: handlers => {
+          const recogniser = new FakeRecogniser(handlers)
+          opened.push(recogniser)
+          return recogniser
+        }
+      })
+      dynamic.listen(0, '127.0.0.1')
+      await new Promise<void>(resolve => dynamic.once('listening', resolve))
+      const ws = new WebSocket(
+        `ws://127.0.0.1:${(dynamic.address() as AddressInfo).port}/api/v1/dictation`,
+        { headers: { authorization: `Bearer ${STRANGER}` } }
+      )
+      const replies: DictationReply[] = []
+      ws.on('message', data => {
+        replies.push(
+          asDictationReply(JSON.parse((data as Buffer).toString('utf8')))
+        )
+      })
+      await new Promise<void>((resolve, reject) => {
+        ws.once('open', resolve)
+        ws.once('error', reject)
+      })
+      const replied = async (count: number): Promise<void> => {
+        for (let i = 0; i < 100 && replies.length < count; i++) await pause(10)
+        expect(replies).length.at.least(count)
+      }
+      const hold = async (id: string, index: number): Promise<void> => {
+        const recogniser = (): FakeRecogniser => opened[index]
+        ws.send(
+          JSON.stringify({
+            kind: 'start',
+            id,
+            scope: 'tess',
+            target: {},
+            context: 'tess'
+          })
+        )
+        for (
+          let i = 0;
+          i < 100 &&
+          (opened.length <= index || !recogniser().calls.includes('begin'));
+          i++
+        )
+          await pause(10)
+        ws.send(Buffer.alloc(4, 1))
+        ws.send(JSON.stringify({ kind: 'release', id }))
+        await settled(recogniser(), 'end')
+        recogniser().handlers.onFinal(`said ${id}`)
+      }
+      try {
+        ws.send(JSON.stringify({ kind: 'keyterms', keyterms: ['Trout'] }))
+        await hold('same', 0)
+        await replied(1)
+        expect(opened).length(1)
+        voice = { ...CONFIG, apiKey: ['two'] }
+        await hold('rotated', 1)
+        await replied(2)
+        expect(opened).length(2)
+        expect(opened[0].calls).includes('close')
+        expect(opened[1].terms).deep.equals([['Trout']])
+        expect(replies.slice(0, 2).map(reply => reply.kind)).deep.equals([
+          'transcript',
+          'transcript'
+        ])
+        voice = null
+        ws.send(
+          JSON.stringify({
+            kind: 'start',
+            id: 'off',
+            scope: 'tess',
+            target: {},
+            context: 'tess'
+          })
+        )
+        await replied(3)
+        expect(replies[2]).deep.equals({
+          kind: 'error',
+          id: 'off',
+          message: 'Dictation is not available on this server'
+        })
+      } finally {
+        ws.close()
+        handle.close()
+        dynamic.close()
+      }
+    })
+
     it('answers 500 when the actor cannot be read', async function () {
       const broken = createServer()
       const handle = attachDictation(broken, {
