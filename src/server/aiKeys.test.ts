@@ -211,7 +211,7 @@ describe('administrator API keys', function () {
     const error = console.error
     console.error = (message: string) => logged.push(message)
     try {
-      // develop restored from production: same row, another server's secret.
+      // A copy of this database on another server: same row, another secret.
       expect(
         await storedAiKeys(f.h.db, { ...S, secret: 'another-secret' })
       ).equals(undefined)

@@ -22,9 +22,9 @@ export const AI_KEYS_SETTING = 'ai.keys'
 /**
  * Which server the stored pools belong to. The pools are sealed under the
  * server's `sessionSecret`, as stream keys are, and carry the origin that
- * saved them. A database copied to another server (develop is restored from
- * production every night) brings the row along, but there it cannot be read
- * and is ignored, and that server keeps to its own file configuration.
+ * saved them. A database copied to another server brings the row along, but
+ * there it cannot be opened and is ignored, and that server keeps to its own
+ * file configuration.
  */
 export interface AiKeysScope {
   origin: string
