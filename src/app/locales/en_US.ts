@@ -204,6 +204,7 @@ export const enUs = {
   angles_swipe_full_screen: 'Swipe up for full screen',
   angles_not_recording_yet: 'Not recording yet',
   angles_stopped: 'Stopped recording',
+  angles_missing_footage: 'Video unavailable at this moment',
   angles_all_ended: 'Every angle has ended.',
   angles_unplaceable:
     'This recording has no start time, so it cannot be held in step with the others.',

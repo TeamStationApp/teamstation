@@ -14,6 +14,63 @@ import { angleNeighbor, tvLayout } from './tvLayout'
 const timeline = (offset = 0): ReturnType<typeof timelineFor> =>
   timelineFor(new Date(100000 + offset).toISOString())
 describe('TV playback composition and remote state', () => {
+  it('keeps a future gap frame covered while another camera covers the selected time', () => {
+    const clock = new PlaybackClock()
+    clock.register(
+      0,
+      {
+        ...timeline(),
+        anchors: [
+          [0, 100000],
+          [40000, 160000]
+        ]
+      },
+      () => undefined
+    )
+    clock.register(1, timeline(), () => undefined)
+    clock.load(0, 100)
+    clock.load(1, 100)
+    clock.seek(150000)
+    clock.settled(0)
+    clock.settled(1)
+    expect(clock.progress(0, 40)).equals(150000)
+    expect(clock.available(0)).equals(false)
+    clock.progress(1, 50)
+    expect(clock.progress(1, 51)).equals(151000)
+    expect(clock.progress(0, 42)).equals(151000)
+    expect(clock.master).equals(1)
+    expect(clock.available(0)).equals(false)
+    expect(clock.progress(1, 61)).equals(161000)
+    clock.settled(0)
+    clock.progress(0, 41)
+    expect(clock.available(0)).equals(true)
+  })
+  for (const count of [1, 2])
+    it(`rejoins post-gap footage with ${count} cameras while preserving a paused gap selection`, () => {
+      const clock = new PlaybackClock()
+      const held = {
+        ...timeline(),
+        anchors: [
+          [0, 100000],
+          [40000, 160000]
+        ] as [number, number][]
+      }
+      for (let i = 0; i < count; i++) {
+        clock.register(i, held, () => undefined)
+        clock.load(i, 100)
+      }
+      clock.seek(150000)
+      for (let i = 0; i < count; i++) {
+        clock.settled(i)
+        expect(clock.progress(i, 40, undefined, undefined, false)).equals(
+          150000
+        )
+        expect(clock.available(i)).equals(false)
+      }
+      expect(clock.progress(0, 41)).equals(161000)
+      expect(clock.available(0)).equals(true)
+      expect(clock.progress(0, 42)).equals(162000)
+    })
   it('waits for fresh live bounds before restoring the selected moment', () => {
     const clock = new PlaybackClock()
     const seeks: number[] = []
@@ -117,6 +174,24 @@ describe('TV playback composition and remote state', () => {
     expect(clock.available(0)).equals(false)
     clock.progress(0, 90, 150, 60)
     expect(clock.available(0)).equals(true)
+  })
+
+  it('marks the snapped future frame unavailable inside a recording outage', () => {
+    const held = {
+      ...timeline(),
+      anchors: [
+        [0, 100000],
+        [10000, 130000]
+      ] as Array<[number, number]>
+    }
+    expect(targetTime(held, 120000, 60)).deep.equals({
+      seconds: 10,
+      available: false
+    })
+    expect(targetTime(held, 130000, 60)).deep.equals({
+      seconds: 10,
+      available: true
+    })
   })
 
   it('makes a reloaded failed camera available at the shared moment', () => {
