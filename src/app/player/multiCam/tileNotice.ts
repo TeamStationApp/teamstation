@@ -24,6 +24,7 @@ export function tileNotice(state: TileNoticeState): string {
   if (state.unplaceable) return lstrings.angles_unplaceable
   if (state.parked === 'beforeStart') return lstrings.angles_not_recording_yet
   if (state.parked === 'afterEnd') return lstrings.angles_stopped
+  if (state.parked === 'gap') return lstrings.angles_missing_footage
   if (state.parked === 'notYet') return lstrings.angles_tile_waiting_live
   if (state.waiting) return lstrings.angles_tile_catching_up
   return lstrings.angles_tile_loading
