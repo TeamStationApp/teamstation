@@ -36,11 +36,12 @@ describe('umpire changes in live screen snapshots', function () {
     const mark = notices.mark()
     const result = await f.h.request(method, path, body, 101)
     expect(result.status, await result.clone().text()).equals(200)
-    const notice = await notices.named(mark, { gameId: 'gam_umpire' })
-    expect(BigInt(notice.revision)).equals(BigInt(before) + 1n)
+    await notices.named(mark, { gameId: 'gam_umpire' })
+    const revision = await readSyncClock(f.h.db)
+    expect(BigInt(revision)).equals(BigInt(before) + 1n)
     const game = await f.h.request('GET', '/games/gam_umpire', undefined, 101)
     expect(game.status).equals(200)
-    expect(game.headers.get(REVISION_HEADER)).equals(notice.revision)
+    expect(game.headers.get(REVISION_HEADER)).equals(revision)
   }
   const signup = async (): Promise<void> => {
     await changed('POST', '/games/gam_umpire/umpire-slots', {

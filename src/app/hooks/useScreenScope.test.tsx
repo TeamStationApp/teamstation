@@ -8,16 +8,17 @@ import type {
   ScreenScopeEvent,
   ScreenScopeListener
 } from '../../common/gameSocket'
-import { ACK_GIVE_UP_MS } from '../../common/screenScope'
+import { ACK_GIVE_UP_MS, COALESCE_MS } from '../../common/screenScope'
 import {
   FakeScopeSocket,
   heldTimers,
-  revisionStamps
+  testClock
 } from '../../test/fakeScreenScope'
 import { SceneShownProvider } from '../components/sceneShown'
 import {
   screenScopeKey,
   ScreenScopeProvider,
+  type ScreenScopeRead,
   SharedScreenScope,
   useScreenScope
 } from './useScreenScope'
@@ -37,17 +38,17 @@ describe('SharedScreenScope', function () {
     const releaseFirst = shared.subscribeScope({ scope: 'home' }, event =>
       first.push(event)
     )
-    socket.ack('4')
+    socket.ack()
     const releaseSecond = shared.subscribeScope({ scope: 'home' }, event =>
       second.push(event)
     )
     // The answer reaches a load that joins late, after the call returns.
     expect(second).deep.equals([])
     await Promise.resolve()
-    expect(second).deep.equals([{ type: 'subscribed', revision: '4' }])
-    socket.changed('5')
-    expect(first.at(-1)).deep.equals({ type: 'changed', revision: '5' })
-    expect(second.at(-1)).deep.equals({ type: 'changed', revision: '5' })
+    expect(second).deep.equals([{ type: 'subscribed' }])
+    socket.changed()
+    expect(first.at(-1)).deep.equals({ type: 'changed' })
+    expect(second.at(-1)).deep.equals({ type: 'changed' })
     expect(socket.asked()).deep.equals(['home'])
     releaseFirst()
     releaseFirst()
@@ -67,9 +68,9 @@ describe('SharedScreenScope', function () {
     shared.subscribeScope({ scope: 'event', gameId: 'g1' }, heard =>
       event.push(heard)
     )
-    socket.ack('2')
+    socket.ack()
     expect(home).deep.equals([])
-    expect(event).deep.equals([{ type: 'subscribed', revision: '2' }])
+    expect(event).deep.equals([{ type: 'subscribed' }])
     // Letting go of the replaced scope leaves the new one held.
     releaseHome()
     expect(socket.asked()).deep.equals(['home', 'event:g1'])
@@ -83,14 +84,14 @@ describe('SharedScreenScope', function () {
     const socket = new FakeScopeSocket()
     const shared = new SharedScreenScope(socket)
     shared.subscribeScope({ scope: 'schedule' }, () => undefined)
-    socket.ack('1')
+    socket.ack()
     socket.deliver({ type: 'resync' })
     const late: ScreenScopeEvent[] = []
     shared.subscribeScope({ scope: 'schedule' }, heard => late.push(heard))
     await Promise.resolve()
     expect(late).deep.equals([])
-    socket.ack('3')
-    expect(late).deep.equals([{ type: 'subscribed', revision: '3' }])
+    socket.ack()
+    expect(late).deep.equals([{ type: 'subscribed' }])
   })
 
   it('tells a late load the scope was refused, and not after it left', async function () {
@@ -148,7 +149,9 @@ describe('useScreenScope', function () {
   interface Probe {
     socket?: FakeScopeSocket
     scope?: ScreenScope
-    client?: ReturnType<typeof revisionStamps>
+    client?: { offline?: boolean }
+    /** The gate's clock, for a test that moves it. */
+    clock?: ReturnType<typeof testClock>
     /** Called, as a screen's existing load would be. */
     load: () => Promise<void>
     /** Handed the function the hook returns. */
@@ -173,7 +176,11 @@ describe('useScreenScope', function () {
     }
     await act(async () => {
       root!.render(
-        <ScreenScopeProvider socket={probe.socket} scope={probe.scope}>
+        <ScreenScopeProvider
+          socket={probe.socket}
+          scope={probe.scope}
+          timers={probe.clock}
+        >
           <Loader {...probe} />
         </ScreenScopeProvider>
       )
@@ -203,13 +210,13 @@ describe('useScreenScope', function () {
       root!.render(tree(true))
     })
     await settle()
-    socket.ack('7')
+    socket.ack()
     await settle()
     expect(loads).equals(1)
     await act(async () => {
       root!.render(tree(false))
     })
-    socket.changed('8')
+    socket.changed()
     await settle()
     expect(loads).equals(1)
   })
@@ -225,14 +232,13 @@ describe('useScreenScope', function () {
       }
     })
     expect(log).deep.equals(['subscribe home'])
-    socket.ack('7')
+    socket.ack()
     await settle()
-    expect(log).deep.equals(['subscribe home', 'subscribed 7', 'load'])
+    expect(log).deep.equals(['subscribe home', 'subscribed', 'load'])
   })
 
   it('reads at once while offline, and with no socket', async function () {
-    const client = revisionStamps()
-    client.offline = true
+    const client = { offline: true }
     let loads = 0
     await render({
       socket: new FakeScopeSocket(),
@@ -274,39 +280,131 @@ describe('useScreenScope', function () {
     })
     await settle()
     expect(loads).equals(1)
-    socket.ack('2')
+    socket.ack()
     await settle()
     expect(loads).equals(2)
   })
 
-  it('reads again for a notice newer than what it read, and not for an older one', async function () {
-    const client = revisionStamps()
-    client.revisions.set('/teams', '5')
+  /** A load the test finishes by hand, and when each began on `clock`. */
+  function timedLoads(clock: ReturnType<typeof testClock>): {
+    load: () => Promise<void>
+    began: number[]
+    finish: () => Promise<void>
+  } {
+    const began: number[] = []
+    let release: (() => void) | undefined
+    return {
+      began,
+      load: async () => {
+        began.push(clock.now())
+        await new Promise<void>(resolve => {
+          release = resolve
+        })
+      },
+      finish: async () => {
+        release?.()
+        release = undefined
+        await settle()
+      }
+    }
+  }
+
+  it('reads a notice at once when idle, and once for ten during a read, 3 s after it began', async function () {
+    const clock = testClock(0)
     const socket = new FakeScopeSocket()
-    let loads = 0
+    const loads = timedLoads(clock)
+    await render({ socket, scope: { scope: 'home' }, clock, load: loads.load })
+    socket.ack()
+    await settle()
+    await loads.finish()
+    // Idle, and the last read began 3 s ago: at once.
+    clock.advance(COALESCE_MS)
+    socket.changed()
+    await settle()
+    expect(loads.began).deep.equals([0, 3000])
+    // Ten notices over 2 s while that read runs: one read, at its 3 s.
+    for (let i = 0; i < 10; i++) {
+      clock.advance(200)
+      socket.changed()
+    }
+    await loads.finish()
+    await act(async () => {
+      clock.advance(999)
+    })
+    expect(loads.began).deep.equals([0, 3000])
+    await act(async () => {
+      clock.advance(1)
+    })
+    await settle()
+    expect(loads.began).deep.equals([0, 3000, 6000])
+    await loads.finish()
+    clock.advance(10_000)
+    await settle()
+    expect(loads.began).deep.equals([0, 3000, 6000])
+  })
+
+  it('holds a notice 1 s after a read to the 3 s mark, and reads one 4 s after at once', async function () {
+    const clock = testClock(0)
+    const socket = new FakeScopeSocket()
+    const loads = timedLoads(clock)
     await render({
       socket,
-      scope: { scope: 'home' },
-      client,
-      load: async () => {
-        loads++
-        client.answer('/teams')
+      scope: { scope: 'schedule' },
+      clock,
+      load: loads.load
+    })
+    socket.ack()
+    await settle()
+    await loads.finish()
+    clock.advance(1000)
+    socket.changed()
+    await settle()
+    expect(loads.began).deep.equals([0])
+    await act(async () => {
+      clock.advance(2000)
+    })
+    await loads.finish()
+    expect(loads.began).deep.equals([0, 3000])
+    clock.advance(4000)
+    socket.changed()
+    await loads.finish()
+    expect(loads.began).deep.equals([0, 3000, 7000])
+  })
+
+  it('reads at once on every subscribed, and holds a notice after a read alongside', async function () {
+    const clock = testClock(0)
+    const socket = new FakeScopeSocket()
+    const loads = timedLoads(clock)
+    let refresh: ScreenScopeRead | undefined
+    await render({
+      socket,
+      scope: { scope: 'event', gameId: 'g1' },
+      clock,
+      load: loads.load,
+      onRefresh: next => {
+        refresh = next as ScreenScopeRead
       }
     })
-    socket.ack('5')
+    socket.ack()
+    await loads.finish()
+    clock.advance(500)
+    socket.deliver({ type: 'resync' })
+    socket.ack()
+    await loads.finish()
+    expect(loads.began).deep.equals([0, 500])
+    clock.advance(5000)
+    await act(async () => {
+      await refresh!.alongside(async () => undefined)
+    })
+    clock.advance(1000)
+    socket.changed()
     await settle()
-    expect(loads).equals(1)
-    socket.changed('4')
-    socket.changed('5')
-    await settle()
-    expect(loads).equals(1)
-    client.revisions.set('/teams', '6')
-    socket.changed('6')
-    await settle()
-    expect(loads).equals(2)
-    socket.changed('6')
-    await settle()
-    expect(loads).equals(2)
+    expect(loads.began).deep.equals([0, 500])
+    await act(async () => {
+      clock.advance(2000)
+    })
+    await loads.finish()
+    expect(loads.began).deep.equals([0, 500, 8500])
   })
 
   it('drops the scope it left, and waits for the new one’s own answer', async function () {
@@ -321,16 +419,16 @@ describe('useScreenScope', function () {
     })
     await render(probe('g1'))
     const left = socket.current()!
-    socket.ack('1')
+    socket.ack()
     await settle()
     expect(loaded).deep.equals(['g1'])
     await render(probe('g2'))
     expect(left.released).equals(true)
     // A notice for the game just left is not heard.
-    left.listener({ type: 'changed', revision: '9' })
+    left.listener({ type: 'changed' })
     await settle()
     expect(loaded).deep.equals(['g1'])
-    socket.ack('2')
+    socket.ack()
     await settle()
     expect(loaded).deep.equals(['g1', 'g2'])
     expect(socket.asked()).deep.equals(['event:g1', 'event:g2'])
@@ -352,7 +450,7 @@ describe('useScreenScope', function () {
       }
     })
     await render(probe('upcoming'))
-    socket.ack('1')
+    socket.ack()
     await settle()
     await render(probe('past'))
     expect(loaded).deep.equals(['upcoming', 'past'])

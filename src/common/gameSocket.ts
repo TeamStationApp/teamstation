@@ -33,11 +33,12 @@ import type { WalkUpSong } from './walkUpSong'
 
 /**
  * The version of the game socket's frames this app speaks, sent with every
- * game subscribe. A server refuses a subscribe below its minimum as
- * `forbidden` with the reason `updateRequired`, so an app too old to read what
- * it would be sent stops following games instead of misreading them.
+ * game and screen scope subscribe. A server refuses a subscribe below its
+ * minimum as `forbidden` with the reason `updateRequired`, so an app too old
+ * to read what it would be sent stops following instead of misreading it. 3
+ * is the first whose scope frames carry no revision.
  */
-export const GAME_SOCKET_PROTOCOL = 2
+export const GAME_SOCKET_PROTOCOL = 3
 
 /**
  * A stored play as `GET /games/:gameId/events` gives each row: its id, its
@@ -152,16 +153,16 @@ export type GameSocketErrorCode =
   | 'tooMany'
   | 'internal'
   /**
-   * A member who may not post (an Announcements reader) typed, or a game
-   * subscribe whose protocol is older than the server reads (with the reason
-   * `updateRequired`).
+   * A member who may not post (an Announcements reader) typed, or a game or
+   * scope subscribe whose protocol is older than the server reads (with the
+   * reason `updateRequired`).
    */
   | 'forbidden'
 
 /**
- * Why a refusal was made, beyond its code: `updateRequired`, a game subscribe
- * whose protocol is older than the server reads. It rides on a `forbidden`
- * error, which apps older than the protocol already read.
+ * Why a refusal was made, beyond its code: `updateRequired`, a game or scope
+ * subscribe whose protocol is older than the server reads. It rides on a
+ * `forbidden` error, which apps older than the protocol already read.
  */
 export type GameSocketErrorReason = 'updateRequired'
 
@@ -198,17 +199,17 @@ export type ScreenScope =
 
 /**
  * What the screen holding a scope hears. No frame carries a record: a
- * `changed` says the scope moved to `revision`, and the screen reads it over
- * REST. Revisions are decimal strings; compare them with `BigInt`.
+ * `changed` says something the scope shows changed, and the screen reads it
+ * over REST.
  */
 export type ScreenScopeEvent =
-  /** The server registered this socket at `revision`: the screen may read. */
-  | { type: 'subscribed'; revision: string }
+  /** The server registered this socket: the screen may read. */
+  | { type: 'subscribed' }
   /**
    * On home or schedule, `gameId` says the notice was of that one game
    * alone (a play, its score): a list that shows no games can let it pass.
    */
-  | { type: 'changed'; revision: string; gameId?: string }
+  | { type: 'changed'; gameId?: string }
   /** The scope was refused (`notFound` for an event it cannot see). */
   | { type: 'error'; code: GameSocketErrorCode; message: string }
   /** The acknowledgement no longer holds. It is asked for again. */
@@ -218,8 +219,7 @@ export type ScreenScopeEvent =
   /**
    * The socket is down after a connection was lost or refused, and is
    * waiting to try again: no acknowledgement is coming soon, so the screen
-   * reads at once, and the next `subscribed` reads again only if it is
-   * newer than that read.
+   * reads at once, and the next `subscribed` reads again.
    */
   | { type: 'unreachable' }
 
@@ -268,16 +268,19 @@ export type GameSocketRequest =
   /** `protocol` is `GAME_SOCKET_PROTOCOL`. */
   | { type: 'subscribe'; gameId: string; id: string; protocol: number }
   | { type: 'unsubscribe'; gameId: string; id: string }
+  /** A subscribe's `protocol` is `GAME_SOCKET_PROTOCOL`. */
   | {
       type: 'subscribe' | 'unsubscribe'
       scope: 'home' | 'schedule'
       id: string
+      protocol?: number
     }
   | {
       type: 'subscribe' | 'unsubscribe'
       scope: 'event'
       gameId: string
       id: string
+      protocol?: number
     }
   | { type: 'ping'; id: string }
   /** The person is typing in a conversation they may post in. */
@@ -285,14 +288,9 @@ export type GameSocketRequest =
 
 /** A screen scope's frames from the server. */
 export type ScreenScopeReply =
-  | { type: 'subscribed'; scope: ScreenScopeName; id: string; revision: string }
+  | { type: 'subscribed'; scope: ScreenScopeName; id: string }
   | { type: 'unsubscribed'; scope: ScreenScopeName; id: string }
-  | {
-      type: 'changed'
-      scope: ScreenScopeName
-      revision: string
-      gameId?: string
-    }
+  | { type: 'changed'; scope: ScreenScopeName; gameId?: string }
   /** The worker lost its `LISTEN`: subscribe the scope again and read. */
   | { type: 'resync' }
 
@@ -487,21 +485,22 @@ function changeOf(raw: unknown): GameChange | undefined {
   }
 }
 
+/** What a screen hears when the server refuses its scope to an app this old. */
+const SCOPE_REFUSED: ScreenScopeEvent = {
+  type: 'error',
+  code: 'forbidden',
+  message: 'Update TeamStation to keep following this screen.'
+}
+
 const asScreenScopeName = asLiteral(
   'home',
   'schedule',
   'event'
 ) as Cleaner<ScreenScopeName>
 
-const asScopeSubscribed = asObject({
-  type: asLiteral('subscribed'),
-  revision: asString
-})
-
 const asScopeChanged = asObject({
   type: asLiteral('changed'),
   scope: asScreenScopeName,
-  revision: asString,
   gameId: asOptional(asString)
 })
 
@@ -557,7 +556,9 @@ export interface GameSocketOptions {
  *
  * A game the server refuses as `updateRequired` is never asked for again,
  * not even after a reconnect, while its listeners stay: they hear
- * `updateRequired` once, as does `onUpdateRequired`.
+ * `updateRequired` once, as does `onUpdateRequired`. A scope it refuses so
+ * tells `onUpdateRequired` too, and its screen hears the refusal as an
+ * `error`; no scope is asked for again on this socket.
  */
 export class GameSocket {
   private readonly baseUrl: string
@@ -586,6 +587,8 @@ export class GameSocket {
   private readonly scopeRequests = new Set<string>()
   /** Screen scopes wait for a new token: see the class comment. */
   private scopeStopped = false
+  /** The server refused a scope to an app this old: none is asked for. */
+  private scopeRefused = false
   private socket: WebSocketLike | undefined
   private open = false
   private closed = false
@@ -698,11 +701,17 @@ export class GameSocket {
     if (this.socket == null && this.timer == null) this.endpoint()
     const held: HeldScreen = { scope: { ...scope }, listener, id: undefined }
     this.screen = held
-    if (this.scopeStopped) listener({ type: 'stopped' })
+    if (this.scopeRefused) listener(SCOPE_REFUSED)
+    else if (this.scopeStopped) listener({ type: 'stopped' })
     else if (this.open) this.requestScope(held)
     else if (this.socket == null && this.timer == null) this.connect()
     // Not a first connect on its way: one that failed, or a wait to retry.
-    if (!this.scopeStopped && !this.open && this.interrupted)
+    if (
+      !this.scopeRefused &&
+      !this.scopeStopped &&
+      !this.open &&
+      this.interrupted
+    )
       listener({ type: 'unreachable' })
     return () => {
       if (this.screen !== held) return
@@ -810,7 +819,7 @@ export class GameSocket {
    */
   private closeIfIdle(): void {
     if (
-      (!this.scopeStopped && this.screen != null) ||
+      (this.scopeAsked() && this.screen != null) ||
       this.listeners.size > 0 ||
       this.chatListeners.size > 0
     )
@@ -862,7 +871,7 @@ export class GameSocket {
       this.setOpen(true)
       for (const gameId of this.listeners.keys())
         if (!this.refused.has(gameId)) this.request('subscribe', gameId)
-      if (this.screen != null && !this.scopeStopped)
+      if (this.screen != null && this.scopeAsked())
         this.requestScope(this.screen)
       if (this.interrupted) {
         for (const gameId of [...this.listeners.keys()])
@@ -894,7 +903,7 @@ export class GameSocket {
     this.detach(socket)
     if (this.closed) return
     if (
-      this.scopeStopped &&
+      !this.scopeAsked() &&
       this.listeners.size === 0 &&
       this.chatListeners.size === 0
     )
@@ -908,7 +917,7 @@ export class GameSocket {
       this.connect()
     }, delay)
     // The screen does not wait out the retry for its acknowledgement.
-    if (!this.scopeStopped) this.screen?.listener({ type: 'unreachable' })
+    if (this.scopeAsked()) this.screen?.listener({ type: 'unreachable' })
   }
 
   /** Lets go of the socket; the scope's acknowledgement goes with it. */
@@ -938,6 +947,11 @@ export class GameSocket {
     if (socket == null) return
     this.detach(socket)
     socket.close(1000, 'closed')
+  }
+
+  /** Whether a screen scope is asked for at all: not stopped or refused. */
+  private scopeAsked(): boolean {
+    return !this.scopeStopped && !this.scopeRefused
   }
 
   private stopScope(): void {
@@ -973,10 +987,11 @@ export class GameSocket {
     const id = `c${this.nextId++}`
     this.scopeRequests.add(id)
     const { scope } = held
+    const protocol = type === 'subscribe' ? GAME_SOCKET_PROTOCOL : undefined
     this.send(
       scope.scope === 'event'
-        ? { type, scope: 'event', gameId: scope.gameId, id }
-        : { type, scope: scope.scope, id }
+        ? { type, scope: 'event', gameId: scope.gameId, id, protocol }
+        : { type, scope: scope.scope, id, protocol }
     )
     return id
   }
@@ -1028,7 +1043,7 @@ export class GameSocket {
       if (held == null) return
       held.id = undefined
       held.listener({ type: 'resync' })
-      if (this.open && !this.scopeStopped) this.requestScope(held)
+      if (this.open && this.scopeAsked()) this.requestScope(held)
       return
     }
     if (head.type === 'change') {
@@ -1100,21 +1115,26 @@ export class GameSocket {
     const held = this.screen
     if (held?.id !== id) return
     let event: ScreenScopeEvent
-    try {
-      if ((raw as { type?: unknown }).type === 'error') {
-        const error = asErrorReply(raw)
-        event = { type: 'error', code: error.code, message: error.message }
-      } else {
-        event = {
-          type: 'subscribed',
-          revision: asScopeSubscribed(raw).revision
-        }
+    let refused = false
+    if ((raw as { type?: unknown }).type === 'error') {
+      let error: ReturnType<typeof asErrorReply>
+      try {
+        error = asErrorReply(raw)
+      } catch {
+        return
       }
-    } catch {
-      return
-    }
+      event = { type: 'error', code: error.code, message: error.message }
+      refused = error.reason === 'updateRequired'
+    } else if ((raw as { type?: unknown }).type === 'subscribed')
+      event = { type: 'subscribed' }
+    else return
     if (event.type === 'error') held.id = undefined
+    if (refused) {
+      this.scopeRefused = true
+      for (const listener of [...this.updateListeners]) listener()
+    }
     held.listener(event)
+    if (refused) this.closeIfIdle()
   }
 
   private scopeChanged(raw: unknown): void {
@@ -1129,7 +1149,6 @@ export class GameSocket {
     if (scope.scope === 'event' && scope.gameId !== changed.gameId) return
     this.screen?.listener({
       type: 'changed',
-      revision: changed.revision,
       ...(scope.scope !== 'event' && changed.gameId != null
         ? { gameId: changed.gameId }
         : {})

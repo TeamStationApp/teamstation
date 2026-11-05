@@ -19,12 +19,12 @@ import {
   type ScreenScopeNotices
 } from '../../test/screenScopeNotices'
 import { attachGameSocket, type GameSocketHandle } from './gameSocket'
-import { REVISION_HEADER } from './syncRevision'
+import { readSyncClock, REVISION_HEADER } from './syncRevision'
 
 /**
  * The writes that change what home, schedule and an event show, each heard
- * on `screen_scopes` with the id the worker matches on, at the revision its
- * own transaction took. A write that fails tells nobody.
+ * on `screen_scopes` with the id the worker matches on, once its own
+ * transaction commits. A write that fails tells nobody.
  *
  * The fixture's people: 101 runs league, season and team A; 102 runs B; 103
  * runs the standalone season and team; 104 belongs to nothing.
@@ -121,10 +121,11 @@ describe('notices from the writes', function () {
     await new Promise(resolve => setTimeout(resolve, 400))
   }
 
-  it('tells a live play’s game, at the revision a later read of it answers (Commit order)', async function () {
+  it('tells a live play’s game, with no revision, committed before a later read of it (Commit order)', async function () {
     const mark = notices.mark()
     await ok('POST', `/games/${gameId}/events`, livePost(0), 101)
     const notice = await notices.named(mark, { gameId })
+    expect(notice).deep.equals({ gameId })
     const read = await f.h.request(
       'GET',
       `/games/${gameId}/lineups`,
@@ -132,7 +133,9 @@ describe('notices from the writes', function () {
       101
     )
     expect(read.status).equals(200)
-    expect(read.headers.get(REVISION_HEADER)).equals(notice.revision)
+    expect(read.headers.get(REVISION_HEADER)).equals(
+      await readSyncClock(f.h.db)
+    )
   })
 
   it('tells nobody of a write that fails (Rollback)', async function () {
@@ -172,10 +175,7 @@ describe('notices from the writes', function () {
     const heard = await notices.since(mark)
     expect(heard.length).equals(2)
     for (const payload of heard)
-      expect(payload).deep.equals({
-        revision: payload.revision,
-        gameId: unscored
-      })
+      expect(payload).deep.equals({ gameId: unscored })
   })
 
   it('tells a team’s schedule of a team event made and moved', async function () {
@@ -240,10 +240,10 @@ describe('notices from the writes', function () {
     const from = [sees, others, nobody].map(each => each.frames.length)
     const mark = notices.mark()
     await ok('PUT', `/groups/team/${f.teamA}`, { name: 'Demo Falcons' }, 101)
-    const notice = await notices.named(mark, { teamId: f.teamA })
+    await notices.named(mark, { teamId: f.teamA })
     await quiet()
     expect(sees.changes(from[0])).deep.equals([
-      { type: 'changed', scope: 'schedule', revision: notice.revision }
+      { type: 'changed', scope: 'schedule' }
     ])
     expect(others.changes(from[1])).deep.equals([])
     expect(nobody.changes(from[2])).deep.equals([])
@@ -282,22 +282,20 @@ describe('notices from the writes', function () {
     // Still a proposal: there is no game row for its id to be matched on.
     expect(request.status).equals('pending')
     expect(request.gameId).equals(null)
-    let notice = await notices.named(mark, { teamId: f.teamB })
+    await notices.named(mark, { teamId: f.teamB })
     await quiet()
     expect(receiving.changes(from)).deep.include({
       type: 'changed',
-      scope: 'schedule',
-      revision: notice.revision
+      scope: 'schedule'
     })
     from = receiving.frames.length
     mark = notices.mark()
     await ok('POST', `/game-requests/${request.id}/withdraw`, {}, 101)
-    notice = await notices.named(mark, { teamId: f.teamB })
+    await notices.named(mark, { teamId: f.teamB })
     await quiet()
     expect(receiving.changes(from)).deep.include({
       type: 'changed',
-      scope: 'schedule',
-      revision: notice.revision
+      scope: 'schedule'
     })
   })
 
@@ -376,19 +374,19 @@ describe('notices from the writes', function () {
     const from = [event, home, stranger].map(each => each.frames.length)
     const mark = notices.mark()
     await ok('POST', `/games/${gameId}/events`, livePost(1), 101)
-    const notice = await notices.named(mark, { gameId })
+    await notices.named(mark, { gameId })
     await quiet()
     expect(event.changes(from[0])).deep.equals([
-      { type: 'changed', scope: 'event', revision: notice.revision, gameId }
+      { type: 'changed', scope: 'event', gameId }
     ])
     // The away side's administrator sees the game too.
     expect(home.changes(from[1])).deep.equals([
-      { type: 'changed', scope: 'home', revision: notice.revision, gameId }
+      { type: 'changed', scope: 'home', gameId }
     ])
     expect(stranger.changes(from[2])).deep.equals([])
   })
 
-  it('sends two plays inside the window as one changed, at the later revision (Coalesce)', async function () {
+  it('sends two plays inside the window as one changed (Coalesce)', async function () {
     const event = await scopeSocket(103)
     expect(
       await event.ask({ type: 'subscribe', scope: 'event', gameId })
@@ -404,7 +402,7 @@ describe('notices from the writes', function () {
     expect(heard.map(payload => payload.gameId)).deep.equals([gameId, gameId])
     await quiet()
     expect(event.changes(from)).deep.equals([
-      { type: 'changed', scope: 'event', revision: heard[1].revision, gameId }
+      { type: 'changed', scope: 'event', gameId }
     ])
   })
 

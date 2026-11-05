@@ -115,14 +115,24 @@ describe('the sync clock', function () {
     await admin.end()
   })
 
-  /** Waits for a notify, which arrives after its commit. */
-  async function heardRevision(revision: string): Promise<ScreenScopePayload> {
+  /**
+   * Waits for a notify naming exactly `ids` among those from `from` on, which
+   * arrives after its commit.
+   */
+  async function heardNamed(
+    ids: ScreenScopePayload,
+    from: number
+  ): Promise<ScreenScopePayload> {
     const deadline = Date.now() + 3000
     for (;;) {
-      const found = heard.find(payload => payload.revision === revision)
+      const found = heard
+        .slice(from)
+        .find(payload => JSON.stringify(payload) === JSON.stringify(ids))
       if (found != null) return found
       if (Date.now() > deadline)
-        throw new Error(`No notice for ${revision} in ${JSON.stringify(heard)}`)
+        throw new Error(
+          `No notice for ${JSON.stringify(ids)} in ${JSON.stringify(heard)}`
+        )
       await wait(10)
     }
   }
@@ -150,8 +160,9 @@ describe('the sync clock', function () {
     }
   })
 
-  it('takes the next revision and announces it with the ids, on commit', async function () {
+  it('takes the next revision and announces the ids, with no revision, on commit', async function () {
     const before = await readSyncClock(db)
+    const count = heard.length
     const revision = await db.transaction().execute(async trx => {
       await trx
         .updateTable('teams')
@@ -164,8 +175,7 @@ describe('the sync clock', function () {
       })
     })
     expect(BigInt(revision)).equals(BigInt(before) + 1n)
-    expect(await heardRevision(revision)).deep.equals({
-      revision,
+    expect(await heardNamed({ teamId: 'tem_clock_a' }, count)).deep.equals({
       teamId: 'tem_clock_a'
     })
   })
@@ -195,11 +205,11 @@ describe('the sync clock', function () {
       return BigInt(before) + 1n
     })
     expect(await readSyncClock(db)).equals(String(revision))
-    await heardRevision(String(revision))
+    await heardNamed({ gameId: 'gam_noted' }, count)
     await wait(50)
     expect(heard.slice(count)).deep.equals([
-      { revision: String(revision), teamId: 'tem_clock_a', userId: '3' },
-      { revision: String(revision), gameId: 'gam_noted' }
+      { teamId: 'tem_clock_a', userId: '3' },
+      { gameId: 'gam_noted' }
     ])
   })
 
@@ -259,10 +269,8 @@ describe('the sync clock', function () {
     const after = await db
       .transaction()
       .execute(async trx => await bumpSyncClock(trx, { userId: '7' }))
-    await heardRevision(after)
-    expect(heard.slice(count).map(payload => payload.revision)).deep.equals([
-      after
-    ])
+    await heardNamed({ userId: '7' }, count)
+    expect(heard.slice(count)).deep.equals([{ userId: '7' }])
     expect(BigInt(after)).equals(BigInt(before) + 1n)
   })
 
@@ -343,6 +351,7 @@ describe('the sync clock', function () {
   })
 
   it('answers a GET with the revision its reads were taken at (Commit order)', async function () {
+    const count = heard.length
     const revision = await db.transaction().execute(async trx => {
       await trx
         .updateTable('teams')
@@ -351,10 +360,10 @@ describe('the sync clock', function () {
         .execute()
       return await bumpSyncClock(trx, { teamId: 'tem_clock_a' })
     })
-    const notice = await heardRevision(revision)
+    await heardNamed({ teamId: 'tem_clock_a' }, count)
     const response = await fetch(`${base}/teams`)
     expect(response.status).equals(200)
-    expect(response.headers.get(REVISION_HEADER)).equals(notice.revision)
+    expect(response.headers.get(REVISION_HEADER)).equals(revision)
     const teams = (await response.json()) as Array<{ name: string }>
     expect(teams[0].name).equals('Committed')
   })

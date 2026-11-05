@@ -108,13 +108,16 @@ export class CachingClient extends TeamStationClient {
       // person's token while the queue read its file sends nothing of it.
       owns: () => this.owned != null,
       send: async (method, path, body, key) =>
-        await super.request(method, path, asRaw, body, {
-          collect: false,
-          ...(key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } })
-        }),
+        await super.request(
+          method,
+          path,
+          asRaw,
+          body,
+          key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } }
+        ),
       token: () => this.token,
       read: async path => {
-        await this.request('GET', path, asRaw, undefined, { collect: false })
+        await this.request('GET', path, asRaw)
       },
       ...options.outbox
     })
@@ -407,9 +410,7 @@ export class CachingClient extends TeamStationClient {
       cleaner: Cleaner<T>
     ): Promise<T | undefined> => {
       try {
-        return await this.request('GET', path, cleaner, undefined, {
-          collect: false
-        })
+        return await this.request('GET', path, cleaner)
       } catch {
         return undefined
       }

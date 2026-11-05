@@ -124,12 +124,7 @@ describe('the update required notice', () => {
       frame => frame.scope === 'event'
     )
     await act(async () => {
-      socket.receive({
-        type: 'subscribed',
-        scope: 'event',
-        id: scope?.id,
-        revision: '8'
-      })
+      socket.receive({ type: 'subscribed', scope: 'event', id: scope?.id })
     })
     await settle(50)
     const [subscribe] = gameSubscribes(socket)
@@ -181,6 +176,29 @@ describe('the update required notice', () => {
     expect(reloads).equals(1)
     // The refused game is never asked for again.
     expect(gameSubscribes(socket)).lengthOf(1)
+  })
+
+  it('shows it when the server refuses a screen’s scope as too old', async () => {
+    showRoute({ name: 'home' }, true)
+    await mount(<App initialToken="token-one" />)
+    const socket = sockets.latest()
+    await act(async () => {
+      socket.open()
+    })
+    await settle(50)
+    const scope = (socket.messages() as Array<Record<string, unknown>>).find(
+      frame => frame.scope === 'home'
+    )
+    expect(scope).deep.include({
+      type: 'subscribe',
+      protocol: GAME_SOCKET_PROTOCOL
+    })
+    expect(document.body.textContent).not.contains(TITLE)
+    await refuse(socket, scope!)
+    const notice = document.querySelector(
+      '[data-testid="updateRequiredNotice"]'
+    )
+    expect(notice?.textContent).contains(TITLE)
   })
 
   it('offers no Reload on a phone, which updates from its store', async () => {

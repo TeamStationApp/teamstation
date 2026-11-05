@@ -995,43 +995,88 @@ describe('the game socket (U14)', function () {
       message: 'Update TeamStation to keep following games.'
     }
 
-    it('subscribes protocol 2, refuses none or 1 with updateRequired, and sends the refused nothing later', async function () {
+    it('subscribes protocol 3, refuses none, 1 or 2 with updateRequired, and sends the refused nothing later', async function () {
+      expect(GAME_SOCKET_PROTOCOL).equals(3)
       const current = await listen(VIEWER)
       const unnamed = await listen(VIEWER)
       const older = await listen(VIEWER)
+      const previous = await listen(VIEWER)
       expect((await subscribed(current, scored)).type).equals('subscribed')
       unnamed.send({ type: 'subscribe', gameId: scored, id: 'n1' })
       older.send({ type: 'subscribe', gameId: scored, id: 'o1', protocol: 1 })
+      previous.send({
+        type: 'subscribe',
+        gameId: scored,
+        id: 'p1',
+        protocol: 2
+      })
       expect(
         await unnamed.next(frame => 'id' in frame && frame.id === 'n1')
       ).deep.equals({ ...UPDATE_REQUIRED, id: 'n1' })
       expect(
         await older.next(frame => 'id' in frame && frame.id === 'o1')
       ).deep.equals({ ...UPDATE_REQUIRED, id: 'o1' })
+      expect(
+        await previous.next(frame => 'id' in frame && frame.id === 'p1')
+      ).deep.equals({ ...UPDATE_REQUIRED, id: 'p1' })
       await db!.transaction().execute(async trx => {
         await notifyGameChange(trx, { game: scored, kind: 'game' })
       })
       await current.next(frame => frame.type === 'change')
       await wait(100)
-      for (const refused of [unnamed, older])
+      for (const refused of [unnamed, older, previous])
         expect(
           refused.frames.filter(
             frame => frame.type === 'subscribed' || frame.type === 'change'
           )
         ).deep.equals([])
-      for (const listener of [current, unnamed, older]) listener.ws.terminate()
+      for (const listener of [current, unnamed, older, previous])
+        listener.ws.terminate()
     })
 
-    it('still subscribes a screen scope sent without a protocol', async function () {
-      const listener = await listen(VIEWER)
-      listener.send({ type: 'subscribe', scope: 'home', id: 'h1' })
+    it('refuses a screen scope with protocol 2 or none as updateRequired, and holds one with 3, told with no revision', async function () {
+      const unnamed = await listen(VIEWER)
+      const previous = await listen(VIEWER)
+      const current = await listen(VIEWER)
+      unnamed.send({ type: 'subscribe', scope: 'home', id: 'h1' })
+      previous.send({
+        type: 'subscribe',
+        scope: 'event',
+        gameId: scored,
+        id: 'h2',
+        protocol: 2
+      })
+      current.send({
+        type: 'subscribe',
+        scope: 'home',
+        id: 'h3',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
       expect(
-        await listener.next(frame => 'id' in frame && frame.id === 'h1')
-      ).deep.include({ type: 'subscribed', scope: 'home' })
-      listener.ws.terminate()
+        await unnamed.next(frame => 'id' in frame && frame.id === 'h1')
+      ).deep.equals({ ...UPDATE_REQUIRED, id: 'h1' })
+      expect(
+        await previous.next(frame => 'id' in frame && frame.id === 'h2')
+      ).deep.equals({ ...UPDATE_REQUIRED, id: 'h2' })
+      expect(
+        await current.next(frame => 'id' in frame && frame.id === 'h3')
+      ).deep.equals({ type: 'subscribed', scope: 'home', id: 'h3' })
+      socket!.screenScopes.notified(JSON.stringify({ gameId: scored }))
+      expect(await current.next(frame => frame.type === 'changed')).deep.equals(
+        { type: 'changed', scope: 'home', gameId: scored }
+      )
+      await wait(100)
+      for (const refused of [unnamed, previous])
+        expect(
+          refused.frames.filter(
+            frame => frame.type === 'subscribed' || frame.type === 'changed'
+          )
+        ).deep.equals([])
+      for (const listener of [unnamed, previous, current])
+        listener.ws.terminate()
     })
 
-    it('refuses protocol 2 where the server asks for 3', async function () {
+    it('refuses protocol 3 where the server asks for 4', async function () {
       const plain = createServer()
       const strict = attachGameSocket(plain, db!, scratchUrl, {
         feed: {
@@ -1043,7 +1088,7 @@ describe('the game socket (U14)', function () {
           close: async () => undefined
         },
         stopSignals: null,
-        minimumProtocol: 3
+        minimumProtocol: 4
       })
       await new Promise<void>(resolve => plain.listen(0, '127.0.0.1', resolve))
       const mainUrl = socketUrl
@@ -1063,7 +1108,7 @@ describe('the game socket (U14)', function () {
           type: 'subscribe',
           gameId: scored,
           id: 'v3',
-          protocol: 3
+          protocol: 4
         })
         expect(
           await listener.next(frame => 'id' in frame && frame.id === 'v3')
@@ -1406,7 +1451,12 @@ describe('the game socket (U14)', function () {
       const noScreen = await listen(VIEWER)
       for (const listener of [screen, leaver]) {
         const id = makeId('event')
-        listener.send({ type: 'subscribe', scope: 'home', id })
+        listener.send({
+          type: 'subscribe',
+          scope: 'home',
+          id,
+          protocol: GAME_SOCKET_PROTOCOL
+        })
         await listener.next(frame => 'id' in frame && frame.id === id)
       }
       const from = screen.frames.length
@@ -1501,7 +1551,12 @@ describe('the game socket (U14)', function () {
       ): Promise<Listener> => {
         const listener = await listen(VIEWER)
         const id = makeId('event')
-        listener.send({ type: 'subscribe', id, ...frame })
+        listener.send({
+          type: 'subscribe',
+          id,
+          protocol: GAME_SOCKET_PROTOCOL,
+          ...frame
+        })
         await listener.next(reply => 'id' in reply && reply.id === id)
         return listener
       }
@@ -1531,7 +1586,7 @@ describe('the game socket (U14)', function () {
         const noScreen = await listen(VIEWER)
         const marks = screens.map(screen => screen.frames.length)
         const startedAt = Date.now()
-        await starved({ revision: '5', gameId: scored }, async () => {
+        await starved({ gameId: scored }, async () => {
           for (const [index, screen] of screens.entries())
             await screen.next(isResync, marks[index])
           expect(Date.now() - startedAt).below(SPREAD_MS + 500)
@@ -1555,7 +1610,7 @@ describe('the game socket (U14)', function () {
         const concerned = await onScreen({ scope: 'home' })
         const elsewhere = await onScreen({ scope: 'event', gameId: scored })
         const marks = [concerned.frames.length, elsewhere.frames.length]
-        await starved({ revision: '6', teamId: homeTeam }, async () => {
+        await starved({ teamId: homeTeam }, async () => {
           await concerned.next(isResync, marks[0])
           await wait(SPREAD_MS + 50)
         })

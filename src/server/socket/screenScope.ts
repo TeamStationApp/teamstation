@@ -8,14 +8,7 @@ import {
   type ScreenScopePayload
 } from './syncRevision'
 
-const asDecimal = (raw: unknown): string => {
-  const text = asString(raw)
-  if (!/^\d+$/.test(text)) throw new TypeError('Expected a decimal revision')
-  return text
-}
-
 export const asScreenScopePayload = asObject({
-  revision: asDecimal,
   gameId: asOptional(asString),
   teamId: asOptional(asString),
   seasonId: asOptional(asString),
@@ -43,7 +36,7 @@ export interface ScreenScopeListenerOptions {
   log?: (message: string) => void
 }
 
-/** A notice held for its window; a later one in the window raises it. */
+/** A notice held for its window; a later one in the window joins it. */
 interface Held {
   payload: ScreenScopePayload
   timer: ReturnType<typeof setTimeout>
@@ -52,9 +45,10 @@ interface Held {
 /**
  * One worker's end of `screen_scopes`.
  *
- * It hears the worker's feed, as `GameFanout` does on `game_changes`. Notices that name the same game, team, season and person
- * within `coalesceMs` are passed on once, with the greatest revision among
- * them. Which sockets hear it is the socket's to decide (`gameSocket.ts`).
+ * It hears the worker's feed, as `GameFanout` does on `game_changes`.
+ * Notices that name the same game, team, season and person within
+ * `coalesceMs` are passed on once, at the window's end. Which sockets hear
+ * it is the socket's to decide (`gameSocket.ts`).
  */
 export class ScreenScopeListener {
   /** Settles once the channel is first in place, or that attempt has failed. */
@@ -107,8 +101,7 @@ export class ScreenScopeListener {
     const key = keyOf(payload)
     const waiting = this.held.get(key)
     if (waiting != null) {
-      if (BigInt(payload.revision) > BigInt(waiting.payload.revision))
-        waiting.payload = payload
+      waiting.payload = payload
       return
     }
     const held: Held = {

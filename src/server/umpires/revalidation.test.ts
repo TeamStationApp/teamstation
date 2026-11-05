@@ -9,6 +9,7 @@ import { closeInto } from '../admin/people'
 import { atomic } from '../db/atomic'
 import { updateEventInfo } from '../events/eventInfo'
 import { setScopeRoles } from '../invites/people'
+import { readSyncClock } from '../socket/syncRevision'
 import { leaderboard, recheckUmpireAssignments } from './assignments'
 
 describe('umpire assignment revalidation through game editors', function () {
@@ -73,13 +74,15 @@ describe('umpire assignment revalidation through game editors', function () {
     const notices = await listenScreenScopes(f.h.db)
     try {
       const mark = notices.mark()
+      const before = BigInt(await readSyncClock(f.h.db))
       await updateEventInfo(f.h.db, actor(101), 'gam_playing', {
         endAt: '2027-04-03T01:00:00Z'
       })
       await expectCleared()
-      const affected = await notices.named(mark, { gameId: 'gam_umpire' })
-      const edited = await notices.named(mark, { gameId: 'gam_playing' })
-      expect(affected.revision).equals(edited.revision)
+      await notices.named(mark, { gameId: 'gam_umpire' })
+      await notices.named(mark, { gameId: 'gam_playing' })
+      // Both in the edit's one commit.
+      expect(BigInt(await readSyncClock(f.h.db))).equals(before + 1n)
     } finally {
       await notices.close()
     }
@@ -392,10 +395,12 @@ describe('umpire assignment revalidation through game editors', function () {
     const notices = await listenScreenScopes(f.h.db)
     try {
       const mark = notices.mark()
+      const before = BigInt(await readSyncClock(f.h.db))
       await move('detach', f.leagueA)
-      const affected = await notices.named(mark, { gameId: 'gam_umpire' })
-      const empty = await notices.named(mark, { gameId: 'gam_playing' })
-      expect(affected.revision).equals(empty.revision)
+      await notices.named(mark, { gameId: 'gam_umpire' })
+      await notices.named(mark, { gameId: 'gam_playing' })
+      // Both in the move's one commit.
+      expect(BigInt(await readSyncClock(f.h.db))).equals(before + 1n)
       const events = (await notices.since(mark)).filter(n => n.gameId != null)
       expect(events.map(n => n.gameId)).have.members([
         'gam_playing',

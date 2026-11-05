@@ -4,12 +4,7 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 
-import {
-  asPage,
-  asSeasonGame,
-  type RevisionRead,
-  TeamStationClient
-} from '../../common/api'
+import { asPage, asSeasonGame, TeamStationClient } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { pageOf } from '../../test/pageOf'
@@ -385,12 +380,8 @@ describe('CachingClient', function () {
     expect(net.calls).deep.equals([])
     client.openFor('usr_1')
     await client.home()
-    const collector: RevisionRead[] = []
-    client.collectRevisions(collector)
     net.most = 0
     await Promise.all([client.prefetch(), client.prefetch()])
-    client.stopCollecting(collector)
-    expect(collector, 'prefetch collects into no load').deep.equals([])
     expect(net.most).within(1, PREFETCH_CONCURRENCY)
 
     const fetched = net.calls.slice(1)

@@ -87,11 +87,11 @@ export const asServerConfig = asObject({
   changeFeed: asOptional(asValue('postgres', 'valkey'), 'postgres'),
 
   /**
-   * The oldest game socket protocol (`GAME_SOCKET_PROTOCOL`) a game subscribe
-   * may name. An app that sends an older one, or none, is told to update and
-   * follows no game live.
+   * The oldest game socket protocol (`GAME_SOCKET_PROTOCOL`) a game or scope
+   * subscribe may name. An app that sends an older one, or none, is told to
+   * update, and follows no game live and no screen's notices.
    */
-  gameSocketMinimumProtocol: asOptional(asNumber, 2),
+  gameSocketMinimumProtocol: asOptional(asNumber, 3),
 
   /** How many connections each kind of process keeps in its pool. */
   databasePoolSizes: asOptional(

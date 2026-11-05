@@ -147,14 +147,13 @@ describe('S2: one changed for the committed play, none for the rolled-back post'
     note(`← ${committed.status} POST live play`)
     expect(committed.status).equals(200)
     const notice = await notices.named(mark, { gameId })
-    note(`  screen_scopes notified at revision ${notice.revision}`)
-    expect(BigInt(notice.revision)).equals(BigInt(before) + 1n)
+    note(`  screen_scopes notified: ${JSON.stringify(notice)}`)
+    expect(notice).deep.equals({ gameId })
+    expect(BigInt(await readSyncClock(f.h.db))).equals(BigInt(before) + 1n)
     await window()
     const told = viewer.changes()
     for (const frame of told) note(`← ${JSON.stringify(frame)}`)
-    expect(told).deep.equals([
-      { type: 'changed', scope: 'event', revision: notice.revision, gameId }
-    ])
+    expect(told).deep.equals([{ type: 'changed', scope: 'event', gameId }])
 
     mark = notices.mark()
     const from = viewer.frames.length

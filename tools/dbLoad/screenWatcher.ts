@@ -1,9 +1,14 @@
 import { WebSocket } from 'ws'
 
 import {
+  GAME_SOCKET_PROTOCOL,
+  type GameSocketErrorCode,
   RECONNECT_DELAYS_MS,
+  type ScreenScope,
+  type ScreenScopeListener,
   type ScreenScopeName
 } from '../../src/common/gameSocket'
+import { ScreenScopeGate } from '../../src/common/screenScope'
 import {
   type Actor,
   FollowedConnection,
@@ -71,18 +76,27 @@ interface ScopeFrame {
   type?: string
   id?: string
   scope?: string
-  revision?: string
   gameId?: string
   code?: string
+  reason?: string
+  message?: string
+}
+
+export interface ScreenWatcherOptions {
+  /** The gate's window, `COALESCE_MS` unless given: for a test's short run. */
+  coalesceMs?: number
 }
 
 /**
- * One signed-in socket holding one screen scope. It reads the scope's routes
- * when the subscribe is answered, on each `changed` newer than the newest it
- * has read for, and on `resync`, which also subscribes again. Notices that
- * land while it reads are read once, after it. A lost connection is retried
- * as the app retries it, and the new `subscribed` reads only when it is newer
- * than the newest read.
+ * One signed-in socket holding one screen scope, read through the app's own
+ * gate (`ScreenScopeGate`): the scope's routes are read when the subscribe
+ * is answered, and on a `changed` at once or, within the gate's window of
+ * the last read, once that has passed, one read covering every notice
+ * since. A `resync` subscribes again, and its `subscribed` reads. A lost
+ * connection is retried as the app retries it, and the new `subscribed`
+ * reads. A refused subscribe reads as the app's does, at once and on each
+ * notice, and the scope is asked for again on the next connection; only
+ * `updateRequired` stops the watcher for good.
  */
 export class ScreenWatcher implements Actor {
   private ws: WebSocket | undefined
@@ -92,11 +106,14 @@ export class ScreenWatcher implements Actor {
   private timer: NodeJS.Timeout | undefined
   private frameId = 0
   private subscribeId: string | undefined
-  /** The newest revision a read has started for. */
-  private revision: bigint | undefined
+  private readonly gate: ScreenScopeGate
+  /** What the gate hears from the scope while it holds it. */
+  private listener: ScreenScopeListener | undefined
   private hasRead = false
+  /** The scope was refused once: as in the gate, every notice now reads. */
+  private direct = false
   private reading: Promise<void> | undefined
-  /** When the first notice that is owed a read once this one ends arrived. */
+  /** When the first notice not yet covered by a read arrived. */
   private owed: number | undefined
 
   constructor(
@@ -104,10 +121,31 @@ export class ScreenWatcher implements Actor {
     private readonly account: Pick<SeededAccount, 'token' | 'kind'>,
     readonly scope: ScreenScopeName,
     private readonly gameId: string,
-    private readonly tally: Tally
-  ) {}
+    private readonly tally: Tally,
+    options: ScreenWatcherOptions = {}
+  ) {
+    this.gate = new ScreenScopeGate({
+      load: async () => {
+        await this.read()
+      },
+      socket: {
+        subscribeScope: (_scope: ScreenScope, listener) => {
+          this.listener = listener
+          if (this.ws?.readyState === WebSocket.OPEN) this.subscribe()
+          return () => {
+            this.listener = undefined
+          }
+        }
+      },
+      coalesceMs: options.coalesceMs
+    })
+  }
 
   start(): void {
+    this.connect()
+  }
+
+  private connect(): void {
     const url = `${this.server.replace(/^http/, 'ws')}/socket`
     const connection = new FollowedConnection(this.server, this.tally)
     const ws = new WebSocket(url, {
@@ -121,9 +159,20 @@ export class ScreenWatcher implements Actor {
     ws.on('open', () => {
       this.attempt = 0
       this.tally.noteSocketOpen()
-      if (!this.opened) this.tally.screenWatchers += 1
+      if (this.opened) {
+        // Not once it is refused as too old, as the app's socket asks no more.
+        if (this.listener != null) this.subscribe()
+        return
+      }
+      this.tally.screenWatchers += 1
       this.opened = true
-      this.subscribe()
+      // Held from the first connection, whose subscribe this sends: a watcher
+      // that never connects reads nothing.
+      this.gate.enter(
+        this.scope === 'event'
+          ? { scope: 'event', gameId: this.gameId }
+          : { scope: this.scope }
+      )
     })
     ws.on('message', data => {
       this.onFrame(String(data))
@@ -137,13 +186,18 @@ export class ScreenWatcher implements Actor {
     ws.on('close', code => {
       if (this.stopped) return
       this.tally.fail(`screen-close-${code}`)
+      // As the app's socket does: the acknowledgement is gone, and the
+      // reconnect's `subscribed` reads.
+      this.subscribeId = undefined
+      this.owed = undefined
+      this.listener?.({ type: 'resync' })
       const delay =
         RECONNECT_DELAYS_MS[
           Math.min(this.attempt, RECONNECT_DELAYS_MS.length - 1)
         ]
       this.attempt += 1
       this.timer = setTimeout(() => {
-        this.start()
+        this.connect()
       }, delay)
     })
   }
@@ -158,9 +212,15 @@ export class ScreenWatcher implements Actor {
               type: 'subscribe',
               scope: 'event',
               gameId: this.gameId,
-              id: this.subscribeId
+              id: this.subscribeId,
+              protocol: GAME_SOCKET_PROTOCOL
             }
-          : { type: 'subscribe', scope: this.scope, id: this.subscribeId }
+          : {
+              type: 'subscribe',
+              scope: this.scope,
+              id: this.subscribeId,
+              protocol: GAME_SOCKET_PROTOCOL
+            }
       )
     )
   }
@@ -174,17 +234,41 @@ export class ScreenWatcher implements Actor {
       this.tally.fail('screen-malformed')
       return
     }
-    if (frame.type === 'subscribed' && frame.id === this.subscribeId) {
-      if (this.newer(frame.revision)) this.read(heardAt)
+    // An answer to the subscribe out now: none is once one was refused.
+    const answers = frame.id != null && frame.id === this.subscribeId
+    if (frame.type === 'subscribed' && answers) {
+      this.owed ??= heardAt
+      this.listener?.({ type: 'subscribed' })
     } else if (frame.type === 'changed' && this.mine(frame)) {
       this.tally.screenNotices += 1
-      if (this.newer(frame.revision)) this.read(heardAt)
+      // Before the acknowledgement the gate drops it, and the read the
+      // acknowledgement starts is timed from that.
+      if (this.gate.acknowledged || this.direct) this.owed ??= heardAt
+      this.listener?.({ type: 'changed' })
     } else if (frame.type === 'resync') {
       this.tally.screenNotices += 1
-      this.read(heardAt)
+      this.subscribeId = undefined
+      this.owed = undefined
+      this.listener?.({ type: 'resync' })
       this.subscribe()
-    } else if (frame.type === 'error' && frame.id === this.subscribeId)
+    } else if (frame.type === 'error' && answers) {
       this.tally.fail(`screen-${frame.code ?? 'error'}`)
+      this.subscribeId = undefined
+      // Too old: as the app, nothing is asked for again, and no notice comes.
+      if (frame.reason === 'updateRequired') {
+        this.gate.leave()
+        return
+      }
+      // Refused (`internal` is the server failing): as the app's gate, it
+      // reads at once and on each notice, and the scope stays held, so the
+      // next connection asks again and its `subscribed` reads.
+      this.direct = true
+      this.listener?.({
+        type: 'error',
+        code: (frame.code ?? 'internal') as GameSocketErrorCode,
+        message: frame.message ?? ''
+      })
+    }
   }
 
   /** A `changed` of this scope, and on an event of this game. */
@@ -193,39 +277,24 @@ export class ScreenWatcher implements Actor {
     return this.scope !== 'event' || frame.gameId === this.gameId
   }
 
-  /** Whether a revision is past the newest read for, taking it if so. */
-  private newer(text: string | undefined): boolean {
-    if (text == null || !/^\d+$/.test(text)) {
-      this.tally.fail('screen-malformed')
-      return false
-    }
-    const revision = BigInt(text)
-    if (this.revision != null && revision <= this.revision) return false
-    this.revision = revision
-    return true
-  }
-
-  /** Reads the scope, or owes a read once the one under way ends. */
-  private read(heardAt: number): void {
-    if (this.reading != null) {
-      this.owed ??= heardAt
-      return
-    }
-    // The first read answers the subscribe; every later one, a notice.
+  /**
+   * The gate's load: reads the scope, timed from the first notice it covers.
+   * The first read answers the first subscribe and is not timed.
+   */
+  private async read(): Promise<void> {
+    const heardAt = this.owed ?? performance.now()
+    this.owed = undefined
     const timed = this.hasRead
     this.hasRead = true
     this.reading = this.readRoutes()
-      .then(() => {
-        if (!timed) return
-        this.tally.screenReReads += 1
-        this.tally.screenReadMs.push(performance.now() - heardAt)
-      })
-      .finally(() => {
-        this.reading = undefined
-        const owed = this.owed
-        this.owed = undefined
-        if (owed != null && !this.stopped) this.read(owed)
-      })
+    try {
+      await this.reading
+    } finally {
+      this.reading = undefined
+    }
+    if (!timed) return
+    this.tally.screenReReads += 1
+    this.tally.screenReadMs.push(performance.now() - heardAt)
   }
 
   private async readRoutes(): Promise<void> {
@@ -243,6 +312,7 @@ export class ScreenWatcher implements Actor {
 
   async stop(): Promise<void> {
     this.stopped = true
+    this.gate.leave()
     if (this.timer != null) clearTimeout(this.timer)
     this.ws?.close(1000)
     await this.reading

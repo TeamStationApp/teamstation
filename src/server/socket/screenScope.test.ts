@@ -29,7 +29,6 @@ import {
 import { ScreenScopeListener } from './screenScope'
 import {
   bumpSyncClock,
-  readSyncClock,
   SCREEN_SCOPES_CHANNEL,
   type ScreenScopeIds
 } from './syncRevision'
@@ -123,22 +122,27 @@ describe('screen scopes on the game socket', function () {
     return listener
   }
 
-  /** Sends a request and waits for the answer to its id. */
+  /**
+   * Sends a request and waits for the answer to its id. A subscribe names
+   * the protocol, as the app's does.
+   */
   async function ask(
     listener: Listener,
     frame: Record<string, unknown>
   ): Promise<GameSocketReply> {
     const from = listener.frames.length
     const id = makeId('event')
-    listener.send({ ...frame, id })
+    listener.send({
+      ...(frame.type === 'subscribe' ? { protocol: GAME_SOCKET_PROTOCOL } : {}),
+      ...frame,
+      id
+    })
     return await listener.next(reply => 'id' in reply && reply.id === id, from)
   }
 
-  /** Commits a write's revision, as a writing transaction ends. */
-  async function commit(ids: ScreenScopeIds): Promise<string> {
-    return await db
-      .transaction()
-      .execute(async trx => await bumpSyncClock(trx, ids))
+  /** Commits a write's notice, as a writing transaction ends. */
+  async function commit(ids: ScreenScopeIds): Promise<void> {
+    await db.transaction().execute(async trx => await bumpSyncClock(trx, ids))
   }
 
   /** The `changed` frames a listener heard from `from`. */
@@ -275,15 +279,17 @@ describe('screen scopes on the game socket', function () {
     await admin.end()
   })
 
-  it('answers subscribed with the clock’s revision for home and schedule', async function () {
+  it('answers subscribed for home and schedule, with no revision', async function () {
     const listener = await listen(VIEWER)
-    const revision = await readSyncClock(db)
-    expect(
-      await ask(listener, { type: 'subscribe', scope: 'home' })
-    ).deep.include({ type: 'subscribed', scope: 'home', revision })
-    expect(
-      await ask(listener, { type: 'subscribe', scope: 'schedule' })
-    ).deep.include({ type: 'subscribed', scope: 'schedule', revision })
+    const home = await ask(listener, { type: 'subscribe', scope: 'home' })
+    expect(home).deep.include({ type: 'subscribed', scope: 'home' })
+    expect(home).not.have.property('revision')
+    const schedule = await ask(listener, {
+      type: 'subscribe',
+      scope: 'schedule'
+    })
+    expect(schedule).deep.include({ type: 'subscribed', scope: 'schedule' })
+    expect(schedule).not.have.property('revision')
     expect(
       await ask(listener, { type: 'unsubscribe', scope: 'schedule' })
     ).deep.include({ type: 'unsubscribed', scope: 'schedule' })
@@ -378,7 +384,7 @@ describe('screen scopes on the game socket', function () {
     const marks = [event, home, outsider, everything].map(
       listener => listener.frames.length
     )
-    const revision = await commit({ gameId: seen })
+    await commit({ gameId: seen })
     await event.next(frame => frame.type === 'changed', marks[0])
     await home.next(frame => frame.type === 'changed', marks[1])
     await everything.next(frame => frame.type === 'changed', marks[3])
@@ -386,11 +392,11 @@ describe('screen scopes on the game socket', function () {
     await commit({ gameId: hidden })
     await wait(250)
     expect(changes(event, marks[0])).deep.equals([
-      { type: 'changed', scope: 'event', revision, gameId: seen }
+      { type: 'changed', scope: 'event', gameId: seen }
     ])
     // Home is told which game, so a list that shows none lets it pass.
     expect(changes(home, marks[1])).deep.equals([
-      { type: 'changed', scope: 'home', revision, gameId: seen }
+      { type: 'changed', scope: 'home', gameId: seen }
     ])
     expect(changes(outsider, marks[2])).deep.equals([])
     expect(changes(everything, marks[3]).length).equals(2)
@@ -404,14 +410,14 @@ describe('screen scopes on the game socket', function () {
     await ask(outsider, { type: 'subscribe', scope: 'schedule' })
     await ask(event, { type: 'subscribe', scope: 'event', gameId: seen })
     const marks = [member, outsider, event].map(l => l.frames.length)
-    const revision = await commit({ teamId: homeTeam })
+    await commit({ teamId: homeTeam })
     await member.next(frame => frame.type === 'changed', marks[0])
     // A season, or nothing at all, that this person is not in.
     await commit({ seasonId: season })
     await commit({})
     await wait(250)
     expect(changes(member, marks[0])).deep.equals([
-      { type: 'changed', scope: 'schedule', revision }
+      { type: 'changed', scope: 'schedule' }
     ])
     expect(changes(outsider, marks[1])).deep.equals([])
     expect(changes(event, marks[2])).deep.equals([])
@@ -423,14 +429,14 @@ describe('screen scopes on the game socket', function () {
     await ask(own, { type: 'subscribe', scope: 'home' })
     await ask(other, { type: 'subscribe', scope: 'home' })
     const marks = [own.frames.length, other.frames.length]
-    const revision = await commit({
+    await commit({
       userId: userIdOfGumbo(stranger.userId),
       teamId: strangers
     })
     await own.next(frame => frame.type === 'changed', marks[0])
     await wait(200)
     expect(changes(own, marks[0])).deep.equals([
-      { type: 'changed', scope: 'home', revision }
+      { type: 'changed', scope: 'home' }
     ])
     expect(changes(other, marks[1])).deep.equals([])
   })
@@ -452,25 +458,25 @@ describe('screen scopes on the game socket', function () {
     await ask(schedule, { type: 'subscribe', scope: 'schedule' })
     const marks = [event.frames.length, schedule.frames.length]
     await db.deleteFrom('games').where('id', '=', gone).execute()
-    const revision = await commit({ gameId: gone })
+    await commit({ gameId: gone })
     await event.next(frame => frame.type === 'changed', marks[0])
     await wait(200)
     expect(changes(event, marks[0])).deep.equals([
-      { type: 'changed', scope: 'event', revision, gameId: gone }
+      { type: 'changed', scope: 'event', gameId: gone }
     ])
     expect(changes(schedule, marks[1])).deep.equals([])
   })
 
-  it('sends two notices for one game inside the window once, at the later revision (Coalesce)', async function () {
+  it('sends two notices for one game inside the window once (Coalesce)', async function () {
     const event = await listen(VIEWER)
     await ask(event, { type: 'subscribe', scope: 'event', gameId: seen })
     const from = event.frames.length
     await commit({ gameId: seen })
-    const later = await commit({ gameId: seen })
+    await commit({ gameId: seen })
     await event.next(frame => frame.type === 'changed', from)
     await wait(250)
     expect(changes(event, from)).deep.equals([
-      { type: 'changed', scope: 'event', revision: later, gameId: seen }
+      { type: 'changed', scope: 'event', gameId: seen }
     ])
   })
 
@@ -483,11 +489,11 @@ describe('screen scopes on the game socket', function () {
       await ask(listener, { type: 'unsubscribe', scope: 'event', gameId: seen })
     ).deep.include({ type: 'unsubscribed', scope: 'event' })
     const from = listener.frames.length
-    const revision = await commit({ gameId: seen })
+    await commit({ gameId: seen })
     await listener.next(frame => frame.type === 'changed', from)
     await wait(200)
     expect(changes(listener, from)).deep.equals([
-      { type: 'changed', scope: 'schedule', revision, gameId: seen }
+      { type: 'changed', scope: 'schedule', gameId: seen }
     ])
     await ask(listener, { type: 'unsubscribe', scope: 'schedule' })
     const after = listener.frames.length
@@ -499,7 +505,13 @@ describe('screen scopes on the game socket', function () {
   it('takes scope requests in the order sent', async function () {
     const listener = await listen(VIEWER)
     // The event's check is slower than the unsubscribe behind it.
-    listener.send({ type: 'subscribe', scope: 'event', gameId: seen, id: 'e1' })
+    listener.send({
+      type: 'subscribe',
+      scope: 'event',
+      gameId: seen,
+      id: 'e1',
+      protocol: GAME_SOCKET_PROTOCOL
+    })
     listener.send({ type: 'unsubscribe', scope: 'event', id: 'e2' })
     await listener.next(frame => 'id' in frame && frame.id === 'e2')
     expect(
@@ -519,7 +531,7 @@ describe('screen scopes on the game socket', function () {
     await sql`select pg_notify(${SCREEN_SCOPES_CHANNEL}, 'not json')`.execute(
       db
     )
-    await sql`select pg_notify(${SCREEN_SCOPES_CHANNEL}, ${JSON.stringify({ revision: 'x' })})`.execute(
+    await sql`select pg_notify(${SCREEN_SCOPES_CHANNEL}, ${JSON.stringify({ gameId: 7 })})`.execute(
       db
     )
     const deadline = Date.now() + 3000
@@ -549,11 +561,8 @@ describe('screen scopes on the game socket', function () {
     ).deep.equals({ type: 'resync' })
     expect(logged.some(line => line.includes('lost the feed'))).equals(true)
     // The socket stays up, and a notice after the new LISTEN arrives.
-    const revision = await commit({ gameId: seen })
-    await home.next(
-      frame => frame.type === 'changed' && frame.revision === revision,
-      marks[0]
-    )
+    await commit({ gameId: seen })
+    await home.next(frame => frame.type === 'changed', marks[0])
     expect(
       games.frames.slice(marks[1]).some(frame => frame.type === 'resync')
     ).equals(false)
@@ -569,16 +578,16 @@ describe('screen scopes on the game socket', function () {
       feed,
       coalesceMs: 1000,
       deliver: async payload => {
-        delivered.push(payload.revision)
+        delivered.push(JSON.stringify(payload))
       },
       onResync: () => undefined
     })
     await listener.listening
-    listener.notified(JSON.stringify({ revision: '1', gameId: seen }))
-    listener.notified(JSON.stringify({ revision: '0', gameId: seen }))
+    listener.notified(JSON.stringify({ gameId: seen }))
+    listener.notified(JSON.stringify({ gameId: seen }))
     listener.notified(undefined)
     await listener.close()
-    listener.notified(JSON.stringify({ revision: '2', gameId: seen }))
+    listener.notified(JSON.stringify({ gameId: seen }))
     await wait(50)
     expect(delivered).deep.equals([])
     await feed.close()
@@ -604,7 +613,7 @@ describe('screen scopes on the game socket', function () {
       }
     })
     await failingDelivery.listening
-    failingDelivery.notified(JSON.stringify({ revision: '3' }))
+    failingDelivery.notified(JSON.stringify({ gameId: seen }))
     const deadline = Date.now() + 3000
     while (!lines.some(line => line.includes('no socket'))) {
       if (Date.now() > deadline) throw new Error(JSON.stringify(lines))
@@ -625,7 +634,7 @@ describe('screen scopes on the game socket', function () {
       feed,
       coalesceMs: 5,
       deliver: async payload => {
-        if (payload.revision === '5')
+        if (payload.gameId === hidden)
           await new Promise<void>(resolve => {
             release = resolve
           })
@@ -639,7 +648,7 @@ describe('screen scopes on the game socket', function () {
       }
     })
     await starved.listening
-    starved.notified(JSON.stringify({ revision: '4', gameId: seen }))
+    starved.notified(JSON.stringify({ gameId: seen }))
     const deadline = Date.now() + 3000
     while (!lines.includes('resync')) {
       if (Date.now() > deadline) throw new Error(JSON.stringify(lines))
@@ -649,7 +658,7 @@ describe('screen scopes on the game socket', function () {
     expect(lines[0]).contains('no database connection in time')
 
     // One still reading when the listener closes has nobody left to tell.
-    starved.notified(JSON.stringify({ revision: '5', gameId: seen }))
+    starved.notified(JSON.stringify({ gameId: hidden }))
     await wait(50)
     await starved.close()
     release()
@@ -678,7 +687,7 @@ describe('screen scopes on the game socket', function () {
     })
     await starved.listening
     const notice = (gameId: string): void => {
-      starved.notified(JSON.stringify({ revision: '1', gameId }))
+      starved.notified(JSON.stringify({ gameId }))
     }
     notice('gam_one')
     await wait(30)

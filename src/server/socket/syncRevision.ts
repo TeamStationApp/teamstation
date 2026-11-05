@@ -21,16 +21,14 @@ export interface ScreenScopeIds {
   userId?: string
 }
 
-/** A `screen_scopes` notify: the ids, and the revision the write took. */
-export interface ScreenScopePayload extends ScreenScopeIds {
-  /** `sync_clock.value` as a decimal string. */
-  revision: string
-}
+/** A `screen_scopes` notify: the ids a write changed, and nothing more. */
+export type ScreenScopePayload = ScreenScopeIds
 
 /**
- * Takes the next revision and announces it, as the last two statements of
- * the writing transaction: one clock update, then one statement that
- * notifies once for each set of ids the write names, all at that revision.
+ * Takes the next revision and announces the write, as the last two
+ * statements of the writing transaction: one clock update, then one
+ * statement that notifies once for each set of ids the write names. The
+ * notices carry no revision: a screen reads on a notice, gated by time.
  *
  * The update holds the clock row until that transaction commits, so a
  * second writer waits here, takes the revision after this one and commits
@@ -58,7 +56,7 @@ export async function bumpSyncClock(
   const revision = rows[0].value
   const named = new Map<string, ScreenScopePayload>()
   for (const each of Array.isArray(ids) ? ids : [ids]) {
-    const payload: ScreenScopePayload = { revision }
+    const payload: ScreenScopePayload = {}
     for (const key of ['gameId', 'teamId', 'seasonId', 'userId'] as const) {
       const id = (each as ScreenScopeIds)[key]
       if (id != null) payload[key] = id

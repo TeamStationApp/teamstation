@@ -46,7 +46,7 @@ import {
   type ScreenScopeListenerOptions
 } from './screenScope'
 import { RESYNC_SPREAD_MS, spread } from './spread'
-import { readSyncClock, type ScreenScopePayload } from './syncRevision'
+import type { ScreenScopePayload } from './syncRevision'
 
 /** The one path the socket answers on. */
 export const SOCKET_PATH = '/socket'
@@ -95,9 +95,9 @@ export interface GameSocketOptions {
     check: () => Promise<PostingStanding>
   ) => Promise<PostingStanding>
   /**
-   * The oldest `GAME_SOCKET_PROTOCOL` a game subscribe may name. One naming
-   * an older one, or none, is refused as `forbidden` with the reason
-   * `updateRequired`. 2 unless given.
+   * The oldest `GAME_SOCKET_PROTOCOL` a game or scope subscribe may name. One
+   * naming an older one, or none, is refused as `forbidden` with the reason
+   * `updateRequired`. 3 unless given.
    */
   minimumProtocol?: number
   /** Where a request that failed is reported. `console.error` unless given. */
@@ -158,13 +158,16 @@ const asScopeRequest = asEither(
   asObject({
     type: asLiteral('subscribe'),
     scope: asLiteral('home', 'schedule'),
-    id: asString
+    id: asString,
+    /** As a game subscribe's: an app older than protocol 3 sends none. */
+    protocol: asOptional(asNumber)
   }),
   asObject({
     type: asLiteral('subscribe'),
     scope: asLiteral('event'),
     gameId: asString,
-    id: asString
+    id: asString,
+    protocol: asOptional(asNumber)
   }),
   asObject({
     type: asLiteral('unsubscribe'),
@@ -311,7 +314,7 @@ export function attachGameSocket(
   const checkTyping =
     options.checkTyping ?? (async (_conversationId, check) => await check())
   const resyncSpreadMs = options.resyncSpreadMs ?? RESYNC_SPREAD_MS
-  const minimumProtocol = options.minimumProtocol ?? 2
+  const minimumProtocol = options.minimumProtocol ?? 3
   /** A resync's closes and frames still to come. */
   const spreadTimers = new Set<ReturnType<typeof setTimeout>>()
   const connections = new Set<Connection>()
@@ -581,17 +584,36 @@ export function attachGameSocket(
     reply(connection, { type: 'unsubscribed', gameId, id })
   }
 
+  /** A subscribe from an app older than the protocol, or naming none. */
+  const outdated = (protocol: number | undefined): boolean =>
+    protocol == null || protocol < minimumProtocol
+
+  const refuseOutdated = (connection: Connection, id: string): void => {
+    reply(connection, {
+      type: 'error',
+      id,
+      code: 'forbidden',
+      reason: 'updateRequired',
+      message: 'Update TeamStation to keep following games.'
+    })
+  }
+
   /**
    * Registers the visible screen's scope, in place of any other, and answers
-   * with the revision it was registered at. Every notice committed after
-   * this reaches the socket, so a read the screen starts on the answer
-   * misses nothing. An event the person cannot see is refused and not held.
+   * once it is held. Every notice committed after this reaches the socket,
+   * so a read the screen starts on the answer misses nothing. An event the
+   * person cannot see is refused and not held, as is any scope from an app
+   * older than the protocol.
    */
   const subscribeScreen = async (
     connection: Connection,
     request: ScopeRequest & { type: 'subscribe' }
   ): Promise<void> => {
     connection.screen = undefined
+    if (outdated(request.protocol)) {
+      refuseOutdated(connection, request.id)
+      return
+    }
     let screen: HeldScreen = { scope: request.scope }
     if (request.scope === 'event') {
       const { gameId } = request
@@ -607,13 +629,10 @@ export function attachGameSocket(
     }
     if (!connections.has(connection)) return
     connection.screen = screen
-    const revision = await readSyncClock(db)
-    if (connection.screen !== screen) return
     reply(connection, {
       type: 'subscribed',
       scope: screen.scope,
-      id: request.id,
-      revision
+      id: request.id
     })
   }
 
@@ -674,7 +693,7 @@ export function attachGameSocket(
         : [{ connection, screen: connection.screen }]
     )
     if (asked.length === 0) return
-    const { gameId, teamId, seasonId, userId, revision } = payload
+    const { gameId, teamId, seasonId, userId } = payload
     // A notice of one game alone (a play, its score) names it to home and
     // schedule too, so a list that shows no games can let it pass.
     const gameOnly =
@@ -684,7 +703,6 @@ export function attachGameSocket(
       reply(connection, {
         type: 'changed',
         scope: screen.scope,
-        revision,
         ...(screen.scope === 'event' || gameOnly ? { gameId } : {})
       })
     }
@@ -837,17 +855,8 @@ export function attachGameSocket(
     // socket hears the refusal as any refused subscribe rather than dropping a
     // frame it cannot read; a newer app tells the person to update by the
     // reason.
-    if (
-      type === 'subscribe' &&
-      (request.protocol == null || request.protocol < minimumProtocol)
-    ) {
-      reply(connection, {
-        type: 'error',
-        id: requestId,
-        code: 'forbidden',
-        reason: 'updateRequired',
-        message: 'Update TeamStation to keep following games.'
-      })
+    if (type === 'subscribe' && outdated(request.protocol)) {
+      refuseOutdated(connection, requestId)
       return
     }
     // The cap is settled as each request arrives; its effect and its answer

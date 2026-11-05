@@ -11,7 +11,12 @@ import {
   type SeasonGame,
   TeamStationClient
 } from '../../common/api'
-import { GameSocket, type WebSocketConstructor } from '../../common/gameSocket'
+import {
+  GAME_SOCKET_PROTOCOL,
+  GameSocket,
+  type ScreenScopeEvent,
+  type WebSocketConstructor
+} from '../../common/gameSocket'
 import { makeId } from '../../common/ids'
 import { ScreenScopeGate } from '../../common/screenScope'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -25,10 +30,10 @@ import { bumpSyncClock, readSyncClock } from './syncRevision'
  *
  * The client is the app's own: `GameSocket` over a real socket, the
  * `TeamStationClient` and the screen gate. The score is committed the way a
- * writer does, with the clock bumped as the transaction's last statements.
- * Each step is printed, so the run is its own log.
+ * writer does, with its notice as the transaction's last statements. Each
+ * step is printed, so the run is its own log.
  */
-describe('S1: subscribed comes before the schedule read, and the revision orders the overlap', function () {
+describe('S1: subscribed comes before the schedule read, and a notice during it reads once more', function () {
   this.timeout(60000)
   let f: GroupFixture
   let server: Server
@@ -36,9 +41,6 @@ describe('S1: subscribed comes before the schedule read, and the revision orders
   let socketUrl = ''
   let gameId = ''
   let started = 0
-  /** The clock once the fixture is built: its own writes bump it too. */
-  let base = 0n
-  const at = (step: bigint): string => String(base + step)
   const trace: string[] = []
   const note = (line: string): void => {
     const entry = `${String(Date.now() - started).padStart(5)}ms ${line}`
@@ -77,7 +79,6 @@ describe('S1: subscribed comes before the schedule read, and the revision orders
       server.listen(0, '127.0.0.1', resolve)
     })
     socketUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`
-    base = BigInt(await readSyncClock(f.h.db))
     started = Date.now()
   })
 
@@ -156,14 +157,14 @@ describe('S1: subscribed comes before the schedule read, and the revision orders
         subscribeScope: (scope, listener) => {
           note(`→ subscribe ${scope.scope}`)
           return gameSocket.subscribeScope(scope, event => {
-            note(
-              `← ${event.type}${'revision' in event ? ` revision ${event.revision}` : ''}`
-            )
+            note(`← ${JSON.stringify(event)}`)
             listener(event)
           })
         }
       },
       client,
+      // The app's gate, its window shortened so the run stays short.
+      coalesceMs: 300,
       load: async () => {
         const games = await client.games({})
         seen = games.find(game => game.id === gameId)
@@ -197,36 +198,87 @@ describe('S1: subscribed comes before the schedule read, and the revision orders
     return { gets, seen }
   }
 
-  it('reads once when the score commits before the GET’s snapshot: the answer already has it', async function () {
+  /** Where the acknowledgement and the first GET fall in the trace. */
+  const ackedBeforeTheRead = (): void => {
+    expect(trace.indexOf('← {"type":"subscribed"}')).within(
+      0,
+      trace.indexOf('→ GET /events (#1)')
+    )
+  }
+
+  /** The game's notice, as the screen hears it: no revision, only its id. */
+  const notice = (): string => `← {"type":"changed","gameId":"${gameId}"}`
+
+  it('reads once more when the score commits before the GET’s snapshot: no revision tells the notice apart', async function () {
     note('score commits before the server reads')
     const { gets, seen } = await schedule('beforeTheRead')
-    expect(trace.indexOf(`← subscribed revision ${at(0n)}`)).lessThan(
-      trace.indexOf('→ GET /events (#1)')
-    )
+    ackedBeforeTheRead()
     expect(seen).deep.include({ homeScore: 3, awayScore: 1 })
-    expect(gets).equals(1)
-    // The notice is at or below the answer's revision, so it is a no-op.
-    const header = trace.find(line => line.startsWith('← 200 GET /events (#1)'))
-    const notice = trace.find(line => line.startsWith('← changed'))
-    expect(header).includes(`${REVISION_HEADER}: ${at(1n)}`)
-    expect(notice).equals(`← changed revision ${at(1n)}`)
+    expect(trace).includes(notice())
+    expect(gets).equals(2)
   })
 
-  it('reads once more when the score commits after the GET’s snapshot: the notice is newer', async function () {
+  it('reads once more when the score commits after the GET’s snapshot, and then has it', async function () {
     note('score commits after the server answered, before the client has it')
     const { gets, seen } = await schedule('afterTheRead')
-    expect(trace.indexOf(`← subscribed revision ${at(0n)}`)).lessThan(
-      trace.indexOf('→ GET /events (#1)')
+    ackedBeforeTheRead()
+    expect(trace).includes(notice())
+    expect(trace.indexOf(notice())).lessThan(
+      trace.indexOf('→ GET /events (#2)')
     )
-    expect(
-      trace.find(line => line.startsWith('← 200 GET /events (#1)'))
-    ).includes(`${REVISION_HEADER}: ${at(0n)}`)
-    expect(trace).includes(`← changed revision ${at(1n)}`)
-    expect(
-      trace.find(line => line.startsWith('← 200 GET /events (#2)'))
-    ).includes(`${REVISION_HEADER}: ${at(1n)}`)
     expect(seen).deep.include({ homeScore: 3, awayScore: 1 })
     expect(gets).equals(2)
+  })
+
+  it('tells the app to update when the server refuses its scope as too old', async function () {
+    const plain = createServer()
+    const strict = attachGameSocket(plain, f.h.db, testDatabaseUrl, {
+      feed: {
+        subscribe: () => ({
+          listening: Promise.resolve(),
+          stop: () => undefined
+        }),
+        publishEphemeral: async () => undefined,
+        close: async () => undefined
+      },
+      stopSignals: null,
+      log: () => undefined,
+      minimumProtocol: GAME_SOCKET_PROTOCOL + 1
+    })
+    await new Promise<void>(resolve => {
+      plain.listen(0, '127.0.0.1', resolve)
+    })
+    const gameSocket = new GameSocket({
+      baseUrl: `http://127.0.0.1:${(plain.address() as AddressInfo).port}/api/v1`,
+      token: f.h.tokens.get(101)!,
+      WebSocketImpl: WebSocket as unknown as WebSocketConstructor
+    })
+    try {
+      let told = 0
+      gameSocket.onUpdateRequired(() => {
+        told++
+      })
+      const heard: ScreenScopeEvent[] = []
+      gameSocket.subscribeScope({ scope: 'home' }, event => heard.push(event))
+      const deadline = Date.now() + 5000
+      while (heard.length === 0) {
+        if (Date.now() > deadline) throw new Error('No answer to the scope')
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+      note(`← ${JSON.stringify(heard[0])}`)
+      expect(heard).deep.equals([
+        {
+          type: 'error',
+          code: 'forbidden',
+          message: 'Update TeamStation to keep following games.'
+        }
+      ])
+      expect(told).equals(1)
+    } finally {
+      gameSocket.close()
+      await strict.close()
+      await new Promise(resolve => plain.close(resolve))
+    }
   })
 })
 

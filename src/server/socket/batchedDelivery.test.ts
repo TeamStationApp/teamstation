@@ -411,16 +411,17 @@ describe('authorizing a delivery in one set of reads', function () {
   describe('a screen notice', function () {
     const told = (frames: Array<Record<string, unknown>>): boolean =>
       frames.some(frame => frame.type === 'changed')
-    let revision = 1
-    const revisionNext = (): string => String((revision += 1))
 
     it('runs the same statements for two hundred stale sockets as for one, and tells exactly those who may see it', async function () {
       // One stale socket.
       const lone = await connect(members[0].token)
-      await lone.ask({ type: 'subscribe', scope: 'home' }, 'home')
+      await lone.ask(
+        { type: 'subscribe', scope: 'home', protocol: GAME_SOCKET_PROTOCOL },
+        'home'
+      )
       now += 120_000
       statements.length = 0
-      said.say('screen_scopes', { gameId: game, revision: revisionNext() })
+      said.say('screen_scopes', { gameId: game })
       await until(() => told(lone.frames), 'the one told')
       const forOne = [...statements]
       lone.ws.terminate()
@@ -436,12 +437,19 @@ describe('authorizing a delivery in one set of reads', function () {
       )
       await Promise.all(
         [...sockets, ...others].map(async each => {
-          await each.ask({ type: 'subscribe', scope: 'home' }, 'home')
+          await each.ask(
+            {
+              type: 'subscribe',
+              scope: 'home',
+              protocol: GAME_SOCKET_PROTOCOL
+            },
+            'home'
+          )
         })
       )
       now += 120_000
       statements.length = 0
-      said.say('screen_scopes', { gameId: game, revision: revisionNext() })
+      said.say('screen_scopes', { gameId: game })
       await until(
         () => sockets.every(each => told(each.frames)),
         'every member told'
@@ -453,7 +461,7 @@ describe('authorizing a delivery in one set of reads', function () {
       // Copies still good read nothing but the game; a team's notice needs
       // not even that, and reaches its members alone.
       statements.length = 0
-      said.say('screen_scopes', { teamId: otherTeam, revision: revisionNext() })
+      said.say('screen_scopes', { teamId: otherTeam })
       await until(
         () => others.slice(2).every(each => told(each.frames)),
         "the other team's members told"
@@ -468,17 +476,22 @@ describe('authorizing a delivery in one set of reads', function () {
     it('keeps its own and other-event sockets out of the read', async function () {
       const mine = await connect(strangers[0].token)
       const elsewhere = await connect(members[3].token)
-      await mine.ask({ type: 'subscribe', scope: 'home' }, 'home')
+      await mine.ask(
+        { type: 'subscribe', scope: 'home', protocol: GAME_SOCKET_PROTOCOL },
+        'home'
+      )
       await elsewhere.ask(
-        { type: 'subscribe', scope: 'event', gameId: game },
+        {
+          type: 'subscribe',
+          scope: 'event',
+          gameId: game,
+          protocol: GAME_SOCKET_PROTOCOL
+        },
         'event'
       )
       now += 120_000
       statements.length = 0
-      said.say('screen_scopes', {
-        userId: strangers[0].userId,
-        revision: revisionNext()
-      })
+      said.say('screen_scopes', { userId: strangers[0].userId })
       await until(() => told(mine.frames), 'their own notice')
       await new Promise(resolve => setTimeout(resolve, 50))
       expect(statements).deep.equals([])
@@ -492,7 +505,10 @@ describe('authorizing a delivery in one set of reads', function () {
       const leaving = await connect(members[6].token)
       const closing = await connect(members[7].token)
       for (const each of [staying, leaving, closing])
-        await each.ask({ type: 'subscribe', scope: 'home' }, 'home')
+        await each.ask(
+          { type: 'subscribe', scope: 'home', protocol: GAME_SOCKET_PROTOCOL },
+          'home'
+        )
       now += 120_000
       statements.length = 0
       let release = (): void => undefined
@@ -500,7 +516,7 @@ describe('authorizing a delivery in one set of reads', function () {
         release = resolve
       })
       try {
-        said.say('screen_scopes', { gameId: game, revision: revisionNext() })
+        said.say('screen_scopes', { gameId: game })
         await until(
           () => statements.some(sql => sql.includes('"games"')),
           'the read of the game'
@@ -521,13 +537,13 @@ describe('authorizing a delivery in one set of reads', function () {
 
     it('tells a home screen nothing of a game nobody has', async function () {
       const holding = await connect(members[4].token)
-      await holding.ask({ type: 'subscribe', scope: 'home' }, 'home')
+      await holding.ask(
+        { type: 'subscribe', scope: 'home', protocol: GAME_SOCKET_PROTOCOL },
+        'home'
+      )
       now += 120_000
       // A notice of a game nobody has: a home screen is not told.
-      said.say('screen_scopes', {
-        gameId: 'gam_nosuch',
-        revision: revisionNext()
-      })
+      said.say('screen_scopes', { gameId: 'gam_nosuch' })
       await new Promise(resolve => setTimeout(resolve, 100))
       expect(told(holding.frames)).equals(false)
       holding.ws.terminate()

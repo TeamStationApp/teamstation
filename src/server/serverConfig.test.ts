@@ -143,11 +143,11 @@ describe('the database addresses', function () {
     )
   })
 
-  it('refuses game subscribes below protocol 2 unless set otherwise', function () {
-    expect(asServerConfig({}).gameSocketMinimumProtocol).equals(2)
+  it('refuses game and scope subscribes below protocol 3 unless set otherwise', function () {
+    expect(asServerConfig({}).gameSocketMinimumProtocol).equals(3)
     expect(
-      asServerConfig({ gameSocketMinimumProtocol: 3 }).gameSocketMinimumProtocol
-    ).equals(3)
+      asServerConfig({ gameSocketMinimumProtocol: 2 }).gameSocketMinimumProtocol
+    ).equals(2)
   })
 
   it('logs no pool wait unless asked', function () {

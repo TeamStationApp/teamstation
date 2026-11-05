@@ -582,8 +582,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             (event.kind === 'playEdits' || event.kind === 'game'))
         ) {
           // A play body is news of its own: read now, as before, without
-          // waiting on the event's scope. The answer counts for the scope,
-          // so its notice of the same commit reads the game no second time.
+          // waiting on the event's scope. The read counts for the scope's
+          // gate, so a notice after it waits out the gate's window.
           readLatest.current.alongside(refreshGame).catch(() => undefined)
           setBox(undefined)
         }

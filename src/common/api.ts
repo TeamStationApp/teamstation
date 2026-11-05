@@ -3190,17 +3190,8 @@ export const REVISION_HEADER = 'x-teamstation-revision'
  */
 export const IDEMPOTENCY_HEADER = 'idempotency-key'
 
-/** One response's revision, as a screen's load collects them. */
-export interface RevisionRead {
-  path: string
-  /** `x-teamstation-revision`, a decimal string: compare with `BigInt`. */
-  revision: string
-}
-
 /** How one call to the API is made, beside its method, path and body. */
 export interface RequestOptions {
-  /** Whether a screen's load collects the answer's revision. */
-  collect?: boolean
   headers?: Record<string, string>
   /**
    * The names of the players a live post's plays name, by gumbo id: never
@@ -3945,13 +3936,6 @@ export class TeamStationClient {
   onSessionRefused?: () => void
   /** The revision each path last answered with. */
   private readonly revisions = new Map<string, string>()
-  /**
-   * Where the screen loads now running collect the revisions they read. Home
-   * runs three at once, and an answer cannot say which load asked for it, so
-   * each running load collects every answer: the least of them is never
-   * newer than the least of its own.
-   */
-  private readonly collectors = new Set<RevisionRead[]>()
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
@@ -3966,20 +3950,6 @@ export class TeamStationClient {
   /** The revision the last answer from `path` carried, if any did. */
   revisionFor(path: string): string | undefined {
     return this.revisions.get(path)
-  }
-
-  /**
-   * Collects `{ path, revision }` from every answer that carries one, until
-   * `stopCollecting`. A screen's load sets this around the calls it makes,
-   * and holds the least of them as the revision of what it shows.
-   */
-  collectRevisions(collector: RevisionRead[]): void {
-    this.collectors.add(collector)
-  }
-
-  /** Stops collecting into `collector`. */
-  stopCollecting(collector: RevisionRead[]): void {
-    this.collectors.delete(collector)
   }
 
   async accountSettings(): Promise<AccountSettings> {
@@ -7089,9 +7059,8 @@ export class TeamStationClient {
   }
 
   /**
-   * Every call to the API. `collect: false` keeps the answer's revision out
-   * of the screen loads now collecting, as a prefetch's is. `headers` are
-   * sent beside the usual ones: a queued write's `Idempotency-Key`.
+   * Every call to the API. `headers` are sent beside the usual ones: a
+   * queued write's `Idempotency-Key`.
    */
   protected async request<T>(
     method: string,
@@ -7334,12 +7303,7 @@ export class TeamStationClient {
     }
     if (!response.ok) throw errorFrom(response.status, text)
     const revision = revisionOf(response)
-    if (revision != null) {
-      this.revisions.set(path, revision)
-      if (options.collect !== false)
-        for (const collector of this.collectors)
-          collector.push({ path, revision })
-    }
+    if (revision != null) this.revisions.set(path, revision)
     if (text === '') return cleaner(undefined)
 
     let parsed: unknown

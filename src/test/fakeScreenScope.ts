@@ -1,10 +1,12 @@
-import type { RevisionRead } from '../common/api'
 import type {
   ScreenScope,
   ScreenScopeEvent,
   ScreenScopeListener
 } from '../common/gameSocket'
-import type { ScreenScopeSocket } from '../common/screenScope'
+import type {
+  ScreenScopeSocket,
+  ScreenScopeTimers
+} from '../common/screenScope'
 
 /** One scope a screen asked the fake socket for. */
 export interface HeldScope {
@@ -56,18 +58,18 @@ export class FakeScopeSocket implements ScreenScopeSocket {
   deliver(event: ScreenScopeEvent): void {
     const held = this.current()
     if (held == null) throw new Error('no scope is held')
-    this.log.push(
-      'revision' in event ? `${event.type} ${event.revision}` : event.type
-    )
+    this.log.push(event.type)
     held.listener(event)
   }
 
-  ack(revision = '1'): void {
-    this.deliver({ type: 'subscribed', revision })
+  ack(): void {
+    this.deliver({ type: 'subscribed' })
   }
 
-  changed(revision: string): void {
-    this.deliver({ type: 'changed', revision })
+  changed(gameId?: string): void {
+    this.deliver(
+      gameId == null ? { type: 'changed' } : { type: 'changed', gameId }
+    )
   }
 }
 
@@ -76,33 +78,44 @@ function describe(scope: ScreenScope): string {
 }
 
 /**
- * The revision-collecting part of a client, for a fake one: every call made
- * through `answer` is stamped with the revision the test sets for its path.
+ * A clock a test moves by hand, for the gate (`ScreenScopeTimers`): its
+ * timers run only when `advance` passes their time, in the order they fall
+ * due, each seeing `now()` at its own time.
  */
-export function revisionStamps(): {
-  offline: boolean
-  revisions: Map<string, string>
-  collectRevisions: (collector: RevisionRead[]) => void
-  stopCollecting: (collector: RevisionRead[]) => void
-  /** Records an answer from `path` as the real client does. */
-  answer: (path: string) => void
+export function testClock(start = 1_000_000): Required<ScreenScopeTimers> & {
+  /** Moves the clock on, running every timer that falls due on the way. */
+  advance: (ms: number) => void
+  /** The delays of the timers waiting now, in the order they were set. */
+  pending: () => number[]
 } {
-  const collectors = new Set<RevisionRead[]>()
-  const revisions = new Map<string, string>()
+  let now = start
+  let next = 1
+  const waiting = new Map<number, { at: number; run: () => void }>()
   return {
-    offline: false,
-    revisions,
-    collectRevisions: collector => {
-      collectors.add(collector)
+    now: () => now,
+    setTimer: (run, ms) => {
+      const id = next++
+      waiting.set(id, { at: now + ms, run })
+      return id
     },
-    stopCollecting: collector => {
-      collectors.delete(collector)
+    clearTimer: timer => {
+      waiting.delete(timer as number)
     },
-    answer: path => {
-      const revision = revisions.get(path)
-      if (revision == null) return
-      for (const collector of collectors) collector.push({ path, revision })
-    }
+    advance: ms => {
+      const until = now + ms
+      for (;;) {
+        let due: [number, { at: number; run: () => void }] | undefined
+        for (const entry of waiting)
+          if (entry[1].at <= until && (due == null || entry[1].at < due[1].at))
+            due = entry
+        if (due == null) break
+        waiting.delete(due[0])
+        now = due[1].at
+        due[1].run()
+      }
+      now = until
+    },
+    pending: () => [...waiting.values()].map(entry => entry.at - now)
   }
 }
 

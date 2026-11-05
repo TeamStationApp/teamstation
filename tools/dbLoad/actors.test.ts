@@ -488,9 +488,7 @@ describe('the actors', function () {
       inner.onFrame(whole)
       inner.onFrame(change('game', '{}'))
       inner.onFrame(change('lineups', '{}'))
-      inner.onFrame(
-        Buffer.from('{"type":"changed","scope":"home","revision":"1"}')
-      )
+      inner.onFrame(Buffer.from('{"type":"changed","scope":"home"}'))
       expect(tally.framesDelivered).equals(5)
       expect(tally.frameBytes).deep.equals([edits.length, whole.length])
     })
