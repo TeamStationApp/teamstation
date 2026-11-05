@@ -817,6 +817,9 @@ async function main(): Promise<void> {
             : undefined,
         180000
       )
+      // The workspace heading can already exist behind the linking gate.
+      // Only its dismissal proves the provider actually completed approval.
+      await m.assertNotVisible({ text: 'Link this device', timeout: 180000 })
       results.identityLinked = {
         actorUserId: fixture.actor.userId,
         nativeDeviceId: deviceId,
