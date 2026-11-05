@@ -8,9 +8,11 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // distribution certificate and publishes it, so a registered device can
 // install it. A master build then re-signs that IPA with the App Store
 // profile and uploads it to TestFlight. Other branches leave that stage
-// skipped. The Android release is compiled on Linux, then signed on the node
-// labelled android-signing, which provides teamstation-sign-release-apk, and
-// published from there. One platform failing leaves the other running.
+// skipped. The Android release APK and Play bundle are compiled on Linux, then
+// signed on the node labelled android-signing, which provides
+// teamstation-sign-release-apk and teamstation-sign-release-aab. The APK is
+// published from there; the bundle is saved for Google Play. One platform
+// failing leaves the other running.
 //
 // The `seat` parameter picks the server the app talks to. A development seat
 // N points the app at https://developN.teamstation.app. Left at `production`,
@@ -426,7 +428,7 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
       '  }',
       '}',
       'EOF',
-      './gradlew --no-daemon --init-script mason-version.gradle :app:assembleRelease'
+      './gradlew --no-daemon --init-script mason-version.gradle :app:assembleRelease :app:bundleRelease'
     ].join('\n'),
     {
       cwd: 'android',
@@ -439,10 +441,10 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
       }
     }
   )
-  await ctx.stash(
-    'android-release',
-    'android/app/build/outputs/apk/release/*.apk'
-  )
+  await ctx.stash('android-release', [
+    'android/app/build/outputs/apk/release/*.apk',
+    'android/app/build/outputs/bundle/release/*.aab'
+  ])
 }
 
 export async function signAndroid(ctx: Stage): Promise<void> {
@@ -453,6 +455,15 @@ export async function signAndroid(ctx: Stage): Promise<void> {
   const apks = await ctx.fs.glob('android/app/build/outputs/apk/release/*.apk')
   const apk = apks[0]
   if (apk == null) throw new Error('No release APK was signed')
+  await ctx.sh(
+    '"$HOME/.local/bin/teamstation-sign-release-aab" android/app/build/outputs/bundle/release'
+  )
+  const bundles = await ctx.fs.glob(
+    'android/app/build/outputs/bundle/release/*.aab'
+  )
+  const bundle = bundles[0]
+  if (bundle == null) throw new Error('No release bundle was signed')
   await ctx.artifacts.save('android-apk', apk)
+  await ctx.artifacts.save('android-aab', bundle)
   await ctx.publish({ app: runApp(ctx), platform: 'android', path: apk })
 }

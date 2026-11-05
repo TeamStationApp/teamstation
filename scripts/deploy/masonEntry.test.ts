@@ -436,6 +436,8 @@ describe('TeamStation pipeline Masonfile', () => {
       fs: {
         async glob(pattern: string) {
           commands.push(`glob:${pattern}`)
+          if (pattern.endsWith('.aab'))
+            return ['android/app/build/outputs/bundle/release/app-release.aab']
           return ['android/app/build/outputs/apk/release/app-release.apk']
         }
       },
@@ -501,15 +503,23 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.match(log, /build-number:26103101/)
     assert.match(
       log,
-      /--init-script mason-version\.gradle :app:assembleRelease/
+      /--init-script mason-version\.gradle :app:assembleRelease :app:bundleRelease/
     )
     assert.equal(log.includes('-PversionCode'), false)
     assert.match(log, /stash:ios-adhoc:build\/TeamStation\.ipa/)
-    assert.match(log, /stash:android-release/)
+    assert.match(
+      log,
+      /stash:android-release:.*apk\/release\/\*\.apk,.*bundle\/release\/\*\.aab/
+    )
     assert.match(log, /unstash:android-release/)
     assert.match(log, /teamstation-sign-release-apk/)
+    assert.match(
+      log,
+      /teamstation-sign-release-aab" android\/app\/build\/outputs\/bundle\/release/
+    )
     assert.match(log, /save:ios-ipa/)
     assert.match(log, /save:android-apk/)
+    assert.match(log, /save:android-aab/)
     // A production build leaves the app's own server alone.
     assert.equal(log.includes('api:'), false)
     const recorded = commands
