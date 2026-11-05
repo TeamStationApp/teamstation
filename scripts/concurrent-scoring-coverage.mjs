@@ -45,7 +45,7 @@ const untracked = git(['ls-files', '--others', '--exclude-standard'])
 const paths = [
   ...new Set([...git(['diff', '--name-only', base]).split('\n'), ...untracked])
 ].filter(path =>
-  /^src\/app\/scoring\/(ScoringScreen\.tsx|scoringFollow\.ts|scoringMachine\.ts|scoringFlow\.ts)$/.test(
+  /^src\/app\/(scoring\/(ScoringScreen\.tsx|scoringFollow\.ts|scoringMachine\.ts|scoringFlow\.ts)|screens\/CoachGameScreen\.tsx)$/.test(
     path
   )
 )
@@ -64,7 +64,7 @@ if (!serverOnly) {
       '--exit',
       'lib/scoring-tests.cjs',
       '--grep',
-      'scoring|scorer|scorekeeper|game socket|roster sheet|offline'
+      'scoring|scorer|scorekeeper|game socket|roster sheet|offline|Coach Game|coach screen|coach’s lineup'
     ],
     { NODE_V8_COVERAGE: temp },
     true
