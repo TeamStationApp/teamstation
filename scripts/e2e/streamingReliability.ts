@@ -291,7 +291,12 @@ const { values } = parseArgs({
     seconds: { type: 'string', default: '3600' }
   }
 })
-assert(values.case === 'retention' || values.surface === 'tv', 'Unknown case')
+assert(
+  values.case === 'retention' ||
+    values.surface === 'tv' ||
+    (values.surface === 'web' && values.case === 'gaps'),
+  'Unknown case'
+)
 const seconds = Number(values.seconds)
 assert(Number.isFinite(seconds) && seconds > 0 && seconds <= 3600)
 const run =
@@ -299,7 +304,11 @@ const run =
     ? import('./streamingReliabilityTv').then(async ({ tvReliability }) => {
         await tvReliability(values.case ?? 'transport')
       })
-    : retention(seconds)
+    : values.case === 'gaps'
+      ? import('./streamingReliabilityWeb').then(async ({ webReliability }) => {
+          await webReliability('gaps')
+        })
+      : retention(seconds)
 run.catch((error: unknown) => {
   console.error(error)
   process.exitCode = 1
