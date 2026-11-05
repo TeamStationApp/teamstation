@@ -140,7 +140,7 @@ public struct PhoneStreamEnvironment {
   public static func live() -> PhoneStreamEnvironment {
     PhoneStreamEnvironment(
       storage: .standard,
-      makeSource: { PhoneCameraSource.standard(camera: CameraSession()) },
+      makeSource: { PhoneCameraSource.standard(camera: CameraSession(rotationSource: .preview)) },
       storageRules: .forLaunch()
     )
   }
