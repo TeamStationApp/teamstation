@@ -6,8 +6,8 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
-import { readTokens } from './fixture'
-import { runMain } from './main'
+import { type SeededAccount, readTokens, type TokensFile } from './fixture'
+import { liveViewersFor, runMain } from './main'
 import {
   fakeStatementsView,
   openScratch,
@@ -101,6 +101,8 @@ describe('the command line', function () {
       '1',
       '--streams',
       '1',
+      '--viewers',
+      '2',
       '--event-schedule',
       '--report',
       report
@@ -114,6 +116,10 @@ describe('the command line', function () {
     expect(data.socketsOpened).at.least(4)
     expect(data.connections.peak).above(0)
     expect(data.streamsStarted).equals(1)
+    // Both viewers watch the one stream's video, which this server cannot play.
+    expect(data.streaming.viewers).equals(2)
+    expect(data.errors['http-404']).at.least(2)
+    expect(text).contains('## Streaming\nstreams started: 1\nlive viewers: 2')
     expect(text).not.contains('socket-close-4403')
   })
 
@@ -221,6 +227,17 @@ describe('the command line', function () {
     expect(
       await refusal('--database', scratch.url, '--scale', 'small')
     ).contains('--tokens')
+    expect(
+      await refusal(
+        ...flags(),
+        '--server',
+        server.base,
+        '--users',
+        '1',
+        '--viewers',
+        '3'
+      )
+    ).contains('--viewers needs --streams above 0')
   })
 
   it('refuses a database not marked for load testing, in every mode', async function () {
@@ -308,6 +325,57 @@ describe('the command line', function () {
     } finally {
       await stats.drop()
     }
+  })
+
+  it('deals --viewers across the live games, then their cameras, as people on them', function () {
+    const person = (
+      label: string,
+      kind: SeededAccount['kind'],
+      gameIndex: number | null
+    ): SeededAccount => ({
+      label,
+      kind,
+      userId: label,
+      token: label,
+      teamId: null,
+      gameIndex
+    })
+    const tokens: Pick<TokensFile, 'accounts' | 'games'> = {
+      accounts: [
+        person('v0', 'viewer', 0),
+        person('w0', 'worstCase', 0),
+        person('v1', 'viewer', 1),
+        person('cam0', 'videographer', 0),
+        person('cam2', 'videographer', 2),
+        person('s0', 'scorekeeper', 0)
+      ],
+      games: ['g0', 'g1', 'g2'].map(id => ({
+        id,
+        sides: undefined as never,
+        seasonId: 's',
+        scorekeeper: 's0'
+      }))
+    }
+    const videos = [
+      { gameId: 'g0', videoId: 'a', videographer: 'cam0' },
+      { gameId: 'g0', videoId: 'b', videographer: 'cam0' },
+      // Nobody but its videographer was seeded on this game.
+      { gameId: 'g2', videoId: 'c', videographer: 'cam2' },
+      // Nobody at all who could watch it.
+      { gameId: 'g9', videoId: 'd', videographer: 'gone' }
+    ]
+    const dealt = liveViewersFor(tokens, videos, 5).map(
+      row => `${row.gameId}/${row.videoId}/${row.account.label}`
+    )
+    expect(dealt).deep.equals([
+      'g0/a/v0',
+      'g2/c/cam2',
+      'g0/b/w0',
+      'g2/c/cam2',
+      'g0/a/v0'
+    ])
+    expect(liveViewersFor(tokens, videos, 0)).deep.equals([])
+    expect(liveViewersFor(tokens, [], 4)).deep.equals([])
   })
 
   it('cleans up by the run the tokens name', async function () {
