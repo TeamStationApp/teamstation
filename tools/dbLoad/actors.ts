@@ -1,5 +1,12 @@
 import { type ChildProcess, spawn } from 'node:child_process'
+import {
+  Agent as HttpAgent,
+  request as httpRequest,
+  type IncomingHttpHeaders
+} from 'node:http'
+import { Agent as HttpsAgent, request as httpsRequest } from 'node:https'
 import { resolve } from 'node:path'
+import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib'
 
 import { WebSocket } from 'ws'
 
@@ -39,6 +46,10 @@ export class Tally implements Measurements {
   streamsStarted = 0
   postAt: number[] = []
   frameSeconds: number[] = []
+  viewersStarted = 0
+  playlistRequests = 0
+  playlistBytesByViewer: number[] = []
+  mediaRequestsByCache: Record<string, number> = {}
   private lastFrameSecond = 0
   private readonly posted = new Map<string, number>()
   private readonly startedAt = Date.now()
@@ -74,6 +85,19 @@ export class Tally implements Measurements {
       this.lastFrameSecond = second
       this.frameSeconds.push(second)
     }
+  }
+
+  /** One playlist answer to viewer `viewer`, by the bytes that came over the wire. */
+  notePlaylist(viewer: number, wireBytes: number): void {
+    this.playlistRequests += 1
+    this.playlistBytesByViewer[viewer] =
+      (this.playlistBytesByViewer[viewer] ?? 0) + wireBytes
+  }
+
+  /** One media answer, by the cache status its CDN gave it. */
+  noteMedia(cacheStatus: string): void {
+    this.mediaRequestsByCache[cacheStatus] =
+      (this.mediaRequestsByCache[cacheStatus] ?? 0) + 1
   }
 
   noteSocketOpen(): void {
@@ -487,6 +511,16 @@ export class RestReaders implements Actor {
 export interface MintedStream {
   streamId: string
   url: string
+  /** The live video the stream records into, which viewers watch. */
+  videoId: string | null
+}
+
+/** A game being streamed, by the video one of its cameras records. */
+export interface LiveVideo {
+  gameId: string
+  videoId: string
+  /** The label of the videographer whose camera it is. */
+  videographer: string
 }
 
 /**
@@ -506,7 +540,7 @@ export async function mintStream(
     'POST',
     `/games/${gameId}/live-streams`,
     { route: '/games/:id/live-streams', body: {}, tally }
-  )) as { id: string }
+  )) as { id: string; videoId?: string | null }
   const revealed = (await request(
     server,
     account,
@@ -514,7 +548,11 @@ export async function mintStream(
     `/games/${gameId}/live-streams/${created.id}/reveal`,
     { route: '/games/:id/live-streams/:id/reveal', tally }
   )) as { url: string }
-  return { streamId: created.id, url: revealed.url }
+  return {
+    streamId: created.id,
+    url: revealed.url,
+    videoId: created.videoId ?? null
+  }
 }
 
 /** At most this many cameras per person on a game, as the route allows. */
@@ -570,6 +608,8 @@ export const spawnTestPattern: SpawnPattern = (url, seconds) =>
 export class Publishers implements Actor {
   readonly children: ChildProcess[] = []
   readonly minted: MintedStream[] = []
+  /** The videos being streamed, for viewers to watch. */
+  readonly videos: LiveVideo[] = []
 
   constructor(
     private readonly servers: string[],
@@ -607,6 +647,12 @@ export class Publishers implements Actor {
       // Stops the run: every stream the server mints would go the same way.
       requireServerHost(stream.url, this.servers)
       this.minted.push(stream)
+      if (stream.videoId != null)
+        this.videos.push({
+          gameId: game.id,
+          videoId: stream.videoId,
+          videographer: account.label
+        })
       try {
         const child = this.spawnPattern(stream.url, this.seconds)
         child.on('error', () => {
@@ -640,5 +686,319 @@ export async function paced<T>(
       await new Promise(done => {
         setTimeout(done, due)
       })
+  }
+}
+
+/** An answer as it came over the wire: its body decoded, its size as sent. */
+export interface RawResponse {
+  status: number
+  headers: IncomingHttpHeaders
+  body: Buffer
+  /** The body's bytes before decoding, which is what compression saves. */
+  wireBytes: number
+}
+
+const AGENTS = {
+  http: new HttpAgent({ keepAlive: true }),
+  https: new HttpsAgent({ keepAlive: true })
+}
+
+function decoded(encoding: string | undefined, body: Buffer): Buffer {
+  if (encoding === 'gzip') return gunzipSync(body)
+  if (encoding === 'deflate') return inflateSync(body)
+  if (encoding === 'br') return brotliDecompressSync(body)
+  return body
+}
+
+/**
+ * One GET by plain HTTP rather than `fetch`, which decodes a compressed body
+ * and so hides how many bytes it was. A failure carries its code as `cause`,
+ * as `fetch`'s do, so the tally counts it by kind.
+ */
+export async function getRaw(
+  url: string,
+  headers: Record<string, string> = {},
+  timeoutMs = 15_000
+): Promise<RawResponse> {
+  const target = new URL(url)
+  const secure = target.protocol === 'https:'
+  const send = secure ? httpsRequest : httpRequest
+  return await new Promise((done, fail) => {
+    const failed = (error: Error & { code?: string }): void => {
+      fail(
+        new Error(`GET ${target.pathname}: ${error.message}`, { cause: error })
+      )
+    }
+    const req = send(
+      target,
+      { headers, agent: secure ? AGENTS.https : AGENTS.http },
+      res => {
+        const chunks: Buffer[] = []
+        let wireBytes = 0
+        res.on('data', (chunk: Buffer) => {
+          wireBytes += chunk.length
+          chunks.push(chunk)
+        })
+        res.on('end', () => {
+          try {
+            done({
+              status: res.statusCode ?? 0,
+              headers: res.headers,
+              body: decoded(
+                res.headers['content-encoding'],
+                Buffer.concat(chunks)
+              ),
+              wireBytes
+            })
+          } catch (error) {
+            failed(error as Error)
+          }
+        })
+        res.on('error', failed)
+      }
+    )
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }))
+    })
+    req.on('error', failed)
+    req.end()
+  })
+}
+
+/**
+ * The CDN's word on whether it had the object: whichever of `cf-cache-status`
+ * and `x-cache` the answer carries, upper-cased, or `NONE` with neither (the
+ * Space itself, with no CDN in front).
+ */
+export function cacheStatusOf(headers: IncomingHttpHeaders): string {
+  const raw = headers['cf-cache-status'] ?? headers['x-cache']
+  const text = (Array.isArray(raw) ? raw.join(', ') : raw)?.trim()
+  return text == null || text === '' ? 'NONE' : text.toUpperCase()
+}
+
+/** A master playlist's first variant, or null for a media playlist. */
+export function masterVariant(text: string): string | null {
+  const lines = text.split('\n').map(line => line.trim())
+  const at = lines.findIndex(line => line.startsWith('#EXT-X-STREAM-INF'))
+  if (at < 0) return null
+  return (
+    lines.slice(at + 1).find(line => line !== '' && !line.startsWith('#')) ??
+    null
+  )
+}
+
+export interface MediaPlaylist {
+  targetSeconds: number
+  ended: boolean
+  /** Init files, from `EXT-X-MAP`, in order. */
+  maps: string[]
+  /** Pieces, in order. */
+  pieces: string[]
+}
+
+/** A playlist with no target duration is reloaded at what HLS suggests for one. */
+const DEFAULT_TARGET_SECONDS = 6
+
+export function parseMediaPlaylist(text: string): MediaPlaylist {
+  const playlist: MediaPlaylist = {
+    targetSeconds: DEFAULT_TARGET_SECONDS,
+    ended: false,
+    maps: [],
+    pieces: []
+  }
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    const target = /^#EXT-X-TARGETDURATION:(\d+(?:\.\d+)?)/.exec(line)
+    const map = /^#EXT-X-MAP:.*URI="([^"]+)"/.exec(line)
+    if (target != null && Number(target[1]) > 0)
+      playlist.targetSeconds = Number(target[1])
+    else if (map != null) playlist.maps.push(map[1])
+    else if (line === '#EXT-X-ENDLIST') playlist.ended = true
+    else if (line !== '' && !line.startsWith('#')) playlist.pieces.push(line)
+  }
+  return playlist
+}
+
+/** A piece's URL without its query, so a piece signed afresh is the same piece. */
+function pieceKey(url: string): string {
+  const parsed = new URL(url)
+  parsed.search = ''
+  return parsed.href
+}
+
+/** A player joining live starts this many pieces from the edge, as hls.js does. */
+export const LIVE_EDGE_PIECES = 3
+
+/** How long a viewer waits before asking again for a video that is not there yet. */
+export const VIEWER_RETRY_MS = 2000
+
+export interface ViewerTimers {
+  set: (run: () => void, ms: number) => unknown
+  clear: (handle: unknown) => void
+}
+
+const REAL_TIMERS: ViewerTimers = {
+  set: (run, ms) => setTimeout(run, ms),
+  clear: handle => {
+    clearTimeout(handle as NodeJS.Timeout)
+  }
+}
+
+/**
+ * Somebody watching a live video as a player does: `/playback`, then the
+ * master playlist, then `index.m3u8` once per target duration. For each piece
+ * it has not seen it sends one ranged GET of a single byte, so the CDN is asked
+ * for every piece by every viewer without the rig downloading video. It counts
+ * the playlist bytes it was sent and each media answer by its cache status.
+ *
+ * A 403 on a playlist is an expired token: it asks `/playback` again, as the
+ * web player does.
+ */
+export class LiveViewer implements Actor {
+  private stopped = false
+  private timer: unknown
+  private playlistUrl: string | undefined
+  /** Whether a playlist has been read since `/playback` last answered. */
+  private freshUrl = false
+  private joined = false
+  private running: Promise<void> | undefined
+  private readonly seen = new Set<string>()
+  readonly media = new Set<Promise<void>>()
+  private readonly timers: ViewerTimers
+  private readonly retryMs: number
+  private readonly timeoutMs: number
+
+  constructor(
+    private readonly server: string,
+    private readonly account: Pick<SeededAccount, 'token' | 'kind'>,
+    private readonly videoId: string,
+    private readonly tally: Tally,
+    /** This viewer's number, which its playlist bytes are counted under. */
+    private readonly index: number,
+    options: {
+      timers?: ViewerTimers
+      retryMs?: number
+      timeoutMs?: number
+    } = {}
+  ) {
+    this.timers = options.timers ?? REAL_TIMERS
+    this.retryMs = options.retryMs ?? VIEWER_RETRY_MS
+    this.timeoutMs = options.timeoutMs ?? 15_000
+  }
+
+  start(): void {
+    this.tally.viewersStarted += 1
+    this.tally.playlistBytesByViewer[this.index] ??= 0
+    this.schedule(0)
+  }
+
+  private schedule(ms: number): void {
+    if (this.stopped) return
+    this.timer = this.timers.set(() => {
+      this.timer = undefined
+      this.running = this.step()
+    }, ms)
+  }
+
+  /** One turn, then the next at the time it answered; none once the video ends. */
+  async step(): Promise<void> {
+    let next: number | null
+    try {
+      next = await this.turn()
+    } catch (error) {
+      this.tally.failure(error)
+      next = this.retryMs
+    }
+    if (next != null) this.schedule(next)
+  }
+
+  private async turn(): Promise<number | null> {
+    if (this.playlistUrl == null) {
+      const answer = (await request(
+        this.server,
+        this.account,
+        'GET',
+        `/videos/${this.videoId}/playback`,
+        { route: '/videos/:id/playback', tally: this.tally }
+      )) as { url: string | null }
+      // Not live yet: its first pieces have not reached the Space.
+      if (answer.url == null) return this.retryMs
+      this.playlistUrl = answer.url
+      this.freshUrl = true
+    }
+    const url = this.playlistUrl
+    const response = await getRaw(
+      url,
+      { 'accept-encoding': 'gzip' },
+      this.timeoutMs
+    )
+    this.tally.notePlaylist(this.index, response.wireBytes)
+    if (response.status === 403) {
+      this.playlistUrl = undefined
+      // A URL `/playback` has only just given out should not be refused.
+      if (!this.freshUrl) return 0
+      this.tally.fail('playlist-http-403')
+      return this.retryMs
+    }
+    if (response.status !== 200) {
+      this.tally.fail(`playlist-http-${response.status}`)
+      return this.retryMs
+    }
+    this.freshUrl = false
+    const text = response.body.toString('utf8')
+    const variant = masterVariant(text)
+    if (variant != null) {
+      this.playlistUrl = new URL(variant, url).href
+      return 0
+    }
+    const playlist = parseMediaPlaylist(text)
+    this.fetchNew(url, playlist)
+    return playlist.ended ? null : playlist.targetSeconds * 1000
+  }
+
+  /**
+   * One ranged GET for each piece not seen before. On joining, only the init
+   * files and the last few pieces: a player starts at the live edge.
+   */
+  private fetchNew(base: string, playlist: MediaPlaylist): void {
+    const fresh = (uris: string[]): string[] =>
+      uris
+        .map(uri => new URL(uri, base).href)
+        .filter(url => {
+          const key = pieceKey(url)
+          if (this.seen.has(key)) return false
+          this.seen.add(key)
+          return true
+        })
+    const maps = fresh(playlist.maps)
+    const pieces = fresh(playlist.pieces)
+    const wanted = this.joined
+      ? [...maps, ...pieces]
+      : [...maps, ...pieces.slice(-LIVE_EDGE_PIECES)]
+    this.joined = true
+    for (const url of wanted) {
+      const asking = this.piece(url).finally(() => {
+        this.media.delete(asking)
+      })
+      this.media.add(asking)
+    }
+  }
+
+  private async piece(url: string): Promise<void> {
+    try {
+      const response = await getRaw(url, { range: 'bytes=0-0' }, this.timeoutMs)
+      this.tally.noteMedia(cacheStatusOf(response.headers))
+      if (response.status !== 200 && response.status !== 206)
+        this.tally.fail(`media-http-${response.status}`)
+    } catch (error) {
+      this.tally.failure(error)
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true
+    if (this.timer != null) this.timers.clear(this.timer)
+    await this.running
+    await Promise.all(this.media)
   }
 }

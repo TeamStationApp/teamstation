@@ -7,6 +7,8 @@ import { Client } from 'pg'
 
 import {
   type Actor,
+  LiveViewer,
+  type LiveVideo,
   paced,
   Publishers,
   reachable,
@@ -25,6 +27,7 @@ import {
 import { type EventResult, runEvent, startEventSchedule } from './events'
 import {
   accountsForShard,
+  type SeededAccount,
   cleanupRun,
   describeShapes,
   newRunId,
@@ -52,14 +55,15 @@ import { Sampler } from './sampler'
  *   npm run start.dbLoad -- --database <url> --scale small --tokens tokens.json [--credentials credentials.json]
  *   npm run start.dbLoad -- --server <url> --database <url> --tokens tokens.json \
  *     --users 500 --games 5 --pitch-seconds 15 --rest-rate 50 --minutes 3 --report load.log \
- *     [--assert --pool-limit 97 --server-log api1.log]
+ *     [--streams 50 --viewers 2000] [--assert --pool-limit 97 --server-log api1.log]
  *   npm run start.dbLoad -- --database <url> --tokens tokens.json --event teamMerge
  *   npm run start.dbLoad -- --server <url> --database <url> --tokens tokens.json --probe
  *   npm run start.dbLoad -- --database <url> --tokens tokens.json --cleanup
  *
  * Every mode refuses a database not marked for load testing. `--stats-database`
  * is where `pg_stat_statements` is installed, when that is not `--database`: it
- * is only read, and only for the statements of `--database`.
+ * is only read, and only for the statements of `--database`. `--viewers` watch
+ * the videos `--streams` publish, dealt across their games.
  */
 
 export interface Io {
@@ -84,6 +88,7 @@ const OPTIONS = {
   minutes: { type: 'string' },
   report: { type: 'string' },
   streams: { type: 'string' },
+  viewers: { type: 'string' },
   scoreboards: { type: 'string' },
   'require-statements': { type: 'boolean' },
   'pooler-address': { type: 'string' },
@@ -130,6 +135,7 @@ export interface RunOptions {
   restRate: number
   minutes: number
   streams: number
+  viewers: number
   scoreboards: number
   reportPath?: string
   requireStatements: boolean
@@ -243,6 +249,25 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
         )
         actors.push(publishers)
         await publishers.start()
+        const watching = liveViewersFor(
+          tokens,
+          publishers.videos,
+          options.viewers
+        )
+        const liveViewers = watching.map(
+          ({ account, videoId }, index) =>
+            new LiveViewer(
+              serverFor(options.servers, index),
+              account,
+              videoId,
+              tally,
+              index
+            )
+        )
+        actors.push(...liveViewers)
+        await paced(liveViewers, options.connectRate, viewer => {
+          viewer.start()
+        })
       }
 
       const schedule = options.eventSchedule
@@ -278,6 +303,55 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
       ((cpu.user + cpu.system) / 1000 / Math.max(1, Date.now() - startedAt)) *
       100,
     loopDelayP95Ms: loopDelay.percentile(95) / 1e6
+  })
+}
+
+/**
+ * Who watches which video: `count` viewers dealt across the games being
+ * streamed, then across each game's cameras. Each is somebody on that game, who
+ * may see its video, or its videographer when the run seeded nobody else there.
+ */
+export function liveViewersFor(
+  tokens: Pick<ReturnType<typeof readTokens>, 'accounts' | 'games'>,
+  videos: readonly LiveVideo[],
+  count: number
+): Array<{ account: SeededAccount; videoId: string; gameId: string }> {
+  const byGame = new Map<string, LiveVideo[]>()
+  for (const video of videos) {
+    const held = byGame.get(video.gameId)
+    if (held == null) byGame.set(video.gameId, [video])
+    else held.push(video)
+  }
+  const games = [...byGame.entries()]
+    .map(([gameId, cameras]) => {
+      const index = tokens.games.findIndex(game => game.id === gameId)
+      const members = tokens.accounts.filter(
+        account =>
+          (account.kind === 'viewer' || account.kind === 'worstCase') &&
+          (account.gameIndex ?? 0) === index
+      )
+      const videographers = cameras.flatMap(
+        camera =>
+          tokens.accounts.find(
+            account => account.label === camera.videographer
+          ) ?? []
+      )
+      return {
+        gameId,
+        cameras,
+        watchers: members.length > 0 ? members : videographers
+      }
+    })
+    .filter(game => game.watchers.length > 0)
+  if (games.length === 0) return []
+  return Array.from({ length: count }, (_, i) => {
+    const game = games[i % games.length]
+    const turn = Math.floor(i / games.length)
+    return {
+      account: game.watchers[turn % game.watchers.length],
+      videoId: game.cameras[turn % game.cameras.length].videoId,
+      gameId: game.gameId
+    }
   })
 }
 
@@ -407,6 +481,10 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
     }
   }
 
+  const streams = count(values.streams, '--streams', 0)
+  const viewers = count(values.viewers, '--viewers', 0)
+  if (viewers > 0 && streams === 0)
+    throw new Error('--viewers needs --streams above 0: they watch its videos')
   const data = await runLoad({
     servers,
     databaseUrl,
@@ -418,7 +496,8 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
     pitchSeconds: count(values['pitch-seconds'], '--pitch-seconds', 15),
     restRate: count(values['rest-rate'], '--rest-rate', 0),
     minutes: count(values.minutes, '--minutes', 1),
-    streams: count(values.streams, '--streams', 0),
+    streams,
+    viewers,
     scoreboards: count(values.scoreboards, '--scoreboards', 0),
     reportPath: values.report,
     requireStatements: values['require-statements'] === true,

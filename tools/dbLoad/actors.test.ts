@@ -1,14 +1,28 @@
 import { spawn } from 'node:child_process'
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse
+} from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib'
 
 import { expect } from 'chai'
-import { after, before, describe, it } from 'mocha'
+import { after, afterEach, before, beforeEach, describe, it } from 'mocha'
 
 import type { GameState } from '../../src/common/scoring/state'
 import {
+  cacheStatusOf,
   CAMERAS_PER_PERSON,
   finishBatter,
+  getRaw,
   HttpError,
+  LIVE_EDGE_PIECES,
+  LiveViewer,
+  masterVariant,
   mintStream,
+  parseMediaPlaylist,
   paced,
   Publishers,
   requireServerHost,
@@ -85,6 +99,12 @@ describe('the actors', function () {
         .executeTakeFirstOrThrow()
       expect(row.game_id).equals(game.id)
       expect(row.user_id).equals(videographer.userId)
+      const video = await scratch.db
+        .selectFrom('live_streams')
+        .select('video_id')
+        .where('id', '=', stream.streamId)
+        .executeTakeFirstOrThrow()
+      expect(stream.videoId).equals(video.video_id).and.not.equals(null)
       expect(tally.requests.map(request_ => request_.route)).deep.equals([
         'POST /games/:id/live-streams',
         'POST /games/:id/live-streams/:id/reveal'
@@ -123,6 +143,17 @@ describe('the actors', function () {
       await publishers.start()
       expect(started.length).equals(4)
       expect(new Set(started).size).equals(4)
+      // Each camera's video, under the game it was minted for, for viewers.
+      expect(publishers.videos.length).equals(4)
+      expect(new Set(publishers.videos.map(row => row.videoId)).size).equals(4)
+      expect(
+        publishers.videos.every(
+          row =>
+            row.videographer === 'videographer00001' &&
+            row.gameId ===
+              tokens.games[account('videographer00001').gameIndex ?? 0].id
+        )
+      ).equals(true)
       expect(tally.streamsStarted).equals(4)
       publishers.stop()
       await Promise.all(
@@ -595,5 +626,381 @@ describe('the actors', function () {
       tally.noteFrame('game')
       expect(tally.deliveryLagMs.length).equals(1)
     })
+  })
+})
+
+/**
+ * A video's routes and its CDN, as a live viewer meets them: `/playback`, the
+ * two playlists behind a token, and pieces that answer a range with a cache
+ * status. Each playlist goes out gzipped, and the media URLs are signed afresh
+ * on every reload, as the base build's are.
+ */
+class FakeVideo {
+  server: Server | undefined
+  base = ''
+  /** The token `/playback` hands out; any other is refused with a 403. */
+  token = 1
+  playbackPending = 0
+  playbackCalls = 0
+  playbackStatus = 200
+  pieces = 5
+  target = 2
+  ended = false
+  indexStatus = 200
+  masterStatus = 200
+  reloads = 0
+  playlistWireBytes = 0
+  /** How each media request is answered, in turn: a header, or a status. */
+  mediaAnswers: Array<{ header?: [string, string]; status?: number }> = []
+  readonly media: Array<{ path: string; range: string | undefined }> = []
+
+  async start(): Promise<void> {
+    this.server = createServer((req, res) => {
+      this.answer(req, res)
+    })
+    await new Promise<void>(resolve =>
+      this.server?.listen(0, '127.0.0.1', resolve)
+    )
+    this.base = `http://127.0.0.1:${(this.server.address() as AddressInfo).port}`
+  }
+
+  async close(): Promise<void> {
+    await new Promise(resolve => {
+      this.server?.close(resolve)
+      this.server?.closeAllConnections()
+    })
+  }
+
+  private gzipped(res: ServerResponse, text: string): void {
+    const body = gzipSync(text)
+    this.playlistWireBytes += body.length
+    res.writeHead(200, { 'content-encoding': 'gzip' })
+    res.end(body)
+  }
+
+  private answer(req: IncomingMessage, res: ServerResponse): void {
+    const url = new URL(req.url ?? '/', this.base)
+    const token = Number(url.searchParams.get('t'))
+    if (url.pathname === '/api/v1/videos/vid1/playback') {
+      this.playbackCalls += 1
+      if (this.playbackStatus !== 200) {
+        res.writeHead(this.playbackStatus).end('{"code":"membersOnly"}')
+        return
+      }
+      const pending = this.playbackPending > 0
+      if (pending) this.playbackPending -= 1
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(
+        JSON.stringify({
+          url: pending
+            ? null
+            : `${this.base}/api/v1/videos/vid1/hls/master.m3u8?t=${this.token}`
+        })
+      )
+      return
+    }
+    if (url.pathname.startsWith('/api/v1/videos/vid1/hls/')) {
+      const file = url.pathname.split('/').pop()
+      const status =
+        file === 'master.m3u8' ? this.masterStatus : this.indexStatus
+      if (token !== this.token || status !== 200) {
+        res.writeHead(token !== this.token ? 403 : status).end()
+        return
+      }
+      if (file === 'master.m3u8') {
+        this.gzipped(
+          res,
+          `#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\n${this.base}/api/v1/videos/vid1/hls/index.m3u8?t=${token}\n`
+        )
+        return
+      }
+      this.reloads += 1
+      const signed = `sig=${this.reloads}`
+      const lines = [
+        '#EXTM3U',
+        `#EXT-X-TARGETDURATION:${this.target}`,
+        `#EXT-X-MAP:URI="${this.base}/media/videos/vid1-secret/init.mp4?${signed}"`,
+        ...Array.from({ length: this.pieces }, (_, i) => [
+          '#EXTINF:2.0,',
+          // Relative, as a playlist may give them.
+          `/media/videos/vid1-secret/seg${String(i).padStart(6, '0')}.m4s?${signed}`
+        ]).flat(),
+        ...(this.ended ? ['#EXT-X-ENDLIST'] : [])
+      ]
+      this.gzipped(res, `${lines.join('\n')}\n`)
+      return
+    }
+    if (url.pathname.startsWith('/media/')) {
+      this.media.push({ path: url.pathname, range: req.headers.range })
+      const answer = this.mediaAnswers.shift() ?? {}
+      const headers: Record<string, string> =
+        answer.header == null ? {} : { [answer.header[0]]: answer.header[1] }
+      res.writeHead(answer.status ?? 206, headers).end('x')
+      return
+    }
+    res.writeHead(404).end()
+  }
+}
+
+describe('a live viewer', function () {
+  let video: FakeVideo
+  let delays: number[]
+  const viewer = (tally: Tally, retryMs = 50): LiveViewer =>
+    new LiveViewer(
+      video.base,
+      { token: 'viewer-token', kind: 'viewer' },
+      'vid1',
+      tally,
+      0,
+      {
+        retryMs,
+        timers: {
+          // The test takes each turn itself, and keeps when it was asked for.
+          set: (_run, ms) => {
+            delays.push(ms)
+            return delays.length
+          },
+          clear: () => undefined
+        }
+      }
+    )
+  const turn = async (actor: LiveViewer): Promise<void> => {
+    await actor.step()
+    await Promise.all(actor.media)
+  }
+
+  beforeEach(async function () {
+    video = new FakeVideo()
+    await video.start()
+    delays = []
+  })
+  afterEach(async function () {
+    await video.close()
+  })
+
+  it('reloads once per target duration and sends one ranged GET per new piece', async function () {
+    const tally = new Tally()
+    const actor = viewer(tally)
+    video.playbackPending = 1
+    actor.start()
+    expect(delays).deep.equals([0])
+    // Not live yet: asked again after the retry.
+    await turn(actor)
+    expect(delays).deep.equals([0, 50])
+    // The master playlist names the variant, which is read at once.
+    await turn(actor)
+    expect(delays.at(-1)).equals(0)
+    // Joining live: the init file and the last few pieces, a byte each.
+    await turn(actor)
+    expect(delays.at(-1)).equals(video.target * 1000)
+    expect(video.media.map(row => row.path.split('/').pop())).deep.equals([
+      'init.mp4',
+      'seg000002.m4s',
+      'seg000003.m4s',
+      'seg000004.m4s'
+    ])
+    expect(LIVE_EDGE_PIECES).equals(3)
+    // Two new pieces, signed afresh along with the old: two requests.
+    video.pieces = 7
+    await turn(actor)
+    expect(
+      video.media.slice(4).map(row => row.path.split('/').pop())
+    ).deep.equals(['seg000005.m4s', 'seg000006.m4s'])
+    // Nothing new, nothing asked; a new target duration is the new reload time.
+    video.target = 4
+    await turn(actor)
+    expect(video.media.length).equals(6)
+    expect(delays.slice(3)).deep.equals([2000, 2000, 4000])
+    expect(video.media.every(row => row.range === 'bytes=0-0')).equals(true)
+    expect(video.reloads).equals(3)
+    expect(tally.viewersStarted).equals(1)
+    // master and three reloads, counted by what came over the wire.
+    expect(tally.playlistRequests).equals(4)
+    expect(tally.playlistBytesByViewer).deep.equals([video.playlistWireBytes])
+    expect(tally.requests.map(row => row.route)).deep.equals([
+      'GET /videos/:id/playback',
+      'GET /videos/:id/playback'
+    ])
+    expect(tally.errors).deep.equals({})
+    // A closed playlist is not reloaded.
+    video.ended = true
+    video.pieces = 8
+    await turn(actor)
+    expect(delays.length).equals(6)
+    expect(video.media.length).equals(7)
+    await actor.stop()
+  })
+
+  it('asks /playback again on a 403, and counts a fresh URL refused as a failure', async function () {
+    const tally = new Tally()
+    const actor = viewer(tally)
+    actor.start()
+    await turn(actor)
+    await turn(actor)
+    expect(video.playbackCalls).equals(1)
+    // The token expires: the playlist is refused and `/playback` asked at once.
+    video.token = 2
+    await turn(actor)
+    expect(delays.at(-1)).equals(0)
+    await turn(actor)
+    expect(video.playbackCalls).equals(2)
+    await turn(actor)
+    expect(video.reloads).equals(2)
+    expect(tally.errors).deep.equals({})
+    // A URL refused straight from `/playback` waits for the retry.
+    video.masterStatus = 403
+    video.token = 3
+    await turn(actor)
+    await turn(actor)
+    expect(video.playbackCalls).equals(3)
+    expect(tally.errors).deep.equals({ 'playlist-http-403': 1 })
+    expect(delays.at(-1)).equals(50)
+    // Another status is counted, and the same URL is asked again.
+    video.masterStatus = 200
+    video.indexStatus = 503
+    await turn(actor)
+    await turn(actor)
+    expect(tally.errors['playlist-http-503']).equals(1)
+    expect(delays.at(-1)).equals(50)
+    // And `/playback` refusing the viewer is counted as its route's failure.
+    video.playbackStatus = 403
+    video.token = 4
+    video.indexStatus = 200
+    await turn(actor)
+    await turn(actor)
+    expect(tally.errors['http-403']).equals(1)
+    await actor.stop()
+  })
+
+  it('records each media answer by its cache status', async function () {
+    const tally = new Tally()
+    const actor = viewer(tally)
+    video.mediaAnswers = [
+      { header: ['cf-cache-status', 'HIT'] },
+      { header: ['x-cache', 'Miss'] },
+      {},
+      { header: ['cf-cache-status', 'HIT'], status: 404 }
+    ]
+    actor.start()
+    await turn(actor)
+    await turn(actor)
+    await turn(actor)
+    expect(tally.mediaRequestsByCache).deep.equals({ HIT: 2, MISS: 1, NONE: 1 })
+    expect(tally.errors).deep.equals({ 'media-http-404': 1 })
+    // A piece nobody answers is counted by why.
+    const gone = new FakeVideo()
+    await gone.start()
+    await gone.close()
+    const late = new Tally()
+    const orphan = new LiveViewer(
+      gone.base,
+      { token: 't', kind: 'viewer' },
+      'vid1',
+      late,
+      0,
+      { timers: { set: () => 0, clear: () => undefined } }
+    )
+    await orphan.step()
+    expect(late.errors).deep.equals({ unreachable: 1 })
+    await actor.stop()
+    await orphan.stop()
+  })
+
+  it('runs on real timers until stopped', async function () {
+    const tally = new Tally()
+    video.target = 0.05
+    const actor = new LiveViewer(
+      video.base,
+      { token: 'viewer-token', kind: 'viewer' },
+      'vid1',
+      tally,
+      3
+    )
+    actor.start()
+    await waitFor(() => video.reloads >= 3, 5000)
+    await actor.stop()
+    const reloads = video.reloads
+    await new Promise(resolve => {
+      setTimeout(resolve, 150)
+    })
+    expect(video.reloads).equals(reloads)
+    expect(tally.playlistBytesByViewer[3]).above(0)
+  })
+
+  it('reads playlists, their target, their pieces and cache headers', async function () {
+    expect(
+      masterVariant(
+        '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n\n# note\nindex.m3u8\n'
+      )
+    ).equals('index.m3u8')
+    expect(masterVariant('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n')).equals(
+      null
+    )
+    expect(masterVariant('#EXTM3U\nseg0.m4s\n')).equals(null)
+    expect(
+      parseMediaPlaylist('#EXTM3U\n#EXT-X-TARGETDURATION:0\nseg0.m4s\n')
+    ).deep.equals({
+      targetSeconds: 6,
+      ended: false,
+      maps: [],
+      pieces: ['seg0.m4s']
+    })
+    expect(cacheStatusOf({})).equals('NONE')
+    expect(cacheStatusOf({ 'x-cache': ' ' })).equals('NONE')
+    expect(cacheStatusOf({ 'x-cache': 'hit' })).equals('HIT')
+    expect(
+      cacheStatusOf({ 'x-cache': ['miss', 'hit'] as unknown as string })
+    ).equals('MISS, HIT')
+    // cf-cache-status wins over x-cache when both are there.
+    expect(
+      cacheStatusOf({ 'cf-cache-status': 'MISS', 'x-cache': 'HIT' })
+    ).equals('MISS')
+  })
+
+  it('counts bytes as sent and decodes each encoding, or fails by code', async function () {
+    const server = createServer((req, res) => {
+      const text = Buffer.from('#EXTM3U\n')
+      if (req.url === '/deflate') {
+        res
+          .writeHead(200, { 'content-encoding': 'deflate' })
+          .end(deflateSync(text))
+      } else if (req.url === '/br') {
+        res
+          .writeHead(200, { 'content-encoding': 'br' })
+          .end(brotliCompressSync(text))
+      } else if (req.url === '/broken') {
+        res.writeHead(200, { 'content-encoding': 'gzip' }).end('not gzip')
+      } else if (req.url === '/slow') {
+        // Never answers.
+      } else res.writeHead(200).end(text)
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    try {
+      for (const path of ['/deflate', '/br', '/plain']) {
+        const answer = await getRaw(`${base}${path}`)
+        expect(answer.body.toString()).equals('#EXTM3U\n')
+        expect(answer.status).equals(200)
+      }
+      expect((await getRaw(`${base}/plain`)).wireBytes).equals(8)
+      const failure = async (
+        url: string,
+        timeoutMs?: number
+      ): Promise<string> => {
+        const tally = new Tally()
+        await getRaw(url, {}, timeoutMs).catch((error: unknown) => {
+          tally.failure(error)
+        })
+        return Object.keys(tally.errors).join()
+      }
+      expect(await failure(`${base}/broken`)).equals('Z_DATA_ERROR')
+      expect(await failure(`${base}/slow`, 50)).equals('ETIMEDOUT')
+      expect(await failure('https://127.0.0.1:1/none')).equals('unreachable')
+    } finally {
+      await new Promise(resolve => {
+        server.close(resolve)
+        server.closeAllConnections()
+      })
+    }
   })
 })
