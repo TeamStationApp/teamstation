@@ -411,12 +411,10 @@ describe('pooled voice recognition', () => {
   ): {
     session: SttSession
     sockets: FakeSocket[]
-    finals: string[]
-    errors: string[]
+    events: string[]
   } {
     const sockets: FakeSocket[] = []
-    const finals: string[] = []
-    const errors: string[] = []
+    const events: string[] = []
     const session = new SttSession(
       {
         apiKey: keys,
@@ -429,79 +427,132 @@ describe('pooled voice recognition', () => {
         }
       },
       {
-        onPartial: () => undefined,
-        onFinal: text => finals.push(text),
-        onError: error => errors.push(error)
+        onPartial: text => events.push(`partial ${text}`),
+        onFinal: text => events.push(`final ${text}`),
+        onError: message => events.push(`error ${message}`)
       }
     )
-    return { session, sockets, finals, errors }
+    return { session, sockets, events }
   }
-  it('replays held audio once with another key and ignores stale sockets', () => {
+  const key = (socket: FakeSocket): string =>
+    socket.headers.Authorization.replace('Bearer ', '')
+  const refuse = (socket: FakeSocket, statusCode: number): void => {
+    socket.emit('unexpected-response', {}, { statusCode })
+    expect(socket.closed).equals(true)
+    socket.emit('close')
+  }
+  const wait = async (ms: number): Promise<void> => {
+    await new Promise(resolve => setTimeout(resolve, ms))
+  }
+
+  it('keeps one socket across holds on a healthy key, and opens ahead on retarget', () => {
+    const h = pooled()
+    h.session.retarget(['Noah D.'])
+    expect(h.sockets).length(1)
+    const first = h.sockets[0].ready()
+    for (const said of ['Ball.', 'Strike.']) {
+      h.session.begin()
+      h.session.write(pcm(2))
+      h.session.end()
+      first.partial(said, true)
+    }
+    expect(h.sockets).length(1)
+    expect(first.controls).deep.equals([FINALIZE, FINALIZE])
+    expect(first.closed).equals(false)
+    h.session.retarget(['Jack A.'])
+    expect(h.sockets).length(2)
+    expect(h.sockets[1].terms()).deep.equals(['Jack A.'])
+    expect(key(h.sockets[1])).equals(key(first))
+    h.sockets[1].ready()
+    expect(first.controls).deep.equals([FINALIZE, FINALIZE, AUDIO_DONE])
+    h.session.begin()
+    h.session.write(pcm(2))
+    h.session.end()
+    h.sockets[1].partial('Jack walked.', true)
+    expect(h.sockets).length(2)
+    expect(h.sockets[1].audio.length).equals(2)
+    expect(h.events).deep.equals([
+      'final Ball.',
+      'final Strike.',
+      'final Jack walked.'
+    ])
+    h.session.close()
+    expect(h.sockets[1].closed).equals(true)
+  })
+
+  it('replays a refused hold on another key, then keeps that key for the next hold', () => {
     const h = pooled(['a', 'b', 'a'])
     h.session.retarget(['Trout'])
     h.session.begin()
-    h.session.write(Buffer.from([1, 2, 3, 4]))
+    h.session.write(Buffer.from([1, 2, 3]))
+    h.session.write(Buffer.from([4]))
     h.session.end()
-    h.sockets[0].emit(
-      'message',
-      JSON.stringify({
-        type: 'transcript.partial',
-        speech_final: false,
-        text: 'partial'
-      })
-    )
-    h.sockets[0].emit('error', new Error('Unexpected server response: 401'))
-    h.sockets[0].emit('close')
+    h.sockets[0].partial('partial')
+    refuse(h.sockets[0], 401)
     expect(h.sockets).length(2)
-    expect(h.sockets[0].headers.Authorization).not.equals(
-      h.sockets[1].headers.Authorization
-    )
+    expect(key(h.sockets[1])).not.equals(key(h.sockets[0]))
+    expect(h.sockets[1].terms()).deep.equals(['Trout'])
     h.sockets[1].ready()
-    expect(
-      h.sockets[1].sent.some(
-        frame =>
-          Buffer.isBuffer(frame) && frame.equals(Buffer.from([1, 2, 3, 4]))
-      )
-    ).equals(true)
-    h.sockets[0].emit(
-      'message',
-      JSON.stringify({
-        type: 'transcript.partial',
-        speech_final: true,
-        text: 'stale'
-      })
-    )
-    h.sockets[1].emit(
-      'message',
-      JSON.stringify({
-        type: 'transcript.partial',
-        speech_final: true,
-        text: 'Recovered'
-      })
-    )
-    expect(h.finals).deep.equals(['Recovered'])
-    expect(h.errors).deep.equals([])
-    h.session.close()
-  })
-  it('returns only the latest failure after exhausting distinct keys', () => {
-    const h = pooled()
+    expect([...h.sockets[1].audio]).deep.equals([1, 2, 3, 4])
+    expect(h.sockets[1].controls).deep.equals([FINALIZE])
+    h.sockets[0].partial('stale', true)
+    h.sockets[1].partial('Recovered', true)
+    expect(h.events).deep.equals([
+      'partial partial',
+      'partial ',
+      'final Recovered'
+    ])
     h.session.begin()
-    h.sockets[0].emit('error', new Error('Unexpected server response: 401'))
-    h.sockets[0].emit('close')
-    h.sockets[1].emit('error', new Error('Unexpected server response: 529'))
-    h.sockets[1].emit('close')
-    expect(h.errors).deep.equals(['The recogniser answered 529'])
+    h.session.write(pcm(2))
+    h.session.end()
+    h.sockets[1].partial('Again', true)
     expect(h.sockets).length(2)
+    expect(h.events.at(-1)).equals('final Again')
     h.session.close()
   })
-  it('does not retry nonretryable HTTP failures or canceled holds', () => {
+
+  it('replays a hold whose socket drops, and never relays the transport text', () => {
+    const h = pooled()
+    h.session.retarget([])
+    const first = h.sockets[0].ready()
+    h.session.begin()
+    h.session.write(pcm(4))
+    first.emit('error', new Error('reset; Authorization: Bearer a'))
+    first.emit('close')
+    expect(h.sockets).length(2)
+    expect(key(h.sockets[1])).not.equals(key(first))
+    h.sockets[1].ready()
+    expect(h.sockets[1].audio.length).equals(4)
+    // A refusal that names no status is a lost socket like any other.
+    h.sockets[1].emit('unexpected-response', {}, {})
+    h.sockets[1].emit('close')
+    expect(h.events).deep.equals(['error The recogniser could not be reached'])
+    expect(h.sockets).length(2)
+  })
+
+  it('reports only the latest failure once every key is spent, then reshuffles', () => {
     const h = pooled()
     h.session.begin()
-    h.sockets[0].emit('error', new Error('Unexpected server response: 400'))
-    h.sockets[0].emit('close')
-    expect(h.sockets).length(1)
-    expect(h.errors).deep.equals(['The recogniser answered 400'])
+    refuse(h.sockets[0], 401)
+    refuse(h.sockets[1], 529)
+    expect(h.events).deep.equals(['error The recogniser answered 529'])
+    expect(h.sockets).length(2)
+    h.session.write(pcm(2))
+    h.session.end()
     h.session.begin()
+    expect(h.sockets).length(3)
+    h.session.close()
+  })
+
+  it('does not retry a status no other key would change, or a closed session', () => {
+    const h = pooled()
+    h.session.begin()
+    refuse(h.sockets[0], 400)
+    expect(h.sockets).length(1)
+    expect(h.events).deep.equals(['error The recogniser answered 400'])
+    h.session.begin()
+    expect(h.sockets).length(2)
+    expect(key(h.sockets[1])).equals(key(h.sockets[0]))
     h.session.close()
     h.sockets[1].emit('close')
     h.session.begin()
@@ -509,32 +560,99 @@ describe('pooled voice recognition', () => {
     h.session.write(Buffer.from([1, 2]))
     h.session.end()
     expect(h.sockets).length(2)
+    expect(h.events).length(1)
   })
-  it('bounds handshake/final waits and reports timeouts, not incomplete transcript success', async () => {
+
+  it('reports an error from xAI once, redacted, on the same socket', () => {
+    const h = pooled(['secret-key'])
+    h.session.retarget([])
+    const socket = h.sockets[0].ready()
+    h.session.begin()
+    h.session.write(pcm(2))
+    socket.say({
+      type: 'error',
+      message: `Unsupported audio for secret-key ${'x'.repeat(300)}`
+    })
+    expect(h.sockets).length(1)
+    expect(h.events).length(1)
+    expect(h.events[0]).equals(
+      `error ${`Unsupported audio for [redacted] ${'x'.repeat(300)}`.slice(0, 200)}`
+    )
+    h.session.write(pcm(2))
+    h.session.begin()
+    socket.say({ type: 'error' })
+    expect(h.events.at(-1)).equals('error The recogniser failed')
+    h.session.begin()
+    h.session.end()
+    socket.partial('Ball.', true)
+    expect(h.sockets).length(1)
+    expect(h.events.at(-1)).equals('final Ball.')
+    expect(socket.audio.length).equals(2)
+    h.session.close()
+  })
+
+  it('settles a timed-out answer on the segments it has', async () => {
+    const h = pooled(['a', 'b'], 5)
+    h.session.retarget([])
+    const socket = h.sockets[0].ready()
+    h.session.begin()
+    socket.partial('Ball one.', true)
+    h.session.end()
+    await wait(25)
+    expect(h.events).deep.equals(['partial Ball one.', 'final Ball one.'])
+    expect(h.sockets).length(1)
+    expect(socket.closed).equals(false)
+    h.session.close()
+  })
+
+  it('ends a hold whose socket never becomes ready, without trying another key', async () => {
     const h = pooled(['a', 'b'], 5)
     h.session.begin()
-    await new Promise(resolve => setTimeout(resolve, 25))
+    h.session.write(pcm(2))
+    await wait(25)
+    expect(h.sockets).length(1)
+    expect(h.sockets[0].closed).equals(true)
+    expect(h.events).deep.equals(['error The recogniser timed out'])
+    h.session.begin()
     expect(h.sockets).length(2)
-    expect(h.errors).deep.equals(['The recogniser timed out'])
+    expect(key(h.sockets[1])).equals(key(h.sockets[0]))
+    h.sockets[1].ready()
+    await wait(25)
+    expect(h.events).length(1)
     h.session.close()
-    const final = pooled(['a', 'b'], 5)
-    final.session.begin()
-    final.sockets[0].ready()
-    final.session.end()
-    await new Promise(resolve => setTimeout(resolve, 25))
-    expect(final.finals).deep.equals([])
-    expect(final.errors).deep.equals(['The recogniser timed out'])
-    final.session.close()
   })
+
+  it('ends a hold that gets no answer, without trying another key', async () => {
+    const h = pooled(['a', 'b'], 5)
+    h.session.retarget([])
+    const socket = h.sockets[0].ready()
+    h.session.begin()
+    socket.partial('Ball')
+    h.session.end()
+    await wait(25)
+    expect(h.events).deep.equals([
+      'partial Ball',
+      'error The recogniser timed out'
+    ])
+    expect(h.sockets).length(1)
+    expect(socket.closed).equals(true)
+    h.session.close()
+  })
+
   it('handles empty pools and bounded replay storage', () => {
     const empty = pooled([])
+    empty.session.retarget(['Trout'])
     empty.session.begin()
-    expect(empty.errors).deep.equals(['No API keys are configured'])
+    expect(empty.sockets).length(0)
+    expect(empty.events).deep.equals(['error No API keys are configured'])
     empty.session.close()
     const full = pooled()
     full.session.begin()
     full.session.write(Buffer.alloc(4 * 1024 * 1024 + 1))
-    expect(full.errors).deep.equals(['The voice request is too long'])
+    expect(full.events).deep.equals(['error The voice request is too long'])
+    expect(full.sockets[0].closed).equals(true)
+    full.session.begin()
+    expect(full.sockets).length(2)
     full.session.close()
   })
 })
@@ -563,6 +681,32 @@ describe('pooled voice connection failures', () => {
     session.write(Buffer.from([0, 0]))
     session.end()
     expect(calls).equals(2)
+    expect(errors).deep.equals(['The recogniser could not be reached'])
+    session.close()
+  })
+
+  it('leaves a socket that cannot open on retarget for the next hold to report', () => {
+    const errors: string[] = []
+    let calls = 0
+    const session = new SttSession(
+      {
+        apiKey: ['a', 'b'],
+        connect: () => {
+          calls++
+          throw new Error('private transport failure')
+        }
+      },
+      {
+        onPartial: () => undefined,
+        onFinal: () => expect.fail('no success'),
+        onError: message => errors.push(message)
+      }
+    )
+    session.retarget(['Trout'])
+    expect(calls).equals(1)
+    expect(errors).deep.equals([])
+    session.begin()
+    expect(calls).equals(3)
     expect(errors).deep.equals(['The recogniser could not be reached'])
     session.close()
   })

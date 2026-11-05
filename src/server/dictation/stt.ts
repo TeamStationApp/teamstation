@@ -41,14 +41,17 @@ export interface SttSocket {
   on: ((event: 'open', listener: () => void) => unknown) &
     ((event: 'message', listener: (data: unknown) => void) => unknown) &
     ((event: 'error', listener: (error: Error) => void) => unknown) &
-    ((event: 'close', listener: () => void) => unknown)
+    ((event: 'close', listener: () => void) => unknown) &
+    ((
+      event: 'unexpected-response',
+      listener: (request: unknown, response: { statusCode?: number }) => void
+    ) => unknown)
 }
 
 export interface SttOptions {
   apiKey: ApiKeyPool
+  /** How long a pooled hold waits for its socket to become ready. */
   handshakeTimeoutMs?: number
-  /** Pool attempts report a missing final answer as failure, not partial success. */
-  failOnTimeout?: boolean
   url?: string
   model?: string
   finalTimeoutMs?: number
@@ -96,6 +99,8 @@ class Upstream {
   ready = false
   finished = false
   error: string | null = null
+  /** The HTTP status of a refused upgrade. */
+  status: number | null = null
   private readonly pending: Array<Buffer | string> = []
 
   constructor(
@@ -131,12 +136,23 @@ interface Utterance {
   /** A byte of a 16-bit sample split across two frames. */
   carry: Buffer | null
   timer?: ReturnType<typeof setTimeout>
+  handshake?: ReturnType<typeof setTimeout>
 }
 
+/** Why a pooled hold failed, which decides whether another key may help. */
+type SttFailure =
+  | { kind: 'status'; status: number }
+  | { kind: 'transport' }
+  | { kind: 'timeout' }
+  | { kind: 'provider'; message: string }
+
+const HANDSHAKE_TIMEOUT_MS = 10000
+
 /**
- * The recogniser for one dictation connection. The route calls `retarget`
- * whenever the client sends key terms, `begin`, `write` and `end` for each
- * hold, and `close` when the connection goes.
+ * The recogniser for one dictation connection on one key. Given `report`, it
+ * serves a key pool: failures go there, typed, in place of `onError`, a hold
+ * waits a bounded time for its socket, and a timed-out answer with nothing
+ * heard is a failure.
  */
 class SingleKeySttSession {
   private current: Upstream | null = null
@@ -147,7 +163,8 @@ class SingleKeySttSession {
 
   constructor(
     private readonly options: SttOptions,
-    private readonly handlers: SttHandlers
+    private readonly handlers: SttHandlers,
+    private readonly report?: (failure: SttFailure) => void
   ) {}
 
   /**
@@ -178,7 +195,12 @@ class SingleKeySttSession {
       this.next = null
     }
     this.current ??= this.open(this.terms)
-    this.utterance = { segments: [], ended: false, carry: null }
+    const utterance: Utterance = { segments: [], ended: false, carry: null }
+    this.utterance = utterance
+    if (this.report != null && !this.current.ready)
+      utterance.handshake = setTimeout(() => {
+        this.fail('The recogniser timed out', { kind: 'timeout' })
+      }, this.options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS)
   }
 
   /** 16-bit mono PCM at 16 kHz, relayed as it arrives. */
@@ -202,8 +224,8 @@ class SingleKeySttSession {
     utterance.ended = true
     this.current.send(JSON.stringify({ type: 'finalize' }))
     utterance.timer = setTimeout(() => {
-      if (this.options.failOnTimeout === true)
-        this.fail('The recogniser timed out')
+      if (this.report != null && utterance.segments.length === 0)
+        this.fail('The recogniser timed out', { kind: 'timeout' })
       else this.settle(utterance.segments.join(' '))
     }, this.options.finalTimeoutMs ?? FINAL_TIMEOUT_MS)
   }
@@ -243,6 +265,13 @@ class SingleKeySttSession {
     socket.on('close', () => {
       this.onClose(upstream)
     })
+    if (this.report != null)
+      socket.on('unexpected-response', (_request, response) => {
+        if (typeof response.statusCode === 'number')
+          upstream.status = response.statusCode
+        // With a listener here, ending the refused handshake is ours to do.
+        socket.close()
+      })
     return upstream
   }
 
@@ -252,6 +281,7 @@ class SingleKeySttSession {
     if (message == null) return
     if (message.type === 'transcript.created') {
       upstream.ready = true
+      if (upstream === this.current) clearTimeout(this.utterance?.handshake)
       this.swap()
       return
     }
@@ -262,7 +292,8 @@ class SingleKeySttSession {
         typeof message.message === 'string'
           ? message.message
           : 'The recogniser failed'
-      if (utterance != null) this.fail(text)
+      if (utterance != null)
+        this.fail(text, { kind: 'provider', message: text })
       return
     }
     if (message.type !== 'transcript.partial' || utterance == null) return
@@ -291,7 +322,10 @@ class SingleKeySttSession {
       this.fail(
         upstream.error == null
           ? 'The recogniser disconnected'
-          : `The recogniser disconnected: ${upstream.error}`
+          : `The recogniser disconnected: ${upstream.error}`,
+        upstream.status == null
+          ? { kind: 'transport' }
+          : { kind: 'status', status: upstream.status }
       )
     // A socket that had been working is replaced at once; one that never
     // opened is left for the next hold, so a refused key does not spin.
@@ -316,12 +350,14 @@ class SingleKeySttSession {
     this.next = null
   }
 
-  private fail(message: string): void {
+  private fail(message: string, failure: SttFailure): void {
     const utterance = this.utterance
     if (utterance == null) return
     clearTimeout(utterance.timer)
+    clearTimeout(utterance.handshake)
     this.utterance = null
-    this.handlers.onError(message)
+    if (this.report == null) this.handlers.onError(message)
+    else this.report(failure)
     this.swap()
   }
 
@@ -330,6 +366,7 @@ class SingleKeySttSession {
     const utterance = this.utterance
     if (utterance == null) return
     clearTimeout(utterance.timer)
+    clearTimeout(utterance.handshake)
     this.utterance = null
     if (text != null) this.handlers.onFinal(text)
     this.swap()
@@ -353,19 +390,41 @@ function parse(data: unknown): Record<string, unknown> | null {
   }
 }
 
-/** A pooled voice request owns its audio and retries, never a completed hold. */
+/** The most audio a pooled hold keeps for replay on another key. */
+const MAX_REPLAY_BYTES = 4 * 1024 * 1024
+
+/** Provider text may quote what it was sent: never the key, never at length. */
+function redacted(message: string, key: string): string {
+  return message.split(key).join('[redacted]').slice(0, 200)
+}
+
+/**
+ * The recogniser for one dictation connection. The route calls `retarget`
+ * whenever the client sends key terms, `begin`, `write` and `end` for each
+ * hold, and `close` when the connection goes.
+ *
+ * Given one key it is a `SingleKeySttSession`. Given a pool it keeps one
+ * attempt — a `SingleKeySttSession` on one key — for as long as that attempt
+ * works, so holds reuse its socket and `retarget` still opens ahead. It keeps
+ * each hold's audio, and when the key is refused or the socket is lost it
+ * replays the hold on another key: the current key first, then the others in
+ * a fresh random order, each at most once a hold. A timeout or an error from
+ * xAI itself is not the key's fault and ends the hold.
+ */
 export class SttSession {
   private readonly legacy: SingleKeySttSession | undefined
   private attempt: SingleKeySttSession | undefined
+  /** The attempt's key, kept across holds until a hold runs out of keys. */
+  private key: string | undefined
+  /** The keys the hold in flight has not tried yet. */
+  private untried: string[] = []
   private terms: readonly string[] = []
-  private keys: string[] = []
   private frames: Buffer[] = []
   private bytes = 0
   private ended = false
   private active = false
+  private showedPartial = false
   private closed = false
-  private generation = 0
-  private handshake?: ReturnType<typeof setTimeout>
 
   constructor(
     private readonly options: SttOptions,
@@ -378,7 +437,20 @@ export class SttSession {
   retarget(terms: readonly string[]): void {
     if (this.closed) return
     this.terms = terms
-    this.legacy?.retarget(terms)
+    if (this.legacy != null) {
+      this.legacy.retarget(terms)
+      return
+    }
+    if (this.attempt == null) {
+      this.key ??= shuffledKeys(this.options.apiKey)[0]
+      if (this.key == null) return
+      this.attempt = this.newAttempt(this.key)
+    }
+    try {
+      this.attempt.retarget(terms)
+    } catch {
+      // A socket that cannot open now is tried again, and reported, by the next hold.
+    }
   }
 
   begin(): void {
@@ -387,13 +459,28 @@ export class SttSession {
       this.legacy.begin()
       return
     }
-    this.stopAttempt()
     this.frames = []
     this.bytes = 0
     this.ended = false
+    this.showedPartial = false
     this.active = true
-    this.keys = shuffledKeys(this.options.apiKey)
-    this.startAttempt()
+    const keys = shuffledKeys(this.options.apiKey)
+    const key = (this.key ??= keys[0])
+    if (key == null) {
+      this.give('No API keys are configured')
+      return
+    }
+    this.untried = keys.filter(other => other !== key)
+    const attempt = this.attempt
+    if (attempt == null) {
+      this.replay(key)
+      return
+    }
+    try {
+      attempt.begin()
+    } catch {
+      this.failed(attempt, key, { kind: 'transport' })
+    }
   }
 
   write(pcm: Buffer): void {
@@ -404,8 +491,10 @@ export class SttSession {
     }
     if (!this.active || this.ended) return
     this.bytes += pcm.length
-    if (this.bytes > 4 * 1024 * 1024) {
-      this.exhaust('The voice request is too long')
+    if (this.bytes > MAX_REPLAY_BYTES) {
+      // The attempt holds part of the hold's audio: start the next on a clean socket.
+      this.dropAttempt()
+      this.give('The voice request is too long')
       return
     }
     this.frames.push(Buffer.from(pcm))
@@ -425,100 +514,107 @@ export class SttSession {
 
   close(): void {
     this.closed = true
-    this.active = false
-    this.frames = []
     this.legacy?.close()
-    this.stopAttempt()
+    this.dropAttempt()
+    this.settle()
   }
 
-  private stopAttempt(): void {
-    this.generation++
-    clearTimeout(this.handshake)
+  private newAttempt(key: string): SingleKeySttSession {
+    const live = (): boolean => attempt === this.attempt && this.active
+    const attempt: SingleKeySttSession = new SingleKeySttSession(
+      { ...this.options, apiKey: key },
+      {
+        // Partial transcripts replace the previous preview, never append to it.
+        onPartial: text => {
+          if (!live()) return
+          this.showedPartial = true
+          this.handlers.onPartial(text)
+        },
+        onFinal: text => {
+          if (!live()) return
+          this.settle()
+          this.handlers.onFinal(text)
+        },
+        // A pooled attempt reports its failures, typed, through `failed`.
+        onError: () => undefined
+      },
+      failure => {
+        this.failed(attempt, key, failure)
+      }
+    )
+    return attempt
+  }
+
+  /** Starts the hold in flight on a new attempt with `key`, from its first frame. */
+  private replay(key: string): void {
+    this.key = key
+    const attempt = this.newAttempt(key)
+    this.attempt = attempt
+    try {
+      attempt.retarget(this.terms)
+      attempt.begin()
+      for (const frame of this.frames) attempt.write(frame)
+      if (this.ended) attempt.end()
+    } catch {
+      this.failed(attempt, key, { kind: 'transport' })
+    }
+  }
+
+  private failed(
+    attempt: SingleKeySttSession,
+    key: string,
+    failure: SttFailure
+  ): void {
+    if (attempt !== this.attempt || !this.active) return
+    if (failure.kind === 'provider') {
+      // The socket is still up, and no other key would hear the audio differently.
+      this.give(redacted(failure.message, key))
+      return
+    }
+    // Refused, lost or hung: the next hold on this key starts on a new socket.
+    this.dropAttempt()
+    if (failure.kind === 'timeout') {
+      this.give('The recogniser timed out')
+      return
+    }
+    // Transport text can carry the Authorization header: never relay it.
+    const message =
+      failure.kind === 'status'
+        ? `The recogniser answered ${failure.status}`
+        : 'The recogniser could not be reached'
+    if (failure.kind === 'status' && !retryableStatus(failure.status)) {
+      this.give(message)
+      return
+    }
+    const next = this.untried.shift()
+    if (next == null) {
+      // Every key failed this hold: the next one starts from a fresh shuffle.
+      this.key = undefined
+      this.give(message)
+      return
+    }
+    if (this.showedPartial) {
+      this.showedPartial = false
+      this.handlers.onPartial('')
+    }
+    this.replay(next)
+  }
+
+  private dropAttempt(): void {
     this.attempt?.close()
     this.attempt = undefined
   }
 
-  private exhaust(message: string): void {
+  /** The hold in flight is over: let its audio go. */
+  private settle(): void {
     this.active = false
     this.frames = []
-    this.stopAttempt()
-    this.handlers.onError(message)
+    this.bytes = 0
   }
 
-  private startAttempt(latest = 'No API keys are configured'): void {
-    if (!this.active || this.closed) return
-    const key = this.keys.shift()
-    if (key == null) {
-      this.exhaust(latest)
-      return
-    }
-    this.stopAttempt()
-    const generation = this.generation
-    const current = (): boolean =>
-      this.active && !this.closed && generation === this.generation
-    let showedPartial = false
-    const fail = (message: string): void => {
-      if (!current()) return
-      // Provider/transport text can contain an authorization header: never relay it.
-      const status = /(?:answered|response:?)\s+(\d{3})/i.exec(message)?.[1]
-      const safe =
-        status == null
-          ? message.toLowerCase().includes('timed out')
-            ? 'The recogniser timed out'
-            : 'The recogniser could not be reached'
-          : `The recogniser answered ${status}`
-      if (status != null && !retryableStatus(Number(status))) {
-        this.exhaust(safe)
-        return
-      }
-      if (showedPartial) this.handlers.onPartial('')
-      this.startAttempt(safe)
-    }
-    const connect =
-      this.options.connect ??
-      ((url: string, headers: Record<string, string>) =>
-        new WebSocket(url, { headers }))
-    this.handshake = setTimeout(() => {
-      fail('The recogniser timed out')
-    }, this.options.handshakeTimeoutMs ?? 10000)
-    this.attempt = new SingleKeySttSession(
-      {
-        ...this.options,
-        apiKey: key,
-        failOnTimeout: true,
-        connect: (url, headers) => {
-          const socket = connect(url, headers)
-          socket.on('message', data => {
-            if (current() && parse(data)?.type === 'transcript.created')
-              clearTimeout(this.handshake)
-          })
-          return socket
-        }
-      },
-      {
-        // Partial transcripts replace the previous preview, never append to it.
-        onPartial: text => {
-          if (!current()) return
-          showedPartial = true
-          this.handlers.onPartial(text)
-        },
-        onFinal: text => {
-          if (!current()) return
-          this.active = false
-          this.frames = []
-          this.stopAttempt()
-          this.handlers.onFinal(text)
-        },
-        onError: fail
-      }
-    )
-    try {
-      this.attempt.retarget(this.terms)
-      this.attempt.begin()
-      for (const frame of this.frames) this.attempt.write(frame)
-      if (this.ended) this.attempt.end()
-    } catch {
-      fail('The recogniser could not be reached')
-    }
+  /** Ends the hold in flight with `message`. */
+  private give(message: string): void {
+    this.settle()
+    this.handlers.onError(message)
   }
 }
