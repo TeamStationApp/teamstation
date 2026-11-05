@@ -634,6 +634,49 @@ describe('pooled voice recognition', () => {
     h.session.close()
   })
 
+  it('waits for the answer to a replayed hold only once its new socket is ready', async () => {
+    const sockets: FakeSocket[] = []
+    const events: string[] = []
+    const session = new SttSession(
+      {
+        apiKey: ['a', 'b'],
+        finalTimeoutMs: 20,
+        handshakeTimeoutMs: 1000,
+        connect: (url, headers) => {
+          const socket = new FakeSocket(url, headers)
+          sockets.push(socket)
+          return socket
+        }
+      },
+      {
+        onPartial: text => events.push(`partial ${text}`),
+        onFinal: text => events.push(`final ${text}`),
+        onError: message => events.push(`error ${message}`)
+      }
+    )
+    const error = console.error
+    console.error = () => undefined
+    try {
+      session.retarget([])
+      sockets[0].ready()
+      session.begin()
+      session.write(pcm(4))
+      session.end()
+      refuse(sockets[0], 401)
+      expect(sockets).length(2)
+      // Longer than the final wait, before the new socket is even up.
+      await wait(60)
+      expect(events).deep.equals([])
+      sockets[1].ready()
+      expect(sockets[1].audio.length).equals(4)
+      sockets[1].partial('Ball four', true)
+      expect(events).deep.equals(['final Ball four'])
+    } finally {
+      console.error = error
+      session.close()
+    }
+  })
+
   it('ends a hold whose socket never becomes ready, without trying another key', async () => {
     const h = pooled(['a', 'b'], 5)
     h.session.begin()

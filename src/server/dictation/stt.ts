@@ -143,6 +143,8 @@ interface Utterance {
   carry: Buffer | null
   timer?: ReturnType<typeof setTimeout>
   handshake?: ReturnType<typeof setTimeout>
+  /** Released before its socket was ready: the final wait starts at ready. */
+  finalOnReady?: boolean
 }
 
 /** Why a pooled hold failed, which decides whether another key may help. */
@@ -232,6 +234,16 @@ class SingleKeySttSession {
     if (utterance == null || utterance.ended || this.current == null) return
     utterance.ended = true
     this.current.send(JSON.stringify({ type: 'finalize' }))
+    // A pooled hold may be released, or replayed, before xAI has its socket
+    // up or any of the audio: the wait for its answer starts once it does.
+    if (this.report != null && !this.current.ready)
+      utterance.finalOnReady = true
+    else this.awaitFinal(utterance)
+  }
+
+  /** The last segment's wait, settled with what was heard when it runs out. */
+  private awaitFinal(utterance: Utterance): void {
+    utterance.finalOnReady = false
     utterance.timer = setTimeout(() => {
       if (this.report != null && utterance.segments.length === 0)
         this.fail('The recogniser timed out', { kind: 'timeout' })
@@ -290,7 +302,11 @@ class SingleKeySttSession {
     if (message == null) return
     if (message.type === 'transcript.created') {
       upstream.ready = true
-      if (upstream === this.current) clearTimeout(this.utterance?.handshake)
+      if (upstream === this.current && this.utterance != null) {
+        clearTimeout(this.utterance.handshake)
+        if (this.utterance.finalOnReady === true)
+          this.awaitFinal(this.utterance)
+      }
       this.swap()
       return
     }
