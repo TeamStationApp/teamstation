@@ -694,10 +694,16 @@ describe('dictation route', function () {
     it('reads its settings again for each hold, and changes recogniser when the voice keys change', async function () {
       const dynamic = createServer()
       let voice: DictationConfig | null = { ...CONFIG, apiKey: ['one'] }
+      let unreadable = false
       const opened: FakeRecogniser[] = []
+      const logged: string[] = []
       const handle = attachDictation(dynamic, {
         db: db!,
-        resolveConfig: async () => voice,
+        log: message => logged.push(message),
+        resolveConfig: async () => {
+          if (unreadable) throw new Error('settings unreadable')
+          return voice
+        },
         scopes: dictationScopes({ tess: async () => true }),
         openRecogniser: handlers => {
           const recogniser = new FakeRecogniser(handlers)
@@ -778,6 +784,42 @@ describe('dictation route', function () {
           kind: 'error',
           id: 'off',
           message: 'Dictation is not available on this server'
+        })
+        unreadable = true
+        ws.send(
+          JSON.stringify({
+            kind: 'start',
+            id: 'unreadable',
+            scope: 'tess',
+            target: {},
+            context: 'tess'
+          })
+        )
+        await replied(4)
+        expect(replies[3]).deep.include({
+          id: 'unreadable',
+          message: 'Dictation is not available on this server'
+        })
+        expect(logged.join('\n')).contains(
+          'dictation unreadable could not read its settings'
+        )
+        unreadable = false
+        voice = { ...CONFIG, apiKey: ['two'] }
+        ws.send(
+          JSON.stringify({
+            kind: 'start',
+            id: 'luna',
+            scope: 'scoring',
+            target: { gameId: 'gam_unused' },
+            context: 'Top of the 1st',
+            model: 'gpt-6-luna'
+          })
+        )
+        await replied(5)
+        expect(replies[4]).deep.equals({
+          kind: 'error',
+          id: 'luna',
+          message: 'GPT-6 Luna is not set up on this server'
         })
       } finally {
         ws.close()

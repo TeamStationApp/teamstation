@@ -8,7 +8,7 @@ import path from 'node:path'
 
 import express from 'express'
 
-import { aiSettings, sayStoredAiKeys } from './aiKeys'
+import { aiSettings, tessAvailable } from './aiKeys'
 import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
@@ -517,7 +517,6 @@ function runPrimary(workerCount: number): void {
 
 function runWorker(): void {
   const db = makeDatabase(serverConfig.databaseUrl)
-  sayStoredAiKeys(db).catch(() => undefined)
   const mediaSecret = resolveMediaSecret()
   const mediaContext: MediaContext = {
     ffmpegPath: serverConfig.ffmpegPath,
@@ -825,9 +824,7 @@ function runWorker(): void {
   const dictation = attachDictation(server, {
     db,
     resolveConfig: async () => (await aiSettings(db)).dictation,
-    scopes: dictationScopes({
-      tess: async () => (await aiSettings(db)).tess != null
-    }),
+    scopes: dictationScopes({ tess: tessAvailable(db) }),
     allowedOrigins: [...serverConfig.corsOrigins, publicUrl],
     listenForUpgrades: false
   })

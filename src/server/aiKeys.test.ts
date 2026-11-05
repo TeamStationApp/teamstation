@@ -18,9 +18,10 @@ import {
   type AiSettings,
   aiSettings,
   fileAiKeys,
-  sayStoredAiKeys,
+  forgetAiKeysNotices,
   storedAiKeys,
-  storedAiKeysValue
+  storedAiKeysValue,
+  tessAvailable
 } from './aiKeys'
 import type { Actor } from './auth/sessions'
 import { endpointFor } from './dictation/models'
@@ -205,6 +206,7 @@ describe('administrator API keys', function () {
     for (const key of Object.values(pools).flat())
       expect(JSON.stringify(row.value)).not.contains(key)
     expect(await storedAiKeys(f.h.db, S)).deep.equals(pools)
+    forgetAiKeysNotices()
     const logged: string[] = []
     const error = console.error
     console.error = (message: string) => logged.push(message)
@@ -275,19 +277,27 @@ describe('administrator API keys', function () {
       aiKeysSaved: false
     })
   })
-  it('says at startup that saved keys override the file', async () => {
+  it('says once that saved keys override the file', async () => {
+    forgetAiKeysNotices()
     const logged: string[] = []
     const log = console.log
     console.log = (message: string) => logged.push(message)
     try {
-      await sayStoredAiKeys(f.h.db, S)
+      await storedAiKeys(f.h.db, S)
       await save(actor(105), { ...defaultNodeSettings, aiKeys: pools })
-      await sayStoredAiKeys(f.h.db, S)
+      await storedAiKeys(f.h.db, S)
+      await storedAiKeys(f.h.db, S)
     } finally {
       console.log = log
     }
     expect(logged).length(1)
     expect(logged[0]).contains('override serverConfig.json')
+  })
+  it('says whether Tess is on as the pools are now', async () => {
+    const tess = tessAvailable(f.h.db, asServerConfig({}), S)
+    expect(await tess()).equals(false)
+    await save(actor(105), { ...defaultNodeSettings, aiKeys: pools })
+    expect(await tess()).equals(true)
   })
   it('offers dictation and speech keys together as the one voice pool', () => {
     expect(

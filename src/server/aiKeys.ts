@@ -54,12 +54,17 @@ export function storedAiKeysValue(
   }
 }
 
-/** Each reason a row was passed over, said once per process. */
+/** What the server says about the row, each once per process. */
 const said = new Set<string>()
 function sayOnce(reason: string): void {
   if (said.has(reason)) return
   said.add(reason)
   console.error(`${AI_KEYS_SETTING} ${reason}; using the file's keys`)
+}
+
+/** Every notice may be said again. For tests. */
+export function forgetAiKeysNotices(): void {
+  said.clear()
 }
 
 /**
@@ -82,13 +87,22 @@ export async function storedAiKeys(
     sayOnce(`was saved by ${String(value?.origin)}, not ${scope.origin}`)
     return undefined
   }
+  let keys: AiKeys
   try {
-    return asAiKeys(JSON.parse(openSecret(scope.secret, String(value.sealed))))
+    keys = asAiKeys(JSON.parse(openSecret(scope.secret, String(value.sealed))))
   } catch {
     // Never the error itself: a failed open could quote what it was given.
     sayOnce('cannot be opened with this server’s sessionSecret')
     return undefined
   }
+  // So an operator who edits the file knows why it has no effect.
+  if (!said.has('saved')) {
+    said.add('saved')
+    console.log(
+      `${AI_KEYS_SETTING}: keys saved in node administration override serverConfig.json's AI keys`
+    )
+  }
+  return keys
 }
 
 /** The pools the file configuration gives, before any administrator save. */
@@ -215,13 +229,11 @@ export async function aiSettings(
   }
 }
 
-/** Said at startup, so an operator who edits the file knows why it has no effect. */
-export async function sayStoredAiKeys(
+/** Whether Tess is on now, asked for each tess dictation hold. */
+export function tessAvailable(
   db: Kysely<Database>,
+  config: ServerConfig = serverConfig,
   scope: AiKeysScope = serverAiKeysScope
-): Promise<void> {
-  if ((await storedAiKeys(db, scope)) != null)
-    console.log(
-      `${AI_KEYS_SETTING}: keys saved in node administration override serverConfig.json's AI keys`
-    )
+): () => Promise<boolean> {
+  return async () => (await aiSettings(db, config, scope)).tess != null
 }
