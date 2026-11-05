@@ -290,6 +290,18 @@ describe('useMultiCam', function () {
     expect(tiles.B.paused).equals(false)
   })
 
+  it('applies rapid toggles before React renders the queued state updates', async () => {
+    const { mc, tiles } = await grid()
+    await act(async () => {
+      mc().toggle()
+      expect(tiles.A.paused).equals(true)
+      mc().toggle()
+      expect(tiles.A.paused).equals(false)
+      expect(tiles.B.paused).equals(false)
+    })
+    expect(mc().playing).equals(true)
+  })
+
   it('moves every tile when the take is moved, and parks one that was not recording yet', async function () {
     const { mc, tiles } = await grid()
     await act(async () => {
@@ -1204,6 +1216,23 @@ describe('useMultiCam on live angles', function () {
 describe('useMultiCam buffering', function () {
   // A is two minutes in at 120 s; B, which started a minute later, at 60 s.
 
+  it('recognizes a native frozen picture despite an advancing optimistic clock', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({}, {}, tiles => {
+      Object.assign(tiles.A, { reportedTime: 120 })
+      Object.assign(tiles.B, { reportedTime: 60 })
+    })
+    await ticks(1)
+    // A's interpolation moves, but no native picture has advanced. B really
+    // reports another second; neither tile is seeking or buffering.
+    tiles.A.currentTime = 121
+    tiles.B.currentTime = 61
+    Object.assign(tiles.B, { reportedTime: 61 })
+    await ticks(1)
+    expect(mc().tiles.A?.stalledSince).a('number')
+    expect(mc().tiles.B?.stalledSince ?? null).equals(null)
+  })
+
   it('holds every tile until each holds five seconds, then plays them together', async function () {
     this.timeout(5000)
     const { mc, tiles } = await grid({}, {}, tiles => {
@@ -1589,6 +1618,65 @@ describe('useMultiCam buffering', function () {
     tiles.B.currentTime = 62
     await ticks(1)
     expect(tiles.B.currentTime).equals(62)
+  })
+})
+
+describe('useMultiCam bounded recovery', () => {
+  it('refreshes a follower that never completes its join without restarting healthy tiles', async () => {
+    const realNow = Date.now
+    const realSet = globalThis.setInterval
+    const realClear = globalThis.clearInterval
+    let now = T0
+    const intervals = new Map<unknown, () => void>()
+    Date.now = () => now
+    globalThis.setInterval = ((callback: () => void) => {
+      const id = {}
+      intervals.set(id, callback)
+      return id
+    }) as unknown as typeof setInterval
+    globalThis.clearInterval = (id: unknown) => {
+      if (!intervals.delete(id))
+        realClear(id as Parameters<typeof clearInterval>[0])
+    }
+    try {
+      const client = new TeamStationClient({ baseUrl: '/api/v1' })
+      const requests: Record<string, number> = {}
+      client.playback = async (id: string) => {
+        requests[id] = (requests[id] ?? 0) + 1
+        return {
+          videoId: id,
+          storage: 'spaces',
+          url: `https://media/${id}-${requests[id]}.m3u8`,
+          expiresAt: null,
+          durationSec: null,
+          unavailable: false
+        }
+      }
+      const { mc, tiles } = await grid({ client })
+      const tick = async (seconds: number): Promise<void> => {
+        now = T0 + seconds * 1000
+        tiles.A.currentTime = 120 + seconds
+        await act(async () => {
+          for (const callback of [...intervals.values()]) callback()
+        })
+      }
+      await tick(1)
+      tiles.B.currentTime = 58
+      await tick(2)
+      tiles.B.readyState = 2
+      Object.assign(tiles.B, { seeking: true })
+      for (let second = 3; second <= 13; second++) await tick(second)
+      expect(requests.B).equals(2)
+      expect(requests.A).equals(1)
+      expect(mc().urls.B).contains('B-2')
+      expect(tiles.A.paused).equals(false)
+    } finally {
+      await act(async () => root?.unmount())
+      root = undefined
+      Date.now = realNow
+      globalThis.setInterval = realSet
+      globalThis.clearInterval = realClear
+    }
   })
 })
 
