@@ -21,6 +21,13 @@ public struct SampleBuffer: @unchecked Sendable {
 /// exactly as the operator taps the flip button. A preview layer drawn through `showPreview` is
 /// attached, turned and detached on that queue too.
 public final class CameraSession: @unchecked Sendable {
+  public enum RotationSource: Sendable {
+    case horizon
+    /// The interface supplies one landscape angle for both preview and encoded buffers.
+    /// Capture waits until the first 0° or 180° arrives; portrait readings keep that last angle.
+    case preview
+  }
+
   public struct State: Sendable, Equatable {
     public var position: CameraPosition = .back
     public var deviceType: String = ""
@@ -63,6 +70,9 @@ public final class CameraSession: @unchecked Sendable {
   /// Last 0°/180° applied to the capture connection. Portrait angles from the coordinator at launch
   /// would swap 1920×1080 into portrait; those are ignored and this is used instead.
   private var lastLandscapeCaptureAngle: CGFloat = 180
+  private let rotationSource: RotationSource
+  private var previewCaptureAngle: CGFloat?
+  private var startRequested = false
   private var sessionObservers: [any NSObjectProtocol] = []
   /// The preview layers drawing this session, with the angle and mirroring each was asked for.
   private var previews: [ObjectIdentifier: PreviewHold] = [:]
@@ -81,7 +91,8 @@ public final class CameraSession: @unchecked Sendable {
     set { outputDelegate.onAudio = newValue }
   }
 
-  public init() {
+  public init(rotationSource: RotationSource = .horizon) {
+    self.rotationSource = rotationSource
     observeSessionLifecycle()
   }
 
@@ -109,10 +120,17 @@ public final class CameraSession: @unchecked Sendable {
     queue.async { [self] in
       guard let layer = target.layer else { return }
       previews[key] = target
+      if rotationSource == .preview {
+        if rotationAngle == 0 || rotationAngle == 180 { previewCaptureAngle = rotationAngle }
+        guard let angle = previewCaptureAngle else { return }
+        lastLandscapeCaptureAngle = angle
+        applyCaptureAngle(angle)
+      }
       Self.withoutAnimation {
         if layer.session !== session { layer.session = session }
-        applyPreview(target)
+        applyPreviews()
       }
+      if startRequested { startIfReady() }
     }
   }
 
@@ -144,16 +162,23 @@ public final class CameraSession: @unchecked Sendable {
 
   public func start() {
     queue.async { [self] in
-      guard !session.isRunning else { return }
-      session.startRunning()
-      state.isRunning = session.isRunning
-      applyPreviews()
-      publish()
+      startRequested = true
+      startIfReady()
     }
+  }
+
+  private func startIfReady() {
+    guard rotationSource != .preview || previewCaptureAngle != nil else { return }
+    guard !session.isRunning else { return }
+    session.startRunning()
+    state.isRunning = session.isRunning
+    applyPreviews()
+    publish()
   }
 
   public func stop() {
     queue.async { [self] in
+      startRequested = false
       guard session.isRunning else { return }
       session.stopRunning()
       state.isRunning = false
@@ -242,7 +267,7 @@ public final class CameraSession: @unchecked Sendable {
     state.position = position
     attachOutputs()
     session.commitConfiguration()
-    attachRotationCoordinator(for: selected)
+    if rotationSource == .horizon { attachRotationCoordinator(for: selected) }
 
     applyFormat(to: selected)
     applySwitching(to: selected, selection: selection, catalog: catalog)
@@ -367,23 +392,27 @@ public final class CameraSession: @unchecked Sendable {
       default:
         break
       }
-      let angle = lastLandscapeCaptureAngle
-      guard let connection = videoOutput.connection(with: .video) else { return }
-      if connection.isVideoMirroringSupported {
-        connection.automaticallyAdjustsVideoMirroring = false
-        if connection.isVideoMirrored {
-          connection.isVideoMirrored = false
-        }
+      applyCaptureAngle(lastLandscapeCaptureAngle)
+    }
+  }
+
+  /// Runs on the capture queue before either preview or encoded frames use the new angle.
+  private func applyCaptureAngle(_ angle: CGFloat) {
+    guard let connection = videoOutput.connection(with: .video) else { return }
+    if connection.isVideoMirroringSupported {
+      connection.automaticallyAdjustsVideoMirroring = false
+      if connection.isVideoMirrored {
+        connection.isVideoMirrored = false
       }
-      guard connection.isVideoRotationAngleSupported(angle) else { return }
-      if connection.videoRotationAngle != angle {
-        connection.videoRotationAngle = angle
-        onCaptureRotationChange?()
-      }
-      if state.captureRotationAngle != Double(angle) {
-        state.captureRotationAngle = Double(angle)
-        publish()
-      }
+    }
+    guard connection.isVideoRotationAngleSupported(angle) else { return }
+    if connection.videoRotationAngle != angle {
+      connection.videoRotationAngle = angle
+      onCaptureRotationChange?()
+    }
+    if state.captureRotationAngle != Double(angle) {
+      state.captureRotationAngle = Double(angle)
+      publish()
     }
   }
 
@@ -401,9 +430,10 @@ public final class CameraSession: @unchecked Sendable {
   /// for nothing.
   private func applyPreview(_ target: PreviewHold) {
     guard let connection = target.layer?.connection else { return }
-    if connection.videoRotationAngle != target.rotationAngle,
-       connection.isVideoRotationAngleSupported(target.rotationAngle) {
-      connection.videoRotationAngle = target.rotationAngle
+    let angle = rotationSource == .preview ? previewCaptureAngle : target.rotationAngle
+    if let angle, connection.videoRotationAngle != angle,
+       connection.isVideoRotationAngleSupported(angle) {
+      connection.videoRotationAngle = angle
     }
     if connection.isVideoMirroringSupported {
       if connection.automaticallyAdjustsVideoMirroring {
