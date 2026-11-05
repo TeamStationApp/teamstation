@@ -272,7 +272,7 @@ main().catch((error: unknown) => {
   if (privateErrorFile != null)
     writeFileSync(
       privateErrorFile,
-      error instanceof Error ? error.stack ?? error.message : String(error),
+      error instanceof Error ? (error.stack ?? error.message) : String(error),
       { mode: 0o600 }
     )
   console.error(
