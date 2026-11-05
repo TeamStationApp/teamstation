@@ -1,4 +1,11 @@
-import { globSync, mkdirSync, readFileSync } from 'node:fs'
+import {
+  globSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { resolve } from 'node:path'
 
 import { build } from 'esbuild'
@@ -10,6 +17,17 @@ import { webSettings } from './web-build-settings.mjs'
 mkdirSync('lib', { recursive: true })
 const currentSetup = process.argv.includes('--current-setup')
 const rosterEdit = process.argv.includes('--roster-edit')
+const chunkArgument = process.argv.find(arg => arg.startsWith('--chunk-bytes='))
+const chunkBytes =
+  chunkArgument == null
+    ? 0
+    : Number(chunkArgument.slice('--chunk-bytes='.length))
+if (!Number.isInteger(chunkBytes) || chunkBytes < 0)
+  throw new Error(`Expected --chunk-bytes=<bytes>, got ${chunkArgument}`)
+const chunkDir =
+  process.argv
+    .find(arg => arg.startsWith('--chunk-dir='))
+    ?.slice('--chunk-dir='.length) ?? 'lib'
 const files = currentSetup
   ? globSync(['src/app/scoring/*.test.tsx', 'src/app/field/*.test.tsx'])
   : globSync('src/**/*.test.tsx')
@@ -22,19 +40,50 @@ const extraFiles = rosterEdit
       'src/app/screens/fullName.test.tsx'
     ])
   : []
-const entries = [
-  {
-    files,
-    outfile: currentSetup
-      ? 'lib/current-setup-tests.cjs'
-      : 'lib/scoring-tests.cjs'
-  },
-  ...extraFiles.map((file, index) => ({
-    files: [file],
-    outfile: `lib/roster-edit-${index}-tests.cjs`
+/**
+ * `--chunk-bytes=B` splits the files, in order of their paths, into bundles in
+ * `--chunk-dir` (lib) of about B bytes of test source each, for
+ * run-unit-tests.mjs to run in processes of their own. Each bundle is a run of
+ * consecutive files, so every file follows only files that came before it in
+ * a single bundle of them all. `scoring-tests-chunks.json` lists each bundle with its test files
+ * and the bytes of test source in them.
+ */
+function chunked(maxBytes) {
+  const bundles = []
+  let bundle
+  for (const file of [...files].sort()) {
+    const bytes = statSync(file).size
+    if (bundle == null || (bundle.bytes > 0 && bundle.bytes + bytes > maxBytes))
+      bundles.push((bundle = { bytes: 0, files: [] }))
+    bundle.bytes += bytes
+    bundle.files.push(file)
+  }
+  return bundles.map((bundle, index) => ({
+    ...bundle,
+    outfile: `${chunkDir}/scoring-tests-chunk-${index}.cjs`
   }))
-]
-for (const entry of entries)
+}
+if (chunkBytes > 0) {
+  mkdirSync(chunkDir, { recursive: true })
+  for (const stale of globSync(`${chunkDir}/scoring-tests-chunk*`))
+    rmSync(stale)
+}
+const entries =
+  chunkBytes > 0
+    ? chunked(chunkBytes)
+    : [
+        {
+          files,
+          outfile: currentSetup
+            ? 'lib/current-setup-tests.cjs'
+            : 'lib/scoring-tests.cjs'
+        },
+        ...extraFiles.map((file, index) => ({
+          files: [file],
+          outfile: `lib/roster-edit-${index}-tests.cjs`
+        }))
+      ]
+const bundle = async entry =>
   await build({
     ...webSettings,
     plugins: [
@@ -114,3 +163,18 @@ for (const entry of entries)
     },
     loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
   })
+
+await Promise.all(entries.map(bundle))
+if (chunkBytes > 0)
+  writeFileSync(
+    `${chunkDir}/scoring-tests-chunks.json`,
+    JSON.stringify(
+      entries.map(({ outfile, bytes, files }) => ({
+        file: outfile,
+        bytes,
+        files
+      })),
+      null,
+      2
+    ) + '\n'
+  )
