@@ -294,7 +294,7 @@ const { values } = parseArgs({
 assert(
   values.case === 'retention' ||
     values.surface === 'tv' ||
-    (values.surface === 'web' && values.case === 'gaps'),
+    (values.surface === 'web' && ['gaps', 'sync'].includes(values.case ?? '')),
   'Unknown case'
 )
 const seconds = Number(values.seconds)
@@ -304,9 +304,9 @@ const run =
     ? import('./streamingReliabilityTv').then(async ({ tvReliability }) => {
         await tvReliability(values.case ?? 'transport')
       })
-    : values.case === 'gaps'
+    : values.case === 'gaps' || values.case === 'sync'
       ? import('./streamingReliabilityWeb').then(async ({ webReliability }) => {
-          await webReliability('gaps')
+          await webReliability(values.case!)
         })
       : retention(seconds)
 run.catch((error: unknown) => {
