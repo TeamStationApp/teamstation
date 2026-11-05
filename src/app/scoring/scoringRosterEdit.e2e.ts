@@ -68,6 +68,7 @@ async function main(): Promise<void> {
     .attach({
       device,
       platform: 'ios',
+      teamId: process.env.TS_IOS_TEAM_ID,
       appId: native ? 'app.teamstation.app' : 'com.apple.mobilesafari',
       artifacts: 'on-failure',
       waitForIdleTimeout: 500,
@@ -161,15 +162,14 @@ async function main(): Promise<void> {
     const nodes = native
       ? all
       : flat(all.find(node => node.type === 'WebView') ?? hierarchy)
-    const node = nodes
-      .filter(
-        node =>
-          (node.text === label ||
-            node.id === label ||
-            node.text?.startsWith(label + ',') === true) &&
-          node.bounds != null
-      )
-      .at(-1)
+    const matches = nodes.filter(
+      node =>
+        (node.text === label ||
+          node.id === label ||
+          node.text?.startsWith(label + ',') === true) &&
+        node.bounds != null
+    )
+    const node = label === 'Roster' ? matches[0] : matches.at(-1)
     assert(node?.bounds != null)
     console.log('Tap', label, node.bounds)
     await point(
@@ -193,9 +193,9 @@ async function main(): Promise<void> {
     await point(target.x + target.width / 2, target.y + target.height / 2)
   }
   const browserStep = async (direction: 'Back' | 'Forward'): Promise<void> => {
-    const target = flat(await m.hierarchy()).find(
-      node => node.id === direction + 'Button'
-    )?.bounds
+    const target = flat(await m.hierarchy())
+      .filter(node => node.id === direction + 'Button' || node.id === direction)
+      .at(-1)?.bounds
     assert(target != null, `Safari ${direction} must be available`)
     await point(target.x + target.width / 2, target.y + target.height / 2)
   }
@@ -232,8 +232,16 @@ async function main(): Promise<void> {
     await tap(label)
     await m.eraseText()
     if (value !== '') await m.inputText({ text: value })
-    if (native) await m.hideKeyboard()
-    else await m.tapOn({ text: '^Done$', timeout: 10000 })
+    await m.hideKeyboard()
+    const until = Date.now() + 10000
+    while (flat(await m.hierarchy()).some(node => node.type === 'Keyboard')) {
+      assert(
+        Date.now() < until,
+        'Keyboard must close before tapping form actions'
+      )
+      await m.hideKeyboard()
+      await pause()
+    }
   }
   const reach = async (label: string): Promise<void> => {
     for (let attempt = 0; attempt < 8; attempt++) {
@@ -272,7 +280,7 @@ async function main(): Promise<void> {
     // Earlier Settings visits can move this player below the first viewport.
     // Give standalone E6 the same ordering so it tests scrolling too.
     const seeded = await fetch(
-      `${fixture.backendUrl}/api/v1/teams/away/players/100/settings`,
+      `${fixture.backendUrl}/api/v1/teams/away/players/${fixture.players('away')[0].userId}/settings`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -410,7 +418,7 @@ async function main(): Promise<void> {
     )
   }
   try {
-    if (native) await m.stopApp()
+    await m.stopApp()
     await m.launchApp()
     if (native) {
       const ready = Date.now() + 60000
@@ -639,6 +647,7 @@ async function main(): Promise<void> {
       )
       return
     }
+    await tap('Lineup')
     await capture(`lineup-${phase}`)
     if (phase === 'after' && section === 'all') await tap('Remove Aaron J')
     await tap('Defense')
@@ -658,8 +667,8 @@ async function main(): Promise<void> {
         await shown('Mookie Betts')
         await capture('player-settings-after')
         await input('Jersey number', '12')
-        await tap('P')
-        await tap('SS')
+        await tap('Player position P')
+        await tap('Player position SS')
         // Settings beside a team edits the jersey and positions; how a player
         // bats and throws is edited away from a team.
         await reach('Save')
@@ -668,8 +677,9 @@ async function main(): Promise<void> {
         while (
           !fixture.trace.some(
             line =>
-              line.startsWith('PUT /api/v1/teams/away/players/100/settings') &&
-              line.includes('-> 200')
+              line.startsWith(
+                `PUT /api/v1/teams/away/players/${fixture.players('away')[0].userId}/settings`
+              ) && line.includes('-> 200')
           ) &&
           Date.now() < until
         )
@@ -677,8 +687,9 @@ async function main(): Promise<void> {
         assert(
           fixture.trace.some(
             line =>
-              line.includes('PUT /api/v1/teams/away/players/100/settings') &&
-              line.includes('-> 200')
+              line.includes(
+                `PUT /api/v1/teams/away/players/${fixture.players('away')[0].userId}/settings`
+              ) && line.includes('-> 200')
           )
         )
         await tap('Back')
@@ -723,7 +734,7 @@ async function main(): Promise<void> {
             !fixture.trace.some(
               line =>
                 line.startsWith(
-                  'PUT /api/v1/teams/home/players/200/settings'
+                  `PUT /api/v1/teams/home/players/${fixture.players('home')[0].userId}/settings`
                 ) && line.includes('-> 200')
             ) &&
             Date.now() < until
@@ -733,7 +744,7 @@ async function main(): Promise<void> {
             fixture.trace.some(
               line =>
                 line.startsWith(
-                  'PUT /api/v1/teams/home/players/200/settings'
+                  `PUT /api/v1/teams/home/players/${fixture.players('home')[0].userId}/settings`
                 ) && line.includes('-> 200')
             )
           )
@@ -829,8 +840,8 @@ async function main(): Promise<void> {
           async () =>
             !flat(await m.hierarchy()).some(
               node =>
-                node.text === 'Settings' ||
-                node.id === 'Settings' ||
+                node.text === 'Player settings' ||
+                node.id === 'Player settings' ||
                 node.text?.includes('JERSEY NUMBER') === true ||
                 node.id === 'JERSEY NUMBER' ||
                 node.text?.includes('Mookie Betts') === true
@@ -868,13 +879,15 @@ async function main(): Promise<void> {
       await shown('Mookie B')
       await reach('Mookie B')
       await tapStarts('Mookie B')
-      await shown('Settings')
-      await tap('Settings')
+      await shown('Player settings')
+      await tap('Player settings')
       await shown('JERSEY NUMBER')
       await shown('Mookie Betts')
       await tap('Back')
     } else await tap('Cancel')
-    await open('players/100?tab=settings&onTeam=away')
+    await open(
+      `players/${fixture.players('away')[0].userId}?tab=settings&onTeam=away`
+    )
     await shown(phase === 'before' ? 'Videos' : 'JERSEY NUMBER')
     if (phase === 'after') await shown('Mookie Betts')
     if (phase === 'before' || section === 'm1')

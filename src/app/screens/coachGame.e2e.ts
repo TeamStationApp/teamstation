@@ -398,10 +398,10 @@ describe('Coach Game', function () {
         throw new Error(`${url} must be a local server`)
     if (ARTIFACTS != null) await mkdir(ARTIFACTS, { recursive: true })
     daemon = await maestro(process.env.MAESTRO_D ?? 'lineupDictation')
-    const support = join(tmpdir(), 'coach-game-e2e')
+    const support = join(tmpdir(), `coach-game-e2e-${process.pid}`)
     const session = await browserSession(
       daemon,
-      'coach-game-coach',
+      `coach-game-coach-${process.pid}`,
       WIDTH,
       HEIGHT,
       support
@@ -716,7 +716,33 @@ describe('Coach Game', function () {
     expect(at('Hosts')).lessThan(at('The game has not started'))
     expect(at('The game has not started')).lessThan(at('Batting — Hosts'))
     inOrder(text.slice(at('Batting — Hosts')), HOSTS)
-    expect(text).includes('Ohtani00000000–')
+    const firstFigures = await coach.page.$eval(
+      '[data-testid="Roster box score"]',
+      root => {
+        const names = Array.from(
+          root.querySelectorAll('[data-testid="frozen-names"]')
+        ).find(column => String(column.textContent).includes('Ohtani'))!
+        const index = Array.from(names.children).findIndex(name =>
+          String(name.textContent).includes('Ohtani')
+        )
+        const figures =
+          names.nextElementSibling!.firstElementChild!.firstElementChild!
+        return Array.from(figures.children[index].children).map(
+          cell => cell.textContent
+        )
+      }
+    )
+    expect(firstFigures).deep.equals([
+      '0',
+      '0',
+      '0',
+      '0',
+      '0',
+      '0',
+      '0',
+      '0',
+      '–'
+    ])
     // Nobody has pitched, and the visitors' order is not the game's yet.
     expect(text).not.includes('Pitching')
     expect(text).not.includes('Batting — Visitors')

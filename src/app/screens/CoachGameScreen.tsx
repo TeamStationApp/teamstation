@@ -345,7 +345,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     setReopened(value => value + 1)
   }, [])
   const reload = useCallback(
-    async (remount = false): Promise<void> => {
+    async (remount = false, background = false): Promise<void> => {
       const session = opened?.session
       if (session == null) return
       // And whether the game holds his side's lineup now, which somebody
@@ -356,6 +356,9 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       ])
       // The screen moved on to another read of the game meanwhile.
       if (openedNow.current !== opened) return
+      // Keep the draft while refreshing its validation against current play
+      // state. Otherwise a batter awarded a base can disable Save forever.
+      const keepDraft = background && dirtyNow.current
       sessionRef.current = session
       // Home and away swapped under it: the session now replays on the new
       // teams, and his side is no longer the one the screen opened on.
@@ -378,6 +381,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       heard(lineups, opened!.side)
       const next = presented(session, opened!.side, ownDefault.current)
       setState(next)
+      if (keepDraft) return
       // A reload that leaves the setup as the editor was drawn from leaves
       // the editor, so its scroll and tab stay. A save draws it again even
       // then: a pinch runner keeps the order and the players, and the editor
@@ -418,6 +422,45 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     }
   })
   const { start: startLive, stop: stopLive } = live
+
+  // Lineup digests do not change on every pitch or completed at-bat. The
+  // editor also needs the current batter and bases to validate its next
+  // save. Refresh live state even over a dirty draft, without replacing the
+  // staged lineup or its base. Serialize notices arriving during a read.
+  const playsPending = useRef(false)
+  useEffect(() => {
+    if (socket == null) return
+    let active = true
+    let reading = false
+    const refresh = async (): Promise<void> => {
+      playsPending.current = true
+      if (reading) return
+      reading = true
+      try {
+        while (playsPending.current) {
+          if (!active) break
+          playsPending.current = false
+          await reload(false, true)
+        }
+      } catch {
+        // A later socket event or reconnect retries the read.
+      } finally {
+        reading = false
+      }
+    }
+    if (playsPending.current) refresh().catch(() => undefined)
+    const stop = listen(socket, gameId, event => {
+      if (
+        event.type === 'resync' ||
+        (event.type === 'change' && event.kind === 'plays')
+      )
+        refresh().catch(() => undefined)
+    })
+    return () => {
+      active = false
+      stop()
+    }
+  }, [socket, gameId, dirty, reload])
 
   // The game, both rosters and the lineups, read once as the screen opens.
   useEffect(() => {
