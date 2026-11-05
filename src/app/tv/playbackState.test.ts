@@ -88,6 +88,42 @@ describe('TV playback composition and remote state', () => {
       expect(clock.available(0)).equals(true)
       expect(clock.progress(0, 42)).equals(162000)
     })
+  it('rejoins matching decoded live frames beyond the safe seek edge without seeking', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[] = []
+    for (let i = 0; i < 4; i++)
+      clock.register(i, timeline(), seconds => seeks.push(seconds))
+    clock.load(0, Infinity)
+    clock.progress(0, 108.0009, 108, 0)
+    for (let i = 1; i < 4; i++) {
+      clock.load(i, Infinity)
+      expect(clock.available(i)).equals(false)
+      clock.progress(i, 108.001, 108, 0)
+      expect(clock.available(i)).equals(true)
+      expect(clock.ports[i].pendingWall).equals(null)
+    }
+    expect(seeks).deep.equals([])
+    clock.progress(0, 109, 108, 0)
+    for (let i = 1; i < 4; i++) {
+      clock.progress(i, 109.01, 108, 0)
+      expect(clock.available(i)).equals(true)
+    }
+  })
+  it('does not substitute a nearby decoded frame for a paused live selection', () => {
+    const clock = new PlaybackClock()
+    clock.register(0, timeline(), () => undefined)
+    clock.load(0, Infinity)
+    clock.progress(0, 108.001, 108, 0)
+    clock.fail(0)
+    clock.load(0, Infinity)
+    clock.progress(0, 108.002, 108, 0, false)
+    expect(clock.available(0)).equals(false)
+    expect(clock.ports[0].pendingWall).equals(208001)
+    clock.progress(0, 110, 108, 0)
+    expect(clock.available(0)).equals(false)
+    clock.progress(0, 108.002)
+    expect(clock.available(0)).equals(true)
+  })
   it('waits for fresh live bounds before restoring the selected moment', () => {
     const clock = new PlaybackClock()
     const seeks: number[] = []

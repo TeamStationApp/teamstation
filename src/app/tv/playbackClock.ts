@@ -183,8 +183,23 @@ export class PlaybackClock {
     // A replacement live source may open at the live edge. Restore the selected
     // moment only once its new seekable bounds arrive, and ignore that first frame.
     if (port.pendingWall !== null) {
-      this.seekPort(port, port.pendingWall, true)
-      return this.wall
+      const target = targetTime(port.timeline, port.pendingWall, port.duration)
+      // AVPlayer can decode live frames beyond its safe seek edge. A recovering
+      // playing camera already at the shared moment needs no impossible seek.
+      // Paused selections and cameras at a different moment still wait/restore.
+      if (
+        playing &&
+        !Number.isFinite(port.duration) &&
+        port.seekableEnd !== null &&
+        target?.available === true &&
+        target.seconds >= port.seekableEnd &&
+        Math.abs(seconds - target.seconds) <= 0.25
+      ) {
+        port.pendingWall = null
+      } else {
+        this.seekPort(port, port.pendingWall, true)
+        return this.wall
+      }
     }
     if (port.settling) return this.wall
     // Native progress queued before a seek can arrive after its completion callback.
