@@ -105,6 +105,7 @@ export function attachHls(
   /** Where to put the playhead once a reloaded stream has opened. */
   let resumeAtSec: number | null = null
   let awaitingLoad = false
+  let openingUntil = 0
   const putBack = (): void => {
     const at = resumeAtSec
     resumeAtSec = null
@@ -126,6 +127,9 @@ export function attachHls(
     if (handle.readyState > 0 || handle.seeking || handle.currentTime > 0)
       resumeAtSec = handle.currentTime
     awaitingLoad = true
+    // Opening and restoring a slow native source can take longer than the
+    // ordinary stall deadline. Bound the attempt without canceling it early.
+    openingUntil = Date.now() + 30_000
     handle.reload()
   }
   /** Loads the stream again now, and plays it, in place of any reload due. */
@@ -187,6 +191,7 @@ export function attachHls(
   }
 
   handle.onError = error => {
+    openingUntil = 0
     // The address is what is wrong: asking again for it is thirty guaranteed
     // failures, and the caller can mint a new one.
     if (addressIsWrong(error)) {
@@ -249,6 +254,7 @@ export function attachHls(
       !singleLive &&
       !gaveUp &&
       now - lastAdvance >= 20_000 &&
+      now >= openingUntil &&
       (failed || hasFailed() || silentReadyTile)
     ) {
       lastAdvance = now
