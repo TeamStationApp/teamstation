@@ -80,6 +80,7 @@ export interface FoldInput {
   me: string
   names: Map<string, string>
   reads: ChatRead[]
+  blockedUserIds?: ReadonlySet<string>
 }
 
 function statusOf(opened: Opened | undefined): MessageStatus {
@@ -117,7 +118,14 @@ export function reactionKey(emoji: string): string {
 
 /** The posts, oldest first, with everything aimed at them applied. */
 export function foldMessages(input: FoldInput): MessageView[] {
-  const envelopes = [...input.envelopes].sort((a, b) => a.seq - b.seq)
+  const envelopes = [...input.envelopes]
+    .filter(
+      envelope =>
+        input.blockedUserIds?.has(envelope.senderUserId) !== true ||
+        envelope.kind === 'delete' ||
+        envelope.kind === 'moderatorDelete'
+    )
+    .sort((a, b) => a.seq - b.seq)
   const posts = new Map<string, MessageView>()
   const reactions = new Map<
     string,

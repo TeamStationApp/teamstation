@@ -59,7 +59,7 @@ export async function notifyChat(
   await sql`select pg_notify(${CHAT_CHANGES_CHANNEL}, ${payload})`.execute(trx)
 }
 
-export type ChatUserChangeKind = 'link' | 'devices' | 'preferences'
+export type ChatUserChangeKind = 'link' | 'devices' | 'preferences' | 'blocks'
 
 /**
  * `pg_notify('chat_changes', { u, k })`: something about one user's own chat

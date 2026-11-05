@@ -3354,6 +3354,7 @@ function Shell(props: AppProps): React.ReactElement {
     ) : top.name === 'account' && session != null ? (
       <AccountScreen
         client={client}
+        socket={gameSocket}
         onTeamStationTv={() => {
           push({ name: 'teamStationTv' })
         }}

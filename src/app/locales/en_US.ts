@@ -680,6 +680,21 @@ export const enUs = {
     'The age range this device shares says you’re under 13, so chat isn’t available here. You can still follow your teams, schedules, stats and videos.',
   chat_age_under13_ok: 'OK',
   chat_age_failed: 'That didn’t save. Check your connection and try again.',
+  chat_block: 'Block',
+  chat_unblock: 'Unblock',
+  chat_block_person: 'Block %s',
+  chat_unblock_person: 'Unblock %s',
+  chat_block_title: 'Block %s?',
+  chat_unblock_title: 'Unblock %s?',
+  chat_block_detail:
+    'Their past and future messages and attachments will be hidden in all your shared chats. They cannot message you directly. They will not be notified, and their team membership stays the same. You can unblock them in Account.',
+  chat_unblock_detail:
+    'Their messages will be visible again, and they can message you directly. They will not be notified.',
+  chat_block_failed: 'That did not save. Check your connection and try again.',
+  chat_report_and_block: 'Report and Block',
+  chat_blocked_people: 'Blocked people',
+  chat_blocked_people_detail: 'Manage the people you have blocked in chat.',
+  chat_blocked_people_empty: 'You have not blocked anyone.',
   chat_report: 'Report',
   chat_report_title: 'Report this message?',
   chat_report_detail:
@@ -716,6 +731,8 @@ export const enUs = {
   chat_save_file: 'Save %s',
   chat_attachment_failed: 'That attachment could not be opened.',
   chat_send_failed: 'That did not send. Try again.',
+  chat_send_blocked:
+    "Message did not send. You've been blocked by the recipient.",
   chat_too_large: '%s is too large: files can be at most 100 MB.',
   chat_members: 'Members',
   chat_members_count_one: '%s member',

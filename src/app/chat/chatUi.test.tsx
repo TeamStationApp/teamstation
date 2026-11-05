@@ -324,6 +324,10 @@ class FakeEngine implements ChatScreenEngine {
     await this.sent(`moderatorDelete ${id} ${target}`)
   }
 
+  async setBlocked(userId: string, blocked: boolean): Promise<void> {
+    await this.sent(`block ${userId} ${String(blocked)}`)
+  }
+
   async report(
     id: string,
     target: string
@@ -946,7 +950,37 @@ describe('a conversation', function () {
     )
   })
 
-  it('reads a closed chat with personal copy and pin but no posting actions', async function () {
+  for (const action of ['Block', 'Report', 'Report and Block'])
+    it(`confirms ${action} from the conversation and dispatches the safety action`, async function () {
+      const { engine } = await open(
+        view({ messages: [message({ body: 'Safety fixture' })] })
+      )
+      await longPress('Safety fixture')
+      await press(action)
+      await until(
+        'confirmation',
+        () =>
+          document.querySelector('[data-testid="chat-safety-confirm"]') != null
+      )
+      await act(async () => {
+        document
+          .querySelector<HTMLElement>('[data-testid="chat-safety-confirm"]')!
+          .click()
+        await delay(30)
+      })
+      await until('safety request', () =>
+        engine.calls.some(call =>
+          call.startsWith(action === 'Block' ? 'block ' : 'report ')
+        )
+      )
+      await until(
+        'confirmation closes',
+        () =>
+          document.querySelector('[data-testid="chat-safety-confirm"]') == null
+      )
+    })
+
+  it('reads a closed chat with personal safety, copy and pin but no posting actions', async function () {
     await open(
       view({
         conversation: chat({ closed: true }),
@@ -959,7 +993,8 @@ describe('a conversation', function () {
     await longPress('old words')
     expect(button('React with 👍')).equals(undefined)
     expect(button('Reply')).equals(undefined)
-    expect(button('Report')).equals(undefined)
+    expect(button('Report')).not.equals(undefined)
+    expect(button('Block')).not.equals(undefined)
     expect(button('Copy')).not.equals(undefined)
     expect(button('Pin')).not.equals(undefined)
     await press('Cancel')

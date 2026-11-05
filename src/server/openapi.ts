@@ -8102,7 +8102,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'chat (400 `target`). Both clear their targets and delete the ' +
             'attachments only those referenced. The signature is the ' +
             'sender identity’s (400 `badSignature`). Notifies `message` with ' +
-            'the `seq`. Answers 201 with the message. Not audited.',
+            'the `seq`. A DM recipient blocking the sender returns 403 ' +
+            '`forbidden` with `details.reason: recipientBlocked`. ' +
+            'Answers 201 with the message. Not audited.',
           security: [{ bearer: [] }],
           parameters: [conversationIdParam],
           requestBody: keyBody({
@@ -8155,6 +8157,63 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/chat/blocks': {
+        get: {
+          summary: 'List the signed-in person’s blocked chat participants',
+          description:
+            'Session only. Returns userId, shortName, avatarUrl, historical userIds and createdAt for each personal block. No encryption keys are required.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'Personal blocked people' },
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/chat/blocks/{userId}': {
+        put: {
+          parameters: [
+            {
+              name: 'userId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          summary: 'Block a chat participant',
+          description:
+            'Idempotent, session only. Requires a shared current or historical chat. Hides their past and future messages and attachments for the caller and prevents their direct messages. Notifies only the caller’s devices; memberships and roles remain unchanged. Returns the caller’s block list.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'Blocked' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        },
+        delete: {
+          parameters: [
+            {
+              name: 'userId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          summary: 'Unblock a chat participant',
+          description:
+            'Idempotent, session only. Removes only the caller’s block and returns their block list. Remains available after leaving the shared chat; previous messages become readable again.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: { description: 'Unblocked' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/chat/reports': {
         post: {
           summary: 'Report a message',
@@ -8165,13 +8224,17 @@ export function openApiDocument(version: string): OpenApiDocument {
             'the report and stores it `verified` when the sender’s signature ' +
             'holds and opening the ciphertext with the key gives exactly the ' +
             'plaintext. A deleted message is 409 `cleared`. Answers 201 ' +
-            '`{id, verified}`. Audited.',
+            '`{id, verified}`. Optional blockSender atomically blocks the stored sender, using the same personal block policy, and adds blockedUserIds containing every merged identity of that sender so clients can hide cached messages immediately. Audited.',
           security: [{ bearer: [] }],
-          requestBody: keyBody({
-            messageId: { type: 'string' },
-            plaintext: { type: 'string' },
-            messageKey: b64
-          }),
+          requestBody: keyBody(
+            {
+              messageId: { type: 'string' },
+              plaintext: { type: 'string' },
+              messageKey: b64,
+              blockSender: { type: 'boolean', default: false }
+            },
+            ['messageId', 'plaintext', 'messageKey']
+          ),
           responses: {
             201: { description: 'Reported' },
             400: errorResponse,

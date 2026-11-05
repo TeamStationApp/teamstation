@@ -19,6 +19,7 @@ import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { survivors } from '../teams/teamStaff'
 import { isEligible, seasonStaffIds, teamGuardianRows } from './audiences'
+import { blockedSenderIds } from './blocks'
 import { DmFacts } from './dms'
 import { defaultPreferences, preferencesFor } from './preferences'
 import { scopeIdentities, scopeKey, scopesOf, titlesOf } from './titles'
@@ -156,12 +157,16 @@ async function describe(
   isAdmin: boolean
 ): Promise<ChatConversation[]> {
   const ids = rows.map(row => row.id)
+  const hidden = await blockedSenderIds(db, userId)
   const preferences = await preferencesFor(db, userId, ids)
   const posts = await db
     .selectFrom('chat_messages')
     .select(['conversation_id', 'id', 'seq', 'created_at'])
     .where('conversation_id', 'in', ids)
     .where('kind', '=', 'post')
+    .$if(hidden.length > 0, query =>
+      query.where('sender_user_id', 'not in', hidden)
+    )
     .distinctOn('conversation_id')
     .orderBy('conversation_id')
     .orderBy('seq', 'desc')
@@ -205,6 +210,7 @@ async function describe(
         where m.conversation_id = any(${ids}::text[])
           and m.seq > coalesce(r.seq, 0)
           and m.sender_user_id <> ${userId}
+          and not (m.sender_user_id = any(${hidden}::text[]))
           and m.kind = 'post'
           and m.cleared_at is null
         group by m.conversation_id
@@ -229,6 +235,9 @@ async function describe(
           eb => eb.fn.max<Date>('created_at').as('at')
         ])
         .where('conversation_id', 'in', ids)
+        .$if(hidden.length > 0, query =>
+          query.where('sender_user_id', 'not in', hidden)
+        )
         .groupBy('conversation_id')
         .execute()
     ).map(row => [row.conversation_id, new Date(row.at).toISOString()])

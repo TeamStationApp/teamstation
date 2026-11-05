@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
 import { asUserId } from '../../common/userId'
+import { blocksFor, setBlock } from '../chat/blocks'
 import {
   addDmMembers,
   createDm,
@@ -11,6 +12,7 @@ import {
   includedAdultIds,
   leaveDm
 } from '../chat/dms'
+import { chatCaller } from '../chat/keys'
 import {
   chatPeople,
   conversationFor,
@@ -56,6 +58,27 @@ export function chatRoutes(
   clock: () => Date = () => new Date()
 ): Router {
   const router = Router()
+
+  router.get(
+    '/chat/blocks',
+    requireActor,
+    withAsync(async (req, res) => {
+      const caller = chatCaller(req.actor)
+      res.json(await blocksFor(db, media, caller.userId))
+    })
+  )
+  for (const method of ['put', 'delete'] as const) {
+    router[method](
+      '/chat/blocks/:userId',
+      requireActor,
+      withAsync(async (req, res) => {
+        const caller = chatCaller(req.actor)
+        const target = cleanBody(asUserId, pathParam(req.params.userId))
+        await setBlock(db, caller.userId, target, method === 'put', clock())
+        res.json(await blocksFor(db, media, caller.userId))
+      })
+    )
+  }
 
   /** The conversation, when the caller is in it now; 404 otherwise. */
   const mustBeMember = async (

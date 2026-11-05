@@ -15,7 +15,13 @@ import type { ConversationState } from './store'
 export async function syncList(
   ctx: Pick<EngineContext, 'client' | 'memory'>
 ): Promise<void> {
-  ctx.memory.setList(await ctx.client.chatConversations())
+  const revision = ctx.memory.blockRevision
+  const list = await ctx.client.chatConversations()
+  if (revision !== ctx.memory.blockRevision) {
+    await syncList(ctx)
+    return
+  }
+  ctx.memory.setList(list)
 }
 
 /**
@@ -77,8 +83,18 @@ export function holdsLatest(
   )
 }
 
-function keep(state: ConversationState, envelopes: ChatMessage[]): void {
+function keep(
+  ctx: EngineContext,
+  state: ConversationState,
+  envelopes: ChatMessage[]
+): void {
   for (const envelope of envelopes) {
+    if (
+      ctx.memory.blockedUserIds.has(envelope.senderUserId) &&
+      envelope.kind !== 'delete' &&
+      envelope.kind !== 'moderatorDelete'
+    )
+      continue
     state.envelopes.set(envelope.seq, envelope)
     // A message read again (cleared since) is opened again.
     const opened = state.opened.get(envelope.id)
@@ -107,7 +123,7 @@ export async function openPending(
     if (opened != null && opened.status !== 'locked') continue
     const next = await openEnvelope(ctx, state, envelope)
     if (opened?.status !== next.status) changed += 1
-    state.opened.set(envelope.id, next)
+    if (state.envelopes.has(envelope.seq)) state.opened.set(envelope.id, next)
   }
   return changed
 }
@@ -124,16 +140,36 @@ export async function syncMessages(
 ): Promise<number> {
   const state = await stateOf(ctx, conversationId)
   let arrived = 0
+  const revision = ctx.memory.blockRevision
   if (!state.synced) {
     const page = await ctx.client.chatMessages(conversationId, {
       before: (through ?? Math.max(state.summary.lastSeq, state.newestSeq)) + 1,
       limit: ctx.pageSize
     })
-    keep(state, page)
+    if (revision !== ctx.memory.blockRevision)
+      return await syncMessages(ctx, conversationId, through)
+    keep(ctx, state, page)
     arrived += page.length
     state.hasEarlier = page.length === ctx.pageSize && page[0].seq > 1
     state.oldestSeq = page[0]?.seq
     state.newestSeq = page[page.length - 1]?.seq ?? 0
+    while (
+      state.blockHistoryFloor != null &&
+      state.oldestSeq != null &&
+      state.oldestSeq > state.blockHistoryFloor &&
+      state.hasEarlier
+    ) {
+      const older = await ctx.client.chatMessages(conversationId, {
+        before: state.oldestSeq,
+        limit: ctx.pageSize
+      })
+      if (revision !== ctx.memory.blockRevision)
+        return await syncMessages(ctx, conversationId, through)
+      keep(ctx, state, older)
+      arrived += older.length
+      if (older.length > 0) state.oldestSeq = older[0].seq
+      state.hasEarlier = older.length === ctx.pageSize && older[0].seq > 1
+    }
     state.synced = true
   }
   for (;;) {
@@ -142,7 +178,9 @@ export async function syncMessages(
       before: through == null ? undefined : through + 1,
       limit: ctx.pageSize
     })
-    keep(state, page)
+    if (revision !== ctx.memory.blockRevision)
+      return await syncMessages(ctx, conversationId, through)
+    keep(ctx, state, page)
     arrived += page.length
     if (page.length > 0) {
       state.newestSeq = page[page.length - 1].seq
@@ -166,11 +204,14 @@ export async function loadEarlier(
   const state = await stateOf(ctx, conversationId)
   if (!state.synced) return await syncMessages(ctx, conversationId)
   if (!state.hasEarlier || state.oldestSeq == null) return 0
+  const revision = ctx.memory.blockRevision
   const page = await ctx.client.chatMessages(conversationId, {
     before: state.oldestSeq,
     limit: ctx.pageSize
   })
-  keep(state, page)
+  if (revision !== ctx.memory.blockRevision)
+    return await syncMessages(ctx, conversationId)
+  keep(ctx, state, page)
   if (page.length > 0) state.oldestSeq = page[0].seq
   state.hasEarlier = page.length === ctx.pageSize && page[0].seq > 1
   await openPending(ctx, state)
