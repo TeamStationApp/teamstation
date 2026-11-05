@@ -34,6 +34,7 @@ export async function nativeRecoveryPermissions(options: {
     tapOn: (options: object) => Promise<unknown>
   }
   open: () => Promise<void>
+  restart: () => Promise<void>
   openScope: (id: string, expected: string) => Promise<void>
   hold: (id: string, body: string) => Promise<void>
 }): Promise<object> {
@@ -148,6 +149,9 @@ export async function nativeRecoveryPermissions(options: {
     posts
   )
   await api.leaveDm(input.conversationId)
+  // Reopening the same native URL can retain its existing screen. A cold
+  // application must attempt authorized access again, as a browser reload does.
+  await options.restart()
   await options.openScope(input.conversationId, 'Chat could not be opened.')
   await blocked('Chat could not be opened.', 'removed-blocked')
   await assert.rejects(

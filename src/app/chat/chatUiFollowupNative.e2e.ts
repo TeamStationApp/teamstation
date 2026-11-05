@@ -1417,6 +1417,16 @@ async function main(): Promise<void> {
               : undefined
           })
         },
+        restart: async () => {
+          await m.stopApp({ appId: fixture.appId })
+          await m.launchApp({
+            appId: fixture.appId,
+            ...(platform === 'ios'
+              ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+              : {})
+          })
+          await m.assertVisible({ text: 'Chat', timeout: 60000 })
+        },
         hold: async (id, body) => {
           await physicalMessageHold(m, `chat-message-${id}`, body, 550)
         }
