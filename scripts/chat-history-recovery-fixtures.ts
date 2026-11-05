@@ -61,6 +61,7 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
           'E7',
           'E8',
           'E9',
+          'E10',
           'E11',
           'E12',
           'E13'

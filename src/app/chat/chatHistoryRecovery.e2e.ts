@@ -33,8 +33,8 @@ interface Fixture {
   artifacts: string
 }
 async function main(): Promise<void> {
-  if (process.argv[2] === 'E8') {
-    await mixedVersionRecovery()
+  if (process.argv[2] === 'E8' || process.argv[2] === 'E10') {
+    await mixedVersionRecovery(process.argv[2])
     return
   }
   if (

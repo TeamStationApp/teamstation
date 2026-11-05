@@ -18,6 +18,7 @@ import {
 import { readSeedTable } from '../../test/chatSeedTable'
 
 interface Device extends MaestroDevice {
+  uploadFile: (options: { css: string; path: string }) => Promise<unknown>
   detach: () => Promise<void>
   evalBrowserScript: (options: { script: string }) => Promise<{ data: unknown }>
 }
@@ -32,7 +33,9 @@ interface Build {
   files: Record<string, string>
 }
 
-export async function mixedVersionRecovery(): Promise<void> {
+export async function mixedVersionRecovery(
+  scenario: 'E8' | 'E10' = 'E8'
+): Promise<void> {
   const fixtureFile = process.env.CHAT_RECOVERY_FIXTURE
   const buildsFile = process.env.CHAT_RECOVERY_BUILDS
   assert(fixtureFile != null && buildsFile != null)
@@ -188,7 +191,7 @@ export async function mixedVersionRecovery(): Promise<void> {
       bin: process.env.MAESTRO_D_BIN
     })) as unknown as Daemon
     console.log(
-      'E8: recording history with both clients on the pinned baseline build'
+      `${scenario}: recording history with both clients on the pinned baseline build`
     )
     const holder = await attach('Ha', 'holder', builds.baseline)
     const original = await attach('Hs', 'original', builds.baseline)
@@ -210,6 +213,150 @@ export async function mixedVersionRecovery(): Promise<void> {
     await message(original, first)
     await send(original, second)
     await message(holder, second)
+    if (scenario === 'E10') {
+      const fileName = 'retained-practice-image.png'
+      const file = join(f.artifacts, fileName)
+      writeFileSync(
+        file,
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgZGD4DwABCAEBfBRbtQAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      )
+      await holder.evalBrowserScript({
+        script: `window.recoveryInputClick=HTMLInputElement.prototype.click;HTMLInputElement.prototype.click=function(){if(this.type==='file'){this.style.display='block';this.style.width='200px';this.style.height='30px';return}return window.recoveryInputClick.call(this)};return true`
+      })
+      try {
+        await holder.tapOn({ text: 'Attach' })
+        await holder.uploadFile({ css: 'input[type="file"]', path: file })
+        await holder.assertVisible({
+          text: 'Remove ' + fileName,
+          timeout: 30000
+        })
+      } finally {
+        await holder.evalBrowserScript({
+          script:
+            'HTMLInputElement.prototype.click=window.recoveryInputClick;delete window.recoveryInputClick;return true'
+        })
+      }
+      const caption = 'Image shared before upgrading either device'
+      await send(holder, caption)
+      await message(original, caption)
+      async function imageReadable(m: Device): Promise<void> {
+        await m.assertVisible({
+          css: `[aria-label="${fileName}"]`,
+          timeout: 30000
+        })
+        const deadline = Date.now() + 30000
+        while (Date.now() < deadline) {
+          const decoded = await m.evalBrowserScript({
+            script: `return [...document.querySelectorAll('[aria-label="${fileName}"] img')].some(image=>image.complete&&image.naturalWidth===1&&image.naturalHeight===1)`
+          })
+          if (decoded.data === true || decoded.data === 'true') return
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+        throw Error('The retained encrypted image must actually decode')
+      }
+      async function safety(m: Device): Promise<string> {
+        await m.openLink({ link: f.origin + '/chat/' + dm.id + '/members' })
+        const selector = '[aria-label^="Safety words with "]'
+        await m.tapOn({ css: selector, timeout: 30000 })
+        await m.assertVisible({
+          css: '[data-testid="chat-safety-group-0"]',
+          timeout: 30000
+        })
+        const value = await m.evalBrowserScript({
+          script:
+            'return [...document.querySelectorAll(\'[data-testid^="chat-safety-group-"]\')].map(node=>node.textContent).join(" ")'
+        })
+        const words = String(value.data)
+        assert.equal(words.trim().split(/\s+/).length, 16)
+        assert(!words.includes('—'))
+        await open(m, dm.id)
+        return words
+      }
+      for (const m of [holder, original]) await imageReadable(m)
+      const safetyBefore = [await safety(holder), await safety(original)]
+      assert.equal(safetyBefore[0], safetyBefore[1])
+      const epochsBefore = await client.chatEpochs(dm.id, 0)
+      const messagesBefore = await client.chatMessages(dm.id)
+      assert.equal(epochsBefore.epochs.length, 1)
+      writeFileSync(
+        join(f.artifacts, 'intact-before.png'),
+        await original.screenshot()
+      )
+      await close(holder)
+      await close(original)
+      console.log(
+        'E10: upgrading both retained profiles with intact keys, messages, image and safety words'
+      )
+      const holderAfter = await attach('Ha', 'holder', builds.current)
+      const recipientAfter = await attach('Hs', 'original', builds.current)
+      for (const m of [holderAfter, recipientAfter]) {
+        await open(m, dm.id)
+        for (const text of [first, second, caption]) await message(m, text)
+        await imageReadable(m)
+      }
+      assert.deepEqual(
+        [await safety(holderAfter), await safety(recipientAfter)],
+        safetyBefore
+      )
+      assert.deepEqual(
+        (await client.chatEpochs(dm.id, 0)).epochs,
+        epochsBefore.epochs
+      )
+      assert.deepEqual(await client.chatMessages(dm.id), messagesBefore)
+      writeFileSync(
+        join(f.artifacts, 'intact-after.png'),
+        await recipientAfter.screenshot()
+      )
+      const continued = 'Ordinary reply after upgrading with keys intact'
+      await send(recipientAfter, continued)
+      await message(holderAfter, continued)
+      await close(holderAfter)
+      await close(recipientAfter)
+      for (const [key, profile] of [
+        ['Ha', 'holder'],
+        ['Hs', 'original']
+      ]) {
+        const restarted = await attach(key, profile, builds.current)
+        await open(restarted, dm.id)
+        for (const text of [first, second, caption, continued])
+          await message(restarted, text)
+        await imageReadable(restarted)
+        assert.equal(await safety(restarted), safetyBefore[0])
+        await close(restarted)
+      }
+      assert.deepEqual(
+        (await client.chatEpochs(dm.id, 0)).epochs,
+        epochsBefore.epochs
+      )
+      const posts = (await client.chatMessages(dm.id)).filter(
+        row => row.kind === 'post'
+      )
+      assert.equal(posts.length, 4)
+      writeFileSync(
+        join(f.artifacts, 'intact-upgrade-results.json'),
+        JSON.stringify(
+          {
+            baseline: builds.baseline,
+            current: builds.current,
+            safetyWordsUnchanged: true,
+            encryptedMessagesUnchanged: true,
+            imageDecodedOnBothVersionsAndRestart: true,
+            freshBoundaries: 0,
+            epochs: 1,
+            posts: 4
+          },
+          null,
+          2
+        )
+      )
+      console.log(
+        'PASS E10 web: both retained profiles preserve exact messages, decrypted image and safety words through upgrade/restart; ordinary sending creates no fresh boundary'
+      )
+      return
+    }
     const before = await client.chatEpochs(dm.id, 0)
     assert.equal(before.epochs.length, 1)
     await close(holder)
