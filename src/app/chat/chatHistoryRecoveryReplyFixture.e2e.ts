@@ -28,7 +28,7 @@ interface Device {
 }
 interface Daemon {
   attach: (options: object) => Promise<Device>
-  shutdown: (options: { wait: boolean }) => Promise<unknown>
+  shutdown: (options: { wait: number }) => Promise<unknown>
 }
 interface Setup {
   synthetic: true
@@ -264,7 +264,7 @@ async function main(): Promise<void> {
     console.log('Normal encrypted reply fixture ready: ' + mode)
   } finally {
     for (const m of active) await m.detach().catch(() => undefined)
-    await daemon.shutdown({ wait: true })
+    await daemon.shutdown({ wait: 15000 })
   }
 }
 main().catch((error: unknown) => {

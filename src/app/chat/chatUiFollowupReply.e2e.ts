@@ -47,7 +47,7 @@ interface Device {
 }
 interface Daemon {
   attach: (options: object) => Promise<Device>
-  shutdown: (options: { wait: boolean }) => Promise<unknown>
+  shutdown: (options: { wait: number }) => Promise<unknown>
 }
 interface Fixture {
   conversationId: string
@@ -881,7 +881,7 @@ async function main(): Promise<void> {
   } finally {
     await device?.clearNetworkMocks().catch(() => undefined)
     await device?.detach()
-    await daemon.shutdown({ wait: true })
+    await daemon.shutdown({ wait: 15000 })
     writeFileSync(
       join(ARTIFACTS, 'reply-results.json'),
       `${JSON.stringify({ cases: results, viewport, released: true }, null, 2)}\n`

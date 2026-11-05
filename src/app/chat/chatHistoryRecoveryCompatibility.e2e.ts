@@ -24,7 +24,7 @@ interface Device extends MaestroDevice {
 }
 interface Daemon {
   attach: (options: Record<string, unknown>) => Promise<Device>
-  shutdown: (options: { wait: boolean }) => Promise<void>
+  shutdown: (options: { wait: number }) => Promise<void>
   close: () => Promise<void>
 }
 interface Build {
@@ -451,7 +451,7 @@ export async function mixedVersionRecovery(
   } finally {
     try {
       for (const m of devices) await m.detach().catch(() => {})
-      await daemon?.shutdown({ wait: true })
+      await daemon?.shutdown({ wait: 15000 })
       await daemon?.close()
     } finally {
       server.closeAllConnections()

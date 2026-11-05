@@ -63,7 +63,7 @@ interface Device {
 }
 interface Daemon {
   attach: (options: object) => Promise<Device>
-  shutdown: (options: { wait: boolean }) => Promise<unknown>
+  shutdown: (options: { wait: number }) => Promise<unknown>
   close: () => Promise<unknown>
 }
 function required(key: string): string {
@@ -3395,7 +3395,7 @@ async function main(): Promise<void> {
     else if (scenario === 'S6') await s6(daemon)
     else await s9(daemon, scenario === 'S10')
   } finally {
-    await daemon.shutdown({ wait: true })
+    await daemon.shutdown({ wait: 15000 })
     await daemon.close()
   }
 }

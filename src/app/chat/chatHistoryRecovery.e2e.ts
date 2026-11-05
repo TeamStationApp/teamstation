@@ -18,7 +18,7 @@ interface Device extends MaestroDevice {
 }
 interface Daemon {
   attach: (options: Record<string, unknown>) => Promise<Device>
-  shutdown: (options: { wait: boolean }) => Promise<void>
+  shutdown: (options: { wait: number }) => Promise<void>
   close: () => Promise<void>
 }
 interface Fixture {
@@ -183,7 +183,7 @@ async function main(): Promise<void> {
     )
   } finally {
     for (const device of devices) await device.detach().catch(() => {})
-    await daemon.shutdown({ wait: true })
+    await daemon.shutdown({ wait: 15000 })
     await daemon.close()
   }
 }
