@@ -23,6 +23,7 @@ const palette = {
   tsMediumOlive: '#6B8E4E',
   tsDarkOlive: '#3D4E2F',
   tsVeryDarkGreen: '#1F2418',
+  tsDeepGreen: '#181D14',
   tsAccentGreen: '#88A870',
   tsPaleGreen: '#C4D4B8',
 
@@ -62,7 +63,7 @@ export const tsDark: Theme = {
   defaultBorderColor: palette.tsPaleGreen,
 
   backgroundColor: palette.tsVeryDarkGreen,
-  cardBackgroundColor: palette.tsBeige,
+  cardBackgroundColor: palette.tsDeepGreen,
   cardBackgroundDark: palette.tsDarkOlive,
   containerBackgroundColor: palette.tsVeryDarkGreen,
   inactiveBackgroundColor: palette.tsDarkOlive,
@@ -71,8 +72,8 @@ export const tsDark: Theme = {
   primaryTextFont: palette.quicksandBold,
   primaryTextFontSizeRem: 1.25,
   primaryTextColor: palette.tsBeige,
-  secondaryTextColor: palette.tsVeryDarkGreen,
-  tertiaryTextColor: palette.tsDarkOlive,
+  secondaryTextColor: palette.tsPaleGreen,
+  tertiaryTextColor: palette.tsAccentGreen,
   placeholderTextColor: palette.tsMediumOlive,
   secondaryTextFont: palette.inter,
   regularTextFont: palette.quicksandRegular,

@@ -229,7 +229,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderColor: theme.dangerColor
   },
   inputLocked: {
-    color: theme.secondaryTextColor,
+    color: theme.isDark ? theme.inputTextColor : theme.secondaryTextColor,
     borderStyle: 'dashed' as const
   },
   error: {

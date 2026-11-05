@@ -126,6 +126,14 @@ async function main(): Promise<void> {
         await m.screenshot()
       )
     }
+    const frameCollection = async (label: string): Promise<void> => {
+      await m.evalBrowserScript({
+        script: `document.querySelector(${JSON.stringify(`[aria-label="${label}"]`)})
+          .closest('[data-testid="relationship-action-row"]')
+          .scrollIntoView({ block: 'center', inline: 'nearest' })`
+      })
+      await new Promise(resolve => setTimeout(resolve, 350))
+    }
     const teamsPath = `/groups/league/${f.leagueA}?tab=teams`
     for (const mode of ['light', 'dark-large'] as const) {
       dark = mode === 'dark-large'
@@ -159,6 +167,7 @@ async function main(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 350))
       }
       const metrics = await collection(page, 'Open Winter Wolves')
+      if (dark && !before) assertReadable(metrics)
       assert.equal(metrics.rows, 2)
       assert.equal(metrics.dividers, 1)
       for (const row of metrics.geometry) {
@@ -172,27 +181,56 @@ async function main(): Promise<void> {
         }
       }
       await shot(`league-teams-${mode}`)
+      // Keep the narrow Teams stress case above; give the settings collections
+      // enough room to show their headings and complete rows in the evidence.
+      if (dark) await page.setViewport({ width: 390, height: 844 })
       await go(`/groups/team/${f.teamA}/settings`, 'PARENT ORGANIZATIONS')
       const reference = await collection(page, 'Leave Willow Woods')
       if (!before) assert.deepEqual(metrics.surface, reference.surface)
+      if (dark) {
+        if (!before) assertReadable(reference)
+        await m.scrollUntilVisible({
+          element: { css: '[aria-label="Leave Willow Woods"]' },
+          centerElement: true
+        })
+        await frameCollection('Leave Willow Woods')
+        await shot('parent-organizations-dark-large')
+      }
       lines.push(`${mode}: ${JSON.stringify(metrics)}`)
       // Existing collection surfaces stay shared and use the same themed card.
-      for (const [path, wanted, label] of [
-        [`/groups/team/${f.teamA}/settings`, 'MANAGE PLAYERS', 'Remove Ichiro'],
+      for (const [path, wanted, label, name] of [
+        [
+          `/groups/team/${f.teamA}/settings`,
+          'MANAGE PLAYERS',
+          'Remove Ichiro',
+          'manage-players'
+        ],
         [
           `/groups/league/${f.leagueA}?tab=seasons`,
           'Winter Weekends',
-          'Open Winter Weekends'
+          'Open Winter Weekends',
+          'league-seasons'
         ],
         [
           `/groups/season/${f.seasonA}?tab=teams`,
           'Winter Wolves',
-          'Open Winter Wolves'
+          'Open Winter Wolves',
+          'season-teams'
         ]
       ]) {
         await go(path, wanted)
         const existing = await collection(page, label)
         assert.deepEqual(existing.surface, reference.surface)
+        if (dark) {
+          if (!before) assertReadable(existing)
+          await m.scrollUntilVisible({
+            element: { css: `[aria-label="${label}"]` },
+            centerElement: true
+          })
+          await frameCollection(label)
+          await shot(`${name}-dark-large`)
+        }
+        lines.push(`${mode} ${name}: ${JSON.stringify(existing.textContrast)}`)
       }
       lines.push(
         `${mode}: Parent Organizations and all three existing collections match`
@@ -333,6 +371,7 @@ async function collection(
   dividers: number
   surface: Record<string, string>
   viewport: number
+  textContrast: Array<{ text: string; ratio: number }>
   geometry: Array<{
     right: number
     targets: Array<{ width: number; height: number }>
@@ -347,7 +386,47 @@ async function collection(
     const rows = [...card.children].filter(
       node => node.getAttribute('data-testid') === 'relationship-action-row'
     )
+    // Measure labels painted on the shared card. Initials tiles have their
+    // own unchanged palette; SVG icons are not text labels.
+    const luminance = (color: string): number => {
+      const channels = color
+        .match(/[\d.]+/g)!
+        .slice(0, 3)
+        .map(Number)
+      return channels
+        .map(channel => channel / 255)
+        .map(v => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+        .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0)
+    }
+    const textContrast: Array<{ text: string; ratio: number }> = []
+    const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT)
+    let textNode: Node | null
+    while ((textNode = walker.nextNode()) != null) {
+      const text =
+        textNode.textContent == null ? '' : textNode.textContent.trim()
+      const element = textNode.parentElement
+      if (text === '' || element == null || element.closest('svg') != null)
+        continue
+      if (element.getBoundingClientRect().height === 0) continue
+      let surface: Element | null = element
+      while (
+        surface != null &&
+        getComputedStyle(surface).backgroundColor === 'rgba(0, 0, 0, 0)'
+      )
+        surface = surface.parentElement
+      if (surface === card) {
+        const values = [
+          luminance(getComputedStyle(element).color),
+          luminance(getComputedStyle(surface).backgroundColor)
+        ].sort((a, b) => a - b)
+        textContrast.push({
+          text,
+          ratio: (values[1] + 0.05) / (values[0] + 0.05)
+        })
+      }
+    }
     return {
+      textContrast,
       rows: rows.length,
       dividers: card.children.length - rows.length,
       surface: Object.fromEntries(
@@ -386,6 +465,14 @@ async function collection(
       })
     }
   }, label)
+}
+function assertReadable(metrics: Awaited<ReturnType<typeof collection>>): void {
+  assert(metrics.textContrast.length > 0, 'Collection has rendered labels')
+  for (const { text, ratio } of metrics.textContrast)
+    assert(
+      ratio >= 4.5,
+      `${text}: text contrast ${ratio.toFixed(2)} is below 4.5`
+    )
 }
 main().catch((error: unknown) => {
   console.error(error)
