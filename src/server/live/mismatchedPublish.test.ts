@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -27,7 +28,9 @@ import {
   absorbWriterPlaylist,
   CONFIGURATION_WAIT_MS,
   configureIngest,
+  forcePublishForTest,
   type LiveEvent,
+  promoteWriterInit,
   publishArrivedForTest,
   publishGoneForTest,
   resetForTest,
@@ -35,6 +38,7 @@ import {
   SOUND_WAIT_MS,
   type TestSession,
   tickSamplerForTest,
+  WRITER_INIT_NAME,
   WRITER_PLAYLIST_NAME,
   writerForTest
 } from './splitter'
@@ -79,6 +83,17 @@ function spawned(): string[][] {
 
 const optionOf = (args: string[], name: string): string =>
   args[args.indexOf(name) + 1]
+
+/**
+ * The arguments of a writer continuing the recording with its init segment:
+ * that init segment and a playlist of its own, numbered from `next`.
+ */
+function expectContinuing(args: string[], next?: number): void {
+  expect(optionOf(args, '-hls_fmp4_init_filename')).equals(WRITER_INIT_NAME)
+  expect(optionOf(args, '-hls_flags')).not.contains('append_list')
+  expect(args.at(-1)).equals(join(DIR, WRITER_PLAYLIST_NAME))
+  if (next != null) expect(optionOf(args, '-start_number')).equals(String(next))
+}
 
 /** The recording's own files, byte for byte, without a writer's notes. */
 function recording(): Record<string, string> {
@@ -280,9 +295,7 @@ describe('a publish configured differently from the recording', function () {
       await publish(1, kind)
 
       const [, ...args] = spawned()[0]
-      expect(optionOf(args, '-hls_fmp4_init_filename')).equals('init.mp4')
-      expect(optionOf(args, '-hls_flags')).contains('append_list')
-      expect(args.at(-1)).equals(join(DIR, 'master.m3u8'))
+      expectContinuing(args, 3)
     })
   }
 
@@ -326,7 +339,9 @@ describe('a publish configured differently from the recording', function () {
       size: 40
     })
     await until(() => spawned().length === 1)
-    expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals('init.mp4')
+    expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals(
+      WRITER_INIT_NAME
+    )
   })
 
   it('hears a classic header sent before its key has been looked up', async function () {
@@ -362,7 +377,9 @@ describe('a publish configured differently from the recording', function () {
 
     answer()
     await until(() => spawned().length === 1)
-    expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals('init.mp4')
+    expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals(
+      WRITER_INIT_NAME
+    )
   })
 
   it('reads a classic header as a header, for the reader that joins late', function () {
@@ -420,11 +437,13 @@ describe('a publish configured differently from the recording', function () {
     expect(events.map(event => event.type)).contains('publishStarted')
     show(made, 1)
     await until(() => spawned().length === 1)
-    expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals('init.mp4')
+    expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals(
+      WRITER_INIT_NAME
+    )
   })
 
   for (const [name, camera, init] of [
-    ['matching', 1, 'init.mp4'],
+    ['matching', 1, WRITER_INIT_NAME],
     ['different', 2, 'init000003.mp4']
   ] as const) {
     it(`takes a ${name} publish after a refusal as if the refusal never happened`, async function () {
@@ -658,7 +677,7 @@ describe('a publish configured differently from the recording', function () {
       await until(() => spawned().length === 1)
       soundHeader(made, SOUND)
       const [, ...args] = spawned()[0]
-      expect(optionOf(args, '-hls_fmp4_init_filename')).equals('init.mp4')
+      expect(optionOf(args, '-hls_fmp4_init_filename')).equals(WRITER_INIT_NAME)
       expect(encoding(args)).deep.equals(PICTURE_ONLY)
       expect(recording()['master.m3u8']).equals(before['master.m3u8'])
     })
@@ -896,7 +915,12 @@ describe('a publish configured differently from the recording', function () {
         live()
         soundless(1)
         await until(() => spawned().length === 1)
-        expect(encoding(spawned()[0].slice(1))).deep.equals(STANDARD)
+        const [, ...args] = spawned()[0]
+        expect(encoding(args)).deep.equals(STANDARD)
+        // Nothing listed to keep whole: FFmpeg appends to the playlist itself.
+        expect(optionOf(args, '-hls_fmp4_init_filename')).equals('init.mp4')
+        expect(optionOf(args, '-hls_flags')).contains('append_list')
+        expect(args.at(-1)).equals(join(DIR, 'master.m3u8'))
       })
 
       it('gives silence over an init segment that cannot be read', async function () {
@@ -907,7 +931,9 @@ describe('a publish configured differently from the recording', function () {
         await until(() => spawned().length === 1)
         const [, ...args] = spawned()[0]
         expect(encoding(args)).deep.equals(STANDARD)
-        expect(optionOf(args, '-hls_fmp4_init_filename')).equals('init.mp4')
+        expect(optionOf(args, '-hls_fmp4_init_filename')).equals(
+          WRITER_INIT_NAME
+        )
       })
     })
 
@@ -1047,9 +1073,7 @@ describe('a publish configured differently from the recording', function () {
           expect(started).lessThan(WITHIN_WAIT)
           const [, ...args] = spawned()[0]
           expect(encoding(args)).deep.equals(COPY)
-          expect(optionOf(args, '-hls_fmp4_init_filename')).equals('init.mp4')
-          expect(optionOf(args, '-hls_flags')).contains('append_list')
-          expect(args.at(-1)).equals(join(DIR, 'master.m3u8'))
+          expectContinuing(args)
         })
       }
 
@@ -1080,7 +1104,7 @@ describe('a publish configured differently from the recording', function () {
         await until(() => spawned().length === 1)
         expect(encoding(spawned()[0].slice(1))).deep.equals(COPY)
         expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals(
-          'init.mp4'
+          WRITER_INIT_NAME
         )
       })
 
@@ -1112,7 +1136,7 @@ describe('a publish configured differently from the recording', function () {
         })
         expect(started).lessThan(WITHIN_WAIT)
         expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals(
-          'init.mp4'
+          WRITER_INIT_NAME
         )
       })
 
@@ -1149,7 +1173,9 @@ describe('a publish configured differently from the recording', function () {
         expect(started).lessThan(WITHIN_WAIT)
         const [, ...args] = spawned()[0]
         expect(encoding(args)).deep.equals(PICTURE_ONLY)
-        expect(optionOf(args, '-hls_fmp4_init_filename')).equals('init.mp4')
+        expect(optionOf(args, '-hls_fmp4_init_filename')).equals(
+          WRITER_INIT_NAME
+        )
       })
 
       it('counts from the first picture, not from the writer asking', async function () {
@@ -1236,13 +1262,13 @@ describe('a publish configured differently from the recording', function () {
         soundful(1)
         await until(() => spawned().length === 1)
         expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals(
-          'init.mp4'
+          WRITER_INIT_NAME
         )
       })
     })
   })
 
-  it('lets FFmpeg mend an init segment that cannot be read', async function () {
+  it("lets the writer's own init segment mend one that cannot be read", async function () {
     firstPublishOnDisk(DIR, START_MS)
     writeFileSync(join(DIR, 'init.mp4'), '')
     live()
@@ -1256,7 +1282,9 @@ describe('a publish configured differently from the recording', function () {
     })
     show(made, 2)
     await until(() => spawned().length === 1)
-    expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals('init.mp4')
+    expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals(
+      WRITER_INIT_NAME
+    )
   })
 
   it("lists a writer's segments behind a discontinuity and its map, on the programme clock", async function () {
@@ -1371,7 +1399,178 @@ describe('a publish configured differently from the recording', function () {
     expect(master()).equals(before)
 
     await publish(1)
-    expect(optionOf(spawned()[1], '-hls_fmp4_init_filename')).equals('init.mp4')
+    expect(optionOf(spawned()[1], '-hls_fmp4_init_filename')).equals(
+      WRITER_INIT_NAME
+    )
+  })
+
+  it('keeps init.mp4 as it was while a continuing writer has written none of its own', async function () {
+    firstPublishOnDisk(DIR, START_MS)
+    const before = readFileSync(join(DIR, 'init.mp4'))
+    const inode = statSync(join(DIR, 'init.mp4')).ino
+    const listed = master()
+    live()
+    await publish(1)
+    expectContinuing(spawned()[0].slice(1), 3)
+    await sleep(100)
+    expect(readFileSync(join(DIR, 'init.mp4'))).deep.equals(before)
+
+    // FFmpeg opens its init file as it starts, and writes it seconds later.
+    writeFileSync(join(DIR, WRITER_INIT_NAME), '')
+    writeFileSync(join(DIR, 'seg000003.m4s.tmp'), 'part of a segment')
+    await sleep(200)
+    expect(readFileSync(join(DIR, 'init.mp4'))).deep.equals(before)
+    expect(statSync(join(DIR, 'init.mp4')).ino).equals(inode)
+    expect(master()).equals(listed)
+  })
+
+  it("renames a continuing writer's whole init segment over init.mp4, then lists its segments behind one join", async function () {
+    firstPublishOnDisk(DIR, START_MS)
+    const before = master()
+    const inode = statSync(join(DIR, 'init.mp4')).ino
+    live()
+    await publish(1)
+    const init = configuredInit(parameterSetNals(1))
+
+    writerClosed(init, WRITER_INIT_NAME, [3])
+    await until(() => master().includes('seg000003.m4s'))
+    expect(readFileSync(join(DIR, 'init.mp4'))).deep.equals(init)
+    expect(
+      statSync(join(DIR, 'init.mp4')).ino,
+      'renamed, not rewritten'
+    ).not.equals(inode)
+    expect(existsSync(join(DIR, WRITER_INIT_NAME))).equals(false)
+    expect(master().startsWith(before), 'nothing listed changes').equals(true)
+    const added = master().slice(before.length).split('\n')
+    expect(added[0]).equals('#EXT-X-DISCONTINUITY')
+    expect(master().match(/EXT-X-MAP/g)).length(1)
+    expect(listedSegments(master()).at(-1)).includes({
+      name: 'seg000003.m4s',
+      init: 'init.mp4'
+    })
+    const at = timelineStartSec(init, readFileSync(join(DIR, 'seg000003.m4s')))
+    expect(at, 'stamped before it was listed').above(11)
+
+    writerClosed(init, WRITER_INIT_NAME, [3, 4])
+    await until(() => master().includes('seg000004.m4s'))
+    writerClosed(init, WRITER_INIT_NAME, [3, 4, 5])
+    await until(() => master().includes('seg000005.m4s'))
+    expect(master().match(/EXT-X-DISCONTINUITY/g), 'one join').length(1)
+    expect(master().match(/seg000003/g), 'listed once').length(1)
+    expect(master().match(/EXT-X-MAP/g)).length(1)
+  })
+
+  it('never takes an init segment that is not whole, and the next writer clears it away', async function () {
+    firstPublishOnDisk(DIR, START_MS)
+    const before = recording()
+    const inode = statSync(join(DIR, 'init.mp4')).ino
+    live()
+    const made = await publish(1)
+    const init = configuredInit(parameterSetNals(1))
+    writeFileSync(join(DIR, WRITER_INIT_NAME), init.subarray(0, 40))
+    await sleep(200)
+    await leave(made)
+    expect(recording()).deep.equals(before)
+    expect(statSync(join(DIR, 'init.mp4')).ino).equals(inode)
+
+    await publish(1)
+    expect(existsSync(join(DIR, WRITER_INIT_NAME))).equals(false)
+    expect(recording()).deep.equals(before)
+    expectContinuing(spawned()[1].slice(1), 3)
+  })
+
+  it("picks a continuing writer's segments up after a crash, its init segment with them", async function () {
+    firstPublishOnDisk(DIR, START_MS)
+    const before = master()
+    // What a process that died leaves: a whole init segment of the writer's,
+    // and a closed segment listed nowhere else.
+    const init = configuredInit(parameterSetNals(1))
+    writerClosed(init, WRITER_INIT_NAME, [3])
+    live()
+    await publish(1)
+
+    expect(master().startsWith(before)).equals(true)
+    expect(master().slice(before.length).split('\n')[0]).equals(
+      '#EXT-X-DISCONTINUITY'
+    )
+    expect(listedSegments(master()).at(-1)).includes({
+      name: 'seg000003.m4s',
+      init: 'init.mp4'
+    })
+    expect(readFileSync(join(DIR, 'init.mp4'))).deep.equals(init)
+    expect(existsSync(join(DIR, WRITER_INIT_NAME))).equals(false)
+    expect(existsSync(join(DIR, WRITER_PLAYLIST_NAME))).equals(false)
+    expectContinuing(spawned()[0].slice(1), 4)
+  })
+
+  it('gives a writer with no publisher to ask its own init segment after a part with one of its own', async function () {
+    firstPublishOnDisk(DIR, START_MS)
+    live()
+    const second = await publish(2)
+    writerClosed(configuredInit(parameterSetNals(2)), 'init000003.mp4', [3])
+    await until(() => master().includes('seg000003.m4s'))
+    await leave(second)
+
+    forcePublishForTest(KEY, true)
+    await until(() => spawned().length === 2)
+    const [, ...args] = spawned()[1]
+    expect(optionOf(args, '-hls_fmp4_init_filename')).equals('init000004.mp4')
+    expect(args.at(-1)).equals(join(DIR, WRITER_PLAYLIST_NAME))
+    forcePublishForTest(KEY, false)
+  })
+
+  it('lists nothing of a writer whose init segment is not whole, and says so before clearing it away', async function () {
+    firstPublishOnDisk(DIR, START_MS)
+    const before = recording()
+    const listed = master()
+    live()
+    const made = await publish(1)
+    const init = configuredInit(parameterSetNals(1))
+    writerClosed(init.subarray(0, init.length - 1), WRITER_INIT_NAME, [3])
+    await sleep(300)
+    expect(master(), 'nothing under an init segment that is not there').equals(
+      listed
+    )
+    await leave(made)
+    expect(master()).equals(listed)
+
+    await publish(1)
+    expect(logs.join('\n')).contains(
+      "[live:liv_mismatch] the last writer's init segment never went over init.mp4; seg000003.m4s stay unlisted"
+    )
+    expect(existsSync(join(DIR, WRITER_INIT_NAME))).equals(false)
+    expect(readFileSync(join(DIR, 'init.mp4')).toString('base64')).equals(
+      before['init.mp4']
+    )
+  })
+
+  it('gives a writer after a change its own init segment when the camera before it matched', async function () {
+    firstPublishOnDisk(DIR, START_MS)
+    live()
+    const first = await publish(1)
+    writerClosed(configuredInit(parameterSetNals(1)), WRITER_INIT_NAME, [3])
+    await until(() => master().includes('seg000003.m4s'))
+    await leave(first)
+
+    const second = await publish(2)
+    expect(optionOf(spawned()[1].slice(1), '-hls_fmp4_init_filename')).equals(
+      'init000004.mp4'
+    )
+    writerClosed(configuredInit(parameterSetNals(2)), 'init000004.mp4', [4])
+    await until(() => master().includes('seg000004.m4s'))
+    await leave(second)
+
+    await publish(1)
+    const [, ...args] = spawned()[2]
+    expect(optionOf(args, '-hls_fmp4_init_filename')).equals('init000005.mp4')
+    expect(listedSegments(master()).map(segment => segment.init)).deep.equals([
+      'init.mp4',
+      'init.mp4',
+      'init.mp4',
+      'init.mp4',
+      'init000004.mp4'
+    ])
+    expect(master().match(/EXT-X-DISCONTINUITY/g)).length(2)
   })
 })
 
@@ -1395,6 +1594,99 @@ describe("carrying a writer's playlist onto the recording", function () {
       `${['#EXTM3U', '#EXT-X-MAP:URI="init000003.mp4"', ...lines].join('\n')}\n`
     )
   }
+
+  const continuing = (lines: string[]): void => {
+    writeFileSync(
+      join(dir, WRITER_PLAYLIST_NAME),
+      `${['#EXTM3U', `#EXT-X-MAP:URI="${WRITER_INIT_NAME}"`, ...lines].join('\n')}\n`
+    )
+  }
+
+  it("lists a continuing writer's segments under init.mp4, behind one join", function () {
+    const before = listing()
+    const init = configuredInit(parameterSetNals(1), SOUND)
+    writeFileSync(join(dir, WRITER_INIT_NAME), init)
+    continuing(['#EXTINF:4.000000,', 'seg000003.m4s'])
+    expect(absorbWriterPlaylist(dir)).equals(true)
+    expect(readFileSync(join(dir, 'init.mp4'))).deep.equals(init)
+    expect(existsSync(join(dir, WRITER_INIT_NAME))).equals(false)
+    expect(listing().slice(before.length)).equals(
+      '#EXT-X-DISCONTINUITY\n#EXTINF:4.000000,\nseg000003.m4s\n'
+    )
+
+    continuing([
+      '#EXTINF:4.000000,',
+      'seg000003.m4s',
+      '#EXTINF:4.000000,',
+      'seg000004.m4s'
+    ])
+    absorbWriterPlaylist(dir)
+    expect(listing().slice(before.length)).equals(
+      '#EXT-X-DISCONTINUITY\n#EXTINF:4.000000,\nseg000003.m4s\n#EXTINF:4.000000,\nseg000004.m4s\n'
+    )
+  })
+
+  it('leaves init.mp4 byte for byte as it was for an init segment that is not whole', function () {
+    const held = readFileSync(join(dir, 'init.mp4'))
+    const init = configuredInit(parameterSetNals(1))
+    const moovless = Buffer.alloc(16)
+    moovless.writeUInt32BE(16, 0)
+    moovless.write('ftyp', 4, 'latin1')
+    const odd = Buffer.concat([init, Buffer.from([0, 0, 0])])
+    for (const partial of [
+      Buffer.alloc(0),
+      init.subarray(0, 6),
+      init.subarray(0, init.length - 1),
+      odd,
+      moovless
+    ]) {
+      writeFileSync(join(dir, WRITER_INIT_NAME), partial)
+      expect(promoteWriterInit(dir)).equals(false)
+      expect(readFileSync(join(dir, 'init.mp4'))).deep.equals(held)
+    }
+    rmSync(join(dir, WRITER_INIT_NAME))
+    expect(promoteWriterInit(dir), 'none at all').equals(false)
+    writeFileSync(join(dir, WRITER_INIT_NAME), init)
+    expect(promoteWriterInit(dir)).equals(true)
+    expect(readFileSync(join(dir, 'init.mp4'))).deep.equals(init)
+  })
+
+  it('leaves a whole init segment where it is when it cannot be renamed', function () {
+    const init = configuredInit(parameterSetNals(1))
+    rmSync(join(dir, 'init.mp4'))
+    mkdirSync(join(dir, 'init.mp4', 'in the way'), { recursive: true })
+    writeFileSync(join(dir, WRITER_INIT_NAME), init)
+    expect(promoteWriterInit(dir)).equals(false)
+    expect(readFileSync(join(dir, WRITER_INIT_NAME))).deep.equals(init)
+  })
+
+  it('lists nothing while the writer init segment cannot be renamed, and keeps it', function () {
+    const before = listing()
+    const init = configuredInit(parameterSetNals(1))
+    rmSync(join(dir, 'init.mp4'))
+    mkdirSync(join(dir, 'init.mp4', 'in the way'), { recursive: true })
+    writeFileSync(join(dir, WRITER_INIT_NAME), init)
+    continuing(['#EXTINF:4.000000,', 'seg000003.m4s'])
+    expect(absorbWriterPlaylist(dir), 'held back').equals(false)
+    expect(listing()).equals(before)
+    expect(readFileSync(join(dir, WRITER_INIT_NAME))).deep.equals(init)
+  })
+
+  it('takes the writer init segment into place before an end the controller wrote', function () {
+    writeFileSync(join(dir, 'master.m3u8'), `${listing()}#EXT-X-ENDLIST\n`)
+    const init = configuredInit(parameterSetNals(1))
+    writeFileSync(join(dir, WRITER_INIT_NAME), init)
+    continuing(['#EXTINF:4.000000,', 'seg000003.m4s'])
+    absorbWriterPlaylist(dir)
+    const lines = listing().trimEnd().split('\n')
+    expect(lines.slice(-4)).deep.equals([
+      '#EXT-X-DISCONTINUITY',
+      '#EXTINF:4.000000,',
+      'seg000003.m4s',
+      '#EXT-X-ENDLIST'
+    ])
+    expect(readFileSync(join(dir, 'init.mp4'))).deep.equals(init)
+  })
 
   it('does nothing with no writer playlist, or one with no map', function () {
     const before = listing()

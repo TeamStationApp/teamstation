@@ -1519,6 +1519,169 @@ describe('what somebody may do changing while the panel is up', function () {
     expect(answers.asked()).equals(2)
   })
 
+  /** The idempotency key of each request to film, in the order sent. */
+  const keys = (fake: FakeClient): unknown[] =>
+    fake.requests.map(
+      sent => (sent as { idempotencyKey?: unknown }).idempotencyKey
+    )
+
+  // The main path: the key ends with the request that went.
+  it('asks again with a new request after a decline, on the same screen', async function () {
+    const fake = fakeClient()
+    fake.allowed = false
+    const answers = access(fake, {})
+    await mountEmptyWith(fake)
+    await press(button('Request access'))
+    answers.now({ requested: true })
+    await poll.poll()
+    expect(text()).contains('Request sent')
+
+    // A coach declines: the next read brings Request access back.
+    answers.now({ requested: false })
+    await poll.poll()
+    expect(text()).not.contains('Request sent')
+    await press(button('Request access'))
+    expect(fake.requests).to.have.length(2)
+    const [first, second] = keys(fake)
+    expect(first).to.be.a('string')
+    expect(second).to.be.a('string').and.not.equal(first)
+    expect(text()).contains('Request sent')
+
+    answers.now({ requested: true })
+    await poll.poll()
+    await poll.poll()
+    expect(text()).contains('Request sent')
+  })
+
+  it('keeps one request through failed sends, and asks anew after a decline', async function () {
+    const fake = fakeClient()
+    fake.allowed = false
+    const answers = access(fake, {})
+    let failures = 2
+    fake.invite = async () => {
+      if (failures > 0) {
+        failures -= 1
+        throw new Error('No signal')
+      }
+      return { id: 'req_1', status: 'pending' }
+    }
+    await mountEmptyWith(fake)
+    await press(button('Request access'))
+    expect(text()).contains('No signal')
+    await press(button('Request access'))
+    await press(button('Request access'))
+    expect(text()).contains('Request sent')
+    const sent = keys(fake)
+    expect(sent).to.have.length(3)
+    expect(new Set(sent).size, 'one key for one ask').equals(1)
+
+    answers.now({ requested: true })
+    await poll.poll()
+    answers.now({ requested: false })
+    await poll.poll()
+    await press(button('Request access'))
+    expect(keys(fake)).to.have.length(4)
+    expect(keys(fake)[3]).to.be.a('string').and.not.equal(sent[0])
+  })
+
+  it('asks anew after a decline of a request whose answer was lost', async function () {
+    const fake = fakeClient()
+    fake.allowed = false
+    const answers = access(fake, {})
+    const appState = fakeAppState()
+    fake.invite = async () => {
+      throw new Error('No signal')
+    }
+    await mountEmptyWith(fake, undefined, appState)
+    await press(button('Request access'))
+    expect(text()).contains('No signal')
+
+    // It reached the server all the same, and a later read says so.
+    answers.now({ requested: true })
+    await appState.turn('active')
+    expect(text()).contains('Request sent')
+    expect(text(), 'nothing failed after all').not.contains('No signal')
+    answers.now({ requested: false })
+    await poll.poll()
+    expect(text()).not.contains('Request sent')
+
+    fake.invite = async () => ({ id: 'req_2', status: 'pending' })
+    await press(button('Request access'))
+    const [lost, next] = keys(fake)
+    expect(next).to.be.a('string').and.not.equal(lost)
+    expect(text()).contains('Request sent')
+  })
+
+  it('asks anew when a lost answer’s request was declined before any read', async function () {
+    const fake = fakeClient()
+    fake.allowed = false
+    access(fake, {})
+    fake.invite = async () => {
+      throw new Error('No signal')
+    }
+    await mountEmptyWith(fake)
+    await press(button('Request access'))
+    const [lost] = keys(fake)
+
+    // The server has it and a coach declines it; nothing reads in between,
+    // and the same key gets that request back, declined.
+    fake.invite = async () =>
+      keys(fake).at(-1) === lost
+        ? { id: 'req_1', status: 'declined' }
+        : { id: 'req_2', status: 'pending' }
+    await press(button('Request access'))
+    const sent = keys(fake)
+    expect(sent).to.have.length(3)
+    expect(sent[1]).equals(lost)
+    expect(sent[2]).to.be.a('string').and.not.equal(lost)
+    expect(text()).contains('Request sent')
+    expect(text()).not.contains('No signal')
+  })
+
+  it('shows no error from a send that fails once a read has its request waiting', async function () {
+    const fake = fakeClient()
+    fake.allowed = false
+    const answers = access(fake, {})
+    const appState = fakeAppState()
+    let fail: (error: Error) => void = () => undefined
+    fake.invite = async () =>
+      await new Promise((_resolve, reject) => {
+        fail = reject
+      })
+    await mountEmptyWith(fake, undefined, appState)
+    await press(button('Request access'))
+
+    // Back from another app, a read begun after the tap finds it waiting,
+    // and only then does the send's answer fail.
+    answers.now({ requested: true })
+    await appState.turn('active')
+    await act(async () => {
+      fail(new Error('No signal'))
+      await delay(20)
+    })
+    expect(text()).contains('Request sent')
+    expect(text()).not.contains('No signal')
+
+    answers.now({ requested: false })
+    await poll.poll()
+    expect(text(), 'declined, with no stale error').not.contains('No signal')
+  })
+
+  // Locks a request from before this mount, which holds no key here.
+  it('asks again once a request from an earlier visit expires', async function () {
+    const fake = fakeClient()
+    fake.allowed = false
+    const answers = access(fake, { requested: true })
+    await mountEmptyWith(fake)
+    expect(text()).contains('Request sent')
+    answers.now({ requested: false })
+    await poll.poll()
+    await press(button('Request access'))
+    expect(keys(fake)).to.have.length(1)
+    expect(keys(fake)[0]).to.be.a('string')
+    expect(text()).contains('Request sent')
+  })
+
   it('takes Record Video away with the role, and stops reading the cameras', async function () {
     const fake = fakeClient()
     const answers = access(fake, { canFilm: true })

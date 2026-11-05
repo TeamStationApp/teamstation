@@ -32,6 +32,8 @@ import {
   statusFor,
   type TestSession,
   tickSamplerForTest,
+  WRITER_INIT_NAME,
+  WRITER_PLAYLIST_NAME,
   writerForTest
 } from './splitter'
 import { firstPublishOnDisk, placedAt } from './splitterFixtures'
@@ -320,10 +322,16 @@ describe('a publish on a key that already holds a recording', function () {
     show(again, FOURCC_HEVC)
     showSound(again)
     await until(() => spawned().length === 2)
+    // A writer continuing the recording: its own playlist and init segment,
+    // numbered after the segment the last writer left.
     const next = spawned()[1]
     const flags = next[next.indexOf('-hls_flags') + 1].split('+')
-    expect(flags).includes('append_list')
-    expect(next[next.indexOf('-start_number') + 1]).equals('0')
+    expect(flags).not.includes('append_list')
+    expect(next[next.indexOf('-start_number') + 1]).equals('4')
+    expect(next[next.indexOf('-hls_fmp4_init_filename') + 1]).equals(
+      WRITER_INIT_NAME
+    )
+    expect(next.at(-1)).equals(join(DIR, WRITER_PLAYLIST_NAME))
   })
 
   it('refuses a newcomer that replaced a quiet publisher, its writer still finishing', async function () {
@@ -362,7 +370,11 @@ describe('a publish on a key that already holds a recording', function () {
     expect(spawned(), 'metadata is not a sequence header').length(0)
     show(made, FOURCC_HEVC)
     await until(() => spawned().length === 1)
-    expect(spawned()[0].join(' ')).contains('append_list')
+    const args = spawned()[0]
+    expect(args[args.indexOf('-hls_fmp4_init_filename') + 1]).equals(
+      WRITER_INIT_NAME
+    )
+    expect(args.at(-1)).equals(join(DIR, WRITER_PLAYLIST_NAME))
   })
 
   for (const [name, codec] of [

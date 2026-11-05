@@ -160,6 +160,11 @@ import Testing
     )
   }
 
+  @Test func saysWhatACameraLimitMeansInTheServersWords() {
+    let sentence = "This game already has 6 cameras. End one to add another."
+    #expect(TeamStationError.cameraLimit(sentence).localizedDescription == sentence)
+  }
+
   @Test func prefersTheServersOwnSentence() {
     let body = Data(#"{"code":"badRequest","message":"This game has no stream to send to yet."}"#.utf8)
     #expect(TeamStationClient.message(from: body, status: 400).hasPrefix("This game has no"))
@@ -215,6 +220,36 @@ struct RefusalTests {
     await #expect(throws: TeamStationError.server("That code is wrong or has expired")) {
       _ = try await client(token: nil).completeSignIn(
         email: "paul@example.com", code: "000000", deviceName: "a Mac"
+      )
+    }
+  }
+
+  @Test func aCameraLimitIsItsOwnError() async throws {
+    let sentence = "You already have 4 cameras on this game. End one to add another."
+    OneAnswer.status = 400
+    OneAnswer.body = #"{"code":"badRequest","message":"\#(sentence)","details":{"reason":"cameraLimit"}}"#
+
+    await #expect(throws: TeamStationError.cameraLimit(sentence)) {
+      _ = try await client(token: "tok").requestLiveStream(
+        gameId: "gam_1", label: "Home Plate", deviceId: "dev_1", deviceModel: "iPad Pro"
+      )
+    }
+  }
+
+  /// `details` is free-form: a body the server would not accept lists its fields there.
+  @Test(arguments: [
+    #"{"code":"badRequest","message":"Fix the camera's name","details":[{"path":"label"}]}"#,
+    #"{"code":"badRequest","message":"Fix the camera's name","details":{"reason":"somethingElse"}}"#,
+    #"{"code":"badRequest","message":"Fix the camera's name","details":"label"}"#,
+    #"{"code":"badRequest","message":"Fix the camera's name"}"#
+  ])
+  func anyOtherRefusalKeepsTheServersSentence(body: String) async throws {
+    OneAnswer.status = 400
+    OneAnswer.body = body
+
+    await #expect(throws: TeamStationError.server("Fix the camera's name")) {
+      _ = try await client(token: "tok").requestLiveStream(
+        gameId: "gam_1", label: "Home Plate", deviceId: "dev_1", deviceModel: "iPad Pro"
       )
     }
   }

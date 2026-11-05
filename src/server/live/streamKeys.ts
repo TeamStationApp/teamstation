@@ -133,6 +133,13 @@ export const MAX_CAMERAS = 4
 export const MAX_GAME_CAMERAS = 6
 
 /**
+ * `details.reason` on the refusal of a camera over either limit, so a client
+ * can tell it from every other 400 without reading the sentence: TS Director
+ * shows it and stops, where it would let another refusal pass quietly.
+ */
+export const CAMERA_LIMIT_REASON = 'cameraLimit'
+
+/**
  * Whether a camera still holds its place: not ended, not revoked, and nobody
  * has closed it. Everything else keeps its row and gives its slot, its name
  * and its share of the limits back.
@@ -342,7 +349,8 @@ export function freeSlot(mine: LiveStreamRow[]): number | undefined {
 
 /**
  * The slot a new camera of this person's takes, or the refusal when they or
- * the game are full. Only active cameras count, and a Director's is one.
+ * the game are full, marked `CAMERA_LIMIT_REASON`. Only active cameras count,
+ * and a Director's is one.
  *
  * Every path that creates a camera calls this under the game's
  * `liveStreams:<gameId>` lock, so two asking at once cannot both pass.
@@ -358,12 +366,14 @@ export async function checkCameraLimits(
   const slot = freeSlot(active.filter(row => row.userId === userId))
   if (slot == null) {
     throw badRequest(
-      `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
+      `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`,
+      { reason: CAMERA_LIMIT_REASON }
     )
   }
   if (active.length >= MAX_GAME_CAMERAS) {
     throw badRequest(
-      `This game already has ${MAX_GAME_CAMERAS} cameras. End one to add another.`
+      `This game already has ${MAX_GAME_CAMERAS} cameras. End one to add another.`,
+      { reason: CAMERA_LIMIT_REASON }
     )
   }
   return slot
