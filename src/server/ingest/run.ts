@@ -5,7 +5,11 @@ import type { Kysely } from 'kysely'
 import type { ChangeFeed } from '../changeFeed/feed'
 import type { Database, PoolOptions } from '../db/database'
 import type { LiveControllerOptions } from '../live/controller'
-import { quit, type ScoreboardClient } from '../scoreboard/scoreboardStore'
+import {
+  quit,
+  type ScoreboardClient,
+  scoreboardPrefix
+} from '../scoreboard/scoreboardStore'
 import { requestDatabaseUrl, type ServerConfig } from '../serverConfig'
 
 /**
@@ -120,7 +124,8 @@ export async function runIngest(
     sessionSecret: config.sessionSecret,
     space: config.space,
     feed,
-    playlistClient: valkey
+    playlistClient: valkey,
+    playlistPrefix: scoreboardPrefix(config.redis.prefix, config.databaseUrl)
   })
   if (!started) {
     logError('live ingest did not start')
