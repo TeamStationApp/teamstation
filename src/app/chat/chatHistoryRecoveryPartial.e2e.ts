@@ -35,7 +35,7 @@ interface Daemon {
 }
 
 export async function partialRecovery(
-  scenario: 'E3' | 'E4' | 'E5' | 'E6' | 'E7' | 'E11' | 'E13' = 'E4'
+  scenario: 'E3' | 'E4' | 'E5' | 'E6' | 'E7' | 'E11' | 'E12' | 'E13' = 'E4'
 ): Promise<void> {
   const file = process.env.CHAT_RECOVERY_FIXTURE
   assert(file != null)
@@ -189,6 +189,7 @@ export async function partialRecovery(
     const dm = await client.createDm([
       people.Hs.userId,
       people.Hk.userId,
+      ...(scenario === 'E12' ? [people.Hc.userId] : []),
       ...(scenario === 'E6' ? [people.P.userId] : [])
     ])
     await open(old, dm.id)
@@ -286,6 +287,188 @@ export async function partialRecovery(
     }
     await close(old)
     await close(holderOne)
+
+    if (scenario === 'E12') {
+      const relayFile = process.env.CHAT_RECOVERY_RELAY
+      const apiLog = process.env.CHAT_RECOVERY_API_LOG
+      assert(relayFile != null && apiLog != null)
+      const relay = JSON.parse(readFileSync(relayFile, 'utf8')) as {
+        disposable: true
+        source: string
+        upstream: string
+        endpoint: string
+        token: string
+        audit: string
+      }
+      assert.equal(relay.disposable, true)
+      assert.equal(relay.source, f.source)
+      assert.equal(relay.upstream, f.apiUrl)
+      faultControl = {
+        disposable: true,
+        endpoint: relay.endpoint,
+        token: relay.token,
+        actors: {
+          one: { userId: people.Hk.userId, conversationId: dm.id },
+          two: { userId: people.Hc.userId, conversationId: dm.id }
+        }
+      }
+      const one = await attach('Hk', 'racing-one')
+      const two = await attach('Hc', 'racing-two')
+      for (const m of [one, two]) {
+        await open(m, dm.id)
+        await m.assertVisible({ text: 'Locked message', timeout: 30000 })
+      }
+      async function claimed(ids: string[]): Promise<void> {
+        const until = Date.now() + 30000
+        while (Date.now() < until) {
+          const rows = readFileSync(relay.audit, 'utf8')
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .map(line => JSON.parse(line) as { gateId: string; event?: string })
+          if (
+            ids.every(id =>
+              rows.some(row => row.gateId === id && row.event == null)
+            )
+          )
+            return
+          await new Promise(resolve => setTimeout(resolve, 50))
+        }
+        throw Error(
+          'Both application requests must reach the deterministic barrier'
+        )
+      }
+      for (const actor of ['one', 'two'])
+        await controlRecovery(faultControl, [
+          actor,
+          'epoch-delay',
+          'epoch-' + actor,
+          '60000'
+        ])
+      const raceOne = 'First simultaneous fresh message'
+      const raceTwo = 'Second simultaneous fresh message'
+      console.log(
+        'E12: holding both actual fresh epoch publications before releasing them together'
+      )
+      const publication = Promise.all([send(one, raceOne), send(two, raceTwo)])
+      publication.catch(() => {})
+      await claimed(['epoch-one', 'epoch-two'])
+      assert.equal((await client.chatEpochs(dm.id, 0)).epochs.length, 1)
+      await controlRecovery(faultControl, ['clear'])
+      await publication
+      for (const m of [one, two]) {
+        await message(m, raceOne)
+        await message(m, raceTwo)
+        assert(!(await body(m)).includes(first))
+      }
+      const won = await client.chatEpochs(dm.id, 0)
+      assert.deepEqual(
+        won.epochs.map(row => row.chainBreak),
+        [false, true]
+      )
+      assert.equal(
+        (await client.chatMessages(dm.id)).filter(row => row.kind === 'post')
+          .length,
+        3
+      )
+      writeFileSync(
+        join(f.artifacts, 'concurrent-fresh-messages.png'),
+        await one.screenshot()
+      )
+
+      for (const actor of ['one', 'two'])
+        await controlRecovery(faultControl, [
+          actor,
+          'history-delay',
+          'history-' + actor,
+          '60000'
+        ])
+      const reopen = Promise.all([open(one, dm.id), open(two, dm.id)])
+      reopen.catch(() => {})
+      await claimed(['history-one', 'history-two'])
+      console.log(
+        'E12: returning history holder while current sends and recovery deliveries are pending'
+      )
+      const holder = await attach('Hs', 'first-holder')
+      await open(holder, dm.id)
+      for (const text of [first, raceOne, raceTwo]) await message(holder, text)
+      const duringOne = 'Current message during first recovery delivery'
+      const duringTwo = 'Current message during second recovery delivery'
+      for (const actor of ['one', 'two'])
+        await controlRecovery(faultControl, [
+          actor,
+          'pending-success',
+          'send-' + actor,
+          '60000'
+        ])
+      const sends = Promise.all([send(one, duringOne), send(two, duringTwo)])
+      sends.catch(() => {})
+      await claimed(['send-one', 'send-two'])
+      const heldAudit = readFileSync(relay.audit, 'utf8')
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line) as { gateId: string; event?: string })
+      assert(
+        !heldAudit.some(
+          row =>
+            ['history-one', 'history-two', 'send-one', 'send-two'].includes(
+              row.gateId
+            ) && row.event === 'delay-released'
+        ),
+        'Recovery and send barriers must still be held together'
+      )
+      await controlRecovery(faultControl, ['clear'])
+      await Promise.all([reopen, sends])
+      const texts = [first, raceOne, raceTwo, duringOne, duringTwo]
+      for (const m of [one, two, holder])
+        for (const text of texts) await message(m, text)
+      assert.deepEqual((await client.chatEpochs(dm.id, 0)).epochs, won.epochs)
+      assert.equal(
+        (await client.chatMessages(dm.id)).filter(row => row.kind === 'post')
+          .length,
+        5
+      )
+      for (const m of [one, two]) {
+        const counts = await m.evalBrowserScript({
+          script: `return JSON.stringify(${JSON.stringify(texts)}.map(text => [...document.querySelectorAll('[data-testid^="chat-message-row-"]')].filter(row => row.textContent.includes(text)).length))`
+        })
+        assert.deepEqual(JSON.parse(String(counts.data)), [1, 1, 1, 1, 1])
+      }
+      for (const text of texts) {
+        assert(
+          !readFileSync(apiLog, 'utf8').includes(text),
+          'Server log must not include message plaintext'
+        )
+        assert(
+          !readFileSync(relay.audit, 'utf8').includes(text),
+          'Fault audit must remain metadata only'
+        )
+      }
+      writeFileSync(
+        join(f.artifacts, 'concurrent-recovered-history.png'),
+        await one.screenshot()
+      )
+      writeFileSync(
+        join(f.artifacts, 'race-results.json'),
+        JSON.stringify(
+          {
+            source: f.source,
+            simultaneousPublications: 2,
+            freshEpochs: 1,
+            posts: 5,
+            duplicateRows: false,
+            historyRecovered: true,
+            plaintextLogged: false
+          },
+          null,
+          2
+        )
+      )
+      console.log(
+        'PASS E12 web: simultaneous fresh publications yield one epoch; both sends survive; concurrent history recovery preserves every message without duplicates or plaintext logs'
+      )
+      return
+    }
 
     console.log(
       `${scenario}: creating second segment with first holder offline`
