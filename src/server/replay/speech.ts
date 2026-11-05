@@ -1,6 +1,6 @@
 import { type ApiKeyPool, normalizedKeys } from '../../common/aiKeys'
 import type { Narration } from '../../common/replay/narration'
-import { retryableStatus, withApiKeys } from '../aiKeyFallback'
+import { keyMayHelp, withApiKeys } from '../aiKeyFallback'
 import type { ServerConfig } from '../serverConfig'
 import { AI_DEFAULTS } from '../serverConfigSchema'
 
@@ -87,7 +87,7 @@ async function synthesizeOnce(
     if (!response.ok)
       throw new SpeechUnavailable(
         `Speech answered ${response.status}`,
-        retryableStatus(response.status)
+        keyMayHelp(response.status, await response.text())
       )
     const audio = Buffer.from(await response.arrayBuffer())
     if (audio.length === 0) throw new SpeechUnavailable('Speech was empty')
@@ -121,6 +121,7 @@ export async function synthesize(
         fetchImpl,
         timeoutMs
       ),
-    error => error instanceof SpeechUnavailable && error.retryable
+    error => error instanceof SpeechUnavailable && error.retryable,
+    'narration'
   )
 }

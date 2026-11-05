@@ -4,7 +4,7 @@ import {
   type ServerSentEvent,
   serverSentEvents
 } from '../../common/serverSentEvents'
-import { retryableStatus, withApiKeys } from '../aiKeyFallback'
+import { keyMayHelp, retryableStatus, withApiKeys } from '../aiKeyFallback'
 import { emitLog } from '../observability/logging'
 import type { TessSettings } from '../serverConfig'
 
@@ -145,8 +145,11 @@ export interface MessagesOptions {
 /** One attempt's settings: a single key from the pool. */
 type OneKey = Omit<TessSettings, 'apiKey'> & { apiKey: string }
 
-/** Losses worth another key: out of reach, but not out of time. */
-const retryableLosses = new WeakSet<HttpError>()
+/**
+ * Failures worth another key that their status alone does not say: out of
+ * reach but not out of time, or a 400 about the key or its account.
+ */
+const anotherKeyMayHelp = new WeakSet<HttpError>()
 
 /** `POST /messages`, logged as `tess_request` whatever its outcome. */
 export async function createMessage(
@@ -281,7 +284,8 @@ export async function streamMessage(
         },
         options
       ),
-    error => !shown && retryable(error)
+    error => !shown && retryable(error),
+    'Tess'
   )
 }
 
@@ -460,7 +464,7 @@ function lost(wait: Deadline, log: Record<string, Property>): HttpError {
       : "Tess's model could not be reached"
   )
   // Out of time is rarely one key's fault, and another key waits as long.
-  if (!wait.expired()) retryableLosses.add(error)
+  if (!wait.expired()) anotherKeyMayHelp.add(error)
   return error
 }
 
@@ -475,7 +479,7 @@ function refused(
 ): HttpError {
   const type = errorType(body)
   log.ec = errorClassOf(status)
-  return new HttpError(
+  const error = new HttpError(
     'unavailable',
     `Tess's model answered ${status} ${type}`,
     {
@@ -485,6 +489,10 @@ function refused(
       ...(status === 413 ? { tooLarge: true } : {})
     }
   )
+  const said = (body?.error as { message?: unknown } | undefined)?.message
+  if (keyMayHelp(status, typeof said === 'string' ? said : ''))
+    anotherKeyMayHelp.add(error)
+  return error
 }
 
 /**
@@ -524,7 +532,9 @@ async function postOnce(
 function retryable(error: unknown): boolean {
   if (!(error instanceof HttpError)) return false
   const status = (error.details as { status?: number } | undefined)?.status
-  return status == null ? retryableLosses.has(error) : retryableStatus(status)
+  return (
+    anotherKeyMayHelp.has(error) || (status != null && retryableStatus(status))
+  )
 }
 
 async function post(
@@ -547,7 +557,8 @@ async function post(
         log
       )
     },
-    retryable
+    retryable,
+    'Tess'
   )
 }
 

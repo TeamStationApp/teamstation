@@ -4,6 +4,7 @@ import { type ApiKeyPool, normalizedKeys } from '../../common/aiKeys'
 import {
   keyAnswered,
   orderedKeys,
+  passedOver,
   redacted,
   retryableStatus
 } from '../aiKeyFallback'
@@ -595,7 +596,13 @@ export class SttSession {
       failure.kind === 'status'
         ? `The recogniser answered ${failure.status}`
         : 'The recogniser could not be reached'
-    if (failure.kind === 'status' && !retryableStatus(failure.status)) {
+    // The handshake carries only the key and the URL, which is the same for
+    // every key: xAI's 400 there is about the key, as its REST API's is.
+    if (
+      failure.kind === 'status' &&
+      !retryableStatus(failure.status) &&
+      failure.status !== 400
+    ) {
       this.give(message)
       return
     }
@@ -606,6 +613,7 @@ export class SttSession {
       this.give(message)
       return
     }
+    passedOver('speech to text', this.options.apiKey, key, message)
     if (this.showedPartial) {
       this.showedPartial = false
       this.handlers.onPartial('')

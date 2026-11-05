@@ -785,6 +785,12 @@ describe('dictation route', function () {
           id: 'off',
           message: 'Dictation is not available on this server'
         })
+        // Off: the old keys' recogniser is closed, and new terms open nothing.
+        expect(opened[1].calls).includes('close')
+        ws.send(JSON.stringify({ kind: 'keyterms', keyterms: ['Judge'] }))
+        await pause(50)
+        expect(opened).length(2)
+        expect(opened[1].terms).deep.equals([['Trout']])
         unreadable = true
         ws.send(
           JSON.stringify({
@@ -821,6 +827,9 @@ describe('dictation route', function () {
           id: 'luna',
           message: 'GPT-6 Luna is not set up on this server'
         })
+        // Back on, with the same keys as before it went off: a new recogniser.
+        expect(opened).length(3)
+        expect(opened[2].terms).deep.equals([['Judge']])
       } finally {
         ws.close()
         handle.close()

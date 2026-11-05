@@ -377,6 +377,8 @@ function serve(
     }
   }
   let recogniser = open()
+  /** Whether `recogniser` was closed because the settings went off. */
+  let off = false
 
   /**
    * The settings as they are now. A save that changed the voice keys gets a
@@ -385,12 +387,19 @@ function serve(
   const adopt = (fresh: DictationConfig): void => {
     const voice = (c: DictationConfig): string =>
       JSON.stringify([normalizedKeys(c.apiKey), c.sttUrl, c.sttModel])
-    const changed = voice(fresh) !== voice(config)
+    const changed = off || voice(fresh) !== voice(config)
     config = fresh
     if (!changed) return
-    recogniser.close()
+    if (!off) recogniser.close()
+    off = false
     recogniser = open()
     if (keyterms != null) recogniser.retarget(keyterms)
+  }
+  /** Dictation went off: its keys are used for nothing until it comes back. */
+  const switchOff = (): void => {
+    if (off) return
+    off = true
+    recogniser.close()
   }
 
   /** What the LLM came back with, for an utterance still waiting on it. */
@@ -489,6 +498,7 @@ function serve(
       }
       if (current !== flight || closed) return
       if (fresh == null) {
+        switchOff()
         fail(start.id, 'Dictation is not available on this server')
         finish(flight, 'unavailable')
         return
@@ -538,7 +548,7 @@ function serve(
     switch (frame.kind) {
       case 'keyterms':
         keyterms = frame.keyterms
-        recogniser.retarget(frame.keyterms)
+        if (!off) recogniser.retarget(frame.keyterms)
         return
       case 'start':
         onStart(frame).catch((error: unknown) => {
@@ -614,7 +624,7 @@ function serve(
   ws.on('close', () => {
     closed = true
     if (current != null) finish(current, 'abandoned: the socket closed')
-    recogniser.close()
+    if (!off) recogniser.close()
   })
   ws.on('error', error => {
     log(`dictation socket for user ${actor.userId}: ${error.message}`)

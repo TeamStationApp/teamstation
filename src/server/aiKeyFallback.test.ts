@@ -5,6 +5,7 @@ import { asAiKeys, asApiKeyPool, normalizedKeys } from '../common/aiKeys'
 import {
   forgetCurrentKeys,
   keyAnswered,
+  keyMayHelp,
   orderedKeys,
   redacted,
   retryableStatus,
@@ -41,10 +42,47 @@ describe('API key pools', () => {
     expect(orderedKeys([])).deep.equals([])
   })
   it('retries exactly credential, rate limit, timeout and server statuses', () => {
-    for (const status of [401, 403, 408, 429, 500, 529, 599])
+    for (const status of [401, 402, 403, 408, 429, 500, 529, 599])
       expect(retryableStatus(status)).equals(true)
     for (const status of [200, 400, 404, 413, 422, 499, 600])
       expect(retryableStatus(status)).equals(false)
+  })
+  it('moves on from a 400 about the key or its account, and not from a bad request', () => {
+    for (const said of [
+      'Your credit balance is too low to access the Anthropic API.',
+      'Incorrect API key provided: xai-****.',
+      'Billing hard limit reached',
+      'You exceeded your current quota'
+    ])
+      expect(keyMayHelp(400, said)).equals(true)
+    expect(keyMayHelp(400, 'max_tokens: must be at most 64000')).equals(false)
+    expect(keyMayHelp(400)).equals(false)
+    expect(keyMayHelp(402)).equals(true)
+    expect(keyMayHelp(404, 'api key')).equals(false)
+  })
+  it('logs each key it passes over by place and fingerprint, never the key', async () => {
+    forgetCurrentKeys()
+    const logged: string[] = []
+    const error = console.error
+    console.error = (line: string) => logged.push(line)
+    try {
+      await withApiKeys(
+        ['secret-one', 'secret-two'],
+        async key => {
+          if (key === 'secret-one') throw new Error('Speech answered 401')
+          return key
+        },
+        () => true,
+        'narration'
+      )
+    } finally {
+      console.error = error
+    }
+    expect(logged).length(1)
+    expect(logged[0]).match(
+      /^narration: API key 1 of 2 \([0-9a-f]{8}\) failed, Speech answered 401; trying the next$/
+    )
+    expect(logged[0]).not.contains('secret')
   })
   it('stops on success, never repeats, and preserves the latest error object', async () => {
     const seen: string[] = []
@@ -56,7 +94,8 @@ describe('API key pools', () => {
           seen.push(key)
           throw seen.length === 1 ? new Error('first') : last
         },
-        () => true
+        () => true,
+        'test'
       )
       expect.fail('must reject')
     } catch (error) {
@@ -68,7 +107,8 @@ describe('API key pools', () => {
       await withApiKeys(
         ['a', 'b'],
         async () => ++calls,
-        () => true
+        () => true,
+        'test'
       )
     ).equals(1)
     expect(calls).equals(1)
@@ -78,7 +118,8 @@ describe('API key pools', () => {
         async () => {
           throw last
         },
-        () => false
+        () => false,
+        'test'
       )
     } catch (error) {
       expect(error).equals(last)
@@ -87,7 +128,8 @@ describe('API key pools', () => {
       await withApiKeys(
         [],
         async () => 1,
-        () => true
+        () => true,
+        'test'
       )
       expect.fail('empty')
     } catch (error) {
@@ -106,7 +148,8 @@ describe('API key pools', () => {
           if (refused.has(key)) throw new Error('refused')
           return key
         },
-        () => true
+        () => true,
+        'test'
       )
     expect([await ask(), await ask()]).deep.equals(['k1', 'k1'])
     refused.add('k1')
@@ -127,7 +170,8 @@ describe('API key pools', () => {
         async () => {
           throw new Error('bad request')
         },
-        () => false
+        () => false,
+        'test'
       )
     } catch {}
     expect(orderedKeys(pool)).deep.equals(['k3', 'k1', 'k2'])
@@ -144,25 +188,29 @@ describe('API key pools', () => {
     expect(
       await untilAnswered(
         ['a', 'b'],
-        async key => {
+        async (key): Promise<{ error: string } | { ok: string }> => {
           seen.push(key)
           return seen.length === 1 ? { error: 'busy' } : { ok: key }
         },
-        answer => ('error' in answer ? 'retry' : false)
+        answer =>
+          'error' in answer ? { retry: true, why: answer.error } : undefined,
+        'test'
       )
     ).deep.equals({ ok: seen[1] })
     expect(
       await untilAnswered(
         ['a', 'b'],
         async () => ({ error: 'bad' }),
-        () => 'final'
+        () => ({ retry: false, why: 'bad' }),
+        'test'
       )
     ).deep.equals({ error: 'bad' })
     expect(
       await untilAnswered(
         [],
         async () => 1,
-        () => false
+        () => undefined,
+        'test'
       )
     ).equals(undefined)
     try {
@@ -171,7 +219,8 @@ describe('API key pools', () => {
         async () => {
           throw new Error('bug')
         },
-        () => false
+        () => undefined,
+        'test'
       )
       expect.fail('rethrow')
     } catch (error) {

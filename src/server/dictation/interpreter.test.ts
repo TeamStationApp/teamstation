@@ -3025,6 +3025,19 @@ describe('scoring API key fallback', () => {
     ).start()
     expect(bad.sent).length(1)
   })
+  it('moves on from a key xAI says is wrong', async () => {
+    const p = provider(
+      { status: 400, text: '{"error":"Incorrect API key provided: xai-****"}' },
+      []
+    )
+    const result = await new Interpretation(
+      config(p.fetch, { apiKey: ['revoked', 'working'] }),
+      'ctx',
+      'ball'
+    ).start()
+    expect(JSON.stringify(result)).not.contains('answered 400')
+    expect(p.sent).length(2)
+  })
   it('keeps every sentence on the key that answered', async () => {
     const keys: string[] = []
     const fetchImpl: typeof fetch = async (_url, init) => {

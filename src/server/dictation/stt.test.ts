@@ -551,12 +551,33 @@ describe('pooled voice recognition', () => {
     h.session.close()
   })
 
+  it('moves on from a refused handshake, and logs the key it passed over', () => {
+    const logged: string[] = []
+    const error = console.error
+    console.error = (line: string) => logged.push(line)
+    try {
+      const h = pooled(['secret-a', 'secret-b'])
+      h.session.begin()
+      h.session.write(pcm(2))
+      refuse(h.sockets[0], 400)
+      expect(h.sockets).length(2)
+      expect(key(h.sockets[1])).equals('secret-b')
+      h.session.close()
+    } finally {
+      console.error = error
+    }
+    expect(logged).length(1)
+    expect(logged[0]).contains('speech to text: API key 1 of 2')
+    expect(logged[0]).contains('The recogniser answered 400')
+    expect(logged[0]).not.contains('secret')
+  })
+
   it('does not retry a status no other key would change, or a closed session', () => {
     const h = pooled()
     h.session.begin()
-    refuse(h.sockets[0], 400)
+    refuse(h.sockets[0], 404)
     expect(h.sockets).length(1)
-    expect(h.events).deep.equals(['error The recogniser answered 400'])
+    expect(h.events).deep.equals(['error The recogniser answered 404'])
     h.session.begin()
     expect(h.sockets).length(2)
     expect(key(h.sockets[1])).equals(key(h.sockets[0]))

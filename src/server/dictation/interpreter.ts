@@ -28,7 +28,7 @@ import {
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
 import { DICTATION_VOCABULARY, heardAs } from '../../common/scoring/vocabulary'
-import { redacted, retryableStatus, untilAnswered } from '../aiKeyFallback'
+import { keyMayHelp, redacted, untilAnswered } from '../aiKeyFallback'
 import { placeSections, placeTools } from './placeInstructions'
 
 /**
@@ -1756,7 +1756,10 @@ export class Interpretation {
       this.config.apiKey,
       async key => await this.requestOnce(key),
       answer =>
-        'error' in answer && (answer.retryable === true ? 'retry' : 'final')
+        'error' in answer
+          ? { retry: answer.retryable === true, why: answer.error }
+          : undefined,
+      `scoring with ${this.config.model}`
     )
     if (result == null) return { error: 'No API keys are configured' }
     return 'error' in result ? { error: result.error } : result
@@ -1794,7 +1797,7 @@ export class Interpretation {
         this.note({
           error: `${error}: ${redacted(text, apiKey)}`
         })
-        return { error, retryable: retryableStatus(response.status) }
+        return { error, retryable: keyMayHelp(response.status, text) }
       }
       const read = call.read(parse(text))
       this.note(read)

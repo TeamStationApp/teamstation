@@ -1110,6 +1110,38 @@ describe('Tess API key fallback', () => {
     )
     expect(down.details).equals(undefined)
   })
+  it('moves on from an account out of credit, but not from a bad request', async () => {
+    const broke = provider(
+      () =>
+        Response.json(
+          {
+            type: 'error',
+            error: {
+              type: 'invalid_request_error',
+              message:
+                'Your credit balance is too low to access the Anthropic API.'
+            }
+          },
+          { status: 400 }
+        ),
+      () => Response.json(ANSWER)
+    )
+    await createMessage(settings, REQUEST, { fetch: broke.fetch })
+    expect(broke.sent).length(2)
+    const bad = provider(
+      () =>
+        Response.json(
+          {
+            type: 'error',
+            error: { type: 'invalid_request_error', message: 'messages: empty' }
+          },
+          { status: 400 }
+        ),
+      () => Response.json(ANSWER)
+    )
+    await failure(createMessage(settings, REQUEST, { fetch: bad.fetch }))
+    expect(bad.sent).length(1)
+  })
   it('does not retry a timed out attempt on another key', async () => {
     let calls = 0
     const fetchImpl: typeof fetch = async (_url, init) => {

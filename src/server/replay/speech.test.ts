@@ -228,6 +228,19 @@ describe('voice API key fallback', () => {
     )
     expect(calls).equals(1)
   })
+  it('moves on from a key xAI says is wrong', async () => {
+    let calls = 0
+    const audio = await synthesize(
+      { text: 'Ball.', emphasis: 'calm' },
+      { ...settings, apiKey: ['revoked', 'working'] },
+      fakeFetch(() =>
+        ++calls === 1
+          ? new Response('Incorrect API key provided', { status: 400 })
+          : new Response(new Uint8Array([1]))
+      )
+    )
+    expect([...audio]).deep.equals([1])
+  })
   it('does not retry a timeout on another key', async () => {
     let calls = 0
     const hung: typeof fetch = async (

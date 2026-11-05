@@ -41,10 +41,42 @@ export function forgetCurrentKeys(): void {
 export function retryableStatus(status: number): boolean {
   return (
     status === 401 ||
+    status === 402 ||
     status === 403 ||
     status === 408 ||
     status === 429 ||
     (status >= 500 && status <= 599)
+  )
+}
+
+/**
+ * A refusal another key may fix. Both providers answer some key and account
+ * trouble with a plain 400: Anthropic an account out of credit, xAI a wrong
+ * or revoked key. A 400 that names neither is the request's own fault.
+ */
+export function keyMayHelp(status: number, body = ''): boolean {
+  return (
+    retryableStatus(status) ||
+    (status === 400 &&
+      /credit|billing|api[ _-]?key|quota|spending limit/i.test(body))
+  )
+}
+
+/**
+ * Says that a request passed over a key: which purpose, which key by its
+ * place in the pool and a fingerprint (never the key), and why. A dead key
+ * shows in the log long before its pool runs out.
+ */
+export function passedOver(
+  purpose: string,
+  pool: ApiKeyPool,
+  key: string,
+  why: string
+): void {
+  const keys = normalizedKeys(pool)
+  const fingerprint = createHash('sha256').update(key).digest('hex').slice(0, 8)
+  console.error(
+    `${purpose}: API key ${keys.indexOf(key) + 1} of ${keys.length} (${fingerprint}) failed, ${why}; trying the next`
   )
 }
 
@@ -57,7 +89,8 @@ export function redacted(text: string, key: string): string {
 export async function withApiKeys<T>(
   pool: ApiKeyPool,
   attempt: (key: string) => Promise<T>,
-  retryable: (error: unknown) => boolean
+  retryable: (error: unknown) => boolean,
+  purpose: string
 ): Promise<T> {
   const keys = orderedKeys(pool)
   if (keys.length === 0) throw new Error('No API keys are configured')
@@ -68,23 +101,36 @@ export async function withApiKeys<T>(
       return result
     } catch (error) {
       if (i === keys.length - 1 || !retryable(error)) throw error
+      // Messages here are the callers' own, with no provider text in them.
+      passedOver(
+        purpose,
+        pool,
+        keys[i],
+        error instanceof Error ? error.message : 'an error'
+      )
     }
   }
 }
 
 /**
  * `withApiKeys` for an attempt that answers its failures rather than throwing
- * them: the first answer `failed` does not claim, or the latest one;
- * undefined for an empty pool.
+ * them. `failed` says of an answer whether it is a failure, why, and whether
+ * another key may help. The result is the first answer that is not a
+ * failure, or the latest one; undefined for an empty pool.
  */
 export async function untilAnswered<T>(
   pool: ApiKeyPool,
   attempt: (key: string) => Promise<T>,
-  failed: (answer: T) => 'retry' | 'final' | false
+  failed: (answer: T) => { retry: boolean; why: string } | undefined,
+  purpose: string
 ): Promise<T | undefined> {
   class Failed extends Error {
-    constructor(readonly answer: T) {
-      super('The attempt answered a failure')
+    constructor(
+      readonly answer: T,
+      readonly retry: boolean,
+      why: string
+    ) {
+      super(why)
     }
   }
   if (normalizedKeys(pool).length === 0) return undefined
@@ -93,10 +139,13 @@ export async function untilAnswered<T>(
       pool,
       async key => {
         const answer = await attempt(key)
-        if (failed(answer) !== false) throw new Failed(answer)
+        const failure = failed(answer)
+        if (failure != null)
+          throw new Failed(answer, failure.retry, failure.why)
         return answer
       },
-      error => error instanceof Failed && failed(error.answer) === 'retry'
+      error => error instanceof Failed && error.retry,
+      purpose
     )
   } catch (error) {
     if (error instanceof Failed) return error.answer
