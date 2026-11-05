@@ -62,10 +62,19 @@ export type Recogniser = Pick<
 /** One utterance's conversation with the LLM, as the route drives it. */
 export type Conversation = Pick<Interpretation, 'start' | 'answer'>
 
-export interface DictationOptions {
+/** Fixed settings, or settings read at each upgrade and each hold: one of them. */
+export type DictationOptions = DictationRouteOptions &
+  (
+    | { config: DictationConfig; resolveConfig?: never }
+    | {
+        config?: never
+        /** Null when dictation is off. */
+        resolveConfig: () => Promise<DictationConfig | null>
+      }
+  )
+
+interface DictationRouteOptions {
   db: Kysely<Database>
-  config: DictationConfig
-  resolveConfig?: () => Promise<DictationConfig | null>
   scopes?: ReadonlyMap<string, Scope>
   /** Swapped out in tests. */
   openRecogniser?: (handlers: SttHandlers) => Recogniser
@@ -191,7 +200,7 @@ export function attachDictation(
         }
         if (socket.destroyed) return
         wss.handleUpgrade(request, socket, head, ws => {
-          serve(ws, actor, { ...options, config })
+          serve(ws, actor, options, config)
         })
       },
       (error: unknown) => {
@@ -251,11 +260,16 @@ function pathOf(url: string | undefined): string {
 }
 
 /** One browser's dictation, from enabling it to switching it off. */
-function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
+function serve(
+  ws: WebSocket,
+  actor: Actor,
+  options: DictationOptions,
+  admitted: DictationConfig
+): void {
   // One scorer's sentences reach the provider server holding the cached
   // prompt; different scorers are spread across servers.
   const cacheKey = randomUUID()
-  let { config } = options
+  let config = admitted
   let keyterms: readonly string[] | undefined
   const scopes = options.scopes ?? SCOPES
   const log =

@@ -8,7 +8,7 @@ import path from 'node:path'
 
 import express from 'express'
 
-import { aiSettings, dictationConfig } from './aiKeys'
+import { aiSettings, sayStoredAiKeys } from './aiKeys'
 import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
@@ -517,6 +517,7 @@ function runPrimary(workerCount: number): void {
 
 function runWorker(): void {
   const db = makeDatabase(serverConfig.databaseUrl)
+  sayStoredAiKeys(db).catch(() => undefined)
   const mediaSecret = resolveMediaSecret()
   const mediaContext: MediaContext = {
     ffmpegPath: serverConfig.ffmpegPath,
@@ -823,9 +824,6 @@ function runWorker(): void {
   // whatever is left.
   const dictation = attachDictation(server, {
     db,
-    config:
-      serverConfig.dictation ??
-      dictationConfig(serverConfig, { anthropicScoring: [], xaiVoice: [] }),
     resolveConfig: async () => (await aiSettings(db)).dictation,
     scopes: dictationScopes({
       tess: async () => (await aiSettings(db)).tess != null
@@ -835,7 +833,7 @@ function runWorker(): void {
   })
   const unbindUpgrades = bindUpgrades(server, [
     (req, socket, head) => gameSocket.acceptUpgrade(req, socket, head),
-    (req, socket, head) => dictation?.acceptUpgrade(req, socket, head),
+    (req, socket, head) => dictation.acceptUpgrade(req, socket, head),
     (req, socket, head) => {
       scoreboard.hub.handleUpgrade(req, socket, head)
       return true

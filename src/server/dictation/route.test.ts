@@ -647,7 +647,6 @@ describe('dictation route', function () {
       let mode: 'enabled' | 'disabled' | 'failed' = 'enabled'
       const handle = attachDictation(dynamic, {
         db: db!,
-        config: CONFIG,
         resolveConfig: async () => {
           calls++
           if (mode === 'failed') throw new Error('settings unavailable')
@@ -698,7 +697,6 @@ describe('dictation route', function () {
       const opened: FakeRecogniser[] = []
       const handle = attachDictation(dynamic, {
         db: db!,
-        config: CONFIG,
         resolveConfig: async () => voice,
         scopes: dictationScopes({ tess: async () => true }),
         openRecogniser: handlers => {
