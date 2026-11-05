@@ -392,7 +392,9 @@ function MultiCamGrid(
             onAttaching={attaching}
             onAttached={attached}
             wantsToPlay={() => mc.intents.current.get(video.id) === true}
-            wantsRecovery={() => mc.playing}
+            wantsRecovery={() =>
+              mc.playing && !mc.ended && mc.tiles[video.id]?.parked == null
+            }
             rect={mc.shownRects[index] ?? { x: 0, y: 0, w: 0, h: 0 }}
             dragging={mc.drag?.index === index ? mc.drag : null}
             armed={armed === index}

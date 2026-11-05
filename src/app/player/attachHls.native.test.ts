@@ -361,69 +361,71 @@ describe('a phone watching a live game whose camera is away', function () {
     }
   })
 
-  for (const state of ['playing', 'paused', 'ended'] as const)
-    it(`supervises a silent single recording only while ${state}`, async () => {
-      const realNow = Date.now
-      let now = realNow()
-      Date.now = () => now
-      const handle = new NativeVideoHandle(
-        () => undefined,
-        () => now
-      )
-      const player = androidPlayer()
-      handle.attach(player.ref)
-      handle.clearBeforeReload = true
-      handle.source = URL
-      const detach = attachHls(handle, URL, undefined, {
-        wantsToPlay: () => state !== 'paused'
-      })
-      try {
-        const loaded: Parameters<typeof handle.handleLoad>[0] = {
-          currentTime: 60,
-          duration: 200,
-          naturalSize: { width: 640, height: 360, orientation: 'landscape' },
-          audioTracks: [],
-          textTracks: [],
-          videoTracks: []
-        }
-        handle.handleLoad(loaded)
-        handle.handleReadyForDisplay()
-        handle.handleProgress({
-          currentTime: 60,
-          playableDuration: 90,
-          seekableDuration: 200
+  for (const surface of ['single', 'grid'])
+    for (const state of ['playing', 'paused', 'ended'] as const)
+      it(`supervises a silent ${surface} recording only while ${state}`, async () => {
+        const realNow = Date.now
+        let now = realNow()
+        Date.now = () => now
+        const handle = new NativeVideoHandle(
+          () => undefined,
+          () => now
+        )
+        const player = androidPlayer()
+        handle.attach(player.ref)
+        handle.clearBeforeReload = true
+        handle.source = URL
+        const detach = attachHls(handle, URL, undefined, {
+          wantsToPlay: () => state !== 'paused',
+          ...(surface === 'grid' ? { buffer: { aheadSec: 30 } } : {})
         })
-        if (state !== 'paused') await handle.play()
-        if (state === 'ended') handle.handleEnd()
-        for (let second = 0; second < 21; second++) {
-          now += 1000
-          for (const run of timers.splice(0)) run()
-        }
-        expect(player.loads()).equals(state === 'playing' ? 1 : 0)
-        if (state === 'playing') {
-          handle.handleLoad({ ...loaded, currentTime: 0 })
-          // The last native report plus the handle's bounded one-second carry.
-          expect(
-            player.seeks.at(-1),
-            'retain the selected recording moment'
-          ).equals(61)
-          handle.handleSeek({ currentTime: 61, seekTime: 61 })
+        try {
+          const loaded: Parameters<typeof handle.handleLoad>[0] = {
+            currentTime: 60,
+            duration: 200,
+            naturalSize: { width: 640, height: 360, orientation: 'landscape' },
+            audioTracks: [],
+            textTracks: [],
+            videoTracks: []
+          }
+          handle.handleLoad(loaded)
           handle.handleReadyForDisplay()
           handle.handleProgress({
-            currentTime: 62,
+            currentTime: 60,
             playableDuration: 90,
             seekableDuration: 200
           })
-          expect(
-            handle.paused,
-            'resume automatically after fresh progress'
-          ).equals(false)
+          if (state !== 'paused') await handle.play()
+          if (state === 'ended') handle.handleEnd()
+          for (let second = 0; second < 21; second++) {
+            now += 1000
+            for (const run of timers.splice(0)) run()
+          }
+          expect(player.loads()).equals(state === 'playing' ? 1 : 0)
+          if (state === 'playing') {
+            handle.handleLoad({ ...loaded, currentTime: 0 })
+            // The last native report plus the handle's bounded one-second carry.
+            expect(
+              player.seeks.at(-1),
+              'retain the selected recording moment'
+            ).equals(61)
+            handle.handleSeek({ currentTime: 61, seekTime: 61 })
+            handle.handleReadyForDisplay()
+            handle.handleProgress({
+              currentTime: 62,
+              playableDuration: 90,
+              seekableDuration: 200
+            })
+            expect(
+              handle.paused,
+              'resume automatically after fresh progress'
+            ).equals(false)
+          }
+        } finally {
+          detach()
+          Date.now = realNow
         }
-      } finally {
-        detach()
-        Date.now = realNow
-      }
-    })
+      })
 
   it('lets a seek made while the stream reopens stand', async function () {
     const { handle, player } = await watching()
