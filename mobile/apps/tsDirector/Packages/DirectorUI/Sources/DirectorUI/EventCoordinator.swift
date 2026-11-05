@@ -95,7 +95,8 @@ public final class EventCoordinator {
       let chosen = events.chosen,
       chosen.streamURL == nil
     else { return }
-    await events.claimChosen(cameraName: cameraName())
+    // A refusal, a full game's included, is read in Settings from `lastError`.
+    _ = try? await events.claimChosen(cameraName: cameraName())
   }
 
   /**
@@ -119,7 +120,7 @@ public final class EventCoordinator {
       throw EventStreamError.refused("Pick a TeamStation event in Settings first")
     }
     if events.chosen?.streamURL == nil {
-      guard await events.claimChosen(cameraName: cameraName()) else {
+      guard try await events.claimChosen(cameraName: cameraName()) else {
         throw EventStreamError.refused(
           events.lastError ?? "TeamStation would not give this event a stream"
         )

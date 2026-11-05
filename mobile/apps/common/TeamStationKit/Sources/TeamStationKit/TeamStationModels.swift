@@ -184,6 +184,9 @@ public enum TeamStationError: Error, LocalizedError, Equatable {
   /// The stream this device holds was ended on TeamStation (a 410). Only starting again makes a
   /// new one; a redial never does.
   case streamEnded
+  /// No camera place is free: this person already has as many cameras on the game as they may, or
+  /// the game has. The server's sentence says which. Ending one of them frees a place.
+  case cameraLimit(String)
 
   public var errorDescription: String? {
     switch self {
@@ -193,7 +196,7 @@ public enum TeamStationError: Error, LocalizedError, Equatable {
       return "Sign in to TeamStation first."
     case .accountStorageUnavailable:
       return "Could not save your sign-in on this device. Please sign in again."
-    case let .server(message), let .unavailable(message):
+    case let .server(message), let .unavailable(message), let .cameraLimit(message):
       return message
     case .accountChanged:
       return "The TeamStation account changed. Try again."
@@ -207,6 +210,25 @@ public enum TeamStationError: Error, LocalizedError, Equatable {
 struct TeamStationApiError: Decodable {
   let code: String
   let message: String
+  /// `details.reason`, where the server names its refusal for a client to act on (`cameraLimit`).
+  /// `details` is free-form — a body the server would not accept lists its fields there — so any
+  /// other shape reads as no reason, and never costs the message.
+  let reason: String?
+
+  private enum CodingKeys: String, CodingKey {
+    case code, message, details
+  }
+
+  private struct Details: Decodable {
+    let reason: String?
+  }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    code = try container.decode(String.self, forKey: .code)
+    message = try container.decode(String.self, forKey: .message)
+    reason = (try? container.decodeIfPresent(Details.self, forKey: .details))?.reason
+  }
 }
 
 // MARK: - Sending a recording in
