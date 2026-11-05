@@ -227,13 +227,18 @@ function nameShown(tile: HTMLElement): boolean {
   )
 }
 
-/** Sets the position each tile's player reports. */
+/** Reports a decoded picture; jsdom does not update media readiness itself. */
 function playAt(seconds: number): void {
-  for (const video of document.querySelectorAll('video'))
+  for (const video of document.querySelectorAll('video')) {
+    Object.defineProperty(video, 'readyState', {
+      configurable: true,
+      value: 4
+    })
     Object.defineProperty(video, 'currentTime', {
       configurable: true,
       value: seconds
     })
+  }
 }
 
 /** Sets every tile's player playing, or not. */

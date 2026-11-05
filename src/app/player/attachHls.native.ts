@@ -91,28 +91,31 @@ export function attachHls(
    */
   let failed = false
   /**
-   * Where the player was when it last reported a failure, until it has played
-   * on from there. Kept apart from `failed`, which a `canplay` clears: iOS
+   * The native progress revision at the last failure, until another native
+   * sample advances. Kept apart from `failed`, which a `canplay` clears: iOS
    * sends that whenever AVPlayer changes its mind about keeping up, picture or
    * not, and a failed AVPlayer raises no second error to set it again.
    */
   let failedAt: number | null = null
   const hasFailed = (): boolean => {
     if (failedAt == null) return false
-    if (handle.currentTime > failedAt + 0.5) failedAt = null
+    if (handle.progressRevision > failedAt) failedAt = null
     return failedAt != null
   }
   /** Where to put the playhead once a reloaded stream has opened. */
   let resumeAtSec: number | null = null
+  let awaitingLoad = false
+  let openingUntil = 0
   const putBack = (): void => {
     const at = resumeAtSec
     resumeAtSec = null
-    if (at != null && at > 0) handle.currentTime = at
+    awaitingLoad = false
+    if (at != null) handle.currentTime = at
   }
   handle.addEventListener('loadedmetadata', putBack)
   // A seek of the viewer's own while the stream reopens is where they want to be.
-  const stopExplicitSeek = onExplicitSeek(handle, () => {
-    resumeAtSec = null
+  const stopExplicitSeek = onExplicitSeek(handle, seconds => {
+    resumeAtSec = awaitingLoad ? seconds : null
   })
   /**
    * Hands the player its stream again, at the moment it had reached: a bare
@@ -121,7 +124,12 @@ export function attachHls(
    * one who was waiting at it.
    */
   const reloadKeepingPlace = (): void => {
-    if (handle.currentTime > 0) resumeAtSec = handle.currentTime
+    if (handle.readyState > 0 || handle.seeking || handle.currentTime > 0)
+      resumeAtSec = handle.currentTime
+    awaitingLoad = true
+    // Opening and restoring a slow native source can take longer than the
+    // ordinary stall deadline. Bound the attempt without canceling it early.
+    openingUntil = Date.now() + 30_000
     handle.reload()
   }
   /** Loads the stream again now, and plays it, in place of any reload due. */
@@ -138,7 +146,10 @@ export function attachHls(
   const stopReloading = singleLive
     ? reloadStalledLive(
         handle,
-        () => intent.wantsToPlay(),
+        // A loaded restoration seek has its own transfer-aware deadline.
+        // Reset this watch's inactivity clock so completion also gets time
+        // to produce its first advancing native sample.
+        () => intent.wantsToPlay() && (awaitingLoad || !handle.seeking),
         restart,
         undefined,
         hasFailed
@@ -149,13 +160,17 @@ export function attachHls(
     if (failed) restart()
   }
   const onPause = (): void => {
-    if (!recovering) wantsToPlay = false
+    wantsToPlay = false
   }
   handle.addEventListener('play', onPlay)
   handle.addEventListener('pause', onPause)
 
   /** Pictures again: the trouble has passed, and it may resume. */
   const recovered = (): void => {
+    failed = false
+    if (recovering && (intent?.wantsToPlay() ?? wantsToPlay) && handle.paused)
+      handle.play().catch(() => undefined)
+    if (hasFailed()) return
     failed = false
     // A reload still due belongs to trouble that has passed. Left to fire, it
     // would find no failure on the books and read that as patience run out.
@@ -170,6 +185,7 @@ export function attachHls(
     if (wanted) handle.play().catch(() => undefined)
   }
   handle.addEventListener('canplay', recovered)
+  handle.addEventListener('timeupdate', recovered)
 
   const giveUp = (): void => {
     if (gaveUp) return
@@ -178,6 +194,7 @@ export function attachHls(
   }
 
   handle.onError = error => {
+    openingUntil = 0
     // The address is what is wrong: asking again for it is thirty guaranteed
     // failures, and the caller can mint a new one.
     if (addressIsWrong(error)) {
@@ -189,7 +206,7 @@ export function attachHls(
       return
     }
     failed = true
-    failedAt ??= handle.currentTime
+    failedAt ??= handle.progressRevision
     const now = Date.now()
     if (firstFailureAt === 0) firstFailureAt = now
     if (now - firstFailureAt > patience) {
@@ -220,6 +237,49 @@ export function attachHls(
     }, wait)
   }
 
+  // Both grid and single players need a deadline when native reports one
+  // failure and then goes quiet. Read native samples, never our own seeks.
+  let observed = handle.reportedTime
+  let lastAdvance = Date.now()
+  let supervision: ReturnType<typeof setTimeout> | undefined
+  const supervise = (): void => {
+    // Native queues a seek until its replacement item is ready. The opening
+    // deadline bounds that wait; the seek deadline starts when putBack reissues it.
+    if (!awaitingLoad) handle.checkSeekTimeout()
+    const now = Date.now()
+    if (handle.reportedTime !== observed) {
+      observed = handle.reportedTime
+      lastAdvance = now
+    }
+    // Restoring a loaded item can legitimately take longer than the opening
+    // grace. Its transfer-aware watchdog above still bounds a stalled seek;
+    // a replacement that never loads remains subject to the opening deadline.
+    if (!awaitingLoad && handle.seeking) lastAdvance = now
+    const wanted =
+      intent?.wantsRecovery?.() ?? intent?.wantsToPlay() ?? wantsToPlay
+    if (!wanted && !failed) lastAdvance = now
+    const silentReadyTile = wanted && handle.readyState >= 3 && !handle.ended
+    if (
+      !singleLive &&
+      !gaveUp &&
+      now - lastAdvance >= 20_000 &&
+      now >= openingUntil &&
+      (failed || hasFailed() || silentReadyTile)
+    ) {
+      lastAdvance = now
+      if (reloads >= MAX_RELOADS) giveUp()
+      else {
+        reloads++
+        recovering = true
+        failed = true
+        failedAt ??= handle.progressRevision
+        reloadKeepingPlace()
+      }
+    }
+    supervision = setTimeout(supervise, 1000)
+  }
+  supervision = setTimeout(supervise, 1000)
+
   // AVPlayer has no live offset to set, so it is moved there on its first
   // play. ExoPlayer is given the cushion as its offset where the source is
   // built (`VideoView.native.tsx`), and starts far enough back to be left.
@@ -233,10 +293,12 @@ export function attachHls(
     stopReloading?.()
     stopExplicitSeek()
     if (timer != null) clearTimeout(timer)
+    if (supervision != null) clearTimeout(supervision)
     handle.removeEventListener('loadedmetadata', putBack)
     handle.removeEventListener('play', onPlay)
     handle.removeEventListener('pause', onPause)
     handle.removeEventListener('canplay', recovered)
+    handle.removeEventListener('timeupdate', recovered)
     handle.onError = null
   }
 }

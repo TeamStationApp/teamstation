@@ -20,6 +20,8 @@ export interface PlayIntent {
    * the element's own pause events remain the whole story, exactly as before.
    */
   wantsToPlay: () => boolean
+  /** A grid may hold a tile while still wanting its source to recover. */
+  wantsRecovery?: () => boolean
   /**
    * How far ahead this player may load, for a caller driving several at once.
    *

@@ -11,7 +11,7 @@ const { values } = parseArgs({
 })
 assert(
   values.surface === 'tv' ||
-    (values.surface === 'web' && values.case === 'gaps'),
+    (values.surface === 'web' && ['gaps', 'sync'].includes(values.case ?? '')),
   'Unknown case'
 )
 const seconds = Number(values.seconds)
@@ -22,8 +22,8 @@ const run =
         await tvReliability(values.case ?? 'transport')
       })
     : import('./streamingReliabilityWeb').then(async ({ webReliability }) => {
-          await webReliability('gaps')
-        })
+        await webReliability(values.case!)
+      })
 run.catch((error: unknown) => {
   console.error(error)
   process.exitCode = 1
