@@ -11,11 +11,14 @@ import {
   buildReport,
   connectionFigures,
   eventFigures,
+  isCacheHit,
   longestGap,
   percentile,
   type ReportData,
   renderReport,
   slowestRequests,
+  STREAMING_QUERIES,
+  streamingQueries,
   writeReport
 } from './report'
 import type { Sample } from './sampler'
@@ -255,6 +258,11 @@ describe('the load report', function () {
         data.answers = 0
       }, /503 rate: no requests/)
       one(data => {
+        data.errors['playlist-http-503'] = 2
+        // The CDN's 503 is not the servers', so it is not counted.
+        data.errors['media-http-503'] = 50
+      }, /503 rate: 2 of 2000/)
+      one(data => {
         data.postP95Ms = 500
       }, /p95 POST: 500 ms/)
       one(data => {
@@ -488,5 +496,178 @@ describe('the load report', function () {
     )
     expect(held.postsDuring).equals(1)
     expect(held.postP95DuringMs).equals(41_000)
+  })
+
+  describe('the streaming section', function () {
+    /** The statements each build sends, as pg_stat_statements has them. */
+    const STATEMENTS = [
+      // The base build's.
+      'select "id" from "videos" where "id" = $1',
+      'select "live_streams"."id" as "id", "live_streams"."user_id" as "userId", "live_streams"."team_id" as "teamId", "live_streams"."game_id" as "gameId", "live_streams"."key_cipher" as "keyCipher", "live_streams"."state" as "state" from "live_streams" left join "videos" on "videos"."id" = "live_streams"."video_id" left join "games" on "games"."id" = "live_streams"."game_id" where "live_streams"."state" in ($1, $2)',
+      'update "live_streams" set "status" = $1, "status_at" = $2, "last_published_at" = $3 where "id" = $4',
+      'select "hidden", "storage", "spaces_verified_at" from "videos" where "id" = $1',
+      // This branch's.
+      'update live_streams set status = v.status, status_at = v.at, last_published_at = greatest(v.published_at, live_streams.last_published_at) from (values ($1, $2, $3, $4)) as v(id, status, at, published_at) where live_streams.id = v.id',
+      'select "hidden", "storage", "spaces_verified_at", "space_secret" from "videos" where "id" = $1',
+      // Neither: the playback route's join, a foreign key check, and the rest.
+      'select "videos"."id" as "id" from "videos" inner join "games" on "games"."id" = "videos"."game_id" where "videos"."id" = $1',
+      'SELECT 1 FROM ONLY "public"."videos" x WHERE "id" OPERATOR(pg_catalog.=) $1 FOR KEY SHARE OF x',
+      'select "id" from "live_streams" where "game_id" = $1'
+    ].map((query, i) => ({
+      queryId: String(i),
+      query,
+      calls: 10 * (i + 1),
+      totalMs: 1,
+      rows: 1
+    }))
+
+    const run = (streams: number, viewers: number): ReportData => {
+      const tally = new Tally()
+      tally.streamsStarted = streams
+      for (let i = 0; i < viewers; i++) {
+        tally.viewersStarted += 1
+        tally.notePlaylist(i, 0)
+        tally.notePlaylist(i, 1500)
+      }
+      for (let i = 0; i < viewers * 3; i++)
+        tally.noteMedia(i % 10 === 0 ? 'MISS' : 'HIT')
+      return buildReport({
+        title: `${streams} streams`,
+        startedAt: 0,
+        finishedAt: 120_000,
+        measurements: tally,
+        samples: [],
+        statements: STATEMENTS,
+        sequentialScans: [],
+        hasStatements: true
+      })
+    }
+
+    it('groups the streaming statements of either build by what they are', function () {
+      const groups = streamingQueries(STATEMENTS, 10)
+      expect(groups.map(row => row.name)).deep.equals(
+        STREAMING_QUERIES.map(row => row.name)
+      )
+      const by = Object.fromEntries(groups.map(row => [row.name, row]))
+      expect(by["playlist route's videos select"]).deep.include({
+        calls: 40 + 60,
+        statements: 2,
+        perSecond: 10
+      })
+      expect(by['sync query'].calls).equals(20)
+      expect(by['status writes']).deep.include({
+        calls: 30 + 50,
+        statements: 2
+      })
+      expect(by['videos reads by id']).deep.include({
+        calls: 10,
+        statements: 1
+      })
+      expect(streamingQueries([], 0)[0].perSecond).equals(0)
+    })
+
+    it('prints with fifty streams and their viewers', function () {
+      const data = run(50, 2000)
+      expect(data.streaming).deep.include({
+        streamsStarted: 50,
+        viewers: 2000,
+        playlistRequests: 4000,
+        playlistBytes: 3_000_000,
+        playlistBytesPerViewer: 1500,
+        mediaRequests: 6000,
+        cacheHitShare: 0.9
+      })
+      // Playlists count towards what could have answered 503.
+      expect(data.answers).equals(4000)
+      const text = renderReport(data)
+      expect(text).contains(
+        [
+          '## Streaming',
+          'streams started: 50',
+          'live viewers: 2000',
+          'playlist requests: 4000',
+          'playlist bytes per viewer: 1500 B over the wire (750 B a minute, 750 B a request, 3000000 B to 2000 viewers)',
+          'media requests: 6000 (HIT 5400, MISS 600)',
+          'cache hits: 90.0% of 6000 media requests',
+          'streaming queries:',
+          "  playlist route's videos select: 100 calls, 0.83 a second",
+          '  sync query: 20 calls, 0.17 a second',
+          '  status writes: 80 calls, 0.67 a second',
+          '  videos reads by id: 10 calls, 0.08 a second',
+          ''
+        ].join('\n')
+      )
+      // As the devops stress report finds them: the heading, then the lines.
+      const section = /^## (.*stream.*)$/im.exec(text)
+      expect(section?.[1]).equals('Streaming')
+      expect(/playlist bytes[^:]*:\s*(.+)$/im.exec(text)?.[1]).matches(
+        /^1500 B/
+      )
+      expect(/cache[- ]?hit[^:]*:\s*(.+)$/im.exec(text)?.[1]).equals(
+        '90.0% of 6000 media requests'
+      )
+      expect(
+        /playlist (?:requests|reloads|fetches)[^:]*:\s*([\d,]+)/i.exec(
+          text
+        )?.[1]
+      ).equals('4000')
+    })
+
+    it('prints with no streams, and with no statement figures', function () {
+      const text = renderReport(run(0, 0))
+      expect(text).contains(
+        [
+          '## Streaming',
+          'streams started: 0',
+          'live viewers: 0',
+          'playlist requests: 0',
+          'playlist bytes per viewer: no viewers',
+          'media requests: 0',
+          'cache hits: no media requests',
+          'streaming queries:'
+        ].join('\n')
+      )
+      const none = buildReport({
+        title: 'none',
+        startedAt: 0,
+        finishedAt: 0,
+        measurements: new Tally(),
+        samples: [],
+        statements: [],
+        sequentialScans: [],
+        hasStatements: false
+      })
+      expect(none.streaming.queries).equals(null)
+      expect(renderReport(none)).contains(
+        'streaming queries: no data (no pg_stat_statements)'
+      )
+      // Viewers sent nothing, over no time, still divide.
+      const idle = new Tally()
+      idle.viewersStarted = 1
+      const quiet = renderReport(
+        buildReport({
+          title: 'idle',
+          startedAt: 0,
+          finishedAt: 0,
+          measurements: idle,
+          samples: [],
+          statements: [],
+          sequentialScans: [],
+          hasStatements: false
+        })
+      )
+      expect(quiet).contains(
+        'playlist bytes per viewer: 0 B over the wire (0 B to 1 viewers)'
+      )
+    })
+
+    it('takes a hit only from the edge cache', function () {
+      expect(isCacheHit('HIT')).equals(true)
+      expect(isCacheHit('TCP_HIT')).equals(true)
+      expect(isCacheHit('MISS, HIT')).equals(true)
+      expect(isCacheHit('HIT, MISS')).equals(false)
+      expect(isCacheHit('NONE')).equals(false)
+      expect(isCacheHit('')).equals(false)
+    })
   })
 })
