@@ -105,7 +105,13 @@ export function createLiveHarness(options: {
     )
     const events: BroadcastEvent[] = []
     let buffer = ''
-    const t0 = new Promise<number>(resolve => {
+    const t0 = new Promise<number>((resolve, reject) => {
+      child.once('error', reject)
+      child.once('exit', code => {
+        reject(
+          new Error(`Broadcaster exited before planning: ${code ?? 'signal'}`)
+        )
+      })
       child.stdout.on('data', (chunk: Buffer) => {
         buffer += chunk.toString('utf8')
         let at
