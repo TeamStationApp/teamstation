@@ -23,6 +23,8 @@ import {
   masterVariant,
   mintStream,
   mintWithRetry,
+  awaitLiveVideos,
+  findLiveVideos,
   PATTERN_MARGIN_SEC,
   parseMediaPlaylist,
   paced,
@@ -358,6 +360,123 @@ describe('the actors', function () {
         ])
         expect(tally.errors['stream-mint-retry']).equals(2)
         publishers.stop()
+      })
+    })
+
+    describe('found through the API by a rig that publishes none', function () {
+      let api: Server
+      let base: string
+      const asked: string[] = []
+      /** Each game's videos by id, as `GET /games/:id` lists them. */
+      let videosOf: Record<
+        string,
+        Array<{ id: string; status: string }> | 'fail'
+      > = {}
+
+      before(async function () {
+        api = createServer((req: IncomingMessage, res: ServerResponse) => {
+          const gameId =
+            /\/api\/v1\/games\/([^/?]+)/.exec(req.url ?? '')?.[1] ?? ''
+          asked.push(
+            `${req.method} ${req.url} ${req.headers.authorization ?? ''}`
+          )
+          const videos = videosOf[gameId]
+          if (videos === 'fail') {
+            res.writeHead(503, { 'content-type': 'application/json' })
+            res.end('{"error":"unavailable"}')
+            return
+          }
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ id: gameId, videos: videos ?? [] }))
+        })
+        await new Promise<void>(done => api.listen(0, '127.0.0.1', done))
+        base = `http://127.0.0.1:${(api.address() as AddressInfo).port}`
+      })
+      after(async function () {
+        await new Promise(done => api.close(done))
+      })
+
+      it("list each live game's live videos as a member of it, and count a game that does not answer", async function () {
+        const [first, second, third] = tokens.games
+        asked.length = 0
+        videosOf = {
+          [first.id]: [
+            { id: 'vid_live1', status: 'live' },
+            { id: 'vid_ready', status: 'ready' }
+          ],
+          [second.id]: [{ id: 'vid_live2', status: 'live' }],
+          ...(third == null ? {} : { [third.id]: 'fail' as const })
+        }
+        const tally = new Tally()
+        const found = await findLiveVideos([base], tokens, tally)
+        expect(found).deep.include.members([
+          { gameId: first.id, videoId: 'vid_live1', videographer: '' },
+          { gameId: second.id, videoId: 'vid_live2', videographer: '' }
+        ])
+        expect(found.length).equals(2)
+        if (third != null) expect(tally.errors['http-503']).equals(1)
+        // Asked as a member of that game: one of its viewers or videographers.
+        const member = tokens.accounts.find(
+          row =>
+            (row.kind === 'viewer' || row.kind === 'videographer') &&
+            (row.gameIndex ?? 0) === 0
+        )
+        expect(asked).contains(
+          `GET /api/v1/games/${first.id} Bearer ${member?.token ?? ''}`
+        )
+        expect(
+          tally.requests.every(
+            row => row.route === 'GET /games/:id (live videos)'
+          )
+        ).equals(true)
+      })
+
+      it('skip a game no member of which was seeded', async function () {
+        asked.length = 0
+        const found = await findLiveVideos(
+          [base],
+          { accounts: [], games: tokens.games },
+          new Tally()
+        )
+        expect(found).deep.equals([])
+        expect(asked).deep.equals([])
+      })
+
+      it('wait until the expected number are live, or the wait runs out', async function () {
+        const video = (
+          n: number
+        ): { gameId: string; videoId: string; videographer: string } => ({
+          gameId: 'game',
+          videoId: `vid_${n}`,
+          videographer: ''
+        })
+        let calls = 0
+        const growing = async (): Promise<Array<ReturnType<typeof video>>> => {
+          calls += 1
+          return Array.from({ length: Math.min(calls, 3) }, (_, i) => video(i))
+        }
+        const enough = await awaitLiveVideos(growing, 3, {
+          pollMs: 1,
+          timeoutMs: 10_000
+        })
+        expect(enough.length).equals(3)
+        expect(calls).equals(3)
+
+        calls = 0
+        const short = await awaitLiveVideos(
+          async () => {
+            calls += 1
+            return [video(0)]
+          },
+          5,
+          { pollMs: 20, timeoutMs: 70 }
+        )
+        expect(short.length).equals(1)
+        expect(calls).within(2, 5)
+        // With no options it asks once and answers what it found, when that is enough.
+        expect(
+          (await awaitLiveVideos(async () => [video(0)], 1)).length
+        ).equals(1)
       })
     })
 

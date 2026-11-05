@@ -555,6 +555,73 @@ export async function mintStream(
   }
 }
 
+/**
+ * The live videos of the seeded live games, as a member of each sees them in
+ * `GET /games/:id`: for a rig whose viewers watch streams another rig
+ * publishes. A game nobody can be asked about, or that does not answer, is
+ * left out of this look.
+ */
+export async function findLiveVideos(
+  servers: string[],
+  tokens: Pick<TokensFile, 'accounts' | 'games'>,
+  tally: Tally
+): Promise<LiveVideo[]> {
+  const found = await Promise.all(
+    tokens.games.map(async (game, index) => {
+      const member = tokens.accounts.find(
+        account =>
+          (account.kind === 'viewer' || account.kind === 'videographer') &&
+          (account.gameIndex ?? 0) === index
+      )
+      if (member == null) return []
+      try {
+        const answer = (await request(
+          serverFor(servers, index),
+          member,
+          'GET',
+          `/games/${game.id}`,
+          { route: '/games/:id (live videos)', tally }
+        )) as { videos?: Array<{ id: string; status: string }> }
+        return (answer.videos ?? [])
+          .filter(video => video.status === 'live')
+          .map(video => ({
+            gameId: game.id,
+            videoId: video.id,
+            videographer: ''
+          }))
+      } catch (error) {
+        tally.failure(error)
+        return []
+      }
+    })
+  )
+  return found.flat()
+}
+
+/**
+ * Asks for the live videos every `pollMs` until `expected` are live or
+ * `timeoutMs` has passed, and answers what it found last: the viewers of a
+ * viewer-only rig wait for the publishing rig's streams.
+ */
+export async function awaitLiveVideos(
+  find: () => Promise<LiveVideo[]>,
+  expected: number,
+  {
+    pollMs = 5000,
+    timeoutMs = 300_000
+  }: { pollMs?: number; timeoutMs?: number } = {}
+): Promise<LiveVideo[]> {
+  const deadline = performance.now() + timeoutMs
+  for (;;) {
+    const videos = await find()
+    if (videos.length >= expected || performance.now() + pollMs > deadline)
+      return videos
+    await new Promise(done => {
+      setTimeout(done, pollMs)
+    })
+  }
+}
+
 /** At most this many cameras per person on a game, as the route allows. */
 export const CAMERAS_PER_PERSON = 4
 

@@ -7,6 +7,8 @@ import { Client } from 'pg'
 
 import {
   type Actor,
+  awaitLiveVideos,
+  findLiveVideos,
   LiveViewer,
   type LiveVideo,
   paced,
@@ -63,7 +65,10 @@ import { Sampler } from './sampler'
  * Every mode refuses a database not marked for load testing. `--stats-database`
  * is where `pg_stat_statements` is installed, when that is not `--database`: it
  * is only read, and only for the statements of `--database`. `--viewers` watch
- * the videos `--streams` publish, dealt across their games.
+ * the videos `--streams` publish, dealt across their games. With
+ * `--watch-streams N` and no `--streams`, they watch the live videos another rig
+ * publishes, found through `GET /games/:id` once N are live (or after
+ * `--watch-timeout` seconds, 300 by default).
  */
 
 export interface Io {
@@ -89,6 +94,8 @@ const OPTIONS = {
   report: { type: 'string' },
   streams: { type: 'string' },
   viewers: { type: 'string' },
+  'watch-streams': { type: 'string' },
+  'watch-timeout': { type: 'string' },
   scoreboards: { type: 'string' },
   'require-statements': { type: 'boolean' },
   'pooler-address': { type: 'string' },
@@ -136,6 +143,9 @@ export interface RunOptions {
   minutes: number
   streams: number
   viewers: number
+  /** For a viewer-only rig: how many live videos to wait for before its viewers start. */
+  watchStreams: number
+  watchWait?: { pollMs?: number; timeoutMs?: number }
   scoreboards: number
   reportPath?: string
   requireStatements: boolean
@@ -254,12 +264,20 @@ export async function runLoad(options: RunOptions): Promise<ReportData> {
       actors.push(readers)
       readers.start()
 
-      if (publishers != null) {
-        const watching = liveViewersFor(
-          tokens,
-          publishers.videos,
-          options.viewers
+      if (options.viewers > 0) {
+        // A rig that publishes nothing watches what another rig publishes,
+        // found through the API once it is live.
+        const videos =
+          publishers?.videos ??
+          (await awaitLiveVideos(
+            async () => await findLiveVideos(options.servers, tokens, tally),
+            options.watchStreams,
+            options.watchWait
+          ))
+        options.log(
+          `live viewers: ${options.viewers} on ${videos.length} live videos`
         )
+        const watching = liveViewersFor(tokens, videos, options.viewers)
         const liveViewers = watching.map(
           ({ account, videoId }, index) =>
             new LiveViewer(
@@ -489,8 +507,15 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
 
   const streams = count(values.streams, '--streams', 0)
   const viewers = count(values.viewers, '--viewers', 0)
-  if (viewers > 0 && streams === 0)
-    throw new Error('--viewers needs --streams above 0: they watch its videos')
+  const watchStreams = count(values['watch-streams'], '--watch-streams', 0)
+  if (viewers > 0 && streams === 0 && watchStreams === 0)
+    throw new Error(
+      '--viewers needs --streams above 0, or --watch-streams N for the live videos another rig publishes'
+    )
+  if (watchStreams > 0 && streams > 0)
+    throw new Error(
+      '--watch-streams is for a rig that publishes nothing: this one has --streams'
+    )
   const data = await runLoad({
     servers,
     databaseUrl,
@@ -504,6 +529,14 @@ export async function runMain(argv: string[], io: Io): Promise<number> {
     minutes: count(values.minutes, '--minutes', 1),
     streams,
     viewers,
+    watchStreams,
+    watchWait: {
+      timeoutMs: count(values['watch-timeout'], '--watch-timeout', 300) * 1000,
+      pollMs: Math.min(
+        5000,
+        count(values['watch-timeout'], '--watch-timeout', 300) * 1000
+      )
+    },
     scoreboards: count(values.scoreboards, '--scoreboards', 0),
     reportPath: values.report,
     requireStatements: values['require-statements'] === true,

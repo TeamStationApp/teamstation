@@ -1,4 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer, request as httpRequest } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -123,6 +125,124 @@ describe('the command line', function () {
     expect(text).not.contains('socket-close-4403')
   })
 
+  it('watches the live videos another rig publishes, found through the API, with --watch-streams', async function () {
+    // What the first run's stream left, made live as the ingest would.
+    const minted = await scratch.db
+      .selectFrom('live_streams')
+      .select('video_id')
+      .where('video_id', 'is not', null)
+      .execute()
+    expect(minted.length).above(0)
+    await scratch.db
+      .updateTable('videos')
+      .set({ status: 'live', hidden: false })
+      .where(
+        'id',
+        'in',
+        minted.map(row => row.video_id ?? '')
+      )
+      .execute()
+    // The test server mounts no `GET /games/:id`, so this one answers it from
+    // the database, as the API does, and passes everything else through.
+    const proxy = createServer((req, res) => {
+      const game = /^\/api\/v1\/games\/([^/?]+)$/.exec(req.url ?? '')?.[1]
+      if (req.method === 'GET' && game != null) {
+        void scratch.db
+          .selectFrom('videos')
+          .select(['id', 'status'])
+          .where('game_id', '=', game)
+          .where('hidden', '=', false)
+          .execute()
+          .then(videos => {
+            res.writeHead(200, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ id: game, videos }))
+          })
+        return
+      }
+      const target = new URL(server.base)
+      const forward = httpRequest(
+        {
+          host: target.hostname,
+          port: target.port,
+          method: req.method,
+          path: req.url,
+          headers: req.headers
+        },
+        answer => {
+          res.writeHead(answer.statusCode ?? 502, answer.headers)
+          answer.pipe(res)
+        }
+      )
+      forward.on('error', () => res.destroy())
+      req.pipe(forward)
+    })
+    await new Promise<void>(done => proxy.listen(0, '127.0.0.1', done))
+    const proxied = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`
+    const report = join(dir, 'watch.log')
+    const code = await run(
+      ...flags(),
+      '--server',
+      proxied,
+      '--users',
+      '2',
+      '--games',
+      '2',
+      '--pitch-seconds',
+      '0.2',
+      '--minutes',
+      '0.03',
+      '--connect-rate',
+      '100',
+      '--viewers',
+      '3',
+      '--watch-streams',
+      String(minted.length),
+      '--watch-timeout',
+      '20',
+      '--report',
+      report
+    )
+    expect(code).equals(0)
+    const data = JSON.parse(readFileSync(`${report}.json`, 'utf8'))
+    expect(data.streamsStarted).equals(0)
+    expect(data.streaming.viewers).equals(3)
+    expect(lines).contains(`live viewers: 3 on ${minted.length} live videos`)
+    proxy.closeAllConnections()
+    await new Promise(done => proxy.close(done))
+  })
+
+  it('gives up waiting for live videos after --watch-timeout, and starts no viewers on none', async function () {
+    await scratch.db
+      .updateTable('videos')
+      .set({ status: 'ready' })
+      .where('status', '=', 'live')
+      .execute()
+    const report = join(dir, 'nowatch.log')
+    const started = Date.now()
+    const code = await run(
+      ...flags(),
+      '--server',
+      server.base,
+      '--users',
+      '1',
+      '--minutes',
+      '0.02',
+      '--viewers',
+      '2',
+      '--watch-streams',
+      '1',
+      '--watch-timeout',
+      '1',
+      '--report',
+      report
+    )
+    expect(code).equals(0)
+    expect(Date.now() - started).below(30_000)
+    expect(lines).contains('live viewers: 2 on 0 live videos')
+    const data = JSON.parse(readFileSync(`${report}.json`, 'utf8'))
+    expect(data.streaming.viewers).equals(0)
+  })
+
   it('holds a run to the thresholds when asked, counting the servers logs', async function () {
     const log = join(dir, 'api.log')
     writeFileSync(log, 'error: sorry, too many clients already\nfine\n')
@@ -237,7 +357,20 @@ describe('the command line', function () {
         '--viewers',
         '3'
       )
-    ).contains('--viewers needs --streams above 0')
+    ).contains('--viewers needs --streams above 0, or --watch-streams N')
+    expect(
+      await refusal(
+        ...flags(),
+        '--server',
+        server.base,
+        '--users',
+        '1',
+        '--streams',
+        '1',
+        '--watch-streams',
+        '1'
+      )
+    ).contains('--watch-streams is for a rig that publishes nothing')
   })
 
   it('refuses a database not marked for load testing, in every mode', async function () {
