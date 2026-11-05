@@ -37,7 +37,7 @@ import { storeAttachment } from '../tess/attachments'
 import { proposeChange } from '../tess/changes'
 import { appendMessages, saveContextTokens } from '../tess/conversation'
 import { ACCOUNT_DELETED } from '../tess/liveUser'
-import { withTurn } from '../tess/turns'
+import { stopTurn, withTurn } from '../tess/turns'
 import { deleteAccount, DELETED_NAME } from './deleteAccount'
 
 const ROOT = '/me/account'
@@ -577,7 +577,11 @@ describe('deleting an account', function () {
 
     // Nor does anything Tess would write later.
     for (const write of [
-      async () => await withTurn(h.db, leaving.id, async () => 'held'),
+      async () =>
+        await withTurn(h.db, leaving.id, undefined, async () => 'held'),
+      async () => {
+        await stopTurn(h.db, leaving.id, 'm1')
+      },
       async () =>
         await appendMessages(h.db, leaving.id, [
           { role: 'assistant', content: [{ type: 'text', text: 'Saturday.' }] }

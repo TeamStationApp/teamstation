@@ -4,8 +4,8 @@
  * API client's own; this module names the parts the chat uses.
  *
  * Tool calls and tool results never reach the client. An assistant message
- * carries the changes it proposed, each as the server stored it, so the card
- * shows what will run rather than what the model said about it, and the
+ * carries the changes it proposed, each as the server stored it, so the
+ * table shows what will run rather than what the model said about it, and the
  * summary of her thinking and her steps, each labelled by the server.
  */
 import type {
@@ -17,6 +17,7 @@ import type {
 
 export type {
   TessChange,
+  TessChangeDetail,
   TessConversation,
   TessMessage,
   TessScreen,
@@ -35,13 +36,15 @@ export type TessUpload = TessAttachmentBody
 
 /**
  * The part of `TeamStationClient` the chat calls. Messages and confirms are
- * streamed, so the chat shows Tess's work as it happens.
+ * streamed, so the chat shows Tess's work as it happens, and either can be
+ * stopped. A turn's changes are confirmed together, by one hold.
  */
 export type TessApi = Pick<
   TeamStationClient,
   | 'tess'
   | 'streamTessMessage'
   | 'uploadTessAttachment'
-  | 'streamTessConfirm'
+  | 'streamTessConfirmAll'
+  | 'stopTess'
   | 'tessUsage'
 >

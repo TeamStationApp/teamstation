@@ -1241,6 +1241,10 @@ export interface TessConversationsTable {
   context_tokens: Generated<number>
   turn_owner: string | null
   turn_until: Timestamp | null
+  /** The app's id for the turn running (106tessCacheUsage). */
+  turn_client_id: string | null
+  /** The app's id for the turn a stop names. */
+  turn_stop: string | null
   updated_at: Generated<Date>
 }
 
@@ -1285,6 +1289,8 @@ export interface TessChangesTable {
   expires_at: Timestamp
   /** When it was confirmed and began to run. */
   started_at: Timestamp | null
+  /** Label and value pairs in plain words, for the person (106tessCacheUsage). */
+  details: Json | null
 }
 
 /**
@@ -1297,6 +1303,9 @@ export interface TessUsageWeeksTable {
   week_start: ColumnType<unknown, string, never>
   input_tokens: Generated<number>
   output_tokens: Generated<number>
+  /** Of the input, read from and written to the cache (106tessCacheUsage). */
+  cache_read_tokens: Generated<number>
+  cache_write_tokens: Generated<number>
   requests: Generated<number>
 }
 

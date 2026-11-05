@@ -33,12 +33,12 @@ const user: UserContext = {
 }
 
 describe("Tess's system prompt", function () {
-  it('caches the instructions and the sitemap, and not the request’s own context', function () {
+  it('caches the instructions and the sitemap for an hour, and not the request’s own context', function () {
     const blocks = systemBlocks({ user })
-    expect(blocks.map(block => block.cached === true)).deep.equals([
-      true,
-      true,
-      false
+    expect(blocks.map(block => block.cached)).deep.equals([
+      '1h',
+      '1h',
+      undefined
     ])
     expect(blocks[0].text).equals(instructions())
     expect(blocks[1].text).equals(sitemapText())

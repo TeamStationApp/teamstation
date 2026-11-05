@@ -230,6 +230,7 @@ import { TessDivider } from './tess/TessDivider'
 import { usePaneAtLeast, useTessWide, useTessWidth } from './tess/tessLayout'
 import { TessOverlayHost, TessOverlayProvider } from './tess/TessOverlay'
 import { TessPanel } from './tess/TessPanel'
+import { forgetQueues as forgetTessQueues } from './tess/tessQueue'
 import type { TessScreen } from './tess/tessTypes'
 import { useTessAvailable } from './tess/useTessAvailable'
 import { useTessBack } from './tess/useTessBack'
@@ -664,10 +665,14 @@ function Shell(props: AppProps): React.ReactElement {
       ...opened
     }
   })
-  /** Forgets the session and starts every tab over, for sign-out and deletion alike. */
+  /**
+   * Forgets the session, and what waits for Tess, and starts every tab over,
+   * for sign-out and deletion alike.
+   */
   const leaveSession = (): void => {
     rememberSession(undefined)
     clearHomeListExpanded().catch(() => undefined)
+    forgetTessQueues()
     setStacks({ home: [], videos: [], schedule: [], search: [], chat: [] })
     setTab('home')
   }
@@ -2309,6 +2314,7 @@ function Shell(props: AppProps): React.ReactElement {
                   client.token = undefined
                   rememberSession(undefined)
                   clearHomeListExpanded().catch(() => undefined)
+                  forgetTessQueues()
                   const destination: Route = {
                     name: 'signIn',
                     next: routePath(route)
@@ -3929,6 +3935,7 @@ function Shell(props: AppProps): React.ReactElement {
         onNavigate={openTessLink}
         screen={tessScreen}
         takesFocus={takeTessFocus}
+        owner={signedInAs}
       />
     </TessFrame>
   )

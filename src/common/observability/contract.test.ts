@@ -188,7 +188,9 @@ describe('private compact event contract', () => {
         status: 200,
         ms: 2400,
         it: 9520,
-        ot: 75
+        ot: 75,
+        cr: 400,
+        cw: 9000
       }),
       sample('tess_request', {
         op: 'assistant',
@@ -211,6 +213,9 @@ describe('private compact event contract', () => {
       { op: 'chat' },
       { it: -1 },
       { it: 10000001 },
+      { cr: -1 },
+      { cr: 10000001 },
+      { cw: 'many' },
       { ot: 'many' },
       { ot: NaN },
       { status: 99 },

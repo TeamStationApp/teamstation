@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { Kysely, Selectable } from 'kysely'
 
 import type { TessChange } from '../../common/api'
-import { conflict, notFound } from '../../common/errors'
+import { badRequest, conflict, HttpError, notFound } from '../../common/errors'
 import type { Database, TessChangesTable } from '../db/database'
 import { isUuid } from './attachments'
 import { type ApiMethod, checkApiRequest } from './denyList'
@@ -17,10 +17,12 @@ import {
 
 /**
  * The changes Tess proposes. She never runs one: `confirmChange` stores the
- * request as she wrote it, the app shows that request on a card, and it runs
- * only when the person holds Confirm, with their own credentials, through
- * the same API and the same permission checks as a tap. A change not
- * confirmed within 30 minutes, or before the person's next message, expires.
+ * request as she wrote it, with what it sets in plain words (`details`), the
+ * app shows a reply's changes as a table with each request folded under it,
+ * and they run only when the person holds Confirm, with their own
+ * credentials, through the same API and the same permission checks as a
+ * tap. A change not confirmed within 30 minutes, or before the person's next
+ * message, expires.
  */
 
 export const CHANGE_TTL_MS = 30 * 60 * 1000
@@ -35,6 +37,9 @@ export const MAX_CHANGE_RESULT = 4000
  */
 export const LOST_AFTER_MS = LOOPBACK_DEADLINE_MS + 30000
 
+/** The most changes one hold confirms. */
+export const MAX_BATCH = 50
+
 export const UNKNOWN_CHANGE =
   'This change may or may not have run. Check whether it happened before asking Tess again.'
 
@@ -47,6 +52,13 @@ export interface ProposedChange {
   path: string
   body?: unknown
   summary: string
+  /** What it sets, label by label, in plain words, in the model's order. */
+  details?: ChangeDetail[]
+}
+
+export interface ChangeDetail {
+  label: string
+  value: string
 }
 
 /**
@@ -70,6 +82,7 @@ export async function proposeChange(
         path: change.path,
         body: change.body === undefined ? null : JSON.stringify(change.body),
         summary: change.summary,
+        details: change.details == null ? null : JSON.stringify(change.details),
         expires_at: new Date(now.getTime() + CHANGE_TTL_MS)
       })
       .execute()
@@ -124,15 +137,45 @@ function lost(row: ChangeRow, now: Date): boolean {
   )
 }
 
-/** A change as the app shows it at `now`: one lost mid-run is unknown. */
+/** The stored details, as pairs of strings, or none. */
+function storedDetails(value: unknown): ChangeDetail[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const details = value.flatMap((item: unknown): ChangeDetail[] => {
+    const { label, value } = (item ?? {}) as Record<string, unknown>
+    return typeof label === 'string' && typeof value === 'string'
+      ? [{ label, value }]
+      : []
+  })
+  return details.length === 0 ? undefined : details
+}
+
+/**
+ * A change as the app shows it at `now`: one lost mid-run is unknown. Its
+ * details, when Tess gave any, are its row of the table. A pending one says
+ * when it expires, and how long it has left as of `now`, which the app
+ * counts from when it receives it, so it stops waiting for its hold then
+ * whatever its own clock says.
+ */
 export function changeView(row: ChangeRow, now = new Date()): TessChange {
+  const details = storedDetails(row.details)
+  const status = lost(row, now) ? 'unknown' : row.status
   return {
     id: row.id,
     summary: row.summary,
     method: row.method,
     path: row.path,
     body: row.body ?? null,
-    status: lost(row, now) ? 'unknown' : row.status
+    status,
+    ...(details == null ? {} : { details }),
+    ...(status === 'pending'
+      ? {
+          expiresAt: new Date(row.expires_at).toISOString(),
+          expiresInMs: Math.max(
+            0,
+            new Date(row.expires_at).getTime() - now.getTime()
+          )
+        }
+      : {})
   }
 }
 
@@ -169,17 +212,21 @@ export interface ConfirmDeps {
  * `pending` is what makes two confirms run it once. A change the server
  * gave no answer to (out of time, or unreachable) is `unknown` too: giving
  * up on the request does not undo a write it may already have made, so the
- * card and Tess both say to check. Answers the change as it ended, and the
- * note Tess is told it with.
+ * table and Tess both say to check. Answers the change as it ended, and the
+ * note Tess is told it with. `batchNow`, for one of a batch, is the moment
+ * the batch was confirmed, against which its time is checked; it is still
+ * marked as starting when it does start, so a long batch's later changes are
+ * not taken for lost while they run.
  */
 export async function runChange(
   deps: ConfirmDeps,
   userId: string,
   credentials: Credentials,
-  changeId: string
+  changeId: string,
+  batchNow?: Date
 ): Promise<{ change: TessChange; note: string }> {
+  const now = batchNow ?? deps.now?.() ?? new Date()
   if (!isUuid(changeId)) throw notFound('No such change')
-  const now = deps.now?.() ?? new Date()
   const found = await deps.db
     .selectFrom('tess_changes')
     .selectAll()
@@ -208,7 +255,10 @@ export async function runChange(
   if (found.status === 'unknown') throw conflict(UNKNOWN_CHANGE)
   const running = await deps.db
     .updateTable('tess_changes')
-    .set({ status: 'running', started_at: now })
+    .set({
+      status: 'running',
+      started_at: batchNow == null ? now : (deps.now?.() ?? new Date())
+    })
     .where('id', '=', changeId)
     .where('user_id', '=', userId)
     .where('status', '=', 'pending')
@@ -250,6 +300,139 @@ export async function runChange(
     note: unanswered
       ? `${confirmed}; the server gave no answer, so it may or may not have happened. Tell them to check whether it did before asking for it again.`
       : `${confirmed}; the server answered ${answer.status}: ${text}`
+  }
+}
+
+/**
+ * Runs a batch of the person's pending changes, the ones a reply proposed,
+ * held as one: each once, in the order given. The batch is looked at whole
+ * first, and nothing runs unless it all can: one named twice is a bad
+ * request, one that is not the person's (or no change) is not found, and one
+ * no longer pending, past its time or lost mid-run is a conflict, the last
+ * two stored as `expired` and `unknown`, as `runChange` stores them. Then
+ * each runs, its time checked at the batch's `now`, so a batch accepted
+ * whole runs whole however long its requests take; one that fails, on the
+ * server or (one taken meanwhile) before it ran, does not stop the rest, nor
+ * does one whose run breaks off with an error of the server's own
+ * (`brokenOff`). Answers each change as it ended, and the note Tess is told
+ * it with.
+ */
+export async function runChanges(
+  deps: ConfirmDeps,
+  userId: string,
+  credentials: Credentials,
+  changeIds: readonly string[]
+): Promise<Array<{ change: TessChange; note: string }>> {
+  if (changeIds.length === 0 || changeIds.length > MAX_BATCH)
+    throw badRequest(`Confirm 1 to ${MAX_BATCH} changes`)
+  if (new Set(changeIds).size !== changeIds.length)
+    throw badRequest('A change is named twice')
+  if (!changeIds.every(isUuid)) throw notFound('No such change')
+  const now = deps.now?.() ?? new Date()
+  const rows = await deps.db
+    .selectFrom('tess_changes')
+    .selectAll()
+    .where('user_id', '=', userId)
+    .where('id', 'in', [...changeIds])
+    .execute()
+  if (rows.length !== changeIds.length) throw notFound('No such change')
+  const late = rows.filter(
+    row => row.status === 'pending' && new Date(row.expires_at) <= now
+  )
+  if (late.length > 0) {
+    await deps.db
+      .updateTable('tess_changes')
+      .set({ status: 'expired' })
+      .where(
+        'id',
+        'in',
+        late.map(row => row.id)
+      )
+      .where('status', '=', 'pending')
+      .execute()
+    throw conflict('These changes have expired. Ask Tess again.')
+  }
+  const gone = rows.filter(row => lost(row, now))
+  if (gone.length > 0) {
+    await deps.db
+      .updateTable('tess_changes')
+      .set({ status: 'unknown' })
+      .where(
+        'id',
+        'in',
+        gone.map(row => row.id)
+      )
+      .where('status', '=', 'running')
+      .execute()
+    throw conflict(UNKNOWN_CHANGE)
+  }
+  if (rows.some(row => row.status === 'unknown')) throw conflict(UNKNOWN_CHANGE)
+  const settled = rows.find(row => row.status !== 'pending')
+  if (settled != null) throw conflict(`A change is already ${settled.status}`)
+  const byId = new Map(rows.map(row => [row.id, row]))
+  const ran: Array<{ change: TessChange; note: string }> = []
+  for (const changeId of changeIds) {
+    try {
+      ran.push(await runChange(deps, userId, credentials, changeId, now))
+    } catch (error) {
+      const row = byId.get(changeId)!
+      ran.push(
+        error instanceof HttpError
+          ? {
+              change:
+                (await changesById(deps.db, userId, [changeId], now)).get(
+                  changeId
+                ) ?? changeView(row, now),
+              note: `The change "${row.summary}" (${row.method} ${row.path}) did not run: ${error.message}`
+            }
+          : await brokenOff(deps.db, userId, row, now)
+      )
+    }
+  }
+  return ran
+}
+
+/**
+ * A change of a batch whose run broke off with an error of the server's own,
+ * a database's say, rather than an answer: stored and told as `failed` when
+ * it is still pending, so it provably never ran, and otherwise as `unknown`,
+ * since its request may have gone out. Never throws, so the rest of the
+ * batch runs and every change of it gets its note.
+ */
+async function brokenOff(
+  db: Kysely<Database>,
+  userId: string,
+  row: ChangeRow,
+  now: Date
+): Promise<{ change: TessChange; note: string }> {
+  const named = `The change "${row.summary}" (${row.method} ${row.path})`
+  try {
+    const failed = await db
+      .updateTable('tess_changes')
+      .set({ status: 'failed' })
+      .where('id', '=', row.id)
+      .where('user_id', '=', userId)
+      .where('status', '=', 'pending')
+      .returningAll()
+      .executeTakeFirst()
+    if (failed != null)
+      return {
+        change: changeView(failed, now),
+        note: `${named} did not run: something went wrong before it could.`
+      }
+    await db
+      .updateTable('tess_changes')
+      .set({ status: 'unknown' })
+      .where('id', '=', row.id)
+      .where('user_id', '=', userId)
+      .where('status', '=', 'running')
+      .execute()
+  } catch {
+    // Unstored, it is told as unknown all the same.
+  }
+  return {
+    change: { ...changeView(row, now), status: 'unknown' },
+    note: `${named} may or may not have run: ${UNKNOWN_CHANGE}`
   }
 }
 

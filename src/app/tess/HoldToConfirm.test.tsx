@@ -53,9 +53,13 @@ function traced(): number {
   return 1 - Number(rect.getAttribute('stroke-dashoffset')) / perimeter
 }
 
-async function holdButton(): Promise<{ confirms: number[] }> {
+/**
+ * The pill, on a clock that takes every timer from `fromMs`: lower than the
+ * default for reduced motion, whose quarter steps are 500 ms apart.
+ */
+async function holdButton(fromMs?: number): Promise<{ confirms: number[] }> {
   const confirms: number[] = []
-  clock = manualClock()
+  clock = manualClock(fromMs)
   await render(<HoldToConfirm onConfirm={() => confirms.push(1)} />)
   await settle()
   return { confirms }
@@ -84,11 +88,15 @@ describe('HoldToConfirm', function () {
     expect(traced()).closeTo(0, 0.001)
   })
 
-  it('runs nothing when released at 2,900 ms, and wipes the trace', async function () {
+  it('holds for two seconds', function () {
+    expect(HOLD_MS).equals(2000)
+  })
+
+  it('runs nothing when released at 1,900 ms, and wipes the trace', async function () {
     const { confirms } = await holdButton()
     await pointer('mousedown')
     expect(clock!.pending()).includes(HOLD_MS)
-    await clock!.advance(2900)
+    await clock!.advance(1900)
     await pointer('mouseup')
     expect(confirms).deep.equals([])
     expect(clock!.pending()).deep.equals([])
@@ -97,10 +105,10 @@ describe('HoldToConfirm', function () {
     expect(confirms).deep.equals([])
   })
 
-  it('runs once after a 3,000 ms hold, and keeps the trace full', async function () {
+  it('runs once after a 2,000 ms hold, and keeps the trace full', async function () {
     const { confirms } = await holdButton()
     await pointer('mousedown')
-    await clock!.advance(2999)
+    await clock!.advance(1999)
     expect(confirms).deep.equals([])
     await clock!.advance(1)
     expect(confirms).deep.equals([1])
@@ -114,7 +122,7 @@ describe('HoldToConfirm', function () {
   it('resets when the press is taken away', async function () {
     const { confirms } = await holdButton()
     await pointer('mousedown')
-    await clock!.advance(1500)
+    await clock!.advance(1000)
     expect(traced()).greaterThan(0)
     // The page's context menu takes the press away from the button.
     await act(async () => {
@@ -129,20 +137,20 @@ describe('HoldToConfirm', function () {
     expect(traced()).closeTo(0, 0.001)
   })
 
-  it('with reduced motion still takes three seconds, drawn a quarter at a time', async function () {
+  it('with reduced motion still takes two seconds, drawn a quarter at a time', async function () {
     reduceMotion()
-    const { confirms } = await holdButton()
+    const { confirms } = await holdButton(400)
     await pointer('mousedown')
-    await clock!.advance(749)
+    await clock!.advance(499)
     expect(traced()).closeTo(0, 0.001)
     await clock!.advance(1)
     expect(traced()).closeTo(0.25, 0.001)
-    await clock!.advance(750)
+    await clock!.advance(500)
     expect(traced()).closeTo(0.5, 0.001)
-    await clock!.advance(750)
+    await clock!.advance(500)
     expect(traced()).closeTo(0.75, 0.001)
     expect(confirms).deep.equals([])
-    await clock!.advance(750)
+    await clock!.advance(500)
     expect(traced()).closeTo(1, 0.001)
     expect(confirms).deep.equals([1])
   })
@@ -172,11 +180,11 @@ describe('HoldToConfirm', function () {
       return <HoldToConfirm disabled={off} onConfirm={() => confirms.push(1)} />
     }
     reduceMotion()
-    clock = manualClock()
+    clock = manualClock(400)
     await render(<Switchable />)
     await settle()
     await pointer('mousedown')
-    await clock.advance(1500)
+    await clock.advance(1000)
     expect(traced()).closeTo(0.5, 0.001)
     await act(async () => {
       turnOff(true)

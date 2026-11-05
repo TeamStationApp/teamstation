@@ -98,6 +98,11 @@ async function main(): Promise<void> {
     app.get('/dictation', (_req, res) => {
       res.json(fixture.dictation)
     })
+    // How many times the model has been asked: what was dictated and not
+    // sent asks it nothing.
+    app.get('/model-calls', (_req, res) => {
+      res.json({ count: fixture.model.calls.length })
+    })
     app.get('/games/:teamId', (req, res, next) => {
       fixture.f.h.db
         .selectFrom('games')

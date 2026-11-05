@@ -4,6 +4,7 @@ import { after, before, beforeEach, describe, it } from 'mocha'
 
 import { TESS_MAX_IMAGE_BYTES } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { sseOf, streamEvents } from '../../test/anthropicStream'
 import {
   callTools,
   expectValidRequest,
@@ -14,9 +15,11 @@ import {
   TOO_LONG
 } from '../../test/tessFakes'
 import {
+  confirmAllTurn,
   confirmTurn,
   MAX_TOOL_ROUNDS,
   runTurn,
+  STOPPED_BEFORE_RUN,
   TOO_LARGE_NOW,
   TOOL_LIMIT,
   type TurnEvent
@@ -28,10 +31,10 @@ import {
   PICTURE_BYTES,
   SUMMARY_SYSTEM
 } from './compaction'
-import { loadConversation } from './conversation'
+import { loadConversation, STOPPED_NOTE } from './conversation'
 import { READING_API, stepLabel } from './stepLabels'
 import { PROPOSED } from './tools'
-import { TURN_RUNNING } from './turns'
+import { stopTurn, TURN_RUNNING, TURN_STOP_POLL_MS } from './turns'
 import { usageWeeks } from './usage'
 
 type Block = Record<string, any>
@@ -89,8 +92,16 @@ describe("Tess's agent loop", function () {
     const [request] = model.messageCalls()
     expect(request.model).equals('claude-sonnet-5-5')
     expect(request.system).length(3)
-    expect(request.system[0].cache_control).deep.equals({ type: 'ephemeral' })
-    expect(request.system[1].cache_control).deep.equals({ type: 'ephemeral' })
+    // The tools, the instructions and the sitemap are every person's, kept
+    // for an hour.
+    expect(request.system[0].cache_control).deep.equals({
+      type: 'ephemeral',
+      ttl: '1h'
+    })
+    expect(request.system[1].cache_control).deep.equals({
+      type: 'ephemeral',
+      ttl: '1h'
+    })
     expect(request.system[2].cache_control).equals(undefined)
     expect(request.tools.map((tool: Block) => tool.name)).deep.equals([
       'api_get',
@@ -1310,5 +1321,284 @@ describe("Tess's agent loop", function () {
     expect(events[0]).deep.equals({ type: 'stored', fromId, change })
     expect(change.status).equals('done')
     expect(joined(events, 'text')).equals('You now follow Demo Hawks.')
+  })
+
+  it('confirms a reply’s changes in one turn: one note for each in one message, then one report', async () => {
+    const follow = (
+      id: string,
+      summary: string
+    ): { name: string; input: unknown } => ({
+      name: 'confirmChange',
+      input: {
+        method: 'PUT',
+        path: `/me/follows/team/${id}`,
+        summary,
+        details: { Team: summary.replace('Follow ', '') }
+      }
+    })
+    model.reply(
+      callTools([
+        follow('tem_account', 'Follow Demo Hawks'),
+        follow('tem_missing', 'Follow Demo Ghosts')
+      ]),
+      say('Hold Confirm to follow both.')
+    )
+    await runTurn(w.deps(), w.user(101), { text: 'Follow both teams' })
+    const ids = (
+      await w.h.db
+        .selectFrom('tess_changes')
+        .select('id')
+        .orderBy('created_at')
+        .execute()
+    ).map(row => row.id)
+    model.reply(say('You follow Demo Hawks; Demo Ghosts was not found.'))
+    const events: TurnEvent[] = []
+    const { changes, fromId } = await confirmAllTurn(
+      w.deps(),
+      w.user(101),
+      ids,
+      event => {
+        events.push(event)
+      },
+      'm-all'
+    )
+    expect(kinds(events)).deep.equals(['preparing', 'stored', 'text'])
+    expect(events[1]).deep.equals({ type: 'stored', fromId, changes })
+    expect(changes.map(change => [change.id, change.status])).deep.equals([
+      [ids[0], 'done'],
+      [ids[1], 'failed']
+    ])
+    expect(changes[0].details).deep.equals([
+      { label: 'Team', value: 'Demo Hawks' }
+    ])
+    const stored = await loadConversation(w.h.db, w.userId(101), fromId)
+    expect(stored.messages.map(message => message.role)).deep.equals([
+      'user',
+      'assistant'
+    ])
+    expect(
+      stored.messages[0].content.map(block =>
+        block.type === 'confirmation' ? block.changeId : block.type
+      )
+    ).deep.equals(ids)
+    // Told in one request, which the API takes.
+    const report = model.messageCalls().at(-1) as Block
+    expectValidRequest(report.messages as Message[])
+    expect(
+      (report.messages.at(-1).content as Block[]).filter(block =>
+        String(block.text).startsWith('The user confirmed')
+      )
+    ).length(2)
+  })
+
+  it('stores a note for every change of a batch when the last one’s run breaks off', async () => {
+    const follow = (id: string): { name: string; input: unknown } => ({
+      name: 'confirmChange',
+      input: {
+        method: 'PUT',
+        path: `/me/follows/team/${id}`,
+        summary: `Follow ${id}`
+      }
+    })
+    model.reply(
+      callTools([follow('tem_account'), follow('tem_other')]),
+      say('Hold Confirm to follow both.')
+    )
+    await runTurn(w.deps(), w.user(101), { text: 'Follow both teams' })
+    const ids = (
+      await w.h.db
+        .selectFrom('tess_changes')
+        .select('id')
+        .orderBy('created_at')
+        .execute()
+    ).map(row => row.id)
+    model.reply(say('One is done; check the other.'))
+    // The second change's run breaks off once it is running.
+    let origins = 0
+    const deps = w.deps()
+    const { changes, fromId } = await confirmAllTurn(
+      {
+        ...deps,
+        origin: () => {
+          if (++origins > 1) throw new Error('connection reset')
+          return deps.origin()
+        }
+      },
+      w.user(101),
+      ids
+    )
+    expect(changes.map(change => change.status)).deep.equals([
+      'done',
+      'unknown'
+    ])
+    const stored = await loadConversation(w.h.db, w.userId(101), fromId)
+    expect(
+      stored.messages[0].content.map(block =>
+        block.type === 'confirmation' ? block.changeId : block.type
+      )
+    ).deep.equals(ids)
+  })
+
+  describe('stopped by the person', () => {
+    /** The start of a streamed answer that says this, then a wait. */
+    const begun = (text: string): { partial: string } => ({
+      partial: streamEvents({
+        content: [{ type: 'text', text }],
+        usage: {
+          input_tokens: 1000,
+          cache_read_input_tokens: 400,
+          output_tokens: 20
+        }
+      })
+        .slice(0, 4)
+        .map(sseOf)
+        .join('')
+    })
+
+    it('stops mid-stream before any round is stored: the message stays, with the stopped reply, and its usage counts', async () => {
+      model.reply(begun('Let me start on the whole season'))
+      const told: string[] = []
+      let asked = false
+      const id = await runTurn(
+        w.deps(),
+        w.user(101),
+        { text: 'Schedule the whole season', clientId: 'm-stop-1' },
+        async event => {
+          told.push(event.type)
+          if (event.type !== 'text' || asked) return
+          asked = true
+          await stopTurn(w.h.db, w.userId(101), 'm-stop-1')
+        }
+      )
+      expect(id).to.be.a('number')
+      expect(await stored()).deep.equals([
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Schedule the whole season' }]
+        },
+        { role: 'assistant', content: [{ type: 'stopped' }] }
+      ])
+      // Not a failure: nothing is taken back.
+      expect(told).not.includes('takenBack')
+      expect(model.messageCalls()).length(1)
+      // What the call had used when it stopped is in the week.
+      const [week] = await usageWeeks(w.h.db, w.userId(101))
+      expect(week).deep.include({
+        inputTokens: 1400,
+        cacheReadTokens: 400,
+        outputTokens: 1,
+        requests: 1
+      })
+
+      // Her next request carries the note, and is one the model takes.
+      model.reply(say('Here are both.'))
+      await runTurn(w.deps(), w.user(101), {
+        text: 'And the playoffs too',
+        clientId: 'm-stop-2'
+      })
+      const next = model.messageCalls()[1]
+      expectValidRequest(next.messages)
+      expect(next.messages[1]).deep.equals({
+        role: 'assistant',
+        content: [{ type: 'text', text: STOPPED_NOTE }]
+      })
+      const conversation = await stored()
+      expect(conversation.at(-1)).deep.equals({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Here are both.' }]
+      })
+    })
+
+    it('lets a tool running when stopped finish and keeps its result, answers the rest as not run, and calls the model no more', async () => {
+      model.reply(
+        callTools([
+          { name: 'api_get', input: { path: '/me/roles' }, id: 'toolu_s1' },
+          { name: 'api_get', input: { path: '/me/account' }, id: 'toolu_s2' }
+        ])
+      )
+      const steps: string[] = []
+      await runTurn(
+        w.deps(),
+        w.user(101),
+        { text: 'What may I do?', clientId: 'm-stop-3' },
+        async event => {
+          if (event.type !== 'step') return
+          steps.push(`${event.id} ${event.status}`)
+          if (event.id !== 'toolu_s1' || event.status !== 'running') return
+          // Stopped while the first runs: it is seen before the second.
+          await stopTurn(w.h.db, w.userId(101), 'm-stop-3')
+          await new Promise(resolve =>
+            setTimeout(resolve, TURN_STOP_POLL_MS * 2)
+          )
+        }
+      )
+      expect(steps).deep.equals([
+        'toolu_s1 running',
+        'toolu_s1 done',
+        'toolu_s2 failed'
+      ])
+      expect(model.messageCalls()).length(1)
+      const messages = await stored()
+      expect(messages.map(message => message.role)).deep.equals([
+        'user',
+        'assistant',
+        'user',
+        'assistant'
+      ])
+      const [first, second] = messages[2].content
+      expect(first).deep.include({
+        type: 'tool_result',
+        tool_use_id: 'toolu_s1'
+      })
+      expect(first.content).match(/^HTTP 200\n/)
+      expect(second).deep.equals({
+        type: 'tool_result',
+        tool_use_id: 'toolu_s2',
+        content: STOPPED_BEFORE_RUN,
+        is_error: true
+      })
+      expect(messages[3]).deep.equals({
+        role: 'assistant',
+        content: [{ type: 'stopped' }]
+      })
+    })
+
+    it('stops only the report of a confirmed change, which has run', async () => {
+      model.reply(
+        callTools([
+          {
+            name: 'confirmChange',
+            input: {
+              method: 'PUT',
+              path: '/me/follows/team/tem_account',
+              summary: 'Follow Demo Hawks'
+            }
+          }
+        ]),
+        say('Hold Confirm to follow them.')
+      )
+      await runTurn(w.deps(), w.user(101), { text: 'Follow the Hawks' })
+      const { id: changeId } = await w.h.db
+        .selectFrom('tess_changes')
+        .select('id')
+        .executeTakeFirstOrThrow()
+      await stopTurn(w.h.db, w.userId(101), 'm-confirm')
+      model.reply(say('You now follow Demo Hawks.'))
+      const { change } = await confirmTurn(
+        w.deps(),
+        w.user(101),
+        changeId,
+        undefined,
+        'm-confirm'
+      )
+      expect(change.status).equals('done')
+      expect((await stored()).at(-1)).deep.equals({
+        role: 'assistant',
+        content: [{ type: 'stopped' }]
+      })
+      // Stopped as it claimed: the report was never asked for.
+      expect(model.pending()).equals(1)
+      model.reset()
+    })
   })
 })
