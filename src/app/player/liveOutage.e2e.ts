@@ -153,12 +153,15 @@ const { dev, ask, camera, broadcast, browser } = createLiveHarness({
   onCamera: one => cameras.push(one)
 })
 
+let probeSequence = 0
 async function probe<T>(page: Page, script: string): Promise<T> {
+  // Capture and seek probes can overlap on the same page.
+  const output = `probe${++probeSequence}`
   await page.evalBrowserScript({
     script: `return JSON.stringify(await (async () => { ${script} })())`,
-    output: 'probe'
+    output
   })
-  return JSON.parse((await page.vars()).probe) as T
+  return JSON.parse((await page.vars())[output]) as T
 }
 
 async function until(
