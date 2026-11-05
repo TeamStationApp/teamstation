@@ -1,21 +1,28 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { expect } from 'chai'
+import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 
+import { makeId } from '../../common/ids'
+import { addGame, addTeam, scratchDatabase } from '../../test/scoreboardKit'
+import type { Database } from '../db/database'
+import { startFakeSpace } from '../dev/fakeSpace'
 import { AAC_PRIMING_SAMPLES, ffmpegEncoders, remuxToHls } from './ffmpeg'
 import {
   ffprobeBeside,
+  ingestVideoFile,
   preRollFrom,
   probeVideoFile,
   readProbe,
   tagFor,
   undeclaredPriming
 } from './ingestFile'
+import type { SpaceSettings } from './spacesHls'
 import { boxesInFile, readFragment, readTracks } from './trackStarts'
 
 const run = promisify(execFile)
@@ -401,5 +408,147 @@ describe('a remux of sound whose priming is undeclared, through real ffmpeg', fu
     expect(await readFile(join(honoured, 'video.m3u8'), 'utf8')).contains(
       '#EXT-X-ENDLIST'
     )
+  })
+})
+
+describe('what has to name an ingested video, in the commit that writes it', function () {
+  this.timeout(120000)
+
+  let db: Kysely<Database> | undefined
+  let drop: (() => Promise<void>) | undefined
+  let store: Awaited<ReturnType<typeof startFakeSpace>> | undefined
+  let dir = ''
+  let gameId = ''
+  const space: SpaceSettings = {
+    bucket: 'test',
+    region: 'sfo3',
+    endpoint: '',
+    accessKeyId: 'k',
+    secretAccessKey: 's',
+    pathStyle: true
+  }
+
+  before(async function () {
+    dir = await mkdtemp(join(tmpdir(), 'tsIngestNamed-'))
+    await run(FFMPEG, [
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=duration=2:size=320x240:rate=30',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      join(dir, 'take.mp4')
+    ])
+    ;({ db, drop } = await scratchDatabase('ingest_named'))
+    gameId = await addGame(db, {
+      homeTeamId: await addTeam(db, 'Pioneers'),
+      awayTeamId: await addTeam(db, 'Visitors'),
+      startAt: new Date()
+    })
+    store = await startFakeSpace({ space, dir: join(dir, 'space') })
+    space.endpoint = store.url
+  })
+
+  after(async function () {
+    if (store != null) {
+      await new Promise<void>(resolve =>
+        store!.server.close(() => {
+          resolve()
+        })
+      )
+    }
+    await drop?.()
+    if (dir !== '') await rm(dir, { recursive: true, force: true })
+  })
+
+  const ingest = async (
+    videoId: string,
+    onWritten: NonNullable<Parameters<typeof ingestVideoFile>[0]['onWritten']>
+  ): Promise<string> =>
+    (
+      await ingestVideoFile({
+        db: db!,
+        space,
+        ffmpegPath: FFMPEG,
+        file: join(dir, 'take.mp4'),
+        gameId,
+        kind: 'program',
+        title: 'Programme',
+        startAt: new Date(),
+        startAtSource: 'distributor',
+        videoId,
+        onWritten
+      })
+    ).videoId
+
+  /** The video's objects in the fake Space: its files, not its folders. */
+  const objects = async (videoId: string): Promise<string[]> => {
+    const entries = await readdir(join(dir, 'space', 'videos', videoId), {
+      recursive: true,
+      withFileTypes: true
+    }).catch(() => [])
+    return entries
+      .filter(entry => entry.isFile() && !entry.name.endsWith('.content-type'))
+      .map(entry => entry.name)
+  }
+
+  it('runs inside the transaction that writes the video, and commits with it', async function () {
+    const videoId = makeId('video')
+    let inside: string | undefined
+    let outside: string | undefined
+    await ingest(videoId, async (trx, written) => {
+      inside = (
+        await trx
+          .selectFrom('videos')
+          .select('id')
+          .where('id', '=', written)
+          .executeTakeFirst()
+      )?.id
+      // Not yet committed: nobody else sees the video before what names it.
+      outside = (
+        await db!
+          .selectFrom('videos')
+          .select('id')
+          .where('id', '=', written)
+          .executeTakeFirst()
+      )?.id
+      await trx
+        .updateTable('videos')
+        .set({ title: 'Named in the same commit' })
+        .where('id', '=', written)
+        .execute()
+    })
+    expect(inside).equals(videoId)
+    expect(outside).equals(undefined)
+    const row = await db!
+      .selectFrom('videos')
+      .select('title')
+      .where('id', '=', videoId)
+      .executeTakeFirstOrThrow()
+    expect(row.title).equals('Named in the same commit')
+  })
+
+  it('writes no video, and leaves none of it in the Space, when it fails', async function () {
+    const videoId = makeId('video')
+    let failure: unknown
+    try {
+      await ingest(videoId, async () => {
+        throw new Error('nothing could name it')
+      })
+    } catch (error) {
+      failure = error
+    }
+    expect(String(failure)).contains('nothing could name it')
+    const row = await db!
+      .selectFrom('videos')
+      .select('id')
+      .where('id', '=', videoId)
+      .executeTakeFirst()
+    expect(row).equals(undefined)
+    expect(await objects(videoId)).deep.equals([])
   })
 })

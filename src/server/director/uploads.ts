@@ -342,6 +342,9 @@ export async function ensureUploadDir(
  * conversion and not the upload. The same reasoning as the live controller
  * resetting `publishing` streams on the way up — a fresh process cannot be
  * doing work the last one claimed.
+ *
+ * A video the stopped take-in had already made stays on the row: asking to
+ * finish again goes on from it, and giving the upload up deletes it.
  */
 export async function reopenInterruptedUploads(
   db: Kysely<Database>
