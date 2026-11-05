@@ -27,6 +27,10 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 export const STABLE_APP = 'app.teamstation.app'
 export const DEVELOP_APP = 'app.teamstation.develop'
 export const DEVELOP_DISPLAY_NAME = 'TeamStation Develop'
+export const DIRECTOR_APP = 'app.teamstation.director'
+export const CAMERAMAN_APP = 'app.teamstation.cameraman'
+export const FIELD_TEAM = 'V4AK4X7A2V'
+export const FIELD_VERSION = '1.0'
 const DEVELOP_ORIGIN = 'https://develop.teamstation.app'
 const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
 const ANDROID = { type: 'do-linux', os: 'linux', arch: 'x64' } as const
@@ -145,6 +149,74 @@ export function setup(m: Setup): void {
       buildStages(w, app)
     }
   )
+  // Director and Cameraman build on their own. A push of master or develop
+  // starts them, and any other branch starts when someone asks.
+  const fieldTrigger = {
+    triggers: [
+      { push: true, branches: ['master', 'develop'] },
+      { request: true }
+    ]
+  }
+  m.buildNumber(DIRECTOR_APP, {
+    format: 'YYMMDDCC',
+    timeZone: 'America/Los_Angeles'
+  })
+  m.workflow('director', fieldTrigger, w => {
+    w.stage('archive', {
+      on: IOS,
+      tools: { node: '24', xcode: '27.0', brew: ['xcodegen'] },
+      timeout: '6h',
+      apple: { distribution: 'adHoc', app: DIRECTOR_APP },
+      publishes: [DIRECTOR_APP],
+      buildNumbers: [DIRECTOR_APP],
+      run: archiveDirector
+    })
+  })
+  m.buildNumber(CAMERAMAN_APP, {
+    format: 'YYMMDDCC',
+    timeZone: 'America/Los_Angeles'
+  })
+  m.workflow('cameraman', fieldTrigger, w => {
+    w.parallel(
+      'build',
+      {
+        ios: [
+          {
+            name: 'archive',
+            on: IOS,
+            tools: { node: '24', xcode: '27.0', brew: ['xcodegen'] },
+            timeout: '6h',
+            apple: { distribution: 'adHoc', app: CAMERAMAN_APP },
+            publishes: [CAMERAMAN_APP],
+            buildNumbers: [CAMERAMAN_APP],
+            run: archiveCameraman
+          }
+        ],
+        android: [
+          {
+            name: 'compile',
+            on: ANDROID,
+            tools: {
+              node: '24',
+              java: '17',
+              android: [
+                'platforms;android-37.0',
+                'build-tools;37.0.0',
+                'ndk;27.1.12297006',
+                'cmake;3.22.1'
+              ],
+              androidLicenses: 'accept'
+            },
+            timeout: '6h',
+            publishes: [CAMERAMAN_APP],
+            buildNumbers: [CAMERAMAN_APP],
+            run: compileCameraman
+          }
+        ]
+      },
+      { failFast: false }
+    )
+  })
 }
 
 function buildStages(w: WorkflowBuilder, app: string): void {
@@ -455,4 +527,158 @@ export async function signAndroid(ctx: Stage): Promise<void> {
   if (apk == null) throw new Error('No release APK was signed')
   await ctx.artifacts.save('android-apk', apk)
   await ctx.publish({ app: runApp(ctx), platform: 'android', path: apk })
+}
+
+/** The server a field app's sign-in links open. Master stays on production. */
+export function fieldOrigin(branch: string | undefined): string {
+  if (branch == null || branch === '' || branch === 'master')
+    return 'https://app.teamstation.app'
+  return DEVELOP_ORIGIN
+}
+
+/**
+ * Writes the gitignored clientConfig.json a field app's Xcode and Gradle
+ * builds read for their team and link host.
+ */
+export function writeFieldClientConfig(
+  appDir: string,
+  branch: string | undefined
+): void {
+  writeFileSync(
+    path.join(appDir, 'clientConfig.json'),
+    JSON.stringify({
+      appleTeamId: FIELD_TEAM,
+      appOrigin: fieldOrigin(branch)
+    }) + '\n',
+    { mode: 0o600 }
+  )
+}
+
+function fieldLinkSettings(branch: string | undefined): string[] {
+  const host = new URL(fieldOrigin(branch)).host
+  return [
+    'SWIFT_ENABLE_EXPLICIT_MODULES=NO',
+    `TS_APP_LINK_HOST=${host}`,
+    `DEVELOPMENT_TEAM=${FIELD_TEAM}`
+  ]
+}
+
+async function archiveFieldApp(
+  ctx: Stage,
+  appDir: string,
+  entitlements: string,
+  project: string,
+  scheme: string
+): Promise<{ ipa: string; build: string }> {
+  const root = developRoot(ctx)
+  writeFieldClientConfig(path.join(root, appDir), ctx.run.branch)
+  await ctx.sh(
+    `node scripts/clientConfig.mjs ${appDir} --entitlements ${entitlements}`
+  )
+  const build = ctx.getBuildNumber(
+    appDir.endsWith('tsDirector') ? DIRECTOR_APP : CAMERAMAN_APP
+  )
+  const archived = await ctx.apple.archive({
+    project,
+    scheme,
+    configuration: 'Release',
+    version: FIELD_VERSION,
+    buildNumber: build,
+    xcargs: [
+      ...fieldLinkSettings(ctx.run.branch),
+      `TS_APP_ENTITLEMENTS=${entitlements}`
+    ]
+  })
+  if (archived.ipa == null) throw new Error('No IPA was exported')
+  return { ipa: archived.ipa, build }
+}
+
+export async function archiveDirector(ctx: Stage): Promise<void> {
+  await ctx.sh('bash mobile/apps/tsDirector/scripts/bootstrap.sh')
+  const { ipa, build } = await archiveFieldApp(
+    ctx,
+    'mobile/apps/tsDirector',
+    'App/Director.entitlements',
+    'mobile/apps/tsDirector/Director.xcodeproj',
+    'Director'
+  )
+  await ctx.artifacts.save('director-ipa', ipa)
+  await ctx.publish({
+    app: DIRECTOR_APP,
+    platform: 'ios',
+    path: ipa,
+    version: FIELD_VERSION,
+    buildNumber: build
+  })
+}
+
+export async function archiveCameraman(ctx: Stage): Promise<void> {
+  await ctx.sh('bash mobile/apps/tsCameraman/scripts/bootstrap.sh')
+  const { ipa, build } = await archiveFieldApp(
+    ctx,
+    'mobile/apps/tsCameraman',
+    'App/Cameraman.entitlements',
+    'mobile/apps/tsCameraman/Cameraman.xcodeproj',
+    'Cameraman'
+  )
+  await ctx.artifacts.save('cameraman-ipa', ipa)
+  await ctx.publish({
+    app: CAMERAMAN_APP,
+    platform: 'ios',
+    path: ipa,
+    version: FIELD_VERSION,
+    buildNumber: build
+  })
+}
+
+export async function compileCameraman(ctx: Stage): Promise<void> {
+  const root = developRoot(ctx)
+  const dir = 'mobile/apps/tsCameramanAndroid'
+  writeFieldClientConfig(path.join(root, dir), ctx.run.branch)
+  const build = ctx.getBuildNumber(CAMERAMAN_APP)
+  const host = new URL(fieldOrigin(ctx.run.branch)).host
+  await ctx.sh(
+    [
+      'test -f app/debug.keystore || keytool -genkeypair',
+      '-keystore app/debug.keystore -alias androiddebugkey',
+      '-keyalg RSA -keysize 2048 -validity 10000',
+      '-storepass android -keypass android',
+      "-dname 'CN=Android Debug,O=Android,C=US'"
+    ].join(' '),
+    { cwd: dir }
+  )
+  await ctx.sh(
+    [
+      "cat > mason-version.gradle << 'EOF'",
+      'gradle.beforeProject { project ->',
+      "  project.plugins.withId('com.android.application') {",
+      "    project.extensions.getByName('androidComponents').finalizeDsl { android ->",
+      "      android.defaultConfig.versionCode = Integer.parseInt(System.getenv('MASON_BUILD_NUMBER'))",
+      "      android.defaultConfig.versionName = System.getenv('MASON_APP_VERSION')",
+      '    }',
+      '  }',
+      '}',
+      'EOF',
+      './gradlew --no-daemon --init-script mason-version.gradle :app:assembleRelease'
+    ].join('\n'),
+    {
+      cwd: dir,
+      env: {
+        MASON_BUILD_NUMBER: build,
+        MASON_APP_VERSION: FIELD_VERSION,
+        TS_PRIMARY_HOST: host
+      }
+    }
+  )
+  const apks = await ctx.fs.glob(`${dir}/app/build/outputs/apk/release/*.apk`)
+  const apk = apks[0]
+  if (apk == null) throw new Error('No Cameraman release APK was built')
+  await ctx.artifacts.save('cameraman-apk', apk)
+  await ctx.publish({
+    app: CAMERAMAN_APP,
+    platform: 'android',
+    path: apk,
+    version: FIELD_VERSION,
+    buildNumber: build
+  })
 }
