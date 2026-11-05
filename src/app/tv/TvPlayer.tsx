@@ -32,6 +32,7 @@ import type { ScoreboardOverlay } from '../../common/nodeSettings'
 import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { angleLabels } from '../player/multiCam/takes'
+import type { NativeProgressData } from '../player/nativeProgress'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
@@ -42,6 +43,7 @@ import {
 } from './NativePresentation'
 import { NativeSeekQueue } from './nativeSeekQueue'
 import { PlaybackClock } from './playbackClock'
+import { PlaybackRecovery } from './playbackRecovery'
 import {
   initialPlayback,
   playbackReducer,
@@ -66,6 +68,7 @@ interface Angle {
   video: VideoSummary
   uri: string
   timeline: WallTimeline
+  revision: number
 }
 interface Statistics extends ReplayStatistics {
   board: BoardTimelineWindow | null
@@ -86,6 +89,11 @@ export function TvPlayer({
   onClose: () => void
 }): React.ReactElement {
   const [angles, setAngles] = useState<Angle[] | null>(null)
+  const anglesRef = useRef<Angle[] | null>(null)
+  anglesRef.current = angles
+  const recovery = useRef(new Map<number, PlaybackRecovery>())
+  const refreshing = useRef(new Set<number>())
+  const refreshAngle = useRef<((index: number) => Promise<void>) | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
   const screen = useWindowDimensions()
@@ -155,6 +163,8 @@ export function TvPlayer({
   const [wall, setWall] = useState<number | null>(null)
   const [failures, setFailures] = useState<number[]>([])
   const [buffering, setBuffering] = useState<number[]>([])
+  const bufferingRef = useRef(buffering)
+  bufferingRef.current = buffering
   const [state, dispatch] = useReducer(playbackReducer, 0, initialPlayback)
   const current = useRef(state)
   current.current = state
@@ -264,6 +274,8 @@ export function TvPlayer({
     setError(null)
     setAngles(null)
     setFailures([])
+    recovery.current.clear()
+    refreshing.current.clear()
     setStats(EMPTY_STATS)
     const load = async (): Promise<void> => {
       const game = await client.game(request.game.id)
@@ -296,7 +308,8 @@ export function TvPlayer({
             video,
             name: names.get(video.id) ?? video.title,
             uri: playback.url,
-            timeline
+            timeline,
+            revision: 0
           }
         })
       )
@@ -309,19 +322,69 @@ export function TvPlayer({
       }
       if (!active) return
       loaded.forEach((angle, index) => {
+        const watch = new PlaybackRecovery(Date.now())
+        watch.opening(Date.now())
+        recovery.current.set(index, watch)
         const queue = new NativeSeekQueue(
           seconds => refs.current[index]?.seek(seconds, 0),
           () => {
             clock.current.settled(index)
+            if (current.current.paused) {
+              recovery.current.get(index)?.readyPaused(Date.now())
+              setError(null)
+            }
+            setFailures(previous => previous.filter(i => i !== index))
           }
         )
         seekQueues.current[index] = queue
         clock.current.register(index, angle.timeline, seconds => {
-          queue.request(seconds)
+          seekQueues.current[index]?.request(seconds)
         })
       })
       dispatch({ type: 'reset', count: loaded.length })
       setAngles(loaded)
+      refreshAngle.current = async index => {
+        if (refreshing.current.has(index)) return
+        refreshing.current.add(index)
+        try {
+          const previous = loaded[index]
+          const [playback, timeline] = await Promise.all([
+            client.playback(previous.video.id),
+            client.wallTimeline(previous.video.id)
+          ])
+          if (!active || playback.url === null) return
+          const updated = {
+            ...previous,
+            uri: playback.url,
+            timeline,
+            video: {
+              ...previous.video,
+              status: timeline.live ? ('live' as const) : ('ready' as const)
+            },
+            revision: previous.revision + 1
+          }
+          loaded[index] = updated
+          clock.current.ports[index].timeline = timeline
+          // Remounting abandons the old native seek, including its completion.
+          seekQueues.current[index] = new NativeSeekQueue(
+            seconds => refs.current[index]?.seek(seconds, 0),
+            () => {
+              clock.current.settled(index)
+              if (current.current.paused) {
+                recovery.current.get(index)?.readyPaused(Date.now())
+                setError(null)
+              }
+              setFailures(previous => previous.filter(i => i !== index))
+            }
+          )
+          setBuffering(previous => previous.filter(i => i !== index))
+          setFailures(previous => [...new Set([...previous, index])])
+          recovery.current.get(index)?.opening(Date.now())
+          setAngles([...loaded])
+        } finally {
+          if (active) refreshing.current.delete(index)
+        }
+      }
       let refreshSequence = 0
       let appliedStatisticsSequence = 0
       let appliedTimelineSequence = 0
@@ -352,6 +415,8 @@ export function TvPlayer({
             appliedTimelineSequence = sequence
             updates.forEach((timeline, i) => {
               clock.current.ports[i].timeline = timeline
+              if (!timeline.live && loaded[i].video.status === 'live')
+                refreshAngle.current?.(i).catch(() => undefined)
             })
           }
         }
@@ -377,10 +442,46 @@ export function TvPlayer({
     return () => {
       active = false
       statisticsRefresh.current = null
+      refreshAngle.current = null
       generation.current = activeGeneration + 1
       clearInterval(timer)
     }
   }, [client, request, retry])
+  useEffect(() => {
+    const timer = setInterval(() => {
+      for (const [index, watch] of recovery.current) {
+        const port = clock.current.ports[index]
+        if (port == null) continue
+        if (seekQueues.current[index]?.timedOut()) {
+          clock.current.fail(index)
+          watch.error(Date.now())
+          setFailures(previous => [...new Set([...previous, index])])
+        }
+        const live = anglesRef.current?.[index].video.status === 'live'
+        const heldForMaster =
+          bufferingRef.current.includes(clock.current.master) &&
+          index !== clock.current.master
+        if (
+          watch.retry(
+            Date.now(),
+            !current.current.paused &&
+              !heldForMaster &&
+              clock.current.available(index),
+            !live && port.ended
+          )
+        ) {
+          clock.current.fail(index)
+          setFailures(previous => [...new Set([...previous, index])])
+          refreshAngle.current?.(index).catch(() => undefined)
+        }
+        if (watch.exhausted && clock.current.ports.every(p => p.failed))
+          setError('The cameras could not play. Try again.')
+      }
+    }, 1000)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [])
   const previousOverlay = useRef(false)
   const previousFull = useRef<number | null>(null)
   useEffect(() => {
@@ -742,8 +843,13 @@ export function TvPlayer({
   const loaded = (index: number, duration: number): void => {
     clock.current.load(
       index,
-      angles?.[index].video.status === 'live' ? Infinity : duration
+      duration > 0 && angles?.[index].video.status === 'live'
+        ? Infinity
+        : duration
     )
+    markReady()
+  }
+  const markReady = (): void => {
     if (ready.current || !clock.current.ports.every(p => p.loaded || p.failed))
       return
     ready.current = true
@@ -778,8 +884,30 @@ export function TvPlayer({
       pendingClip.current = undefined
     }
   }
-  const progress = (index: number, seconds: number): void => {
-    const next = clock.current.progress(index, seconds)
+  const progress = (
+    index: number,
+    seconds: number,
+    seekableEnd?: number,
+    seekableStart?: number
+  ): void => {
+    const port = clock.current.ports[index]
+    if (
+      port != null &&
+      !port.failed &&
+      !port.settling &&
+      port.target == null &&
+      port.pendingWall === null &&
+      recovery.current.get(index)?.progress(seconds, Date.now()) === true
+    ) {
+      setError(null)
+      setFailures(previous => previous.filter(i => i !== index))
+    }
+    const next = clock.current.progress(
+      index,
+      seconds,
+      seekableEnd,
+      seekableStart
+    )
     if (index !== clock.current.master || next === null) return
     setWall(previous =>
       previous !== null &&
@@ -938,6 +1066,7 @@ export function TvPlayer({
                 }}
               >
                 <TransportVideo
+                  key={`${angle.video.id}:${angle.revision}`}
                   ref={ref => {
                     refs.current[index] = ref
                   }}
@@ -954,15 +1083,26 @@ export function TvPlayer({
                   resizeMode="contain"
                   progressUpdateInterval={250}
                   onLoad={event => {
+                    if (anglesRef.current?.[index] !== angle) return
                     loaded(index, event.duration)
+                    if (clock.current.wall === null)
+                      setFailures(previous => previous.filter(i => i !== index))
                   }}
                   onSeek={event => {
+                    if (anglesRef.current?.[index] !== angle) return
                     seekQueues.current[index]?.complete(event.seekTime)
                   }}
-                  onProgress={event => {
-                    progress(index, event.currentTime)
+                  onProgress={(event: NativeProgressData) => {
+                    if (anglesRef.current?.[index] !== angle) return
+                    progress(
+                      index,
+                      event.currentTime,
+                      event.seekableEnd ?? event.seekableDuration,
+                      event.seekableStart
+                    )
                   }}
                   onBuffer={event => {
+                    if (anglesRef.current?.[index] !== angle) return
                     setBuffering(previous =>
                       event.isBuffering
                         ? [...new Set([...previous, index])]
@@ -970,6 +1110,11 @@ export function TvPlayer({
                     )
                   }}
                   onEnd={() => {
+                    if (anglesRef.current?.[index] !== angle) return
+                    if (angle.video.status === 'live') {
+                      recovery.current.get(index)?.error(Date.now())
+                      return
+                    }
                     const complete = clock.current.end(index)
                     setWall(clock.current.wall)
                     setReadySequence(n => n + 1)
@@ -983,8 +1128,10 @@ export function TvPlayer({
                     }
                   }}
                   onError={() => {
+                    if (anglesRef.current?.[index] !== angle) return
                     const unavailable = clock.current.fail(index)
-                    loaded(index, 0)
+                    recovery.current.get(index)?.error(Date.now())
+                    markReady()
                     setFailures(previous => [...new Set([...previous, index])])
                     if (unavailable)
                       setError('The cameras could not play. Try again.')
