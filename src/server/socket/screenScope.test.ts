@@ -28,7 +28,7 @@ import {
 } from './gameSocket'
 import { ScreenScopeListener } from './screenScope'
 import {
-  bumpSyncClock,
+  announceNotedScopes,
   SCREEN_SCOPES_CHANNEL,
   type ScreenScopeIds
 } from './syncRevision'
@@ -142,7 +142,9 @@ describe('screen scopes on the game socket', function () {
 
   /** Commits a write's notice, as a writing transaction ends. */
   async function commit(ids: ScreenScopeIds): Promise<void> {
-    await db.transaction().execute(async trx => await bumpSyncClock(trx, ids))
+    await db.transaction().execute(async trx => {
+      await announceNotedScopes(trx, ids)
+    })
   }
 
   /** The `changed` frames a listener heard from `from`. */

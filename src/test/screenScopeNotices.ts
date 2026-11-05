@@ -9,11 +9,12 @@ import {
 import { testDatabaseUrl } from '../migrate/testDatabase'
 import type { Database } from '../server/db/database'
 import {
-  bumpSyncClock,
+  announceNotedScopes,
   SCREEN_SCOPES_CHANNEL,
   type ScreenScopeIds,
   type ScreenScopePayload
 } from '../server/socket/syncRevision'
+import { recordStatements } from './pgStatements'
 
 /**
  * Everything committed on `screen_scopes` in one test database, heard the
@@ -79,9 +80,9 @@ export async function listenScreenScopes(
     mark: () => heard.length,
     since: async mark => {
       const userId = `sentinel-${process.pid}-${++sentinels}`
-      await db
-        .transaction()
-        .execute(async trx => await bumpSyncClock(trx, { userId }))
+      await db.transaction().execute(async trx => {
+        await announceNotedScopes(trx, { userId })
+      })
       await wait(
         () => heard.find(payload => payload.userId === userId),
         `for ${userId}`
@@ -99,6 +100,34 @@ export async function listenScreenScopes(
       await client.end()
     }
   }
+}
+
+/**
+ * The notices each `pg_notify` statement sent while `work` ran, one list per
+ * statement. A write announces in one statement, as its transaction's last,
+ * so each list is one commit's notices. `since`'s own are left out.
+ */
+export async function announcedDuring(
+  work: () => Promise<unknown>
+): Promise<ScreenScopePayload[][]> {
+  const { sent } = await recordStatements(async () => await work())
+  return sent
+    .filter(
+      statement =>
+        statement.text.includes('pg_notify(') &&
+        statement.values[0] === SCREEN_SCOPES_CHANNEL
+    )
+    .map(statement =>
+      (statement.values[1] as string[]).map(
+        payload => JSON.parse(payload) as ScreenScopePayload
+      )
+    )
+    .filter(
+      notices =>
+        !notices.every(
+          notice => notice.userId?.startsWith('sentinel-') === true
+        )
+    )
 }
 
 /** A raw `/socket` connection, its frames kept in the order they came. */

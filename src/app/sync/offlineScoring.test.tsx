@@ -139,10 +139,7 @@ function fieldServer(stored: { plays: GumboPlay[]; currentPlay: unknown }): {
       const [path, query = ''] =
         init?.method === 'POST' ? target.split('?') : [target]
       const json = (status: number, body: unknown): Response =>
-        new Response(JSON.stringify(body), {
-          status,
-          headers: { 'x-teamstation-revision': String(revision) }
-        })
+        new Response(JSON.stringify(body), { status })
       if (init?.method === 'POST') {
         const body = JSON.parse(init.body as string) as Record<string, unknown>
         state.posts.push({ path, query, body })

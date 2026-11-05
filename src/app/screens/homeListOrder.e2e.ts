@@ -115,8 +115,7 @@ function cors(
     contentType: 'application/json',
     headers: {
       'access-control-allow-origin': origin,
-      'access-control-allow-credentials': 'true',
-      'x-teamstation-revision': '1'
+      'access-control-allow-credentials': 'true'
     },
     body: JSON.stringify(body)
   }

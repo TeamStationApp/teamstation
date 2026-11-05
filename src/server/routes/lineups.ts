@@ -105,7 +105,6 @@ import { withAsync } from '../middleware/withErrors'
 import { scoringUsers } from '../scoring/gumboIds'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
-import { withRevision } from '../socket/syncRevision'
 import { tellGameWritten } from './gameWritten'
 import { teamWalkUpSongs } from './walkUpSongs'
 
@@ -284,7 +283,7 @@ export function lineupRoutes(
   router.get(
     '/teams/:teamId/default-lineup',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
@@ -306,7 +305,7 @@ export function lineupRoutes(
   router.get(
     '/games/:gameId/lineups',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)

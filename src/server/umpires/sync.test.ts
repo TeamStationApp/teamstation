@@ -8,7 +8,6 @@ import {
   type ScreenScopeNotices
 } from '../../test/screenScopeNotices'
 import { UMPIRE_TEST_NOW, umpireFixture } from '../../test/umpireFixture'
-import { readSyncClock, REVISION_HEADER } from '../socket/syncRevision'
 
 describe('umpire changes in live screen snapshots', function () {
   this.timeout(60000)
@@ -32,16 +31,18 @@ describe('umpire changes in live screen snapshots', function () {
     path: string,
     body: unknown
   ): Promise<void> {
-    const before = await readSyncClock(f.h.db)
     const mark = notices.mark()
     const result = await f.h.request(method, path, body, 101)
     expect(result.status, await result.clone().text()).equals(200)
     await notices.named(mark, { gameId: 'gam_umpire' })
-    const revision = await readSyncClock(f.h.db)
-    expect(BigInt(revision)).equals(BigInt(before) + 1n)
+    // One write, announced once: its notices are distinct.
+    const heard = await notices.since(mark)
+    expect(heard.filter(notice => notice.gameId === 'gam_umpire')).deep.equals([
+      { gameId: 'gam_umpire' }
+    ])
     const game = await f.h.request('GET', '/games/gam_umpire', undefined, 101)
     expect(game.status).equals(200)
-    expect(game.headers.get(REVISION_HEADER)).equals(revision)
+    expect(game.headers.get('x-teamstation-revision')).equals(null)
   }
   const signup = async (): Promise<void> => {
     await changed('POST', '/games/gam_umpire/umpire-slots', {
@@ -49,7 +50,7 @@ describe('umpire changes in live screen snapshots', function () {
       userId: userIdOfGumbo(101)
     })
   }
-  it('announces signup and removal at the revision of the changed game projection', async () => {
+  it('announces signup and removal of the changed game projection', async () => {
     await signup()
     const detail = await (
       await f.h.request('GET', '/games/gam_umpire', undefined, 101)
@@ -80,8 +81,7 @@ describe('umpire changes in live screen snapshots', function () {
     await changed('DELETE', `${league}/umpire-types/uty_plate`, undefined)
     await changed('DELETE', `${league}/umpire-levels/ulv_majors`, undefined)
   })
-  it('does not announce rejected writes or advance the clock for a read', async () => {
-    const before = await readSyncClock(f.h.db)
+  it('does not announce rejected writes or a read', async () => {
     const mark = notices.mark()
     const response = await f.h.request(
       'POST',
@@ -96,7 +96,6 @@ describe('umpire changes in live screen snapshots', function () {
       undefined,
       101
     )
-    expect(await readSyncClock(f.h.db)).equals(before)
     expect(await notices.since(mark)).deep.equals([])
   })
 })

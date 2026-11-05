@@ -83,7 +83,6 @@ import {
   statisticsQuery
 } from '../scoring/gameStatistics'
 import { highlightSettings } from '../settings'
-import { withRevision, withRevisionThen } from '../socket/syncRevision'
 import {
   battingLines,
   battingRates,
@@ -147,7 +146,7 @@ export function teamRoutes(
   router.get(
     '/teams',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       if (hasVideoFilter(req.query)) {
@@ -569,16 +568,14 @@ export function teamRoutes(
 
   router.get(
     '/games/:gameId',
-    // The scoreboard is asked of Redis after the reads have committed, so
-    // the transaction does not hold a connection through that call.
-    withRevisionThen(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       const gameId = pathParam(req.params.gameId)
       const event =
         actor == null ? null : await teamEventDetail(db, actor, gameId)
       if (event != null) {
         res.json(event)
-        return async () => undefined
+        return
       }
       const scopes =
         actor == null
@@ -814,15 +811,13 @@ export function teamRoutes(
           codecs: video.codecs
         }))
       }
-      return async () => {
-        if (!nonMemberView)
-          answer.scoreboard = await scoreboardOf(store, mayOverride, {
-            startAt: new Date(game.start_at).getTime(),
-            status: game.status,
-            gameId
-          })
-        res.json(answer)
-      }
+      if (!nonMemberView)
+        answer.scoreboard = await scoreboardOf(store, mayOverride, {
+          startAt: new Date(game.start_at).getTime(),
+          status: game.status,
+          gameId
+        })
+      res.json(answer)
     })
   )
 
@@ -988,7 +983,7 @@ export function teamRoutes(
   router.get(
     '/teams/:teamId/roster',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)

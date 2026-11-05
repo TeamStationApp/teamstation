@@ -19,7 +19,6 @@ import {
   type ScreenScopeNotices
 } from '../../test/screenScopeNotices'
 import { attachGameSocket, type GameSocketHandle } from './gameSocket'
-import { readSyncClock, REVISION_HEADER } from './syncRevision'
 
 /**
  * The writes that change what home, schedule and an event show, each heard
@@ -133,9 +132,8 @@ describe('notices from the writes', function () {
       101
     )
     expect(read.status).equals(200)
-    expect(read.headers.get(REVISION_HEADER)).equals(
-      await readSyncClock(f.h.db)
-    )
+    // A list read takes no revision, and says none.
+    expect(read.headers.get('x-teamstation-revision')).equals(null)
   })
 
   it('tells nobody of a write that fails (Rollback)', async function () {

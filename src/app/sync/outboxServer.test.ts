@@ -14,9 +14,9 @@ import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
 import { startingContext } from '../../server/routes/lineups'
-import { readSyncClock } from '../../server/socket/syncRevision'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
+import { listenScreenScopes } from '../../test/screenScopeNotices'
 import { seedSettingsCleanup3 } from '../../test/settingsCleanup3Fixture'
 import { cacheFileName, openCacheStore } from './cacheStore'
 import { CachingClient } from './cachingClient'
@@ -211,11 +211,13 @@ describe('the outbox against the server', function () {
     expect(await playersNamed(f, f.teamA, 'Vladimir')).length(1)
     // And a lineup.
     const lineup = await homeLineup(f, lineupGame)
-    const clock = Number(await readSyncClock(f.h.db))
+    const notices = await listenScreenScopes(f.h.db)
+    const before = notices.mark()
     transport.dropNext = true
     await client.saveLineups(lineupGame, lineup)
-    const saved = Number(await readSyncClock(f.h.db))
-    expect(saved).greaterThan(clock)
+    // The save committed: it announced its game.
+    expect(await notices.since(before)).deep.include({ gameId: lineupGame })
+    const saved = notices.mark()
     expect((await client.outboxSummary()).count).equals(3)
 
     client.wakeOutbox(true)
@@ -240,7 +242,9 @@ describe('the outbox against the server', function () {
     expect(await playCount(f, gameId)).equals(1)
     const made = await playersNamed(f, f.teamA, 'Vladimir')
     expect(made).length(1)
-    expect(Number(await readSyncClock(f.h.db))).equals(saved)
+    // Answered from what was stored, the second sends wrote nothing.
+    expect(await notices.since(saved)).deep.equals([])
+    await notices.close()
     // The phone's copies are the server's now.
     const roster = await client.roster(f.teamA)
     const entry = roster.find(row => row.userId === made[0])!

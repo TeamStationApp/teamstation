@@ -640,7 +640,7 @@ async function refusePlayer(
  * one was written.
  *
  * It owns no transaction: it notes the change on the caller's, and the
- * function that opened that one bumps the clock after its last write.
+ * function that opened that one announces it after its last write.
  */
 export async function addToScope(
   db: Kysely<Database>,

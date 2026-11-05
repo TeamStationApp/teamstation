@@ -141,7 +141,7 @@ interface Sent {
   key: string | undefined
 }
 
-type Answer = 'offline' | { status?: number; body: unknown; revision?: string }
+type Answer = 'offline' | { status?: number; body: unknown }
 
 type Handler = (sent: Sent) => Answer | Promise<Answer>
 
@@ -197,11 +197,7 @@ describe('the phone outbox', function () {
       const answer = await handler(call)
       if (answer === 'offline') throw new TypeError('Load failed')
       return new Response(JSON.stringify(answer.body), {
-        status: answer.status ?? 200,
-        headers:
-          answer.revision == null
-            ? {}
-            : { 'x-teamstation-revision': answer.revision }
+        status: answer.status ?? 200
       })
     }) as unknown as typeof globalThis.fetch
     const openCache = async (userId: string): Promise<DocumentStore> => {
@@ -247,7 +243,7 @@ describe('the phone outbox', function () {
     async sent =>
       sent.method === 'GET'
         ? sent.path in reads
-          ? { body: reads[sent.path], revision: '5' }
+          ? { body: reads[sent.path] }
           : refusal(404, 'notFound', 'Not found')
         : await post(sent)
 
@@ -1261,7 +1257,7 @@ describe('the phone outbox', function () {
     let reads: Record<string, unknown> = {}
     const p = phone(async sent =>
       sent.method === 'GET' && sent.path in reads
-        ? { body: reads[sent.path], revision: '9' }
+        ? { body: reads[sent.path] }
         : await server409(sent)
     )
     await p.client.gameEvents('g1')
@@ -1613,7 +1609,7 @@ describe('the phone outbox', function () {
     let online = false
     let served = eventsDoc('g1', 'D0')
     const p = phone(async sent => {
-      if (sent.method === 'GET') return { body: served, revision: '5' }
+      if (sent.method === 'GET') return { body: served }
       if (!online) return 'offline'
       return refusal(
         409,

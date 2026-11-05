@@ -191,7 +191,7 @@ export const RESET_SINCE_READ = 'This game was reset since it was read'
  * sees the locked game row first and throws to refuse the post; the route
  * asks there whether its sender may score the game. The refold script, which
  * rewrites TeamStation's own plays, passes none. `written` is told the
- * answer last, in the post's transaction, before the clock: where a queued
+ * answer last, in the post's transaction, before it announces: where a queued
  * post's `Idempotency-Key` keeps it. It sees a pregame at-bat as stored,
  * since the answer folds it only after the commit.
  *
@@ -607,7 +607,7 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       taggedGame.currentPlay == null &&
       taggedCurrent != null
     // And to the screens of that game: its event, and home and schedule,
-    // from the clock this transaction bumps last. A post that makes the
+    // announced as this transaction's last statement. A post that makes the
     // game final, unmakes it, or changes a final score moves its teams'
     // records too, so Home's lists are told; a play otherwise is not.
     const nowStatus =

@@ -2167,6 +2167,24 @@ describe('api client', function () {
     expect(refused).instanceOf(Error)
   })
 
+  it('reads an answer the same whatever revision header it carries, and keeps none', async function () {
+    const answers: Array<Record<string, string>> = [
+      {},
+      { 'x-teamstation-revision': '4' }
+    ]
+    const read = await Promise.all(
+      answers.map(async headers => {
+        const client = new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: async () => new Response('[]', { status: 200, headers })
+        })
+        return { teams: await client.teams(), client }
+      })
+    )
+    expect(read[1].teams).deep.equals(read[0].teams).deep.equals([])
+    expect('revisionFor' in read[1].client).equals(false)
+  })
+
   it('refuses a response of the wrong shape rather than passing it on', async function () {
     const { fetch } = stubFetch(200, [{ id: 'tem_1' }])
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })

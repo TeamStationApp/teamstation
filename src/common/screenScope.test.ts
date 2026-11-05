@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { testClock } from '../test/fakeScreenScope'
-import { REVISION_HEADER, TeamStationClient } from './api'
+import { TeamStationClient } from './api'
 import type {
   ScreenScope,
   ScreenScopeEvent,
@@ -49,28 +49,12 @@ const settle = async (): Promise<void> => {
     await new Promise(resolve => setImmediate(resolve))
 }
 
-/** A client whose answers carry the revisions the test sets per path. */
-function revisionClient(): {
-  client: TeamStationClient
-  revisions: Map<string, string>
-  calls: string[]
-} {
-  const revisions = new Map<string, string>()
-  const calls: string[] = []
-  const fake = async (url: unknown): Promise<Response> => {
-    const path = String(url).replace('http://api.test/api/v1', '')
-    calls.push(path)
-    const revision = revisions.get(path)
-    return new Response('[]', {
-      status: 200,
-      headers: revision == null ? {} : { [REVISION_HEADER]: revision }
-    })
-  }
-  const client = new TeamStationClient({
+/** A client whose every answer is an empty list. */
+function emptyClient(): TeamStationClient {
+  return new TeamStationClient({
     baseUrl: 'http://api.test/api/v1',
-    fetch: fake
+    fetch: async () => new Response('[]', { status: 200 })
   })
-  return { client, revisions, calls }
 }
 
 /** A load the test finishes by hand: `running()` until `finish()`. */
@@ -523,7 +507,7 @@ describe('the screen scope gate', function () {
   })
 
   it('reads at once while the client is offline, and again on the ack', async function () {
-    const { client } = revisionClient()
+    const client = emptyClient()
     client.offline = true
     const { gate, socket, clock, loads } = makeGate({ client })
     gate.enter({ scope: 'home' })
@@ -651,15 +635,7 @@ describe('the screen scope gate', function () {
   })
 })
 
-describe('TeamStationClient revisions', function () {
-  it('records each path’s revision', async function () {
-    const { client, revisions } = revisionClient()
-    revisions.set('/teams', '4')
-    await client.teams()
-    expect(client.revisionFor('/teams')).equals('4')
-    expect(client.revisionFor('/seasons')).equals(undefined)
-  })
-
+describe('TeamStationClient offline', function () {
   it('is offline while a request cannot leave the device', async function () {
     let reachable = false
     const client = new TeamStationClient({

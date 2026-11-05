@@ -31,7 +31,7 @@ export interface SqlExecutor {
 export interface StoredDocument {
   /** The answer's JSON, as the server sent it. */
   body: string
-  /** `x-teamstation-revision` of that answer; `0` when it carried none. */
+  /** `0`: answers carry no revision now, and nothing reads this. */
   revision: string
   /** The answer's `lineupsDigest` or `digest`, when it had one. */
   serverDigest: string | null

@@ -761,16 +761,6 @@ export interface AuditLogTable {
 }
 
 /**
- * The one row whose `value` is the revision screen scopes are told about.
- * `value` is a bigint: read it as `value::text`, since the int8 parser
- * refuses one past a safe integer.
- */
-export interface SyncClockTable {
-  id: number
-  value: ColumnType<number | string, number | string, number | string>
-}
-
-/**
  * A queued write's answer, by the key its sender gave it: one per person and
  * key. `request_hash` is of the method, path and body, so the key cannot be
  * spent on another request. `result_id` is set in the write's transaction;
@@ -1669,7 +1659,6 @@ export interface Database {
   scoreboard_log: ScoreboardLogTable
   season_teams: SeasonTeamsTable
   seasons: SeasonsTable
-  sync_clock: SyncClockTable
   sync_idempotency: SyncIdempotencyTable
   system_settings: SystemSettingsTable
   team_follows: TeamFollowsTable

@@ -23,12 +23,7 @@ import { postGamePlays } from '../events/postPlays'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
-import {
-  bumpNotedScopes,
-  noteScopeChange,
-  readSyncClock,
-  REVISION_HEADER
-} from '../socket/syncRevision'
+import { announceNoted, noteScopeChange } from '../socket/syncRevision'
 import { eventRoutes } from './events'
 
 const adminUrl = testDatabaseUrl
@@ -61,7 +56,6 @@ function play(atBatIndex: number): Record<string, unknown> {
 
 interface Read {
   status: number
-  revision: string
   plays: Array<{ id: string; gumbo: TagDocument }>
   playsDigest: string
   generation: number
@@ -169,12 +163,8 @@ describe('reading a game without taking its row', function () {
     const response = await fetch(`${base}/games/${id}/events`, {
       headers: { authorization: `Bearer ${TOKEN}` }
     })
-    const body = (await response.json()) as Omit<Read, 'status' | 'revision'>
-    return {
-      ...body,
-      status: response.status,
-      revision: response.headers.get(REVISION_HEADER) ?? ''
-    }
+    const body = (await response.json()) as Omit<Read, 'status'>
+    return { ...body, status: response.status }
   }
 
   const post = async (
@@ -205,7 +195,7 @@ describe('reading a game without taking its row', function () {
     expect(await eventTagsNeedRepair(db, id)).equals(true)
   }
 
-  /** Runs `during` with a post open: game row and clock held, uncommitted. */
+  /** Runs `during` with a post open: game row held, announced, uncommitted. */
   const duringOpenPost = async <T>(
     id: string,
     plays: unknown[],
@@ -217,11 +207,11 @@ describe('reading a game without taking its row', function () {
         source: { system: 'teamstation' },
         plays
       } as unknown as Parameters<typeof postGamePlays>[2])
-      await bumpNotedScopes(trx)
+      await announceNoted(trx)
       return await during()
     })
 
-  it('answers at once while a post holds the game and the clock, with what has committed', async function () {
+  it('answers at once while a post holds the game, with what has committed', async function () {
     const id = await newGame('gam_read_open_post')
     expect((await post(id, [play(0)])).status).equals(200)
     const committed = await read(id)
@@ -235,14 +225,31 @@ describe('reading a game without taking its row', function () {
       expect(each.status).equals(200)
       expect(each.plays.length).equals(1)
       expect(each.playsDigest).equals(committed.playsDigest)
-      expect(each.revision).equals(committed.revision)
     }
     const after = await read(id)
     expect(after.plays.length).equals(2)
-    expect(BigInt(after.revision) > BigInt(committed.revision)).equals(true)
+    expect(after.playsDigest).not.equals(committed.playsDigest)
   })
 
-  it('answers the revision its rows were read at, when a write commits in the middle of the read', async function () {
+  it('posts to two games at once without either waiting on the other', async function () {
+    const first = await newGame('gam_read_two_a')
+    const second = await newGame('gam_read_two_b')
+    const waiting = await duringOpenPost(first, [play(0)], async () => {
+      // The other game's post commits while this one is open.
+      const posted = await atOnce(post(second, [play(0)]))
+      expect(posted.status).equals(200)
+      const { rows } = await sql<{ waiting: number }>`
+        select count(*)::integer as waiting from pg_locks where not granted`.execute(
+        db
+      )
+      return rows[0].waiting
+    })
+    expect(waiting).equals(0)
+    expect((await read(first)).plays.length).equals(1)
+    expect((await read(second)).plays.length).equals(1)
+  })
+
+  it('reads its plays and its game row in one snapshot, when a write commits in the middle of the read', async function () {
     const id = await newGame('gam_read_midway')
     expect((await post(id, [play(0)])).status).equals(200)
     const before = await read(id)
@@ -262,32 +269,31 @@ describe('reading a game without taking its row', function () {
         await new Promise(resolve => setTimeout(resolve, 10))
       }
       // The write takes the game row the read would have queued on.
-      const revision = await atomic(db, async trx => {
+      await atomic(db, async trx => {
         await trx
           .updateTable('games')
           .set({ play_generation: before.generation + 1 })
           .where('id', '=', id)
           .execute()
         noteScopeChange(trx, { gameId: id })
-        return await bumpNotedScopes(trx)
       })
       await sql`rollback`.execute(connection)
-      return { reading, revision: revision! }
+      return { reading }
     })
     const midway = await atOnce(hold.reading)
-    // Its rows and its revision are of the moment before the write.
+    // Its game row is of the moment its plays were read, before the write.
     expect(midway.generation).equals(before.generation)
-    expect(midway.revision).equals(before.revision)
-    expect(BigInt(hold.revision) > BigInt(midway.revision)).equals(true)
+    expect(midway.playsDigest).equals(before.playsDigest)
     const after = await read(id)
     expect(after.generation).equals(before.generation + 1)
-    expect(after.revision).equals(hold.revision)
   })
 
-  it('keeps a revision to one set of rows, and never answers newer than its rows, under concurrent posts', async function () {
+  it('answers only what one post or another left, under concurrent posts', async function () {
     const id = await newGame('gam_read_concurrent')
     const writing = { going: true }
     const seen: Read[] = []
+    const empty = await read(id)
+    const left = new Set([empty.playsDigest])
     const reader = async (): Promise<void> => {
       while (writing.going) seen.push(await read(id))
     }
@@ -296,6 +302,7 @@ describe('reading a game without taking its row', function () {
       for (let index = 0; index < 15; index++) {
         const posted = await post(id, [play(index)])
         expect(posted.status).equals(200)
+        left.add(posted.playsDigest)
         // Once a post has answered, every read holds it.
         const own = await read(id)
         expect(own.playsDigest).equals(posted.playsDigest)
@@ -305,21 +312,13 @@ describe('reading a game without taking its row', function () {
       writing.going = false
     }
     await Promise.all(readers)
-    const byRevision = new Map<string, Read>()
+    // A digest is of the plays and the game row's at-bat together: a read
+    // that mixed two moments would answer one no post left.
     for (const each of seen) {
       expect(each.status).equals(200)
-      const first = byRevision.get(each.revision)
-      if (first != null) expect(each.playsDigest).equals(first.playsDigest)
-      else byRevision.set(each.revision, each)
+      expect(left.has(each.playsDigest), each.playsDigest).equals(true)
     }
-    const ordered = [...byRevision.values()].sort((a, b) =>
-      BigInt(a.revision) < BigInt(b.revision) ? -1 : 1
-    )
-    for (let at = 1; at < ordered.length; at++)
-      expect(ordered[at].plays.length).greaterThan(
-        ordered[at - 1].plays.length - 1
-      )
-    expect(ordered.at(-1)?.plays.length).equals(15)
+    expect(Math.max(...seen.map(each => each.plays.length))).equals(15)
   })
 
   it('finds nothing to repair after a post, the at-bat in progress included, and writes nothing when read', async function () {
@@ -382,7 +381,7 @@ describe('reading a game without taking its row', function () {
         `http://127.0.0.1:${port}/api/v1/games/${id}/events`,
         { headers: { authorization: `Bearer ${TOKEN}` } }
       )
-      const body = (await response.json()) as Omit<Read, 'status' | 'revision'>
+      const body = (await response.json()) as Omit<Read, 'status'>
       expect(response.status).equals(200)
       expect(body.plays).length(2)
       const reads = statements.filter(
@@ -518,7 +517,6 @@ describe('reading a game without taking its row', function () {
       const answer = await atOnce(read(id))
       expect(answer.status).equals(200)
       expect(answer.plays.length).equals(1)
-      expect(answer.revision).equals(await readSyncClock(db))
     } finally {
       await sql`drop trigger keep_stripped on events`.execute(db)
       await sql`drop function keep_stripped()`.execute(db)

@@ -416,12 +416,7 @@ describe('team rosters through the Valkey cache', function () {
       )
       const member = listed![0].userId
       expect(
-        await onPeopleList(
-          db,
-          { kind: 'team', id: teamId },
-          member,
-          viewer
-        )
+        await onPeopleList(db, { kind: 'team', id: teamId }, member, viewer)
       ).equals(true)
     })
   })
@@ -2490,7 +2485,13 @@ describe('team rosters through the Valkey cache', function () {
               .executeTakeFirstOrThrow()
           ).epoch
         const first = await epoch()
-        await migrateDown(pool, migrations, 1)
+        // 109, and every migration after it first.
+        const through = migrations.filter(
+          m => m.name >= '109teamRosterVersions'
+        ).length
+        expect((await migrateDown(pool, migrations, through)).at(-1)).equals(
+          '109teamRosterVersions'
+        )
         const tables = async (): Promise<string[]> =>
           (
             await sql<{ name: string }>`

@@ -3181,9 +3181,6 @@ export const asTessUsageWeek = asObject({
 })
 export type TessUsageWeek = ReturnType<typeof asTessUsageWeek>
 
-/** The response header a screen's read carries its revision in. */
-export const REVISION_HEADER = 'x-teamstation-revision'
-
 /**
  * The request header a queued write is sent with: the same request with
  * the same key is answered once and written once.
@@ -3934,8 +3931,6 @@ export class TeamStationClient {
    * refused (`POST /auth/...`) is not that.
    */
   onSessionRefused?: () => void
-  /** The revision each path last answered with. */
-  private readonly revisions = new Map<string, string>()
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
@@ -3945,11 +3940,6 @@ export class TeamStationClient {
     this.token = options.token
     this.doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.newStreamingRequest = options.streamingRequest
-  }
-
-  /** The revision the last answer from `path` carried, if any did. */
-  revisionFor(path: string): string | undefined {
-    return this.revisions.get(path)
   }
 
   async accountSettings(): Promise<AccountSettings> {
@@ -7302,8 +7292,6 @@ export class TeamStationClient {
       )
     }
     if (!response.ok) throw errorFrom(response.status, text)
-    const revision = revisionOf(response)
-    if (revision != null) this.revisions.set(path, revision)
     if (text === '') return cleaner(undefined)
 
     let parsed: unknown
@@ -7322,12 +7310,6 @@ function guardiansPath(teamId: string, userId: string): string {
 
 function walkUpSongPath(teamId: string, userId: string): string {
   return `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/walk-up-song`
-}
-
-/** The answer's revision. A stand-in response may carry no headers. */
-function revisionOf(response: Response): string | null {
-  const headers = (response as Partial<Response>).headers
-  return headers == null ? null : headers.get(REVISION_HEADER)
 }
 
 function attachmentPath(attachmentId: string): string {

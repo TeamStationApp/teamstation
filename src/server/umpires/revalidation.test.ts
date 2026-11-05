@@ -3,13 +3,15 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { actor, type GroupFixture } from '../../test/groupFixtures'
-import { listenScreenScopes } from '../../test/screenScopeNotices'
+import {
+  announcedDuring,
+  listenScreenScopes
+} from '../../test/screenScopeNotices'
 import { UMPIRE_TEST_NOW, umpireFixture } from '../../test/umpireFixture'
 import { closeInto } from '../admin/people'
 import { atomic } from '../db/atomic'
 import { updateEventInfo } from '../events/eventInfo'
 import { setScopeRoles } from '../invites/people'
-import { readSyncClock } from '../socket/syncRevision'
 import { leaderboard, recheckUmpireAssignments } from './assignments'
 
 describe('umpire assignment revalidation through game editors', function () {
@@ -74,15 +76,20 @@ describe('umpire assignment revalidation through game editors', function () {
     const notices = await listenScreenScopes(f.h.db)
     try {
       const mark = notices.mark()
-      const before = BigInt(await readSyncClock(f.h.db))
-      await updateEventInfo(f.h.db, actor(101), 'gam_playing', {
-        endAt: '2027-04-03T01:00:00Z'
+      const announced = await announcedDuring(async () => {
+        await updateEventInfo(f.h.db, actor(101), 'gam_playing', {
+          endAt: '2027-04-03T01:00:00Z'
+        })
       })
       await expectCleared()
       await notices.named(mark, { gameId: 'gam_umpire' })
       await notices.named(mark, { gameId: 'gam_playing' })
-      // Both in the edit's one commit.
-      expect(BigInt(await readSyncClock(f.h.db))).equals(before + 1n)
+      // Both in the edit's one commit, announced by its one statement.
+      expect(announced).length(1)
+      expect(announced[0]).to.deep.include.members([
+        { gameId: 'gam_umpire' },
+        { gameId: 'gam_playing' }
+      ])
     } finally {
       await notices.close()
     }
@@ -395,12 +402,20 @@ describe('umpire assignment revalidation through game editors', function () {
     const notices = await listenScreenScopes(f.h.db)
     try {
       const mark = notices.mark()
-      const before = BigInt(await readSyncClock(f.h.db))
-      await move('detach', f.leagueA)
+      const announced = await announcedDuring(async () => {
+        await move('detach', f.leagueA)
+      })
       await notices.named(mark, { gameId: 'gam_umpire' })
       await notices.named(mark, { gameId: 'gam_playing' })
-      // Both in the move's one commit.
-      expect(BigInt(await readSyncClock(f.h.db))).equals(before + 1n)
+      // Both in the move's one commit, announced by its one statement.
+      const games = announced.filter(each =>
+        each.some(notice => notice.gameId != null)
+      )
+      expect(games).length(1)
+      expect(games[0]).to.deep.include.members([
+        { gameId: 'gam_umpire' },
+        { gameId: 'gam_playing' }
+      ])
       const events = (await notices.since(mark)).filter(n => n.gameId != null)
       expect(events.map(n => n.gameId)).have.members([
         'gam_playing',

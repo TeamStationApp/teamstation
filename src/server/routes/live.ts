@@ -56,7 +56,6 @@ import {
   settleRecordingReminder
 } from '../notifications/recordingReminders'
 import type { LiveSettings } from '../serverConfig'
-import { withRevision } from '../socket/syncRevision'
 
 /**
  * The cameras pointed at a game: the URLs they publish to, and what each one
@@ -832,9 +831,7 @@ export function liveRoutes(
   router.get(
     '/live',
     requireActor,
-    // Home's look at what is on is one of the reads its scope gates, so it
-    // carries the revision its rows were read at, as the others do.
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)

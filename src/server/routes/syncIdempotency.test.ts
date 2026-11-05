@@ -11,9 +11,9 @@ import {
 import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
+import { listenScreenScopes } from '../../test/screenScopeNotices'
 import { seedSettingsCleanup3 } from '../../test/settingsCleanup3Fixture'
 import { KEY_RETENTION_DAYS, purgeExpiredKeys } from '../db/syncIdempotency'
-import { readSyncClock } from '../socket/syncRevision'
 import { startingContext } from './lineups'
 
 /** A play the game takes from anybody who may score it. */
@@ -294,9 +294,12 @@ describe('Idempotency-Key on the writes a phone queues', function () {
     const body = await homeLineup(f, gameId)
     // Batting order reversed, so the save has something to write.
     body.battingOrder = [...body.battingOrder].reverse()
-    // Each save that writes takes the next revision of the clock.
+    // Each save that writes announces its game once.
+    const notices = await listenScreenScopes(f.h.db)
+    const start = notices.mark()
     const saves = async (): Promise<number> =>
-      Number(await readSyncClock(f.h.db))
+      (await notices.since(start)).filter(notice => notice.gameId === gameId)
+        .length
     const before = await saves()
     const first = await send(f, `/games/${gameId}/lineups`, body, 'k-lineup')
     expect(first.status, JSON.stringify(first.body)).equals(200)
@@ -339,6 +342,7 @@ describe('Idempotency-Key on the writes a phone queues', function () {
       )
     ).deep.equals(unchanged)
     expect(await saves()).equals(after)
+    await notices.close()
   })
 
   it('keeps only a live post’s own digests, and rebuilds its answer from the game on replay', async function () {

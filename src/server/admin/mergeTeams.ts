@@ -355,8 +355,8 @@ export async function mergeTeams(
 
   if (!apply) return report
 
-  // `atomic`: its last statements tell the screens of both teams and of
-  // every game moved, from the clock this transaction bumps.
+  // `atomic`: its last statement tells the screens of both teams and of
+  // every game moved, once this transaction commits.
   await atomic(db, async trx => {
     // The two teams' keys, exclusively: their roster and game writers take
     // them shared before any row, so they wait for this merge, and writers

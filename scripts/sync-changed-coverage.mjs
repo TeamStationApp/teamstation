@@ -11,7 +11,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // Changed-line coverage of the offline sync work: screen scopes on the
-// socket, the sync clock, and the phone's cache and outbox. One mocha process
+// socket, their notices, and the phone's cache and outbox. One mocha process
 // runs the suites those changes can reach, server and app together, under
 // NODE_V8_COVERAGE. The gate reads `git merge-base origin/master HEAD` to
 // HEAD, so it runs after the milestone is committed.

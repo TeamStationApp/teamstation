@@ -8,6 +8,7 @@ import { after, before, describe, it } from 'mocha'
 import { makeId } from '../../common/ids'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import {
+  announcedDuring,
   databaseUrlOf,
   listenScreenScopes,
   openScopeSocket,
@@ -15,15 +16,14 @@ import {
   type ScreenScopeNotices
 } from '../../test/screenScopeNotices'
 import { attachGameSocket, type GameSocketHandle } from './gameSocket'
-import { readSyncClock } from './syncRevision'
 
 /**
  * S2: an event's screen hears of the live play that committed, and of
  * nothing from the post that rolled back.
  *
  * The second post fails a constraint that is checked as its transaction
- * commits, after the clock was bumped and `screen_scopes` notified, so the
- * notify was sent and still never reaches anybody. Each step is printed, so
+ * commits, after `screen_scopes` was notified, so the notify was sent and
+ * still never reaches anybody. Each step is printed, so
  * the run is its own log.
  */
 describe('S2: one changed for the committed play, none for the rolled-back post', function () {
@@ -140,16 +140,20 @@ describe('S2: one changed for the committed play, none for the rolled-back post'
     expect(subscribed).deep.include({ type: 'subscribed', scope: 'event' })
     note(`← ${JSON.stringify(subscribed)}`)
 
-    const before = await readSyncClock(f.h.db)
     let mark = notices.mark()
     note('→ POST live play, home 1')
-    const committed = await post(1)
-    note(`← ${committed.status} POST live play`)
-    expect(committed.status).equals(200)
+    let committed: Awaited<ReturnType<typeof post>> | undefined
+    const sent = await announcedDuring(async () => {
+      committed = await post(1)
+    })
+    note(`← ${committed?.status} POST live play`)
+    expect(committed?.status).equals(200)
+    note(`  pg_notify statements: ${JSON.stringify(sent)}`)
+    expect(sent).length(1)
+    expect(sent[0]).deep.include({ gameId })
     const notice = await notices.named(mark, { gameId })
     note(`  screen_scopes notified: ${JSON.stringify(notice)}`)
     expect(notice).deep.equals({ gameId })
-    expect(BigInt(await readSyncClock(f.h.db))).equals(BigInt(before) + 1n)
     await window()
     const told = viewer.changes()
     for (const frame of told) note(`← ${JSON.stringify(frame)}`)
@@ -158,9 +162,15 @@ describe('S2: one changed for the committed play, none for the rolled-back post'
     mark = notices.mark()
     const from = viewer.frames.length
     note('→ POST live play, home 99 (refused as it commits)')
-    const refused = await post(99)
-    note(`← ${refused.status} POST live play`)
-    expect(refused.status).equals(500)
+    let refused: Awaited<ReturnType<typeof post>> | undefined
+    const unsent = await announcedDuring(async () => {
+      refused = await post(99)
+    })
+    note(`← ${refused?.status} POST live play`)
+    expect(refused?.status).equals(500)
+    // Its one notify statement ran, and the rollback dropped it.
+    note(`  pg_notify statements: ${JSON.stringify(unsent)}`)
+    expect(unsent).length(1)
     await window()
     const heard = await notices.since(mark)
     note(`  screen_scopes notices since: ${JSON.stringify(heard)}`)

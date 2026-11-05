@@ -71,7 +71,8 @@ const upcomingGame = (id: string, home: string, away: string): unknown => ({
 interface Answer {
   status?: number
   body: unknown
-  revision?: string
+  /** The revision header a server sent before reads took none. */
+  olderRevision?: string
 }
 
 /**
@@ -108,9 +109,9 @@ function server(routes: Record<string, Answer | undefined>): {
         return new Response(JSON.stringify(answer.body), {
           status: answer.status ?? 200,
           headers:
-            answer.revision == null
+            answer.olderRevision == null
               ? {}
-              : { 'x-teamstation-revision': answer.revision }
+              : { 'x-teamstation-revision': answer.olderRevision }
         })
       } finally {
         state.inFlight--
@@ -146,7 +147,7 @@ describe('CachingClient', function () {
 
   it('answers a GET that fails to leave the device from the store, the first time (Cache hit)', async function () {
     const net = server({
-      '/teams': { body: [team('tem_hawks', 'Hawks')], revision: '7' }
+      '/teams': { body: [team('tem_hawks', 'Hawks')], olderRevision: '7' }
     })
     const online = clientOf(net.fetch)
     online.openFor('usr_1')
@@ -155,7 +156,8 @@ describe('CachingClient', function () {
       .get('usr_1')!
       .db.prepare("SELECT revision FROM documents WHERE key = 'home.teams'")
       .get()
-    expect(stored).property('revision', '7')
+    // Whatever an older server said: nothing reads the column.
+    expect(stored).property('revision', '0')
 
     // A new process: nothing has failed in it yet.
     stores.get('usr_1')!.db.close()
@@ -187,8 +189,8 @@ describe('CachingClient', function () {
   it('stores no season query as games.all, and a season read offline throws (Season query)', async function () {
     const all = [upcomingGame('g1', 'tem_hawks', 'tem_owls')]
     const net = server({
-      '/events?season=sea_1': { body: [], revision: '2' },
-      '/events': { body: all, revision: '2' }
+      '/events?season=sea_1': { body: [] },
+      '/events': { body: all }
     })
     const client = clientOf(net.fetch)
     client.openFor('usr_1')
@@ -210,8 +212,7 @@ describe('CachingClient', function () {
   it('answers a pending document as stored, even when the server answered (Pending document)', async function () {
     const net = server({
       '/games/g1/lineups': {
-        body: { away: 'server', home: 'server', digest: 'd9' },
-        revision: '9'
+        body: { away: 'server', home: 'server', digest: 'd9' }
       }
     })
     const client = clientOf(net.fetch)
@@ -237,7 +238,7 @@ describe('CachingClient', function () {
           "SELECT body, revision FROM documents WHERE key = 'lineups.g1'"
         )
         .get()
-    ).deep.include({ body: '{"mine":true}', revision: '4' })
+    ).deep.include({ body: '{"mine":true}' })
     // A refusal from the server is not an answer to show over it either.
     const refusing = server({
       '/games/g1/lineups': {
@@ -262,7 +263,7 @@ describe('CachingClient', function () {
 
   it('drops a stored document the server says is gone or not this person’s, and keeps a pending one', async function () {
     const routes: Record<string, Answer | undefined> = {
-      '/teams': { body: [team('tem_hawks', 'Hawks')], revision: '3' },
+      '/teams': { body: [team('tem_hawks', 'Hawks')] },
       '/games/g1/lineups': {
         body: { away: 'server', home: 'server', digest: 'd9' }
       }
@@ -296,7 +297,7 @@ describe('CachingClient', function () {
       await client.teams().catch(() => undefined)
     }
     // A server error is not the record gone: it stays.
-    routes['/teams'] = { body: [team('tem_hawks', 'Hawks')], revision: '4' }
+    routes['/teams'] = { body: [team('tem_hawks', 'Hawks')] }
     await client.teams()
     routes['/teams'] = { status: 500, body: { code: 'internal', message: 'x' } }
     await client.teams().catch(() => undefined)
@@ -310,8 +311,7 @@ describe('CachingClient', function () {
           away: { teamId: 'tem_owls', teamName: 'Owls', lineups: [] },
           home: { teamId: 'tem_hawks', teamName: 'Hawks', lineups: [] },
           digest: 'dl1'
-        },
-        revision: '3'
+        }
       },
       '/games/g1/events': {
         body: {
@@ -319,8 +319,7 @@ describe('CachingClient', function () {
           currentPlay: null,
           lineupsDigest: 'dl1',
           playsDigest: 'p1'
-        },
-        revision: '3'
+        }
       }
     })
     const client = clientOf(net.fetch)
@@ -351,23 +350,20 @@ describe('CachingClient', function () {
           ),
           seasons: [],
           leagues: []
-        },
-        revision: '5'
+        }
       },
-      '/me/roles': { body: roles, revision: '5' },
+      '/me/roles': { body: roles },
       '/events?when=upcoming': {
         body: [
           upcomingGame('g1', 'tem_hawks', 'tem_owls'),
           upcomingGame('g2', 'tem_hawks', 'tem_external')
-        ],
-        revision: '5'
+        ]
       },
-      '/teams/tem_hawks/roster': { body: [rosterEntry(101)], revision: '5' },
+      '/teams/tem_hawks/roster': { body: [rosterEntry(101)] },
       '/teams/tem_hawks/roster?includeFullNames=true': {
-        body: [rosterEntry(101, 'Mookie Betts')],
-        revision: '5'
+        body: [rosterEntry(101, 'Mookie Betts')]
       },
-      '/teams/tem_owls/roster': { body: [rosterEntry(202)], revision: '5' },
+      '/teams/tem_owls/roster': { body: [rosterEntry(202)] },
       '/teams/tem_owls/roster?includeFullNames=true': {
         status: 403,
         body: { error: 'forbidden', message: 'No' }
@@ -422,10 +418,9 @@ describe('CachingClient', function () {
   it('paints Schedule from a first page only the prefetch stored (Paged prefetch)', async function () {
     const games = [upcomingGame('g1', 'tem_hawks', 'tem_owls')]
     const net = server({
-      '/events?when=upcoming': { body: games, revision: '1' },
+      '/events?when=upcoming': { body: games },
       '/events?paged=1&when=upcoming': {
-        body: pageOf(games, {}, { counts: null }),
-        revision: '1'
+        body: pageOf(games, {}, { counts: null })
       }
     })
     const client = clientOf(net.fetch)
@@ -451,9 +446,7 @@ describe('CachingClient', function () {
       ['/events?paged=1&hasVideo=1', { hasVideo: true }]
     ]
     const net = server(
-      Object.fromEntries(
-        lists.map(([path]) => [path, { body: pageOf(games), revision: '1' }])
-      )
+      Object.fromEntries(lists.map(([path]) => [path, { body: pageOf(games) }]))
     )
     const client = clientOf(net.fetch)
     client.openFor('usr_1')
@@ -473,7 +466,7 @@ describe('CachingClient', function () {
   it('reads an array an older build stored as a miss (Stored array)', async function () {
     const games = [upcomingGame('g1', 'tem_hawks', 'tem_owls')]
     const net = server({
-      '/events?when=upcoming': { body: games, revision: '1' }
+      '/events?when=upcoming': { body: games }
     })
     const client = clientOf(net.fetch)
     client.openFor('usr_1')
@@ -484,7 +477,7 @@ describe('CachingClient', function () {
     const store = await openCacheStore(stores.get('usr_1')!)
     await store.store(gamesKey('upcoming'), {
       body: JSON.stringify(games),
-      revision: '1',
+      revision: '0',
       serverDigest: null
     })
     expect(
@@ -503,8 +496,7 @@ describe('CachingClient', function () {
   it('reads ahead from the stored upcoming list when it will not load', async function () {
     const net = server({
       '/events?when=upcoming': {
-        body: [upcomingGame('g3', 'tem_hawks', 'tem_owls')],
-        revision: '1'
+        body: [upcomingGame('g3', 'tem_hawks', 'tem_owls')]
       }
     })
     const client = clientOf(net.fetch)
@@ -528,7 +520,7 @@ describe('CachingClient', function () {
   })
 
   it('opens the file only for a known user, keeps it, and deletes it on sign-out', async function () {
-    const net = server({ '/teams': { body: [], revision: '1' } })
+    const net = server({ '/teams': { body: [] } })
     const client = clientOf(net.fetch)
     expect(client.cacheUser).equals(undefined)
     await client.teams()
@@ -639,7 +631,7 @@ describe('CachingClient', function () {
       confirmedAt: '2027-04-12T12:00:00.000Z'
     }
     const net = server({
-      '/me/account/chat-age': { body: confirmed, revision: '3' }
+      '/me/account/chat-age': { body: confirmed }
     })
     const client = clientOf(net.fetch)
     client.openFor('usr_1')
@@ -649,7 +641,7 @@ describe('CachingClient', function () {
   })
 
   it('answers a pending document the server sent back unreadable as the server answer', async function () {
-    const net = server({ '/me/roles': { body: { teams: {} }, revision: '2' } })
+    const net = server({ '/me/roles': { body: { teams: {} } } })
     const client = clientOf(net.fetch)
     client.openFor('usr_1')
     await client.cached('none', raw => raw)

@@ -359,7 +359,7 @@ export async function closeInto(
       await notifyChatUser(trx, owner, 'blocks')
     return { closed: true, moved }
   }
-  // Opened here, the merge's last statements bump the clock; inside a
+  // Opened here, the merge's last statement announces it; inside a
   // caller's transaction, the caller's opener does.
   if (!db.isTransaction) return await atomic(db, merge)
 

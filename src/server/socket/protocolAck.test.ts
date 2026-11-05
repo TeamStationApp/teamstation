@@ -6,11 +6,7 @@ import { sql } from 'kysely'
 import { after, afterEach, before, beforeEach, describe, it } from 'mocha'
 import WebSocket from 'ws'
 
-import {
-  REVISION_HEADER,
-  type SeasonGame,
-  TeamStationClient
-} from '../../common/api'
+import { type SeasonGame, TeamStationClient } from '../../common/api'
 import {
   GAME_SOCKET_PROTOCOL,
   GameSocket,
@@ -22,7 +18,7 @@ import { ScreenScopeGate } from '../../common/screenScope'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { attachGameSocket, type GameSocketHandle } from './gameSocket'
-import { bumpSyncClock, readSyncClock } from './syncRevision'
+import { announceNotedScopes } from './syncRevision'
 
 /**
  * S1: the schedule's acknowledgement comes before its `GET /events`, and a
@@ -93,15 +89,15 @@ describe('S1: subscribed comes before the schedule read, and a notice during it 
     await f?.h.close()
   })
 
-  /** Commits the score, as the scoring write does: rows, then the clock. */
-  async function commitScore(): Promise<string> {
-    return await f.h.db.transaction().execute(async trx => {
+  /** Commits the score, as the scoring write does: rows, then the notice. */
+  async function commitScore(): Promise<void> {
+    await f.h.db.transaction().execute(async trx => {
       await trx
         .updateTable('games')
         .set({ home_score: 3, away_score: 1, status: 'inProgress' })
         .where('id', '=', gameId)
         .execute()
-      return await bumpSyncClock(trx, { gameId })
+      await announceNotedScopes(trx, { gameId })
     })
   }
 
@@ -115,7 +111,7 @@ describe('S1: subscribed comes before the schedule read, and a notice during it 
   ): Promise<{ gets: number; seen: SeasonGame | undefined }> {
     const token = f.h.tokens.get(101)!
     let gets = 0
-    let committing: Promise<string> | undefined
+    let committing: Promise<void> | undefined
     const fetchWithScore = (async (
       url: string,
       init: RequestInit
@@ -125,16 +121,16 @@ describe('S1: subscribed comes before the schedule read, and a notice during it 
       note(`→ GET /events (#${gets})`)
       if (first && when === 'beforeTheRead') {
         committing = commitScore()
-        note(`  score committed at revision ${await committing}`)
+        await committing
+        note('  score committed')
       }
       const response = await fetch(url, init)
       if (first && when === 'afterTheRead') {
         committing = commitScore()
-        note(`  score committed at revision ${await committing}`)
+        await committing
+        note('  score committed')
       }
-      note(
-        `← 200 GET /events (#${gets}) ${REVISION_HEADER}: ${response.headers.get(REVISION_HEADER)}`
-      )
+      note(`← ${response.status} GET /events (#${gets})`)
       return response
     }) as unknown as typeof fetch
     const client = new TeamStationClient({
@@ -169,7 +165,7 @@ describe('S1: subscribed comes before the schedule read, and a notice during it 
         const games = await client.games({})
         seen = games.find(game => game.id === gameId)
         note(
-          `  schedule shows ${seen?.homeScore ?? '-'}–${seen?.awayScore ?? '-'}, holding revision ${client.revisionFor('/events')}`
+          `  schedule shows ${seen?.homeScore ?? '-'}–${seen?.awayScore ?? '-'}`
         )
         loaded()
       }
@@ -282,8 +278,8 @@ describe('S1: subscribed comes before the schedule read, and a notice during it 
   })
 })
 
-/** The reads a subscribed screen makes, each at the revision it read. */
-describe('the revision on every read a screen scope uses', function () {
+/** The reads a subscribed screen makes, none of them at a revision. */
+describe('no revision on any read a screen scope uses', function () {
   this.timeout(60000)
   let f: GroupFixture
   let gameId = ''
@@ -307,7 +303,7 @@ describe('the revision on every read a screen scope uses', function () {
     await f?.h.close()
   })
 
-  it('answers each GET the phone caches with x-teamstation-revision', async function () {
+  it('answers each GET the phone caches with no x-teamstation-revision', async function () {
     const reads = [
       '/teams',
       '/seasons',
@@ -318,6 +314,7 @@ describe('the revision on every read a screen scope uses', function () {
       '/events?when=upcoming',
       '/me/roles',
       '/me/home',
+      '/live',
       `/teams/${f.teamA}/roster`,
       `/teams/${f.teamA}/roster?includeFullNames=true`,
       `/games/${gameId}`,
@@ -325,22 +322,14 @@ describe('the revision on every read a screen scope uses', function () {
       `/games/${gameId}/events`,
       `/teams/${f.teamA}/default-lineup`
     ]
-    const before = await readSyncClock(f.h.db)
     for (const read of reads) {
       const response = await f.h.request('GET', read, undefined, 101)
       expect(response.status, read).equals(200)
-      expect(response.headers.get(REVISION_HEADER), read).equals(before)
-    }
-    const revision = await f.h.db
-      .transaction()
-      .execute(async trx => await bumpSyncClock(trx, { teamId: f.teamA }))
-    for (const read of reads) {
-      const response = await f.h.request('GET', read, undefined, 101)
-      expect(response.headers.get(REVISION_HEADER), read).equals(revision)
+      expect(response.headers.get('x-teamstation-revision'), read).equals(null)
     }
   })
 
-  it('answers the events beneath an open post with an older revision, and the post with its own', async function () {
+  it('answers the events beneath an open post at once, and the post’s once it commits', async function () {
     let release!: () => void
     const mayCommit = new Promise<void>(resolve => {
       release = resolve
@@ -349,7 +338,7 @@ describe('the revision on every read a screen scope uses', function () {
     const hasLocked = new Promise<void>(resolve => {
       locked = resolve
     })
-    // A live post: it holds the game, writes, and takes the next revision.
+    // A live post: it holds the game, writes, and announces.
     const post = f.h.db.transaction().execute(async trx => {
       await trx
         .selectFrom('games')
@@ -359,34 +348,33 @@ describe('the revision on every read a screen scope uses', function () {
         .executeTakeFirst()
       await trx
         .updateTable('games')
-        .set({ home_score: 1 })
+        .set(eb => ({ play_generation: eb('play_generation', '+', 1) }))
         .where('id', '=', gameId)
         .execute()
-      const revision = await bumpSyncClock(trx, { gameId })
+      await announceNotedScopes(trx, { gameId })
       locked()
       await mayCommit
-      return revision
     })
     await hasLocked
-    const reading = f.h.request(
+    // It does not wait for the post, and shows nothing the post wrote.
+    const response = await f.h.request(
       'GET',
       `/games/${gameId}/events`,
       undefined,
       101
     )
-    // It does not wait for the post, and shows nothing the post wrote.
-    const response = await reading
     expect(response.status).equals(200)
-    const before = response.headers.get(REVISION_HEADER)
+    const beneath = (await response.json()) as { generation: number }
     release()
-    const revision = await post
-    expect(BigInt(before!) < BigInt(revision)).equals(true)
+    await post
     const after = await f.h.request(
       'GET',
       `/games/${gameId}/events`,
       undefined,
       101
     )
-    expect(after.headers.get(REVISION_HEADER)).equals(revision)
+    expect(after.status).equals(200)
+    expect(after.headers.get('x-teamstation-revision')).equals(null)
+    expect(await after.json()).property('generation', beneath.generation + 1)
   })
 })
