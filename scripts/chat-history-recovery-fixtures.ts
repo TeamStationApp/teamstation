@@ -53,7 +53,9 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
       ['bands', 'core', 'default', 'intact'].includes(values.scenario)) ||
       (values.runner === 'reply' &&
         values.surface === 'web' &&
-        values.scenario === 'shared') ||
+        ['shared', 'small', 'paging', 'incoming', 'incoming-send'].includes(
+          values.scenario
+        )) ||
       (values.runner === 'web' &&
         values.surface === 'web' &&
         [
@@ -277,6 +279,25 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
     })
     const shared = join(out, 'shared-fixture.json')
     const profile = join(out, 'profiles', 'actor')
+    const peerProfile = join(out, 'profiles', 'peer')
+    const setup = join(out, 'reply-setup.json')
+    const incoming = join(out, 'incoming-fixture.json')
+    privateJson(setup, {
+      synthetic: true,
+      source: owner.source,
+      origin: owner.webUrl,
+      apiUrl: owner.apiUrl,
+      seedFile: join(out, 'seed.txt'),
+      artifacts: out,
+      protectedConversation: protectedRoom.id,
+      profiles: {
+        Hc: profile,
+        Hs: peerProfile,
+        Ha: join(out, 'profiles', 'other-peer')
+      },
+      incoming,
+      small: join(out, 'small-fixture.json')
+    })
     const path = join(out, 'env.sh')
     writeFileSync(
       path,
@@ -290,19 +311,19 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
         CHAT_UI_FIXTURE_PEOPLE: JSON.stringify(peers),
         CHAT_UI_HISTORY_FIXTURE_FILE: shared,
         CHAT_UI_REPLY_SEED_FILE: join(out, 'seed.txt'),
-        CHAT_UI_REPLY_ACTOR: 'Hc',
+        CHAT_UI_REPLY_ACTOR: values.scenario === 'incoming-send' ? 'Hs' : 'Hc',
         CHAT_UI_REPLY_PEER: 'Hs',
-        CHAT_UI_REPLY_PROFILE_DIR: profile,
+        CHAT_UI_REPLY_PROFILE_DIR:
+          values.scenario === 'incoming-send' ? peerProfile : profile,
         CHAT_UI_REPLY_WEB_DEVICE: 'recovery-reply',
-        CHAT_UI_REPLY_ARTIFACTS: join(out, 'shared-results'),
+        CHAT_UI_REPLY_ARTIFACTS: join(out, values.scenario + '-results'),
         CHAT_UI_REPLY_SHARED_FIXTURE: shared,
-        CHAT_UI_REPLY_SMALL_FIXTURE: join(
-          out,
-          'small-results',
-          'small-fixture.json'
-        ),
+        CHAT_UI_REPLY_SMALL_FIXTURE: join(out, 'small-fixture.json'),
+        CHAT_UI_REPLY_INCOMING_FIXTURE: incoming,
+        CHAT_UI_REPLY_CREATE_OUTGOING: 'true',
         CHAT_UI_REPLY_PROTECTED_CONVERSATION: protectedRoom.id,
-        CHAT_UI_REPLY_MODE: 'shared',
+        CHAT_UI_REPLY_MODE: values.scenario,
+        CHAT_RECOVERY_REPLY_SETUP: setup,
         CHAT_RECOVERY_FIXTURE_SOURCE: owner.source,
         MAESTRO_D: 'recovery-reply-' + Date.now()
       }),
