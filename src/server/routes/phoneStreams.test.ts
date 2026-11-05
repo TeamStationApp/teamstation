@@ -730,6 +730,8 @@ describe('phones and Directors asking for their streams by device', function () 
       expect(clash.body.message).equals(
         'You already have a camera called home plate on this game'
       )
+      // Only a camera limit is marked: Director keeps every other refusal quiet.
+      expect(clash.body.details).equals(undefined)
       const first = await ask(gameId, phone('First Base', PIXEL))
       const rename = await call(
         'PATCH',
@@ -2850,6 +2852,7 @@ describe('phones and Directors asking for their streams by device', function () 
       ]) {
         expect(refused.status).equals(400)
         expect(refused.body.message).equals(FIFTH)
+        expect(refused.body.details).deep.equals({ reason: 'cameraLimit' })
       }
       expect(await streamsOn(gameId)).equals(4)
     })
@@ -2874,6 +2877,7 @@ describe('phones and Directors asking for their streams by device', function () 
       ]) {
         expect(refused.status).equals(400)
         expect(refused.body.message).equals(SEVENTH)
+        expect(refused.body.details).deep.equals({ reason: 'cameraLimit' })
       }
       expect(await streamsOn(gameId)).equals(6)
 
