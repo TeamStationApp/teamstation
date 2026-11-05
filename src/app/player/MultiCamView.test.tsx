@@ -78,6 +78,7 @@ async function grid(options: {
   steps?: Array<ReturnType<typeof boardStep>>
   /** Each angle's player is given an address, rather than waiting for one. */
   playable?: boolean
+  gap?: boolean
   /** The angles shown; all four by default. */
   ids?: string[]
   /** The game is before the overlay's start date. */
@@ -114,6 +115,14 @@ async function grid(options: {
   // its start says, which only its timeline knows.
   server.timelines.set('a', wallTimelineOf([[0, OVERLAY_T0]]))
   server.timelines.set('b', wallTimelineOf([[0, OVERLAY_T0 + 90_000]]))
+  if (options.gap)
+    server.timelines.set(
+      'b',
+      wallTimelineOf([
+        [0, OVERLAY_T0],
+        [40000, OVERLAY_T0 + 60000]
+      ])
+    )
   server.timelines.set('c', wallTimelineOf([[0, OVERLAY_T0]]))
   server.timelines.set('d', wallTimelineOf([[0, OVERLAY_T0]]))
   server.steps.set('g1', options.steps ?? [])
@@ -388,6 +397,39 @@ describe("the grid beside Tess's chat", function () {
 
 describe('the grid coming and going', function () {
   afterEach(unmount)
+  it('fully covers a future frame when the selected instant is missing', async function () {
+    await grid({
+      width: 1280,
+      height: 720,
+      playable: true,
+      gap: true,
+      ids: ['a', 'b'],
+      atMs: OVERLAY_T0 + 50000
+    })
+    await act(async () => {
+      for (const video of document.querySelectorAll('video')) {
+        Object.defineProperty(video, 'readyState', {
+          value: 4,
+          configurable: true
+        })
+        Object.defineProperty(video, 'duration', {
+          value: 100,
+          configurable: true
+        })
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      }
+      await settle(100)
+    })
+    const notice = [...document.querySelectorAll('div')].find(
+      node =>
+        node.textContent === lstrings.angles_missing_footage &&
+        node.children.length === 0
+    )
+    expect(notice, 'missing-footage notice').not.equals(undefined)
+    expect(
+      window.getComputedStyle(notice!.parentElement!).backgroundColor
+    ).equals('rgb(0, 0, 0)')
+  })
 
   it("stops at a highlight's end and stays up (U12)", async function () {
     let ends = 0

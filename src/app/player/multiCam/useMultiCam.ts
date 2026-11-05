@@ -886,7 +886,7 @@ export function useMultiCam(
       // sound.
       if (correction?.kind === 'park') {
         // A live camera behind the game waits where it opened.
-        if (correction.reason !== 'notYet')
+        if (correction.reason !== 'notYet' && correction.reason !== 'gap')
           element.currentTime =
             correction.reason === 'beforeStart'
               ? 0
@@ -1106,15 +1106,16 @@ export function useMultiCam(
           element.pause()
           // Waiting for its live footage to reach the game: left where it is,
           // with nothing sought, until its mapping says the footage is there.
-          if (correction.reason === 'notYet') {
+          if (correction.reason === 'notYet' || correction.reason === 'gap') {
+            const reason = correction.reason
             setTiles(current =>
-              current[video.id]?.parked === 'notYet'
+              current[video.id]?.parked === reason
                 ? current
                 : {
                     ...current,
                     [video.id]: {
                       ...(current[video.id] ?? freshTile()),
-                      parked: 'notYet'
+                      parked: reason
                     }
                   }
             )

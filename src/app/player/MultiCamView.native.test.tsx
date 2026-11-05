@@ -87,6 +87,8 @@ async function grid(options: {
   steps?: Array<ReturnType<typeof boardStep>>
   /** Each angle's player is given an address, rather than waiting for one. */
   playable?: boolean
+  gap?: boolean
+  atMs?: number
 }): Promise<void> {
   await windowSize(options.width, options.height)
   const server = overlayServer()
@@ -94,6 +96,14 @@ async function grid(options: {
   // its timeline knows.
   server.timelines.set('a', wallTimelineOf([[0, OVERLAY_T0]]))
   server.timelines.set('b', wallTimelineOf([[0, OVERLAY_T0 + 90_000]]))
+  if (options.gap === true)
+    server.timelines.set(
+      'b',
+      wallTimelineOf([
+        [0, OVERLAY_T0],
+        [40000, OVERLAY_T0 + 60000]
+      ])
+    )
   server.timelines.set('c', wallTimelineOf([[0, OVERLAY_T0]]))
   server.timelines.set('d', wallTimelineOf([[0, OVERLAY_T0]]))
   server.steps.set('g1', options.steps ?? STEPS)
@@ -126,6 +136,7 @@ async function grid(options: {
           order={IDS}
           audioId="b"
           zoomedId={null}
+          atMs={options.atMs}
           onChange={() => undefined}
           onClose={() => undefined}
         />
@@ -202,6 +213,45 @@ function placed(): {
 
 describe('the board over the phone’s grid (C5)', function () {
   afterEach(unmount)
+
+  it('announces missing footage on the accessible picture and covers its future frame', async () => {
+    await grid({
+      Grid: PhoneGrid,
+      width: 402,
+      height: 874,
+      playable: true,
+      gap: true,
+      atMs: OVERLAY_T0 + 50000
+    })
+    await act(async () => {
+      for (const video of document.querySelectorAll('video')) {
+        Object.defineProperty(video, 'readyState', {
+          value: 4,
+          configurable: true
+        })
+        Object.defineProperty(video, 'duration', {
+          value: 100,
+          configurable: true
+        })
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      }
+      await settle(100)
+    })
+    const picture = document.querySelector(
+      '[role="img"][aria-label="Angle b angle: ' +
+        lstrings.angles_missing_footage +
+        '"]'
+    )
+    expect(picture, 'accessible missing-footage notice').not.equals(null)
+    const notice = [...picture!.querySelectorAll('div')].find(
+      node =>
+        node.textContent === lstrings.angles_missing_footage &&
+        node.children.length === 0
+    )
+    expect(
+      window.getComputedStyle(notice!.parentElement!).backgroundColor
+    ).equals('rgb(0, 0, 0)')
+  })
 
   it('names each tile as a picture of its angle', async function () {
     await grid({ Grid: PhoneGrid, width: 402, height: 874 })

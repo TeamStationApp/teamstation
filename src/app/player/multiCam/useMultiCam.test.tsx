@@ -1805,6 +1805,37 @@ describe('useMultiCam buffering', function () {
 })
 
 describe('useMultiCam on each tile’s own dates (U22)', function () {
+  it('parks missing footage without showing a future frame and resumes after the gap', async function () {
+    const { mc, tiles } = await grid({
+      videos: [video('A', 0), video('B', 0)],
+      order: ['A', 'B']
+    })
+    await act(async () => {
+      mc().takeMapping('B')(
+        fromFragments([
+          { start: 0, duration: 100, programDateTime: T0 },
+          { start: 100, duration: 400, programDateTime: T0 + 120_000 }
+        ])
+      )
+      mc().goTo(T0 + 99_000)
+    })
+    expect(tiles.B.currentTime).closeTo(99, 0.01)
+    await act(async () => {
+      mc().goTo(T0 + 110_000)
+    })
+    expect(mc().tiles.B?.parked).equals('gap')
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime, 'no seek into future footage').closeTo(99, 0.01)
+    expect(tiles.A.currentTime).closeTo(110, 0.01)
+    expect(tiles.A.paused).equals(false)
+    await act(async () => {
+      mc().goTo(T0 + 120_000)
+    })
+    expect(mc().tiles.B?.parked).equals(null)
+    expect(tiles.B.currentTime).closeTo(100, 0.01)
+    expect(tiles.B.paused).equals(false)
+  })
+
   it('lines two angles up by their program date-times, not by their starts', async function () {
     // Both rows say the same start, but their playlists begin a minute
     // apart on the wall: A's first fragment was captured at T0 + 60 s.

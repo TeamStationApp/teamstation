@@ -609,7 +609,12 @@ function Tile(props: {
       // end-to-end suite, which finds each tile's place on the glass by it.
       accessible
       accessibilityRole="image"
-      accessibilityLabel={sprintf(lstrings.angles_tile_label, name)}
+      accessibilityLabel={
+        sprintf(lstrings.angles_tile_label, name) +
+        (parked === 'gap'
+          ? `: ${tileNotice({ unavailable, unplaceable, parked, waiting })}`
+          : '')
+      }
       style={[
         styles.tile,
         {
@@ -641,7 +646,12 @@ function Tile(props: {
       unplaceable ||
       waiting ||
       !hasPicture ? (
-        <View style={styles.tileParked}>
+        <View
+          style={[
+            styles.tileParked,
+            parked === 'gap' ? { backgroundColor: '#000' } : null
+          ]}
+        >
           <Text style={styles.tileParkedText}>
             {tileNotice({ unavailable, unplaceable, parked, waiting })}
           </Text>
