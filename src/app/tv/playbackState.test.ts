@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import { defaultScoreboardSettings } from '../../common/nodeSettings'
 import { PlaybackClock } from './playbackClock'
+import { PlaybackRecovery } from './playbackRecovery'
 import {
   angleLayout,
   initialPlayback,
@@ -14,6 +15,176 @@ import { angleNeighbor, tvLayout } from './tvLayout'
 const timeline = (offset = 0): ReturnType<typeof timelineFor> =>
   timelineFor(new Date(100000 + offset).toISOString())
 describe('TV playback composition and remote state', () => {
+  it('retries a failed ended angle when rewind returns to its footage', () => {
+    const clock = new PlaybackClock()
+    const recovery = new PlaybackRecovery(0)
+    for (let i = 0; i < 2; i++) {
+      clock.register(i, timeline(), () => undefined)
+      clock.load(i, i === 0 ? 10 : 100)
+    }
+    clock.seek(120000)
+    expect(clock.ports[0].ended).equals(true)
+    clock.fail(0)
+    recovery.error(5001)
+    clock.seek(105000)
+    expect(clock.ports[0].ended).equals(false)
+    expect(clock.ports[0].failed).equals(true)
+    expect(recovery.retry(7000, false, clock.ports[0].ended)).equals(true)
+  })
+  it('rejoins matching decoded live frames beyond the safe seek edge without seeking', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[] = []
+    for (let i = 0; i < 4; i++)
+      clock.register(i, timeline(), seconds => seeks.push(seconds))
+    clock.load(0, Infinity)
+    clock.progress(0, 108.0009, 108, 0)
+    for (let i = 1; i < 4; i++) {
+      clock.load(i, Infinity)
+      expect(clock.available(i)).equals(false)
+      clock.progress(i, 108.001, 108, 0)
+      expect(clock.available(i)).equals(true)
+      expect(clock.ports[i].pendingWall).equals(null)
+    }
+    expect(seeks).deep.equals([])
+    clock.progress(0, 109, 108, 0)
+    for (let i = 1; i < 4; i++) {
+      clock.progress(i, 109.01, 108, 0)
+      expect(clock.available(i)).equals(true)
+    }
+  })
+  it('does not substitute a nearby decoded frame for a paused live selection', () => {
+    const clock = new PlaybackClock()
+    clock.register(0, timeline(), () => undefined)
+    clock.load(0, Infinity)
+    clock.progress(0, 108.001, 108, 0)
+    clock.fail(0)
+    clock.load(0, Infinity)
+    clock.progress(0, 108.002, 108, 0, false)
+    expect(clock.available(0)).equals(false)
+    expect(clock.ports[0].pendingWall).equals(208001)
+    clock.progress(0, 110, 108, 0)
+    expect(clock.available(0)).equals(false)
+    clock.progress(0, 108.002)
+    expect(clock.available(0)).equals(true)
+  })
+  it('waits for fresh live bounds before restoring the selected moment', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[] = []
+    clock.register(0, timeline(), seconds => seeks.push(seconds))
+    clock.load(0, Infinity)
+    clock.progress(0, 112, 108, 0)
+    clock.fail(0)
+    clock.load(0, Infinity)
+    expect(clock.available(0)).equals(false)
+    expect(clock.progress(0, 200, 210, 0)).equals(212000)
+    expect(seeks).deep.equals([112])
+    clock.settled(0)
+    clock.progress(0, 112, 210, 0)
+    expect(clock.progress(0, 113, 210, 0)).equals(213000)
+    expect(clock.available(0)).equals(true)
+  })
+  it('retains a new rewind while live bounds are unknown and an expired target stays unavailable', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[] = []
+    clock.register(0, timeline(), seconds => seeks.push(seconds))
+    clock.load(0, Infinity)
+    clock.progress(0, 112, 108, 0)
+    clock.fail(0)
+    clock.load(0, Infinity)
+    clock.seek(180000)
+    expect(seeks).deep.equals([])
+    expect(clock.progress(0, 200)).equals(180000)
+    expect(clock.progress(0, 200, 210, 120)).equals(180000)
+    expect(seeks).deep.equals([])
+    expect(clock.available(0)).equals(false)
+    clock.seek(230000)
+    expect(seeks).deep.equals([130])
+  })
+  it('accepts a successful zero-duration live reload and restores its selected moment', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[] = []
+    clock.register(0, timeline(), seconds => seeks.push(seconds))
+    clock.load(0, Infinity)
+    clock.progress(0, 1, 30, 0)
+    clock.fail(0)
+    clock.load(0, 0)
+    expect(clock.ports[0].failed).equals(false)
+    clock.progress(0, 20, 30, 0)
+    expect(seeks).deep.equals([1])
+    clock.settled(0)
+    clock.progress(0, 1, 30, 0)
+    expect(clock.progress(0, 2, 30, 0)).equals(102000)
+    expect(clock.available(0)).equals(true)
+  })
+  it('seeks a live clock within its growing native seekable extent', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[] = []
+    clock.register(0, timeline(), seconds => seeks.push(seconds))
+    clock.load(0, Infinity)
+    clock.progress(0, 40)
+    expect(clock.move(10)).equals(null)
+    clock.progress(0, 40, 60)
+    expect(clock.recordingExtent()).deep.equals({ start: 100000, end: 160000 })
+    expect(clock.move(-10)).equals(130000)
+    expect(seeks).deep.equals([30])
+    clock.settled(0)
+    clock.progress(0, 30, 80)
+    expect(clock.move(100)).equals(179900)
+    expect(clock.ports[0].duration).equals(Infinity)
+    clock.progress(0, 30, NaN)
+    expect(clock.recordingExtent()?.end).equals(180000)
+  })
+
+  it('keeps playing native frames beyond the live seek limit after recovery', () => {
+    const clock = new PlaybackClock()
+    clock.register(0, timeline(), () => undefined)
+    clock.register(1, timeline(), () => undefined)
+    clock.load(0, Infinity)
+    clock.load(1, Infinity)
+    clock.progress(0, 108.001, 108)
+    clock.settled(1)
+    clock.progress(1, 108.001, 108)
+    expect(clock.available(0)).equals(true)
+    expect(clock.progress(0, 112, 108)).equals(212000)
+    expect(clock.progress(1, 112, 108)).equals(212000)
+    expect(clock.available(1)).equals(true)
+    expect(clock.recordingExtent()?.end).equals(208000)
+    expect(clock.move(-10)).equals(202000)
+  })
+
+  it('uses native sliding-window endpoints and hides cameras outside their own window', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[] = []
+    clock.register(0, timeline(), seconds => seeks.push(seconds))
+    clock.register(1, timeline(), () => undefined)
+    clock.load(0, Infinity)
+    clock.load(1, Infinity)
+    clock.progress(0, 90, 120, 40)
+    clock.progress(1, 90, 120, 80)
+    expect(clock.recordingExtent()).deep.equals({ start: 140000, end: 220000 })
+    expect(clock.move(-100)).equals(140000)
+    expect(seeks.at(-1)).equals(40)
+    expect(clock.available(0)).equals(true)
+    expect(clock.available(1)).equals(false)
+    clock.seek(230000)
+    expect(clock.available(0)).equals(false)
+    clock.progress(0, 90, 150, 60)
+    expect(clock.available(0)).equals(true)
+  })
+
+  it('makes a reloaded failed camera available at the shared moment', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[] = []
+    clock.register(0, timeline(), seconds => seeks.push(seconds))
+    clock.load(0, 60)
+    clock.progress(0, 20)
+    expect(clock.fail(0)).equals(true)
+    clock.load(0, 80)
+    expect(clock.available(0)).equals(true)
+    expect(seeks).deep.equals([20])
+    clock.settled(0)
+    expect(clock.progress(0, 20)).equals(120000)
+  })
   it('keeps hidden angles resident, prevents an empty layout and collapses enlargement on toggles', () => {
     let state = initialPlayback(4)
     expect(angleLayout(3, state)).includes({ left: 50, top: 50, width: 50 })
@@ -252,9 +423,7 @@ describe('TV native playback clock contracts', () => {
     for (let i = 0; i < 2; i++)
       allFailed.register(i, timeline(), () => undefined)
     expect(allFailed.fail(0)).equals(false)
-    allFailed.load(0, 0)
     expect(allFailed.fail(1)).equals(true)
-    allFailed.load(1, 0)
     expect(allFailed.available(0)).equals(false)
     expect(allFailed.available(1)).equals(false)
   })
