@@ -85,7 +85,7 @@
     "stats-request": "node -r sucrase/register src/server/statsBuilder/cli.ts",
     "stats-tables-seed": "node -r sucrase/register src/server/dev/statsTablesSeed.ts",
     "tess.sitemap": "node -r sucrase/register src/server/tess/sitemapCli.ts",
-    "test": "node src/migrate/requirePostgres18.js && node scripts/chatCryptoBuild.mjs node wasm && node scripts/build-scoring-tests.mjs && node scripts/checkScoringLayering.mjs && npm run test.mocha -- --spec 'src/**/*.test.ts' --ignore '**/node_modules/**' && npm run test.mocha -- --spec lib/scoring-tests.cjs",
+    "test": "node src/migrate/requirePostgres18.js && node scripts/chatCryptoBuild.mjs node wasm && node scripts/checkScoringLayering.mjs && node scripts/run-unit-tests.mjs",
     "test.mocha": "mocha --timeout 20000 --exit -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts",
     "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json && tsc -p tsconfig.eventControl.json",
     "typecheck.native": "tsc -p tsconfig.native.json",
