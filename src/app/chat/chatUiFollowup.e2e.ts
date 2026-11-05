@@ -1907,7 +1907,7 @@ async function historyFixture(daemon: Daemon): Promise<void> {
     await m.openLink({ link: WEB + '/chat' })
     await m.evalBrowserScript({
       script:
-        'for(let n=0;n<240;n++){if(document.querySelector(\'[aria-label="New message"]\'))return true;await new Promise(r=>setTimeout(r,250))}throw new Error("Chat enrollment did not finish before fixture creation")'
+        'for(let n=0;n<240;n++){if(document.querySelector(\'[data-testid="chat-conversation-list"]\'))return true;await new Promise(r=>setTimeout(r,250))}throw new Error("Chat enrollment did not finish before fixture creation")'
     })
     await m.tapOn({ text: 'New message', timeout: 60000 })
     const people: string[] = JSON.parse(required('CHAT_UI_FIXTURE_PEOPLE'))
