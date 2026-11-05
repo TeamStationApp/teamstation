@@ -85,12 +85,6 @@ export function eventGeocoder(
         inFlight.set(key, work)
         return await work
       }
-      const cached = await db
-        .selectFrom('event_geocodes')
-        .select(['latitude', 'longitude'])
-        .where('address', '=', key)
-        .executeTakeFirst()
-      if (cached != null) return cached
       const pending = inFlight.get(key)
       if (pending != null) return await pending
       if ((failed.get(key) ?? 0) > now())
@@ -99,55 +93,81 @@ export function eventGeocoder(
         )
       if (inFlight.size >= 8)
         throw unavailable('The map is busy. Try again shortly.')
-      const work = tail
-        .then(async () => {
-          const delay = Math.max(
-            0,
-            lastStart + (options.spacingMs ?? 1000) - now()
-          )
-          if (delay > 0)
-            await new Promise(resolve => setTimeout(resolve, delay))
-          lastStart = now()
-          const url = new URL(provider)
-          url.searchParams.set('q', address)
-          url.searchParams.set('limit', '1')
-          const response = await doFetch(url, {
-            signal: AbortSignal.timeout(options.timeoutMs ?? 5000),
-            headers: {
-              'User-Agent': 'TeamStation/1.0 (+https://app.teamstation.app)',
-              accept: 'application/json'
-            }
-          })
-          if (!response.ok)
-            throw unavailable(
-              'The map provider is unavailable. Try again shortly.'
-            )
-          const result = photonCoordinates(await response.json())
-          await db
-            .insertInto('event_geocodes')
-            .values({ address: key, ...result })
-            .onConflict(oc =>
-              oc
-                .column('address')
-                .doUpdateSet({ ...result, updated_at: new Date() })
-            )
-            .execute()
-          failed.delete(key)
-          return result
-        })
-        .catch(() => {
-          if (failed.size >= 256) failed.delete(failed.keys().next().value!)
-          failed.set(key, now() + (options.failureTtlMs ?? 10000))
-          throw unavailable(
-            'The address could not be located. Check it or try again shortly.'
-          )
-        })
-        .finally(() => {
-          inFlight.delete(key)
-        })
+      // Recorded before the cache read, which yields: two lookups of one
+      // address at once otherwise both miss this map and both ask Photon.
+      let settle!: (value: Coordinates) => void
+      let fail!: (error: unknown) => void
+      const work = new Promise<Coordinates>((resolve, reject) => {
+        settle = resolve
+        fail = reject
+      })
       inFlight.set(key, work)
-      tail = work.catch(() => undefined)
-      return await work
+      const finish = (error?: unknown, value?: Coordinates): void => {
+        if (inFlight.get(key) === work) inFlight.delete(key)
+        if (error != null) fail(error)
+        else settle(value!)
+      }
+      try {
+        const cached = await db
+          .selectFrom('event_geocodes')
+          .select(['latitude', 'longitude'])
+          .where('address', '=', key)
+          .executeTakeFirst()
+        if (cached != null) {
+          finish(undefined, cached)
+          return cached
+        }
+        const job = tail
+          .then(async () => {
+            const delay = Math.max(
+              0,
+              lastStart + (options.spacingMs ?? 1000) - now()
+            )
+            if (delay > 0)
+              await new Promise(resolve => setTimeout(resolve, delay))
+            lastStart = now()
+            const url = new URL(provider)
+            url.searchParams.set('q', address)
+            url.searchParams.set('limit', '1')
+            const response = await doFetch(url, {
+              signal: AbortSignal.timeout(options.timeoutMs ?? 5000),
+              headers: {
+                'User-Agent': 'TeamStation/1.0 (+https://app.teamstation.app)',
+                accept: 'application/json'
+              }
+            })
+            if (!response.ok)
+              throw unavailable(
+                'The map provider is unavailable. Try again shortly.'
+              )
+            const result = photonCoordinates(await response.json())
+            await db
+              .insertInto('event_geocodes')
+              .values({ address: key, ...result })
+              .onConflict(oc =>
+                oc
+                  .column('address')
+                  .doUpdateSet({ ...result, updated_at: new Date() })
+              )
+              .execute()
+            failed.delete(key)
+            return result
+          })
+          .catch(() => {
+            if (failed.size >= 256) failed.delete(failed.keys().next().value!)
+            failed.set(key, now() + (options.failureTtlMs ?? 10000))
+            throw unavailable(
+              'The address could not be located. Check it or try again shortly.'
+            )
+          })
+        tail = job.catch(() => undefined)
+        const result = await job
+        finish(undefined, result)
+        return result
+      } catch (error) {
+        finish(error)
+        throw error
+      }
     }
   }
 }
