@@ -24,7 +24,9 @@ interface Daemon {
   close: () => Promise<void>
 }
 
-export async function partialRecovery(): Promise<void> {
+export async function partialRecovery(
+  scenario: 'E3' | 'E4' = 'E4'
+): Promise<void> {
   const file = process.env.CHAT_RECOVERY_FIXTURE
   assert(file != null)
   const f = JSON.parse(readFileSync(file, 'utf8')) as {
@@ -128,7 +130,7 @@ export async function partialRecovery(): Promise<void> {
   const third = 'Current conversation after reset'
   const during = 'Sending while part of history remains locked'
   try {
-    console.log('E4: enrolling original recipient and first holder')
+    console.log(`${scenario}: enrolling original recipient and first holder`)
     const old = await attach('Ha', 'recipient-old')
     const holderOne = await attach('Hs', 'first-holder')
     await holderOne.assertVisible({
@@ -155,12 +157,51 @@ export async function partialRecovery(): Promise<void> {
     await close(old)
     await close(holderOne)
 
-    console.log('E4: creating second segment with first holder offline')
+    console.log(
+      `${scenario}: creating second segment with first holder offline`
+    )
     const holderTwo = await attach('Hk', 'second-holder')
     await open(holderTwo, dm.id)
     await holderTwo.assertVisible({ text: 'Locked message', timeout: 30000 })
     await send(holderTwo, second)
     assert(!(await body(holderTwo)).includes(first))
+    if (scenario === 'E3') {
+      console.log('E3: returning an authorized holder for automatic recovery')
+      const holder = await attach('Hs', 'first-holder')
+      await open(holder, dm.id)
+      await message(holder, second)
+      await message(holderTwo, first)
+      assert(!(await body(holderTwo)).includes('Locked message'))
+      assert(!(await body(holder)).includes('OLD SAFETY WORDS'))
+      await send(holderTwo, during)
+      await message(holder, during)
+      writeFileSync(
+        join(f.artifacts, 'automatic-history.png'),
+        await holderTwo.screenshot()
+      )
+      await close(holderTwo)
+      const restarted = await attach('Hk', 'second-holder')
+      await open(restarted, dm.id)
+      for (const text of [first, second, during]) await message(restarted, text)
+      const epochs = await client.chatEpochs(dm.id, 0)
+      assert.deepEqual(
+        epochs.epochs.map(epoch => epoch.epoch),
+        [1, 2]
+      )
+      assert.deepEqual(
+        epochs.epochs.map(epoch => epoch.chainBreak),
+        [false, true]
+      )
+      assert.equal(
+        (await client.chatMessages(dm.id)).filter(row => row.kind === 'post')
+          .length,
+        3
+      )
+      console.log(
+        'PASS E3: first enrollment sends fresh; returning holder restores history without manual approval; restart retains all messages'
+      )
+      return
+    }
     await close(holderTwo)
 
     console.log('E4: resetting recipient and creating third segment')

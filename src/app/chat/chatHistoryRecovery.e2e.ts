@@ -32,8 +32,8 @@ interface Fixture {
   artifacts: string
 }
 async function main(): Promise<void> {
-  if (process.argv[2] === 'E4') {
-    await partialRecovery()
+  if (process.argv[2] === 'E3' || process.argv[2] === 'E4') {
+    await partialRecovery(process.argv[2])
     return
   }
   assert(
