@@ -240,7 +240,13 @@ export function seatEnvironment(
   const seat = ctx.run.params?.seat ?? 'production'
   const branch = ctx.run.branch
   if (seat === 'production') {
-    if (branch == null || branch === '' || branch === 'master') return {}
+    if (
+      branch == null ||
+      branch === '' ||
+      branch === 'master' ||
+      branch === 'paul/streamingReliabilitySoakBuild'
+    )
+      return {}
     return {
       TS_API_BASE_URL: `${DEVELOP_ORIGIN}/api/v1`,
       TS_APP_ORIGIN: DEVELOP_ORIGIN
