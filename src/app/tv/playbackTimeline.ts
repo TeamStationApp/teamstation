@@ -1,4 +1,9 @@
-import { mediaAt, wallAt, type WallTimeline } from '../../common/wallTimeline'
+import {
+  inWallGap,
+  mediaAt,
+  wallAt,
+  type WallTimeline
+} from '../../common/wallTimeline'
 
 export { type BoxStep, boxTimeline } from '../../common/replay/videoBoxTimeline'
 
@@ -22,7 +27,8 @@ export function targetTime(
   const seconds = media / 1000
   return {
     seconds: Math.max(0, Math.min(duration, seconds)),
-    available: seconds >= 0 && seconds < duration
+    available:
+      seconds >= 0 && seconds < duration && !inWallGap(timeline.anchors, wall)
   }
 }
 export function commonStart(timelines: WallTimeline[]): number | null {

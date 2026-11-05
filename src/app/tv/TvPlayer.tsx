@@ -1019,7 +1019,7 @@ export function TvPlayer({
                 }}
                 testID={`tv-angle-${index}`}
                 accessibilityRole="button"
-                accessibilityLabel={`Camera ${angle.name}`}
+                accessibilityLabel={`Camera ${angle.name}${!available || failures.includes(index) ? ': video unavailable at this moment' : ''}`}
                 accessibilityValue={{
                   text: `${clock.current.ports[index]?.position.toFixed(1)} seconds`
                 }}

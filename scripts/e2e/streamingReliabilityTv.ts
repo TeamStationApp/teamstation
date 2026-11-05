@@ -32,7 +32,10 @@ export async function tvReliability(testCase: string): Promise<void> {
   assert(
     device != null && metro != null && output != null && clientRoot != null
   )
-  assert(['transport', 'archive'].includes(testCase), 'Unsupported TV case')
+  assert(
+    ['transport', 'archive', 'gaps', 'recovery'].includes(testCase),
+    'Unsupported TV case'
+  )
   const before = process.env.TS_EXPECT_BASE_FAILURE === '1'
   const { MaestroD } = createRequire(join(clientRoot, 'package.json'))(
     './dist/cjs/index.js'
@@ -41,14 +44,15 @@ export async function tvReliability(testCase: string): Promise<void> {
     name: process.env.MAESTRO_D ?? 'streamingReliabilityTv'
   })
   const tv = await daemon.attach({ device, platform: 'ios', artifacts: 'none' })
-  const fixture = await tvFixture({ scored: true })
+  const fixture = await tvFixture({ scored: true, gap: testCase === 'gaps' })
   let recording: ChildProcess | undefined
   try {
     await mkdir(output, { recursive: true })
-    fixture.tvMedia.live = true
+    fixture.tvMedia.fail = testCase === 'recovery'
+    fixture.tvMedia.live = testCase !== 'gaps'
     await fixture.db
       .updateTable('videos')
-      .set({ status: 'live' })
+      .set({ status: testCase === 'gaps' ? 'ready' : 'live' })
       .where('game_id', '=', 'gam_tv_0')
       .execute()
     await tv.launchApp({
@@ -72,8 +76,121 @@ export async function tvReliability(testCase: string): Promise<void> {
     await tv.assertVisible({ text: 'Recent Games', timeout: 30000 })
     await tv.tapOn({ id: 'tv-watch-game' })
     await tv.assertVisible({ id: 'tv-angle-3', timeout: 30000 })
+    if (testCase === 'recovery') {
+      const outageSeconds = Number(process.env.TS_FAULT_SECONDS ?? 180)
+      assert(
+        Number.isFinite(outageSeconds) &&
+          outageSeconds > 0 &&
+          outageSeconds <= 180
+      )
+      await delay(outageSeconds * 1000)
+      await writeFile(join(output, 'tv-outage.png'), await tv.screenshot())
+      recording = spawn(
+        'xcrun',
+        [
+          'simctl',
+          'io',
+          device,
+          'recordVideo',
+          '--force',
+          join(output, 'tv-recovery.mp4')
+        ],
+        { stdio: 'ignore' }
+      )
+      const restored = Date.now()
+      fixture.tvMedia.fail = false
+      let restoredTree: Tree
+      do {
+        await delay(1000)
+        restoredTree = await tv.hierarchy()
+        if (Date.now() - restored > 30000)
+          throw new Error('TV did not recover within 30 seconds')
+      } while (
+        /could not play|unavailable at this moment/i.test(allText(restoredTree))
+      )
+      await tv.pressKey({ key: 'DPAD_LEFT' })
+      const first = find(await tv.hierarchy(), 'tv-current-time')?.text
+      await delay(2000)
+      const second = find(await tv.hierarchy(), 'tv-current-time')?.text
+      assert(
+        first !== undefined && second !== undefined && first !== second,
+        'Recovered TV must advance'
+      )
+      await writeFile(join(output, 'tv-recovered.png'), await tv.screenshot())
+      await writeFile(
+        join(output, 'recovery.json'),
+        JSON.stringify(
+          {
+            outageSeconds,
+            recoveredWithinMs: Date.now() - restored,
+            first,
+            second
+          },
+          null,
+          2
+        )
+      )
+      console.log(
+        `PASS: TV automatically recovers and advances after a ${outageSeconds}-second media outage`
+      )
+      return
+    }
     await delay(6000)
     await tv.pressKey({ key: 'playPause' })
+    if (testCase === 'gaps') {
+      recording = spawn(
+        'xcrun',
+        [
+          'simctl',
+          'io',
+          device,
+          'recordVideo',
+          '--force',
+          join(output, 'gap-playback.mp4')
+        ],
+        { stdio: 'ignore' }
+      )
+      for (let i = 0; i < 5; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
+      await delay(1500)
+      const gapTree = await tv.hierarchy()
+      await writeFile(join(output, 'gap-observed.png'), await tv.screenshot())
+      await writeFile(
+        join(output, 'gap-observed.json'),
+        JSON.stringify(gapTree, null, 2)
+      )
+      const missing = 'First base: video unavailable at this moment'
+      if (before)
+        assert(
+          !allText(gapTree).includes(missing),
+          'Base incorrectly displays future footage'
+        )
+      else
+        assert(
+          allText(gapTree).includes(missing),
+          'Missing footage must be explicit'
+        )
+      await writeFile(
+        join(output, before ? 'gap-before.png' : 'gap-after.png'),
+        await tv.screenshot()
+      )
+      await writeFile(
+        join(output, 'gap-tree.json'),
+        JSON.stringify(gapTree, null, 2)
+      )
+      for (let i = 0; i < 2; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
+      await delay(1500)
+      assert(
+        !allText(await tv.hierarchy()).includes(missing),
+        'Footage resumes after the gap'
+      )
+      await writeFile(join(output, 'gap-resumed.png'), await tv.screenshot())
+      console.log(
+        before
+          ? 'BASE REPRODUCED: missing footage displays a future frame'
+          : 'PASS: missing footage is covered and resumes after the gap'
+      )
+      return
+    }
     await tv.pressKey({ key: 'DPAD_LEFT' })
     const tree = (await tv.hierarchy()) as Tree
     await writeFile(
