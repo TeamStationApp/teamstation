@@ -8,10 +8,34 @@ const nativeTime = (seconds: number): number =>
 export class NativeSeekQueue {
   private active: number | null = null
   private desired = 0
+  private requestedAt = 0
+  private timeoutReported = false
+  private buffering = false
+
+  get pending(): boolean {
+    return this.active !== null && !this.timeoutReported
+  }
+
+  buffer(isBuffering: boolean): void {
+    if (this.buffering !== isBuffering && this.pending)
+      this.requestedAt = this.now()
+    this.buffering = isBuffering
+  }
+
+  transferProgress(): void {
+    if (this.pending && this.buffering) this.requestedAt = this.now()
+  }
+
+  /** An explicit decoder error supersedes any outstanding seek. */
+  fail(): void {
+    this.active = null
+    this.timeoutReported = true
+  }
 
   constructor(
     private readonly seek: (seconds: number) => void,
-    private readonly settled: () => void
+    private readonly settled: () => void,
+    private readonly now: () => number = Date.now
   ) {}
 
   request(seconds: number): void {
@@ -20,12 +44,27 @@ export class NativeSeekQueue {
     // Always ask native: playback may have moved since the last JS event.
     // The pinned native no-op patch guarantees acknowledgement in that case.
     this.active = seconds
+    this.requestedAt = this.now()
+    this.timeoutReported = false
     this.seek(seconds)
+  }
+
+  /** A lost completion is a source failure even while the viewer is paused. */
+  timedOut(): boolean {
+    if (
+      this.active === null ||
+      this.timeoutReported ||
+      this.now() - this.requestedAt < (this.buffering ? 120_000 : 5000)
+    )
+      return false
+    this.timeoutReported = true
+    return true
   }
 
   complete(seekTime: number): void {
     if (
       this.active === null ||
+      this.timeoutReported ||
       nativeTime(seekTime) !== nativeTime(this.active)
     )
       return
