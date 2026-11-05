@@ -92,6 +92,11 @@ export interface PlayerScreenProps {
   /** After Settings saves the player on `forTeam`, their roster entry. */
   onSettingsSaved?: (entry: RosterEntry) => void
   /**
+   * After a role write on this page lands, so the shell reloads
+   * `GET /me/roles`. Tabs and controls read that copy.
+   */
+  onRolesChanged?: () => void
+  /**
    * Who is signed in, if anybody. Somebody who is not the player and has no
    * say over them yet is offered "Request to be a guardian".
    */
@@ -195,6 +200,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     onOpenTeam,
     onRemovedFromTeam,
     onBack,
+    onRolesChanged,
     forTeam,
     roles,
     viewer,
@@ -303,7 +309,15 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
       : roles == null
         ? undefined
         : guardian === true || keepsSongs(roles, forTeam)
-  const settingsShown = canManage === true
+  // The signed-in player's own page offers Settings before the roster
+  // answer is in, from the route id, and after it from the loaded player.
+  // The roster editor stays behind canManage; the gear is what reaches the
+  // roles they hold themselves.
+  const ownPlayer =
+    viewer != null &&
+    (player?.userId === viewer.userId ||
+      (player == null && userId === viewer.userId))
+  const settingsShown = canManage === true || ownPlayer
   const settingsPending = canManage == null && tab === 'settings'
   // Who may invite a guardian is the server's to say, since it turns on
   // whether the player has one yet: a guardian invites another from Settings
@@ -342,7 +356,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   )?.teamName
   const tabs = [...TABS, ...(walkUpShown ? [WALKUP_TAB] : []), TEAMS_TAB]
   const refused =
-    (tab === 'settings' && canManage === false) ||
+    (tab === 'settings' && canManage === false && !ownPlayer) ||
     (tab === 'walkup' && canKeepSongs === false)
   useEffect(() => {
     if (!refused) return
@@ -756,7 +770,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
             <View style={styles.section}>
               {settingsPending ? (
                 <Text style={styles.muted}>{lstrings.common_loading}</Text>
-              ) : (
+              ) : canManage === true ? (
                 <PlayerSettingsTab
                   client={client}
                   teamId={forTeam}
@@ -821,7 +835,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                     )
                   }}
                 />
-              )}
+              ) : null}
               {!settingsPending && invitesGuardians && (
                 <GuardianInvite
                   client={client}
@@ -831,14 +845,17 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                 />
               )}
               {
-                // The player's own roles on the team, for its staff.
-                forTeam != null && coachesTeam(roles, forTeam) && (
-                  <PlayerTeamRoles
-                    client={client}
-                    teamId={forTeam}
-                    userId={player?.userId ?? userId}
-                  />
-                )
+                // Staff edit anyone's roles. The player edits the roles they
+                // hold themselves, on their own page.
+                forTeam != null &&
+                  (coachesTeam(roles, forTeam) || ownPlayer) && (
+                    <PlayerTeamRoles
+                      client={client}
+                      teamId={forTeam}
+                      userId={player?.userId ?? userId}
+                      onChanged={onRolesChanged}
+                    />
+                  )
               }
               {
                 // Last: taking them off the team, for its administrators alone.

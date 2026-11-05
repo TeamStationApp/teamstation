@@ -24,9 +24,10 @@ export interface LevelPeopleTabProps {
 
 /**
  * A season's or league's People tab: its people in the roster's six
- * sections, opened the way a team's are. A player's row opens their page;
- * for the level's administrators, coaches and assistants every other row
- * opens that person's profile, where their roles here are changed.
+ * sections. Your own row opens your profile here, including when you also
+ * play on a team the level reaches, because that player page has no section
+ * for this level. Anyone else's player row opens their page. Every other
+ * row opens a profile for the level's administrators, coaches and assistants.
  */
 export function LevelPeopleTab(props: LevelPeopleTabProps): React.ReactElement {
   const { client, kind, id, onOpenPlayer, onOpenPerson } = props
@@ -73,6 +74,10 @@ export function LevelPeopleTab(props: LevelPeopleTabProps): React.ReactElement {
     <PeopleList
       people={answer.people}
       onOpen={person => {
+        if (person.self && onOpenPerson != null)
+          return () => {
+            onOpenPerson(person.userId, person.shortName)
+          }
         if (person.isPlayer && onOpenPlayer != null)
           return () => {
             onOpenPlayer(

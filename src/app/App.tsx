@@ -3419,6 +3419,7 @@ function Shell(props: AppProps): React.ReactElement {
             scoringRefresh.current?.()
         }}
         roles={myRoles}
+        onRolesChanged={refreshRoles}
         viewer={
           signedInAs == null ? undefined : { userId: signedInAs, isAdmin }
         }

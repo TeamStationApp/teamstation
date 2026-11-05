@@ -83,6 +83,8 @@ function profile(fields: Partial<PersonProfile> = {}): PersonProfile {
 
 interface Calls {
   changes: Array<[string, string, string, string, string]>
+  stepped: Array<[string, string, string]>
+  left: Array<[string, string]>
   players: unknown[]
   loads: number
 }
@@ -95,7 +97,13 @@ async function render(
     staleManager?: boolean
   } = {}
 ): Promise<Calls> {
-  const calls: Calls = { changes: [], players: [], loads: 0 }
+  const calls: Calls = {
+    changes: [],
+    stepped: [],
+    left: [],
+    players: [],
+    loads: 0
+  }
   const kind = options.kind ?? 'team'
   const client = {
     personProfile: async (asked: string, id: string, userId: string) => {
@@ -120,6 +128,16 @@ async function render(
     removeRole: async (k: string, id: string, userId: string, role: string) => {
       calls.changes.push(['remove', k, id, userId, role])
       return { userId, roles: [], member: false }
+    },
+    stepDown: async (k: string, id: string, role: string) => {
+      calls.stepped.push([k, id, role])
+      if (options.failChange === true)
+        throw new HttpError('forbidden', 'A coach has to give this back')
+      return { userId: userIdOfGumbo(203), roles: [], member: true }
+    },
+    leaveGroup: async (k: string, id: string) => {
+      calls.left.push([k, id])
+      return { removed: true }
     }
   } as unknown as TeamStationClient
   const host = document.createElement('div')
@@ -484,5 +502,173 @@ describe('the person profile', function () {
     })
     await render([new HttpError('notFound', 'Not found')])
     expect(text()).includes('You can’t open this person here.')
+  })
+
+  it('steps down from a role you hold on the level you opened, and leaves a refusal in the sheet', async function () {
+    const calls = await render(
+      [
+        profile({
+          viewer: { manages: false, admin: false, self: true },
+          sections: [
+            section('team', {
+              roles: ['scorekeeper', 'coach'],
+              member: true
+            }),
+            section('season', { roles: ['videographer'] })
+          ]
+        })
+      ],
+      { failChange: true }
+    )
+    expect(buttonIn(rowOf('team', 'scorekeeper'))).equals(null)
+    const step = rowOf('team', 'scorekeeper').querySelector<HTMLElement>(
+      '[aria-label="Step down as Scorekeeper"]'
+    )
+    expect(step).not.equals(null)
+    expect(
+      rowOf('team', 'admin').querySelector('[aria-label^="Step down"]')
+    ).equals(null)
+    expect(rowOf('team', 'admin').textContent).includes('\u2014')
+    expect(
+      rowOf('team', 'assistant').querySelector('[aria-label^="Step down"]')
+    ).equals(null)
+    expect(rowOf('team', 'assistant').textContent).includes('\u2014')
+    // Held only because Scorekeeper grants it.
+    expect(rowOf('team', 'songkeeper').textContent).includes('With Scorekeeper')
+    expect(
+      rowOf('team', 'songkeeper').querySelector('[aria-label^="Step down"]')
+    ).equals(null)
+    expect(
+      rowOf('season', 'videographer').querySelector('[aria-label^="Step down"]')
+    ).equals(null)
+    await click(step!)
+    expect(text()).includes('Step down as Scorekeeper?')
+    expect(text()).includes(
+      'An administrator, a coach, or an assistant has to give this back.'
+    )
+    await click(
+      document.querySelector<HTMLElement>('[aria-label="Cancel confirmation"]')!
+    )
+    expect(calls.stepped).deep.equals([])
+    await click(step!)
+    await click(
+      document.querySelector<HTMLElement>(
+        '[aria-label="Confirm change"] [aria-label="Step Down"]'
+      )!
+    )
+    expect(calls.stepped).deep.equals([['team', 'grp_one', 'scorekeeper']])
+    expect(text()).includes('A coach has to give this back')
+    expect(document.querySelector('[aria-label="Confirm change"]')).not.equals(
+      null
+    )
+  })
+
+  it('reads a held Admin as Yes, with no Step Down', async function () {
+    await render([
+      profile({
+        viewer: { manages: false, admin: false, self: true },
+        sections: [section('team', { roles: ['admin'] })]
+      })
+    ])
+    expect(rowOf('team', 'admin').textContent).includes('Yes')
+    expect(
+      rowOf('team', 'admin').querySelector('[aria-label^="Step down"]')
+    ).equals(null)
+    expect(
+      rowOf('team', 'songkeeper').querySelector('[aria-label^="Step down"]')
+    ).equals(null)
+  })
+
+  it('gives an explicit Songkeeper its own Step Down beside Scorekeeper', async function () {
+    await render([
+      profile({
+        viewer: { manages: false, admin: false, self: true },
+        sections: [section('team', { roles: ['scorekeeper', 'songkeeper'] })]
+      })
+    ])
+    expect(
+      rowOf('team', 'songkeeper').querySelector(
+        '[aria-label="Step down as Songkeeper"]'
+      )
+    ).not.equals(null)
+  })
+
+  it('leaves the level from Member, and reads Player with no Step Down on a player membership', async function () {
+    const calls = await render([
+      profile({
+        viewer: { manages: false, admin: false, self: true },
+        sections: [
+          section('team', {
+            member: true,
+            player: true,
+            roles: ['videographer']
+          })
+        ]
+      })
+    ])
+    expect(rowOf('team', 'member').textContent).includes('Player')
+    expect(
+      rowOf('team', 'member').querySelector('[aria-label^="Step down"]')
+    ).equals(null)
+    await click(
+      rowOf('team', 'videographer').querySelector<HTMLElement>(
+        '[aria-label="Step down as Videographer"]'
+      )!
+    )
+    expect(text()).includes('Step down as Videographer?')
+    await act(async () => {
+      root?.unmount()
+    })
+    const leaving = await render([
+      profile({
+        viewer: { manages: false, admin: false, self: true },
+        sections: [section('team', { member: true })]
+      })
+    ])
+    await click(
+      rowOf('team', 'member').querySelector<HTMLElement>(
+        '[aria-label="Step down as Member"]'
+      )!
+    )
+    expect(text()).includes('Leave Demo team?')
+    expect(text()).includes('lose every role held directly there')
+    await click(
+      document.querySelector<HTMLElement>(
+        '[aria-label="Confirm change"] [aria-label="Step Down"]'
+      )!
+    )
+    expect(leaving.left).deep.equals([['team', 'grp_one']])
+    expect(calls.left).deep.equals([])
+  })
+
+  it('keeps the Member switch when a manager opens a player', async function () {
+    await render([
+      profile({
+        viewer: { manages: true, admin: false, self: false },
+        sections: [
+          section('team', {
+            editable: true,
+            member: true,
+            player: true,
+            roles: ['scorekeeper']
+          })
+        ]
+      })
+    ])
+    const member = rowOf('team', 'member')
+    expect(member.textContent).not.includes('Player')
+    expect(buttonIn(member)?.getAttribute('role')).equals('switch')
+  })
+
+  it('keeps a manager’s switches, including on their own profile', async function () {
+    await render([
+      profile({
+        viewer: { manages: true, admin: true, self: true }
+      })
+    ])
+    expect(document.querySelector('[aria-label^="Step down"]')).equals(null)
+    expect(
+      buttonIn(rowOf('team', 'coach'))?.getAttribute('aria-checked')
+    ).equals('true')
   })
 })

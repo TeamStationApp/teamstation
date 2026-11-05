@@ -2366,6 +2366,103 @@ describe('a player’s Team roles on Settings', function () {
     expect(guardian).deep.equals([])
     expect(text()).not.includes('TEAM ROLES')
   })
+
+  it('shows Settings and Step Down on your own player page without the roster editor', async function () {
+    const asked: unknown[] = []
+    let roleNotices = 0
+    const client = Object.assign(
+      rolesClient(true, asked, false, ['videographer']),
+      {
+        personProfile: async () =>
+          asPersonProfile({
+            context: { kind: 'team', id: 't1', name: 'Hawks' },
+            person: {
+              userId: userIdOfGumbo(7),
+              gumboId: 7,
+              shortName: 'Jordan P',
+              fullName: 'Jordan Pacheco',
+              avatarUrl: null,
+              canHoldRoles: true
+            },
+            guardianOf: [],
+            sections: [
+              {
+                level: 'team',
+                groups: [{ id: 't1', name: 'Hawks' }],
+                roles: ['videographer'],
+                member: true,
+                player: true,
+                follower: false,
+                editable: false
+              }
+            ],
+            viewer: { manages: false, admin: false, self: true }
+          }),
+        stepDown: async (kind: string, id: string, role: Role) => {
+          asked.push(['stepDown', kind, id, role])
+          return {
+            userId: userIdOfGumbo(7),
+            roles: [],
+            member: true
+          }
+        }
+      }
+    )
+    await render(
+      <PlayerScreen
+        client={client}
+        userId={userIdOfGumbo(7)}
+        forTeam="t1"
+        initialTab="settings"
+        viewer={{ userId: userIdOfGumbo(7), isAdmin: false }}
+        roles={roles({ t1: ['videographer'] })}
+        onRolesChanged={() => {
+          roleNotices++
+        }}
+      />
+    )
+    expect(document.querySelector('[aria-label="Filter videos"]')).equals(null)
+    expect(document.querySelector('[aria-label="Jersey number"]')).equals(null)
+    expect(document.querySelector('[aria-label="Player settings"]')).not.equals(
+      null
+    )
+    const member = document.querySelector(
+      '[data-testid="playerTeamRoles"] [data-testid="role-team-member"]'
+    )
+    expect(member?.textContent).includes('Player')
+    expect(member?.querySelector('[aria-label^="Step down"]')).equals(null)
+    await press('Step down as Videographer')
+    expect(text()).includes('Step down as Videographer?')
+    const confirm = document.querySelector<HTMLElement>(
+      '[aria-label="Confirm change"] [aria-label="Step Down"]'
+    )
+    expect(confirm).not.equals(null)
+    await act(async () => {
+      confirm!.click()
+      await delay(20)
+    })
+    expect(asked).deep.include(['stepDown', 'team', 't1', 'videographer'])
+    expect(roleNotices).equals(1)
+  })
+
+  it('shows a scorekeeper someone else’s Settings without their role rows', async function () {
+    await render(
+      <PlayerScreen
+        client={rolesClient(true, [])}
+        userId={userIdOfGumbo(7)}
+        forTeam="t1"
+        initialTab="settings"
+        viewer={{ userId: userIdOfGumbo(99), isAdmin: false }}
+        roles={roles({ t1: ['scorekeeper'] })}
+      />
+    )
+    expect(document.querySelector('[aria-label="Jersey number"]')).not.equals(
+      null
+    )
+    expect(document.querySelector('[data-testid="playerTeamRoles"]')).equals(
+      null
+    )
+  })
 })
 
 describe('a player’s stats tables', function () {
