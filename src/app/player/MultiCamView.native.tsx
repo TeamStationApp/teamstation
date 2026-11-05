@@ -392,6 +392,7 @@ function MultiCamGrid(
             onAttaching={attaching}
             onAttached={attached}
             wantsToPlay={() => mc.intents.current.get(video.id) === true}
+            wantsRecovery={() => mc.playing}
             rect={mc.shownRects[index] ?? { x: 0, y: 0, w: 0, h: 0 }}
             dragging={mc.drag?.index === index ? mc.drag : null}
             armed={armed === index}
@@ -509,6 +510,7 @@ function Tile(props: {
   onAttaching: (id: string) => number | null
   onAttached: (id: string, element: TileHandle, toSec: number | null) => void
   wantsToPlay: () => boolean
+  wantsRecovery: () => boolean
   rect: Rect
   dragging: TileDrag | null
   /** Picked up, and waiting to be dropped. */
@@ -522,6 +524,8 @@ function Tile(props: {
   onWallMapping: (mapping: WallMapping | null) => void
   heard: boolean
 }): React.ReactElement {
+  const recoveryIntent = useRef(props.wantsRecovery)
+  recoveryIntent.current = props.wantsRecovery
   const {
     videoId,
     url,
@@ -580,7 +584,12 @@ function Tile(props: {
       () => {
         onGiveUp(videoId)
       },
-      { wantsToPlay, onWallMapping }
+      {
+        wantsToPlay,
+        onWallMapping,
+        buffer: TILE_BUFFER,
+        wantsRecovery: () => recoveryIntent.current()
+      }
     )
     const start = (): void => {
       onAttached(videoId, handle, toSec)
