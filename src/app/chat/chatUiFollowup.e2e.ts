@@ -55,7 +55,9 @@ interface Device {
   }) => Promise<unknown>
   scrollUntilVisible: (options: {
     element: { css: string }
+    from?: { css: string }
     direction: string
+    maxScrolls?: number
     centerElement?: boolean
     timeout?: number
   }) => Promise<unknown>
@@ -1897,8 +1899,10 @@ async function historyFixture(daemon: Daemon): Promise<void> {
     const selector = `[data-testid="chat-message-${id}"]`
     await m.scrollUntilVisible({
       element: { css: selector },
+      from: { css: '[data-testid="chat-message-history"]' },
       direction: 'UP',
-      timeout: 30000,
+      maxScrolls: 50,
+      timeout: 60000,
       centerElement: true
     })
     await m.evalBrowserScript({
