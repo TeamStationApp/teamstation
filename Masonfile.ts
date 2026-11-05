@@ -256,6 +256,32 @@ export function seatEnvironment(
   }
 }
 
+/**
+ * What the about screen shows. Mason checks the pinned commit out detached, so
+ * reading the git branch names it "detached", and a missing build number is
+ * "development". The native build number and the run's branch go in instead.
+ */
+export function provenanceEnvironment(
+  ctx: Pick<Stage, 'run'>,
+  version: string,
+  buildNumber: string
+): Record<string, string> {
+  const { branch, commit } = ctx.run
+  if (branch == null || branch === '' || commit == null || commit === '') {
+    throw new Error('The build has no branch or commit to record')
+  }
+  return {
+    TS_BUILD_INFO: JSON.stringify({
+      app: 'TeamStation',
+      version,
+      buildNumber,
+      branch,
+      commit,
+      builtAt: new Date().toISOString()
+    })
+  }
+}
+
 function workspacePath(ctx: Stage, name: string): string {
   const root = ctx.workspace
   if (root == null || root === '') return name
@@ -318,7 +344,8 @@ export async function buildIos(ctx: Stage): Promise<void> {
       CARGO_HOME: `${rustRoot}/cargo`,
       RUSTUP_HOME: `${rustRoot}/rustup`,
       PATH: `${rustRoot}/cargo/bin:${process.env.PATH ?? ''}`,
-      ...seatEnvironment(ctx)
+      ...seatEnvironment(ctx),
+      ...provenanceEnvironment(ctx, version, build)
     }
   })
   if (archived.ipa == null) throw new Error('No IPA was exported')
@@ -406,6 +433,7 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
       env: {
         ...rustEnv,
         ...seatEnvironment(ctx),
+        ...provenanceEnvironment(ctx, version, build),
         MASON_BUILD_NUMBER: build,
         MASON_APP_VERSION: version
       }

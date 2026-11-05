@@ -211,7 +211,7 @@ describe('build version', function () {
     dir = mkdtempSync(path.join(tmpdir(), 'build-version-'))
     process.chdir(dir)
     expect(deployedVersion()).equals(undefined)
-    expect(versionOf()).equals('0.1.0')
+    expect(versionOf()).equals('1.1.0')
     writeFileSync(
       path.join(dir, 'build.json'),
       JSON.stringify({ version: '0.1.0-20261008-abc' })

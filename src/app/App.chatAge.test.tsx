@@ -138,6 +138,17 @@ describe('the app before and after the chat age sheet', function () {
       await delay()
     })
   }
+  // Not Now steps back with history.go, which lands after the render that
+  // closed the sheet. Wait for the address, and do not sit out the wait when
+  // it has already landed.
+  const untilPath = async (expected: string): Promise<void> => {
+    for (let tries = 0; tries < 40; tries += 1) {
+      if (path() === expected) return
+      await act(async () => {
+        await delay(25)
+      })
+    }
+  }
   const navTab = (label: string): HTMLElement => {
     const tab = [
       ...document.querySelectorAll<HTMLElement>('[role="tab"]')
@@ -167,6 +178,7 @@ describe('the app before and after the chat age sheet', function () {
       pressChatAge('decline')
     })
     expect(chatAgeSheet()).equals(null)
+    await untilPath('/schedule')
     expect(path()).equals('/schedule')
     await settle(() => {
       navTab('Chat').click()
@@ -211,9 +223,11 @@ describe('the app before and after the chat age sheet', function () {
     await settle(() => {
       pressChatAge('decline')
     })
+    await untilPath('/')
     expect(path()).equals('/')
     expect(window.history.state?.tsRouteIndex).equals(depth)
     await browserBack()
+    await untilPath('/schedule')
     expect(path()).equals('/schedule')
     expect(chatAgeSheet()).equals(null)
   })
@@ -230,6 +244,7 @@ describe('the app before and after the chat age sheet', function () {
     await settle(() => {
       pressChatAge('decline')
     })
+    await untilPath(address.split('?')[0])
     expect(path() + window.location.search).equals(address)
     expect(window.history.state?.tsRouteIndex).equals(depth)
     expect(chatAgeSheet()).equals(null)
@@ -252,6 +267,7 @@ describe('the app before and after the chat age sheet', function () {
         pressChatAge('decline')
       })
       expect(chatAgeSheet()).equals(null)
+      await untilPath(page)
       expect(path()).equals(page)
       expect(window.location.search).not.contains('tab=chats')
       // No extra step: Back from here leaves the page, not its first tab.
@@ -267,6 +283,7 @@ describe('the app before and after the chat age sheet', function () {
     })
     // The sheet goes in the same render, while the frame slides out.
     expect(chatAgeSheet()).equals(null)
+    await untilPath('/')
     expect(path()).equals('/')
   })
 
@@ -335,6 +352,7 @@ describe('the app before and after the chat age sheet', function () {
     expect(path()).equals('/account')
     expect(chatAgeSheet(), 'the team page is beneath').equals(null)
     await back()
+    await untilPath('/teams/group_demo')
     expect(path()).equals('/teams/group_demo')
     expect(chatAgeSheet(), 'the team page is on top again').not.equals(null)
   })
@@ -343,6 +361,7 @@ describe('the app before and after the chat age sheet', function () {
     await open('/teams/group_demo?tab=chats', 'unconfirmed')
     expect(chatAgeSheet()).not.equals(null)
     await back()
+    await untilPath('/')
     expect(path()).equals('/')
     expect(chatAgeSheet()).equals(null)
     await settle(() => undefined)
@@ -414,6 +433,7 @@ describe('the app before and after the chat age sheet', function () {
       pressChatAge('ok')
     })
     expect(chatAgeSheet()).equals(null)
+    await untilPath('/')
     expect(path()).equals('/')
     navTab('Chat')
   })

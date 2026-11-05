@@ -43,7 +43,8 @@ describe('node settings', function () {
         leadSecByEventType: { strikeout: 10 },
         mergeWithinSec: 5,
         tailSec: 5
-      }
+      },
+      distribution: { betaBuildsUrl: '', appStoreUrl: '' }
     })
   })
 
@@ -102,6 +103,30 @@ describe('node settings', function () {
     expect(
       asNodeSettings({ ...defaultNodeSettings, replay: { pitchSec: 7 } }).replay
     ).deep.equals({ pitchSec: 7 })
+    const { distribution: _links, ...withoutLinks } = defaultNodeSettings
+    expect(asNodeSettings(withoutLinks).distribution).deep.equals({
+      betaBuildsUrl: '',
+      appStoreUrl: ''
+    })
+    expect(
+      asNodeSettings({
+        ...defaultNodeSettings,
+        distribution: {
+          betaBuildsUrl: ' https://builds.example.test/mason ',
+          appStoreUrl: ''
+        }
+      }).distribution
+    ).deep.equals({
+      betaBuildsUrl: 'https://builds.example.test/mason',
+      appStoreUrl: ''
+    })
+    expect(
+      refused(
+        with_(s => {
+          s.distribution.appStoreUrl = 'http://apps.example.test'
+        })
+      )
+    ).equals('distribution.appStoreUrl must be an HTTPS URL')
     expect(refused(with_(s => (s.scoreboard.single.x = 1)))).equals(
       'scoreboard.single.x must be a number from 0 to under 1'
     )

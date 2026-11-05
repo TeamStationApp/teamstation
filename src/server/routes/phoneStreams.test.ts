@@ -3427,7 +3427,11 @@ describe('phones and Directors asking for their streams by device', function () 
       const settled = async (id: string): Promise<Body> => {
         for (let tries = 0; tries < 200; tries += 1) {
           const row = await uploadRow(id)
-          if (row.state !== 'assembling') return row
+          // A failure keeps its parts, so a retry can finish them. Ready and
+          // abandoned are written first, and the parts go after that, so the
+          // row can already say so while the directory is still there.
+          if (row.state === 'failed') return row
+          if (row.state !== 'assembling' && !(await onDisk(id))) return row
           await new Promise(resolve => setTimeout(resolve, 10))
         }
         throw new Error(`${id} never settled`)
