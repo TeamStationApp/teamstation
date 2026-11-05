@@ -1889,7 +1889,7 @@ async function historyFixture(daemon: Daemon): Promise<void> {
     await m.pressKey({ key: 'Enter' })
     return decode(
       await m.evalBrowserScript({
-        script: `for(let n=0;n<200;n++){const rows=[...document.querySelectorAll('[data-testid^="chat-message-msg_"]')].filter(x=>x.innerText.includes(${JSON.stringify(body)}));if(rows.length===1&&document.querySelector('[data-testid="chat-composer"]').value==='')return JSON.stringify(rows[0].getAttribute('data-testid').slice('chat-message-'.length));await new Promise(r=>setTimeout(r,50))}throw new Error('Fixture post was not uniquely acknowledged')`
+        script: `for(let n=0;n<200;n++){const rows=[...document.querySelectorAll('[data-testid^="chat-message-msg_"]')].filter(x=>x.innerText.includes(${JSON.stringify(body)}));if(rows.length===1&&document.querySelector('[data-testid="chat-composer"]').value==='')return JSON.stringify(rows[0].getAttribute('data-testid').slice('chat-message-'.length));const pane=document.querySelector('[data-testid="chat-message-pane"]');const history=[...pane.querySelectorAll('div')].find(x=>getComputedStyle(x).overflowY==='auto');if(history&&rows.length===0){history.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:800}));history.scrollTop=history.scrollHeight;history.dispatchEvent(new Event('scroll'))}await new Promise(r=>setTimeout(r,50))}throw new Error('Fixture post was not uniquely acknowledged')`
       })
     ) as string
   }
