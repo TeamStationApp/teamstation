@@ -51,6 +51,7 @@ import { atBatOf } from '../events/atBatInProgress'
 import { pregameFold } from '../events/currentPlay'
 import { type PlayWrite, replaceGameEvents } from '../events/eventWrite'
 import { postGamePlays, readPlays, RESET_SINCE_READ } from '../events/postPlays'
+import { type ListFields, listFieldsChanged } from '../events/postPlays'
 import {
   lineupContext,
   lineupsDigest,
@@ -3700,6 +3701,79 @@ describe('the status a live post leaves', function () {
       )
     ).equals('scheduled')
     expect(statusAfterLivePost('cancelled', final, true)).equals('cancelled')
+  })
+})
+
+describe('the list fields a post compares', function () {
+  const at = (inning: number, top: boolean, balls = 0): object => ({
+    about: { atBatIndex: 3, inning, isTopInning: top },
+    count: { balls, strikes: 1, outs: 1 },
+    playEvents: [{ isPitch: true }]
+  })
+  /** A line score of `halves` halves played, the visitors with `hits`. */
+  const line = (halves: number, hits: number): object => ({
+    away: { runs: [0], h: hits },
+    home: { runs: [0], h: 0 },
+    innings: Array.from({ length: Math.ceil(halves / 2) }, (_, index) => ({
+      num: index + 1,
+      away: { runs: 0, hits: 0 },
+      home: index * 2 + 1 < halves ? { runs: 0, hits: 0 } : { hits: 0 }
+    }))
+  })
+  const game: ListFields = {
+    status: 'inProgress',
+    away_score: 1,
+    home_score: 0,
+    linescore: line(3, 2),
+    currentPlay: at(2, true),
+    start_at: new Date('2026-05-01T17:00:00Z'),
+    home_team_id: 'tem_home',
+    away_team_id: 'tem_away',
+    venue: 'North Field',
+    field_id: null,
+    cancellation_reason: null
+  }
+
+  it('finds nothing in a pitch, a count or a hit', function () {
+    expect(
+      listFieldsChanged(game, {
+        ...game,
+        linescore: line(3, 3),
+        currentPlay: at(2, true, 3),
+        start_at: new Date(game.start_at)
+      })
+    ).equals(false)
+    // A game's first lineups fold into an at-bat where its first will be.
+    expect(
+      listFieldsChanged(
+        { ...game, linescore: null, currentPlay: null },
+        { ...game, linescore: line(0, 0), currentPlay: at(1, true) }
+      )
+    ).equals(false)
+  })
+
+  it('finds a status, a score, a half, an inning, a start, a team, a venue, a field or a cancellation', function () {
+    for (const changed of [
+      { status: 'final' },
+      { away_score: 2 },
+      { home_score: null },
+      { currentPlay: at(2, false) },
+      { currentPlay: at(3, true) },
+      { currentPlay: null },
+      { linescore: line(4, 2) },
+      { linescore: line(5, 2) },
+      { linescore: null },
+      { start_at: new Date('2026-05-01T18:00:00Z') },
+      { home_team_id: 'tem_other' },
+      { away_team_id: 'tem_other' },
+      { venue: 'South Field' },
+      { field_id: 'fld_one' },
+      { status: 'cancelled', cancellation_reason: 'weather' }
+    ])
+      expect(
+        listFieldsChanged(game, { ...game, ...changed }),
+        JSON.stringify(changed)
+      ).equals(true)
   })
 })
 

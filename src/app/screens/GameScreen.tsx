@@ -33,6 +33,7 @@ import { eventName } from '../../common/eventInfo'
 import { eventHeroLines, viewerTimezone } from '../../common/eventTime'
 import type { GameSocket } from '../../common/gameSocket'
 import type { Side } from '../../common/scoring/state'
+import type { ScreenScopeNotice } from '../../common/screenScope'
 import type { WallTimeline } from '../../common/wallTimeline'
 import {
   AnglePickerModal,
@@ -537,7 +538,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       if (!shown.current || gone) setError(lstrings.common_not_found)
     }
   }, [refreshGame, gameId])
-  const readGame = useScreenScope(loadGame, client, paintGame)
+  /**
+   * Where the socket's subscription to this game stands: `held` once the
+   * server acknowledged it, `refused` after an error or an update required,
+   * and `asked` from a new subscribe or a reconnect until either is heard.
+   */
+  const gameHeld = useRef<'asked' | 'held' | 'refused'>('asked')
+  // A post's notice of this game: its play frames read the game already,
+  // but only while the socket holds the game to hear them.
+  const ownPost = useCallback(
+    (notice: ScreenScopeNotice): boolean =>
+      gameHeld.current === 'held' &&
+      notice.byPost === true &&
+      notice.gameId === gameId,
+    [gameId]
+  )
+  const readGame = useScreenScope(loadGame, client, paintGame, {
+    passes: ownPost
+  })
   // A new game is read again from scratch; a socket arriving (a sign-in) is
   // not a new game.
   const readLatest = useRef(readGame)
@@ -572,10 +590,33 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       clearTimeout(timer)
     }
   }, [game, clockNow])
+  // Whether the game is an event, which has no frames: the subscription below
+  // depends on this alone, so a game arriving from its first read (eventKind
+  // undefined, then 'game') keeps the subscription it already has. Dropping and
+  // taking it again would leave a gap no frame covers, and a post in it would be
+  // skipped once the subscription is held again.
+  const isEvent = game?.eventKind === 'event'
   useEffect(() => {
-    if (props.socket == null || game?.eventKind === 'event') return
+    if (props.socket == null || isEvent) return
+    gameHeld.current = 'asked'
+    let unsubscribe: () => void
     try {
-      return props.socket.subscribe(gameId, event => {
+      unsubscribe = props.socket.subscribe(gameId, event => {
+        if (event.type === 'error' || event.type === 'updateRequired') {
+          gameHeld.current = 'refused'
+          return
+        }
+        if (event.type === 'subscribed') {
+          const refused = gameHeld.current === 'refused'
+          gameHeld.current = 'held'
+          // Frames sent while it was refused never came: read what they
+          // carried.
+          if (refused)
+            readLatest.current.alongside(refreshGame).catch(() => undefined)
+          return
+        }
+        // A reconnect asks for the game again.
+        if (event.type === 'resync') gameHeld.current = 'asked'
         if (
           event.type === 'resync' ||
           (event.type === 'change' &&
@@ -592,7 +633,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       // A host without a socket transport still receives foreground REST updates.
       return undefined
     }
-  }, [props.socket, gameId, game?.eventKind, refreshGame])
+    return () => {
+      gameHeld.current = 'asked'
+      unsubscribe()
+    }
+  }, [props.socket, gameId, isEvent, refreshGame])
   const [canManageSchedule, setCanManageSchedule] = useState(false)
   useEffect(() => {
     setCanManageSchedule(false)

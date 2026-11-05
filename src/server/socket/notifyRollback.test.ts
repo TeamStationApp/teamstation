@@ -150,14 +150,16 @@ describe('S2: one changed for the committed play, none for the rolled-back post'
     expect(committed?.status).equals(200)
     note(`  pg_notify statements: ${JSON.stringify(sent)}`)
     expect(sent).length(1)
-    expect(sent[0]).deep.include({ gameId })
+    expect(sent[0]).deep.include({ gameId, byPost: true })
     const notice = await notices.named(mark, { gameId })
     note(`  screen_scopes notified: ${JSON.stringify(notice)}`)
-    expect(notice).deep.equals({ gameId })
+    expect(notice).deep.equals({ gameId, byPost: true })
     await window()
     const told = viewer.changes()
     for (const frame of told) note(`← ${JSON.stringify(frame)}`)
-    expect(told).deep.equals([{ type: 'changed', scope: 'event', gameId }])
+    expect(told).deep.equals([
+      { type: 'changed', scope: 'event', gameId, byPost: true }
+    ])
 
     mark = notices.mark()
     const from = viewer.frames.length

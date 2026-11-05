@@ -703,7 +703,9 @@ export function attachGameSocket(
       reply(connection, {
         type: 'changed',
         scope: screen.scope,
-        ...(screen.scope === 'event' || gameOnly ? { gameId } : {})
+        ...(screen.scope === 'event' || gameOnly ? { gameId } : {}),
+        // A post's own: its play frames already read the game's screen.
+        ...(payload.byPost === true ? { byPost: true } : {})
       })
     }
     const row =

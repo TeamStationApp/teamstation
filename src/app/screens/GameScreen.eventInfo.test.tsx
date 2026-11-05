@@ -359,6 +359,29 @@ describe('the event page’s automatic and explicit sections', () => {
     root = undefined
     expect(detached).equals(true)
   })
+  it('keeps its game subscription when the game arrives from its first read', async () => {
+    const { client, game } = fixture()
+    // A game says what it is once read: undefined before, 'game' after.
+    game.eventKind = 'game'
+    let subscribes = 0
+    let detaches = 0
+    await render({
+      client,
+      gameId: 'g1',
+      socket: {
+        subscribe: () => {
+          subscribes++
+          return () => {
+            detaches++
+          }
+        }
+      }
+    })
+    // The game has loaded (it is shown), and the subscription it began with stands.
+    expect(selected()).equals('Info')
+    expect(subscribes).equals(1)
+    expect(detaches).equals(0)
+  })
   it('preserves a chosen Info section while later scoring arrives and responds to explicit address changes', async () => {
     const { client, game } = fixture()
     let listener: ((event: GameSocketEvent) => void) | undefined
@@ -767,6 +790,160 @@ describe('the event page’s screen scope', () => {
       })
     })
     expect(reads()).equals(3)
+  })
+
+  it('lets a post’s notice of its own game pass, its frames having read it, and reads one from any other write through the gate', async () => {
+    const clock = testClock(0)
+    const socket = new FakeScopeSocket()
+    const { client, game } = fixture()
+    const began: number[] = []
+    client.game = async () => {
+      began.push(clock.now())
+      return { ...game }
+    }
+    let listener: ((event: GameSocketEvent) => void) | undefined
+    await renderScoped(
+      {
+        client,
+        gameId: 'g1',
+        socket: {
+          subscribe: (_id, receive) => {
+            listener = receive
+            return () => undefined
+          }
+        }
+      },
+      socket,
+      clock
+    )
+    await act(async () => {
+      socket.ack()
+    })
+    expect(began).deep.equals([0])
+    // The socket holds the game: its acknowledgement reads nothing itself.
+    await act(async () => {
+      listener!({ type: 'subscribed', gameId: 'g1' })
+    })
+    expect(began).deep.equals([0])
+    // The post's play frame reads the game; its notice reads nothing more.
+    clock.advance(5000)
+    await act(async () => {
+      listener!({
+        type: 'change',
+        gameId: 'g1',
+        kind: 'playEdits',
+        at: new Date().toISOString(),
+        data: {
+          generation: 0,
+          fromDigest: 'd0',
+          digest: 'd1',
+          namesDigest: 'n0',
+          edits: [],
+          currentPlay: null
+        }
+      })
+    })
+    expect(began).deep.equals([0, 5000])
+    clock.advance(300)
+    await act(async () => {
+      socket.changed('g1', true)
+    })
+    await act(async () => {
+      clock.advance(10_000)
+    })
+    expect(began).deep.equals([0, 5000])
+    // Event info, an umpire or a video names the game with no post behind it.
+    await act(async () => {
+      socket.changed('g1')
+    })
+    expect(began).deep.equals([0, 5000, 15300])
+    // Another game's post is not this screen's own.
+    await act(async () => {
+      clock.advance(COALESCE_MS)
+      socket.changed('g2', true)
+    })
+    expect(began).deep.equals([0, 5000, 15300, 18300])
+  })
+
+  it('reads a post’s notice of its own game while the socket does not hold the game, and reads again once it does after a refusal', async () => {
+    const clock = testClock(0)
+    const socket = new FakeScopeSocket()
+    const { client, game } = fixture()
+    const began: number[] = []
+    client.game = async () => {
+      began.push(clock.now())
+      return { ...game }
+    }
+    let listener: ((event: GameSocketEvent) => void) | undefined
+    await renderScoped(
+      {
+        client,
+        gameId: 'g1',
+        socket: {
+          subscribe: (_id, receive) => {
+            listener = receive
+            return () => undefined
+          }
+        }
+      },
+      socket,
+      clock
+    )
+    await act(async () => {
+      socket.ack()
+    })
+    expect(began).deep.equals([0])
+    // A saturated database refuses the game's subscribe: no play frame
+    // comes, so the post's notice is the only news of it.
+    await act(async () => {
+      listener!({
+        type: 'error',
+        gameId: 'g1',
+        code: 'internal',
+        message: 'internal'
+      })
+    })
+    clock.advance(5000)
+    await act(async () => {
+      socket.changed('g1', true)
+    })
+    expect(began).deep.equals([0, 5000])
+    // The retried subscribe is acknowledged: what the refused frames carried
+    // is read.
+    clock.advance(5000)
+    await act(async () => {
+      listener!({ type: 'subscribed', gameId: 'g1' })
+    })
+    expect(began).deep.equals([0, 5000, 10000])
+    // Held again, a post's notice of the game reads nothing.
+    clock.advance(5000)
+    await act(async () => {
+      socket.changed('g1', true)
+    })
+    await act(async () => {
+      clock.advance(10_000)
+    })
+    expect(began).deep.equals([0, 5000, 10000])
+    // A reconnect asks for the game again: until it is held, its notice reads.
+    await act(async () => {
+      listener!({ type: 'resync', gameId: 'g1' })
+    })
+    expect(began).deep.equals([0, 5000, 10000, 25000])
+    clock.advance(COALESCE_MS)
+    await act(async () => {
+      socket.changed('g1', true)
+    })
+    expect(began).deep.equals([0, 5000, 10000, 25000, 28000])
+    // An app too old for the game is never sent it: its notice reads.
+    await act(async () => {
+      listener!({ type: 'subscribed', gameId: 'g1' })
+      listener!({ type: 'updateRequired', gameId: 'g1' })
+    })
+    clock.advance(COALESCE_MS)
+    await act(async () => {
+      socket.changed('g1', true)
+    })
+    expect(began).deep.equals([0, 5000, 10000, 25000, 28000, 31000])
   })
 
   it('paints the stored game before subscribed (Cache first paint)', async () => {

@@ -17,19 +17,28 @@ export interface ScreenScopeIds {
   userId?: string
 }
 
-/** A `screen_scopes` notify: the ids a write changed, and nothing more. */
-export type ScreenScopePayload = ScreenScopeIds
+/**
+ * A `screen_scopes` notify: the ids a write changed, and `byPost` when a
+ * scorer's post of plays made the change. That post's play frames already
+ * make the game's own screen read it, so that screen lets the notice pass.
+ */
+export interface ScreenScopePayload extends ScreenScopeIds {
+  byPost?: boolean
+}
+
+const ID_KEYS = ['gameId', 'teamId', 'seasonId', 'userId'] as const
 
 /**
  * Announces the write, as the last statement of the writing transaction:
  * one statement that notifies once for each distinct set of ids the write
- * names. The notices carry no revision: a screen reads on a notice, gated by
- * time. Postgres delivers them on commit, so a rollback announces nothing,
- * and this takes no row: writers that announce never wait on each other here.
+ * names. A set is `byPost` only when every note of it was. The notices carry
+ * no revision: a screen reads on a notice, gated by time. Postgres delivers
+ * them on commit, so a rollback announces nothing, and this takes no row:
+ * writers that announce never wait on each other here.
  */
 export async function announceNotedScopes(
   trx: Kysely<Database>,
-  ids: ScreenScopeIds | readonly ScreenScopeIds[]
+  ids: ScreenScopePayload | readonly ScreenScopePayload[]
 ): Promise<void> {
   if (!trx.isTransaction)
     throw new Error(
@@ -38,20 +47,25 @@ export async function announceNotedScopes(
   const named = new Map<string, ScreenScopePayload>()
   for (const each of Array.isArray(ids) ? ids : [ids]) {
     const payload: ScreenScopePayload = {}
-    for (const key of ['gameId', 'teamId', 'seasonId', 'userId'] as const) {
-      const id = (each as ScreenScopeIds)[key]
+    for (const key of ID_KEYS) {
+      const id = (each as ScreenScopePayload)[key]
       if (id != null) payload[key] = id
     }
-    named.set(JSON.stringify(payload), payload)
+    const key = JSON.stringify(payload)
+    const held = named.get(key)
+    const byPost =
+      (each as ScreenScopePayload).byPost === true &&
+      (held == null || held.byPost === true)
+    named.set(key, byPost ? { ...payload, byPost } : payload)
   }
-  const payloads = [...named.keys()]
+  const payloads = [...named.values()].map(payload => JSON.stringify(payload))
   await sql`select pg_notify(${SCREEN_SCOPES_CHANNEL}, payload) from unnest(${payloads}::text[]) as payload`.execute(
     trx
   )
 }
 
 /** What each open transaction has changed, until it announces. */
-const noted = new WeakMap<Kysely<Database>, ScreenScopeIds[]>()
+const noted = new WeakMap<Kysely<Database>, ScreenScopePayload[]>()
 
 /**
  * The transactions `atomic` opened, and so announces for when their work is
@@ -71,11 +85,11 @@ export function announcesWhenDone(trx: Kysely<Database>): void {
  * transaction). A function given a transaction notes and never announces, so
  * the notify stays the last statement however the writes are composed. A
  * transaction `atomic` did not open throws: nothing would ever announce the
- * note.
+ * note. `byPost` marks a change a post of plays made (`ScreenScopePayload`).
  */
 export function noteScopeChange(
   trx: Kysely<Database>,
-  ids: ScreenScopeIds
+  ids: ScreenScopePayload
 ): void {
   if (!trx.isTransaction)
     throw new Error('A screen scope change is noted inside its transaction')
@@ -85,7 +99,7 @@ export function noteScopeChange(
       'A screen scope change is noted inside a transaction atomic opened'
     )
   // Nothing the worker could match a socket on: nobody to tell.
-  if (Object.values(ids).every(id => id == null)) return
+  if (ID_KEYS.every(key => ids[key] == null)) return
   const list = noted.get(trx)
   if (list == null) noted.set(trx, [ids])
   else list.push(ids)
@@ -104,14 +118,19 @@ export interface GameFigureIds {
  * videos. Those lists pass over a notice that names only a game, as every
  * play's does, so this also tells the game's teams and season, as its row
  * stands in `trx`, and those of `before` when the write moved it. Only for
- * the writes that change those figures, never for a play.
+ * the writes that change those figures, never for a play. `byPost` marks the
+ * game's own notice as a post of plays' (`ScreenScopePayload`).
  */
 export async function noteGameFigures(
   trx: Kysely<Database>,
   gameId: string,
-  before?: GameFigureIds
+  before?: GameFigureIds,
+  options: { byPost?: boolean } = {}
 ): Promise<void> {
-  noteScopeChange(trx, { gameId })
+  noteScopeChange(
+    trx,
+    options.byPost === true ? { gameId, byPost: true } : { gameId }
+  )
   const now = await trx
     .selectFrom('games')
     .select(['home_team_id', 'away_team_id', 'season_id'])

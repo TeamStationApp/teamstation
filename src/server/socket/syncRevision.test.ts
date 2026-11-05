@@ -164,6 +164,43 @@ describe('announcing screen scope changes', function () {
     ])
   })
 
+  it('announces a set of ids as a post’s only when every note of it was', async function () {
+    const count = heard.length
+    const { sent } = await recordStatements(async () => {
+      await db.transaction().execute(async trx => {
+        await announceNotedScopes(trx, [
+          { gameId: 'gam_by_post', byPost: true },
+          { gameId: 'gam_by_post', byPost: true },
+          { gameId: 'gam_mixed', byPost: true },
+          { gameId: 'gam_mixed' },
+          { gameId: 'gam_plain' },
+          { gameId: 'gam_plain', byPost: true },
+          { teamId: 'tem_notes_a', byPost: false }
+        ])
+      })
+    })
+    expect(notifies(sent)).deep.equals([
+      [
+        { gameId: 'gam_by_post', byPost: true },
+        { gameId: 'gam_mixed' },
+        { gameId: 'gam_plain' },
+        { teamId: 'tem_notes_a' }
+      ]
+    ])
+    await heardNamed({ teamId: 'tem_notes_a' }, count)
+  })
+
+  it('notes nothing for a post that names no id', async function () {
+    const count = heard.length
+    const { sent } = await recordStatements(async () => {
+      await atomic(db, async trx => {
+        noteScopeChange(trx, { byPost: true })
+      })
+    })
+    expect(notifies(sent)).deep.equals([])
+    expect(heard.slice(count)).deep.equals([])
+  })
+
   it('refuses to announce outside a transaction', async function () {
     let failure: unknown
     try {

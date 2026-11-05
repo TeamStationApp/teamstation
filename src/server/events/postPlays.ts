@@ -50,7 +50,7 @@ import {
 } from '../socket/gameChanges'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
 import { type GamePlayerRow, gamePlayers } from '../users/nameBook'
-import { atBatOf, postedAtBat } from './atBatInProgress'
+import { atBatOf, postedAtBat, PREGAME_ABOUT } from './atBatInProgress'
 import { pregameFold } from './currentPlay'
 import { repairEventTags } from './eventTags'
 import {
@@ -259,7 +259,12 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         'pregame',
         'lineup_started_at',
         'lineups_digest',
-        'play_generation'
+        'play_generation',
+        // The rest of what a list shows of the game (`listFieldsChanged`).
+        'linescore',
+        'start_at',
+        'venue',
+        'field_id'
       ])
       .where('id', '=', gameId)
       .forUpdate()
@@ -596,7 +601,7 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       rewritten.length > 0 ? await readPlays(trx, gameId) : stored
     const taggedGame = await trx
       .selectFrom('games')
-      .select(['currentPlay', 'pregame'])
+      .select(['currentPlay', 'pregame', ...LIST_FIELDS])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
     const taggedCurrent = atBatOf(taggedGame, taggedStored.length > 0)
@@ -607,9 +612,13 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       taggedGame.currentPlay == null &&
       taggedCurrent != null
     // And to the screens of that game: its event, and home and schedule,
-    // announced as this transaction's last statement. A post that makes the
-    // game final, unmakes it, or changes a final score moves its teams'
-    // records too, so Home's lists are told; a play otherwise is not.
+    // announced as this transaction's last statement, when the post changed
+    // something a list shows of it. A pitch that moves only the count tells
+    // no screen scope: every screen of the game hears it as a play frame.
+    // The notice is the post's (`byPost`), which those frames read already.
+    // A post that makes the game final, unmakes it, or changes a final score
+    // moves its teams' records too, so Home's lists are told; a play
+    // otherwise is not.
     const nowStatus =
       game.cancellation_reason === 'withdrawal' ? 'cancelled' : status
     const finalBefore = game.status === 'final'
@@ -619,8 +628,14 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       (finalNow &&
         (posted.away !== game.away_score || posted.home !== game.home_score))
     )
-      await noteGameFigures(trx, gameId)
-    else noteScopeChange(trx, { gameId })
+      await noteGameFigures(trx, gameId, undefined, { byPost: true })
+    else if (
+      listFieldsChanged(
+        { ...game, currentPlay: atBatOf(game, hadPlays) },
+        { ...taggedGame, currentPlay: taggedCurrent }
+      )
+    )
+      noteScopeChange(trx, { gameId, byPost: true })
     const sides = teamsOfRow(game)
     const whole = {
       plays: taggedStored.map(row => row.gumbo as GumboPlay),
@@ -1101,6 +1116,82 @@ export async function gamePlaysDigest(
 ): Promise<string> {
   const rows = await readPlays(db, game.id)
   return playsDigest(rows, atBatOf(game, rows.length > 0))
+}
+
+/** The columns of a game that a list of games shows, beside its at-bat. */
+const LIST_FIELDS = [
+  'status',
+  'away_score',
+  'home_score',
+  'linescore',
+  'start_at',
+  'home_team_id',
+  'away_team_id',
+  'venue',
+  'field_id',
+  'cancellation_reason'
+] as const
+
+/** A game as a list shows it: `LIST_FIELDS` and the at-bat readers get. */
+export interface ListFields {
+  status: string
+  away_score: number | null
+  home_score: number | null
+  linescore: unknown
+  currentPlay: unknown
+  start_at: Date
+  home_team_id: string
+  away_team_id: string
+  venue: string | null
+  field_id: string | null
+  cancellation_reason: string | null
+}
+
+/**
+ * Whether a list of games shows `after` differently from `before`: its
+ * status, score, inning or half, start, teams, venue or field, or why it was
+ * cancelled. The inning and half are the at-bat's and the line score's
+ * halves; a pitch, a count or a hit changes none of these.
+ */
+export function listFieldsChanged(
+  before: ListFields,
+  after: ListFields
+): boolean {
+  return (
+    before.status !== after.status ||
+    before.away_score !== after.away_score ||
+    before.home_score !== after.home_score ||
+    halfOf(before) !== halfOf(after) ||
+    new Date(before.start_at).getTime() !==
+      new Date(after.start_at).getTime() ||
+    before.home_team_id !== after.home_team_id ||
+    before.away_team_id !== after.away_team_id ||
+    before.venue !== after.venue ||
+    before.field_id !== after.field_id ||
+    before.cancellation_reason !== after.cancellation_reason
+  )
+}
+
+/**
+ * The half a game is in, as its at-bat and its line score place it: the
+ * line score's innings, and whether the last has had its bottom half. A game
+ * with no at-bat yet is where its first will be, the top of the 1st.
+ */
+function halfOf(game: Pick<ListFields, 'linescore' | 'currentPlay'>): string {
+  const innings =
+    (game.linescore as { innings?: unknown[] } | null)?.innings ?? []
+  const last = innings.at(-1) as { home?: { runs?: unknown } } | undefined
+  const about = (
+    game.currentPlay as {
+      about?: { inning?: unknown; isTopInning?: unknown }
+    } | null
+  )?.about
+  return JSON.stringify([
+    innings.length,
+    last?.home?.runs != null,
+    about?.inning ?? PREGAME_ABOUT.inning,
+    about?.isTopInning ?? PREGAME_ABOUT.isTopInning
+  ])
 }
 
 /**

@@ -818,7 +818,24 @@ describe('GameSocket (U16)', function () {
         scope: 'event',
         gameId: 'g1'
       })
-      expect(heard).deep.equals([{ type: 'changed' }])
+      // A post's own notice says so, for the game's screen to let it pass.
+      last().receive({
+        type: 'changed',
+        scope: 'event',
+        gameId: 'g1',
+        byPost: true
+      })
+      last().receive({
+        type: 'changed',
+        scope: 'event',
+        gameId: 'g1',
+        byPost: false
+      })
+      expect(heard).deep.equals([
+        { type: 'changed', gameId: 'g1' },
+        { type: 'changed', gameId: 'g1', byPost: true },
+        { type: 'changed', gameId: 'g1' }
+      ])
       socket.close()
     })
 
@@ -1234,7 +1251,7 @@ describe('GameSocket (U16)', function () {
       lone.socket.close()
     })
 
-    it('passes on the one game a home notice names, and names none on an event', function () {
+    it('passes on the one game a home notice names, and whether a post made it', function () {
       const { socket } = makeSocket()
       const heard: ScreenScopeEvent[] = []
       socket.subscribeScope({ scope: 'home' }, event => heard.push(event))
@@ -1245,9 +1262,16 @@ describe('GameSocket (U16)', function () {
         gameId: 'g1'
       })
       last().receive({ type: 'changed', scope: 'home' })
+      last().receive({
+        type: 'changed',
+        scope: 'home',
+        gameId: 'g1',
+        byPost: true
+      })
       expect(heard).deep.equals([
         { type: 'changed', gameId: 'g1' },
-        { type: 'changed' }
+        { type: 'changed' },
+        { type: 'changed', gameId: 'g1', byPost: true }
       ])
       socket.close()
     })

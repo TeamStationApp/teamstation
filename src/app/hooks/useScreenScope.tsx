@@ -15,6 +15,7 @@ import type {
 import {
   type ScreenScopeClient,
   ScreenScopeGate,
+  type ScreenScopeNotice,
   type ScreenScopeSocket,
   type ScreenScopeTimers
 } from '../../common/screenScope'
@@ -184,7 +185,9 @@ export function ScreenScopeProvider(
 /**
  * Runs one of the visible screen's loads when its scope allows. With
  * `passGameNotices`, a home or schedule notice that names one game alone does
- * not run it: a list of teams and seasons shows no game.
+ * not run it: a list of teams and seasons shows no game. Nor does a notice
+ * `passes` lets go: a game's screen lets its own game's notice from a post
+ * (`byPost`) pass, since that post's play frames already read it.
  *
  * Returns the function the screen calls wherever it called `load` before:
  * from `useForegroundRefresh`, a timer, or a socket's game frame. While
@@ -211,9 +214,13 @@ export function useScreenScope(
   options: {
     /** The load shows no games: a notice of one game alone reads nothing. */
     passGameNotices?: boolean
+    /** A notice the load has read already by another way: it reads nothing. */
+    passes?: (notice: ScreenScopeNotice) => boolean
   } = {}
 ): ScreenScopeRead {
   const passGameNotices = options.passGameNotices === true
+  const latestPasses = useRef(options.passes)
+  latestPasses.current = options.passes
   const { socket, scope, timers } = useContext(ScreenScopeContext)
   const latest = useRef(load)
   latest.current = load
@@ -232,8 +239,10 @@ export function useScreenScope(
         // Covered, a screen reads nothing a notice names: it reads as it is
         // shown again, and the top may take no scope of its own to supersede
         // this one.
-        passes: (notice: { gameId?: string }) =>
-          !shownNow.current || (passGameNotices && notice.gameId != null),
+        passes: (notice: ScreenScopeNotice) =>
+          !shownNow.current ||
+          (passGameNotices && notice.gameId != null) ||
+          latestPasses.current?.(notice) === true,
         ...timers
       }),
     [socket, client, passGameNotices, timers]

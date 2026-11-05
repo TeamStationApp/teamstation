@@ -1076,6 +1076,42 @@ describe('the game socket (U14)', function () {
         listener.ws.terminate()
     })
 
+    it('tells a post’s notice as the post’s on the changed frame, to an event and to home', async function () {
+      const event = await listen(VIEWER)
+      const home = await listen(VIEWER)
+      event.send({
+        type: 'subscribe',
+        scope: 'event',
+        gameId: scored,
+        id: 'e1',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
+      home.send({
+        type: 'subscribe',
+        scope: 'home',
+        id: 'h1',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
+      await event.next(frame => 'id' in frame && frame.id === 'e1')
+      await home.next(frame => 'id' in frame && frame.id === 'h1')
+      socket!.screenScopes.notified(
+        JSON.stringify({ gameId: scored, byPost: true })
+      )
+      expect(await event.next(frame => frame.type === 'changed')).deep.equals({
+        type: 'changed',
+        scope: 'event',
+        gameId: scored,
+        byPost: true
+      })
+      expect(await home.next(frame => frame.type === 'changed')).deep.equals({
+        type: 'changed',
+        scope: 'home',
+        gameId: scored,
+        byPost: true
+      })
+      for (const listener of [event, home]) listener.ws.terminate()
+    })
+
     it('refuses protocol 3 where the server asks for 4', async function () {
       const plain = createServer()
       const strict = attachGameSocket(plain, db!, scratchUrl, {

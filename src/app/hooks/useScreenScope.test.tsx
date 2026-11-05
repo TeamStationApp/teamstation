@@ -8,7 +8,11 @@ import type {
   ScreenScopeEvent,
   ScreenScopeListener
 } from '../../common/gameSocket'
-import { ACK_GIVE_UP_MS, COALESCE_MS } from '../../common/screenScope'
+import {
+  ACK_GIVE_UP_MS,
+  COALESCE_MS,
+  type ScreenScopeNotice
+} from '../../common/screenScope'
 import {
   FakeScopeSocket,
   heldTimers,
@@ -156,10 +160,14 @@ describe('useScreenScope', function () {
     load: () => Promise<void>
     /** Handed the function the hook returns. */
     onRefresh?: (refresh: () => Promise<void>) => void
+    /** A notice the load lets pass. */
+    passes?: (notice: ScreenScopeNotice) => boolean
   }
 
   function Loader(props: Probe): null {
-    const refresh = useScreenScope(props.load, props.client)
+    const refresh = useScreenScope(props.load, props.client, undefined, {
+      passes: props.passes
+    })
     const { onRefresh } = props
     useEffect(() => {
       onRefresh?.(refresh)
@@ -219,6 +227,47 @@ describe('useScreenScope', function () {
     socket.changed()
     await settle()
     expect(loads).equals(1)
+  })
+
+  it('lets pass a post’s notice of its own game, and reads every other', async function () {
+    const log: string[] = []
+    const clock = testClock(0)
+    const socket = new FakeScopeSocket(log)
+    const scope: ScreenScope = { scope: 'event', gameId: 'g1' }
+    let loads = 0
+    const load = async (): Promise<void> => {
+      loads++
+    }
+    const probe = (): Probe => ({
+      socket,
+      scope,
+      clock,
+      load,
+      // A new function each render, as a screen may hand one.
+      passes: notice => notice.byPost === true && notice.gameId === 'g1'
+    })
+    await render(probe())
+    socket.ack()
+    await settle()
+    expect(loads).equals(1)
+    const heard = async (gameId?: string, byPost?: boolean): Promise<void> => {
+      clock.advance(COALESCE_MS)
+      socket.changed(gameId, byPost)
+      await settle()
+    }
+    await heard('g1', true)
+    expect(loads).equals(1)
+    await render(probe())
+    await heard('g1', true)
+    expect(loads).equals(1)
+    await heard('g1')
+    expect(loads).equals(2)
+    await heard('g2', true)
+    expect(loads).equals(3)
+    await heard()
+    expect(loads).equals(4)
+    // The gate the screen began with: one scope asked for.
+    expect(socket.asked()).deep.equals(['event:g1'])
   })
 
   it('reads only after the scope is acknowledged', async function () {

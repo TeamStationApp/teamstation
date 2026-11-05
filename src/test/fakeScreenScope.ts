@@ -66,10 +66,13 @@ export class FakeScopeSocket implements ScreenScopeSocket {
     this.deliver({ type: 'subscribed' })
   }
 
-  changed(gameId?: string): void {
-    this.deliver(
-      gameId == null ? { type: 'changed' } : { type: 'changed', gameId }
-    )
+  /** A notice, naming a game, and a post's own (`byPost`) when it says so. */
+  changed(gameId?: string, byPost?: boolean): void {
+    this.deliver({
+      type: 'changed',
+      ...(gameId == null ? {} : { gameId }),
+      ...(byPost === true ? { byPost } : {})
+    })
   }
 }
 

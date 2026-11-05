@@ -26,6 +26,12 @@ export interface ScreenScopeSocket {
  */
 export const COALESCE_MS = 3000
 
+/** What a `changed` names, for a load to tell whether it shows it. */
+export interface ScreenScopeNotice {
+  gameId?: string
+  byPost?: boolean
+}
+
 /** The part of the client a screen's load reads through. */
 export interface ScreenScopeClient {
   /** Set while requests fail to leave the device. */
@@ -51,9 +57,11 @@ export interface ScreenScopeGateOptions extends ScreenScopeTimers {
   coalesceMs?: number
   /**
    * A notice this load does not show, which reads nothing: Home's lists of
-   * teams and seasons let a notice of one game alone pass.
+   * teams and seasons let a notice of one game alone pass, and a game's
+   * screen its own game's notice from a post (`byPost`), whose play frames
+   * read it already.
    */
-  passes?: (notice: { gameId?: string }) => boolean
+  passes?: (notice: ScreenScopeNotice) => boolean
   /** A load that threw. The gate goes on; the screen shows its own error. */
   onError?: (error: unknown) => void
 }
@@ -91,7 +99,7 @@ export class ScreenScopeGate {
   private readonly giveUpMs: number
   private readonly coalesceMs: number
   private readonly onError: (error: unknown) => void
-  private readonly passes: (notice: { gameId?: string }) => boolean
+  private readonly passes: (notice: ScreenScopeNotice) => boolean
   private readonly setTimer: (run: () => void, ms: number) => unknown
   private readonly clearTimer: (timer: unknown) => void
   private readonly now: () => number

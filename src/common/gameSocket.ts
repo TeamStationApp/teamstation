@@ -1,4 +1,5 @@
 import {
+  asBoolean,
   asEither,
   asMaybe,
   asNumber,
@@ -208,8 +209,10 @@ export type ScreenScopeEvent =
   /**
    * On home or schedule, `gameId` says the notice was of that one game
    * alone (a play, its score): a list that shows no games can let it pass.
+   * On an event it names the event's game. `byPost` says a post of plays
+   * made the change, whose play frames already read the game's own screen.
    */
-  | { type: 'changed'; gameId?: string }
+  | { type: 'changed'; gameId?: string; byPost?: boolean }
   /** The scope was refused (`notFound` for an event it cannot see). */
   | { type: 'error'; code: GameSocketErrorCode; message: string }
   /** The acknowledgement no longer holds. It is asked for again. */
@@ -290,7 +293,12 @@ export type GameSocketRequest =
 export type ScreenScopeReply =
   | { type: 'subscribed'; scope: ScreenScopeName; id: string }
   | { type: 'unsubscribed'; scope: ScreenScopeName; id: string }
-  | { type: 'changed'; scope: ScreenScopeName; gameId?: string }
+  | {
+      type: 'changed'
+      scope: ScreenScopeName
+      gameId?: string
+      byPost?: boolean
+    }
   /** The worker lost its `LISTEN`: subscribe the scope again and read. */
   | { type: 'resync' }
 
@@ -501,7 +509,8 @@ const asScreenScopeName = asLiteral(
 const asScopeChanged = asObject({
   type: asLiteral('changed'),
   scope: asScreenScopeName,
-  gameId: asOptional(asString)
+  gameId: asOptional(asString),
+  byPost: asOptional(asBoolean)
 })
 
 /** A game being asked for again: how many times, and the wait now set. */
@@ -1149,9 +1158,8 @@ export class GameSocket {
     if (scope.scope === 'event' && scope.gameId !== changed.gameId) return
     this.screen?.listener({
       type: 'changed',
-      ...(scope.scope !== 'event' && changed.gameId != null
-        ? { gameId: changed.gameId }
-        : {})
+      ...(changed.gameId != null ? { gameId: changed.gameId } : {}),
+      ...(changed.byPost === true ? { byPost: true } : {})
     })
   }
 

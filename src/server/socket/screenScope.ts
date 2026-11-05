@@ -1,4 +1,4 @@
-import { asObject, asOptional, asString } from 'cleaners'
+import { asBoolean, asObject, asOptional, asString } from 'cleaners'
 
 import type { ChangeFeed } from '../changeFeed/feed'
 import { isConnectionUnavailable } from '../db/database'
@@ -12,7 +12,8 @@ export const asScreenScopePayload = asObject({
   gameId: asOptional(asString),
   teamId: asOptional(asString),
   seasonId: asOptional(asString),
-  userId: asOptional(asString)
+  userId: asOptional(asString),
+  byPost: asOptional(asBoolean)
 })
 
 export interface ScreenScopeListenerOptions {
@@ -47,8 +48,9 @@ interface Held {
  *
  * It hears the worker's feed, as `GameFanout` does on `game_changes`.
  * Notices that name the same game, team, season and person within
- * `coalesceMs` are passed on once, at the window's end. Which sockets hear
- * it is the socket's to decide (`gameSocket.ts`).
+ * `coalesceMs` are passed on once, at the window's end, `byPost` only when
+ * every one of them was. Which sockets hear it is the socket's to decide
+ * (`gameSocket.ts`).
  */
 export class ScreenScopeListener {
   /** Settles once the channel is first in place, or that attempt has failed. */
@@ -101,7 +103,11 @@ export class ScreenScopeListener {
     const key = keyOf(payload)
     const waiting = this.held.get(key)
     if (waiting != null) {
-      waiting.payload = payload
+      // A post's notice merged with any other is no longer the post's alone.
+      if (waiting.payload.byPost === true && payload.byPost !== true) {
+        const { byPost: _byPost, ...ids } = waiting.payload
+        waiting.payload = ids
+      }
       return
     }
     const held: Held = {

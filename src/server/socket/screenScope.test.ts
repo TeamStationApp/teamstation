@@ -30,7 +30,7 @@ import { ScreenScopeListener } from './screenScope'
 import {
   announceNotedScopes,
   SCREEN_SCOPES_CHANNEL,
-  type ScreenScopeIds
+  type ScreenScopePayload
 } from './syncRevision'
 
 const wait = async (ms: number): Promise<void> => {
@@ -141,7 +141,7 @@ describe('screen scopes on the game socket', function () {
   }
 
   /** Commits a write's notice, as a writing transaction ends. */
-  async function commit(ids: ScreenScopeIds): Promise<void> {
+  async function commit(ids: ScreenScopePayload): Promise<void> {
     await db.transaction().execute(async trx => {
       await announceNotedScopes(trx, ids)
     })
@@ -480,6 +480,74 @@ describe('screen scopes on the game socket', function () {
     expect(changes(event, from)).deep.equals([
       { type: 'changed', scope: 'event', gameId: seen }
     ])
+  })
+
+  it('tells event and home a post’s notice as the post’s, and two in a window as a post’s only when both were', async function () {
+    const event = await listen(VIEWER)
+    const home = await listen(VIEWER)
+    await ask(event, { type: 'subscribe', scope: 'event', gameId: seen })
+    await ask(home, { type: 'subscribe', scope: 'home' })
+    let from = [event.frames.length, home.frames.length]
+    await commit({ gameId: seen, byPost: true })
+    await event.next(frame => frame.type === 'changed', from[0])
+    await home.next(frame => frame.type === 'changed', from[1])
+    expect(changes(event, from[0])).deep.equals([
+      { type: 'changed', scope: 'event', gameId: seen, byPost: true }
+    ])
+    expect(changes(home, from[1])).deep.equals([
+      { type: 'changed', scope: 'home', gameId: seen, byPost: true }
+    ])
+    await wait(250)
+    from = [event.frames.length, home.frames.length]
+    await commit({ gameId: seen, byPost: true })
+    await commit({ gameId: seen })
+    await event.next(frame => frame.type === 'changed', from[0])
+    await wait(250)
+    expect(changes(event, from[0])).deep.equals([
+      { type: 'changed', scope: 'event', gameId: seen }
+    ])
+  })
+
+  it('passes on a window’s notices as a post’s only when every one was (Coalesce)', async function () {
+    const delivered: unknown[] = []
+    const feed = new PostgresFeed({
+      databaseUrl: scratchUrl,
+      log: () => undefined
+    })
+    const listener = new ScreenScopeListener({
+      feed,
+      coalesceMs: 50,
+      deliver: async payload => {
+        delivered.push(payload)
+      },
+      onResync: () => undefined
+    })
+    await listener.listening
+    const notice = (payload: object): void => {
+      listener.notified(JSON.stringify(payload))
+    }
+    notice({ gameId: 'gam_posts', byPost: true })
+    notice({ gameId: 'gam_posts', byPost: true })
+    notice({ gameId: 'gam_post_first', byPost: true })
+    notice({ gameId: 'gam_post_first' })
+    notice({ gameId: 'gam_post_last' })
+    notice({ gameId: 'gam_post_last', byPost: true })
+    await wait(150)
+    expect(
+      delivered
+        .map(payload => JSON.stringify(payload, ['gameId', 'byPost']))
+        .sort()
+    ).deep.equals(
+      [
+        { gameId: 'gam_post_first' },
+        { gameId: 'gam_post_last' },
+        { gameId: 'gam_posts', byPost: true }
+      ]
+        .map(payload => JSON.stringify(payload))
+        .sort()
+    )
+    await listener.close()
+    await feed.close()
   })
 
   it('replaces the scope a socket holds, and lets go only the one it names (Replaced scope)', async function () {

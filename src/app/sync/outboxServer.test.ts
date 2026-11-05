@@ -212,11 +212,20 @@ describe('the outbox against the server', function () {
     // And a lineup.
     const lineup = await homeLineup(f, lineupGame)
     const notices = await listenScreenScopes(f.h.db)
-    const before = notices.mark()
+    const digest = async (): Promise<string | null> =>
+      (
+        await f.h.db
+          .selectFrom('games')
+          .select('lineups_digest')
+          .where('id', '=', lineupGame)
+          .executeTakeFirstOrThrow()
+      ).lineups_digest
+    const unsaved = await digest()
     transport.dropNext = true
     await client.saveLineups(lineupGame, lineup)
-    // The save committed: it announced its game.
-    expect(await notices.since(before)).deep.include({ gameId: lineupGame })
+    // The save committed: the game keeps its lineups.
+    const stored = await digest()
+    expect(stored).not.equals(unsaved)
     const saved = notices.mark()
     expect((await client.outboxSummary()).count).equals(3)
 
@@ -244,6 +253,7 @@ describe('the outbox against the server', function () {
     expect(made).length(1)
     // Answered from what was stored, the second sends wrote nothing.
     expect(await notices.since(saved)).deep.equals([])
+    expect(await digest()).equals(stored)
     await notices.close()
     // The phone's copies are the server's now.
     const roster = await client.roster(f.teamA)
