@@ -39,6 +39,7 @@ function section(
     member: false,
     follower: false,
     editable: false,
+    player: false,
     ...fields
   }
 }
@@ -290,7 +291,7 @@ describe('the person profile', function () {
             roles: ['admin']
           })
         ],
-        viewer: { manages: true, admin: false }
+        viewer: { manages: true, admin: false, self: false }
       })
     ])
     expect(buttonIn(rowOf('team', 'admin'))).equals(null)
@@ -322,11 +323,11 @@ describe('the person profile', function () {
           }),
           section('season', { roles: ['admin'] })
         ],
-        viewer: { manages: true, admin: false }
+        viewer: { manages: true, admin: false, self: false }
       }),
       profile({
         sections: [section('team', { editable: true, member: true })],
-        viewer: { manages: true, admin: false }
+        viewer: { manages: true, admin: false, self: false }
       })
     ])
     expect(
@@ -469,7 +470,7 @@ describe('the person profile', function () {
         profile({
           context: { kind: 'league', id: 'grp_one', name: 'Demo League' },
           sections: [section('league', { member: true })],
-          viewer: { manages: false, admin: false }
+          viewer: { manages: false, admin: false, self: false }
         })
       ],
       { kind: 'league' }

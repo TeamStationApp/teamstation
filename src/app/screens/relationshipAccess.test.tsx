@@ -318,7 +318,8 @@ describe('relationship list access regression', () => {
         roles: [],
         member: true,
         follower: false,
-        editable: true
+        editable: true,
+        player: false
       },
       viewer: { manages: true, admin: true },
       canHoldRoles: true

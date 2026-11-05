@@ -13,7 +13,7 @@ import { createSession } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { rolesAt } from '../invites/people'
 import { notificationDetail } from '../notifications/inbox'
-import { onPeopleList, peopleAt } from '../teams/teamRoster'
+import { onPeopleList, peopleAt, teamRoster } from '../teams/teamRoster'
 
 /**
  * People at a team, a season and a league, through the real routes: who may
@@ -885,6 +885,46 @@ describe('people at a team, a season and a league', function () {
       expect(sectionOf(people, COACH)).equals(undefined)
     })
 
+    it('marks the signed-in person on a team, a season and a league', async () => {
+      const team = await call('GET', `/teams/${f.teamA}/roster`, SCOREKEEPER)
+      expect(team.status).equals(200)
+      const rows = team.body as RosterEntry[]
+      expect(
+        rows.find(row => row.userId === userIdOfGumbo(SCOREKEEPER))?.self
+      ).equals(true)
+      expect(
+        rows.find(row => row.userId === userIdOfGumbo(COACH))?.self
+      ).equals(false)
+
+      const season = await call(
+        'GET',
+        `/seasons/${f.seasonA}/people`,
+        SEASON_MEMBER
+      )
+      const seasonPeople = (season.body as LevelPeople).people
+      expect(
+        seasonPeople.find(row => row.userId === userIdOfGumbo(SEASON_MEMBER))
+          ?.self
+      ).equals(true)
+      expect(
+        seasonPeople.find(row => row.userId === userIdOfGumbo(PLAYER))?.self
+      ).equals(false)
+
+      const league = await call(
+        'GET',
+        `/leagues/${f.leagueA}/people`,
+        LEAGUE_MEMBER
+      )
+      const leaguePeople = (league.body as LevelPeople).people
+      expect(
+        leaguePeople.find(row => row.userId === userIdOfGumbo(LEAGUE_MEMBER))
+          ?.self
+      ).equals(true)
+      expect(
+        leaguePeople.find(row => row.userId === userIdOfGumbo(101))?.self
+      ).equals(false)
+    })
+
     it('lists a league’s people, and keeps both lists from anybody outside them', async () => {
       const league = await call(
         'GET',
@@ -1006,14 +1046,72 @@ describe('people at a team, a season and a league', function () {
         false,
         false
       ])
-      expect(body.viewer).deep.equals({ manages: true, admin: false })
+      expect(body.viewer).deep.equals({
+        manages: true,
+        admin: false,
+        self: false
+      })
+    })
+
+    it('says when the profile is the signed-in person, and when a team membership is a player', async () => {
+      const own = await profile('team', f.teamA, SCOREKEEPER, SCOREKEEPER)
+      expect(own.status).equals(200)
+      expect(own.body.viewer).deep.equals({
+        manages: false,
+        admin: false,
+        self: true
+      })
+      expect(
+        own.body.sections.find(section => section.level === 'team')?.player
+      ).equals(false)
+
+      const asCoach = await profile('team', f.teamA, SCOREKEEPER, COACH)
+      expect(asCoach.body.viewer).deep.equals({
+        manages: true,
+        admin: false,
+        self: false
+      })
+
+      const player = await profile('team', f.teamA, PLAYER, COACH)
+      expect(
+        player.body.sections.find(section => section.level === 'team')?.player
+      ).equals(true)
+      expect(
+        player.body.sections.find(section => section.level === 'season')?.player
+      ).equals(false)
+
+      const alias = 210
+      await insertFixtureUsers(f.h.db, {
+        id: alias,
+        legacyId: 'usr_people_210',
+        display_name: 'Sandy Alias',
+        first_name: 'Sandy',
+        last_name: 'Alias',
+        login_enabled: false
+      })
+      await f.h.db
+        .updateTable('users')
+        .set({ merged_into: userIdOfGumbo(SCOREKEEPER) })
+        .where('id', '=', userIdOfGumbo(alias))
+        .execute()
+      const kept = (
+        await teamRoster(f.h.db, undefined, f.teamA, false, {
+          userId: userIdOfGumbo(alias),
+          isAdmin: false
+        })
+      ).find(row => row.userId === userIdOfGumbo(SCOREKEEPER))
+      expect(kept?.self).equals(true)
     })
 
     it('reads what is held at each level, and a follower as a follower', async () => {
       const coach = await profile('team', f.teamA, COACH, 101)
       expect(coach.body.sections[0]).includes({ member: true, follower: false })
       expect(coach.body.sections[0].roles).deep.equals(['coach'])
-      expect(coach.body.viewer).deep.equals({ manages: true, admin: true })
+      expect(coach.body.viewer).deep.equals({
+        manages: true,
+        admin: true,
+        self: false
+      })
       const admin = await profile('team', f.teamA, 101, COACH)
       expect(admin.body.sections.map(section => section.roles)).deep.equals([
         ['admin'],

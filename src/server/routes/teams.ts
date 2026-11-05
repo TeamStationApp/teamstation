@@ -1007,7 +1007,7 @@ export function teamRoutes(
       }
       if (!(await nonMemberTeam(db, actor, scopes, teamId))) throw notFound()
       // Staff imagery is public; other people's faces and family links are not.
-      const roster = await teamRoster(db, media.space, teamId)
+      const roster = await teamRoster(db, media.space, teamId, false, actor)
       res.json(
         roster.map(entry => ({
           ...entry,

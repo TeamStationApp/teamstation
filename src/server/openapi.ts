@@ -2711,6 +2711,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'jersey',
             'positions',
             'isPlayer',
+            'self',
             'role',
             'bats',
             'throws',
@@ -2763,6 +2764,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             jersey: { type: ['string', 'null'] },
             positions: { type: 'array', items: { type: 'string' } },
             isPlayer: { type: 'boolean' },
+            self: {
+              type: 'boolean',
+              description:
+                'The signed-in person, including another id merged into ' +
+                'theirs. False for everybody else.'
+            },
             role: {
               type: 'string',
               description: 'Their membership: `owner`, `manager` or `member`.'
@@ -2928,7 +2935,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                   'roles',
                   'member',
                   'follower',
-                  'editable'
+                  'editable',
+                  'player'
                 ],
                 properties: {
                   level: {
@@ -2962,13 +2970,20 @@ export function openApiDocument(version: string): OpenApiDocument {
                   },
                   member: { type: 'boolean' },
                   follower: { type: 'boolean' },
-                  editable: { type: 'boolean' }
+                  editable: { type: 'boolean' },
+                  player: {
+                    type: 'boolean',
+                    description:
+                      'A team section whose membership is a player. False ' +
+                      'on a season or league section, and on a team ' +
+                      'membership that is not a player.'
+                  }
                 }
               }
             },
             viewer: {
               type: 'object',
-              required: ['manages', 'admin'],
+              required: ['manages', 'admin', 'self'],
               properties: {
                 manages: {
                   type: 'boolean',
@@ -2978,6 +2993,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                 admin: {
                   type: 'boolean',
                   description: 'An administrator of it, who changes Admin.'
+                },
+                self: {
+                  type: 'boolean',
+                  description:
+                    'The signed-in person, including another id merged ' +
+                    'into theirs.'
                 }
               }
             }

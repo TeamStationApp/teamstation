@@ -124,7 +124,7 @@ export async function personProfile(
     },
     guardianOf: await guardianRows(db, space, ref, userId),
     sections: await sections(db, ref, userId, editable),
-    viewer: { manages: editable, admin: editable && admin }
+    viewer: { manages: editable, admin: editable && admin, self }
   }
 }
 
@@ -256,12 +256,24 @@ async function sections(
     const roles = new Set<string>()
     let member = false
     let follower = false
+    let player = false
     for (const id of ids) {
       const group: GroupRef = { kind: level, id }
       groups.push({ id, name: await groupName(db, group) })
       const held = await heldAt(db, group, userId)
       for (const role of held.roles) roles.add(role)
       member ||= held.member
+      if (level === 'team' && !player) {
+        const idsOfPerson = (await onePerson(db, userId)).userIds
+        player =
+          (await db
+            .selectFrom('memberships')
+            .select('user_id')
+            .where('user_id', 'in', idsOfPerson)
+            .where('team_id', '=', id)
+            .where('is_player', '=', true)
+            .executeTakeFirst()) != null
+      }
       follower ||=
         level === 'team'
           ? (await followersOf(db, id)).includes(userId)
@@ -284,6 +296,7 @@ async function sections(
       roles: ROLES.filter(role => roles.has(role)),
       member,
       follower,
+      player,
       editable: manages && level === ref.kind
     })
   }
