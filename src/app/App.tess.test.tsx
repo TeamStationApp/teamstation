@@ -360,7 +360,8 @@ describe("Tess in the app's shell", () => {
       await settle(60)
       expect(currentRoute().name).equals('account')
       const index = window.history.state?.tsRouteIndex as number
-      restoreWindow = (await windowSize(1024, 900)).restore
+      // open's restore puts the document's own box back after the test.
+      await windowSize(1024, 900)
       await settle(60)
       expect(byTestId('Tess layer')).not.equals(null)
       await act(async () => {

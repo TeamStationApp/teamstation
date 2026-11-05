@@ -19,11 +19,21 @@ const wait = async (): Promise<void> => {
     await new Promise(resolve => setTimeout(resolve, 510))
   })
 }
+/** Whether a touch is down, and whether any touch began, in this test. */
+let down = false
+let touched = false
 afterEach(async () => {
   await act(async () => {
     root?.unmount()
     changeTheme(tsBallpark)
   })
+  // React Native Web counts the touches down, and ignores mouse presses after
+  // a touch until a mouse button comes up as the browser's own mouse events
+  // follow it. Finish both, so the next file's mouse presses are heard.
+  if (down) await touch(document.body, 'touchcancel', 10)
+  if (touched)
+    document.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }))
+  down = touched = false
   document.body.innerHTML = ''
 })
 async function setup(extra: Partial<RosterDragProps> = {}): Promise<{
@@ -75,8 +85,18 @@ async function touch(
 ): Promise<Event> {
   const e = new window.Event(type, { bubbles: true, cancelable: true })
   const point = { identifier: 1, clientX: x, clientY: y }
+  // A lifted or cancelled touch is no longer among the touches down.
+  const lifted = type === 'touchend' || type === 'touchcancel'
+  if (type === 'touchstart') down = touched = true
+  if (lifted) down = false
   Object.defineProperties(e, {
-    touches: { value: multi ? [point, { ...point, identifier: 2 }] : [point] },
+    touches: {
+      value: lifted
+        ? []
+        : multi
+          ? [point, { ...point, identifier: 2 }]
+          : [point]
+    },
     changedTouches: { value: [point] }
   })
   await act(async () => {
