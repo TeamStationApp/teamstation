@@ -1,5 +1,13 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -28,7 +36,11 @@ import {
   sweepLocalCopies,
   sync
 } from './controller'
-import { LIVE_PLAYLIST_NAME } from './splitter'
+import {
+  LIVE_PLAYLIST_NAME,
+  WRITER_INIT_NAME,
+  WRITER_PLAYLIST_NAME
+} from './splitter'
 
 /**
  * The end of a game, from the moment the window shuts.
@@ -393,6 +405,75 @@ describe('the end of a live stream', function () {
     expect(keys.some(key => key.endsWith('vid_played/video.mp4'))).equals(true)
     expect(keys.some(key => key.includes('seg000000'))).equals(false)
   })
+  /**
+   * What a writer continuing the recording leaves when this process dies
+   * under it: its init segment, one closed segment, and its own playlist
+   * naming it. `whole` false cuts the init segment's last byte off.
+   */
+  async function crashedWriter(
+    videoId: string,
+    whole: boolean
+  ): Promise<{ dir: string; init: Buffer }> {
+    const dir = await recordSomething(videoId)
+    const other = await recordSomething(`${videoId}_writer`)
+    const init = await readFile(join(other, 'init.mp4'))
+    await writeFile(
+      join(dir, WRITER_INIT_NAME),
+      whole ? init : init.subarray(0, init.length - 1)
+    )
+    await copyFile(join(other, 'seg000000.m4s'), join(dir, 'seg000003.m4s'))
+    await writeFile(
+      join(dir, WRITER_PLAYLIST_NAME),
+      [
+        '#EXTM3U',
+        `#EXT-X-MAP:URI="${WRITER_INIT_NAME}"`,
+        '#EXTINF:2.000000,',
+        'seg000003.m4s',
+        ''
+      ].join('\n')
+    )
+    return { dir, init }
+  }
+
+  it("lists a crashed writer's segment under init.mp4 before it closes the playlist", async function () {
+    if (options == null) this.skip()
+    await makeStream({ id: 'liv_crash', videoId: 'vid_crash', published: true })
+    const { dir, init } = await crashedWriter('vid_crash', true)
+
+    await finishStream(options, 'liv_crash', 'the stream window closed')
+    const closed = await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8')
+    expect(closed.trimEnd().split('\n').slice(-5)).deep.equals([
+      'seg000002.m4s',
+      '#EXT-X-DISCONTINUITY',
+      '#EXTINF:2.000000,',
+      'seg000003.m4s',
+      '#EXT-X-ENDLIST'
+    ])
+    expect(closed.match(/#EXT-X-MAP/g)).length(1)
+    expect(await readFile(join(dir, 'init.mp4'))).deep.equals(init)
+  })
+
+  it('says what a crashed writer leaves unlisted when its init segment is not whole', async function () {
+    if (options == null) this.skip()
+    await makeStream({ id: 'liv_held', videoId: 'vid_held', published: true })
+    const { dir } = await crashedWriter('vid_held', false)
+    const said: string[] = []
+
+    await finishStream(
+      { ...options, log: message => said.push(message) },
+      'liv_held',
+      'the stream window closed'
+    )
+    const closed = await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8')
+    expect(closed.trimEnd().split('\n').slice(-2)).deep.equals([
+      'seg000002.m4s',
+      '#EXT-X-ENDLIST'
+    ])
+    expect(said).contains(
+      "live: vid_held: the last writer's init segment never went over init.mp4; seg000003.m4s stay unlisted"
+    )
+  })
+
   it('says so on the row when a late sound track was stamped from nought', async function () {
     if (options == null) this.skip()
     await makeStream({ id: 'liv_reset', videoId: 'vid_reset', published: true })

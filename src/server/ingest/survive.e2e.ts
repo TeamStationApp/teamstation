@@ -1,5 +1,18 @@
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import {
+  type ChildProcess,
+  execFileSync,
+  spawn,
+  spawnSync
+} from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Server, Socket } from 'node:net'
 import { networkInterfaces, tmpdir } from 'node:os'
@@ -9,7 +22,9 @@ import { expect } from 'chai'
 import { after, afterEach, before, describe, it } from 'mocha'
 
 import { type LiveFixture, liveFixture } from '../../test/liveFixture'
+import { pathOfKey, startFakeSpace } from '../dev/fakeSpace'
 import { liveVideoDir } from '../live/controller'
+import { configurationOfInit } from '../live/decoderConfig'
 import { LIVE_PLAYLIST_NAME } from '../live/splitter'
 import { streamUrlFor } from '../live/streamKeys'
 import { mediaUrlPath } from '../media/mediaTokens'
@@ -30,6 +45,11 @@ import { asServerConfig } from '../serverConfig'
  * middle of a publish and judge the recording. With `TS_E2E_ARTIFACT_DIR` set
  * they leave there a frame either side of the outage and the remuxed
  * recording.
+ *
+ * G1 drops a camera and brings it back on the same key, with a stand-in Space
+ * in this process, and looks at `init.mp4` every 10 ms, here and in the Space,
+ * throughout. With `TS_E2E_ARTIFACT_DIR` set it leaves `init-window.log`
+ * there, written before it asserts anything.
  */
 const register = require.resolve('sucrase/register')
 const INGEST = resolve('src/server/ingest/main.ts')
@@ -734,3 +754,343 @@ for (const [name, how] of [
     })
   })
 }
+
+/** One look at an init segment: when, how big, and whether it parses. */
+interface InitSample {
+  atMs: number
+  size: number | undefined
+  parses?: boolean
+}
+
+/** The size of a file, or undefined when there is none. */
+function sizeOf(file: string): number | undefined {
+  try {
+    return statSync(file).size
+  } catch {
+    return undefined
+  }
+}
+
+describe('G1: a camera that comes back keeps init.mp4 whole, locally and in the Space', function () {
+  this.timeout(240_000)
+  let fixture: LiveFixture | undefined
+  let folder = ''
+  const procs: Proc[] = []
+  const publishers: ChildProcess[] = []
+  let space: Awaited<ReturnType<typeof startFakeSpace>> | undefined
+
+  before(async function () {
+    fixture = await liveFixture('surviveg1')
+    if (fixture == null) throw new Error('no Postgres for the ingest e2e')
+    folder = await mkdtemp(join(tmpdir(), 'tsSurviveG1-'))
+  })
+
+  after(async function () {
+    for (const publisher of publishers) publisher.kill('SIGKILL')
+    for (const proc of procs) await stop(proc)
+    await new Promise<void>(resolve => {
+      if (space == null) resolve()
+      else
+        space.server.close(() => {
+          resolve()
+        })
+    })
+    await fixture?.drop()
+    if (folder !== '') await rm(folder, { recursive: true, force: true })
+  })
+
+  it('never empties or half-writes init.mp4 while the publisher returns, and the join decodes', async function () {
+    const ports = { listen: await freePort(), live: await freePort() }
+    const spaceSettings = {
+      endpoint: '',
+      region: 'test',
+      bucket: 'surviveg1',
+      accessKeyId: 'surviveg1',
+      secretAccessKey: randomBytes(32).toString('hex'),
+      pathStyle: true
+    }
+    const spaceDir = join(folder, 'space')
+    const spaceLog = join(folder, 'space.log')
+    space = await startFakeSpace({
+      space: spaceSettings,
+      dir: spaceDir,
+      log: spaceLog
+    })
+    spaceSettings.endpoint = space.url
+    const config = {
+      ...baseConfig(folder, fixture!.url, ports),
+      space: spaceSettings
+    }
+    await writeConfig(folder, config)
+    const settings = asServerConfig(config)
+    const stream = await fixture!.addStream(settings.live, SECRET)
+    const dir = liveVideoDir(settings.mediaDir, stream.videoId)
+    const playlistFile = join(dir, LIVE_PLAYLIST_NAME)
+    const initFile = join(dir, 'init.mp4')
+    const spaceInit = pathOfKey(spaceDir, `videos/${stream.videoId}/init.mp4`)!
+    const lines: string[] = []
+    const say = (line: string): void => {
+      lines.push(line)
+      console.log(`      G1 ${line}`)
+    }
+
+    const ingest = startProcess(INGEST, folder)
+    procs.push(ingest)
+    await healthPortOf(ingest)
+    const api = startProcess(API, folder)
+    procs.push(api)
+    await apiListening(api)
+
+    // HEVC with a two-second GOP and AAC, as the phones and TS Director send.
+    const url = `rtmp://127.0.0.1:${ports.live}/live/${stream.key}`
+    const publish = (seconds?: number): ChildProcess => {
+      const publisher = spawn(
+        'ffmpeg',
+        [
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-re',
+          '-f',
+          'lavfi',
+          '-i',
+          'testsrc2=size=1280x720:rate=30',
+          '-f',
+          'lavfi',
+          '-i',
+          'sine=frequency=440:sample_rate=48000',
+          ...(seconds == null ? [] : ['-t', String(seconds)]),
+          '-c:v',
+          'libx265',
+          '-preset',
+          'ultrafast',
+          '-x265-params',
+          'keyint=60:min-keyint=60:scenecut=0:bframes=0:log-level=error',
+          '-pix_fmt',
+          'yuv420p',
+          '-c:a',
+          'aac',
+          '-ar',
+          '48000',
+          '-ac',
+          '2',
+          '-f',
+          'flv',
+          url
+        ],
+        { stdio: ['ignore', 'ignore', 'ignore'] }
+      )
+      publishers.push(publisher)
+      return publisher
+    }
+    say(
+      '$ the camera publishes testsrc2 1280x720 30 fps HEVC (GOP 60) + AAC 48 kHz stereo to rtmp://127.0.0.1:<port>/live/<key>'
+    )
+
+    // 1. The first publish, until two segments are listed.
+    const first = publish()
+    await until(
+      'two segments',
+      () => segmentsOf(readIfThere(playlistFile)).length >= 2,
+      60_000
+    )
+    const listedBefore = segmentsOf(readFileSync(playlistFile, 'utf8')).length
+    say(
+      `first publish: ${listedBefore} segments listed, init.mp4 ${sizeOf(initFile)} bytes`
+    )
+
+    // 2. Look at init.mp4, here and in the Space, from before the camera
+    // drops until its return has been written and its writer has gone.
+    const started = Date.now()
+    const local: InitSample[] = []
+    const remote: InitSample[] = []
+    const sampling = { on: true }
+    const sampler = (async () => {
+      let tick = 0
+      while (sampling.on) {
+        const atMs = Date.now() - started
+        const size = sizeOf(initFile)
+        const sample: InitSample = { atMs, size }
+        if (tick % 5 === 0) {
+          let bytes: Buffer | undefined
+          try {
+            bytes = readFileSync(initFile)
+          } catch {
+            bytes = undefined
+          }
+          sample.parses = bytes != null && configurationOfInit(bytes) != null
+        }
+        local.push(sample)
+        if (tick % 5 === 0) {
+          const held = sizeOf(spaceInit)
+          if (held != null || remote.length > 0)
+            remote.push({ atMs, size: held })
+        }
+        tick++
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+    })()
+
+    // 3. The camera drops, and is back three seconds later for ten seconds.
+    await new Promise(resolve => setTimeout(resolve, 500))
+    first.kill('SIGKILL')
+    say(`+${Date.now() - started} ms the first publisher is killed`)
+    await new Promise(resolve => setTimeout(resolve, 3000))
+    const second = publish(10)
+    say(`+${Date.now() - started} ms the same camera publishes again for 10 s`)
+    await new Promise(resolve => second.once('exit', resolve))
+    say(`+${Date.now() - started} ms the second publisher exits`)
+    const finished = await until(
+      'the writer to finish',
+      () => childPids(ingest.child.pid!).length === 0,
+      30_000
+    ).then(
+      () => true,
+      () => false
+    )
+    say(
+      `+${Date.now() - started} ms the writer ${finished ? 'has finished' : 'had not finished 30 s after the publisher left'}`
+    )
+    await new Promise(resolve => setTimeout(resolve, 4000))
+    sampling.on = false
+    await sampler
+
+    // 4. What the live directory holds, before the camera is ended.
+    const playlist = readFileSync(playlistFile, 'utf8')
+    const segments = segmentsOf(playlist)
+    const maps = playlist
+      .split('\n')
+      .filter(line => line.startsWith('#EXT-X-MAP:'))
+    const joinAt = playlist.split('\n').indexOf('#EXT-X-DISCONTINUITY')
+    const scratchLeft = existsSync(join(dir, '.writer-init.mp4'))
+    const writerPlaylist = readIfThere(join(dir, '.writer.m3u8'))
+    const writerOnly = segmentsOf(
+      writerPlaylist
+        .split('\n')
+        .filter(line => !line.startsWith('#EXT-X-MAP'))
+        .join('\n')
+    )
+      .map(s => s.uri)
+      .filter(uri => !segments.some(s => s.uri === uri))
+    const closed = join(dir, 'closed.m3u8')
+    await writeFile(closed, `${playlist.trimEnd()}\n#EXT-X-ENDLIST\n`)
+    const decode = spawnSync(
+      'ffmpeg',
+      ['-hide_banner', '-v', 'error', '-i', closed, '-f', 'null', '-'],
+      { encoding: 'utf8' }
+    )
+    const decodeErrors = (decode.stderr ?? '').trim()
+    const numbers = segments.map(s => Number(s.uri.slice(3, -4)))
+    const inOrder = numbers.every(
+      (n, at) => at === 0 || n === numbers[at - 1] + 1
+    )
+    const putLines = readIfThere(spaceLog)
+      .split('\n')
+      .filter(line => / PUT \S+\/init\.mp4 /.test(line))
+    const failedPuts = putLines.filter(line => !/ PUT \S+ 2\d\d /.test(line))
+
+    const emptyLocal = local.filter(s => s.size == null || s.size === 0)
+    const unparsed = local.filter(s => s.parses === false)
+    const emptyRemote = remote.filter(s => s.size === 0)
+    const sizes = (samples: InitSample[]): number[] =>
+      samples.map(s => s.size ?? 0)
+    const runs = (samples: InitSample[]): string[] => {
+      const out: string[] = []
+      let from: InitSample | undefined
+      let last: InitSample | undefined
+      for (const s of samples) {
+        const bad = s.size == null || s.size === 0
+        if (bad && from == null) from = s
+        if (!bad && from != null) {
+          out.push(
+            `+${from.atMs}..+${last!.atMs} ms (${last!.atMs - from.atMs} ms)`
+          )
+          from = undefined
+        }
+        last = s
+      }
+      if (from != null)
+        out.push(`+${from.atMs}..+${last!.atMs} ms (to the end)`)
+      return out
+    }
+    say(
+      `local init.mp4: ${local.length} samples every 10 ms, min ${Math.min(...sizes(local))} bytes, max ${Math.max(...sizes(local))} bytes; ${emptyLocal.length} empty or missing; ${local.filter(s => s.parses != null).length} parsed, ${unparsed.length} unparseable`
+    )
+    for (const run of runs(local))
+      say(`  local init.mp4 empty or missing ${run}`)
+    say(
+      `Space init.mp4: ${remote.length} samples every 50 ms, min ${remote.length === 0 ? '-' : Math.min(...sizes(remote))} bytes; ${emptyRemote.length} empty; ${putLines.length} PUTs of init.mp4, ${failedPuts.length} not 2xx`
+    )
+    say(
+      `master.m3u8: ${segments.length} segments (${segments[0]?.uri} .. ${segments.at(-1)?.uri}), in order with no gap: ${inOrder}; ${maps.length} EXT-X-MAP (${maps.join(' ')}); ${discontinuities(playlist)} EXT-X-DISCONTINUITY`
+    )
+    if (joinAt >= 0) {
+      say('  the join:')
+      for (const line of playlist
+        .split('\n')
+        .slice(Math.max(0, joinAt - 3), joinAt + 4))
+        say(`    ${line}`)
+    }
+    say(
+      `writer files: .writer-init.mp4 ${scratchLeft ? 'present' : 'absent'}; .writer.m3u8 ${writerPlaylist === '' ? 'absent' : 'present'}, segments only it lists: ${writerOnly.length === 0 ? 'none' : writerOnly.join(', ')}`
+    )
+    say(
+      `$ ffmpeg -v error -i closed.m3u8 -f null -   (master.m3u8 + #EXT-X-ENDLIST)`
+    )
+    say(decodeErrors === '' ? '  (no output: decoded whole)' : decodeErrors)
+
+    const artifacts = process.env.TS_E2E_ARTIFACT_DIR
+    const writeLog = (): void => {
+      if (artifacts == null || artifacts === '') return
+      mkdirSync(artifacts, { recursive: true })
+      writeFileSync(join(artifacts, 'init-window.log'), `${lines.join('\n')}\n`)
+    }
+    writeLog()
+
+    // 5. The camera is ended, and the recording put away.
+    await fixture!.db
+      .updateTable('live_streams')
+      .set({ state: 'ended' })
+      .where('id', '=', stream.id)
+      .execute()
+    await until(
+      'the camera to be finished',
+      async () =>
+        (
+          await fixture!.db
+            .selectFrom('live_streams')
+            .select('ended_at')
+            .where('id', '=', stream.id)
+            .executeTakeFirstOrThrow()
+        ).ended_at != null,
+      60_000
+    )
+    await new Promise(resolve => setTimeout(resolve, 5000))
+    const rangeErrors = ingest
+      .output()
+      .split('\n')
+      .filter(line => line.includes('RangeError'))
+    say(
+      `ingest output through the End: ${rangeErrors.length === 0 ? 'no RangeError' : rangeErrors.join('\n')}`
+    )
+    writeLog()
+
+    expect(finished, 'the writer finished after the publisher left').equals(
+      true
+    )
+    expect(emptyLocal, 'local init.mp4 empty or missing').deep.equals([])
+    expect(unparsed, 'local init.mp4 unparseable').deep.equals([])
+    expect(emptyRemote, 'Space init.mp4 empty').deep.equals([])
+    expect(failedPuts, 'init.mp4 PUTs not 2xx').deep.equals([])
+    expect(segments.length).greaterThan(listedBefore)
+    expect(inOrder, 'segments in order with no gap').equals(true)
+    expect(maps).deep.equals(['#EXT-X-MAP:URI="init.mp4"'])
+    expect(discontinuities(playlist)).equals(1)
+    expect(decodeErrors).equals('')
+    expect(scratchLeft, '.writer-init.mp4 left behind').equals(false)
+    expect(writerOnly, 'segments only the writer playlist lists').deep.equals(
+      []
+    )
+    expect(rangeErrors).deep.equals([])
+  })
+})
