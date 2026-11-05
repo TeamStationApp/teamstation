@@ -11,6 +11,7 @@ import { modelsOf } from '../server/dictation/models'
 import { healthRoutes } from '../server/routes/health'
 import { tessRoutes } from '../server/routes/tess'
 import { asServerConfig } from '../server/serverConfig'
+import { TEST_AI_KEYS_SCOPE } from './aiKeysScope'
 import { sseText } from './anthropicStream'
 import { groupFixture } from './groupFixtures'
 import {
@@ -38,7 +39,7 @@ describe('API keys in the running application', function () {
           '/api/v1',
           healthRoutes(db, 'test', {
             resolveAi: async () => {
-              const ai = await aiSettings(db, config)
+              const ai = await aiSettings(db, config, TEST_AI_KEYS_SCOPE)
               return {
                 tess: ai.tess != null,
                 narration: ai.speech != null,
@@ -53,7 +54,8 @@ describe('API keys in the running application', function () {
           '/api/v1',
           tessRoutes(db, {
             settings: null,
-            resolveSettings: async () => (await aiSettings(db, config)).tess,
+            resolveSettings: async () =>
+              (await aiSettings(db, config, TEST_AI_KEYS_SCOPE)).tess,
             origin: () => origin,
             fetch: async (url, init) => {
               if (

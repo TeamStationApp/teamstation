@@ -17,6 +17,7 @@ import { migrateUp } from '../migrate/runner'
 import { testDatabaseUrl } from '../migrate/testDatabase'
 import { createSession } from '../server/auth/sessions'
 import { makeDatabase } from '../server/db/database'
+import { sealSecret } from '../server/live/secrets'
 import { insertFixtureUsers } from './insertFixtureUsers'
 
 /** Real entry-point smoke: isolated configuration, database, Redis and object endpoint. */
@@ -195,6 +196,7 @@ async function startupSmoke(): Promise<void> {
       await createSession(db, userIdOfGumbo(102), 'startup-smoke')
     ).token
     const port = await availablePort()
+    const sessionSecret = randomBytes(32).toString('hex')
     const redisPort = await availablePort()
     objectServer = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'image/png' })
@@ -226,7 +228,7 @@ async function startupSmoke(): Promise<void> {
         purgeReplacedRecordings: false,
         serveMediaLocally: false,
         logRequests: false,
-        sessionSecret: randomBytes(32).toString('hex'),
+        sessionSecret,
         mediaSecret: randomBytes(32).toString('hex'),
         live: { enabled: false },
         googlePlaces: { apiKey: 'placeholder-key', baseUrl: objectOrigin },
@@ -350,11 +352,17 @@ async function startupSmoke(): Promise<void> {
       .insertInto('system_settings')
       .values({
         key: 'ai.keys',
+        // Sealed as the server seals a save: its origin, its sessionSecret.
         value: JSON.stringify({
           origin,
-          anthropicChatbot: ['chat-placeholder'],
-          anthropicScoring: ['score-placeholder'],
-          xaiVoice: ['voice-placeholder']
+          sealed: sealSecret(
+            sessionSecret,
+            JSON.stringify({
+              anthropicChatbot: ['chat-placeholder'],
+              anthropicScoring: ['score-placeholder'],
+              xaiVoice: ['voice-placeholder']
+            })
+          )
         })
       })
       .execute()

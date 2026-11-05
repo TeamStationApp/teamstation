@@ -1146,16 +1146,21 @@ const nodeSettingsSchema = {
   required: ['scoreboard', 'highlights'],
   properties: {
     aiKeys: {
-      type: 'object',
+      type: ['object', 'null'],
       additionalProperties: false,
       description:
-        'Administrator-only API key pools. Omission on save preserves stored credentials; empty arrays disable the service. Never returned by public settings or health.',
+        "Administrator-only API key pools. Omission on save preserves stored credentials; null on save drops them for the server configuration file's; empty arrays disable the service. Never returned by public settings or health.",
       required: ['anthropicChatbot', 'anthropicScoring', 'xaiVoice'],
       properties: {
         anthropicChatbot: { type: 'array', items: { type: 'string' } },
         anthropicScoring: { type: 'array', items: { type: 'string' } },
         xaiVoice: { type: 'array', items: { type: 'string' } }
       }
+    },
+    aiKeysSaved: {
+      type: 'boolean',
+      description:
+        'Read only: whether aiKeys were saved in node administration, overriding the server configuration file.'
     },
     replay: {
       type: 'object',

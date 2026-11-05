@@ -71,7 +71,9 @@ function shownPlacement(placement: BoardPlacement): BoardPlacement {
 export function shownSettings(settings: NodeSettings): NodeSettings {
   const { scoreboard: s, highlights: h } = settings
   return {
-    ...(settings.aiKeys == null ? {} : { aiKeys: settings.aiKeys }),
+    ...(settings.aiKeys == null
+      ? {}
+      : { aiKeys: settings.aiKeys, aiKeysSaved: settings.aiKeysSaved }),
     radar: { ...settings.radar },
     replay: { pitchSec: nearest(PITCH_DELAYS, settings.replay.pitchSec) },
     scoreboard: {
@@ -214,7 +216,8 @@ export function NodeSettingsCard({
     setSaved(false)
     setProblem(undefined)
   }
-  const save = async (): Promise<void> => {
+  /** Saves the card; `fileKeys` drops the saved keys for the file's. */
+  const save = async (fileKeys = false): Promise<void> => {
     if (busy) return
     setBusy(true)
     setProblem(undefined)
@@ -225,10 +228,16 @@ export function NodeSettingsCard({
           normalizedKeys(text.split(/\r?\n/))
         ])
       ) as unknown as AiKeys
-      const { aiKeys: shown, ...rest } = settings
+      const { aiKeys: shown, aiKeysSaved: _saved, ...rest } = settings
       const stored = await client.setNodeSettings({
         ...rest,
-        ...(shown == null || !keysEdited ? {} : { aiKeys })
+        ...(shown == null
+          ? {}
+          : fileKeys
+            ? { aiKeys: null }
+            : keysEdited
+              ? { aiKeys }
+              : {})
       })
       setSettings(shownSettings(stored))
       showKeys(stored.aiKeys)
@@ -370,7 +379,12 @@ export function NodeSettingsCard({
           <SectionHeader title="AI API keys" />
           <Text style={styles.hint}>
             Enter one API key per line. Leave a field empty to turn that service
-            off.
+            off. The XAI keys also serve the Grok scoring models.
+          </Text>
+          <Text style={styles.hint}>
+            {settings.aiKeysSaved === true
+              ? 'These keys were saved here and override the server configuration file.'
+              : "These are the server configuration file's keys. Saving a change here overrides them."}
           </Text>
           <Card style={styles.card}>
             {(
@@ -403,6 +417,17 @@ export function NodeSettingsCard({
               </View>
             ))}
           </Card>
+          {settings.aiKeysSaved === true && (
+            <Button
+              label="Use the configuration file's keys"
+              kind="text"
+              textColor={theme.linkTextColor}
+              disabled={busy}
+              onPress={() => {
+                save(true).catch(() => undefined)
+              }}
+            />
+          )}
         </View>
       )}
       <View style={styles.section}>
@@ -557,7 +582,11 @@ export function NodeSettingsCard({
         disabled={busy}
         onPress={() => {
           change(
-            shownSettings({ ...defaultNodeSettings, aiKeys: settings.aiKeys })
+            shownSettings({
+              ...defaultNodeSettings,
+              aiKeys: settings.aiKeys,
+              aiKeysSaved: settings.aiKeysSaved
+            })
           )
         }}
       />

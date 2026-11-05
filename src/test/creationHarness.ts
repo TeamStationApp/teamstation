@@ -38,6 +38,7 @@ import {
   accountHarness,
   type MountExtra
 } from './accountHarness'
+import { TEST_AI_KEYS_SCOPE } from './aiKeysScope'
 
 /** Real server/database/mail/object service; no creation or approval response is stubbed. */
 export async function creationHarness(
@@ -101,7 +102,10 @@ export async function creationHarness(
       app.use('/api/v1', manageRoutes(db, { sendInvite, sendAdded, clock }))
       app.use('/api/v1', peopleRoutes(db, media, { sendAdded, clock }))
       app.use('/api/v1', inviteRoutes(db, { sendCode }))
-      app.use('/api/v1', nodeAdministrationRoutes(db, media.space))
+      app.use(
+        '/api/v1',
+        nodeAdministrationRoutes(db, media.space, TEST_AI_KEYS_SCOPE)
+      )
       app.use('/api/v1', gameApprovalRoutes(db, clock))
       app.use('/api/v1', scheduleRoutes(db))
       app.use('/api/v1', notificationRoutes(db, clock))

@@ -11,6 +11,7 @@ import {
   nodeAccounts,
   requireNodeAdmin
 } from '../admin/nodeAdministration'
+import { type AiKeysScope, serverAiKeysScope } from '../aiKeys'
 import type { Database } from '../db/database'
 import { accountMailEnabled, setAccountMailEnabled } from '../email/accountMail'
 import { cleanBody } from '../jsonBody'
@@ -24,7 +25,9 @@ const asAccountMail = asObject({ accountMessages: asBoolean })
 
 export function nodeAdministrationRoutes(
   db: Kysely<Database>,
-  space?: SpaceSettings
+  space?: SpaceSettings,
+  /** Whose AI keys these are: replaced in tests, which have no sessionSecret. */
+  aiKeysScope: AiKeysScope = serverAiKeysScope
 ): Router {
   const router = Router()
   router.get(
@@ -101,7 +104,7 @@ export function nodeAdministrationRoutes(
       if (req.actor == null) throw unauthorized()
       res
         .set('Cache-Control', 'no-store')
-        .json(await nodeSettings(db, req.actor))
+        .json(await nodeSettings(db, req.actor, aiKeysScope))
     })
   )
   router.put(
@@ -120,11 +123,11 @@ export function nodeAdministrationRoutes(
       )
         highlights.tailSec = (await highlightSettings(db, true)).tailSec
       const settings = cleanBody(asNodeSettingsUpdate, req.body)
-      await setNodeSettings(db, req.actor, settings)
+      await setNodeSettings(db, req.actor, settings, aiKeysScope)
       // What is stored now, including a pitch delay the save left alone.
       res
         .set('Cache-Control', 'no-store')
-        .json(await nodeSettings(db, req.actor))
+        .json(await nodeSettings(db, req.actor, aiKeysScope))
     })
   )
   return router

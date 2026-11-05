@@ -58,7 +58,10 @@ export function eventControlIssuerOf(
   return config.eventControlIssuer ?? origin
 }
 
-/** What Tess calls the Messages API with. Never sent to a client. */
+/**
+ * What Tess calls the Messages API with. Its keys reach no client but a node
+ * administrator signed in directly, on GET and PUT `/node/settings`.
+ */
 export interface TessSettings {
   apiKey: ApiKeyPool
   baseUrl: string

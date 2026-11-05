@@ -68,6 +68,7 @@ import {
   asNodeSettings,
   asScoreboardOverlay,
   type NodeSettings,
+  type NodeSettingsUpdate,
   type ScoreboardOverlay
 } from './nodeSettings'
 import {
@@ -3690,7 +3691,7 @@ export class TeamStationClient {
   }
 
   /** A node administrator sets every node setting at once. */
-  async setNodeSettings(settings: NodeSettings): Promise<NodeSettings> {
+  async setNodeSettings(settings: NodeSettingsUpdate): Promise<NodeSettings> {
     return await this.request('PUT', '/node/settings', asNodeSettings, settings)
   }
 

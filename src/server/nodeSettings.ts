@@ -25,6 +25,8 @@ import {
   AI_KEYS_SETTING,
   aiKeys,
   aiKeysChange,
+  type AiKeysScope,
+  serverAiKeysScope,
   storedAiKeysValue
 } from './aiKeys'
 import { type Actor, isHumanSession } from './auth/sessions'
@@ -151,17 +153,21 @@ export async function scoreboardSettings(
 /** Every node setting, for the node administration screen. */
 export async function nodeSettings(
   db: Kysely<Database>,
-  actor: Actor
+  actor: Actor,
+  scope: AiKeysScope = serverAiKeysScope
 ): Promise<NodeSettings> {
   await requireNodeAdmin(
     db,
     actor,
     'Only a node administrator can see the node settings'
   )
+  // Tools can manage ordinary settings, but must never receive credentials.
+  const ai = isHumanSession(actor)
+    ? await aiKeys(db, undefined, scope)
+    : undefined
   return {
+    ...(ai == null ? {} : { aiKeys: ai.keys, aiKeysSaved: ai.saved }),
     // Past this worker's cache: another may have taken the last save.
-    // Tools can manage ordinary settings, but must never receive credentials.
-    ...(isHumanSession(actor) ? { aiKeys: await aiKeys(db) } : {}),
     scoreboard: await scoreboardSettings(db, Date.now(), true),
     radar: await radarSettings(db),
     highlights: await highlightSettings(db, true),
@@ -176,7 +182,8 @@ export async function nodeSettings(
 export async function setNodeSettings(
   db: Kysely<Database>,
   actor: Actor,
-  settings: NodeSettingsUpdate
+  settings: NodeSettingsUpdate,
+  scope: AiKeysScope = serverAiKeysScope
 ): Promise<void> {
   const admin = await requireNodeAdmin(
     db,
@@ -186,16 +193,16 @@ export async function setNodeSettings(
   if (settings.aiKeys !== undefined && !isHumanSession(actor))
     throw forbidden('Sign in directly to change AI API keys')
   const { scoreboard, highlights, radar, replay } = settings
+  // `null` goes back to the file's keys; a change is sealed for this server.
+  const { aiKeys: keys } = settings
+  const clearAiKeys = keys === null
   const writeAiKeys =
-    settings.aiKeys !== undefined && (await aiKeysChange(db, settings.aiKeys))
+    keys != null && (await aiKeysChange(db, keys, undefined, scope))
   const rows: Array<[string, unknown]> = [
-    ...(settings.aiKeys === undefined || !writeAiKeys
+    ...(keys == null || !writeAiKeys
       ? []
       : [
-          [AI_KEYS_SETTING, storedAiKeysValue(settings.aiKeys)] as [
-            string,
-            unknown
-          ]
+          [AI_KEYS_SETTING, storedAiKeysValue(keys, scope)] as [string, unknown]
         ]),
     ...(replay == null
       ? []
@@ -223,6 +230,11 @@ export async function setNodeSettings(
   ]
   const now = new Date()
   await db.transaction().execute(async trx => {
+    if (clearAiKeys)
+      await trx
+        .deleteFrom('system_settings')
+        .where('key', '=', AI_KEYS_SETTING)
+        .execute()
     for (const [key, value] of rows) {
       // A jsonb column takes the value as JSON text: a bare string would be
       // read as JSON, not as the string.

@@ -17,7 +17,11 @@ import {
 } from './nodeSettings'
 import { forgetSettings, highlightSettings } from './settings'
 const emptyKeys = { anthropicChatbot: [], anthropicScoring: [], xaiVoice: [] }
-const defaultNodeSettings = { ...baseDefaults, aiKeys: emptyKeys }
+const defaultNodeSettings = {
+  ...baseDefaults,
+  aiKeys: emptyKeys,
+  aiKeysSaved: false
+}
 
 describe('node settings', function () {
   this.timeout(60000)
@@ -35,6 +39,7 @@ describe('node settings', function () {
 
   const changed: NodeSettings = {
     aiKeys: emptyKeys,
+    aiKeysSaved: false,
     radar: { pitchWindowSec: 4, inPlayWindowSec: 20 },
     replay: { pitchSec: 7 },
     scoreboard: {

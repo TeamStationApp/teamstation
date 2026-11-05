@@ -499,4 +499,35 @@ describe('NodeSettingsCard API keys', () => {
     expect(fields[0].value).equals('a\nb')
     expect(text()).contains('Saved.')
   })
+  it('says whose keys these are, and goes back to the file on request', async () => {
+    const file = {
+      anthropicChatbot: ['file-chat'],
+      anthropicScoring: [],
+      xaiVoice: []
+    }
+    let current: NodeSettings = {
+      ...defaultNodeSettings,
+      aiKeys: { ...file, anthropicChatbot: ['saved-chat'] },
+      aiKeysSaved: true
+    }
+    const saves: unknown[] = []
+    const client = {
+      nodeSettings: async () => current,
+      setNodeSettings: async (value: { aiKeys?: unknown }) => {
+        saves.push(value)
+        if (value.aiKeys === null)
+          current = { ...current, aiKeys: file, aiKeysSaved: false }
+        return current
+      }
+    } as unknown as TeamStationClient
+    await render(client)
+    expect(text()).contains('override the server configuration file')
+    await press("Use the configuration file's keys")
+    expect(saves).length(1)
+    expect(saves[0]).has.property('aiKeys', null)
+    expect(saves[0]).not.has.property('aiKeysSaved')
+    expect(document.querySelectorAll('textarea')[0].value).equals('file-chat')
+    expect(text()).contains("the server configuration file's keys")
+    expect(text()).not.contains("Use the configuration file's keys")
+  })
 })

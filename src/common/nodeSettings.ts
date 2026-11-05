@@ -69,6 +69,8 @@ export interface HighlightTimings {
 export interface NodeSettings {
   /** Administrator-only secrets; omitted by older servers and clients. */
   aiKeys?: AiKeys
+  /** Whether `aiKeys` were saved here, over the server configuration file's. */
+  aiKeysSaved?: boolean
   scoreboard: ScoreboardSettings
   highlights: HighlightTimings
   radar: RadarSettings
@@ -154,8 +156,14 @@ export function asScoreboardOverlay(raw: unknown): ScoreboardOverlay {
  * messages name the field, for the screen to show beside it.
  */
 export function asNodeSettings(raw: unknown): NodeSettings {
-  const { replay, ...rest } = asNodeSettingsUpdate(raw)
+  const { replay, aiKeys, ...rest } = asNodeSettingsUpdate(raw)
   return {
+    ...(aiKeys == null
+      ? {}
+      : {
+          aiKeys,
+          aiKeysSaved: record(raw, 'the settings').aiKeysSaved === true
+        }),
     ...rest,
     scoreboard: {
       ...rest.scoreboard,
@@ -170,8 +178,13 @@ export function asNodeSettings(raw: unknown): NodeSettings {
  * A save from the node administration screen. An app from before the replay
  * section sends no `replay`, and its save keeps the stored pitch delay.
  */
-export type NodeSettingsUpdate = Omit<NodeSettings, 'replay'> & {
+export type NodeSettingsUpdate = Omit<
+  NodeSettings,
+  'replay' | 'aiKeys' | 'aiKeysSaved'
+> & {
   replay?: ReplaySettings
+  /** New pools; `null` drops the saved ones for the file's; absent keeps them. */
+  aiKeys?: AiKeys | null
 }
 
 /** A save, checked as `asNodeSettings` checks a document, `replay` optional. */
@@ -180,7 +193,9 @@ export function asNodeSettingsUpdate(raw: unknown): NodeSettingsUpdate {
   const scoreboard = record(value.scoreboard, 'scoreboard')
   const highlights = record(value.highlights, 'highlights')
   return {
-    ...(value.aiKeys === undefined ? {} : { aiKeys: asAiKeys(value.aiKeys) }),
+    ...(value.aiKeys === undefined
+      ? {}
+      : { aiKeys: value.aiKeys === null ? null : asAiKeys(value.aiKeys) }),
     radar: asRadarSettings(value.radar ?? defaultRadarSettings),
     ...(value.replay == null ? {} : { replay: asReplaySettings(value.replay) }),
     scoreboard: {
