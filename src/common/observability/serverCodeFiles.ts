@@ -206,6 +206,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/media/imageUrls.js',
   'server/media/images.js',
   'server/media/ingestFile.js',
+  'server/media/livePlaylists.js',
   'server/media/locations.js',
   'server/media/mediaContext.js',
   'server/media/mediaOrigins.js',
