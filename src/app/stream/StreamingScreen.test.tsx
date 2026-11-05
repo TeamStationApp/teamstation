@@ -69,8 +69,7 @@ interface Harness {
 
 async function mount(
   session: StreamingSession = SESSION,
-  answers: Record<string, unknown> = {},
-  startOnOpen = false
+  answers: Record<string, unknown> = {}
 ): Promise<Harness> {
   const native = fakePhoneStreamModule({
     zoomScale: SCALE,
@@ -111,7 +110,6 @@ async function mount(
     root!.render(
       <ThemeProvider>
         <StreamingScreen
-          startOnOpen={startOnOpen}
           client={client}
           session={session}
           deviceId="00000000-0000-4000-8000-000000000001"
@@ -191,33 +189,32 @@ describe('the streaming screen', function () {
     root = undefined
   })
 
-  it('starts recording after the hero opens the camera', async function () {
-    const h = await mount(SESSION, {}, true)
+  it('opens idle and starts only after the record button is pressed', async function () {
+    const h = await mount()
+    expect(calls(h.native, 'startRecording')).has.length(0)
+    expect(calls(h.native, 'resumeInterrupted')).has.length(0)
+    await press('broadcast-button')
     expect(calls(h.native, 'startRecording')).has.length(1)
-    const names = h.native.calls.map(call => call.name)
-    expect(names.indexOf('open')).lessThan(names.indexOf('startRecording'))
-    expect(byTestId('camera-close')?.getAttribute('aria-disabled')).equals(
-      'true'
-    )
   })
 
-  it('does not start a second recording when the hero resumes an interrupted take', async function () {
-    const h = await mount(
-      SESSION,
-      {
-        interruptedSession: {
-          liveStreamId: SESSION.streamId,
-          gameId: SESSION.gameId,
-          angleName: SESSION.angleName,
-          streaming: true,
-          downtimeSeconds: 10
-        },
-        resumeInterrupted: true
-      },
-      true
+  it('keeps Record disabled until the preview finishes opening', async function () {
+    let release!: () => void
+    const h = await mount(SESSION, {
+      open: new Promise<void>(resolve => {
+        release = resolve
+      })
+    })
+    expect(byTestId('broadcast-button')?.getAttribute('aria-disabled')).equals(
+      'true'
     )
-    expect(calls(h.native, 'resumeInterrupted')).has.length(1)
+    await press('broadcast-button')
     expect(calls(h.native, 'startRecording')).has.length(0)
+    await act(async () => {
+      release()
+      await delay(20)
+    })
+    await press('broadcast-button')
+    expect(calls(h.native, 'startRecording')).has.length(1)
   })
 
   it('opens the engine sideways under the Cameraman overlay, and closes it after', async function () {
@@ -613,81 +610,28 @@ describe('the streaming screen', function () {
     expect(calls(h.native, 'close')).has.length(1)
   })
 
-  it('carries a take a kill interrupted on, when opened again on its stream', async function () {
-    const interrupted = {
-      liveStreamId: SESSION.streamId,
-      gameId: SESSION.gameId,
-      angleName: 'Home Plate',
-      streaming: true,
-      downtimeSeconds: 40
-    }
-    const h = await mount(SESSION, {
-      interruptedSession: interrupted,
-      resumeInterrupted: true
+  for (const interruptedId of [SESSION.streamId, 'liv_other']) {
+    it(`waits for Record with interrupted stream ${interruptedId}`, async function () {
+      const h = await mount(SESSION, {
+        interruptedSession: {
+          liveStreamId: interruptedId,
+          gameId: SESSION.gameId,
+          angleName: SESSION.angleName,
+          streaming: true,
+          downtimeSeconds: 40
+        },
+        resumeInterrupted: true
+      })
+      expect(calls(h.native, 'resumeInterrupted')).has.length(0)
+      expect(calls(h.native, 'startRecording')).has.length(0)
+      expect(
+        byTestId('camera-close')?.getAttribute('aria-disabled')
+      ).not.equals('true')
+      await press('broadcast-button')
+      expect(calls(h.native, 'startRecording')).has.length(1)
+      expect(calls(h.native, 'resumeInterrupted')).has.length(0)
     })
-    expect(calls(h.native, 'resumeInterrupted')).deep.equals([
-      [
-        {
-          apiBase: 'https://teamstation.example.test/api/v1',
-          token: 'token-0000',
-          deviceId: '00000000-0000-4000-8000-000000000001',
-          deviceModel: 'iPhone 13 Pro'
-        }
-      ]
-    ])
-    // Recording again before the engine's first status says so.
-    expect(byTestId('camera-close')?.getAttribute('aria-disabled')).equals(
-      'true'
-    )
-    await act(async () => {
-      root?.unmount()
-      await delay(10)
-    })
-    root = undefined
-
-    // A take of another stream is left for that stream's Record to close.
-    const other = await mount(SESSION, {
-      interruptedSession: { ...interrupted, liveStreamId: 'liv_other' },
-      resumeInterrupted: true
-    })
-    expect(calls(other.native, 'interruptedSession')).has.length(1)
-    expect(calls(other.native, 'resumeInterrupted')).deep.equals([])
-    await act(async () => {
-      root?.unmount()
-      await delay(10)
-    })
-    root = undefined
-
-    // Refused: the screen says why.
-    const again = fakePhoneStreamModule({
-      zoomScale: SCALE,
-      interruptedSession: interrupted
-    })
-    again.failures.resumeInterrupted = { code: 'permission' }
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    await act(async () => {
-      root!.render(
-        <ThemeProvider>
-          <StreamingScreen
-            client={
-              { baseUrl: '', token: undefined } as unknown as TeamStationClient
-            }
-            session={SESSION}
-            deviceId="00000000-0000-4000-8000-000000000001"
-            deviceModel="iPhone 13 Pro"
-            phone={makePhoneStream(again)}
-            onClose={() => {}}
-          />
-        </ThemeProvider>
-      )
-      await delay(20)
-    })
-    expect(byTestId('stream-problem')?.textContent).contains(
-      'camera and the microphone'
-    )
-  })
+  }
 
   it('on a streaming-only start, shows the notice and tells the server nothing at Stop', async function () {
     // Another stream's take on this phone is not this stream's.

@@ -902,8 +902,8 @@ async function main(): Promise<void> {
       .executeTakeFirstOrThrow()
     if (hostPublished.game_id == null)
       throw new Error('Accepted host-only proposal has no published game')
-    await visit(admin, `/games/${hostPublished.game_id}`)
-    await contains(admin.page, 'No videos.')
+    await visit(admin, `/games/${hostPublished.game_id}?tab=watch`)
+    await contains(admin.page, 'No videos')
     await absent(admin.page, 'Event settings')
     const requestCount = (
       await f.h.db.selectFrom('group_requests').select('id').execute()

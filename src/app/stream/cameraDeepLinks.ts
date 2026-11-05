@@ -36,17 +36,20 @@ export type CameraLaunch =
   /** No link can be fired, so the URL has to be shown. */
   | { kind: 'sheet'; target: RtmpTarget }
 
-export interface LaunchCamera {
+interface CameraSetup {
   client: TeamStationClient
   gameId: string
   name: string
   source: LinkedCamera
-  links: CameraLinks
-  os: string
   /** A camera was made, whatever becomes of its link. */
   onCreated: () => void
   /** The person has been told it failed: nothing more may happen. */
   signal: AbortSignal
+}
+
+interface LaunchCamera extends CameraSetup {
+  links: CameraLinks
+  os: string
 }
 
 const DEFAULT_PORT = { rtmp: 1935, rtmps: 443 }
@@ -153,7 +156,8 @@ async function urlOf(
 }
 
 /**
- * Sends a camera's row to its app: makes the camera, then fires its link. A
+ * A browser follows the maker’s HTTPS link directly, including when the app
+ * is missing. On a phone, sends a camera's row to its app: makes the camera, then fires its link. A
  * link carries the stream key, so an `https` one goes to the app alone: a
  * browser would hand the key to a website. With the app missing nothing is made
  * on Android, whose store page comes up and leaves the person free to tap the
@@ -163,7 +167,7 @@ async function urlOf(
  * app, however late an answer it was waiting for arrives.
  */
 export async function launchCamera(args: LaunchCamera): Promise<CameraLaunch> {
-  const { client, gameId, name, source, links, os, onCreated, signal } = args
+  const { name, source, links, os, signal } = args
   const check = INSTALL_CHECKS[source]
   const probe = os === 'android' ? (check.androidUrl ?? check.url) : check.url
   const isInstalled = await installed(links, probe, check.packageName, os)
@@ -173,6 +177,31 @@ export async function launchCamera(args: LaunchCamera): Promise<CameraLaunch> {
     await links.openURL(storePage(check.packageName))
     return { kind: 'store' }
   }
+  return await addAndLaunch(
+    args,
+    os,
+    async link => await fire(links, link, check.packageName)
+  )
+}
+
+/** Browsers follow the maker's HTTPS link directly. A missing app leaves its site open. */
+export async function launchWebCamera(
+  args: CameraSetup,
+  navigate: (link: string) => void
+): Promise<CameraLaunch> {
+  args.signal.throwIfAborted()
+  return await addAndLaunch(args, 'web', async link => {
+    navigate(link)
+    return true
+  })
+}
+
+async function addAndLaunch(
+  args: CameraSetup,
+  os: string,
+  open: (link: string) => Promise<boolean>
+): Promise<CameraLaunch> {
+  const { client, gameId, name, source, onCreated, signal } = args
   const stream = await client.addLiveStream(
     gameId,
     name,
@@ -184,8 +213,7 @@ export async function launchCamera(args: LaunchCamera): Promise<CameraLaunch> {
     const url = await urlOf(client, stream, signal)
     const link = url == null ? undefined : cameraLink(source, url, name, os)
     signal.throwIfAborted()
-    if (link != null && (await fire(links, link, check.packageName)))
-      return { kind: 'opened' }
+    if (link != null && (await open(link))) return { kind: 'opened' }
   } catch {
     // Its row exists, so the person still needs its URL.
   }

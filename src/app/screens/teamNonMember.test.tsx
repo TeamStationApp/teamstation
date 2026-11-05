@@ -614,9 +614,10 @@ describe('a member’s game Videos tab', function () {
   it('says there are no videos, readably, with no player box, for a game without one', async function () {
     const asked = await page([])
     noPlayerBox()
-    const notice = document.querySelector('[data-testid="gameVideoNotice"]')
-    expect(notice?.textContent).equals('No videos.')
-    readable(notice!.querySelector('[role="alert"]'))
+    const empty = document.querySelector('[data-testid="stream-empty-state"]')
+    const title = empty!.querySelector('[role="alert"]')
+    expect(title?.textContent).equals('No videos')
+    readable(title ?? null)
     expect(text()).not.includes(VIDEOS_MEMBERS_ONLY)
     // Nothing recorded, so no highlights to list, nor a heading over none.
     expect(text()).not.includes('Highlights')
