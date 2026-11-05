@@ -51,6 +51,9 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
   assert(
     (values.runner === 'native' &&
       ['bands', 'core', 'default', 'intact'].includes(values.scenario)) ||
+      (values.runner === 'reply' &&
+        values.surface === 'web' &&
+        values.scenario === 'shared') ||
       (values.runner === 'web' &&
         values.surface === 'web' &&
         [
@@ -244,6 +247,62 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
     { mode: 0o600 }
   )
   const people = readSeedTable(readFileSync(join(out, 'seed.txt'), 'utf8'))
+  if (values.runner === 'reply') {
+    // Only inspect membership here. The browser enrolls its own identity and
+    // creates every encrypted fixture message through the normal composer.
+    const actor = people.Hc
+    assert(actor.email.endsWith('@chat.example.com'))
+    const client = new TeamStationClient({
+      baseUrl: owner.apiUrl,
+      passwordKdf: async (password, parameters) =>
+        await nativeArgon(passwordBytes(password), parameters)
+    })
+    await client.signInWithPassword(actor.email, actor.password)
+    const protectedRoom = (await client.chatConversations()).find(
+      room => room.title === 'Hawks Members'
+    )
+    assert(protectedRoom != null, 'Protected seeded membership is required')
+    const candidates = await client.dmCandidates()
+    const peers = ['Ha', 'Hs'].map(key => {
+      const person = candidates.find(row => row.userId === people[key].userId)
+      assert(person != null, 'History peers must be eligible adult candidates')
+      return person.shortName
+    })
+    const shared = join(out, 'shared-fixture.json')
+    const profile = join(out, 'profiles', 'actor')
+    const path = join(out, 'env.sh')
+    writeFileSync(
+      path,
+      recoveryFixtureEnvironment({
+        TS_CHAT_WEB_URL: owner.webUrl,
+        TS_CHAT_API_URL: owner.apiUrl,
+        CHAT_UI_SEED_FILE: join(out, 'seed.txt'),
+        CHAT_UI_ARTIFACTS: join(out, 'producer-results'),
+        CHAT_UI_PROFILE_DIR: profile,
+        CHAT_UI_CONVERSATION: protectedRoom.id,
+        CHAT_UI_FIXTURE_PEOPLE: JSON.stringify(peers),
+        CHAT_UI_HISTORY_FIXTURE_FILE: shared,
+        CHAT_UI_REPLY_SEED_FILE: join(out, 'seed.txt'),
+        CHAT_UI_REPLY_ACTOR: 'Hc',
+        CHAT_UI_REPLY_PEER: 'Hs',
+        CHAT_UI_REPLY_PROFILE_DIR: profile,
+        CHAT_UI_REPLY_WEB_DEVICE: 'recovery-reply',
+        CHAT_UI_REPLY_ARTIFACTS: join(out, 'shared-results'),
+        CHAT_UI_REPLY_SHARED_FIXTURE: shared,
+        CHAT_UI_REPLY_SMALL_FIXTURE: join(
+          out,
+          'small-results',
+          'small-fixture.json'
+        ),
+        CHAT_UI_REPLY_PROTECTED_CONVERSATION: protectedRoom.id,
+        CHAT_UI_REPLY_MODE: 'shared',
+        CHAT_RECOVERY_FIXTURE_SOURCE: owner.source,
+        MAESTRO_D: 'recovery-reply-' + Date.now()
+      }),
+      { mode: 0o600, flag: 'wx' }
+    )
+    return path
+  }
   if (values.runner === 'web') {
     // These scenarios must first enroll through the actual browser UI.
     // A provider engine here would pre-enroll them and change the scenario.
