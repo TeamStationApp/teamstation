@@ -111,13 +111,16 @@ describe('statsBuilder main', function () {
 
   it('drains on start, on notify, schedules retry_at, and stops cleanly', async function () {
     const gameId = makeId('game')
+    // Final, so its rebuilds on this fixed clock do not wait out a live
+    // game's gap.
     await db
       .insertInto('games')
       .values({
         id: gameId,
         home_team_id: home,
         away_team_id: away,
-        start_at: new Date()
+        start_at: new Date(),
+        status: 'final'
       })
       .execute()
     await replaceGameEvents(db, {
@@ -286,6 +289,73 @@ describe('statsBuilder main', function () {
     } finally {
       console.log = originalLog
       if (handle != null) await handle.stop('SIGTERM')
+    }
+  })
+
+  it("wakes at the end of a live game's gap and builds its last generation", async function () {
+    const originalLog = console.log
+    console.log = () => undefined
+    const gameId = makeId('game')
+    await db
+      .insertInto('games')
+      .values({
+        id: gameId,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date(),
+        status: 'inProgress'
+      })
+      .execute()
+    await replaceGameEvents(db, {
+      gameId,
+      homeTeamId: home,
+      awayTeamId: away,
+      plays: [{ gumbo: play(), source: 'manual' }]
+    })
+    const began = clockNow.getTime()
+    let now = began
+    const timers: Array<() => void> = []
+    const handle = await runStatsBuilder({
+      databaseUrl: scratchUrl,
+      clock: () => new Date(now),
+      signals: new EventEmitter(),
+      setTimeout: ((fn: () => void) => {
+        timers.push(fn)
+        return 0 as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeout: () => undefined
+    })
+    const stateOf = async (): Promise<{ status: string; built: number }> => {
+      const row = await db
+        .selectFrom('game_stats_state')
+        .select(['status', 'built_generation'])
+        .where('game_id', '=', gameId)
+        .executeTakeFirstOrThrow()
+      return { status: row.status, built: Number(row.built_generation) }
+    }
+    try {
+      expect(await stateOf()).deep.equals({ status: 'built', built: 1 })
+      now = began + 1000
+      const armed = timers.length
+      await requestGameStats(db, gameId)
+      await requestGameStats(db, gameId)
+      await until(
+        'the gap timer',
+        () => timers.length > armed && handle.lastTimerMs() === 2000,
+        2000
+      )
+      expect(await stateOf()).deep.equals({ status: 'pending', built: 1 })
+
+      now = began + 3000
+      timers[timers.length - 1]()
+      for (const deadline = Date.now() + 2000; Date.now() < deadline;) {
+        if ((await stateOf()).status === 'built') break
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+      expect(await stateOf()).deep.equals({ status: 'built', built: 3 })
+    } finally {
+      await handle.stop('SIGTERM')
+      console.log = originalLog
     }
   })
 

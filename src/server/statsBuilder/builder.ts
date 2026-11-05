@@ -10,6 +10,17 @@ import { type PlateAppearance, rowsOf } from '../stats/plateAppearances'
 export type Clock = () => Date
 
 /**
+ * How long a live game waits after a build began before it builds again.
+ * Requests that arrive in the gap cost one build, of the latest generation. A
+ * final game builds at once.
+ */
+export const BUILD_GAP_MS = 3000
+
+/** The owed game's own status, read by its key only where it is asked for. */
+const statusOfGame = sql<string>`(select games.status from games
+  where games.id = game_stats_state.game_id)`
+
+/**
  * Optional callback between reading the game and writing the result.
  * Tests use it for "post during build" and "user deleted mid-build".
  */
@@ -110,18 +121,32 @@ export async function buildNext(
   afterRead?: AfterReadHook | null
 ): Promise<BuildResult> {
   const now = clock()
+  // `built_at` holds when the game's last build began, since every build
+  // stores this `now`.
+  const gapStart = new Date(now.getTime() - BUILD_GAP_MS)
   // Object box so catch can read the pick; a `let` assigned only inside the
   // transaction callback is narrowed to `null`/`never` by control-flow analysis.
   const picked = { gameId: null as string | null, gen: 0 }
 
   try {
     const outcome = await db.transaction().execute(async trx => {
+      // Walked in `requested_at` order down the owed index, stopping at the
+      // first game that may build. No join: a game's status is looked up
+      // only for one still inside its gap, so a seeded history of thousands
+      // owed costs what one owed game does.
       let query = trx
         .selectFrom('game_stats_state')
         .select(['game_id', 'requested_generation'])
         .whereRef('requested_generation', '>', 'built_generation')
         .where(eb =>
           eb.or([eb('retry_at', 'is', null), eb('retry_at', '<=', now)])
+        )
+        .where(eb =>
+          eb.or([
+            eb('built_at', 'is', null),
+            eb('built_at', '<=', gapStart),
+            eb(statusOfGame, '=', 'final')
+          ])
         )
         .orderBy('requested_at', 'asc')
         .orderBy('game_id', 'asc')
@@ -402,18 +427,34 @@ async function markFailed(
   )
 }
 
-/** Earliest future `retry_at` among games still owed, or null. */
+/**
+ * The earliest future moment a game still owed may build, or null: its
+ * `retry_at`, or for a game not yet final the end of the gap after its last
+ * build began, whichever is later.
+ */
 export async function earliestRetryAt(
   db: Kysely<Database>,
   clock: Clock
 ): Promise<Date | null> {
   const now = clock()
+  const gapStart = new Date(now.getTime() - BUILD_GAP_MS)
+  // The gap holds only a game built in the last few seconds and not final;
+  // its status is looked up for that game alone. A game never built has a
+  // null `built_at`, which must read as false here, or the null would make
+  // `and` ask every such game's status.
+  const inGap = sql<boolean>`(coalesce(game_stats_state.built_at > ${gapStart}, false)
+    and ${statusOfGame} <> 'final')`
+  const opens = sql<Date | null>`greatest(
+    game_stats_state.retry_at,
+    case when ${inGap}
+      then game_stats_state.built_at + make_interval(secs => ${BUILD_GAP_MS / 1000})
+    end
+  )`
   const row = await db
     .selectFrom('game_stats_state')
-    .select(eb => eb.fn.min('retry_at').as('next'))
+    .select(eb => eb.fn.min(opens).as('next'))
     .whereRef('requested_generation', '>', 'built_generation')
-    .where('retry_at', 'is not', null)
-    .where('retry_at', '>', now)
+    .where(eb => eb.or([eb('retry_at', '>', now), eb(inGap, '=', true)]))
     .executeTakeFirst()
   if (row?.next == null) return null
   return new Date(row.next)

@@ -21,7 +21,13 @@ import type { Database, GamePlayerStatsTable } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
 import { statRows } from '../stats/rows'
-import { type AfterReadHook, buildNext, drain } from './builder'
+import {
+  type AfterReadHook,
+  BUILD_GAP_MS,
+  buildNext,
+  drain,
+  earliestRetryAt
+} from './builder'
 import { requestGameStats } from './request'
 import { gameStatsStatus } from './status'
 
@@ -89,6 +95,10 @@ describe('statsBuilder drain', function () {
   const otherBatter = mint()
   let clockNow = new Date('2026-09-25T12:00:00.000Z')
   const clock = (): Date => new Date(clockNow)
+  /** Past a live game's gap after its last build, so it builds again. */
+  const pastGap = (): void => {
+    clockNow = new Date(clockNow.getTime() + BUILD_GAP_MS)
+  }
 
   before(async function () {
     attachInt8Parser()
@@ -207,6 +217,7 @@ describe('statsBuilder drain', function () {
       .set(eb => ({ requested_generation: eb('requested_generation', '+', 1) }))
       .where('game_id', '=', gameId)
       .execute()
+    pastGap()
     await drain(db, clock)
     expect(
       await db
@@ -237,6 +248,7 @@ describe('statsBuilder drain', function () {
       awayTeamId: away,
       plays: [{ gumbo: paPlay(batter, pitcher), source: 'manual' }]
     })
+    pastGap()
     await drain(db, clock)
     rows = await statRows(db, { gameId })
     expect(
@@ -246,6 +258,7 @@ describe('statsBuilder drain', function () {
       rows.find(row => row.userId === userIdOfGumbo(pitcher))!.extra?.pitches
     ).equals(null)
     await requestGameStats(db, gameId)
+    pastGap()
     await drain(db, clock)
     expect(await statRows(db, { gameId })).deep.equals(rows)
   })
@@ -287,6 +300,7 @@ describe('statsBuilder drain', function () {
       awayTeamId: away,
       plays: [{ gumbo: paPlay(batter, pitcher), source: 'manual' }]
     })
+    pastGap()
     await drain(db, clock)
     const ids = (
       await db
@@ -316,6 +330,7 @@ describe('statsBuilder drain', function () {
       awayTeamId: away,
       plays: [{ gumbo: bad, source: 'manual' }]
     })
+    pastGap()
     await drain(db, clock)
     const state = await db
       .selectFrom('game_stats_state')
@@ -343,6 +358,7 @@ describe('statsBuilder drain', function () {
       awayTeamId: away,
       plays: []
     })
+    pastGap()
     await drain(db, clock)
     const state = await gameStatsStatus(db, gameId)
     expect(state.status).equals('built')
@@ -376,6 +392,7 @@ describe('statsBuilder drain', function () {
     // Must not advertise built over the stale play snapshot we just wrote.
     expect(state.status).equals('pending')
 
+    pastGap()
     await drain(db, clock)
     state = await db
       .selectFrom('game_stats_state')
@@ -900,6 +917,183 @@ describe('statsBuilder drain', function () {
           .executeTakeFirstOrThrow()
       ).status
     ).equals('built')
+  })
+
+  /** A game in progress, built once at the clock, and the gens built since. */
+  async function builtLiveGame(plays: GumboPlay[]): Promise<{
+    gameId: string
+    builds: number[]
+    count: AfterReadHook
+  }> {
+    const gameId = await seedGame(plays)
+    await db
+      .updateTable('games')
+      .set({ status: 'inProgress' })
+      .where('id', '=', gameId)
+      .execute()
+    const builds: number[] = []
+    const count: AfterReadHook = async ({ gameId: current, gen }) => {
+      if (current === gameId) builds.push(gen)
+    }
+    await drain(db, clock, count)
+    expect(builds).deep.equals([1])
+    return { gameId, builds, count }
+  }
+
+  async function stateOf(
+    gameId: string
+  ): Promise<Selectable<Database['game_stats_state']>> {
+    return await db
+      .selectFrom('game_stats_state')
+      .selectAll()
+      .where('game_id', '=', gameId)
+      .executeTakeFirstOrThrow()
+  }
+
+  it("builds a live game once for five requests within 3 s of a build that has just begun, at the gap's end, at the last generation", async function () {
+    const began = clockNow.getTime()
+    const plays = [paPlay(batter, pitcher)]
+    const { gameId, builds, count } = await builtLiveGame(plays)
+
+    // Five posts, each a new plate appearance, while that build's gap runs.
+    for (let post = 1; post <= 5; post++) {
+      clockNow = new Date(began + post * 500)
+      plays.push(
+        paPlay(post % 2 === 0 ? batter : otherBatter, pitcher, {
+          atBatIndex: post
+        })
+      )
+      await replaceGameEvents(db, {
+        gameId,
+        homeTeamId: home,
+        awayTeamId: away,
+        plays: plays.map(gumbo => ({ gumbo, source: 'manual' as const }))
+      })
+      await drain(db, clock, count)
+    }
+    expect(builds).deep.equals([1])
+    let state = await stateOf(gameId)
+    expect(Number(state.requested_generation)).equals(6)
+    expect(Number(state.built_generation)).equals(1)
+    expect(state.status).equals('pending')
+    expect(await earliestRetryAt(db, clock)).deep.equals(
+      new Date(began + BUILD_GAP_MS)
+    )
+
+    clockNow = new Date(began + BUILD_GAP_MS - 1)
+    await drain(db, clock, count)
+    expect(builds).deep.equals([1])
+
+    clockNow = new Date(began + BUILD_GAP_MS)
+    await drain(db, clock, count)
+    expect(builds).deep.equals([1, 6])
+    state = await stateOf(gameId)
+    expect(Number(state.built_generation)).equals(6)
+    expect(state.status).equals('built')
+    expect(new Date(state.built_at!).toISOString()).equals(
+      clockNow.toISOString()
+    )
+    const rows = await db
+      .selectFrom('game_player_stats')
+      .select(['gumbo_id', 'pa', 'pitch_bf'])
+      .where('game_id', '=', gameId)
+      .execute()
+    const lines = new Map(rows.map(row => [Number(row.gumbo_id), row]))
+    expect(lines.get(batter)?.pa).equals(3)
+    expect(lines.get(otherBatter)?.pa).equals(3)
+    expect(lines.get(pitcher)?.pitch_bf).equals(6)
+    expect(await earliestRetryAt(db, clock)).equals(null)
+  })
+
+  it('builds a live game at once on a request after a 3 s quiet period', async function () {
+    const began = clockNow.getTime()
+    const { gameId, builds, count } = await builtLiveGame([
+      paPlay(batter, pitcher)
+    ])
+    clockNow = new Date(began + BUILD_GAP_MS + 2000)
+    await requestGameStats(db, gameId)
+    expect(await earliestRetryAt(db, clock)).equals(null)
+    await drain(db, clock, count)
+    expect(builds).deep.equals([1, 2])
+    const state = await stateOf(gameId)
+    expect(state.status).equals('built')
+    expect(new Date(state.built_at!).toISOString()).equals(
+      clockNow.toISOString()
+    )
+  })
+
+  it('builds a final game at once, whatever the gap', async function () {
+    const began = clockNow.getTime()
+    const { gameId, builds, count } = await builtLiveGame([
+      paPlay(batter, pitcher)
+    ])
+    clockNow = new Date(began + 500)
+    await db
+      .updateTable('games')
+      .set({ status: 'final' })
+      .where('id', '=', gameId)
+      .execute()
+    await requestGameStats(db, gameId)
+    expect(await earliestRetryAt(db, clock)).equals(null)
+    await drain(db, clock, count)
+    expect(builds).deep.equals([1, 2])
+    expect((await stateOf(gameId)).status).equals('built')
+  })
+
+  it('leaves the generation owed when a build after the gap fails', async function () {
+    const doomed = mint()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(doomed),
+      legacyId: legacies.get(doomed)!,
+      display_name: 'Doomed',
+      created_at: new Date(),
+      updated_at: new Date()
+    })
+    const began = clockNow.getTime()
+    const { gameId, builds, count } = await builtLiveGame([
+      paPlay(batter, pitcher)
+    ])
+    const deleteDoomed: AfterReadHook = async args => {
+      await count(args)
+      if (args.gameId !== gameId) return
+      await args.db
+        .deleteFrom('users')
+        .where('id', '=', userIdOfGumbo(doomed))
+        .execute()
+    }
+    clockNow = new Date(began + 1000)
+    await replaceGameEvents(db, {
+      gameId,
+      homeTeamId: home,
+      awayTeamId: away,
+      plays: [
+        paPlay(batter, pitcher),
+        paPlay(doomed, pitcher, { atBatIndex: 1 })
+      ].map(gumbo => ({ gumbo, source: 'manual' as const }))
+    })
+    await drain(db, clock, deleteDoomed)
+    expect(builds).deep.equals([1])
+
+    clockNow = new Date(began + BUILD_GAP_MS)
+    await drain(db, clock, deleteDoomed)
+    expect(builds).deep.equals([1, 2])
+    const failed = await stateOf(gameId)
+    expect(failed.status).equals('failed')
+    expect(Number(failed.requested_generation)).equals(2)
+    expect(Number(failed.built_generation)).equals(1)
+    expect(new Date(failed.built_at!).getTime()).equals(began)
+    const retryAt = new Date(clockNow.getTime() + 60_000)
+    expect(new Date(failed.retry_at!).toISOString()).equals(
+      retryAt.toISOString()
+    )
+    expect(await earliestRetryAt(db, clock)).deep.equals(retryAt)
+
+    clockNow = retryAt
+    await drain(db, clock, count)
+    expect(builds).deep.equals([1, 2, 2])
+    const built = await stateOf(gameId)
+    expect(built.status).equals('built')
+    expect(Number(built.built_generation)).equals(2)
   })
 
   it('gameStatsStatus returns each status and none', async function () {
