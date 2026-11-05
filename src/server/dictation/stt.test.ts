@@ -564,6 +564,7 @@ describe('pooled voice recognition', () => {
   })
 
   it('reports an error from xAI once, redacted, on the same socket', () => {
+    // One key in a pool takes the single-key path, which redacts as well.
     const h = pooled(['secret-key'])
     h.session.retarget([])
     const socket = h.sockets[0].ready()
@@ -646,14 +647,26 @@ describe('pooled voice recognition', () => {
     expect(empty.sockets).length(0)
     expect(empty.events).deep.equals(['error No API keys are configured'])
     empty.session.close()
+    // Past the replay buffer a hold goes on, but no longer moves to another key.
     const full = pooled()
     full.session.begin()
     full.session.write(Buffer.alloc(4 * 1024 * 1024 + 1))
-    expect(full.events).deep.equals(['error The voice request is too long'])
-    expect(full.sockets[0].closed).equals(true)
-    full.session.begin()
-    expect(full.sockets).length(2)
+    expect(full.events).deep.equals([])
+    expect(full.sockets[0].closed).equals(false)
+    full.sockets[0].emit('close')
+    expect(full.events).deep.equals([
+      'error The recogniser could not be reached'
+    ])
+    expect(full.sockets).length(1)
     full.session.close()
+    // A pool of one has nothing to replay on, and keeps no buffer at all.
+    const one = pooled(['only'])
+    one.session.begin()
+    one.session.write(Buffer.alloc(4 * 1024 * 1024 + 2))
+    one.session.end()
+    one.sockets[0].ready().partial('Long.', true)
+    expect(one.events).deep.equals(['final Long.'])
+    one.session.close()
   })
 })
 

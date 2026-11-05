@@ -1,7 +1,7 @@
 import WebSocket from 'ws'
 
-import type { ApiKeyPool } from '../../common/aiKeys'
-import { retryableStatus, shuffledKeys } from '../aiKeyFallback'
+import { type ApiKeyPool, normalizedKeys } from '../../common/aiKeys'
+import { redacted, retryableStatus, shuffledKeys } from '../aiKeyFallback'
 
 /**
  * Speech to text, streamed to xAI's dictation model.
@@ -148,6 +148,9 @@ type SttFailure =
 
 const HANDSHAKE_TIMEOUT_MS = 10000
 
+/** One session's options: a single key from the pool. */
+type OneKeyOptions = Omit<SttOptions, 'apiKey'> & { apiKey: string }
+
 /**
  * The recogniser for one dictation connection on one key. Given `report`, it
  * serves a key pool: failures go there, typed, in place of `onError`, a hold
@@ -162,7 +165,7 @@ class SingleKeySttSession {
   private closed = false
 
   constructor(
-    private readonly options: SttOptions,
+    private readonly options: OneKeyOptions,
     private readonly handlers: SttHandlers,
     private readonly report?: (failure: SttFailure) => void
   ) {}
@@ -246,7 +249,7 @@ class SingleKeySttSession {
       this.options.model ?? DEFAULT_STT_MODEL,
       terms
     )
-    const headers = { Authorization: `Bearer ${String(this.options.apiKey)}` }
+    const headers = { Authorization: `Bearer ${this.options.apiKey}` }
     const connect =
       this.options.connect ??
       ((to: string, with_: Record<string, string>) =>
@@ -290,7 +293,7 @@ class SingleKeySttSession {
     if (message.type === 'error') {
       const text =
         typeof message.message === 'string'
-          ? message.message
+          ? redacted(message.message, this.options.apiKey)
           : 'The recogniser failed'
       if (utterance != null)
         this.fail(text, { kind: 'provider', message: text })
@@ -393,11 +396,6 @@ function parse(data: unknown): Record<string, unknown> | null {
 /** The most audio a pooled hold keeps for replay on another key. */
 const MAX_REPLAY_BYTES = 4 * 1024 * 1024
 
-/** Provider text may quote what it was sent: never the key, never at length. */
-function redacted(message: string, key: string): string {
-  return message.split(key).join('[redacted]').slice(0, 200)
-}
-
 /**
  * The recogniser for one dictation connection. The route calls `retarget`
  * whenever the client sends key terms, `begin`, `write` and `end` for each
@@ -421,6 +419,8 @@ export class SttSession {
   private terms: readonly string[] = []
   private frames: Buffer[] = []
   private bytes = 0
+  /** False once the hold outgrew the replay buffer: it stays on its key. */
+  private replayable = true
   private ended = false
   private active = false
   private showedPartial = false
@@ -430,8 +430,13 @@ export class SttSession {
     private readonly options: SttOptions,
     private readonly handlers: SttHandlers
   ) {
-    if (typeof options.apiKey === 'string')
-      this.legacy = new SingleKeySttSession(options, handlers)
+    // One key has nothing to fail over to: no replay buffer, no cap.
+    const keys = normalizedKeys(options.apiKey)
+    if (keys.length === 1)
+      this.legacy = new SingleKeySttSession(
+        { ...options, apiKey: keys[0] },
+        handlers
+      )
   }
 
   retarget(terms: readonly string[]): void {
@@ -461,6 +466,7 @@ export class SttSession {
     }
     this.frames = []
     this.bytes = 0
+    this.replayable = true
     this.ended = false
     this.showedPartial = false
     this.active = true
@@ -492,12 +498,10 @@ export class SttSession {
     if (!this.active || this.ended) return
     this.bytes += pcm.length
     if (this.bytes > MAX_REPLAY_BYTES) {
-      // The attempt holds part of the hold's audio: start the next on a clean socket.
-      this.dropAttempt()
-      this.give('The voice request is too long')
-      return
-    }
-    this.frames.push(Buffer.from(pcm))
+      // Too long to keep: the hold goes on, but cannot move to another key.
+      this.replayable = false
+      this.frames = []
+    } else if (this.replayable) this.frames.push(Buffer.from(pcm))
     this.attempt?.write(pcm)
   }
 
@@ -568,7 +572,7 @@ export class SttSession {
     if (attempt !== this.attempt || !this.active) return
     if (failure.kind === 'provider') {
       // The socket is still up, and no other key would hear the audio differently.
-      this.give(redacted(failure.message, key))
+      this.give(failure.message)
       return
     }
     // Refused, lost or hung: the next hold on this key starts on a new socket.
@@ -586,9 +590,9 @@ export class SttSession {
       this.give(message)
       return
     }
-    const next = this.untried.shift()
+    const next = this.replayable ? this.untried.shift() : undefined
     if (next == null) {
-      // Every key failed this hold: the next one starts from a fresh shuffle.
+      // No key left for this hold: the next one starts from a fresh shuffle.
       this.key = undefined
       this.give(message)
       return
