@@ -1257,7 +1257,7 @@ async function main(): Promise<void> {
           await m.screenshot()
         )
         await m.openLink({
-          link: `${fixture.scheme}:/chat/${input.conversationId}/members`
+          link: `${fixture.scheme}://chat/${input.conversationId}/members`
         })
         const safetyLabel = await until(
           'The real member safety action must be available',
