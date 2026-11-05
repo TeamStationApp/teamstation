@@ -98,6 +98,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/dictation/route.js',
   'server/dictation/scopes.js',
   'server/dictation/stt.js',
+  'server/director/cancelInterrupted.e2e.js',
   'server/director/discard.js',
   'server/director/purge.js',
   'server/director/runGames.js',
