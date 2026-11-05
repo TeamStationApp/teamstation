@@ -21,9 +21,17 @@ import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { startFakeSpace } from '../dev/fakeSpace'
-import { deleteVideoIfThere, finishDiscards } from '../director/discard'
+import {
+  deleteVideoIfThere,
+  finishDiscards,
+  finishGivenUpUploads
+} from '../director/discard'
 import { purgeReplacedRecordings } from '../director/purge'
-import { PART_SIZE, uploadDir } from '../director/uploads'
+import {
+  PART_SIZE,
+  reopenInterruptedUploads,
+  uploadDir
+} from '../director/uploads'
 import {
   beganPublishing,
   handleLiveEventForTest,
@@ -3967,6 +3975,496 @@ describe('phones and Directors asking for their streams by device', function () 
           expect((await uploadRow(id)).state).equals('abandoned')
           expect(await programs(gameId)).deep.equals([])
           expect(await onDisk(id)).equals(false)
+        })
+
+        /** An upload whose take-in made its video, in the state given. */
+        const withVideo = async (
+          gameId: string,
+          streamId: string,
+          state: 'open' | 'assembling' | 'failed' | 'abandoned',
+          step: string | null = null
+        ): Promise<{ id: string; video: string }> => {
+          const id = await open(gameId, streamId)
+          await send(id)
+          const video = await addVideo(gameId)
+          await db!
+            .updateTable('director_uploads')
+            .set({ state, step, video_id: video })
+            .where('id', '=', id)
+            .execute()
+          return { id, video }
+        }
+        /** Until a request is waiting on a lock this transaction holds. */
+        const blockedBy = async (trx: Transaction<Database>): Promise<void> => {
+          const { rows: held } = await sql<{
+            pid: number
+          }>`select pg_backend_pid() as pid`.execute(trx)
+          const holder = held[0].pid
+          for (let tries = 0; tries < 500; tries += 1) {
+            const { rows } = await sql<{ count: string }>`
+              select count(*) as count from pg_stat_activity
+              where ${holder} = any(pg_blocking_pids(pid))`.execute(db!)
+            if (Number(rows[0].count) > 0) return
+            await new Promise(resolve => setTimeout(resolve, 10))
+          }
+          throw new Error('nothing waited on this transaction')
+        }
+        const liveHidden = async (
+          videoId: string
+        ): Promise<{ hidden: boolean; replacedBy: string | null }> =>
+          await db!
+            .selectFrom('videos')
+            .select(['hidden', 'replaced_by as replacedBy'])
+            .where('id', '=', videoId)
+            .executeTakeFirstOrThrow()
+
+        it('gives up the video of an upload a restart interrupted', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          // What a server stopped between writing the video on the row and
+          // marking it ready leaves: `assembling`, the video, the parts.
+          const { id, video } = await withVideo(
+            gameId,
+            camera.id,
+            'assembling',
+            'remuxing'
+          )
+          expect(await reopenInterruptedUploads(db)).greaterThan(0)
+          const reopened = await uploadRow(id)
+          expect(reopened.state).equals('open')
+          expect(reopened.video_id).equals(video)
+
+          const gaveUp = await call('DELETE', `/director/uploads/${id}`, OWNER)
+          expect(gaveUp.status).equals(204)
+          expect((await uploadRow(id)).state).equals('abandoned')
+          expect(await exists(video)).equals(false)
+          expect(await programs(gameId)).deep.equals([])
+          expect(await onDisk(id)).equals(false)
+          expect((await liveHidden(camera.videoId)).hidden).equals(false)
+        })
+
+        it('gives up the video when the take-in fails while the cancel waits for the row', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          const { id, video } = await withVideo(gameId, camera.id, 'assembling')
+          // The cancel reads the row as `assembling`, then waits for the lock
+          // the take-in's catch holds while it writes `failed`.
+          let gaveUp: Promise<{ status: number }> | undefined
+          await db.transaction().execute(async trx => {
+            await trx
+              .selectFrom('director_uploads')
+              .select('id')
+              .where('id', '=', id)
+              .forUpdate()
+              .execute()
+            gaveUp = call('DELETE', `/director/uploads/${id}`, OWNER)
+            await blockedBy(trx)
+            await trx
+              .updateTable('director_uploads')
+              .set({ state: 'failed', message: 'not a video' })
+              .where('id', '=', id)
+              .execute()
+          })
+          expect((await gaveUp!).status).equals(204)
+          expect((await uploadRow(id)).state).equals('abandoned')
+          expect(await exists(video)).equals(false)
+          expect(await programs(gameId)).deep.equals([])
+        })
+
+        it('gives up the video when a cancel whose delete failed is sent again', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          const { id, video } = await withVideo(gameId, camera.id, 'failed')
+          // The Space refuses the listing the video's delete starts with.
+          store!.faults.set({ method: 'GET', status: 500 })
+          const first = await call('DELETE', `/director/uploads/${id}`, OWNER)
+          expect(first.status).equals(500)
+          expect((await uploadRow(id)).state).equals('abandoned')
+          expect(await exists(video)).equals(true)
+
+          store!.faults.clear()
+          const again = await call('DELETE', `/director/uploads/${id}`, OWNER)
+          expect(again.status).equals(204)
+          expect(await exists(video)).equals(false)
+          expect(await programs(gameId)).deep.equals([])
+        })
+
+        it('refuses a finish that waits on a cancel, and takes nothing in', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          const path = `/games/${gameId}/live-streams/${camera.id}`
+          await call('PATCH', path, OWNER, { localRecording: 'recorded' })
+          // Reopened after a restart, with the video its take-in made: a
+          // take-in would reuse it and replace the whole stream at once.
+          const { id } = await withVideo(gameId, camera.id, 'open')
+          await wholeStream(id)
+          let finished: Promise<{ status: number; body: Body }> | undefined
+          await db.transaction().execute(async trx => {
+            await trx
+              .selectFrom('director_uploads')
+              .select('id')
+              .where('id', '=', id)
+              .forUpdate()
+              .execute()
+            finished = call('POST', `/director/uploads/${id}/finish`, OWNER)
+            await blockedBy(trx)
+            // What the cancel commits while the finish waits for the row.
+            await trx
+              .updateTable('director_uploads')
+              .set({ state: 'abandoned' })
+              .where('id', '=', id)
+              .execute()
+          })
+          const answer = await finished!
+          expect(answer.status).equals(400)
+          expect(String(answer.body.message)).equals(
+            'This upload is abandoned.'
+          )
+          for (let tries = 0; tries < 200; tries += 1) {
+            await new Promise(resolve => setTimeout(resolve, 10))
+          }
+          expect((await uploadRow(id)).state).equals('abandoned')
+          expect(await liveHidden(camera.videoId)).deep.equals({
+            hidden: false,
+            replacedBy: null
+          })
+        })
+
+        it('answers a finish that waits on a take-in finishing as one asked twice', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          const { id, video } = await withVideo(gameId, camera.id, 'failed')
+          let finished: Promise<{ status: number; body: Body }> | undefined
+          await db.transaction().execute(async trx => {
+            await trx
+              .selectFrom('director_uploads')
+              .select('id')
+              .where('id', '=', id)
+              .forUpdate()
+              .execute()
+            finished = call('POST', `/director/uploads/${id}/finish`, OWNER)
+            await blockedBy(trx)
+            // An earlier finish's take-in, on the same video, getting there
+            // first.
+            await trx
+              .updateTable('director_uploads')
+              .set({ state: 'ready', step: null })
+              .where('id', '=', id)
+              .execute()
+          })
+          const answer = await finished!
+          expect(answer.status).equals(200)
+          expect(answer.body).deep.equals({ videoId: video, state: 'ready' })
+          expect((await uploadRow(id)).state).equals('ready')
+          expect(await programs(gameId)).deep.equals([video])
+        })
+
+        it('leaves the row as it was when the finish is refused the game', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          const { id } = await withVideo(gameId, camera.id, 'failed')
+          // A game nobody here films, so the finish is refused it.
+          const now = new Date()
+          const [home, away] = [makeId('team'), makeId('team')]
+          for (const team of [home, away]) {
+            await db
+              .insertInto('teams')
+              .values({
+                id: team,
+                name: team,
+                created_at: now,
+                updated_at: now
+              })
+              .execute()
+          }
+          const elsewhere = makeId('game')
+          await db
+            .insertInto('games')
+            .values({
+              id: elsewhere,
+              home_team_id: home,
+              away_team_id: away,
+              start_at: now,
+              created_at: now,
+              updated_at: now
+            })
+            .execute()
+          await db
+            .updateTable('director_uploads')
+            .set({ game_id: elsewhere })
+            .where('id', '=', id)
+            .execute()
+
+          const refused = await call(
+            'POST',
+            `/director/uploads/${id}/finish`,
+            OWNER
+          )
+          expect(refused.status).equals(404)
+          const row = await uploadRow(id)
+          expect(row.state).equals('failed')
+          expect(row.step).equals(null)
+        })
+
+        it('takes an upload in from the row it claimed, with the video another try wrote', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          const id = await open(gameId, camera.id)
+          await send(id)
+          await db
+            .updateTable('director_uploads')
+            .set({ state: 'failed' })
+            .where('id', '=', id)
+            .execute()
+          let ingests = 0
+          ingesting = async options => {
+            ingests += 1
+            return await addVideo(options.gameId)
+          }
+          const other = await addVideo(gameId)
+          let asked: Promise<{ status: number; body: Body }> | undefined
+          await db.transaction().execute(async trx => {
+            await trx
+              .selectFrom('director_uploads')
+              .select('id')
+              .where('id', '=', id)
+              .forUpdate()
+              .execute()
+            asked = call('POST', `/director/uploads/${id}/finish`, OWNER)
+            await blockedBy(trx)
+            // Another finish's take-in made its video, and failed after it.
+            await trx
+              .updateTable('director_uploads')
+              .set({ video_id: other })
+              .where('id', '=', id)
+              .execute()
+          })
+          expect((await asked!).status).equals(202)
+          const row = await settled(id)
+          expect(row.state).equals('ready')
+          expect(row.video_id).equals(other)
+          expect(ingests).equals(0)
+          expect(await programs(gameId)).deep.equals([other])
+        })
+
+        it('says an upload given up on while it was finished is abandoned, not short of parts', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          const id = await open(gameId, camera.id)
+          await send(id)
+          let finished: Promise<{ status: number; body: Body }> | undefined
+          await db.transaction().execute(async trx => {
+            // The finish has read the row and waits to ask after its camera;
+            // the cancel lands then, and takes the parts.
+            await sql`lock table live_streams in access exclusive mode`.execute(
+              trx
+            )
+            finished = call('POST', `/director/uploads/${id}/finish`, OWNER)
+            await blockedBy(trx)
+            await trx
+              .updateTable('director_uploads')
+              .set({ state: 'abandoned' })
+              .where('id', '=', id)
+              .execute()
+            await rm(uploadDir(uploadsDir, id), {
+              recursive: true,
+              force: true
+            })
+          })
+          const answer = await finished!
+          expect(answer.status).equals(400)
+          expect(String(answer.body.message)).equals(
+            'This upload is abandoned.'
+          )
+          expect((await uploadRow(id)).state).equals('abandoned')
+        })
+
+        it('names the video on the row in the commit that makes it, so a cancel after a failure deletes it', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          const id = await open(gameId, camera.id)
+          await send(id)
+          let made = ''
+          // The video's row is written, and then the take-in stops before
+          // its own write of the video on the upload.
+          ingesting = async options => {
+            made = makeId('video')
+            await db!.transaction().execute(async trx => {
+              await trx
+                .insertInto('videos')
+                .values({
+                  id: made,
+                  game_id: options.gameId,
+                  kind: 'program',
+                  title: 'What the app called it',
+                  storage: 'local',
+                  status: 'ready',
+                  hidden: false,
+                  duration_sec: 600,
+                  created_at: new Date(),
+                  updated_at: new Date()
+                })
+                .execute()
+              await options.onWritten?.(trx, made)
+            })
+            throw new Error('stopped after the video was made')
+          }
+          await finish(id)
+          const failed = await settled(id)
+          expect(failed.state).equals('failed')
+          expect(failed.video_id).equals(made)
+
+          const gaveUp = await call('DELETE', `/director/uploads/${id}`, OWNER)
+          expect(gaveUp.status).equals(204)
+          expect(await exists(made)).equals(false)
+          expect(await programs(gameId)).deep.equals([])
+        })
+
+        it('finishes on its own the delete a cancel could not', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          const { id, video } = await withVideo(gameId, camera.id, 'failed')
+          store!.faults.set({ method: 'GET', status: 500 })
+          const first = await call('DELETE', `/director/uploads/${id}`, OWNER)
+          expect(first.status).equals(500)
+          expect((await uploadRow(id)).video_id).equals(video)
+          expect(await exists(video)).equals(true)
+
+          // Nobody asks again: the server's own sweep finishes it.
+          store!.faults.clear()
+          await finishDiscards({
+            db,
+            space: SPACE,
+            mediaRoot: uploadsDir,
+            uploadsDir
+          })
+          expect(await exists(video)).equals(false)
+          expect((await uploadRow(id)).video_id).equals(null)
+          expect(await programs(gameId)).deep.equals([])
+        })
+
+        it('goes on past a given-up upload whose video will not delete', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          // A recording from the old server, which this one refuses to
+          // delete, ahead of one it can.
+          const stuck = await withVideo(gameId, camera.id, 'abandoned')
+          await db
+            .updateTable('videos')
+            .set({ storage: 'peertube' })
+            .where('id', '=', stuck.video)
+            .execute()
+          const freed = await withVideo(gameId, camera.id, 'abandoned')
+
+          await finishGivenUpUploads({
+            db,
+            space: SPACE,
+            mediaRoot: uploadsDir
+          })
+          expect(await exists(stuck.video)).equals(true)
+          expect((await uploadRow(stuck.id)).video_id).equals(stuck.video)
+          expect(await exists(freed.video)).equals(false)
+        })
+
+        it('deletes the video a take-in named on the row, when it fails after a cancel', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          const id = await open(gameId, camera.id)
+          await send(id)
+          let made = ''
+          // Given up while it assembled, then the ingest fails after the
+          // commit that wrote its video and named it on the row.
+          ingesting = async options => {
+            made = makeId('video')
+            await db!.transaction().execute(async trx => {
+              await trx
+                .insertInto('videos')
+                .values({
+                  id: made,
+                  game_id: options.gameId,
+                  kind: 'program',
+                  title: 'What the app called it',
+                  storage: 'local',
+                  status: 'ready',
+                  hidden: false,
+                  duration_sec: 600,
+                  created_at: new Date(),
+                  updated_at: new Date()
+                })
+                .execute()
+              await options.onWritten?.(trx, made)
+            })
+            const gaveUp = await call(
+              'DELETE',
+              `/director/uploads/${id}`,
+              OWNER
+            )
+            expect(gaveUp.status).equals(204)
+            throw new Error('the commit was not acknowledged')
+          }
+          await finish(id)
+          expect((await settled(id)).state).equals('abandoned')
+          for (let tries = 0; tries < 200; tries += 1) {
+            if (!(await exists(made))) break
+            await new Promise(resolve => setTimeout(resolve, 10))
+          }
+          expect(await exists(made)).equals(false)
+          expect(await programs(gameId)).deep.equals([])
+        })
+
+        it('gives up the video of an upload left assembling with no take-in behind it', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          // What a worker that died mid take-in leaves: nothing will move it.
+          const { id, video } = await withVideo(gameId, camera.id, 'assembling')
+          const gaveUp = await call('DELETE', `/director/uploads/${id}`, OWNER)
+          expect(gaveUp.status).equals(204)
+          expect((await uploadRow(id)).state).equals('abandoned')
+          expect(await exists(video)).equals(false)
+          expect(await programs(gameId)).deep.equals([])
+        })
+
+        it('leaves a deleted camera’s given-up upload to the camera’s delete, keeping its live video hidden', async function () {
+          if (db == null) this.skip()
+          const gameId = await newGame()
+          const camera = await endedCamera(gameId)
+          const { video } = await withVideo(gameId, camera.id, 'abandoned')
+          // The upload had replaced the camera's live video, and the camera's
+          // delete has begun.
+          await db
+            .updateTable('videos')
+            .set({ hidden: true, replaced_by: video })
+            .where('id', '=', camera.videoId)
+            .execute()
+          await db
+            .updateTable('live_streams')
+            .set({ discarded_at: new Date() })
+            .where('id', '=', camera.id)
+            .execute()
+
+          await finishGivenUpUploads({
+            db,
+            space: SPACE,
+            mediaRoot: uploadsDir
+          })
+          expect(await exists(video)).equals(true)
+          expect(await liveHidden(camera.videoId)).deep.equals({
+            hidden: true,
+            replacedBy: video
+          })
         })
 
         it('stays ready when settling the copy fails after it', async function () {

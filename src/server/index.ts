@@ -322,7 +322,8 @@ const DISCARD_SWEEP_INTERVAL_MS = 60 * 60 * 1000
 
 /**
  * Finishes the deletes of cameras that left the list with something still to
- * delete, on the way up and then every hour.
+ * delete, and of uploads given up on that still name a video, on the way up
+ * and then every hour.
  */
 function startDiscardSweep(db: ReturnType<typeof makeDatabase>): void {
   const sweep = (): void => {
