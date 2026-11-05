@@ -647,6 +647,8 @@
         "Scoreboard settings",
         "Loading the node's settings…",
         "Retry",
+        "AI API keys",
+        "Enter one API key per line. Leave a field empty to turn that service off.",
         "Where the scoreboard sits over video: top, left and height are percentages of the video, from its top-left corner. The height is the full board&apos;s; its width follows the team names. It shows for games starting on or after the date, in UTC.",
         "Four-angle portrait",
         "Radar matching",
