@@ -89,7 +89,7 @@ import {
   pitchingLines,
   pitchingRates
 } from '../stats'
-import { boxScoreOrder, pitchingOrder } from '../stats/boxScoreOrder'
+import { boxScoreOrder, gamePlays, pitchingOrder } from '../stats/boxScoreOrder'
 import { teamRecords } from '../stats/records'
 import { statRows } from '../stats/rows'
 import { gameStatsStatus } from '../statsBuilder/status'
@@ -1168,8 +1168,12 @@ export function teamRoutes(
         gumboIds.set(row.userId, ids)
       }
 
+      // The pitchers' order always needs the game's plays, and the batters'
+      // order needs them while a line has no first appearance: one read
+      // serves both.
+      const plays = await gamePlays(db, gameId)
       const pitching = (
-        await pitchingOrder(db, gameId, pitchingLines(rows))
+        await pitchingOrder(db, gameId, pitchingLines(rows), plays)
       ).map(line => ({
         ...line,
         userId: publicUserId(line.userId),
@@ -1179,7 +1183,7 @@ export function teamRoutes(
         ip: inningsPitched(line.outs),
         rates: pitchingRates(line)
       }))
-      const lines = await boxScoreOrder(db, gameId, battingLines(rows))
+      const lines = await boxScoreOrder(db, gameId, battingLines(rows), plays)
       // The batter a withdrawn line stands in for in this game, so an order
       // that still names him shows the line, not his name beside it. The
       // game's plays name him already.
