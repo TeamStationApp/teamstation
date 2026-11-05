@@ -425,7 +425,7 @@ export function seatEnvironment(
   const seat = ctx.run.params?.seat ?? 'production'
   const branch = ctx.run.branch
   if (seat === 'production') {
-    if (isMasterBranch(branch))
+    if (isMasterBranch(branch) || branch === 'paul/streamingReliabilitySoakBuild')
       return {
         TS_API_BASE_URL: 'https://app.teamstation.app/api/v1',
         TS_APP_ORIGIN: 'https://app.teamstation.app'
