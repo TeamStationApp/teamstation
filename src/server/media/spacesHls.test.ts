@@ -601,17 +601,16 @@ describe('live playlists through Valkey', function () {
   }
   /** The subscription is in place: a notice published now is heard. */
   async function following(target = playback): Promise<void> {
-    await until(
-      'subscribed',
-      async () =>
-        (
-          await client.sendCommand([
-            'PUBSUB',
-            'NUMSUB',
-            livePlaylistChannel(prefix)
-          ])
-        )[1] > 0 && target.following != null
-    )
+    await until('subscribed', async () => {
+      const reply: unknown = await client.sendCommand([
+        'PUBSUB',
+        'NUMSUB',
+        livePlaylistChannel(prefix)
+      ])
+      return (
+        Array.isArray(reply) && Number(reply[1]) > 0 && target.following != null
+      )
+    })
     // The subscribe's own reply lands just after the server counts it.
     await new Promise(resolve => setTimeout(resolve, 50))
   }
