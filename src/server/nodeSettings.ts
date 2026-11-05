@@ -1,6 +1,5 @@
 import type { Kysely } from 'kysely'
 
-import { asAiKeys } from '../common/aiKeys'
 import { forbidden } from '../common/errors'
 import {
   asDate,
@@ -22,7 +21,12 @@ import {
   utcStartOf
 } from '../common/nodeSettings'
 import { requireNodeAdmin } from './admin/nodeAdministration'
-import { AI_KEYS_SETTING, aiKeys } from './aiKeys'
+import {
+  AI_KEYS_SETTING,
+  aiKeys,
+  aiKeysChange,
+  storedAiKeysValue
+} from './aiKeys'
 import { type Actor, isHumanSession } from './auth/sessions'
 import type { Database } from './db/database'
 import { forgetSettings, highlightSettings } from './settings'
@@ -182,10 +186,17 @@ export async function setNodeSettings(
   if (settings.aiKeys !== undefined && !isHumanSession(actor))
     throw forbidden('Sign in directly to change AI API keys')
   const { scoreboard, highlights, radar, replay } = settings
+  const writeAiKeys =
+    settings.aiKeys !== undefined && (await aiKeysChange(db, settings.aiKeys))
   const rows: Array<[string, unknown]> = [
-    ...(settings.aiKeys === undefined
+    ...(settings.aiKeys === undefined || !writeAiKeys
       ? []
-      : [[AI_KEYS_SETTING, asAiKeys(settings.aiKeys)] as [string, unknown]]),
+      : [
+          [AI_KEYS_SETTING, storedAiKeysValue(settings.aiKeys)] as [
+            string,
+            unknown
+          ]
+        ]),
     ...(replay == null
       ? []
       : [['replay.pitchSec', replay.pitchSec] as [string, unknown]]),

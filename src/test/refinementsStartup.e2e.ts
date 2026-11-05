@@ -351,6 +351,7 @@ async function startupSmoke(): Promise<void> {
       .values({
         key: 'ai.keys',
         value: JSON.stringify({
+          origin,
           anthropicChatbot: ['chat-placeholder'],
           anthropicScoring: ['score-placeholder'],
           xaiVoice: ['voice-placeholder']

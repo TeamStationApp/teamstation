@@ -469,6 +469,10 @@ describe('NodeSettingsCard API keys', () => {
     const fields = document.querySelectorAll('textarea')
     expect(fields).length(3)
     expect(fields[0].rows).equals(3)
+    // Saving other settings never sends the keys, so none are stored by it.
+    await press('Save')
+    expect(saves.at(-1)).not.has.property('aiKeys')
+    expect(text()).contains('Save unavailable')
     // The native setter is deliberately invoked with the textarea as its receiver.
     // eslint-disable-next-line @typescript-eslint/unbound-method
     const setter = Object.getOwnPropertyDescriptor(

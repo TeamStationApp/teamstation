@@ -8,7 +8,11 @@ import {
   httpOrigin,
   PRIMARY_HOST
 } from '../common/primaryUrl'
-import { asServerConfig, type ServerConfig } from './serverConfigSchema'
+import {
+  AI_DEFAULTS,
+  asServerConfig,
+  type ServerConfig
+} from './serverConfigSchema'
 
 export {
   asServerConfig,
@@ -69,8 +73,8 @@ export function tessSettings(
   if (apiKey == null || normalizedKeys(apiKey).length === 0) return null
   return {
     apiKey,
-    baseUrl: config.tess?.baseUrl ?? 'https://api.anthropic.com/v1',
-    model: config.tess?.model ?? 'claude-sonnet-5-5'
+    baseUrl: config.tess?.baseUrl ?? AI_DEFAULTS.anthropicBaseUrl,
+    model: config.tess?.model ?? AI_DEFAULTS.tessModel
   }
 }
 

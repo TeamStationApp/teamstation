@@ -5,7 +5,14 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { defaultNodeSettings } from '../common/nodeSettings'
 import { actor, type GroupFixture, groupFixture } from '../test/groupFixtures'
-import { aiKeys, aiSettings } from './aiKeys'
+import {
+  AI_KEYS_SETTING,
+  aiKeys,
+  aiSettings,
+  fileAiKeys,
+  storedAiKeys,
+  storedAiKeysValue
+} from './aiKeys'
 import { endpointFor } from './dictation/models'
 import { SttSession } from './dictation/stt'
 import { nodeSettings, setNodeSettings } from './nodeSettings'
@@ -131,7 +138,7 @@ describe('administrator API keys', function () {
     expect(await aiKeys(f.h.db)).deep.equals(pools)
     expect((await nodeSettings(f.h.db, actor(105))).aiKeys).deep.equals(pools)
   })
-  it('never uses administrator voice keys for legacy Grok scoring', async () => {
+  it('adds administrator voice keys to the file key for Grok scoring', async () => {
     await setNodeSettings(f.h.db, actor(105), {
       ...defaultNodeSettings,
       aiKeys: pools
@@ -141,12 +148,74 @@ describe('administrator API keys', function () {
     })
     const saved = (await aiSettings(f.h.db, legacy)).dictation!
     expect(saved.apiKey).deep.equals(pools.xaiVoice)
-    expect(endpointFor('grok-example', saved)?.apiKey).equals('legacy-scoring')
+    expect(endpointFor('grok-example', saved)?.apiKey).deep.equals([
+      'legacy-scoring',
+      ...pools.xaiVoice
+    ])
     const fresh = (await aiSettings(f.h.db, asServerConfig({}))).dictation!
-    expect(endpointFor('grok-example', fresh)).equals(undefined)
+    expect(endpointFor('grok-example', fresh)?.apiKey).deep.equals(
+      pools.xaiVoice
+    )
     expect(endpointFor('claude-example', fresh)?.apiKey).deep.equals(
       pools.anthropicScoring
     )
+  })
+  it('ignores pools another origin saved, and a row it cannot read', async () => {
+    const legacy = asServerConfig({ tess: { apiKey: 'file-chat' } })
+    const put = async (value: unknown): Promise<void> => {
+      await f.h.db
+        .insertInto('system_settings')
+        .values({ key: AI_KEYS_SETTING, value: JSON.stringify(value) })
+        .onConflict(oc =>
+          oc.column('key').doUpdateSet({ value: JSON.stringify(value) })
+        )
+        .execute()
+    }
+    await put(storedAiKeysValue(pools, 'https://elsewhere.example'))
+    expect(await storedAiKeys(f.h.db)).equals(undefined)
+    expect((await aiKeys(f.h.db, legacy)).anthropicChatbot).deep.equals([
+      'file-chat'
+    ])
+    expect((await aiSettings(f.h.db, legacy)).tess?.apiKey).equals('file-chat')
+    expect(await storedAiKeys(f.h.db, 'https://elsewhere.example')).deep.equals(
+      pools
+    )
+    await put({ ...storedAiKeysValue(pools), xaiVoice: 'not-a-pool' })
+    expect(await storedAiKeys(f.h.db)).equals(undefined)
+    expect((await nodeSettings(f.h.db, actor(105))).aiKeys).deep.equals(
+      await aiKeys(f.h.db)
+    )
+  })
+  it('stores nothing when a save repeats the file pools, and stores an edit', async () => {
+    const stored = async (): Promise<number> =>
+      (
+        await f.h.db
+          .selectFrom('system_settings')
+          .select('key')
+          .where('key', '=', AI_KEYS_SETTING)
+          .execute()
+      ).length
+    await setNodeSettings(f.h.db, actor(105), {
+      ...defaultNodeSettings,
+      aiKeys: fileAiKeys()
+    })
+    expect(await stored()).equals(0)
+    await setNodeSettings(f.h.db, actor(105), {
+      ...defaultNodeSettings,
+      aiKeys: pools
+    })
+    expect(await stored()).equals(1)
+    expect(await aiKeys(f.h.db)).deep.equals(pools)
+  })
+  it('offers dictation and speech keys together as the one voice pool', () => {
+    expect(
+      fileAiKeys(
+        asServerConfig({
+          dictation: { apiKey: ['dictation', 'shared'] },
+          speech: { apiKey: ['speech', 'shared'] }
+        })
+      ).xaiVoice
+    ).deep.equals(['dictation', 'shared', 'speech'])
   })
   it('restricts reads and writes, stores normalized arrays, and preserves keys for older clients', async () => {
     expect(
@@ -208,7 +277,7 @@ describe('administrator API keys', function () {
     expect(await aiKeys(f.h.db, legacy)).deep.equals({
       anthropicChatbot: ['chat'],
       anthropicScoring: ['score'],
-      xaiVoice: ['voice']
+      xaiVoice: ['voice', 'speech']
     })
     const before = await aiSettings(f.h.db, legacy)
     expect(before.tess?.apiKey).equals('chat')

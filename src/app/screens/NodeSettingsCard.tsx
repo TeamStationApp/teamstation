@@ -144,8 +144,11 @@ export function NodeSettingsCard({
     anthropicScoring: '',
     xaiVoice: ''
   })
+  // Only edited keys are sent, so saving other settings never stores them.
+  const [keysEdited, setKeysEdited] = useState(false)
   const showKeys = (keys: AiKeys | undefined): void => {
     if (keys == null) return
+    setKeysEdited(false)
     setKeyText({
       anthropicChatbot: keys.anthropicChatbot.join('\n'),
       anthropicScoring: keys.anthropicScoring.join('\n'),
@@ -222,9 +225,10 @@ export function NodeSettingsCard({
           normalizedKeys(text.split(/\r?\n/))
         ])
       ) as unknown as AiKeys
+      const { aiKeys: shown, ...rest } = settings
       const stored = await client.setNodeSettings({
-        ...settings,
-        ...(settings.aiKeys == null ? {} : { aiKeys })
+        ...rest,
+        ...(shown == null || !keysEdited ? {} : { aiKeys })
       })
       setSettings(shownSettings(stored))
       showKeys(stored.aiKeys)
@@ -391,6 +395,7 @@ export function NodeSettingsCard({
                   value={keyText[key]}
                   onChangeText={text => {
                     setKeyText(current => ({ ...current, [key]: text }))
+                    setKeysEdited(true)
                     setSaved(false)
                     setProblem(undefined)
                   }}

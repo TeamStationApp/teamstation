@@ -13,6 +13,20 @@ import { asAppLinksConfig, asOrigin } from './appLinks/config'
 import type { SpaceSettings } from './media/spacesHls'
 import { asOAuthConfig } from './oauth/config'
 
+/** The AI defaults, shared with settings built from administrator key pools. */
+export const AI_DEFAULTS = {
+  xaiBaseUrl: 'https://api.x.ai/v1',
+  sttUrl: 'wss://api.x.ai/v1/stt',
+  sttModel: 'grok-voice-transcribe-2.0',
+  dictationModel: 'grok-4.3',
+  openaiBaseUrl: 'https://api.openai.com/v1',
+  anthropicBaseUrl: 'https://api.anthropic.com/v1',
+  tessModel: 'claude-sonnet-5-5',
+  voice: 'rex',
+  speed: 1.1,
+  bitRate: 64000
+} as const
+
 export const asServerConfig = asObject({
   /** Separate restricted login; never substitute the application owner. */
   analyticsReaderUrl: asOptional(asString),
@@ -273,21 +287,21 @@ export const asServerConfig = asObject({
   dictation: asOptional(
     asObject({
       apiKey: asApiKeyPool,
-      baseUrl: asOptional(asString, 'https://api.x.ai/v1'),
-      sttUrl: asOptional(asString, 'wss://api.x.ai/v1/stt'),
-      sttModel: asOptional(asString, 'grok-voice-transcribe-2.0'),
-      model: asOptional(asString, 'grok-4.3'),
+      baseUrl: asOptional(asString, AI_DEFAULTS.xaiBaseUrl),
+      sttUrl: asOptional(asString, AI_DEFAULTS.sttUrl),
+      sttModel: asOptional(asString, AI_DEFAULTS.sttModel),
+      model: asOptional(asString, AI_DEFAULTS.dictationModel),
       /** Keys for the GPT and Claude models; without one, those are not offered. */
       openai: asOptional(
         asObject({
           apiKey: asApiKeyPool,
-          baseUrl: asOptional(asString, 'https://api.openai.com/v1')
+          baseUrl: asOptional(asString, AI_DEFAULTS.openaiBaseUrl)
         })
       ),
       anthropic: asOptional(
         asObject({
           apiKey: asApiKeyPool,
-          baseUrl: asOptional(asString, 'https://api.anthropic.com/v1')
+          baseUrl: asOptional(asString, AI_DEFAULTS.anthropicBaseUrl)
         })
       )
     })
@@ -302,10 +316,10 @@ export const asServerConfig = asObject({
   speech: asOptional(
     asObject({
       apiKey: asOptional(asApiKeyPool),
-      baseUrl: asOptional(asString, 'https://api.x.ai/v1'),
-      voice: asOptional(asString, 'rex'),
-      speed: asOptional(asNumber, 1.1),
-      bitRate: asOptional(asNumber, 64000)
+      baseUrl: asOptional(asString, AI_DEFAULTS.xaiBaseUrl),
+      voice: asOptional(asString, AI_DEFAULTS.voice),
+      speed: asOptional(asNumber, AI_DEFAULTS.speed),
+      bitRate: asOptional(asNumber, AI_DEFAULTS.bitRate)
     })
   ),
 
@@ -317,8 +331,8 @@ export const asServerConfig = asObject({
   tess: asOptional(
     asObject({
       apiKey: asOptional(asApiKeyPool),
-      baseUrl: asOptional(asString, 'https://api.anthropic.com/v1'),
-      model: asOptional(asString, 'claude-sonnet-5-5')
+      baseUrl: asOptional(asString, AI_DEFAULTS.anthropicBaseUrl),
+      model: asOptional(asString, AI_DEFAULTS.tessModel)
     })
   ),
 
