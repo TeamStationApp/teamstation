@@ -10,12 +10,15 @@ import {
 import {
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   stat,
   utimes,
   writeFile
 } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
@@ -25,6 +28,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { startFakeSpace } from '../dev/fakeSpace'
 import type { ProbedStream } from '../media/ffmpeg'
 import type { SpaceSettings } from '../media/spacesHls'
+import type { PartReader } from '../media/wallClockScan'
 import type { PictureSize } from './finishVideo'
 import {
   OriginPublisher,
@@ -32,6 +36,7 @@ import {
   type PlaylistSink
 } from './originPublisher'
 import { PlaylistTail } from './playlistTail'
+import { spacePartReader } from './spacePieceReader'
 
 const header =
   '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-MAP:URI="init.mp4"\n'
@@ -162,6 +167,67 @@ describe('publishing a live origin', function () {
     for (let n = 0; n < count; n++)
       await writeFile(join(dir, segment(n)), `fragment ${n}`)
   }
+
+  it('counts a kept piece the tail deletes later as deleted, so a flush that checks the playlist again skips it', async () => {
+    // Pieces end at 4, 8, 12 and 16 s: with a 4 s tail, the first two may go.
+    let placement: number | undefined = 1
+    const publisher = new OriginPublisher({
+      ...options,
+      localTailSec: 4,
+      scanned: () => ({ segments: 3, placementSegment: placement })
+    })
+    await stage(4)
+    await publisher.flush()
+    await publisher.flush()
+    expect(await readdir(dir)).not.includes(segment(0))
+    expect(await readdir(dir)).includes(segment(1))
+    // The scan moves on, and the placement piece goes with nothing after it.
+    placement = undefined
+    await publisher.flush()
+    expect(await readdir(dir)).not.includes(segment(1))
+    // A playlist that no longer holds the cursor's piece where it was makes
+    // the next flush check every piece again.
+    ;(publisher as unknown as { cursor: number }).cursor = 0
+    requests.length = 0
+    expect((await publisher.flush()).body).contains(segment(3))
+    expect(puts()).deep.equals([])
+    // Nor does the deleted piece hold back the pieces that follow.
+    await writeFile(join(dir, segment(4)), 'fragment 4')
+    await writeFile(join(dir, 'master.m3u8'), playlist(5))
+    expect((await publisher.flush()).body).contains(segment(4))
+    expect(puts()).deep.equals([segment(4), 'index.m3u8'])
+  })
+
+  it('deletes nothing once the recording starts to finish, and still uploads', async () => {
+    // Pieces end at 4, 8, 12, 16 and 20 s, with a 4 s tail.
+    let scannedTo = 3
+    const publisher = new OriginPublisher({
+      ...options,
+      localTailSec: 4,
+      scanned: () => ({ segments: scannedTo })
+    })
+    await stage(3)
+    await publisher.flush()
+    await publisher.flush()
+    expect(await readdir(dir)).not.includes(segment(0))
+    // The close has begun: the playlist is about to be closed and probed.
+    publisher.holdPieces = true
+    for (const n of [3, 4])
+      await writeFile(join(dir, segment(n)), `fragment ${n}`)
+    await writeFile(join(dir, 'master.m3u8'), playlist(5))
+    scannedTo = 5
+    requests.length = 0
+    expect((await publisher.flush()).body).contains(segment(4))
+    await publisher.flush()
+    expect(puts()).includes(segment(4))
+    for (let n = 1; n < 5; n++) expect(await readdir(dir)).includes(segment(n))
+    // Without the hold, the next flush deletes what the tail no longer needs.
+    publisher.holdPieces = false
+    scannedTo = 4
+    await publisher.flush()
+    expect(await readdir(dir)).not.includes(segment(1))
+    expect(await readdir(dir)).not.includes(segment(2))
+  })
 
   it('sends nothing on an unchanged tick, and nothing at all once stopped', async () => {
     await stage(100)
@@ -643,12 +709,14 @@ describe('publishing a live origin', function () {
     interface Held {
       acknowledged: Map<unknown, unknown>
       published: Set<unknown>
+      kept: Map<unknown, unknown>
       cursor: number
       cursorNumber?: unknown
     }
     const keys = (held: Held): unknown[] => [
       ...held.acknowledged.keys(),
       ...held.published,
+      ...held.kept.keys(),
       held.cursorNumber
     ]
     const held = publisher as unknown as Held
@@ -941,6 +1009,40 @@ describe('publishing a live origin', function () {
       expect(logged.join('\n')).contains('database failed')
     })
 
+    it('sizes a part the tail has deleted whole from what it knew of it, before and after a restart', async function () {
+      const THIRD_INIT = 'init000004.mp4'
+      encode('640x360', '4.1', THIRD_INIT, 4)
+      const three =
+        listed(false) +
+        `#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="${THIRD_INIT}"\n${entry(4)}${entry(5)}`
+      // Pieces end at 1, 2, 3 and 4 s: with a 1 s tail, all of part 1 goes.
+      const tailing = {
+        ...options,
+        localTailSec: 1,
+        scanned: () => ({ segments: 6 })
+      }
+      await writeFile(join(dir, 'master.m3u8'), listed(false))
+      const publisher = new OriginPublisher(tailing)
+      await publisher.flush()
+      await publisher.flush()
+      const left = await readdir(dir)
+      expect(left).not.includes(segment(0))
+      expect(left).not.includes(segment(1))
+
+      await writeFile(join(dir, 'master.m3u8'), three)
+      await publisher.flush()
+      expect(logged).deep.equals([])
+      const written = await master()
+      expect(written).contains('RESOLUTION=640x360')
+      expect(pictures.at(-1)).deep.equals({ width: 640, height: 360 })
+
+      // A new process knows part 1's first piece only from the Space.
+      await writeFile(object('master.m3u8'), 'an old master')
+      await new OriginPublisher(tailing).flush()
+      expect(logged).deep.equals([])
+      expect(await master()).equals(written)
+    })
+
     it('leaves out a picture size no part can say', async function () {
       options.probe = async () => ({ codecName: 'h264', codecTag: 'avc1' })
       await writeFile(join(dir, 'init.mp4'), 'an init segment')
@@ -987,5 +1089,98 @@ describe('publishing a live origin', function () {
     const master = await readFile(object('master.m3u8'), 'utf8')
     expect(master).contains('CODECS="avc1.')
     expect(master).contains('RESOLUTION=160x90')
+  })
+})
+
+describe('reading a deleted piece back from the Space', function () {
+  /** A Space answering each GET with the next status, then 200 and the piece. */
+  async function answering(
+    statuses: number[]
+  ): Promise<{ read: PartReader; asked: () => number; close: () => void }> {
+    let asked = 0
+    const server = createServer((_req, res) => {
+      const status = statuses[asked++] ?? 200
+      res.writeHead(status).end(status === 200 ? 'fragment 0' : '')
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    return {
+      read: spacePartReader(
+        {
+          endpoint: `http://127.0.0.1:${port}`,
+          region: 'test',
+          bucket: 'test',
+          accessKeyId: 'example',
+          secretAccessKey: 'example',
+          pathStyle: true
+        },
+        'vid_origin',
+        { retryMs: 0 }
+      ),
+      asked: () => asked,
+      close: () => {
+        server.closeAllConnections()
+        server.close()
+      }
+    }
+  }
+  const gone = join(tmpdir(), 'tsPartReaderGone', segment(0))
+
+  it('asks again after a 5xx or a slow-down, three times in all', async () => {
+    const once = await answering([503])
+    try {
+      expect(Buffer.from(await once.read(gone)).toString()).equals('fragment 0')
+      expect(once.asked()).equals(2)
+    } finally {
+      once.close()
+    }
+    const always = await answering([500, 429, 503, 200])
+    try {
+      expect(await failure(always.read(gone))).contains('answered 503')
+      expect(always.asked()).equals(3)
+    } finally {
+      always.close()
+    }
+  })
+
+  it('fails at once on an answer the Space will give again', async () => {
+    const missing = await answering([404])
+    try {
+      expect(await failure(missing.read(gone))).contains('answered 404')
+      expect(missing.asked()).equals(1)
+    } finally {
+      missing.close()
+    }
+  })
+
+  it('gives up on a read that stalls, rather than holding the close', async () => {
+    // Accepts the connection and never answers.
+    const server = createServer(() => {})
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    const folder = await mkdtemp(join(tmpdir(), 'tsPartReader-'))
+    try {
+      const read = spacePartReader(
+        {
+          endpoint: `http://127.0.0.1:${port}`,
+          region: 'test',
+          bucket: 'test',
+          accessKeyId: 'example',
+          secretAccessKey: 'example',
+          pathStyle: true
+        },
+        'vid_origin',
+        { timeoutMs: 100, attempts: 2, retryMs: 0 }
+      )
+      const started = Date.now()
+      expect(await failure(read(join(folder, segment(0))))).matches(
+        /TimeoutError|aborted/
+      )
+      expect(Date.now() - started).below(2000)
+    } finally {
+      server.closeAllConnections()
+      server.close()
+      await rm(folder, { recursive: true, force: true })
+    }
   })
 })

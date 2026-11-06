@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { readFile, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -35,7 +35,8 @@ import {
   isSegmentName,
   objectKey,
   publishedPlaylist,
-  segmentNumber
+  segmentNumber,
+  withoutSegments
 } from './originPublish'
 import {
   type PlaylistTail,
@@ -79,9 +80,32 @@ function initsOf(playlist: MediaPlaylist): string[] {
   ]
 }
 
+/** The first piece of each part a playlist lists: one per init segment. */
+function partFirstPieces(playlist: MediaPlaylist): Set<string> {
+  const seen = new Set<string>()
+  const firsts = new Set<string>()
+  for (const segment of playlist.segments) {
+    const init = (segment.map ?? playlist.map)?.uri ?? ''
+    if (seen.has(init)) continue
+    seen.add(init)
+    firsts.add(segment.uri)
+  }
+  return firsts
+}
+
 /** The file system calls a flush makes per piece, injectable for counting. */
 export interface OriginFiles {
   stat: (path: string) => Promise<{ size: number; mtimeMs: number }>
+}
+
+/**
+ * How far the stream's wall clock scan has read its playlist: the pieces
+ * before `segments` it does not read again, apart from `placementSegment`,
+ * which it reads again after a restamp.
+ */
+export interface ScannedThrough {
+  segments: number
+  placementSegment?: number
 }
 
 /**
@@ -122,6 +146,16 @@ export interface OriginPublisherOptions {
   files?: OriginFiles
   /** Reads the local playlist; the one shared reader of it by default. */
   playlist?: PlaylistTail
+  /**
+   * Seconds of the newest pieces kept on disk once the Space has them; 0, the
+   * default, keeps every piece.
+   */
+  localTailSec?: number
+  /**
+   * How far the wall clock scan has read, or undefined before it has read
+   * anything, when no piece is deleted.
+   */
+  scanned?: () => ScannedThrough | undefined
 }
 
 /** A published body, and how a flush that puts it carries on. */
@@ -158,6 +192,12 @@ export interface OriginFlush {
  */
 export class OriginPublisher {
   closing = false
+  /**
+   * Set when the recording starts to finish, before its playlist is closed:
+   * from then on the tail deletes nothing, since the close reads what is on
+   * disk, and asks whether anything was deleted, before `closing` is set.
+   */
+  holdPieces = false
   private stopped = false
   private started = false
   private masterWritten = false
@@ -183,19 +223,70 @@ export class OriginPublisher {
     closed: boolean
   }
 
-  /** By `pieceKey`, as is `published`. */
+  /** By `pieceKey`, as are `published` and `kept`. */
   private readonly acknowledged = new Map<number, FileStamp>()
   private readonly published = new Set<number>()
   /** The count of leading pieces uploaded and unchanged, and the last one's number. */
   private cursor = 0
   private cursorNumber?: number
-  /** The playlist's stamp at the last flush that left nothing to upload. */
-  private settled?: { size: number; mtimeMs: number; result: OriginFlush }
+  /**
+   * The playlist's stamp at the last flush that left nothing to upload, and
+   * where the wall clock scan was then: a scan that has moved on may let the
+   * tail delete more.
+   */
+  private settled?: {
+    size: number
+    mtimeMs: number
+    scanned: string
+    result: OriginFlush
+  }
+
+  /**
+   * The highest sequence number deleted from disk. Those pieces are never
+   * opened again, apart from the few the tail had to keep, in `kept`.
+   */
+  private deletedNumber = -1
+  /**
+   * Pieces the tail passed over and kept, by number, such as the wall clock scan's
+   * placement piece, with their place in the playlist (-1 when a restart
+   * found them on disk and does not know it yet).
+   */
+  private readonly kept = new Map<number, number>()
+  /** How many leading playlist pieces the tail has deleted or kept. */
+  private trimmed = 0
+  /**
+   * The size of each part's first piece once it has left the disk, which
+   * the master is still sized from: the acknowledged length the tail deleted,
+   * or after a restart the Space's. By `pieceKey`, one entry per part.
+   */
+  private readonly firstPieceBytes = new Map<number, number>()
 
   constructor(private readonly options: OriginPublisherOptions) {}
 
   stop(): void {
     this.stopped = true
+  }
+
+  /** Whether any piece of this recording has left the disk. */
+  get deletedAny(): boolean {
+    return this.deletedNumber >= 0
+  }
+
+  /** Where the wall clock scan is, as far as the tail cares. */
+  private scannedKey(): string {
+    if ((this.options.localTailSec ?? 0) <= 0) return ''
+    const scanned = this.options.scanned?.()
+    return scanned == null
+      ? ''
+      : `${scanned.segments}:${scanned.placementSegment ?? ''}`
+  }
+
+  private isDeleted(name: string): boolean {
+    return (
+      isSegmentName(name) &&
+      segmentNumber(name) <= this.deletedNumber &&
+      !this.kept.has(segmentNumber(name))
+    )
   }
 
   /** Seed from remote checksums, never one GET per segment. */
@@ -227,17 +318,35 @@ export class OriginPublisher {
         throw new Error(`Reading live origin answered ${response.status}`)
     }
     const local = parseMediaPlaylist(body)
+    const firsts = partFirstPieces(local)
     const names = [
       ...initsOf(local).filter(isInitName),
       ...local.segments.map(segment => segment.uri)
     ]
+    // Only what is on disk is seeded. A piece the Space holds and the disk
+    // does not was deleted after it was acknowledged, so it stays so.
+    const onDisk: string[] = []
     for (const name of names) {
       const entry = remote.get(objectKey(videoId, name))
       if (entry == null) continue
-      const local = await this.snapshot(name)
+      const local = await this.snapshot(name).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
+      })
+      if (local === null) {
+        if (isSegmentName(name))
+          this.deletedNumber = Math.max(this.deletedNumber, segmentNumber(name))
+        if (firsts.has(name))
+          this.firstPieceBytes.set(pieceKey(name), entry.size)
+        continue
+      }
+      if (isSegmentName(name)) onDisk.push(name)
       if (local?.size === entry.size && local.md5 === entry.etag.toLowerCase())
         this.acknowledged.set(pieceKey(name), local)
     }
+    for (const name of onDisk)
+      if (segmentNumber(name) < this.deletedNumber)
+        this.kept.set(segmentNumber(name), -1)
     this.masterWritten = remote.has(objectKey(videoId, 'master.m3u8'))
     this.started = true
   }
@@ -248,10 +357,12 @@ export class OriginPublisher {
     await this.start()
     const stamp = await this.playlistStamp()
     const settled = this.settled
+    const scanned = this.scannedKey()
     if (
       stamp != null &&
       settled?.size === stamp.size &&
-      settled.mtimeMs === stamp.mtimeMs
+      settled.mtimeMs === stamp.mtimeMs &&
+      settled.scanned === scanned
     )
       return settled.result
     this.settled = undefined
@@ -285,6 +396,7 @@ export class OriginPublisher {
     let failed = false
     for (let index = this.cursor; index < count; index++) {
       const name = uri(index)
+      if (this.isDeleted(name)) continue
       if (!this.options.isFinal(name)) break
       try {
         if (!(await this.publishFile(name))) break
@@ -300,8 +412,12 @@ export class OriginPublisher {
     for (let index = from; index < count; index++) {
       const name = uri(index)
       if (
-        this.options.isFinal(name) &&
-        (await this.unchanged(name, this.acknowledged.get(segmentNumber(name))))
+        this.isDeleted(name) ||
+        (this.options.isFinal(name) &&
+          (await this.unchanged(
+            name,
+            this.acknowledged.get(segmentNumber(name))
+          )))
       )
         fresh.add(name)
     }
@@ -349,12 +465,21 @@ export class OriginPublisher {
       if (!this.notified && acknowledgedCount > 0) {
         this.metadata ??= await this.probe(body)
         if (!this.masterWritten && this.active()) {
+          // After a restart the first pieces may be gone from the disk: the
+          // master is sized from the first one still here.
+          let first = built.segment(0)
+          for (let index = 0; index < exposed; index++) {
+            if (!this.isDeleted(built.segment(index).uri)) {
+              first = built.segment(index)
+              break
+            }
+          }
           const { width, height } = this.metadata
           await this.putPlaylist(
             'master.m3u8',
             await this.masterOfPart(
               FIRST_INIT,
-              built.segment(0),
+              first,
               width == null || height == null ? undefined : { width, height }
             )
           )
@@ -369,6 +494,7 @@ export class OriginPublisher {
         await this.sayEveryPart(view, exposed)
     }
     if (failed) throw failure
+    await this.trimTail(view, mayMove, body)
     const result = {
       complete:
         view.ended &&
@@ -385,7 +511,7 @@ export class OriginPublisher {
       this.notified &&
       this.active()
     )
-      this.settled = { ...stamp, result }
+      this.settled = { ...stamp, scanned, result }
     return result
   }
 
@@ -460,14 +586,14 @@ export class OriginPublisher {
   /** A master playlist of one part, from its init segment and first segment. */
   private async masterOfPart(
     init: string,
-    first: { uri: string; durationSec: number },
+    first: { uri: string; durationSec: number; bytes?: number },
     size: PictureSize | undefined
   ): Promise<string> {
     const { dir } = this.options
     const codecs = codecsAttribute(
       codecsFromInit(await readFile(join(dir, init)))
     )
-    const bytes = (await this.stat(join(dir, first.uri))).size
+    const bytes = first.bytes ?? (await this.stat(join(dir, first.uri))).size
     // Include every track's bytes; HLS probes commonly report no bitrate.
     const bandwidth = Math.max(
       1,
@@ -488,7 +614,8 @@ export class OriginPublisher {
    * choose by the master, and the first part's says only what that part
    * needs. Each pass that publishes a new part's first piece does it, which
    * the closing pass is one of, and a new process does it again. The reader
-   * keeps each part's first piece, so this costs nothing while no part is new.
+   * keeps each part's first piece, and the publisher its size once the tail
+   * has deleted it, so this costs nothing while no part is new.
    *
    * The recording is whole and playing whatever this does. A failure is said
    * in the log and tried again at the next pass, and never stops a flush or a
@@ -515,11 +642,7 @@ export class OriginPublisher {
                 await readFile(join(this.options.dir, part.init))
               )
         masters.push(
-          await this.masterOfPart(
-            part.init,
-            { uri: part.name, durationSec: part.durationSec },
-            size
-          )
+          await this.masterOfPart(part.init, this.heldPiece(view, part), size)
         )
       }
       const master = combinedMaster(masters)
@@ -532,6 +655,31 @@ export class OriginPublisher {
         `live: ${this.options.videoId} master of ${published.length} parts not written: ${String(error)}`
       )
     }
+  }
+
+  /**
+   * The piece a part's master entry is sized from: its first, from the disk
+   * or from the size kept when the tail deleted it, and otherwise the first
+   * of the part still on the disk. The tail deletes from the front, so this
+   * walks only past what it deleted, in memory, and only when a master is
+   * written again.
+   */
+  private heldPiece(
+    view: PlaylistView,
+    part: PlaylistView['parts'][number]
+  ): { uri: string; durationSec: number; bytes?: number } {
+    const from = view.listedAt(part.name)
+    if (from == null || !this.isDeleted(part.name))
+      return { uri: part.name, durationSec: part.durationSec }
+    const bytes = this.firstPieceBytes.get(pieceKey(part.name))
+    if (bytes != null)
+      return { uri: part.name, durationSec: part.durationSec, bytes }
+    for (let index = from; index < view.count; index++) {
+      const segment = view.segment(index)
+      if ((segment.map ?? view.map)?.uri !== part.init) break
+      if (!this.isDeleted(segment.uri)) return segment
+    }
+    return { uri: part.name, durationSec: part.durationSec }
   }
 
   /** The published body of any other playlist, from its whole text. */
@@ -556,6 +704,90 @@ export class OriginPublisher {
           ? body.slice(before.length)
           : undefined
     }
+  }
+
+  /**
+   * Deletes from disk each piece the tail no longer needs: one acknowledged
+   * (before the cursor, so uploaded, verified by length and unchanged since),
+   * that the wall clock scan has read and will not read again, that the
+   * writer can no longer restamp, and that ended more than `localTailSec`
+   * before the newest piece, by program date time. Only once the published
+   * playlist lists it, and never while closing. Each pass starts where the
+   * last stopped, so it costs the same at any length of recording.
+   */
+  private async trimTail(
+    view: PlaylistView,
+    mayMove: (name: string) => boolean,
+    body: string
+  ): Promise<void> {
+    const tailSec = this.options.localTailSec ?? 0
+    if (
+      tailSec <= 0 ||
+      this.closing ||
+      this.holdPieces ||
+      !this.active() ||
+      !this.notified ||
+      this.lastBody !== body
+    )
+      return
+    const scanned = this.options.scanned?.()
+    if (scanned == null) return
+    const firsts = new Set(view.parts.map(part => part.name))
+    const count = view.count
+    const limit = view.endMs(count - 1) - tailSec * 1000
+    const before = Math.min(this.cursor, scanned.segments)
+    const deletable = (index: number): boolean =>
+      index < Math.min(before, count) &&
+      index !== scanned.placementSegment &&
+      view.endMs(index) < limit &&
+      !mayMove(view.segment(index).uri)
+    for (const [number, index] of [...this.kept]) {
+      const name =
+        index >= 0 && index < count ? view.segment(index).uri : undefined
+      if (
+        index >= 0 &&
+        name != null &&
+        segmentNumber(name) === number &&
+        deletable(index)
+      ) {
+        if (!(await this.deletePiece(name, firsts.has(name)))) return
+        this.kept.delete(number)
+        // Every piece before `trimmed` is deleted or kept, so this marks
+        // nothing on disk as gone, and a flush that checks the playlist
+        // again from the start skips this one.
+        this.deletedNumber = Math.max(this.deletedNumber, number)
+      }
+    }
+    let index = this.trimmed
+    for (
+      ;
+      index < Math.min(before, count) && view.endMs(index) < limit;
+      index++
+    ) {
+      const name = view.segment(index).uri
+      if (this.isDeleted(name)) continue
+      if (!deletable(index)) {
+        this.kept.set(segmentNumber(name), index)
+        continue
+      }
+      if (!(await this.deletePiece(name, firsts.has(name)))) break
+      this.kept.delete(segmentNumber(name))
+      this.deletedNumber = Math.max(this.deletedNumber, segmentNumber(name))
+    }
+    this.trimmed = index
+  }
+
+  /** Deletes one piece, keeping its size first when it starts a part. */
+  private async deletePiece(name: string, first: boolean): Promise<boolean> {
+    if (!this.active() || this.closing || this.holdPieces) return false
+    const stamp = this.acknowledged.get(pieceKey(name))
+    if (first && stamp != null)
+      this.firstPieceBytes.set(pieceKey(name), stamp.size)
+    await unlink(join(this.options.dir, name)).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    })
+    this.acknowledged.delete(pieceKey(name))
+    return true
   }
 
   private async stat(path: string): Promise<{ size: number; mtimeMs: number }> {
@@ -651,9 +883,14 @@ export class OriginPublisher {
   private async probe(body: string): Promise<ProbedStream> {
     // A closed snapshot avoids waiting for more live input during ffprobe.
     const path = join(this.options.dir, '.origin-probe.m3u8')
+    // Only what is still on disk: after a restart, the first pieces may be
+    // gone.
+    const held = this.deletedAny
+      ? withoutSegments(body, name => this.isDeleted(name))
+      : body
     await writeFile(
       path,
-      body.includes('#EXT-X-ENDLIST') ? body : body + '#EXT-X-ENDLIST\n'
+      held.includes('#EXT-X-ENDLIST') ? held : held + '#EXT-X-ENDLIST\n'
     )
     try {
       return await (

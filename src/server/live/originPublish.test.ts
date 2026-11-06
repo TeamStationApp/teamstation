@@ -1,7 +1,12 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { isSegmentName, objectKey, publishedPlaylist } from './originPublish'
+import {
+  isSegmentName,
+  objectKey,
+  publishedPlaylist,
+  withoutSegments
+} from './originPublish'
 
 const header =
   '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-MAP:URI="init.mp4"\n'
@@ -15,6 +20,24 @@ const set = (...names: string[]): Set<string> => new Set(names)
 const numbers = (...pieces: number[]): Set<number> => new Set(pieces)
 
 describe('the published live playlist', function () {
+  it('keeps a later part’s map, and its break, when the part’s first piece is dropped', function () {
+    const later =
+      '#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000002.mp4"\n#EXTINF:4.000000,\nseg000002.m4s\n#EXTINF:4.000000,\nseg000003.m4s\n'
+    const body = header + first + second + later
+    // The tail deleted the first part and the second's first piece.
+    expect(withoutSegments(body, name => name < 'seg000003.m4s')).equals(
+      header +
+        '#EXT-X-MAP:URI="init000002.mp4"\n#EXTINF:4.000000,\nseg000003.m4s\n'
+    )
+    // With a piece of the first part still listed, the break stays too.
+    expect(withoutSegments(body, name => name === 'seg000002.m4s')).equals(
+      header +
+        first +
+        second +
+        '#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000002.mp4"\n#EXTINF:4.000000,\nseg000003.m4s\n'
+    )
+  })
+
   it('keeps a later map with the segment it opens, and names it as an object', function () {
     const later =
       '#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000002.mp4"\n#EXTINF:4.000000,\nseg000002.m4s\n'
