@@ -1,9 +1,17 @@
-import { expect } from 'chai'
-import { describe, it } from 'mocha'
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
 
+import { expect } from 'chai'
+import { after, before, describe, it } from 'mocha'
+
+import { addGame, addTeam, scratchDatabase } from '../../test/scoreboardKit'
+import type { MediaContext } from './mediaContext'
 import { verifyQueryToken } from './mediaTokens'
-import { posterSecond, posterUrl } from './posters'
+import { posterSecond, postersFor, posterUrl, warmPosters } from './posters'
+import { clearFragmentCache } from './spaceFrames'
 import { stillKey, stillSubject } from './stills'
+import { warmVideoStills } from './videoStills'
 
 describe('a game poster', function () {
   it('is a signed URL to the API for a still kept beside the video in the Space', function () {
@@ -54,5 +62,93 @@ describe('a game poster', function () {
     // Nothing known about the length: assume it is long enough.
     expect(posterSecond(null)).equals(150)
     expect(posterSecond(undefined)).equals(150)
+  })
+})
+
+describe('a poster or highlight still of a secret-path video', function () {
+  this.timeout(30000)
+  const SECRET = '0123456789abcdef0123456789abcdef'
+  let server: Server
+  const reads: string[] = []
+  let media: MediaContext
+
+  before(async function () {
+    server = createServer((req, res) => {
+      reads.push(new URL(req.url ?? '/', 'http://x').pathname)
+      res.writeHead(404).end()
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    media = {
+      mediaRoot: tmpdir(),
+      ffmpegPath: 'ffmpeg',
+      mediaSecret: 'secret',
+      publicUrl: 'http://app.example.test',
+      space: {
+        endpoint: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+        region: 'test',
+        bucket: 'b',
+        accessKeyId: 'example',
+        secretAccessKey: 'example',
+        pathStyle: true
+      }
+    }
+  })
+  after(function () {
+    server.close()
+  })
+
+  it('reads its frames from the secret path, for the poster and for highlights', async function () {
+    clearFragmentCache()
+    reads.length = 0
+    await warmPosters(media, [
+      {
+        gameId: 'gam_1',
+        videoId: 'vid_poster',
+        storage: 'spaces',
+        spaceSecret: SECRET,
+        durationSec: 600
+      }
+    ])
+    await warmVideoStills(media, 'spaces', 'vid_still', SECRET, [
+      { playOffsetSec: 30 }
+    ])
+    const media_ = reads.filter(path => !path.includes('/stills/'))
+    expect(media_).deep.equals([
+      `/b/videos/vid_poster-${SECRET}/master.m3u8`,
+      `/b/videos/vid_still-${SECRET}/master.m3u8`
+    ])
+  })
+
+  it('lists each game’s poster video with its secret', async function () {
+    const { db, drop } = await scratchDatabase('posters_secret')
+    try {
+      const gameId = await addGame(db, {
+        homeTeamId: await addTeam(db, 'Pioneers'),
+        awayTeamId: await addTeam(db, 'Visitors'),
+        startAt: new Date()
+      })
+      await db
+        .insertInto('videos')
+        .values({
+          id: 'vid_poster',
+          game_id: gameId,
+          kind: 'program',
+          title: 'Programme',
+          storage: 'spaces',
+          status: 'ready',
+          hidden: false,
+          space_secret: SECRET
+        })
+        .execute()
+      expect((await postersFor(db, [gameId])).get(gameId)).deep.equals({
+        gameId,
+        videoId: 'vid_poster',
+        storage: 'spaces',
+        spaceSecret: SECRET,
+        durationSec: null
+      })
+    } finally {
+      await drop()
+    }
   })
 })
