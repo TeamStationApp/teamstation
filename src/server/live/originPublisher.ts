@@ -21,20 +21,52 @@ import {
   listSpaceObjectEntries,
   verifyObjectLength
 } from '../media/spacesVideo'
-import { type MediaPlaylist, parseMediaPlaylist } from '../media/wallClockScan'
+import {
+  type MediaPlaylist,
+  parseMediaPlaylist,
+  type PlaylistSegment
+} from '../media/wallClockScan'
 import {
   combinedMaster,
   masterPictureSize,
   type PictureSize
 } from './finishVideo'
-import { isSegmentName, objectKey, publishedPlaylist } from './originPublish'
-import { FIRST_INIT, isInitName, listedSegments } from './segmentClock'
+import {
+  isSegmentName,
+  objectKey,
+  publishedPlaylist,
+  segmentNumber
+} from './originPublish'
+import {
+  type PlaylistTail,
+  playlistTail,
+  type PlaylistView
+} from './playlistTail'
+import { FIRST_INIT, isInitName } from './segmentClock'
 
 interface FileStamp {
   size: number
   mtimeMs: number
   md5: string
 }
+
+/** `init.mp4`'s key among the pieces, which are keyed by sequence number. */
+const INIT_PIECE = -1
+
+/**
+ * The key a piece is held under for the life of a recording: its sequence
+ * number; `INIT_PIECE` for `init.mp4`; and below that, `-2 - n` for the init
+ * segment of a part that begins at segment `n` (`init<n>.mp4`). A name parsed
+ * out of a playlist body is a slice of that body, and holding one keeps the
+ * whole body alive, so a set of names kept across flushes would keep every
+ * body the recording ever had.
+ */
+function pieceKey(name: string): number {
+  if (name === FIRST_INIT) return INIT_PIECE
+  const part = /^init(\d+)\.mp4$/.exec(name)
+  return part == null ? segmentNumber(name) : -2 - Number(part[1])
+}
+
 /** The init segments a playlist names, in order, each once. */
 function initsOf(playlist: MediaPlaylist): string[] {
   return [
@@ -47,18 +79,61 @@ function initsOf(playlist: MediaPlaylist): string[] {
   ]
 }
 
+/** The file system calls a flush makes per piece, injectable for counting. */
+export interface OriginFiles {
+  stat: (path: string) => Promise<{ size: number; mtimeMs: number }>
+}
+
+/**
+ * Where each published playlist body goes besides the Space. `append` gets
+ * the text a body added to the one before it; `replace` gets a whole body
+ * that does not extend it (the first, or one a reconnect rewrote).
+ */
+export interface PlaylistSink {
+  append: (videoId: string, text: string) => Promise<void>
+  replace: (videoId: string, body: string) => Promise<void>
+}
+
+export const noPlaylistSink: PlaylistSink = {
+  append: async () => {},
+  replace: async () => {}
+}
 export interface OriginPublisherOptions {
   space: SpaceSettings
   videoId: string
   dir: string
   ffmpegPath: string
   isFinal: (name: string) => boolean
+  /**
+   * A piece the writer may still rewrite in place (a continuation not yet
+   * placed on the timeline). The cursor does not pass it, so it is checked
+   * again on each flush until the writer settles. None by default.
+   */
+  mayMove?: (name: string) => boolean
   onFirstSegment: (probe: ProbedStream) => Promise<void>
   /** The recording's largest picture, when a later part has changed it. */
   onLargestPicture: (size: PictureSize) => Promise<void>
   log: (message: string) => void
   /** A test may substitute a probe; object I/O still goes through HTTP. */
   probe?: (playlist: string) => Promise<ProbedStream>
+  /** Receives each new body's added text; a no-op by default. */
+  playlistSink?: PlaylistSink
+  /** Defaults to `node:fs/promises`. */
+  files?: OriginFiles
+  /** Reads the local playlist; the one shared reader of it by default. */
+  playlist?: PlaylistTail
+}
+
+/** A published body, and how a flush that puts it carries on. */
+interface PublishedBody {
+  body: string
+  /** How many media segments the body lists. */
+  exposed: number
+  segment: (index: number) => PlaylistSegment
+  /** Adds the pieces the body lists to `published`, once it has been put. */
+  expose: () => void
+  /** The text the body adds to `before`, or undefined if it does not extend it. */
+  after: (before: string | undefined) => string | undefined
 }
 
 export interface OriginFlush {
@@ -73,6 +148,13 @@ export interface OriginFlush {
  * It asks the database nothing. Whether the video still exists is the
  * controller's to know, from its own sync: a deleted video's publisher is
  * stopped there, and a stopped publisher writes nothing more.
+ *
+ * A flush costs the same at any length of recording. It returns after one
+ * `stat` while the local playlist is unchanged and everything in it is
+ * published. Otherwise it checks each part's init segment and only the
+ * pieces from its acknowledged cursor onward: the pieces before the cursor
+ * were uploaded and found unchanged once, and the writer only appends, so
+ * they are not opened again.
  */
 export class OriginPublisher {
   closing = false
@@ -84,8 +166,31 @@ export class OriginPublisher {
   private partsInMaster = 1
   private metadata?: ProbedStream
   private lastBody?: string
-  private readonly acknowledged = new Map<string, FileStamp>()
-  private readonly published = new Set<string>()
+  /** What `appendBody` keeps of one parse of the playlist. */
+  private built?: {
+    generation: number
+    /** One past the last piece whose number is in `published`. */
+    publishedEnd: number
+    /** Pieces before this one are all in `published`. */
+    exposed: number
+  }
+
+  /** The last body `appendBody` built that was put, and what it held. */
+  private lastBuilt?: {
+    body: string
+    generation: number
+    end: number
+    closed: boolean
+  }
+
+  /** By `pieceKey`, as is `published`. */
+  private readonly acknowledged = new Map<number, FileStamp>()
+  private readonly published = new Set<number>()
+  /** The count of leading pieces uploaded and unchanged, and the last one's number. */
+  private cursor = 0
+  private cursorNumber?: number
+  /** The playlist's stamp at the last flush that left nothing to upload. */
+  private settled?: { size: number; mtimeMs: number; result: OriginFlush }
 
   constructor(private readonly options: OriginPublisherOptions) {}
 
@@ -113,7 +218,7 @@ export class OriginPublisher {
       for (const segment of parseMediaPlaylist(held).segments) {
         if (!isSegmentName(segment.uri))
           throw new Error('Invalid published live segment URI')
-        this.published.add(segment.uri)
+        this.published.add(segmentNumber(segment.uri))
       }
       this.lastBody = held
     } else {
@@ -129,9 +234,9 @@ export class OriginPublisher {
     for (const name of names) {
       const entry = remote.get(objectKey(videoId, name))
       if (entry == null) continue
-      const here = await this.snapshot(name)
-      if (here?.size === entry.size && here.md5 === entry.etag.toLowerCase())
-        this.acknowledged.set(name, here)
+      const local = await this.snapshot(name)
+      if (local?.size === entry.size && local.md5 === entry.etag.toLowerCase())
+        this.acknowledged.set(pieceKey(name), local)
     }
     this.masterWritten = remote.has(objectKey(videoId, 'master.m3u8'))
     this.started = true
@@ -141,55 +246,107 @@ export class OriginPublisher {
     if ((this.closing && options.close !== true) || !this.active())
       return { complete: false }
     await this.start()
-    const onDisk = await this.localPlaylist()
-    if (onDisk == null || !this.active()) return { complete: false }
-    const playlist = parseMediaPlaylist(onDisk)
-    if (playlist.segments.length === 0) return { complete: false }
-    // Validate every name before performing any write.
-    for (const segment of playlist.segments)
-      objectKey(this.options.videoId, segment.uri)
-    if (playlist.map?.uri !== FIRST_INIT)
+    const stamp = await this.playlistStamp()
+    const settled = this.settled
+    if (
+      stamp != null &&
+      settled?.size === stamp.size &&
+      settled.mtimeMs === stamp.mtimeMs
+    )
+      return settled.result
+    this.settled = undefined
+    const view = this.options.playlist?.read() ?? this.readPlaylist()
+    if (view == null || !this.active()) return { complete: false }
+    const count = view.count
+    if (count === 0) return { complete: false }
+    const uri = (index: number): string => view.segment(index).uri
+    // Validate every name before performing any write. A playlist whose
+    // pieces are all piece names needs only the video checked.
+    if (view.publishedExact) objectKey(this.options.videoId, uri(0))
+    else
+      for (let index = 0; index < count; index++)
+        objectKey(this.options.videoId, uri(index))
+    if (view.map?.uri !== FIRST_INIT)
       throw new Error('Live playlist has no init.mp4 map')
-    const inits = initsOf(playlist)
+    const inits = view.inits
+    for (const init of inits) objectKey(this.options.videoId, init)
+    // A playlist that no longer holds the cursor's piece where it was is not
+    // an append: check it all again.
+    if (
+      this.cursor > count ||
+      (this.cursor > 0 &&
+        segmentNumber(uri(this.cursor - 1)) !== this.cursorNumber)
+    )
+      this.cursor = 0
     // Every map is in the store before the segments listed under it.
-    for (const init of inits) {
-      objectKey(this.options.videoId, init)
+    for (const init of inits)
       if (!(await this.publishFile(init))) return { complete: false }
-    }
     let failure: unknown
     let failed = false
-    for (const segment of playlist.segments) {
-      if (!this.options.isFinal(segment.uri)) break
+    for (let index = this.cursor; index < count; index++) {
+      const name = uri(index)
+      if (!this.options.isFinal(name)) break
       try {
-        if (!(await this.publishFile(segment.uri))) break
+        if (!(await this.publishFile(name))) break
       } catch (error) {
         failure = error
         failed = true
         break
       }
     }
-    const acknowledged = new Set<string>()
-    for (const segment of playlist.segments) {
+    // Every piece before the cursor is acknowledged; of the rest, `fresh`.
+    const from = this.cursor
+    const fresh = new Set<string>()
+    for (let index = from; index < count; index++) {
+      const name = uri(index)
       if (
-        this.options.isFinal(segment.uri) &&
-        (await this.unchanged(segment.uri, this.acknowledged.get(segment.uri)))
+        this.options.isFinal(name) &&
+        (await this.unchanged(name, this.acknowledged.get(segmentNumber(name))))
       )
-        acknowledged.add(segment.uri)
+        fresh.add(name)
     }
-    // A reconnect can replace the init while a slow segment upload runs.
-    for (const init of inits) {
-      if (!(await this.unchanged(init, this.acknowledged.get(init))))
+    // A playlist that names a piece twice keeps the whole set, as names.
+    const named = view.publishedExact
+      ? undefined
+      : new Set<string>([
+          ...Array.from({ length: from }, (_, index) => uri(index)),
+          ...fresh
+        ])
+    const isAcknowledged = (index: number): boolean =>
+      named == null
+        ? index < from || fresh.has(uri(index))
+        : named.has(uri(index))
+    const acknowledgedCount = named?.size ?? from + fresh.size
+    // A reconnect can replace an init while a slow segment upload runs.
+    for (const init of inits)
+      if (!(await this.unchanged(init, this.acknowledged.get(pieceKey(init)))))
         return { complete: false }
-    }
-    const body = publishedPlaylist(onDisk, acknowledged, this.published)
-    const exposed = parseMediaPlaylist(body).segments
-    if (exposed.length > 0 && this.active()) {
+    const mayMove = this.options.mayMove ?? (() => false)
+    while (
+      this.cursor < count &&
+      isAcknowledged(this.cursor) &&
+      !mayMove(uri(this.cursor))
+    )
+      this.cursor++
+    this.cursorNumber =
+      this.cursor > 0 ? segmentNumber(uri(this.cursor - 1)) : undefined
+    const built =
+      named == null
+        ? this.appendBody(view, from, isAcknowledged)
+        : this.wholeBody(view, named)
+    const { body, exposed } = built
+    if (exposed > 0 && this.active()) {
       if (body !== this.lastBody) {
         await this.putPlaylist('index.m3u8', body)
+        const before = this.lastBody
         this.lastBody = body
-        for (const segment of exposed) this.published.add(segment.uri)
+        built.expose()
+        const sink = this.options.playlistSink ?? noPlaylistSink
+        const added = built.after(before)
+        if (added != null) await sink.append(this.options.videoId, added)
+        else await sink.replace(this.options.videoId, body)
       }
-      if (!this.notified && acknowledged.size > 0) {
+      if (!this.notified && acknowledgedCount > 0) {
         this.metadata ??= await this.probe(body)
         if (!this.masterWritten && this.active()) {
           const { width, height } = this.metadata
@@ -197,7 +354,7 @@ export class OriginPublisher {
             'master.m3u8',
             await this.masterOfPart(
               FIRST_INIT,
-              exposed[0],
+              built.segment(0),
               width == null || height == null ? undefined : { width, height }
             )
           )
@@ -208,17 +365,95 @@ export class OriginPublisher {
           this.notified = true
         }
       }
-      if (this.notified && this.masterWritten) await this.sayEveryPart(body)
+      if (this.notified && this.masterWritten)
+        await this.sayEveryPart(view, exposed)
     }
     if (failed) throw failure
-    return {
+    const result = {
       complete:
-        playlist.ended &&
-        acknowledged.size === playlist.segments.length &&
+        view.ended &&
+        acknowledgedCount === count &&
         this.lastBody === body &&
         this.notified &&
         !this.stopped,
       body
+    }
+    if (
+      stamp != null &&
+      this.cursor === count &&
+      this.lastBody === body &&
+      this.notified &&
+      this.active()
+    )
+      this.settled = { ...stamp, result }
+    return result
+  }
+
+  /**
+   * The published body of a playlist `publishedPlaylist` would keep exactly:
+   * the playlist's own text up to the end of the last piece it publishes,
+   * with the end tag once it is complete. Only the pieces it adds are added
+   * to `published`, and the published end is kept for the playlist's parse,
+   * so a flush that adds a piece costs the same however many came before it.
+   */
+  private appendBody(
+    view: PlaylistView,
+    cursor: number,
+    isAcknowledged: (index: number) => boolean
+  ): PublishedBody {
+    const count = view.count
+    let held = this.built
+    if (held?.generation !== view.generation) {
+      // A new parse: every published piece must still be listed.
+      const listed = new Map<number, number>()
+      for (let index = 0; index < count; index++)
+        listed.set(segmentNumber(view.segment(index).uri), index)
+      let publishedEnd = 0
+      for (const number of this.published) {
+        const at = listed.get(number)
+        if (at == null)
+          throw new Error('Local playlist lost a published segment')
+        publishedEnd = Math.max(publishedEnd, at + 1)
+      }
+      held = { generation: view.generation, publishedEnd, exposed: 0 }
+      this.built = held
+    }
+    // Every piece before the cursor is acknowledged.
+    let acknowledgedEnd = cursor
+    while (acknowledgedEnd < count && isAcknowledged(acknowledgedEnd))
+      acknowledgedEnd++
+    const end = Math.max(acknowledgedEnd, held.publishedEnd)
+    const closed = view.ended && acknowledgedEnd === count
+    const closing = closed ? '#EXT-X-ENDLIST\n' : ''
+    const text = view.bodyText(end)
+    const body = text === '' && !closed ? '\n' : text + closing
+    const last = this.lastBuilt
+    const owner = held
+    return {
+      body,
+      exposed: end,
+      segment: index => view.segment(index),
+      expose: () => {
+        for (let index = owner.exposed; index < end; index++)
+          this.published.add(segmentNumber(view.segment(index).uri))
+        owner.exposed = Math.max(owner.exposed, end)
+        owner.publishedEnd = Math.max(owner.publishedEnd, end)
+        this.lastBuilt =
+          body === '\n'
+            ? undefined
+            : { body, generation: view.generation, end, closed }
+      },
+      after: before => {
+        if (before == null) return undefined
+        if (
+          last?.body === before &&
+          last.generation === view.generation &&
+          !last.closed &&
+          last.end <= end
+        )
+          return view.bodyBetween(last.end, end) + closing
+        return body.startsWith(before) ? body.slice(before.length) : undefined
+      }
     }
   }
 
@@ -232,7 +467,7 @@ export class OriginPublisher {
     const codecs = codecsAttribute(
       codecsFromInit(await readFile(join(dir, init)))
     )
-    const bytes = (await stat(join(dir, first.uri))).size
+    const bytes = (await this.stat(join(dir, first.uri))).size
     // Include every track's bytes; HLS probes commonly report no bitrate.
     const bandwidth = Math.max(
       1,
@@ -247,47 +482,104 @@ export class OriginPublisher {
   }
 
   /**
-   * Once a playlist lists a part with its own init segment, the Space's master
-   * and the video's row say the most any part needs, as a recording finished
-   * on this machine does (`combinedMaster`): players choose by the master, and
-   * the first part's says only what that part needs. Each pass that lists a new
-   * part does it, which the closing pass is one of, and a new process does it
-   * again.
+   * Once the published playlist lists a part with its own init segment, the
+   * Space's master and the video's row say the most any part needs, as a
+   * recording finished on this machine does (`combinedMaster`): players
+   * choose by the master, and the first part's says only what that part
+   * needs. Each pass that publishes a new part's first piece does it, which
+   * the closing pass is one of, and a new process does it again. The reader
+   * keeps each part's first piece, so this costs nothing while no part is new.
    *
    * The recording is whole and playing whatever this does. A failure is said
    * in the log and tried again at the next pass, and never stops a flush or a
    * close.
    */
-  private async sayEveryPart(body: string): Promise<void> {
-    const parts = new Map<string, { uri: string; durationSec: number }>()
-    for (const { name, init, durationSec } of listedSegments(body)) {
-      if (!parts.has(init)) parts.set(init, { uri: name, durationSec })
-    }
-    if (parts.size <= this.partsInMaster) return
+  private async sayEveryPart(
+    view: PlaylistView,
+    exposed: number
+  ): Promise<void> {
+    // The parts whose first piece the published body lists.
+    const published = view.parts.filter(part => {
+      const at = view.listedAt(part.name)
+      return at != null && at < exposed
+    })
+    if (published.length <= this.partsInMaster) return
     try {
       const { width, height } = this.metadata ?? {}
       const masters: string[] = []
-      for (const [init, first] of parts) {
+      for (const part of published) {
         const size =
-          init === FIRST_INIT && width != null && height != null
+          part.init === FIRST_INIT && width != null && height != null
             ? { width, height }
-            : pictureSizeFromInit(await readFile(join(this.options.dir, init)))
-        masters.push(await this.masterOfPart(init, first, size))
+            : pictureSizeFromInit(
+                await readFile(join(this.options.dir, part.init))
+              )
+        masters.push(
+          await this.masterOfPart(
+            part.init,
+            { uri: part.name, durationSec: part.durationSec },
+            size
+          )
+        )
       }
       const master = combinedMaster(masters)
       await this.putPlaylist('master.m3u8', master)
       const size = masterPictureSize(master)
       if (size != null) await this.options.onLargestPicture(size)
-      this.partsInMaster = parts.size
+      this.partsInMaster = published.length
     } catch (error) {
       this.options.log(
-        `live: ${this.options.videoId} master of ${parts.size} parts not written: ${String(error)}`
+        `live: ${this.options.videoId} master of ${published.length} parts not written: ${String(error)}`
       )
+    }
+  }
+
+  /** The published body of any other playlist, from its whole text. */
+  private wholeBody(
+    view: PlaylistView,
+    named: ReadonlySet<string>
+  ): PublishedBody {
+    this.built = undefined
+    this.lastBuilt = undefined
+    const body = publishedPlaylist(view.text(), named, this.published)
+    const exposed = parseMediaPlaylist(body).segments
+    return {
+      body,
+      exposed: exposed.length,
+      segment: index => exposed[index],
+      expose: () => {
+        for (const segment of exposed)
+          this.published.add(segmentNumber(segment.uri))
+      },
+      after: before =>
+        before != null && body.startsWith(before)
+          ? body.slice(before.length)
+          : undefined
+    }
+  }
+
+  private async stat(path: string): Promise<{ size: number; mtimeMs: number }> {
+    return await (this.options.files ?? { stat }).stat(path)
+  }
+
+  private async playlistStamp(): Promise<
+    { size: number; mtimeMs: number } | undefined
+  > {
+    try {
+      const info = await this.stat(join(this.options.dir, 'master.m3u8'))
+      return { size: info.size, mtimeMs: info.mtimeMs }
+    } catch {
+      return undefined
     }
   }
 
   private active(): boolean {
     return !this.stopped
+  }
+
+  /** The local playlist, read on from the last read (`playlistTail`). */
+  private readPlaylist(): PlaylistView | undefined {
+    return playlistTail(join(this.options.dir, 'master.m3u8')).read()
   }
 
   private async localPlaylist(): Promise<string | undefined> {
@@ -301,13 +593,19 @@ export class OriginPublisher {
 
   private async unchanged(name: string, held?: FileStamp): Promise<boolean> {
     if (held == null) return false
-    const info = await stat(join(this.options.dir, name)).catch(() => undefined)
+    const info = await this.stat(join(this.options.dir, name)).catch(
+      () => undefined
+    )
     return info?.size === held.size && info.mtimeMs === held.mtimeMs
   }
 
   private async snapshot(name: string): Promise<FileStamp | undefined> {
     const path = join(this.options.dir, name)
-    const info = await stat(path)
+    const info = await this.stat(path)
+    // A writer creates a file before it fills it, and a reconnecting one
+    // truncates the init it rewrites: nothing is uploaded until it has bytes
+    // and holds still while it is read.
+    if (info.size === 0) return undefined
     const hash = createHash('md5')
     for await (const bytes of createReadStream(path)) hash.update(bytes)
     const held = {
@@ -319,15 +617,12 @@ export class OriginPublisher {
   }
 
   private async publishFile(name: string): Promise<boolean> {
-    if (await this.unchanged(name, this.acknowledged.get(name))) return true
+    if (await this.unchanged(name, this.acknowledged.get(pieceKey(name))))
+      return true
     if (!this.active()) return false
-    this.acknowledged.delete(name)
+    this.acknowledged.delete(pieceKey(name))
     const held = await this.snapshot(name)
     if (held == null || !this.active()) return false
-    // FFmpeg empties its init file as it starts and writes it when its first
-    // segment closes. Only a recording's first writer, or one on a playlist
-    // that lists nothing, does that to `init.mp4`: the next pass gets it.
-    if (held.size === 0) return false
     const { space, videoId, dir } = this.options
     const key = objectKey(videoId, name)
     await putObjectFile({
@@ -339,7 +634,7 @@ export class OriginPublisher {
     const result = await verifyObjectLength({ space, key, size: held.size })
     if (!result.ok) throw new Error(result.reason)
     if (!(await this.unchanged(name, held))) return false
-    this.acknowledged.set(name, held)
+    this.acknowledged.set(pieceKey(name), held)
     return true
   }
 
