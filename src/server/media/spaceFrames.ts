@@ -131,6 +131,8 @@ export interface SpaceFrame {
 export interface SpaceFrameOptions {
   space: SpaceSettings
   videoId: string
+  /** The video's media is under `videos/<id>-<secret>/`; null for `videos/<id>/`. */
+  spaceSecret: string | null
   /** Seconds into the video. */
   atSec: number
   /** The work directory the fragment is written under. */
@@ -185,13 +187,14 @@ export async function fetchSpaceFrame(
   options: SpaceFrameOptions
 ): Promise<SpaceFrame | undefined> {
   const { space, videoId, atSec, workDir } = options
+  const video = { id: videoId, spaceSecret: options.spaceSecret }
   const doFetch = options.fetch ?? globalThis.fetch
 
   const cache = playlistsFor(space, options.fetch)
-  const master = await cache.get(videoId, MASTER_PLAYLIST, true)
+  const master = await cache.get(video, MASTER_PLAYLIST, true)
   const variant = master == null ? undefined : mediaVariant(master)
   if (variant == null) return undefined
-  const playlist = await cache.get(videoId, variant, options.verified === true)
+  const playlist = await cache.get(video, variant, options.verified === true)
   if (playlist == null) return undefined
   const fragment = fragmentAt(playlist, atSec)
   if (fragment == null) return undefined
@@ -206,7 +209,7 @@ export async function fetchSpaceFrame(
     objects.map(async ([file, range]) => {
       const url = presignGetUrl({
         ...space,
-        key: spaceKey(videoId, file),
+        key: spaceKey(video, file),
         expiresSec: FRAGMENT_URL_TTL_SEC
       })
       if (range != null) return await range_(doFetch, url, range)

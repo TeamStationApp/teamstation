@@ -457,6 +457,8 @@ export function playerRoutes(
         endOffsetSec: number
         stillUrl: string
         storage: 'peertube' | 'local' | 'spaces'
+        /** Only for cutting its still; never sent. */
+        spaceSecret: string | null
       }
       const now = Date.now()
 
@@ -480,6 +482,7 @@ export function playerRoutes(
             'game_id as gameId',
             'kind',
             'storage',
+            'space_secret as spaceSecret',
             'start_at as startAt',
             'sync_offset_sec as syncOffsetSec',
             'duration_sec as durationSec'
@@ -562,7 +565,8 @@ export function playerRoutes(
               playOffsetSec: highlight.playOffsetSec,
               endOffsetSec: highlight.endOffsetSec,
               stillUrl: stillUrl(media, video.id, highlight.playOffsetSec, now),
-              storage: video.storage
+              storage: video.storage,
+              spaceSecret: video.spaceSecret
             })
             // One row per play: the first video that covers it is the one the
             // list opens, and the same moment twice is two thumbnails of one
@@ -608,7 +612,7 @@ export function playerRoutes(
       }
 
       res.json({
-        highlights: out.map(({ storage, ...rest }) => rest),
+        highlights: out.map(({ storage, spaceSecret, ...rest }) => rest),
         /** The `before` to ask for the next page with. */
         nextBefore,
         /**
@@ -629,9 +633,13 @@ export function playerRoutes(
         else held.push(row)
       }
       for (const [videoId, rows_] of byVideo) {
-        warmVideoStills(media, rows_[0].storage, videoId, rows_).catch(
-          () => undefined
-        )
+        warmVideoStills(
+          media,
+          rows_[0].storage,
+          videoId,
+          rows_[0].spaceSecret,
+          rows_
+        ).catch(() => undefined)
       }
     })
   )

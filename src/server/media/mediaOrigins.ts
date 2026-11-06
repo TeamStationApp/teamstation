@@ -13,6 +13,8 @@ import { spaceConfigured } from './spacesHls'
  * - **The Space**, when one is configured (its keys set): the bucket's own
  *   subdomain, or the endpoint itself for a path-style stand-in. Presigned
  *   video, image and chat attachment URLs point there.
+ * - **`space.mediaBaseUrl`'s origin**, when it is set: unsigned media URLs
+ *   under each video's secret path point there (the CDN).
  * - **Apple Music's artwork**, `https://*.mzstatic.com`, for walk-up songs.
  */
 export function mediaOrigins(config: ServerConfig): string[] {
@@ -31,6 +33,10 @@ export function mediaOrigins(config: ServerConfig): string[] {
         : `${endpoint.protocol}//${space.bucket}.${endpoint.host}`
     )
   }
+  // Public media under secret paths, when it comes from somewhere else (a
+  // CDN). Its origin only: a CSP source with a path would allow just that path.
+  const mediaBaseUrl = space.mediaBaseUrl ?? ''
+  if (mediaBaseUrl !== '') origins.push(new URL(mediaBaseUrl).origin)
   const source = space.readOnlySource
   if (source != null && source.keys.length > 0 && spaceConfigured(source)) {
     const endpoint = new URL(source.endpoint)

@@ -260,7 +260,12 @@ describe('shared still ownership', function () {
       videoId: 'demo',
       atSec: 20,
       ffmpegPath: serverConfig.ffmpegPath,
-      source: { kind: 'space' as const, space, videoId: 'demo' }
+      source: {
+        kind: 'space' as const,
+        space,
+        videoId: 'demo',
+        spaceSecret: null
+      }
     }
     expect(await ensureStill(options)).equals(stillKey('demo', 20))
     expect(sourceReads).greaterThan(0)
