@@ -207,6 +207,16 @@ describe('scoring actions', function () {
     expect(examples.map(action => action.type)).deep.equals([...ACTION_TYPES])
     for (const action of examples)
       expect(cleanAction(copyState(action))).deep.equals({ action })
+    // An Out at First is a result of its own.
+    const outAtFirst = {
+      type: 'result',
+      eventType: 'field_out',
+      outBy: 'first',
+      advance: 'ground'
+    } as const
+    expect(cleanAction(copyState(outAtFirst))).deep.equals({
+      action: outAtFirst
+    })
   })
 
   it('carries a whole setup on a roster change', function () {
@@ -285,7 +295,11 @@ describe('scoring actions', function () {
     expect(props('ballInPlay')).have.property('launchAngle')
     expect(props('ballInPlay')).not.have.property('launchAngleDragged')
     expect(props('result').eventType.enum).deep.equals(RESULT_TYPES)
-    expect(props('result').outBy.enum).deep.equals(OUT_KINDS)
+    // Out at First is the scorer's own: dictation says a throw.
+    expect(props('result').outBy.enum).deep.equals(
+      OUT_KINDS.filter(kind => kind !== 'first')
+    )
+    expect(OUT_KINDS).includes('first')
     expect(props('result').base.enum).deep.equals(BASES)
     expect(props('fieldingPlay').errorKind.enum).deep.equals(ERROR_KINDS)
     const fielding = toolSchema().find(tool => tool.name === 'fieldingPlay')!

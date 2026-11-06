@@ -200,15 +200,17 @@ export function acceptTrajectory(
       eventType: outcomeEvents[outcome],
       ...(outcome === 'Ground Out'
         ? { outBy: 'throw' as const, advance: 'ground' as const }
-        : outcome === 'Ball Caught'
-          ? {
-              outBy: 'catch' as const,
-              foulCaught:
-                pending.location != null && !isFairLocation(pending.location)
-            }
-          : outcome === 'Batter Interference'
-            ? { outBy: 'interference' as const }
-            : {})
+        : outcome === 'Out at First'
+          ? { outBy: 'first' as const, advance: 'ground' as const }
+          : outcome === 'Ball Caught'
+            ? {
+                outBy: 'catch' as const,
+                foulCaught:
+                  pending.location != null && !isFairLocation(pending.location)
+              }
+            : outcome === 'Batter Interference'
+              ? { outBy: 'interference' as const }
+              : {})
     })
     next.pendingPlay ??= pending
     next.phase = 'runnerMovement'

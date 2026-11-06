@@ -94,9 +94,14 @@ export const RESULT_TYPES = [
 ] as const
 export type ResultType = (typeof RESULT_TYPES)[number]
 
-/** How a batter was put out on a ball in play. */
-export const OUT_KINDS = ['throw', 'catch', 'interference'] as const
+/**
+ * How a batter was put out on a ball in play. `first`: thrown out at first,
+ * the Out at First a scorer picks.
+ */
+export const OUT_KINDS = ['throw', 'catch', 'interference', 'first'] as const
 export type OutKind = (typeof OUT_KINDS)[number]
+/** The out kinds dictation offers: an Out at First is said as a throw. */
+const DICTATED_OUT_KINDS = OUT_KINDS.filter(kind => kind !== 'first')
 
 export const BASES = ['1B', '2B', '3B'] as const
 export type Base = (typeof BASES)[number]
@@ -865,7 +870,7 @@ export function toolSchema(): Tool[] {
       {
         eventType: oneOf(RESULT_TYPES, 'The outcome'),
         outBy: oneOf(
-          OUT_KINDS,
+          DICTATED_OUT_KINDS,
           'For field_out: thrown out, caught, or interference'
         ),
         base: oneOf(BASES, 'For manual_placement: where the batter was put'),
