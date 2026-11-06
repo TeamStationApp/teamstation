@@ -4726,41 +4726,24 @@ export class Chat2UI {
       assert(result.status === 0, 'QA app link delivery failed')
       return
     }
+    if (this.surface === 'ios') {
+      // The host hands the simulator's link straight to the app that claims
+      // the scheme. A link opened from inside the device asks first, and a
+      // relaunched app can lose that confirmation before its button is
+      // tapped, leaving the tap on the screen behind it.
+      const result = spawnSync(
+        'xcrun',
+        ['simctl', 'openurl', this.deviceId, this.fixture.scheme + ':/' + path],
+        { encoding: 'utf8', timeout: 60000 }
+      )
+      assert(result.status === 0, 'QA app link delivery failed')
+      return
+    }
     await this.device.openLink({
       link: this.native
         ? this.fixture.scheme + ':/' + path
         : this.fixture.webUrl.replace(/\/$/, '') + path
     })
-    if (this.surface === 'ios') {
-      for (let i = 0; i < 10; i++) {
-        const nodes = await this.nodes()
-        if (nodes.some(n => /Open in .TeamStation/.test(n.text ?? ''))) {
-          const open = need(
-            nodes.find(n => n.text === 'Open' && n.bounds != null),
-            'Observed native Open alert button required'
-          )
-          await this.tapObserved(open)
-          // What the accepted link opened, beside the button's point.
-          const after = join(
-            this.runDir,
-            `link-alert-accepted-${this.steps.length}.png`
-          )
-          this.steps.push({
-            name: 'iOS link confirmation accepted',
-            path,
-            poll: i,
-            button: open.bounds,
-            evidence: await this.captureImage(after).then(
-              () => after,
-              () => undefined
-            ),
-            outcome: 'passed'
-          })
-          break
-        }
-        await new Promise(resolve => setTimeout(resolve, 200))
-      }
-    }
   }
 
   async tapObserved(node: PublicNode): Promise<void> {
