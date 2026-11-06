@@ -120,9 +120,11 @@ describe('announcing screen scope changes', function () {
       await pool.query('update sync_clock set value = 41 where id = 1')
       await migrateUp(pool, migrations)
       expect(await clock()).deep.equals([])
-      expect(await migrateDown(pool, migrations, 1)).deep.equals([
-        '110dropSyncClock'
-      ])
+      // Every migration from the drop on comes back down, newest first.
+      const fromDrop = migrations.filter(m => m.name >= '110dropSyncClock')
+      expect(await migrateDown(pool, migrations, fromDrop.length)).deep.equals(
+        fromDrop.map(m => m.name).reverse()
+      )
       expect(
         (await pool.query('select id, value::text from sync_clock')).rows
       ).deep.equals([{ id: 1, value: '0' }])
