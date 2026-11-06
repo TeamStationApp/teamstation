@@ -13,6 +13,8 @@ export interface RosterTarget {
   drop: (id: number, edge?: 'before' | 'after') => void
   insertion?: 'row' | 'end'
   clip?: () => Promise<RosterRect>
+  /** Placed at a fixed spot: a lifted card's closing slot never moves it. */
+  fixed?: boolean
 }
 export interface RosterScroll {
   measure: () => Promise<RosterRect>
@@ -171,6 +173,7 @@ export class RosterGesture {
         if (
           frozen != null &&
           drag?.rect != null &&
+          target.fixed !== true &&
           source?.clip === target.clip &&
           frozen.rect.y > drag.rect.y
         )

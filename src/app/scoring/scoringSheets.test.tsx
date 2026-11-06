@@ -11,7 +11,7 @@ import { candidate } from '../../test/fakeCandidateClient'
 import { measureBoxes } from '../../test/measureBoxes'
 import { mintedRosterEntry } from '../../test/mintedRosterEntry'
 import { scoringSession } from '../../test/scoringSession'
-import { ThemeProvider } from '../theme/ThemeContext'
+import { getTheme, ThemeProvider } from '../theme/ThemeContext'
 import { gameFixture } from './isUnscoredGame.test'
 import { draftOfLocalPlayer, rosterPlayerBody } from './playerDraft'
 import {
@@ -527,7 +527,7 @@ describe('scoring slide-up sheets', function () {
     expect(footer.textContent).includes('Save RostersCancel')
     await click('Defense')
     expect(document.body.textContent).includes(
-      'Drag player into position. On touch, hold briefly first.'
+      'Drag a player into position (on touch, hold a roster card briefly first). Drag a fielder to move or swap him; tap him to clear.'
     )
     expect(
       document.querySelector('[aria-label="Top-down baseball field"]')
@@ -579,6 +579,75 @@ describe('scoring slide-up sheets', function () {
     expect(
       document.querySelector('[data-roster-target="defense-P"]')!.textContent
     ).includes('Player 1')
+    await click('Cancel')
+  })
+  /** The player id at a position, or null when it is empty. */
+  const fielder = (position: string): string | null =>
+    document
+      .querySelector(`[data-roster-target="defense-${position}"]`)!
+      .getAttribute('data-roster-player')
+  const card = (position: string): string =>
+    `[data-roster-target="defense-${position}"]`
+  it('moves a fielder dragged to an empty position, swaps him with an occupied one, and clears on a tap (U32)', async function () {
+    this.timeout(10000)
+    await mount()
+    await menu('Set Team Rosters')
+    await click('Defense')
+    const pitcher = fielder('P')
+    const catcher = fielder('C')
+    const first = fielder('1B')
+    expect(pitcher).not.equals(null)
+    expect(catcher).not.equals(null)
+    // Swap: the pitcher dropped on the catcher's spot trades places with him.
+    await drag(card('P'), 'defense-C')
+    expect(fielder('C')).equals(pitcher)
+    expect(fielder('P')).equals(catcher)
+    // Tap: first base empties and his man goes back to the roster.
+    await click('Clear 1B')
+    expect(fielder('1B')).equals(null)
+    expect(
+      document.querySelector(
+        `[data-roster-target="roster"] [data-roster-player="${first}"]`
+      )
+    ).not.equals(null)
+    // Move: the man now pitching, dropped on empty first, leaves P empty.
+    await drag(card('P'), 'defense-1B')
+    expect(fielder('1B')).equals(catcher)
+    expect(fielder('P')).equals(null)
+    expect(document.querySelector(card('P'))!.textContent).includes(
+      'Unassigned'
+    )
+    // Dropped on his own spot nothing changes.
+    await drag(card('1B'), 'defense-1B')
+    expect(fielder('1B')).equals(catcher)
+    // A roster card dropped on an occupied spot replaces him.
+    await drag(
+      `[data-roster-target="roster"] [data-roster-player="${first}"]`,
+      'defense-C'
+    )
+    expect(fielder('C')).equals(first)
+    await click('Cancel')
+  })
+  it('clears every position, the pitcher too, from the red Clear level with Roster (U34)', async function () {
+    this.timeout(10000)
+    await mount()
+    await menu('Set Team Rosters')
+    await click('Defense')
+    const header = document.querySelector<HTMLElement>(
+      '[data-testid="Defense roster header"]'
+    )!
+    expect(header.textContent).equals('RosterClear')
+    expect(header.style.flexDirection).equals('row')
+    expect(header.style.justifyContent).equals('space-between')
+    const label = header.querySelector<HTMLElement>(
+      '[aria-label="Clear Defense"]'
+    )!.firstElementChild as HTMLElement
+    const red = document.createElement('div')
+    red.style.color = getTheme().scoringOutColor
+    expect(window.getComputedStyle(label).color).equals(red.style.color)
+    await click('Clear Defense')
+    for (const position of ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF'])
+      expect(fielder(position), position).equals(null)
     await click('Cancel')
   })
   it('adds placeholders through player entry while keeping additions in the roster draft', async function () {

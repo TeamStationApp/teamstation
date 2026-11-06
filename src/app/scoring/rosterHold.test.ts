@@ -61,3 +61,34 @@ describe('roster half-second hold', function () {
     expect(calls).equals(0)
   })
 })
+describe('roster immediate drag (U31)', function () {
+  it('starts a drag at 10 px with no timer and takes 9 px for a tap', function () {
+    mock.timers.enable({ apis: ['setTimeout'] })
+    try {
+      const activated: unknown[] = []
+      const hold = new RosterHold(
+        p => activated.push(p),
+        () => true
+      )
+      hold.start({ x: 0, y: 0 })
+      mock.timers.tick(5000)
+      expect(hold.active).equals(false)
+      hold.move({ x: 9, y: 0 })
+      expect(hold.active).equals(false)
+      expect(hold.finish()).equals(true)
+      expect(activated).deep.equals([])
+      hold.start({ x: 0, y: 0 })
+      hold.move({ x: 6, y: 8 })
+      expect(hold.active).equals(true)
+      expect(activated).deep.equals([{ x: 0, y: 0 }])
+      hold.move({ x: 100, y: 100 })
+      expect(activated).length(1)
+      expect(hold.finish()).equals(false)
+      expect(hold.active).equals(false)
+      hold.move({ x: 50, y: 50 })
+      expect(activated).length(1)
+    } finally {
+      mock.timers.reset()
+    }
+  })
+})

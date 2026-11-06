@@ -2758,3 +2758,36 @@ describe('a scoring session that waits only for a pitcher (U15)', function () {
     expect(session.state.liveData.linescore.balls).equals(0)
   })
 })
+
+describe('a scoring session after the defense is cleared (U35)', function () {
+  it('refuses every pitch until a pitcher is assigned again', async () => {
+    const setup = setupOf(game())
+    const pitcher = setup.sides.home.defense.P
+    const session = await ScoringSession.open(
+      new FakeStore(),
+      'g1',
+      { gamePk: 'g1', teams: TEAMS, setup },
+      { ...new Clock().options, requireCurrentSetup: true }
+    )
+    const cleared = setupOf(game())
+    for (const position of POSITIONS)
+      cleared.sides.home.defense[position] = null
+    expect(
+      session.apply({ type: 'lineup', kind: 'roster', setup: cleared }).problems
+    ).deep.equals([])
+    expect(session.apply(ball).problems).deep.equals([
+      { code: 'notNow', message: 'Missing pitcher' }
+    ])
+    expect(session.state.liveData.linescore.balls).equals(0)
+    const restored = setupOf(game())
+    for (const position of POSITIONS)
+      restored.sides.home.defense[position] = null
+    restored.sides.home.defense.P = pitcher
+    expect(
+      session.apply({ type: 'lineup', kind: 'roster', setup: restored })
+        .problems
+    ).deep.equals([])
+    expect(session.apply(ball).problems).deep.equals([])
+    expect(session.state.liveData.linescore.balls).equals(1)
+  })
+})

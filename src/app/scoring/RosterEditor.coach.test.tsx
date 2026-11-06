@@ -238,4 +238,28 @@ describe('the roster screen for a coach', function () {
     expect(host.querySelectorAll('[data-testid="batIcon"]')).lengthOf(1)
     expect(host.textContent).not.includes('Drop here to remove')
   })
+  it('clears his whole defense, the pitcher too, from the red Clear level with Roster (U34)', async function () {
+    await mount()
+    await click('Defense')
+    const header = host.querySelector<HTMLElement>(
+      '[data-testid="Defense roster header"]'
+    )!
+    expect(header.textContent).equals('RosterClear')
+    expect(header.style.justifyContent).equals('space-between')
+    expect(
+      host
+        .querySelector('[data-roster-target="defense-P"]')!
+        .getAttribute('data-roster-player')
+    ).not.equals(null)
+    await click('Clear Defense')
+    expect(host.querySelectorAll('[data-roster-target^="defense-"]')).lengthOf(
+      9
+    )
+    expect(
+      host.querySelectorAll(
+        '[data-roster-target^="defense-"][data-roster-player]'
+      )
+    ).lengthOf(0)
+    expect(saveDisabled()).equals(null)
+  })
 })

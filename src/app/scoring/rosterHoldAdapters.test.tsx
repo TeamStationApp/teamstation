@@ -137,6 +137,57 @@ describe('roster hold platform adapters', function () {
     expect(taps).deep.equals([])
     expect(engine.active).equals(null)
   })
+  it('drags an immediate card at 10 px by touch or mouse with no hold, and takes 9 px for a tap (U33)', async () => {
+    const { engine, row, taps, drops } = await setup({ immediate: true })
+    expect(row.style.touchAction).equals('none')
+    await touch(row, 'touchstart', 10)
+    await touch(row, 'touchmove', 19)
+    expect(engine.active).equals(null)
+    await touch(row, 'touchend', 19)
+    expect(taps).deep.equals([1])
+    await touch(row, 'touchstart', 10)
+    await touch(row, 'touchmove', 20)
+    expect(engine.active?.id).equals(1)
+    const move = await touch(row, 'touchmove', 150)
+    expect(move.defaultPrevented).equals(true)
+    await touch(row, 'touchend', 150)
+    expect(drops).deep.equals([1])
+    expect(taps).deep.equals([1])
+    const pointer = async (type: string, x: number): Promise<void> => {
+      const event = new window.MouseEvent(type, {
+        bubbles: true,
+        clientX: x,
+        clientY: 10,
+        button: 0
+      })
+      Object.defineProperties(event, {
+        pointerType: { value: 'mouse' },
+        pointerId: { value: 1 }
+      })
+      await act(async () => {
+        row.dispatchEvent(event)
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+    }
+    await pointer('pointerdown', 10)
+    expect(engine.active).equals(null)
+    await pointer('pointermove', 150)
+    expect(engine.active?.id).equals(1)
+    await pointer('pointerup', 150)
+    await act(async () => {
+      row.click()
+    })
+    expect(drops).deep.equals([1, 1])
+    expect(taps).deep.equals([1])
+    await pointer('pointerdown', 10)
+    await pointer('pointermove', 15)
+    await pointer('pointerup', 15)
+    await act(async () => {
+      row.click()
+    })
+    expect(taps).deep.equals([1, 1])
+    expect(drops).deep.equals([1, 1])
+  })
   it('lets a short tap append and lets pre-hold movement scroll without adding or dropping', async () => {
     const { engine, row, taps, drops } = await setup()
     await touch(row, 'touchstart', 10)
