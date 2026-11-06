@@ -4003,6 +4003,24 @@ export class Chat2UI {
       'QA app back in front after Settings',
       60000
     )
+    // A relaunched app is still becoming active when its first element shows,
+    // and a link sent then can lose its confirmation: wait until two reads a
+    // second apart see the same screen.
+    let previous = ''
+    await until(
+      async () => {
+        const screen = JSON.stringify(
+          (await this.nodes()).map(node => [node.id, node.text])
+        )
+        const still = screen === previous
+        previous = screen
+        if (still) return true
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        return undefined
+      },
+      'QA app settled after Settings',
+      30000
+    )
     this.steps.push({
       name: 'QA app back in front after Settings',
       outcome: 'passed'
@@ -4726,24 +4744,56 @@ export class Chat2UI {
       assert(result.status === 0, 'QA app link delivery failed')
       return
     }
-    if (this.surface === 'ios') {
-      // The host hands the simulator's link straight to the app that claims
-      // the scheme. A link opened from inside the device asks first, and a
-      // relaunched app can lose that confirmation before its button is
-      // tapped, leaving the tap on the screen behind it.
-      const result = spawnSync(
-        'xcrun',
-        ['simctl', 'openurl', this.deviceId, this.fixture.scheme + ':/' + path],
-        { encoding: 'utf8', timeout: 60000 }
-      )
-      assert(result.status === 0, 'QA app link delivery failed')
-      return
-    }
     await this.device.openLink({
       link: this.native
         ? this.fixture.scheme + ':/' + path
         : this.fixture.webUrl.replace(/\/$/, '') + path
     })
+    if (this.surface === 'ios') {
+      const asking = (nodes: PublicNode[]): boolean =>
+        nodes.some(n => /Open in .TeamStation/.test(n.text ?? ''))
+      for (let i = 0; i < 10; i++) {
+        const nodes = await this.nodes()
+        if (asking(nodes)) {
+          // A just-relaunched app becoming active can withdraw the
+          // confirmation between two reads; tap its button only while a
+          // fresh read still shows it, or the tap lands on the screen behind.
+          const current = await this.nodes()
+          if (!asking(current)) {
+            this.steps.push({
+              name: 'iOS link confirmation withdrawn before its tap',
+              path,
+              poll: i,
+              outcome: 'passed'
+            })
+            break
+          }
+          const open = need(
+            current.find(n => n.text === 'Open' && n.bounds != null),
+            'Observed native Open alert button required'
+          )
+          await this.tapObserved(open)
+          // What the accepted link opened, beside the button's point.
+          const after = join(
+            this.runDir,
+            `link-alert-accepted-${this.steps.length}.png`
+          )
+          this.steps.push({
+            name: 'iOS link confirmation accepted',
+            path,
+            poll: i,
+            button: open.bounds,
+            evidence: await this.captureImage(after).then(
+              () => after,
+              () => undefined
+            ),
+            outcome: 'passed'
+          })
+          break
+        }
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+    }
   }
 
   async tapObserved(node: PublicNode): Promise<void> {
