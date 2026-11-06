@@ -4677,10 +4677,16 @@ export class Chat2UI {
     // slow start routes the first link late, and a second one would open the
     // conversation again, so the resend waits well past a slow start.
     const routed =
-      path === '/chat' ? 'chat-conversation-list' : 'chat-message-history'
+      path === '/chat'
+        ? { id: 'chat-conversation-list' }
+        : path === '/dev/chat-bench'
+          ? { text: exactText('Chat crypto bench') }
+          : { id: 'chat-message-history' }
     if (
-      (path === '/chat' || /^\/chat\/cnv_[^/]+$/.test(path)) &&
-      !(await this.visible({ id: routed }, 45000))
+      (path === '/chat' ||
+        path === '/dev/chat-bench' ||
+        /^\/chat\/cnv_[^/]+$/.test(path)) &&
+      !(await this.visible(routed, 45000))
     ) {
       // The screen the first link left, for a resend that also fails.
       const unrouted = join(
@@ -4698,6 +4704,40 @@ export class Chat2UI {
         outcome: 'passed'
       })
       await this.openNativeLink(path)
+      // A simulator asks before every link, and the link a running app
+      // accepts that way can be lost; one that starts the app arrives as its
+      // launch address. The start keeps the launch setting returnFromSettings
+      // passes, through the simulator's own launch environment.
+      if (
+        this.surface === 'ios' &&
+        !this.physical &&
+        !(await this.visible(routed, 45000))
+      ) {
+        const simctl = (...args: string[]): number | null =>
+          spawnSync('xcrun', ['simctl', ...args], {
+            encoding: 'utf8',
+            timeout: 60000
+          }).status
+        assert(
+          simctl(
+            'spawn',
+            this.deviceId,
+            'launchctl',
+            'setenv',
+            'TS_DECLARED_AGE_LOWER',
+            '13'
+          ) === 0,
+          'QA app launch setting for its link failed'
+        )
+        // Not running already is as good as stopped.
+        simctl('terminate', this.deviceId, this.fixture.appId)
+        this.steps.push({
+          name: 'iOS simulator app started by its unrouted link',
+          path,
+          outcome: 'passed'
+        })
+        await this.openNativeLink(path)
+      }
     }
   }
 

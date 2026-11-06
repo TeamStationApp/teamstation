@@ -8115,7 +8115,9 @@ describe('compatibility harness route and coordinate boundaries', () => {
       device: {
         openLink: async (args: unknown) => {
           calls.push(args)
-        }
+        },
+        // The bench opened by the first link.
+        assertVisible: async () => {}
       }
     })
     await ui.open('/dev/chat-bench')
