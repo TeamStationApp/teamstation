@@ -388,7 +388,7 @@ describe('prior runner corrections', () => {
     expect(s.state.liveData.linescore.teams.away.runs).equals(2)
   })
   for (const reason of ['Throwing Error', 'Fielding Error'] as const)
-    it(`retains a shared ${reason} when its first runner returns home to third`, async () => {
+    it(`keeps a run scored on a shared ${reason} when the trailing runner returns`, async () => {
       const { session: s, store } = priorRunnerFixture('occupied')
       expect(
         s.apply({ type: 'baseRunning', kind: 'steal', runner: 100 }).problems
@@ -419,6 +419,13 @@ describe('prior runner corrections', () => {
         { type: 'pitch', call: 'B' }
       ] as ScoringAction[])
         expect(s.apply(action).problems).deep.equals([])
+      // The runner who scored on the error has left the field.
+      expect(priorRunners(s.state)).deep.equals([
+        { runner: 101, from: 2, to: 1 }
+      ])
+      expect(returnPriorRunner(s.opening, s.actions, s.state, 100, 3)).equals(
+        null
+      )
       const before = copyState(s.picture().current)
       const eventCount =
         s.state.liveData.plays.allPlays.at(-1)!.playEvents.length
@@ -427,22 +434,22 @@ describe('prior runner corrections', () => {
         state: s.state,
         log: s.actions
       })
-      const proposed = returnPriorRunner(s.opening, s.actions, s.state, 100, 3)!
+      const proposed = returnPriorRunner(s.opening, s.actions, s.state, 101, 1)!
       expect(proposed).not.equals(null)
       expect(
         JSON.stringify({ opening: s.opening, state: s.state, log: s.actions })
       ).equals(original)
       expect(s.sync(proposed.log)).deep.equals([])
-      expect(baseIds(s.state)).deep.equals([null, 101, 100])
-      expect(s.state.liveData.linescore.teams.away.runs).equals(0)
+      expect(baseIds(s.state)).deep.equals([101, null, null])
+      expect(s.state.liveData.linescore.teams.away.runs).equals(1)
       expect(s.state.liveData.linescore.teams.home.errors).equals(1)
       const play = s.state.liveData.plays.allPlays.at(-1)!
       expect(play.playEvents).has.length(eventCount)
       expect(
         play.runners.filter(row => row.details.runner.id === 101)
-      ).has.length(1)
+      ).has.length(0)
       expect(
-        play.runners.find(row => row.details.runner.id === 101)!.credits[0]
+        play.runners.findLast(row => row.details.runner.id === 100)!.credits[0]
           .player?.id
       ).equals(207)
       expect(s.picture().current).deep.equals(before)
@@ -457,7 +464,7 @@ describe('prior runner corrections', () => {
         },
         { setTimer: () => null, clearTimer: () => undefined }
       )
-      expect(baseIds(reopened.state)).deep.equals([null, 101, 100])
+      expect(baseIds(reopened.state)).deep.equals([101, null, null])
       expect(
         reopened.state.liveData.plays.allPlays.at(-1)!.runners
       ).deep.equals(play.runners)
@@ -589,8 +596,7 @@ describe('prior runner corrections', () => {
   })
   for (const [eventType, to] of [
     ['double', 1],
-    ['triple', 2],
-    ['home_run', 3]
+    ['triple', 2]
   ] as const)
     it(`shortens a result-derived ${eventType} without adding an event`, async () => {
       const { session: s } = priorRunnerFixture('pitched')
@@ -911,5 +917,67 @@ describe('prior runner corrections', () => {
       storedRecordOf(before)!.actionTimes
     )
     expect(s.state.liveData.linescore.defense.P!.id).equals(207)
+  })
+  describe('scorers leave the field (U21, U22)', () => {
+    const single: ScoringAction[] = [
+      { type: 'ballInPlay', contact: 'swing', fielder: 207 },
+      { type: 'result', eventType: 'single' },
+      { type: 'gameFlow', kind: 'closePlay' }
+    ]
+    for (const loaded of [false, true])
+      for (const homeRunKind of ['in-park', 'out-of-park'] as const)
+        it(`offers nobody after a ${homeRunKind} home run with the bases ${loaded ? 'loaded' : 'empty'}`, () => {
+          const { session: s } = priorRunnerFixture('occupied')
+          const log: ScoringAction[] = [
+            ...(loaded ? [...single, ...single, ...single] : []),
+            {
+              type: 'ballInPlay',
+              contact: 'swing',
+              fielder: 208,
+              homeRunKind
+            },
+            { type: 'result', eventType: 'home_run' },
+            { type: 'gameFlow', kind: 'closePlay' }
+          ]
+          expect(s.sync(log)).deep.equals([])
+          const play = s.state.liveData.plays.allPlays.at(-1)!
+          expect(play.result.eventType).equals('home_run')
+          expect(play.source.teamstation.homeRunKind).equals(homeRunKind)
+          const scorers = play.runners.map(row => row.details.runner.id)
+          expect(scorers).length(loaded ? 4 : 1)
+          expect(baseIds(s.state)).deep.equals([null, null, null])
+          expect(priorRunners(s.state)).deep.equals([])
+          for (const runner of scorers)
+            expect(
+              returnPriorRunner(s.opening, s.actions, s.state, runner, 3)
+            ).equals(null)
+          expect(s.state.liveData.linescore.teams.away.runs).equals(
+            loaded ? 4 : 1
+          )
+        })
+    it('offers nobody after a runner from second is dragged home on a single and called safe', () => {
+      const { session: s } = priorRunnerFixture('occupied')
+      expect(baseIds(s.state)).deep.equals([101, 100, null])
+      for (const action of [
+        { type: 'ballInPlay', contact: 'swing', fielder: 207 },
+        { type: 'result', eventType: 'single' },
+        { type: 'runnerMovement', runner: 100, to: 'home' },
+        { type: 'gameFlow', kind: 'closePlay' }
+      ] as ScoringAction[])
+        expect(s.apply(action).problems).deep.equals([])
+      const play = s.state.liveData.plays.allPlays.at(-1)!
+      const row = play.runners.findLast(item => item.details.runner.id === 100)!
+      // The single put him on third; the drag took him on home.
+      expect([row.movement.start, row.movement.end]).deep.equals([3, 4])
+      expect(row.details.movementReason).equals('Advance')
+      expect(s.state.liveData.linescore.teams.away.runs).equals(1)
+      expect(priorRunners(s.state)).deep.equals([])
+      expect(returnPriorRunner(s.opening, s.actions, s.state, 100, 3)).equals(
+        null
+      )
+      expect(s.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+      expect(priorRunners(s.state)).deep.equals([])
+      expect(s.state.liveData.linescore.teams.away.runs).equals(1)
+    })
   })
 })
