@@ -6,7 +6,6 @@ import type { Kysely } from 'kysely'
 import type { Database } from '../db/database'
 import {
   type MediaPlaylist,
-  parseMediaPlaylist,
   type Placement,
   type PlaylistSegment,
   readPart,
@@ -18,6 +17,7 @@ import {
   type WallPoint
 } from '../media/wallClockScan'
 import type { StoredWallPoint } from '../media/wallTimeline'
+import { playlistTail, type PlaylistView } from './playlistTail'
 import { FIRST_INIT } from './segmentClock'
 import { LIVE_PLAYLIST_NAME } from './splitter'
 
@@ -99,13 +99,17 @@ export async function scanNewSegments(
   /** Each segment passed over, and why. */
   unreadable: string[]
 }> {
-  const playlist = await readPlaylist(directory)
+  const playlist = readPlaylistView(directory)
   const seenAt = now()
   if (playlist == null) return { points: [], cursor, unreadable: [] }
-  const fresh = playlist.segments.slice(
-    cursor.segments,
-    cursor.segments + limit
+  const count = playlist.count
+  const fresh: PlaylistSegment[] = []
+  for (
+    let index = cursor.segments;
+    index < Math.min(count, cursor.segments + limit);
+    index++
   )
+    fresh.push(playlist.segment(index))
   if (fresh.length === 0) return { points: [], cursor, unreadable: [] }
 
   // No init segment, so nothing can be read out of a segment: it is placed by
@@ -123,22 +127,17 @@ export async function scanNewSegments(
   const points: StoredWallPoint[] = []
   const unreadable: string[] = []
   let { last, placement, placementSegment, latest } = cursor
-  const starts: number[] = []
-  let end = 0
-  for (const segment of playlist.segments) {
-    starts.push(end)
-    end += segment.durationSec * 1000
-  }
-  let startMs = starts[cursor.segments] ?? end
-  if (placementSegment != null) {
-    const reference = playlist.segments[placementSegment]
-    const track = reference == null ? null : await trackOf(reference)
+  // Where each segment starts, kept by the reader as the playlist grows.
+  let startMs = playlist.startMs(cursor.segments)
+  if (placementSegment != null && placementSegment < count) {
+    const reference = playlist.segment(placementSegment)
+    const track = await trackOf(reference)
     if (track != null) {
       placement = scanSegment(
         await readPart(join(directory, reference.uri)),
         track,
         {
-          startMs: starts[placementSegment],
+          startMs: playlist.startMs(placementSegment),
           durationMs: reference.durationSec * 1000,
           discontinuity: true
         }
@@ -233,7 +232,7 @@ export async function resumeScan(
     .limit(1)
     .executeTakeFirst()
   if (newest == null) return SCAN_FROM_START
-  const playlist = await readPlaylist(directory)
+  const playlist = readPlaylist(directory)
   if (playlist == null) return SCAN_FROM_START
 
   const starts: number[] = []
@@ -287,15 +286,21 @@ export async function resumeScan(
   }
 }
 
-/** The playlist the splitter writes, or null before it has written one. */
-async function readPlaylist(directory: string): Promise<MediaPlaylist | null> {
+/**
+ * The playlist the splitter writes, read on from the last read
+ * (`playlistTail`), or null before it has written one.
+ */
+function readPlaylistView(directory: string): PlaylistView | null {
   try {
-    return parseMediaPlaylist(
-      await readFile(join(directory, LIVE_PLAYLIST_NAME), 'utf8')
-    )
+    return playlistTail(join(directory, LIVE_PLAYLIST_NAME)).read() ?? null
   } catch {
     return null
   }
+}
+
+/** The whole playlist the splitter writes, or null before it has written one. */
+function readPlaylist(directory: string): MediaPlaylist | null {
+  return readPlaylistView(directory)?.mediaPlaylist() ?? null
 }
 
 /**

@@ -20,11 +20,13 @@ export function objectKey(videoId: string, name: string): string {
  * Publish the acknowledged prefix, retaining every segment already exposed.
  * A restamp can invalidate an acknowledgement but cannot retract its URI:
  * the previous object remains playable until its replacement is verified.
+ * `published` holds sequence numbers (`segmentNumber`), which its owner keeps
+ * for the whole recording without holding on to any playlist body.
  */
 export function publishedPlaylist(
   onDisk: string,
   acknowledged: ReadonlySet<string>,
-  published: ReadonlySet<string>
+  published: ReadonlySet<number>
 ): string {
   const header: string[] = []
   const segments: Array<{ name: string; lines: string[] }> = []
@@ -53,9 +55,9 @@ export function publishedPlaylist(
       else header.push(line)
     }
   }
-  const names = new Set(segments.map(segment => segment.name))
-  for (const name of published)
-    if (!names.has(name))
+  const numbers = new Set(segments.map(segment => segmentNumber(segment.name)))
+  for (const number of published)
+    if (!numbers.has(number))
       throw new Error('Local playlist lost a published segment')
   let acknowledgedEnd = 0
   while (
@@ -65,7 +67,7 @@ export function publishedPlaylist(
     acknowledgedEnd++
   let publishedEnd = 0
   for (const [index, segment] of segments.entries())
-    if (published.has(segment.name)) publishedEnd = index + 1
+    if (published.has(segmentNumber(segment.name))) publishedEnd = index + 1
   const end = Math.max(acknowledgedEnd, publishedEnd)
   return (
     [
@@ -76,4 +78,10 @@ export function publishedPlaylist(
         : [])
     ].join('\n') + '\n'
   )
+}
+
+/** A piece's sequence number: `seg000042.m4s` is 42. */
+export function segmentNumber(name: string): number {
+  if (!isSegmentName(name)) throw new Error('Invalid live segment URI')
+  return Number(name.slice(3, -4))
 }

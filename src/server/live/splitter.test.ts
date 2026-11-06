@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  type openSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -15,7 +16,7 @@ import {
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import { createServer, type Server, Socket } from 'net'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { basename, join } from 'path'
 
 import { CODEC_REFUSAL } from '../../common/api'
 import { remuxToHls, remuxToHlsArgs, VIDEO_FILE } from '../media/ffmpeg'
@@ -1193,6 +1194,65 @@ describe('a live playlist through a reconnect', function () {
       )
     })
     expect(logs.join('\n')).contains('by its frame wall clocks')
+  })
+
+  it('answers which pieces are final from one stat while the playlist is unchanged, and reads only what it added once it grows', async function () {
+    const listing = (count: number): string =>
+      [
+        '#EXTM3U',
+        '#EXT-X-VERSION:7',
+        '#EXT-X-TARGETDURATION:4',
+        '#EXT-X-MAP:URI="init.mp4"',
+        ...Array.from({ length: count }, (_, n) => [
+          '#EXTINF:4.000000,',
+          `seg${String(n).padStart(6, '0')}.m4s`
+        ]).flat(),
+        ''
+      ].join('\n')
+    setLive(KEY, spec())
+    forcePublishForTest(KEY, true)
+    await writerArgs()
+    writeFileSync(join(dir, 'master.m3u8'), listing(2))
+    // The module object itself: the splitter reads `readFileSync` off it.
+    const fs = require('fs') as {
+      readFileSync: typeof readFileSync
+      openSync: typeof openSync
+    }
+    const read = fs.readFileSync
+    const open = fs.openSync
+    const reads: string[] = []
+    const opens: string[] = []
+    fs.readFileSync = ((path: string, ...rest: unknown[]) => {
+      if (String(path).startsWith(dir)) reads.push(basename(String(path)))
+      return (read as (...args: unknown[]) => unknown)(path, ...rest)
+    }) as typeof read
+    fs.openSync = ((path: string, ...rest: unknown[]) => {
+      if (String(path).startsWith(dir)) opens.push(basename(String(path)))
+      return (open as (...args: unknown[]) => unknown)(path, ...rest)
+    }) as typeof open
+    try {
+      const first = finalSegments('liv_test')
+      expect([...first!]).deep.equals(['seg000000.m4s', 'seg000001.m4s'])
+      expect(reads).deep.equals(['master.m3u8'])
+      reads.length = 0
+      opens.length = 0
+      // One tick a second, for every stream: nothing changed, nothing read.
+      for (let tick = 0; tick < 5; tick++)
+        expect(finalSegments('liv_test')).equals(first)
+      expect(reads).deep.equals([])
+      writeFileSync(join(dir, 'master.m3u8'), listing(3))
+      expect([...finalSegments('liv_test')!]).deep.equals([
+        'seg000000.m4s',
+        'seg000001.m4s',
+        'seg000002.m4s'
+      ])
+      // Opened for what it added, not read whole again.
+      expect(reads).deep.equals([])
+      expect(opens).deep.equals(['master.m3u8'])
+    } finally {
+      fs.readFileSync = read
+      fs.openSync = open
+    }
   })
 
   it('leaves a return its frame wall clocks placed where it is when this server restarts', async function () {
