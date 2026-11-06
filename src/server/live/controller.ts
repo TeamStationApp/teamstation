@@ -651,7 +651,16 @@ function runSync(): void {
   }
   syncOnce(running.log)
     .then(() => {
-      if (scheduler !== running) return
+      if (scheduler !== running) {
+        // Stopped while it ran, and started again without a drain: the new
+        // start's sync, asked for while this one ran, follows it now, since
+        // nothing else will ask without a feed.
+        if (scheduler != null && syncAgain) {
+          syncAgain = false
+          scheduleSync(Date.now())
+        }
+        return
+      }
       if (syncAgain) {
         syncAgain = false
         scheduleSync(Date.now())

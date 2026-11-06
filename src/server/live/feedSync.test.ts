@@ -339,6 +339,61 @@ describe('the live controller on the change feed', function () {
     await until(() => syncs().length > before, 'a sync on the next notice')
   })
 
+  it('runs the next start’s sync after a sync the stop left running, with no feed to ask again', async function () {
+    const slow = { on: false, running: false, started: 0 }
+    const held = new Set<string>()
+    const options = await start(
+      {
+        db: db.withPlugin({
+          transformQuery: args => {
+            if (JSON.stringify(args.node).includes('key_cipher')) {
+              slow.started++
+              if (slow.on) held.add(args.queryId.queryId)
+            }
+            return args.node
+          },
+          transformResult: async args => {
+            if (held.delete(args.queryId.queryId)) {
+              slow.running = true
+              await wait(400)
+              slow.running = false
+            }
+            return args.result
+          }
+        })
+      },
+      { resyncMs: 60_000 }
+    )
+    stopLiveController()
+    await drainLiveController()
+    // A start whose sync is slow, stopped while it runs and started again
+    // without a drain, as a script might.
+    slow.on = true
+    expect(
+      await startLiveController({
+        ...options,
+        live: { ...options.live, port: await freePort() }
+      })
+    ).equals(true)
+    await until(() => slow.running, 'the slow sync')
+    slow.on = false
+    stopLiveController()
+    const before = slow.started
+    expect(
+      await startLiveController({
+        ...options,
+        live: { ...options.live, port: await freePort() }
+      })
+    ).equals(true)
+    // Its sync waits for the one still running, then runs.
+    await until(
+      () => slow.started > before,
+      'the second start’s own sync',
+      2000
+    )
+    expect(slow.running).equals(false)
+  })
+
   it('closes the playlist when the reconnect grace runs out, on its own deadline', async function () {
     const stream = await addStream()
     await fixture!.db
