@@ -115,7 +115,7 @@ async function main(): Promise<void> {
       1,
       'Exactly one matching live device link is required'
     )
-    const record = await store.load()
+    const record = await store.load(fixture.actor.userId)
     assert(record?.userId === fixture.actor.userId)
     await approveLink(setup, record, links[0])
     console.log(

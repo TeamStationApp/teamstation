@@ -186,6 +186,8 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
         values.surface === 'web' &&
         (browserFollowup ||
           [
+            'E1',
+            'E2',
             'E3',
             'E4',
             'E5',
@@ -787,11 +789,45 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
       'artifacts'
     ])
     privateJson(join(out, 'fixture.json'), fixture)
+    // E1 and E2 start from retained browser profiles: the browser enrolls
+    // both people, sends the history and resets the recipient itself.
+    const retained = ['E1', 'E2'].includes(values.scenario)
+      ? join(out, 'recovery-fixture.json')
+      : undefined
+    if (retained != null) {
+      const producer = 'src/app/chat/chatHistoryRecoveryRetained.e2e.ts'
+      let output = `$ node -r sucrase/register ${producer} ${values.scenario}\n`
+      try {
+        output += execFileSync(
+          process.execPath,
+          ['-r', 'sucrase/register', producer, values.scenario],
+          {
+            env: {
+              ...process.env,
+              CHAT_RECOVERY_FIXTURE: join(out, 'fixture.json'),
+              CHAT_RECOVERY_RETAINED: retained,
+              MAESTRO_D: 'recovery-retained-' + Date.now()
+            },
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe']
+          }
+        )
+      } catch (error) {
+        const failed = error as { stdout?: string; stderr?: string }
+        output += (failed.stdout ?? '') + (failed.stderr ?? '')
+        throw error
+      } finally {
+        writeFileSync(join(out, 'retained-producer.log'), output, {
+          flag: 'wx',
+          mode: 0o600
+        })
+      }
+    }
     const path = join(out, 'env.sh')
     writeFileSync(
       path,
       recoveryFixtureEnvironment({
-        CHAT_RECOVERY_FIXTURE: join(out, 'fixture.json'),
+        CHAT_RECOVERY_FIXTURE: retained ?? join(out, 'fixture.json'),
         CHAT_RECOVERY_SURFACE: 'web',
         CHAT_RECOVERY_DEVICE: 'recovery-' + values.scenario,
         CHAT_RECOVERY_FIXTURE_SOURCE: owner.source,
