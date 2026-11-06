@@ -227,11 +227,8 @@ describe('the ingest keeps only the newest pieces on disk (M4)', function () {
   }
 
   async function remoteSize(name: string): Promise<number | undefined> {
-    return (
-      await files
-        .stat(join(f.remote, 'videos', f.videoId, name))
-        .catch(() => undefined)
-    )?.size
+    return (await files.stat(join(f.remoteDir, name)).catch(() => undefined))
+      ?.size
   }
 
   async function live(tailSec: number): Promise<void> {
@@ -350,6 +347,7 @@ describe('the ingest keeps only the newest pieces on disk (M4)', function () {
     const restarted = new OriginPublisher({
       space: f.options.space!,
       videoId: f.videoId,
+      spaceSecret: f.spaceSecret,
       dir: f.dir,
       ffmpegPath: f.options.ffmpegPath,
       isFinal: () => true,
@@ -443,9 +441,9 @@ describe('the ingest keeps only the newest pieces on disk (M4)', function () {
     expect(row?.spaces_verified_at).not.equals(null)
     expect(row?.duration_sec).equals(expected)
     expect(await playlistDuration(whole)).equals(expected)
-    const stills = (
-      await files.readdir(join(f.remote, 'videos', f.videoId, 'stills'))
-    ).filter(name => name.endsWith('.jpg'))
+    const stills = (await files.readdir(join(f.oldRemoteDir, 'stills'))).filter(
+      name => name.endsWith('.jpg')
+    )
     expect(stills).deep.equals(['150.jpg'])
     expect(await files.stat(f.dir).catch(() => undefined)).equals(undefined)
     console.log(

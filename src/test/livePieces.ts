@@ -1,7 +1,10 @@
 import { readFile } from 'node:fs/promises'
 
+import pg from 'pg'
+
 import { spacePartReader } from '../server/live/spacePieceReader'
 import { spaceConfigured, type SpaceSettings } from '../server/media/spacesHls'
+import type { VideoPath } from '../server/media/videoPrefix'
 
 /**
  * Reading a live recording's pieces in an end-to-end test.
@@ -16,7 +19,7 @@ import { spaceConfigured, type SpaceSettings } from '../server/media/spacesHls'
 /** Where a live video's pieces are kept in the Space. */
 export interface LivePieceSpace {
   space: SpaceSettings
-  videoId: string
+  video: VideoPath
 }
 
 /** The bytes of one file of a live recording, by its path on disk. */
@@ -40,15 +43,16 @@ export function livePieceReader(
       found ??= where()
       const source = await found
       if (source == null) throw error
-      return await spacePartReader(source.space, source.videoId)(path)
+      return await spacePartReader(source.space, source.video)(path)
     }
   }
 }
 
 /**
  * The Space of this machine's server configuration (`serverConfig.json` in
- * the working directory, as the server reads it). Undefined when no Space is
- * configured. The configuration is loaded only when this is called.
+ * the working directory, as the server reads it), with the video's prefix
+ * from its row's `space_secret`. Undefined when no Space is configured. The
+ * configuration is loaded only when this is called.
  */
 export async function serverLivePieceSpace(
   videoId: string
@@ -56,7 +60,20 @@ export async function serverLivePieceSpace(
   const { serverConfig } = await import('../server/serverConfig')
   const space = serverConfig.space
   if (space == null || !spaceConfigured(space)) return undefined
-  return { space, videoId }
+  const client = new pg.Client({ connectionString: serverConfig.databaseUrl })
+  await client.connect()
+  try {
+    const { rows } = await client.query<{ space_secret: string | null }>(
+      'select space_secret from videos where id = $1',
+      [videoId]
+    )
+    return {
+      space,
+      video: { id: videoId, spaceSecret: rows[0]?.space_secret ?? null }
+    }
+  } finally {
+    await client.end()
+  }
 }
 
 /** A reader for one video's live pieces, against this machine's server. */

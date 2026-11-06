@@ -8,6 +8,7 @@ import { rtmpOrigin } from '../../common/primaryUrl'
 import { hashToken } from '../auth/tokens'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
+import { newSpaceSecret } from '../media/videoPrefix'
 import type { LiveSettings } from '../serverConfig'
 import { openSecret, sealSecret } from './secrets'
 
@@ -443,6 +444,9 @@ export async function createLiveStream(
         storage: 'local',
         status: 'processing',
         hidden: true,
+        // With the id, before any publish: the origin uploads under
+        // `videos/<id>-<secret>/` from its first piece.
+        space_secret: newSpaceSecret(),
         created_at: now,
         updated_at: now
       })
