@@ -54,8 +54,8 @@ export function entityPreviewLoader(
     if (engine == null || ids.length === 0) return
     if (engine.status === 'idle') {
       starting ??= (async () => {
-        if (!(await loadCore()).ready) return
-        const record = await store.load()
+        if (!(await loadCore()).ready || userId == null) return
+        const record = await store.load(userId)
         if (
           record?.userId !== userId ||
           record?.identity == null ||

@@ -64,7 +64,7 @@ import {
 } from './chat/DeviceApprovalPrompt'
 import { DeviceApprovals } from './chat/deviceApprovals'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
-import { leaveChat } from './chat/engine/links'
+import { releaseChat } from './chat/engine/links'
 import { entityChats, entityPreviewLoader } from './chat/entityChats'
 import { keyStore } from './chat/keyStore'
 import { LinkDeviceScreen } from './chat/LinkDeviceScreen'
@@ -676,13 +676,17 @@ function Shell(props: AppProps): React.ReactElement {
     setStacks({ home: [], videos: [], schedule: [], search: [], chat: [] })
     setTab('home')
   }
-  /** Sign Out, pressed: the server's session and the phone's file go. */
+  /**
+   * Sign Out, pressed: chat keeps this account's keys and the device stays
+   * linked. The server's session and the phone's queue file go.
+   */
   const signOutNow = (): void => {
-    leaveChat({ client, store: keyStore })
-      .finally(() => {
-        client.signOut().catch(() => undefined)
-        leaveSession()
-      })
+    const finish = (): void => {
+      client.signOut().catch(() => undefined)
+      leaveSession()
+    }
+    releaseChat(keyStore)
+      .finally(finish)
       .catch(() => undefined)
   }
   const [confirmingSignOut, setConfirmingSignOut] = useState(false)
@@ -2305,11 +2309,7 @@ function Shell(props: AppProps): React.ReactElement {
             route.name !== 'oauthApprove'
               ? undefined
               : async () => {
-                  await leaveChat({ client, store: keyStore }).catch(
-                    () => undefined
-                  )
-                  // Removing the chat device may already have revoked this
-                  // session, so logout can legitimately answer unauthorized.
+                  await releaseChat(keyStore).catch(() => undefined)
                   await client.signOut().catch(() => undefined)
                   client.token = undefined
                   rememberSession(undefined)

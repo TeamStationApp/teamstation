@@ -70,7 +70,7 @@ import { type ChatFixture, openChatFixture } from './chatTestFixture'
 /** A store in memory, written through the same JSON the real ones keep. */
 class MemoryStore implements ChatKeyStore {
   text: string | undefined
-  async load(): Promise<ChatKeyRecord | undefined> {
+  async load(_userId: string): Promise<ChatKeyRecord | undefined> {
     return this.text == null ? undefined : recordFromJson(this.text)
   }
 
@@ -78,11 +78,11 @@ class MemoryStore implements ChatKeyStore {
     this.text = recordToJson(record)
   }
 
-  async wipe(): Promise<void> {
+  async wipe(_userId: string): Promise<void> {
     this.text = undefined
   }
 
-  async exists(): Promise<boolean> {
+  async exists(_userId: string): Promise<boolean> {
     return this.text != null
   }
 

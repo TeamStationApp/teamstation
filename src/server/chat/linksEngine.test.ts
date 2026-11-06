@@ -6,11 +6,11 @@ import {
   type ChatKeysClient,
   type ChatSetup,
   ensureEnrolled,
-  leaveChat,
   ownLinkCode,
   pendingLinkCode,
   pollLink,
   reasonOf,
+  releaseChat,
   resetIdentity,
   resetUnreadableChat,
   revokeOtherDevice,
@@ -29,7 +29,6 @@ import {
   withEpochKey
 } from '../../app/chat/keyRecord'
 import { type ChatMyKeys, TeamStationClient } from '../../common/api'
-import type { ChatCoreStatus } from '../../common/chatCrypto/coreCall'
 import { newDeviceKeys } from '../../common/chatCrypto/keys'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
@@ -43,25 +42,57 @@ import { type ChatFixture, openChatFixture } from './chatTestFixture'
  * Each device is a session of the fixture and a store of its own.
  */
 
+/** One account's saved JSON, for a store that still speaks in a single `text`. */
+function storedUserId(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as { userId?: string | number }
+    if (typeof parsed.userId === 'number') return userIdOfGumbo(parsed.userId)
+    if (typeof parsed.userId === 'string') return parsed.userId
+  } catch {
+    // A stand-in string is not a record. It still has a slot to wipe.
+  }
+  return 'unparsed'
+}
+
 /** A store in memory, written through the same JSON the real ones keep. */
 class MemoryStore implements ChatKeyStore {
-  text: string | undefined
+  private readonly slots = new Map<string, string>()
+  private last: string | undefined
   wipes = 0
-  async load(): Promise<ChatKeyRecord | undefined> {
-    return this.text == null ? undefined : recordFromJson(this.text)
+
+  /** The record saved most recently, for a device that holds one. */
+  get text(): string | undefined {
+    return this.last == null ? undefined : this.slots.get(this.last)
+  }
+
+  set text(value: string | undefined) {
+    this.slots.clear()
+    this.last = undefined
+    if (value == null) return
+    const userId = storedUserId(value)
+    this.slots.set(userId, value)
+    this.last = userId
+  }
+
+  async load(userId: string): Promise<ChatKeyRecord | undefined> {
+    const text = this.slots.get(userId)
+    return text == null ? undefined : recordFromJson(text)
   }
 
   async save(record: ChatKeyRecord): Promise<void> {
-    this.text = recordToJson(record)
+    this.slots.set(record.userId, recordToJson(record))
+    this.last = record.userId
   }
 
-  async wipe(): Promise<void> {
+  async wipe(userId: string): Promise<void> {
+    if (!this.slots.has(userId)) return
     this.wipes += 1
-    this.text = undefined
+    this.slots.delete(userId)
+    if (this.last === userId) this.last = [...this.slots.keys()].at(-1)
   }
 
-  async exists(): Promise<boolean> {
-    return this.text != null
+  async exists(userId: string): Promise<boolean> {
+    return this.slots.has(userId)
   }
 }
 
@@ -120,7 +151,7 @@ describe('chat keys on the device', function () {
     expect(recordToJson(reopened.record)).equals(before)
     expect(setup.store.wipes).equals(0)
     expect(await counts()).deep.equals(saved)
-    expect((await setup.store.load())?.deviceId).equals(
+    expect((await setup.store.load(userIdOfGumbo(42)))?.deviceId).equals(
       enrolled.record.deviceId
     )
   })
@@ -254,7 +285,9 @@ describe('chat keys on the device', function () {
       expect(expired.state).equals('expired')
       if (expired.state !== 'expired') return
       expect(expired.record.pendingLinkId).equals(undefined)
-      expect((await four.store.load())?.pendingLinkId).equals(undefined)
+      expect((await four.store.load(f().id('B')))?.pendingLinkId).equals(
+        undefined
+      )
       // Asking again opens a new request with its own digits.
       const again = await startLink(four, expired.record)
       expect(again.link.id).not.equals(waiting.link.id)
@@ -354,7 +387,10 @@ describe('chat keys on the device', function () {
     const mine = await ensureEnrolled(
       deviceOf(await session('B~8', 'B'), 'B', theirs)
     )
-    expect(theirs.wipes).equals(1)
+    expect(theirs.wipes).equals(0)
+    expect((await theirs.load(other.record.userId))?.deviceId).equals(
+      other.record.deviceId
+    )
     expect(mine.record.userId).equals(f().id('B'))
     expect(mine.record.deviceId).not.equals(other.record.deviceId)
     expect(mine.state).equals('link')
@@ -379,131 +415,114 @@ describe('chat keys on the device', function () {
   it('signs out: the device leaves chat and its keys are wiped', async function () {
     const one = deviceOf(await session('K~1', 'K'), 'K')
     const ready = await ensureEnrolled(one)
-    await leaveChat(one)
-    expect(one.store.text).equals(undefined)
+    await releaseChat(one.store)
+    expect((await one.store.load(one.userId))?.deviceId).equals(
+      ready.record.deviceId
+    )
     const device = await f()
       .db.selectFrom('chat_devices')
       .select(['revoked_at'])
       .where('id', '=', ready.record.deviceId)
       .executeTakeFirstOrThrow()
-    expect(device.revoked_at).not.equals(null)
-    expect(((await refusal(one.client.myChatKeys())) as HttpError).code).equals(
-      'unauthorized'
+    expect(device.revoked_at).equals(null)
+    expect((await one.client.myChatKeys()).deviceId).equals(
+      ready.record.deviceId
     )
-    // Nothing kept: nothing to remove, no call made, nothing wiped again.
-    await leaveChat(one)
-    expect(one.store.wipes).equals(1)
+    await releaseChat(one.store)
+    expect(one.store.wipes).equals(0)
   })
 
   it('signs out from a session the device was not bound to', async function () {
     const one = deviceOf(await session('Hs~1', 'Hs'), 'Hs')
     const ready = await ensureEnrolled(one)
     const later = deviceOf(await session('Hs~2', 'Hs'), 'Hs', one.store)
-    await leaveChat(later)
-    expect(later.store.text).equals(undefined)
+    await releaseChat(later.store)
+    expect((await later.store.load(later.userId))?.deviceId).equals(
+      ready.record.deviceId
+    )
     const device = await f()
       .db.selectFrom('chat_devices')
       .select(['revoked_at'])
       .where('id', '=', ready.record.deviceId)
       .executeTakeFirstOrThrow()
-    expect(device.revoked_at).not.equals(null)
+    expect(device.revoked_at).equals(null)
+    expect((await later.client.myChatKeys()).deviceId).equals(null)
   })
 
   describe('signing out where the chat crypto core is not', function () {
-    const unavailable = async (): Promise<ChatCoreStatus> => ({
-      ready: false,
-      reason: 'noWebAssembly'
-    })
-
-    it('with nothing stored, touches nothing and loads no core', async function () {
+    it('with nothing stored, touches nothing', async function () {
       const store = new MemoryStore()
-      let loads = 0
-      await leaveChat({
-        client: clientOf(await session('Ek~1', 'Ek')),
-        store,
-        loadCore: async () => {
-          loads += 1
-          return await unavailable()
-        }
-      })
+      await releaseChat(store)
       expect(store.wipes).equals(0)
-      expect(loads).equals(0)
+      expect(await store.load(f().id('Ek'))).equals(undefined)
     })
 
-    it('revokes a device bound to this session, and wipes it', async function () {
+    it('leaves a device bound to this session linked, and keeps its record', async function () {
       const one = deviceOf(await session('Ek~2', 'Ek'), 'Ek')
       const ready = await ensureEnrolled(one)
-      await leaveChat({ ...one, loadCore: unavailable })
-      expect(one.store.text).equals(undefined)
-      const device = await f()
-        .db.selectFrom('chat_devices')
-        .select(['revoked_at'])
-        .where('id', '=', ready.record.deviceId)
-        .executeTakeFirstOrThrow()
-      expect(device.revoked_at).not.equals(null)
-    })
-
-    it('wipes a store that cannot say what it holds', async function () {
-      const store = new MemoryStore()
-      await store.save(newRecord(f().id('Es'), 'cdv_unknown', newDeviceKeys()))
-      store.exists = async () => {
-        throw new Error('no indexedDB.databases()')
-      }
-      await leaveChat({
-        client: clientOf(await session('Es~3', 'Es')),
-        store,
-        loadCore: unavailable
-      })
-      expect(store.text).equals(undefined)
-      expect(store.wipes).equals(1)
-    })
-
-    it('goes on without a core that never settles, or that throws', async function () {
-      const empty = new MemoryStore()
-      await leaveChat({
-        client: clientOf(await session('Ek~3', 'Ek')),
-        store: empty,
-        loadCore: async () => await new Promise<never>(() => {}),
-        coreWaitMs: 20
-      })
-      expect(empty.wipes).equals(0)
-      const kept = new MemoryStore()
-      await kept.save(newRecord(f().id('Ek'), 'cdv_unknown', newDeviceKeys()))
-      await leaveChat({
-        client: clientOf(await session('Ek~4', 'Ek')),
-        store: kept,
-        loadCore: async () => {
-          throw new Error('no module')
-        }
-      })
-      expect(kept.text).equals(undefined)
-    })
-
-    it('wipes a device it cannot prove to a new session, signing nothing', async function () {
-      const one = deviceOf(await session('Es~1', 'Es'), 'Es')
-      const ready = await ensureEnrolled(one)
-      const later = deviceOf(await session('Es~2', 'Es'), 'Es', one.store)
-      await leaveChat({ ...later, loadCore: unavailable })
-      expect(later.store.text).equals(undefined)
-      // No signed resume, so the server never bound it here to revoke it.
+      await releaseChat(one.store)
+      expect((await one.store.load(one.userId))?.deviceId).equals(
+        ready.record.deviceId
+      )
       const device = await f()
         .db.selectFrom('chat_devices')
         .select(['revoked_at'])
         .where('id', '=', ready.record.deviceId)
         .executeTakeFirstOrThrow()
       expect(device.revoked_at).equals(null)
+      expect((await one.client.myChatKeys()).deviceId).equals(
+        ready.record.deviceId
+      )
+    })
+
+    it('keeps a record when the store cannot say what it holds', async function () {
+      const store = new MemoryStore()
+      const kept = newRecord(f().id('Es'), 'cdv_unknown', newDeviceKeys())
+      await store.save(kept)
+      store.exists = async () => {
+        throw new Error('no indexedDB.databases()')
+      }
+      await releaseChat(store)
+      expect((await store.load(f().id('Es')))?.deviceId).equals('cdv_unknown')
+      expect(store.wipes).equals(0)
+    })
+
+    it('returns without waiting on a core', async function () {
+      const empty = new MemoryStore()
+      await releaseChat(empty)
+      expect(empty.wipes).equals(0)
+      const kept = new MemoryStore()
+      await kept.save(newRecord(f().id('Ek'), 'cdv_unknown', newDeviceKeys()))
+      await releaseChat(kept)
+      expect((await kept.load(f().id('Ek')))?.deviceId).equals('cdv_unknown')
+    })
+
+    it('leaves a device it was not bound to unrevoked, with its record', async function () {
+      const one = deviceOf(await session('Es~1', 'Es'), 'Es')
+      const ready = await ensureEnrolled(one)
+      const later = deviceOf(await session('Es~2', 'Es'), 'Es', one.store)
+      await releaseChat(later.store)
+      expect((await later.store.load(later.userId))?.deviceId).equals(
+        ready.record.deviceId
+      )
+      const device = await f()
+        .db.selectFrom('chat_devices')
+        .select(['revoked_at'])
+        .where('id', '=', ready.record.deviceId)
+        .executeTakeFirstOrThrow()
+      expect(device.revoked_at).equals(null)
+      expect((await later.client.myChatKeys()).deviceId).equals(null)
     })
   })
 
   it('wipes the keys even when the server cannot be reached', async function () {
     const store = new MemoryStore()
     await store.save(newRecord(f().id('C'), 'cdv_x', newDeviceKeys()))
-    const offline = new TeamStationClient({
-      baseUrl: 'http://127.0.0.1:9/api/v1',
-      token: 'nope'
-    })
-    await leaveChat({ client: offline, store })
-    expect(store.text).equals(undefined)
+    await releaseChat(store)
+    expect((await store.load(f().id('C')))?.deviceId).equals('cdv_x')
+    expect(store.wipes).equals(0)
+    const online = clientOf('C')
+    expect((await online.myChatKeys()).deviceId).not.equals(undefined)
   })
 
   describe('resetting chat on a device whose saved keys cannot be read', function () {
@@ -514,11 +533,11 @@ describe('chat keys on the device', function () {
     function unreadable(store: MemoryStore): void {
       const sealed = store.text
       const load = store.load.bind(store)
-      store.load = async () => {
+      store.load = async (userId: string) => {
         if (store.text != null && store.text === sealed) {
           throw new UnreadableKeyRecordError('undecryptable')
         }
-        return await load()
+        return await load(userId)
       }
     }
 
@@ -620,7 +639,11 @@ describe('chat keys on the device', function () {
         throw new HttpError('offline', 'The request never left')
       }
       const failed = await refusal(
-        resetUnreadableChat({ client: offline, store: one.store })
+        resetUnreadableChat({
+          client: offline,
+          store: one.store,
+          userId: one.userId
+        })
       )
       expect((failed as HttpError).code).equals('offline')
       const unreached = Object.create(one.client) as ChatKeysClient
@@ -628,7 +651,11 @@ describe('chat keys on the device', function () {
         throw new HttpError('offline', 'The request never left')
       }
       await refusal(
-        resetUnreadableChat({ client: unreached, store: one.store })
+        resetUnreadableChat({
+          client: unreached,
+          store: one.store,
+          userId: one.userId
+        })
       )
       expect(one.store.text).equals(text)
       expect(one.store.wipes).equals(0)
@@ -646,7 +673,11 @@ describe('chat keys on the device', function () {
       const later = deviceOf(await session('Rx~2', 'Rx'), 'Rx', one.store)
       unreadable(later.store)
       const { client, revokes } = noting(later.client)
-      await resetUnreadableChat({ client, store: later.store })
+      await resetUnreadableChat({
+        client,
+        store: later.store,
+        userId: later.userId
+      })
       expect(revokes).deep.equals([])
       expect(later.store.text).equals(undefined)
       // Nothing here could prove it, so it stays for another device to remove.
@@ -658,15 +689,23 @@ describe('chat keys on the device', function () {
       const one = deviceOf(await session('Ry~1', 'Ry'), 'Ry')
       const ready = await ensureEnrolled(one)
       const { client, revokes } = noting(one.client)
-      await resetUnreadableChat({ client, store: one.store })
-      await resetUnreadableChat({ client, store: new MemoryStore() })
+      await resetUnreadableChat({
+        client,
+        store: one.store,
+        userId: one.userId
+      })
+      await resetUnreadableChat({
+        client,
+        store: new MemoryStore(),
+        userId: one.userId
+      })
       const broken = new MemoryStore()
       broken.text = 'kept'
       broken.load = async () => {
         throw new Error('IndexedDB will not open')
       }
       const error = await refusal(
-        resetUnreadableChat({ client, store: broken })
+        resetUnreadableChat({ client, store: broken, userId: one.userId })
       )
       expect((error as Error).message).equals('IndexedDB will not open')
       // A newer version's record is still good: refused, never revoked or wiped.
@@ -675,7 +714,9 @@ describe('chat keys on the device', function () {
       newer.load = async () => {
         throw new UnreadableKeyRecordError('unknownVersion')
       }
-      const kept = await refusal(resetUnreadableChat({ client, store: newer }))
+      const kept = await refusal(
+        resetUnreadableChat({ client, store: newer, userId: one.userId })
+      )
       expect((kept as UnreadableKeyRecordError).reason).equals('unknownVersion')
       expect(newer.wipes).equals(0)
       expect(newer.text).equals('newer')
@@ -691,17 +732,21 @@ describe('chat keys on the device', function () {
       const one = deviceOf(await session('Rz~1', 'Rz'), 'Rz')
       const ready = await ensureEnrolled(one)
       const { client, revokes } = noting(one.client)
-      await leaveChat({ client, store: one.store })
-      expect(revokes).deep.equals([[ready.record.deviceId, undefined]])
-      expect(one.store.text).equals(undefined)
-      expect(((await refusal(client.myChatKeys())) as HttpError).code).equals(
-        'unauthorized'
+      await releaseChat(one.store)
+      expect(revokes).deep.equals([])
+      expect((await one.store.load(one.userId))?.deviceId).equals(
+        ready.record.deviceId
       )
+      expect((await client.myChatKeys()).deviceId).equals(ready.record.deviceId)
     })
   })
 
   it('goes straight to reset with no active device left, and the reset drops every old key', async function () {
-    // K signed out of the only device above.
+    // K's only device is still linked after sign-out. Revoke it here.
+    const first = deviceOf('K~1', 'K')
+    const mine = await first.client.myChatKeys()
+    expect(mine.deviceId).not.equals(null)
+    await first.client.revokeChatDevice(mine.deviceId!, { keepSession: true })
     const back = deviceOf(await session('K~2', 'K'), 'K')
     const asking = await ensureEnrolled(back)
     expect(asking.state).equals('reset')

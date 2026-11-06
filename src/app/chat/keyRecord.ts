@@ -25,7 +25,7 @@ import { asUserId, type UserId, userIdOfGumbo } from '../../common/userId'
  * this module rather than import each other.
  */
 export interface ChatKeyRecord {
-  /** The user the keys belong to. A record for anybody else is wiped. */
+  /** The user the keys belong to. */
   userId: UserId
   /** This device's id on the server (`cdv_…`). */
   deviceId: string
@@ -64,22 +64,33 @@ export interface ChatLogHead {
   broken: boolean
 }
 
-/** Where a device keeps its record. */
+/**
+ * Where a device keeps one account's record. A call names that account and
+ * does not read or delete another account's slot.
+ */
 export interface ChatKeyStore {
   /**
    * Only an absent record returns undefined. Unreadable keys must block
    * enrollment: a record that is there but cannot be read throws
    * `UnreadableKeyRecordError` and stays where it is.
    */
-  load: () => Promise<ChatKeyRecord | undefined>
+  load: (userId: string) => Promise<ChatKeyRecord | undefined>
+  /** Writes `record` into `record.userId`'s slot. */
   save: (record: ChatKeyRecord) => Promise<void>
-  /** Forgets every key this device holds. */
-  wipe: () => Promise<void>
+  /** Forgets this account's slot. */
+  wipe: (userId: string) => Promise<void>
   /**
-   * Whether a record is stored, answered without creating anything: signing
-   * out where chat's crypto core is not asks this first.
+   * Whether this account's record is stored, answered without creating
+   * anything: signing out where chat's crypto core is not asks this first.
+   * A present slot is not parsed.
    */
-  exists: () => Promise<boolean>
+  exists: (userId: string) => Promise<boolean>
+  /**
+   * Deletes the legacy slot when it is empty, unreadable, or `userId`'s.
+   * A readable record for another account stays. A store with no legacy
+   * slot omits this.
+   */
+  discardLegacy?: (userId: string) => Promise<void>
 }
 
 export const b64 = (bytes: Uint8Array): string =>
