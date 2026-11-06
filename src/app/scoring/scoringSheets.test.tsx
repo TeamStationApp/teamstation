@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
 import { TeamStationClient } from '../../common/api'
-import { ScoringSession } from '../../common/scoring/session'
+import { applyAction, ScoringSession } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import { candidate } from '../../test/fakeCandidateClient'
 import { measureBoxes } from '../../test/measureBoxes'
@@ -721,7 +721,7 @@ describe('scoring slide-up sheets', function () {
       null
     )
   })
-  it('inserts at row boundaries, adjusts existing indices, and styles numbered roster rows', async function () {
+  it('inserts at row boundaries before the first pitch, adjusts existing indices, and styles numbered roster rows (U29)', async function () {
     this.timeout(5000)
     await mount()
     await menu('Set Team Rosters')
@@ -747,6 +747,82 @@ describe('scoring slide-up sheets', function () {
     expect(
       document.querySelector('[data-roster-target="roster"]')!.textContent
     ).not.includes('#1 Player 1')
+    await click('Cancel')
+  })
+  const lineupOrder = (): number[] =>
+    Array.from(
+      document.querySelectorAll(
+        '[data-roster-target^="lineup-"][data-roster-player]'
+      )
+    ).map(n => Number(n.getAttribute('data-roster-player')))
+  const benched = (id: number): boolean =>
+    document.querySelector(
+      `[data-roster-target="roster"] [data-roster-player="${id}"]`
+    ) != null
+  it('clears the lineup before the first pitch, every player back on the roster (U26)', async function () {
+    await mount()
+    await menu('Set Team Rosters')
+    await click('Lineup')
+    expect(lineupOrder()).deep.equals([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(document.querySelector('[aria-label="Remove Player 1"]')).not.equals(
+      null
+    )
+    await click('Clear Lineup')
+    expect(lineupOrder()).deep.equals([])
+    for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9])
+      expect(benched(id), String(id)).equals(true)
+    await click('Cancel')
+  })
+  it('locks the lineup at the first pitch: no Clear or X, a bat on the slot due, replace and swap in place (U27, U28)', async function () {
+    this.timeout(8000)
+    await mount(session => {
+      // Player 9 sits; the leadoff man takes a ball.
+      session.liveData.boxscore.teams.away.battingOrder.pop()
+      Object.assign(
+        session,
+        applyAction(session, { type: 'pitch', call: 'B' }).state
+      )
+    })
+    await menu('Set Team Rosters')
+    await click('Lineup')
+    expect(document.querySelector('[aria-label="Clear Lineup"]')).equals(null)
+    expect(document.querySelector('[aria-label^="Remove Player"]')).equals(null)
+    const bat = (): string | null =>
+      document
+        .querySelector('[data-testid="batIcon"]')!
+        .closest('[data-roster-target]')!
+        .getAttribute('data-roster-target')
+    expect(bat()).equals('lineup-0')
+    expect(
+      document.querySelector('[data-roster-target="roster"]')!.textContent
+    ).not.includes('Drop here to remove')
+    // The roster column takes no lineup drop.
+    await drag('[aria-label="Reorder Player 2"]', 'roster')
+    expect(lineupOrder()).deep.equals([1, 2, 3, 4, 5, 6, 7, 8])
+    // The bench player dropped on the second slot replaces him there.
+    await drag(
+      '[data-roster-target="roster"] [data-roster-player="9"]',
+      'lineup-1'
+    )
+    expect(lineupOrder()).deep.equals([1, 9, 3, 4, 5, 6, 7, 8])
+    expect(benched(2)).equals(true)
+    expect(benched(9)).equals(false)
+    // A lineup player dropped on another slot swaps with him; the bat stays
+    // on the first slot, now Player 9's.
+    await drag('[aria-label="Reorder Player 1"]', 'lineup-1')
+    expect(lineupOrder()).deep.equals([9, 1, 3, 4, 5, 6, 7, 8])
+    expect(bat()).equals('lineup-0')
+    expect(
+      document
+        .querySelector('[data-testid="batIcon"]')!
+        .getAttribute('aria-label')
+    ).equals('Player 9 bats')
+    // A late arrival still joins at the end of the order.
+    await drag(
+      '[data-roster-target="roster"] [data-roster-player="2"]',
+      'lineup-end'
+    )
+    expect(lineupOrder()).deep.equals([9, 1, 3, 4, 5, 6, 7, 8, 2])
     await click('Cancel')
   })
   it('validates override fields and player collisions, then reconciles the chosen half', async function () {

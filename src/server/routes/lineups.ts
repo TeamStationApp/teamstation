@@ -33,7 +33,7 @@ import {
   asRosterPlayerBody
 } from '../../common/playerSettings'
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
-import { addPlayer } from '../../common/scoring/lineup'
+import { addPlayer, pitchThrown } from '../../common/scoring/lineup'
 import {
   type Lineup,
   NO_DEFAULT_LINEUP,
@@ -957,6 +957,8 @@ function sideActions(
       type: 'lineup',
       kind: 'roster',
       setup,
+      // After the first pitch a saved order keeps each side's batting slot.
+      ...(pitchThrown(state) ? { keepSlot: true as const } : {}),
       ...(body.nextBatter == null ? {} : { nextBatter: ids[body.nextBatter] })
     },
     ...runners.map((runner): ScoringAction => ({

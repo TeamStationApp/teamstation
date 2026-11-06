@@ -117,9 +117,11 @@ export function currentSetupError(
 export function rosterError(
   state: GameState,
   setup: GameSetup,
-  nextBatter?: number
+  nextBatter?: number,
+  /** Whether the save keeps each side's batting slot (`keepSlot`). */
+  keepSlot = false
 ): string | undefined {
-  return applyRoster(state, setup, nextBatter).error
+  return applyRoster(state, setup, nextBatter, {}, false, keepSlot).error
 }
 
 /** Why this correction could not be made, or undefined when it could. */

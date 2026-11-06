@@ -34,7 +34,7 @@ function applyRosterDraft(
   }
 }
 describe('atomic scoring edits', function () {
-  it('preserves batter identity, count and pitches through reordered rosters and pitcher replacement', function () {
+  it('keeps the batting slot, count and pitches through a reordered roster after the first pitch, and pitcher replacement', function () {
     const state = scoringReducer(initial(), { type: 'PITCH', kind: 'ball' })
     const draft = copyState(state.session)
     draft.liveData.boxscore.teams.away.battingOrder.reverse()
@@ -43,7 +43,11 @@ describe('atomic scoring edits', function () {
     defense.C = defense.P
     defense.P = catcher
     const next = scoringReducer(state, { type: 'ROSTER', draft })
-    expect(next.session.liveData.boxscore.teams.away.battingIndex).equals(8)
+    // The slot is kept: whoever the save put first bats, with the count.
+    expect(next.session.liveData.boxscore.teams.away.battingIndex).equals(0)
+    expect(next.session.liveData.plays.currentPlay?.matchup.batter.id).equals(
+      draft.liveData.boxscore.teams.away.battingOrder[0]
+    )
     // The pitch stays; the changes follow it as the play's lineup events.
     const events = next.session.liveData.plays.currentPlay!.playEvents
     expect(events.slice(0, 1)).deep.equals(
