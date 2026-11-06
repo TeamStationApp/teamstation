@@ -2,6 +2,7 @@ import { basename } from 'node:path'
 
 import { presignGetUrl } from '../media/presign'
 import type { SpaceSettings } from '../media/spacesHls'
+import type { VideoPath } from '../media/videoPrefix'
 import { type PartReader, readPart } from '../media/wallClockScan'
 import { objectKey } from './originPublish'
 
@@ -25,7 +26,7 @@ const PIECE_READ_TIMEOUT_MS = 30_000
  */
 export function spacePartReader(
   space: SpaceSettings,
-  videoId: string,
+  video: VideoPath,
   timeoutMs = PIECE_READ_TIMEOUT_MS
 ): PartReader {
   return async (path, range) => {
@@ -38,7 +39,7 @@ export function spacePartReader(
     const response = await fetch(
       presignGetUrl({
         ...space,
-        key: objectKey(videoId, name),
+        key: objectKey(video, name),
         expiresSec: 300
       }),
       {

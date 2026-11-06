@@ -189,6 +189,7 @@ describe('fetching one fragment out of the Space', function () {
     const frame = await fetchSpaceFrame({
       space: SPACE,
       videoId: 'vid_abc',
+      spaceSecret: null,
       atSec: 13,
       workDir,
       fetch: fakeFetch
@@ -211,6 +212,7 @@ describe('fetching one fragment out of the Space', function () {
     const frame = await fetchSpaceFrame({
       space: SPACE,
       videoId: 'vid_abc',
+      spaceSecret: null,
       atSec: 13,
       workDir,
       fetch: fakeFetch
@@ -224,6 +226,7 @@ describe('fetching one fragment out of the Space', function () {
     const frame = await fetchSpaceFrame({
       space: SPACE,
       videoId: 'vid_abc',
+      spaceSecret: null,
       atSec: 500,
       workDir,
       fetch: fakeFetch
@@ -242,6 +245,7 @@ describe('fetching one fragment out of the Space', function () {
     const frame = await fetchSpaceFrame({
       space: SPACE,
       videoId: 'vid_abc',
+      spaceSecret: null,
       atSec: 13,
       workDir,
       fetch: whole
@@ -268,6 +272,7 @@ describe('fetching one fragment out of the Space', function () {
     const opts = {
       space: SPACE,
       videoId: 'vid_live',
+      spaceSecret: null,
       atSec: 2,
       workDir,
       fetch: liveFetch
@@ -333,6 +338,7 @@ describe('fetching one fragment out of the Space', function () {
         await fetchSpaceFrame({
           space: SPACE,
           videoId: 'vid_bad',
+          spaceSecret: null,
           atSec: 1,
           workDir,
           fetch: badFetch
@@ -354,6 +360,7 @@ describe('fetching one fragment out of the Space', function () {
       fetchSpaceFrame({
         space: SPACE,
         videoId: 'vid_abc',
+        spaceSecret: null,
         atSec: 13,
         workDir,
         fetch: fakeFetch
@@ -361,6 +368,7 @@ describe('fetching one fragment out of the Space', function () {
       fetchSpaceFrame({
         space: SPACE,
         videoId: 'vid_abc',
+        spaceSecret: null,
         atSec: 13,
         workDir,
         fetch: fakeFetch

@@ -32,6 +32,7 @@ import {
   setLive
 } from '../live/splitter'
 import { createLiveStream } from '../live/streamKeys'
+import { videoPrefix } from '../media/videoPrefix'
 
 const run = promisify(execFile)
 describe('revoked streams retain and finalize actual recordings', function () {
@@ -200,17 +201,23 @@ describe('revoked streams retain and finalize actual recordings', function () {
       expect(typeof (await resolveKey(stream.key, options))).equals('string')
       const retained = await f.h.db
         .selectFrom('videos')
-        .select(['status', 'hidden', 'duration_sec'])
+        .select(['status', 'hidden', 'duration_sec', 'space_secret'])
         .where('id', '=', stream.videoId!)
         .executeTakeFirstOrThrow()
       expect(retained.status).equals('ready')
       expect(retained.hidden).equals(false)
       expect(retained.duration_sec ?? 0).greaterThan(1.5)
+      expect(retained.space_secret).matches(/^[0-9a-f]{32}$/)
       await settleLiveWork()
       expect(await stat(spec.hlsDir).catch(() => undefined)).equals(undefined)
       expect(
         f.h.objects
-          .get(`/${f.h.space.bucket}/videos/${stream.videoId!}/index.m3u8`)
+          .get(
+            `/${f.h.space.bucket}/${videoPrefix({
+              id: stream.videoId!,
+              spaceSecret: retained.space_secret
+            })}index.m3u8`
+          )
           ?.toString()
       ).includes('#EXT-X-ENDLIST')
       const uploaded = await f.h.db
