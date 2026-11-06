@@ -25,6 +25,7 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // build does.
 
 export const STABLE_APP = 'app.teamstation.app'
+export const TV_APP = 'app.teamstation.tv'
 export const DEVELOP_APP = 'app.teamstation.develop'
 export const DEVELOP_DISPLAY_NAME = 'TeamStation Develop'
 const DEVELOP_ORIGIN = 'https://develop.teamstation.app'
@@ -143,6 +144,33 @@ export function setup(m: Setup): void {
     },
     w => {
       buildStages(w, app)
+    }
+  )
+  m.buildNumber(TV_APP, { format: 'YYMMDDCC', timeZone: 'America/Los_Angeles' })
+  // Explicit request-only triggers exclude this workflow from branch polling.
+  m.workflow(
+    'tvos',
+    {
+      triggers: [{ request: true }],
+      params: {
+        seat: {
+          type: 'choice',
+          choices: ['production', '1', '2', '3', '4', '5', '6', '7', '8'],
+          default: 'production'
+        }
+      }
+    },
+    w => {
+      w.stage('archive', {
+        on: IOS,
+        tools: { node: '24', xcode: '27.0', cocoapods: '1.16.2' },
+        timeout: '6h',
+        apple: { distribution: 'adHoc', app: TV_APP, platform: 'tvos' },
+        publishes: [TV_APP],
+        buildNumbers: [TV_APP],
+        cache: [{ key: 'npm', paths: ['~/.npm'] }],
+        run: buildTv
+      })
     }
   )
 }
@@ -306,9 +334,10 @@ function appVersion(ctx: Stage): string {
  * Installs dependencies through Socket. A quota refusal or a worker with no
  * Socket token installs with npm; any other Socket failure stops the build.
  */
-async function install(ctx: Stage): Promise<void> {
-  await ctx.sh('npm install --prefix .mason-tools @socketsecurity/cli')
+async function install(ctx: Stage, cwd?: string): Promise<void> {
+  await ctx.sh('npm install --prefix .mason-tools @socketsecurity/cli', { cwd })
   const scanned = await ctx.sh('.mason-tools/node_modules/.bin/socket npm ci', {
+    cwd,
     env: { SOCKET_CLI_ACCEPT_RISKS: '1' },
     allowFailure: true
   })
@@ -317,7 +346,28 @@ async function install(ctx: Stage): Promise<void> {
   if (!/429|Insufficient quota|requires an API token/.test(detail)) {
     throw new Error(`socket npm ci failed with exit code ${scanned.code}`)
   }
-  await ctx.sh('npm ci')
+  await ctx.sh('npm ci', { cwd })
+}
+
+/** A standalone Apple TV download; never automatically submitted to TestFlight. */
+export async function buildTv(ctx: Stage): Promise<void> {
+  const api =
+    seatEnvironment(ctx).TS_API_BASE_URL ?? 'https://app.teamstation.app/api/v1'
+  await install(ctx)
+  await install(ctx, 'appletv')
+  await ctx.sh('pod install', { cwd: 'appletv/ios' })
+  const archived = await ctx.apple.archive({
+    workspace: 'appletv/ios/TeamStationTV.xcworkspace',
+    scheme: 'TeamStationTV',
+    configuration: 'Release',
+    version: appVersion(ctx),
+    buildNumber: ctx.getBuildNumber(TV_APP),
+    xcargs: [`TV_API_BASE_URL=${api}`]
+  })
+  if (archived.ipa == null) throw new Error('No tvOS IPA was exported')
+  await ctx.artifacts.save('tvos-ipa', archived.ipa)
+  await ctx.artifacts.save('tvos-dsym', archived.dsyms)
+  await ctx.publish({ app: TV_APP, platform: 'tvos', path: archived.ipa })
 }
 
 export async function buildIos(ctx: Stage): Promise<void> {
