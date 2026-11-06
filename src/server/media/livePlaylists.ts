@@ -21,6 +21,12 @@ import type { VideoPath } from './videoPrefix'
  * a live playlist while Valkey has it, and rewrites each line once.
  */
 
+/**
+ * How long a flush waits on Valkey before it goes on without it. A healthy
+ * answer takes a millisecond; this is a connection that stopped answering.
+ */
+const SINK_TIMEOUT_MS = 1000
+
 /** How long a list outlives its last push: longer than any game. */
 export const LIVE_PLAYLIST_TTL_SEC = 12 * 60 * 60
 
@@ -67,15 +73,26 @@ export function parseLivePlaylistNotice(
  * serves a list that holds only the latest pieces. Valkey failing never fails
  * a flush: the Space write already happened, the sink forgets the list, and
  * the next body replaces it.
+ *
+ * Nor does Valkey stalling hold one. The client has no command timeout, and a
+ * connection that stays open without answering would keep every video's
+ * flush, and so its pieces and its playlist in the Space, waiting until TCP
+ * gives up, minutes later. A call that has not answered in `timeoutMs` is
+ * left behind: the flush goes on, every list is forgotten, and until that call
+ * settles no command is sent, since each would queue behind it on the same
+ * connection. Once it settles, the next body of each video replaces its list.
  */
 export class ValkeyPlaylistSink implements PlaylistSink {
   private readonly lists = new Map<string, { length: number; gen: number }>()
   private down = false
+  /** A call that outlasted its timeout and has not settled yet. */
+  private stalled: Promise<void> | undefined
 
   constructor(
     private readonly client: ScoreboardClient,
     private readonly prefix: string,
-    private readonly log: (message: string) => void = () => {}
+    private readonly log: (message: string) => void = () => {},
+    private readonly timeoutMs = SINK_TIMEOUT_MS
   ) {}
 
   async append(videoId: string, text: string, body: string): Promise<void> {
@@ -146,8 +163,25 @@ export class ValkeyPlaylistSink implements PlaylistSink {
     videoId: string,
     run: () => Promise<void>
   ): Promise<void> {
+    if (this.stalled != null) {
+      this.lists.delete(videoId)
+      return
+    }
+    const running = run()
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      await run()
+      const answered = await Promise.race([
+        running.then(() => true),
+        new Promise<boolean>(resolve => {
+          timer = setTimeout(() => {
+            resolve(false)
+          }, this.timeoutMs)
+        })
+      ])
+      if (!answered) {
+        this.leaveBehind(running)
+        return
+      }
       if (this.down) this.log('live playlists: Valkey answers again')
       this.down = false
     } catch (error) {
@@ -155,7 +189,29 @@ export class ValkeyPlaylistSink implements PlaylistSink {
       this.lists.delete(videoId)
       if (!this.down) this.log(`live playlists: ${String(error)}`)
       this.down = true
+    } finally {
+      clearTimeout(timer)
     }
+  }
+
+  /**
+   * Gives up waiting on a call Valkey has not answered. Whatever it did to a
+   * list when it settles is forgotten with the rest, so every next body
+   * replaces its list.
+   */
+  private leaveBehind(running: Promise<void>): void {
+    this.lists.clear()
+    if (!this.down)
+      this.log(
+        `live playlists: Valkey did not answer in ${this.timeoutMs} ms; sending nothing until it does`
+      )
+    this.down = true
+    this.stalled = running
+      .catch(() => {})
+      .finally(() => {
+        this.stalled = undefined
+        this.lists.clear()
+      })
   }
 }
 

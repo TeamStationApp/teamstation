@@ -1081,4 +1081,62 @@ describe('live playlists when Valkey stalls', function () {
     expect(await stalled.live(video)).equals(rewritten(body(3)))
     expect(logged).length(1)
   })
+
+  it('goes on with a flush when the sink’s Valkey stalls, sends nothing more until it answers, then replaces the list', async function () {
+    // Each MULTI waits until the test settles it; every command is counted.
+    const execs: Array<Pending<unknown[]>> = []
+    const sent: string[] = []
+    const multi: Record<string, (...args: unknown[]) => unknown> = {
+      del: () => {
+        sent.push('del')
+        return multi
+      },
+      rPush: () => {
+        sent.push('rPush')
+        return multi
+      },
+      expire: () => multi,
+      incr: () => multi,
+      exec: async () =>
+        await new Promise<unknown[]>((resolve, reject) => {
+          execs.push({ resolve, reject })
+        })
+    }
+    const published: string[] = []
+    const client = {
+      multi: () => multi,
+      publish: async (_channel: string, message: string) => {
+        published.push(message)
+      }
+    } as unknown as ScoreboardClient
+    const sink = new ValkeyPlaylistSink(
+      client,
+      prefix,
+      line => logged.push(line),
+      100
+    )
+    let started = Date.now()
+    await sink.replace(video.id, body(1))
+    expect(Date.now() - started).within(90, 400)
+    expect(logged).deep.equals([
+      'live playlists: Valkey did not answer in 100 ms; sending nothing until it does'
+    ])
+    // Nothing more is sent behind the stalled call, and no flush waits.
+    started = Date.now()
+    await sink.append(video.id, piece(1), body(2))
+    await sink.replace('vid_other', body(1))
+    expect(Date.now() - started).below(50)
+    expect(execs).length(1)
+    // The stalled call answers late: what it wrote is not trusted.
+    execs[0].resolve([1, 1, 1, 7, 1])
+    await new Promise(resolve => setImmediate(resolve))
+    sent.length = 0
+    const appending = sink.append(video.id, piece(2), body(3))
+    await new Promise(resolve => setImmediate(resolve))
+    expect(sent).deep.equals(['del', 'rPush'])
+    execs[1].resolve([1, 1, 1, 8, 1])
+    await appending
+    expect(published.at(-1)).equals(JSON.stringify({ v: video.id, n: 1, g: 8 }))
+    expect(logged.at(-1)).equals('live playlists: Valkey answers again')
+  })
 })
