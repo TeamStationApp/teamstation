@@ -202,7 +202,7 @@ describe('defensive presentation barriers', function () {
         if (home) state.session.liveData.linescore.isTopInning = false
         state = scoringReducer(state, {
           type: 'OUTCOME',
-          outcome: caught ? 'Ball Caught' : 'Throw Out'
+          outcome: caught ? 'Ball Caught' : 'Ground Out'
         })
         state = scoringReducer(state, {
           type: 'FIELDER',
@@ -276,7 +276,7 @@ describe('defensive presentation barriers', function () {
   for (const completed of [false, true])
     it(`continues to first and captures the visible runner when receiver is chosen ${completed ? 'after' : 'during'} approach`, function () {
       let state = initial()
-      state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Throw Out' })
+      state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Ground Out' })
       state = scoringReducer(state, {
         type: 'FIELDER',
         id: 10,
@@ -338,7 +338,7 @@ describe('defensive presentation barriers', function () {
     })
   it('uses an unassisted touch without a self-throw and invalidates it on undo', function () {
     let state = initial()
-    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Throw Out' })
+    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Ground Out' })
     state = scoringReducer(state, {
       type: 'FIELDER',
       id: 10,

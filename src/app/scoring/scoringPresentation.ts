@@ -404,7 +404,7 @@ export function hitPresentation(
     },
     batSide: state.session.liveData.plays.currentPlay!.matchup.batSide.code,
     slowRunner: pending.outcome !== 'Ball Caught',
-    out: ['Ball Caught', 'Throw Out', 'Batter Interference'].includes(
+    out: ['Ball Caught', 'Ground Out', 'Batter Interference'].includes(
       pending.outcome
     )
   }

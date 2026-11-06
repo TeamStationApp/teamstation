@@ -403,6 +403,11 @@ export interface Movement {
    * `start` with no Safe/Out strip.
    */
   offeredTo?: number
+  /**
+   * A ground out sent this runner up one base: correction may drag him back
+   * to `start`, forced or not, and the relay may put him out where he stands.
+   */
+  groundOffer?: boolean
   force: boolean
   decision: 'pending' | 'safe' | 'out'
   resolved?: boolean
@@ -416,7 +421,7 @@ export type ResolutionOutcome =
   | 'Home Run'
   | "Fielder's Choice"
   | 'Error'
-  | 'Throw Out'
+  | 'Ground Out'
   | 'Ball Caught'
   | 'Batter Interference'
   | 'Walk'
@@ -713,6 +718,7 @@ const asMovement = asObject({
   from: asNumber,
   to: asNumber,
   offeredTo: asOptional(asNumber),
+  groundOffer: asOptional(asBoolean),
   force: asBoolean,
   decision: asLiteral('pending', 'safe', 'out'),
   resolved: asOptional(asBoolean)

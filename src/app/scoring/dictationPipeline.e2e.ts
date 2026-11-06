@@ -1742,7 +1742,7 @@ describe('dictation, end to end', function () {
           angle: number
         ): Promise<void> => {
           await tap(page, 'Swing in Play')
-          if (['Throw Out', 'Ball Caught'].includes(outcome))
+          if (['Ground Out', 'Ball Caught'].includes(outcome))
             await page.locator('[aria-label="Batter Out"]').click()
           await page.locator(`[aria-label="${outcome}"]`).click()
           await page.waitForSelector(
@@ -1770,7 +1770,7 @@ describe('dictation, end to end', function () {
         await tap(page, 'Swing and Miss')
         await tap(page, 'Swing and Miss')
         await finishAtBat(page)
-        await hitTo('Throw Out', 4, -10)
+        await hitTo('Ground Out', 4, -10)
         await page.waitForSelector(
           '[aria-label^="Tap or drag the next defender"]'
         )

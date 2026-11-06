@@ -161,7 +161,7 @@ describe('rendered defensive transfers', function () {
   for (const unassisted of [false, true])
     it(`animates ${unassisted ? 'a touch without a self-throw' : 'a visible throw to a receiver'}`, async function () {
       let state = initialScoringState(scoringSession(gameFixture), true)
-      state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Throw Out' })
+      state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Ground Out' })
       state = scoringReducer(state, {
         type: 'FIELDER',
         id: 10,

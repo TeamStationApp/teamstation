@@ -189,7 +189,8 @@ function decide(
             action.out === true &&
             action.runner !== batter &&
             !(
-              action.reason === 'Throw Out' &&
+              (action.reason === 'Ground Out' ||
+                action.reason === 'Throw Out') &&
               (action.fielders?.length ?? 0) > 1
             )
         )
@@ -1191,7 +1192,7 @@ function baseOuts(
       runner,
       to: out.base,
       out: true,
-      reason: forced ? 'Force Out' : 'Throw Out',
+      reason: forced ? 'Force Out' : 'Ground Out',
       ...(fielders == null ? {} : { fielders })
     })
   }
@@ -2256,7 +2257,7 @@ function creditThrowOuts(
             ].includes(result.eventType)
           positions.set(
             thrower,
-            fieldingLocation(fair ? "Fielder's Choice" : 'Throw Out', point)
+            fieldingLocation(fair ? "Fielder's Choice" : 'Ground Out', point)
           )
         }
       }

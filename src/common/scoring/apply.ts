@@ -57,6 +57,8 @@ import {
   completesHitOffer,
   currentSetupError,
   forcedFrom,
+  GROUND_OUTS,
+  groundOfferAt,
   hasEligiblePitch,
   HIT_BASES,
   homeBackProposal,
@@ -492,7 +494,8 @@ function refineEventType(play: GamePlay, pending: Resolution | null): void {
       runner.movement.end > runner.movement.start
   )
   const grounder =
-    pending.outcome === 'Throw Out' || pending.outcome === "Fielder's Choice"
+    GROUND_OUTS.includes(pending.outcome) ||
+    pending.outcome === "Fielder's Choice"
   const forced = made.some(
     runner => runner.movement.isOut && runner.movement.forceOut
   )
@@ -507,7 +510,7 @@ function refineEventType(play: GamePlay, pending: Resolution | null): void {
     play.result.eventType = outs >= 2 ? 'sac_fly_double_play' : 'sac_fly'
   else if (
     pending.contactKind === 'bunt' &&
-    pending.outcome === 'Throw Out' &&
+    GROUND_OUTS.includes(pending.outcome) &&
     batterOut &&
     advanced &&
     pending.originalOuts < 2
@@ -692,6 +695,43 @@ function prepareHit(ctx: Ctx): void {
   }
   if (pending.outcome !== 'Error')
     line(ctx).teams[battingSide(ctx.state)].hits++
+}
+
+/**
+ * A ground out with fewer than two out sends every other runner up one base,
+ * lead runner first. Each keeps the base he started from, so the scorer can
+ * drag him back there, forced or not; the runner from third waits on the home
+ * call, and his run counts only once he is safe. With two out the batter's
+ * out ends the half and nobody moves.
+ */
+function prepareGroundOut(ctx: Ctx): void {
+  const pending = ctx.state.pending!
+  if (!GROUND_OUTS.includes(pending.outcome) || pending.originalOuts >= 2)
+    return
+  const runners = pending.originalBases
+    .map((id, index) => ({ id, from: index + 1 }))
+    .filter((row): row is { id: number; from: number } => row.id != null)
+    .reverse()
+  pending.movements = runners.map(row => ({
+    playerId: row.id,
+    start: row.from,
+    from: row.from,
+    to: row.from + 1,
+    offeredTo: row.from + 1,
+    groundOffer: true,
+    force: forcedFrom(ctx.state, row.from),
+    decision: row.from + 1 === 4 ? 'pending' : 'safe',
+    resolved: false
+  }))
+  rebuildQueue(ctx)
+  for (const key of BASE_KEYS) line(ctx).offense[key] = null
+  for (const movement of pending.movements) {
+    if (movement.to < 4) {
+      setBase(ctx, movement.playerId, movement.to)
+      recordRunner(ctx, movement, { reason: 'Ground Out' })
+    }
+    moved(ctx, movement)
+  }
 }
 
 /**
@@ -1088,7 +1128,7 @@ const BATTED: Partial<Record<ResultAction['eventType'], ResolutionOutcome>> = {
   fielders_choice: "Fielder's Choice"
 }
 const OUT_OUTCOMES = {
-  throw: 'Throw Out',
+  throw: 'Ground Out',
   catch: 'Ball Caught',
   interference: 'Batter Interference'
 } as const
@@ -1226,7 +1266,7 @@ function battedResult(
   play.result.eventType = action.eventType
   play.result.description = outcome
   play.source.teamstation.outcome = outcome
-  if (outcome === 'Throw Out' || outcome === 'Ball Caught')
+  if (GROUND_OUTS.includes(outcome) || outcome === 'Ball Caught')
     play.source.teamstation.outSubtype = outcome
   if (outcome === 'Home Run')
     play.source.teamstation.homeRunKind = kind ?? 'in-park'
@@ -1243,6 +1283,7 @@ function battedResult(
     play.result.description = 'Foul ball caught'
   }
   prepareHit(ctx)
+  if (action.advance === 'ground') prepareGroundOut(ctx)
   prepareBatterResult(ctx)
 }
 
@@ -1427,9 +1468,18 @@ function runnerMovement(
   } else if (to < where) {
     refuse('illegal', 'A runner cannot go back')
   }
-  if (decision === 'batterOut' && action.out !== true)
+  if (decision === 'batterOut' && action.out !== true && !retakingOffer)
     refuse('notNow', 'Say who put the batter out')
   if (action.out === true) {
+    // Put out on the base a ground out sent him to, he is out going there
+    // from his own base: the advance he never made leaves the play.
+    const offer =
+      to === where ? groundOfferAt(state, action.runner, where) : undefined
+    if (offer != null) {
+      const start = offer.start ?? offer.from
+      removeAdvanceRow(current(ctx), action.runner, start, where)
+      where = start
+    }
     finishOut(ctx, {
       runner: action.runner,
       from: where,

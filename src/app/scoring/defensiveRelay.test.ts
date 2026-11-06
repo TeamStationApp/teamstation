@@ -5,6 +5,7 @@ import { completeMotions } from '../../test/scoringHelpers'
 import { scoringSession } from '../../test/scoringSession'
 import { BASES } from '../field/fieldModel'
 import { sampleThrow } from '../field/playAnimationModel'
+import { fieldStageInstruction } from './battedBallField'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
@@ -192,7 +193,7 @@ describe('a relay that forces the lead runner before the batter', function () {
       type: 'CLOSE_PLAY',
       generation: state.generation
     })
-    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Throw Out' })
+    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Ground Out' })
     state = scoringReducer(state, {
       type: 'FIELDER',
       id: 14,
@@ -221,7 +222,13 @@ describe('a relay that forces the lead runner before the batter', function () {
 
   it('records 6-4-3 as the lead runner out at second, then the batter at first', function () {
     let state = grounder()
+    // The ground out already stood the runner from first on second.
+    expect(state.session.liveData.linescore.offense.second?.id).equals(1)
+    expect(state.session.liveData.linescore.offense.first).equals(null)
     expect(state.phase).equals('chooseDefender')
+    expect(fieldStageInstruction(state)).equals(
+      'Tap or drag the next defender, hold a runner to put him out on his base, or hit Done to finish the out.'
+    )
     expect(state.runnerAction).includes({
       purpose: 'batterRetirement',
       thrower: 14
@@ -274,7 +281,7 @@ describe('a relay that forces the lead runner before the batter', function () {
       ])
     ).deep.equals([
       [1, 'Force Out', 1, true, ['f_assist 14', 'f_putout 13']],
-      [2, 'Throw Out', 2, true, ['f_assist 13', 'f_putout 12']]
+      [2, 'Ground Out', 2, true, ['f_assist 13', 'f_putout 12']]
     ])
     expect(state.log.filter(action => action.type === 'runnerMovement')).length(
       2
@@ -299,6 +306,74 @@ describe('a relay that forces the lead runner before the batter', function () {
     expect(play.result.eventType).equals('force_out')
     expect(play.runners.filter(runner => runner.movement.isOut)).length(1)
     expect(ended.runnerAction).equals(null)
+  })
+})
+
+describe('a relay after a ground out that stood an unforced runner on third', function () {
+  it('tags him out on third, then retires the batter', function () {
+    let state = initialScoringState(scoringSession(gameFixture))
+    // Batter 1 walks and steals second; batter 2 grounds to short.
+    for (let i = 0; i < 4; i++)
+      state = completeMotions(
+        scoringReducer(state, { type: 'PITCH', kind: 'ball' })
+      )
+    state = scoringReducer(state, {
+      type: 'CLOSE_PLAY',
+      generation: state.generation
+    })
+    const session = structuredClone(state.session)
+    session.liveData.linescore.offense.second =
+      session.liveData.linescore.offense.first
+    session.liveData.linescore.offense.first = null
+    state = { ...state, session }
+    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Ground Out' })
+    state = scoringReducer(state, {
+      type: 'FIELDER',
+      id: 14,
+      point: { x: -20, z: -40 },
+      generation: state.generation
+    })
+    state = completeMotions(
+      scoringReducer(state, {
+        type: 'TRAJECTORY',
+        angle: -10,
+        generation: state.generation
+      })
+    )
+    expect(state.session.liveData.linescore.offense.third?.id).equals(1)
+    state = completeMotions(
+      scoringReducer(state, {
+        type: 'DEFENDER',
+        id: 15,
+        point: { ...BASES[3] },
+        generation: state.generation
+      })
+    )
+    // Not forced: dropped a base on, nothing happens; where he stands, a tag.
+    expect(
+      scoringReducer(state, {
+        type: 'RUNNER_DROP',
+        id: 1,
+        to: 4,
+        decision: 'out',
+        generation: state.generation
+      })
+    ).equals(state)
+    state = scoringReducer(state, {
+      type: 'RUNNER_DROP',
+      id: 1,
+      to: 3,
+      decision: 'out',
+      generation: state.generation
+    })
+    expect(state.session.liveData.linescore.outs).equals(1)
+    expect(state.runnerAction).includes({ thrower: 15, playerId: 2 })
+    const row = state.session.liveData.plays.currentPlay!.runners.at(-1)!
+    expect(row.details.movementReason).equals('Tag Out')
+    expect(row.movement).includes({ start: 2, end: 3, forceOut: false })
+    expect(
+      row.credits.map(credit => `${credit.credit} ${credit.player.id}`)
+    ).deep.equals(['f_assist 14', 'f_putout 15'])
   })
 })
 

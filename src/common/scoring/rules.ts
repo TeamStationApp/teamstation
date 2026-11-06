@@ -193,6 +193,13 @@ export const HIT_BASES: Partial<Record<ResolutionOutcome, number>> = {
   'Home Run': 4
 }
 
+/**
+ * The batted outs made by a throw on the ground, which send every other
+ * runner up a base when the result asks for it. A caught ball and batter
+ * interference are not among them.
+ */
+export const GROUND_OUTS: readonly string[] = ['Ground Out', 'Out at First']
+
 /** The trajectory a launch angle falls in, in the scorer's own terms. */
 export function trajectoryOf(angle: number): Trajectory {
   const value = Math.round(angle)
@@ -413,7 +420,12 @@ export function homeBackProposal(state: GameState): Movement[] | null {
   if (pending == null || id == null) return null
   const moves = copyState(pending.movements)
   const lead = moves.find(move => move.playerId === id)
-  if (lead == null || lead.force || lead.from === 0) return null
+  if (lead == null || lead.from === 0) return null
+  // A ground out sent him home: forced or not, he may go back to an empty third.
+  if (lead.groundOffer === true) {
+    if (moves.some(move => move.decision !== 'out' && move.to === 3))
+      return null
+  } else if (lead.force) return null
   lead.to = 3
   lead.decision = 'safe'
   lead.resolved = true
@@ -468,7 +480,7 @@ export function forcedFrom(state: GameState, from: number): boolean {
   if (pending == null || from < 1 || from > 3 || batterRetired(state))
     return false
   const batterRunning =
-    pending.outcome === 'Throw Out' ||
+    GROUND_OUTS.includes(pending.outcome) ||
     (["Fielder's Choice", 'Error'].includes(pending.outcome) &&
       pending.movements.some(
         move => move.from === 0 && move.decision !== 'out'
@@ -529,7 +541,7 @@ export function nextDecision(state: GameState): Decision {
     return state.awaitingBatter != null ? 'awaitingBatter' : 'ready'
   if (
     outs < 3 &&
-    ['Throw Out', 'Batter Interference', 'Batter Out — Other'].includes(
+    [...GROUND_OUTS, 'Batter Interference', 'Batter Out — Other'].includes(
       pending.outcome
     ) &&
     !batterRetired(state)
@@ -562,13 +574,40 @@ export function closesAutomatically(state: GameState): boolean {
   )
 }
 
-/** The hit movement that left this runner with an unforced one-base offer. */
+/**
+ * The movement that left this runner with a one-base offer he can be dragged
+ * back from: an unforced hit advance, or any ground-out advance, forced or not.
+ */
 export function hitOfferMovement(
   state: GameState,
   runnerId: number
 ): Movement | undefined {
   const move = state.pending?.movements.find(m => m.playerId === runnerId)
-  if (move?.offeredTo == null || move.force) return undefined
+  if (move?.offeredTo == null || move.decision === 'out') return undefined
+  if (move.force && move.groundOffer !== true) return undefined
+  return move
+}
+
+/**
+ * The ground-out advance that stands this runner on `base` now: the relay
+ * that retires the batter may put him out there.
+ */
+export function groundOfferAt(
+  state: GameState,
+  runnerId: number,
+  base: number
+): Movement | undefined {
+  const move = state.pending?.movements.find(m => m.playerId === runnerId)
+  if (
+    move?.groundOffer !== true ||
+    move.decision !== 'safe' ||
+    base < 1 ||
+    base > 3 ||
+    move.to !== base ||
+    move.to !== move.offeredTo ||
+    (move.start ?? move.from) === base
+  )
+    return undefined
   return move
 }
 

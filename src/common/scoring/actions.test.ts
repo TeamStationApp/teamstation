@@ -293,7 +293,11 @@ describe('scoring actions', function () {
       /A hit already moves the batter and every runner/
     )
     expect(props('runnerMovement').to.enum).deep.equals(DESTINATIONS)
-    expect(props('runnerMovement').reason.enum).deep.equals(RUNNER_REASONS)
+    expect(props('runnerMovement').reason.enum).deep.equals(
+      RUNNER_REASONS.filter(
+        reason => !['Ground Out', 'Out at First', 'Tag Out'].includes(reason)
+      )
+    )
     expect(props('baseRunning').kind.enum).deep.equals(BASE_RUNNING_KINDS)
     expect(props('batteryEvent').kind.enum).deep.equals(BATTERY_KINDS)
     expect(props('lineup').kind.enum).deep.equals(LINEUP_KINDS)

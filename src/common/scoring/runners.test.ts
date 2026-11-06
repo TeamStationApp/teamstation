@@ -471,7 +471,7 @@ describe('the batter on a ball in play', function () {
     expect(outs(state)).equals(1)
     const thrown = state.liveData.plays.allPlays[0]
     expect(thrown.runners[0].movement).includes({ forceOut: true, end: 1 })
-    expect(thrown.result.event).equals('Throw Out')
+    expect(thrown.result.event).equals('Ground Out')
   })
 
   it("gives the batter and the runners their bases on a fielder's choice", function () {
