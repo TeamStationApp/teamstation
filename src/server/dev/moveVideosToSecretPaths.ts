@@ -44,8 +44,9 @@ import {
  * So it is idempotent: a second run changes nothing, and a run stopped after
  * the copies finishes by deleting the old objects. A row with nothing under
  * its old prefix only gets a secret. A read-only-source video, whose objects
- * are another bucket's, is left alone, secret and all; so is one being
- * published to right now.
+ * are another bucket's, is left alone, secret and all; so is a live
+ * recording the ingest still holds: its stream open, or ended with its close
+ * not yet verified. A later run moves it.
  */
 
 /** Copies in flight at once for one video. */
@@ -105,7 +106,7 @@ export async function moveVideosToSecretPaths(
   for (;;) {
     let query = db
       .selectFrom('videos')
-      .select(['id', 'space_secret'])
+      .select(['id', 'space_secret', 'kind', 'spaces_verified_at'])
       .where('id', '>', after)
       .orderBy('id')
       .limit(batchSize)
@@ -136,11 +137,20 @@ export async function moveVideosToSecretPaths(
         report.moved.length + report.finished.length >= options.limit
       )
         return report
-      if (isReadOnlySource(space, row.id) || open.has(row.id)) {
+      // A live recording whose stream ended is still the ingest's until its
+      // close is verified (or, with no Space then, until it is put away): its
+      // origin finishes it on the path it started on.
+      const unfinished = row.kind === 'live' && row.spaces_verified_at == null
+      const why = isReadOnlySource(space, row.id)
+        ? 'read-only source'
+        : open.has(row.id)
+          ? 'its stream is open'
+          : unfinished
+            ? 'its recording is not closed yet'
+            : undefined
+      if (why != null) {
         report.skipped.push(row.id)
-        log(
-          `skip ${row.id}: ${open.has(row.id) ? 'its stream is open' : 'read-only source'}`
-        )
+        log(`skip ${row.id}: ${why}`)
         continue
       }
       await moveOne(options, row.id, row.space_secret, dryRun, report, log)

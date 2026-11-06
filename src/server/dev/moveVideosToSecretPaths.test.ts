@@ -89,20 +89,23 @@ describe('moving videos to their secret paths', function () {
     await rm(root, { recursive: true, force: true })
   })
 
+  /** A program video, or with `live` a live recording, closed unless told. */
   const addVideo = async (
     id: string,
     storage: 'local' | 'spaces',
-    spaceSecret: string | null = null
+    spaceSecret: string | null = null,
+    live: { closed: boolean } | undefined = undefined
   ): Promise<void> => {
     await db
       .insertInto('videos')
       .values({
         id,
         game_id: 'gam_one',
-        kind: storage === 'local' ? 'live' : 'program',
+        kind: live == null ? 'program' : 'live',
         title: id,
         storage,
-        space_secret: spaceSecret
+        space_secret: spaceSecret,
+        spaces_verified_at: live?.closed === false ? null : new Date()
       })
       .execute()
   }
@@ -124,7 +127,7 @@ describe('moving videos to their secret paths', function () {
       ['stills/10.jpg', 30]
     ] as const)
       await put(`videos/vid_done/${file}`, bytes)
-    await addVideo('vid_live', 'local')
+    await addVideo('vid_live', 'spaces', null, { closed: true })
     for (const [file, bytes] of [
       ['master.m3u8', 40],
       ['index.m3u8', 90],
@@ -332,6 +335,33 @@ describe('moving videos to their secret paths', function () {
     const recording = await fetch(plain(`${prefix}video.mp4`))
     expect(Number(recording.headers.get('content-length'))).equals(5000)
     expect(recording.headers.get('cache-control')).equals('public, max-age=600')
+  })
+
+  it('leaves a live recording whose stream ended until its close is verified, put away or not', async function () {
+    await seed()
+    await pool.query(
+      `insert into live_streams (id, game_id, team_id, key_hash, key_prefix, key_cipher, opens_at, video_id, state, ended_at)
+       values ('liv_one', 'gam_one', 'tem_home', 'h', 'p', 'c', now(), 'vid_live', 'ended', now())`
+    )
+    for (const storage of ['spaces', 'local']) {
+      await pool.query(
+        `update videos set storage = $1, spaces_verified_at = null where id = 'vid_live'`,
+        [storage]
+      )
+      const report = await move()
+      expect(report.skipped, storage).deep.equals(['vid_demo', 'vid_live'])
+      expect((await secrets()).vid_live, storage).equals(null)
+      expect(
+        await listSpaceObjects(space, oldVideoPrefix('vid_live')),
+        storage
+      ).length(5)
+    }
+    expect(lines).includes('skip vid_live: its recording is not closed yet')
+    await pool.query(
+      `update videos set storage = 'spaces', spaces_verified_at = now() where id = 'vid_live'`
+    )
+    expect((await move()).skipped).deep.equals(['vid_demo'])
+    expect((await secrets()).vid_live).not.equals(null)
   })
 
   it('leaves a video whose stream is open, publishing or idle in its reconnect grace, and moves one whose stream ended', async function () {
