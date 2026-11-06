@@ -1589,9 +1589,13 @@ const gumboSchemas = {
         type: 'array',
         items: {
           type: 'object',
-          required: ['player', 'credit'],
+          required: ['credit'],
           properties: {
-            player: gumboPerson,
+            player: {
+              ...gumboPerson,
+              description:
+                'Left out for a stand-in at a position nobody was playing: the position alone is credited.'
+            },
             position: {
               ...gumboPosition,
               description: 'Left out for a fielder not on defence.'

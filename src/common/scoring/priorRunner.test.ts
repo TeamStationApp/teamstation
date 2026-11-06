@@ -443,7 +443,7 @@ describe('prior runner corrections', () => {
       ).has.length(1)
       expect(
         play.runners.find(row => row.details.runner.id === 101)!.credits[0]
-          .player.id
+          .player?.id
       ).equals(207)
       expect(s.picture().current).deep.equals(before)
       await s.flush()

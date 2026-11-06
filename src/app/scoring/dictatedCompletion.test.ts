@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import type { ScoringAction } from '../../common/scoring/actions'
+import type { DictatedAction as ScoringAction } from '../../common/scoring/actions'
 import { nextDecision } from '../../common/scoring/rules'
 import { scoringSession } from '../../test/scoringSession'
 import {
@@ -103,7 +103,7 @@ describe('a dictated sentence finishes the play', function () {
     const play = state.session.liveData.plays.allPlays.at(-1)
     expect(
       play?.runners.flatMap(runner =>
-        (runner.credits ?? []).map(c => `${c.credit} ${c.player.id}`)
+        (runner.credits ?? []).map(c => `${c.credit} ${c.player?.id}`)
       )
     ).deep.equals([`f_assist ${SS}`, `f_putout ${FIRST_BASEMAN}`])
     nothingToTap(state)
@@ -1636,7 +1636,7 @@ describe('a dictated throw credits the fielder who covered the base', function (
       (currentPlay?.runners.length ?? 0) > 0 ? currentPlay : allPlays.at(-1)
     return (play?.runners ?? [])
       .flatMap(runner =>
-        (runner.credits ?? []).map(c => `${c.credit} ${c.player.id}`)
+        (runner.credits ?? []).map(c => `${c.credit} ${c.player?.id}`)
       )
       .sort()
   }
@@ -1928,7 +1928,7 @@ describe('a dictated double play', function () {
       (currentPlay?.runners.length ?? 0) > 0 ? currentPlay : allPlays.at(-1)
     return (play?.runners ?? [])
       .flatMap(runner =>
-        (runner.credits ?? []).map(c => `${c.credit} ${c.player.id}`)
+        (runner.credits ?? []).map(c => `${c.credit} ${c.player?.id}`)
       )
       .sort()
   }

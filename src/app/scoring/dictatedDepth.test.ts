@@ -2,10 +2,10 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
-  type BallInPlayAction,
   cleanAction,
-  type PitchAction,
-  type ScoringAction
+  type DictatedAction as ScoringAction,
+  type DictatedBallInPlay as BallInPlayAction,
+  type PitchAction
 } from '../../common/scoring/actions'
 import type { Depth, FOUL_DEPTHS } from '../../common/scoring/depth'
 import { distanceFeet } from '../../common/scoring/document'

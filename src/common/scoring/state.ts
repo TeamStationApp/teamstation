@@ -37,6 +37,13 @@ export const POSITIONS = [
   'RF'
 ] as const
 export type Position = (typeof POSITIONS)[number]
+export function isPosition(raw: unknown): raw is Position {
+  return POSITIONS.includes(raw as Position)
+}
+export function asPosition(raw: unknown): Position {
+  if (!isPosition(raw)) throw new TypeError('Expected a fielding position')
+  return raw
+}
 export type Side = 'away' | 'home'
 export type BatSide = 'R' | 'L'
 
@@ -57,14 +64,37 @@ const asNullable =
   raw =>
     raw === null ? null : cleaner(raw)
 
+/**
+ * A fielder in an action or a play: his scoring id, or, for a position nobody
+ * is playing, that position. The scorer can play a ball with a stand-in at an
+ * empty position, and nobody is credited for what the stand-in did.
+ */
+export type FielderRef = number | Position
+export function asFielderRef(raw: unknown): FielderRef {
+  if (isPosition(raw)) return raw
+  return asSessionId(raw)
+}
+
 const asPoint = asObject({ x: asNumber, z: asNumber })
 export type Point = ReturnType<typeof asPoint>
 
 export const asPlayerRef = asObject({ id: asSessionId, fullName: asString })
 export type PlayerRef = ReturnType<typeof asPlayerRef>
 const asCount = asObject({ balls: asNumber, strikes: asNumber, outs: asNumber })
-const asCredit = asObject({
-  player: asPlayerRef,
+type CreditKind =
+  | 'f_assist'
+  | 'f_putout'
+  | 'f_fielded_ball'
+  | 'f_fielding_error'
+  | 'f_throwing_error'
+/** A fielding credit. A stand-in at an empty position credits nobody. */
+export interface RunnerCredit {
+  player?: PlayerRef
+  credit: CreditKind
+  position: string
+}
+const asCredit: Cleaner<RunnerCredit> = asObject({
+  player: asOptional(asPlayerRef),
   credit: asLiteral(
     'f_assist',
     'f_putout',
@@ -74,8 +104,26 @@ const asCredit = asObject({
   ),
   position: asString
 })
-export type RunnerCredit = ReturnType<typeof asCredit>
-const asRoute = asArray(asObject({ player: asPlayerRef, location: asPoint }))
+/**
+ * One fielder of a route: the player, or, for a stand-in at an empty
+ * position, that position alone.
+ */
+export interface RouteHop {
+  player?: PlayerRef
+  position?: Position
+  location: Point
+}
+/** The fielder a route hop names: his id, or a stand-in's position. */
+export function hopFielder(hop: RouteHop): FielderRef | undefined {
+  return hop.player?.id ?? hop.position
+}
+const asRoute: Cleaner<RouteHop[]> = asArray(
+  asObject({
+    player: asOptional(asPlayerRef),
+    position: asOptional(asPosition),
+    location: asPoint
+  })
+)
 
 /**
  * A pitch's `pitchData` as the scorer gives it: its speed, its zone, and
@@ -307,7 +355,16 @@ export const asGamePlay = asObject({
       /** Runner records included in that relay; later routes take precedence. */
       fieldingRouteRecordCount: asOptional(asNumber),
       errorCredit: asOptional(
-        asObject({ player: asPlayerRef, defensiveRoute: asRoute })
+        asObject({
+          // A stand-in at an empty position is charged by his position.
+          player: asOptional(asPlayerRef),
+          position: asOptional(asPosition),
+          defensiveRoute: asRoute
+        }) as Cleaner<{
+          player?: PlayerRef
+          position?: Position
+          defensiveRoute: RouteHop[]
+        }>
       ),
       runnerActions: asOptional(
         asArray(
@@ -457,8 +514,8 @@ export interface Resolution {
   sameAppearance?: boolean
   choiceApplied?: boolean
   /** The fielder who first handled the ball, and who holds it now. */
-  fielder?: number
-  ballHolder?: number
+  fielder?: FielderRef
+  ballHolder?: FielderRef
   originalRunnerRecordCount: number
   originalBases: Array<number | null>
   originalRuns: number
@@ -862,8 +919,8 @@ export const asGameState: Cleaner<GameState> = exactly(
         homeRunKind: asOptional(asLiteral('out-of-park', 'in-park')),
         sameAppearance: asOptional(asBoolean),
         choiceApplied: asOptional(asBoolean),
-        fielder: asOptional(asSessionId),
-        ballHolder: asOptional(asSessionId),
+        fielder: asOptional(asFielderRef),
+        ballHolder: asOptional(asFielderRef),
         originalRunnerRecordCount: asNumber,
         originalBases: asArray(asNullable(asSessionId)),
         originalRuns: asNumber,

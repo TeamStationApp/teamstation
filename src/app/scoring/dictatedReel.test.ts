@@ -2,9 +2,9 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type {
-  BallInPlayAction,
+  DictatedAction as ScoringAction,
+  DictatedBallInPlay as BallInPlayAction,
   ResultAction,
-  ScoringAction,
   Trajectory
 } from '../../common/scoring/actions'
 import { scoringSession } from '../../test/scoringSession'
@@ -242,7 +242,7 @@ describe('a dictated sentence on the field', function () {
       expect(
         state.session.liveData.plays.allPlays.map(play =>
           play.runners.flatMap(runner =>
-            runner.credits.map(credit => [credit.player.id, credit.credit])
+            runner.credits.map(credit => [credit.player?.id, credit.credit])
           )
         )
       ).deep.equals(
@@ -317,7 +317,7 @@ describe('a dictated sentence on the field', function () {
         play.runners.flatMap(r =>
           (r.credits ?? []).map(c => [
             r.details.runner.id,
-            c.player.id,
+            c.player?.id,
             c.credit
           ])
         )
@@ -907,7 +907,7 @@ describe('a dictated sentence on the field', function () {
         r.details.runner.id,
         r.credits
           .filter(c => c.credit === 'f_assist' || c.credit === 'f_putout')
-          .map(c => c.player.id)
+          .map(c => c.player?.id)
       ])
     expect(outs).deep.equals([
       [5, [F.SS, F.B2]],

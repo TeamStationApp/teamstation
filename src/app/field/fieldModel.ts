@@ -37,6 +37,11 @@ export interface FieldPlayer {
   displayName: string
   jersey: string
   playerId?: number
+  /**
+   * A nameless stand-in playing an empty position for one play: the
+   * position he plays, in place of a player id.
+   */
+  standIn?: string
   batSide?: 'R' | 'L'
   team: 'defense' | 'runner'
   position: GroundPoint
@@ -48,6 +53,16 @@ export interface FieldPlayer {
   batting?: boolean
   droppedBat?: { x: number; z: number; heading: number }
   runnerBase?: number
+}
+/**
+ * Whom a drawn player is to the game: his player id, or a stand-in's
+ * position. A fielder named either way is found by comparing with this.
+ */
+export function fielderKey(player: {
+  playerId?: number
+  standIn?: string
+}): number | string | undefined {
+  return player.playerId ?? player.standIn
 }
 export type CameraView = 'home' | 'overhead' | 'infield' | 'scoreboard'
 export const BASE = 27.432 / Math.sqrt(2)

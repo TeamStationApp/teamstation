@@ -13,7 +13,7 @@ import {
 } from '../scoring/scoringPresentation'
 import { battingPose, buntingPose, pitchingPose } from './athletePose'
 import { BALL_CONTACT } from './ballArcModel'
-import type { FieldPlayer } from './fieldModel'
+import { fielderKey, type FieldPlayer } from './fieldModel'
 import {
   DEFENDER_SPEED,
   sampleHit,
@@ -155,7 +155,7 @@ export function PlayAnimation({
         player.pose.run = 1
       }
       if (sequence.kind === 'throw' && 'progress' in sample) {
-        if (player.playerId === sequence.thrower) {
+        if (fielderKey(player) === sequence.thrower) {
           if (sequence.unassisted) {
             player.position = { x: sample.ball.x, z: sample.ball.z }
             player.target = { ...player.position }
@@ -191,14 +191,14 @@ export function PlayAnimation({
           player.stride = runtime.current.elapsedMs * 0.012
           player.pose.run = sample.runnerProgress < 1 ? 1 : 0
         }
-        if (player.playerId === sequence.receiver)
+        if (fielderKey(player) === sequence.receiver)
           player.pose.catch = sample.progress > 0.8 ? 1 : 0
       }
       if (
         sequence.kind === 'hit' &&
         'fielder' in sample &&
         sequence.fielder != null &&
-        player.playerId === sequence.fielder
+        fielderKey(player) === sequence.fielder
       ) {
         player.position = { ...sample.fielder }
         player.target = { ...sample.fielder }

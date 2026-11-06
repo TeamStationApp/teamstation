@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { scoringSession } from '../../test/scoringSession'
-import { BASES } from '../field/fieldModel'
+import { BASES, createPlayers } from '../field/fieldModel'
 import { foulPoint, sampleHit, samplePitch } from '../field/playAnimationModel'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -13,7 +13,8 @@ import {
   PITCH_TIMING,
   pitchPresentation,
   presentationRuntime,
-  stepPresentation
+  stepPresentation,
+  throwSequence
 } from './scoringPresentation'
 import type { ScoringState } from './scoringTypes'
 function initial(): ScoringState {
@@ -443,5 +444,74 @@ describe('the pitch before a ball in play', function () {
     expect(seq.fielderStartMs).equals(seq.contactMs)
     expect(seq.flightEndMs).greaterThan(seq.contactMs + 1000)
     expect(sampleHit(seq, seq.contactMs).fielder).deep.equals(seq.fielderStart)
+  })
+})
+
+describe('a stand-in at an empty position (U48)', function () {
+  it('plays the ball from the empty position’s spot, nameless, and throws right-handed', function () {
+    let state = initial()
+    state.session.liveData.linescore.defense.SS = null
+    state.session.liveData.boxscore.teams.home.defense.SS = null
+    const spot = createPlayers().find(player => player.id === 'SS')!.position
+    expect(
+      scoringFieldPlayers(state).some(player => player.standIn === 'SS')
+    ).equals(false)
+    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Ground Out' })
+    // Nobody is there to take a ball to an occupied position by position.
+    expect(
+      scoringReducer(state, {
+        type: 'FIELDER',
+        id: '3B',
+        point: { x: -10, z: -30 },
+        generation: 0
+      })
+    ).equals(state)
+    state = scoringReducer(state, {
+      type: 'FIELDER',
+      id: 'SS',
+      point: { x: -10, z: -30 },
+      generation: 0
+    })
+    expect(state.pendingPlay?.fielder).equals('SS')
+    const drawn = scoringFieldPlayers(state).find(
+      player => player.standIn === 'SS'
+    )!
+    expect(drawn.id).equals('empty-SS')
+    expect(drawn.displayName).equals('')
+    expect(drawn.playerId).equals(undefined)
+    expect(drawn.emptyPosition).equals(undefined)
+    state = scoringReducer(state, {
+      type: 'TRAJECTORY',
+      angle: -10,
+      generation: 0
+    })
+    const seq = state.presentation!
+    if (seq.kind !== 'hit') throw new Error('Expected hit')
+    expect(seq.fielder).equals('SS')
+    expect(seq.fielderStart).deep.equals(spot)
+    expect(
+      seq.players.filter(player => player.standIn === 'SS').map(p => p.id)
+    ).deep.equals(['empty-SS'])
+    expect(state.session.liveData.plays.currentPlay!.hitData).includes({
+      position: 'SS'
+    })
+    expect(state.session.liveData.plays.currentPlay!.hitData!.fielder).equals(
+      undefined
+    )
+    const players = scoringFieldPlayers(state)
+    const thrown = throwSequence(state, {
+      players,
+      thrower: 'SS',
+      receiver: state.session.liveData.linescore.defense['1B']!.id,
+      runner: state.session.liveData.plays.currentPlay!.matchup.batter.id,
+      from: { x: -10, z: -30 },
+      to: BASES[1],
+      runnerPoint: BASES[0],
+      final: false
+    })
+    expect(thrown.throwSide).equals('R')
+    expect(
+      thrown.players.find(player => player.standIn === 'SS')!.position
+    ).deep.equals({ x: -10, z: -30 })
   })
 })

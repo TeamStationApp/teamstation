@@ -10,7 +10,9 @@ import { overrideOf, trajectoryOf } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import {
   BASE_KEYS,
+  type FielderRef,
   type GameState,
+  isPosition,
   type Position,
   POSITIONS
 } from '../../common/scoring/state'
@@ -78,6 +80,19 @@ function capital(text: string): string {
 }
 
 /** Names and positions as the game stood when the play began. */
+/** Who plays a position, for a stand-in nobody is named for. */
+const STAND_IN_WORDS: Record<Position, string> = {
+  P: 'pitcher',
+  C: 'catcher',
+  '1B': 'first baseman',
+  '2B': 'second baseman',
+  SS: 'shortstop',
+  '3B': 'third baseman',
+  LF: 'left fielder',
+  CF: 'center fielder',
+  RF: 'right fielder'
+}
+
 class Words {
   constructor(private readonly game: GameState) {}
 
@@ -86,24 +101,29 @@ class Words {
     return player == null ? `Player ${id}` : drawnName(player)
   }
 
-  position(id: number): Position | undefined {
+  position(id: FielderRef): Position | undefined {
+    if (isPosition(id)) return id
     const defense = this.game.liveData.linescore.defense
     return POSITIONS.find(position => defense[position]?.id === id)
   }
 
-  /** "Noah D. (SS)", the way a credit reads. */
-  fielder(id: number): string {
+  /**
+   * "Noah D. (SS)", the way a credit reads; a stand-in at an empty position
+   * is "the shortstop", for nobody played there.
+   */
+  fielder(id: FielderRef): string {
+    if (isPosition(id)) return `the ${STAND_IN_WORDS[id]}`
     const position = this.position(id)
     return position == null ? this.name(id) : `${this.name(id)} (${position})`
   }
 
   /** "Noah D. (SS) to Sam P. (1B)". */
-  chain(fielders: readonly number[] | undefined): string | undefined {
+  chain(fielders: readonly FielderRef[] | undefined): string | undefined {
     if (fielders == null || fielders.length === 0) return undefined
     return fielders.map(id => this.fielder(id)).join(' to ')
   }
 
-  direction(fielder: number | undefined): string | undefined {
+  direction(fielder: FielderRef | undefined): string | undefined {
     const position = fielder == null ? undefined : this.position(fielder)
     return position == null ? undefined : DIRECTIONS[position]
   }

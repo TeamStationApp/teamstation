@@ -186,9 +186,13 @@ describe('the server scoring source with default lineups (U12)', function () {
           player => player.local
         )
       ).equals(false)
+      // Eight take the field with a stand-in at the ninth position; none
+      // leave nobody to pitch.
       expect(
-        session.apply({ type: 'pitch', call: 'B' }).problems[0].message
-      ).includes('Missing defensive positions')
+        session
+          .apply({ type: 'pitch', call: 'B' })
+          .problems.map(problem => problem.message)
+      ).deep.equals(count === 0 ? ['Missing pitcher'] : [])
     }
     const session = await new ServerScoringSource(fake).open(game, [], home)
     expect(session.state.liveData.linescore.offense.batter).equals(null)

@@ -8,6 +8,7 @@ import {
 } from '../../common/scoring/actions'
 import { revealedSides } from '../../common/scoring/lineupHistory'
 import {
+  canField,
   closesAutomatically,
   completesHitOffer,
   DID_NOT_TAG_UP,
@@ -34,9 +35,10 @@ import {
 } from './scoringMachine'
 import { approachFirst, basePath, enqueue, sequencesFor } from './scoringMotion'
 import { throwPresentation, type ThrowSequence } from './scoringPresentation'
-import { baseIds, battingSide } from './scoringSelectors'
+import { baseIds, battingSide, fielderName } from './scoringSelectors'
 import {
   CORRECTION_WINDOW_MS,
+  type FielderRef,
   type RunnerAction,
   type ScoringEvent,
   type ScoringSnapshot,
@@ -420,7 +422,7 @@ export function completeDefense(
 }
 
 /** The runner the scorer called out is out, by the fielders who handled it. */
-export function finishOut(state: ScoringState, defender: number): void {
+export function finishOut(state: ScoringState, defender: FielderRef): void {
   const action = state.runnerAction!
   const route = action.defensiveRoute
   const fielders =
@@ -531,16 +533,15 @@ function commitSafe(state: ScoringState): void {
     state.presentation = pickoff
 }
 
+/**
+ * Whether a fielder is in the field: a player on the defense, or a stand-in
+ * at a position nobody is playing.
+ */
 function validDefender(
   state: ScoringState,
-  id: number | undefined
-): id is number {
-  return (
-    id != null &&
-    Object.values(state.session.liveData.linescore.defense).some(
-      player => player?.id === id
-    )
-  )
+  id: FielderRef | undefined
+): id is FielderRef {
+  return id != null && canField(state.session.liveData.linescore.defense, id)
 }
 
 /**
@@ -805,7 +806,7 @@ export function runnerReducer(
       return state
     return accepted(
       state,
-      `Error by ${state.session.gameData.players[event.id].fullName}`,
+      `Error by ${fielderName(state.session, event.id)}`,
       next => {
         act(next, {
           type: 'fieldingPlay',
@@ -1064,7 +1065,7 @@ export function runnerReducer(
       return state
     return accepted(
       state,
-      `Thrower ${state.session.gameData.players[event.id].fullName}`,
+      `Thrower ${fielderName(state.session, event.id)}`,
       next => {
         next.runnerAction!.thrower = event.id
         next.runnerAction!.throwerPoint = { ...event.point }
@@ -1149,8 +1150,8 @@ export function runnerReducer(
     return accepted(
       state,
       event.id == null
-        ? `Out by ${state.session.gameData.players[id].fullName}`
-        : `Throw to ${state.session.gameData.players[id].fullName}`,
+        ? `Out by ${fielderName(state.session, id)}`
+        : `Throw to ${fielderName(state.session, id)}`,
       next => {
         next.runnerAction!.runnerPoint =
           event.runnerPoint ?? next.runnerAction!.runnerPoint

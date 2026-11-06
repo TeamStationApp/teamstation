@@ -3,14 +3,16 @@ import { BALL_CONTACT, type BallArcState } from '../field/ballArcModel'
 import {
   BASES,
   clampToField,
+  createPlayers,
+  fielderKey,
   type FieldPlayer,
   type GroundPoint,
   OUT_APPROACH_SPEED
 } from '../field/fieldModel'
-import { fieldPlayersFor } from './fieldAdapter'
+import { fieldPlayersFor, withStandIns } from './fieldAdapter'
 import type { ContactKind } from './scoringContract'
 import { scoringFieldPlayers } from './scoringMotion'
-import type { ScoringState } from './scoringTypes'
+import type { FielderRef, ScoringState } from './scoringTypes'
 export type PitchKind = 'ball' | 'called' | 'swing' | 'foul'
 export interface Point3 extends GroundPoint {
   y: number
@@ -69,8 +71,10 @@ export function pitchPresentation(
   const catcher = session.liveData.linescore.defense.C?.id ?? pitcher
   const throwSide =
     session.gameData.players[pitcher].throws === 'left' ? 'L' : 'R'
-  const location = (id: number): GroundPoint =>
-    players.find(player => player.playerId === id)!.position
+  // A replayed pitch with nobody on the mound comes from the mound.
+  const location = (id: number, spot: 'P' | 'C'): GroundPoint =>
+    players.find(player => player.playerId === id)?.position ??
+    createPlayers().find(player => player.id === spot)!.position
   return {
     id: `${state.generation}:${session.meta.sequence + 1}:pitch`,
     generation: state.generation,
@@ -91,13 +95,13 @@ export function pitchPresentation(
     batSide: play.matchup.batSide.code,
     throwSide,
     from: pitchingHand(
-      location(pitcher),
+      location(pitcher, 'P'),
       PITCH_TIMING.release,
       PITCH_TIMING.release,
       throwSide
     ),
     plate: { x: 0, y: BALL_CONTACT, z: 0 },
-    glove: { ...location(catcher), y: 5.2 }
+    glove: { ...location(catcher, 'C'), y: 5.2 }
   }
 }
 export interface HitSequence {
@@ -121,7 +125,7 @@ export interface HitSequence {
   fielderEndMs: number
   players: FieldPlayer[]
   batter: number
-  fielder?: number
+  fielder?: FielderRef
   fielderStart: GroundPoint
   arc: BallArcState
   batSide: 'R' | 'L'
@@ -155,8 +159,8 @@ export interface ThrowSequence {
   stage: 'transfer' | 'tag'
   durationMs: number
   players: FieldPlayer[]
-  thrower: number
-  receiver: number
+  thrower: FielderRef
+  receiver: FielderRef
   runner: number
   from: Point3
   to: Point3
@@ -229,8 +233,8 @@ export function tagMs(
 export interface ThrowParts {
   /** The field as the throw starts; the three below are placed on it. */
   players: FieldPlayer[]
-  thrower: number
-  receiver: number
+  thrower: FielderRef
+  receiver: FielderRef
   runner: number
   from: GroundPoint
   to: GroundPoint
@@ -252,17 +256,21 @@ export function throwSequence(
     runner.batting = false
   }
   for (const player of players) {
-    if (player.playerId === thrower) {
+    if (fielderKey(player) === thrower) {
       player.position = { ...from }
       player.target = { ...from }
-    } else if (player.playerId === receiver) {
+    } else if (fielderKey(player) === receiver) {
       player.position = { ...to }
       player.target = { ...to }
     }
   }
   const unassisted = final
+  // A stand-in at an empty position throws right-handed.
   const throwSide =
-    state.session.gameData.players[thrower].throws === 'left' ? 'L' : 'R'
+    typeof thrower === 'number' &&
+    state.session.gameData.players[thrower].throws === 'left'
+      ? 'L'
+      : 'R'
   const heading = Math.atan2(to.x - from.x, to.z - from.z)
   return {
     id: `${state.generation}:${state.session.meta.sequence + 1}:throw`,
@@ -288,7 +296,7 @@ export function throwSequence(
 }
 export function throwPresentation(
   state: ScoringState,
-  receiver: number,
+  receiver: FielderRef,
   point?: GroundPoint,
   final = false
 ): ThrowSequence {
@@ -305,10 +313,10 @@ export function throwPresentation(
     holder?.point ??
     action.throwerPoint ??
     state.pendingPlay?.location ??
-    players.find(p => p.playerId === thrower)!.position
+    players.find(p => fielderKey(p) === thrower)!.position
   const to = final
     ? BASES[action.to % 4]
-    : (point ?? players.find(p => p.playerId === receiver)!.position)
+    : (point ?? players.find(p => fielderKey(p) === receiver)!.position)
   const runner = players.find(p => p.playerId === action.playerId)!
   const runnerPoint =
     action.runnerPoint ??
@@ -335,9 +343,12 @@ export function hitPresentation(
   angle: number
 ): HitSequence {
   const pending = state.pendingPlay!
-  const players = fieldPlayersFor(state.session)
+  // A stand-in at an empty position starts from that position's plate.
+  const players = withStandIns(fieldPlayersFor(state.session), state.session, [
+    pending.fielder
+  ])
   const start =
-    players.find(player => player.playerId === pending.fielder)?.position ??
+    players.find(player => fielderKey(player) === pending.fielder)?.position ??
     pending.location!
   const target = pending.location!
   const flight = Math.max(

@@ -14,16 +14,22 @@ import { DEPTHS, FOUL_DEPTHS, FOUL_SIDES } from './depth'
 import { PITCH_DATA_CLEANERS, PITCH_DATA_TOOL_FIELDS } from './pitchLocation'
 import { idOfWrittenTag, positionSaid, tagOf, writtenTag } from './playerTags'
 import {
+  asFielderRef,
   asGameSetup,
   asSessionId,
+  type FielderRef,
   type GameState,
+  isPosition,
   type Optional,
   type PlayerRef,
+  type Position,
   POSITIONS,
   type Side,
   withoutUndefined
 } from './state'
 import { DICTATION_TERMS } from './vocabulary'
+
+export { asFielderRef }
 
 /**
  * The middle ground between whoever watched the game and the rules that score
@@ -281,7 +287,7 @@ const actionCleaners = {
      */
     launchAngleDragged: asOptional(asBoolean),
     location: asOptional(asPoint),
-    fielder: asOptional(asSessionId),
+    fielder: asOptional(asFielderRef),
     direction: asOptional(asOneOf(DIRECTIONS)),
     landingHeight: asOptional(asNumber),
     homeRunKind: asOptional(asOneOf(HOME_RUN_KINDS)),
@@ -301,8 +307,8 @@ const actionCleaners = {
   }),
   fieldingPlay: asObject({
     type: asLiteral('fieldingPlay'),
-    fielders: asArray(asSessionId),
-    error: asOptional(asSessionId),
+    fielders: asArray(asFielderRef),
+    error: asOptional(asFielderRef),
     errorKind: asOptional(asOneOf(ERROR_KINDS)),
     locations: asOptional(asArray(asPoint))
   }),
@@ -312,13 +318,13 @@ const actionCleaners = {
     to: asOneOf(DESTINATIONS),
     out: asOptional(asBoolean),
     reason: asOptional(asRunnerReason),
-    error: asOptional(asSessionId),
+    error: asOptional(asFielderRef),
     errorEvent: asOptional(asNumber),
-    fielders: asOptional(asArray(asSessionId)),
+    fielders: asOptional(asArray(asFielderRef)),
     locations: asOptional(asArray(asPoint)),
     runnerLocation: asOptional(asPoint),
     fieldingRoute: asOptional(
-      asArray(asObject({ id: asSessionId, point: asPoint }))
+      asArray(asObject({ id: asFielderRef, point: asPoint }))
     )
   }),
   baseRunning: asObject({
@@ -412,6 +418,42 @@ export type ScoringAction =
   | LineupAction
   | GameFlowAction
 
+/** A fielder field with every stand-in left out: ids only. */
+type ById<T> =
+  T extends ReadonlyArray<infer U>
+    ? Array<ById<U>>
+    : T extends { id: FielderRef }
+      ? Omit<T, 'id'> & { id: number }
+      : Exclude<T, Position>
+/**
+ * An action with every fielder named by his id. Dictation writes these: a
+ * spoken position resolves to whoever plays it (`untaggedAction`), never to
+ * a stand-in, which only the scorer's tap on an empty position names.
+ */
+export type ByIdAction<A> = A extends unknown
+  ? {
+      [K in keyof A]: K extends
+        'fielder' | 'error' | 'fielders' | 'fieldingRoute'
+        ? ById<A[K]>
+        : A[K]
+    }
+  : never
+export type DictatedAction = ByIdAction<ScoringAction>
+/** Whether every fielder an action names is a player, as dictation's are. */
+export function namesFieldersById(
+  action: ScoringAction
+): action is ScoringAction & DictatedAction {
+  const refs: unknown[] = []
+  if ('fielder' in action) refs.push(action.fielder)
+  if ('error' in action) refs.push(action.error)
+  if ('fielders' in action) refs.push(...(action.fielders ?? []))
+  if ('fieldingRoute' in action)
+    refs.push(...(action.fieldingRoute ?? []).map(hop => hop.id))
+  return !refs.some(isPosition)
+}
+export type DictatedBallInPlay = ByIdAction<BallInPlayAction>
+export type DictatedRunnerMovement = ByIdAction<RunnerMovementAction>
+
 export interface Problem {
   code:
     | 'unknownAction'
@@ -499,34 +541,46 @@ const PLAYER_FIELDS = [
   'pitcher'
 ]
 const PLAYERS_FIELDS = ['fielders', 'order', 'bases']
+/** The fields that may name an empty position's stand-in (`FielderRef`). */
+const STAND_IN_FIELDS = new Set(['fielder', 'error', 'fielders'])
 
 /**
  * Each player an action names, through `each`, field by field: a runner of a
  * battery event's advances too. A null among `bases` is an empty base.
+ * With `keepPositions`, a fielder named by his position (a stand-in at an
+ * empty position, as a stored action holds it) passes through untouched:
+ * it is no player id. Dictation leaves it off, so a spoken position still
+ * resolves to whoever plays there.
  */
 export function mapPlayers(
   raw: Record<string, unknown>,
-  each: (value: unknown, field: string) => unknown
+  each: (value: unknown, field: string) => unknown,
+  options: { keepPositions?: boolean } = {}
 ): Record<string, unknown> {
+  const keep = options.keepPositions === true
+  const map = (value: unknown, field: string): unknown =>
+    keep && STAND_IN_FIELDS.has(field) && isPosition(value)
+      ? value
+      : each(value, field)
   const out: Record<string, unknown> = { ...raw }
   for (const field of PLAYER_FIELDS)
-    if (out[field] != null) out[field] = each(out[field], field)
+    if (out[field] != null) out[field] = map(out[field], field)
   for (const field of PLAYERS_FIELDS)
     if (Array.isArray(out[field]))
       out[field] = (out[field] as unknown[]).map(value =>
-        value == null ? value : each(value, field)
+        value == null ? value : map(value, field)
       )
   if (Array.isArray(out.advances))
     out.advances = out.advances.map((advance: unknown) =>
       advance != null && typeof advance === 'object'
-        ? mapPlayers(advance as Record<string, unknown>, each)
+        ? mapPlayers(advance as Record<string, unknown>, each, options)
         : advance
     )
   if (Array.isArray(out.fieldingRoute))
     out.fieldingRoute = out.fieldingRoute.map((step: unknown) => {
       if (step == null || typeof step !== 'object') return step
       const held = step as Record<string, unknown>
-      return held.id == null ? step : { ...held, id: each(held.id, 'fielders') }
+      return held.id == null ? step : { ...held, id: map(held.id, 'fielders') }
     })
   return out
 }
@@ -667,16 +721,20 @@ export function actionFromTagSlots(
   action: ScoringAction,
   order: readonly number[]
 ): ScoringAction {
-  const mapped = mapPlayers(action, value => {
-    if (
-      typeof value !== 'number' ||
-      !Number.isSafeInteger(value) ||
-      value < 0 ||
-      order[value] == null
-    )
-      throw new Error('Unknown player tag')
-    return order[value]
-  })
+  const mapped = mapPlayers(
+    action,
+    value => {
+      if (
+        typeof value !== 'number' ||
+        !Number.isSafeInteger(value) ||
+        value < 0 ||
+        order[value] == null
+      )
+        throw new Error('Unknown player tag')
+      return order[value]
+    },
+    { keepPositions: true }
+  )
   const result = cleanAction(mapped)
   if ('problem' in result) throw new Error(result.problem.message)
   return result.action

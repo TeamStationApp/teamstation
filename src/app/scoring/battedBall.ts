@@ -1,5 +1,6 @@
 import {
   allowedAngle,
+  canField,
   homeRunKind,
   outcomeAvailable,
   trajectoryLabel
@@ -16,8 +17,8 @@ import {
 } from './scoringContract'
 import { accepted, act, settleRunners } from './scoringFlow'
 import { hitPresentation } from './scoringPresentation'
-import { baseIds } from './scoringSelectors'
-import type { ScoringState } from './scoringTypes'
+import { baseIds, fielderName } from './scoringSelectors'
+import type { FielderRef, ScoringState } from './scoringTypes'
 
 /**
  * A ball in play as the scorer draws it: the outcome, then the fielder or the
@@ -59,27 +60,31 @@ export function chooseOutcome(
     }
   )
 }
+/**
+ * The fielder who played the ball: a player on the defense, or a nameless
+ * stand-in at a position nobody is playing (`SS`), whom nobody is credited
+ * for.
+ */
 export function placeFielder(
   state: ScoringState,
-  id: number,
+  id: FielderRef,
   point: GroundPoint,
   generation: number,
   landingHeight?: number
 ): ScoringState {
+  const defense = state.session.liveData.linescore.defense
   if (
     state.phase !== 'locateFielder' ||
     state.generation !== generation ||
     !Number.isFinite(point.x) ||
     !Number.isFinite(point.z) ||
     (landingHeight != null && !Number.isFinite(landingHeight)) ||
-    !Object.values(state.session.liveData.linescore.defense).some(
-      player => player?.id === id
-    )
+    !canField(defense, id)
   )
     return state
   return accepted(
     state,
-    `Fielded by ${state.session.gameData.players[id].fullName}`,
+    `Fielded by ${fielderName(state.session, id)}`,
     next => {
       const pending = next.pendingPlay!
       pending.fielder = id

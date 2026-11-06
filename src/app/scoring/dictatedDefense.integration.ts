@@ -123,7 +123,7 @@ describe('dictated defensive routes through the real interpreter', function () {
         play.runners.flatMap(r =>
           (r.credits ?? []).map(c => [
             r.details.runner.id,
-            c.player.id,
+            c.player?.id,
             c.credit
           ])
         )

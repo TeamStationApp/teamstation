@@ -7,10 +7,11 @@ import type {
 } from '../../common/scoring/actions'
 import { allowedAngle, closesFirst, inPlay } from '../../common/scoring/rules'
 import { upcoming } from '../../common/scoring/session'
-import { fenceOf } from '../../common/scoring/state'
+import { fenceOf, type FielderRef } from '../../common/scoring/state'
 import { fieldingLocation } from '../field/fieldingLocation'
 import {
   BASES,
+  fielderKey,
   type GroundPoint,
   OUT_APPROACH_SPEED
 } from '../field/fieldModel'
@@ -115,7 +116,7 @@ export function hitGeometry(
     fielder == null
       ? undefined
       : fieldPlayersFor(state.session).find(
-          player => player.team === 'defense' && player.playerId === fielder
+          player => player.team === 'defense' && fielderKey(player) === fielder
         )?.position
   const middle =
     outcome === 'Ground Out' || outcome === "Fielder's Choice"
@@ -234,7 +235,8 @@ export class ReelBuilder {
   private hitBeat: Beat | null = null
   private hitCaught = false
   private hitResultSeen = false
-  private landing: { fielder?: number; point: GroundPoint } | null = null
+  private landing: { fielder?: FielderRef; point: GroundPoint } | null = null
+
   private throwBeat: Beat | null = null
   /**
    * Where the hit's picture leaves a batter it runs out toward first. He
@@ -244,7 +246,7 @@ export class ReelBuilder {
   private batterRun: BatterRun | null = null
   private readonly batterRuns: BatterRun[] = []
   /** Where each defender finished the preceding throw in this sentence. */
-  private readonly defenderPoints = new Map<number, GroundPoint>()
+  private readonly defenderPoints = new Map<FielderRef, GroundPoint>()
   private choice = false
   private choiceOut?: {
     runner: number
@@ -256,8 +258,8 @@ export class ReelBuilder {
   private safeRelays: RunnerMovementAction[] = []
   /** A throw charged as an error, drawn once the play's outs are. */
   private wildThrow: {
-    thrower: number
-    receiver: number
+    thrower: FielderRef
+    receiver: FielderRef
     batter: number
     /** The batter reached on it: the throw was to first, whoever covered. */
     toFirst: boolean
@@ -672,8 +674,8 @@ export class ReelBuilder {
   private shareBatterRun(
     run: BatterRun,
     out: {
-      thrower: number
-      receiver: number
+      thrower: FielderRef
+      receiver: FielderRef
       from: GroundPoint
       target: GroundPoint
     }
@@ -714,9 +716,9 @@ export class ReelBuilder {
       suppressed: false,
       hasBall: false
     }))
-    const standing = (id: number): GroundPoint | undefined =>
+    const standing = (id: FielderRef): GroundPoint | undefined =>
       this.defenderPoints.get(id) ??
-      players.find(p => p.team === 'defense' && p.playerId === id)?.position
+      players.find(p => p.team === 'defense' && fielderKey(p) === id)?.position
     const from = standing(wild.thrower)
     // The base thrown to: first for the batter's error, whoever covered it
     // (a pitcher covering stands nearer home than first); else the one the
@@ -778,7 +780,7 @@ export class ReelBuilder {
   private throws(
     state: ScoringState,
     runner: number,
-    fielders: readonly number[],
+    fielders: readonly FielderRef[],
     to: keyof typeof BASE_INDEX | undefined,
     locations?: readonly GroundPoint[],
     safe = false
@@ -790,17 +792,15 @@ export class ReelBuilder {
       hasBall: false
     }))
     for (const player of players) {
-      const point =
-        player.playerId == null
-          ? undefined
-          : this.defenderPoints.get(player.playerId)
+      const key = fielderKey(player) as FielderRef | undefined
+      const point = key == null ? undefined : this.defenderPoints.get(key)
       if (player.team === 'defense' && point != null) {
         player.position = { ...point }
         player.target = { ...point }
       }
     }
-    const standing = (id: number): GroundPoint | undefined =>
-      players.find(p => p.team === 'defense' && p.playerId === id)?.position
+    const standing = (id: FielderRef): GroundPoint | undefined =>
+      players.find(p => p.team === 'defense' && fielderKey(p) === id)?.position
     if (
       (!safe && !players.some(p => p.playerId === runner)) ||
       fielders.some(id => standing(id) == null)
@@ -840,9 +840,10 @@ export class ReelBuilder {
       const carried = step.thrower === step.receiver
       const sequence = throwSequence(state, {
         players: players.map(player => {
+          const key = fielderKey(player) as FielderRef | undefined
           const point =
-            player.team === 'defense' && player.playerId != null
-              ? this.defenderPoints.get(player.playerId)
+            player.team === 'defense' && key != null
+              ? this.defenderPoints.get(key)
               : undefined
           return {
             ...player,

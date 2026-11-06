@@ -302,7 +302,7 @@ describe('fielder choice runner calls', function () {
         expect(state.session.liveData.linescore.outs).equals(outs + 1)
         expect(
           current(state).source.teamstation.fieldingRoute!.map(
-            hop => hop.player.id
+            hop => hop.player?.id
           )
         ).deep.equals([15, 13])
         let replay = session
@@ -349,7 +349,9 @@ describe('fielder choice runner calls', function () {
     state = choose(state, 6, 'out', 0)
     state = choose(state, 7, 'out', 1)
     expect(
-      current(state).source.teamstation.fieldingRoute!.map(hop => hop.player.id)
+      current(state).source.teamstation.fieldingRoute!.map(
+        hop => hop.player?.id
+      )
     ).deep.equals([15, 13])
     expect(current(state).runners.filter(row => row.movement.isOut)).length(3)
     expect(baseIds(state.session)).not.includes(1)
@@ -528,7 +530,7 @@ describe('fielder choice runner calls', function () {
       current(state)
         .runners.filter(row => row.movement.isOut)
         .map(row =>
-          row.credits.map(credit => [credit.player.id, credit.credit])
+          row.credits.map(credit => [credit.player?.id, credit.credit])
         )
     ).deep.equals([
       [[15, 'f_putout']],
@@ -547,7 +549,7 @@ describe('fielder choice runner calls', function () {
       current(state)
         .runners.filter(row => row.movement.isOut)
         .map(row =>
-          row.credits.map(credit => [credit.player.id, credit.credit])
+          row.credits.map(credit => [credit.player?.id, credit.credit])
         )
     ).deep.equals([
       [
@@ -607,14 +609,14 @@ describe('fielder choice runner calls', function () {
       const restored = asGameState(JSON.parse(JSON.stringify(state.session)))
       expect(
         restored.liveData.plays.currentPlay!.source.teamstation.fieldingRoute!.map(
-          hop => [hop.player.id, hop.location]
+          hop => [hop.player?.id, hop.location]
         )
       ).deep.equals(route.map(hop => [hop.id, hop.point]))
       expect(
         current(state)
           .runners.flatMap(row => row.credits)
           .filter(
-            credit => credit.player.id === 15 && credit.credit === 'f_putout'
+            credit => credit.player?.id === 15 && credit.credit === 'f_putout'
           )
       ).length(0)
       expect(current(state).runners.filter(row => row.movement.isOut)).length(
@@ -704,7 +706,7 @@ describe('fielder choice runner calls', function () {
     expect(
       current(state)
         .runners.find(row => row.movement.isOut)!
-        .credits.map(credit => [credit.player.id, credit.credit])
+        .credits.map(credit => [credit.player?.id, credit.credit])
     ).deep.equals([[15, 'f_putout']])
   })
   it('undoes putout selection and rejects the previous picker generation', function () {
@@ -875,7 +877,7 @@ describe('fielder choice runner calls', function () {
       const outs = current(state).runners.filter(row => row.movement.isOut)
       expect(
         outs.map(row =>
-          row.credits.map(credit => [credit.player.id, credit.credit])
+          row.credits.map(credit => [credit.player?.id, credit.credit])
         )
       ).deep.equals([
         [
@@ -912,7 +914,7 @@ describe('fielder choice runner calls', function () {
       expect(
         current(state)
           .runners.find(row => row.movement.isOut)!
-          .credits.map(credit => [credit.player.id, credit.credit])
+          .credits.map(credit => [credit.player?.id, credit.credit])
       ).deep.equals(
         onwardOnly
           ? [[short, 'f_putout']]
@@ -948,7 +950,7 @@ describe('fielder choice runner calls', function () {
       expect(
         current(state)
           .runners.find(row => row.movement.isOut)!
-          .credits.map(credit => [credit.player.id, credit.credit])
+          .credits.map(credit => [credit.player?.id, credit.credit])
       ).deep.equals([
         [short, 'f_assist'],
         [second, 'f_putout']
@@ -1005,7 +1007,7 @@ describe('fielder choice runner calls', function () {
     state = choose(state, 6, 'out')
     const row = current(state).runners.find(row => row.movement.isOut)!
     expect(
-      row.credits.map(credit => [credit.player.id, credit.credit])
+      row.credits.map(credit => [credit.player?.id, credit.credit])
     ).deep.equals([
       [short, 'f_assist'],
       [second, 'f_putout']
@@ -1013,7 +1015,7 @@ describe('fielder choice runner calls', function () {
     expect(
       current(state)
         .source.teamstation.runnerActions!.find(row => row.isOut)!
-        .defensiveRoute!.map(hop => hop.player.id)
+        .defensiveRoute!.map(hop => hop.player?.id)
     ).deep.equals([short, second])
   })
   for (let mask = 1; mask < 8; mask++) {
@@ -1102,7 +1104,7 @@ describe('fielder choice runner calls', function () {
               ).length(1)
               expect(
                 row.credits.every(credit =>
-                  [15, 13, 12].includes(credit.player.id)
+                  [15, 13, 12].includes(credit.player?.id ?? -1)
                 )
               ).equals(true)
               expect(row.movement.originBase).equals(
@@ -1149,7 +1151,7 @@ describe('fielder choice runner calls', function () {
         row => row.isOut
       )!
       expect(
-        record.defensiveRoute!.map(hop => [hop.player.id, hop.location])
+        record.defensiveRoute!.map(hop => [hop.player?.id, hop.location])
       ).deep.equals(route.map(hop => [hop.id, hop.point]))
     })
   it('uses the order of outs to distinguish a removed force', function () {

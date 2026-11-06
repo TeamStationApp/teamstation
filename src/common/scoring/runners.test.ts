@@ -292,7 +292,7 @@ describe('runners on a hit', function () {
     expect(runs(state)).equals(0)
     const record = state.liveData.plays.currentPlay!.runners.at(-1)!
     expect(record.movement).includes({ isOut: true, end: 4, forceOut: false })
-    expect(record.credits.map(c => [c.player.id, c.credit])).deep.equals([
+    expect(record.credits.map(c => [c.player?.id, c.credit])).deep.equals([
       [F.CF, 'f_assist'],
       [F.SS, 'f_assist'],
       [F.C, 'f_putout']
@@ -440,7 +440,7 @@ describe('outs and the third out', function () {
     })
     const record = state.liveData.plays.currentPlay!.runners.at(-1)!
     expect(outs(state)).equals(1)
-    expect(record.credits.map(c => [c.player.id, c.credit])).deep.equals([
+    expect(record.credits.map(c => [c.player?.id, c.credit])).deep.equals([
       [F.C, 'f_assist'],
       [F.SS, 'f_assist'],
       [F['1B'], 'f_assist'],
@@ -560,7 +560,7 @@ describe('the batter on a ball in play', function () {
         runner.details.runner.id,
         runner.movement.outNumber,
         runner.movement.forceOut,
-        runner.credits.map(credit => `${credit.credit} ${credit.player.id}`)
+        runner.credits.map(credit => `${credit.credit} ${credit.player?.id}`)
       ])
     ).deep.equals([
       [1, 1, true, [`f_assist ${F.SS}`, `f_putout ${F['2B']}`]],
@@ -644,7 +644,7 @@ describe('the batter on a ball in play', function () {
     expect(state.liveData.linescore.teams.home.errors).equals(1)
     const credit =
       state.liveData.plays.currentPlay!.source.teamstation.errorCredit!
-    expect(credit.player.id).equals(F['1B'])
+    expect(credit.player?.id).equals(F['1B'])
     expect(credit.defensiveRoute.map(hop => hop.location)).deep.equals([
       { x: 1, z: -30 },
       { x: 0, z: 0 }

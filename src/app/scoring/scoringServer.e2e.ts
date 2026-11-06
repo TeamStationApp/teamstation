@@ -21,7 +21,11 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
-import type { GameSetup, GameState } from '../../common/scoring/state'
+import type {
+  FielderRef,
+  GameSetup,
+  GameState
+} from '../../common/scoring/state'
 import { signInTestAccount } from '../../test/passwordFixtures'
 import { browserCoverageCollector } from '../browserCoverage.e2e'
 import { createDevelopmentSession, teamsOf } from './developmentSession'
@@ -613,8 +617,10 @@ describe('scoring into the server', function () {
             ]!
           )
     }
-    const mapped = (id: number): number => {
-      const found = idOf.get(id)
+    const mapped = <T extends FielderRef>(id: T): T => {
+      // A stand-in's position is no fixture id.
+      if (typeof id !== 'number') return id
+      const found = idOf.get(id) as T | undefined
       if (found == null) throw new Error(`No player for fixture id ${id}`)
       return found
     }

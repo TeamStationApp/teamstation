@@ -17,7 +17,7 @@ import {
   type RunnerMovementAction,
   type ScoringAction
 } from './actions'
-import { errorCredit, fieldedCredit, outCredits, positionOf } from './credits'
+import { errorCredit, fieldedCredit, fielderOf, outCredits } from './credits'
 import {
   addErrorlessOut,
   type ChargeBook,
@@ -52,6 +52,7 @@ import { homeRunKind, isFair } from './park'
 import { pitchZone } from './pitchLocation'
 import { pitchTypeOf } from './pitchType'
 import {
+  canField,
   choiceOpen,
   closesFirst,
   completesHitOffer,
@@ -75,16 +76,20 @@ import {
 import {
   BASE_KEYS,
   copyState,
+  type FielderRef,
   type GamePlay,
   type GameState,
+  isPosition,
   lineupsOf,
   type Movement,
   type PitchData,
   type PlayerRef,
   type PlayEvent,
   type Point,
+  type Position,
   type Resolution,
   type ResolutionOutcome,
+  type RouteHop,
   type RunnerCredit,
   setupOf,
   withoutUndefined
@@ -168,7 +173,7 @@ interface Recorded {
   /** The play event that made it, when that event is already written. */
   playIndex?: number
   credits?: RunnerCredit[]
-  route?: Array<{ id: number; point: Point }>
+  route?: Array<{ id: FielderRef; point: Point }>
   thrower?: Point
   defender?: Point
 }
@@ -237,10 +242,7 @@ function recordRunner(ctx: Ctx, movement: Movement, record: Recorded): void {
     credits,
     throwerLocation: record.thrower,
     defenderLocation: record.defender,
-    defensiveRoute: record.route?.map(hop => ({
-      player: playerRef(state, hop.id),
-      location: hop.point
-    }))
+    defensiveRoute: record.route?.map(hop => routeHop(state, hop.id, hop.point))
   })
   play.count = count(ctx)
 }
@@ -836,7 +838,7 @@ interface OutCall {
   from: number
   to: number
   reason: string
-  fielders: number[]
+  fielders: FielderRef[]
   locations?: Point[]
   runnerLocation?: Point
 }
@@ -1080,18 +1082,16 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
     ctx.out.push({ type: 'ballFielded', fielder: action.fielder })
   }
   if (angle != null || action.location != null || action.fielder != null) {
+    // A stand-in at an empty position leaves the fielder out: only his
+    // position is known.
+    const fielder =
+      action.fielder == null ? undefined : fielderOf(ctx.state, action.fielder)
     play.hitData = withoutUndefined({
       launchAngle: angle,
       trajectory: angle == null ? undefined : trajectoryLabel(angle),
       coordinates: action.location == null ? undefined : { ...action.location },
-      fielder:
-        action.fielder == null
-          ? undefined
-          : playerRef(ctx.state, action.fielder),
-      position:
-        action.fielder == null
-          ? undefined
-          : positionOf(ctx.state, action.fielder)
+      fielder: fielder?.player,
+      position: fielder?.position
     })
     // The scorer's own pick, which the label and MLB's list both lose.
     const detail = play.source.teamstation
@@ -1115,8 +1115,19 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
     play.source.teamstation.landingHeight = action.landingHeight
 }
 
-function isFielder(ctx: Ctx, id: number): boolean {
-  return Object.values(line(ctx).defense).some(player => player?.id === id)
+/**
+ * Whether a fielder is in the field now: a player on the defense, or a
+ * stand-in at a position nobody is playing.
+ */
+function isFielder(ctx: Ctx, id: FielderRef): boolean {
+  return canField(line(ctx).defense, id)
+}
+
+/** One hop of a stored route: the player, or a stand-in's position. */
+function routeHop(state: GameState, id: FielderRef, location: Point): RouteHop {
+  return isPosition(id)
+    ? { position: id, location }
+    : { player: playerRef(state, id), location }
 }
 
 const BATTED: Partial<Record<ResultAction['eventType'], ResolutionOutcome>> = {
@@ -1254,7 +1265,10 @@ function battedResult(
     !baseIds(ctx.state).some(id => id != null)
   )
     refuse('illegal', "A fielder's choice needs a runner on base")
-  const fielder = play.hitData?.fielder?.id
+  // A stand-in at an empty position is known by his position alone.
+  const standIn = play.hitData?.position
+  const fielder =
+    play.hitData?.fielder?.id ?? (isPosition(standIn) ? standIn : undefined)
   const kind = play.source.teamstation.homeRunKind
   ctx.state.pending = newResolution(ctx, outcome, {
     contactKind: contact,
@@ -1276,8 +1290,7 @@ function battedResult(
   }
   const landed = play.hitData?.coordinates
   const foul =
-    action.foulCaught ??
-    (landed != null && play.hitData?.fielder != null && !isFair(landed))
+    action.foulCaught ?? (landed != null && fielder != null && !isFair(landed))
   if (foul && outcome === 'Ball Caught') {
     play.source.teamstation.foulCaught = true
     play.result.description = 'Foul ball caught'
@@ -1297,12 +1310,14 @@ function fieldingPlay(ctx: Ctx, action: FieldingPlayAction): void {
     if (!isFielder(ctx, id))
       refuse('unknownPlayer', 'That player is not in the field')
   const play = current(ctx)
+  const charged = fielderOf(ctx.state, action.error)
   play.source.teamstation.errorCredit = {
-    player: playerRef(ctx.state, action.error),
-    defensiveRoute: action.fielders.map((id, i) => ({
-      player: playerRef(ctx.state, id),
-      location: action.locations?.[i] ?? { x: 0, z: 0 }
-    }))
+    ...(charged.player == null
+      ? { position: action.error as Position }
+      : { player: charged.player }),
+    defensiveRoute: action.fielders.map((id, i) =>
+      routeHop(ctx.state, id, action.locations?.[i] ?? { x: 0, z: 0 })
+    )
   }
   const batterRecord = play.runners.find(
     runner =>
@@ -1343,10 +1358,9 @@ function saveChoiceRoute(
     )
   )
     refuse('illegal', 'Choose the fielders and their locations')
-  current(ctx).source.teamstation.fieldingRoute = route.map(hop => ({
-    player: playerRef(ctx.state, hop.id),
-    location: { ...hop.point }
-  }))
+  current(ctx).source.teamstation.fieldingRoute = route.map(hop =>
+    routeHop(ctx.state, hop.id, { ...hop.point })
+  )
 }
 
 /**
