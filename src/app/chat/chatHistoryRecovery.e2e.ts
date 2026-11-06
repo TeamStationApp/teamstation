@@ -128,6 +128,29 @@ async function main(): Promise<void> {
     }
     throw new Error('Expected text was not rendered in a message row')
   }
+  /**
+   * The information panel slides in and loads its members after the safety
+   * words appear: wait until the words hold still and nothing is loading, so
+   * the approval frame shows the whole settled card.
+   */
+  async function settled(device: Device): Promise<void> {
+    const deadline = Date.now() + 15000
+    let last = ''
+    let steady = 0
+    while (Date.now() < deadline) {
+      const read = await device.evalBrowserScript({
+        script:
+          "const words=[...document.querySelectorAll('*')].find(node=>node.childElementCount===0&&node.textContent==='OLD SAFETY WORDS');const box=words?.getBoundingClientRect();return JSON.stringify({x:box?.x,y:box?.y,loading:document.body.innerText.includes('Loading…')})"
+      })
+      const state = JSON.parse(String(read.data)) as { loading: boolean }
+      const position = String(read.data)
+      steady = !state.loading && position === last ? steady + 1 : 0
+      last = position
+      if (steady >= 3) return
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    throw new Error('The approval panel did not settle')
+  }
   async function shot(device: Device, file: string): Promise<void> {
     writeFileSync(join(f.artifacts, file), await device.screenshot())
   }
@@ -166,6 +189,7 @@ async function main(): Promise<void> {
     await oldLocked(recipient)
     await holder.tapOn({ text: 'Review', timeout: 30000 })
     await visible(holder, 'OLD SAFETY WORDS')
+    await settled(holder)
     await shot(holder, 'approval-after.png')
     await holder.tapOn({ text: 'Approve', timeout: 30000 })
     for (const text of f.oldMessages) await messageVisible(recipient, text)
