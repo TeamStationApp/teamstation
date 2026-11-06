@@ -31,6 +31,7 @@ import {
   stillSpaceUrl,
   stillSubject
 } from '../media/stills'
+import type { VideoPath } from '../media/videoPrefix'
 import { readWallTimeline } from '../media/wallTimeline'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
@@ -74,6 +75,7 @@ export function mediaRoutes(
           'videos.status as status',
           'videos.duration_sec as durationSec',
           'videos.hidden as hidden',
+          'videos.space_secret as spaceSecret',
           'games.home_team_id as homeTeamId',
           'games.away_team_id as awayTeamId',
           'games.season_id as seasonId'
@@ -95,7 +97,8 @@ export function mediaRoutes(
         : await locateVideo({
             mediaRoot,
             storage: video.storage,
-            videoId
+            videoId,
+            spaceSecret: video.spaceSecret
           })
       if (location == null) {
         // The row says there is a video; its files are not there. Better to
@@ -116,7 +119,10 @@ export function mediaRoutes(
 
       let entry = 'master.m3u8'
       if (video.storage === 'spaces' && video.kind === 'live') {
-        const master = await playback.playlists.get(videoId, 'master.m3u8')
+        const master = await playback.playlists.get(
+          { id: videoId, spaceSecret: video.spaceSecret },
+          'master.m3u8'
+        )
         if (master != null && mediaVariant(master) === 'index.m3u8')
           entry = 'index.m3u8'
       }
@@ -202,6 +208,7 @@ export function mediaRoutes(
           'videos.storage as storage',
           'videos.hidden as hidden',
           'videos.spaces_verified_at as spacesVerifiedAt',
+          'videos.space_secret as spaceSecret',
           'games.home_team_id as homeTeamId',
           'games.away_team_id as awayTeamId',
           'games.season_id as seasonId'
@@ -217,7 +224,7 @@ export function mediaRoutes(
       await redirectToStill(
         res,
         video.storage,
-        videoId,
+        { id: videoId, spaceSecret: video.spaceSecret },
         atSec,
         video.spacesVerifiedAt != null
       )
@@ -258,14 +265,14 @@ export function mediaRoutes(
       }
       const video = await db
         .selectFrom('videos')
-        .select(['storage', 'hidden', 'spaces_verified_at'])
+        .select(['storage', 'hidden', 'spaces_verified_at', 'space_secret'])
         .where('id', '=', videoId)
         .executeTakeFirst()
       if (video == null || video.hidden) throw notFound()
       await redirectToStill(
         res,
         video.storage,
-        videoId,
+        { id: videoId, spaceSecret: video.space_secret },
         atSec,
         video.spaces_verified_at != null
       )
@@ -276,15 +283,17 @@ export function mediaRoutes(
   async function redirectToStill(
     res: Response,
     storage: 'peertube' | 'local' | 'spaces',
-    videoId: string,
+    video: VideoPath,
     atSec: number,
     verified: boolean
   ): Promise<void> {
+    const videoId = video.id
     const source = await videoFrameSource({
       mediaRoot,
       space,
       storage,
       videoId,
+      spaceSecret: video.spaceSecret,
       verified
     })
     if (source == null) throw notFound()
@@ -337,13 +346,16 @@ export function mediaRoutes(
       if (!spaceConfigured(space)) throw notFound()
       const video = await db
         .selectFrom('videos')
-        .select(['hidden', 'storage', 'spaces_verified_at'])
+        .select(['hidden', 'storage', 'spaces_verified_at', 'space_secret'])
         .where('id', '=', videoId)
         .executeTakeFirst()
       if (video == null || video.hidden || video.storage !== 'spaces')
         throw notFound()
       const verified = video.spaces_verified_at != null
-      const body = await playback.get(videoId, file, verified)
+      // Its media URLs carry the secret path, which only a viewer this route
+      // has let in (by the token `/playback` minted) ever sees.
+      const path = { id: videoId, spaceSecret: video.space_secret }
+      const body = await playback.get(path, file, verified)
       if (body == null) throw notFound()
 
       res.type('application/vnd.apple.mpegurl')
@@ -361,7 +373,7 @@ export function mediaRoutes(
         res.send(rewriteMasterPlaylist(body, variant))
         return
       }
-      res.send(playback.rewrite(videoId, file, body))
+      res.send(playback.rewrite(path, file, body))
     })
   )
 
@@ -399,6 +411,7 @@ export function mediaRoutes(
           'videos.kind as kind',
           'videos.storage as storage',
           'videos.status as status',
+          'videos.space_secret as spaceSecret',
           'games.id as gameId',
           'games.home_team_id as homeTeamId',
           'games.away_team_id as awayTeamId'

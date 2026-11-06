@@ -8,10 +8,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import type { ReadableStream as WebReadableStream } from 'node:stream/web'
 import { promisify } from 'node:util'
 
 import { presignGetUrl } from './presign'
 import { spaceConfigured, type SpaceSettings } from './spacesHls'
+import { withoutSecrets } from './videoPrefix'
 
 const run = promisify(execFile)
 
@@ -217,31 +219,58 @@ export async function fetchImage(
 }
 
 /**
+ * How an uploaded object may be read. With neither, it is private and carries
+ * no cache header, as every upload did before. Each is signed (`x-amz-acl`,
+ * `cache-control`) and sent with the request; a multipart upload sends them
+ * when it creates the upload.
+ */
+export interface UploadAccess {
+  acl?: 'public-read'
+  cacheControl?: string
+}
+
+function accessHeaders(access: UploadAccess): Record<string, string> {
+  const headers: Record<string, string> = {}
+  if (access.acl != null) headers['x-amz-acl'] = access.acl
+  if (access.cacheControl != null)
+    headers['cache-control'] = access.cacheControl
+  return headers
+}
+
+/**
  * Writes one object into the Space with a presigned PUT.
  *
  * The same signing as reading, with the verb changed, so there is no SDK and
  * no second implementation of SigV4 to keep in step.
  */
-export async function putObject(options: {
-  space: SpaceSettings
-  key: string
-  body: Buffer
-  contentType: string
-  /** Gives up on the upload, for a caller that cannot wait for ever. */
-  signal?: AbortSignal
-}): Promise<void> {
+export async function putObject(
+  options: {
+    space: SpaceSettings
+    key: string
+    body: Buffer
+    contentType: string
+    /** Gives up on the upload, for a caller that cannot wait for ever. */
+    signal?: AbortSignal
+  } & UploadAccess
+): Promise<void> {
   const { space, key, body, contentType, signal } = options
+  const headers = accessHeaders(options)
 
-  const response = await fetch(signedPutUrl(space, key), {
-    method: 'PUT',
-    body: new Uint8Array(body),
-    headers: { 'content-type': contentType },
-    signal
-  })
+  const response = await fetch(
+    signedSpaceUrl(space, key, 'PUT', undefined, headers),
+    {
+      method: 'PUT',
+      body: new Uint8Array(body),
+      headers: { 'content-type': contentType, ...headers },
+      signal
+    }
+  )
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
     throw new Error(
-      `Upload of ${key} answered ${response.status} ${detail.slice(0, 200)}`
+      withoutSecrets(
+        `Upload of ${key} answered ${response.status} ${detail.slice(0, 200)}`
+      )
     )
   }
 }
@@ -263,7 +292,9 @@ export async function deleteObject(options: {
   if (!response.ok && response.status !== 404) {
     const detail = await response.text().catch(() => '')
     throw new Error(
-      `Deleting ${key} answered ${response.status} ${detail.slice(0, 200)}`
+      withoutSecrets(
+        `Deleting ${key} answered ${response.status} ${detail.slice(0, 200)}`
+      )
     )
   }
 }
@@ -297,12 +328,14 @@ export const MULTIPART_PART_BYTES = 100 * 1024 * 1024
  * Over 5 GB the same stream is cut into parts. A DigitalOcean Space will not
  * accept one PUT that large, and the archive has camera files that size.
  */
-export async function putObjectFile(options: {
-  space: SpaceSettings
-  key: string
-  path: string
-  contentType: string
-}): Promise<void> {
+export async function putObjectFile(
+  options: {
+    space: SpaceSettings
+    key: string
+    path: string
+    contentType: string
+  } & UploadAccess
+): Promise<void> {
   const { space, key, path, contentType } = options
   const info = await stat(path)
   if (info.size > SINGLE_PUT_LIMIT_BYTES) {
@@ -312,7 +345,9 @@ export async function putObjectFile(options: {
       path,
       contentType,
       size: info.size,
-      partSize: MULTIPART_PART_BYTES
+      partSize: MULTIPART_PART_BYTES,
+      acl: options.acl,
+      cacheControl: options.cacheControl
     })
     return
   }
@@ -322,7 +357,8 @@ export async function putObjectFile(options: {
     path,
     contentType,
     start: 0,
-    end: info.size - 1
+    end: info.size - 1,
+    signedHeaders: accessHeaders(options)
   })
 }
 
@@ -333,33 +369,67 @@ export async function putObjectFile(options: {
  * An incomplete upload is aborted: Spaces bills the parts until somebody
  * says they will not be completed.
  */
-export async function putObjectMultipart(options: {
+export async function putObjectMultipart(
+  options: {
+    space: SpaceSettings
+    key: string
+    path: string
+    contentType: string
+    size: number
+    partSize: number
+  } & UploadAccess
+): Promise<void> {
+  const { path } = options
+  await multipartUpload(options, async part => {
+    return await streamPutFile({ ...part, path })
+  })
+}
+
+/** One part of a multipart upload: a byte range, sent as one sized PUT. */
+interface UploadPart {
   space: SpaceSettings
   key: string
-  path: string
   contentType: string
-  size: number
-  partSize: number
-}): Promise<void> {
-  const { space, key, path, contentType, size, partSize } = options
-  const uploadId = await initiateMultipart(space, key)
+  start: number
+  end: number
+  query: Record<string, string>
+}
+
+async function multipartUpload(
+  options: {
+    space: SpaceSettings
+    key: string
+    contentType: string
+    size: number
+    partSize: number
+  } & UploadAccess,
+  sendPart: (part: UploadPart) => Promise<string | undefined>
+): Promise<void> {
+  const { space, key, contentType, size, partSize } = options
+  const uploadId = await initiateMultipart(
+    space,
+    key,
+    contentType,
+    accessHeaders(options)
+  )
   const parts: Array<{ partNumber: number; etag: string }> = []
   try {
     let start = 0
     let partNumber = 1
     while (start < size) {
       const end = Math.min(start + partSize, size) - 1
-      const etag = await streamPutFile({
+      const etag = await sendPart({
         space,
         key,
-        path,
         contentType,
         start,
         end,
         query: { partNumber: String(partNumber), uploadId }
       })
       if (etag == null || etag === '') {
-        throw new Error(`Upload of ${key} part ${partNumber} returned no ETag`)
+        throw new Error(
+          withoutSecrets(`Upload of ${key} part ${partNumber} returned no ETag`)
+        )
       }
       parts.push({ partNumber, etag })
       start = end + 1
@@ -374,23 +444,30 @@ export async function putObjectMultipart(options: {
 
 async function initiateMultipart(
   space: SpaceSettings,
-  key: string
+  key: string,
+  contentType: string,
+  headers: Record<string, string>
 ): Promise<string> {
   const response = await fetch(
-    signedSpaceUrl(space, key, 'POST', { uploads: '' }),
+    signedSpaceUrl(space, key, 'POST', { uploads: '' }, headers),
     {
-      method: 'POST'
+      method: 'POST',
+      headers: { 'content-type': contentType, ...headers }
     }
   )
   const body = await response.text().catch(() => '')
   if (!response.ok) {
     throw new Error(
-      `Upload of ${key} initiate answered ${response.status} ${body.slice(0, 200)}`
+      withoutSecrets(
+        `Upload of ${key} initiate answered ${response.status} ${body.slice(0, 200)}`
+      )
     )
   }
   const id = /<UploadId>([^<]+)<\/UploadId>/.exec(body)?.[1]
   if (id == null || id === '') {
-    throw new Error(`Upload of ${key} initiate returned no UploadId`)
+    throw new Error(
+      withoutSecrets(`Upload of ${key} initiate returned no UploadId`)
+    )
   }
   return id
 }
@@ -421,7 +498,9 @@ async function completeMultipart(
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
     throw new Error(
-      `Upload of ${key} complete answered ${response.status} ${detail.slice(0, 200)}`
+      withoutSecrets(
+        `Upload of ${key} complete answered ${response.status} ${detail.slice(0, 200)}`
+      )
     )
   }
 }
@@ -438,7 +517,9 @@ async function abortMultipart(
   if (!response.ok && response.status !== 404) {
     const detail = await response.text().catch(() => '')
     throw new Error(
-      `Upload of ${key} abort answered ${response.status} ${detail.slice(0, 200)}`
+      withoutSecrets(
+        `Upload of ${key} abort answered ${response.status} ${detail.slice(0, 200)}`
+      )
     )
   }
 }
@@ -458,14 +539,30 @@ async function streamPutFile(options: {
   start: number
   end: number
   query?: Record<string, string>
+  signedHeaders?: Record<string, string>
 }): Promise<string | undefined> {
-  const { space, key, path, contentType, start, end, query } = options
+  const { path, start, end } = options
   const length = end - start + 1
   // Opened before the request: a source that cannot be read throws here, with
   // no request left open to time out later. An empty file is an empty body;
   // a read stream refuses an `end` before its `start`.
   const source =
     length > 0 ? createReadStream(path, { start, end }) : Readable.from([])
+  return await streamPut({ ...options, source, length })
+}
+
+/** Streams `length` bytes of `source` as one sized PUT, and returns its ETag. */
+async function streamPut(options: {
+  space: SpaceSettings
+  key: string
+  contentType: string
+  source: Readable
+  length: number
+  query?: Record<string, string>
+  signedHeaders?: Record<string, string>
+}): Promise<string | undefined> {
+  const { space, key, contentType, source, length, query } = options
+  const signedHeaders = options.signedHeaders ?? {}
   let sent = 0
   async function* counted(
     chunks: AsyncIterable<Buffer>
@@ -475,7 +572,7 @@ async function streamPutFile(options: {
       yield chunk
     }
   }
-  const url = new URL(signedSpaceUrl(space, key, 'PUT', query))
+  const url = new URL(signedSpaceUrl(space, key, 'PUT', query, signedHeaders))
   const send = url.protocol === 'https:' ? httpsRequest : httpRequest
   const request = send({
     protocol: url.protocol,
@@ -485,7 +582,8 @@ async function streamPutFile(options: {
     path: `${url.pathname}${url.search}`,
     headers: {
       'content-type': contentType,
-      'content-length': String(length)
+      'content-length': String(length),
+      ...signedHeaders
     }
   })
 
@@ -540,7 +638,9 @@ async function streamPutFile(options: {
       // would wait a minute for the bytes the stated length still owes.
       if (sent < length) {
         sendFailed = new Error(
-          `Upload of ${key}: the file is shorter than it was (${sent} of ${length} bytes)`
+          withoutSecrets(
+            `Upload of ${key}: the file is shorter than it was (${sent} of ${length} bytes)`
+          )
         )
         request.destroy(sendFailed)
       }
@@ -558,7 +658,9 @@ async function streamPutFile(options: {
     // already said no.
     request.destroy()
     throw new Error(
-      `Upload of ${key} answered ${result.status} ${result.detail.slice(0, 200)}`
+      withoutSecrets(
+        `Upload of ${key} answered ${result.status} ${result.detail.slice(0, 200)}`
+      )
     )
   }
 
@@ -568,16 +670,91 @@ async function streamPutFile(options: {
   return result.etag
 }
 
-/** The one presigned URL both uploaders write against. */
-function signedPutUrl(space: SpaceSettings, key: string): string {
-  return signedSpaceUrl(space, key, 'PUT')
+/**
+ * CopyObject's limit: an object larger than this is copied as a multipart
+ * upload of ranged reads instead.
+ */
+export const COPY_LIMIT_BYTES = SINGLE_PUT_LIMIT_BYTES
+
+/**
+ * Copies one object to another key in the same bucket, with new headers.
+ *
+ * A presigned `PUT` whose signature covers `x-amz-copy-source`,
+ * `x-amz-metadata-directive: REPLACE` and the access headers, so the copy
+ * takes this call's ACL, cache header and content type rather than the
+ * source's. The bytes never leave the Space. An object over `copyLimitBytes`
+ * (CopyObject refuses one over 5 GiB) is streamed from a presigned GET, a part
+ * at a time, into a multipart upload.
+ */
+export async function copyObject(
+  options: {
+    space: SpaceSettings
+    sourceKey: string
+    key: string
+    contentType: string
+    /** The source's length, from a listing. */
+    size: number
+    /** Lowered by a test. */
+    copyLimitBytes?: number
+    partSize?: number
+  } & UploadAccess
+): Promise<void> {
+  const { space, sourceKey, key, contentType, size } = options
+  if (size > (options.copyLimitBytes ?? COPY_LIMIT_BYTES)) {
+    await multipartUpload(
+      {
+        ...options,
+        partSize: options.partSize ?? MULTIPART_PART_BYTES
+      },
+      async part => {
+        const response = await fetch(signedSpaceUrl(space, sourceKey, 'GET'), {
+          headers: { range: `bytes=${part.start}-${part.end}` }
+        })
+        if (response.status !== 206 || response.body == null) {
+          await response.body?.cancel()
+          throw new Error(
+            withoutSecrets(
+              `Reading ${sourceKey} bytes ${part.start}-${part.end} answered ${response.status}`
+            )
+          )
+        }
+        return await streamPut({
+          ...part,
+          source: Readable.fromWeb(response.body as WebReadableStream),
+          length: part.end - part.start + 1
+        })
+      }
+    )
+    return
+  }
+  const headers = {
+    ...accessHeaders(options),
+    'x-amz-copy-source': `/${space.bucket}/${sourceKey
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/')}`,
+    'x-amz-metadata-directive': 'REPLACE'
+  }
+  const response = await fetch(
+    signedSpaceUrl(space, key, 'PUT', undefined, headers),
+    { method: 'PUT', headers: { 'content-type': contentType, ...headers } }
+  )
+  // A copy can fail after the 200 has gone out, with the error in the body.
+  const detail = await response.text().catch(() => '')
+  if (!response.ok || detail.includes('<Error>'))
+    throw new Error(
+      withoutSecrets(
+        `Copy of ${sourceKey} to ${key} answered ${response.status} ${detail.slice(0, 200)}`
+      )
+    )
 }
 
 function signedSpaceUrl(
   space: SpaceSettings,
   key: string,
   method: 'GET' | 'PUT' | 'POST' | 'DELETE',
-  query?: Record<string, string>
+  query?: Record<string, string>,
+  signedHeaders?: Record<string, string>
 ): string {
   if (!spaceConfigured(space)) throw new Error('No Space is configured')
   return presignGetUrl({
@@ -590,7 +767,8 @@ function signedSpaceUrl(
     key,
     expiresSec: 300,
     query,
-    pathStyle: space.pathStyle
+    pathStyle: space.pathStyle,
+    signedHeaders
   })
 }
 

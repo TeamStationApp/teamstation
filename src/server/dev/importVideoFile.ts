@@ -17,6 +17,7 @@ import {
   uploadVideoDirectory,
   verifyVideoDirectory
 } from '../media/spacesVideo'
+import { newSpaceSecret } from '../media/videoPrefix'
 import { serverConfig } from '../serverConfig'
 
 const run = promisify(execFile)
@@ -214,6 +215,9 @@ async function main(): Promise<void> {
   if (!spaceConfigured(space)) throw new Error('no Space is configured')
 
   const videoId = makeId('video')
+  // With the id, before the first upload: the objects go under its secret
+  // path, and the row is written with it.
+  const spaceSecret = newSpaceSecret()
   const work = await mkdtemp(join(tmpdir(), `tsImport-${videoId}-`))
   const db = makeDatabase(args.databaseUrl)
   try {
@@ -233,12 +237,14 @@ async function main(): Promise<void> {
     const uploaded = await uploadVideoDirectory({
       space,
       videoId,
+      spaceSecret,
       dir: work,
       files
     })
     const verified = await verifyVideoDirectory({
       space,
       videoId,
+      spaceSecret,
       dir: work,
       files: uploaded.files
     })
@@ -270,6 +276,7 @@ async function main(): Promise<void> {
         hidden: false,
         size_bytes: String(uploaded.bytes),
         spaces_verified_at: now,
+        space_secret: spaceSecret,
         created_at: now,
         updated_at: now
       })
