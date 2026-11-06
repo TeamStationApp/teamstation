@@ -201,6 +201,7 @@ describe('the phone document cache', function () {
       leaseUntil: null,
       message: null,
       names: null,
+      background: false,
       dependsOn: ['player-5']
     })
     expect(queued[1]).deep.include({ names: '{"12":"Juan Soto"}' })
@@ -236,7 +237,7 @@ describe('the phone document cache', function () {
     await store.close()
   })
 
-  it('adds the outbox message and names columns to a file made before them, and reads a bad dependency list as none', async function () {
+  it('adds the outbox message, names and background columns to a file made before them, and reads a bad dependency list as none (U36)', async function () {
     const executor = nodeSqliteExecutor(join(dir, 'older.sqlite'))
     executor.db.exec(`CREATE TABLE outbox (
       id text PRIMARY KEY, idempotency_key text NOT NULL UNIQUE,
@@ -251,9 +252,26 @@ describe('the phone document cache', function () {
     expect(row).deep.include({
       message: null,
       names: null,
+      background: false,
       dependsOn: [],
       gameId: null
     })
+    // A row queued in the background reads back as one.
+    await store.atomically(async tx => {
+      await tx.enqueue({
+        id: 'r2',
+        idempotencyKey: 'k2',
+        chain: 'game:g1',
+        method: 'PUT',
+        path: '/games/g1/unroster',
+        body: '{}',
+        dependsOn: [],
+        gameId: 'g1',
+        background: true
+      })
+    })
+    const rows = await store.atomically(async tx => await tx.outbox())
+    expect(rows.map(each => each.background)).deep.equals([false, true])
     await store.close()
     // Opened again, the column is there already.
     const again = await openCacheStore(

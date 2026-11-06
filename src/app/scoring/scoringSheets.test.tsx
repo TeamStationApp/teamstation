@@ -128,7 +128,8 @@ async function mount(
   client.createRosterPlayer = async (_teamId, player) =>
     mintedRosterEntry(player)
   client.rosterCandidates = async () => [
-    candidate('Mookie Betts', { userId: 'usr_betts' })
+    candidate('Mookie Betts', { userId: 'usr_betts' }),
+    candidate('Aaron Judge', { userId: 'usr_judge' })
   ]
   const betts = (): ReturnType<typeof mintedRosterEntry> =>
     mintedRosterEntry({
@@ -422,14 +423,25 @@ describe('scoring slide-up sheets', function () {
     try {
       await mount()
       await menu('Set Team Rosters')
-      for (const action of ['Add to Roster', 'Add as Pool Player']) {
+      for (const [name, action] of [
+        ['Mookie B', 'Add to Roster'],
+        ['Aaron J', 'Add as Pool Player']
+      ]) {
         // Nothing answers the screen's own requests here, which leaves the
         // client offline; the search is answered.
         await act(async () => {
           mountedClient!.offline = false
         })
         await click('Add Existing Player')
-        await click('Choose Mookie B')
+        await act(async () => {
+          await new Promise(resolve => setTimeout(resolve, 20))
+        })
+        // Somebody added already is not listed again when the sheet reopens.
+        expect(
+          document.querySelector('[aria-label="Choose Mookie B"]') != null,
+          name
+        ).equals(name === 'Mookie B')
+        await click(`Choose ${name}`)
         await click(action)
       }
       expect(existingSent).deep.equals([
@@ -439,13 +451,78 @@ describe('scoring slide-up sheets', function () {
         },
         {
           guest: { gameId: 'g1', side: 'away', teamId: 'away' },
-          body: { userId: 'usr_betts', jersey: null, positions: [] }
+          body: { userId: 'usr_judge', jersey: null, positions: [] }
         }
       ])
       await click('Cancel')
     } finally {
       restore()
     }
+  })
+
+  it('opens the rosters at once while the game is still being read again (U39)', async function () {
+    HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
+    const session = scoringSession(gameFixture)
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.game = async () => gameFixture
+    client.roster = async () => []
+    client.myRoles = async () => ({
+      teams: { away: ['scorekeeper'], home: ['scorekeeper'] },
+      guardianOf: []
+    })
+    client.gameLineups = async () => await new Promise(() => undefined)
+    const store = memoryStore()
+    const load = store.load
+    let hold = false
+    let reads = 0
+    store.load = async gameId => {
+      if (hold) {
+        reads++
+        return await new Promise(() => undefined)
+      }
+      return await load(gameId)
+    }
+    const source: ScoringSource = {
+      persistent: true,
+      open: async () => {
+        const opened = ScoringSession.start(store, 'g1', session)
+        return opened
+      }
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <ScoringScreen
+            client={client}
+            gameId="g1"
+            source={source}
+            userId={12}
+            onExit={() => undefined}
+          />
+        </ThemeProvider>
+      )
+    })
+    hold = true
+    await menu('Set Team Rosters')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    // The game's read behind the sheet has not come back.
+    expect(reads).lessThan(2)
+    expect(document.querySelector('[aria-label="Refreshing game"]')).equals(
+      null
+    )
+    expect(document.querySelector('[aria-label="Save Rosters"]')).not.equals(
+      null
+    )
+    // An edit and Save go through with the read still out.
+    await click('Lineup')
+    await click('Clear Lineup')
+    await click('Save Rosters')
+    expect(document.querySelector('[aria-label="Save Rosters"]')).equals(null)
   })
 
   it('names the teams inside the Away/Home pill and nowhere else', async function () {

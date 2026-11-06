@@ -25,6 +25,7 @@ import {
 } from './session'
 import {
   asGameState,
+  copyState,
   type GameState,
   type Position,
   POSITIONS,
@@ -1653,6 +1654,115 @@ describe('a scoring session', function () {
       expect(session.pending).equals(0)
     })
 
+    /** A session whose clock reads `at`. */
+    async function openAt(
+      store: LineupStore,
+      at: string | (() => string)
+    ): Promise<ScoringSession> {
+      const clock = new Clock()
+      clock.options.now = () => new Date(typeof at === 'string' ? at : at())
+      return (await open(store, clock)).session
+    }
+    const reverseHome = (setup: ReturnType<typeof setupOf>): void => {
+      setup.sides.home.battingOrder = [
+        ...setup.sides.home.battingOrder
+      ].reverse()
+    }
+    /** `session` changes the home order as `change` does, unsaved. */
+    function stage(
+      session: ScoringSession,
+      change: (setup: ReturnType<typeof setupOf>) => void
+    ): number[] {
+      const setup = setupOf(session.state)
+      change(setup)
+      expect(
+        session.apply({ type: 'lineup', kind: 'roster', setup }).problems
+      ).deep.equals([])
+      return setup.sides.home.battingOrder
+    }
+
+    it('keeps the later lineup change of a side, whichever device saves first (U41)', async function () {
+      // Ours made first, theirs later and saved first: theirs stands.
+      {
+        const store = new LineupStore()
+        let oursAt = '2026-09-25T12:00:10.000Z'
+        const ours = await openAt(store, () => oursAt)
+        const theirs = await openAt(store, '2026-09-25T12:00:20.000Z')
+        stage(ours, reverseHome)
+        const kept = stage(theirs, swapLeadoff)
+        store.moveTo = 'theirs'
+        await theirs.flush()
+        // Ours goes out after theirs was stored.
+        oursAt = '2026-09-25T12:00:30.000Z'
+        await ours.flush()
+        expect(ours.rebases).equals(1)
+        expect(
+          ours.state.liveData.boxscore.teams.home.battingOrder
+        ).deep.equals(kept)
+        expect(ours.problem).includes(
+          'another device changed that lineup later'
+        )
+        const read = await openAt(store, '2026-09-25T12:01:00.000Z')
+        expect(
+          read.state.liveData.boxscore.teams.home.battingOrder
+        ).deep.equals(kept)
+      }
+      // Theirs made first and saved first, ours later: ours stands.
+      {
+        const store = new LineupStore()
+        const ours = await openAt(store, '2026-09-25T12:00:20.000Z')
+        const theirs = await openAt(store, '2026-09-25T12:00:10.000Z')
+        stage(theirs, swapLeadoff)
+        store.moveTo = 'theirs'
+        await theirs.flush()
+        const kept = stage(ours, reverseHome)
+        await ours.flush()
+        expect(ours.rebases).equals(1)
+        expect(ours.problem).equals(null)
+        const read = await openAt(store, '2026-09-25T12:01:00.000Z')
+        expect(
+          read.state.liveData.boxscore.teams.home.battingOrder
+        ).deep.equals(kept)
+      }
+      // Theirs later, but of the other side: ours is put back on top.
+      {
+        const store = new LineupStore()
+        const ours = await openAt(store, '2026-09-25T12:00:10.000Z')
+        const theirs = await openAt(store, '2026-09-25T12:00:20.000Z')
+        const before = setupOf(ours.state)
+        stage(theirs, swapAwayLeadoff)
+        store.moveTo = 'theirs'
+        await theirs.flush()
+        // Our roster names the away side as it was, unchanged by us.
+        const setup = copyState(before)
+        reverseHome(setup)
+        expect(
+          ours.apply({ type: 'lineup', kind: 'roster', setup }).problems
+        ).deep.equals([])
+        await ours.flush()
+        expect(ours.problem).equals(null)
+        expect(
+          ours.state.liveData.boxscore.teams.home.battingOrder
+        ).deep.equals(setup.sides.home.battingOrder)
+      }
+    })
+
+    it('stamps an action with the time it was made when one is given', async function () {
+      const store = new LineupStore()
+      const session = await openAt(store, '2026-09-25T12:00:30.000Z')
+      const setup = setupOf(session.state)
+      swapLeadoff(setup)
+      session.apply(
+        { type: 'lineup', kind: 'roster', setup },
+        { time: '2026-09-25T12:00:05.000Z' }
+      )
+      session.apply(ball)
+      expect(session.actionStamps.slice(-2)).deep.equals([
+        '2026-09-25T12:00:05.000Z',
+        '2026-09-25T12:00:30.000Z'
+      ])
+    })
+
     it('keeps the time an unsaved pitch was taken when it puts the pitch back on the lineups', async function () {
       const store = new LineupStore()
       const clock = new Clock()
@@ -1680,6 +1790,95 @@ describe('a scoring session', function () {
       )
       expect(stored.teamStation.actionTimes).length(
         stored.teamStation.actions.length
+      )
+    })
+
+    it('weighs another device’s lineup change no later than the rebase read it, so a clock that runs ahead does not win', async function () {
+      const store = new LineupStore()
+      // Their phone runs 30 minutes fast; ours is right.
+      const theirs = await openAt(store, '2026-09-25T12:30:00.000Z')
+      const ours = await openAt(store, '2026-09-25T12:00:10.000Z')
+      stage(theirs, swapLeadoff)
+      store.moveTo = 'theirs'
+      await theirs.flush()
+      // Ours, made after theirs reached the server, saves over it.
+      const kept = stage(ours, reverseHome)
+      await ours.flush()
+      expect(ours.rebases).equals(1)
+      expect(ours.problem).equals(null)
+      expect(ours.state.liveData.boxscore.teams.home.battingOrder).deep.equals(
+        kept
+      )
+    })
+
+    it('weighs a roster after a substitution only for the side it changes, in a rebase', async function () {
+      const store = new LineupStore()
+      const ours = await openAt(store, '2026-09-25T12:00:10.000Z')
+      const theirs = await openAt(store, '2026-09-25T12:00:20.000Z')
+      // Ours: the home second baseman to short, then the away order reversed.
+      expect(
+        ours.apply({
+          type: 'lineup',
+          kind: 'position',
+          side: 'home',
+          position: 'SS',
+          player: F['2B']
+        }).problems
+      ).deep.equals([])
+      const setup = setupOf(ours.state)
+      setup.sides.away.battingOrder = [
+        ...setup.sides.away.battingOrder
+      ].reverse()
+      expect(
+        ours.apply({ type: 'lineup', kind: 'roster', setup }).problems
+      ).deep.equals([])
+      // Theirs, later and saved first, changes home only.
+      stage(theirs, reverseHome)
+      store.moveTo = 'theirs'
+      await theirs.flush()
+      await ours.flush()
+      expect(ours.rebases).equals(1)
+      // Our home change is older than theirs and goes; our away one stays.
+      expect(ours.state.liveData.boxscore.teams.away.battingOrder).deep.equals(
+        setup.sides.away.battingOrder
+      )
+    })
+
+    it('keeps our lineup change through a rebase whose read reconciles a roster mismatch', async function () {
+      const store = new LineupStore()
+      let at = '2026-09-25T12:00:10.000Z'
+      let mismatch = false
+      const clock = new Clock()
+      clock.options.now = () => new Date(at)
+      // The phone's roster has the home side's last batter sitting, which the
+      // stored setup does not: a read reconciles it with a roster action.
+      let sitting = 0
+      const ours = await ScoringSession.open(store, 'g1', context, {
+        ...clock.options,
+        reconcileSetup: setup => {
+          if (!mismatch) return setup
+          const next = copyState(setup)
+          next.sides.home.battingOrder = next.sides.home.battingOrder.filter(
+            id => id !== sitting
+          )
+          return next
+        }
+      })
+      sitting = ours.state.liveData.boxscore.teams.home.battingOrder.at(-1)!
+      await coachSaves(store, swapAwayLeadoff)
+      const setup = setupOf(ours.state)
+      reverseHome(setup)
+      expect(
+        ours.apply({ type: 'lineup', kind: 'roster', setup }).problems
+      ).deep.equals([])
+      // The refused save's reread comes later, and reconciles at that time.
+      at = '2026-09-25T12:00:30.000Z'
+      mismatch = true
+      await ours.flush()
+      expect(ours.rebases).equals(1)
+      expect(ours.problem).equals(null)
+      expect(ours.state.liveData.boxscore.teams.home.battingOrder).deep.equals(
+        setup.sides.home.battingOrder
       )
     })
 

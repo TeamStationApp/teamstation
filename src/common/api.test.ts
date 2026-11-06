@@ -14,6 +14,7 @@ import {
   asSaveLineupsBody,
   asScopeGrant,
   asStandingsRow,
+  type RequestOptions,
   type SaveLineupsBody,
   TeamStationClient
 } from './api'
@@ -3562,5 +3563,119 @@ describe('account selection client', () => {
     expect(JSON.parse(stub.calls[1].body!)).deep.equals({
       userId: person.userId
     })
+  })
+})
+
+describe('writes a screen does not wait for (U37, U44)', function () {
+  /** A client that records each call's options and answers what it is told. */
+  class Recording extends TeamStationClient {
+    calls: Array<{ method: string; path: string; options?: RequestOptions }> =
+      []
+
+    answer: unknown = {}
+    protected override async request<T>(
+      method: string,
+      path: string,
+      cleaner: (raw: unknown) => T,
+      _body?: unknown,
+      options?: RequestOptions
+    ): Promise<T> {
+      this.calls.push({ method, path, options })
+      return cleaner(this.answer)
+    }
+  }
+  const save: SaveLineupsBody = {
+    side: 'home',
+    base: 'd0',
+    players: [],
+    battingOrder: [],
+    defense: {}
+  }
+  const player = {
+    firstName: 'Mookie',
+    lastName: 'Betts',
+    jersey: '50',
+    positions: ['RF' as const],
+    bats: 'right' as const,
+    throws: 'right' as const
+  }
+  const entry = mintedRosterEntry(player, 700002)
+
+  it('forwards background to the request of each listed write, and nothing without it', async () => {
+    const client = new Recording({ baseUrl: '/api/v1' })
+    const background = { background: true }
+    client.answer = {
+      away: {
+        teamId: 'a',
+        teamName: 'A',
+        start: null,
+        changes: [],
+        current: null
+      },
+      home: {
+        teamId: 'h',
+        teamName: 'H',
+        start: null,
+        changes: [],
+        current: null
+      },
+      digest: 'd1'
+    }
+    await client.saveLineups('g1', save, background)
+    await client.saveLineups('g1', save)
+    client.answer = { away: [], home: [] }
+    await client.setRostered(
+      'g1',
+      { side: 'home', userId: 'usr_a', rostered: false },
+      background
+    )
+    client.answer = entry
+    await client.createRosterPlayer('t1', player, background)
+    await client.createGuestPlayer('g1', 'home', player, 't1', background)
+    await client.addExistingRosterPlayer(
+      't1',
+      { userId: 'usr_a', jersey: null, positions: [] },
+      { background: true, deviceNames: { usr_a: 'Mookie B' } }
+    )
+    await client.addExistingGuest(
+      'g1',
+      'home',
+      { userId: 'usr_a', jersey: null, positions: [] },
+      undefined,
+      background
+    )
+    await client.renameGuestPlayer(
+      'g1',
+      'usr_a',
+      { firstName: 'Mookie', lastName: 'Betts' },
+      12,
+      background
+    )
+    await client.renameGuestPlayer('g1', 'usr_a', {
+      firstName: 'Mookie',
+      lastName: ''
+    })
+    expect(client.calls.map(call => call.options)).deep.equals([
+      { background: true },
+      undefined,
+      { background: true },
+      { background: true },
+      { background: true },
+      { background: true, deviceNames: { usr_a: 'Mookie B' } },
+      { background: true },
+      { background: true, deviceNames: { '12': 'Mookie Betts' } },
+      undefined
+    ])
+  })
+
+  it('reads changedAt on a lineup save as an ISO time, and refuses anything else', () => {
+    expect(
+      asSaveLineupsBody({ ...save, changedAt: '2026-11-06T12:00:00.000Z' })
+        .changedAt
+    ).equals('2026-11-06T12:00:00.000Z')
+    expect('changedAt' in asSaveLineupsBody(save)).equals(false)
+    expect(() => asSaveLineupsBody({ ...save, changedAt: 'yesterday' })).throws(
+      TypeError
+    )
   })
 })

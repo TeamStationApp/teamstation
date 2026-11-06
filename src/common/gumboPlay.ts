@@ -44,7 +44,7 @@ export function asCount(raw: unknown): number {
  * An ISO-8601 time Postgres accepts. `Date.parse` rolls an impossible date
  * such as 31 February over into March, so the date is checked on its own.
  */
-function asIsoTime(raw: unknown): string {
+export function asIsoTime(raw: unknown): string {
   const match = typeof raw === 'string' ? ISO_TIME.exec(raw) : null
   if (match == null || Number.isNaN(Date.parse(match[0]))) {
     throw new TypeError(`Expected an ISO-8601 time, got ${JSON.stringify(raw)}`)

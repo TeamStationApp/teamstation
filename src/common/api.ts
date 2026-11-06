@@ -58,7 +58,7 @@ import {
   type ParentPreview
 } from './groupLinks'
 import { asGuests } from './guests'
-import { asCount, asCurrentPlay, asGumboPlay } from './gumboPlay'
+import { asCount, asCurrentPlay, asGumboPlay, asIsoTime } from './gumboPlay'
 import { asLocality, type Locality } from './locality'
 import {
   asNodeAccounts,
@@ -3200,8 +3200,36 @@ export interface RequestOptions {
    * of the game reads named before the server answers.
    */
   deviceNames?: Record<string, string>
+  /**
+   * The screen does not wait for the server: the phone's client queues the
+   * write and answers its own answer at once, sending it in the background.
+   * The plain client sends it as any other.
+   */
+  background?: boolean
   /** Cancels the call; a cancelled call is not the network going away. */
   signal?: AbortSignal
+}
+
+/**
+ * How a screen makes a write it does not wait for: `background` queues it on
+ * the phone (`RequestOptions.background`), with `deviceNames` kept beside it.
+ */
+export interface WriteOptions {
+  background?: boolean
+  deviceNames?: Record<string, string>
+}
+
+/** The request options a write's `WriteOptions` asks for, or none. */
+function writeOptions(
+  options: WriteOptions | undefined
+): RequestOptions | undefined {
+  if (options == null) return undefined
+  const { background, deviceNames } = options
+  if (background !== true && deviceNames == null) return undefined
+  return {
+    ...(background === true ? { background } : {}),
+    ...(deviceNames == null ? {} : { deviceNames })
+  }
 }
 
 /**
@@ -3294,6 +3322,12 @@ export interface SaveLineupsBody {
    * refuses the save. An older app sends none.
    */
   generation?: number
+  /**
+   * When the change was made, as an ISO time: the side's lineup action is
+   * stored at that time, and a later change of that side already stored
+   * refuses it (409 `{ stale: true, newer: true }`). An older app sends none.
+   */
+  changedAt?: string
 }
 
 const asIndex: Cleaner<number> = raw => {
@@ -3323,7 +3357,8 @@ const asSaveLineupsShape = asObject({
   runners: asOptional(
     asArray(asObject({ base: asLiteral('1B', '2B', '3B'), player: asIndex }))
   ),
-  generation: asOptional(asCount)
+  generation: asOptional(asCount),
+  changedAt: asOptional(asIsoTime)
 })
 
 /** Cleans a lineup save, and refuses an index past the players it names. */
@@ -3360,7 +3395,8 @@ export const asSaveLineupsBody: Cleaner<SaveLineupsBody> = raw => {
     defense,
     ...(body.nextBatter == null ? {} : { nextBatter: body.nextBatter }),
     ...(body.runners == null ? {} : { runners: body.runners }),
-    ...(body.generation == null ? {} : { generation: body.generation })
+    ...(body.generation == null ? {} : { generation: body.generation }),
+    ...(body.changedAt == null ? {} : { changedAt: body.changedAt })
   }
 }
 
@@ -5696,13 +5732,15 @@ export class TeamStationClient {
    */
   async saveLineups(
     gameId: string,
-    body: SaveLineupsBody
+    body: SaveLineupsBody,
+    options?: WriteOptions
   ): Promise<GameLineupsResponse> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/lineups`,
       asGameLineupsResponse,
-      body
+      body,
+      writeOptions(options)
     )
   }
 
@@ -5943,25 +5981,29 @@ export class TeamStationClient {
    */
   async createRosterPlayer(
     teamId: string,
-    player: NewRosterPlayer
+    player: NewRosterPlayer,
+    options?: WriteOptions
   ): Promise<RosterEntry> {
     return await this.request(
       'POST',
       `/teams/${encodeURIComponent(teamId)}/roster-players`,
       asRosterEntry,
-      player
+      player,
+      writeOptions(options)
     )
   }
 
   async setRostered(
     gameId: string,
-    body: UnrosterBody
+    body: UnrosterBody,
+    options?: WriteOptions
   ): Promise<ReturnType<typeof asUnrostered>> {
     return await this.request(
       'PUT',
       `/games/${encodeURIComponent(gameId)}/unroster`,
       asUnrostered,
-      body
+      body,
+      writeOptions(options)
     )
   }
 
@@ -5972,13 +6014,15 @@ export class TeamStationClient {
    */
   async addExistingRosterPlayer(
     teamId: string,
-    body: ExistingRosterPlayer
+    body: ExistingRosterPlayer,
+    options?: WriteOptions
   ): Promise<ExistingPlayerAnswer> {
     return await this.request(
       'POST',
       `/teams/${encodeURIComponent(teamId)}/roster-players`,
       asExistingPlayerAnswer,
-      body
+      body,
+      writeOptions(options)
     )
   }
 
@@ -5987,13 +6031,15 @@ export class TeamStationClient {
     gameId: string,
     side: 'away' | 'home',
     body: ExistingRosterPlayer,
-    teamId?: string
+    teamId?: string,
+    options?: WriteOptions
   ): Promise<ExistingPlayerAnswer> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/guest-players`,
       asExistingPlayerAnswer,
-      { side, ...(teamId == null ? {} : { teamId }), ...body }
+      { side, ...(teamId == null ? {} : { teamId }), ...body },
+      writeOptions(options)
     )
   }
 
@@ -6032,13 +6078,15 @@ export class TeamStationClient {
     gameId: string,
     side: 'away' | 'home',
     player: NewRosterPlayer,
-    teamId?: string
+    teamId?: string,
+    options?: WriteOptions
   ): Promise<RosterEntry> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/guest-players`,
       asRosterEntry,
-      { side, ...(teamId == null ? {} : { teamId }), ...player }
+      { side, ...(teamId == null ? {} : { teamId }), ...player },
+      writeOptions(options)
     )
   }
 
@@ -6053,22 +6101,26 @@ export class TeamStationClient {
     gameId: string,
     userId: string,
     name: { firstName: string; lastName: string },
-    gumboId?: number | null
+    gumboId?: number | null,
+    options?: WriteOptions
   ): Promise<RosterEntry> {
     return await this.request(
       'PUT',
       `/games/${encodeURIComponent(gameId)}/guest-players/${encodeURIComponent(userId)}`,
       asRosterEntry,
       { firstName: name.firstName, lastName: name.lastName },
-      gumboId == null
-        ? undefined
-        : {
-            deviceNames: {
-              [String(gumboId)]: [name.firstName, name.lastName]
-                .filter(part => part !== '')
-                .join(' ')
-            }
-          }
+      writeOptions({
+        ...options,
+        ...(gumboId == null
+          ? {}
+          : {
+              deviceNames: {
+                [String(gumboId)]: [name.firstName, name.lastName]
+                  .filter(part => part !== '')
+                  .join(' ')
+              }
+            })
+      })
     )
   }
 
