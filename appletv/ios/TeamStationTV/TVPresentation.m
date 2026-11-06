@@ -73,7 +73,6 @@ RCT_EXPORT_VIEW_PROPERTY(highlighted, BOOL)
     self.contentMode = UIViewContentModeScaleAspectFill;
     self.clipsToBounds = NO;
     self.layer.cornerRadius = 12;
-    self.backgroundColor = [UIColor colorWithWhite:0.18 alpha:1];
     self.previewSurface = [UIView new];
     self.previewSurface.userInteractionEnabled = NO;
     self.previewSurface.clipsToBounds = YES;
@@ -110,6 +109,8 @@ RCT_EXPORT_VIEW_PROPERTY(highlighted, BOOL)
   [self updatePreviewFocus];
 }
 - (void)updatePreviewFocus {
+  // A thumbnail still loading its image has no artwork for UIKit to lift.
+  self.backgroundColor = [UIColor colorWithWhite:self.previewFocused ? 0.45 : 0.18 alpha:1];
   BOOL raised = self.previewFocused && !UIAccessibilityIsReduceMotionEnabled();
   self.previewSurface.transform = raised ? CGAffineTransformMakeScale(1.1,1.1) : CGAffineTransformIdentity;
   self.previewSheen.alpha = raised ? 1 : 0;
