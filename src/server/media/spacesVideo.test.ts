@@ -288,6 +288,27 @@ describe('a video’s objects under its secret path', function () {
     })
   })
 
+  it('names a failed delete under a secret path without the secret', async function () {
+    await put(`videos/vid_a-${SECRET}/seg000000.m4s`)
+    fake.faults.set({ method: 'DELETE', key: /seg000000/, status: 500 })
+    let message = ''
+    try {
+      await deleteVideoFromSpace({
+        space,
+        videoId: 'vid_a',
+        spaceSecret: SECRET
+      })
+    } catch (error) {
+      message = String(error)
+    }
+    expect(message).contains(
+      `Deleting videos/vid_a-${SECRET.slice(0, 4)}…/seg000000.m4s answered 500`
+    )
+    expect(message).not.contains(SECRET)
+    fake.faults.clear()
+    await deleteVideoFromSpace({ space, videoId: 'vid_a', spaceSecret: SECRET })
+  })
+
   it('finds a secret prefix nobody holds the secret of, by listing, exactly', async function () {
     await put(`videos/vid_a-${SECRET}/seg000000.m4s`)
     await put(`videos/vid_a-${OTHER}/init.mp4`)

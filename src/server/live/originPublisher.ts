@@ -145,7 +145,9 @@ export interface OriginPublisherOptions {
   /**
    * A piece the writer may still rewrite in place (a continuation not yet
    * placed on the timeline). The cursor does not pass it, so it is checked
-   * again on each flush until the writer settles. None by default.
+   * again on each flush until the writer settles. It is listed all the same,
+   * so under a secret path it goes up `no-cache`: the copy that replaces it
+   * after a restamp must not meet the old bytes at the edge. None by default.
    */
   mayMove?: (name: string) => boolean
   onFirstSegment: (probe: ProbedStream) => Promise<void>
@@ -751,12 +753,15 @@ export class OriginPublisher {
     if (held == null || !this.active()) return false
     const { space, dir, spaceSecret } = this.options
     const key = objectKey(this.video, name)
+    const headers = uploadHeadersFor(spaceSecret, name)
+    if (headers.cacheControl != null && this.options.mayMove?.(name) === true)
+      headers.cacheControl = 'no-cache'
     await putObjectFile({
       space,
       key,
       path: join(dir, name),
       contentType: contentTypeFor(name),
-      ...uploadHeadersFor(spaceSecret, name)
+      ...headers
     })
     const result = await verifyObjectLength({ space, key, size: held.size })
     if (!result.ok) throw new Error(result.reason)

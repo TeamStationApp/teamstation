@@ -184,7 +184,15 @@ describe('publishing a live origin', function () {
     const restarted = new OriginPublisher({ ...options, spaceSecret: secret })
     expect((await restarted.flush()).body).contains(segment(1))
     expect(puts()).deep.equals([])
-  })
+
+    // A piece the writer may still restamp is listed, but never kept at the
+    // edge; once it settles and is rewritten, the new bytes are cached.
+    let moving = true
+    const continuing = new OriginPublisher({
+      ...options,
+      spaceSecret: secret,
+      mayMove: name => moving && name === segment(2)
+    })
 
   it('uploads a video with no secret on its old path, private, with no access headers', async () => {
     const acls: Array<string | undefined> = []

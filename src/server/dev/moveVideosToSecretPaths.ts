@@ -17,7 +17,8 @@ import {
   newSpaceSecret,
   oldVideoPrefix,
   uploadHeadersFor,
-  videoPrefix
+  videoPrefix,
+  withoutSecrets
 } from '../media/videoPrefix'
 
 /**
@@ -80,7 +81,7 @@ export interface MoveReport {
 
 /** A secret, shortened for a log: the whole of it is a capability. */
 export function maskedPrefix(videoId: string, secret: string): string {
-  return `videos/${videoId}-${secret.slice(0, 4)}…/`
+  return withoutSecrets(videoPrefix({ id: videoId, spaceSecret: secret }))
 }
 
 export async function moveVideosToSecretPaths(

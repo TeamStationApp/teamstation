@@ -13,6 +13,7 @@ import { promisify } from 'node:util'
 
 import { presignGetUrl } from './presign'
 import { spaceConfigured, type SpaceSettings } from './spacesHls'
+import { withoutSecrets } from './videoPrefix'
 
 const run = promisify(execFile)
 
@@ -267,7 +268,9 @@ export async function putObject(
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
     throw new Error(
-      `Upload of ${key} answered ${response.status} ${detail.slice(0, 200)}`
+      withoutSecrets(
+        `Upload of ${key} answered ${response.status} ${detail.slice(0, 200)}`
+      )
     )
   }
 }
@@ -289,7 +292,9 @@ export async function deleteObject(options: {
   if (!response.ok && response.status !== 404) {
     const detail = await response.text().catch(() => '')
     throw new Error(
-      `Deleting ${key} answered ${response.status} ${detail.slice(0, 200)}`
+      withoutSecrets(
+        `Deleting ${key} answered ${response.status} ${detail.slice(0, 200)}`
+      )
     )
   }
 }
@@ -422,7 +427,9 @@ async function multipartUpload(
         query: { partNumber: String(partNumber), uploadId }
       })
       if (etag == null || etag === '') {
-        throw new Error(`Upload of ${key} part ${partNumber} returned no ETag`)
+        throw new Error(
+          withoutSecrets(`Upload of ${key} part ${partNumber} returned no ETag`)
+        )
       }
       parts.push({ partNumber, etag })
       start = end + 1
@@ -451,12 +458,16 @@ async function initiateMultipart(
   const body = await response.text().catch(() => '')
   if (!response.ok) {
     throw new Error(
-      `Upload of ${key} initiate answered ${response.status} ${body.slice(0, 200)}`
+      withoutSecrets(
+        `Upload of ${key} initiate answered ${response.status} ${body.slice(0, 200)}`
+      )
     )
   }
   const id = /<UploadId>([^<]+)<\/UploadId>/.exec(body)?.[1]
   if (id == null || id === '') {
-    throw new Error(`Upload of ${key} initiate returned no UploadId`)
+    throw new Error(
+      withoutSecrets(`Upload of ${key} initiate returned no UploadId`)
+    )
   }
   return id
 }
@@ -487,7 +498,9 @@ async function completeMultipart(
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
     throw new Error(
-      `Upload of ${key} complete answered ${response.status} ${detail.slice(0, 200)}`
+      withoutSecrets(
+        `Upload of ${key} complete answered ${response.status} ${detail.slice(0, 200)}`
+      )
     )
   }
 }
@@ -504,7 +517,9 @@ async function abortMultipart(
   if (!response.ok && response.status !== 404) {
     const detail = await response.text().catch(() => '')
     throw new Error(
-      `Upload of ${key} abort answered ${response.status} ${detail.slice(0, 200)}`
+      withoutSecrets(
+        `Upload of ${key} abort answered ${response.status} ${detail.slice(0, 200)}`
+      )
     )
   }
 }
@@ -623,7 +638,9 @@ async function streamPut(options: {
       // would wait a minute for the bytes the stated length still owes.
       if (sent < length) {
         sendFailed = new Error(
-          `Upload of ${key}: the file is shorter than it was (${sent} of ${length} bytes)`
+          withoutSecrets(
+            `Upload of ${key}: the file is shorter than it was (${sent} of ${length} bytes)`
+          )
         )
         request.destroy(sendFailed)
       }
@@ -641,7 +658,9 @@ async function streamPut(options: {
     // already said no.
     request.destroy()
     throw new Error(
-      `Upload of ${key} answered ${result.status} ${result.detail.slice(0, 200)}`
+      withoutSecrets(
+        `Upload of ${key} answered ${result.status} ${result.detail.slice(0, 200)}`
+      )
     )
   }
 
@@ -694,7 +713,9 @@ export async function copyObject(
         if (response.status !== 206 || response.body == null) {
           await response.body?.cancel()
           throw new Error(
-            `Reading ${sourceKey} bytes ${part.start}-${part.end} answered ${response.status}`
+            withoutSecrets(
+              `Reading ${sourceKey} bytes ${part.start}-${part.end} answered ${response.status}`
+            )
           )
         }
         return await streamPut({
@@ -722,7 +743,9 @@ export async function copyObject(
   const detail = await response.text().catch(() => '')
   if (!response.ok || detail.includes('<Error>'))
     throw new Error(
-      `Copy of ${sourceKey} to ${key} answered ${response.status} ${detail.slice(0, 200)}`
+      withoutSecrets(
+        `Copy of ${sourceKey} to ${key} answered ${response.status} ${detail.slice(0, 200)}`
+      )
     )
 }
 

@@ -82,8 +82,15 @@ describe('a live origin under its secret path', function () {
     expect((await fetch(plain(`${f.prefix}index.m3u8`))).status).equals(403)
   })
 
-  it('gives a row from before secrets one before its origin starts, when its old prefix is empty', async () => {
+  it('gives a row from before secrets one before its origin starts, when its old prefix holds no media', async () => {
     await forgetSecret()
+    // Stills stay on the old path whatever the secret, so they do not count.
+    await putObject({
+      space: f.f.h.space,
+      key: `videos/${f.videoId}/stills/3.jpg`,
+      body: Buffer.from('a still'),
+      contentType: 'image/jpeg'
+    })
     await f.stage(3)
     await f.begin()
     await drainPublishForTest(f.videoId)
@@ -95,7 +102,7 @@ describe('a live origin under its secret path', function () {
     )
     expect(
       await listSpaceObjects(f.f.h.space, `videos/${f.videoId}/`)
-    ).deep.equals([])
+    ).deep.equals([`videos/${f.videoId}/stills/3.jpg`])
   })
 
   it('keeps a row with objects on its old path there, private, with no secret', async () => {

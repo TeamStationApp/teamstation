@@ -354,7 +354,13 @@ async function originSecret(
       return undefined
     }
   )
-  if (listed == null || listed.length > 0) return null
+  // Stills stay under the old prefix whatever the secret, as the move script
+  // leaves them: only media there would split the recording.
+  if (
+    listed == null ||
+    listed.some(key => !key.startsWith(`${oldVideoPrefix(videoId)}stills/`))
+  )
+    return null
   const filled = await sql<{ space_secret: string | null }>`
     update videos set space_secret = ${newSpaceSecret()}
      where id = ${videoId} and space_secret is null

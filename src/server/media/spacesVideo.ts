@@ -9,7 +9,8 @@ import {
   isSecretKeyOf,
   oldVideoPrefix,
   uploadHeadersFor,
-  videoPrefix
+  videoPrefix,
+  withoutSecrets
 } from './videoPrefix'
 
 /**
@@ -166,16 +167,24 @@ export async function verifyObjectLength(options: {
   )
   try {
     if (!response.ok)
-      return { ok: false, reason: `${key} answered ${response.status}` }
+      return {
+        ok: false,
+        reason: withoutSecrets(`${key} answered ${response.status}`)
+      }
     const length = lengthFromContentRange(
       response.headers.get('content-range') ?? ''
     )
     if (response.status !== 206 || length == null)
-      return { ok: false, reason: `${key} did not answer a byte range` }
+      return {
+        ok: false,
+        reason: withoutSecrets(`${key} did not answer a byte range`)
+      }
     if (length !== size)
       return {
         ok: false,
-        reason: `${key} is ${length} bytes there and ${size} here`
+        reason: withoutSecrets(
+          `${key} is ${length} bytes there and ${size} here`
+        )
       }
     return { ok: true, checked: 1 }
   } finally {
@@ -257,7 +266,9 @@ export async function listSpaceObjectEntries(
     )
     if (!response.ok) {
       await response.body?.cancel()
-      throw new Error(`Listing ${prefix} answered ${response.status}`)
+      throw new Error(
+        withoutSecrets(`Listing ${prefix} answered ${response.status}`)
+      )
     }
     const xml = await response.text()
     if (
@@ -364,7 +375,9 @@ export async function deleteSpaceKeys(
           )
           await response.body?.cancel()
           if (!response.ok && response.status !== 404)
-            throw new Error(`Deleting ${key} answered ${response.status}`)
+            throw new Error(
+              withoutSecrets(`Deleting ${key} answered ${response.status}`)
+            )
           deleted++
         } catch (error) {
           if (!failed) failure = error

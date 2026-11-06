@@ -10,7 +10,8 @@ import {
   oldVideoPrefix,
   uploadHeadersFor,
   videoKey,
-  videoPrefix
+  videoPrefix,
+  withoutSecrets
 } from './videoPrefix'
 
 const SECRET = '0123456789abcdef0123456789abcdef'
@@ -61,6 +62,24 @@ describe('a video’s prefix in the Space', function () {
     expect(isSecretKeyOf('vid_a', 'videos/vid_a-b/seg000000.m4s')).equals(false)
     expect(isSecretKeyOf('vid_a', 'videos/vid_a/seg000000.m4s')).equals(false)
     expect(isSecretKeyOf('vid_a', `images/vid_a-${SECRET}/x`)).equals(false)
+  })
+
+  it('cuts every secret path in a message to its first four characters', function () {
+    const other = 'fedcba9876543210fedcba9876543210'
+    expect(
+      withoutSecrets(
+        `Deleting videos/vid_a-${SECRET}/seg000001.m4s answered 500 <Key>videos/vid_a-b-${other}/init.mp4</Key>`
+      )
+    ).equals(
+      `Deleting videos/vid_a-${SECRET.slice(0, 4)}…/seg000001.m4s answered 500 <Key>videos/vid_a-b-${other.slice(0, 4)}…/init.mp4</Key>`
+    )
+    // Not a secret path: the old one, a stills key, 32 hex not followed by a slash.
+    for (const text of [
+      'videos/vid_a/seg000001.m4s',
+      `videos/vid_a/stills/${SECRET}.jpg`,
+      `videos/vid_a-${SECRET}x/seg000001.m4s`
+    ])
+      expect(withoutSecrets(text)).equals(text)
   })
 
   it('makes pieces and recordings public for 600 s, init files revalidated on every use, and nothing else public', function () {

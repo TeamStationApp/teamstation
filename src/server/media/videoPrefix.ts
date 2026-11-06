@@ -24,6 +24,18 @@ export interface VideoPath {
 
 const SECRET = /^[0-9a-f]{32}$/
 
+/** A secret path's secret segment, with what precedes it and its first four. */
+const SECRET_IN_TEXT = /(videos\/[^/\s]+?-)([0-9a-f]{4})[0-9a-f]{28}(?=\/)/g
+
+/**
+ * Text with each secret path in it cut to the secret's first four characters,
+ * `videos/<id>-1a2b…/`. The path is the read capability for a video's media,
+ * so an error that names a key must not carry it into a log.
+ */
+export function withoutSecrets(text: string): string {
+  return text.replace(SECRET_IN_TEXT, '$1$2…')
+}
+
 /** A new secret: 32 lowercase hex characters from `randomBytes(16)`. */
 export function newSpaceSecret(): string {
   return randomBytes(16).toString('hex')
