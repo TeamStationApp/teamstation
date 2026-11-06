@@ -131,17 +131,17 @@ describe('defensive relay draft', function () {
         state.session.liveData.plays.currentPlay!.source.teamstation.runnerActions!.at(
           -1
         )!
-      expect(record.defensiveRoute!.map(h => h.player.id)).deep.equals([
+      expect(record.defensiveRoute!.map(h => h.player?.id)).deep.equals([
         10,
         ...receivers
       ])
       expect(
         record.credits
           .filter(c => c.credit === 'f_putout')
-          .map(c => c.player.id)
+          .map(c => c.player?.id)
       ).deep.equals([holder])
       expect(
-        new Set(record.credits.map(c => `${c.player.id}:${c.credit}`)).size
+        new Set(record.credits.map(c => `${c.player?.id}:${c.credit}`)).size
       ).equals(record.credits.length)
       expect(
         state.session.liveData.plays.currentPlay!.playEvents.filter(
@@ -277,7 +277,7 @@ describe('a relay that forces the lead runner before the batter', function () {
         runner.details.movementReason,
         runner.movement.outNumber,
         runner.movement.forceOut,
-        runner.credits.map(credit => `${credit.credit} ${credit.player.id}`)
+        runner.credits.map(credit => `${credit.credit} ${credit.player?.id}`)
       ])
     ).deep.equals([
       [1, 'Force Out', 1, true, ['f_assist 14', 'f_putout 13']],
@@ -372,7 +372,7 @@ describe('a relay after a ground out that stood an unforced runner on third', fu
     expect(row.details.movementReason).equals('Tag Out')
     expect(row.movement).includes({ start: 2, end: 3, forceOut: false })
     expect(
-      row.credits.map(credit => `${credit.credit} ${credit.player.id}`)
+      row.credits.map(credit => `${credit.credit} ${credit.player?.id}`)
     ).deep.equals(['f_assist 14', 'f_putout 15'])
   })
 })

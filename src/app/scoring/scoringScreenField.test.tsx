@@ -330,7 +330,7 @@ describe('scoring screen field wiring', function () {
       expect(live.state.liveData.linescore.teams.home.errors).equals(1)
       expect(
         live.state.liveData.plays.currentPlay!.runners.at(-1)!.credits[0].player
-          .id
+          ?.id
       ).equals(pitcher.playerId)
       await step(() => {
         props().onUndo?.()
@@ -865,7 +865,7 @@ describe('scoring screen field wiring', function () {
         })
         expect(reopened.state.gameData.players[id]).deep.equals(savedPlayer)
       })
-  it('keeps a two-ball appearance gated after a resting defender move', async function () {
+  it('keeps a two-ball appearance gated after a resting move off the mound', async function () {
     const initial = scoringSession(gameFixture)
     const live = ScoringSession.start(memoryStore(), 'g1', initial, {
       requireCurrentSetup: true
@@ -875,27 +875,29 @@ describe('scoring screen field wiring', function () {
     await mount({ open: async () => live })
     await step(() =>
       field().onPlayerTap?.(
-        field().players.find(player => player.label === 'P')!.id
+        field().players.find(player => player.label === 'C')!.id
       )
     )
     await step(() => {
       document
-        .querySelector<HTMLElement>('[aria-label="Assign P #2 Player 2"]')!
+        .querySelector<HTMLElement>('[aria-label="Assign C #1 Player 1"]')!
         .click()
     })
     expect(props().canPitch).equals(false)
+    expect(props().instruction).equals('Assign a pitcher')
     expect(props().summary).includes('2 balls')
     await step(() => {
       props().onPitch('ball')
     })
     expect(props().summary).includes('2 balls')
-    expect(live.state.liveData.boxscore.teams.home.defense.C).equals(null)
+    expect(live.state.liveData.boxscore.teams.home.defense.P).equals(null)
   })
   for (const problem of ['partial', 'defense'] as const)
-    it(`resolves reopened pending play with ${problem} setup, then blocks the next action`, async function () {
+    it(`resolves reopened pending play with ${problem} setup, then ${problem === 'partial' ? 'blocks' : 'allows'} the next action`, async function () {
       const initial = scoringSession(gameFixture)
       if (problem === 'partial')
         initial.liveData.boxscore.teams.away.battingOrder.pop()
+      // A stand-in plays an empty catcher's spot: only the lineup blocks.
       else initial.liveData.boxscore.teams.home.defense.C = null
       const store = memoryStore()
       const context = {
@@ -965,8 +967,9 @@ describe('scoring screen field wiring', function () {
       await live.flush()
       expect(live.state.pending).equals(null)
       expect(live.state.liveData.plays.allPlays).has.length(1)
-      expect(props().canPitch).equals(false)
-      expect(field().interaction?.runnerIds).deep.equals([])
+      expect(props().canPitch).equals(problem === 'defense')
+      if (problem === 'partial')
+        expect(field().interaction?.runnerIds).deep.equals([])
       const reopened = await ScoringSession.open(store, 'g1', context)
       expect(reopened.state.liveData.plays.allPlays).has.length(1)
     })
@@ -975,8 +978,8 @@ describe('scoring screen field wiring', function () {
       const initial = scoringSession(gameFixture)
       const away = initial.liveData.boxscore.teams.away
       const home = initial.liveData.boxscore.teams.home
-      const catcher = away.defense.C!
-      if (problem === 'defense') away.defense.C = null
+      const pitcher = away.defense.P!
+      if (problem === 'defense') away.defense.P = null
       else home.battingOrder = []
       const store = memoryStore()
       const context = {
@@ -1010,7 +1013,7 @@ describe('scoring screen field wiring', function () {
         })
       }
       if (problem === 'defense') {
-        await step(() => field().onPlayerTap?.('empty-C'))
+        await step(() => field().onPlayerTap?.('empty-P'))
         expect(
           document.querySelector('[aria-label="Defensive roster"]')
         ).not.equals(null)
@@ -1021,12 +1024,12 @@ describe('scoring screen field wiring', function () {
           document.querySelector('[aria-label="Defensive roster"]')
         ).not.equals(null)
         expect(live.state.liveData.boxscore.teams.away.players).has.length(10)
-        expect(live.state.liveData.boxscore.teams.away.defense.C).equals(null)
+        expect(live.state.liveData.boxscore.teams.away.defense.P).equals(null)
         await click(
-          `Assign C #${initial.gameData.players[catcher].jersey} Player 2`
+          `Assign P #${initial.gameData.players[pitcher].jersey} ${initial.gameData.players[pitcher].fullName}`
         )
-        expect(live.state.liveData.boxscore.teams.away.defense.C).equals(
-          catcher
+        expect(live.state.liveData.boxscore.teams.away.defense.P).equals(
+          pitcher
         )
       } else {
         await step(() => props().setupToast?.onSetLineup?.())
@@ -1105,7 +1108,7 @@ describe('scoring screen field wiring', function () {
       const initial = scoringSession(gameFixture)
       if (problem === 'partial')
         initial.liveData.boxscore.teams.away.battingOrder.pop()
-      else initial.liveData.boxscore.teams.home.defense.C = null
+      else initial.liveData.boxscore.teams.home.defense.P = null
       const game = freshGame('g1', initial.gameData.teams, setupOf(initial))
       game.liveData.linescore.offense.first = {
         id: 2,
@@ -1196,7 +1199,9 @@ describe('scoring screen field wiring', function () {
     })
     const saved = JSON.stringify(store.games.get('g1'))
     await mount({ persistent: true, open: async () => live })
-    expect(props().canPitch).equals(false)
+    // The empty catcher's spot no longer holds scoring up: a stand-in plays
+    // it, and the plate still offers the picker.
+    expect(props().canPitch).equals(true)
     await step(() => field().onPlayerTap?.('empty-C'))
     expect(JSON.stringify(store.games.get('g1'))).equals(saved)
     expect(
@@ -2190,6 +2195,56 @@ describe('scoring screen field wiring', function () {
     expect(props().accessibilitySummary).includes('Batter')
   })
 
+  it('plays a ball to an empty position with a nameless stand-in, then shows the plate again (U14)', async function () {
+    const initial = scoringSession(gameFixture)
+    initial.liveData.boxscore.teams.home.defense.SS = null
+    const game = freshGame('g1', initial.gameData.teams, setupOf(initial))
+    const live = ScoringSession.start(memoryStore(), 'g1', game, {
+      requireCurrentSetup: true
+    })
+    await mount({ open: async () => live })
+    // A pitcher is all scoring waits for.
+    expect(props().instruction).equals(undefined)
+    expect(props().canPitch).equals(true)
+    const plate = ():
+      | (Rendered & {
+          emptyPosition?: boolean
+          displayName?: string
+          standIn?: string
+        })
+      | undefined => players().find(player => player.id === 'empty-SS')
+    expect(plate()).includes({ emptyPosition: true, displayName: 'SS' })
+    const outcome = props().ballInPlayControl as React.ReactElement<{
+      onChoose: (outcome: string, contact?: string) => void
+    }>
+    await step(() => {
+      outcome.props.onChoose('Ball Caught')
+    })
+    // The empty position takes the ball while the play is open.
+    expect(field().interaction?.selectableIds).includes('empty-SS')
+    await step(() => field().onFieldPlacement?.(placement('empty-SS')))
+    const standIn = plate()!
+    expect(standIn.emptyPosition).not.equals(true)
+    expect(standIn.standIn).equals('SS')
+    expect(standIn.displayName).equals('')
+    expect(players().filter(player => player.id === 'empty-SS')).has.length(1)
+    await step(() => field().onTrajectoryAccepted?.(60, 0))
+    await settle()
+    const caught = live.state.liveData.plays.allPlays.find(
+      play => play.hitData?.position === 'SS'
+    )!
+    expect(caught.hitData?.fielder).equals(undefined)
+    expect(caught.runners.at(-1)!.credits).deep.equals([
+      { credit: 'f_putout', position: 'SS' }
+    ])
+    await step(() => props().onFinish?.())
+    await settle()
+    await live.flush()
+    expect(live.state.pending).equals(null)
+    expect(plate()).includes({ emptyPosition: true, displayName: 'SS' })
+    expect(plate()?.standIn).equals(undefined)
+  })
+
   it('scores an error from outcome to fielder, trajectory and defender', async function () {
     await mount()
     const outcome = props().ballInPlayControl as React.ReactElement<{
@@ -2358,8 +2413,14 @@ describe('scoring screen field wiring', function () {
     expect(document.querySelector('[aria-label="Create Player"]')).not.equals(
       null
     )
+    expect(props().canPitch).equals(false)
     await click('Assign P #1 Player 1')
-    expect(props().instruction).not.includes('P,')
+    // Only a pitcher is needed: the rest stay empty plates to fill.
+    expect(props().instruction).equals(undefined)
+    expect(props().canPitch).equals(true)
+    expect(
+      field().players.filter(player => player.emptyPosition === true)
+    ).has.length(8)
     const pitcher = field().players.find(player => player.label === 'P')!
     await step(() => field().onPlayerTap?.(pitcher.id))
     expect(document.querySelector('[aria-label="Create Player"]')).not.equals(

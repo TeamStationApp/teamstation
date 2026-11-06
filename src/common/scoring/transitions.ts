@@ -1,4 +1,5 @@
 import type { PitchCall } from './actions'
+import type { FielderRef } from './state'
 
 /**
  * What an action did, in the order it happened, for the scoring screen to
@@ -10,7 +11,7 @@ import type { PitchCall } from './actions'
  */
 export type Transition =
   | { type: 'pitchThrown'; call: PitchCall | 'X'; pitcher: number }
-  | { type: 'ballFielded'; fielder: number }
+  | { type: 'ballFielded'; fielder: FielderRef }
   | {
       type: 'runnerMoved'
       runner: number
@@ -22,7 +23,7 @@ export type Transition =
       automaticHome: boolean
     }
   | { type: 'runnerReturned'; runner: number; from: number; to: number }
-  | { type: 'throwMade'; from: number; to: number }
+  | { type: 'throwMade'; from: FielderRef; to: FielderRef }
   | {
       type: 'outRecorded'
       runner: number
@@ -33,7 +34,7 @@ export type Transition =
     }
   | { type: 'runScored'; runner: number; rbi: boolean }
   | { type: 'runsTakenBack'; runs: number }
-  | { type: 'errorCharged'; fielder: number }
+  | { type: 'errorCharged'; fielder: FielderRef }
   | { type: 'batterChanged'; batter: number | null }
   | { type: 'playClosed'; atBatIndex: number; eventType: string }
   | { type: 'halfEnded'; inning: number; half: 'top' | 'bottom' }

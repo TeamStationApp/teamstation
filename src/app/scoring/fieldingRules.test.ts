@@ -294,7 +294,7 @@ describe('outcome-specific fielding', function () {
       expect(
         state.session.liveData.plays
           .currentPlay!.source.teamstation.runnerActions!.at(-1)!
-          .defensiveRoute!.map(h => h.player.id)
+          .defensiveRoute!.map(h => h.player?.id)
       ).deep.equals([10, ...receivers])
       expect(state.session.liveData.plays.currentPlay!.result.event).equals(
         'Batter Interference'

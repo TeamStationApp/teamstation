@@ -837,3 +837,52 @@ describe('the last play, however it was tapped', function () {
     expect(lastPlaySpan([], 0)).deep.equals({ start: 0, end: 0 })
   })
 })
+
+describe('a play a stand-in made (U48)', function () {
+  it('names the empty position he played, and nobody', function () {
+    const before = game().session
+    const setup = setupOf(before)
+    setup.sides.home.defense.SS = null
+    setup.sides.home.defense['1B'] = null
+    const shortHanded = applyAction(before, {
+      type: 'lineup',
+      kind: 'roster',
+      setup
+    }).state
+    const actions: ScoringAction[] = [
+      { type: 'ballInPlay', contact: 'swing', fielder: 'SS' },
+      result('field_out', { outBy: 'throw' }),
+      {
+        type: 'runnerMovement',
+        runner: 1,
+        to: '1B',
+        out: true,
+        fielders: ['SS', '1B']
+      }
+    ]
+    let after = shortHanded
+    for (const action of actions) {
+      const applied = applyAction(after, action)
+      expect(applied.problems, JSON.stringify(action)).deep.equals([])
+      after = applied.state
+    }
+    expect(describePlay(shortHanded, actions, after)).deep.equals({
+      primary: 'Chase L. ground out',
+      secondary: 'The shortstop to the first baseman'
+    })
+    const error: ScoringAction[] = [
+      { type: 'ballInPlay', contact: 'swing', fielder: 'SS' },
+      result('field_error'),
+      { type: 'fieldingPlay', fielders: ['SS'], error: 'SS' }
+    ]
+    let charged = shortHanded
+    for (const action of error) charged = applyAction(charged, action).state
+    expect(describePlay(shortHanded, error, charged)).deep.equals({
+      primary: 'Chase L. reaches on an error',
+      secondary: 'Error by the shortstop'
+    })
+    expect(describePlay(shortHanded, [error[2]], charged)?.primary).equals(
+      'Error charged to the shortstop'
+    )
+  })
+})

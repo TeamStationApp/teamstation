@@ -49,7 +49,7 @@ describe('a game stored before ground outs advanced runners', function () {
           reason: runner.details.movementReason,
           rbi: runner.details.rbi,
           credits: runner.credits.map(
-            credit => `${credit.credit} ${credit.player.id}`
+            credit => `${credit.credit} ${credit.player?.id}`
           )
         })),
         outSubtype: play.source.teamstation.outSubtype ?? null

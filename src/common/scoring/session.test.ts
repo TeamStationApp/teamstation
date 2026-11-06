@@ -22,7 +22,14 @@ import {
   storedChange,
   type StoredGame
 } from './session'
-import { asGameState, type GameState, setupOf, type Side } from './state'
+import {
+  asGameState,
+  type GameState,
+  type Position,
+  POSITIONS,
+  setupOf,
+  type Side
+} from './state'
 import { namesIn, withNames, withoutNames } from './storedNames'
 
 /**
@@ -1752,34 +1759,35 @@ describe('a scoring session', function () {
 
     it('drops a change the game no longer takes, and says so', async function () {
       const store = new LineupStore()
-      // As the scoring screen opens it: a pitch needs a whole defence.
+      // As the scoring screen opens it: a pitch needs a pitcher.
       const session = await ScoringSession.open(store, 'g1', context, {
         ...new Clock().options,
         requireCurrentSetup: true
       })
       session.apply(ball)
       await session.flush()
-      // The coach leaves short empty: no pitch can follow until it is filled.
+      // The coach leaves the mound empty: no pitch can follow until it is
+      // filled.
       const roster = await coachSaves(store, setup => {
-        setup.sides.home.defense.SS = null
+        setup.sides.home.defense.P = null
       })
       session.apply(strike)
       await session.flush()
       expect(session.readOnly).equals(false)
       expect(session.actions).deep.equals([ball, roster])
       expect(session.problem).equals(
-        "A change could not follow another device's lineup change: Missing defensive positions: SS"
+        "A change could not follow another device's lineup change: Missing pitcher"
       )
       expect(session.pending).equals(0)
       // The scorer's next change clears it.
-      const shortstop = setupOf(session.state).sides.home.battingOrder[0]
+      const pitcher = setupOf(session.state).sides.home.battingOrder[0]
       expect(
         session.apply({
           type: 'lineup',
           kind: 'position',
           side: 'home',
-          position: 'SS',
-          player: shortstop
+          position: 'P',
+          player: pitcher
         }).problems
       ).deep.equals([])
       expect(session.problem).equals(null)
@@ -2667,5 +2675,39 @@ describe('a scoring session', function () {
       expect(store.current?.playEvents).deep.equals([])
       expect(session.state.liveData.linescore.offense.batter?.id).equals(10)
     })
+  })
+})
+
+describe('a scoring session that waits only for a pitcher (U15)', function () {
+  const fielding = (positions: readonly Position[]): SessionContext => {
+    const setup = setupOf(game())
+    for (const position of POSITIONS)
+      if (!positions.includes(position))
+        setup.sides.home.defense[position] = null
+    return { gamePk: 'g1', teams: TEAMS, setup }
+  }
+
+  it('takes a pitch with only a pitcher on the field', async () => {
+    const session = await ScoringSession.open(
+      new FakeStore(),
+      'g1',
+      fielding(['P']),
+      { ...new Clock().options, requireCurrentSetup: true }
+    )
+    expect(session.apply(ball).problems).deep.equals([])
+    expect(session.state.liveData.linescore.balls).equals(1)
+  })
+
+  it('refuses a pitch with nobody on the mound', async () => {
+    const session = await ScoringSession.open(
+      new FakeStore(),
+      'g1',
+      fielding(['C', '1B', '2B', 'SS', '3B', 'LF', 'CF', 'RF']),
+      { ...new Clock().options, requireCurrentSetup: true }
+    )
+    expect(session.apply(ball).problems).deep.equals([
+      { code: 'notNow', message: 'Missing pitcher' }
+    ])
+    expect(session.state.liveData.linescore.balls).equals(0)
   })
 })

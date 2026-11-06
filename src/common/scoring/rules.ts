@@ -19,11 +19,13 @@ import {
 import { type HomeRunKind, homeRunKind, isFair, PARK } from './park'
 import {
   copyState,
+  type FielderRef,
   type GamePlay,
   type GameSetup,
   type GameState,
+  isPosition,
   type Movement,
-  POSITIONS,
+  type Position,
   type ResolutionOutcome
 } from './state'
 
@@ -55,7 +57,7 @@ export type { HomeRunKind, Override, RosterPlayer }
 export function previousRunnerError(
   state: GameState,
   reason: string | undefined,
-  defender: number | undefined
+  defender: FielderRef | undefined
 ): number | undefined {
   const play = state.liveData.plays.currentPlay
   if (play == null || defender == null) return
@@ -77,7 +79,10 @@ export function previousRunnerError(
     prior?.details.playIndex != null &&
     prior.details.playIndex > lastPitch &&
     prior.credits.some(
-      credit => credit.player.id === defender && credit.credit === kind
+      credit =>
+        (isPosition(defender)
+          ? credit.player == null && credit.position === defender
+          : credit.player?.id === defender) && credit.credit === kind
     )
   )
     return prior.details.playIndex
@@ -93,10 +98,10 @@ export function currentSetupError(
   state: GameState,
   acceptedLineup?: string | null
 ): string | undefined {
-  const defense = state.liveData.boxscore.teams[fieldingSide(state)].defense
-  const missing = POSITIONS.filter(position => defense[position] == null)
-  if (missing.length > 0)
-    return `Missing defensive positions: ${missing.join(', ')}`
+  // Only a pitcher is needed: anyone else's position can be played by a
+  // stand-in, whom nobody is credited for.
+  if (state.liveData.boxscore.teams[fieldingSide(state)].defense.P == null)
+    return 'Missing pitcher'
   const count =
     state.liveData.boxscore.teams[battingSide(state)].battingOrder.length
   if (count === 0) return 'No players in lineup'
@@ -199,6 +204,18 @@ export const HIT_BASES: Partial<Record<ResolutionOutcome, number>> = {
  * interference are not among them.
  */
 export const GROUND_OUTS: readonly string[] = ['Ground Out', 'Out at First']
+
+/**
+ * Whether `id` can field a ball: a player on defense, or a stand-in at a
+ * position nobody plays.
+ */
+export function canField(
+  defense: Readonly<Partial<Record<Position, { id: number } | null>>>,
+  id: FielderRef
+): boolean {
+  if (isPosition(id)) return defense[id] == null
+  return Object.values(defense).some(player => player?.id === id)
+}
 
 /** The trajectory a launch angle falls in, in the scorer's own terms. */
 export function trajectoryOf(angle: number): Trajectory {

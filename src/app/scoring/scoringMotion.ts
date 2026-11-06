@@ -1,13 +1,18 @@
-import type { GamePlay } from '../../common/scoring/state'
+import {
+  type GamePlay,
+  hopFielder,
+  isPosition
+} from '../../common/scoring/state'
 import type { Transition } from '../../common/scoring/transitions'
 import {
   BASES,
   clampToField,
+  fielderKey,
   type FieldPlayer,
   type GroundPoint
 } from '../field/fieldModel'
 import { shortPlayerNames } from './currentSetup'
-import { fieldPlayersFor } from './fieldAdapter'
+import { fieldPlayersFor, withStandIns } from './fieldAdapter'
 import { copyState } from './scoringMachine'
 import { battingSide } from './scoringSelectors'
 import type { ScoringSnapshot, ScoringState } from './scoringTypes'
@@ -205,11 +210,37 @@ export function scoringFieldPlayers(
     'chooseThrower',
     'chooseDefender'
   ].includes(state.phase)
-  const players = fieldPlayersFor(session)
-  const labels = shortPlayerNames(Object.values(session.gameData.players))
   const pending = state.pendingPlay
   const movements = session.pending?.movements ?? []
   const defensiveRoute = scoringDefensiveRoute(session)
+  // A play that named an empty position draws its nameless stand-in there
+  // until the play is over.
+  const open = pending != null || session.pending != null
+  const players = withStandIns(
+    fieldPlayersFor(session),
+    session,
+    open
+      ? [
+          pending?.fielder,
+          pending?.ballHolder,
+          session.pending?.fielder,
+          session.pending?.ballHolder,
+          ...defensiveRoute.map(hopFielder),
+          ...(
+            session.liveData.plays.currentPlay?.source.teamstation
+              .runnerActions ?? []
+          ).flatMap(action =>
+            action.credits.map(credit => credit.player?.id ?? credit.position)
+          ),
+          ...(pending?.fieldersChoice?.route ?? []).map(hop => hop.id),
+          ...(state.runnerAction?.defensiveRoute ?? []).map(hop => hop.id),
+          state.runnerAction?.thrower,
+          state.runnerAction?.defender,
+          state.runnerAction?.error
+        ].filter(isPosition)
+      : []
+  )
+  const labels = shortPlayerNames(Object.values(session.gameData.players))
   const homeQueue = session.homeQueue
   const absent = movements
     .filter(move => move.decision === 'out' || move.to === 4)
@@ -360,7 +391,7 @@ export function scoringFieldPlayers(
   for (const player of players) {
     if (
       pending != null &&
-      player.playerId === pending.fielder &&
+      fielderKey(player) === pending.fielder &&
       pending.location != null &&
       pending.trajectoryAccepted &&
       state.presentation?.kind !== 'hit'
@@ -374,8 +405,10 @@ export function scoringFieldPlayers(
     if (pending != null && player.team === 'defense') {
       for (const action of session.liveData.plays.currentPlay?.source
         .teamstation.runnerActions ?? []) {
-        const credit = action.credits.find(
-          credit => credit.player.id === player.playerId
+        const credit = action.credits.find(credit =>
+          credit.player == null
+            ? player.standIn === credit.position
+            : credit.player.id === player.playerId
         )
         if (credit == null) continue
         const location =
@@ -389,14 +422,14 @@ export function scoringFieldPlayers(
       }
     }
     if (
-      player.playerId === state.runnerAction?.thrower &&
+      fielderKey(player) === state.runnerAction?.thrower &&
       state.runnerAction?.throwerPoint != null
     ) {
       player.position = { ...state.runnerAction.throwerPoint }
       player.target = { ...player.position }
     }
     if (
-      player.playerId === state.runnerAction?.defender &&
+      fielderKey(player) === state.runnerAction?.defender &&
       state.runnerAction?.defenderPoint != null
     ) {
       player.position = { ...state.runnerAction.defenderPoint }
@@ -404,7 +437,7 @@ export function scoringFieldPlayers(
     }
     if (player.team === 'defense') {
       for (const hop of defensiveRoute)
-        if (hop.player.id === player.playerId) {
+        if (hopFielder(hop) === fielderKey(player)) {
           player.position = { ...hop.location }
           player.target = { ...hop.location }
         }
@@ -412,7 +445,7 @@ export function scoringFieldPlayers(
         ...(pending?.fieldersChoice?.route ?? []),
         ...(state.runnerAction?.defensiveRoute ?? [])
       ])
-        if (hop.id === player.playerId) {
+        if (hop.id === fielderKey(player)) {
           player.position = { ...hop.point }
           player.target = { ...hop.point }
         }
@@ -422,7 +455,7 @@ export function scoringFieldPlayers(
       player.hasBall =
         state.phase === 'chooseDefender' &&
         state.presentation == null &&
-        player.playerId === holder
+        fielderKey(player) === holder
     }
     player.suppressed =
       state.presentation == null && suppressed && player.team === 'runner'

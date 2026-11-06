@@ -243,7 +243,7 @@ describe('the runner a ground out sends home', function () {
     const row = out.liveData.plays.currentPlay!.runners.at(-1)!
     expect(row.movement).includes({ start: 3, end: 4, isOut: true })
     expect(
-      row.credits.map(credit => `${credit.credit} ${credit.player.id}`)
+      row.credits.map(credit => `${credit.credit} ${credit.player?.id}`)
     ).deep.equals([`f_assist ${F['1B']}`, `f_putout ${F.C}`])
   })
 

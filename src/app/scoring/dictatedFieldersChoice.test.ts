@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import type { ScoringAction } from '../../common/scoring/actions'
+import type { DictatedAction as ScoringAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/session'
 import { asGameState } from '../../common/scoring/state'
 import { choiceRelayPhrases } from '../../test/fieldersChoicePhrases'
@@ -11,7 +11,7 @@ import { gameFixture } from './isUnscoredGame.test'
 import { atRest, initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
 import { playerRef } from './scoringSelectors'
-import type { ScoringState } from './scoringTypes'
+import type { FielderRef, ScoringState } from './scoringTypes'
 
 function game(mask = 7, outs = 0): ScoringState {
   const session = scoringSession(gameFixture)
@@ -32,12 +32,17 @@ const choice: ScoringAction = { type: 'result', eventType: 'fielders_choice' }
 
 function playReel(state: ScoringState): {
   state: ScoringState
-  throws: Array<{ from: number; to: number; origin: unknown; target: unknown }>
+  throws: Array<{
+    from: FielderRef
+    to: FielderRef
+    origin: unknown
+    target: unknown
+  }>
   motions: Map<number, Array<{ x: number; z: number }>>
 } {
   const throws: Array<{
-    from: number
-    to: number
+    from: FielderRef
+    to: FielderRef
     origin: unknown
     target: unknown
   }> = []
@@ -120,7 +125,7 @@ function credits(state: ScoringState): unknown {
   return play.runners.flatMap(r =>
     r.credits
       .filter(c => c.credit === 'f_putout' || c.credit === 'f_assist')
-      .map(c => [r.details.runner.id, c.player.id, c.credit])
+      .map(c => [r.details.runner.id, c.player?.id, c.credit])
   )
 }
 
@@ -311,7 +316,7 @@ describe('dictated fielder choice animation and credits', function () {
     ])
     expect(
       result.state.session.liveData.plays.currentPlay!.source.teamstation.fieldingRoute!.map(
-        hop => hop.player.id
+        hop => hop.player?.id
       )
     ).deep.equals([15, 14, 13, 12])
     expect(credits(result.state)).deep.equals([])
@@ -618,7 +623,7 @@ describe('dictated fielder choice animation and credits', function () {
       const route =
         second.state.session.liveData.plays.currentPlay!.source.teamstation
           .fieldingRoute!
-      expect(route.map(hop => hop.player.id)).deep.equals([15, 13, 12, 12, 11])
+      expect(route.map(hop => hop.player?.id)).deep.equals([15, 13, 12, 12, 11])
       expect(second.state.session.liveData.plays.currentPlay!.runners).length(
         count
       )
@@ -1030,7 +1035,7 @@ describe('dictated fielder choice animation and credits', function () {
       expect(play.runners.filter(r => r.details.runner.id === 8)).length(1)
       expect(
         play.source.teamstation.fieldingRoute?.map(h => [
-          h.player.id,
+          h.player?.id,
           h.location
         ])
       ).deep.equals([
@@ -1236,7 +1241,7 @@ describe('dictated fielder choice animation and credits', function () {
       const result = playReel(say(game(example.mask), [], example.said))
       expect(result.throws.map(t => [t.from, t.to])).deep.equals(example.throws)
       expect(credits(result.state)).deep.equals(example.credits)
-      const endpoints = new Map<number, unknown>()
+      const endpoints = new Map<FielderRef, unknown>()
       for (const hop of result.throws) {
         if (endpoints.has(hop.from))
           expect(hop.origin).deep.equals(endpoints.get(hop.from))
@@ -1331,7 +1336,7 @@ describe('dictated fielder choice animation and credits', function () {
               const fielded = play.runners.flatMap(r =>
                 r.credits
                   .filter(c => c.credit === 'f_fielded_ball')
-                  .map(c => [r.details.runner.id, c.player.id])
+                  .map(c => [r.details.runner.id, c.player?.id])
               )
               expect(fielded.length).at.most(1)
               for (const row of fielded) expect(row).deep.equals([1, 15])

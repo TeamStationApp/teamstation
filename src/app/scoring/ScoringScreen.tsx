@@ -86,6 +86,7 @@ import {
   assignDefender,
   battingWarningKey,
   emptyDefensePlayers,
+  fielderRefOf,
   lineupCountMessage,
   lineupsUnaccepted,
   missingDefense,
@@ -2254,7 +2255,8 @@ function ScoringPanel(props: {
     )
     const named = priorRunnerPlayers(next, priorRunner.candidates, session).map(
       player => {
-        const person = displaySession.gameData.players[player.playerId ?? 0]
+        if (player.playerId == null) return player
+        const person = displaySession.gameData.players[player.playerId]
         if (person == null) return player
         const label = labels.get(person.id) ?? ''
         return {
@@ -2265,7 +2267,13 @@ function ScoringPanel(props: {
         }
       }
     )
-    const complete = [...named, ...emptyDefensePlayers(session)]
+    // A position a play's stand-in is playing is drawn by him, not its plate.
+    const complete = [
+      ...named,
+      ...emptyDefensePlayers(session).filter(
+        plate => !named.some(player => player.id === plate.id)
+      )
+    ]
     previousPlayers.current = complete
     return complete
   }, [
@@ -2487,7 +2495,7 @@ function ScoringPanel(props: {
   }
   const setupInstruction = setupWarning
     ? missing.length > 0
-      ? `Missing defensive positions\n${missing.join(', ')}`
+      ? 'Assign a pitcher'
       : !lineupAccepted
         ? 'Insufficient batting lineup.'
         : undefined
@@ -2658,7 +2666,9 @@ function ScoringPanel(props: {
                           player.team !== 'runner' &&
                           (state.phase === 'runnerError' ||
                             player.hasBall !== true) &&
-                          player.emptyPosition !== true
+                          // An empty position is played by a stand-in
+                          // while a play is open.
+                          (hasActivePlay || player.emptyPosition !== true)
                       )
                       .map(player => player.id),
                     ...(relayForce ? runnerIds : [])
@@ -2700,9 +2710,9 @@ function ScoringPanel(props: {
         registerKeyboard,
         onFieldPlacement: event => {
           if (tiebreaker.active) return
-          const id = players.find(
-            player => player.id === event.entityId
-          )?.playerId
+          // A player, or the stand-in at an empty position's plate.
+          const placed = players.find(player => player.id === event.entityId)
+          const id = placed == null ? undefined : fielderRefOf(placed)
           if (id != null && state.phase === 'runnerError')
             dispatchRunner({
               type: 'RUNNER_ERROR',

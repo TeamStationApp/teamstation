@@ -242,12 +242,16 @@ export function situationActions(
     .filter((entry): entry is ScoringAction => !('point' in entry))
     .map(action => {
       const converted = cleanAction(
-        mapPlayers(action, value => {
-          const id = setup.tagOrder[Number(value) - 1]
-          if (id == null)
-            throw new Error('Fixture player has no persisted identity')
-          return id
-        })
+        mapPlayers(
+          action,
+          value => {
+            const id = setup.tagOrder[Number(value) - 1]
+            if (id == null)
+              throw new Error('Fixture player has no persisted identity')
+            return id
+          },
+          { keepPositions: true }
+        )
       )
       if ('problem' in converted) throw new Error(converted.problem.message)
       return converted.action

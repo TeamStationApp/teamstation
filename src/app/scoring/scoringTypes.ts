@@ -3,6 +3,7 @@ import type { StagedRunner } from '../../common/scoring/rosterCommands'
 import type { HomeRunKind, Override } from '../../common/scoring/rules'
 import type {
   BatSide,
+  FielderRef,
   GamePlayer,
   GameSide,
   GameState,
@@ -16,6 +17,7 @@ import type { PresentationSequence } from './scoringPresentation'
 export { POSITIONS } from '../../common/scoring/state'
 export type {
   BatSide,
+  FielderRef,
   Movement,
   Position,
   Side
@@ -58,7 +60,7 @@ export type ScoringPhase =
  */
 export interface PendingPlay {
   fieldersChoice?: {
-    route: Array<{ id: number; point: GroundPoint }>
+    route: Array<{ id: FielderRef; point: GroundPoint }>
     runners: Array<{
       playerId: number
       from: number
@@ -77,7 +79,7 @@ export interface PendingPlay {
    * for the fielder to play.
    */
   carom?: GroundPoint
-  ballHolder?: number
+  ballHolder?: FielderRef
   ballLocation?: GroundPoint
   batterPoint?: GroundPoint
   outcome:
@@ -88,7 +90,8 @@ export interface PendingPlay {
     | 'Batter Out — Other'
     | 'Dropped Third Strike'
     | 'Manual placement'
-  fielder?: number
+  /** Who fielded it: a player, or a stand-in at an empty position. */
+  fielder?: FielderRef
   location?: GroundPoint
   angle?: number
   trajectoryAccepted: boolean
@@ -107,7 +110,7 @@ export interface MotionCommand {
   complete: boolean
 }
 export interface RunnerAction {
-  defensiveRoute?: Array<{ id: number; point: GroundPoint }>
+  defensiveRoute?: Array<{ id: FielderRef; point: GroundPoint }>
   purpose?:
     | 'batterRetirement'
     | 'errorAttribution'
@@ -121,11 +124,11 @@ export interface RunnerAction {
   returnPhase: ScoringPhase
   decision?: 'safe' | 'out'
   reason?: string
-  error?: number
+  error?: FielderRef
   errorEvent?: number
-  thrower?: number
+  thrower?: FielderRef
   throwerPoint?: GroundPoint
-  defender?: number
+  defender?: FielderRef
   defenderPoint?: GroundPoint
 }
 /** How long the scorekeeper has to move another runner before the play closes. */
@@ -283,7 +286,7 @@ export type ScoringEvent =
       generation: number
       landingHeight?: number
     }
-  | { type: 'ERROR_CREDIT'; id: number; generation: number }
+  | { type: 'ERROR_CREDIT'; id: FielderRef; generation: number }
   | { type: 'ERROR_CANCEL' }
   | { type: 'PRESENTATION_CONTACT'; id: string; generation: number }
   | {
@@ -320,17 +323,22 @@ export type ScoringEvent =
       generation: number
     }
   | { type: 'RUNNER_REASON'; reason: string }
-  | { type: 'RUNNER_ERROR'; id: number; generation: number }
+  | { type: 'RUNNER_ERROR'; id: FielderRef; generation: number }
   | { type: 'RUNNER_ERROR_REUSE'; reuse: boolean }
   | { type: 'RUNNER_PITCH'; addBall: boolean }
   | { type: 'RUNNER_PITCH_NEW' }
   | { type: 'RUNNER_PITCH_KIND'; kind: 'ball' | 'called' | 'swing' }
   | { type: 'CANCEL_RUNNER' }
   | { type: 'RUNNER_CANCEL' }
-  | { type: 'THROWER'; id: number; point: GroundPoint; generation: number }
+  | {
+      type: 'THROWER'
+      id: FielderRef
+      point: GroundPoint
+      generation: number
+    }
   | {
       type: 'DEFENDER'
-      id?: number
+      id?: FielderRef
       point?: GroundPoint
       runnerPoint?: GroundPoint
       generation: number
@@ -338,7 +346,7 @@ export type ScoringEvent =
   | { type: 'OUTCOME'; outcome: Outcome; contactKind?: ContactKind }
   | {
       type: 'FIELDER'
-      id: number
+      id: FielderRef
       point: GroundPoint
       landingHeight?: number
       generation: number
