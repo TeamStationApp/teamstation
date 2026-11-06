@@ -216,6 +216,12 @@ export interface OriginFlush {
  */
 export class OriginPublisher {
   closing = false
+  /**
+   * Set when the recording starts to finish, before its playlist is closed:
+   * from then on the tail deletes nothing, since the close reads what is on
+   * disk, and asks whether anything was deleted, before `closing` is set.
+   */
+  holdPieces = false
   private stopped = false
   private started = false
   private masterWritten = false
@@ -641,6 +647,7 @@ export class OriginPublisher {
     if (
       tailSec <= 0 ||
       this.closing ||
+      this.holdPieces ||
       !this.active() ||
       !this.notified ||
       this.lastBody !== body
@@ -693,7 +700,7 @@ export class OriginPublisher {
   }
 
   private async deletePiece(name: string): Promise<boolean> {
-    if (!this.active() || this.closing) return false
+    if (!this.active() || this.closing || this.holdPieces) return false
     await unlink(join(this.options.dir, name)).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     })

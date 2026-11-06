@@ -159,12 +159,17 @@ function runDuration(trun: Buffer, defaultDuration: number): number {
  * nothing when there is no sound, or no picture to measure it against.
  *
  * Fragments are taken in order and the walk stops at the answer, so a caller
- * reading them lazily reads only as far as the sound's first appearance.
+ * reading them lazily reads only as far as the sound's first appearance. With
+ * no sound track, or no picture track, there is no answer to find, and not one
+ * fragment is read: a picture-only recording would otherwise be read whole,
+ * and a tailed one fetched piece by piece from the Space.
  */
 export async function placeSound(
   tracks: Map<number, TrackInfo>,
   moofs: AsyncIterable<Buffer> | Iterable<Buffer>
 ): Promise<SoundPlacement | undefined> {
+  const kinds = new Set([...tracks.values()].map(track => track.kind))
+  if (!kinds.has('audio') || !kinds.has('video')) return undefined
   let picture: FragmentRun | undefined
   let sound: FragmentRun | undefined
   // Whether picture had already been going before the sound turned up. Only

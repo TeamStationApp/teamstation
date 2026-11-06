@@ -242,6 +242,37 @@ describe('publishing a live origin', function () {
     expect(puts()).deep.equals([segment(4), 'index.m3u8'])
   })
 
+  it('deletes nothing once the recording starts to finish, and still uploads', async () => {
+    // Pieces end at 4, 8, 12, 16 and 20 s, with a 4 s tail.
+    let scannedTo = 3
+    const publisher = new OriginPublisher({
+      ...options,
+      localTailSec: 4,
+      scanned: () => ({ segments: scannedTo })
+    })
+    await stage(3)
+    await publisher.flush()
+    await publisher.flush()
+    expect(await readdir(dir)).not.includes(segment(0))
+    // The close has begun: the playlist is about to be closed and probed.
+    publisher.holdPieces = true
+    for (const n of [3, 4])
+      await writeFile(join(dir, segment(n)), `fragment ${n}`)
+    await writeFile(join(dir, 'master.m3u8'), playlist(5))
+    scannedTo = 5
+    requests.length = 0
+    expect((await publisher.flush()).body).contains(segment(4))
+    await publisher.flush()
+    expect(puts()).includes(segment(4))
+    for (let n = 1; n < 5; n++) expect(await readdir(dir)).includes(segment(n))
+    // Without the hold, the next flush deletes what the tail no longer needs.
+    publisher.holdPieces = false
+    scannedTo = 4
+    await publisher.flush()
+    expect(await readdir(dir)).not.includes(segment(1))
+    expect(await readdir(dir)).not.includes(segment(2))
+  })
+
   it('uploads a video with no secret on its old path, private, with no access headers', async () => {
     const acls: Array<string | undefined> = []
     store.server.on('request', req => {

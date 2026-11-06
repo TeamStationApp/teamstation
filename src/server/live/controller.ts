@@ -1888,6 +1888,10 @@ async function finishStreamRecording(
     return
   }
 
+  // Nothing more leaves the disk: what is there now is what the close probes,
+  // and the tail's next flush could otherwise delete pieces under ffprobe.
+  const holding = origins.get(row.videoId)
+  if (holding != null) holding.publisher.holdPieces = true
   await closePlaylist(mediaRoot, row.videoId)
   const dir = liveVideoDir(mediaRoot, row.videoId)
   // Once the disk tail has deleted pieces, what is left here cannot be
