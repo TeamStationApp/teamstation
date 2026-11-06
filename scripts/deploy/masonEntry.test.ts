@@ -16,6 +16,7 @@ import {
   appIdOf,
   applyDevelopIdentity,
   buildIos,
+  buildTv,
   compileAndroid,
   DEVELOP_APP,
   provenanceEnvironment,
@@ -23,7 +24,8 @@ import {
   seatEnvironment,
   setup,
   signAndroid,
-  STABLE_APP
+  STABLE_APP,
+  TV_APP
 } from '../../Masonfile'
 import { app, fixtureSettings, testRoot } from './config.test'
 import { masonDeploy } from './mason'
@@ -306,7 +308,7 @@ describe('TeamStation pipeline Masonfile', () => {
         assert.equal(version, 1)
       },
       buildNumber(key, options) {
-        assert.equal(key, 'app.teamstation.app')
+        assert.ok([STABLE_APP, TV_APP].includes(key))
         assert.equal(options?.format, 'YYMMDDCC')
         assert.equal(options?.timeZone, 'America/Los_Angeles')
       },
@@ -363,7 +365,7 @@ describe('TeamStation pipeline Masonfile', () => {
       branch: ['master'],
       params: { seat: 'production' }
     })
-    assert.deepEqual(Object.keys(workflows), ['build'])
+    assert.deepEqual(Object.keys(workflows), ['build', 'tvos'])
     assert.deepEqual(workflows.build?.options, {
       params: {
         seat: {
@@ -418,7 +420,7 @@ describe('TeamStation pipeline Masonfile', () => {
         return { code: 0, stdout: '', stderr: '' }
       },
       getBuildNumber(key: string) {
-        assert.equal(key, 'app.teamstation.app')
+        assert.equal(key, STABLE_APP)
         return '26103101'
       },
       async stash(name: string, paths?: string | string[]) {
@@ -715,7 +717,8 @@ describe('TeamStation pipeline Masonfile', () => {
       DEVELOP_APP,
       DEVELOP_APP,
       DEVELOP_APP,
-      STABLE_APP
+      STABLE_APP,
+      TV_APP
     ])
   })
 
@@ -1000,5 +1003,169 @@ describe('TeamStation pipeline Masonfile', () => {
         }
       })
     }, /No ad hoc IPA was stashed/)
+  })
+})
+
+describe('request-only Apple TV workflow', () => {
+  for (const branch of ['master', 'develop']) {
+    it(`only accepts requests on ${branch}`, () => {
+      setup({
+        branch,
+        apiVersion() {},
+        buildNumber() {},
+        parallel() {
+          assert.fail('unexpected parallel workflow')
+        },
+        workflow(name, options, declare) {
+          if (name === 'build') {
+            assert.equal(options.triggers, undefined)
+            return
+          }
+          assert.equal(name, 'tvos')
+          assert.deepEqual(options.triggers, [{ request: true }])
+          assert.equal(options.params?.seat.default, 'production')
+          declare({
+            parallel() {
+              assert.fail('unexpected parallel stage')
+            },
+            stage(name, stage) {
+              assert.equal(name, 'archive')
+              assert.deepEqual(stage.apple, {
+                distribution: 'adHoc',
+                app: TV_APP,
+                platform: 'tvos'
+              })
+              assert.deepEqual(stage.publishes, [TV_APP])
+              assert.deepEqual(stage.buildNumbers, [TV_APP])
+              assert.equal(stage.run, buildTv)
+            }
+          })
+        }
+      })
+    })
+  }
+
+  for (const [branch, seat, host] of [
+    ['master', 'production', 'app'],
+    ['develop', 'production', 'develop'],
+    ['master', '2', 'develop2']
+  ]) {
+    it(`archives a standalone TV app for ${branch}/${seat}`, async () => {
+      const commands: Array<[string, string | undefined]> = []
+      const saved: string[] = []
+      let published = false
+      await buildTv({
+        run: { branch, params: { seat } },
+        async sh(command, options) {
+          commands.push([command, options?.cwd])
+          return { code: 0, stdout: '', stderr: '' }
+        },
+        getBuildNumber(app) {
+          assert.equal(app, TV_APP)
+          return '26110601'
+        },
+        async stash() {
+          assert.fail('no release stash')
+        },
+        async unstash() {},
+        fs: {
+          async glob() {
+            return []
+          }
+        },
+        artifacts: {
+          async save(name) {
+            saved.push(name)
+          },
+          async fetch() {
+            return []
+          }
+        },
+        apple: {
+          async archive(options) {
+            assert.equal(
+              options.workspace,
+              'appletv/ios/TeamStationTV.xcworkspace'
+            )
+            assert.equal(options.scheme, 'TeamStationTV')
+            assert.equal(options.configuration, 'Release')
+            assert.equal(options.buildNumber, '26110601')
+            assert.match(options.version ?? '', /^\d+(\.\d+){0,2}$/)
+            assert.deepEqual(options.xcargs, [
+              `TV_API_BASE_URL=https://${host}.teamstation.app/api/v1`
+            ])
+            return { archive: 'tv.xcarchive', ipa: 'tv.ipa', dsyms: 'tv.dSYM' }
+          },
+          async resign() {
+            assert.fail('no re-signing')
+          },
+          async testflight() {
+            assert.fail('no TestFlight submission')
+          }
+        },
+        async publish(options) {
+          assert.deepEqual(options, {
+            app: TV_APP,
+            platform: 'tvos',
+            path: 'tv.ipa'
+          })
+          published = true
+        }
+      })
+      assert.deepEqual(
+        commands.filter(([cmd]) => cmd.includes('socket npm ci')),
+        [
+          ['.mason-tools/node_modules/.bin/socket npm ci', undefined],
+          ['.mason-tools/node_modules/.bin/socket npm ci', 'appletv']
+        ]
+      )
+      assert.deepEqual(commands.at(-1), ['pod install', 'appletv/ios'])
+      assert.deepEqual(saved, ['tvos-ipa', 'tvos-dsym'])
+      assert.ok(published)
+    })
+  }
+
+  it('does not publish when tvOS export fails', async () => {
+    await assert.rejects(
+      buildTv({
+        run: { branch: 'master' },
+        async sh() {
+          return { code: 0, stdout: '', stderr: '' }
+        },
+        getBuildNumber() {
+          return '26110601'
+        },
+        async stash() {},
+        async unstash() {},
+        fs: {
+          async glob() {
+            return []
+          }
+        },
+        artifacts: {
+          async save() {
+            assert.fail('cannot save a failed export')
+          },
+          async fetch() {
+            return []
+          }
+        },
+        apple: {
+          async archive() {
+            return { archive: 'tv.xcarchive', dsyms: 'tv.dSYM' }
+          },
+          async resign() {
+            assert.fail('no re-signing')
+          },
+          async testflight() {
+            assert.fail('no TestFlight')
+          }
+        },
+        async publish() {
+          assert.fail('cannot publish a failed export')
+        }
+      }),
+      /No tvOS IPA was exported/
+    )
   })
 })
