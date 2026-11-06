@@ -78,7 +78,8 @@ export async function purgeReplacedRecordings(options: {
       'purge_after as purgeAfter',
       'hidden',
       'replaced_by as replacedBy',
-      'storage'
+      'storage',
+      'space_secret as spaceSecret'
     ])
     .where('purge_after', 'is not', null)
     .execute()
@@ -94,6 +95,7 @@ export async function purgeReplacedRecordings(options: {
     now
   )
 
+  const secrets = new Map(rows.map(one => [one.id, one.spaceSecret]))
   const gone: string[] = []
   for (const videoId of due) {
     try {
@@ -110,7 +112,11 @@ export async function purgeReplacedRecordings(options: {
       // The Space first, then the copy on this disk, then the row — the same
       // order and the same steps as deleting one by hand. Doing less than the
       // route does is how a sweep leaves work directories behind for ever.
-      await deleteVideoFromSpace({ space, videoId })
+      await deleteVideoFromSpace({
+        space,
+        videoId,
+        spaceSecret: secrets.get(videoId) ?? null
+      })
       // The Space has gone by here, so the row must go too: leaving it
       // because a directory would not delete gives a recording whose media
       // is already gone, retried every six hours for ever. The directory is
