@@ -284,6 +284,20 @@ describe('swapping a game’s home and away teams', function () {
   const settle = async (): Promise<void> => {
     await new Promise(resolve => setTimeout(resolve, 150))
   }
+  /**
+   * Hears out what the commits so far announced, then forgets it. The queue
+   * keeps commit order, so a notice sent now arrives after all of those, however
+   * late a busy machine delivers them.
+   */
+  const forgetHeard = async (): Promise<void> => {
+    const mark = makeId('game')
+    await sql`select pg_notify(${GAME_CHANGES_CHANNEL}, ${JSON.stringify({ mark })})`.execute(
+      db
+    )
+    while (!heard.some(({ payload }) => payload.mark === mark))
+      await new Promise(resolve => setTimeout(resolve, 5))
+    heard = []
+  }
   const notices = (id: string, kind: string): number =>
     heard.filter(
       ({ channel, payload }) =>
@@ -555,7 +569,7 @@ describe('swapping a game’s home and away teams', function () {
     const session = await open('gam_replays', true)
     expect(session.problem).equals(null)
     const game = await row('gam_replays')
-    const availability = await gameAvailability(db, game)
+    const availability = await gameAvailability(db, game, { roster: true })
     const setup = reconcileRoster(
       setupOf(session.state),
       contextFor('gam_replays', true).teams,
@@ -579,8 +593,12 @@ describe('swapping a game’s home and away teams', function () {
       base
     )
     await settle()
-    for (const kind of ['plays', 'game', 'lineups'])
+    for (const kind of ['playEdits', 'game', 'lineups'])
       expect(notices('gam_digest', kind), kind).above(0)
+    // The plays are read again, whatever they were.
+    expect(
+      heard.find(({ payload }) => payload.kind === 'playEdits')?.payload
+    ).deep.equals({ game: 'gam_digest', kind: 'playEdits', generation: 0 })
     const stale = await staleRoster('gam_digest', base)
     expect(stale).property('code', 'conflict')
     expect(stale).nested.property('details.stale', true)
@@ -756,7 +774,7 @@ describe('swapping a game’s home and away teams', function () {
   it('leaves nothing and says nothing when its transaction rolls back', async function () {
     await prepared('gam_rolled')
     const before = await row('gam_rolled')
-    heard = []
+    await forgetHeard()
     const error = await failure(
       async () =>
         await atomic(db, async trx => {

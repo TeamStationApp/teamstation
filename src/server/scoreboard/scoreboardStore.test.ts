@@ -16,6 +16,7 @@ import {
   testPrefix,
   testStore
 } from '../../test/scoreboardKit'
+import { asServerConfig, requestDatabaseUrl } from '../serverConfig'
 import {
   makeScoreboardClient,
   makeScoreboardSubscriber,
@@ -350,6 +351,18 @@ describe('the scoreboard store', function () {
       scoreboardPrefix('', 'postgres://localhost:5433/AppDatabase_seat')
     ).equals('ts:AppDatabase_seat')
     expect(scoreboardPrefix('mine', 'postgres://x/y')).equals('mine')
+  })
+
+  it('names the database, not the pool in front of it', function () {
+    const config = asServerConfig({
+      databaseUrl: 'postgres://db.example.test/AppDatabase_seat',
+      databasePoolUrl: 'postgres://pool.example.test/app_pool'
+    })
+    // Every caller hands it `databaseUrl`, which a pool URL does not change.
+    expect(requestDatabaseUrl(config)).contains('app_pool')
+    expect(scoreboardPrefix('', config.databaseUrl)).equals(
+      scoreboardPrefix('', 'postgres://localhost:5433/AppDatabase_seat')
+    )
     expect(() => parseScoreboardMessage('{"gameId":1}')).throws(TypeError)
     expect(() =>
       parseScoreboardMessage(

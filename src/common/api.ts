@@ -1437,10 +1437,12 @@ const asStoredGame = asObject({
   currentPlay: asOptional(asNullable(asCurrentPlay), null),
   playsDigest: asOptional(asNullable(asString), null),
   priorPlaysDigest: asOptional(asNullable(asString), null),
+  namesDigest: asOptional(asNullable(asString), null),
   lineupsDigest: asOptional(asNullable(asString), null),
   generation: asOptional(asNullable(asNumber), null),
   swap: asSwapEffect,
-  modelNames: asOptional(asObject(asString))
+  modelNames: asOptional(asObject(asString)),
+  halves: asOptional(asArray(asString))
 })
 
 /** A game's plays as a session reads them, with the digests that were sent. */
@@ -1452,12 +1454,83 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
     ...(stored.priorPlaysDigest == null
       ? {}
       : { priorPlaysDigest: stored.priorPlaysDigest }),
+    ...(stored.namesDigest == null ? {} : { namesDigest: stored.namesDigest }),
     ...(stored.lineupsDigest == null
       ? {}
       : { lineupsDigest: stored.lineupsDigest }),
     ...(stored.generation == null ? {} : { generation: stored.generation }),
     ...(stored.swap === undefined ? {} : { swap: stored.swap }),
-    ...(stored.modelNames == null ? {} : { modelNames: stored.modelNames })
+    ...(stored.modelNames == null ? {} : { modelNames: stored.modelNames }),
+    ...(stored.halves == null || stored.halves.length === 0
+      ? {}
+      : { halves: stored.halves })
+  }
+}
+
+/**
+ * What a session reads of a save's answer: the digests and the generation
+ * the game was left with, each only when the answer has it.
+ */
+export interface PostedEdits {
+  playsDigest?: string
+  priorPlaysDigest?: string
+  lineupsDigest?: string
+  generation?: number
+}
+
+const asPostedFields = asObject({
+  playsDigest: asOptional(asNullable(asString)),
+  priorPlaysDigest: asOptional(asNullable(asString)),
+  lineupsDigest: asOptional(asNullable(asString)),
+  generation: asOptional(asNullable(asNumber))
+})
+
+/**
+ * A live post's answer as a session reads it, whichever shape it has: a
+ * live post's edits (`{ edits, currentPlay, … }`, as `?answer=edits` asks),
+ * or every stored play as a post asking for no `answer`, an older server or
+ * a phone's queue answers (a `StoredGame`),
+ * or a bare `{ plays, currentPlay }` with no digests, as a mocked server or
+ * the phone's own copy of a queued post may give. It keeps the digests and
+ * the generation, each only when present and not null. Throws on anything
+ * that is not an object.
+ */
+export function asPostedEdits(raw: unknown): PostedEdits {
+  const posted = asPostedFields(raw)
+  return {
+    ...(posted.playsDigest == null ? {} : { playsDigest: posted.playsDigest }),
+    ...(posted.priorPlaysDigest == null
+      ? {}
+      : { priorPlaysDigest: posted.priorPlaysDigest }),
+    ...(posted.lineupsDigest == null
+      ? {}
+      : { lineupsDigest: posted.lineupsDigest }),
+    ...(posted.generation == null ? {} : { generation: posted.generation })
+  }
+}
+
+/**
+ * The body of the live post a session's save is: the change, as TeamStation
+ * scored it. The device's names stay on the device.
+ */
+export function liveEventsBody(change: SaveChange): Record<string, unknown> {
+  return {
+    mode: 'live',
+    source: { system: 'teamstation' },
+    plays: change.plays,
+    remove: change.remove,
+    ...(change.currentPlay === undefined
+      ? {}
+      : { currentPlay: change.currentPlay }),
+    ...(change.fenceDistanceFt === undefined
+      ? {}
+      : { fenceDistanceFt: change.fenceDistanceFt }),
+    ...(change.lineupsBase === undefined
+      ? {}
+      : { lineupsBase: change.lineupsBase }),
+    ...(change.generation === undefined
+      ? {}
+      : { generation: change.generation })
   }
 }
 
@@ -3108,26 +3181,14 @@ export const asTessUsageWeek = asObject({
 })
 export type TessUsageWeek = ReturnType<typeof asTessUsageWeek>
 
-/** The response header a screen's read carries its revision in. */
-export const REVISION_HEADER = 'x-teamstation-revision'
-
 /**
  * The request header a queued write is sent with: the same request with
  * the same key is answered once and written once.
  */
 export const IDEMPOTENCY_HEADER = 'idempotency-key'
 
-/** One response's revision, as a screen's load collects them. */
-export interface RevisionRead {
-  path: string
-  /** `x-teamstation-revision`, a decimal string: compare with `BigInt`. */
-  revision: string
-}
-
 /** How one call to the API is made, beside its method, path and body. */
 export interface RequestOptions {
-  /** Whether a screen's load collects the answer's revision. */
-  collect?: boolean
   headers?: Record<string, string>
   /**
    * The names of the players a live post's plays name, by gumbo id: never
@@ -3870,15 +3931,6 @@ export class TeamStationClient {
    * refused (`POST /auth/...`) is not that.
    */
   onSessionRefused?: () => void
-  /** The revision each path last answered with. */
-  private readonly revisions = new Map<string, string>()
-  /**
-   * Where the screen loads now running collect the revisions they read. Home
-   * runs three at once, and an answer cannot say which load asked for it, so
-   * each running load collects every answer: the least of them is never
-   * newer than the least of its own.
-   */
-  private readonly collectors = new Set<RevisionRead[]>()
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
@@ -3888,25 +3940,6 @@ export class TeamStationClient {
     this.token = options.token
     this.doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.newStreamingRequest = options.streamingRequest
-  }
-
-  /** The revision the last answer from `path` carried, if any did. */
-  revisionFor(path: string): string | undefined {
-    return this.revisions.get(path)
-  }
-
-  /**
-   * Collects `{ path, revision }` from every answer that carries one, until
-   * `stopCollecting`. A screen's load sets this around the calls it makes,
-   * and holds the least of them as the revision of what it shows.
-   */
-  collectRevisions(collector: RevisionRead[]): void {
-    this.collectors.add(collector)
-  }
-
-  /** Stops collecting into `collector`. */
-  stopCollecting(collector: RevisionRead[]): void {
-    this.collectors.delete(collector)
   }
 
   async accountSettings(): Promise<AccountSettings> {
@@ -5811,37 +5844,23 @@ export class TeamStationClient {
    * Scores into a game as it is played: the plays that changed, the indexes
    * an undo took away, and the at-bat in progress when it changed. Naming
    * the lineups digest it was built on, it is refused as stale (409,
-   * `details.stale`) once somebody else has saved the lineups since.
+   * `details.stale`) once somebody else has saved the lineups since. It
+   * answers the digests and the generation the save left the game with
+   * (`asPostedEdits`). It asks for the edits answer (`?answer=edits`); a
+   * phone's queue takes it off, since its answer is written as the phone's
+   * copy of the game.
    */
   async saveGameEvents(
     gameId: string,
     change: SaveChange
-  ): Promise<StoredGame> {
-    const stored = await this.request(
+  ): Promise<PostedEdits> {
+    return await this.request(
       'POST',
-      `/games/${encodeURIComponent(gameId)}/events`,
-      asStoredGame,
-      {
-        mode: 'live',
-        source: { system: 'teamstation' },
-        plays: change.plays,
-        remove: change.remove,
-        ...(change.currentPlay === undefined
-          ? {}
-          : { currentPlay: change.currentPlay }),
-        ...(change.fenceDistanceFt === undefined
-          ? {}
-          : { fenceDistanceFt: change.fenceDistanceFt }),
-        ...(change.lineupsBase === undefined
-          ? {}
-          : { lineupsBase: change.lineupsBase }),
-        ...(change.generation === undefined
-          ? {}
-          : { generation: change.generation })
-      },
+      `/games/${encodeURIComponent(gameId)}/events?answer=edits`,
+      asPostedEdits,
+      liveEventsBody(change),
       change.names == null ? undefined : { deviceNames: change.names }
     )
-    return storedGameOf(stored)
   }
 
   /**
@@ -7030,9 +7049,8 @@ export class TeamStationClient {
   }
 
   /**
-   * Every call to the API. `collect: false` keeps the answer's revision out
-   * of the screen loads now collecting, as a prefetch's is. `headers` are
-   * sent beside the usual ones: a queued write's `Idempotency-Key`.
+   * Every call to the API. `headers` are sent beside the usual ones: a
+   * queued write's `Idempotency-Key`.
    */
   protected async request<T>(
     method: string,
@@ -7274,13 +7292,6 @@ export class TeamStationClient {
       )
     }
     if (!response.ok) throw errorFrom(response.status, text)
-    const revision = revisionOf(response)
-    if (revision != null) {
-      this.revisions.set(path, revision)
-      if (options.collect !== false)
-        for (const collector of this.collectors)
-          collector.push({ path, revision })
-    }
     if (text === '') return cleaner(undefined)
 
     let parsed: unknown
@@ -7299,12 +7310,6 @@ function guardiansPath(teamId: string, userId: string): string {
 
 function walkUpSongPath(teamId: string, userId: string): string {
   return `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/walk-up-song`
-}
-
-/** The answer's revision. A stand-in response may carry no headers. */
-function revisionOf(response: Response): string | null {
-  const headers = (response as Partial<Response>).headers
-  return headers == null ? null : headers.get(REVISION_HEADER)
 }
 
 function attachmentPath(attachmentId: string): string {

@@ -12,6 +12,7 @@ import {
   resolvePlayerNamePrivacy,
   spokenFormat
 } from '../../common/playerNamePrivacy'
+import { anyOf } from '../db/anyOf'
 import type { Database } from '../db/database'
 import { isWithdrawnKey } from '../games/withdrawn'
 import { openAddsOf } from '../openAdds'
@@ -48,7 +49,7 @@ async function leagueSources(
   const rows = await db
     .selectFrom('leagues')
     .select(['id', 'name', 'player_name_privacy'])
-    .where('id', 'in', ids)
+    .where('id', '=', anyOf(ids))
     .execute()
   return new Map(rows.map(row => [row.id, sourceOf('league', row)]))
 }
@@ -62,7 +63,7 @@ async function resolveTeams(
   const teams = await db
     .selectFrom('teams')
     .select(['id', 'name', 'league_id', 'player_name_privacy'])
-    .where('id', 'in', teamIds)
+    .where('id', '=', anyOf(teamIds))
     .execute()
   const parents = await db
     .selectFrom('season_team_parents')
@@ -74,7 +75,7 @@ async function resolveTeams(
       'seasons.league_id as leagueId',
       'seasons.player_name_privacy as player_name_privacy'
     ])
-    .where('season_team_parents.team_id', 'in', teamIds)
+    .where('season_team_parents.team_id', '=', anyOf(teamIds))
     .execute()
   const leagues = await leagueSources(db, [
     ...teams.map(team => team.league_id),
@@ -186,7 +187,7 @@ export async function teamFormats(
   const merged = await db
     .selectFrom('teams')
     .select('id')
-    .where('id', 'in', wanted)
+    .where('id', '=', anyOf(wanted))
     .where('merged_into', 'is not', null)
     .execute()
   const survivors = new Map<string, string>()
@@ -235,8 +236,8 @@ export async function lentPlayers(
     .where('game_guest_details.pool', '=', true)
     .where(eb =>
       eb.or([
-        eb('games.home_team_id', 'in', teamIds),
-        eb('games.away_team_id', 'in', teamIds)
+        eb('games.home_team_id', '=', anyOf(teamIds)),
+        eb('games.away_team_id', '=', anyOf(teamIds))
       ])
     )
     .execute()
@@ -255,6 +256,8 @@ export async function lentPlayers(
   const candidates = pairs.filter(pair =>
     guested.has(`${pair.teamId} ${pair.userId}`)
   )
+  // One array parameter each: a team's lent players can outnumber a
+  // statement's 65535.
   const own =
     candidates.length === 0
       ? []
@@ -264,13 +267,13 @@ export async function lentPlayers(
           .where('is_player', '=', true)
           .where(
             'team_id',
-            'in',
-            candidates.map(pair => pair.teamId)
+            '=',
+            anyOf([...new Set(candidates.map(pair => pair.teamId))])
           )
           .where(
             'user_id',
-            'in',
-            candidates.map(pair => pair.userId)
+            '=',
+            anyOf([...new Set(candidates.map(pair => pair.userId))])
           )
           .execute()
   const players = new Set(own.map(row => `${row.team_id} ${row.user_id}`))
@@ -304,7 +307,7 @@ export async function currentFormats(
     .selectFrom('memberships')
     .innerJoin('teams', 'teams.id', 'memberships.team_id')
     .select(['memberships.user_id as userId', 'memberships.team_id as teamId'])
-    .where('memberships.user_id', 'in', wanted)
+    .where('memberships.user_id', '=', anyOf(wanted))
     .where('memberships.is_player', '=', true)
     .where('teams.merged_into', 'is', null)
     .execute()

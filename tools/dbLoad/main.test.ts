@@ -1,0 +1,413 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { type AddressInfo, connect, createServer } from 'node:net'
+import { join } from 'node:path'
+
+import { expect } from 'chai'
+import { after, before, describe, it } from 'mocha'
+import { Pool } from 'pg'
+
+import { readTokens } from './fixture'
+import { runMain } from './main'
+import {
+  fakeStatementsView,
+  openScratch,
+  type Scratch,
+  startTestServer,
+  type TestServer
+} from './testSupport'
+
+describe('the command line', function () {
+  this.timeout(240_000)
+
+  let scratch: Scratch
+  let server: TestServer
+  let dir: string
+  let tokensPath: string
+  const lines: string[] = []
+  const io = {
+    log: (message: string): void => {
+      lines.push(message)
+    }
+  }
+  const run = async (...args: string[]): Promise<number> => {
+    lines.length = 0
+    return await runMain(args, io)
+  }
+  const refusal = async (...args: string[]): Promise<string> => {
+    let message = ''
+    await run(...args).catch((error: Error) => {
+      message = error.message
+    })
+    return message
+  }
+
+  before(async function () {
+    scratch = await openScratch('main')
+    dir = mkdtempSync(join(tmpdir(), 'dbload-main-'))
+    tokensPath = join(dir, 'tokens.json')
+    expect(
+      await run(
+        '--database',
+        scratch.url,
+        '--scale',
+        'small',
+        '--accounts',
+        '30',
+        '--crowded',
+        '10',
+        '--run-id',
+        'cli',
+        '--tokens',
+        tokensPath
+      )
+    ).equals(0)
+    expect(lines.join('\n')).contains('every shape present')
+    server = await startTestServer(scratch)
+  })
+  after(async function () {
+    await server.close()
+    rmSync(dir, { recursive: true })
+    await scratch.drop()
+  })
+
+  const load = [
+    '--database',
+    () => scratch.url,
+    '--tokens',
+    () => tokensPath
+  ] as const
+  const flags = (): string[] =>
+    load.map(item => (typeof item === 'function' ? item() : item))
+
+  it('drives a run at any small size and writes its report', async function () {
+    const report = join(dir, 'load.log')
+    const code = await run(
+      ...flags(),
+      '--server',
+      server.base,
+      '--users',
+      '4',
+      '--games',
+      '2',
+      '--pitch-seconds',
+      '0.2',
+      '--rest-rate',
+      '20',
+      '--minutes',
+      '0.05',
+      '--connect-rate',
+      '100',
+      '--scoreboards',
+      '1',
+      '--screen-watchers',
+      '3',
+      '--streams',
+      '1',
+      '--event-schedule',
+      '--report',
+      report
+    )
+    expect(code).equals(0)
+    const text = readFileSync(report, 'utf8')
+    expect(text).contains('4 users, 2 games, 1 server(s)')
+    expect(text).contains('## Screen watchers\nwatchers: 3\n')
+    const data = JSON.parse(readFileSync(`${report}.json`, 'utf8'))
+    expect(data.posts).above(0)
+    expect(data.postP95Ms).above(0)
+    expect(data.socketsOpened).at.least(4)
+    expect(data.connections.peak).above(0)
+    expect(data.streamsStarted).equals(1)
+    expect(data.screens.watchers).equals(3)
+    expect(data.screens.reads).above(0)
+    expect(text).not.contains('socket-close-4403')
+  })
+
+  it('holds a run to the thresholds when asked, counting the servers logs', async function () {
+    const log = join(dir, 'api.log')
+    writeFileSync(log, 'error: sorry, too many clients already\nfine\n')
+    const code = await run(
+      ...flags(),
+      '--server',
+      server.base,
+      '--users',
+      '4',
+      '--shard',
+      '1/2',
+      '--minutes',
+      '0.01',
+      '--assert',
+      '--pool-limit',
+      '10',
+      '--server-log',
+      log
+    )
+    expect(code).equals(1)
+    const text = lines.join('\n')
+    expect(text).contains('MISSED too many clients: seen 1 times')
+    // The second of two rigs does not score, so its posts hold no limit.
+    expect(text).contains('p95 POST: not held: this rig does not score')
+    expect(text).contains('p95 delivery lag: not held: this rig does not score')
+    expect(text).not.contains('MISSED p95 POST')
+    expect(text).not.contains('MISSED p95 delivery lag')
+    expect(text).contains('thresholds missed')
+    expect(text).matches(/rig: CPU \d+% of one core/)
+  })
+
+  it('still holds a rig that scores and posted nothing to its posts', async function () {
+    const report = join(dir, 'scoring.log')
+    const code = await run(
+      ...flags(),
+      '--server',
+      server.base,
+      '--load-balancer',
+      server.base,
+      '--users',
+      '4',
+      '--minutes',
+      '0.01',
+      '--assert',
+      '--pool-limit',
+      '10',
+      '--report',
+      report
+    )
+    expect(code).equals(1)
+    const text = lines.join('\n')
+    expect(text).contains('MISSED p95 POST: no data')
+    expect(text).not.contains('not held')
+    expect(text).contains('thresholds missed')
+    expect(readFileSync(report, 'utf8')).contains(
+      '## Connection resets\ntotal: 0\n'
+    )
+  })
+
+  it('leaves the scoring to the first of two rigs, and classes the pooler', async function () {
+    const code = await run(
+      ...flags(),
+      '--server',
+      server.base,
+      '--users',
+      '4',
+      '--shard',
+      '1/2',
+      '--minutes',
+      '0.01',
+      '--pooler-address',
+      '192.0.2.1'
+    )
+    expect(code).equals(0)
+    expect(lines.join('\n')).contains('POST /games/:id/events: 0 posts')
+  })
+
+  it('reports an unreachable server as an error, not as zeros, and exits 1', async function () {
+    const report = join(dir, 'down.log')
+    const code = await run(
+      ...flags(),
+      '--server',
+      'http://127.0.0.1:1',
+      '--users',
+      '1',
+      '--minutes',
+      '0',
+      '--report',
+      report
+    )
+    expect(code).equals(1)
+    const data = JSON.parse(readFileSync(`${report}.json`, 'utf8'))
+    expect(data.errors.unreachable).equals(1)
+    expect(data.postP95Ms).equals(null)
+    expect(readFileSync(report, 'utf8')).contains('p95 no data')
+    // Why it could not be reached, in the report and on stdout.
+    const reason =
+      'GET /api/v1/health failed 5 time(s), the last with fetch failed: bad port'
+    expect(data.unreachable).deep.equals({ 'http://127.0.0.1:1': reason })
+    expect(readFileSync(report, 'utf8')).contains(
+      `## Errors\ntotal: 1\n  unreachable: 1\n  unreachable http://127.0.0.1:1: ${reason}\n`
+    )
+    expect(lines.join('\n')).contains(
+      `http://127.0.0.1:1 is unreachable: ${reason}`
+    )
+  })
+
+  it('runs its load when the first health check is reset', async function () {
+    // In front of the server, a proxy that resets its first connection.
+    let connections = 0
+    const target = Number(new URL(server.base).port)
+    const front = createServer(socket => {
+      connections += 1
+      if (connections === 1) {
+        socket.resetAndDestroy()
+        return
+      }
+      const upstream = connect(target, '127.0.0.1')
+      socket.pipe(upstream).pipe(socket)
+      const end = (): void => {
+        socket.destroy()
+        upstream.destroy()
+      }
+      socket.on('error', end).on('close', end)
+      upstream.on('error', end).on('close', end)
+    })
+    await new Promise<void>(resolve => front.listen(0, '127.0.0.1', resolve))
+    try {
+      const report = join(dir, 'reset.log')
+      const code = await run(
+        ...flags(),
+        '--server',
+        `http://127.0.0.1:${(front.address() as AddressInfo).port}`,
+        '--users',
+        '2',
+        '--minutes',
+        '0.02',
+        '--report',
+        report
+      )
+      expect(code).equals(0)
+      const data = JSON.parse(readFileSync(`${report}.json`, 'utf8'))
+      expect(data.errors.unreachable).equals(undefined)
+      expect(data.unreachable).deep.equals({})
+      expect(data.seconds).above(1)
+      expect(data.socketsOpened).at.least(1)
+      expect(lines.join('\n')).not.contains('is unreachable')
+    } finally {
+      await new Promise(resolve => front.close(resolve))
+    }
+  })
+
+  it('fails a run that needs statements where the extension is absent', async function () {
+    const message = await refusal(
+      ...flags(),
+      '--server',
+      server.base,
+      '--users',
+      '1',
+      '--require-statements'
+    )
+    expect(message).contains('no pg_stat_statements')
+  })
+
+  it('refuses what cannot be run, saying what', async function () {
+    expect(await refusal('--tokens', tokensPath)).contains('--database')
+    expect(await refusal('--database', scratch.url)).contains('--tokens')
+    expect(await refusal(...flags())).contains('--server')
+    expect(await refusal(...flags(), '--server', server.base)).contains(
+      '--users'
+    )
+    expect(
+      await refusal(...flags(), '--server', server.base, '--users', 'many')
+    ).contains('--users takes a number')
+    expect(
+      await refusal(...flags(), '--server', server.base, '--users', '100000')
+    ).contains('--users 100000 is above')
+    expect(
+      await refusal(
+        ...flags(),
+        '--server',
+        server.base,
+        '--users',
+        '1',
+        '--games',
+        '500'
+      )
+    ).contains('--games 500 is above the 5')
+    expect(
+      await refusal('--database', scratch.url, '--scale', 'small')
+    ).contains('--tokens')
+  })
+
+  it('refuses a database not marked for load testing, in every mode', async function () {
+    const unmarked = await openScratch('mainunmarked', false)
+    try {
+      const flagsThere = ['--database', unmarked.url, '--tokens', tokensPath]
+      for (const mode of [
+        ['--scale', 'small', '--run-id', 'no'],
+        ['--cleanup'],
+        ['--event', 'teamMerge'],
+        ['--probe', '--server', server.base],
+        ['--server', server.base, '--users', '1']
+      ])
+        expect(await refusal(...flagsThere, ...mode), mode.join(' ')).contains(
+          'not marked for load testing'
+        )
+    } finally {
+      await unmarked.drop()
+    }
+  })
+
+  it('runs one event, and says when its copies are gone', async function () {
+    expect(await run(...flags(), '--event', 'signOut')).equals(0)
+    expect(lines[0]).contains('signOut copy 0')
+    expect(await refusal(...flags(), '--event', 'nothing')).contains(
+      'Unknown --event'
+    )
+  })
+
+  it('probes, exiting 1 when a probe failed and writing the figures', async function () {
+    await fakeStatementsView(scratch)
+    const report = join(dir, 'probe.log')
+    const code = await run(
+      ...flags(),
+      '--server',
+      server.base,
+      '--probe',
+      '--report',
+      report
+    )
+    // This server does not carry the team and season routes.
+    expect(code).equals(1)
+    expect(readFileSync(report, 'utf8')).contains('socket subscribe')
+    const pool = new Pool({ connectionString: scratch.url })
+    await pool.query('drop table pg_stat_statements')
+    await pool.end()
+  })
+
+  it('reads statements from --stats-database, where the database under test has none', async function () {
+    const stats = await openScratch('mainstats')
+    try {
+      await fakeStatementsView(stats)
+      const pool = new Pool({ connectionString: stats.url })
+      await pool.query(
+        `update pg_stat_statements set
+           dbid = (select oid from pg_database where datname = $1), calls = 5`,
+        [scratch.name]
+      )
+      await pool.end()
+      const report = join(dir, 'stats.log')
+      const code = await run(
+        ...flags(),
+        '--stats-database',
+        stats.url,
+        '--server',
+        server.base,
+        '--probe',
+        '--report',
+        report
+      )
+      expect(code).equals(1)
+      expect(readFileSync(report, 'utf8')).contains('socket subscribe')
+      expect(
+        await refusal(
+          ...flags(),
+          '--stats-database',
+          stats.url,
+          '--server',
+          server.base,
+          '--users',
+          '1',
+          '--require-statements'
+        )
+      ).contains('no pg_stat_statements')
+    } finally {
+      await stats.drop()
+    }
+  })
+
+  it('cleans up by the run the tokens name', async function () {
+    expect(readTokens(tokensPath).runId).equals('cli')
+    expect(await run(...flags(), '--cleanup')).equals(0)
+    expect(lines[0]).contains('"users":')
+    const users = await scratch.db.selectFrom('users').select('id').execute()
+    expect(users).deep.equals([])
+  })
+})

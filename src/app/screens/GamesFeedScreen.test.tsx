@@ -13,11 +13,7 @@ import {
   type TeamStationClient
 } from '../../common/api'
 import { ACK_GIVE_UP_MS } from '../../common/screenScope'
-import {
-  FakeScopeSocket,
-  heldTimers,
-  revisionStamps
-} from '../../test/fakeScreenScope'
+import { FakeScopeSocket, heldTimers } from '../../test/fakeScreenScope'
 import { type FrameClock, installFrameClock } from '../../test/frameClock'
 import { listProps, reachEnd } from '../../test/PagedListStandIn'
 import { pageOf } from '../../test/pageOf'
@@ -792,15 +788,14 @@ describe('the games feed’s screen scope', function () {
     asked: Array<{ when?: string }>,
     offline = false
   ): Promise<void> {
-    const stamps = revisionStamps()
-    stamps.offline = offline
-    const client = Object.assign(stamps, {
+    const client = {
+      offline,
       gamesPage: async (query: { when?: string }) => {
         asked.push(query)
         socket.log.push('client.gamesPage')
         return pageOf([game('gam_final', { startAt: START })])
       }
-    }) as unknown as TeamStationClient
+    } as unknown as TeamStationClient
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -828,8 +823,7 @@ describe('the games feed’s screen scope', function () {
     const socket = new FakeScopeSocket()
     const asked: Array<{ when?: string }> = []
     const keys: string[] = []
-    const stamps = revisionStamps()
-    const client = Object.assign(stamps, {
+    const client = {
       gamesPage: async (query: { when?: string }) => {
         asked.push(query)
         return pageOf([game('gam_final', { startAt: START })])
@@ -838,7 +832,7 @@ describe('the games feed’s screen scope', function () {
         keys.push(key)
         return cleaner(pageOf([game('gam_stored', { startAt: START })]))
       }
-    }) as unknown as TeamStationClient
+    } as unknown as TeamStationClient
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -861,7 +855,7 @@ describe('the games feed’s screen scope', function () {
     expect(spinning()).equals(false)
     expect(text()).includes('Badgers')
     await act(async () => {
-      socket.ack('2')
+      socket.ack()
       await delay(20)
     })
     expect(asked).deep.equals([{ when: 'upcoming' }])
@@ -871,13 +865,13 @@ describe('the games feed’s screen scope', function () {
   it('paints the stored videos under their own key', async function () {
     timers = heldTimers(ACK_GIVE_UP_MS)
     const keys: string[] = []
-    const client = Object.assign(revisionStamps(), {
+    const client = {
       gamesPage: async () => pageOf([game('gam_final')]),
       cached: async (key: string, cleaner: (raw: unknown) => unknown) => {
         keys.push(key)
         return cleaner(pageOf([]))
       }
-    }) as unknown as TeamStationClient
+    } as unknown as TeamStationClient
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -899,7 +893,7 @@ describe('the games feed’s screen scope', function () {
   it('leaves what the server answered under a slower stored copy', async function () {
     timers = heldTimers(ACK_GIVE_UP_MS)
     let stored!: (raw: unknown) => void
-    const client = Object.assign(revisionStamps(), {
+    const client = {
       gamesPage: async () => pageOf([game('gam_new', { venue: 'New field' })]),
       cached: async (_key: string, cleaner: (raw: unknown) => unknown) =>
         cleaner(
@@ -907,7 +901,7 @@ describe('the games feed’s screen scope', function () {
             stored = resolve
           })
         )
-    }) as unknown as TeamStationClient
+    } as unknown as TeamStationClient
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -939,12 +933,12 @@ describe('the games feed’s screen scope', function () {
     expect(asked, 'client.gamesPage before subscribed').deep.equals([])
     expect(spinning()).equals(true)
     await act(async () => {
-      socket.ack('2')
+      socket.ack()
       await delay(20)
     })
     expect(socket.log).deep.equals([
       'subscribe schedule',
-      'subscribed 2',
+      'subscribed',
       'client.gamesPage'
     ])
     expect(asked).deep.equals([{ when: 'upcoming' }])

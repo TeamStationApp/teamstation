@@ -854,7 +854,9 @@ describe('a game named in player name privacy', function () {
         .selectAll()
         .where('id', '=', gameId)
         .executeTakeFirstOrThrow()
-      const { guestPlayers } = await gameAvailability(f.h.db, game)
+      const { guestPlayers } = await gameAvailability(f.h.db, game, {
+        roster: false
+      })
       const guest = [...guestPlayers.home, ...guestPlayers.away][0]
       expect(guest.shortName).equals('R C')
       expect(guest.nameFormat).equals('initials')

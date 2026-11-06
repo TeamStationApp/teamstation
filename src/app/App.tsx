@@ -84,6 +84,7 @@ import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
 import { OfflineBanner } from './components/OfflineBanner'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
+import { UpdateRequiredNotice } from './components/UpdateRequiredNotice'
 import { ChatBench } from './dev/chatBench'
 import { StandaloneField } from './field/StandaloneField'
 import { useForegroundRefresh } from './hooks/useForegroundRefresh'
@@ -885,6 +886,19 @@ function Shell(props: AppProps): React.ReactElement {
     () => () => {
       gameSocket?.close()
     },
+    [gameSocket]
+  )
+  /**
+   * The server refused a game screen's subscribe because this build is older
+   * than the socket's protocol. It stays set: no later socket of this build
+   * would be told otherwise.
+   */
+  const [updateRequired, setUpdateRequired] = useState(false)
+  useEffect(
+    () =>
+      gameSocket?.onUpdateRequired(() => {
+        setUpdateRequired(true)
+      }),
     [gameSocket]
   )
   /**
@@ -4112,6 +4126,11 @@ function Shell(props: AppProps): React.ReactElement {
                   }}
                 />
               )}
+              {updateRequired && (
+                <UpdateRequiredNotice
+                  onReload={Platform.OS === 'web' ? reloadPage : undefined}
+                />
+              )}
             </View>
           </TessOverlayProvider>
         </ChatOverlayHost>
@@ -4121,6 +4140,11 @@ function Shell(props: AppProps): React.ReactElement {
   return (
     <ChatAgeContext.Provider value={chatAge}>{shell}</ChatAgeContext.Provider>
   )
+}
+
+/** Loads the page again, and with it the newest web build. */
+function reloadPage(): void {
+  globalThis.location?.reload()
 }
 
 /** How often a session opened on the stored user is asked about again. */

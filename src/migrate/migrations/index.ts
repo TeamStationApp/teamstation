@@ -119,6 +119,9 @@ import { migration104ManagerScheduling } from './104ManagerScheduling'
 import { migration105ChatAgeConfirmations } from './105chatAgeConfirmations'
 import { migration106TessCacheUsage } from './106tessCacheUsage'
 import { migration107ChatUserBlocks } from './107chatUserBlocks'
+import { migration108EventChildrenHold } from './108eventChildrenHold'
+import { migration109TeamRosterVersions } from './109teamRosterVersions'
+import { migration110DropSyncClock } from './110dropSyncClock'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -241,5 +244,8 @@ export const migrations: Migration[] = [
   migration104ManagerScheduling,
   migration105ChatAgeConfirmations,
   migration106TessCacheUsage,
-  migration107ChatUserBlocks
+  migration107ChatUserBlocks,
+  migration108EventChildrenHold,
+  migration109TeamRosterVersions,
+  migration110DropSyncClock
 ]

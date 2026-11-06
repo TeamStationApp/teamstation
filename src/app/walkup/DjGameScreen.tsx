@@ -222,7 +222,7 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
         return
       }
       if (event.type !== 'change') return
-      if (event.kind === 'plays' || event.kind === 'lineups') {
+      if (event.kind === 'playEdits' || event.kind === 'lineups') {
         load().catch(() => undefined)
         return
       }

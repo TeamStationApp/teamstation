@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import express from 'express'
 import { Kysely, PostgresDialect } from 'kysely'
 import { after, before, describe, it } from 'mocha'
-import { Pool } from 'pg'
+import { Client, Pool } from 'pg'
 
 import { asBoxScore } from '../../common/api'
 import { makeId } from '../../common/ids'
@@ -17,7 +17,7 @@ import { attachInt8Parser } from '../db/int8'
 import type { MediaContext } from '../media/mediaContext'
 import { errorHandler } from '../middleware/withErrors'
 import { battingLines, pitchingLines } from '../stats'
-import { boxScoreOrder } from '../stats/boxScoreOrder'
+import { boxScoreOrder, pitchingOrder } from '../stats/boxScoreOrder'
 import { statRows } from '../stats/rows'
 import { insertUser } from '../users/insertUser'
 import { teamRoutes } from './teams'
@@ -42,6 +42,20 @@ const batter = mint()
 const pitcher = mint()
 const reliever = mint()
 const viewer = mint()
+
+/** Every statement the route's pool runs, by its text. */
+const statements: string[] = []
+class CountingClient extends Client {
+  override query(...args: any[]): any {
+    if (typeof args[0] === 'string') statements.push(args[0])
+    return (super.query as (...given: any[]) => any)(...args)
+  }
+}
+/** The ordered plays query: the game's plays, as the box score orders them. */
+const playsReads = (): number =>
+  statements.filter(text =>
+    text.includes('from "events" where "gameId" = $1 order by "atBatIndex"')
+  ).length
 
 const media: MediaContext = {
   ffmpegPath: 'ffmpeg',
@@ -87,7 +101,7 @@ describe('GET /games/:gameId/box-score stats', function () {
       return
     }
     await admin.query(`create database ${scratchName}`)
-    pool = new Pool({ connectionString: scratchUrl })
+    pool = new Pool({ connectionString: scratchUrl, Client: CountingClient })
     await migrateUp(pool, migrations)
     db = new Kysely<Database>({ dialect: new PostgresDialect({ pool }) })
 
@@ -377,6 +391,64 @@ describe('GET /games/:gameId/box-score stats', function () {
       userId: userIdOfGumbo(reliever),
       outs: 6
     })
+  })
+
+  /** The order each function gives reading the plays for itself. */
+  async function ownOrder(): Promise<{
+    batting: string[]
+    pitching: string[]
+  }> {
+    const rows = await statRows(db!, { gameId })
+    return {
+      batting: (await boxScoreOrder(db!, gameId, battingLines(rows))).map(
+        line => line.userId
+      ),
+      pitching: (await pitchingOrder(db!, gameId, pitchingLines(rows))).map(
+        line => line.userId
+      )
+    }
+  }
+
+  it('reads the plays once for a line without a first appearance, answering as before', async function () {
+    await setState('built', null, new Date())
+    const rows = await statRows(db!, { gameId })
+    expect(battingLines(rows).some(line => line.firstPa == null)).equals(true)
+    statements.length = 0
+    const box = await ask()
+    expect(statements.length).greaterThan(0)
+    expect(playsReads()).equals(1)
+    const own = await ownOrder()
+    expect(box.batting.map(line => line.userId)).deep.equals(own.batting)
+    expect(box.pitching.map(line => line.userId)).deep.equals(own.pitching)
+  })
+
+  it('reads the plays once for a built game whose lines all have first appearances', async function () {
+    await db!
+      .updateTable('game_player_stats')
+      .set({ extra: JSON.stringify({ firstPa: 0 }) })
+      .where('game_id', '=', gameId)
+      .where('gumbo_id', '=', batter)
+      .execute()
+    try {
+      const rows = await statRows(db!, { gameId })
+      expect(battingLines(rows).every(line => line.firstPa != null)).equals(
+        true
+      )
+      statements.length = 0
+      const box = await ask()
+      expect(playsReads()).equals(1)
+      const own = await ownOrder()
+      expect(box.batting.map(line => line.userId)).deep.equals(own.batting)
+      expect(box.pitching.map(line => line.userId)).deep.equals(own.pitching)
+      expect(box.batting[0]).includes({ userId: userIdOfGumbo(batter), pa: 3 })
+    } finally {
+      await db!
+        .updateTable('game_player_stats')
+        .set({ extra: null })
+        .where('game_id', '=', gameId)
+        .where('gumbo_id', '=', batter)
+        .execute()
+    }
   })
 
   it('keeps a withdrawn starter ahead of the reliever who followed', async function () {

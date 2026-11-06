@@ -1,7 +1,33 @@
-import { type Kysely, sql } from 'kysely'
+import { type Kysely, type RawBuilder, sql } from 'kysely'
 
 import { retargetRecord } from '../../common/scoring/teamRecord'
 import type { Database } from '../db/database'
+import {
+  holdingEventChildren,
+  rebuildEventChildren
+} from '../events/eventChildren'
+
+/** How many games' plays are read and written at a time. */
+const GAMES_PER_BATCH = 25
+
+/** How a rewrite of a play reaches that play's children. */
+export interface RetargetOptions {
+  /**
+   * For a caller moving a whole team: each play moves to the new batting team
+   * with its record, and the children of all of them are rebuilt in a set
+   * rather than by the trigger, one play at a time.
+   */
+  rebuildChildren?: boolean
+}
+
+/** Whether a record, already read once, is version 3 and names the team. */
+export function recordNamesTeam(
+  teamId: string,
+  record: RawBuilder<unknown>
+): RawBuilder<boolean> {
+  return sql<boolean>`coalesce(${record}->>'version' = '3'
+    and strpos((${record})::text, ${teamId}) > 0, false)`
+}
 
 /**
  * Keeps these games readable after one of their teams was replaced by
@@ -13,32 +39,19 @@ export async function retargetGameTeams(
   trx: Kysely<Database>,
   gameIds: readonly string[],
   fromTeamId: string,
-  toTeamId: string
+  toTeamId: string,
+  options: RetargetOptions = {}
 ): Promise<void> {
   if (gameIds.length === 0 || fromTeamId === toTeamId) return
-  const plays = await trx
-    .selectFrom('events')
-    .select(['id', 'gumbo'])
-    .where('gameId', 'in', [...gameIds])
-    .where(sql<string>`gumbo->'teamStation'->>'version'`, '=', '3')
-    // Only a record that names the team: a merge can move many games.
-    .where(
-      sql<boolean>`strpos((gumbo->'teamStation')::text, ${fromTeamId}) > 0`
+  // A merge can move many games: only the records are read, each changes once.
+  for (let at = 0; at < gameIds.length; at += GAMES_PER_BATCH)
+    await retargetPlays(
+      trx,
+      gameIds.slice(at, at + GAMES_PER_BATCH),
+      fromTeamId,
+      toTeamId,
+      options
     )
-    .execute()
-  for (const play of plays) {
-    const gumbo = play.gumbo as Record<string, unknown>
-    await trx
-      .updateTable('events')
-      .set({
-        gumbo: {
-          ...gumbo,
-          teamStation: retargetRecord(gumbo.teamStation, fromTeamId, toTeamId)
-        }
-      })
-      .where('id', '=', play.id)
-      .execute()
-  }
   const games = await trx
     .selectFrom('games')
     .select(['id', 'currentPlay', 'pregame'])
@@ -48,27 +61,37 @@ export async function retargetGameTeams(
         || coalesce(pregame, 'null')::text, ${fromTeamId}) > 0`
     )
     .execute()
-  for (const game of games) {
+  // Written only where a record changed; null keeps what the game holds.
+  const changes = games.flatMap(game => {
     const current = game.currentPlay as Record<string, unknown> | null
     const record =
       current == null
         ? undefined
         : retargetRecord(current.teamStation, fromTeamId, toTeamId)
     const pregame = retargetRecord(game.pregame, fromTeamId, toTeamId)
-    // Written only where a record changed.
-    const changed = {
-      ...(current == null || same(record, current.teamStation)
-        ? {}
-        : { currentPlay: { ...current, teamStation: record } }),
-      ...(same(pregame, game.pregame) ? {} : { pregame: pregame as never })
-    }
-    if (Object.keys(changed).length === 0) continue
-    await trx
-      .updateTable('games')
-      .set(changed)
-      .where('id', '=', game.id)
-      .execute()
-  }
+    const currentPlay =
+      current == null || same(record, current.teamStation)
+        ? null
+        : JSON.stringify({ ...current, teamStation: record })
+    const nextPregame = same(pregame, game.pregame)
+      ? null
+      : JSON.stringify(pregame)
+    return currentPlay == null && nextPregame == null
+      ? []
+      : [{ id: game.id, currentPlay, pregame: nextPregame }]
+  })
+  if (changes.length > 0)
+    await sql`
+      update games g set
+        "currentPlay" = coalesce(v.current_play::jsonb, g."currentPlay"),
+        pregame = coalesce(v.pregame::jsonb, g.pregame)
+      from unnest(
+        ${changes.map(change => change.id)}::text[],
+        ${changes.map(change => change.currentPlay)}::text[],
+        ${changes.map(change => change.pregame)}::text[]
+      ) as v(id, current_play, pregame)
+      where g.id = v.id
+    `.execute(trx)
   // A game's guests and players left off are kept under its teams' ids.
   for (const column of ['guests', 'unrostered'] as const)
     await sql`update games set ${sql.ref(column)} =
@@ -77,6 +100,49 @@ export async function retargetGameTeams(
       where id in (${sql.join([...gameIds])}) and ${sql.ref(column)} ? ${fromTeamId}::text`.execute(
       trx
     )
+}
+
+/** Rewrites the records of a batch of games that name the old team. */
+async function retargetPlays(
+  trx: Kysely<Database>,
+  gameIds: readonly string[],
+  fromTeamId: string,
+  toTeamId: string,
+  { rebuildChildren = false }: RetargetOptions
+): Promise<void> {
+  const record = sql.ref('one.record')
+  const { rows: plays } = await sql<{ id: string; record: unknown }>`
+    select e.id, one.record from events e
+    cross join lateral (select e.gumbo->'teamStation' offset 0) as one(record)
+    where e."gameId" = any(${[...gameIds]}::text[])
+      and ${recordNamesTeam(fromTeamId, record)}
+  `.execute(trx)
+  if (plays.length === 0) return
+  const ids = plays.map(play => play.id)
+  const rewritten = JSON.stringify(
+    plays.map(play => ({
+      id: play.id,
+      record: retargetRecord(play.record, fromTeamId, toTeamId)
+    }))
+  )
+  const write = sql`
+    update events e set
+      gumbo = e.gumbo || jsonb_build_object('teamStation', v.record)
+      ${
+        rebuildChildren
+          ? sql`, "battingTeamId" = case when e."battingTeamId" = ${fromTeamId}
+              then ${toTeamId} else e."battingTeamId" end`
+          : sql``
+      }
+    from jsonb_to_recordset(${rewritten}::jsonb) as v(id text, record jsonb)
+    where e.id = v.id
+  `
+  if (!rebuildChildren) {
+    await write.execute(trx)
+    return
+  }
+  await holdingEventChildren(trx, async () => await write.execute(trx))
+  await rebuildEventChildren(trx, ids)
 }
 
 function same(a: unknown, b: unknown): boolean {

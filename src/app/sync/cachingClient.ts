@@ -83,7 +83,7 @@ function digestOf(raw: unknown): string | null {
  * SQLite file (see `documentKeys.ts`).
  *
  * A GET of a document goes to the server as before. Its answer replaces the
- * document, with its revision and digest, unless a queued write holds the
+ * document, with its digest, unless a queued write holds the
  * document (`pending`), in which case the stored body is the answer, whatever
  * the server said. A GET that cannot leave the device answers the stored
  * body, the first time as any other, and throws the usual offline error when
@@ -108,13 +108,16 @@ export class CachingClient extends TeamStationClient {
       // person's token while the queue read its file sends nothing of it.
       owns: () => this.owned != null,
       send: async (method, path, body, key) =>
-        await super.request(method, path, asRaw, body, {
-          collect: false,
-          ...(key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } })
-        }),
+        await super.request(
+          method,
+          path,
+          asRaw,
+          body,
+          key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } }
+        ),
       token: () => this.token,
       read: async path => {
-        await this.request('GET', path, asRaw, undefined, { collect: false })
+        await this.request('GET', path, asRaw)
       },
       ...options.outbox
     })
@@ -314,9 +317,9 @@ export class CachingClient extends TeamStationClient {
    * team's roster (whole names only where they manage it), and for each
    * upcoming game both sides' rosters, the game, its lineups, its plays and
    * each side's default lineup, and the first page Schedule opens on, so that
-   * it paints without having been opened. Four at a time, without collecting
-   * revisions into a screen's load; a read that fails is left for the next
-   * time. One prefetch runs at a time, and none while offline.
+   * it paints without having been opened. Four at a time; a read that fails
+   * is left for the next time. One prefetch runs at a time, and none while
+   * offline.
    */
   async prefetch(): Promise<void> {
     if (this.owned == null || this.offline) return
@@ -348,7 +351,7 @@ export class CachingClient extends TeamStationClient {
       return value
     }
 
-    let answered: { raw: unknown; revision: string } | undefined
+    let answered: { raw: unknown } | undefined
     let value: T
     try {
       value = await super.request(
@@ -356,7 +359,7 @@ export class CachingClient extends TeamStationClient {
         path,
         raw => {
           const cleaned = cleaner(raw)
-          answered = { raw, revision: this.revisionFor(path) ?? '0' }
+          answered = { raw }
           return cleaned
         },
         body,
@@ -386,7 +389,8 @@ export class CachingClient extends TeamStationClient {
     if (answered?.raw === undefined) return value
     const kept = await this.storeTo(opened.store, key, {
       body: JSON.stringify(answered.raw),
-      revision: answered.revision,
+      // Answers carry no revision; the column stays for phones' files.
+      revision: '0',
       serverDigest: digestOf(answered.raw)
     })
     if (kept?.pending !== true) return value
@@ -407,9 +411,7 @@ export class CachingClient extends TeamStationClient {
       cleaner: Cleaner<T>
     ): Promise<T | undefined> => {
       try {
-        return await this.request('GET', path, cleaner, undefined, {
-          collect: false
-        })
+        return await this.request('GET', path, cleaner)
       } catch {
         return undefined
       }

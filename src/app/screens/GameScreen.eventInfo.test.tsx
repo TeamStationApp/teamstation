@@ -14,11 +14,11 @@ import { HttpError } from '../../common/errors'
 import { asEventInfo } from '../../common/eventInfo'
 import { eventArrivalTime, eventHeroLines } from '../../common/eventTime'
 import type { GameSocketEvent } from '../../common/gameSocket'
-import { ACK_GIVE_UP_MS } from '../../common/screenScope'
+import { ACK_GIVE_UP_MS, COALESCE_MS } from '../../common/screenScope'
 import {
   FakeScopeSocket,
   heldTimers,
-  revisionStamps
+  testClock
 } from '../../test/fakeScreenScope'
 import { HeaderSlotProvider } from '../components/headerSlot'
 import { ScreenScopeProvider } from '../hooks/useScreenScope'
@@ -359,6 +359,29 @@ describe('the event page’s automatic and explicit sections', () => {
     root = undefined
     expect(detached).equals(true)
   })
+  it('keeps its game subscription when the game arrives from its first read', async () => {
+    const { client, game } = fixture()
+    // A game says what it is once read: undefined before, 'game' after.
+    game.eventKind = 'game'
+    let subscribes = 0
+    let detaches = 0
+    await render({
+      client,
+      gameId: 'g1',
+      socket: {
+        subscribe: () => {
+          subscribes++
+          return () => {
+            detaches++
+          }
+        }
+      }
+    })
+    // The game has loaded (it is shown), and the subscription it began with stands.
+    expect(selected()).equals('Info')
+    expect(subscribes).equals(1)
+    expect(detaches).equals(0)
+  })
   it('preserves a chosen Info section while later scoring arrives and responds to explicit address changes', async () => {
     const { client, game } = fixture()
     let listener: ((event: GameSocketEvent) => void) | undefined
@@ -686,7 +709,8 @@ describe('the event page’s screen scope', () => {
 
   async function renderScoped(
     props: React.ComponentProps<typeof GameScreen>,
-    socket: FakeScopeSocket
+    socket: FakeScopeSocket,
+    clock?: ReturnType<typeof testClock>
   ): Promise<void> {
     const host = document.createElement('div')
     document.body.append(host)
@@ -698,6 +722,7 @@ describe('the event page’s screen scope', () => {
             <ScreenScopeProvider
               socket={socket}
               scope={{ scope: 'event', gameId: props.gameId }}
+              timers={clock}
             >
               <GameScreen {...props} />
             </ScreenScopeProvider>
@@ -716,8 +741,8 @@ describe('the event page’s screen scope', () => {
     expect(selected()).equals('Info')
   })
 
-  it('waits for the event’s subscribed, then reads, and reads again for a newer changed', async () => {
-    timers = heldTimers(ACK_GIVE_UP_MS)
+  it('waits for the event’s subscribed, then reads, and reads again for a changed', async () => {
+    const clock = testClock(0)
     const socket = new FakeScopeSocket()
     const { client, reads } = counted()
     let listener: ((event: GameSocketEvent) => void) | undefined
@@ -732,17 +757,19 @@ describe('the event page’s screen scope', () => {
           }
         }
       },
-      socket
+      socket,
+      clock
     )
     expect(socket.asked()).deep.equals(['event:g1'])
     expect(reads(), 'client.game before subscribed').equals(0)
     await act(async () => {
-      socket.ack('5')
+      socket.ack()
     })
     expect(reads(), 'client.game after subscribed').equals(1)
     expect(selected()).equals('Info')
+    clock.advance(COALESCE_MS)
     await act(async () => {
-      socket.changed('6')
+      socket.changed()
     })
     expect(reads()).equals(2)
     // A play body on the game's own subscription still reads at once.
@@ -750,12 +777,173 @@ describe('the event page’s screen scope', () => {
       listener?.({
         type: 'change',
         gameId: 'g1',
-        kind: 'plays',
+        kind: 'playEdits',
         at: new Date().toISOString(),
-        data: { plays: [], currentPlay: null, digest: 'd1' }
+        data: {
+          generation: 0,
+          fromDigest: 'd0',
+          digest: 'd1',
+          namesDigest: 'n0',
+          edits: [],
+          currentPlay: null
+        }
       })
     })
     expect(reads()).equals(3)
+  })
+
+  it('lets a post’s notice of its own game pass, its frames having read it, and reads one from any other write through the gate', async () => {
+    const clock = testClock(0)
+    const socket = new FakeScopeSocket()
+    const { client, game } = fixture()
+    const began: number[] = []
+    client.game = async () => {
+      began.push(clock.now())
+      return { ...game }
+    }
+    let listener: ((event: GameSocketEvent) => void) | undefined
+    await renderScoped(
+      {
+        client,
+        gameId: 'g1',
+        socket: {
+          subscribe: (_id, receive) => {
+            listener = receive
+            return () => undefined
+          }
+        }
+      },
+      socket,
+      clock
+    )
+    await act(async () => {
+      socket.ack()
+    })
+    expect(began).deep.equals([0])
+    // The socket holds the game: its acknowledgement reads nothing itself.
+    await act(async () => {
+      listener!({ type: 'subscribed', gameId: 'g1' })
+    })
+    expect(began).deep.equals([0])
+    // The post's play frame reads the game; its notice reads nothing more.
+    clock.advance(5000)
+    await act(async () => {
+      listener!({
+        type: 'change',
+        gameId: 'g1',
+        kind: 'playEdits',
+        at: new Date().toISOString(),
+        data: {
+          generation: 0,
+          fromDigest: 'd0',
+          digest: 'd1',
+          namesDigest: 'n0',
+          edits: [],
+          currentPlay: null
+        }
+      })
+    })
+    expect(began).deep.equals([0, 5000])
+    clock.advance(300)
+    await act(async () => {
+      socket.changed('g1', true)
+    })
+    await act(async () => {
+      clock.advance(10_000)
+    })
+    expect(began).deep.equals([0, 5000])
+    // Event info, an umpire or a video names the game with no post behind it.
+    await act(async () => {
+      socket.changed('g1')
+    })
+    expect(began).deep.equals([0, 5000, 15300])
+    // Another game's post is not this screen's own.
+    await act(async () => {
+      clock.advance(COALESCE_MS)
+      socket.changed('g2', true)
+    })
+    expect(began).deep.equals([0, 5000, 15300, 18300])
+  })
+
+  it('reads a post’s notice of its own game while the socket does not hold the game, and reads again once it does after a refusal', async () => {
+    const clock = testClock(0)
+    const socket = new FakeScopeSocket()
+    const { client, game } = fixture()
+    const began: number[] = []
+    client.game = async () => {
+      began.push(clock.now())
+      return { ...game }
+    }
+    let listener: ((event: GameSocketEvent) => void) | undefined
+    await renderScoped(
+      {
+        client,
+        gameId: 'g1',
+        socket: {
+          subscribe: (_id, receive) => {
+            listener = receive
+            return () => undefined
+          }
+        }
+      },
+      socket,
+      clock
+    )
+    await act(async () => {
+      socket.ack()
+    })
+    expect(began).deep.equals([0])
+    // A saturated database refuses the game's subscribe: no play frame
+    // comes, so the post's notice is the only news of it.
+    await act(async () => {
+      listener!({
+        type: 'error',
+        gameId: 'g1',
+        code: 'internal',
+        message: 'internal'
+      })
+    })
+    clock.advance(5000)
+    await act(async () => {
+      socket.changed('g1', true)
+    })
+    expect(began).deep.equals([0, 5000])
+    // The retried subscribe is acknowledged: what the refused frames carried
+    // is read.
+    clock.advance(5000)
+    await act(async () => {
+      listener!({ type: 'subscribed', gameId: 'g1' })
+    })
+    expect(began).deep.equals([0, 5000, 10000])
+    // Held again, a post's notice of the game reads nothing.
+    clock.advance(5000)
+    await act(async () => {
+      socket.changed('g1', true)
+    })
+    await act(async () => {
+      clock.advance(10_000)
+    })
+    expect(began).deep.equals([0, 5000, 10000])
+    // A reconnect asks for the game again: until it is held, its notice reads.
+    await act(async () => {
+      listener!({ type: 'resync', gameId: 'g1' })
+    })
+    expect(began).deep.equals([0, 5000, 10000, 25000])
+    clock.advance(COALESCE_MS)
+    await act(async () => {
+      socket.changed('g1', true)
+    })
+    expect(began).deep.equals([0, 5000, 10000, 25000, 28000])
+    // An app too old for the game is never sent it: its notice reads.
+    await act(async () => {
+      listener!({ type: 'subscribed', gameId: 'g1' })
+      listener!({ type: 'updateRequired', gameId: 'g1' })
+    })
+    clock.advance(COALESCE_MS)
+    await act(async () => {
+      socket.changed('g1', true)
+    })
+    expect(began).deep.equals([0, 5000, 10000, 25000, 28000, 31000])
   })
 
   it('paints the stored game before subscribed (Cache first paint)', async () => {
@@ -772,12 +960,13 @@ describe('the event page’s screen scope', () => {
     expect(keys).deep.equals(['game.g1'])
     expect(selected()).equals('Info')
     await act(async () => {
-      socket.ack('2')
+      socket.ack()
     })
     expect(reads()).equals(1)
   })
 
   it('says the game is not found when its first read fails, and keeps it shown when a later one does', async () => {
+    const clock = testClock(0)
     const socket = new FakeScopeSocket()
     const { client, game } = fixture()
     let fail = true
@@ -785,37 +974,34 @@ describe('the event page’s screen scope', () => {
       if (fail) throw new Error('No such game')
       return { ...game }
     }
-    await renderScoped({ client, gameId: 'g1' }, socket)
+    await renderScoped({ client, gameId: 'g1' }, socket, clock)
     await act(async () => {
-      socket.ack('1')
+      socket.ack()
     })
     expect(document.body.textContent).includes(lstrings.common_not_found)
     fail = false
+    clock.advance(COALESCE_MS)
     await act(async () => {
-      socket.changed('2')
+      socket.changed()
     })
     expect(document.body.textContent).not.includes(lstrings.common_not_found)
     fail = true
+    clock.advance(COALESCE_MS)
     await act(async () => {
-      socket.changed('3')
+      socket.changed()
     })
     expect(document.body.textContent).not.includes(lstrings.common_not_found)
     expect(selected()).equals('Info')
   })
-  it('reads the game once for a play, whichever way the commit is heard first', async () => {
-    timers = heldTimers(ACK_GIVE_UP_MS)
+  it('holds a notice after a play’s own read to its 3 s, and reads once for those during it', async () => {
+    const clock = testClock(0)
     const socket = new FakeScopeSocket()
     const { client, game } = fixture()
-    const stamps = revisionStamps()
-    client.collectRevisions = stamps.collectRevisions
-    client.stopCollecting = stamps.stopCollecting
-    stamps.revisions.set('/games/g1', '5')
-    let reads = 0
+    const began: number[] = []
     let hold: Promise<void> | undefined
     client.game = async () => {
-      reads++
+      began.push(clock.now())
       await hold
-      stamps.answer('/games/g1')
       return { ...game }
     }
     let listener: ((event: GameSocketEvent) => void) | undefined
@@ -830,58 +1016,73 @@ describe('the event page’s screen scope', () => {
           }
         }
       },
-      socket
+      socket,
+      clock
     )
     await act(async () => {
-      socket.ack('5')
+      socket.ack()
     })
-    expect(reads).equals(1)
+    expect(began).deep.equals([0])
     const play = (): void => {
       listener!({
         type: 'change',
         gameId: 'g1',
-        kind: 'plays',
+        kind: 'playEdits',
         at: new Date().toISOString(),
-        data: { plays: [], currentPlay: null, digest: 'd1' }
+        data: {
+          generation: 0,
+          fromDigest: 'd0',
+          digest: 'd1',
+          namesDigest: 'n0',
+          edits: [],
+          currentPlay: null
+        }
       })
     }
-    // A play commits at 6: its frame reads the game, and the scope's notice
-    // of the same commit reads nothing more.
-    stamps.revisions.set('/games/g1', '6')
+    // A play's frame reads the game at once; the scope's notice of the same
+    // commit, half a second later, waits for that read's 3 s.
+    clock.advance(5000)
     await act(async () => {
       play()
     })
-    expect(reads).equals(2)
+    expect(began).deep.equals([0, 5000])
+    clock.advance(500)
     await act(async () => {
-      socket.changed('6')
+      socket.changed()
     })
-    expect(reads, 'one read for the commit').equals(2)
-    // The notice arrives while the frame's read is still out: the same.
+    expect(began).deep.equals([0, 5000])
+    await act(async () => {
+      clock.advance(2500)
+    })
+    expect(began).deep.equals([0, 5000, 8000])
+    // Notices while a frame's read is still out: one read, 3 s after it began.
     let release!: () => void
     hold = new Promise(resolve => {
       release = resolve
     })
-    stamps.revisions.set('/games/g1', '7')
+    clock.advance(5000)
     await act(async () => {
       play()
     })
     await act(async () => {
-      socket.changed('7')
+      socket.changed()
+      socket.changed()
     })
+    clock.advance(1000)
     await act(async () => {
       release()
       await hold
     })
-    expect(reads).equals(3)
     hold = undefined
-    // A newer commit than the screen shows still reads.
+    expect(began).deep.equals([0, 5000, 8000, 13000])
     await act(async () => {
-      socket.changed('8')
+      clock.advance(2000)
     })
-    expect(reads).equals(4)
+    expect(began).deep.equals([0, 5000, 8000, 13000, 16000])
   })
 
   it('says a stored game the server no longer has is not found, and keeps it through no signal', async () => {
+    const clock = testClock(0)
     const socket = new FakeScopeSocket()
     const { client, game } = fixture()
     client.cached = (async () => ({ ...game })) as TeamStationClient['cached']
@@ -889,16 +1090,17 @@ describe('the event page’s screen scope', () => {
     client.game = async () => {
       throw failure
     }
-    await renderScoped({ client, gameId: 'g1' }, socket)
+    await renderScoped({ client, gameId: 'g1' }, socket, clock)
     await act(async () => {
-      socket.ack('1')
+      socket.ack()
     })
     expect(document.body.textContent).not.includes(lstrings.common_not_found)
     expect(selected()).equals('Info')
     for (const code of ['notFound', 'forbidden'] as const) {
       failure = new HttpError(code, 'Gone')
+      clock.advance(COALESCE_MS)
       await act(async () => {
-        socket.changed(code === 'notFound' ? '2' : '3')
+        socket.changed()
       })
       expect(document.body.textContent, code).includes(
         lstrings.common_not_found

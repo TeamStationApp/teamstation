@@ -86,11 +86,8 @@ import { withAsync } from '../middleware/withErrors'
 import { completionNotice } from '../notifications/completionNotice'
 import { gamesAround, rewriteTeamBoards } from '../scoreboard/gameSource'
 import type { ScoreboardStore } from '../scoreboard/scoreboardStore'
-import {
-  groupScopeIds,
-  noteScopeChange,
-  withRevision
-} from '../socket/syncRevision'
+import { notifyLiveGamesRenamed } from '../socket/gameChanges'
+import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
 import { followMerges } from '../teams/followMerges'
 import { outsideSpoken } from '../users/readerNames'
 import { inviteUrl } from './invites'
@@ -594,7 +591,7 @@ export function groupRoutes(
   router.get(
     '/me/groups',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = await currentActor(db, actorOf(req))
       if (req.query.role != null) {
         if (req.query.role !== 'admin')
@@ -675,7 +672,7 @@ export function groupRoutes(
   router.get(
     '/me/follows',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = await currentActor(db, actorOf(req))
       const rows = await db
         .selectFrom('follows')
@@ -1188,6 +1185,8 @@ export function groupRoutes(
           // Everything below this level is named differently now.
           affected = await teamsFormattedBy(trx, ref)
           for (const teamId of affected) noteScopeChange(trx, { teamId })
+          // Their games in progress are named again for their viewers.
+          await notifyLiveGamesRenamed(trx, { teams: affected })
           // A game's screen hears only of its own game.
           for (const gameId of await gamesAround(trx, affected, clock.now()))
             noteScopeChange(trx, { gameId })

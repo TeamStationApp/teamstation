@@ -1,44 +1,43 @@
-import { asObject, asOptional, asString } from 'cleaners'
-import { Client } from 'pg'
+import { asBoolean, asObject, asOptional, asString } from 'cleaners'
 
+import type { ChangeFeed } from '../changeFeed/feed'
+import { isConnectionUnavailable } from '../db/database'
 import {
   SCREEN_SCOPES_CHANNEL,
   type ScreenScopeIds,
   type ScreenScopePayload
 } from './syncRevision'
 
-const asDecimal = (raw: unknown): string => {
-  const text = asString(raw)
-  if (!/^\d+$/.test(text)) throw new TypeError('Expected a decimal revision')
-  return text
-}
-
 export const asScreenScopePayload = asObject({
-  revision: asDecimal,
   gameId: asOptional(asString),
   teamId: asOptional(asString),
   seasonId: asOptional(asString),
-  userId: asOptional(asString)
+  userId: asOptional(asString),
+  byPost: asOptional(asBoolean)
 })
 
 export interface ScreenScopeListenerOptions {
-  /** Where the `LISTEN` connection goes: the database the writes commit to. */
-  databaseUrl: string
+  /** The process's feed, on the database the writes commit to. */
+  feed: ChangeFeed
   /** Passes one notice, after its window, to the sockets it concerns. */
   deliver: (payload: ScreenScopePayload) => Promise<void>
   /**
-   * Listening again after the connection was lost: notices in between were
-   * never heard, so every screen scope subscribes again and reads.
+   * The feed has returned after a gap, or a notice found no database
+   * connection in time: notices were never heard or never passed on, so every
+   * screen scope subscribes again and reads.
    */
   onResync: () => void
   /** Notices about the same ids within this long are sent once. */
   coalesceMs?: number
-  /** How long to wait before listening again after the connection is lost. */
-  retryMs?: number
+  /**
+   * At most one resync per this long for notices that found no connection, so
+   * screens are not sent to read over and over while the pool is starved.
+   */
+  starvedResyncMs?: number
   log?: (message: string) => void
 }
 
-/** A notice held for its window; a later one in the window raises it. */
+/** A notice held for its window; a later one in the window joins it. */
 interface Held {
   payload: ScreenScopePayload
   timer: ReturnType<typeof setTimeout>
@@ -47,43 +46,51 @@ interface Held {
 /**
  * One worker's end of `screen_scopes`.
  *
- * It holds one `LISTEN` connection, beside the one `GameFanout` holds on
- * `game_changes`. Notices that name the same game, team, season and person
- * within `coalesceMs` are passed on once, with the greatest revision among
- * them. Which sockets hear it is the socket's to decide (`gameSocket.ts`).
+ * It hears the worker's feed, as `GameFanout` does on `game_changes`.
+ * Notices that name the same game, team, season and person within
+ * `coalesceMs` are passed on once, at the window's end, `byPost` only when
+ * every one of them was. Which sockets hear it is the socket's to decide
+ * (`gameSocket.ts`).
  */
 export class ScreenScopeListener {
-  /** Settles once the first `LISTEN` is in place, or has failed. */
+  /** Settles once the channel is first in place, or that attempt has failed. */
   readonly listening: Promise<void>
-  private readonly databaseUrl: string
   private readonly deliver: (payload: ScreenScopePayload) => Promise<void>
   private readonly onResync: () => void
   private readonly coalesceMs: number
-  private readonly retryMs: number
+  private readonly starvedResyncMs: number
   private readonly log: (message: string) => void
   private readonly held = new Map<string, Held>()
-  private client: Client | undefined
-  private readonly hangingUp = new Set<Promise<void>>()
-  private retry: ReturnType<typeof setTimeout> | undefined
-  /** Set once a connection is lost, until a new `LISTEN` is in place. */
-  private missed = false
+  private readonly stopListening: () => void
   private closed = false
+  /** When the last resync for a starved notice went. */
+  private starvedResyncAt: number | undefined
+  /** A later one, owed at the end of the window. */
+  private starvedResyncTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(options: ScreenScopeListenerOptions) {
-    this.databaseUrl = options.databaseUrl
     this.deliver = options.deliver
     this.onResync = options.onResync
     this.coalesceMs = options.coalesceMs ?? 250
-    this.retryMs = options.retryMs ?? 1000
+    this.starvedResyncMs = options.starvedResyncMs ?? 30_000
     this.log =
       options.log ??
       (message => {
         console.error(`screen scopes: ${message}`)
       })
-    this.listening = this.listen()
+    const subscription = options.feed.subscribe(SCREEN_SCOPES_CHANNEL, {
+      onPayload: text => {
+        this.notified(text)
+      },
+      onListening: first => {
+        if (!first) this.onResync()
+      }
+    })
+    this.listening = subscription.listening
+    this.stopListening = subscription.stop
   }
 
-  /** A notify, as the `LISTEN` connection hands it over. */
+  /** A notify, as the feed hands it over. */
   notified(text: string | undefined): void {
     if (text == null || this.closed) return
     let payload: ScreenScopePayload
@@ -96,8 +103,11 @@ export class ScreenScopeListener {
     const key = keyOf(payload)
     const waiting = this.held.get(key)
     if (waiting != null) {
-      if (BigInt(payload.revision) > BigInt(waiting.payload.revision))
-        waiting.payload = payload
+      // A post's notice merged with any other is no longer the post's alone.
+      if (waiting.payload.byPost === true && payload.byPost !== true) {
+        const { byPost: _byPost, ...ids } = waiting.payload
+        waiting.payload = ids
+      }
       return
     }
     const held: Held = {
@@ -105,69 +115,49 @@ export class ScreenScopeListener {
       timer: setTimeout(() => {
         this.held.delete(key)
         this.deliver(held.payload).catch((error: unknown) => {
-          this.log(`sending ${JSON.stringify(held.payload)}: ${String(error)}`)
+          if (!isConnectionUnavailable(error)) {
+            this.log(
+              `sending ${JSON.stringify(held.payload)}: ${String(error)}`
+            )
+            return
+          }
+          if (this.closed) return
+          this.log(
+            `resyncing screens for ${JSON.stringify(held.payload)}: no database connection in time`
+          )
+          this.resyncStarved()
         })
       }, this.coalesceMs)
     }
     this.held.set(key, held)
   }
 
-  async close(): Promise<void> {
-    this.closed = true
-    clearTimeout(this.retry)
-    for (const held of this.held.values()) clearTimeout(held.timer)
-    this.held.clear()
-    const client = this.client
-    this.client = undefined
-    if (client != null) this.hangUp(client)
-    await Promise.all([...this.hangingUp])
-  }
-
-  private hangUp(client: Client): void {
-    const ending: Promise<void> = client
-      .end()
-      .catch(() => undefined)
-      .finally(() => {
-        this.hangingUp.delete(ending)
-      })
-    this.hangingUp.add(ending)
-  }
-
-  private async listen(): Promise<void> {
-    if (this.closed) return
-    const client = new Client({ connectionString: this.databaseUrl })
-    this.client = client
-    client.on('notification', message => {
-      if (this.client === client) this.notified(message.payload)
-    })
-    client.on('error', error => {
-      this.lost(client, String(error))
-    })
-    client.on('end', () => {
-      this.lost(client, 'the connection ended')
-    })
-    try {
-      await client.connect()
-      await client.query(`listen ${SCREEN_SCOPES_CHANNEL}`)
-    } catch (error) {
-      this.lost(client, String(error))
+  /**
+   * Once a window. A notice missed after the window's resync was read is still
+   * owed its read, so the window's end brings one more when any were held back.
+   */
+  private resyncStarved(): void {
+    if (this.starvedResyncTimer != null) return
+    const now = Date.now()
+    const dueAt = (this.starvedResyncAt ?? -Infinity) + this.starvedResyncMs
+    if (now >= dueAt) {
+      this.starvedResyncAt = now
+      this.onResync()
       return
     }
-    if (this.missed && this.client === client) {
-      this.missed = false
+    this.starvedResyncTimer = setTimeout(() => {
+      this.starvedResyncTimer = undefined
+      this.starvedResyncAt = Date.now()
       this.onResync()
-    }
+    }, dueAt - now)
   }
 
-  private lost(client: Client, why: string): void {
-    if (this.client !== client || this.closed) return
-    this.client = undefined
-    this.missed = true
-    this.log(`lost the ${SCREEN_SCOPES_CHANNEL} listener: ${why}`)
-    this.hangUp(client)
-    this.retry = setTimeout(() => {
-      this.listen().catch(() => undefined)
-    }, this.retryMs)
+  async close(): Promise<void> {
+    this.closed = true
+    this.stopListening()
+    clearTimeout(this.starvedResyncTimer)
+    for (const held of this.held.values()) clearTimeout(held.timer)
+    this.held.clear()
   }
 }
 

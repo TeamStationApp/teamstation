@@ -1,3 +1,5 @@
+import { connect, createServer, type Socket } from 'node:net'
+
 import { expect } from 'chai'
 import { EventEmitter } from 'events'
 import { Kysely, PostgresDialect, sql } from 'kysely'
@@ -13,15 +15,27 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { until } from '../../test/scoreboardKit'
+import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
-import { runStatsBuilder } from './main'
+import { runMain, runStatsBuilder } from './main'
 import { requestGameStats } from './request'
 
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_stats_main_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
+/**
+ * The scratch database through a stand-in on `port`, as the test database's own
+ * user: a URL with no user would sign in as whoever runs the tests.
+ */
+const throughPort = (port: number): string => {
+  const url = new URL(scratchUrl)
+  url.hostname = '127.0.0.1'
+  url.port = String(port)
+  url.searchParams.set('sslmode', 'disable')
+  return url.toString()
+}
 
 describe('statsBuilder main', function () {
   this.timeout(60000)
@@ -97,13 +111,16 @@ describe('statsBuilder main', function () {
 
   it('drains on start, on notify, schedules retry_at, and stops cleanly', async function () {
     const gameId = makeId('game')
+    // Final, so its rebuilds on this fixed clock do not wait out a live
+    // game's gap.
     await db
       .insertInto('games')
       .values({
         id: gameId,
         home_team_id: home,
         away_team_id: away,
-        start_at: new Date()
+        start_at: new Date(),
+        status: 'final'
       })
       .execute()
     await replaceGameEvents(db, {
@@ -245,28 +262,445 @@ describe('statsBuilder main', function () {
         ).status
       ).equals('built')
 
-      // Listen client error with an injected signal bus (no process.exit):
-      // the failure is reported before the builder gives up.
+      // A drain error with an injected signal bus (no process.exit): the
+      // failure is reported before the builder gives up.
       const reported: unknown[] = []
+      let clockFails = false
       handle = await runStatsBuilder({
         databaseUrl: scratchUrl,
-        clock: () => new Date(clockNow),
+        clock: () => {
+          if (clockFails) throw new Error('drain boom')
+          return new Date(clockNow)
+        },
         signals,
         report: async error => {
           reported.push(error)
         }
       })
-      handle.listenClient().emit('error', new Error('listen boom'))
-      await new Promise(resolve => setTimeout(resolve, 50))
+      clockFails = true
+      await requestGameStats(db, gameId)
+      await until('the report', () => reported.length > 0, 2000)
       expect(process.exitCode).equals(1)
       expect(reported.map(error => (error as Error).message)).deep.equals([
-        'listen boom'
+        'drain boom'
       ])
       process.exitCode = 0
       handle = undefined
     } finally {
       console.log = originalLog
       if (handle != null) await handle.stop('SIGTERM')
+    }
+  })
+
+  it("wakes at the end of a live game's gap and builds its last generation", async function () {
+    const originalLog = console.log
+    console.log = () => undefined
+    const gameId = makeId('game')
+    await db
+      .insertInto('games')
+      .values({
+        id: gameId,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date(),
+        status: 'inProgress'
+      })
+      .execute()
+    await replaceGameEvents(db, {
+      gameId,
+      homeTeamId: home,
+      awayTeamId: away,
+      plays: [{ gumbo: play(), source: 'manual' }]
+    })
+    const began = clockNow.getTime()
+    let now = began
+    const timers: Array<() => void> = []
+    const handle = await runStatsBuilder({
+      databaseUrl: scratchUrl,
+      clock: () => new Date(now),
+      signals: new EventEmitter(),
+      setTimeout: ((fn: () => void) => {
+        timers.push(fn)
+        return 0 as unknown as NodeJS.Timeout
+      }) as typeof setTimeout,
+      clearTimeout: () => undefined
+    })
+    const stateOf = async (): Promise<{ status: string; built: number }> => {
+      const row = await db
+        .selectFrom('game_stats_state')
+        .select(['status', 'built_generation'])
+        .where('game_id', '=', gameId)
+        .executeTakeFirstOrThrow()
+      return { status: row.status, built: Number(row.built_generation) }
+    }
+    try {
+      expect(await stateOf()).deep.equals({ status: 'built', built: 1 })
+      now = began + 1000
+      const armed = timers.length
+      await requestGameStats(db, gameId)
+      await requestGameStats(db, gameId)
+      await until(
+        'the gap timer',
+        () => timers.length > armed && handle.lastTimerMs() === 2000,
+        2000
+      )
+      expect(await stateOf()).deep.equals({ status: 'pending', built: 1 })
+
+      now = began + 3000
+      timers[timers.length - 1]()
+      for (const deadline = Date.now() + 2000; Date.now() < deadline;) {
+        if ((await stateOf()).status === 'built') break
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+      expect(await stateOf()).deep.equals({ status: 'built', built: 3 })
+    } finally {
+      await handle.stop('SIGTERM')
+      console.log = originalLog
+    }
+  })
+
+  it('drains when the feed returns after a loss, and keeps running', async function () {
+    const originalLog = console.log
+    console.log = () => undefined
+    const lines: string[] = []
+    const reported: unknown[] = []
+    const exitCode = process.exitCode
+    const feed = new PostgresFeed({
+      databaseUrl: scratchUrl,
+      retryMs: 300,
+      log: line => lines.push(line)
+    })
+    const handle = await runStatsBuilder({
+      databaseUrl: scratchUrl,
+      feed,
+      signals: new EventEmitter(),
+      report: async error => {
+        reported.push(error)
+      }
+    })
+    try {
+      expect(handle.feed).equals(feed)
+      const gameId = makeId('game')
+      const statusOf = async (): Promise<string | undefined> =>
+        (
+          await db
+            .selectFrom('game_stats_state')
+            .select('status')
+            .where('game_id', '=', gameId)
+            .executeTakeFirst()
+        )?.status
+      await sql`
+        select pg_terminate_backend(pid) from pg_stat_activity
+        where datname = ${scratchName}
+          and application_name = ${FEED_APPLICATION_NAME}`.execute(db)
+      await until(
+        'the loss',
+        () => lines.some(line => line.includes('lost the feed')),
+        2000
+      )
+      // Asked for while nobody hears: only the return can find it.
+      await db
+        .insertInto('games')
+        .values({
+          id: gameId,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        })
+        .execute()
+      await replaceGameEvents(db, {
+        gameId,
+        homeTeamId: home,
+        awayTeamId: away,
+        plays: [{ gumbo: play(), source: 'manual' }]
+      })
+      expect(await statusOf()).not.equals('built')
+      for (const deadline = Date.now() + 5000; Date.now() < deadline;) {
+        if ((await statusOf()) === 'built') break
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
+      expect(await statusOf()).equals('built')
+      expect(reported).deep.equals([])
+      expect(process.exitCode).equals(exitCode)
+    } finally {
+      await handle.stop('SIGTERM')
+      console.log = originalLog
+    }
+  })
+
+  it('asks again when no connection comes in time, rather than exiting', async function () {
+    const originalLog = console.log
+    const originalError = console.error
+    console.log = () => undefined
+    const complaints: string[] = []
+    console.error = (...args: unknown[]) => {
+      complaints.push(args.map(String).join(' '))
+    }
+    const reported: unknown[] = []
+    const exitCode = process.exitCode
+    const delays: number[] = []
+    // Takes every connection and answers none until the test lets it through.
+    const target = new URL(adminUrl)
+    let through = false
+    const sockets: Socket[] = []
+    const door = createServer(inbound => {
+      inbound.on('error', () => undefined)
+      sockets.push(inbound)
+      if (!through) return
+      const outbound = connect(Number(target.port), target.hostname)
+      outbound.on('error', () => undefined)
+      sockets.push(outbound)
+      inbound.pipe(outbound)
+      outbound.pipe(inbound)
+    })
+    await new Promise<void>(resolve => {
+      door.listen(0, '127.0.0.1', resolve)
+    })
+    const address = door.address() as { port: number }
+    const gameId = makeId('game')
+    await db
+      .insertInto('games')
+      .values({
+        id: gameId,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    await replaceGameEvents(db, {
+      gameId,
+      homeTeamId: home,
+      awayTeamId: away,
+      plays: [{ gumbo: play(), source: 'manual' }]
+    })
+    const statusOf = async (): Promise<string | undefined> =>
+      (
+        await db
+          .selectFrom('game_stats_state')
+          .select('status')
+          .where('game_id', '=', gameId)
+          .executeTakeFirst()
+      )?.status
+    const handle = await runStatsBuilder({
+      databaseUrl: scratchUrl,
+      requestUrl: throughPort(address.port),
+      signals: new EventEmitter(),
+      setTimeout: ((work: () => void, ms: number) => {
+        delays.push(ms)
+        return setTimeout(work, Math.min(ms, 50))
+      }) as typeof setTimeout,
+      report: async error => {
+        reported.push(error)
+      }
+    })
+    try {
+      // It came up with no connection, and stands ready to try again.
+      expect(handle.lastTimerMs()).equals(5000)
+      expect(delays).deep.equals([5000])
+      expect(complaints.join('\n')).includes('asking again')
+      expect(await statusOf()).not.equals('built')
+      through = true
+      for (const socket of sockets) socket.destroy()
+      await until(
+        'the build',
+        async () => (await statusOf()) === 'built',
+        20000
+      )
+      expect(reported).deep.equals([])
+      expect(process.exitCode).equals(exitCode)
+    } finally {
+      await handle.stop('SIGTERM')
+      for (const socket of sockets) socket.destroy()
+      door.close()
+      console.log = originalLog
+      console.error = originalError
+    }
+  })
+
+  it('fails to start on a database it cannot reach, leaving nothing open', async function () {
+    const signals = new EventEmitter()
+    const lines: string[] = []
+    const missing = adminUrl.replace(/\/[^/]*$/, `/${scratchName}_missing`)
+    const failure = await runStatsBuilder({
+      databaseUrl: missing,
+      feed: new PostgresFeed({
+        databaseUrl: missing,
+        log: line => lines.push(line)
+      }),
+      signals
+    }).then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    expect(String(failure)).includes('does not exist')
+    expect(lines.length).equals(1)
+    expect(signals.listenerCount('SIGTERM')).equals(0)
+    await new Promise(resolve => setTimeout(resolve, 1200))
+    expect(lines.length).equals(1)
+  })
+
+  it('fails to start on a database nothing answers for, leaving nothing open', async function () {
+    const closed = createServer()
+    await new Promise<void>(resolve => {
+      closed.listen(0, '127.0.0.1', resolve)
+    })
+    const { port } = closed.address() as { port: number }
+    await new Promise(resolve => closed.close(resolve))
+    const absent = throughPort(port)
+    const originalError = console.error
+    console.error = () => undefined
+    const signals = new EventEmitter()
+    const lines: string[] = []
+    try {
+      const failure = await runStatsBuilder({
+        databaseUrl: absent,
+        feed: new PostgresFeed({
+          databaseUrl: absent,
+          log: line => lines.push(line)
+        }),
+        signals
+      }).then(
+        () => undefined,
+        (error: unknown) => error
+      )
+      expect((failure as { code?: unknown }).code).equals('ECONNREFUSED')
+      expect(signals.listenerCount('SIGTERM')).equals(0)
+      const heard = lines.length
+      await new Promise(resolve => setTimeout(resolve, 1200))
+      expect(lines.length).equals(heard)
+    } finally {
+      console.error = originalError
+    }
+  })
+
+  it('asks again when the database goes away after starting', async function () {
+    const originalLog = console.log
+    const originalError = console.error
+    console.log = () => undefined
+    const complaints: string[] = []
+    console.error = (...args: unknown[]) => {
+      complaints.push(args.map(String).join(' '))
+    }
+    const reported: unknown[] = []
+    const exitCode = process.exitCode
+    const target = new URL(adminUrl)
+    const sockets = new Set<Socket>()
+    const door = createServer(inbound => {
+      const outbound = connect(Number(target.port), target.hostname)
+      for (const socket of [inbound, outbound]) {
+        socket.on('error', () => undefined)
+        sockets.add(socket)
+      }
+      inbound.pipe(outbound)
+      outbound.pipe(inbound)
+    })
+    await new Promise<void>(resolve => {
+      door.listen(0, '127.0.0.1', resolve)
+    })
+    const { port } = door.address() as { port: number }
+    const gameId = makeId('game')
+    await db
+      .insertInto('games')
+      .values({
+        id: gameId,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const delays: number[] = []
+    const handle = await runStatsBuilder({
+      databaseUrl: scratchUrl,
+      requestUrl: throughPort(port),
+      signals: new EventEmitter(),
+      setTimeout: ((work: () => void, ms: number) => {
+        delays.push(ms)
+        return setTimeout(work, Math.min(ms, 50))
+      }) as typeof setTimeout,
+      report: async error => {
+        reported.push(error)
+      }
+    })
+    try {
+      // Now nothing answers at that address: every attempt is refused.
+      await new Promise<void>(resolve => {
+        door.close(() => {
+          resolve()
+        })
+        for (const socket of sockets) socket.destroy()
+      })
+      await until(
+        'a refused attempt',
+        async () => complaints.join('\n').includes('asking again'),
+        20000
+      )
+      expect(delays).includes(5000)
+      await replaceGameEvents(db, {
+        gameId,
+        homeTeamId: home,
+        awayTeamId: away,
+        plays: [{ gumbo: play(), source: 'manual' }]
+      })
+      // It answers again at the same address, and what is owed gets built.
+      await new Promise<void>(resolve => {
+        door.listen(port, '127.0.0.1', resolve)
+      })
+      await until(
+        'the build',
+        async () =>
+          (
+            await db
+              .selectFrom('game_stats_state')
+              .select('status')
+              .where('game_id', '=', gameId)
+              .executeTakeFirst()
+          )?.status === 'built',
+        20000
+      )
+      expect(reported).deep.equals([])
+      expect(process.exitCode).equals(exitCode)
+    } finally {
+      await handle.stop('SIGTERM')
+      for (const socket of sockets) socket.destroy()
+      door.close()
+      console.log = originalLog
+      console.error = originalError
+    }
+  })
+
+  it('queries through the request address as its role, and listens on the database', async function () {
+    const originalLog = console.log
+    console.log = () => undefined
+    const namesOn = async (config: {
+      databaseUrl: string
+      databasePoolUrl: string
+    }): Promise<string[]> => {
+      const handle = await runMain({
+        ...config,
+        changeFeed: 'postgres',
+        redis: { url: 'redis://127.0.0.1:1', prefix: '', caFile: '' }
+      })
+      const { rows } = await sql<{ name: string; query: string }>`
+        select application_name as name, query from pg_stat_activity
+        where datname = ${scratchName}
+          and application_name <> ''
+          and pid <> pg_backend_pid()`.execute(db)
+      await handle.stop('SIGTERM')
+      return rows.map(row => row.name).sort()
+    }
+    try {
+      expect(
+        await namesOn({ databaseUrl: scratchUrl, databasePoolUrl: '' })
+      ).deep.equals([FEED_APPLICATION_NAME, 'teamstation-statsBuilder'])
+      // The name a URL carries beats the role's, so it shows which URL it is.
+      expect(
+        await namesOn({
+          databaseUrl: scratchUrl,
+          databasePoolUrl: `${scratchUrl}?application_name=thePool`
+        })
+      ).deep.equals([FEED_APPLICATION_NAME, 'thePool'])
+    } finally {
+      console.log = originalLog
     }
   })
 })

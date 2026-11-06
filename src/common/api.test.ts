@@ -10,6 +10,7 @@ import {
   asPage,
   asPlayerHighlight,
   asPlayerStats,
+  asPostedEdits,
   asSaveLineupsBody,
   asScopeGrant,
   asStandingsRow,
@@ -2166,6 +2167,24 @@ describe('api client', function () {
     expect(refused).instanceOf(Error)
   })
 
+  it('reads an answer the same whatever revision header it carries, and keeps none', async function () {
+    const answers: Array<Record<string, string>> = [
+      {},
+      { 'x-teamstation-revision': '4' }
+    ]
+    const read = await Promise.all(
+      answers.map(async headers => {
+        const client = new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: async () => new Response('[]', { status: 200, headers })
+        })
+        return { teams: await client.teams(), client }
+      })
+    )
+    expect(read[1].teams).deep.equals(read[0].teams).deep.equals([])
+    expect('revisionFor' in read[1].client).equals(false)
+  })
+
   it('refuses a response of the wrong shape rather than passing it on', async function () {
     const { fetch } = stubFetch(200, [{ id: 'tem_1' }])
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
@@ -2500,6 +2519,17 @@ describe('api client', function () {
       plays: [],
       currentPlay: null
     })
+    // The teams whose players' halves the read carries, when there are any.
+    const managing = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { plays: [], halves: ['tem_home'] }).fetch
+    })
+    expect((await managing.gameEvents('g')).halves).deep.equals(['tem_home'])
+    const nobody = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { plays: [], halves: [] }).fetch
+    })
+    expect(await nobody.gameEvents('g')).not.to.have.property('halves')
   })
 
   it('scores into a game live, naming TeamStation and only what changed', async function () {
@@ -2507,6 +2537,10 @@ describe('api client', function () {
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     await client.saveGameEvents('gam_1', { plays: [], remove: [3] })
     expect(calls[0].method).equals('POST')
+    // Only what it wrote is asked for back.
+    expect(calls[0].url).equals(
+      'http://x/api/v1/games/gam_1/events?answer=edits'
+    )
     expect(JSON.parse(calls[0].body!)).deep.equals({
       mode: 'live',
       source: { system: 'teamstation' },
@@ -2569,6 +2603,70 @@ describe('api client', function () {
       plays: [],
       currentPlay: null
     })
+  })
+
+  it('reads a save of either shape for its digests and generation (asPostedEdits)', async function () {
+    const digests = {
+      playsDigest: 'after',
+      priorPlaysDigest: 'found',
+      lineupsDigest: 'lineups',
+      generation: 2
+    }
+    const play = {
+      id: 'evt_1',
+      gameId: 'gam_1',
+      gumbo: { about: { atBatIndex: 0 } }
+    }
+    // A live post's edits (`?answer=edits`), and a whole game (no answer
+    // asked for, or an older server), keep the same four fields.
+    expect(
+      asPostedEdits({
+        edits: [
+          { op: 'put', play },
+          { op: 'remove', atBatIndex: 4 }
+        ],
+        currentPlay: null,
+        ...digests
+      })
+    ).deep.equals(digests)
+    expect(
+      asPostedEdits({ plays: [play], currentPlay: null, ...digests })
+    ).deep.equals(digests)
+    // A mocked server's bare list, and the phone's own copy of a queued
+    // post, carry none, or none that are not null.
+    expect(asPostedEdits({ plays: [play], currentPlay: null })).deep.equals({})
+    expect(
+      asPostedEdits({
+        plays: [],
+        currentPlay: null,
+        playsDigest: null,
+        priorPlaysDigest: null,
+        lineupsDigest: null,
+        generation: null
+      })
+    ).deep.equals({})
+    expect(asPostedEdits({ playsDigest: 'only' })).deep.equals({
+      playsDigest: 'only'
+    })
+    for (const raw of [null, 'plays', 3, undefined])
+      expect(() => asPostedEdits(raw), String(raw)).to.throw(TypeError)
+    expect(() => asPostedEdits({ generation: 'two' })).to.throw(TypeError)
+
+    // `saveGameEvents` answers what it reads of either.
+    const edits = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { edits: [], currentPlay: null, ...digests }).fetch
+    })
+    expect(
+      await edits.saveGameEvents('gam_1', { plays: [], remove: [] })
+    ).deep.equals(digests)
+    const bare = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { plays: [play], currentPlay: null }).fetch
+    })
+    expect(
+      await bare.saveGameEvents('gam_1', { plays: [], remove: [] })
+    ).deep.equals({})
   })
 
   it('reads sacrifice bunts on a batting line, and none from an older server', async function () {

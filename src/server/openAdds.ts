@@ -1,6 +1,7 @@
 import { type Kysely, sql, type SqlBool } from 'kysely'
 
 import type { OnePerson } from './admin/people'
+import { anyOf } from './db/anyOf'
 import type { Database } from './db/database'
 
 /**
@@ -10,13 +11,15 @@ import type { Database } from './db/database'
  */
 
 /** However deep a chain of merges can go, as `onePerson` walks it. */
-const MAX_MERGE_DEPTH = 16
+/** However deep a chain of merges can sensibly go before it is a mistake. */
+export const MAX_MERGE_DEPTH = 16
 
 /**
- * `onePerson` for several rows at once, in one query: each row asked about,
- * keyed by itself, as the open row it is now and every row closed into that
- * one. Walks the merges the way `onePerson` does: up to whoever is still open,
- * stopping at a loop or after `MAX_MERGE_DEPTH` steps, then back down.
+ * Each row asked about, in one query, keyed by itself, as the open row it is
+ * now and every row closed into that one. The one walk of merges the server
+ * uses (`onePeople`, `onePerson` and sign-in's `openRowOf` share its limit): up
+ * to whoever is still open, stopping at a loop or after `MAX_MERGE_DEPTH`
+ * steps, then back down.
  */
 export async function peopleOf(
   db: Kysely<Database>,
@@ -86,7 +89,7 @@ async function openHolds(
   db: Kysely<Database>,
   scope: { teamIds: readonly string[] } | { userIds: readonly string[] }
 ): Promise<OpenHold[]> {
-  const asked = 'teamIds' in scope ? scope.teamIds : scope.userIds
+  const asked = [...new Set('teamIds' in scope ? scope.teamIds : scope.userIds)]
   if (asked.length === 0) return []
   const rows = await db
     .selectFrom('group_requests')
@@ -113,12 +116,14 @@ async function openHolds(
     .where('group_requests.status', '=', 'applied')
     .where('group_requests.expires_at', '>', new Date())
     .where(sql<string>`group_requests.terms->>'mode'`, '=', 'roster')
+    // One array parameter: a team's lent players can outnumber a
+    // statement's 65535.
     .where(
       'teamIds' in scope
         ? sql.ref<string>('group_requests.initiating_team_id')
         : sql<string>`group_requests.terms->>'userId'`,
-      'in',
-      [...asked]
+      '=',
+      anyOf(asked)
     )
     .execute()
   const standing = rows.filter(
@@ -143,8 +148,8 @@ async function openHolds(
           .where(sql<string>`terms->>'mode'`, '=', 'roster')
           .where(
             'initiating_team_id',
-            'in',
-            standing.map(row => row.teamId!)
+            '=',
+            anyOf([...new Set(standing.map(row => row.teamId!))])
           )
           .execute()
   return standing.flatMap(row => {

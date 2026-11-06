@@ -18,7 +18,8 @@ const idOf = (value: unknown): number | null => {
   return typeof id === 'number' ? id : null
 }
 
-async function gamePlays(
+/** A game's plays in order: one read serves both of a box score's orders. */
+export async function gamePlays(
   db: Kysely<Database>,
   gameId: string
 ): Promise<GumboPlay[]> {
@@ -59,26 +60,30 @@ async function standsFor(
   )
 }
 
-/** Stored first appearances, with a play fallback while old rows rebuild. */
+/**
+ * Stored first appearances, with a play fallback while old rows rebuild. The
+ * fallback reads the game's plays unless the caller has read them already.
+ */
 export async function boxScoreOrder(
   db: Kysely<Database>,
   gameId: string,
-  lines: BattingLine[]
+  lines: BattingLine[],
+  plays?: GumboPlay[]
 ): Promise<BattingLine[]> {
   const first = new Map<string, number>()
   for (const line of lines)
     if (line.firstPa != null) first.set(line.userId, line.firstPa)
   if (lines.some(line => line.firstPa == null)) {
-    const plays = (await gamePlays(db, gameId)).filter(
+    const appearances = (plays ?? (await gamePlays(db, gameId))).filter(
       play => eventTypeCounts(play.result.eventType)?.pa === true
     )
-    const ids = plays.flatMap(play =>
+    const ids = appearances.flatMap(play =>
       typeof play.matchup?.batter?.id === 'number'
         ? [play.matchup.batter.id]
         : []
     )
     const survivors = await scoringUsers(db, ids)
-    for (const play of plays) {
+    for (const play of appearances) {
       const id = play.matchup?.batter?.id
       if (typeof id !== 'number') continue
       const survivor = survivors.get(id)!
@@ -135,14 +140,15 @@ export function pitchersInOrder(plays: GumboPlay[]): number[] {
 /**
  * Pitchers in the order they pitched, first pitcher at the top. A pitcher the
  * plays never put on the mound keeps the old order after them: most outs
- * first.
+ * first. The plays are read here unless the caller has read them already.
  */
 export async function pitchingOrder(
   db: Kysely<Database>,
   gameId: string,
-  lines: PitchingLine[]
+  lines: PitchingLine[],
+  plays?: GumboPlay[]
 ): Promise<PitchingLine[]> {
-  const appeared = pitchersInOrder(await gamePlays(db, gameId))
+  const appeared = pitchersInOrder(plays ?? (await gamePlays(db, gameId)))
   const users = await scoringUsers(db, appeared)
   const rank = new Map<string, number>()
   appeared.forEach((id, index) => {

@@ -51,19 +51,55 @@ class FakeChanges implements GameChanges {
     await settle()
   }
 
-  /** A `plays` notice; with no digest, as an older server sends it. */
+  /**
+   * A `playEdits` notice leaving the plays at `digest`; with none, one that
+   * says only to read the game again.
+   */
   async plays(digest?: string): Promise<void> {
-    const data: Omit<GameChangeData['plays'], 'digest'> = {
-      plays: [],
-      currentPlay: null,
-      ...(digest == null ? {} : { digest })
-    }
+    const data: GameChangeData['playEdits'] =
+      digest == null
+        ? {
+            generation: 0,
+            fromDigest: null,
+            digest: null,
+            namesDigest: null,
+            edits: null
+          }
+        : {
+            generation: 0,
+            fromDigest: 'before',
+            digest,
+            namesDigest: 'names',
+            edits: [],
+            currentPlay: null
+          }
     await this.emit({
       type: 'change',
       gameId: 'g1',
-      kind: 'plays',
+      kind: 'playEdits',
       at: '2026-10-12T12:00:00Z',
-      data: data as GameChangeData['plays']
+      data
+    })
+  }
+
+  /**
+   * A `playEdits` notice saying to read the game again, naming the digest a
+   * post left, as a post bringing in a newcomer sends: with none, as other
+   * writers send.
+   */
+  async reread(digest?: string): Promise<void> {
+    await this.emit({
+      type: 'change',
+      gameId: 'g1',
+      kind: 'playEdits',
+      at: '2026-10-12T12:00:00Z',
+      data: {
+        generation: 0,
+        fromDigest: null,
+        digest: digest ?? null,
+        namesDigest: null,
+        edits: null
+      }
     })
   }
 
@@ -154,7 +190,8 @@ async function scoring(
       if (lineups != null && change.lineupsBase !== lineups.value)
         throw new HttpError('conflict', 'The lineups changed', { stale: true })
       const prior = digestOf(await load(gameId))
-      const saved = await save(gameId, change)
+      // The memory store answers the whole game it keeps.
+      const saved = (await save(gameId, change)) as StoredGame
       return {
         ...saved,
         playsDigest: digestOf(saved),
@@ -435,6 +472,20 @@ describe('the scoring screen on the game socket', function () {
     expect(document.body.textContent).includes('2 balls 1 strikes')
     await changes.lineups('elsewhere')
     expect(reloads).deep.equals([false, false])
+  })
+
+  it('passes over its own post’s re-read echo, which names the digest it wrote, as when the post brought in a newcomer', async function () {
+    const { changes, store, reloads } = await scoring({
+      lineups: { value: 'd0' }
+    })
+    await click('Ball')
+    await settle()
+    const echo = (await store.load('g1')).playsDigest!
+    await changes.reread(echo)
+    expect(reloads).deep.equals([])
+    // One naming no digest is read, as another writer's.
+    await changes.reread()
+    expect(reloads).deep.equals([false])
   })
 
   it('reads in after a save that found another device’s plays, even on its own echo', async function () {

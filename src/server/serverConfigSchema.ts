@@ -4,7 +4,8 @@ import {
   asNumber,
   asObject,
   asOptional,
-  asString
+  asString,
+  asValue
 } from 'cleaners'
 
 import { asHttpsUrl } from '../common/distribution'
@@ -47,11 +48,70 @@ export const asServerConfig = asObject({
    */
   statsBuilder: asOptional(asBoolean, true),
 
+  /**
+   * Whether this node's primary runs the purges, the key sweep, the hourly
+   * sweep that finishes discards, the warnings of expiring local copies, the
+   * reopening of interrupted uploads, the chat reconciler and the stats
+   * builder (which `statsBuilder` then still governs). True on exactly one
+   * node, false on the others. The relay is not among them: each API primary
+   * is a candidate.
+   *
+   * These act on the disk of the node they run on, so a second API node needs
+   * ownership first. A Director upload's parts are on the node that received
+   * it, and reopening has no owner filter: a node with this off leaves its own
+   * interrupted uploads `assembling`, and the jobs node's restart could reopen
+   * another node's. The discard sweep deletes part folders from its own node's
+   * uploads, so a discard's parts on another node are marked done and left
+   * behind. Chat attachment and replaced-recording purges have the same limit.
+   */
+  backgroundJobs: asOptional(asBoolean, true),
+
   /** Postgres for TeamStation's own data. */
   databaseUrl: asOptional(
     asString,
     'postgres://localhost:5432/teamstation_dev'
   ),
+
+  /**
+   * A transaction-mode connection pooler in front of the same database, which
+   * request traffic goes through. Empty means `databaseUrl`, so a deployment
+   * without a pooler connects directly. `LISTEN` and migrations never use it.
+   */
+  databasePoolUrl: asOptional(asString, ''),
+
+  /**
+   * How a process hears the server's notices. `postgres` holds a direct
+   * connection in every process. `valkey` holds one, in one elected API
+   * primary, which republishes to Valkey for the rest.
+   */
+  changeFeed: asOptional(asValue('postgres', 'valkey'), 'postgres'),
+
+  /**
+   * The oldest game socket protocol (`GAME_SOCKET_PROTOCOL`) a game or scope
+   * subscribe may name. An app that sends an older one, or none, is told to
+   * update, and follows no game live and no screen's notices.
+   */
+  gameSocketMinimumProtocol: asOptional(asNumber, 3),
+
+  /** How many connections each kind of process keeps in its pool. */
+  databasePoolSizes: asOptional(
+    asObject({
+      worker: asOptional(asNumber, 10),
+      primary: asOptional(asNumber, 3),
+      statsBuilder: asOptional(asNumber, 3),
+      ingest: asOptional(asNumber, 3)
+    }),
+    () => ({ worker: 10, primary: 3, statsBuilder: 3, ingest: 3 })
+  ),
+
+  /**
+   * Whether each process times the first statement of every checkout from its
+   * pool, which is where a transaction-mode pooler hands out a server
+   * connection, and logs a `db-wait` line of those times once a minute. Each
+   * time is that statement's round trip: the pooler's wait and the
+   * statement's execution, not Node's own queue for a pool client.
+   */
+  logDatabaseWait: asOptional(asBoolean, false),
 
   /**
    * PeerTube's database, read-only, used only by the importer. Empty when

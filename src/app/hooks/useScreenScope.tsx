@@ -7,16 +7,17 @@ import React, {
   useRef
 } from 'react'
 
-import type { RevisionRead } from '../../common/api'
 import type {
   ScreenScope,
   ScreenScopeEvent,
   ScreenScopeListener
 } from '../../common/gameSocket'
 import {
-  type RevisionCollecting,
+  type ScreenScopeClient,
   ScreenScopeGate,
-  type ScreenScopeSocket
+  type ScreenScopeNotice,
+  type ScreenScopeSocket,
+  type ScreenScopeTimers
 } from '../../common/screenScope'
 import { useSceneShown } from '../components/sceneShown'
 
@@ -43,8 +44,8 @@ interface Shared {
  * The visible screen's one scope, held for each of the loads on it.
  *
  * A socket holds one scope, and a subscribe to another replaces it. Home has
- * three loads (its lists, the recent game, what is live), each with its own
- * revision, so each has its own gate; they share the one subscription here.
+ * three loads (its lists, the recent game, what is live), each read on its
+ * own, so each has its own gate; they share the one subscription here.
  * A load that joins a scope already answered hears that answer, after the
  * call that joined it returns, as the gate expects of a socket.
  */
@@ -111,6 +112,8 @@ export class SharedScreenScope implements ScreenScopeSocket {
 export interface ScreenScopeValue {
   socket?: ScreenScopeSocket
   scope?: ScreenScope
+  /** The clock the loads' gates time their reads by: the platform's unless given. */
+  timers?: ScreenScopeTimers
 }
 
 const ScreenScopeContext = createContext<ScreenScopeValue>({})
@@ -141,6 +144,8 @@ export interface ScreenScopeProviderProps {
   socket?: ScreenScopeSocket
   /** The visible screen's scope; none for a screen that takes none. */
   scope?: ScreenScope
+  /** For a test's clock; the platform's timers unless given. */
+  timers?: ScreenScopeTimers
   children?: React.ReactNode
 }
 
@@ -152,7 +157,7 @@ export interface ScreenScopeProviderProps {
 export function ScreenScopeProvider(
   props: ScreenScopeProviderProps
 ): React.ReactElement {
-  const { socket, children } = props
+  const { socket, timers, children } = props
   const shared = useMemo(
     () => (socket == null ? undefined : new SharedScreenScope(socket)),
     [socket]
@@ -166,7 +171,10 @@ export function ScreenScopeProvider(
     if (shared == null || scope == null) return
     return shared.subscribeScope(scope, () => undefined)
   }, [shared, scope])
-  const value = useMemo(() => ({ socket: shared, scope }), [shared, scope])
+  const value = useMemo(
+    () => ({ socket: shared, scope, timers }),
+    [shared, scope, timers]
+  )
   return (
     <ScreenScopeContext.Provider value={value}>
       {children}
@@ -174,34 +182,20 @@ export function ScreenScopeProvider(
   )
 }
 
-/** What a screen's load reads through, as far as the gate is concerned. */
-type ScopeClient = Partial<RevisionCollecting>
-
-function collectingOf(client: ScopeClient | undefined): RevisionCollecting {
-  return {
-    get offline() {
-      return client?.offline === true
-    },
-    collectRevisions: (collector: RevisionRead[]) => {
-      client?.collectRevisions?.(collector)
-    },
-    stopCollecting: (collector: RevisionRead[]) => {
-      client?.stopCollecting?.(collector)
-    }
-  }
-}
-
 /**
  * Runs one of the visible screen's loads when its scope allows. With
  * `passGameNotices`, a home or schedule notice that names one game alone does
- * not run it: a list of teams and seasons shows no game.
+ * not run it: a list of teams and seasons shows no game. Nor does a notice
+ * `passes` lets go: a game's screen lets its own game's notice from a post
+ * (`byPost`) pass, since that post's play frames already read it.
  *
  * Returns the function the screen calls wherever it called `load` before:
  * from `useForegroundRefresh`, a timer, or a socket's game frame. While
  * online with a socket, the first call holds the screen's scope and the
  * load waits for the server's `subscribed` (or three seconds); a later
- * `changed` newer than what the load read runs it again. With no socket, no
- * scope, or the client offline, a call runs the load at once.
+ * `changed` runs it again at once, or, within `COALESCE_MS` of the last
+ * read, once that much has passed. With no socket, no scope, or the client
+ * offline, a call runs the load at once.
  *
  * `paint`, when given, runs first each time the screen enters its scope,
  * before any wait: it shows what the phone has stored (`client.cached`), so
@@ -215,15 +209,19 @@ function collectingOf(client: ScopeClient | undefined): RevisionCollecting {
  */
 export function useScreenScope(
   load: () => Promise<void>,
-  client?: ScopeClient,
+  client?: ScreenScopeClient,
   paint?: () => Promise<void>,
   options: {
     /** The load shows no games: a notice of one game alone reads nothing. */
     passGameNotices?: boolean
+    /** A notice the load has read already by another way: it reads nothing. */
+    passes?: (notice: ScreenScopeNotice) => boolean
   } = {}
 ): ScreenScopeRead {
   const passGameNotices = options.passGameNotices === true
-  const { socket, scope } = useContext(ScreenScopeContext)
+  const latestPasses = useRef(options.passes)
+  latestPasses.current = options.passes
+  const { socket, scope, timers } = useContext(ScreenScopeContext)
   const latest = useRef(load)
   latest.current = load
   const latestPaint = useRef(paint)
@@ -237,14 +235,17 @@ export function useScreenScope(
           await latest.current()
         },
         socket,
-        client: collectingOf(client),
+        client,
         // Covered, a screen reads nothing a notice names: it reads as it is
         // shown again, and the top may take no scope of its own to supersede
         // this one.
-        passes: (notice: { gameId?: string }) =>
-          !shownNow.current || (passGameNotices && notice.gameId != null)
+        passes: (notice: ScreenScopeNotice) =>
+          !shownNow.current ||
+          (passGameNotices && notice.gameId != null) ||
+          latestPasses.current?.(notice) === true,
+        ...timers
       }),
-    [socket, client, passGameNotices]
+    [socket, client, passGameNotices, timers]
   )
   /** The gate and scope this render's function may act on, once mounted. */
   const live = useRef<
@@ -292,7 +293,7 @@ export function useScreenScope(
 /**
  * The function `useScreenScope` hands back: the load, when the scope allows,
  * and `alongside` for a read the screen makes by another way (a game's play
- * frame), whose answer then counts for the scope's notice of the same commit.
+ * frame), which counts as a read for the scope's notices.
  */
 export type ScreenScopeRead = (() => Promise<void>) & {
   alongside: (read: () => Promise<void>) => Promise<void>

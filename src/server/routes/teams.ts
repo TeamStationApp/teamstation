@@ -30,6 +30,7 @@ import {
   visibleScopes
 } from '../access'
 import { onePerson } from '../admin/people'
+import type { ValkeyCache } from '../cache/valkeyCache'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
@@ -82,14 +83,13 @@ import {
   statisticsQuery
 } from '../scoring/gameStatistics'
 import { highlightSettings } from '../settings'
-import { withRevision, withRevisionThen } from '../socket/syncRevision'
 import {
   battingLines,
   battingRates,
   pitchingLines,
   pitchingRates
 } from '../stats'
-import { boxScoreOrder, pitchingOrder } from '../stats/boxScoreOrder'
+import { boxScoreOrder, gamePlays, pitchingOrder } from '../stats/boxScoreOrder'
 import { teamRecords } from '../stats/records'
 import { statRows } from '../stats/rows'
 import { gameStatsStatus } from '../statsBuilder/status'
@@ -137,14 +137,16 @@ function kindAsked(asked: unknown): TeamKindAsked {
 export function teamRoutes(
   db: Kysely<Database>,
   media: MediaContext,
-  store?: ScoreboardStore
+  store?: ScoreboardStore,
+  /** Where team rosters' cores are kept, outside write transactions. */
+  rosterCache?: ValkeyCache
 ): Router {
   const router = Router()
 
   router.get(
     '/teams',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       if (hasVideoFilter(req.query)) {
@@ -566,16 +568,14 @@ export function teamRoutes(
 
   router.get(
     '/games/:gameId',
-    // The scoreboard is asked of Redis after the reads have committed, so
-    // the transaction does not hold a connection through that call.
-    withRevisionThen(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       const gameId = pathParam(req.params.gameId)
       const event =
         actor == null ? null : await teamEventDetail(db, actor, gameId)
       if (event != null) {
         res.json(event)
-        return async () => undefined
+        return
       }
       const scopes =
         actor == null
@@ -699,7 +699,9 @@ export function teamRoutes(
         actor == null || nonMemberView
           ? undefined
           : await givenRolesOnTeams(db, [game.away_team_id, game.home_team_id])
-      const availability = await gameAvailability(db, game)
+      const availability = await gameAvailability(db, game, {
+        roster: false
+      })
       const answer = {
         id: game.id,
         umpires: await gameUmpires(db, game.id, media),
@@ -809,15 +811,13 @@ export function teamRoutes(
           codecs: video.codecs
         }))
       }
-      return async () => {
-        if (!nonMemberView)
-          answer.scoreboard = await scoreboardOf(store, mayOverride, {
-            startAt: new Date(game.start_at).getTime(),
-            status: game.status,
-            gameId
-          })
-        res.json(answer)
-      }
+      if (!nonMemberView)
+        answer.scoreboard = await scoreboardOf(store, mayOverride, {
+          startAt: new Date(game.start_at).getTime(),
+          status: game.status,
+          gameId
+        })
+      res.json(answer)
     })
   )
 
@@ -983,7 +983,7 @@ export function teamRoutes(
   router.get(
     '/teams/:teamId/roster',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
@@ -1001,13 +1001,27 @@ export function teamRoutes(
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       if (canSeeTeam(scopes, teamId)) {
         res.json(
-          await teamRoster(db, media.space, teamId, fullNames === 'true', actor)
+          await teamRoster(
+            db,
+            media.space,
+            teamId,
+            fullNames === 'true',
+            actor,
+            rosterCache
+          )
         )
         return
       }
       if (!(await nonMemberTeam(db, actor, scopes, teamId))) throw notFound()
       // Staff imagery is public; other people's faces and family links are not.
-      const roster = await teamRoster(db, media.space, teamId, false, actor)
+      const roster = await teamRoster(
+        db,
+        media.space,
+        teamId,
+        false,
+        actor,
+        rosterCache
+      )
       res.json(
         roster.map(entry => ({
           ...entry,
@@ -1154,8 +1168,12 @@ export function teamRoutes(
         gumboIds.set(row.userId, ids)
       }
 
+      // The pitchers' order always needs the game's plays, and the batters'
+      // order needs them while a line has no first appearance: one read
+      // serves both.
+      const plays = await gamePlays(db, gameId)
       const pitching = (
-        await pitchingOrder(db, gameId, pitchingLines(rows))
+        await pitchingOrder(db, gameId, pitchingLines(rows), plays)
       ).map(line => ({
         ...line,
         userId: publicUserId(line.userId),
@@ -1165,7 +1183,7 @@ export function teamRoutes(
         ip: inningsPitched(line.outs),
         rates: pitchingRates(line)
       }))
-      const lines = await boxScoreOrder(db, gameId, battingLines(rows))
+      const lines = await boxScoreOrder(db, gameId, battingLines(rows), plays)
       // The batter a withdrawn line stands in for in this game, so an order
       // that still names him shows the line, not his name beside it. The
       // game's plays name him already.

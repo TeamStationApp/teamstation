@@ -20,7 +20,7 @@ import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { posterSecond, posterUrl } from '../media/posters'
 import { requireActor } from '../middleware/withAuth'
-import { withRevision } from '../socket/syncRevision'
+import { withAsync } from '../middleware/withErrors'
 import {
   type ScheduleFilter,
   scheduleOf,
@@ -133,7 +133,7 @@ export function eventListRoutes(
   router.get(
     '/events',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       // A paged list's `hasVideo` is one of its filters, read below with the

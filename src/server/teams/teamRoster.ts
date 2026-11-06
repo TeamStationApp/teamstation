@@ -20,12 +20,14 @@ import {
   teamsUnder
 } from '../access'
 import { onePerson } from '../admin/people'
+import type { ValkeyCache } from '../cache/valkeyCache'
+import { anyOf } from '../db/anyOf'
 import type { Database } from '../db/database'
 import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
 import { heldAt } from '../invites/grants'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
-import { teamWalkUpSongs } from '../routes/walkUpSongs'
+import { gumboIdsOf, teamRosterCore } from './rosterCore'
 import { teamHeadCoach } from './teamHeadCoach'
 
 /**
@@ -77,28 +79,15 @@ export async function teamRoster(
   teamId: string,
   includeFullNames = false,
   /** Who reads it, so a hold holds only against those it keeps out. */
-  viewer?: { userId: string; isAdmin: boolean }
+  viewer?: { userId: string; isAdmin: boolean },
+  /**
+   * Where the team's core may be read from and kept (`teamRosterCore`). Not
+   * inside a write transaction.
+   */
+  cache?: ValkeyCache
 ): Promise<RosterEntry[]> {
-  const members = await db
-    .selectFrom('memberships')
-    .innerJoin('users', 'users.id', 'memberships.user_id')
-    .select([
-      'memberships.user_id as userId',
-      'users.display_name as displayName',
-      'users.first_name as firstName',
-      'users.last_name as lastName',
-      'users.bats as bats',
-      'users.throws as throws',
-      'users.avatar_path as avatarPath',
-      'memberships.jersey as jersey',
-      'memberships.positions as positions',
-      'memberships.is_player as isPlayer',
-      'memberships.role as role'
-    ])
-    .where('memberships.team_id', '=', teamId)
-    .where('users.merged_into', 'is', null)
-    .orderBy('users.display_name')
-    .execute()
+  const core = await teamRosterCore(db, teamId, cache)
+  const members = core.members
 
   // The seasons and leagues above the team, read once for its roles and its
   // members both.
@@ -125,35 +114,31 @@ export async function teamRoster(
       .map(row => row.userId)
   )
   const followers = await followersOf(db, teamId)
-
-  return await sectionPeople(
+  const others = await outsiders(
     db,
-    space,
-    [
-      ...members,
-      ...(await outsiders(
-        db,
-        [
-          ...given.keys(),
-          ...memberLevels.keys(),
-          ...family.keys(),
-          ...followers
-        ],
-        new Set(members.map(row => row.userId))
-      ))
-    ],
-    {
-      openAdds: open,
-      ownLevel: 'team',
-      given,
-      memberLevels,
-      family,
-      songs: await teamWalkUpSongs(db, teamId),
-      teamId,
-      includeFullNames,
-      selfIds: await viewerIds(db, viewer)
-    }
+    [...given.keys(), ...memberLevels.keys(), ...family.keys(), ...followers],
+    new Set(members.map(row => row.userId))
   )
+  // The members' gumbo ids are the core's; everybody else's are read here.
+  const gumboIds = new Map(core.gumboIds)
+  for (const [userId, gumboId] of await gumboIdsOf(
+    db,
+    others.map(row => row.userId)
+  ))
+    gumboIds.set(userId, gumboId)
+
+  return await sectionPeople(db, space, [...members, ...others], {
+    openAdds: open,
+    ownLevel: 'team',
+    given,
+    memberLevels,
+    family,
+    songs: new Map(core.songs),
+    gumboIds,
+    teamId,
+    includeFullNames,
+    selfIds: await viewerIds(db, viewer)
+  })
 }
 
 /**
@@ -308,7 +293,8 @@ export async function peopleAt(
   db: Kysely<Database>,
   space: MediaContext['space'] | undefined,
   ref: { kind: 'league' | 'season' | 'team'; id: string },
-  viewer?: { userId: string; isAdmin: boolean }
+  viewer?: { userId: string; isAdmin: boolean },
+  cache?: ValkeyCache
 ): Promise<RosterEntry[] | undefined> {
   if (ref.kind !== 'team')
     return await levelPeople(db, space, { kind: ref.kind, id: ref.id }, viewer)
@@ -320,7 +306,7 @@ export async function peopleAt(
     .executeTakeFirst()
   return team == null
     ? undefined
-    : await teamRoster(db, space, ref.id, false, viewer)
+    : await teamRoster(db, space, ref.id, false, viewer, cache)
 }
 
 /** Whether somebody is on a level's people list, in any section. */
@@ -459,7 +445,7 @@ async function outsiders(
       'throws',
       'avatar_path as avatarPath'
     ])
-    .where('id', 'in', ids)
+    .where('id', '=', anyOf(ids))
     .where('merged_into', 'is', null)
     .where('disabled_at', 'is', null)
     .orderBy('display_name')
@@ -493,6 +479,8 @@ async function sectionPeople(
     /** Who the team holds only through an add that may yet be rejected. */
     openAdds?: ReadonlySet<string>
     songs?: Map<string, WalkUpSong>
+    /** Everybody's gumbo ids, when the caller has them; read here if not. */
+    gumboIds?: Map<string, number>
     /** The team these people are shown on: a roster's, not a level's list. */
     teamId?: string
     /**
@@ -506,19 +494,12 @@ async function sectionPeople(
 ): Promise<RosterEntry[]> {
   const headCoach =
     facts.teamId == null ? undefined : await teamHeadCoach(db, facts.teamId)
-  const mappings =
-    rows.length === 0
-      ? []
-      : await db
-          .selectFrom('gumbo_ids')
-          .selectAll()
-          .where(
-            'user_id',
-            'in',
-            rows.map(row => row.userId)
-          )
-          .execute()
-  const gumboIds = new Map(mappings.map(row => [row.user_id, row.gumbo_id]))
+  const gumboIds =
+    facts.gumboIds ??
+    (await gumboIdsOf(
+      db,
+      rows.map(row => row.userId)
+    ))
   const { ownLevel, given, memberLevels, family, songs, includeFullNames } =
     facts
   // Worked out across the whole list so two children called Jordan do not

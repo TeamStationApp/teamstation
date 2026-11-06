@@ -68,6 +68,7 @@ import {
   roleScopes,
   visibleScopes
 } from '../access'
+import type { ValkeyCache } from '../cache/valkeyCache'
 import type { Database } from '../db/database'
 import {
   type Answer,
@@ -91,7 +92,10 @@ import {
   createGuestPlayer,
   renameGuestPlayer
 } from '../games/guestPlayers'
-import { gameAvailability } from '../games/rosterAvailability'
+import {
+  type GameAvailability,
+  gameAvailability
+} from '../games/rosterAvailability'
 import { setRostered } from '../games/unroster'
 import { publicNames } from '../groups/playerNamePrivacy'
 import { cleanBody } from '../jsonBody'
@@ -101,7 +105,6 @@ import { withAsync } from '../middleware/withErrors'
 import { scoringUsers } from '../scoring/gumboIds'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
-import { withRevision } from '../socket/syncRevision'
 import { tellGameWritten } from './gameWritten'
 import { teamWalkUpSongs } from './walkUpSongs'
 
@@ -119,6 +122,11 @@ export interface LineupRouteOptions {
    * where a test posts a scorer's play, as one arriving mid-save would.
    */
   beforeSave?: (gameId: string) => Promise<void>
+  /**
+   * Where a save's live post, and an unroster's, leaves the game socket's
+   * frame of its edits.
+   */
+  cache?: ValkeyCache
   /**
    * Called once a save has committed, before its answer is read: where a test
    * saves another device's change, as one landing in between would.
@@ -189,7 +197,7 @@ export function lineupRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asUnrosterBody, req.body)
-      res.json(await setRostered(db, actor, gameId, body))
+      res.json(await setRostered(db, actor, gameId, body, options.cache))
       tellGameWritten(options.onGameWritten, gameId)
     })
   )
@@ -275,7 +283,7 @@ export function lineupRoutes(
   router.get(
     '/teams/:teamId/default-lineup',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
@@ -297,7 +305,7 @@ export function lineupRoutes(
   router.get(
     '/games/:gameId/lineups',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
@@ -588,7 +596,11 @@ async function saveSide(
       const context =
         (await contextOf(trx, gameId, game, stored)) ??
         (await startingContext(trx, gameId, game, sees))
-      const availability = await gameAvailability(trx, { id: gameId, ...game })
+      const availability = await gameAvailability(
+        trx,
+        { id: gameId, ...game },
+        { roster: true }
+      )
       return {
         stored,
         context,
@@ -652,7 +664,12 @@ async function saveSide(
                   resultId: posted.lineupsDigest ?? read.digest
                 })
               },
-          { expectedGeneration: body.generation }
+          // The replay reads every play the post leaves.
+          {
+            expectedGeneration: body.generation,
+            answer: 'all',
+            cache: options.cache
+          }
         )
         // A live post always keeps one.
         wrote = posted.lineupsDigest ?? read.digest
@@ -731,7 +748,7 @@ export async function startingContext(
     .selectAll()
     .where('id', '=', gameId)
     .executeTakeFirstOrThrow()
-  const availability = await gameAvailability(db, gameRow)
+  const availability = await gameAvailability(db, gameRow, { roster: true })
   const rows = await db
     .selectFrom('teams')
     .select(['id', 'name', 'logo_path', 'default_lineup'])
@@ -829,7 +846,7 @@ function sideActions(
   held: boolean,
   roster: readonly RosterEntry[],
   guests: readonly number[],
-  availability: Awaited<ReturnType<typeof gameAvailability>>
+  availability: GameAvailability<true>
 ): ScoringAction[] {
   // Who this side fields, read as the app reads it to build this body: with
   // the setup and who has played, or no body could ever be saved.

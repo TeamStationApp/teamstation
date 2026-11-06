@@ -1,7 +1,7 @@
 import type { IncomingMessage, Server } from 'node:http'
 import type { Duplex } from 'node:stream'
 
-import { asEither, asObject, asOptional, asString } from 'cleaners'
+import { asEither, asNumber, asObject, asOptional, asString } from 'cleaners'
 import type { Kysely } from 'kysely'
 import { type RawData, type WebSocket, WebSocketServer } from 'ws'
 
@@ -16,12 +16,20 @@ import {
   canSeeGame,
   type GameScope,
   type VisibleScopes,
-  visibleScopes
+  visibleScopes,
+  visibleScopesForUsers
 } from '../access'
-import { type Actor, actorForToken, keyAllows } from '../auth/sessions'
+import {
+  type Actor,
+  actorForToken,
+  actorsForTokens,
+  keyAllows
+} from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
+import type { ChangeFeed } from '../changeFeed/feed'
+import { PostgresFeed } from '../changeFeed/postgresFeed'
 import { mayPost, type PostingStanding } from '../chat/messages'
-import type { Database } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
 import {
   ChatFanout,
   type ChatFanoutOptions,
@@ -37,7 +45,8 @@ import {
   ScreenScopeListener,
   type ScreenScopeListenerOptions
 } from './screenScope'
-import { readSyncClock, type ScreenScopePayload } from './syncRevision'
+import { RESYNC_SPREAD_MS, SCREEN_NOTICE_SPREAD_MS, spread } from './spread'
+import type { ScreenScopePayload } from './syncRevision'
 
 /** The one path the socket answers on. */
 export const SOCKET_PATH = '/socket'
@@ -60,12 +69,29 @@ export interface GameSocketOptions {
    * for none.
    */
   stopSignals?: NodeJS.EventEmitter | null
-  fanout?: Omit<GameFanoutOptions, 'db' | 'databaseUrl' | 'onLost'>
+  /**
+   * The process's feed, which stays open when the socket closes. Without it
+   * the socket builds and owns a `PostgresFeed` on its `databaseUrl`.
+   */
+  feed?: ChangeFeed
+  /**
+   * The window a resync's 1012 closes and `resync` frames are spread over, so
+   * thousands of clients do not read again at the same instant.
+   * `RESYNC_SPREAD_MS` unless given; 0 acts at once.
+   */
+  resyncSpreadMs?: number
+  /**
+   * The window one screen notice's `changed` frames are spread over, so the
+   * screens following a scope do not all read at the same instant.
+   * `SCREEN_NOTICE_SPREAD_MS` unless given; 0 tells at once.
+   */
+  screenNoticeSpreadMs?: number
+  fanout?: Omit<GameFanoutOptions, 'db' | 'feed' | 'authorize' | 'onResync'>
   screenScopes?: Omit<
     ScreenScopeListenerOptions,
-    'databaseUrl' | 'deliver' | 'onResync'
+    'feed' | 'deliver' | 'onResync'
   >
-  chat?: Omit<ChatFanoutOptions, 'db' | 'databaseUrl'>
+  chat?: Omit<ChatFanoutOptions, 'db' | 'feed' | 'resyncSpreadMs'>
   /**
    * Wraps each typing hint's check, which `check` runs. For tests, to make
    * it fail; the check itself unless given.
@@ -74,6 +100,12 @@ export interface GameSocketOptions {
     conversationId: string,
     check: () => Promise<PostingStanding>
   ) => Promise<PostingStanding>
+  /**
+   * The oldest `GAME_SOCKET_PROTOCOL` a game or scope subscribe may name. One
+   * naming an older one, or none, is refused as `forbidden` with the reason
+   * `updateRequired`. 3 unless given.
+   */
+  minimumProtocol?: number
   /** Where a request that failed is reported. `console.error` unless given. */
   log?: (message: string) => void
   /**
@@ -93,6 +125,7 @@ export interface GameSocketOptions {
 }
 
 export interface GameSocketHandle {
+  feed: ChangeFeed
   fanout: GameFanout
   screenScopes: ScreenScopeListener
   chat: ChatFanout
@@ -110,7 +143,9 @@ const asRequest = asEither(
   asObject({
     type: asLiteral('subscribe', 'unsubscribe'),
     gameId: asString,
-    id: asString
+    id: asString,
+    /** A subscribe's `GAME_SOCKET_PROTOCOL`; an app older than it sends none. */
+    protocol: asOptional(asNumber)
   }),
   asObject({ type: asLiteral('ping'), id: asString }),
   asObject({
@@ -129,13 +164,16 @@ const asScopeRequest = asEither(
   asObject({
     type: asLiteral('subscribe'),
     scope: asLiteral('home', 'schedule'),
-    id: asString
+    id: asString,
+    /** As a game subscribe's: an app older than protocol 3 sends none. */
+    protocol: asOptional(asNumber)
   }),
   asObject({
     type: asLiteral('subscribe'),
     scope: asLiteral('event'),
     gameId: asString,
-    id: asString
+    id: asString,
+    protocol: asOptional(asNumber)
   }),
   asObject({
     type: asLiteral('unsubscribe'),
@@ -183,12 +221,69 @@ interface Connection {
   subscriber: FanoutSubscriber
   /** The visible screen's scope, once registered. */
   screen: HeldScreen | undefined
+  /** A spread 1012 close is still to come. */
+  closeDue: boolean
+  /** A spread `resync` frame for the screen is still to come. */
+  screenResyncDue: boolean
   /** The last scope request still being handled; the next waits on it. */
   screenTurn: Promise<void>
   /** Set for a signed-in session: what hears its person's chat hints. */
   chat: ChatSubscriber | undefined
   /** When this socket last sent a typing hint that was looked at. */
   typedAt: number
+}
+
+/** Each frame's bytes, for as long as somebody still holds the frame. */
+const encodedFrames = new WeakMap<GameSocketReply, Buffer>()
+
+/**
+ * A frame as it goes out, made once however many sockets hear it. One delivery
+ * carries a game's whole list of plays to everybody watching it, and encoding
+ * that again for each of them holds the worker up for seconds.
+ */
+function encodedFrame(frame: GameSocketReply): Buffer {
+  let encoded = encodedFrames.get(frame)
+  if (encoded == null) {
+    encoded = Buffer.from(JSON.stringify(frame))
+    encodedFrames.set(frame, encoded)
+  }
+  return encoded
+}
+
+/**
+ * Which of these subscribers may see the game, on the delivery's connection: a
+ * read of their credentials and a set of reads of their scopes, however many
+ * there are. Somebody whose credential no longer answers as them is signed out
+ * and sent nothing. Nobody is sent anything when the reads fail.
+ */
+export async function authorizeSubscribers(
+  subscribers: FanoutSubscriber[],
+  game: GameScope,
+  source: Kysely<Database>,
+  log: (message: string) => void
+): Promise<boolean[]> {
+  if (subscribers.length === 0) return []
+  try {
+    const actors = await actorsForTokens(
+      source,
+      subscribers.map(subscriber => subscriber.token)
+    )
+    const stillThem = (subscriber: FanoutSubscriber): boolean =>
+      actors.get(subscriber.token)?.userId === subscriber.userId
+    const scopes = await visibleScopesForUsers(
+      source,
+      subscribers.filter(stillThem).map(subscriber => subscriber.userId)
+    )
+    return subscribers.map(subscriber => {
+      if (stillThem(subscriber))
+        return canSeeGame(scopes.get(subscriber.userId)!, game)
+      subscriber.signedOut()
+      return false
+    })
+  } catch (error: unknown) {
+    log(`game socket: authorizing a delivery: ${String(error)}`)
+    return subscribers.map(() => false)
+  }
 }
 
 /**
@@ -224,43 +319,96 @@ export function attachGameSocket(
     options.checkGame ?? (async (_gameId, check) => await check())
   const checkTyping =
     options.checkTyping ?? (async (_conversationId, check) => await check())
+  const resyncSpreadMs = options.resyncSpreadMs ?? RESYNC_SPREAD_MS
+  const screenNoticeSpreadMs =
+    options.screenNoticeSpreadMs ?? SCREEN_NOTICE_SPREAD_MS
+  const minimumProtocol = options.minimumProtocol ?? 3
+  /** A resync's closes and frames, and notices' frames, still to come. */
+  const spreadTimers = new Set<ReturnType<typeof setTimeout>>()
   const connections = new Set<Connection>()
   const wss = new WebSocketServer({
     noServer: true,
     maxPayload: MAX_FRAME_BYTES
   })
+  const feed =
+    options.feed ??
+    new PostgresFeed({
+      databaseUrl,
+      log: message => {
+        log(`change feed: ${message}`)
+      }
+    })
+  // Changes went unheard: each client watching a game reconnects and reads
+  // again, at its own moment. One already due goes once. A socket that stopped
+  // watching meanwhile, or left, has nothing to read again.
+  const closeToResync = (targets: Connection[]): void => {
+    const due = targets.filter(connection => !connection.closeDue)
+    for (const connection of due) connection.closeDue = true
+    spread(
+      'resync',
+      due,
+      resyncSpreadMs,
+      connection => {
+        connection.closeDue = false
+        if (connection.games.size > 0)
+          connection.ws.close(1012, 'Changes may have been missed')
+      },
+      spreadTimers
+    )
+  }
+  // Notices went unheard or unsent: each screen subscribes again and reads, at
+  // its own moment. A frame still to come covers whatever is missed before it.
+  const resyncScreens = (targets: Connection[]): void => {
+    const due = targets.filter(
+      connection => connection.screen != null && !connection.screenResyncDue
+    )
+    for (const connection of due) connection.screenResyncDue = true
+    spread(
+      'resync',
+      due,
+      resyncSpreadMs,
+      connection => {
+        connection.screenResyncDue = false
+        if (connection.screen != null) reply(connection, { type: 'resync' })
+      },
+      spreadTimers
+    )
+  }
   const fanout = new GameFanout({
     ...options.fanout,
     db,
-    databaseUrl,
-    // Changes went unheard: every client reconnects and reads again.
-    onLost: () => {
-      for (const connection of connections)
-        connection.ws.close(1012, 'Changes may have been missed')
+    feed,
+    authorize: async (subscribers, game, source) =>
+      await authorizeSubscribers(subscribers, game, source, log),
+    // A socket watching no game has its screen's and chat's own resync.
+    onResync: () => {
+      closeToResync(
+        [...connections].filter(connection => connection.games.size > 0)
+      )
     }
   })
   const screenScopes = new ScreenScopeListener({
     ...options.screenScopes,
-    databaseUrl,
+    feed,
     deliver: async payload => {
       await announce(payload)
     },
-    // Notices went unheard: every screen subscribes again and reads.
     onResync: () => {
-      for (const connection of connections)
-        if (connection.screen != null) reply(connection, { type: 'resync' })
+      resyncScreens([...connections])
     }
   })
-  const chat = new ChatFanout({ ...options.chat, db, databaseUrl })
+  const chat = new ChatFanout({ ...options.chat, db, feed, resyncSpreadMs })
 
-  const scopesOf = async (connection: Connection): Promise<VisibleScopes> => {
-    if (connection.scopes != null && clock() - connection.scopesAt < recheckMs)
-      return connection.scopes
-    connection.reading ??= visibleScopes(
-      db,
-      connection.actor.userId,
-      connection.actor.isAdmin
-    )
+  /** Whether this socket's copy of its person's scopes is still good. */
+  const scopesFresh = (connection: Connection): boolean =>
+    connection.scopes != null && clock() - connection.scopesAt < recheckMs
+
+  /** A read under way for a socket, whose result becomes its copy. */
+  const readingInto = async (
+    connection: Connection,
+    read: Promise<VisibleScopes>
+  ): Promise<VisibleScopes> =>
+    await read
       .then(scopes => {
         connection.scopes = scopes
         connection.scopesAt = clock()
@@ -269,12 +417,39 @@ export function attachGameSocket(
       .finally(() => {
         connection.reading = undefined
       })
+
+  const scopesOf = async (connection: Connection): Promise<VisibleScopes> => {
+    if (scopesFresh(connection)) return connection.scopes!
+    connection.reading ??= readingInto(
+      connection,
+      visibleScopes(db, connection.actor.userId, connection.actor.isAdmin)
+    )
     return await connection.reading
+  }
+
+  /**
+   * Reads the scopes of every one of these sockets whose copy is stale, once
+   * for all their people, so that `scopesOf` then finds each read under way.
+   */
+  const readScopesOf = (concerned: Connection[]): void => {
+    const stale = concerned.filter(
+      connection => !scopesFresh(connection) && connection.reading == null
+    )
+    if (stale.length === 0) return
+    const reading = visibleScopesForUsers(
+      db,
+      stale.map(connection => connection.actor.userId)
+    )
+    for (const connection of stale)
+      connection.reading = readingInto(
+        connection,
+        reading.then(scopes => scopes.get(connection.actor.userId)!)
+      )
   }
 
   const reply = (connection: Connection, frame: GameSocketReply): void => {
     if (connection.ws.readyState !== connection.ws.OPEN) return
-    connection.ws.send(JSON.stringify(frame))
+    connection.ws.send(encodedFrame(frame), { binary: false })
   }
   const refuse = (
     connection: Connection,
@@ -419,17 +594,36 @@ export function attachGameSocket(
     reply(connection, { type: 'unsubscribed', gameId, id })
   }
 
+  /** A subscribe from an app older than the protocol, or naming none. */
+  const outdated = (protocol: number | undefined): boolean =>
+    protocol == null || protocol < minimumProtocol
+
+  const refuseOutdated = (connection: Connection, id: string): void => {
+    reply(connection, {
+      type: 'error',
+      id,
+      code: 'forbidden',
+      reason: 'updateRequired',
+      message: 'Update TeamStation to keep following games.'
+    })
+  }
+
   /**
    * Registers the visible screen's scope, in place of any other, and answers
-   * with the revision it was registered at. Every notice committed after
-   * this reaches the socket, so a read the screen starts on the answer
-   * misses nothing. An event the person cannot see is refused and not held.
+   * once it is held. Every notice committed after this reaches the socket,
+   * so a read the screen starts on the answer misses nothing. An event the
+   * person cannot see is refused and not held, as is any scope from an app
+   * older than the protocol.
    */
   const subscribeScreen = async (
     connection: Connection,
     request: ScopeRequest & { type: 'subscribe' }
   ): Promise<void> => {
     connection.screen = undefined
+    if (outdated(request.protocol)) {
+      refuseOutdated(connection, request.id)
+      return
+    }
     let screen: HeldScreen = { scope: request.scope }
     if (request.scope === 'event') {
       const { gameId } = request
@@ -445,13 +639,10 @@ export function attachGameSocket(
     }
     if (!connections.has(connection)) return
     connection.screen = screen
-    const revision = await readSyncClock(db)
-    if (connection.screen !== screen) return
     reply(connection, {
       type: 'subscribed',
       scope: screen.scope,
-      id: request.id,
-      revision
+      id: request.id
     })
   }
 
@@ -506,23 +697,37 @@ export function attachGameSocket(
    * Nothing else is told: a notice nobody matches is dropped.
    */
   const announce = async (payload: ScreenScopePayload): Promise<void> => {
-    const holding = [...connections].filter(
-      connection => connection.screen != null
+    const asked = [...connections].flatMap(connection =>
+      connection.screen == null
+        ? []
+        : [{ connection, screen: connection.screen }]
     )
-    if (holding.length === 0) return
-    const { gameId, teamId, seasonId, userId, revision } = payload
+    if (asked.length === 0) return
+    const { gameId, teamId, seasonId, userId } = payload
     // A notice of one game alone (a play, its score) names it to home and
     // schedule too, so a list that shows no games can let it pass.
     const gameOnly =
       gameId != null && teamId == null && seasonId == null && userId == null
+    // Each screen hears it at its own moment within the window, so the
+    // screens following a scope do not all read at once. One that left, or
+    // moved to another screen, before its turn is not told.
     const tell = (connection: Connection, screen: HeldScreen): void => {
-      if (connection.screen !== screen) return
-      reply(connection, {
+      const frame: GameSocketReply = {
         type: 'changed',
         scope: screen.scope,
-        revision,
-        ...(screen.scope === 'event' || gameOnly ? { gameId } : {})
-      })
+        ...(screen.scope === 'event' || gameOnly ? { gameId } : {}),
+        // A post's own: its play frames already read the game's screen.
+        ...(payload.byPost === true ? { byPost: true } : {})
+      }
+      spread(
+        'screen notice',
+        [connection],
+        screenNoticeSpreadMs,
+        () => {
+          if (connection.screen === screen) reply(connection, frame)
+        },
+        spreadTimers
+      )
     }
     const row =
       gameId == null
@@ -540,9 +745,29 @@ export function attachGameSocket(
             awayTeamId: row.away_team_id,
             seasonId: row.season_id
           }
+    // A socket that closed or changed its screen during that read is not
+    // told, and does not stop the others being told.
+    const holding = asked.filter(
+      ({ connection, screen }) => connection.screen === screen
+    )
+    // Everybody whose answer turns on their scopes, read together.
+    readScopesOf(
+      holding
+        .filter(({ connection, screen }) => {
+          if (gameId != null)
+            return (
+              game != null &&
+              (screen.scope !== 'event' || screen.gameId === gameId)
+            )
+          if (screen.scope === 'event') return false
+          if (userId != null && connection.actor.userId === userId) return false
+          return teamId != null || seasonId != null
+        })
+        .map(({ connection }) => connection)
+    )
+    const unread: Connection[] = []
     await Promise.all(
-      holding.map(async connection => {
-        const screen = connection.screen!
+      holding.map(async ({ connection, screen }) => {
         try {
           if (gameId != null) {
             if (screen.scope === 'event' && screen.gameId !== gameId) return
@@ -571,10 +796,16 @@ export function attachGameSocket(
           )
             tell(connection, screen)
         } catch (error: unknown) {
-          log(`game socket: telling ${screen.scope}: ${String(error)}`)
+          if (isConnectionUnavailable(error)) unread.push(connection)
+          else log(`game socket: telling ${screen.scope}: ${String(error)}`)
         }
       })
     )
+    if (unread.length === 0) return
+    log(
+      `game socket: resyncing ${unread.length} screen(s): no database connection in time`
+    )
+    resyncScreens(unread)
   }
 
   /**
@@ -642,6 +873,15 @@ export function attachGameSocket(
     }
     const { gameId, type } = request
     const requestId = request.id
+    // Before it takes a place: an app this old is sent nothing of the game.
+    // `forbidden` is a code an app older than the protocol reads, so its
+    // socket hears the refusal as any refused subscribe rather than dropping a
+    // frame it cannot read; a newer app tells the person to update by the
+    // reason.
+    if (type === 'subscribe' && outdated(request.protocol)) {
+      refuseOutdated(connection, requestId)
+      return
+    }
     // The cap is settled as each request arrives; its effect and its answer
     // wait their turn behind the game's earlier requests. One that throws is
     // still answered, and its turn still ends, so the next one runs.
@@ -701,7 +941,8 @@ export function attachGameSocket(
         conversationId,
         async () => await mayPost(db, conversationId, userId, new Date(now))
       )
-      if (standing === 'poster') await notifyTyping(db, conversationId, userId)
+      if (standing === 'poster')
+        await notifyTyping(feed, db, conversationId, userId)
     } catch (error: unknown) {
       log(`chat socket: typing in ${conversationId}: ${String(error)}`)
       refuseTyping('internal', 'The server could not pass that on; try again')
@@ -733,30 +974,19 @@ export function attachGameSocket(
       reading: undefined,
       screen: undefined,
       screenTurn: Promise.resolve(),
+      closeDue: false,
+      screenResyncDue: false,
       subscriber: {
         send: message => {
           reply(connection, message)
         },
-        maySee: async (game, source) => {
-          try {
-            const authenticated = await actorForToken(source, token, {
-              recordUse: false
-            })
-            if (authenticated?.userId !== connection.actor.userId) {
-              connection.ws.close(1008, 'Sign in again')
-              return false
-            }
-            return canSeeGame(
-              await visibleScopes(
-                source,
-                authenticated.userId,
-                authenticated.isAdmin
-              ),
-              game
-            )
-          } catch {
-            return false
-          }
+        token,
+        userId: actor.userId,
+        signedOut: () => {
+          connection.ws.close(1008, 'Sign in again')
+        },
+        resync: () => {
+          closeToResync([connection])
         }
       },
       chat: undefined,
@@ -826,7 +1056,16 @@ export function attachGameSocket(
       },
       (error: unknown) => {
         console.error(`game socket: signing in an upgrade: ${String(error)}`)
-        refuseUpgrade(socket, 500, 'Internal Server Error')
+        // Out of connections for the moment, so it is told to come back, as a
+        // starved request is.
+        if (isConnectionUnavailable(error))
+          refuseUpgrade(
+            socket,
+            503,
+            'Service Unavailable',
+            'Retry-After: 1\r\n'
+          )
+        else refuseUpgrade(socket, 500, 'Internal Server Error')
       }
     )
     return true
@@ -868,11 +1107,14 @@ export function attachGameSocket(
       server.off('upgrade', upgrade)
       stopSignals?.off('SIGTERM', stop)
       stopSignals?.off('SIGINT', stop)
+      for (const timer of spreadTimers) clearTimeout(timer)
+      spreadTimers.clear()
       for (const connection of connections)
         connection.ws.close(1001, 'The server is restarting')
       await fanout.close()
       await screenScopes.close()
       await chat.close()
+      if (options.feed == null) await feed.close()
       await new Promise<void>(resolve => {
         wss.close(() => {
           resolve()
@@ -885,6 +1127,7 @@ export function attachGameSocket(
   stopSignals?.on('SIGINT', stop)
 
   return {
+    feed,
     fanout,
     screenScopes,
     chat,
@@ -900,8 +1143,13 @@ function rawText(data: RawData): string {
   return data.toString('utf8')
 }
 
-function refuseUpgrade(socket: Duplex, status: number, text: string): void {
+function refuseUpgrade(
+  socket: Duplex,
+  status: number,
+  text: string,
+  headers = ''
+): void {
   socket.end(
-    `HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`
+    `HTTP/1.1 ${status} ${text}\r\n${headers}Connection: close\r\nContent-Length: 0\r\n\r\n`
   )
 }

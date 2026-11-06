@@ -31,6 +31,7 @@ import {
   type PlayerRemover,
   shortDate
 } from '../notifications/requestInformation'
+import { notifyPlaysChanged } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { refuseDeleted } from '../users/deleted'
 import { ensureGumboId } from '../users/insertUser'
@@ -463,6 +464,7 @@ async function playedGames(
     guests: unknown
     home_team_id: string
     away_team_id: string
+    status: string
   }>
 > {
   const gumbos = await trx
@@ -474,7 +476,14 @@ async function playedGames(
   if (terms.mode === 'pool') {
     const game = await trx
       .selectFrom('games')
-      .select(['id', 'currentPlay', 'guests', 'home_team_id', 'away_team_id'])
+      .select([
+        'id',
+        'currentPlay',
+        'guests',
+        'home_team_id',
+        'away_team_id',
+        'status'
+      ])
       .where('id', '=', terms.gameId!)
       .executeTakeFirst()
     if (
@@ -489,7 +498,7 @@ async function playedGames(
   // it.
   const games = await trx
     .selectFrom('games')
-    .select(['id', 'guests', 'home_team_id', 'away_team_id'])
+    .select(['id', 'guests', 'home_team_id', 'away_team_id', 'status'])
     .where(eb =>
       eb.or([
         eb('home_team_id', '=', terms.teamId),
@@ -572,7 +581,14 @@ async function playedGames(
   // session would have them bat under their own name.
   const underWay = await trx
     .selectFrom('games')
-    .select(['id', 'guests', 'home_team_id', 'away_team_id', 'currentPlay'])
+    .select([
+      'id',
+      'guests',
+      'home_team_id',
+      'away_team_id',
+      'currentPlay',
+      'status'
+    ])
     .where(eb =>
       eb.or([
         eb('home_team_id', '=', terms.teamId),
@@ -863,6 +879,9 @@ export async function undoPlayerAdd(
       .onConflict(oc => oc.columns(['game_id', 'user_id']).doNothing())
       .execute()
     noteScopeChange(trx, { gameId: game.id })
+    // Its viewers hold plays that name them: they read them again, under
+    // the placeholder.
+    if (game.status === 'inProgress') await notifyPlaysChanged(trx, game.id)
   }
   if (terms.mode === 'roster') {
     // Whatever has come to rest on the row since the add stays: somebody

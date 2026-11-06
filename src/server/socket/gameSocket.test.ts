@@ -1,16 +1,21 @@
 import { EventEmitter } from 'node:events'
-import { createServer, type IncomingMessage } from 'node:http'
+import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { PassThrough } from 'node:stream'
 
 import { expect } from 'chai'
 import express from 'express'
-import type { Kysely } from 'kysely'
+import { Kysely, PostgresDialect } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 import WebSocket from 'ws'
 
-import type { GameSocketReply } from '../../common/gameSocket'
+import { asPostedEdits } from '../../common/api'
+import {
+  GAME_SOCKET_PROTOCOL,
+  type GameSocketReply,
+  type PlayEditsData
+} from '../../common/gameSocket'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import type { ScoringAction } from '../../common/scoring/actions'
@@ -23,16 +28,21 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
+import type { ChangeFeed, FeedChannel, FeedHandlers } from '../changeFeed/feed'
+import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
 import { type Database, makeDatabase } from '../db/database'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { eventRoutes } from '../routes/events'
+import { readWalkUpSong } from '../routes/walkUpSongs'
+import { notifyGameChange } from './gameChanges'
 import {
   attachGameSocket,
   type GameSocketHandle,
   MAX_SUBSCRIPTIONS
 } from './gameSocket'
+import { SCREEN_NOTICE_SPREAD_MS } from './spread'
 
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_game_socket_${Date.now()}_${process.pid}`
@@ -76,6 +86,7 @@ describe('the game socket (U14)', function () {
   const failing = new Set<string>()
   const logged: string[] = []
   const listeners: Listener[] = []
+  let songsTimeOut = false
 
   const taken = new Set<number>()
   const mint = (): { userId: number; legacyId: string } => {
@@ -195,7 +206,12 @@ describe('the game socket (U14)', function () {
     id = makeId('game')
   ): Promise<GameSocketReply> {
     const from = listener.frames.length
-    listener.send({ type: 'subscribe', gameId, id })
+    listener.send({
+      type: 'subscribe',
+      gameId,
+      id,
+      protocol: GAME_SOCKET_PROTOCOL
+    })
     return await listener.next(frame => 'id' in frame && frame.id === id, from)
   }
 
@@ -231,15 +247,10 @@ describe('the game socket (U14)', function () {
             : { currentPlay: change.currentPlay })
         })
       })
-      const answer = (await response.json()) as {
-        plays: Array<{ gumbo: GumboPlay }>
-        currentPlay: CurrentPlay | null
-      }
+      const answer: unknown = await response.json()
       expect(response.status, JSON.stringify(answer)).equals(200)
-      return {
-        plays: answer.plays.map(row => row.gumbo),
-        currentPlay: answer.currentPlay
-      }
+      // A live post answers its edits: the session reads their digests.
+      return asPostedEdits(answer)
     }
   }
   let session: ScoringSession | undefined
@@ -262,14 +273,14 @@ describe('the game socket (U14)', function () {
       .filter(frame => frame.type === 'change' && frame.gameId === scored)
       .map(frame => (frame.type === 'change' ? frame.kind : ''))
 
-  /** Waits until a post's `plays` and `game` have arrived, and a little more. */
+  /** Waits until a post's `playEdits` and `game` have arrived, and a little more. */
   async function settled(listener: Listener, from: number): Promise<string[]> {
     await listener.next(
       frame => frame.type === 'change' && frame.kind === 'game',
       from
     )
     await listener.next(
-      frame => frame.type === 'change' && frame.kind === 'plays',
+      frame => frame.type === 'change' && frame.kind === 'playEdits',
       from
     )
     await wait(150)
@@ -403,7 +414,16 @@ describe('the game socket (U14)', function () {
       recheckMs: 60_000,
       clock: () => now,
       stopSignals: signals,
-      fanout: { coalesceMs: 20, retryMs: 50, log: () => undefined },
+      resyncSpreadMs: 0,
+      fanout: {
+        coalesceMs: 20,
+        log: () => undefined,
+        readSong: async (reader, teamId, userId) => {
+          if (songsTimeOut)
+            throw new Error('timeout exceeded when trying to connect')
+          return await readWalkUpSong(reader, teamId, userId)
+        }
+      },
       log: message => {
         logged.push(message)
       },
@@ -497,6 +517,84 @@ describe('the game socket (U14)', function () {
       ).equals(404)
     })
 
+    it('tells an upgrade starved at sign-in to come back, and only that one', async function () {
+      const feed: ChangeFeed = {
+        subscribe: () => ({
+          listening: Promise.resolve(),
+          stop: () => undefined
+        }),
+        publishEphemeral: async () => undefined,
+        close: async () => undefined
+      }
+      /** A socket server signing in on this pool, and how it refuses `VIEWER`. */
+      const refusal = async (
+        pool: Pool
+      ): Promise<{ status?: number; retryAfter?: string | string[] }> => {
+        const plain = createServer()
+        const starved = new Kysely<Database>({
+          dialect: new PostgresDialect({ pool })
+        })
+        const handle = attachGameSocket(plain, starved, scratchUrl, {
+          feed,
+          stopSignals: null,
+          fanout: { log: () => undefined }
+        })
+        await new Promise<void>(resolve =>
+          plain.listen(0, '127.0.0.1', resolve)
+        )
+        const { port } = plain.address() as AddressInfo
+        try {
+          return await new Promise((resolve, reject) => {
+            const ws = new WebSocket(`ws://127.0.0.1:${port}/socket`, {
+              headers: { authorization: `Bearer ${VIEWER}` }
+            })
+            ws.on('unexpected-response', (_req, res) => {
+              resolve({
+                status: res.statusCode,
+                retryAfter: res.headers['retry-after']
+              })
+              ws.terminate()
+            })
+            ws.on('open', () => {
+              reject(new Error('The upgrade was accepted'))
+            })
+            ws.on('error', () => undefined)
+          })
+        } finally {
+          await handle.close()
+          await new Promise(resolve => plain.close(resolve))
+        }
+      }
+
+      const small = new Pool({
+        connectionString: scratchUrl,
+        max: 1,
+        connectionTimeoutMillis: 50
+      })
+      const held = await small.connect()
+      try {
+        expect(await refusal(small)).deep.equals({
+          status: 503,
+          retryAfter: '1'
+        })
+      } finally {
+        held.release()
+        await small.end()
+      }
+
+      const absent = new Pool({
+        connectionString: scratchUrl.replace(scratchName, `${scratchName}_no`)
+      })
+      try {
+        expect(await refusal(absent)).deep.equals({
+          status: 500,
+          retryAfter: undefined
+        })
+      } finally {
+        await absent.end()
+      }
+    })
+
     it('declines a scoreboard path without writing a response', function () {
       const raw = new PassThrough()
       const req = {
@@ -562,11 +660,17 @@ describe('the game socket (U14)', function () {
       listener.send({ type: 'unsubscribe', gameId: many[0], id: 'u1' })
       await listener.next(frame => 'id' in frame && frame.id === 'u1')
       const from = listener.frames.length
-      listener.send({ type: 'subscribe', gameId: many[0], id: 'r1' })
+      listener.send({
+        type: 'subscribe',
+        gameId: many[0],
+        id: 'r1',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
       listener.send({
         type: 'subscribe',
         gameId: many[MAX_SUBSCRIPTIONS - 1],
-        id: 'r2'
+        id: 'r2',
+        protocol: GAME_SOCKET_PROTOCOL
       })
       const first = await listener.next(
         frame => 'id' in frame && frame.id === 'r1',
@@ -587,7 +691,12 @@ describe('the game socket (U14)', function () {
       const games = [scored, ...many]
       expect(games.length).equals(MAX_SUBSCRIPTIONS + 2)
       games.forEach((gameId, i) => {
-        listener.send({ type: 'subscribe', gameId, id: `s${i}` })
+        listener.send({
+          type: 'subscribe',
+          gameId,
+          id: `s${i}`,
+          protocol: GAME_SOCKET_PROTOCOL
+        })
       })
       const answers = []
       for (let i = 0; i < games.length; i++)
@@ -626,7 +735,12 @@ describe('the game socket (U14)', function () {
       failing.add(scored)
       try {
         // The last place, held while the check fails, and a request behind it.
-        listener.send({ type: 'subscribe', gameId: scored, id: 'x1' })
+        listener.send({
+          type: 'subscribe',
+          gameId: scored,
+          id: 'x1',
+          protocol: GAME_SOCKET_PROTOCOL
+        })
         listener.send({ type: 'unsubscribe', gameId: scored, id: 'x2' })
         await listener.next(frame => 'id' in frame && frame.id === 'x2', from)
       } finally {
@@ -669,8 +783,18 @@ describe('the game socket (U14)', function () {
         [scored, 'd'],
         [hidden, 'h']
       ] as const) {
-        listener.send({ type: 'subscribe', gameId, id: `${prefix}1` })
-        listener.send({ type: 'subscribe', gameId, id: `${prefix}2` })
+        listener.send({
+          type: 'subscribe',
+          gameId,
+          id: `${prefix}1`,
+          protocol: GAME_SOCKET_PROTOCOL
+        })
+        listener.send({
+          type: 'subscribe',
+          gameId,
+          id: `${prefix}2`,
+          protocol: GAME_SOCKET_PROTOCOL
+        })
       }
       const answer = async (id: string): Promise<GameSocketReply> =>
         await listener.next(frame => 'id' in frame && frame.id === id)
@@ -687,7 +811,12 @@ describe('the game socket (U14)', function () {
       const listener = await listen(VIEWER)
       // Never subscribed to by any other test, so no one else watches it.
       const gameId = many[MAX_SUBSCRIPTIONS]
-      listener.send({ type: 'subscribe', gameId, id: 'a1' })
+      listener.send({
+        type: 'subscribe',
+        gameId,
+        id: 'a1',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
       listener.send({ type: 'unsubscribe', gameId, id: 'a2' })
       await listener.next(frame => 'id' in frame && frame.id === 'a2')
       expect(
@@ -699,9 +828,19 @@ describe('the game socket (U14)', function () {
       ])
       expect(socket!.fanout.games()).not.to.include(gameId)
       // And a subscribe after that is the one that stands.
-      listener.send({ type: 'subscribe', gameId, id: 'a3' })
+      listener.send({
+        type: 'subscribe',
+        gameId,
+        id: 'a3',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
       listener.send({ type: 'unsubscribe', gameId, id: 'a4' })
-      listener.send({ type: 'subscribe', gameId, id: 'a5' })
+      listener.send({
+        type: 'subscribe',
+        gameId,
+        id: 'a5',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
       await listener.next(frame => 'id' in frame && frame.id === 'a5')
       expect(listener.frames.slice(2).map(frame => frame.type)).deep.equals([
         'subscribed',
@@ -719,7 +858,12 @@ describe('the game socket (U14)', function () {
       const listener = await listen(VIEWER)
       for (const gameId of many.slice(0, MAX_SUBSCRIPTIONS - 1))
         expect((await subscribed(listener, gameId)).type).equals('subscribed')
-      listener.send({ type: 'subscribe', gameId: scored, id: 'f1' })
+      listener.send({
+        type: 'subscribe',
+        gameId: scored,
+        id: 'f1',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
       listener.send({ type: 'unsubscribe', gameId: scored, id: 'f2' })
       await listener.next(frame => 'id' in frame && frame.id === 'f2')
       expect(
@@ -734,7 +878,12 @@ describe('the game socket (U14)', function () {
       const games = [scored, ...many, hidden]
       expect(games.length).greaterThan(MAX_SUBSCRIPTIONS + 1)
       games.forEach((gameId, i) => {
-        listener.send({ type: 'subscribe', gameId, id: `p${i}` })
+        listener.send({
+          type: 'subscribe',
+          gameId,
+          id: `p${i}`,
+          protocol: GAME_SOCKET_PROTOCOL
+        })
         listener.send({ type: 'unsubscribe', gameId, id: `q${i}` })
       })
       for (let i = 0; i < games.length; i++)
@@ -765,7 +914,12 @@ describe('the game socket (U14)', function () {
       // Nothing is left holding a place: a full burst is admitted after it.
       const from = listener.frames.length
       many.slice(0, MAX_SUBSCRIPTIONS + 1).forEach((gameId, i) => {
-        listener.send({ type: 'subscribe', gameId, id: `r${i}` })
+        listener.send({
+          type: 'subscribe',
+          gameId,
+          id: `r${i}`,
+          protocol: GAME_SOCKET_PROTOCOL
+        })
       })
       const burst = []
       for (let i = 0; i <= MAX_SUBSCRIPTIONS; i++)
@@ -831,8 +985,213 @@ describe('the game socket (U14)', function () {
     })
   })
 
+  describe('the protocol version', function () {
+    // `forbidden` is among the codes an app older than the protocol reads
+    // (`notFound`, `malformed`, `tooMany`, `internal` and `forbidden`), so it
+    // hears a refused subscribe and reads the game on its own.
+    const UPDATE_REQUIRED = {
+      type: 'error',
+      code: 'forbidden',
+      reason: 'updateRequired',
+      message: 'Update TeamStation to keep following games.'
+    }
+
+    it('subscribes protocol 3, refuses none, 1 or 2 with updateRequired, and sends the refused nothing later', async function () {
+      expect(GAME_SOCKET_PROTOCOL).equals(3)
+      const current = await listen(VIEWER)
+      const unnamed = await listen(VIEWER)
+      const older = await listen(VIEWER)
+      const previous = await listen(VIEWER)
+      expect((await subscribed(current, scored)).type).equals('subscribed')
+      unnamed.send({ type: 'subscribe', gameId: scored, id: 'n1' })
+      older.send({ type: 'subscribe', gameId: scored, id: 'o1', protocol: 1 })
+      previous.send({
+        type: 'subscribe',
+        gameId: scored,
+        id: 'p1',
+        protocol: 2
+      })
+      expect(
+        await unnamed.next(frame => 'id' in frame && frame.id === 'n1')
+      ).deep.equals({ ...UPDATE_REQUIRED, id: 'n1' })
+      expect(
+        await older.next(frame => 'id' in frame && frame.id === 'o1')
+      ).deep.equals({ ...UPDATE_REQUIRED, id: 'o1' })
+      expect(
+        await previous.next(frame => 'id' in frame && frame.id === 'p1')
+      ).deep.equals({ ...UPDATE_REQUIRED, id: 'p1' })
+      await db!.transaction().execute(async trx => {
+        await notifyGameChange(trx, { game: scored, kind: 'game' })
+      })
+      await current.next(frame => frame.type === 'change')
+      await wait(100)
+      for (const refused of [unnamed, older, previous])
+        expect(
+          refused.frames.filter(
+            frame => frame.type === 'subscribed' || frame.type === 'change'
+          )
+        ).deep.equals([])
+      for (const listener of [current, unnamed, older, previous])
+        listener.ws.terminate()
+    })
+
+    it('refuses a screen scope with protocol 2 or none as updateRequired, and holds one with 3, told with no revision', async function () {
+      const unnamed = await listen(VIEWER)
+      const previous = await listen(VIEWER)
+      const current = await listen(VIEWER)
+      unnamed.send({ type: 'subscribe', scope: 'home', id: 'h1' })
+      previous.send({
+        type: 'subscribe',
+        scope: 'event',
+        gameId: scored,
+        id: 'h2',
+        protocol: 2
+      })
+      current.send({
+        type: 'subscribe',
+        scope: 'home',
+        id: 'h3',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
+      expect(
+        await unnamed.next(frame => 'id' in frame && frame.id === 'h1')
+      ).deep.equals({ ...UPDATE_REQUIRED, id: 'h1' })
+      expect(
+        await previous.next(frame => 'id' in frame && frame.id === 'h2')
+      ).deep.equals({ ...UPDATE_REQUIRED, id: 'h2' })
+      expect(
+        await current.next(frame => 'id' in frame && frame.id === 'h3')
+      ).deep.equals({ type: 'subscribed', scope: 'home', id: 'h3' })
+      socket!.screenScopes.notified(JSON.stringify({ gameId: scored }))
+      expect(await current.next(frame => frame.type === 'changed')).deep.equals(
+        { type: 'changed', scope: 'home', gameId: scored }
+      )
+      await wait(100)
+      for (const refused of [unnamed, previous])
+        expect(
+          refused.frames.filter(
+            frame => frame.type === 'subscribed' || frame.type === 'changed'
+          )
+        ).deep.equals([])
+      for (const listener of [unnamed, previous, current])
+        listener.ws.terminate()
+    })
+
+    it('tells a post’s notice as the post’s on the changed frame, to an event and to home', async function () {
+      const event = await listen(VIEWER)
+      const home = await listen(VIEWER)
+      event.send({
+        type: 'subscribe',
+        scope: 'event',
+        gameId: scored,
+        id: 'e1',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
+      home.send({
+        type: 'subscribe',
+        scope: 'home',
+        id: 'h1',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
+      await event.next(frame => 'id' in frame && frame.id === 'e1')
+      await home.next(frame => 'id' in frame && frame.id === 'h1')
+      socket!.screenScopes.notified(
+        JSON.stringify({ gameId: scored, byPost: true })
+      )
+      expect(await event.next(frame => frame.type === 'changed')).deep.equals({
+        type: 'changed',
+        scope: 'event',
+        gameId: scored,
+        byPost: true
+      })
+      expect(await home.next(frame => frame.type === 'changed')).deep.equals({
+        type: 'changed',
+        scope: 'home',
+        gameId: scored,
+        byPost: true
+      })
+      for (const listener of [event, home]) listener.ws.terminate()
+    })
+
+    it('refuses protocol 3 where the server asks for 4', async function () {
+      const plain = createServer()
+      const strict = attachGameSocket(plain, db!, scratchUrl, {
+        feed: {
+          subscribe: () => ({
+            listening: Promise.resolve(),
+            stop: () => undefined
+          }),
+          publishEphemeral: async () => undefined,
+          close: async () => undefined
+        },
+        stopSignals: null,
+        minimumProtocol: 4
+      })
+      await new Promise<void>(resolve => plain.listen(0, '127.0.0.1', resolve))
+      const mainUrl = socketUrl
+      socketUrl = `ws://127.0.0.1:${(plain.address() as AddressInfo).port}/socket`
+      try {
+        const listener = await listen(VIEWER)
+        listener.send({
+          type: 'subscribe',
+          gameId: scored,
+          id: 'v2',
+          protocol: GAME_SOCKET_PROTOCOL
+        })
+        expect(
+          await listener.next(frame => 'id' in frame && frame.id === 'v2')
+        ).deep.equals({ ...UPDATE_REQUIRED, id: 'v2' })
+        listener.send({
+          type: 'subscribe',
+          gameId: scored,
+          id: 'v3',
+          protocol: 4
+        })
+        expect(
+          await listener.next(frame => 'id' in frame && frame.id === 'v3')
+        ).deep.include({ type: 'subscribed', gameId: scored })
+        listener.ws.terminate()
+      } finally {
+        socketUrl = mainUrl
+        await strict.close()
+        await new Promise(resolve => plain.close(resolve))
+      }
+    })
+  })
+
   describe('delivery', function () {
-    it('delivers plays and game for a post, and lineups only when they change', async function () {
+    it('encodes a change once for all who hear it', async function () {
+      const listeners = [await listen(VIEWER), await listen(OTHER)]
+      for (const listener of listeners) await subscribed(listener, scored)
+      const marks = listeners.map(listener => listener.frames.length)
+      const stringify = JSON.stringify
+      let changes = 0
+      JSON.stringify = ((value: unknown, ...rest: []) => {
+        if ((value as { type?: string } | null)?.type === 'change') changes += 1
+        return stringify(value, ...rest)
+      }) as typeof JSON.stringify
+      try {
+        await db!.transaction().execute(async trx => {
+          await notifyGameChange(trx, { game: scored, kind: 'game' })
+        })
+        const heard = await Promise.all(
+          listeners.map(
+            async (listener, index) =>
+              await listener.next(
+                frame => frame.type === 'change' && frame.kind === 'game',
+                marks[index]
+              )
+          )
+        )
+        expect(heard[0]).deep.equals(heard[1])
+      } finally {
+        JSON.stringify = stringify
+      }
+      expect(changes).equals(1)
+      for (const listener of listeners) listener.ws.terminate()
+    })
+
+    it('delivers play edits and game for a post, and lineups only when they change', async function () {
       const listener = await listen(VIEWER)
       const quiet = await listen(OTHER)
       await subscribed(listener, scored)
@@ -846,21 +1205,53 @@ describe('the game socket (U14)', function () {
       expect(await settled(listener, from)).deep.equals([
         'game',
         'lineups',
-        'plays'
+        'playEdits'
       ])
-      const plays = listener.frames
-        .slice(from)
-        .find(frame => frame.type === 'change' && frame.kind === 'plays')
-      expect(plays?.type === 'change' && plays.data).to.have.keys(
-        'plays',
-        'currentPlay',
-        'digest'
-      )
+      // It brings the lineups' players into a game that named nobody, with no
+      // pregame lineups and no event_players, which can change how the book
+      // tells them apart: viewers read again.
+      const playsFrame = (): PlayEditsData | undefined => {
+        const plays = listener.frames
+          .slice(from)
+          .find(frame => frame.type === 'change' && frame.kind === 'playEdits')
+        return plays?.type === 'change' && plays.kind === 'playEdits'
+          ? plays.data
+          : undefined
+      }
+      expect(playsFrame()).deep.include({ edits: null })
 
-      // Another pitch leaves the lineups alone.
+      // Another pitch leaves the lineups alone, and names nobody new.
       from = listener.frames.length
       await apply(strike)
-      expect(await settled(listener, from)).deep.equals(['game', 'plays'])
+      expect(await settled(listener, from)).deep.equals(['game', 'playEdits'])
+      const edits = playsFrame()
+      expect(edits).to.have.keys(
+        'generation',
+        'fromDigest',
+        'digest',
+        'namesDigest',
+        'edits',
+        'currentPlay'
+      )
+      // No play is stored yet: only the at-bat, with the digest a read of
+      // the game gives now.
+      expect(edits?.edits).deep.equals([])
+      expect(edits?.currentPlay).to.have.nested.property('about.atBatIndex', 0)
+      const read = (await (
+        await fetch(`${base}/games/${scored}/events`, {
+          headers: { authorization: `Bearer ${SCORER}` }
+        })
+      ).json()) as {
+        playsDigest: string
+        namesDigest: string
+        currentPlay: unknown
+      }
+      expect(edits?.digest).equals(read.playsDigest)
+      // Named from the book a read of the game is named from.
+      expect(edits?.namesDigest).to.be.a('string').and.equal(read.namesDigest)
+      expect(edits?.fromDigest)
+        .to.be.a('string')
+        .and.not.equal(read.playsDigest)
 
       // Strike him out, then pinch-hit for the batter due.
       await apply(strike, strike, { type: 'gameFlow', kind: 'closePlay' })
@@ -876,7 +1267,7 @@ describe('the game socket (U14)', function () {
       expect(await settled(listener, from)).deep.equals([
         'game',
         'lineups',
-        'plays'
+        'playEdits'
       ])
       const lineups = listener.frames
         .slice(from)
@@ -889,6 +1280,9 @@ describe('the game socket (U14)', function () {
       expect(JSON.stringify(away?.current)).to.include(
         String(awayPlayers[9].userId)
       )
+      // He is on the roster the game's lineups were set from, though in no
+      // play yet: the book holds him already, and viewers are sent edits.
+      expect(playsFrame()?.edits).to.be.an('array')
 
       // Undone, it is announced once more.
       from = listener.frames.length
@@ -897,13 +1291,13 @@ describe('the game socket (U14)', function () {
       expect(await settled(listener, from)).deep.equals([
         'game',
         'lineups',
-        'plays'
+        'playEdits'
       ])
 
       // And a pitch after it is not.
       from = listener.frames.length
       await apply(ball)
-      expect(await settled(listener, from)).deep.equals(['game', 'plays'])
+      expect(await settled(listener, from)).deep.equals(['game', 'playEdits'])
 
       expect(kindsHeard(quiet, 0)).deep.equals([])
       listener.ws.terminate()
@@ -956,15 +1350,34 @@ describe('the game socket (U14)', function () {
   })
 
   describe('losing the listener', function () {
-    it('closes every socket with 1012 so its client reconnects and resyncs', async function () {
+    const feedConnections = async (): Promise<number> =>
+      (
+        await adminPool!.query(
+          `select pid from pg_stat_activity
+           where datname = $1 and application_name = $2`,
+          [scratchName, FEED_APPLICATION_NAME]
+        )
+      ).rows.length
+
+    it('closes each socket watching a game with 1012 once the feed returns, so its client reconnects and resyncs', async function () {
       const listener = await listen(VIEWER)
+      const watchingNothing = await listen(VIEWER)
       await subscribed(listener, scored)
+      // Every channel the worker hears shares the one connection.
+      expect(await feedConnections()).equals(1)
+      const cutAt = Date.now()
       await adminPool!.query(
         `select pg_terminate_backend(pid) from pg_stat_activity
-         where datname = $1 and query ilike 'listen %'`,
-        [scratchName]
+         where datname = $1 and application_name = $2`,
+        [scratchName, FEED_APPLICATION_NAME]
       )
+      await wait(200)
+      expect(listener.ws.readyState).equals(WebSocket.OPEN)
       expect(await listener.closed).equals(1012)
+      expect(Date.now() - cutAt).greaterThan(700)
+      expect(await feedConnections()).equals(1)
+      expect(watchingNothing.ws.readyState).equals(WebSocket.OPEN)
+      watchingNothing.ws.terminate()
       // It listens again, and a new socket hears the next change.
       await wait(200)
       const again = await listen(VIEWER)
@@ -973,6 +1386,513 @@ describe('the game socket (U14)', function () {
       await apply(ball)
       await settled(again, from)
       again.ws.terminate()
+    })
+  })
+
+  describe('a delivery with no connection to be had in time', function () {
+    it('closes the game’s sockets with 1012 so their clients reconnect and resync', async function () {
+      const listener = await listen(VIEWER)
+      await subscribed(listener, scored)
+      songsTimeOut = true
+      try {
+        await notifyGameChange(db!, {
+          team: homeTeam,
+          kind: 'walkUpSong',
+          userId: userIdOfGumbo(mint().userId)
+        })
+        expect(await listener.closed).equals(1012)
+      } finally {
+        songsTimeOut = false
+      }
+    })
+  })
+
+  describe('a resync spread over a window', function () {
+    const SPREAD_MS = 400
+    let feedHandlers: Partial<Record<FeedChannel, FeedHandlers>> = {}
+    let spreading: GameSocketHandle | undefined
+    let plain: Server | undefined
+    let mainUrl = ''
+
+    /** Its feed is in the test's hands, so a gap is one call away. */
+    before(async function () {
+      const feed: ChangeFeed = {
+        subscribe: (channel, handlers) => {
+          feedHandlers[channel] = handlers
+          return { listening: Promise.resolve(), stop: () => undefined }
+        },
+        publishEphemeral: async () => undefined,
+        close: async () => undefined
+      }
+      plain = createServer()
+      spreading = attachGameSocket(plain, db!, scratchUrl, {
+        feed,
+        stopSignals: null,
+        resyncSpreadMs: SPREAD_MS,
+        fanout: {
+          coalesceMs: 5,
+          log: () => undefined,
+          readSong: async () => {
+            throw new Error('timeout exceeded when trying to connect')
+          }
+        }
+      })
+      const listening = plain
+      await new Promise<void>(resolve =>
+        listening.listen(0, '127.0.0.1', resolve)
+      )
+      mainUrl = socketUrl
+      socketUrl = `ws://127.0.0.1:${(plain.address() as AddressInfo).port}/socket`
+    })
+
+    after(async function () {
+      socketUrl = mainUrl
+      await spreading?.close()
+      await new Promise(resolve => plain?.close(resolve))
+      feedHandlers = {}
+    })
+
+    const gap = (channel: FeedChannel): void => {
+      feedHandlers[channel]?.onListening?.(false)
+    }
+
+    it('closes a watcher later, within the window, and leaves alone one that left, stopped watching or came after', async function () {
+      const watcher = await listen(VIEWER)
+      const leaver = await listen(VIEWER)
+      const stopper = await listen(VIEWER)
+      const idle = await listen(VIEWER)
+      for (const listener of [watcher, leaver, stopper])
+        await subscribed(listener, scored)
+      const startedAt = Date.now()
+      gap('game_changes')
+      // Twice is one close for each.
+      gap('game_changes')
+      expect(watcher.ws.readyState).equals(WebSocket.OPEN)
+      leaver.ws.terminate()
+      const asked = makeId('event')
+      stopper.send({ type: 'unsubscribe', gameId: scored, id: asked })
+      await stopper.next(frame => 'id' in frame && frame.id === asked)
+      const later = await listen(VIEWER)
+      await subscribed(later, scored)
+      expect(await watcher.closed).equals(1012)
+      expect(Date.now() - startedAt).below(SPREAD_MS + 150)
+      await wait(SPREAD_MS + 50)
+      for (const listener of [stopper, idle, later])
+        expect(listener.ws.readyState).equals(WebSocket.OPEN)
+      for (const listener of [stopper, idle, later]) listener.ws.terminate()
+    })
+
+    it('sends each screen one resync, later, within the window', async function () {
+      const screen = await listen(VIEWER)
+      const leaver = await listen(VIEWER)
+      const noScreen = await listen(VIEWER)
+      for (const listener of [screen, leaver]) {
+        const id = makeId('event')
+        listener.send({
+          type: 'subscribe',
+          scope: 'home',
+          id,
+          protocol: GAME_SOCKET_PROTOCOL
+        })
+        await listener.next(frame => 'id' in frame && frame.id === id)
+      }
+      const from = screen.frames.length
+      const isResync = (frame: GameSocketReply): boolean =>
+        frame.type === 'resync'
+      gap('screen_scopes')
+      gap('screen_scopes')
+      expect(screen.frames.slice(from).some(isResync)).equals(false)
+      leaver.ws.terminate()
+      await wait(SPREAD_MS + 100)
+      expect(screen.frames.slice(from).filter(isResync)).to.have.length(1)
+      expect(noScreen.frames.some(isResync)).equals(false)
+      expect(screen.ws.readyState).equals(WebSocket.OPEN)
+      screen.ws.terminate()
+      noScreen.ws.terminate()
+    })
+
+    it('spreads the close a delivery with no connection owes, once for many', async function () {
+      const watcher = await listen(VIEWER)
+      await subscribed(watcher, scored)
+      const payload = JSON.stringify({
+        team: homeTeam,
+        kind: 'walkUpSong',
+        userId: userIdOfGumbo(mint().userId)
+      })
+      const startedAt = Date.now()
+      feedHandlers.game_changes?.onPayload(payload)
+      await wait(20)
+      feedHandlers.game_changes?.onPayload(payload)
+      expect(await watcher.closed).equals(1012)
+      expect(Date.now() - startedAt).below(SPREAD_MS + 150)
+    })
+
+    describe('a screen notice with no connection in time', function () {
+      let screenHandlers: FeedHandlers | undefined
+      let pool: Pool
+      let starving: Kysely<Database>
+      let handle: GameSocketHandle
+      let other: Server
+      let parentUrl = ''
+      const lines: string[] = []
+
+      before(async function () {
+        // One connection, which requests use until a test takes it for itself.
+        pool = new Pool({
+          connectionString: scratchUrl,
+          max: 1,
+          connectionTimeoutMillis: 50
+        })
+        starving = new Kysely<Database>({
+          dialect: new PostgresDialect({ pool })
+        })
+        other = createServer()
+        handle = attachGameSocket(other, starving, scratchUrl, {
+          feed: {
+            subscribe: (channel, handlers) => {
+              if (channel === 'screen_scopes') screenHandlers = handlers
+              return { listening: Promise.resolve(), stop: () => undefined }
+            },
+            publishEphemeral: async () => undefined,
+            close: async () => undefined
+          },
+          stopSignals: null,
+          resyncSpreadMs: SPREAD_MS,
+          recheckMs: 0,
+          screenScopes: {
+            coalesceMs: 5,
+            log: line => {
+              lines.push(line)
+            }
+          },
+          log: line => {
+            lines.push(line)
+          }
+        })
+        await new Promise<void>(resolve => {
+          other.listen(0, '127.0.0.1', resolve)
+        })
+        parentUrl = socketUrl
+        socketUrl = `ws://127.0.0.1:${(other.address() as AddressInfo).port}/socket`
+      })
+
+      after(async function () {
+        socketUrl = parentUrl
+        await handle.close()
+        await new Promise(resolve => other.close(resolve))
+        await starving.destroy()
+      })
+
+      const onScreen = async (
+        frame: Record<string, unknown>
+      ): Promise<Listener> => {
+        const listener = await listen(VIEWER)
+        const id = makeId('event')
+        listener.send({
+          type: 'subscribe',
+          id,
+          protocol: GAME_SOCKET_PROTOCOL,
+          ...frame
+        })
+        await listener.next(reply => 'id' in reply && reply.id === id)
+        return listener
+      }
+      const isResync = (frame: GameSocketReply): boolean =>
+        frame.type === 'resync'
+
+      /** Sends a notice with the pool's one connection taken. */
+      const starved = async (
+        notice: Record<string, unknown>,
+        during: () => Promise<void>
+      ): Promise<void> => {
+        const taken = await pool.connect()
+        try {
+          lines.length = 0
+          screenHandlers?.onPayload(JSON.stringify(notice))
+          await during()
+        } finally {
+          taken.release()
+        }
+      }
+
+      it('sends every screen one resync when the game cannot be read', async function () {
+        const screens = [
+          await onScreen({ scope: 'home' }),
+          await onScreen({ scope: 'schedule' })
+        ]
+        const noScreen = await listen(VIEWER)
+        const marks = screens.map(screen => screen.frames.length)
+        const startedAt = Date.now()
+        await starved({ gameId: scored }, async () => {
+          for (const [index, screen] of screens.entries())
+            await screen.next(isResync, marks[index])
+          expect(Date.now() - startedAt).below(SPREAD_MS + 500)
+          await wait(SPREAD_MS + 50)
+        })
+        for (const [index, screen] of screens.entries()) {
+          const heard = screen.frames.slice(marks[index])
+          expect(heard.filter(isResync)).to.have.length(1)
+          expect(heard.some(frame => frame.type === 'changed')).equals(false)
+          expect(screen.ws.readyState).equals(WebSocket.OPEN)
+          screen.ws.terminate()
+        }
+        expect(noScreen.frames.some(isResync)).equals(false)
+        expect(
+          lines.some(line => line.includes('no database connection in time'))
+        ).equals(true)
+        noScreen.ws.terminate()
+      })
+
+      it('sends a resync only to the screens whose scopes could not be read', async function () {
+        const concerned = await onScreen({ scope: 'home' })
+        const elsewhere = await onScreen({ scope: 'event', gameId: scored })
+        const marks = [concerned.frames.length, elsewhere.frames.length]
+        await starved({ teamId: homeTeam }, async () => {
+          await concerned.next(isResync, marks[0])
+          await wait(SPREAD_MS + 50)
+        })
+        expect(
+          concerned.frames.slice(marks[0]).filter(isResync)
+        ).to.have.length(1)
+        expect(elsewhere.frames.slice(marks[1]).some(isResync)).equals(false)
+        expect(lines.some(line => line.includes('1 screen(s)'))).equals(true)
+        concerned.ws.terminate()
+        elsewhere.ws.terminate()
+      })
+    })
+
+    it('lets go of what is still to come when it closes', async function () {
+      const other = createServer()
+      const handle = attachGameSocket(other, db!, scratchUrl, {
+        feed: {
+          subscribe: (channel, handlers) => {
+            feedHandlers[channel] = handlers
+            return { listening: Promise.resolve(), stop: () => undefined }
+          },
+          publishEphemeral: async () => undefined,
+          close: async () => undefined
+        },
+        stopSignals: null,
+        resyncSpreadMs: 60_000
+      })
+      await new Promise<void>(resolve => other.listen(0, '127.0.0.1', resolve))
+      const url = socketUrl
+      socketUrl = `ws://127.0.0.1:${(other.address() as AddressInfo).port}/socket`
+      const watcher = await listen(VIEWER)
+      socketUrl = url
+      await subscribed(watcher, scored)
+      gap('game_changes')
+      await handle.close()
+      expect(await watcher.closed).equals(1001)
+      await new Promise(resolve => other.close(resolve))
+    })
+  })
+
+  describe('a screen notice spread over a second (M8b)', function () {
+    const SCREENS = 200
+    let screenHandlers: FeedHandlers | undefined
+    let handle: GameSocketHandle
+    let other: Server
+    let parentUrl = ''
+
+    /** Its feed is in the test's hands; its notice spread is the default. */
+    before(async function () {
+      other = createServer()
+      handle = attachGameSocket(other, db!, scratchUrl, {
+        feed: {
+          subscribe: (channel, handlers) => {
+            if (channel === 'screen_scopes') screenHandlers = handlers
+            return { listening: Promise.resolve(), stop: () => undefined }
+          },
+          publishEphemeral: async () => undefined,
+          close: async () => undefined
+        },
+        stopSignals: null,
+        screenScopes: { coalesceMs: 5, log: () => undefined }
+      })
+      await new Promise<void>(resolve => other.listen(0, '127.0.0.1', resolve))
+      parentUrl = socketUrl
+      socketUrl = `ws://127.0.0.1:${(other.address() as AddressInfo).port}/socket`
+    })
+
+    after(async function () {
+      socketUrl = parentUrl
+      await handle.close()
+      other.closeAllConnections()
+      await new Promise(resolve => other.close(resolve))
+    })
+
+    interface Screen {
+      listener: Listener
+      /** When each `changed` frame arrived. */
+      changedAt: number[]
+    }
+
+    /** One of the viewer's sockets, holding home. */
+    const onHomeOnce = async (): Promise<Screen> => {
+      const listener = await listen(VIEWER)
+      const changedAt: number[] = []
+      listener.ws.on('message', data => {
+        const frame = JSON.parse((data as Buffer).toString('utf8')) as {
+          type: string
+        }
+        if (frame.type === 'changed') changedAt.push(Date.now())
+      })
+      await ask(listener, { type: 'subscribe', scope: 'home' })
+      return { listener, changedAt }
+    }
+
+    /** `count` of them, opened twenty at a time, as the backlog takes. */
+    const onHome = async (count: number): Promise<Screen[]> => {
+      const screens: Screen[] = []
+      while (screens.length < count)
+        screens.push(
+          ...(await Promise.all(
+            Array.from(
+              { length: Math.min(20, count - screens.length) },
+              onHomeOnce
+            )
+          ))
+        )
+      return screens
+    }
+
+    /** Sends a request and waits for the answer to its id. */
+    const ask = async (
+      listener: Listener,
+      frame: Record<string, unknown>
+    ): Promise<number> => {
+      const id = makeId('event')
+      listener.send({ ...frame, id, protocol: GAME_SOCKET_PROTOCOL })
+      await listener.next(reply => 'id' in reply && reply.id === id)
+      return listener.frames.findIndex(
+        reply => 'id' in reply && reply.id === id
+      )
+    }
+
+    /** The viewer's own change, which every home of theirs is told. */
+    const notice = (): number => {
+      const at = Date.now()
+      screenHandlers?.onPayload(
+        JSON.stringify({ userId: userIdOfGumbo(viewer.userId) })
+      )
+      return at
+    }
+
+    const close = (screens: Screen[]): void => {
+      for (const { listener } of screens) listener.ws.terminate()
+    }
+
+    it('tells 200 screens on one scope at their own moments within a second, none before the notice', async function () {
+      const screens = await onHome(SCREENS)
+      await wait(50)
+      expect(screens.filter(screen => screen.changedAt.length > 0)).deep.equals(
+        []
+      )
+      const noticeAt = notice()
+      await wait(SCREEN_NOTICE_SPREAD_MS + 300)
+      expect(screens.map(screen => screen.changedAt.length)).deep.equals(
+        screens.map(() => 1)
+      )
+      const offsets = screens.map(screen => screen.changedAt[0] - noticeAt)
+      expect(Math.min(...offsets)).at.least(0)
+      expect(Math.max(...offsets)).below(SCREEN_NOTICE_SPREAD_MS + 100)
+      // Spread over the window, not at once: told together, the 200 would
+      // all land in one tenth of it, where a spread puts about 20.
+      expect(Math.max(...offsets) - Math.min(...offsets)).above(
+        SCREEN_NOTICE_SPREAD_MS / 2
+      )
+      const tenths = new Map<number, number>()
+      for (const offset of offsets) {
+        const tenth = Math.floor(offset / (SCREEN_NOTICE_SPREAD_MS / 10))
+        tenths.set(tenth, (tenths.get(tenth) ?? 0) + 1)
+      }
+      expect(Math.max(...tenths.values())).below(SCREENS / 4)
+      close(screens)
+    })
+
+    it('sends no frame to a screen that left or moved on before its turn', async function () {
+      const screens = await onHome(SCREENS)
+      const [stayers, leavers, movers] = [
+        screens.slice(0, 50),
+        screens.slice(50, 125),
+        screens.slice(125)
+      ]
+      notice()
+      // The first frame heard: every turn is set by now, most still to come.
+      while (stayers.every(screen => screen.changedAt.length === 0))
+        await wait(1)
+      // Each answer marks when the server let home go: a frame for home after
+      // it was sent on the old screen's turn, which is what may not happen.
+      const gone = await Promise.all([
+        ...leavers.map(
+          async ({ listener }) =>
+            await ask(listener, { type: 'unsubscribe', scope: 'home' })
+        ),
+        ...movers.map(
+          async ({ listener }) =>
+            await ask(listener, { type: 'subscribe', scope: 'schedule' })
+        )
+      ])
+      await wait(SCREEN_NOTICE_SPREAD_MS + 300)
+      expect(stayers.map(screen => screen.changedAt.length)).deep.equals(
+        stayers.map(() => 1)
+      )
+      // A mover's new schedule may be told the notice; its home may not.
+      const homeChanges = (frames: GameSocketReply[]): GameSocketReply[] =>
+        frames.filter(
+          frame => frame.type === 'changed' && frame.scope === 'home'
+        )
+      const left = [...leavers, ...movers]
+      const late = left.filter(
+        ({ listener }, i) =>
+          homeChanges(listener.frames.slice(gone[i] + 1)).length > 0
+      )
+      expect(late).deep.equals([])
+      // Most left inside the window, so their turn came after and was skipped.
+      expect(
+        left.filter(({ listener }) => homeChanges(listener.frames).length === 0)
+          .length
+      ).above(left.length / 2)
+      close(screens)
+    })
+
+    it('logs a notice frame that throws as a screen notice, and still tells the other screens', async function () {
+      const screens = await onHome(2)
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const send = WebSocket.prototype.send
+      const failing = console.error
+      const errors: unknown[] = []
+      let thrown = false
+      // The server's first `changed` frame fails as it goes out.
+      WebSocket.prototype.send = function (
+        this: WebSocket,
+        ...args: unknown[]
+      ): void {
+        const [data] = args
+        if (
+          !thrown &&
+          Buffer.isBuffer(data) &&
+          data.toString('utf8').includes('"type":"changed"')
+        ) {
+          thrown = true
+          throw new Error('send failed')
+        }
+        Reflect.apply(send, this, args)
+      } as typeof send
+      console.error = (line: unknown) => errors.push(line)
+      try {
+        notice()
+        await wait(SCREEN_NOTICE_SPREAD_MS + 300)
+      } finally {
+        WebSocket.prototype.send = send
+        console.error = failing
+      }
+      expect(errors).deep.equals(['screen notice: Error: send failed'])
+      expect(
+        screens.map(screen => screen.changedAt.length).sort((a, b) => a - b)
+      ).deep.equals([0, 1])
+      close(screens)
     })
   })
 
@@ -1003,6 +1923,37 @@ describe('the game socket (U14)', function () {
       await handle.fanout.listening
       await handle.close()
       expect(process.listenerCount('SIGTERM')).equals(before)
+    })
+
+    it('leaves open a feed it was given', async function () {
+      const plain = createServer()
+      const feed = new PostgresFeed({
+        databaseUrl: scratchUrl,
+        log: () => undefined
+      })
+      const handle = attachGameSocket(
+        plain,
+        db!,
+        'postgres://unused.example.test/none',
+        {
+          feed,
+          stopSignals: null
+        }
+      )
+      expect(handle.feed).equals(feed)
+      await handle.fanout.listening
+      await handle.close()
+      const heard: Array<string | undefined> = []
+      const { listening } = feed.subscribe('feed_probe', {
+        onPayload: payload => {
+          heard.push(payload)
+        }
+      })
+      await listening
+      await feed.publishEphemeral('feed_probe', 'still open', db!)
+      for (let i = 0; i < 100 && heard.length === 0; i++) await wait(20)
+      expect(heard).deep.equals(['still open'])
+      await feed.close()
     })
   })
 })

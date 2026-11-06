@@ -1,4 +1,3 @@
-import type { RevisionRead } from './api'
 import type {
   ScreenScope,
   ScreenScopeEvent,
@@ -19,42 +18,52 @@ export interface ScreenScopeSocket {
   ) => () => void
 }
 
-/** The part of the client a screen's load reads through. */
-export interface RevisionCollecting {
-  /** Set while requests fail to leave the device. */
-  offline?: boolean
-  collectRevisions: (collector: RevisionRead[]) => void
-  stopCollecting: (collector: RevisionRead[]) => void
+/**
+ * The shortest time between the starts of two reads a screen's notices
+ * cause. A notice with no read running and none begun this long ago reads at
+ * once; any other waits, and every notice until that read begins is covered
+ * by it.
+ */
+export const COALESCE_MS = 3000
+
+/** What a `changed` names, for a load to tell whether it shows it. */
+export interface ScreenScopeNotice {
+  gameId?: string
+  byPost?: boolean
 }
 
-export interface ScreenScopeGateOptions {
+/** The part of the client a screen's load reads through. */
+export interface ScreenScopeClient {
+  /** Set while requests fail to leave the device. */
+  offline?: boolean
+}
+
+/** The clock a gate times its reads by: the platform's, unless given. */
+export interface ScreenScopeTimers {
+  setTimer?: (run: () => void, ms: number) => unknown
+  clearTimer?: (timer: unknown) => void
+  /** In milliseconds, for the time since a read began. */
+  now?: () => number
+}
+
+export interface ScreenScopeGateOptions extends ScreenScopeTimers {
   /** The screen's existing load: the REST calls it already makes. */
   load: () => Promise<void>
   /** None for a signed-out visitor: there is nothing to acknowledge. */
   socket?: ScreenScopeSocket
-  client?: RevisionCollecting
+  client?: ScreenScopeClient
   giveUpMs?: number
+  /** `COALESCE_MS` unless given. */
+  coalesceMs?: number
   /**
    * A notice this load does not show, which reads nothing: Home's lists of
-   * teams and seasons let a notice of one game alone pass.
+   * teams and seasons let a notice of one game alone pass, and a game's
+   * screen its own game's notice from a post (`byPost`), whose play frames
+   * read it already.
    */
-  passes?: (notice: { revision: string; gameId?: string }) => boolean
+  passes?: (notice: ScreenScopeNotice) => boolean
   /** A load that threw. The gate goes on; the screen shows its own error. */
   onError?: (error: unknown) => void
-  setTimer?: (run: () => void, ms: number) => unknown
-  clearTimer?: (timer: unknown) => void
-}
-
-/** The least revision among one load's answers, or none if none had one. */
-export function leastRevision(
-  reads: readonly RevisionRead[]
-): bigint | undefined {
-  let least: bigint | undefined
-  for (const read of reads) {
-    const revision = BigInt(read.revision)
-    if (least == null || revision < least) least = revision
-  }
-  return least
 }
 
 /**
@@ -62,21 +71,23 @@ export function leastRevision(
  *
  * While online with a socket, the screen's load does not run until the
  * server acknowledges the scope (`subscribed`), so every write committed
- * after the read's snapshot is announced to it. If no acknowledgement comes
+ * after the read began is announced to it. If no acknowledgement comes
  * within `giveUpMs` the load runs so the screen can leave its loading
  * state, and runs again when the acknowledgement does arrive: that second
  * read is the one that closes the race. Every later `subscribed` (after a
- * reconnect or a server `resync`) reads again.
+ * reconnect or a server `resync`) reads again at once.
  *
- * The revision the screen holds is the least one among the answers of its
- * last load. A `changed` newer than that reads again, once even if several
- * arrive while a load runs; one at or below it does nothing. A screen that
- * has left its scope, or replaced it, hears nothing more from it.
+ * A `changed` reads at once when no read of the screen is running and the
+ * last one began `coalesceMs` ago or more. Otherwise it is owed: one read,
+ * once any running read has finished and `coalesceMs` have passed since the
+ * last began, covers it and every other notice until that read begins. A
+ * read the screen starts itself (a refresh, or `alongside`) counts as a read
+ * here. A screen that has left its scope, or replaced it, hears nothing more
+ * from it.
  *
  * While the socket is down after a lost or refused connection, waiting to
- * try again, a read runs at once rather than wait out the retry, and the
- * next `subscribed` reads again only when it is newer than that read. A
- * first connect on its way is waited for as above.
+ * try again, a read runs at once rather than wait out the retry. A first
+ * connect on its way is waited for as above.
  *
  * With no socket, no scope, or the client offline, a read runs at once. So
  * does it once the scope was refused or stopped for want of a token.
@@ -84,46 +95,43 @@ export function leastRevision(
 export class ScreenScopeGate {
   private readonly load: () => Promise<void>
   private readonly socket: ScreenScopeSocket | undefined
-  private readonly client: RevisionCollecting | undefined
+  private readonly client: ScreenScopeClient | undefined
   private readonly giveUpMs: number
+  private readonly coalesceMs: number
   private readonly onError: (error: unknown) => void
-  private readonly passes: (notice: {
-    revision: string
-    gameId?: string
-  }) => boolean
-
+  private readonly passes: (notice: ScreenScopeNotice) => boolean
   private readonly setTimer: (run: () => void, ms: number) => unknown
   private readonly clearTimer: (timer: unknown) => void
+  private readonly now: () => number
   /** Moves on each enter and leave, so a stale answer is told apart. */
   private generation = 0
   private release: (() => void) | undefined
   private acked = false
   /** Nothing will be acknowledged: a read runs at once. */
   private direct = true
-  /**
-   * The socket is down and retrying: reads run at once until the next
-   * acknowledgement, which reads again only if it is newer.
-   */
+  /** The socket is down and retrying: reads run at once until it is back. */
   private unreachable = false
   /** A read is wanted and waits for the acknowledgement. */
   private wanted = false
   private giveUp: unknown
   private running = false
-  /** Another read was asked for while one ran. */
+  /** A read was asked for while one ran: it runs once that one ends. */
   private again = false
-  private held: bigint | undefined
-  /** The newest notice heard while a load ran. */
-  private newest: bigint | undefined
+  /** A notice is owed a read, no sooner than `coalesceMs` after the last. */
+  private dirty = false
+  /** The owed read, waiting out `coalesceMs`. */
+  private owed: unknown
+  /** When the last read began, the screen's own included. */
+  private startedAt: number | undefined
   /** Reads the screen is making by another way (`alongside`). */
   private outside = 0
-  /** The newest notice heard while one of those ran. */
-  private newestOutside: bigint | undefined
 
   constructor(options: ScreenScopeGateOptions) {
     this.load = options.load
     this.socket = options.socket
     this.client = options.client
     this.giveUpMs = options.giveUpMs ?? ACK_GIVE_UP_MS
+    this.coalesceMs = options.coalesceMs ?? COALESCE_MS
     this.onError = options.onError ?? (() => undefined)
     this.passes = options.passes ?? (() => false)
     this.setTimer =
@@ -133,11 +141,7 @@ export class ScreenScopeGate {
       (timer => {
         globalThis.clearTimeout(timer as ReturnType<typeof setTimeout>)
       })
-  }
-
-  /** The revision of what the screen shows, as a decimal string. */
-  get revision(): string | undefined {
-    return this.held?.toString()
+    this.now = options.now ?? (() => Date.now())
   }
 
   /** Whether the server has registered the scope this screen holds. */
@@ -187,32 +191,22 @@ export class ScreenScopeGate {
 
   /**
    * A read the screen makes by another way, for news that came by another
-   * way: a game's play frame. Its answers count as what the screen shows, so
-   * the scope's notice of the same commit reads nothing more; a notice newer
-   * than them, heard meanwhile or after, reads as usual.
+   * way: a game's play frame. It counts as a read: a notice heard while it
+   * runs is owed one more, and one after it waits out `coalesceMs` from its
+   * start. So does a notice owed before it began: its read is timed again
+   * from this one's start once this one ends.
    */
   async alongside(read: () => Promise<void>): Promise<void> {
     const generation = this.generation
-    const collector: RevisionRead[] = []
-    this.client?.collectRevisions(collector)
     this.outside++
-    let failed = true
+    this.startedAt = this.now()
+    this.stopOwing()
     try {
       await read()
-      failed = false
     } finally {
-      this.client?.stopCollecting(collector)
       if (generation === this.generation) {
         this.outside--
-        const least = failed ? undefined : leastRevision(collector)
-        if (least != null && (this.held == null || least > this.held))
-          this.held = least
-        const newest = this.newestOutside
-        if (this.outside === 0) {
-          this.newestOutside = undefined
-          if (newest != null && (this.held == null || newest > this.held))
-            this.requestLoad()
-        }
+        this.settled()
       }
     }
   }
@@ -223,54 +217,37 @@ export class ScreenScopeGate {
     this.release?.()
     this.release = undefined
     this.stopWaiting()
+    this.stopOwing()
     this.acked = false
     this.direct = true
     this.unreachable = false
     this.running = false
     this.again = false
-    this.held = undefined
-    this.newest = undefined
+    this.dirty = false
+    this.startedAt = undefined
     this.outside = 0
-    this.newestOutside = undefined
   }
 
   private heard(event: ScreenScopeEvent): void {
     switch (event.type) {
-      case 'subscribed': {
-        const read = this.unreachable && !this.running ? this.held : undefined
+      case 'subscribed':
         this.acked = true
         this.unreachable = false
         this.stopWaiting()
-        // Read while the socket was down: an acknowledgement no newer than
-        // that read has nothing more to show, and notices from here on do.
-        if (read != null && BigInt(event.revision) <= read) return
         this.requestLoad()
         return
-      }
       case 'unreachable':
         if (this.acked) return
         this.unreachable = true
         this.runWanted()
         return
-      case 'changed': {
+      case 'changed':
         // Before the acknowledgement a notice is older than the read the
         // acknowledgement starts.
         if (!this.acked && !this.direct) return
         if (this.passes(event)) return
-        const revision = BigInt(event.revision)
-        if (this.outside > 0 && !this.running) {
-          if (this.newestOutside == null || revision > this.newestOutside)
-            this.newestOutside = revision
-          return
-        }
-        if (this.running) {
-          if (this.newest == null || revision > this.newest)
-            this.newest = revision
-          return
-        }
-        if (this.held == null || revision > this.held) this.requestLoad()
+        this.noticed()
         return
-      }
       case 'resync':
         this.acked = false
         return
@@ -280,6 +257,43 @@ export class ScreenScopeGate {
         this.direct = true
         this.runWanted()
     }
+  }
+
+  /** A notice the screen shows: it reads at once, or is owed a read. */
+  private noticed(): void {
+    if (this.running || this.outside > 0) {
+      this.dirty = true
+      return
+    }
+    if (this.owed != null) return
+    this.dirty = true
+    this.readWhenDue()
+  }
+
+  /** Reads what is owed once `coalesceMs` have passed since the last read began. */
+  private readWhenDue(): void {
+    const wait =
+      this.startedAt == null ? 0 : this.startedAt + this.coalesceMs - this.now()
+    if (wait <= 0) {
+      this.requestLoad()
+      return
+    }
+    // Leaving clears it, so it only ever runs for this scope.
+    this.owed = this.setTimer(() => {
+      this.owed = undefined
+      if (this.running || this.outside > 0) return
+      this.requestLoad()
+    }, wait)
+  }
+
+  /** A read ended: what was asked for meanwhile runs, or waits its turn. */
+  private settled(): void {
+    if (this.running || this.outside > 0) return
+    if (this.again) {
+      this.requestLoad()
+      return
+    }
+    if (this.dirty && this.owed == null) this.readWhenDue()
   }
 
   /** Runs the read that was waiting for the acknowledgement, if one was. */
@@ -295,6 +309,12 @@ export class ScreenScopeGate {
     this.giveUp = undefined
   }
 
+  private stopOwing(): void {
+    if (this.owed != null) this.clearTimer(this.owed)
+    this.owed = undefined
+  }
+
+  /** Reads now, or once the running read ends. Covers every notice so far. */
   private requestLoad(): void {
     if (this.running) {
       this.again = true
@@ -307,28 +327,16 @@ export class ScreenScopeGate {
     const generation = this.generation
     this.running = true
     this.again = false
-    this.newest = undefined
-    const collector: RevisionRead[] = []
-    this.client?.collectRevisions(collector)
-    let failed = false
+    this.dirty = false
+    this.stopOwing()
+    this.startedAt = this.now()
     try {
       await this.load()
     } catch (error: unknown) {
-      failed = true
       this.onError(error)
-    } finally {
-      this.client?.stopCollecting(collector)
     }
     if (generation !== this.generation) return
     this.running = false
-    // A load that failed left the screen as it was, at the revision it had.
-    if (!failed) this.held = leastRevision(collector)
-    const newest = this.newest
-    this.newest = undefined
-    if (
-      this.again ||
-      (newest != null && (this.held == null || newest > this.held))
-    )
-      this.requestLoad()
+    this.settled()
   }
 }

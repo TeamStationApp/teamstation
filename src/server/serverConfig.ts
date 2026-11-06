@@ -53,6 +53,19 @@ export function eventControlIssuerOf(
   return config.eventControlIssuer ?? origin
 }
 
+/**
+ * Where request traffic connects: the pooler when there is one, and otherwise
+ * the database itself. `databaseUrl` stays the database's own address, for
+ * what a transaction pool cannot carry and for the name it holds.
+ */
+export function requestDatabaseUrl(
+  config: Pick<ServerConfig, 'databaseUrl' | 'databasePoolUrl'>
+): string {
+  return config.databasePoolUrl === ''
+    ? config.databaseUrl
+    : config.databasePoolUrl
+}
+
 /** What Tess calls the Messages API with. Never sent to a client. */
 export interface TessSettings {
   apiKey: string

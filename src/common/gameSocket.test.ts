@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import {
   type ChatSocketEvent,
+  GAME_SOCKET_PROTOCOL,
   GameSocket,
   type GameSocketEvent,
   RECONNECT_DELAYS_MS,
@@ -203,8 +204,18 @@ describe('GameSocket (U16)', function () {
       expect(socket.connected).equals(true)
       socket.subscribe('g2', () => undefined)
       expect(last().sent).deep.equals([
-        { type: 'subscribe', gameId: 'g1', id: 'c1' },
-        { type: 'subscribe', gameId: 'g2', id: 'c2' }
+        {
+          type: 'subscribe',
+          gameId: 'g1',
+          id: 'c1',
+          protocol: GAME_SOCKET_PROTOCOL
+        },
+        {
+          type: 'subscribe',
+          gameId: 'g2',
+          id: 'c2',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       socket.close()
     })
@@ -253,8 +264,18 @@ describe('GameSocket (U16)', function () {
       timers.fire()
       last().open()
       expect(last().sent).deep.equals([
-        { type: 'subscribe', gameId: 'g1', id: 'c3' },
-        { type: 'subscribe', gameId: 'g2', id: 'c4' }
+        {
+          type: 'subscribe',
+          gameId: 'g1',
+          id: 'c3',
+          protocol: GAME_SOCKET_PROTOCOL
+        },
+        {
+          type: 'subscribe',
+          gameId: 'g2',
+          id: 'c4',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       expect(heard).deep.equals([
         { type: 'resync', gameId: 'g1' },
@@ -301,11 +322,55 @@ describe('GameSocket (U16)', function () {
       last().receive(new Uint8Array([1]))
       last().onmessage?.({ data: 7 })
       last().receive({ type: 'change', gameId: 'g1', kind: 'weather' })
-      last().receive({ kind: 'plays' })
+      last().receive({ kind: 'playEdits' })
+      last().receive({ type: 'change', gameId: 'g1', kind: 'plays' })
       last().receive({ type: 'error', code: 'unknown', message: 'x' })
       last().receive({ ...change, gameId: 'g9' })
       expect(one).deep.equals([change, { type: 'subscribed', gameId: 'g1' }])
       expect(two).deep.equals([])
+      socket.close()
+    })
+
+    it('passes on an older worker’s whole list of plays as the re-read form, with its digest', function () {
+      const { socket } = makeSocket()
+      const heard: GameSocketEvent[] = []
+      socket.subscribe('g1', event => heard.push(event))
+      last().open()
+      const reread = (digest: string | null): GameSocketEvent => ({
+        type: 'change',
+        gameId: 'g1',
+        kind: 'playEdits',
+        at: '2026-09-28T00:00:00.000Z',
+        data: {
+          generation: -1,
+          fromDigest: null,
+          digest,
+          namesDigest: null,
+          edits: null
+        }
+      })
+      const legacy = {
+        type: 'change',
+        gameId: 'g1',
+        kind: 'plays',
+        at: '2026-09-28T00:00:00.000Z',
+        data: { plays: [{}], currentPlay: null, digest: 'd0' }
+      }
+      last().receive(legacy)
+      // Without a digest, or with data that does not read, it still says
+      // to read again.
+      last().receive({ ...legacy, data: { plays: [] } })
+      last().receive({ ...legacy, data: 'garbled' })
+      last().receive({ ...legacy, data: { digest: 7 } })
+      // A frame that is not a change, or names no game, is still dropped.
+      last().receive({ ...legacy, gameId: 3 })
+      last().receive({ ...legacy, at: undefined })
+      expect(heard).deep.equals([
+        reread('d0'),
+        reread(null),
+        reread(null),
+        reread(null)
+      ])
       socket.close()
     })
 
@@ -320,9 +385,9 @@ describe('GameSocket (U16)', function () {
       const plays = {
         type: 'change',
         gameId: 'g1',
-        kind: 'plays',
+        kind: 'playEdits',
         at: 'x',
-        data: { plays: [], currentPlay: null }
+        data: { generation: 0, fromDigest: null, digest: null, edits: null }
       }
       last().receive(plays)
       expect(dj).deep.equals([plays])
@@ -353,7 +418,7 @@ describe('GameSocket (U16)', function () {
       last().receive({
         type: 'change',
         gameId: 'g1',
-        kind: 'plays',
+        kind: 'playEdits',
         at: 'x',
         data: {}
       })
@@ -454,7 +519,8 @@ describe('GameSocket (U16)', function () {
         [1, 2, 3, 4, 5, 6, 7].map(i => ({
           type: 'subscribe',
           gameId: 'g1',
-          id: `c${i}`
+          id: `c${i}`,
+          protocol: GAME_SOCKET_PROTOCOL
         }))
       )
       last().receive({ type: 'subscribed', gameId: 'g1', id: 'c7' })
@@ -503,7 +569,12 @@ describe('GameSocket (U16)', function () {
       timers.fire()
       last().open()
       expect(subscribes()).deep.equals([
-        { type: 'subscribe', gameId: 'g1', id: 'c2' }
+        {
+          type: 'subscribe',
+          gameId: 'g1',
+          id: 'c2',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       last().receive(internal('c2'))
       expect(timers.pending()).equals(1)
@@ -530,6 +601,139 @@ describe('GameSocket (U16)', function () {
       // An internal that answers no subscribe is only passed on.
       last().receive({ type: 'error', code: 'internal', message: 'x' })
       expect(timers.pending()).equals(1)
+      socket.close()
+    })
+  })
+
+  describe('an app older than the server reads', function () {
+    const updateRequired = (id: string): Record<string, unknown> => ({
+      type: 'error',
+      id,
+      code: 'forbidden',
+      reason: 'updateRequired',
+      message: 'Update TeamStation to keep following games.'
+    })
+
+    it('tells the game and onUpdateRequired once, and never asks for that game again', function () {
+      const { socket, timers } = makeSocket()
+      const heard: GameSocketEvent[] = []
+      const other: GameSocketEvent[] = []
+      let told = 0
+      const stopHearing = socket.onUpdateRequired(() => {
+        told++
+      })
+      socket.subscribe('g1', event => heard.push(event))
+      socket.subscribe('g2', event => other.push(event))
+      last().open()
+      last().receive(updateRequired('c1'))
+      // A second refusal of the same game, as a late duplicate, says nothing.
+      last().receive(updateRequired('c1'))
+      expect(heard).deep.equals([{ type: 'updateRequired', gameId: 'g1' }])
+      expect(other).deep.equals([])
+      expect(told).equals(1)
+      expect(timers.pending()).equals(0)
+      // A reconnect asks again only for the game that was not refused.
+      last().drop()
+      timers.fire()
+      last().open()
+      expect(last().sent).deep.equals([
+        {
+          type: 'subscribe',
+          gameId: 'g2',
+          id: 'c3',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
+      ])
+      expect(heard.filter(event => event.type === 'updateRequired')).lengthOf(1)
+      stopHearing()
+      socket.close()
+    })
+
+    it('sends no unsubscribe for a refused game, and asks again for it once it is wanted anew', function () {
+      const { socket } = makeSocket()
+      const heard: GameSocketEvent[] = []
+      const stop = socket.subscribe('g1', event => heard.push(event))
+      const chat = socket.onChat(() => undefined)
+      last().open()
+      last().receive(updateRequired('c1'))
+      stop()
+      stop()
+      expect(last().sent).lengthOf(1)
+      socket.subscribe('g1', event => heard.push(event))
+      expect(last().sent[1]).deep.equals({
+        type: 'subscribe',
+        gameId: 'g1',
+        id: 'c2',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
+      last().receive(updateRequired('c2'))
+      expect(heard).deep.equals([
+        { type: 'updateRequired', gameId: 'g1' },
+        { type: 'updateRequired', gameId: 'g1' }
+      ])
+      chat()
+      socket.close()
+    })
+
+    it('closes the socket when the refused game was all it held', function () {
+      const { socket } = makeSocket()
+      const stop = socket.subscribe('g1', () => undefined)
+      const socketOf = last()
+      socketOf.open()
+      socketOf.receive(updateRequired('c1'))
+      stop()
+      expect(socketOf.closedWith).equals(1000)
+      expect(socketOf.sent).lengthOf(1)
+    })
+
+    it('passes on a forbidden refusal with no reason, or one it does not know, as any other error', function () {
+      const { socket } = makeSocket()
+      const heard: GameSocketEvent[] = []
+      let told = 0
+      socket.onUpdateRequired(() => {
+        told++
+      })
+      socket.subscribe('g1', event => heard.push(event))
+      last().open()
+      last().receive({
+        type: 'error',
+        id: 'c1',
+        code: 'forbidden',
+        message: 'No'
+      })
+      socket.subscribe('g2', () => undefined)
+      last().receive({
+        type: 'error',
+        id: 'c2',
+        code: 'forbidden',
+        reason: 'somethingNewer',
+        message: 'Not yet'
+      })
+      expect(heard).deep.equals([
+        { type: 'error', gameId: 'g1', code: 'forbidden', message: 'No' }
+      ])
+      expect(told).equals(0)
+      socket.close()
+    })
+
+    it('ignores a refusal of a subscribe it did not send', function () {
+      const { socket } = makeSocket()
+      const heard: GameSocketEvent[] = []
+      let told = 0
+      socket.onUpdateRequired(() => {
+        told++
+      })
+      socket.subscribe('g1', event => heard.push(event))
+      last().open()
+      last().receive(updateRequired('nobody'))
+      last().receive({
+        type: 'error',
+        code: 'forbidden',
+        reason: 'updateRequired',
+        message: 'Update TeamStation to keep following games.'
+      })
+      expect(heard).deep.equals([])
+      expect(told).equals(0)
       socket.close()
     })
   })
@@ -568,15 +772,19 @@ describe('GameSocket (U16)', function () {
       })
       last().open()
       expect(last().sent).deep.equals([
-        { type: 'subscribe', scope: 'home', id: 'c1' }
+        {
+          type: 'subscribe',
+          scope: 'home',
+          id: 'c1',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       last().receive({
         type: 'subscribed',
         scope: 'home',
-        id: 'c1',
-        revision: '41'
+        id: 'c1'
       })
-      expect(heard).deep.equals([{ type: 'subscribed', revision: '41' }])
+      expect(heard).deep.equals([{ type: 'subscribed' }])
       socket.close()
     })
 
@@ -589,24 +797,45 @@ describe('GameSocket (U16)', function () {
       )
       last().open()
       expect(last().sent).deep.equals([
-        { type: 'subscribe', scope: 'event', gameId: 'g1', id: 'c1' }
+        {
+          type: 'subscribe',
+          scope: 'event',
+          gameId: 'g1',
+          id: 'c1',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       last().receive({
         type: 'changed',
         scope: 'event',
-        revision: '5',
         gameId: 'g2'
       })
-      last().receive({ type: 'changed', scope: 'home', revision: '6' })
-      last().receive({ type: 'changed', scope: 'event', revision: 'x7' })
-      last().receive({ type: 'changed', scope: 'nowhere', revision: '7' })
+      last().receive({ type: 'changed', scope: 'home' })
+      last().receive({ type: 'changed', scope: 'event' })
+      last().receive({ type: 'changed', scope: 'nowhere' })
       last().receive({
         type: 'changed',
         scope: 'event',
-        revision: '8',
         gameId: 'g1'
       })
-      expect(heard).deep.equals([{ type: 'changed', revision: '8' }])
+      // A post's own notice says so, for the game's screen to let it pass.
+      last().receive({
+        type: 'changed',
+        scope: 'event',
+        gameId: 'g1',
+        byPost: true
+      })
+      last().receive({
+        type: 'changed',
+        scope: 'event',
+        gameId: 'g1',
+        byPost: false
+      })
+      expect(heard).deep.equals([
+        { type: 'changed', gameId: 'g1' },
+        { type: 'changed', gameId: 'g1', byPost: true },
+        { type: 'changed', gameId: 'g1' }
+      ])
       socket.close()
     })
 
@@ -620,8 +849,19 @@ describe('GameSocket (U16)', function () {
       )
       last().open()
       expect(last().sent).deep.equals([
-        { type: 'subscribe', gameId: 'g1', id: 'c1' },
-        { type: 'subscribe', scope: 'event', gameId: 'g1', id: 'c2' }
+        {
+          type: 'subscribe',
+          gameId: 'g1',
+          id: 'c1',
+          protocol: GAME_SOCKET_PROTOCOL
+        },
+        {
+          type: 'subscribe',
+          scope: 'event',
+          gameId: 'g1',
+          id: 'c2',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       // The event scope refused: its error has no game, and still reaches
       // only the scope.
@@ -634,9 +874,15 @@ describe('GameSocket (U16)', function () {
       const change = {
         type: 'change',
         gameId: 'g1',
-        kind: 'plays',
+        kind: 'playEdits',
         at: '2026-10-21T00:00:00.000Z',
-        data: { plays: [], currentPlay: null, digest: 'd1' }
+        data: {
+          generation: 0,
+          fromDigest: 'd0',
+          digest: 'd1',
+          edits: [],
+          currentPlay: null
+        }
       }
       last().receive(change)
       last().receive({ type: 'subscribed', gameId: 'g1', id: 'c1' })
@@ -646,7 +892,8 @@ describe('GameSocket (U16)', function () {
       expect(game).deep.equals([change, { type: 'subscribed', gameId: 'g1' }])
       // An answer that does not read is nobody's.
       socket.subscribeScope({ scope: 'home' }, event => scope.push(event))
-      last().receive({ type: 'subscribed', scope: 'home', id: 'c3' })
+      last().receive({ type: 'error', id: 'c3' })
+      last().receive({ type: 'unsubscribed', scope: 'home', id: 'c3' })
       expect(scope).lengthOf(1)
       expect(game).lengthOf(2)
       socket.close()
@@ -667,31 +914,39 @@ describe('GameSocket (U16)', function () {
       last().receive({
         type: 'subscribed',
         scope: 'home',
-        id: 'c1',
-        revision: '1'
+        id: 'c1'
       })
-      last().receive({ type: 'changed', scope: 'home', revision: '2' })
+      last().receive({ type: 'changed', scope: 'home' })
       leaveHome()
       expect(last().sent).deep.equals([
-        { type: 'subscribe', scope: 'home', id: 'c1' },
-        { type: 'subscribe', scope: 'schedule', id: 'c2' }
+        {
+          type: 'subscribe',
+          scope: 'home',
+          id: 'c1',
+          protocol: GAME_SOCKET_PROTOCOL
+        },
+        {
+          type: 'subscribe',
+          scope: 'schedule',
+          id: 'c2',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       expect(home).deep.equals([])
       expect(schedule).deep.equals([])
       last().receive({
         type: 'subscribed',
         scope: 'schedule',
-        id: 'c2',
-        revision: '2'
+        id: 'c2'
       })
-      expect(schedule).deep.equals([{ type: 'subscribed', revision: '2' }])
+      expect(schedule).deep.equals([{ type: 'subscribed' }])
       leaveSchedule()
       leaveSchedule()
       expect(last().sent.slice(2)).deep.equals([
         { type: 'unsubscribe', scope: 'schedule', id: 'c3' }
       ])
       last().receive({ type: 'unsubscribed', scope: 'schedule', id: 'c3' })
-      last().receive({ type: 'changed', scope: 'schedule', revision: '3' })
+      last().receive({ type: 'changed', scope: 'schedule' })
       expect(schedule).lengthOf(1)
       // Let go before it opened, nothing is sent.
       const quiet = makeSocket()
@@ -710,32 +965,30 @@ describe('GameSocket (U16)', function () {
       last().receive({
         type: 'subscribed',
         scope: 'schedule',
-        id: 'c1',
-        revision: '1'
+        id: 'c1'
       })
       last().receive({ type: 'resync' })
       expect(last().sent[1]).deep.equals({
         type: 'subscribe',
         scope: 'schedule',
-        id: 'c2'
+        id: 'c2',
+        protocol: GAME_SOCKET_PROTOCOL
       })
       // The old subscribe's answer no longer counts.
       last().receive({
         type: 'subscribed',
         scope: 'schedule',
-        id: 'c1',
-        revision: '1'
+        id: 'c1'
       })
       last().receive({
         type: 'subscribed',
         scope: 'schedule',
-        id: 'c2',
-        revision: '3'
+        id: 'c2'
       })
       expect(heard).deep.equals([
-        { type: 'subscribed', revision: '1' },
+        { type: 'subscribed' },
         { type: 'resync' },
-        { type: 'subscribed', revision: '3' }
+        { type: 'subscribed' }
       ])
       // A dropped socket voids the ack, says it is down, and the reconnect
       // asks again.
@@ -748,15 +1001,19 @@ describe('GameSocket (U16)', function () {
       timers.fire()
       last().open()
       expect(last().sent).deep.equals([
-        { type: 'subscribe', scope: 'schedule', id: 'c3' }
+        {
+          type: 'subscribe',
+          scope: 'schedule',
+          id: 'c3',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       last().receive({
         type: 'subscribed',
         scope: 'schedule',
-        id: 'c3',
-        revision: '4'
+        id: 'c3'
       })
-      expect(heard.at(-1)).deep.equals({ type: 'subscribed', revision: '4' })
+      expect(heard.at(-1)).deep.equals({ type: 'subscribed' })
       expect(heard).lengthOf(6)
       // A resync with nothing held, or after the scope stopped, asks nothing.
       const idle = makeSocket()
@@ -795,7 +1052,12 @@ describe('GameSocket (U16)', function () {
       first.socket.close()
       retrying.open()
       expect(retrying.sent).deep.equals([
-        { type: 'subscribe', scope: 'schedule', id: 'c1' }
+        {
+          type: 'subscribe',
+          scope: 'schedule',
+          id: 'c1',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       socket.close()
     })
@@ -821,7 +1083,12 @@ describe('GameSocket (U16)', function () {
       })
       last().open()
       expect(last().sent).deep.equals([
-        { type: 'subscribe', scope: 'schedule', id: 'c2' }
+        {
+          type: 'subscribe',
+          scope: 'schedule',
+          id: 'c2',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       socket.close()
     })
@@ -838,14 +1105,29 @@ describe('GameSocket (U16)', function () {
       timers.fire()
       last().open()
       expect(last().sent).deep.equals([
-        { type: 'subscribe', gameId: 'g1', id: 'c3' }
+        {
+          type: 'subscribe',
+          gameId: 'g1',
+          id: 'c3',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       // The new token reconnects at once and asks for both.
       socket.setToken('tok_new')
       last().open()
       expect(last().sent).deep.equals([
-        { type: 'subscribe', gameId: 'g1', id: 'c4' },
-        { type: 'subscribe', scope: 'home', id: 'c5' }
+        {
+          type: 'subscribe',
+          gameId: 'g1',
+          id: 'c4',
+          protocol: GAME_SOCKET_PROTOCOL
+        },
+        {
+          type: 'subscribe',
+          scope: 'home',
+          id: 'c5',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       socket.close()
     })
@@ -859,8 +1141,7 @@ describe('GameSocket (U16)', function () {
       first.receive({
         type: 'subscribed',
         scope: 'home',
-        id: 'c1',
-        revision: '1'
+        id: 'c1'
       })
       socket.authFailed()
       socket.authFailed()
@@ -872,10 +1153,7 @@ describe('GameSocket (U16)', function () {
       expect(first.closedWith).equals(1000)
       expect(socket.connected).equals(false)
       expect(timers.pending()).equals(0)
-      expect(heard).deep.equals([
-        { type: 'subscribed', revision: '1' },
-        { type: 'stopped' }
-      ])
+      expect(heard).deep.equals([{ type: 'subscribed' }, { type: 'stopped' }])
       // While waiting to reconnect, a 401 cancels the wait.
       const waiting = makeSocket()
       waiting.socket.subscribeScope({ scope: 'home' }, () => undefined)
@@ -901,7 +1179,79 @@ describe('GameSocket (U16)', function () {
       socket.close()
     })
 
-    it('passes on the one game a home notice names, and names none on an event', function () {
+    it('tells onUpdateRequired of a scope refused as too old, and asks for no scope again', function () {
+      const { socket, timers } = makeSocket()
+      let told = 0
+      socket.onUpdateRequired(() => {
+        told++
+      })
+      const heard: ScreenScopeEvent[] = []
+      socket.subscribe('g1', () => undefined)
+      socket.subscribeScope({ scope: 'home' }, event => heard.push(event))
+      last().open()
+      expect(last().sent[1]).deep.equals({
+        type: 'subscribe',
+        scope: 'home',
+        id: 'c2',
+        protocol: GAME_SOCKET_PROTOCOL
+      })
+      last().receive({
+        type: 'error',
+        id: 'c2',
+        code: 'forbidden',
+        reason: 'updateRequired',
+        message: 'Update TeamStation to keep following games.'
+      })
+      expect(told).equals(1)
+      expect(heard).deep.equals([
+        {
+          type: 'error',
+          code: 'forbidden',
+          message: 'Update TeamStation to keep following games.'
+        }
+      ])
+      // A screen after it hears so at once, and nothing is sent for it.
+      socket.subscribeScope({ scope: 'schedule' }, event => heard.push(event))
+      expect(heard.at(-1)).deep.equals({
+        type: 'error',
+        code: 'forbidden',
+        message: 'Update TeamStation to keep following this screen.'
+      })
+      expect(last().sent).lengthOf(2)
+      // A reconnect asks for the game again, and for no scope.
+      last().drop(1006)
+      expect(heard).lengthOf(2)
+      timers.fire()
+      last().open()
+      expect(last().sent).deep.equals([
+        {
+          type: 'subscribe',
+          gameId: 'g1',
+          id: 'c3',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
+      ])
+      expect(told).equals(1)
+      socket.close()
+
+      // A socket that held only the refused scope closes.
+      const lone = makeSocket()
+      lone.socket.subscribeScope({ scope: 'home' }, () => undefined)
+      const only = last()
+      only.open()
+      only.receive({
+        type: 'error',
+        id: 'c1',
+        code: 'forbidden',
+        reason: 'updateRequired',
+        message: 'Update TeamStation to keep following games.'
+      })
+      expect(only.closedWith).equals(1000)
+      expect(lone.socket.connected).equals(false)
+      lone.socket.close()
+    })
+
+    it('passes on the one game a home notice names, and whether a post made it', function () {
       const { socket } = makeSocket()
       const heard: ScreenScopeEvent[] = []
       socket.subscribeScope({ scope: 'home' }, event => heard.push(event))
@@ -909,13 +1259,19 @@ describe('GameSocket (U16)', function () {
       last().receive({
         type: 'changed',
         scope: 'home',
-        revision: '4',
         gameId: 'g1'
       })
-      last().receive({ type: 'changed', scope: 'home', revision: '5' })
+      last().receive({ type: 'changed', scope: 'home' })
+      last().receive({
+        type: 'changed',
+        scope: 'home',
+        gameId: 'g1',
+        byPost: true
+      })
       expect(heard).deep.equals([
-        { type: 'changed', revision: '4', gameId: 'g1' },
-        { type: 'changed', revision: '5' }
+        { type: 'changed', gameId: 'g1' },
+        { type: 'changed' },
+        { type: 'changed', gameId: 'g1', byPost: true }
       ])
       socket.close()
     })
@@ -929,11 +1285,16 @@ describe('GameSocket (U16)', function () {
       expect(heard).deep.equals([{ type: 'stopped' }])
       last().open()
       expect(last().sent).deep.equals([
-        { type: 'subscribe', gameId: 'g1', id: 'c1' }
+        {
+          type: 'subscribe',
+          gameId: 'g1',
+          id: 'c1',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
       ])
       expect(socket.connected).equals(true)
       socket.close()
-      last().receive({ type: 'changed', scope: 'home', revision: '9' })
+      last().receive({ type: 'changed', scope: 'home' })
       expect(heard).lengthOf(1)
     })
   })
