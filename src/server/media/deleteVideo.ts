@@ -72,7 +72,7 @@ export async function deleteVideo(
   const { db, space, mediaRoot } = context
   const video = await db
     .selectFrom('videos')
-    .select(['storage', 'game_id as gameId'])
+    .select(['storage', 'game_id as gameId', 'space_secret as spaceSecret'])
     .where('id', '=', videoId)
     .executeTakeFirst()
   if (video == null) throw notFound()
@@ -97,7 +97,11 @@ export async function deleteVideo(
   // which objects were the video's, and they are then paid for for ever.
   let removedFromSpace = 0
   if (spaceConfigured(space)) {
-    const { deleted } = await deleteVideoFromSpace({ space, videoId })
+    const { deleted } = await deleteVideoFromSpace({
+      space,
+      videoId,
+      spaceSecret: video.spaceSecret
+    })
     removedFromSpace = deleted
   }
 

@@ -161,6 +161,14 @@ export const asServerConfig = asObject({
       accessKeyId: asOptional(asString, ''),
       secretAccessKey: asOptional(asString, ''),
       pathStyle: asOptional(asBoolean, false),
+      /**
+       * Where viewers fetch public media (pieces and recordings under a
+       * video's secret path): the CDN endpoint's origin, or any base URL with
+       * a path. Empty means the bucket's own base. The web app's CSP allows
+       * its origin, and is fixed when the web app is built, so a change here
+       * means a build, not just a restart.
+       */
+      mediaBaseUrl: asOptional(asString, ''),
       readOnlySource: asOptional(
         asObject({
           endpoint: asString,
@@ -179,7 +187,8 @@ export const asServerConfig = asObject({
       bucket: 'media-bucket',
       accessKeyId: '',
       secretAccessKey: '',
-      pathStyle: false
+      pathStyle: false,
+      mediaBaseUrl: ''
     }
   ),
 

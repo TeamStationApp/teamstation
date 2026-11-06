@@ -177,7 +177,7 @@ describe('a live origin shared by API nodes', function () {
     await drainPublishForTest(f.videoId)
     expect(Date.now() - before).lessThan(10000)
     expect(await f.body()).contains('seg000003.m4s')
-    const remote3 = join(f.remote, 'videos', f.videoId, 'seg000003.m4s')
+    const remote3 = join(f.remoteDir, 'seg000003.m4s')
     const first = await readFile(remote3)
     writeFileSync(
       join(f.dir, 'seg000004.m4s'),
@@ -219,9 +219,7 @@ describe('a live origin shared by API nodes', function () {
     await f.f.h.db.deleteFrom('videos').where('id', '=', f.videoId).execute()
     await sync(f.options)
     await drainPublishForTest(f.videoId)
-    const names = await readdir(join(f.remote, 'videos', f.videoId)).catch(
-      () => []
-    )
+    const names = await readdir(f.remoteDir).catch(() => [])
     expect(names).deep.equals([])
     expect(await stat(f.dir).catch(() => undefined)).equals(undefined)
     console.log('prefix after idle delete:', names)
@@ -232,7 +230,7 @@ describe('a live origin shared by API nodes', function () {
     await f.begin()
     await drainPublishForTest(f.videoId)
     const onSpace = async (): Promise<Record<string, string>> => {
-      const folder = join(f.remote, 'videos', f.videoId)
+      const folder = f.remoteDir
       const held: Record<string, string> = {}
       for (const name of await readdir(folder)) {
         const bytes = await readFile(join(folder, name))
