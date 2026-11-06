@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import type { SpaceSettings } from './spacesHls'
 import { spaceConfigured } from './spacesHls'
 import type { FrameSource } from './stills'
+import { videoPrefix } from './videoPrefix'
 
 /**
  * Where a video's HLS actually sits, under the media root.
@@ -31,12 +32,22 @@ export interface VideoLocation {
  * fetched when a still is actually cut.
  */
 export async function videoFrameSource(
-  options: LocateOptions & { space: SpaceSettings; verified?: boolean }
+  options: LocateOptions & {
+    space: SpaceSettings
+    spaceSecret: string | null
+    verified?: boolean
+  }
 ): Promise<FrameSource | undefined> {
-  const { space, storage, videoId } = options
+  const { space, storage, videoId, spaceSecret } = options
   if (storage === 'spaces') {
     if (!spaceConfigured(space)) return undefined
-    return { kind: 'space', space, videoId, verified: options.verified }
+    return {
+      kind: 'space',
+      space,
+      videoId,
+      spaceSecret,
+      verified: options.verified
+    }
   }
   const path = await locateVideoFile(options)
   return path == null ? undefined : { kind: 'file', path }
@@ -77,6 +88,8 @@ export interface LocateOptions {
   mediaRoot: string
   storage: VideoStorage
   videoId: string
+  /** A `spaces` video's secret, for where its objects are; null for none. */
+  spaceSecret?: string | null
 }
 
 interface CacheEntry {
@@ -104,7 +117,11 @@ export async function locateVideo(
   if (storage === 'spaces') {
     // Served by the API from the bucket, not from disk, so there is nothing to
     // look up: the caller does not build a `/media` URL for these.
-    return { dir: `videos/${videoId}`, master: 'master.m3u8' }
+    const prefix = videoPrefix({
+      id: videoId,
+      spaceSecret: options.spaceSecret ?? null
+    })
+    return { dir: prefix.slice(0, -1), master: 'master.m3u8' }
   }
   return await locatePeertube(mediaRoot, videoId)
 }
