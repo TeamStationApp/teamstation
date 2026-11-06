@@ -767,6 +767,46 @@ describe('live playlists through Valkey', function () {
     expect(spaceReads).equals(2)
   })
 
+  it('reads the Space while an open list has not grown in 15 s, and Valkey again once it grows', async function () {
+    let time = 0
+    const clocked = followingPlayback(undefined, () => time)
+    await following(clocked)
+    const fromSpace = clocked.rewrite(video, 'index.m3u8', body(1))
+    await sink.replace(video.id, body(2))
+    const copy = rewriteMediaPlaylist(body(2), uri => clocked.sign(video, uri))
+    expect(await clocked.live(video)).equals(copy)
+    time += 15_000
+    expect(await clocked.live(video)).equals(copy)
+    expect(spaceReads).equals(0)
+    // The ingest stopped reaching Valkey; this worker did not.
+    time += 1
+    expect(await clocked.live(video)).equals(fromSpace)
+    expect(spaceReads).equals(1)
+    // A subscriber reconnect reads the same list again: not growth.
+    clocked.following!.drop()
+    time += 1000
+    expect(await clocked.live(video)).equals(fromSpace)
+    // Once it grows, the copy is served again.
+    await sink.append(video.id, piece(2), body(3))
+    const grown = rewriteMediaPlaylist(body(3), uri => clocked.sign(video, uri))
+    await until('the growth', async () => (await clocked.live(video)) === grown)
+    // A closed list never grows, and is served until it goes.
+    await sink.append(
+      video.id,
+      '#EXT-X-ENDLIST\n',
+      body(3) + '#EXT-X-ENDLIST\n'
+    )
+    await until(
+      'the close',
+      async () =>
+        (await clocked.live(video))?.includes('#EXT-X-ENDLIST') === true
+    )
+    const reads = spaceReads
+    time += 30_000
+    expect(await clocked.live(video)).contains('#EXT-X-ENDLIST')
+    expect(spaceReads).equals(reads)
+  })
+
   it('drops a copy nobody asked for in ten minutes', async function () {
     let time = 0
     const clocked = followingPlayback(undefined, () => time)

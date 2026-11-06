@@ -247,6 +247,14 @@ const RETRY_MS = 1000
 const READ_TIMEOUT_MS = 1000
 /** A video whose reads keep timing out is logged this often. */
 const STALL_LOG_MS = 60_000
+/**
+ * How long a copy of an open playlist is vouched for after it last grew.
+ * Pieces arrive every few seconds; a list that stopped growing may be one the
+ * ingest can no longer write (its Valkey connection stalled or failing, while
+ * this worker's still answers), and the Space, which the ingest keeps
+ * current regardless, is read instead until the list grows again.
+ */
+const STILL_MS = 15_000
 
 interface Followed {
   video: VideoPath
@@ -283,6 +291,18 @@ export class LivePlaylists {
   private readonly missing = new Map<string, number>()
   /** When each video's last stalled read was logged. */
   private readonly stalls = new Map<string, number>()
+  /**
+   * Each followed list's generation and length, and when it last changed.
+   * Kept across a drop: a list read again after a subscriber reconnect is
+   * not growth.
+   */
+  private readonly grown = new Map<
+    string,
+    { gen: number; count: number; at: number }
+  >()
+
+  /** When each video's still list was last logged. */
+  private readonly stills = new Map<string, number>()
   private following = false
   private down = false
   private readonly now: () => number
@@ -377,7 +397,25 @@ export class LivePlaylists {
     }
     if (this.followed.get(video.id) !== held || held.count === 0)
       return undefined
+    if (held.closedAt == null && this.stillFor(video.id, at)) return undefined
     return held.rewritten
+  }
+
+  /**
+   * Whether an open playlist's list has not grown in `STILL_MS`. The copy is
+   * kept, so a notice that extends it brings the worker back to Valkey.
+   */
+  private stillFor(id: string, at: number): boolean {
+    const grew = this.grown.get(id)
+    if (grew == null || at - grew.at <= STILL_MS) return false
+    const loggedAt = this.stills.get(id)
+    if (loggedAt == null || at - loggedAt >= STALL_LOG_MS) {
+      this.stills.set(id, at)
+      this.options.log?.(
+        `live playlists: ${id} has not grown in ${STILL_MS / 1000} s; reading the Space`
+      )
+    }
+    return true
   }
 
   /** Whether `chain` settles within the read timeout. */
@@ -492,6 +530,10 @@ export class LivePlaylists {
         held.closedAt = this.now()
     }
     held.count += entries.length
+    const { id } = held.video
+    const grew = this.grown.get(id)
+    if (grew?.gen !== held.gen || grew.count !== held.count)
+      this.grown.set(id, { gen: held.gen, count: held.count, at: this.now() })
   }
 
   private fail(held: Followed, error: unknown): void {
@@ -513,5 +555,10 @@ export class LivePlaylists {
       if (at - failedAt >= RETRY_MS) this.missing.delete(id)
     for (const [id, loggedAt] of this.stalls)
       if (at - loggedAt >= STALL_LOG_MS) this.stalls.delete(id)
+    for (const [id, grew] of this.grown)
+      if (!this.followed.has(id) && at - grew.at > IDLE_KEEP_MS)
+        this.grown.delete(id)
+    for (const [id, loggedAt] of this.stills)
+      if (at - loggedAt >= STALL_LOG_MS) this.stills.delete(id)
   }
 }
