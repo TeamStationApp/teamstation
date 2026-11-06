@@ -19,6 +19,7 @@ import pg from 'pg'
 
 import { TeamStationClient } from '../../common/api'
 import { serverConfig } from '../../server/serverConfig'
+import { serverLivePieceReader } from '../../test/livePieces'
 import { signInTestAccount } from '../../test/passwordFixtures'
 import { createLiveHarness } from './liveHarness.e2e'
 
@@ -108,8 +109,10 @@ const clock = kit('../../../scripts/e2e/liveOutage/playlistClock.ts') as {
     ffmpegPath: string,
     dir: string,
     segments: readonly Segment[],
-    nearMs: number
-  ) => Array<number | null>
+    nearMs: number,
+    size: { width: number; height: number } | undefined,
+    read: (path: string) => Promise<Uint8Array>
+  ) => Promise<Array<number | null>>
   wallAtPosition: (
     segments: readonly Segment[],
     markers: ReadonlyArray<number | null>,
@@ -431,14 +434,27 @@ describe('E20: live viewers through a publisher outage', function () {
 
     const dir = join(serverConfig.mediaDir, 'work', 'videos', angle.videoId)
     const livePlaylist = readFileSync(join(dir, 'master.m3u8'), 'utf8')
-    if (framesDir != null)
-      cpSync(dir, join(framesDir, 'live'), { recursive: true })
     const { segments, mediaSequence, ended } = clock.parsePlaylist(livePlaylist)
-    const markers = clock.firstMarkers(
+    // With a Space, the ingest keeps only the newest minute on disk; the
+    // older pieces are read back from the Space.
+    const readPiece = serverLivePieceReader(angle.videoId)
+    if (framesDir != null) {
+      const copy = join(framesDir, 'live')
+      cpSync(dir, copy, { recursive: true })
+      for (const segment of segments)
+        if (!existsSync(join(copy, segment.uri)))
+          writeFileSync(
+            join(copy, segment.uri),
+            await readPiece(join(dir, segment.uri))
+          )
+    }
+    const markers = await clock.firstMarkers(
       serverConfig.ffmpegPath,
       dir,
       segments,
-      t0
+      t0,
+      undefined,
+      readPiece
     )
     const maps = livePlaylist
       .split('\n')

@@ -23,7 +23,11 @@ import {
   remuxToHls,
   VIDEO_FILE
 } from '../media/ffmpeg'
-import { isStampedAt, readRecordingStamps } from '../media/wallClockScan'
+import {
+  isStampedAt,
+  type PartReader,
+  readRecordingStamps
+} from '../media/wallClockScan'
 import { storeWallPoints } from '../media/wallTimeline'
 import { boxesIn, fillHoles } from './holeFiller'
 import {
@@ -788,7 +792,9 @@ export async function replaceAnchorsFromRecording(
   db: Kysely<Database>,
   videoId: string,
   dir: string,
-  playlistFile: string = MEDIA_PLAYLIST
+  playlistFile: string = MEDIA_PLAYLIST,
+  /** How the recording's files are read; the disk by default. */
+  readPart?: PartReader
 ): Promise<number> {
   const stamped = await db
     .selectFrom('video_wall_anchors')
@@ -798,7 +804,7 @@ export async function replaceAnchorsFromRecording(
     .limit(1)
     .executeTakeFirst()
   if (stamped == null) return 0
-  const scan = await readRecordingStamps(dir, { playlistFile })
+  const scan = await readRecordingStamps(dir, { playlistFile, readPart })
   if (scan.points.length === 0) return 0
   await db.transaction().execute(async trx => {
     // Each arrival point, with the media time of the point after it.
