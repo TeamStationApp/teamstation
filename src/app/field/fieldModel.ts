@@ -1,4 +1,5 @@
 import type { AthletePose } from './athletePose'
+import { SCORING_SPEED } from './scoringSpeed'
 
 /** Ground coordinates are metres: home is (0, 0), centre field is negative z. */
 export interface GroundPoint {
@@ -149,13 +150,18 @@ export function clampToField(point: GroundPoint): GroundPoint {
 export function setDestination(player: FieldPlayer, point: GroundPoint): void {
   player.target = clampToField(point)
 }
-export const OUT_APPROACH_SPEED = 1.4 * 17
+export const OUT_APPROACH_SPEED = 1.4 * 17 * SCORING_SPEED
 export function locomotionSpeed(
   distance: number,
   offense: boolean,
   slow = false
 ): number {
-  return 1.4 * Math.min(17, 4 + distance * 1.1) * (offense && !slow ? 2 : 1)
+  return (
+    1.4 *
+    Math.min(17, 4 + distance * 1.1) *
+    (offense && !slow ? 2 : 1) *
+    SCORING_SPEED
+  )
 }
 /** Frame-rate independent locomotion; cap elapsed time after a backgrounded tab. */
 export function advancePlayer(player: FieldPlayer, elapsed: number): void {

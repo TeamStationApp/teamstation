@@ -47,7 +47,7 @@ import {
   type MoveDraft,
   previewMove
 } from './movePreview'
-import { PlayAnimation } from './PlayAnimation'
+import { BallWarmup, PlayAnimation } from './PlayAnimation'
 import { Player } from './Player'
 import {
   hasPlayerLabel,
@@ -946,6 +946,16 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       <PlayerShadows
         players={players.filter(player => player.emptyPosition !== true)}
       />
+      <BallWarmup
+        onDrawn={() => {
+          // After that frame's render, which follows its frame callbacks.
+          setTimeout(() => {
+            whenDrawn(gl.getContext(), () => {
+              gl.domElement.setAttribute?.('data-field-drawn', 'true')
+            })
+          }, 0)
+        }}
+      />
       {props.presentation != null && (
         <PlayAnimation
           key={props.presentation.id}
@@ -1046,4 +1056,51 @@ function BatterBoxHint({ side }: { side: 'L' | 'R' }): React.ReactElement {
       />
     </mesh>
   )
+}
+
+/** The part of a browser's WebGL 2 context that fences the GPU. */
+interface FenceGl {
+  readonly SYNC_GPU_COMMANDS_COMPLETE: number
+  readonly TIMEOUT_EXPIRED: number
+  fenceSync: (condition: number, flags: number) => object | null
+  flush: () => void
+  clientWaitSync: (fence: object, flags: number, timeout: number) => number
+  deleteSync: (fence: object) => void
+}
+
+/**
+ * Calls `drawn` once the GPU has finished what the field asked of it so far:
+ * its opening frames, with every shader compiled (`data-field-drawn`). A
+ * browser's software GPU can take a second over them after the page shows the
+ * field. Without GL fences (a WebGL 1 context, or a phone's, whose fenceSync
+ * throws because expo-gl does not implement it) it calls at once.
+ */
+export function whenDrawn(context: unknown, drawn: () => void): void {
+  const Gl2 = (
+    globalThis as { WebGL2RenderingContext?: abstract new () => unknown }
+  ).WebGL2RenderingContext
+  if (Gl2 == null || !(context instanceof Gl2)) {
+    drawn()
+    return
+  }
+  const gl = context as FenceGl
+  let fence: object | null = null
+  try {
+    fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
+  } catch {}
+  if (fence == null) {
+    drawn()
+    return
+  }
+  gl.flush()
+  const poll = (): void => {
+    const status = gl.clientWaitSync(fence, 0, 0)
+    if (status === gl.TIMEOUT_EXPIRED) {
+      setTimeout(poll, 16)
+      return
+    }
+    gl.deleteSync(fence)
+    drawn()
+  }
+  poll()
 }

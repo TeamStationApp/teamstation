@@ -5,9 +5,18 @@ import { PerspectiveCamera, Vector3 } from 'three'
 import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from '../scoring/scoringMachine'
-import { PITCH_TIMING, pitchPresentation } from '../scoring/scoringPresentation'
+import {
+  PITCH_TIMING,
+  pitchPresentation,
+  THROW_RELEASE_MS
+} from '../scoring/scoringPresentation'
 import { applyFieldCamera } from './cameraModel'
-import { sampleHit, samplePitch, sampleThrow } from './playAnimationModel'
+import {
+  FOUL_FADE_MS,
+  sampleHit,
+  samplePitch,
+  sampleThrow
+} from './playAnimationModel'
 
 const initial = (): ReturnType<typeof initialScoringState> =>
   initialScoringState(scoringSession(gameFixture), true)
@@ -61,9 +70,9 @@ describe('defender speed and perspective foul flight', function () {
       expect(sampled.progress).closeTo(1 / 3, 1e-8)
       expect(sampled.defenderProgress).equals(1)
       expect(state.session.liveData.linescore.outs).equals(0)
-      expect(sampleThrow({ ...tag, unassisted: false }, 150).ball).deep.equals(
-        tag.from
-      )
+      expect(
+        sampleThrow({ ...tag, unassisted: false }, THROW_RELEASE_MS).ball
+      ).deep.equals(tag.from)
     })
   for (const outcome of [
     'Single',
@@ -177,7 +186,7 @@ describe('defender speed and perspective foul flight', function () {
         expect(contact.ball).deep.equals(sequence.plate)
         const late = samplePitch(
           sequence,
-          sequence.durationMs - 200,
+          sequence.durationMs - FOUL_FADE_MS,
           camera.position
         )
         const depth = (p: typeof sequence.plate): number =>

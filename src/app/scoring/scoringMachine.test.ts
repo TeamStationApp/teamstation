@@ -31,6 +31,7 @@ import {
   sessionAt
 } from './scoringMachine'
 import { scoringPreferenceStore } from './scoringPreferenceStore'
+import { presentationRuntime, stepPresentation } from './scoringPresentation'
 import {
   baseIds,
   canSwitchBatter,
@@ -891,6 +892,35 @@ describe('the play animation setting', function () {
     const resumed = initialScoringState(session, false)
     expect(resumed.phase).equals('correctionWindow')
     expect(resumed.pendingPlay?.outcome).equals('Single')
+  })
+})
+
+describe('pitches in quick succession (U47)', function () {
+  it('takes the next pitch within 400 ms of the last, once its picture is done', function () {
+    let state = scoringReducer(initial(), {
+      type: 'PRESENTATION',
+      enabled: true
+    })
+    state = scoringReducer(state, { type: 'PITCH', kind: 'ball' })
+    const sequence = state.presentation!
+    expect(sequence.kind).equals('pitch')
+    expect(sequence.durationMs).equals(280)
+    // While the pitch is drawn the next one waits.
+    expect(scoringReducer(state, { type: 'PITCH', kind: 'ball' })).equals(state)
+    const runtime = presentationRuntime()
+    expect(stepPresentation(runtime, sequence, 279, false).done).equals(false)
+    expect(stepPresentation(runtime, sequence, 1, false).done).equals(true)
+    state = scoringReducer(state, {
+      type: 'PRESENTATION_DONE',
+      id: sequence.id,
+      generation: sequence.generation,
+      stage: sequence.stage
+    })
+    expect(state.presentation).equals(null)
+    const next = scoringReducer(state, { type: 'PITCH', kind: 'ball' })
+    expect(next).not.equals(state)
+    expect(next.session.liveData.linescore.balls).equals(2)
+    expect(next.presentation?.kind).equals('pitch')
   })
 })
 

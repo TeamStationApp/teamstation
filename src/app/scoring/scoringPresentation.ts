@@ -1,4 +1,4 @@
-import { pitchingHand } from '../field/athletePose'
+import { releaseHand } from '../field/athletePose'
 import { BALL_CONTACT, type BallArcState } from '../field/ballArcModel'
 import {
   BASES,
@@ -9,6 +9,7 @@ import {
   type GroundPoint,
   OUT_APPROACH_SPEED
 } from '../field/fieldModel'
+import { SCORING_SPEED } from '../field/scoringSpeed'
 import { fieldPlayersFor, withStandIns } from './fieldAdapter'
 import type { ContactKind } from './scoringContract'
 import { scoringFieldPlayers } from './scoringMotion'
@@ -38,25 +39,40 @@ export interface PitchSequence {
   /** Where a foul the scorer placed came down; the ball flies there. */
   foul?: GroundPoint
 }
+export { SCORING_SPEED }
+/**
+ * A pitch has no windup: the ball leaves the pitcher's hand as the picture
+ * starts, and its picture ends at 280 ms so that, with the frames and the
+ * commit that follow, the scorer can tap the next pitch within 400 ms.
+ */
 export const PITCH_TIMING = {
-  release: 650,
-  plate: 1050,
-  catch: 1220,
-  finish: 1500,
-  foulFinish: 1750
+  release: 0,
+  plate: 240,
+  catch: 260,
+  finish: 280,
+  foulFinish: 540
 } as const
+/** A thrower's windup, from the start of a throw to the ball leaving his hand. */
+export const THROW_RELEASE_MS = 150 / SCORING_SPEED
+/** How long a throw from one fielder to another takes. */
+export const THROW_MS = 900 / SCORING_SPEED
+/** What a placed foul's picture lasts after it came down. */
+const FOUL_SETTLE_MS = 400 / SCORING_SPEED
 /** When a ball in play meets the bat: as its pitch reaches the plate. */
 export const HIT_CONTACT_MS = PITCH_TIMING.plate
 /** When it meets the bat with no pitcher on the field to draw a pitch. */
-export const HIT_UNPITCHED_CONTACT_MS = 450
+export const HIT_UNPITCHED_CONTACT_MS = 450 / SCORING_SPEED
 /** The longest a placed foul is in the air: a deep one, into the seats. */
-export const FOUL_FLIGHT_MAX_MS = 2000
+export const FOUL_FLIGHT_MAX_MS = 2000 / SCORING_SPEED
 /** How long a placed foul is in the air, by how far it went. */
 export function foulFlightMs(foul: GroundPoint): number {
   // Its distance at a fly ball's pace, up to a deep fly's time in the air.
   return Math.min(
     FOUL_FLIGHT_MAX_MS,
-    Math.max(900, (Math.hypot(foul.x, foul.z) / 20) * 1000)
+    Math.max(
+      900 / SCORING_SPEED,
+      (Math.hypot(foul.x, foul.z) / (20 * SCORING_SPEED)) * 1000
+    )
   )
 }
 export function pitchPresentation(
@@ -86,7 +102,7 @@ export function pitchPresentation(
         ? PITCH_TIMING.finish
         : foul == null
           ? PITCH_TIMING.foulFinish
-          : PITCH_TIMING.plate + foulFlightMs(foul) + 400,
+          : PITCH_TIMING.plate + foulFlightMs(foul) + FOUL_SETTLE_MS,
     ...(kind === 'foul' && foul != null ? { foul: { ...foul } } : {}),
     players,
     pitcher,
@@ -94,12 +110,7 @@ export function pitchPresentation(
     batter: play.matchup.batter.id,
     batSide: play.matchup.batSide.code,
     throwSide,
-    from: pitchingHand(
-      location(pitcher, 'P'),
-      PITCH_TIMING.release,
-      PITCH_TIMING.release,
-      throwSide
-    ),
+    from: releaseHand(location(pitcher, 'P'), throwSide),
     plate: { x: 0, y: BALL_CONTACT, z: 0 },
     glove: { ...location(catcher, 'C'), y: 5.2 }
   }
@@ -211,7 +222,7 @@ export function outBatterPoint(
 }
 /**
  * How long a tag takes: the ball's way or the runner's, whichever is longer,
- * at the pace they share, and never under `floorMs`.
+ * at the pace they share, and never under `floorMs` at scoring's speed.
  */
 export function tagMs(
   from: GroundPoint,
@@ -220,7 +231,7 @@ export function tagMs(
   floorMs: number
 ): number {
   return Math.max(
-    floorMs,
+    floorMs / SCORING_SPEED,
     (Math.max(
       Math.hypot(to.x - from.x, to.z - from.z),
       Math.hypot(to.x - runnerFrom.x, to.z - runnerFrom.z)
@@ -286,12 +297,10 @@ export function throwSequence(
     runnerFrom: { ...runnerPoint },
     throwSide,
     heading,
-    from: final
-      ? { ...from, y: 6 }
-      : pitchingHand(from, 150, 150, throwSide, heading),
+    from: final ? { ...from, y: 6 } : releaseHand(from, throwSide, heading),
     to: { ...to, y: 5.2 },
     unassisted,
-    durationMs: unassisted ? tagMs(from, to, runnerPoint, 650) : 900
+    durationMs: unassisted ? tagMs(from, to, runnerPoint, 650) : THROW_MS
   }
 }
 export function throwPresentation(
@@ -336,7 +345,7 @@ export function throwPresentation(
   })
 }
 /** How long a ball off the wall takes to drop and come back. */
-export const CAROM_MS = 600
+export const CAROM_MS = 600 / SCORING_SPEED
 
 export function hitPresentation(
   state: ScoringState,
@@ -352,8 +361,10 @@ export function hitPresentation(
     pending.location!
   const target = pending.location!
   const flight = Math.max(
-    1100,
-    (Math.hypot(target.x - start.x, target.z - start.z) / 20) * 1000
+    1100 / SCORING_SPEED,
+    (Math.hypot(target.x - start.x, target.z - start.z) /
+      (20 * SCORING_SPEED)) *
+      1000
   )
   const pitcher = state.session.liveData.plays.currentPlay!.matchup.pitcher.id
   const mound = players.find(player => player.playerId === pitcher)?.position
@@ -394,12 +405,7 @@ export function hitPresentation(
       : {
           pitcher,
           throwSide,
-          from: pitchingHand(
-            mound,
-            PITCH_TIMING.release,
-            PITCH_TIMING.release,
-            throwSide
-          ),
+          from: releaseHand(mound, throwSide),
           plate: { x: 0, y: BALL_CONTACT, z: 0 }
         }),
     players,
@@ -461,7 +467,11 @@ export function stepPresentation(
         ]
       : sequence.kind === 'throw'
         ? [
-            ['release', sequence.unassisted ? Infinity : 150, 'swish'],
+            [
+              'release',
+              sequence.unassisted ? Infinity : THROW_RELEASE_MS,
+              'swish'
+            ],
             // A wild throw is never caught.
             [
               'catch',

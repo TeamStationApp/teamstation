@@ -90,6 +90,30 @@ describe('field cues on a phone', function () {
     expect(native.calls).deep.equals(['sessionCategory', 'isRunning'])
   })
 
+  it('loads the cues with the screen, touching neither the session nor the engine, and only once', function () {
+    const native = new FakeCueSounds()
+    const audio = makeNativeScoringAudio(native)
+    audio.prepare()
+    expect(native.calls).deep.equals(['load swish', 'load pop', 'load bat'])
+    native.calls = []
+    audio.prepare()
+    audio.unlock()
+    expect(native.calls).deep.equals([
+      'sessionCategory',
+      'useAmbientSession',
+      'isRunning',
+      'start'
+    ])
+    const failing = new FakeCueSounds()
+    failing.throwing = true
+    expect(() => {
+      makeNativeScoringAudio(failing).prepare()
+    }).not.throws()
+    expect(() => {
+      makeNativeScoringAudio(null).prepare()
+    }).not.throws()
+  })
+
   it('plays each cue on the next of four voices, and nothing while disabled', function () {
     const native = new FakeCueSounds()
     const audio = makeNativeScoringAudio(native)

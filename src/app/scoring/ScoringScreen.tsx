@@ -1200,6 +1200,10 @@ function ScoringPanel(props: {
   useEffect(() => {
     scoringAudio.setEnabled(sound)
   }, [sound])
+  // The cues are made with the screen, not on the first pitch's tap.
+  useEffect(() => {
+    scoringAudio.prepare()
+  }, [])
   const keyboard = useRef<((key: string) => boolean) | null>(null)
   const registerKeyboard = useCallback(
     (handler: ((key: string) => boolean) | null) => {
