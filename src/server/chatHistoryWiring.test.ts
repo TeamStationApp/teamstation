@@ -45,6 +45,7 @@ describe('server history recovery wiring', () => {
       if (name === './serverConfig')
         return {
           serverConfig: config,
+          requestDatabaseUrl: () => 'postgres://invalid.example.test/unused',
           speechSettings: noop,
           tessSettings: noop,
           publicUrl: 'https://example.test',
