@@ -147,7 +147,7 @@ export function webKeyStore(options: WebKeyStoreOptions = {}): ChatKeyStore {
   async function keysOf(db: IDBDatabase): Promise<string[]> {
     const transaction = db.transaction(STORE, 'readonly')
     const keys = await done(transaction.objectStore(STORE).getAllKeys())
-    return keys.map(key => String(key))
+    return keys.flatMap(key => (typeof key === 'string' ? [key] : []))
   }
 
   /** Drops the wrapping key once nothing it seals is left. */

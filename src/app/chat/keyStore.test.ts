@@ -183,7 +183,8 @@ describe('chat key store in the browser', function () {
     let userId = userIdOfGumbo(12)
     try {
       const parsed = JSON.parse(text) as { userId?: number | string }
-      if (typeof parsed.userId === 'number') userId = userIdOfGumbo(parsed.userId)
+      if (typeof parsed.userId === 'number')
+        userId = userIdOfGumbo(parsed.userId)
       else if (typeof parsed.userId === 'string') userId = parsed.userId
     } catch {
       // Not JSON: it replaces the sample account's slot.
@@ -321,9 +322,9 @@ describe('chat key store in the browser', function () {
     expect((failed as UnreadableKeyRecordError).reason).equals(
       'wrappingKeyMissing'
     )
-    expect(
-      (await raw(factory)).get(recordKey(userIdOfGumbo(42)))
-    ).deep.equals(before.get(recordKey(userIdOfGumbo(42))))
+    expect((await raw(factory)).get(recordKey(userIdOfGumbo(42)))).deep.equals(
+      before.get(recordKey(userIdOfGumbo(42)))
+    )
   })
 
   it('names why a kept record is unreadable, without its text, and keeps it', async () => {
@@ -436,7 +437,9 @@ describe('chat key store in the browser', function () {
     try {
       expect(await keyStore.load(userIdOfGumbo(12))).equals(undefined)
       await keyStore.save(sample())
-      expect((await keyStore.load(userIdOfGumbo(12)))?.userId).equals(userIdOfGumbo(12))
+      expect((await keyStore.load(userIdOfGumbo(12)))?.userId).equals(
+        userIdOfGumbo(12)
+      )
       await keyStore.wipe(userIdOfGumbo(12))
       expect(await keyStore.load(userIdOfGumbo(12))).equals(undefined)
     } finally {
@@ -520,14 +523,17 @@ describe('chat key store in the browser', function () {
     ) as Record<'put' | 'delete', (...args: unknown[]) => IDBRequest>
     db.close()
     const original = proto[method]
-    proto[method] = function (this: {
-      transaction: {
-        _execRequestAsync: (op: {
-          operation: () => never
-          source: unknown
-        }) => IDBRequest
-      }
-    }, ...args: unknown[]) {
+    proto[method] = function (
+      this: {
+        transaction: {
+          _execRequestAsync: (op: {
+            operation: () => never
+            source: unknown
+          }) => IDBRequest
+        }
+      },
+      ...args: unknown[]
+    ) {
       const asked = method === 'put' ? args[1] : args[0]
       if (asked === key) {
         return this.transaction._execRequestAsync({
@@ -662,7 +668,9 @@ describe('chat key store in the browser', function () {
     const loaded = await store.load(a.userId).catch((error: unknown) => error)
     expect(loaded).instanceOf(UnreadableKeyRecordError)
     expect((loaded as UnreadableKeyRecordError).reason).equals('undecryptable')
-    const existed = await store.exists(a.userId).catch((error: unknown) => error)
+    const existed = await store
+      .exists(a.userId)
+      .catch((error: unknown) => error)
     expect(existed).instanceOf(UnreadableKeyRecordError)
     expect(await raw(factory)).deep.equals(before)
   })

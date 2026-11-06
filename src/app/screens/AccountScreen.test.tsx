@@ -874,7 +874,9 @@ describe('Account settings screen', () => {
     await press('Sign out')
     expect(signedOut).equals(true)
     expect(revoked).equals(0)
-    expect((await keyStore.load(f.session.user.id))?.deviceId).equals('cdv_keep')
+    expect((await keyStore.load(f.session.user.id))?.deviceId).equals(
+      'cdv_keep'
+    )
     expect((await keyStore.load(userIdOfGumbo(202)))?.deviceId).equals(
       'cdv_other'
     )
@@ -1018,7 +1020,9 @@ describe('Account settings screen', () => {
   it('asks for sign-in again, claiming nothing, when the session has ended', async () => {
     installChatDatabase()
     const f = fixture()
-    await keyStore.save(newRecord(f.session.user.id, 'cdv_ended', newDeviceKeys()))
+    await keyStore.save(
+      newRecord(f.session.user.id, 'cdv_ended', newDeviceKeys())
+    )
     let left = 0
     const client = new TeamStationClient({
       baseUrl: '/api/v1',
@@ -1069,7 +1073,9 @@ describe('Account settings screen', () => {
     installChatDatabase()
     const f = fixture()
     const otherId = userIdOfGumbo(202)
-    await keyStore.save(newRecord(f.session.user.id, 'cdv_gone', newDeviceKeys()))
+    await keyStore.save(
+      newRecord(f.session.user.id, 'cdv_gone', newDeviceKeys())
+    )
     await keyStore.save(newRecord(otherId, 'cdv_kept', newDeviceKeys()))
     let signedOut = false
     await render(
@@ -1123,7 +1129,7 @@ describe('Account settings screen', () => {
         resolve(request.result)
       }
       request.onerror = () => {
-        reject(request.error)
+        reject(request.error ?? new Error('indexedDB request failed'))
       }
     })
     const transaction = db.transaction('keys', 'readwrite')
@@ -1135,7 +1141,7 @@ describe('Account settings screen', () => {
         resolve(request.result)
       }
       request.onerror = () => {
-        reject(request.error)
+        reject(request.error ?? new Error('indexedDB request failed'))
       }
     })
     rows.put(sealed, 'record')
@@ -1145,7 +1151,7 @@ describe('Account settings screen', () => {
         resolve()
       }
       transaction.onerror = () => {
-        reject(transaction.error)
+        reject(transaction.error ?? new Error('indexedDB transaction failed'))
       }
     })
     db.close()
@@ -1168,7 +1174,7 @@ describe('Account settings screen', () => {
           resolve(request.result)
         }
         request.onerror = () => {
-          reject(request.error)
+          reject(request.error ?? new Error('indexedDB request failed'))
         }
       })
       const read = after.transaction('keys', 'readonly')
@@ -1178,7 +1184,7 @@ describe('Account settings screen', () => {
           resolve(request.result)
         }
         request.onerror = () => {
-          reject(request.error)
+          reject(request.error ?? new Error('indexedDB request failed'))
         }
       })
       after.close()

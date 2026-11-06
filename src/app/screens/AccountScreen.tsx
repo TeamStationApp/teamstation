@@ -249,7 +249,9 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       return
     }
     setSigningOut(true)
-    releaseChat(chatStore).finally(onSignOut).catch(() => undefined)
+    releaseChat(chatStore)
+      .finally(onSignOut)
+      .catch(() => undefined)
   }
 
   return (

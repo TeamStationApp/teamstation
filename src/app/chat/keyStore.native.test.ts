@@ -38,7 +38,10 @@ const keychain = {
   /** A Keychain that will not answer (locked since boot, say). */
   locked: false,
   calls: [] as string[],
-  seen: [] as Array<{ op: string; options: Record<string, unknown> | undefined }>,
+  seen: [] as Array<{
+    op: string
+    options: Record<string, unknown> | undefined
+  }>,
   ACCESSIBLE: {
     AFTER_FIRST_UNLOCK: 'AccessibleAfterFirstUnlock',
     AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY:
@@ -48,11 +51,17 @@ const keychain = {
     keychain.calls.push(op)
     keychain.seen.push({ op, options })
   },
-  async hasGenericPassword(options?: { service?: string; cloudSync?: boolean }) {
+  async hasGenericPassword(options?: {
+    service?: string
+    cloudSync?: boolean
+  }) {
     keychain.note('has', options)
     return keychain.saved.has(options?.service ?? '')
   },
-  async getGenericPassword(options?: { service?: string; cloudSync?: boolean }) {
+  async getGenericPassword(options?: {
+    service?: string
+    cloudSync?: boolean
+  }) {
     keychain.note('get', options)
     if (keychain.locked) throw new Error('User interaction is not allowed')
     const found = keychain.saved.get(options?.service ?? '')
@@ -75,7 +84,10 @@ const keychain = {
     keychain.saved.set(options?.service ?? '', { username, password, options })
     return { service: options?.service ?? '', storage: 'keychain' }
   },
-  async resetGenericPassword(options?: { service?: string; cloudSync?: boolean }) {
+  async resetGenericPassword(options?: {
+    service?: string
+    cloudSync?: boolean
+  }) {
     keychain.note('reset', options)
     if (options?.service != null && options.service === keychain.failReset)
       return false
@@ -228,14 +240,18 @@ describe('chat key store on the phone', function () {
       options: undefined
     })
     const before = keychain.saved.get(accountKeyService(sample.userId))
-    const unreadable = await keyStore.load(sample.userId).catch((error: unknown) => error)
+    const unreadable = await keyStore
+      .load(sample.userId)
+      .catch((error: unknown) => error)
     expect(unreadable).instanceOf(UnreadableKeyRecordError)
     expect((unreadable as UnreadableKeyRecordError).reason).equals('invalid')
     expect(String(unreadable)).not.contains('do-not-log')
     expect(keychain.saved.get(accountKeyService(sample.userId))).equals(before)
     keychain.locked = true
     try {
-      const locked = await keyStore.load(sample.userId).catch((error: unknown) => error)
+      const locked = await keyStore
+        .load(sample.userId)
+        .catch((error: unknown) => error)
       expect(locked).instanceOf(Error)
       expect(locked).not.instanceOf(UnreadableKeyRecordError)
     } finally {
@@ -411,7 +427,9 @@ describe('chat key store on the phone', function () {
         )
       }
     })
-    const unreadable = await store.load(sample.userId).catch((error: unknown) => error)
+    const unreadable = await store
+      .load(sample.userId)
+      .catch((error: unknown) => error)
     expect(unreadable).instanceOf(UnreadableKeyRecordError)
     expect((unreadable as UnreadableKeyRecordError).reason).equals(
       'undecryptable'
@@ -462,7 +480,9 @@ describe('chat key store on the phone', function () {
           throw failure
         }
       })
-      const failed = await store.load(sample.userId).catch((error: unknown) => error)
+      const failed = await store
+        .load(sample.userId)
+        .catch((error: unknown) => error)
       expect(failed).equals(failure)
     }
   })
@@ -520,9 +540,9 @@ describe('chat key store on the phone', function () {
     await keyStore.save(sample)
     const kept = keychain.saved.get(accountKeyService(sample.userId))?.password
     expect((await keyStore.load(sample.userId))?.deviceId).equals('cdv_phone')
-    expect(keychain.saved.get(accountKeyService(sample.userId))?.password).equals(
-      kept
-    )
+    expect(
+      keychain.saved.get(accountKeyService(sample.userId))?.password
+    ).equals(kept)
     expect(keychain.saved.has(KEY_SERVICE)).equals(false)
   })
 
@@ -532,7 +552,9 @@ describe('chat key store on the phone', function () {
     keep(KEY_SERVICE, text)
     keychain.refuse = true
     try {
-      const failed = await keyStore.load(sample.userId).catch((error: unknown) => error)
+      const failed = await keyStore
+        .load(sample.userId)
+        .catch((error: unknown) => error)
       expect(String(failed)).contains('could not be saved')
     } finally {
       keychain.refuse = false
@@ -546,11 +568,13 @@ describe('chat key store on the phone', function () {
     const text = recordToJson(sample)
     keep(KEY_SERVICE, text)
     keychain.failReset = KEY_SERVICE
-    const failed = await keyStore.load(sample.userId).catch((error: unknown) => error)
+    const failed = await keyStore
+      .load(sample.userId)
+      .catch((error: unknown) => error)
     expect(String(failed)).contains('could not be removed')
-    expect(keychain.saved.get(accountKeyService(sample.userId))?.password).equals(
-      text
-    )
+    expect(
+      keychain.saved.get(accountKeyService(sample.userId))?.password
+    ).equals(text)
     expect(keychain.saved.has(KEY_SERVICE)).equals(true)
     keychain.failReset = undefined
     expect((await keyStore.load(sample.userId))?.deviceId).equals('cdv_phone')
@@ -561,7 +585,9 @@ describe('chat key store on the phone', function () {
     keychain.saved.clear()
     keep(KEY_SERVICE, '{"secret":"do-not-log"')
     const before = keychain.saved.get(KEY_SERVICE)
-    const loaded = await keyStore.load(sample.userId).catch((error: unknown) => error)
+    const loaded = await keyStore
+      .load(sample.userId)
+      .catch((error: unknown) => error)
     expect(loaded).instanceOf(UnreadableKeyRecordError)
     const existed = await keyStore
       .exists(sample.userId)
@@ -592,7 +618,9 @@ describe('chat key store on the phone', function () {
         }
       }
     })
-    const failed = await store.load(sample.userId).catch((error: unknown) => error)
+    const failed = await store
+      .load(sample.userId)
+      .catch((error: unknown) => error)
     expect((failed as UnreadableKeyRecordError).reason).equals('unknownVersion')
     expect(asked).deep.equals([service])
     expect(keychain.saved.has(KEY_SERVICE)).equals(true)
@@ -662,7 +690,11 @@ describe('chat key store on the phone', function () {
     const legacy = recordToJson(other)
     keep(KEY_SERVICE, legacy)
     const { client, revoked } = resetClient('cdv_phone')
-    await resetUnreadableChat({ client, store: keyStore, userId: sample.userId })
+    await resetUnreadableChat({
+      client,
+      store: keyStore,
+      userId: sample.userId
+    })
     expect(revoked).deep.equals(['cdv_phone'])
     expect(keychain.saved.has(service)).equals(false)
     expect(keychain.saved.get(KEY_SERVICE)?.password).equals(legacy)

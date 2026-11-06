@@ -57,8 +57,8 @@ import {
   type ChatKeysClient,
   type ChatSetup,
   ensureEnrolled,
-  releaseChat,
   readApprovalKeys,
+  releaseChat,
   StaleChatSetupError,
   startLink
 } from './engine/links'
@@ -2285,9 +2285,9 @@ describe('chat devices in the app', function () {
     await until('the account', () => text().includes('Sign out'))
     await press('Sign out')
     await until('signed out', () => asked.includes('POST /auth/logout'))
-    expect(
-      asked.some(call => call.startsWith('DELETE /chat/devices/'))
-    ).equals(false)
+    expect(asked.some(call => call.startsWith('DELETE /chat/devices/'))).equals(
+      false
+    )
     expect(await keyStore.exists(USER)).equals(true)
     expect(fake.devices[0].revokedAt).equals(null)
   })
@@ -2320,9 +2320,9 @@ describe('chat devices in the app', function () {
     await until('sign in', () => currentRoute().name === 'signIn')
     expect(await keyStore.exists(USER)).equals(true)
     expect(fake.devices[0].revokedAt).equals(null)
-    expect(
-      asked.some(call => call.startsWith('DELETE /chat/devices/'))
-    ).equals(false)
+    expect(asked.some(call => call.startsWith('DELETE /chat/devices/'))).equals(
+      false
+    )
     expect(asked.includes('POST /auth/logout')).equals(true)
   })
 

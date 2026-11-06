@@ -8,8 +8,7 @@ import { newDeviceKeys } from '../../common/chatCrypto/keys'
 import { userIdOfGumbo } from '../../common/userId'
 import legacy from '../../test/legacyChatKeyRecord.json'
 import { newRecord, recordToJson } from '../chat/keyRecord'
-import { KEY_DATABASE, recordKey, webKeyStore } from '../chat/keyStore'
-import { FIXTURE_USER_ID } from './chatIdentityStoreProbeRun'
+import { KEY_DATABASE, webKeyStore } from '../chat/keyStore'
 import type { KeychainModule } from '../chat/keyStore.native'
 import {
   openIdentityProbeStorage,
@@ -17,7 +16,10 @@ import {
   probeIdentityStorage
 } from './chatIdentityStoreProbe'
 import type * as NativeProbe from './chatIdentityStoreProbe.native'
-import { runIdentityStoreProbe } from './chatIdentityStoreProbeRun'
+import {
+  FIXTURE_USER_ID,
+  runIdentityStoreProbe
+} from './chatIdentityStoreProbeRun'
 
 const signal = (): AbortSignal => new AbortController().signal
 async function rejected(
@@ -397,7 +399,9 @@ describe('isolated native identity storage diagnostic', () => {
       'has ' + native.probeAccountService(),
       'get ' + native.probeAccountService()
     ])
-    expect(fixture.rows.get(native.probeAccountService())?.password).equals('existing')
+    expect(fixture.rows.get(native.probeAccountService())?.password).equals(
+      'existing'
+    )
   })
 
   it('clears its own leftover from a run stopped before cleanup, then runs', async () => {
@@ -407,7 +411,10 @@ describe('isolated native identity storage diagnostic', () => {
         username: 'chat',
         password: 'protected'
       })
-      fixture.rows.set(native.probeAccountService(), { username: 'chat', password })
+      fixture.rows.set(native.probeAccountService(), {
+        username: 'chat',
+        password
+      })
       const result = await runIdentityStoreProbe(
         async () => await native.openIdentityProbeStorage(fixture.module),
         signal()
@@ -434,7 +441,9 @@ describe('isolated native identity storage diagnostic', () => {
     fixture.control.refuseReset = true
     await rejected(native.openIdentityProbeStorage(fixture.module), 'occupied')
     expect(fixture.calls.some(call => call.startsWith('set'))).equals(false)
-    expect(fixture.rows.get(native.probeAccountService())?.password).equals('allocated')
+    expect(fixture.rows.get(native.probeAccountService())?.password).equals(
+      'allocated'
+    )
     fixture.control.refuseReset = false
     const storage = await native.openIdentityProbeStorage(fixture.module)
     await storage.cleanup()
@@ -486,9 +495,7 @@ describe('isolated native identity storage diagnostic', () => {
       native.PROBE_SERVICE
     )
     expect(
-      native.mapIdentityProbeService(
-        `app.teamstation.chat.${FIXTURE_USER_ID}`
-      )
+      native.mapIdentityProbeService(`app.teamstation.chat.${FIXTURE_USER_ID}`)
     ).equals(native.probeAccountService())
     expect(() =>
       native.mapIdentityProbeService('app.teamstation.other')

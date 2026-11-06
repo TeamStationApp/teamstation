@@ -60,8 +60,10 @@ export function DeleteAccountSheet(
         // Stop an enrolment that is still saving, then drop this account's
         // slot and its legacy record. Another account's legacy record stays.
         releaseChat(store)
-          .then(() => store.wipe(userId))
-          .then(() => store.discardLegacy?.(userId))
+          .then(async () => {
+            await store.wipe(userId)
+          })
+          .then(async () => await store.discardLegacy?.(userId))
           .then(
             () => {
               working.current = false

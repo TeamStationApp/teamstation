@@ -1,7 +1,4 @@
 import { userIdOfGumbo } from '../../common/userId'
-
-/** The account the compatibility fixture's record belongs to. */
-export const FIXTURE_USER_ID = userIdOfGumbo(42)
 import legacy from '../../test/legacyChatKeyRecord.json'
 import { type ChatKeysClient, ensureEnrolled } from '../chat/engine/links'
 import {
@@ -9,6 +6,9 @@ import {
   recordFromJson,
   recordToJson
 } from '../chat/keyRecord'
+
+/** The account the compatibility fixture's record belongs to. */
+export const FIXTURE_USER_ID = userIdOfGumbo(42)
 
 export interface IdentityProbeStorage {
   store: ChatKeyStore

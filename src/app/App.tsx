@@ -685,7 +685,9 @@ function Shell(props: AppProps): React.ReactElement {
       client.signOut().catch(() => undefined)
       leaveSession()
     }
-    releaseChat(keyStore).finally(finish).catch(() => undefined)
+    releaseChat(keyStore)
+      .finally(finish)
+      .catch(() => undefined)
   }
   const [confirmingSignOut, setConfirmingSignOut] = useState(false)
   const settingsVisitId = useRef(0)

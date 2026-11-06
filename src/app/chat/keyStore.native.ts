@@ -75,16 +75,15 @@ export function nativeKeyStore(keychain: KeychainModule): ChatKeyStore {
     return await run
   }
 
-  const account = (
-    userId: string
-  ): { service: string; cloudSync: true } => ({
+  const account = (userId: string): { service: string; cloudSync: true } => ({
     service: accountKeyService(userId),
     cloudSync: true
   })
 
-  async function readPassword(
-    options: { service: string; cloudSync?: boolean }
-  ): Promise<string | undefined> {
+  async function readPassword(options: {
+    service: string
+    cloudSync?: boolean
+  }): Promise<string | undefined> {
     let found: Password
     try {
       found = await keychain.getGenericPassword(options)

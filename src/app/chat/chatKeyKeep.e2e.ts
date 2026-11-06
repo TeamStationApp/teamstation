@@ -171,7 +171,7 @@ async function keyNames(page: Page): Promise<string[]> {
           reject(request.error ?? new Error('indexedDB keys failed'))
         }
       })
-      return keys.map(key => String(key))
+      return keys.flatMap(key => (typeof key === 'string' ? [key] : []))
     } finally {
       db.close()
     }
@@ -190,7 +190,9 @@ describe('chat keys stay across two accounts', function () {
 
   it('resumes person 1 on the same device after person 2 has signed in', async () => {
     if (ARTIFACTS === '') throw new Error('Set TS_CHAT_ARTIFACTS')
-    const people = readSeedTable(readFileSync(join(ARTIFACTS, 'seed.txt'), 'utf8'))
+    const people = readSeedTable(
+      readFileSync(join(ARTIFACTS, 'seed.txt'), 'utf8')
+    )
     const pool = new Pool({ connectionString: databaseUrl() })
     let free: Set<string>
     try {

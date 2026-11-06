@@ -458,7 +458,9 @@ describe('the phone shell offline', () => {
     expect(holdsStore(keyStore, BETTS.id)).equals(true)
     const fetchBefore = globalThis.fetch
     globalThis.fetch = async (url, init) => {
-      if (String(url).endsWith('/oauth/approve/test-approval/details')) {
+      const address =
+        typeof url === 'string' ? url : url instanceof URL ? url.href : url.url
+      if (address.endsWith('/oauth/approve/test-approval/details')) {
         return new Response(
           JSON.stringify({ clientName: 'Fixture app', scopes: ['openid'] }),
           { status: 200 }
