@@ -987,7 +987,11 @@ describe("saving a side's lineup (U8)", function () {
     appeared: makeId('game'),
     leftAfterPlaying: makeId('game'),
     imported: makeId('game'),
-    slot: makeId('game')
+    slot: makeId('game'),
+    newer: makeId('game'),
+    fastClock: makeId('game'),
+    lateSync: makeId('game'),
+    afterSub: makeId('game')
   }
   const TEAMS = {
     away: { id: away, name: 'Visitors' },
@@ -1164,7 +1168,11 @@ describe("saving a side's lineup (U8)", function () {
       games.busy,
       games.stale,
       games.between,
-      games.slot
+      games.slot,
+      games.newer,
+      games.fastClock,
+      games.lateSync,
+      games.afterSub
     ])
       await score(gameId, [{ type: 'pitch', call: 'B' }])
     const guest = await createGuestPlayer(
@@ -1249,7 +1257,11 @@ describe("saving a side's lineup (U8)", function () {
   })
 
   /** A scorer's session on the game, saving as the scoring screen does. */
-  async function scoring(gameId: string): Promise<ScoringSession> {
+  async function scoring(
+    gameId: string,
+    /** The scorer's clock, when not the server's. */
+    now?: () => Date
+  ): Promise<ScoringSession> {
     const database = db!
     return await ScoringSession.open(
       {
@@ -1287,7 +1299,7 @@ describe("saving a side's lineup (U8)", function () {
       },
       gameId,
       { gamePk: gameId, teams: TEAMS, setup: setup() },
-      { requireCurrentSetup: true }
+      { requireCurrentSetup: true, ...(now == null ? {} : { now }) }
     )
   }
 
@@ -2662,6 +2674,158 @@ describe("saving a side's lineup (U8)", function () {
     expect(after.state.liveData.boxscore.teams.away.battingIndex).equals(0)
     expect(after.state.liveData.linescore.offense.batter?.id).equals(swapped)
     expect(after.state.liveData.linescore.balls).equals(1)
+  })
+
+  it('stores a save at the time its change was made, and refuses one older than a change stored since (U42)', async function () {
+    const swapFirstTwo = async (): Promise<SaveLineupsBody> => {
+      const body = bodyOf((await scoring(games.newer)).state, 'away')
+      const [first, second, ...rest] = body.battingOrder
+      body.battingOrder = [second, first, ...rest]
+      return body
+    }
+    const stampOfLast = async (): Promise<string | undefined> => {
+      const after = await scoring(games.newer)
+      const index = after.actions.findLastIndex(
+        action => action.type === 'lineup' && action.kind === 'roster'
+      )
+      return after.actionStamps[index]
+    }
+    // Made at noon: stored at noon, not when it reached the server.
+    const first = await save(games.newer, AWAY_COACH, {
+      ...(await swapFirstTwo()),
+      changedAt: '2026-01-01T12:00:00.000Z'
+    })
+    expect(first.status, JSON.stringify(first.body)).equals(200)
+    expect(await stampOfLast()).equals('2026-01-01T12:00:00.000Z')
+    const order = (await scoring(games.newer)).state.liveData.boxscore.teams
+      .away.battingOrder
+    // Made before that one, saved after it: refused, and nothing changes.
+    const older = await save(games.newer, AWAY_COACH, {
+      ...(await swapFirstTwo()),
+      changedAt: '2026-01-01T11:59:00.000Z'
+    })
+    expect(older.status).equals(409)
+    expect(older.body).deep.include({
+      details: { stale: true, newer: true }
+    })
+    expect(
+      (await scoring(games.newer)).state.liveData.boxscore.teams.away
+        .battingOrder
+    ).deep.equals(order)
+    // The other side is not that one: it saves.
+    const other = await save(games.newer, COACH, {
+      ...bodyOf((await scoring(games.newer)).state, 'home'),
+      battingOrder: [
+        ...bodyOf((await scoring(games.newer)).state, 'home').battingOrder
+      ].reverse(),
+      changedAt: '2026-01-01T11:58:00.000Z'
+    })
+    expect(other.status, JSON.stringify(other.body)).equals(200)
+    // Made later: saved.
+    const later = await save(games.newer, AWAY_COACH, {
+      ...(await swapFirstTwo()),
+      changedAt: '2026-01-01T12:01:00.000Z'
+    })
+    expect(later.status, JSON.stringify(later.body)).equals(200)
+    expect(await stampOfLast()).equals('2026-01-01T12:01:00.000Z')
+    // A time ahead of the server's clock is stored as now.
+    const ahead = await save(games.newer, AWAY_COACH, {
+      ...(await swapFirstTwo()),
+      changedAt: '2999-01-01T00:00:00.000Z'
+    })
+    expect(ahead.status, JSON.stringify(ahead.body)).equals(200)
+    expect(Date.parse((await stampOfLast())!)).lessThan(Date.now() + 1000)
+  })
+
+  it('weighs a scorer’s lineup change no later than the server received it, so a clock that runs ahead does not refuse a coach’s save (U42)', async function () {
+    // The scorer's phone runs 30 minutes fast: his change of the away order
+    // is stamped half an hour from now.
+    const fast = await scoring(
+      games.fastClock,
+      () => new Date(Date.now() + 30 * 60_000)
+    )
+    const setup = setupOf(fast.state)
+    setup.sides.away.battingOrder = [...setup.sides.away.battingOrder].reverse()
+    expect(
+      fast.apply({ type: 'lineup', kind: 'roster', setup }).problems
+    ).deep.equals([])
+    await fast.flush()
+    expect(fast.problem).equals(null)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    // The coach changes it after that reached the server, on the lineups
+    // he read before it.
+    const body = bodyOf((await scoring(games.fastClock)).state, 'away')
+    const [first, second, ...rest] = body.battingOrder
+    const saved = await save(games.fastClock, AWAY_COACH, {
+      ...body,
+      battingOrder: [second, first, ...rest],
+      changedAt: new Date().toISOString()
+    })
+    expect(saved.status, JSON.stringify(saved.body)).equals(200)
+  })
+
+  it('counts a roster after a substitution only for the side it changes (U42)', async function () {
+    let at = Date.now() - 3 * 60_000
+    const scorer = await scoring(games.afterSub, () => new Date(at))
+    // The scorer moves a home fielder, then reverses the away order.
+    const home = scorer.state.liveData.boxscore.teams.home
+    const second = home.defense['2B']!
+    expect(
+      scorer.apply({
+        type: 'lineup',
+        kind: 'position',
+        side: 'home',
+        position: 'SS',
+        player: second
+      }).problems
+    ).deep.equals([])
+    at += 2 * 60_000
+    const setup = setupOf(scorer.state)
+    setup.sides.away.battingOrder = [...setup.sides.away.battingOrder].reverse()
+    expect(
+      scorer.apply({ type: 'lineup', kind: 'roster', setup }).problems
+    ).deep.equals([])
+    await scorer.flush()
+    expect(scorer.problem).equals(null)
+    // The home coach's change, made between the two: no home change came
+    // after it.
+    const body = bodyOf((await scoring(games.afterSub)).state, 'home')
+    const [first, next, ...rest] = body.battingOrder
+    const saved = await save(games.afterSub, COACH, {
+      ...body,
+      battingOrder: [next, first, ...rest],
+      changedAt: new Date(Date.now() - 2 * 60_000).toISOString()
+    })
+    expect(saved.status, JSON.stringify(saved.body)).equals(200)
+  })
+
+  it('plays a coach’s change that syncs after later pitches when it entered the log, keeping when it was made (U42)', async function () {
+    const madeAt = new Date(Date.now() - 60_000).toISOString()
+    // Pitches scored after the coach made his change offline.
+    await score(games.lateSync, [
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'C' }
+    ])
+    const body = bodyOf((await scoring(games.lateSync)).state, 'away')
+    const [first, second, ...rest] = body.battingOrder
+    const saved = await save(games.lateSync, AWAY_COACH, {
+      ...body,
+      battingOrder: [second, first, ...rest],
+      changedAt: madeAt
+    })
+    expect(saved.status, JSON.stringify(saved.body)).equals(200)
+    const after = await scoring(games.lateSync)
+    expect(after.actionStamps.at(-1)).equals(madeAt)
+    const stored = (await gameRow(games.lateSync)).currentPlay as {
+      teamStation: { actionTimes: string[]; playbackTimes?: string[] }
+    }
+    const played =
+      stored.teamStation.playbackTimes ?? stored.teamStation.actionTimes
+    expect(stored.teamStation.actionTimes.at(-1)).equals(madeAt)
+    for (let i = 1; i < played.length; i++)
+      expect(Date.parse(played[i]), `play time ${i}`).gte(
+        Date.parse(played[i - 1])
+      )
   })
 
   it('keeps existing guests by identity and adds a newly persisted guest', async function () {

@@ -1,4 +1,8 @@
 import { HttpError } from '../../common/errors'
+import {
+  placeholderSuffix,
+  placeholderTeamName
+} from '../../common/placeholderNames'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import { userIdOfGumbo } from '../../common/userId'
 import type {
@@ -9,6 +13,7 @@ import type {
   StoredDocument
 } from './cacheStore'
 import {
+  candidatesKey,
   eventsKey,
   fullRosterKey,
   gameKey,
@@ -83,11 +88,48 @@ export type QueuedCall =
       /** The player's gumbo id, and the name he is given. */
       names?: DeviceNames
     }
+  | {
+      /**
+       * A player left off one side of a game, or put back: `PUT`, on the
+       * game's chain. Queued only by a screen that does not wait.
+       */
+      kind: 'unroster'
+      gameId: string
+      path: string
+      body: unknown
+    }
+  | {
+      /**
+       * A game-only player made on the phone: `POST` of a guest with no
+       * `userId`, on the game's chain. Queued only by a screen that does not
+       * wait; he has a gumbo id of the phone's until the server's lands.
+       */
+      kind: 'guestPlayer'
+      gameId: string
+      path: string
+      body: unknown
+    }
+  | {
+      /**
+       * A person who already exists put on a team's roster, or on one side
+       * of a game: `POST` with his `userId`, on the team's or the game's
+       * chain. Queued only by a screen that does not wait. `names` holds
+       * his short name by user id, and by gumbo id when he has one.
+       */
+      kind: 'existingPlayer'
+      teamId?: string
+      gameId?: string
+      path: string
+      body: unknown
+      names?: DeviceNames
+    }
 
 const ROSTER_PATH = /^\/teams\/([^/?]+)\/roster-players$/
 const LINEUPS_PATH = /^\/games\/([^/?]+)\/lineups$/
 const EVENTS_PATH = /^\/games\/([^/?]+)\/events$/
 const GUEST_PATH = /^\/games\/([^/?]+)\/guest-players\/([^/?]+)$/
+const GUESTS_PATH = /^\/games\/([^/?]+)\/guest-players$/
+const UNROSTER_PATH = /^\/games\/([^/?]+)\/unroster$/
 
 function decoded(id: string): string | undefined {
   try {
@@ -101,13 +143,47 @@ function decoded(id: string): string | undefined {
  * The queued write `method path` is, or none for a call that is not one:
  * a `POST` of a roster player, a lineup or a live post, or the `PUT` of a
  * game-only player's name. `names` are the device's names kept beside it.
+ * `background`, from a screen that does not wait for the server, also
+ * queues a player left off a game or put back (`unroster`), a game-only
+ * player made (`guestPlayer`) and a person who already exists added
+ * (`existingPlayer`); without it those go to the server as before.
  */
 export function queuedCallOf(
   method: string,
   path: string,
   body: unknown,
-  names?: DeviceNames
+  names?: DeviceNames,
+  background = false
 ): QueuedCall | undefined {
+  const existing = body != null && typeof body === 'object' && 'userId' in body
+  if (background) {
+    const unroster = method === 'PUT' ? UNROSTER_PATH.exec(path) : null
+    const unrosterGame = unroster == null ? undefined : decoded(unroster[1])
+    if (unrosterGame != null)
+      return { kind: 'unroster', gameId: unrosterGame, path, body }
+    const guests = method === 'POST' ? GUESTS_PATH.exec(path) : null
+    const guestsGame = guests == null ? undefined : decoded(guests[1])
+    if (guestsGame != null)
+      return existing
+        ? {
+            kind: 'existingPlayer',
+            gameId: guestsGame,
+            path,
+            body,
+            ...(names == null ? {} : { names })
+          }
+        : { kind: 'guestPlayer', gameId: guestsGame, path, body }
+    const roster = method === 'POST' ? ROSTER_PATH.exec(path) : null
+    const rosterTeam = roster == null ? undefined : decoded(roster[1])
+    if (rosterTeam != null && existing)
+      return {
+        kind: 'existingPlayer',
+        teamId: rosterTeam,
+        path,
+        body,
+        ...(names == null ? {} : { names })
+      }
+  }
   if (method === 'PUT') {
     const guest = GUEST_PATH.exec(path)
     const gameId = guest == null ? undefined : decoded(guest[1])
@@ -126,8 +202,8 @@ export function queuedCallOf(
   const roster = ROSTER_PATH.exec(path)
   const teamId = roster == null ? undefined : decoded(roster[1])
   // A player who already exists is added by id, after a search that needs
-  // the server: only a player made on the phone waits in the queue.
-  const existing = body != null && typeof body === 'object' && 'userId' in body
+  // the server: only a player made on the phone waits in the queue, unless
+  // the screen does not wait (above).
   if (teamId != null && !existing) return { kind: 'roster', teamId, path, body }
   const lineups = LINEUPS_PATH.exec(path)
   const lineupsGame = lineups == null ? undefined : decoded(lineups[1])
@@ -149,11 +225,78 @@ export function queuedCallOf(
 
 /** The method a queued write is sent with. */
 export function methodOf(call: QueuedCall): 'POST' | 'PUT' {
-  return call.kind === 'guestRename' ? 'PUT' : 'POST'
+  return call.kind === 'guestRename' || call.kind === 'unroster'
+    ? 'PUT'
+    : 'POST'
 }
 
 export function chainOf(call: QueuedCall): string {
-  return call.kind === 'roster' ? `team:${call.teamId}` : `game:${call.gameId}`
+  if (call.kind === 'roster') return `team:${call.teamId}`
+  if (call.kind === 'existingPlayer')
+    return call.teamId != null ? `team:${call.teamId}` : `game:${call.gameId}`
+  return `game:${call.gameId}`
+}
+
+/**
+ * `value` with a placeholder in place of the player the phone gave `from`:
+ * his gumbo id and user ids turned to the placeholder's, and wherever an
+ * entry names him, the placeholder's name.
+ */
+function standInFor(
+  value: unknown,
+  from: number,
+  userId: string,
+  to: { localId: number; name: string; first: string; last: string }
+): unknown {
+  const toUser = userIdOfGumbo(to.localId)
+  const swapped = withServerIds(
+    value,
+    new Map([[from, { serverId: to.localId, userId: toUser }]])
+  )
+  const walk = (raw: unknown): unknown => {
+    if (typeof raw === 'string')
+      return raw === userId && userId !== '' ? toUser : raw
+    if (Array.isArray(raw)) return raw.map(walk)
+    if (raw == null || typeof raw !== 'object') return raw
+    const entry = Object.fromEntries(
+      Object.entries(raw).map(([key, item]) => [key, walk(item)])
+    )
+    if (entry.id !== to.localId && entry.gumboId !== to.localId) return entry
+    const named: Json = { ...entry }
+    if ('fullName' in named) named.fullName = to.name
+    if ('name' in named && typeof named.name === 'string') named.name = to.name
+    if ('shortName' in named) named.shortName = to.name
+    if ('firstName' in named) named.firstName = to.first
+    if ('lastName' in named) named.lastName = to.last
+    if ('nameDetails' in named)
+      named.nameDetails = {
+        firstName: to.first,
+        lastName: to.last,
+        displayName: to.name
+      }
+    return named
+  }
+  return walk(swapped)
+}
+
+/** The device's names a row of `call` keeps beside its body, as JSON. */
+function namesOf(call: QueuedCall): string | null {
+  return call.kind === 'events' ||
+    call.kind === 'guestRename' ||
+    call.kind === 'existingPlayer'
+    ? call.names == null
+      ? null
+      : JSON.stringify(call.names)
+    : null
+}
+
+/** Whether `call` is queued only by a screen that does not wait. */
+function backgroundOnly(call: QueuedCall): boolean {
+  return (
+    call.kind === 'unroster' ||
+    call.kind === 'guestPlayer' ||
+    call.kind === 'existingPlayer'
+  )
 }
 
 /** The row id of a player's create: what a write naming him waits for. */
@@ -202,6 +345,42 @@ export interface OutboxSummary {
 
 export type OutboxListener = (summary: OutboxSummary) => void
 
+/**
+ * Something a queued write came to that its screen should say, once it is
+ * known: the screen already showed the phone's answer and moved on. Names
+ * the game, or the team, whose screen says it.
+ */
+export interface OutboxNotice {
+  gameId?: string
+  teamId?: string
+  message: string
+  /**
+   * Writes queued after it that named a player the phone gave up were
+   * dropped, and the game read from the server again: a screen holding
+   * him reads the game again too.
+   */
+  reread?: true
+}
+
+/** What one landing found to do once its transaction commits. */
+interface Landing {
+  notices: OutboxNotice[]
+  /** Paths to read from the server again. */
+  reads: string[]
+}
+
+export type OutboxNoticeListener = (notice: OutboxNotice) => void
+
+/** A queued lineup another device changed later: the server's stands. */
+export const NEWER_LINEUP_MESSAGE =
+  'Another device changed this lineup later; theirs is shown.'
+/** An add of somebody who exists that waits on approval, as its sheet says. */
+export const PENDING_APPROVAL_MESSAGE =
+  'This needs approval first. Use a placeholder for this game.'
+/** The same, once writes already naming him were given a placeholder. */
+export const STAND_IN_MESSAGE =
+  'A player you added needs approval first. A placeholder plays for him in this game.'
+
 export interface OutboxOptions {
   /** The open cache, or none. */
   store: () => Promise<DocumentStore | undefined>
@@ -235,6 +414,7 @@ export interface OutboxOptions {
 
 type Outcome =
   | { kind: 'ok'; answer: unknown }
+  | { kind: 'newer' }
   | { kind: 'retry'; network: boolean }
   | { kind: 'auth' }
   | { kind: 'park'; message: string }
@@ -256,7 +436,11 @@ function outcomeOf(error: unknown, call: QueuedCall): Outcome {
   // it. Not a refusal to show, and not one to send again.
   if (error.code === 'idempotencyKeyReused') return { kind: 'reused' }
   const details = error.details as
-    { stale?: unknown; retry?: unknown } | null | undefined
+    { stale?: unknown; retry?: unknown; newer?: unknown } | null | undefined
+  // A lineup changed later on another device than this one was: the
+  // server's stands, and this write is dropped, not held.
+  if (error.code === 'conflict' && details?.newer === true)
+    return { kind: 'newer' }
   // A conflict the server says to send again as it is: the game moved while
   // it saved (a lineup save that raced another write). Waited for, as a 5xx.
   if (error.code === 'conflict' && details?.retry === true)
@@ -306,7 +490,12 @@ function namesOfRow(row: OutboxRow): DeviceNames | undefined {
 
 /** The call a queued row is. */
 function callOfRow(row: OutboxRow): QueuedCall {
-  return queuedCallOf(row.method, row.path, parsed(row.body), namesOfRow(row))!
+  const body = parsed(row.body)
+  const names = namesOfRow(row)
+  // A kind only a screen that does not wait queues reads as one whatever
+  // the row says: such a call that fell back to a direct send kept it.
+  return (queuedCallOf(row.method, row.path, body, names, row.background) ??
+    queuedCallOf(row.method, row.path, body, names, true))!
 }
 
 /** The gumbo id a rename names, and the name it gives him. */
@@ -324,23 +513,33 @@ function renameOf(call: Extract<QueuedCall, { kind: 'guestRename' }>): {
   }
 }
 
+/** A team's two rosters, and the read that fills each. */
+function teamDocuments(teamId: string): Array<{ key: string; path: string }> {
+  const team = `/teams/${encodeURIComponent(teamId)}/roster`
+  return [
+    { key: rosterKey(teamId), path: team },
+    { key: fullRosterKey(teamId), path: `${team}?includeFullNames=true` }
+  ]
+}
+
 /** The documents a queued call writes, and the read that fills each. */
 function documentsOf(call: QueuedCall): Array<{ key: string; path: string }> {
-  if (call.kind === 'roster') {
-    const team = `/teams/${encodeURIComponent(call.teamId)}/roster`
-    return [
-      { key: rosterKey(call.teamId), path: team },
-      { key: fullRosterKey(call.teamId), path: `${team}?includeFullNames=true` }
-    ]
-  }
+  if (call.kind === 'roster') return teamDocuments(call.teamId)
+  if (call.kind === 'existingPlayer')
+    return call.teamId == null ? [] : teamDocuments(call.teamId)
+  if (call.kind === 'guestPlayer') return []
   const game = `/games/${encodeURIComponent(call.gameId)}`
+  if (call.kind === 'unroster')
+    return [{ key: gameKey(call.gameId), path: game }]
   return call.kind === 'lineups'
     ? [{ key: lineupsKey(call.gameId), path: `${game}/lineups` }]
     : [{ key: eventsKey(call.gameId), path: `${game}/events` }]
 }
 
 /** The document a game write keeps: its lineups, or its plays. */
-function ownKey(call: Exclude<QueuedCall, { kind: 'roster' }>): string {
+function ownKey(
+  call: Extract<QueuedCall, { kind: 'lineups' | 'events' }>
+): string {
   return call.kind === 'lineups'
     ? lineupsKey(call.gameId)
     : eventsKey(call.gameId)
@@ -364,8 +563,13 @@ export class Outbox {
   private timer: unknown
   /** The last drain found nothing it could send, and nothing was queued since. */
   private idle = false
-  private readonly chains = new Map<string, Promise<unknown>>()
   private readonly listeners = new Set<OutboxListener>()
+  private readonly noticeListeners = new Set<OutboxNoticeListener>()
+  /**
+   * Rows written for a direct send in flight: they hold their chain's place,
+   * and the drain neither sends them nor takes their lease back.
+   */
+  private readonly direct = new Set<string>()
 
   constructor(options: OutboxOptions) {
     this.options = {
@@ -387,20 +591,39 @@ export class Outbox {
    * a queued write the phone's.
    */
   async submit(call: QueuedCall): Promise<unknown> {
-    const chain = chainOf(call)
-    const before = this.chains.get(chain) ?? Promise.resolve()
-    const run = before.then(async () => await this.submitNow(call))
-    // The next call of the chain waits for this one, whatever it came to.
-    const settled: Promise<void> = run.then(
-      () => {
-        if (this.chains.get(chain) === settled) this.chains.delete(chain)
-      },
-      () => {
-        if (this.chains.get(chain) === settled) this.chains.delete(chain)
-      }
-    )
-    this.chains.set(chain, settled)
-    return await run
+    // Its place in the chain is taken now: behind a send of the chain still
+    // in flight, whose row holds the chain, it is queued at once, ahead of
+    // anything queued after it.
+    return await this.submitNow(call)
+  }
+
+  /**
+   * Queues `call` and answers the phone's answer to it at once, written onto
+   * the phone's documents in the same transaction, whatever else its chain
+   * holds: the drain sends it later, in order, after a direct send of the
+   * chain still in flight, whose row holds its place. For a screen that
+   * never waits on the network. A call whose documents are not on the
+   * phone, so it has no answer of the phone's, or a file that cannot be
+   * written, goes to the server as `submit` sends it.
+   */
+  async submitBackground(call: QueuedCall): Promise<unknown> {
+    const store = await this.options.store()
+    if (store == null || this.options.owns?.() === false)
+      return await this.submit(call)
+    let answer: unknown
+    try {
+      answer = await this.enqueue(
+        store,
+        call,
+        this.makeId(),
+        undefined,
+        undefined,
+        true
+      )
+    } catch {
+      return await this.submit(call)
+    }
+    return answer
   }
 
   /** Sends what can be sent, one row at a time. One drain runs at once. */
@@ -598,6 +821,21 @@ export class Outbox {
     }
   }
 
+  /** Tells `listener` each notice a queued write comes to, until unsubscribed. */
+  subscribeNotices(listener: OutboxNoticeListener): () => void {
+    this.noticeListeners.add(listener)
+    return () => {
+      this.noticeListeners.delete(listener)
+    }
+  }
+
+  /** Reads again and tells what a landing found, once it has committed. */
+  private async told(landing: Landing): Promise<void> {
+    if (landing.reads.length > 0) await this.reread(landing.reads)
+    for (const notice of landing.notices)
+      for (const listener of this.noticeListeners) listener(notice)
+  }
+
   /** The queue as it stands. */
   async summary(): Promise<OutboxSummary> {
     const store = await this.options.store()
@@ -605,7 +843,8 @@ export class Outbox {
       store == null
         ? { rows: [], made: new Set<number>() }
         : await store.atomically(async tx => ({
-            rows: await tx.outbox(),
+            // A direct send in flight is not yet a write the phone holds.
+            rows: (await tx.outbox()).filter(row => !this.direct.has(row.id)),
             made: new Set(
               (await tx.localPlayers())
                 .filter(player => player.serverId != null)
@@ -669,39 +908,89 @@ export class Outbox {
     if (store == null)
       return await this.options.send(method, call.path, call.body, undefined)
     const chain = chainOf(call)
-    let waits: boolean
+    const key = this.makeId()
+    // Sent now when nothing of its chain waits, with a row of its own in
+    // flight holding its place: a write queued behind it meanwhile goes
+    // after it, and if it cannot be answered it stays ahead of them.
+    let reserved:
+      { row: OutboxRow; body: unknown } | { queued: unknown } | 'notOurs'
     try {
-      waits = await store.atomically(async tx => {
+      reserved = await store.atomically(async tx => {
+        // A session that is not the file's: its write is not this file's.
+        if (this.options.owns?.() === false) return 'notOurs' as const
         const rows = await tx.outbox()
-        if (rows.some(row => row.chain === chain)) return true
-        return (await this.dependencies(tx, rows, call.body)).length > 0
+        // Behind a write of its chain, or a player it names not yet made:
+        // queued in this same transaction, so its place is the one it was
+        // called in.
+        if (
+          rows.some(row => row.chain === chain) ||
+          (await this.dependencies(tx, rows, call.body)).length > 0
+        )
+          return { queued: await this.queueIn(tx, call, key) }
+        const body = await this.prepared(tx, call, call.body)
+        const row = await tx.enqueue({
+          id: this.makeId(),
+          idempotencyKey: key,
+          chain,
+          method,
+          path: call.path,
+          body: JSON.stringify(body),
+          names: namesOf(call),
+          dependsOn: [],
+          gameId: call.kind === 'roster' ? null : (call.gameId ?? null),
+          background: backgroundOnly(call)
+        })
+        const leaseUntil = this.options.now() + LEASE_MS
+        await tx.update(row.id, { state: 'inflight', leaseUntil })
+        this.direct.add(row.id)
+        return { row: { ...row, state: 'inflight', leaseUntil }, body }
       })
     } catch {
       // A file that cannot be read queues nothing: the call is sent as is.
       return await this.options.send(method, call.path, call.body, undefined)
     }
-    // A session that is not the file's: its write is not this file's either.
-    if (this.options.owns?.() === false)
+    if (reserved === 'notOurs')
       return await this.options.send(method, call.path, call.body, undefined)
-    const key = this.makeId()
-    if (waits) return await this.enqueue(store, call, key)
-    const body = await store.atomically(
-      async tx => await this.prepared(tx, call, call.body)
-    )
+    if ('queued' in reserved) return this.queued(reserved.queued)
+    const { row, body } = reserved
     let answer: unknown
     try {
       answer = await this.options.send(method, call.path, body, key)
     } catch (error: unknown) {
-      if (!isRetryable(error, call)) throw error
+      if (!isRetryable(error, call)) {
+        await store
+          .atomically(async tx => {
+            await tx.remove(row.id)
+          })
+          .catch(() => undefined)
+        this.direct.delete(row.id)
+        this.wake(true)
+        throw error
+      }
       this.failed(outcomeOf(error, call) as { kind: 'retry'; network: boolean })
-      // Queued as sent, so a retry under the same key is the same request.
-      return await this.enqueue(store, call, key, error, body)
+      // Queued as sent, in the place it held, so a retry under the same key
+      // is the same request and still goes first.
+      try {
+        return await this.enqueue(store, call, key, error, body, false, row)
+      } finally {
+        this.direct.delete(row.id)
+      }
     }
     this.succeeded()
-    await store.atomically(async tx => {
-      await this.landed(tx, call, undefined, key, body, answer)
-    })
+    const landing: Landing = { notices: [], reads: [] }
+    let behind = false
+    try {
+      behind = await store.atomically(async tx => {
+        await this.landed(tx, call, row, key, body, answer, landing)
+        return (await tx.outbox()).some(other => other.chain === chain)
+      })
+    } finally {
+      this.direct.delete(row.id)
+    }
+    await this.told(landing)
     this.notify()
+    // What was queued behind it goes now.
+    if (behind) this.wake()
     return answer
   }
 
@@ -712,34 +1001,20 @@ export class Outbox {
     key: string,
     cause?: unknown,
     /** The body already sent under `key`, when it was. */
-    sent?: unknown
+    sent?: unknown,
+    /** Queued by `submitBackground`. */
+    background = false,
+    /** The row of a direct send it replaces, whose place it takes. */
+    replaces?: OutboxRow
   ): Promise<unknown> {
-    const answer = await store.atomically(async tx => {
-      const dependsOn = await this.dependencies(
-        tx,
-        await tx.outbox(),
-        call.body
-      )
-      const written = await this.optimistic(tx, call)
-      if (written == null) return undefined
-      await tx.enqueue({
-        id: written.id ?? this.makeId(),
-        idempotencyKey: key,
-        chain: chainOf(call),
-        method: methodOf(call),
-        path: call.path,
-        body: JSON.stringify(sent === undefined ? call.body : sent),
-        names:
-          call.kind === 'events' || call.kind === 'guestRename'
-            ? call.names == null
-              ? null
-              : JSON.stringify(call.names)
-            : null,
-        dependsOn,
-        gameId: call.kind === 'roster' ? null : call.gameId
-      })
-      return written.answer
-    })
+    const answer = await store.atomically(
+      async tx => await this.queueIn(tx, call, key, sent, background, replaces)
+    )
+    return this.queued(answer, cause)
+  }
+
+  /** What a queued write answers, once its transaction has committed. */
+  private queued(answer: unknown, cause?: unknown): unknown {
     if (answer === undefined)
       throw cause instanceof Error
         ? cause
@@ -751,6 +1026,38 @@ export class Outbox {
     this.notify()
     this.wake()
     return answer
+  }
+
+  /**
+   * Writes `call` onto the documents and queues it in `tx`: its answer, or
+   * undefined when the documents it builds on are not on the phone.
+   */
+  private async queueIn(
+    tx: CacheTransaction,
+    call: QueuedCall,
+    key: string,
+    sent?: unknown,
+    background = false,
+    replaces?: OutboxRow
+  ): Promise<unknown> {
+    if (replaces != null) await tx.remove(replaces.id)
+    const dependsOn = await this.dependencies(tx, await tx.outbox(), call.body)
+    const written = await this.optimistic(tx, call)
+    if (written == null) return undefined
+    await tx.enqueue({
+      id: written.id ?? this.makeId(),
+      idempotencyKey: key,
+      chain: chainOf(call),
+      method: methodOf(call),
+      path: call.path,
+      body: JSON.stringify(sent === undefined ? call.body : sent),
+      names: namesOf(call),
+      dependsOn,
+      gameId: call.kind === 'roster' ? null : (call.gameId ?? null),
+      background: background || backgroundOnly(call),
+      ...(replaces == null ? {} : { seq: replaces.seq })
+    })
+    return written.answer
   }
 
   /** The creates still queued of the players the phone made that `body` names. */
@@ -781,6 +1088,10 @@ export class Outbox {
   ): Promise<{ answer: unknown; id?: string } | undefined> {
     if (call.kind === 'roster') return await this.localPlayer(tx, call)
     if (call.kind === 'guestRename') return await this.renamed(tx, call)
+    if (call.kind === 'unroster') return await this.unrostered(tx, call)
+    if (call.kind === 'guestPlayer') return await this.localGuest(tx, call)
+    if (call.kind === 'existingPlayer')
+      return await this.existingEntry(tx, call)
     const key = ownKey(call)
     const held = await tx.read(key)
     if (held == null) return undefined
@@ -821,6 +1132,182 @@ export class Outbox {
     }
   }
 
+  /**
+   * A player left off a side of the game, or put back, on the phone's copy
+   * of the game: the lists `PUT /games/:gameId/unroster` would answer. None
+   * when the game, or the player's gumbo id, is not on the phone.
+   */
+  private async unrostered(
+    tx: CacheTransaction,
+    call: Extract<QueuedCall, { kind: 'unroster' }>
+  ): Promise<{ answer: unknown } | undefined> {
+    const held = await tx.read(gameKey(call.gameId))
+    if (held == null) return undefined
+    const game = parsed(held.body)
+    const body = (call.body ?? {}) as Json
+    const side = body.side === 'home' ? 'home' : 'away'
+    const userId = typeof body.userId === 'string' ? body.userId : ''
+    const gumboId = await this.gumboOf(tx, game, side, userId)
+    if (gumboId == null) return undefined
+    const lists = unrosteredLists(game.unrostered)
+    const others = lists[side].filter(id => id !== gumboId)
+    const answer = {
+      ...lists,
+      [side]: body.rostered === true ? others : [...others, gumboId]
+    }
+    await tx.write(gameKey(call.gameId), {
+      ...held,
+      body: JSON.stringify({ ...game, unrostered: answer }),
+      pending: true
+    })
+    return { answer }
+  }
+
+  /**
+   * The gumbo id of the person `userId` on `side` of `game`: from the game's
+   * guests, either team's rosters on the phone, or the players it made.
+   */
+  private async gumboOf(
+    tx: CacheTransaction,
+    game: Json,
+    side: 'away' | 'home',
+    userId: string
+  ): Promise<number | undefined> {
+    const teamId = game[side === 'home' ? 'homeTeamId' : 'awayTeamId']
+    const guests = ((game.guestPlayers ?? {}) as Json)[side]
+    const lists: Json[][] = [Array.isArray(guests) ? guests.filter(isJson) : []]
+    if (typeof teamId === 'string')
+      for (const key of [rosterKey(teamId), fullRosterKey(teamId)]) {
+        const document = await tx.read(key)
+        if (document != null) lists.push(listOf(document.body))
+      }
+    for (const player of await tx.localPlayers())
+      lists.push([parsed(player.body)])
+    for (const list of lists)
+      for (const entry of list)
+        if (entry.userId === userId && typeof entry.gumboId === 'number')
+          return entry.gumboId
+    return undefined
+  }
+
+  /**
+   * A game-only player made on the phone: a gumbo id no roster on the phone
+   * has, his entry as the server would answer it, and his create's row id.
+   */
+  private async localGuest(
+    tx: CacheTransaction,
+    call: Extract<QueuedCall, { kind: 'guestPlayer' }>
+  ): Promise<{ answer: unknown; id: string }> {
+    const localId = await this.freeGumboId(tx, [])
+    const body = (call.body ?? {}) as Json
+    const entry = {
+      ...localRosterEntry(localId, call.body as NewRosterPlayer, true),
+      role: 'player'
+    }
+    await tx.addLocalPlayer({
+      localId,
+      serverId: null,
+      teamId:
+        typeof body.teamId === 'string' ? body.teamId : `game:${call.gameId}`,
+      body: JSON.stringify(entry)
+    })
+    return { answer: entry, id: createRowId(localId) }
+  }
+
+  /**
+   * A person who already exists, added on the phone: his roster entry, with
+   * his user id, the short name the search showed and the jersey and
+   * positions chosen, listed on the team's rosters on the phone. He keeps
+   * his own gumbo id when the search gave one; else he takes one of the
+   * phone's until the server's lands.
+   */
+  private async existingEntry(
+    tx: CacheTransaction,
+    call: Extract<QueuedCall, { kind: 'existingPlayer' }>
+  ): Promise<{ answer: unknown; id?: string }> {
+    const body = (call.body ?? {}) as Json
+    const userId = typeof body.userId === 'string' ? body.userId : ''
+    const names = call.names ?? {}
+    const known = Object.keys(names)
+      .map(Number)
+      .find(id => Number.isSafeInteger(id) && id > 0)
+    const plain =
+      call.teamId == null ? undefined : await tx.read(rosterKey(call.teamId))
+    const full =
+      call.teamId == null
+        ? undefined
+        : await tx.read(fullRosterKey(call.teamId))
+    const gumboId =
+      known ??
+      (await this.freeGumboId(
+        tx,
+        [plain, full].flatMap(document =>
+          document == null ? [] : listOf(document.body)
+        )
+      ))
+    const entry: Json = {
+      userId,
+      gumboId,
+      shortName: names[userId] ?? names[String(gumboId)] ?? 'Player',
+      avatarUrl: null,
+      jersey: typeof body.jersey === 'string' ? body.jersey : null,
+      positions: Array.isArray(body.positions) ? body.positions : [],
+      bats: null,
+      throws: null,
+      isPlayer: true,
+      ...(call.teamId == null ? { pool: true } : {}),
+      role: call.teamId == null ? 'player' : 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null,
+      walkUpSong: null
+    }
+    if (known == null)
+      await tx.addLocalPlayer({
+        localId: gumboId,
+        serverId: null,
+        teamId: call.teamId ?? `game:${call.gameId}`,
+        body: JSON.stringify(entry)
+      })
+    if (call.teamId != null)
+      for (const [key, document, shown] of [
+        [rosterKey(call.teamId), plain, plainEntry(entry)],
+        [fullRosterKey(call.teamId), full, entry]
+      ] as const)
+        if (document != null)
+          await tx.write(key, {
+            ...document,
+            body: JSON.stringify([
+              ...listOf(document.body).filter(
+                listed => listed.userId !== userId
+              ),
+              shown
+            ]),
+            pending: true
+          })
+    return known == null
+      ? { answer: entry, id: createRowId(gumboId) }
+      : { answer: entry }
+  }
+
+  /** A gumbo id no player the phone made, and none of `entries`, has. */
+  private async freeGumboId(
+    tx: CacheTransaction,
+    entries: Json[]
+  ): Promise<number> {
+    const taken = new Set<unknown>(
+      (await tx.localPlayers()).map(player => player.localId)
+    )
+    for (const entry of entries) {
+      taken.add(entry.gumboId)
+      taken.add(entry.userId)
+    }
+    let localId: number
+    do localId = randomGumboId()
+    while (taken.has(localId) || taken.has(userIdOfGumbo(localId)))
+    return localId
+  }
+
   /** The server's ids of the players the phone made whose create landed. */
   private async landedIds(
     tx: CacheTransaction
@@ -840,7 +1327,7 @@ export class Outbox {
   /** `body` applied onto `document` as the server would answer it. */
   private async applied(
     tx: CacheTransaction,
-    call: Exclude<QueuedCall, { kind: 'roster' }>,
+    call: Extract<QueuedCall, { kind: 'guestRename' | 'lineups' | 'events' }>,
     document: Json,
     body: unknown
   ): Promise<Json> {
@@ -931,7 +1418,8 @@ export class Outbox {
   ): Promise<unknown> {
     const sent = withServerIds(body, await this.landedIds(tx))
     const field = baseField(call)
-    if (field == null || call.kind === 'roster') return sent
+    if (field == null || (call.kind !== 'lineups' && call.kind !== 'events'))
+      return sent
     const { [field]: base, ...rest } = sent as Json
     if (!isLocal(base)) return sent
     const digest = await this.serverDigest(tx, call.gameId)
@@ -965,7 +1453,8 @@ export class Outbox {
     row: OutboxRow | undefined,
     key: string,
     sent: unknown,
-    answer: unknown
+    answer: unknown,
+    landing: Landing
   ): Promise<void> {
     if (row == null) await tx.removeKey(key)
     else await tx.remove(row.id)
@@ -977,6 +1466,14 @@ export class Outbox {
     }
     if (call.kind === 'guestRename') {
       await this.landedRename(tx, call)
+      return
+    }
+    if (call.kind === 'unroster') {
+      await this.landedUnroster(tx, call, answer)
+      return
+    }
+    if (call.kind === 'guestPlayer' || call.kind === 'existingPlayer') {
+      await this.landedGuest(tx, call, row, answer, later, landing)
       return
     }
     const response = (answer ?? {}) as Json
@@ -1009,7 +1506,10 @@ export class Outbox {
     for (const other of rewriting)
       document = await this.applied(
         tx,
-        callOfRow(other) as Exclude<QueuedCall, { kind: 'roster' }>,
+        callOfRow(other) as Extract<
+          QueuedCall,
+          { kind: 'guestRename' | 'lineups' | 'events' }
+        >,
         document,
         parsed(other.body)
       )
@@ -1053,6 +1553,340 @@ export class Outbox {
     const held = await tx.read(key)
     if (held != null && !writing && held.pending)
       await tx.write(key, { ...held, pending: false })
+  }
+
+  /**
+   * A player left off or put back landed: the game's lists on the phone are
+   * the server's, held still while a later write of the chain writes them.
+   */
+  private async landedUnroster(
+    tx: CacheTransaction,
+    call: Extract<QueuedCall, { kind: 'unroster' }>,
+    answer: unknown
+  ): Promise<void> {
+    const key = gameKey(call.gameId)
+    const held = await tx.read(key)
+    if (held == null) return
+    const writing = (await tx.outbox()).some(other =>
+      documentsOf(callOfRow(other)).some(doc => doc.key === key)
+    )
+    await tx.write(key, {
+      ...held,
+      body: writing
+        ? held.body
+        : JSON.stringify({
+            ...parsed(held.body),
+            unrostered: unrosteredLists(answer)
+          }),
+      pending: writing
+    })
+  }
+
+  /**
+   * A game-only player's or an existing person's add landed: the server's
+   * gumbo id replaces the phone's in every later write, and a team's
+   * rosters list the server's entry.
+   */
+  private async landedGuest(
+    tx: CacheTransaction,
+    call: Extract<QueuedCall, { kind: 'guestPlayer' | 'existingPlayer' }>,
+    row: OutboxRow | undefined,
+    answer: unknown,
+    later: OutboxRow[],
+    landing: Landing
+  ): Promise<void> {
+    if (
+      call.kind === 'existingPlayer' &&
+      isJson(answer) &&
+      isJson(answer.pending)
+    ) {
+      await this.awaitsApproval(tx, call, row, later, landing)
+      return
+    }
+    if (call.kind === 'existingPlayer') await this.foundAdded(tx, call)
+    if (call.kind === 'existingPlayer' && call.teamId != null) {
+      await this.landedPlayer(
+        tx,
+        {
+          kind: 'roster',
+          teamId: call.teamId,
+          path: call.path,
+          body: call.body
+        },
+        row,
+        answer,
+        later
+      )
+      return
+    }
+    const entry = (answer ?? {}) as Json
+    const localId = row == null ? undefined : localIdOfRow(row.id)
+    if (localId != null && typeof entry.gumboId === 'number')
+      await tx.landPlayer(localId, entry.gumboId, JSON.stringify(entry))
+  }
+
+  /**
+   * Somebody who exists landed on a team or a game: the people the phone
+   * kept as found for the team no longer list him, as the server's search
+   * does not.
+   */
+  private async foundAdded(
+    tx: CacheTransaction,
+    call: Extract<QueuedCall, { kind: 'existingPlayer' }>
+  ): Promise<void> {
+    const body = (call.body ?? {}) as Json
+    const teamId = call.teamId ?? body.teamId
+    if (typeof teamId !== 'string') return
+    const key = candidatesKey(teamId)
+    const held = await tx.read(key)
+    if (held == null) return
+    let kept: Json[]
+    try {
+      kept = listOf(held.body)
+    } catch {
+      return
+    }
+    const left = kept.filter(listed => listed.userId !== body.userId)
+    if (left.length !== kept.length)
+      await tx.write(key, { ...held, body: JSON.stringify(left) })
+  }
+
+  /**
+   * An add of somebody who exists that the server holds for approval
+   * (`202 { pending }`): nobody was added, so the phone's entry for him and
+   * the gumbo id it gave him go, and his screen is told why. Every write
+   * queued since that names him by that id goes too, as a discard drops a
+   * given-up create's dependants, and what they wrote is read from the
+   * server again: sent, the server would refuse the phone's id and hold
+   * the game behind it.
+   */
+  private async awaitsApproval(
+    tx: CacheTransaction,
+    call: Extract<QueuedCall, { kind: 'existingPlayer' }>,
+    row: OutboxRow | undefined,
+    later: OutboxRow[],
+    landing: Landing
+  ): Promise<void> {
+    const body = (call.body ?? {}) as Json
+    const localId = row == null ? undefined : localIdOfRow(row.id)
+    let stoodIn: string | undefined
+    // Whom later writes name him by: the gumbo id the phone gave him, or the
+    // one the search gave somebody who has played before.
+    const known = Object.keys(call.names ?? {})
+      .map(Number)
+      .find(id => Number.isSafeInteger(id) && id > 0)
+    const target = localId ?? known
+    if (target != null && row != null) {
+      const create = localId == null ? undefined : createRowId(localId)
+      const userId = typeof body.userId === 'string' ? body.userId : ''
+      const naming = (await tx.outbox()).filter(
+        other =>
+          other.seq > row.seq &&
+          ((create != null && other.dependsOn.includes(create)) ||
+            namedLocalIds(parsed(other.body), new Set([target])).length > 0 ||
+            (userId !== '' && other.body.includes(JSON.stringify(userId))))
+      )
+      // Nothing scored is lost: in each game a write already names him, a
+      // placeholder plays in his place, made before those writes go.
+      const games = new Map<string, OutboxRow[]>()
+      const elsewhere: OutboxRow[] = []
+      for (const other of naming)
+        if (other.gameId == null) elsewhere.push(other)
+        else
+          games.set(other.gameId, [...(games.get(other.gameId) ?? []), other])
+      for (const [gameId, rows] of games) {
+        const placeholder = await this.standIn(tx, call, gameId, row.seq)
+        if (placeholder == null) {
+          elsewhere.push(...rows)
+          continue
+        }
+        stoodIn ??= gameId
+        const swap = (value: unknown): unknown =>
+          standInFor(value, target, userId, placeholder)
+        for (const other of rows) {
+          await tx.remove(other.id)
+          const names: DeviceNames =
+            other.names == null ? {} : (JSON.parse(other.names) as DeviceNames)
+          await tx.enqueue({
+            id: other.id,
+            idempotencyKey: other.idempotencyKey,
+            chain: other.chain,
+            method: other.method,
+            path: other.path,
+            body: JSON.stringify(swap(parsed(other.body))),
+            names:
+              other.names == null
+                ? null
+                : JSON.stringify({
+                    ...(swap(names) as DeviceNames),
+                    [String(placeholder.localId)]: placeholder.name
+                  }),
+            dependsOn: [
+              ...other.dependsOn.filter(id => id !== create),
+              placeholder.rowId
+            ],
+            gameId: other.gameId,
+            background: other.background,
+            seq: other.seq
+          })
+        }
+        // The game's documents on the phone those writes hold read so too.
+        const keys = new Set(
+          rows.flatMap(other =>
+            documentsOf(callOfRow(other)).map(doc => doc.key)
+          )
+        )
+        for (const key of keys) {
+          const held = await tx.read(key)
+          if (held == null) continue
+          await tx.write(key, {
+            ...held,
+            body: JSON.stringify(swap(parsed(held.body)))
+          })
+        }
+        landing.reads.push(
+          ...rows.flatMap(other =>
+            documentsOf(callOfRow(other)).map(doc => doc.path)
+          )
+        )
+      }
+      // A write of no game naming him cannot be given a placeholder.
+      if (elsewhere.length > 0)
+        landing.reads.push(
+          ...(await this.drop(tx, new Set(elsewhere.map(other => other.id))))
+        )
+      if (localId != null) await tx.forgetLocalPlayer(localId)
+    }
+    if (call.teamId != null)
+      for (const key of [rosterKey(call.teamId), fullRosterKey(call.teamId)]) {
+        const held: StoredDocument | undefined = await tx.read(key)
+        if (held == null) continue
+        await tx.write(key, {
+          ...held,
+          body: JSON.stringify(
+            listOf(held.body).filter(
+              listed =>
+                listed.userId !== body.userId &&
+                (localId == null || listed.gumboId !== localId)
+            )
+          ),
+          pending: later.length > 0 && held.pending
+        })
+      }
+    landing.notices.push(
+      stoodIn != null
+        ? { gameId: stoodIn, message: STAND_IN_MESSAGE, reread: true }
+        : {
+            ...(call.teamId == null
+              ? { gameId: call.gameId }
+              : { teamId: call.teamId }),
+            message: PENDING_APPROVAL_MESSAGE
+          }
+    )
+  }
+
+  /**
+   * Queues a game-only placeholder for `gameId` on the side somebody whose
+   * add waits on approval was to play, named as the roster editor names its
+   * placeholders (the team's name cut short, then a letter), never as he
+   * is: his create's place in the queue (`seq`), and a gumbo id of the
+   * phone's. None when the game is not on the phone.
+   */
+  private async standIn(
+    tx: CacheTransaction,
+    call: Extract<QueuedCall, { kind: 'existingPlayer' }>,
+    gameId: string,
+    seq: number
+  ): Promise<
+    | {
+        localId: number
+        rowId: string
+        name: string
+        first: string
+        last: string
+      }
+    | undefined
+  > {
+    const body = (call.body ?? {}) as Json
+    const held = await tx.read(gameKey(gameId))
+    if (held == null) return undefined
+    const game = parsed(held.body)
+    const teamId = call.teamId ?? body.teamId
+    const side =
+      body.side === 'home' || body.side === 'away'
+        ? body.side
+        : teamId === game.homeTeamId
+          ? 'home'
+          : teamId === game.awayTeamId
+            ? 'away'
+            : undefined
+    if (side == null) return undefined
+    const teamName = game[side === 'home' ? 'homeTeamName' : 'awayTeamName']
+    const prefix = placeholderTeamName(
+      typeof teamName === 'string' ? teamName : ''
+    )
+    const guests = isJson(game.guestPlayers)
+      ? Object.values(game.guestPlayers).flatMap(list =>
+          Array.isArray(list) ? list : []
+        )
+      : []
+    const taken = new Set(
+      [
+        ...guests,
+        ...(await tx.localPlayers()).map(player => parsed(player.body))
+      ]
+        .flatMap(entry =>
+          isJson(entry)
+            ? [
+                entry.shortName,
+                entry.fullName,
+                (entry.nameDetails as Json | undefined)?.displayName
+              ]
+            : []
+        )
+        .filter((name): name is string => typeof name === 'string')
+        .map(name => name.toLowerCase())
+    )
+    let index = 0
+    while (taken.has(`${prefix} ${placeholderSuffix(index)}`.toLowerCase()))
+      index++
+    const last = placeholderSuffix(index)
+    const guest: Extract<QueuedCall, { kind: 'guestPlayer' }> = {
+      kind: 'guestPlayer',
+      gameId,
+      path: `/games/${encodeURIComponent(gameId)}/guest-players`,
+      body: {
+        side,
+        ...(typeof teamId === 'string' ? { teamId } : {}),
+        firstName: prefix,
+        lastName: last,
+        jersey: typeof body.jersey === 'string' ? body.jersey : null,
+        positions: Array.isArray(body.positions) ? body.positions : [],
+        bats: 'right',
+        throws: 'right'
+      }
+    }
+    const made = await this.localGuest(tx, guest)
+    await tx.enqueue({
+      id: made.id,
+      idempotencyKey: this.makeId(),
+      chain: chainOf(guest),
+      method: methodOf(guest),
+      path: guest.path,
+      body: JSON.stringify(guest.body),
+      names: null,
+      dependsOn: [],
+      gameId,
+      background: true,
+      seq
+    })
+    return {
+      localId: localIdOfRow(made.id)!,
+      rowId: made.id,
+      name: `${prefix} ${last}`,
+      first: prefix,
+      last
+    }
   }
 
   /** A player's create landed: his ids recorded, his entries the server's. */
@@ -1123,6 +1957,7 @@ export class Outbox {
     for (const row of rows)
       if (
         row.state === 'inflight' &&
+        !this.direct.has(row.id) &&
         (row.leaseUntil == null || row.leaseUntil < now)
       ) {
         row.state = 'pending'
@@ -1291,16 +2126,21 @@ export class Outbox {
     switch (outcome.kind) {
       case 'ok':
         this.succeeded()
-        await store.atomically(async tx => {
-          await this.landed(
-            tx,
-            call,
-            row,
-            row.idempotencyKey,
-            sent,
-            outcome.answer
-          )
-        })
+        {
+          const landing: Landing = { notices: [], reads: [] }
+          await store.atomically(async tx => {
+            await this.landed(
+              tx,
+              call,
+              row,
+              row.idempotencyKey,
+              sent,
+              outcome.answer,
+              landing
+            )
+          })
+          await this.told(landing)
+        }
         return true
       case 'retry':
         await store.atomically(async tx => {
@@ -1334,6 +2174,20 @@ export class Outbox {
           })
         })
         return true
+      case 'newer': {
+        // Another device's later lineup stands: this write goes, and what it
+        // wrote is read from the server again.
+        const reads = await store.atomically(
+          async tx => await this.drop(tx, new Set([row.id]))
+        )
+        await this.reread(reads)
+        if (call.kind === 'lineups')
+          await this.told({
+            notices: [{ gameId: call.gameId, message: NEWER_LINEUP_MESSAGE }],
+            reads: []
+          })
+        return true
+      }
       case 'reused': {
         // What it wrote is read from the server again, as a discard does.
         const reads = await store.atomically(
@@ -1369,6 +2223,19 @@ function randomGumboId(): number {
   let value = bytes[0] & 0x1f
   for (let i = 1; i < 7; i++) value = value * 256 + bytes[i]
   return value === 0 ? 1 : value
+}
+
+const isJson = (value: unknown): value is Json =>
+  value != null && typeof value === 'object' && !Array.isArray(value)
+
+/** A game's players left off, by side, as the phone holds them. */
+function unrosteredLists(raw: unknown): { away: number[]; home: number[] } {
+  const lists = isJson(raw) ? raw : {}
+  const ids = (value: unknown): number[] =>
+    Array.isArray(value)
+      ? value.filter((id): id is number => typeof id === 'number')
+      : []
+  return { away: ids(lists.away), home: ids(lists.home) }
 }
 
 /** A roster document's entries. */

@@ -28,7 +28,13 @@ import {
   type SqlExecutor
 } from './cacheStore'
 import { CachingClient, OFFLINE_CREATE_MESSAGE } from './cachingClient'
-import { eventsKey, fullRosterKey, lineupsKey, rosterKey } from './documentKeys'
+import {
+  eventsKey,
+  fullRosterKey,
+  gameKey,
+  lineupsKey,
+  rosterKey
+} from './documentKeys'
 import {
   appliedEvents,
   appliedLineups,
@@ -39,9 +45,14 @@ import {
   BACKOFF_MS,
   chainOf,
   JITTER,
+  LEASE_MS,
   LOST_PLAYER_MESSAGE,
+  NEWER_LINEUP_MESSAGE,
+  type OutboxNotice,
   type OutboxSummary,
-  queuedCallOf
+  PENDING_APPROVAL_MESSAGE,
+  queuedCallOf,
+  STAND_IN_MESSAGE
 } from './outbox'
 import { heldGameText, PARKED_GAME_MESSAGE } from './useOffline'
 
@@ -157,7 +168,11 @@ describe('the phone outbox', function () {
   })
 
   /** A phone on `handler`'s server, with its clock and timers in the test's hand. */
-  function phone(handler: Handler): {
+  function phone(
+    handler: Handler,
+    /** Stands between the client and its file, when given. */
+    wrap?: (store: DocumentStore) => DocumentStore
+  ): {
     client: CachingClient
     sent: Sent[]
     posts: () => Sent[]
@@ -192,7 +207,8 @@ describe('the phone outbox', function () {
     const openCache = async (userId: string): Promise<DocumentStore> => {
       const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
       executors.push(executor)
-      return await openCacheStore(executor)
+      const store = await openCacheStore(executor)
+      return wrap == null ? store : wrap(store)
     }
     const client = new CachingClient({
       baseUrl: 'http://x/api/v1',
@@ -2346,6 +2362,863 @@ describe('the phone outbox', function () {
       chains: {},
       games: {},
       teams: {}
+    })
+  })
+
+  describe('written in the background (U36)', function () {
+    const homeRoster = [serverEntry(201, 'Hawk'), serverEntry(202, 'Owl')]
+    const gameDoc = { ...gameFixture, id: 'g1' }
+
+    it('reads the kinds only a screen that does not wait queues, and on which chain', function () {
+      // A foreground add of somebody who exists is not queued, as before.
+      expect(
+        queuedCallOf('POST', '/teams/t1/roster-players', { userId: 'usr_a' })
+      ).equals(undefined)
+      expect(
+        queuedCallOf('POST', '/games/g1/guest-players', { side: 'home' })
+      ).equals(undefined)
+      expect(queuedCallOf('PUT', '/games/g1/unroster', {})).equals(undefined)
+      const existing = queuedCallOf(
+        'POST',
+        '/teams/t1/roster-players',
+        { userId: 'usr_a' },
+        { usr_a: 'Mookie B' },
+        true
+      )!
+      expect(existing).deep.include({ kind: 'existingPlayer', teamId: 't1' })
+      expect(chainOf(existing)).equals('team:t1')
+      const pool = queuedCallOf(
+        'POST',
+        '/games/g1/guest-players',
+        { side: 'home', userId: 'usr_a' },
+        undefined,
+        true
+      )!
+      expect(pool).deep.include({ kind: 'existingPlayer', gameId: 'g1' })
+      expect(chainOf(pool)).equals('game:g1')
+      const guest = queuedCallOf(
+        'POST',
+        '/games/g1/guest-players',
+        { side: 'home' },
+        undefined,
+        true
+      )!
+      expect(guest.kind).equals('guestPlayer')
+      expect(chainOf(guest)).equals('game:g1')
+      const unroster = queuedCallOf(
+        'PUT',
+        '/games/g1/unroster',
+        {},
+        undefined,
+        true
+      )!
+      expect(unroster.kind).equals('unroster')
+      expect(chainOf(unroster)).equals('game:g1')
+      // A roster create, a lineup, a rename still read as they did.
+      expect(
+        queuedCallOf('POST', '/games/g1/lineups', {}, undefined, true)!.kind
+      ).equals('lineups')
+      expect(
+        queuedCallOf(
+          'PUT',
+          '/games/g1/guest-players/usr_a',
+          {},
+          undefined,
+          true
+        )!.kind
+      ).equals('guestRename')
+      expect(
+        queuedCallOf('POST', '/teams/t1/roster-players', {}, undefined, true)!
+          .kind
+      ).equals('roster')
+      expect(
+        queuedCallOf('GET', '/games/g1/unroster', {}, undefined, true)
+      ).equals(undefined)
+    })
+
+    it('answers a lineup save at once while the server holds it, and lands it after', async function () {
+      let release!: () => void
+      const held = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const p = phone(
+        server({ '/games/g1/lineups': lineupsDoc('D0') }, async () => {
+          await held
+          return { body: lineupsDoc('D1') }
+        })
+      )
+      await p.client.gameLineups('g1')
+      const saved = await p.client.saveLineups('g1', lineupSave('D0', [7]), {
+        background: true
+      })
+      // The phone's answer, before the server has said anything.
+      expect(saved.digest).match(/^local-/)
+      expect(saved.home.current?.batters).deep.equals([
+        { gumboId: 7, name: 'Player 0', jersey: '0' }
+      ])
+      expect(p.rows().map(row => row.background)).deep.equals([1])
+      expect(p.document(lineupsKey('g1'))!.pending).equals(1)
+      release()
+      await p.client.drainOutbox()
+      await p.client.drainOutbox()
+      expect(p.rows()).deep.equals([])
+      expect(p.document(lineupsKey('g1'))!.server_digest).equals('D1')
+    })
+
+    it('leaves a player off a game at once, from the phone’s rosters, and takes the server’s lists when it lands', async function () {
+      let online = false
+      const p = phone(
+        server(
+          {
+            '/games/g1': gameDoc,
+            '/teams/home/roster': homeRoster
+          },
+          sent => {
+            if (!online) return 'offline'
+            expect(sent.method).equals('PUT')
+            return { body: { away: [], home: [202, 201] } }
+          }
+        )
+      )
+      await p.client.game('g1')
+      await p.client.roster('home')
+      const lists = await p.client.setRostered(
+        'g1',
+        { side: 'home', userId: userIdOfGumbo(201), rostered: false },
+        { background: true }
+      )
+      expect(lists).deep.equals({ away: [], home: [201] })
+      const held = p.document(gameKey('g1'))!
+      expect(held.pending).equals(1)
+      expect(JSON.parse(String(held.body)).unrostered).deep.equals(lists)
+      const [row] = p.rows()
+      expect(row).deep.include({
+        method: 'PUT',
+        chain: 'game:g1',
+        path: '/games/g1/unroster',
+        background: 1
+      })
+      // Put back: the phone's lists lose him again.
+      expect(
+        await p.client.setRostered(
+          'g1',
+          { side: 'home', userId: userIdOfGumbo(201), rostered: true },
+          { background: true }
+        )
+      ).deep.equals({ away: [], home: [] })
+      await p.client.drainOutbox()
+      online = true
+      p.clock.now += 60_000
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      expect(p.rows()).deep.equals([])
+      const landed = p.document(gameKey('g1'))!
+      expect(landed.pending).equals(0)
+      expect(JSON.parse(String(landed.body)).unrostered).deep.equals({
+        away: [],
+        home: [202, 201]
+      })
+    })
+
+    it('sends a player it cannot find on the phone as a plain request', async function () {
+      const p = phone(
+        server({ '/games/g1': gameDoc }, () => ({
+          body: { away: [], home: [999] }
+        }))
+      )
+      await p.client.game('g1')
+      expect(
+        await p.client.setRostered(
+          'g1',
+          { side: 'home', userId: userIdOfGumbo(999), rostered: false },
+          { background: true }
+        )
+      ).deep.equals({ away: [], home: [999] })
+      expect(p.rows()).deep.equals([])
+    })
+
+    it('makes a game-only player with a phone id, and sends a play naming him with the server’s once he lands', async function () {
+      let online = false
+      const p = phone(
+        server({ '/games/g1/events': eventsDoc('g1', 'D0') }, sent => {
+          if (!online) return 'offline'
+          if (sent.path === '/games/g1/guest-players')
+            return { status: 201, body: serverEntry(555, 'Babe') }
+          return { body: eventsDoc('g1', 'D1') }
+        })
+      )
+      await p.client.gameEvents('g1')
+      const entry = await p.client.createGuestPlayer(
+        'g1',
+        'home',
+        newPlayer('Babe'),
+        'home',
+        { background: true }
+      )
+      const localId = entry.gumboId!
+      expect(localId).not.equals(555)
+      expect(entry.shortName).equals('Babe B')
+      await p.client.saveGameEvents('g1', {
+        plays: [play(1, localId)],
+        remove: []
+      })
+      const [create, post] = p.rows()
+      expect(create).deep.include({
+        id: `player-${localId}`,
+        chain: 'game:g1',
+        background: 1
+      })
+      expect(JSON.parse(String(post.depends_on))).deep.equals([
+        `player-${localId}`
+      ])
+      // The tries made with no signal end before it comes back.
+      await p.client.drainOutbox()
+      online = true
+      p.clock.now += 60_000
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      await p.client.drainOutbox()
+      expect(p.rows()).deep.equals([])
+      const sentPost = p.posts().find(call => call.path === '/games/g1/events')!
+      expect(
+        (sentPost.body as { plays: GumboPlay[] }).plays[0].matchup?.batter?.id
+      ).equals(555)
+    })
+
+    it('adds somebody who exists with the name the search gave, and lands him after the store is opened again', async function () {
+      const p = phone(
+        server(
+          {
+            '/teams/home/roster': homeRoster,
+            '/teams/home/roster?includeFullNames=true': homeRoster
+          },
+          () => 'offline'
+        )
+      )
+      await p.client.roster('home')
+      await p.client.roster('home', { includeFullNames: true })
+      const userId = userIdOfGumbo(777)
+      const answer = await p.client.addExistingRosterPlayer(
+        'home',
+        { userId, jersey: '12', positions: ['SS'] },
+        { background: true, deviceNames: { [userId]: 'Mookie B' } }
+      )
+      expect('entry' in answer).equals(true)
+      const entry = (answer as { entry: Record<string, unknown> }).entry
+      expect(entry).deep.include({
+        userId,
+        shortName: 'Mookie B',
+        jersey: '12',
+        positions: ['SS']
+      })
+      const localId = entry.gumboId as number
+      const [row] = p.rows()
+      expect(row).deep.include({
+        id: `player-${localId}`,
+        chain: 'team:home',
+        background: 1,
+        names: JSON.stringify({ [userId]: 'Mookie B' })
+      })
+      expect(
+        JSON.parse(String(p.document(rosterKey('home'))!.body)).map(
+          (listed: { userId: string }) => listed.userId
+        )
+      ).includes(userId)
+      // The next launch, online: the stored row is the same call.
+      await p.client.drainOutbox()
+      const again = phone(
+        server({ '/teams/home/roster': homeRoster }, () => ({
+          status: 201,
+          body: { ...(serverEntry(777, 'Mookie') as object), userId }
+        }))
+      )
+      again.clock.now += 60_000
+      again.client.wakeOutbox(true)
+      await again.client.drainOutbox()
+      await again.client.drainOutbox()
+      expect(again.posts().map(call => call.body)).deep.equals([
+        { userId, jersey: '12', positions: ['SS'] }
+      ])
+      expect(again.rows()).deep.equals([])
+      const roster = JSON.parse(
+        String(again.document(fullRosterKey('home'))!.body)
+      ) as Array<{ userId: string; gumboId: number }>
+      expect(roster.filter(listed => listed.userId === userId)).deep.equals([
+        { ...(serverEntry(777, 'Mookie') as object), userId }
+      ])
+    })
+
+    it('keeps the gumbo id somebody who exists already has, and adds a pool player to the game', async function () {
+      let online = false
+      const p = phone(
+        server({ '/games/g1': gameDoc }, () =>
+          online
+            ? {
+                status: 201,
+                body: { ...(serverEntry(888, 'Aaron') as object), pool: true }
+              }
+            : 'offline'
+        )
+      )
+      await p.client.game('g1')
+      const userId = userIdOfGumbo(888)
+      const answer = await p.client.addExistingGuest(
+        'g1',
+        'home',
+        { userId, jersey: null, positions: [] },
+        'home',
+        {
+          background: true,
+          deviceNames: { [userId]: 'Aaron J', '888': 'Aaron J' }
+        }
+      )
+      expect((answer as { entry: Record<string, unknown> }).entry).deep.include(
+        { gumboId: 888, pool: true, shortName: 'Aaron J' }
+      )
+      expect(p.rows().map(row => row.chain)).deep.equals(['game:g1'])
+      online = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      expect(p.rows()).deep.equals([])
+    })
+
+    it('drops a lineup a later change on another device beat, without holding the game, and reads the server’s (newer)', async function () {
+      let served = lineupsDoc('D0')
+      const p = phone(async sent => {
+        if (sent.method === 'GET') return { body: served, revision: '5' }
+        served = lineupsDoc('D9')
+        return refusal(409, 'conflict', 'Changed later on another device', {
+          stale: true,
+          newer: true
+        })
+      })
+      await p.client.gameLineups('g1')
+      const notices: OutboxNotice[] = []
+      p.client.subscribeOutboxNotices(notice => notices.push(notice))
+      await p.client.saveLineups(
+        'g1',
+        { ...lineupSave('D0'), changedAt: '2026-11-06T12:00:00.000Z' },
+        { background: true }
+      )
+      await p.client.drainOutbox()
+      expect(p.rows()).deep.equals([])
+      // Said to the game's screens, which showed the save as made.
+      expect(notices).deep.equals([
+        { gameId: 'g1', message: NEWER_LINEUP_MESSAGE }
+      ])
+      expect(await p.client.outboxSummary()).deep.equals({
+        count: 0,
+        chains: {},
+        games: {},
+        teams: {}
+      })
+      const doc = p.document(lineupsKey('g1'))!
+      expect(doc.pending).equals(0)
+      expect(doc.server_digest).equals('D9')
+    })
+
+    /** A phone whose events post is held at the server until released. */
+    function heldPitch(
+      answer: () => Answer = () => ({
+        body: eventsDoc('g1', 'D1')
+      })
+    ): {
+      p: ReturnType<typeof phone>
+      release: () => void
+      held: () => boolean
+    } {
+      let release: (() => void) | undefined
+      const p = phone(
+        server({ '/games/g1/events': eventsDoc('g1', 'D0') }, async sent => {
+          // Only the first post is held; any after it is answered at once.
+          if (sent.path === '/games/g1/events' && release == null) {
+            await new Promise<void>(resolve => {
+              release = resolve
+            })
+            return answer()
+          }
+          if (sent.path === '/games/g1/events')
+            return { body: eventsDoc('g1', 'D2') }
+          return { status: 201, body: serverEntry(555, 'Babe') }
+        })
+      )
+      return {
+        p,
+        release: () => {
+          release!()
+        },
+        held: () => release != null
+      }
+    }
+    const whilePitchHeld = async (held: () => boolean): Promise<void> => {
+      for (let tries = 0; !held() && tries < 100; tries++)
+        await new Promise(resolve => setTimeout(resolve, 5))
+      expect(held()).equals(true)
+    }
+    const writes = (p: ReturnType<typeof phone>): string[] =>
+      p.sent.filter(call => call.method !== 'GET').map(call => call.path)
+
+    it('answers a background add at once while a direct pitch post of its chain is in flight, and sends it after the pitch', async function () {
+      const { p, release, held } = heldPitch()
+      await p.client.gameEvents('g1')
+      const pitch = p.client.saveGameEvents('g1', {
+        plays: [play(1)],
+        remove: []
+      })
+      await whilePitchHeld(held)
+      // The add answers with the phone's entry, the pitch still out.
+      const entry = await p.client.createGuestPlayer(
+        'g1',
+        'home',
+        newPlayer('Babe'),
+        'home',
+        { background: true }
+      )
+      expect(entry.shortName).equals('Babe B')
+      for (let tries = 0; tries < 10; tries++)
+        await new Promise(resolve => setTimeout(resolve, 5))
+      // One write of the chain in flight: the pitch.
+      expect(writes(p)).deep.equals(['/games/g1/events'])
+      release()
+      await pitch
+      await p.client.drainOutbox()
+      expect(writes(p)).deep.equals([
+        '/games/g1/events',
+        '/games/g1/guest-players'
+      ])
+      expect(p.rows()).deep.equals([])
+    })
+
+    it('keeps the order calls were made in: a pitch post in flight, the next pitch, then a background add', async function () {
+      const { p, release, held } = heldPitch()
+      await p.client.gameEvents('g1')
+      const first = p.client.saveGameEvents('g1', {
+        plays: [play(1)],
+        remove: []
+      })
+      await whilePitchHeld(held)
+      const second = p.client.saveGameEvents('g1', {
+        plays: [play(2)],
+        remove: []
+      })
+      await p.client.createGuestPlayer(
+        'g1',
+        'home',
+        newPlayer('Babe'),
+        'home',
+        { background: true }
+      )
+      release()
+      await first
+      await second
+      for (let round = 0; round < 3; round++) await p.client.drainOutbox()
+      const posts = p.sent.filter(call => call.method === 'POST')
+      expect(
+        posts.map(call =>
+          call.path === '/games/g1/events'
+            ? `pitch ${(call.body as { plays: GumboPlay[] }).plays[0].about.atBatIndex}`
+            : 'add'
+        )
+      ).deep.equals(['pitch 1', 'pitch 2', 'add'])
+      expect(p.rows()).deep.equals([])
+    })
+
+    it('keeps a direct pitch post that could not be answered ahead of a background write queued while it was out', async function () {
+      const { p, release, held } = heldPitch(() => 'offline')
+      await p.client.gameEvents('g1')
+      const pitch = p.client.saveGameEvents('g1', {
+        plays: [play(1)],
+        remove: []
+      })
+      await whilePitchHeld(held)
+      await p.client.createGuestPlayer(
+        'g1',
+        'home',
+        newPlayer('Babe'),
+        'home',
+        { background: true }
+      )
+      release()
+      await pitch
+      expect(p.rows().map(row => row.path)).deep.equals([
+        '/games/g1/events',
+        '/games/g1/guest-players'
+      ])
+    })
+
+    it('gives a placeholder the queued lineup save and live post that name somebody whose add waits on approval, and sends them after it', async function () {
+      let online = false
+      const p = phone(async sent => {
+        if (sent.method === 'GET') {
+          const reads: Record<string, unknown> = {
+            '/games/g1': gameDoc,
+            '/games/g1/events': eventsDoc('g1', 'D0'),
+            '/games/g1/lineups': lineupsDoc('D0'),
+            '/teams/home/roster': homeRoster,
+            '/teams/home/roster?includeFullNames=true': homeRoster
+          }
+          return sent.path in reads
+            ? { body: reads[sent.path], revision: '5' }
+            : refusal(404, 'notFound', 'Not found')
+        }
+        if (!online) return 'offline'
+        if (sent.path === '/teams/home/roster-players')
+          return { status: 202, body: { pending: { requestId: 'req_1' } } }
+        if (sent.path === '/games/g1/guest-players')
+          return { status: 201, body: serverEntry(556, 'Placeholder') }
+        if (sent.path === '/games/g1/lineups') return { body: lineupsDoc('D1') }
+        return { body: eventsDoc('g1', 'D1') }
+      })
+      await p.client.game('g1')
+      await p.client.gameEvents('g1')
+      await p.client.gameLineups('g1')
+      await p.client.roster('home')
+      await p.client.roster('home', { includeFullNames: true })
+      const notices: OutboxNotice[] = []
+      p.client.subscribeOutboxNotices(notice => notices.push(notice))
+      const userId = userIdOfGumbo(777)
+      const answer = await p.client.addExistingRosterPlayer(
+        'home',
+        { userId, jersey: '12', positions: [] },
+        { background: true, deviceNames: { [userId]: 'Mookie B' } }
+      )
+      const localId = (answer as { entry: { gumboId: number } }).entry.gumboId
+      // He is put in the lineup and bats, both still on the phone.
+      const save = lineupSave('D0', [localId])
+      save.players[0].fullName = 'Mookie Betts'
+      await p.client.saveLineups('g1', save, { background: true })
+      await p.client.saveGameEvents('g1', {
+        plays: [play(1, localId)],
+        remove: []
+      })
+      await p.client.drainOutbox()
+      online = true
+      p.clock.now += 60_000
+      p.client.wakeOutbox(true)
+      for (let round = 0; round < 4; round++) await p.client.drainOutbox()
+      // Everything scored went, after the placeholder was made.
+      expect(p.rows()).deep.equals([])
+      const sent = p.sent.filter(
+        call =>
+          call.method === 'POST' && call.path !== '/teams/home/roster-players'
+      )
+      expect(sent.map(call => call.path)).deep.equals([
+        '/games/g1/guest-players',
+        '/games/g1/lineups',
+        '/games/g1/events'
+      ])
+      expect(sent[0].body).deep.include({
+        side: 'home',
+        firstName: 'HAWKS',
+        lastName: 'A'
+      })
+      const lineup = sent[1].body as SaveLineupsBody
+      expect(lineup.players[0]).deep.include({
+        gumboId: 556,
+        fullName: 'HAWKS A'
+      })
+      expect(
+        (sent[2].body as { plays: GumboPlay[] }).plays[0].matchup?.batter?.id
+      ).equals(556)
+      for (const call of sent)
+        expect(JSON.stringify(call.body)).not.match(/Mookie|Betts/)
+      expect((await p.client.outboxSummary()).games).deep.equals({})
+      expect(notices).deep.equals([
+        { gameId: 'g1', message: STAND_IN_MESSAGE, reread: true }
+      ])
+    })
+
+    it('gives a placeholder the writes that name somebody with a gumbo id of his own whose add waits on approval', async function () {
+      let online = false
+      const p = phone(async sent => {
+        if (sent.method === 'GET') {
+          const reads: Record<string, unknown> = {
+            '/games/g1': gameDoc,
+            '/games/g1/events': eventsDoc('g1', 'D0'),
+            '/games/g1/lineups': lineupsDoc('D0'),
+            '/teams/home/roster': homeRoster,
+            '/teams/home/roster?includeFullNames=true': homeRoster
+          }
+          return sent.path in reads
+            ? { body: reads[sent.path], revision: '5' }
+            : refusal(404, 'notFound', 'Not found')
+        }
+        if (!online) return 'offline'
+        if (sent.path === '/teams/home/roster-players')
+          return { status: 202, body: { pending: { requestId: 'req_1' } } }
+        if (sent.path === '/games/g1/guest-players')
+          return { status: 201, body: serverEntry(556, 'Placeholder') }
+        if (sent.path === '/games/g1/lineups') return { body: lineupsDoc('D1') }
+        return { body: eventsDoc('g1', 'D1') }
+      })
+      await p.client.game('g1')
+      await p.client.gameEvents('g1')
+      await p.client.gameLineups('g1')
+      await p.client.roster('home')
+      await p.client.roster('home', { includeFullNames: true })
+      const notices: OutboxNotice[] = []
+      p.client.subscribeOutboxNotices(notice => notices.push(notice))
+      const userId = userIdOfGumbo(777)
+      const answer = await p.client.addExistingRosterPlayer(
+        'home',
+        { userId, jersey: '12', positions: [] },
+        {
+          background: true,
+          deviceNames: { [userId]: 'Mookie B', '777': 'Mookie B' }
+        }
+      )
+      const localId = (answer as { entry: { gumboId: number } }).entry.gumboId
+      expect(localId).equals(777)
+      // He is put in the lineup and bats, both still on the phone.
+      const save = lineupSave('D0', [localId])
+      save.players[0].fullName = 'Mookie Betts'
+      await p.client.saveLineups('g1', save, { background: true })
+      await p.client.saveGameEvents('g1', {
+        plays: [play(1, localId)],
+        remove: []
+      })
+      await p.client.drainOutbox()
+      online = true
+      p.clock.now += 60_000
+      p.client.wakeOutbox(true)
+      for (let round = 0; round < 4; round++) await p.client.drainOutbox()
+      // Everything scored went, after the placeholder was made.
+      expect(p.rows()).deep.equals([])
+      const sent = p.sent.filter(
+        call =>
+          call.method === 'POST' && call.path !== '/teams/home/roster-players'
+      )
+      expect(sent.map(call => call.path)).deep.equals([
+        '/games/g1/guest-players',
+        '/games/g1/lineups',
+        '/games/g1/events'
+      ])
+      expect(sent[0].body).deep.include({
+        side: 'home',
+        firstName: 'HAWKS',
+        lastName: 'A'
+      })
+      const lineup = sent[1].body as SaveLineupsBody
+      expect(lineup.players[0]).deep.include({
+        gumboId: 556,
+        fullName: 'HAWKS A'
+      })
+      expect(
+        (sent[2].body as { plays: GumboPlay[] }).plays[0].matchup?.batter?.id
+      ).equals(556)
+      for (const call of sent)
+        expect(JSON.stringify(call.body)).not.match(/Mookie|Betts/)
+      expect((await p.client.outboxSummary()).games).deep.equals({})
+      expect(notices).deep.equals([
+        { gameId: 'g1', message: STAND_IN_MESSAGE, reread: true }
+      ])
+    })
+
+    it('tells each landing’s notices once its own transaction commits, whatever lands beside it', async function () {
+      let releasePitch: (() => void) | undefined
+      // The add's landing is held between its writes and its commit.
+      let holdLanding = false
+      let releaseLanding: (() => void) | undefined
+      const p = phone(
+        server(
+          {
+            '/games/g1/events': eventsDoc('g1', 'D0'),
+            '/teams/home/roster': homeRoster,
+            '/teams/home/roster?includeFullNames=true': homeRoster
+          },
+          async sent => {
+            if (sent.path === '/teams/home/roster-players') {
+              holdLanding = true
+              return { status: 202, body: { pending: { requestId: 'req_1' } } }
+            }
+            await new Promise<void>(resolve => {
+              releasePitch = resolve
+            })
+            return { body: eventsDoc('g1', 'D1') }
+          }
+        ),
+        store => ({
+          ...store,
+          atomically: async run =>
+            await store.atomically(async tx => {
+              const value = await run(tx)
+              if (holdLanding) {
+                holdLanding = false
+                await new Promise<void>(resolve => {
+                  releaseLanding = resolve
+                })
+              }
+              return value
+            })
+        })
+      )
+      await p.client.gameEvents('g1')
+      await p.client.roster('home')
+      await p.client.roster('home', { includeFullNames: true })
+      const notices: OutboxNotice[] = []
+      p.client.subscribeOutboxNotices(notice => notices.push(notice))
+      const pitch = p.client.saveGameEvents('g1', {
+        plays: [play(1)],
+        remove: []
+      })
+      const pitchHeld = (): boolean => releasePitch != null
+      for (let tries = 0; !pitchHeld() && tries < 100; tries++)
+        await new Promise(resolve => setTimeout(resolve, 5))
+      const userId = userIdOfGumbo(777)
+      await p.client.addExistingRosterPlayer(
+        'home',
+        { userId, jersey: null, positions: [] },
+        { background: true, deviceNames: { [userId]: 'Mookie B' } }
+      )
+      const drained = p.client.drainOutbox()
+      const landingHeld = (): boolean => releaseLanding != null
+      for (let tries = 0; !landingHeld() && tries < 100; tries++)
+        await new Promise(resolve => setTimeout(resolve, 5))
+      // The pitch lands while the add's landing has yet to commit.
+      releasePitch!()
+      for (let tries = 0; tries < 10; tries++)
+        await new Promise(resolve => setTimeout(resolve, 5))
+      releaseLanding!()
+      await pitch
+      await drained
+      expect(notices).deep.equals([
+        { teamId: 'home', message: PENDING_APPROVAL_MESSAGE }
+      ])
+    })
+
+    it('takes back an add of somebody who exists that waits on approval, on the team’s rosters and on a game (202 pending)', async function () {
+      let online = false
+      const p = phone(
+        server(
+          {
+            '/games/g1': gameDoc,
+            '/teams/home/roster': homeRoster,
+            '/teams/home/roster?includeFullNames=true': homeRoster
+          },
+          () =>
+            online
+              ? { status: 202, body: { pending: { requestId: 'req_1' } } }
+              : 'offline'
+        )
+      )
+      await p.client.game('g1')
+      await p.client.roster('home')
+      await p.client.roster('home', { includeFullNames: true })
+      const notices: OutboxNotice[] = []
+      p.client.subscribeOutboxNotices(notice => notices.push(notice))
+      const member = userIdOfGumbo(777)
+      await p.client.addExistingRosterPlayer(
+        'home',
+        { userId: member, jersey: '12', positions: [] },
+        { background: true, deviceNames: { [member]: 'Mookie B' } }
+      )
+      const guest = userIdOfGumbo(778)
+      await p.client.addExistingGuest(
+        'g1',
+        'home',
+        { userId: guest, jersey: null, positions: [] },
+        'home',
+        { background: true, deviceNames: { [guest]: 'Aaron J' } }
+      )
+      const localPlayers = (): unknown[] =>
+        executors.at(-1)!.db.prepare('SELECT * FROM local_players').all()
+      expect(localPlayers()).length(2)
+      await p.client.drainOutbox()
+      online = true
+      p.clock.now += 60_000
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      await p.client.drainOutbox()
+      expect(p.rows()).deep.equals([])
+      // Nobody was added: the phone's entry and the ids it gave go.
+      expect(localPlayers()).deep.equals([])
+      for (const key of [rosterKey('home'), fullRosterKey('home')]) {
+        const listed = JSON.parse(String(p.document(key)!.body)) as Array<{
+          userId?: string
+        }>
+        expect(
+          listed.map(entry => entry.userId),
+          key
+        ).deep.equals(listed.map((_, index) => userIdOfGumbo(201 + index)))
+      }
+      expect(notices).deep.equals([
+        { teamId: 'home', message: PENDING_APPROVAL_MESSAGE },
+        { gameId: 'g1', message: PENDING_APPROVAL_MESSAGE }
+      ])
+    })
+
+    it('keeps a background write that fell back to a direct send readable, in flight and after a restart', async function () {
+      // g1 is not on the phone, so leaving a player off it goes direct, and
+      // the server holds it; g2 is.
+      const p = phone(
+        server(
+          {
+            '/games/g2': { ...gameFixture, id: 'g2' },
+            '/teams/home/roster': homeRoster
+          },
+          async sent => {
+            if (sent.path === '/games/g1/unroster')
+              return await new Promise<Answer>(() => undefined)
+            return { body: { away: [], home: [201] } }
+          }
+        )
+      )
+      await p.client.game('g2')
+      await p.client.roster('home')
+      const held = p.client.setRostered(
+        'g1',
+        { side: 'home', userId: userIdOfGumbo(201), rostered: false },
+        { background: true }
+      )
+      held.catch(() => undefined)
+      const out = (): boolean =>
+        p.rows().some(row => row.path === '/games/g1/unroster')
+      for (let tries = 0; !out() && tries < 100; tries++)
+        await new Promise(resolve => setTimeout(resolve, 5))
+      expect(
+        p.rows().map(row => [row.path, row.state, row.background])
+      ).deep.equals([['/games/g1/unroster', 'inflight', 1]])
+      // Another game's write lands beside it.
+      await p.client.setRostered(
+        'g2',
+        { side: 'home', userId: userIdOfGumbo(201), rostered: false },
+        { background: true }
+      )
+      await p.client.drainOutbox()
+      expect(p.rows().map(row => row.path)).deep.equals(['/games/g1/unroster'])
+      expect(p.document(gameKey('g2'))!.pending).equals(0)
+      // The app was killed with it out: the next launch sends it.
+      const again = phone(
+        server({}, () => ({ body: { away: [], home: [201] } }))
+      )
+      again.clock.now += 2 * LEASE_MS
+      again.client.wakeOutbox(true)
+      await again.client.drainOutbox()
+      await again.client.drainOutbox()
+      expect(again.rows()).deep.equals([])
+      expect(
+        again.posts().length +
+          again.sent.filter(call => call.method === 'PUT').length
+      ).greaterThan(0)
+    })
+
+    it('sends a background write with no file to keep it in as a plain request', async function () {
+      const client = new CachingClient({
+        baseUrl: 'http://x/api/v1',
+        fetch: async () =>
+          new Response(JSON.stringify({ away: [], home: [3] })),
+        openCache: async () => {
+          throw new Error('no disk')
+        }
+      })
+      client.openFor('usr_3')
+      expect(
+        await client.setRostered(
+          'g1',
+          { side: 'home', userId: userIdOfGumbo(3), rostered: false },
+          { background: true }
+        )
+      ).deep.equals({ away: [], home: [3] })
     })
   })
 })

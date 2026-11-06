@@ -484,8 +484,17 @@ describe('Coach Game', function () {
     await coach.coachGame(fixture.gameId)
     await coach.tap('Roster', 'tab')
     await checked(true)
+    // The switch turns at once; the change is read back once it has landed.
+    const unrostered = async (): Promise<unknown> =>
+      await coach.page.waitForResponse(
+        response =>
+          response.request().method() === 'PUT' &&
+          response.url().endsWith('/unroster')
+      )
+    const leftOff = unrostered()
     await coach.session.m.tapOn({ css: selector })
     await checked(false)
+    await leftOff
     await coach.shot('roster-switch-off.png')
     const client = new TeamStationClient({
       baseUrl: API,
@@ -501,8 +510,10 @@ describe('Coach Game', function () {
     await coach.coachGame(fixture.gameId)
     await coach.tap('Roster', 'tab')
     await checked(false)
+    const putBack = unrostered()
     await coach.session.m.tapOn({ css: selector })
     await checked(true)
+    await putBack
     const on = (await client.gameLineups(fixture.gameId)).home.current!
     expect(
       on.batters.some(

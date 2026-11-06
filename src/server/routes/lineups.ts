@@ -40,6 +40,10 @@ import {
   placeholderSidesOf
 } from '../../common/scoring/lineupHistory'
 import {
+  latestLineupChanges,
+  olderThan
+} from '../../common/scoring/lineupTimes'
+import {
   appearedIn,
   reconcileRoster
 } from '../../common/scoring/rosterAvailability'
@@ -509,6 +513,10 @@ class GameMoved extends Error {
   }
 }
 
+/** A save older than a change of the same side already stored. */
+export const NEWER_LINEUP =
+  'This lineup was changed later on another device; that change stands.'
+
 /** What a save replayed: the game's lineups digest, at-bat and plays. */
 function snapshotOf(
   game: {
@@ -571,7 +579,8 @@ async function saveSide(
           'lineups_digest',
           'play_generation',
           'guests',
-          'unrostered'
+          'unrostered',
+          'updated_at'
         ])
         .where('id', '=', gameId)
         .executeTakeFirst()
@@ -607,7 +616,10 @@ async function saveSide(
             )
         ),
         snapshot: snapshotOf(game, rows),
-        digest: await storedLineupsDigest(trx, { id: gameId, ...game })
+        digest: await storedLineupsDigest(trx, { id: gameId, ...game }),
+        // Every write of the game sets it: no action stored was received
+        // after it.
+        received: new Date(game.updated_at).getTime()
       }
     })
 
@@ -694,12 +706,50 @@ async function saveSide(
     sees
   )
   if (actions.length === 0) return { outcome: 'unchanged', digest: read.digest }
+  // A device whose clock runs ahead is not let to claim the future.
+  const changedAt =
+    body.changedAt == null
+      ? undefined
+      : Date.parse(body.changedAt) > Date.now()
+        ? new Date().toISOString()
+        : body.changedAt
+  // The latest creation time wins: a stored change of this side made after
+  // this one stands, and this one changes nothing. A save made on the
+  // lineups as they stand (its base is the current digest) saw every change
+  // stored and is never refused. Once the digest has moved, every stored
+  // lineup change of the side is weighed, not only those since the base,
+  // which the digest cannot place in the log. A stored stamp counts no later
+  // than the game's last write (`updated_at`), so a device whose clock runs
+  // ahead does not win every save after its own.
+  if (
+    changedAt != null &&
+    body.base !== read.digest &&
+    olderThan(
+      [body.side],
+      changedAt,
+      latestLineupChanges(
+        session.lineupSides,
+        session.actionStamps.map(stamp => {
+          const time = stamp == null ? NaN : Date.parse(stamp)
+          return Number.isNaN(time) || time <= read.received
+            ? stamp
+            : new Date(read.received).toISOString()
+        })
+      )
+    )
+  )
+    throw conflict(NEWER_LINEUP, { stale: true, newer: true })
   // The game takes a lineup change with a ball in play; the scorer's screen
   // offers none until the play has its result, and nor does this.
   if (awaitingResult(session.state))
     throw conflict('Finish the current play first')
   for (const action of actions) {
-    const problem = session.apply(action).problems[0]
+    // Stored at the time the change was made, so a later one can tell; it
+    // plays, and its event is recorded, at the time it entered the log.
+    const problem = session.apply(
+      action,
+      changedAt == null ? {} : { time: changedAt }
+    ).problems[0]
     if (problem != null) throw refusal(problem)
   }
   await options.beforeSave?.(gameId)

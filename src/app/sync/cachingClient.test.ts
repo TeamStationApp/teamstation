@@ -16,6 +16,8 @@ import { pageOf } from '../../test/pageOf'
 import { cacheFileName, type DocumentStore, openCacheStore } from './cacheStore'
 import { CachingClient, PREFETCH_CONCURRENCY } from './cachingClient'
 import {
+  candidatesKey,
+  candidatesTeamOf,
   documentKeyOf,
   fallbackKeyOf,
   fullRosterKey,
@@ -148,6 +150,51 @@ describe('CachingClient', function () {
 
   const clientOf = (fetch: typeof globalThis.fetch): CachingClient =>
     new CachingClient({ baseUrl: 'http://x/api/v1', fetch, openCache })
+
+  it('keeps the people each search for a team found, newest first and each once, for Add Existing Player (U43)', async function () {
+    const person = (name: string, cursor: string): unknown => ({
+      userId: `usr_${name}`,
+      gumboId: null,
+      externalIds: [],
+      shortName: `${name} B`,
+      shortParts: { first: name, last: 'B' },
+      avatarUrl: null,
+      bats: null,
+      throws: null,
+      teams: [],
+      tier: 'mine',
+      cursor
+    })
+    const net = server({
+      '/users?forTeam=tem_hawks&limit=30': {
+        body: [person('Mookie', 'c1'), person('Mike', 'c2')]
+      },
+      '/users?forTeam=tem_hawks&q=aar&limit=30': {
+        body: [person('Aaron', 'c3'), person('Mike', 'c4')]
+      },
+      '/users?forTeam=tem_owls&limit=30': { body: [] }
+    })
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.rosterCandidates({ teamId: 'tem_hawks', limit: 30 })
+    await client.rosterCandidates({ teamId: 'tem_hawks', q: 'aar', limit: 30 })
+    await client.rosterCandidates({ teamId: 'tem_owls', limit: 30 })
+    const kept = await client.cached(
+      candidatesKey('tem_hawks'),
+      raw => raw as Array<{ userId: string; cursor: string }>
+    )
+    expect(kept?.map(row => [row.userId, row.cursor])).deep.equals([
+      ['usr_Aaron', 'c3'],
+      ['usr_Mike', 'c4'],
+      ['usr_Mookie', 'c1']
+    ])
+    expect(await client.cached(candidatesKey('tem_owls'), raw => raw)).equals(
+      undefined
+    )
+    expect(candidatesTeamOf('/users?forTeam=t%201&q=x')).equals('t 1')
+    expect(candidatesTeamOf('/users?guardedBy=me')).equals(undefined)
+    expect(candidatesTeamOf('/teams/t1/roster')).equals(undefined)
+  })
 
   it('answers a GET that fails to leave the device from the store, the first time (Cache hit)', async function () {
     const net = server({

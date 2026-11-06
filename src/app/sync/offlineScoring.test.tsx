@@ -24,7 +24,12 @@ import { ThemeProvider } from '../theme/ThemeContext'
 import { cacheFileName, type DocumentStore, openCacheStore } from './cacheStore'
 import { CachingClient } from './cachingClient'
 import { eventsKey, fullRosterKey, lineupsKey, rosterKey } from './documentKeys'
-import type { OutboxSummary } from './outbox'
+import {
+  NEWER_LINEUP_MESSAGE,
+  type OutboxNotice,
+  type OutboxSummary,
+  PENDING_APPROVAL_MESSAGE
+} from './outbox'
 import {
   OFFLINE_BANNER,
   PARKED_GAME_MESSAGE,
@@ -49,8 +54,12 @@ function fieldServer(stored: { plays: GumboPlay[]; currentPlay: unknown }): {
   offline: boolean
   /** Another device saved the lineups: live posts are stale. */
   stale: boolean
+  /** Another device changed the lineups later: lineup saves are refused. */
+  newer: boolean
   /** While set, a play's save waits on it before it is answered. */
   holdPlays?: Promise<void>
+  /** While set, every request waits on it before it is answered. */
+  hold?: Promise<void>
   posts: Post[]
 } {
   const plays = new Map(stored.plays.map(play => [play.about.atBatIndex, play]))
@@ -129,9 +138,12 @@ function fieldServer(stored: { plays: GumboPlay[]; currentPlay: unknown }): {
   const state = {
     offline: false,
     stale: false,
+    newer: false,
     holdPlays: undefined as Promise<void> | undefined,
+    hold: undefined as Promise<void> | undefined,
     posts: [] as Post[],
     fetch: (async (url: unknown, init?: RequestInit) => {
+      if (state.hold != null) await state.hold
       if (state.offline) throw new TypeError('Load failed')
       const path = String(url).replace('http://x/api/v1', '')
       const json = (status: number, body: unknown): Response =>
@@ -165,6 +177,12 @@ function fieldServer(stored: { plays: GumboPlay[]; currentPlay: unknown }): {
           made.push({ teamId: team, entry })
           return json(201, entry)
         }
+        if (path === '/games/g1/lineups' && state.newer)
+          return json(409, {
+            code: 'conflict',
+            message: 'Another device changed this lineup later',
+            details: { stale: true, newer: true }
+          })
         if (path === '/games/g1/lineups')
           return json(200, {
             away: side('away', 'Owls'),
@@ -709,5 +727,228 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     expect(sent.map(post => post.path)).deep.equals(['/games/g1/lineups'])
     expect(sent[0].body.base).equals('lineups-1')
     expect(sent[0].body.side).equals('home')
+  })
+
+  for (const network of ['held', 'offline'] as const)
+    it(`shows lineup, defense and roster changes at once with the server ${network === 'held' ? 'holding every request' : 'out of reach'} (U38)`, async function () {
+      const { client, net, rows } = await preparedPhone()
+      await open(client)
+      expect(document.body.textContent).includes('1 balls')
+      // From here nothing the server is asked comes back.
+      let release!: () => void
+      if (network === 'held')
+        net.hold = new Promise<void>(resolve => {
+          release = resolve
+        })
+      else net.offline = true
+      const before = net.posts.length
+      await click('Open scoring menu')
+      await click('Set Team Rosters')
+      // The editor, at once: no spinner while the game is read behind it.
+      expect(hasLabel('Refreshing game')).equals(false)
+      expect(hasLabel('Save Rosters')).equals(true)
+      // A roster change: a player made on the phone, listed at once.
+      await click('Create Player')
+      await input('First Name', 'Mookie')
+      await input('Last Name', 'Betts')
+      await click('Create Player')
+      await settle()
+      // A lineup change: he bats at the end, saved and shown at once.
+      await click('Add Mookie B to Lineup')
+      await click('Save Rosters')
+      await settle()
+      expect(hasLabel('Save Rosters')).equals(false)
+      await click('Open scoring menu')
+      await click('Set Team Rosters')
+      expect(hasLabel('Refreshing game')).equals(false)
+      expect(hasLabel('Add Mookie B to Lineup')).equals(false)
+      expect(document.body.textContent).includes('Mookie B')
+      // A defense change: the whole defense cleared, and the field waits
+      // for a pitcher at once.
+      await click('Home Team')
+      await click('Defense')
+      await click('Clear Defense')
+      await click('Save Rosters')
+      await settle()
+      expect(
+        document.body.textContent,
+        document.body.textContent ?? ''
+      ).includes('Assign a pitcher')
+      expect(net.posts.length, 'nothing has landed').equals(before)
+      expect(rows().length).greaterThan(0)
+      if (network === 'held') {
+        release()
+        net.hold = undefined
+      } else net.offline = false
+      client.wakeOutbox(true)
+      await act(async () => {
+        await client.drainOutbox()
+      })
+      await settle(50)
+      expect(rows()).deep.equals([])
+      expect(net.posts.slice(before).map(post => post.path)[0]).equals(
+        '/teams/away/roster-players'
+      )
+    })
+
+  it('shows a coach’s lineup save at once while the server holds it (U40)', async function () {
+    const { client, net, rows, document: stored } = await preparedPhone()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <GestureHandlerRootView>
+            <CoachGameScreen
+              client={client}
+              gameId="g1"
+              teamId="home"
+              onExit={() => undefined}
+            />
+          </GestureHandlerRootView>
+        </ThemeProvider>
+      )
+    })
+    for (let i = 0; i < 100 && !hasLabel('Save Rosters'); i++) await settle(10)
+    let release!: () => void
+    net.hold = new Promise<void>(resolve => {
+      release = resolve
+    })
+    await click('Lineup')
+    const leadoff = document.querySelector<HTMLElement>(
+      '[aria-label^="Reorder "]'
+    )!
+    const moved = leadoff.getAttribute('aria-label')
+    for (const key of ['Enter', 'ArrowDown', 'Enter'])
+      await act(async () => {
+        leadoff.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key, bubbles: true })
+        )
+      })
+    await settle()
+    await click('Save Rosters')
+    await settle(50)
+    // Saved on screen: the editor clean over the new order, the save queued.
+    expect(
+      document
+        .querySelector('[aria-label="Save Rosters"]')
+        ?.getAttribute('aria-disabled')
+    ).equals('true')
+    expect(
+      document
+        .querySelectorAll('[aria-label^="Reorder "]')
+        .item(1)
+        .getAttribute('aria-label')
+    ).equals(moved)
+    expect(rows().map(row => row.path)).deep.equals(['/games/g1/lineups'])
+    expect(stored(lineupsKey('g1'))!.pending).equals(1)
+    const body = JSON.parse(String(rows()[0].body)) as { changedAt?: string }
+    expect(Number.isNaN(Date.parse(body.changedAt ?? ''))).equals(false)
+    release()
+    net.hold = undefined
+    client.wakeOutbox(true)
+    await act(async () => {
+      await client.drainOutbox()
+    })
+    await settle(50)
+    expect(rows()).deep.equals([])
+  })
+  it('says on Coach Game when another device changed the lineup later, and shows theirs (newer)', async function () {
+    const { client, net, rows } = await preparedPhone()
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <GestureHandlerRootView>
+            <CoachGameScreen
+              client={client}
+              gameId="g1"
+              teamId="home"
+              onExit={() => undefined}
+            />
+          </GestureHandlerRootView>
+        </ThemeProvider>
+      )
+    })
+    for (let i = 0; i < 100 && !hasLabel('Save Rosters'); i++) await settle(10)
+    net.offline = true
+    await click('Lineup')
+    const leadoff = document.querySelector<HTMLElement>(
+      '[aria-label^="Reorder "]'
+    )!
+    for (const key of ['Enter', 'ArrowDown', 'Enter'])
+      await act(async () => {
+        leadoff.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key, bubbles: true })
+        )
+      })
+    await settle()
+    await click('Save Rosters')
+    await settle(50)
+    expect(document.body.textContent).not.includes(NEWER_LINEUP_MESSAGE)
+    net.offline = false
+    net.newer = true
+    client.wakeOutbox(true)
+    await act(async () => {
+      await client.drainOutbox()
+    })
+    await settle(100)
+    expect(rows()).deep.equals([])
+    expect(document.body.textContent).includes(NEWER_LINEUP_MESSAGE)
+  })
+
+  it('says on the scoring screen when another device changed a lineup queued here later (newer)', async function () {
+    const { client, net } = await preparedPhone()
+    await open(client)
+    net.offline = true
+    await client.saveLineups(
+      'g1',
+      {
+        side: 'home',
+        base: 'lineups-1',
+        players: [{ gumboId: 10, fullName: 'Player 10', jersey: '10' }],
+        battingOrder: [0],
+        defense: { P: 0 },
+        changedAt: '2026-10-22T18:00:00.000Z'
+      },
+      { background: true }
+    )
+    net.offline = false
+    net.newer = true
+    client.wakeOutbox(true)
+    await act(async () => {
+      await client.drainOutbox()
+    })
+    await settle(50)
+    expect(document.body.textContent).includes(NEWER_LINEUP_MESSAGE)
+  })
+  it('opens the game again on the scoring screen when writes naming a player the server did not take were dropped', async function () {
+    const { client } = await preparedPhone()
+    let tell: ((notice: OutboxNotice) => void) | undefined
+    client.subscribeOutboxNotices = listener => {
+      tell = listener
+      return () => undefined
+    }
+    let reads = 0
+    const events = client.gameEvents.bind(client)
+    client.gameEvents = async (...args) => {
+      reads++
+      return await events(...args)
+    }
+    await open(client)
+    const before = reads
+    await act(async () => {
+      tell!({
+        teamId: 'home',
+        message: PENDING_APPROVAL_MESSAGE,
+        reread: true
+      })
+    })
+    await settle(100)
+    expect(document.body.textContent).includes(PENDING_APPROVAL_MESSAGE)
+    expect(reads, 'the game is read again').greaterThan(before)
   })
 })

@@ -72,12 +72,32 @@ export interface OutboxRow {
    * row writes read named (`appliedEvents`). Null for a row with none.
    */
   names: string | null
+  /**
+   * Queued by a screen that does not wait for the server
+   * (`Outbox.submitBackground`): the kinds only such a screen queues
+   * (`unroster`, `guestPlayer`, `existingPlayer`) are read back from it.
+   */
+  background: boolean
 }
 
 export type NewOutboxRow = Omit<
   OutboxRow,
-  'seq' | 'state' | 'attempts' | 'leaseUntil' | 'message' | 'names'
-> & { names?: string | null }
+  | 'seq'
+  | 'state'
+  | 'attempts'
+  | 'leaseUntil'
+  | 'message'
+  | 'names'
+  | 'background'
+> & {
+  names?: string | null
+  background?: boolean
+  /**
+   * Its place in the queue, when it takes the place a row it replaces held
+   * (a direct send that could not be answered); else after every row.
+   */
+  seq?: number
+}
 
 /** A player made on the phone with no signal, until the server has made him. */
 export interface LocalPlayer {
@@ -175,7 +195,8 @@ const SCHEMA = [
 /** Columns added after a file may already have been made without them. */
 const ADDED_COLUMNS: Array<[table: string, column: string, type: string]> = [
   ['outbox', 'message', 'text'],
-  ['outbox', 'names', 'text']
+  ['outbox', 'names', 'text'],
+  ['outbox', 'background', 'integer NOT NULL DEFAULT 0']
 ]
 
 function outboxRowOf(row: SqlRow): OutboxRow {
@@ -194,7 +215,8 @@ function outboxRowOf(row: SqlRow): OutboxRow {
     leaseUntil: row.lease_until == null ? null : Number(row.lease_until),
     gameId: typeof row.game_id === 'string' ? row.game_id : null,
     message: typeof row.message === 'string' ? row.message : null,
-    names: typeof row.names === 'string' ? row.names : null
+    names: typeof row.names === 'string' ? row.names : null,
+    background: Number(row.background ?? 0) === 1
   }
 }
 
@@ -240,18 +262,19 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
       )
       const queued: OutboxRow = {
         ...row,
-        seq: Number(last.seq) + 1,
+        seq: row.seq ?? Number(last.seq) + 1,
         state: 'pending',
         attempts: 0,
         leaseUntil: null,
         message: null,
-        names: row.names ?? null
+        names: row.names ?? null,
+        background: row.background === true
       }
       await tx.execute(
         `INSERT INTO outbox (id, idempotency_key, seq, chain, method, path,
            body, depends_on, state, attempts, lease_until, game_id, message,
-           names)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           names, background)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           queued.id,
           queued.idempotencyKey,
@@ -266,7 +289,8 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
           queued.leaseUntil,
           queued.gameId,
           queued.message,
-          queued.names
+          queued.names,
+          queued.background ? 1 : 0
         ]
       )
       return queued

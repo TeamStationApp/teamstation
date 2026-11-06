@@ -42,8 +42,10 @@ import {
 } from '../../common/scoring/startingSetup'
 import { setupOf } from '../../common/scoring/state'
 import type { Unrostered } from '../../common/unroster'
+import { userIdOfGumbo } from '../../common/userId'
 import { Button } from '../components/Button'
 import { Icon } from '../components/Icon'
+import { forgetFound } from '../hooks/useRosterCandidates'
 import { lstrings, plural, sprintf } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { BatIcon } from './BatIcon'
@@ -304,15 +306,20 @@ export function RosterEditor({
   onCreateGuest?: (side: Side, player: PlayerDraft) => Promise<RosterEntry>
   /** Searches the players Add Existing Player offers; without it the row is off. */
   client?: TeamStationClient
-  /** Add to Roster for an existing player, on a team the caller manages. */
+  /**
+   * Add to Roster for an existing player, on a team the caller manages.
+   * `candidate` is the person as the search found him.
+   */
   onAddExistingRosterPlayer?: (
     teamId: string,
-    body: ExistingRosterPlayer
+    body: ExistingRosterPlayer,
+    candidate?: RosterCandidate
   ) => Promise<ExistingPlayerAnswer>
   /** Add as Pool Player: this game only, on this side. */
   onAddExistingGuest?: (
     side: Side,
-    body: ExistingRosterPlayer
+    body: ExistingRosterPlayer,
+    candidate?: RosterCandidate
   ) => Promise<ExistingPlayerAnswer>
   /**
    * Save Rosters, lit when the draft validates and has changed or is
@@ -391,6 +398,9 @@ export function RosterEditor({
   }, [draft])
   const [created, setCreated] = useState<Record<string, RosterEntry[]>>({})
   const [editingLocal, setEditingLocal] = useState<number>()
+  // People added here through Add Existing Player, by user id: on the
+  // roster or in the game now, though their ids may still be the phone's.
+  const [joined, setJoined] = useState<ReadonlySet<string>>(new Set())
   // Pool players added here, whom the game's guests do not list yet.
   const [pooled, setPooled] = useState<
     ReadonlyMap<number, RosterEntry['bats']>
@@ -409,8 +419,12 @@ export function RosterEditor({
   const [exclusions, setExclusions] = useState(
     unrostered ?? { away: [], home: [] }
   )
-  const [rosterBusy, setRosterBusy] = useState(false)
-  const [savingRoster, setSavingRoster] = useState(false)
+  // The lists as last set, between renders: a second change made while the
+  // first is still out builds on the first.
+  const exclusionsNow = useRef(exclusions)
+  exclusionsNow.current = exclusions
+  /** Counts availability changes: only the latest one's answer is whole. */
+  const rosterRequests = useRef(0)
   const [rosterProblem, setRosterProblem] = useState<string>()
   useEffect(() => {
     if (unrostered != null) setExclusions(unrostered)
@@ -456,31 +470,95 @@ export function RosterEditor({
     userId: string,
     rostered: boolean
   ): Promise<void> => {
-    if (onRosteredChange == null || rosterBusy || savingRoster) return
-    setRosterBusy(true)
+    if (onRosteredChange == null) return
     setRosterProblem(undefined)
-    try {
-      const lists = await onRosteredChange(side, userId, rostered)
+    const gumboId = rosters?.[draft.gameData.teams[side].id]?.find(
+      row => row.userId === userId
+    )?.gumboId
+    const apply = (lists: Unrostered): void => {
+      exclusionsNow.current = lists
       setExclusions(lists)
       setDraft(previous => applyAvailability(previous, lists))
       setBase(previous => applyAvailability(previous, lists))
-      if (!rostered) {
-        const gumboId = rosters?.[draft.gameData.teams[side].id]?.find(
-          row => row.userId === userId
-        )?.gumboId
-        setNextBatter(previous => (previous === gumboId ? undefined : previous))
-        setRunners(previous =>
-          previous.filter(runner => runner.player !== gumboId)
-        )
-      }
+    }
+    /** The lists now, with `gumboId` left off (`off`) or put back. */
+    const toggled = (lists: Unrostered, off: boolean): Unrostered => {
+      if (gumboId == null) return lists
+      const others = lists[side].filter(id => id !== gumboId)
+      return { ...lists, [side]: off ? [...others, gumboId] : others }
+    }
+    // Shown at once, as the server will answer; its answer replaces it. A
+    // refusal undoes only this change, so one made meanwhile stays.
+    const wasOff =
+      gumboId != null && exclusionsNow.current[side].includes(gumboId)
+    const before = { draft, base, nextBatter, runners }
+    if (gumboId != null) apply(toggled(exclusionsNow.current, !rostered))
+    if (!rostered) {
+      setNextBatter(previous => (previous === gumboId ? undefined : previous))
+      setRunners(previous =>
+        previous.filter(runner => runner.player !== gumboId)
+      )
+    }
+    const request = ++rosterRequests.current
+    try {
+      const answer = await onRosteredChange(side, userId, rostered)
+      // A change made since has an answer of its own, which may come first:
+      // this one says only where its own player stands.
+      if (request === rosterRequests.current) apply(answer)
+      else if (gumboId != null)
+        apply(toggled(exclusionsNow.current, answer[side].includes(gumboId)))
     } catch (error) {
+      if (gumboId != null) {
+        apply(toggled(exclusionsNow.current, wasOff))
+        if (!wasOff) {
+          // Put back where he was: his slot, his position, on base, due up.
+          const restore = (
+            now: ScoringSessionState,
+            was: ScoringSessionState | undefined
+          ): ScoringSessionState => {
+            if (was == null) return now
+            const next = copyState(now)
+            const team = next.liveData.boxscore.teams[side]
+            const old = was.liveData.boxscore.teams[side]
+            const at = old.battingOrder.indexOf(gumboId)
+            if (at >= 0 && !team.battingOrder.includes(gumboId))
+              team.battingOrder.splice(
+                Math.min(at, team.battingOrder.length),
+                0,
+                gumboId
+              )
+            for (const position of POSITIONS)
+              if (
+                old.defense[position] === gumboId &&
+                team.defense[position] == null
+              )
+                team.defense[position] = gumboId
+            return next
+          }
+          setDraft(previous => restore(previous, before.draft))
+          setBase(previous => restore(previous, before.base))
+          setNextBatter(previous =>
+            previous == null && before.nextBatter === gumboId
+              ? gumboId
+              : previous
+          )
+          setRunners(previous => [
+            ...previous,
+            ...before.runners.filter(
+              runner =>
+                runner.player === gumboId &&
+                !previous.some(
+                  held => held.player === gumboId || held.base === runner.base
+                )
+            )
+          ])
+        }
+      }
       setRosterProblem(
         error instanceof Error
           ? error.message
           : 'Could not change game availability'
       )
-    } finally {
-      setRosterBusy(false)
     }
   }
   useEffect(() => {
@@ -537,6 +615,9 @@ export function RosterEditor({
       })
       if ('pendingRequestId' in answer) return 'pending'
       const { entry } = answer
+      setJoined(held => new Set(held).add(candidate.userId))
+      if (client != null)
+        forgetFound(client, draft.gameData.teams[side].id, candidate.userId)
       // Somebody on the roster already plays as it holds them, not as typed.
       const held = answer.unchanged === true
       const player: PlayerDraft = {
@@ -596,6 +677,18 @@ export function RosterEditor({
       })
     }
   }
+  // Everybody already in the game, either side or a guest, by user id: Add
+  // Existing Player lists nobody of them.
+  const inGame = useMemo(() => {
+    const ids = new Set(joined)
+    for (const id of Object.keys(draft.gameData.players))
+      try {
+        ids.add(userIdOfGumbo(Number(id)))
+      } catch {
+        // Not a gumbo id: nobody a search lists.
+      }
+    return ids
+  }, [draft.gameData.players, joined])
   const names = useMemo(
     () =>
       rosters == null
@@ -871,7 +964,6 @@ export function RosterEditor({
           loading={rosterLoading}
           error={rosterProblem ?? editError}
           unrostered={exclusions[side]}
-          rosterBusy={rosterBusy || savingRoster}
           onRosteredChange={
             coach && onRosteredChange != null
               ? (userId, rostered) => {
@@ -881,10 +973,7 @@ export function RosterEditor({
           }
           onRetry={onRetryRoster}
           adding={
-            state.readOnly === true ||
-            rosterLoading === true ||
-            rosterBusy ||
-            savingRoster
+            state.readOnly === true || rosterLoading === true
               ? 'disabled'
               : 'enabled'
           }
@@ -1208,6 +1297,7 @@ export function RosterEditor({
           client={client}
           teamId={draft.gameData.teams[side].id}
           gameId={draft.gamePk}
+          excluded={inGame}
           onChoose={setChosen}
           onClose={() => {
             setSearching(false)
@@ -1225,7 +1315,8 @@ export function RosterEditor({
                         async body =>
                           await onAddExistingRosterPlayer(
                             draft.gameData.teams[side].id,
-                            body
+                            body,
+                            chosen
                           ),
                         false
                       )
@@ -1233,7 +1324,7 @@ export function RosterEditor({
                   : {}),
                 onAddAsPool: joinExisting(
                   chosen,
-                  async body => await onAddExistingGuest(side, body),
+                  async body => await onAddExistingGuest(side, body, chosen),
                   true
                 )
               }}
@@ -1377,10 +1468,7 @@ export function RosterEditor({
               accessibilityLabel="Save Rosters"
               label="Save Rosters"
               disabled={
-                rosterBusy ||
-                savingRoster ||
-                spoken.busy ||
-                !rosterSavable(dirty, unaccepted, validation)
+                spoken.busy || !rosterSavable(dirty, unaccepted, validation)
               }
               onPress={() => {
                 const saving = onSave(
@@ -1390,14 +1478,11 @@ export function RosterEditor({
                   openedOver
                 )
                 if (saving instanceof Promise) {
-                  setSavingRoster(true)
                   saving.then(
                     () => {
-                      setSavingRoster(false)
                       spoken.clear()
                     },
                     (error: unknown) => {
-                      setSavingRoster(false)
                       const message =
                         error instanceof Error ? error.message : ''
                       if (message !== '') spoken.problem(message)

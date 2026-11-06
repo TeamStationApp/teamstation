@@ -1215,7 +1215,7 @@ describe('scoring screen field wiring', function () {
     expect(props().canPitch).equals(true)
     expect(live.state.liveData.plays.allPlays).has.length(0)
   })
-  it('does not mutate a peer-started active play after a picker refresh', async function () {
+  it('closes the picker over a peer-started active play its background read finds, writing nothing', async function () {
     const initial = scoringSession(gameFixture)
     const store = memoryStore()
     const context = {
@@ -1226,11 +1226,6 @@ describe('scoring screen field wiring', function () {
     const first = await ScoringSession.open(store, 'g1', context)
     const peer = await ScoringSession.open(store, 'g1', context)
     await mount({ persistent: true, open: async () => first })
-    await step(() =>
-      field().onPlayerTap?.(
-        field().players.find(player => player.label === 'P')!.id
-      )
-    )
     peer.apply({
       type: 'ballInPlay',
       contact: 'swing',
@@ -1238,11 +1233,11 @@ describe('scoring screen field wiring', function () {
     })
     await peer.flush()
     const saved = JSON.stringify(store.games.get('g1'))
-    await step(() => {
-      document
-        .querySelector<HTMLElement>('[aria-label="Assign P #2 Player 2"]')!
-        .click()
-    })
+    await step(() =>
+      field().onPlayerTap?.(
+        field().players.find(player => player.label === 'P')!.id
+      )
+    )
     expect(JSON.stringify(store.games.get('g1'))).equals(saved)
     expect(document.querySelector('[aria-label="Defensive roster"]')).equals(
       null
@@ -1288,6 +1283,11 @@ describe('scoring screen field wiring', function () {
       const first = await ScoringSession.open(store, 'g1', context)
       const peer = await ScoringSession.open(store, 'g1', context)
       await mount({ persistent: true, open: async () => first })
+      // Saved before the setup opens: its background read follows them, and
+      // the setup is applied over them at once.
+      expect(peer.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+      expect(peer.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+      await peer.flush()
       if (route === 'defender')
         await step(() =>
           field().onPlayerTap?.(
@@ -1296,9 +1296,6 @@ describe('scoring screen field wiring', function () {
         )
       if (route === 'placeholder')
         await step(() => field().onPlayerTap?.('empty-RF'))
-      expect(peer.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
-      expect(peer.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
-      await peer.flush()
       if (route === 'lineup') {
         await step(() => props().setupToast?.onSetLineup?.())
         await step(() => {
@@ -1349,7 +1346,7 @@ describe('scoring screen field wiring', function () {
       if (route === 'placeholder')
         expect(saved.state.liveData.boxscore.teams.home.players).has.length(10)
     })
-  it('revalidates the defending side when a peer changes halves while the picker is open', async function () {
+  it('revalidates the defending side when its background read finds a peer changed halves', async function () {
     const initial = scoringSession(gameFixture)
     const context = {
       gamePk: 'g1',
@@ -1360,18 +1357,13 @@ describe('scoring screen field wiring', function () {
     const first = await ScoringSession.open(store, 'g1', context)
     const peer = await ScoringSession.open(store, 'g1', context)
     await mount({ persistent: true, open: async () => first })
+    peer.apply({ type: 'gameFlow', kind: 'endHalf' })
+    await peer.flush()
     await step(() =>
       field().onPlayerTap?.(
         field().players.find(player => player.label === 'P')!.id
       )
     )
-    peer.apply({ type: 'gameFlow', kind: 'endHalf' })
-    await peer.flush()
-    await step(() => {
-      document
-        .querySelector<HTMLElement>('[aria-label="Assign P #2 Player 2"]')!
-        .click()
-    })
     await first.flush()
     expect(first.state.liveData.linescore.isTopInning).equals(false)
     expect(first.state.liveData.boxscore.teams.away.defense).deep.equals(
@@ -2785,12 +2777,14 @@ describe('scoring screen field wiring', function () {
       expect(live.state.liveData.boxscore.teams.home.players).has.length(11)
     })
 
-  it('keeps player entry recoverable after a failed refresh and retries without duplicating', async function () {
+  it('creates a player at once with the game unreachable, reading nothing (U38)', async function () {
     const initial = scoringSession(gameFixture)
     const store = memoryStore()
     const load = store.load
     let fail = false
+    let reads = 0
     store.load = async id => {
+      reads++
       if (fail) throw new Error('Offline')
       return await load(id)
     }
@@ -2800,11 +2794,17 @@ describe('scoring screen field wiring', function () {
       setup: setupOf(initial)
     })
     await mount({ persistent: true, open: async () => live })
+    fail = true
     await step(() =>
       field().onPlayerTap?.(
         field().players.find(player => player.label === 'P')!.id
       )
     )
+    // The sheet is over the game as the screen holds it; the read behind it
+    // failed and says nothing.
+    expect(
+      document.querySelector('[aria-label="Defensive roster"]')
+    ).not.equals(null)
     await step(() => {
       document
         .querySelectorAll<HTMLElement>('[aria-label="Create Player"]')
@@ -2821,7 +2821,7 @@ describe('scoring screen field wiring', function () {
       )!.set!.call(node, 'Mookie')
       node.dispatchEvent(new window.Event('input', { bubbles: true }))
     })
-    fail = true
+    const before = reads
     await step(() => {
       document
         .querySelectorAll<HTMLElement>('[aria-label="Create Player"]')
@@ -2830,19 +2830,10 @@ describe('scoring screen field wiring', function () {
         )
         .click()
     })
-    expect(document.body.textContent).includes(
+    expect(reads).equals(before)
+    expect(document.body.textContent).not.includes(
       'Unable to create the player. Please try again.'
     )
-    expect(live.state.liveData.boxscore.teams.home.players).has.length(9)
-    fail = false
-    await step(() => {
-      document
-        .querySelectorAll<HTMLElement>('[aria-label="Create Player"]')
-        .item(
-          document.querySelectorAll('[aria-label="Create Player"]').length - 1
-        )
-        .click()
-    })
     expect(live.state.liveData.boxscore.teams.home.players).has.length(10)
     expect(document.querySelector('[aria-label="First Name"]')).equals(null)
   })
@@ -2866,7 +2857,7 @@ describe('scoring screen field wiring', function () {
   })
 
   for (const change of ['half', 'active', 'read-only', 'final'] as const)
-    it(`blocks player creation when a peer makes the game ${change}`, async function () {
+    it(`closes player creation when its background read finds a peer made the game ${change}`, async function () {
       const initial = scoringSession(gameFixture)
       const context = {
         gamePk: 'g1',
@@ -2877,27 +2868,6 @@ describe('scoring screen field wiring', function () {
       const live = await ScoringSession.open(store, 'g1', context)
       const peer = await ScoringSession.open(store, 'g1', context)
       await mount({ persistent: true, open: async () => live })
-      await step(() =>
-        field().onPlayerTap?.(
-          field().players.find(player => player.label === 'P')!.id
-        )
-      )
-      await step(() => {
-        document
-          .querySelectorAll<HTMLElement>('[aria-label="Create Player"]')
-          .item(
-            document.querySelectorAll('[aria-label="Create Player"]').length - 1
-          )
-          .click()
-      })
-      await step(() => {
-        const node = document.querySelector('[aria-label="First Name"]')!
-        Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype,
-          'value'
-        )!.set!.call(node, 'Mookie')
-        node.dispatchEvent(new window.Event('input', { bubbles: true }))
-      })
       if (change === 'read-only')
         Object.defineProperty(live, 'readOnly', { get: () => true })
       else {
@@ -2917,14 +2887,11 @@ describe('scoring screen field wiring', function () {
         ).deep.equals([])
         await peer.flush()
       }
-      await step(() => {
-        document
-          .querySelectorAll<HTMLElement>('[aria-label="Create Player"]')
-          .item(
-            document.querySelectorAll('[aria-label="Create Player"]').length - 1
-          )
-          .click()
-      })
+      await step(() =>
+        field().onPlayerTap?.(
+          field().players.find(player => player.label === 'P')!.id
+        )
+      )
       expect(live.state.liveData.boxscore.teams.home.players).has.length(9)
       expect(live.state.liveData.boxscore.teams.away.players).has.length(9)
       expect(document.querySelector('[aria-label="Defensive roster"]')).equals(

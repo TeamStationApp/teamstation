@@ -17,6 +17,9 @@ import { HttpError } from '../../common/errors'
 import { managesRoster } from '../../common/roles'
 import type { DocumentStore, StoredDocument } from './cacheStore'
 import {
+  CANDIDATES_KEPT,
+  candidatesKey,
+  candidatesTeamOf,
   documentKeyOf,
   fallbackKeyOf,
   GAMES_UPCOMING,
@@ -25,6 +28,7 @@ import {
 import {
   Outbox,
   type OutboxListener,
+  type OutboxNoticeListener,
   type OutboxOptions,
   type OutboxSummary,
   queuedCallOf
@@ -128,6 +132,14 @@ export class CachingClient extends TeamStationClient {
   /** Tells `listener` the queue each time it changes, until unsubscribed. */
   subscribeOutbox(listener: OutboxListener): () => void {
     return this.outbox.subscribe(listener)
+  }
+
+  /**
+   * Tells `listener` what a queued write came to that its screen should say
+   * (a lineup another device changed later, an add waiting on approval).
+   */
+  subscribeOutboxNotices(listener: OutboxNoticeListener): () => void {
+    return this.outbox.subscribeNotices(listener)
   }
 
   /**
@@ -335,16 +347,27 @@ export class CachingClient extends TeamStationClient {
   ): Promise<T> {
     const opened = this.owned
     // A roster player, a lineup, a live play and a game-only player's
-    // rename go through the queue, with the names kept beside a play.
+    // rename go through the queue, with the names kept beside a play. A
+    // screen that does not wait queues its write and takes the phone's
+    // answer at once, written onto the phone's documents as it is queued.
+    const background = options?.background === true
     const queued =
       opened == null
         ? undefined
-        : queuedCallOf(method, path, body, options?.deviceNames)
-    if (queued != null) return cleaner(await this.outbox.submit(queued))
+        : queuedCallOf(method, path, body, options?.deviceNames, background)
+    if (queued != null)
+      return cleaner(
+        background
+          ? await this.outbox.submitBackground(queued)
+          : await this.outbox.submit(queued)
+      )
     const key = method === 'GET' ? documentKeyOf(path) : undefined
     if (key == null || opened == null) {
       const value = await super.request(method, path, cleaner, body, options)
       this.outbox.wake(true)
+      const team = method === 'GET' ? candidatesTeamOf(path) : undefined
+      if (team != null && opened != null)
+        await this.keepCandidates(opened.store, team, value)
       return value
     }
 
@@ -511,6 +534,51 @@ export class CachingClient extends TeamStationClient {
       return await (await store)?.store(key, document)
     } catch {
       return undefined
+    }
+  }
+
+  /**
+   * Adds the people a search for `teamId` found to the ones the phone keeps
+   * for it, each once, the newest answer's first: what Add Existing Player
+   * lists at once, and offline.
+   */
+  private async keepCandidates(
+    store: Promise<DocumentStore | undefined>,
+    teamId: string,
+    found: unknown
+  ): Promise<void> {
+    if (!Array.isArray(found) || found.length === 0) return
+    const key = candidatesKey(teamId)
+    try {
+      await (
+        await store
+      )?.atomically(async tx => {
+        const held = await tx.read(key)
+        let kept: unknown[] = []
+        try {
+          const raw: unknown = held == null ? [] : JSON.parse(held.body)
+          if (Array.isArray(raw)) kept = raw
+        } catch {
+          kept = []
+        }
+        const idOf = (raw: unknown): unknown =>
+          raw != null && typeof raw === 'object'
+            ? (raw as { userId?: unknown }).userId
+            : undefined
+        const fresh = new Set(found.map(idOf))
+        const next = [
+          ...found,
+          ...kept.filter(entry => !fresh.has(idOf(entry)))
+        ].slice(0, CANDIDATES_KEPT)
+        await tx.write(key, {
+          body: JSON.stringify(next),
+          revision: '0',
+          serverDigest: null,
+          pending: false
+        })
+      })
+    } catch {
+      // A file that cannot be written keeps what it held.
     }
   }
 
