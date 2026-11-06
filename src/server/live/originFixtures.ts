@@ -12,6 +12,8 @@ import type { VideosTable } from '../db/database'
 import { startFakeSpace } from '../dev/fakeSpace'
 import { setScopeRoles } from '../invites/people'
 import type { MediaContext } from '../media/mediaContext'
+import { listSpaceObjects } from '../media/spacesVideo'
+import { oldVideoPrefix, videoPrefix } from '../media/videoPrefix'
 import { mediaRoutes } from '../routes/media'
 import {
   beganPublishing,
@@ -33,11 +35,21 @@ export interface OriginFixture {
   media: MediaContext
   stream: Awaited<ReturnType<typeof createLiveStream>>
   videoId: string
+  /** The row's secret, which the live stream key made with it. */
+  spaceSecret: string
+  /** `videoPrefix` of the video: where its media is in the Space. */
+  prefix: string
+  /** That prefix as a directory of the stand-in Space. */
+  remoteDir: string
+  /** The old prefix's directory, `videos/<id>/`, which holds its stills. */
+  oldRemoteDir: string
   dir: string
   stage: (seconds?: number) => Promise<void>
   begin: () => Promise<void>
   row: () => Promise<Selectable<VideosTable> | undefined>
   body: () => Promise<string>
+  /** Every key the Space holds under either of the video's prefixes. */
+  objects: () => Promise<string[]>
   close: () => Promise<void>
 }
 export async function originFixture(): Promise<OriginFixture> {
@@ -112,10 +124,15 @@ export async function originFixture(): Promise<OriginFixture> {
   })
   const row = await f.h.db
     .selectFrom('live_streams')
-    .select('video_id')
-    .where('id', '=', stream.id)
+    .innerJoin('videos', 'videos.id', 'live_streams.video_id')
+    .select(['live_streams.video_id', 'videos.space_secret'])
+    .where('live_streams.id', '=', stream.id)
     .executeTakeFirstOrThrow()
   const videoId = row.video_id!
+  const spaceSecret = row.space_secret!
+  const prefix = videoPrefix({ id: videoId, spaceSecret })
+  const remoteDir = join(remote, prefix)
+  const oldRemoteDir = join(remote, oldVideoPrefix(videoId))
   const dir = liveVideoDir(root, videoId)
   const stage = async (seconds = 3): Promise<void> => {
     await mkdir(dir, { recursive: true })
@@ -156,6 +173,10 @@ export async function originFixture(): Promise<OriginFixture> {
     media: mediaContext,
     stream,
     videoId,
+    spaceSecret,
+    prefix,
+    remoteDir,
+    oldRemoteDir,
     dir,
     stage,
     begin: async () => {
@@ -167,8 +188,11 @@ export async function originFixture(): Promise<OriginFixture> {
         .selectAll()
         .where('id', '=', videoId)
         .executeTakeFirst(),
-    body: async () =>
-      await readFile(join(remote, 'videos', videoId, 'index.m3u8'), 'utf8'),
+    body: async () => await readFile(join(remoteDir, 'index.m3u8'), 'utf8'),
+    objects: async () => [
+      ...(await listSpaceObjects(f.h.space, prefix)),
+      ...(await listSpaceObjects(f.h.space, oldVideoPrefix(videoId)))
+    ],
     close: async () => {
       stopLiveController()
       await drainLiveController()

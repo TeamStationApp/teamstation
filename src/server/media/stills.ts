@@ -9,7 +9,8 @@ import type { MediaContext } from './mediaContext'
 import { signQueryToken } from './mediaTokens'
 import { isReadOnlySourceKey, presignGetUrl } from './presign'
 import { fetchSpaceFrame, readLocalFrame } from './spaceFrames'
-import { spaceConfigured, spaceKey, type SpaceSettings } from './spacesHls'
+import { spaceConfigured, type SpaceSettings } from './spacesHls'
+import { oldVideoPrefix } from './videoPrefix'
 
 const run = promisify(execFile)
 
@@ -23,13 +24,23 @@ const run = promisify(execFile)
  * request after that is a redirect to the Space. The frame is cut in a
  * temporary directory that is gone before the request is answered.
  *
- * Deleting a video from the Space takes its stills with it, since they share
- * its prefix.
+ * Stills stay under `videos/<id>/` whatever the video's secret: they are
+ * private, served signed, and every caller here has only a video id. They are
+ * cut from the video's media, under its secret path, which is why a `space`
+ * source carries the secret. Deleting a video from the Space deletes both
+ * prefixes, so its stills go with it.
  */
 
 export type FrameSource =
   | { kind: 'file'; path: string }
-  | { kind: 'space'; space: SpaceSettings; videoId: string; verified?: boolean }
+  | {
+      kind: 'space'
+      space: SpaceSettings
+      videoId: string
+      /** Where the video's media is: `videos/<id>-<secret>/`, or null for `videos/<id>/`. */
+      spaceSecret: string | null
+      verified?: boolean
+    }
 
 export interface StillOptions {
   ffmpegPath: string
@@ -56,7 +67,7 @@ export function stillSecond(atSec: number): number {
 
 /** Where a video's still for this moment is kept in the Space. */
 export function stillKey(videoId: string, atSec: number): string {
-  return spaceKey(videoId, `stills/${stillSecond(atSec)}.jpg`)
+  return `${oldVideoPrefix(videoId)}stills/${stillSecond(atSec)}.jpg`
 }
 
 /**
@@ -248,6 +259,7 @@ async function openFrame(
   return await fetchSpaceFrame({
     space: source.space,
     videoId: source.videoId,
+    spaceSecret: source.spaceSecret,
     verified: source.verified,
     atSec,
     workDir: scratch,
