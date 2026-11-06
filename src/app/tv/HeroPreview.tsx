@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { AppState } from 'react-native'
+import { AppState, Image, StyleSheet } from 'react-native'
 
 import type { TeamStationClient, VideoSummary } from '../../common/api'
 import { MidpointPreview } from './MidpointPreview'
@@ -23,13 +23,17 @@ export function HeroPreview({
   gameId,
   active,
   muted = false,
+  paused = false,
   videoId,
+  fallbackPoster,
   onPosition
 }: {
   client: TeamStationClient
   gameId: string
   active: boolean
   muted?: boolean
+  paused?: boolean
+  fallbackPoster?: string | null
   videoId?: string
   onPosition?: (seconds: number) => void
 }): React.ReactElement | null {
@@ -40,8 +44,12 @@ export function HeroPreview({
     uri: string
     id: string
     live: boolean
+    duration: number | null
     owner: string
   } | null>(null)
+  const owner = `${gameId}:${videoId ?? ''}`
+  const [unavailable, setUnavailable] = useState<string | null>(null)
+  const [failedStill, setFailedStill] = useState<string | null>(null)
   const [failed, setFailed] = useState<string[]>([])
   useEffect(() => {
     const listener = AppState.addEventListener('change', state => {
@@ -53,10 +61,12 @@ export function HeroPreview({
   }, [])
   useEffect(() => {
     setFailed([])
+    setFailedStill(null)
   }, [gameId, client])
   useEffect(() => {
     let current = true
     setSource(null)
+    setUnavailable(null)
     if (!active || !foreground) return
     const load = async (): Promise<void> => {
       const game = await client.game(gameId)
@@ -73,7 +83,8 @@ export function HeroPreview({
               uri: playback.url,
               id: video.id,
               live: video.status === 'live',
-              owner: `${gameId}:${videoId ?? ''}`
+              duration: playback.durationSec ?? video.durationSec,
+              owner
             })
             return
           }
@@ -81,27 +92,67 @@ export function HeroPreview({
           /* Try the next authorized playable angle. */
         }
       }
+      if (current) setUnavailable(owner)
     }
     load().catch(() => {
-      /* The poster stays visible. */
+      if (current) setUnavailable(owner)
     })
     return () => {
       current = false
     }
-  }, [client, gameId, videoId, active, foreground, failed])
-  if (!active || !foreground || source?.owner !== `${gameId}:${videoId ?? ''}`)
-    return null
+  }, [client, gameId, videoId, active, foreground, failed, owner])
+  if (!active || !foreground) return null
+  const playable = source?.owner === owner ? source : null
+  if (playable === null && unavailable !== owner) return null
+  const midpoint =
+    !muted &&
+    playable !== null &&
+    !playable.live &&
+    playable.duration != null &&
+    playable.duration > 0
+      ? `${client.baseUrl}/videos/${encodeURIComponent(playable.id)}/still?t=${Math.round(playable.duration / 2)}`
+      : null
+  const useMidpoint = midpoint !== null && midpoint !== failedStill
+  const poster = useMidpoint ? midpoint : fallbackPoster
   return (
-    <MidpointPreview
-      key={`${source.id}:${source.uri}`}
-      testID={muted ? 'tv-tile-video' : 'tv-hero-video'}
-      uri={source.uri}
-      live={source.live}
-      muted={muted}
-      onPosition={onPosition}
-      onError={() => {
-        setFailed(ids => [...ids, source.id])
-      }}
-    />
+    <>
+      {poster != null && (
+        <Image
+          testID={
+            useMidpoint ? 'tv-hero-midpoint-still' : 'tv-hero-fallback-poster'
+          }
+          source={{
+            uri: poster,
+            headers:
+              useMidpoint && client.token !== undefined
+                ? { Authorization: `Bearer ${client.token}` }
+                : undefined
+          }}
+          onError={
+            useMidpoint
+              ? () => {
+                  setFailedStill(midpoint)
+                }
+              : undefined
+          }
+          resizeMode="cover"
+          style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]}
+        />
+      )}
+      {playable !== null && (
+        <MidpointPreview
+          key={`${playable.id}:${playable.uri}`}
+          testID={muted ? 'tv-tile-video' : 'tv-hero-video'}
+          uri={playable.uri}
+          live={playable.live}
+          muted={muted}
+          paused={paused}
+          onPosition={onPosition}
+          onError={() => {
+            setFailed(ids => [...ids, playable.id])
+          }}
+        />
+      )}
+    </>
   )
 }

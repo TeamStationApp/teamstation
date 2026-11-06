@@ -16,8 +16,11 @@ import type {
   UserMatch,
   VideoGame
 } from '../../common/api'
+import { TsMark } from '../components/TsMark'
+import { useMotionPreference } from '../components/useMotionPreference'
 import {
   browseGeometry,
+  collectionGradientLayout,
   fourAcross,
   gameDate,
   heroDetailsScale,
@@ -29,6 +32,8 @@ import {
   NativeGradient,
   NativeSearch,
   nativeTvPresentation,
+  reducedMotionThumbnail,
+  staticTileFocus,
   TvPoster,
   type TvSearchItem
 } from './NativePresentation'
@@ -67,6 +72,8 @@ export interface TvPlayRequest {
   game: VideoGame
   clip?: TvClip
 }
+const toolbarHeight = 115
+
 const pageKey = (page: TvPage): string =>
   page.kind === 'home'
     ? 'home'
@@ -74,7 +81,7 @@ const pageKey = (page: TvPage): string =>
       ? page.team.id
       : page.player.userId
 
-export function TvScrim(): React.ReactElement {
+function TvScrim({ width }: { width: '40%' | '65%' }): React.ReactElement {
   return (
     <View
       testID="tv-hero-scrim"
@@ -90,7 +97,7 @@ export function TvScrim(): React.ReactElement {
             left: 0,
             top: 0,
             bottom: 0,
-            width: '40%'
+            width
           }}
         />
       ) : (
@@ -98,7 +105,7 @@ export function TvScrim(): React.ReactElement {
           <Defs>
             <LinearGradient id="hero-left" x1="0" y1="0" x2="1" y2="0">
               <Stop offset="0" stopColor="#000" stopOpacity={0.75} />
-              <Stop offset="0.4" stopColor="#000" stopOpacity={0} />
+              <Stop offset={width} stopColor="#000" stopOpacity={0} />
             </LinearGradient>
           </Defs>
           <Rect width="100%" height="100%" fill="url(#hero-left)" />
@@ -130,7 +137,7 @@ function BrowseGradient({
       pointerEvents="none"
       source={{ uri: reverse ? browseGradientUp : browseGradientDown }}
       resizeMode="stretch"
-      style={StyleSheet.absoluteFill}
+      style={{ width: '100%', height: '100%' }}
     />
   )
 }
@@ -140,10 +147,10 @@ const collectionGradient =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAQACAYAAAAgBjM/AAADpUlEQVR4AVXBsQEAMAzDIKL/j67Xgs+FMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFMplwoUwmXCiTCRfKZMKFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQukwmFy2RC4TKZULhMJhQuk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUwmk8lkMplMJpPJZDKZTCaTyWQymUzmAb8wCLqSa8HwAAAAAElFTkSuQmCC'
 function CollectionBackground({
   top,
-  rowHeight
+  height
 }: {
   top: ReactNative.Animated.AnimatedInterpolation<number>
-  rowHeight: number
+  height: number
 }): React.ReactElement {
   return (
     <Animated.View
@@ -154,14 +161,14 @@ function CollectionBackground({
         top: 0,
         left: 0,
         right: 0,
-        height: rowHeight * 4,
+        height,
         transform: [{ translateY: top }]
       }}
     >
       <Image
         source={{ uri: collectionGradient }}
         resizeMode="stretch"
-        style={StyleSheet.absoluteFill}
+        style={{ width: '100%', height: '100%' }}
       />
     </Animated.View>
   )
@@ -179,8 +186,10 @@ function Tile({
   preview,
   onPreviewFocus,
   tileRef,
+  reducedMotion,
   nextFocusUp
 }: {
+  reducedMotion: boolean
   tileRef?: React.Ref<FocusNode>
   nextFocusUp?: number
   id: string
@@ -215,7 +224,7 @@ function Tile({
       {...{
         nextFocusUp,
         hasTVPreferredFocus: preferred,
-        // UIImageView owns lift, parallax and Reduce Motion without a second scale.
+        // The artwork owns focus presentation; the press target keeps its bounds.
         tvParallaxProperties: { enabled: false }
       }}
       onFocus={() => {
@@ -231,7 +240,14 @@ function Tile({
       onPress={onPress}
       style={[styles.tile, { width }]}
     >
-      <View style={[styles.thumbnail, { height: (width * 9) / 16 }]}>
+      <View
+        style={[
+          styles.thumbnail,
+          { height: (width * 9) / 16 },
+          reducedMotion && reducedMotionThumbnail,
+          focused && reducedMotion && staticTileFocus
+        ]}
+      >
         {image === null ? (
           <View style={StyleSheet.absoluteFill}>
             <Text style={styles.placeholder}>▶</Text>
@@ -280,6 +296,7 @@ export function TvBrowser({
   viewerName: string
   visible?: boolean
 }): React.ReactElement {
+  const firstName = viewerName.trim().split(/\s+/)[0]
   const [pages, setPages] = useState<TvPage[]>([{ kind: 'home' }])
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchFocused, setSearchFocused] = useState(false)
@@ -426,27 +443,13 @@ export function TvBrowser({
         destinations={searchNode === null ? undefined : [searchNode]}
         style={styles.toolbar}
       >
-        <View
-          testID="tv-header-gradient"
-          pointerEvents="none"
-          style={StyleSheet.absoluteFill}
-        >
-          {nativeTvPresentation ? (
-            <BrowseGradient reverse />
-          ) : (
-            <Svg width="100%" height="100%">
-              <Defs>
-                <LinearGradient id="header" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <Stop offset="0" stopColor="black" stopOpacity={0.75} />
-                  <Stop offset="1" stopColor="black" stopOpacity={0} />
-                </LinearGradient>
-              </Defs>
-              <Rect width="100%" height="100%" fill="url(#header)" />
-            </Svg>
-          )}
+        <View style={styles.brandGroup}>
+          <TsMark size={2.75} />
+          <Text style={styles.brand}>TeamStation</Text>
         </View>
-        <Text style={styles.brand}>TeamStation TV</Text>
-        <Text style={styles.welcome}>Welcome, {viewerName}</Text>
+        <Text style={styles.welcome} numberOfLines={1}>
+          {firstName !== '' ? `Welcome, ${firstName}` : 'Welcome'}
+        </Text>
         {nativeTvPresentation ? (
           <Pressable
             ref={setSearchNode}
@@ -676,6 +679,7 @@ function BrowsePage({
   onPlay: (request: TvPlayRequest) => void
 }): React.ReactElement {
   const [watchNode, setWatchNode] = useState<FocusNode | null>(null)
+  const reducedMotion = useMotionPreference()
   const [heroDetailsHeight, setHeroDetailsHeight] = useState(0)
   const [firstTile, setFirstTile] = useState<FocusNode | null>(null)
   const key = pageKey(page)
@@ -687,13 +691,18 @@ function BrowsePage({
     }
   }, [active, key, watchNode, registerWatch])
   const { width, height, fontScale } = useWindowDimensions()
-  const [viewportHeight, setViewportHeight] = useState(height - 115)
+  const [viewportHeight, setViewportHeight] = useState(height - toolbarHeight)
   const scrollY = useRef(new Animated.Value(0)).current
   const geometry = browseGeometry(
     width,
     viewportHeight,
     page.kind === 'team',
     fontScale
+  )
+  const gradient = collectionGradientLayout(
+    geometry.heroHeight + toolbarHeight,
+    geometry.rowHeight,
+    viewportHeight + toolbarHeight
   )
   const tileWidth = geometry.tileWidth
   const [collection, setCollection] = useState<TvCollection | null>(null)
@@ -779,6 +788,7 @@ function BrowsePage({
   ): React.ReactElement => (
     <Tile
       key={game.id}
+      reducedMotion={reducedMotion}
       tileRef={first ? setFirstTile : undefined}
       nextFocusUp={firstRow ? focusTag(watchNode) : undefined}
       preview={{ client, gameId: game.id, active }}
@@ -830,7 +840,6 @@ function BrowsePage({
         testID="tv-hero"
         style={[styles.hero, { height: geometry.heroHeight }]}
       >
-        <TvScrim />
         <View
           testID="tv-hero-details"
           onLayout={event => {
@@ -985,6 +994,7 @@ function BrowsePage({
               {collection.highlights.map(clip => (
                 <Tile
                   key={`${clip.game.id}-${clip.eventId}`}
+                  reducedMotion={reducedMotion}
                   preview={{
                     client,
                     gameId: clip.game.id,
@@ -1030,6 +1040,7 @@ function BrowsePage({
               {collection.teams.map(team => (
                 <Tile
                   key={team.id}
+                  reducedMotion={reducedMotion}
                   id={`team-${team.id}`}
                   image={team.logoUrl}
                   title={team.name}
@@ -1083,29 +1094,73 @@ function BrowsePage({
         pointerEvents="none"
         style={styles.backdrop}
       >
-        {collection?.hero?.posterUrl != null && (
-          <Image
-            source={{ uri: collection.hero.posterUrl }}
-            style={StyleSheet.absoluteFill}
-            resizeMode="cover"
-          />
-        )}
+        {collection?.hero?.isLive === true &&
+          collection.hero.posterUrl != null && (
+            <Image
+              source={{ uri: collection.hero.posterUrl }}
+              style={StyleSheet.absoluteFill}
+              resizeMode="cover"
+            />
+          )}
         {collection?.hero != null && (
           <HeroPreview
             client={client}
             gameId={collection.hero.id}
-            active={active && heroVisible && previewFocus === null}
+            fallbackPoster={
+              collection.hero.isLive ? null : collection.hero.posterUrl
+            }
+            active={active}
+            paused={!heroVisible || previewFocus !== null}
           />
         )}
+        <Animated.View
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              opacity: scrollY.interpolate({
+                inputRange: gradient.inputRange,
+                outputRange: [1, 0],
+                extrapolate: 'clamp'
+              })
+            }
+          ]}
+        >
+          <TvScrim width={page.kind === 'home' ? '65%' : '40%'} />
+          <View
+            testID="tv-header-gradient"
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: toolbarHeight
+            }}
+          >
+            {nativeTvPresentation ? (
+              <BrowseGradient reverse />
+            ) : (
+              <Svg width="100%" height="100%">
+                <Defs>
+                  <LinearGradient id="header" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <Stop offset="0" stopColor="black" stopOpacity={0.75} />
+                    <Stop offset="1" stopColor="black" stopOpacity={0} />
+                  </LinearGradient>
+                </Defs>
+                <Rect width="100%" height="100%" fill="url(#header)" />
+              </Svg>
+            )}
+          </View>
+        </Animated.View>
+        <CollectionBackground
+          top={scrollY.interpolate({
+            inputRange: gradient.inputRange,
+            outputRange: gradient.outputRange,
+            extrapolate: 'clamp'
+          })}
+          height={gradient.height}
+        />
       </View>
-      <CollectionBackground
-        top={scrollY.interpolate({
-          inputRange: [0, Math.max(1, geometry.heroHeight)],
-          outputRange: [geometry.heroHeight, 0],
-          extrapolate: 'clamp'
-        })}
-        rowHeight={geometry.rowHeight}
-      />
       <Animated.ScrollView
         testID={`tv-page-${pageKey(page)}`}
         style={styles.page}
@@ -1117,9 +1172,7 @@ function BrowsePage({
             listener: (
               event: ReactNative.NativeSyntheticEvent<ReactNative.NativeScrollEvent>
             ) => {
-              setHeroVisible(
-                event.nativeEvent.contentOffset.y < geometry.heroHeight
-              )
+              setHeroVisible(event.nativeEvent.contentOffset.y <= 1)
             }
           }
         )}
@@ -1158,17 +1211,24 @@ function BrowsePage({
 }
 const styles = StyleSheet.create({
   scene: { flex: 1, width: '100%', backgroundColor: '#000' },
-  backdrop: { position: 'absolute', top: -115, bottom: 0, left: 0, right: 0 },
+  backdrop: {
+    position: 'absolute',
+    top: -toolbarHeight,
+    bottom: 0,
+    left: 0,
+    right: 0
+  },
   toolbar: {
-    height: 115,
+    height: toolbarHeight,
     paddingHorizontal: 76,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 24,
     zIndex: 1
   },
+  brandGroup: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   brand: { fontSize: 31, color: '#fff', fontWeight: '700' },
-  welcome: { color: '#ddd', fontSize: 18, flex: 1 },
+  welcome: { color: '#ddd', fontSize: 27, flex: 1 },
   search: {
     height: 60,
     width: 210,
@@ -1264,7 +1324,7 @@ const styles = StyleSheet.create({
   status: { padding: 76, gap: 24, alignItems: 'flex-start' },
   searchResults: {
     position: 'absolute',
-    top: 115,
+    top: toolbarHeight,
     bottom: 0,
     left: 0,
     right: 0,
