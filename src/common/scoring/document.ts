@@ -22,7 +22,7 @@ import {
   type SaidPlayer
 } from './lineup'
 import { PARK } from './park'
-import { trajectoryOf } from './rules'
+import { GROUND_OUTS, trajectoryOf } from './rules'
 import {
   fenceOf,
   type GamePlay,
@@ -157,7 +157,12 @@ function eventName(type: string, play: GamePlay): string {
   if (type !== 'field_out') return mlbEventName(type)
   const detail = play.source.teamstation
   const bunt = detail.contactKind === 'bunt' ? 'Bunt ' : ''
-  if (detail.outSubtype === 'Throw Out') return `${bunt}Groundout`
+  // Throw Out is the name a ground out was stored with before.
+  if (
+    detail.outSubtype === 'Throw Out' ||
+    (detail.outSubtype != null && GROUND_OUTS.includes(detail.outSubtype))
+  )
+    return `${bunt}Groundout`
   if (detail.outSubtype !== 'Ball Caught') return mlbEventName(type)
   switch (play.hitData?.trajectory) {
     case 'Pop Fly':

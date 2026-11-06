@@ -68,11 +68,22 @@ function sidesOf(raw: unknown, teams: SideTeams): unknown {
   })
 }
 
-/** One action as a version 3 record stores it. Only lineup actions change. */
+/**
+ * One action as a version 3 record stores it. Lineup actions name teams, and
+ * a runner put out on a ground out keeps the reason `Throw Out` it was stored
+ * with before the rename: builds already installed refuse `Ground Out`, and
+ * every build reads `Throw Out` as the ground out it is.
+ */
 export function actionByTeam<A extends { type: string }>(
   action: A,
   teams: SideTeams
 ): Record<string, unknown> {
+  if (action.type === 'runnerMovement') {
+    const movement = action as A & { reason?: string }
+    return movement.reason === 'Ground Out'
+      ? { ...movement, reason: 'Throw Out' }
+      : movement
+  }
   if (action.type !== 'lineup') return action
   const { side, setup, confirmed, unseen, ...rest } = action as A & {
     side?: Side

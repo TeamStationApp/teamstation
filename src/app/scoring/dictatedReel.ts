@@ -88,7 +88,7 @@ export function outcomeOf(result: ResultAction | undefined): Outcome {
       ? 'Ball Caught'
       : result.outBy === 'interference'
         ? 'Batter Interference'
-        : 'Throw Out'
+        : 'Ground Out'
   return HIT_OUTCOMES[result.eventType] ?? 'Single'
 }
 
@@ -118,7 +118,7 @@ export function hitGeometry(
           player => player.team === 'defense' && player.playerId === fielder
         )?.position
   const middle =
-    outcome === 'Throw Out' || outcome === "Fielder's Choice"
+    outcome === 'Ground Out' || outcome === "Fielder's Choice"
       ? { x: 0, z: -40 }
       : { x: 0, z: -80 }
   const aim = action.location ?? standing ?? middle
@@ -164,7 +164,7 @@ export function hitGeometry(
         ? TRAJECTORY_ANGLES[action.trajectory]
         : outcome === 'Ball Caught'
           ? TRAJECTORY_ANGLES.fly_ball
-          : outcome === 'Throw Out'
+          : outcome === 'Ground Out'
             ? TRAJECTORY_ANGLES.ground_ball
             : TRAJECTORY_ANGLES.line_drive)
   return {

@@ -116,6 +116,10 @@ export const RUNNER_REASONS = [
   'Safe from Pickoff',
   'Safe at home',
   'Out at home',
+  'Ground Out',
+  'Out at First',
+  'Tag Out',
+  /** The name a ground out was stored with before it was Ground Out. */
   'Throw Out',
   'Ball Caught',
   'Batter Interference',
@@ -123,6 +127,31 @@ export const RUNNER_REASONS = [
   'Other'
 ] as const
 export type RunnerReason = (typeof RUNNER_REASONS)[number]
+/**
+ * The reasons dictation offers: the ones it offered before the rename, so a
+ * ground out is still said Throw Out, which `asRunnerReason` reads as Ground
+ * Out. Naming it Ground Out, Out at First or Tag Out to the model made it
+ * misread force plays and pop ups it scored before.
+ */
+export const SPOKEN_RUNNER_REASONS = RUNNER_REASONS.filter(
+  reason => !['Ground Out', 'Out at First', 'Tag Out'].includes(reason)
+)
+
+/**
+ * A runner's reason, reading a stored `Throw Out` as the `Ground Out` it was
+ * renamed to, so an old action still cleans and means the same out.
+ */
+export const asRunnerReason: Cleaner<RunnerReason> = raw => {
+  const reason = asOneOf(RUNNER_REASONS)(raw)
+  return reason === 'Throw Out' ? 'Ground Out' : reason
+}
+
+/**
+ * How a result moves the runners on base. `ground`: a ground out that sends
+ * every other runner up one base. Only new actions carry it, so a stored game
+ * replays as it was scored.
+ */
+export const ADVANCE_KINDS = ['ground'] as const
 
 export const BASE_RUNNING_KINDS = [
   'steal',
@@ -266,6 +295,7 @@ const actionCleaners = {
     type: asLiteral('result'),
     eventType: asOneOf(RESULT_TYPES),
     outBy: asOptional(asOneOf(OUT_KINDS)),
+    advance: asOptional(asOneOf(ADVANCE_KINDS)),
     base: asOptional(asOneOf(BASES)),
     foulCaught: asOptional(asBoolean)
   }),
@@ -281,7 +311,7 @@ const actionCleaners = {
     runner: asSessionId,
     to: asOneOf(DESTINATIONS),
     out: asOptional(asBoolean),
-    reason: asOptional(asOneOf(RUNNER_REASONS)),
+    reason: asOptional(asRunnerReason),
     error: asOptional(asSessionId),
     errorEvent: asOptional(asNumber),
     fielders: asOptional(asArray(asSessionId)),
@@ -803,7 +833,7 @@ export function toolSchema(): Tool[] {
         runner: id('The runner'),
         to: oneOf(DESTINATIONS, 'Where the runner ended up or was put out'),
         out: { type: 'boolean', description: 'The runner was put out' },
-        reason: oneOf(RUNNER_REASONS, 'Why'),
+        reason: oneOf(SPOKEN_RUNNER_REASONS, 'Why'),
         fielders: ids(
           "For an out: the fielders who handled the ball, last one made the putout. For the Safe batter on a fielder's choice: the remaining relay, including late throws, starting with the current ball holder. These Safe throws award no putout or assist."
         ),

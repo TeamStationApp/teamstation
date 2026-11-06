@@ -33,7 +33,7 @@ const decorations: Record<
   'Home Run': { badge: 'HR', tone: 'green' },
   "Fielder's Choice": { badge: 'FC', tone: 'amber' },
   Error: { badge: 'E', tone: 'amber' },
-  'Throw Out': { icon: 'throw' },
+  'Ground Out': { icon: 'throw' },
   'Ball Caught': { icon: 'catch' },
   'Batter Interference': { icon: 'interference' },
   Balk: { badge: 'BK', tone: 'amber' },

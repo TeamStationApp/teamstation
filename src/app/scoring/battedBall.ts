@@ -193,8 +193,8 @@ export function acceptTrajectory(
     act(next, {
       type: 'result',
       eventType: outcomeEvents[outcome],
-      ...(outcome === 'Throw Out'
-        ? { outBy: 'throw' as const }
+      ...(outcome === 'Ground Out'
+        ? { outBy: 'throw' as const, advance: 'ground' as const }
         : outcome === 'Ball Caught'
           ? {
               outBy: 'catch' as const,

@@ -19,6 +19,10 @@ import type { ScoringEvent, ScoringSessionState } from './scoringTypes'
  * action script in the shape a dictation interpreter sends — no separate
  * contact step, no explicit closes, the next pitch closing a decided play.
  * They must make the same game.
+ *
+ * A tapped ground out sends the runner on first to second itself, so the
+ * script's ground out carries `advance: 'ground'` in place of its explicit
+ * advance of that runner.
  */
 function script(): ScoringAction[] {
   const raw = JSON.parse(
@@ -31,6 +35,17 @@ function script(): ScoringAction[] {
     )
     if ('problem' in cleaned) throw new Error(cleaned.problem.message)
     return cleaned.action
+  })
+}
+function groundAdvanceScript(): ScoringAction[] {
+  return script().flatMap((action): ScoringAction[] => {
+    if (action.type === 'result' && action.eventType === 'field_out')
+      return [
+        action.outBy === 'throw' ? { ...action, advance: 'ground' } : action
+      ]
+    return action.type === 'runnerMovement' && action.reason === 'Advance'
+      ? []
+      : [action]
   })
 }
 function tapped(): ScoringSessionState {
@@ -56,7 +71,7 @@ function tapped(): ScoringSessionState {
   tap({ type: 'PITCH', kind: 'swing' })
   tap({ type: 'PITCH', kind: 'swing' })
   close()
-  tap({ type: 'OUTCOME', outcome: 'Throw Out' })
+  tap({ type: 'OUTCOME', outcome: 'Ground Out' })
   tap({
     type: 'FIELDER',
     id: 14,
@@ -71,13 +86,6 @@ function tapped(): ScoringSessionState {
     generation: state.generation
   })
   tap({ type: 'DEFENDER', generation: state.generation })
-  tap({
-    type: 'RUNNER_DROP',
-    id: 1,
-    to: 2,
-    decision: 'safe',
-    generation: state.generation
-  })
   close()
   tap({ type: 'OUTCOME', outcome: 'Ball Caught' })
   tap({
@@ -99,7 +107,7 @@ function game(state: ScoringSessionState): unknown {
 describe('a dictated half inning and a tapped one', function () {
   it('make the same game, plays, credits and line score', function () {
     let dictated = scoringSession(gameFixture)
-    for (const action of script()) {
+    for (const action of groundAdvanceScript()) {
       const applied = applyAction(dictated, action)
       expect(applied.problems, JSON.stringify(action)).deep.equals([])
       dictated = applied.state

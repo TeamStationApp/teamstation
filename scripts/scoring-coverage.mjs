@@ -57,6 +57,11 @@ const test = spawnSync(
           'src/common/scoring/*.test.ts',
           'src/app/scoring/*.test.ts',
           'src/app/field/*.test.ts',
+          'src/server/scoring/*.test.ts',
+          'src/common/replay/*.test.ts',
+          'src/app/replay/*.test.ts',
+          'src/server/routes/lineups.test.ts',
+          'src/app/sync/*.test.ts',
           ...(rosterEdit
             ? [
                 'src/app/navigation/*.test.ts',

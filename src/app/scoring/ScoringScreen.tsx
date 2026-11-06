@@ -40,6 +40,7 @@ import {
   awaitingResult,
   completesHitOffer,
   forcedFrom,
+  groundOfferAt,
   runnerDecisionError as baseOccupiedError,
   undoesHitOffer
 } from '../../common/scoring/rules'
@@ -2342,7 +2343,8 @@ function ScoringPanel(props: {
     ) &&
     !state.motions.some(motion => !motion.complete)
   // While the throw is going round to retire the batter, a runner forced to
-  // the next base can be put out there first.
+  // the next base can be put out there first, and so can a runner a ground
+  // out sent up, on the base he now stands on.
   const relayForce =
     state.phase === 'chooseDefender' &&
     state.runnerAction?.purpose === 'batterRetirement' &&
@@ -2391,10 +2393,15 @@ function ScoringPanel(props: {
                 player.team === 'runner' &&
                 player.batting !== true &&
                 player.playerId != null &&
-                forcedFrom(
+                (forcedFrom(
                   session,
                   baseIds(session).indexOf(player.playerId) + 1
-                )
+                ) ||
+                  groundOfferAt(
+                    session,
+                    player.playerId,
+                    baseIds(session).indexOf(player.playerId) + 1
+                  ) != null)
             )
             .map(player => player.id)
         : homeWaiting

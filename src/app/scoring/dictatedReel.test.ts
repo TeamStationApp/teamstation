@@ -1226,7 +1226,7 @@ describe('a dictated sentence on the field', function () {
       expect(outcomeOf(result('field_out', { outBy: 'interference' }))).equals(
         'Batter Interference'
       )
-      expect(outcomeOf(result('field_out'))).equals('Throw Out')
+      expect(outcomeOf(result('field_out'))).equals('Ground Out')
       expect(outcomeOf(result('hit_by_pitch'))).equals('Single')
     })
   })

@@ -1,3 +1,4 @@
+import { GROUND_OUTS } from './rules'
 import {
   BASE_KEYS,
   type BaseKey,
@@ -182,7 +183,8 @@ function batterCharge(
   const reachedOnError = pending?.batterReachedOnError === true
   if (
     pending != null &&
-    (pending.outcome === "Fielder's Choice" || pending.outcome === 'Throw Out')
+    (pending.outcome === "Fielder's Choice" ||
+      GROUND_OUTS.includes(pending.outcome))
   ) {
     const replaced = play.runners
       .slice(pending.originalRunnerRecordCount)

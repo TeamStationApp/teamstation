@@ -12,6 +12,7 @@ import {
   completesHitOffer,
   DID_NOT_TAG_UP,
   forcedFrom,
+  groundOfferAt,
   hasEligiblePitch,
   homeBackProposal,
   nextDecision,
@@ -312,7 +313,9 @@ export function beginDefense(state: ScoringState): void {
  * During the relay that retires the batter, a forced runner the throw beat to
  * the next base is out there: the fielder holding the ball puts him out, with
  * the relay so far behind him. The relay then goes on for the batter from that
- * fielder, so a 6-4-3 records the lead runner first and the batter second.
+ * fielder, so a 6-4-3 records the lead runner first and the batter second. A
+ * runner a ground out already stood on that base is dropped where he stands:
+ * forced out when he was forced from his own base, tagged out when not.
  */
 export function forceOutInRelay(
   state: ScoringState,
@@ -328,6 +331,11 @@ export function forceOutInRelay(
   const from =
     [offense.first?.id, offense.second?.id, offense.third?.id].indexOf(runner) +
     1
+  const offer = to === from ? groundOfferAt(game, runner, to) : undefined
+  const forced =
+    offer != null
+      ? forcedFrom(game, offer.start ?? offer.from)
+      : to === from + 1 && forcedFrom(game, from)
   if (
     state.phase !== 'chooseDefender' ||
     action?.purpose !== 'batterRetirement' ||
@@ -336,20 +344,19 @@ export function forceOutInRelay(
     generation !== state.generation ||
     route.length === 0 ||
     from === 0 ||
-    to !== from + 1 ||
-    !forcedFrom(game, from)
+    (offer == null && !forced)
   )
     return state
   return accepted(
     state,
-    `Force out ${game.gameData.players[runner].fullName}`,
+    `${forced ? 'Force' : 'Tag'} out ${game.gameData.players[runner].fullName}`,
     next => {
       act(next, {
         type: 'runnerMovement',
         runner,
         to: destination(to),
         out: true,
-        reason: 'Force Out',
+        reason: forced ? 'Force Out' : 'Tag Out',
         fielders: route.map(hop => hop.id),
         locations: route.map(hop => ({ ...hop.point })),
         runnerLocation: { ...BASES[to % 4] }

@@ -57,14 +57,14 @@ describe('ball-in-play outcome menu', function () {
       Array.from(
         button('Batter Out options').querySelectorAll('[data-outcome]')
       ).map(n => n.getAttribute('data-outcome'))
-    ).deep.equals(['Throw Out', 'Ball Caught', 'Batter Interference'])
-    expect(button('Throw Out')).not.equals(null)
+    ).deep.equals(['Ground Out', 'Ball Caught', 'Batter Interference'])
+    expect(button('Ground Out')).not.equals(null)
     expect(chosen).has.length(0)
     await click('Batter Out')
-    expect(document.querySelector('[aria-label="Throw Out"]')).equals(null)
+    expect(document.querySelector('[aria-label="Ground Out"]')).equals(null)
     await click('Batter Out')
-    await click('Throw Out')
-    expect(chosen).deep.equals(['Throw Out'])
+    await click('Ground Out')
+    expect(chosen).deep.equals(['Ground Out'])
     for (const label of [
       'Single',
       'Double',
@@ -312,7 +312,11 @@ describe('swing and bunt paired controls', () => {
     await render(false, true)
     await click('Bunt in Play')
     await click("Fielder's Choice")
-    for (const outcome of ['Throw Out', 'Ball Caught', 'Batter Interference']) {
+    for (const outcome of [
+      'Ground Out',
+      'Ball Caught',
+      'Batter Interference'
+    ]) {
       await click('Bunt in Play')
       await click('Batter Out')
       await click(outcome)

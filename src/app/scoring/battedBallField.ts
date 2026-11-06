@@ -1,4 +1,4 @@
-import { forcedFrom } from '../../common/scoring/rules'
+import { forcedFrom, groundOfferAt } from '../../common/scoring/rules'
 import type { BallArcState } from '../field/ballArcModel'
 import { fieldingLocation } from '../field/fieldingLocation'
 import type { FieldCanvasProps } from '../field/fieldTypes'
@@ -29,9 +29,20 @@ export function fieldStageInstruction(state: ScoringState): string | undefined {
         (runner, index) =>
           runner != null && forcedFrom(state.session, index + 1)
       )
+    // A ground out already stood the runners a base on: one can be put out
+    // where he stands.
+    const standing =
+      state.runnerAction?.purpose === 'batterRetirement' &&
+      [offense.first, offense.second, offense.third].some(
+        (runner, index) =>
+          runner != null &&
+          groundOfferAt(state.session, runner.id, index + 1) != null
+      )
     return forced
       ? 'Tap or drag the next defender, drag a forced runner out at the next base, or hit Done to finish the out.'
-      : 'Tap or drag the next defender, or hit Done to finish the out.'
+      : standing
+        ? 'Tap or drag the next defender, hold a runner to put him out on his base, or hit Done to finish the out.'
+        : 'Tap or drag the next defender, or hit Done to finish the out.'
   }
 }
 /** Renderer callbacks and preview use the same phase and constraints as reducer events. */

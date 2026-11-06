@@ -16,6 +16,7 @@ import {
 import { asGameDetail, type RosterEntry } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
+import { browserCoverageCollector } from '../browserCoverage.e2e'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
 import { initialHitTarget } from '../field/trajectoryGuide'
@@ -53,6 +54,22 @@ interface SceneProbeWindow {
   __REACT_DEVTOOLS_GLOBAL_HOOK__: unknown
 }
 const base = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
+/**
+ * With TS_BROWSER_COVERAGE_OUT, every page this file opens counts its JS
+ * coverage, written there as istanbul JSON once the file's tests end. The
+ * counts map back through `dist/`, so the run serves the production build
+ * (`scripts/serveDist.mjs`).
+ */
+const coverageOut = process.env.TS_BROWSER_COVERAGE_OUT
+const coverage =
+  coverageOut == null || coverageOut === ''
+    ? null
+    : browserCoverageCollector(new URL(base).origin)
+after(async function () {
+  this.timeout(600000)
+  if (coverage != null && coverageOut != null)
+    await coverage.record(coverageOut)
+})
 let browser: Browser
 /** Leaves every save unanswered, as a server that never replies would. */
 let holdSaves = false
@@ -71,6 +88,7 @@ async function open(
   const createdRoster: Record<string, RosterEntry[]> = {}
   const context = await browser.createBrowserContext()
   const page = await context.newPage()
+  await coverage?.track(page)
   page.once('close', () => {
     context.close().catch(() => undefined)
   })
@@ -517,6 +535,60 @@ async function placeDefenderWithKeyboard(
   await page.keyboard.press('ArrowUp')
   await page.keyboard.press('Enter')
 }
+async function overrideBases(
+  page: Page,
+  bases: Array<['First base' | 'Second base' | 'Third base', string]>
+): Promise<void> {
+  await click(page, 'Open scoring menu')
+  await click(page, 'Overrides')
+  for (const [base, player] of bases) {
+    await click(page, base)
+    await click(page, `Choose ${base} ${player}`)
+  }
+  await click(page, 'Apply Override')
+}
+
+async function dragRunner(
+  page: Page,
+  fromBase: number,
+  toBase: number
+): Promise<void> {
+  const from = await projectBase(page, fromBase, 6)
+  const to = await projectBase(page, toBase, 0)
+  await page.touchscreen.touchStart(...from)
+  await new Promise(resolve => setTimeout(resolve, 400))
+  await page.touchscreen.touchMove(to[0], to[1])
+}
+
+async function runnerNearBase(page: Page, base: number): Promise<boolean> {
+  await captureScene(page)
+  const { x, z } = BASES[base]
+  return await page.evaluate(
+    (tx, tz) => {
+      const scene = (window as unknown as SceneProbeWindow).qaScene
+      if (scene == null) return false
+      let best = Infinity
+      scene.traverse(obj => {
+        if (!obj.name.startsWith('player-offense-')) return
+        const dx = obj.position.x - tx
+        const dz = obj.position.z - tz
+        best = Math.min(best, dx * dx + dz * dz)
+      })
+      return best < 36
+    },
+    x,
+    z
+  )
+}
+
+async function waitRunnerNearBase(page: Page, base: number): Promise<void> {
+  for (let i = 0; i < 60; i++) {
+    if (await runnerNearBase(page, base)) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  expect(await runnerNearBase(page, base), `runner near ${base}`).equals(true)
+}
+
 describe('scoring browser', function () {
   this.timeout(60000)
   before(async function () {
@@ -771,7 +843,7 @@ describe('scoring browser', function () {
         if (defensive) {
           await click(page, 'Swing in Play')
           await click(page, 'Batter Out')
-          await click(page, 'Throw Out')
+          await click(page, 'Ground Out')
           await page.waitForSelector('canvas[data-field-ready="true"]')
           await placeDefenderWithKeyboard(page)
           await page.keyboard.press('Enter')
@@ -866,7 +938,7 @@ describe('scoring browser', function () {
       try {
         await click(page, 'Swing in Play')
         await click(page, 'Batter Out')
-        await click(page, 'Throw Out')
+        await click(page, 'Ground Out')
         await page.waitForSelector('canvas[data-field-ready="true"]')
         await placeDefenderWithKeyboard(page)
         if (process.env.TS_SCORING_ARTIFACT_DIR != null && assisted)
@@ -2740,7 +2812,7 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
-  for (const out of ['Ball Caught', 'Throw Out'])
+  for (const out of ['Ball Caught', 'Ground Out'])
     it(`opens ${out} under one drag and returns to the right without a Back button`, async function () {
       const { page, unexpected } = await open('/games/g1/score')
       try {
@@ -2759,10 +2831,12 @@ describe('scoring browser', function () {
         await page.waitForSelector('[aria-label="Batter Out"]')
         const parent = await center('Batter Out')
         await page.mouse.move(parent.x, parent.y, { steps: 3 })
-        await page.waitForSelector('[aria-label="Throw Out"]')
+        await page.waitForSelector('[aria-label="Ground Out"]')
         const right = await center('Single')
         await page.mouse.move(right.x, right.y, { steps: 3 })
-        await page.waitForSelector('[aria-label="Throw Out"]', { hidden: true })
+        await page.waitForSelector('[aria-label="Ground Out"]', {
+          hidden: true
+        })
         await page.mouse.move(parent.x, parent.y, { steps: 3 })
         await page.waitForSelector('[aria-label="Ball Caught"]')
         const leaf = await center(out)
@@ -3070,13 +3144,13 @@ describe('scoring browser', function () {
         await click(page, 'Swing in Play')
         await click(page, 'Batter Out')
         expect(
-          await page.$eval('[aria-label="Throw Out"]', n => ({
+          await page.$eval('[aria-label="Ground Out"]', n => ({
             font: getComputedStyle(n).fontSize,
             weight: getComputedStyle(n).fontWeight
           }))
         ).deep.equals({ font: '13px', weight: '700' })
         for (const label of [
-          'Throw Out',
+          'Ground Out',
           'Ball Caught',
           'Batter Interference'
         ]) {
@@ -3541,7 +3615,7 @@ describe('scoring browser', function () {
     try {
       await click(page, 'Swing in Play')
       await click(page, 'Batter Out')
-      await click(page, 'Throw Out')
+      await click(page, 'Ground Out')
       const reject = async (): Promise<void> => {
         const undo = await page.$eval('[aria-label^="Undo "]', n =>
           n.getAttribute('aria-label')
@@ -5152,7 +5226,7 @@ describe('scoring browser', function () {
         await page.close()
       }
     })
-  for (const outcome of ['Single', 'Throw Out'])
+  for (const outcome of ['Single', 'Ground Out'])
     it(`completes a bunt ${outcome} with distinct menus and Undo`, async () => {
       const { page } = await open('/games/g1/score')
       try {
@@ -5162,7 +5236,7 @@ describe('scoring browser', function () {
           null
         )
         expect(await page.$('[aria-label="Fielder\'s Choice"]')).equals(null)
-        if (outcome === 'Throw Out') await click(page, 'Batter Out')
+        if (outcome === 'Ground Out') await click(page, 'Batter Out')
         await click(page, outcome)
         await page.waitForSelector(`[aria-label="Undo Bunt: ${outcome}"]`)
         await page.focus('[role="application"]')
@@ -5173,7 +5247,7 @@ describe('scoring browser', function () {
           '[aria-label^="Drag up and down for ball trajectory"]'
         )
         await page.keyboard.press('Enter')
-        if (outcome === 'Throw Out') {
+        if (outcome === 'Ground Out') {
           await page.waitForSelector(
             '[aria-label^="Tap or drag the next defender"]'
           )
@@ -6224,60 +6298,6 @@ describe('unforced hit-offer on a single (E1–E4)', function () {
     await browser?.close()
   })
 
-  async function overrideBases(
-    page: Page,
-    bases: Array<['First base' | 'Second base' | 'Third base', string]>
-  ): Promise<void> {
-    await click(page, 'Open scoring menu')
-    await click(page, 'Overrides')
-    for (const [base, player] of bases) {
-      await click(page, base)
-      await click(page, `Choose ${base} ${player}`)
-    }
-    await click(page, 'Apply Override')
-  }
-
-  async function dragRunner(
-    page: Page,
-    fromBase: number,
-    toBase: number
-  ): Promise<void> {
-    const from = await projectBase(page, fromBase, 6)
-    const to = await projectBase(page, toBase, 0)
-    await page.touchscreen.touchStart(...from)
-    await new Promise(resolve => setTimeout(resolve, 400))
-    await page.touchscreen.touchMove(to[0], to[1])
-  }
-
-  async function runnerNearBase(page: Page, base: number): Promise<boolean> {
-    await captureScene(page)
-    const { x, z } = BASES[base]
-    return await page.evaluate(
-      (tx, tz) => {
-        const scene = (window as unknown as SceneProbeWindow).qaScene
-        if (scene == null) return false
-        let best = Infinity
-        scene.traverse(obj => {
-          if (!obj.name.startsWith('player-offense-')) return
-          const dx = obj.position.x - tx
-          const dz = obj.position.z - tz
-          best = Math.min(best, dx * dx + dz * dz)
-        })
-        return best < 36
-      },
-      x,
-      z
-    )
-  }
-
-  async function waitRunnerNearBase(page: Page, base: number): Promise<void> {
-    for (let i = 0; i < 60; i++) {
-      if (await runnerNearBase(page, base)) return
-      await new Promise(resolve => setTimeout(resolve, 100))
-    }
-    expect(await runnerNearBase(page, base)).equals(true)
-  }
-
   it('E1 auto-advances an unforced runner second to third on a single', async function () {
     const { page } = await open(
       '/games/g1/score',
@@ -6408,6 +6428,376 @@ describe('unforced hit-offer on a single (E1–E4)', function () {
         timeout: 30000
       })
       await page.waitForSelector('[aria-label*="Owls 1 · Hawks 0"]')
+    } finally {
+      await page.close()
+    }
+  })
+})
+
+/**
+ * E1: a ground out sends every other runner up a base. With TS_CAPTURE_ONLY=1
+ * (the before pictures, taken on the base revision) only the scenarios that
+ * take a picture run, and nothing is asserted. Pictures go to
+ * TS_SCORING_ARTIFACT_DIR as `<name>-<TS_ARTIFACT_PHASE>.png` (after by
+ * default).
+ */
+describe('ground outs', function () {
+  this.timeout(180000)
+  const capturing = process.env.TS_CAPTURE_ONLY === '1'
+  const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
+  before(async function () {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.TS_CHROME_PATH,
+      args: [
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+        '--enable-unsafe-swiftshader'
+      ]
+    })
+  })
+  after(async function () {
+    await browser?.close()
+  })
+
+  async function openPhone(): Promise<Page> {
+    const { page } = await open(
+      '/games/g1/score',
+      false,
+      false,
+      false,
+      'switch',
+      true
+    )
+    await page.setViewport({
+      width: 402,
+      height: 874,
+      deviceScaleFactor: 2,
+      isMobile: true,
+      hasTouch: true
+    })
+    await page.waitForSelector('canvas[data-field-ready="true"]', {
+      timeout: 30000
+    })
+    return page
+  }
+  async function frame(page: Page): Promise<void> {
+    await page.evaluate(
+      async () =>
+        await new Promise(resolve => {
+          requestAnimationFrame(resolve)
+        })
+    )
+  }
+  async function picture(
+    page: Page,
+    name: string,
+    settleMs = 1500
+  ): Promise<void> {
+    const dir = process.env.TS_SCORING_ARTIFACT_DIR
+    if (dir == null || dir === '') return
+    await mkdir(dir, { recursive: true })
+    // Let the last motion settle before the picture.
+    await new Promise(resolve => setTimeout(resolve, settleMs))
+    await page.screenshot({ path: join(dir, `${name}-${phase}.png`) })
+  }
+  /** The play stays open for correction for a few seconds: drag at once. */
+  async function correcting(page: Page): Promise<void> {
+    await page.waitForSelector('[aria-label="Time to edit play"]', {
+      timeout: 30000
+    })
+  }
+  /** The ground ball to the shortstop, the fifth player the field offers. */
+  async function groundOut(
+    page: Page,
+    contact: 'Swing' | 'Bunt' = 'Swing'
+  ): Promise<void> {
+    await waitReady(page)
+    await click(page, `${contact} in Play`)
+    await click(page, 'Batter Out')
+    // The base revision calls it Throw Out.
+    await page.waitForSelector(
+      '[aria-label="Ground Out"], [aria-label="Throw Out"]'
+    )
+    await click(
+      page,
+      (await page.$('[aria-label="Ground Out"]')) == null
+        ? 'Throw Out'
+        : 'Ground Out'
+    )
+    await page.waitForSelector(
+      '[aria-label^="Tap or drag a player to where the ball was fielded"]'
+    )
+    await page.focus('[role="application"]')
+    for (let i = 0; i <= 4; i++) await page.keyboard.press(']')
+    await frame(page)
+    await page.keyboard.press('Space')
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Enter')
+    await page.waitForSelector(
+      '[aria-label^="Drag up and down for ball trajectory."]'
+    )
+    if (contact === 'Swing')
+      for (let value = 45; value > -10; value--)
+        await page.keyboard.press('ArrowDown')
+    await frame(page)
+    await page.keyboard.press('Enter')
+    await page.waitForSelector(
+      '[aria-label^="Tap or drag the next defender"]',
+      {
+        timeout: 30000
+      }
+    )
+  }
+  /** Places the player `presses` steps along the field's choosable list. */
+  async function place(page: Page, presses: number): Promise<void> {
+    await frame(page)
+    await frame(page)
+    await page.focus('[role="application"]')
+    for (let i = 0; i < presses; i++) await page.keyboard.press(']')
+    await frame(page)
+    await page.keyboard.press('Space')
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Enter')
+  }
+  async function tapEither(page: Page, label: string): Promise<void> {
+    const selector = `[aria-label="${label}"], [aria-label="Bottom ${label}"]`
+    await page.waitForSelector(selector, { timeout: 30000 })
+    await click(
+      page,
+      (await page.$(`[aria-label="${label}"]`)) == null
+        ? `Bottom ${label}`
+        : label
+    )
+  }
+  /** The shortstop holds the ball: the first baseman is third, and takes it. */
+  async function batterOutAtFirst(page: Page): Promise<void> {
+    await place(page, 3)
+    await tapEither(page, 'Finish defensive play')
+  }
+  async function outsShown(page: Page, outs: number): Promise<void> {
+    await page.waitForSelector(`[aria-label*=" ${outs} outs"]`, {
+      timeout: 30000
+    })
+  }
+  async function score(page: Page, away: number): Promise<void> {
+    await page.waitForSelector(`[aria-label*="Owls ${away} · Hawks 0"]`, {
+      timeout: 30000
+    })
+  }
+  async function stillNear(page: Page, base: number): Promise<void> {
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect(await runnerNearBase(page, base), `runner on ${base}`).equals(true)
+  }
+  /**
+   * A dropped runner is set back on the base he left and runs to the one he
+   * was dropped on, so a base he passes through is not empty until the field
+   * moves nobody.
+   */
+  async function atRest(page: Page): Promise<void> {
+    await page.waitForSelector('[role="application"][data-moving=""]', {
+      timeout: 30000
+    })
+  }
+  async function nobodyNear(page: Page, base: number): Promise<void> {
+    expect(await runnerNearBase(page, base), `nobody on ${base}`).equals(false)
+  }
+
+  it('sends the runner on first to second, and he drags back to first', async function () {
+    const page = await openPhone()
+    try {
+      await overrideBases(page, [['First base', 'Player 7']])
+      await groundOut(page)
+      await batterOutAtFirst(page)
+      await correcting(page)
+      if (!capturing) await waitRunnerNearBase(page, 2)
+      await picture(page, 'ground-out-runner-on-first', 0)
+      if (capturing) return
+      await outsShown(page, 1)
+      await dragRunner(page, 2, 1)
+      await page.touchscreen.touchEnd()
+      await atRest(page)
+      await waitRunnerNearBase(page, 1)
+      await nobodyNear(page, 2)
+      await tapEither(page, 'Finish at-bat')
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 30000
+      })
+      await stillNear(page, 1)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('sends runners on first and second to second and third, and refuses the lead back onto the trail', async function () {
+    if (capturing) this.skip()
+    const page = await openPhone()
+    try {
+      await overrideBases(page, [
+        ['First base', 'Player 6'],
+        ['Second base', 'Player 7']
+      ])
+      await groundOut(page)
+      await batterOutAtFirst(page)
+      await correcting(page)
+      await waitRunnerNearBase(page, 3)
+      await waitRunnerNearBase(page, 2)
+      // Second is taken: the field offers the lead runner no way back, and
+      // he stays on third.
+      await dragRunner(page, 3, 2)
+      await page.touchscreen.touchEnd()
+      await waitRunnerNearBase(page, 3)
+      // The trailing runner goes back to first; the lead keeps third.
+      await dragRunner(page, 2, 1)
+      await page.touchscreen.touchEnd()
+      await atRest(page)
+      await waitRunnerNearBase(page, 1)
+      await waitRunnerNearBase(page, 3)
+      await nobodyNear(page, 2)
+    } finally {
+      await page.close()
+    }
+  })
+
+  for (const call of ['Safe', 'Out', 'Back'] as const)
+    it(`asks Safe, Out or Back for the runner from third, and he is ${call}`, async function () {
+      if (capturing) this.skip()
+      const page = await openPhone()
+      try {
+        await overrideBases(page, [['Third base', 'Player 8']])
+        await groundOut(page)
+        await batterOutAtFirst(page)
+        await page.waitForSelector(
+          '[aria-label="Home plate decision for Player 8"]',
+          { timeout: 30000 }
+        )
+        // The run is not on the board until he is called safe.
+        await score(page, 0)
+        expect(await page.$('[aria-label="Back"]')).not.equals(null)
+        await click(page, call)
+        if (call === 'Safe') await score(page, 1)
+        else if (call === 'Out') {
+          await place(page, 0)
+          await tapEither(page, 'Finish defensive play')
+          await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+            timeout: 30000
+          })
+          await outsShown(page, 2)
+          await score(page, 0)
+        } else {
+          await waitRunnerNearBase(page, 3)
+          await score(page, 0)
+          await tapEither(page, 'Finish at-bat')
+          await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+            timeout: 30000
+          })
+          await stillNear(page, 3)
+          await score(page, 0)
+        }
+      } finally {
+        await page.close()
+      }
+    })
+
+  it('scores the lead runner with the bases loaded and moves the others up a base', async function () {
+    if (capturing) this.skip()
+    const page = await openPhone()
+    try {
+      await overrideBases(page, [
+        ['First base', 'Player 6'],
+        ['Second base', 'Player 7'],
+        ['Third base', 'Player 8']
+      ])
+      await groundOut(page)
+      await batterOutAtFirst(page)
+      await page.waitForSelector(
+        '[aria-label="Home plate decision for Player 8"]',
+        { timeout: 30000 }
+      )
+      await score(page, 0)
+      await click(page, 'Safe')
+      await score(page, 1)
+      await waitRunnerNearBase(page, 2)
+      await waitRunnerNearBase(page, 3)
+      await outsShown(page, 1)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('moves the runner up on a bunt ground out too', async function () {
+    if (capturing) this.skip()
+    const page = await openPhone()
+    try {
+      await overrideBases(page, [['First base', 'Player 7']])
+      await groundOut(page, 'Bunt')
+      await batterOutAtFirst(page)
+      await waitRunnerNearBase(page, 2)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('puts the runner from first out on second in a 6-4-3, then the batter at first', async function () {
+    const page = await openPhone()
+    try {
+      await overrideBases(page, [['First base', 'Player 7']])
+      await groundOut(page)
+      // The shortstop holds the ball, so the second baseman is fourth.
+      await place(page, 4)
+      await page.waitForSelector(
+        '[aria-label^="Tap or drag the next defender"]'
+      )
+      if (!capturing)
+        await page.waitForSelector(
+          '[aria-label^="Tap or drag the next defender, hold a runner to put him out on his base"]'
+        )
+      // The runner is the last player the field offers: held where he stands.
+      await frame(page)
+      await frame(page)
+      await page.focus('[role="application"]')
+      await page.keyboard.press('[')
+      await frame(page)
+      await page.keyboard.press('Space')
+      await page.keyboard.press('o')
+      await page.keyboard.press('Enter')
+      if (!capturing) {
+        await page.waitForSelector(
+          '[aria-label^="Tap or drag the next defender, or hit Done"]'
+        )
+      }
+      // The second baseman still holds it, so the first baseman is third.
+      await batterOutAtFirst(page)
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 30000
+      })
+      await picture(page, 'ground-out-double-play')
+      if (capturing) return
+      await outsShown(page, 2)
+      for (const at of [1, 2, 3]) await nobodyNear(page, at)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('moves nobody with two out: the batter out ends the half', async function () {
+    if (capturing) this.skip()
+    const page = await openPhone()
+    try {
+      for (let i = 0; i < 6; i++) {
+        await waitReady(page)
+        await click(page, 'Swing and Miss')
+      }
+      await waitReady(page)
+      await overrideBases(page, [['First base', 'Player 7']])
+      await groundOut(page)
+      await stillNear(page, 1)
+      await nobodyNear(page, 2)
+      await batterOutAtFirst(page)
+      await page.waitForSelector('[aria-label*="Bottom 1st"]', {
+        timeout: 30000
+      })
+      await score(page, 0)
     } finally {
       await page.close()
     }

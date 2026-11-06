@@ -16,7 +16,7 @@ describe('defender speed and perspective foul flight', function () {
     it(`finishes ${distance}-unit fielding travel from contact at eighty percent of catching speed`, function () {
       let state = scoringReducer(initial(), {
         type: 'OUTCOME',
-        outcome: 'Throw Out'
+        outcome: 'Ground Out'
       })
       state = scoringReducer(state, {
         type: 'FIELDER',
@@ -67,7 +67,7 @@ describe('defender speed and perspective foul flight', function () {
     })
   for (const outcome of [
     'Single',
-    'Throw Out',
+    'Ground Out',
     'Ball Caught',
     'Error',
     'Batter Interference',

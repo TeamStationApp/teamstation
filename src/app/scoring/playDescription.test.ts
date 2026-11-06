@@ -622,7 +622,7 @@ describe('the last play, however it was tapped', function () {
   })
   it('reads a tapped ground out, over its entries, as a ground out', function () {
     const opening = game({}, undefined, true)
-    let state = tapHit(opening, 'Throw Out', 14, -8)
+    let state = tapHit(opening, 'Ground Out', 14, -8)
     state = scoringReducer(state, {
       type: 'DEFENDER',
       id: 12,
