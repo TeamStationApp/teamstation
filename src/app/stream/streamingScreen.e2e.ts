@@ -55,12 +55,22 @@
 //      louder while the video plays than once it is paused.
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
+import { serverLivePieceReader } from '../../test/livePieces'
 import { type AngleCandidate, angleLabels } from '../player/multiCam/takes'
 import { screenOf } from './screenOf'
 
@@ -406,6 +416,8 @@ async function clipAround(
   let duration: string | undefined
   let gap = false
   let segments = 0
+  /** Where in `kept` each piece's path is. */
+  const pieces: number[] = []
   for (const line of lines) {
     if (line.startsWith('#EXT-X-MAP:')) {
       map = line.replace(/URI="([^"]+)"/, (_all, uri: string) => {
@@ -425,6 +437,7 @@ async function clipAround(
           mapWritten = map
         }
         kept.push(duration, absolute(line))
+        pieces.push(kept.length - 1)
         segments += 1
         gap = false
       }
@@ -432,23 +445,45 @@ async function clipAround(
     }
   }
   kept.push('#EXT-X-ENDLIST', '')
-  const list = `${file}.m3u8`
-  await writeFile(list, kept.join('\n'))
-  await run('ffmpeg', [
-    '-nostdin',
-    '-loglevel',
-    'error',
-    '-protocol_whitelist',
-    'file',
-    '-allowed_extensions',
-    'ALL',
-    '-i',
-    list,
-    '-c',
-    'copy',
-    '-y',
-    file
-  ])
+  // With a Space, the ingest keeps only the newest minute on disk; a piece it
+  // deleted is read back from the Space into a scratch directory of its own.
+  const readPiece = serverLivePieceReader(path.basename(dir))
+  let fetched: string | undefined
+  try {
+    for (const at of pieces) {
+      const piece = kept[at]
+      if (
+        await access(piece).then(
+          () => true,
+          () => false
+        )
+      )
+        continue
+      fetched ??= await mkdtemp(path.join(tmpdir(), 'tsClipAround-'))
+      const copy = path.join(fetched, path.basename(piece))
+      await writeFile(copy, await readPiece(piece))
+      kept[at] = copy
+    }
+    const list = `${file}.m3u8`
+    await writeFile(list, kept.join('\n'))
+    await run('ffmpeg', [
+      '-nostdin',
+      '-loglevel',
+      'error',
+      '-protocol_whitelist',
+      'file',
+      '-allowed_extensions',
+      'ALL',
+      '-i',
+      list,
+      '-c',
+      'copy',
+      '-y',
+      file
+    ])
+  } finally {
+    if (fetched != null) await rm(fetched, { recursive: true, force: true })
+  }
   return segments
 }
 

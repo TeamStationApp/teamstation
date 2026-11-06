@@ -10,12 +10,15 @@ import {
 import {
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   stat,
   utimes,
   writeFile
 } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
@@ -32,6 +35,7 @@ import {
   type PlaylistSink
 } from './originPublisher'
 import { PlaylistTail } from './playlistTail'
+import { spacePartReader } from './spacePieceReader'
 
 const header =
   '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-MAP:URI="init.mp4"\n'
@@ -162,6 +166,67 @@ describe('publishing a live origin', function () {
     for (let n = 0; n < count; n++)
       await writeFile(join(dir, segment(n)), `fragment ${n}`)
   }
+
+  it('counts a kept piece the tail deletes later as deleted, so a flush that checks the playlist again skips it', async () => {
+    // Pieces end at 4, 8, 12 and 16 s: with a 4 s tail, the first two may go.
+    let placement: number | undefined = 1
+    const publisher = new OriginPublisher({
+      ...options,
+      localTailSec: 4,
+      scanned: () => ({ segments: 3, placementSegment: placement })
+    })
+    await stage(4)
+    await publisher.flush()
+    await publisher.flush()
+    expect(await readdir(dir)).not.includes(segment(0))
+    expect(await readdir(dir)).includes(segment(1))
+    // The scan moves on, and the placement piece goes with nothing after it.
+    placement = undefined
+    await publisher.flush()
+    expect(await readdir(dir)).not.includes(segment(1))
+    // A playlist that no longer holds the cursor's piece where it was makes
+    // the next flush check every piece again.
+    ;(publisher as unknown as { cursor: number }).cursor = 0
+    requests.length = 0
+    expect((await publisher.flush()).body).contains(segment(3))
+    expect(puts()).deep.equals([])
+    // Nor does the deleted piece hold back the pieces that follow.
+    await writeFile(join(dir, segment(4)), 'fragment 4')
+    await writeFile(join(dir, 'master.m3u8'), playlist(5))
+    expect((await publisher.flush()).body).contains(segment(4))
+    expect(puts()).deep.equals([segment(4), 'index.m3u8'])
+  })
+
+  it('deletes nothing once the recording starts to finish, and still uploads', async () => {
+    // Pieces end at 4, 8, 12, 16 and 20 s, with a 4 s tail.
+    let scannedTo = 3
+    const publisher = new OriginPublisher({
+      ...options,
+      localTailSec: 4,
+      scanned: () => ({ segments: scannedTo })
+    })
+    await stage(3)
+    await publisher.flush()
+    await publisher.flush()
+    expect(await readdir(dir)).not.includes(segment(0))
+    // The close has begun: the playlist is about to be closed and probed.
+    publisher.holdPieces = true
+    for (const n of [3, 4])
+      await writeFile(join(dir, segment(n)), `fragment ${n}`)
+    await writeFile(join(dir, 'master.m3u8'), playlist(5))
+    scannedTo = 5
+    requests.length = 0
+    expect((await publisher.flush()).body).contains(segment(4))
+    await publisher.flush()
+    expect(puts()).includes(segment(4))
+    for (let n = 1; n < 5; n++) expect(await readdir(dir)).includes(segment(n))
+    // Without the hold, the next flush deletes what the tail no longer needs.
+    publisher.holdPieces = false
+    scannedTo = 4
+    await publisher.flush()
+    expect(await readdir(dir)).not.includes(segment(1))
+    expect(await readdir(dir)).not.includes(segment(2))
+  })
 
   it('sends nothing on an unchanged tick, and nothing at all once stopped', async () => {
     await stage(100)
@@ -643,12 +708,14 @@ describe('publishing a live origin', function () {
     interface Held {
       acknowledged: Map<unknown, unknown>
       published: Set<unknown>
+      kept: Map<unknown, unknown>
       cursor: number
       cursorNumber?: unknown
     }
     const keys = (held: Held): unknown[] => [
       ...held.acknowledged.keys(),
       ...held.published,
+      ...held.kept.keys(),
       held.cursorNumber
     ]
     const held = publisher as unknown as Held
@@ -987,5 +1054,38 @@ describe('publishing a live origin', function () {
     const master = await readFile(object('master.m3u8'), 'utf8')
     expect(master).contains('CODECS="avc1.')
     expect(master).contains('RESOLUTION=160x90')
+  })
+})
+
+describe('reading a deleted piece back from the Space', function () {
+  it('gives up on a read that stalls, rather than holding the close', async () => {
+    // Accepts the connection and never answers.
+    const server = createServer(() => {})
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    const folder = await mkdtemp(join(tmpdir(), 'tsPartReader-'))
+    try {
+      const read = spacePartReader(
+        {
+          endpoint: `http://127.0.0.1:${port}`,
+          region: 'test',
+          bucket: 'test',
+          accessKeyId: 'example',
+          secretAccessKey: 'example',
+          pathStyle: true
+        },
+        'vid_origin',
+        100
+      )
+      const started = Date.now()
+      expect(await failure(read(join(folder, segment(0))))).matches(
+        /TimeoutError|aborted/
+      )
+      expect(Date.now() - started).below(2000)
+    } finally {
+      server.closeAllConnections()
+      server.close()
+      await rm(folder, { recursive: true, force: true })
+    }
   })
 })
