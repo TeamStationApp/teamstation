@@ -228,6 +228,29 @@ describe('the feed relay', function () {
     await stopAll()
   })
 
+  it('carries live_changes unchanged from a commit to a Valkey feed', async function () {
+    const prefix = testPrefix()
+    const feed = feedOf(prefix)
+    const live = hearer()
+    await feed.subscribe('live_changes', live).listening
+    relayOf(prefix, 'live')
+    await until(() => live.listenings.length === 2, 'the resync')
+    const sent = [
+      '{"s" : "liv_a-b", "v" : null}',
+      '{"v" : "vid_x"}',
+      '{"g" : "gam_y"}'
+    ]
+    const client = await poker.connect()
+    await client.query('begin')
+    for (const payload of sent)
+      await client.query(`select pg_notify('live_changes', $1)`, [payload])
+    await client.query('commit')
+    client.release()
+    await until(() => live.payloads.length === 3, 'every payload')
+    expect(live.payloads).deep.equals(sent)
+    await stopAll()
+  })
+
   it('ends leadership on a failed publish, and comes back when it can', async function () {
     const prefix = testPrefix()
     let failing = false
