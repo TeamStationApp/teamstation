@@ -116,11 +116,13 @@ describe('announcing screen scope changes', function () {
       ).rows
     try {
       const before = migrations.filter(m => m.name < '110dropSyncClock')
+      // Up to and including the drop, so the one taken down is the drop.
+      const through = migrations.filter(m => m.name <= '110dropSyncClock')
       await migrateUp(pool, before)
       await pool.query('update sync_clock set value = 41 where id = 1')
-      await migrateUp(pool, migrations)
+      await migrateUp(pool, through)
       expect(await clock()).deep.equals([])
-      expect(await migrateDown(pool, migrations, 1)).deep.equals([
+      expect(await migrateDown(pool, through, 1)).deep.equals([
         '110dropSyncClock'
       ])
       expect(
