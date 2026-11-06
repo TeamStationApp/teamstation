@@ -42,6 +42,8 @@ declare module '@mason/types' {
     workspace?: string
     run: {
       branch: string
+      /** The immutable source revision selected for this run. */
+      commit: string
       /** The run's workflow parameters, as the master checked them. */
       params?: Readonly<Record<string, string | number | boolean>>
     }
@@ -100,7 +102,11 @@ declare module '@mason/types' {
     publishes?: string[]
     buildNumbers?: string[]
     cache?: Array<{ key: string; paths: string[] }>
-    apple?: { distribution: string; app: string }
+    apple?: {
+      distribution: string
+      app: string
+      platform?: 'ios' | 'macos' | 'tvos'
+    }
     checkout?: boolean | { depth?: number }
     /**
      * Skip the stage unless every listed field matches. `branch` entries are
@@ -129,6 +135,7 @@ declare module '@mason/types' {
     default?: string
   }
   export interface WorkflowOptions {
+    triggers?: Array<{ request: true }>
     params?: Record<string, ChoiceParam>
   }
   export interface Setup {
