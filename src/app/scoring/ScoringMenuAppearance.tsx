@@ -34,6 +34,7 @@ const decorations: Record<
   "Fielder's Choice": { badge: 'FC', tone: 'amber' },
   Error: { badge: 'E', tone: 'amber' },
   'Ground Out': { icon: 'throw' },
+  'Out at First': { icon: 'throw' },
   'Ball Caught': { icon: 'catch' },
   'Batter Interference': { icon: 'interference' },
   Balk: { badge: 'BK', tone: 'amber' },

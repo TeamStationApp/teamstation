@@ -40,7 +40,8 @@ import {
   forceOutInRelay,
   Refused,
   runnerReducer,
-  settleRunners
+  settleRunners,
+  throwOutAtFirst
 } from './scoringFlow'
 import { approachFirst } from './scoringMotion'
 import { outBatterPoint, pitchPresentation } from './scoringPresentation'
@@ -597,6 +598,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
         )
     }
     settleRunners(next)
+    throwOutAtFirst(next)
     return next
   }
   // Above the presentation guard, so a sentence spoken mid-animation is told

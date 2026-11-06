@@ -2,12 +2,16 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { BallInPlayAction } from '../../common/scoring/actions'
+import type { Position } from '../../common/scoring/state'
+import { completeMotions } from '../../test/scoringHelpers'
 import { scoringSession } from '../../test/scoringSession'
+import { BASES } from '../field/fieldModel'
 import { allowedAngle, startingAngle, trajectoryLabel } from './battedBall'
 import { gameFixture } from './isUnscoredGame.test'
 import { type Outcome, outcomeEvents } from './scoringContract'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
+import type { FielderRef, ScoringState } from './scoringTypes'
 const initial = (): ReturnType<typeof initialScoringState> =>
   initialScoringState(scoringSession(gameFixture))
 describe('batted-ball draft', function () {
@@ -214,5 +218,233 @@ describe('contextual batted-ball choices', function () {
     expect(inPlayHit(homeRun)).not.have.property('launchAngle')
     // Before any play the control would start at 45° as well.
     expect(startingAngle(initial())).equals(45)
+  })
+})
+
+describe('Out at First', function () {
+  const SS = 14
+  const FIRST = 12
+  const PITCHER = 10
+  /** Lets the presentation on screen finish, the next one included. */
+  function presented(state: ScoringState): ScoringState {
+    for (let count = 0; count < 10 && state.presentation != null; count++) {
+      const shown = state.presentation
+      if (shown.kind === 'hit' && shown.stage === 'swing')
+        state = scoringReducer(state, {
+          type: 'PRESENTATION_CONTACT',
+          id: shown.id,
+          generation: state.generation
+        })
+      const sequence = state.presentation!
+      state = scoringReducer(state, {
+        type: 'PRESENTATION_DONE',
+        id: sequence.id,
+        generation: state.generation,
+        stage: sequence.stage
+      })
+      state = completeMotions(state)
+    }
+    return completeMotions(state)
+  }
+  /** A ground ball to `fielder` called Out at First. */
+  function outAtFirst(
+    fielder: FielderRef,
+    options: {
+      outcome?: 'Out at First' | 'Ground Out'
+      presentation?: boolean
+      empty?: Position
+      contactKind?: 'swing' | 'bunt'
+    } = {}
+  ): ScoringState {
+    let state = initialScoringState(
+      scoringSession(gameFixture),
+      options.presentation ?? false
+    )
+    if (options.empty != null)
+      state.session.liveData.linescore.defense[options.empty] = null
+    state = scoringReducer(state, {
+      type: 'OUTCOME',
+      outcome: options.outcome ?? 'Out at First',
+      contactKind: options.contactKind
+    })
+    state = scoringReducer(state, {
+      type: 'FIELDER',
+      id: fielder,
+      point: { x: -20, z: -40 },
+      generation: state.generation
+    })
+    state = scoringReducer(state, {
+      type: 'TRAJECTORY',
+      angle: -10,
+      generation: state.generation
+    })
+    return presented(state)
+  }
+  /** The batter's out as the closed play stores it. */
+  function batterOut(state: ScoringState): {
+    reason: string | undefined
+    credits: string[]
+    outSubtype: string | undefined
+    outBy: string | undefined
+  } {
+    const closed = scoringReducer(state, {
+      type: 'CLOSE_PLAY',
+      generation: state.generation
+    })
+    const play = closed.session.liveData.plays.allPlays.at(-1)!
+    const batter = play.matchup.batter.id
+    const runner = play.runners.find(
+      row => row.details.runner.id === batter && row.movement.isOut
+    )!
+    const result = closed.log.findLast(action => action.type === 'result')
+    return {
+      reason: runner.details.movementReason,
+      credits: runner.credits.map(
+        credit => `${credit.credit} ${credit.player?.id ?? credit.position}`
+      ),
+      outSubtype: play.source.teamstation.outSubtype,
+      outBy: result?.type === 'result' ? result.outBy : undefined
+    }
+  }
+
+  for (const presentation of [false, true])
+    it(`throws the shortstop's ball to the first baseman with no prompt${presentation ? ', drawn' : ''}`, function () {
+      const state = outAtFirst(SS, { presentation })
+      expect(state.phase).not.equals('chooseDefender')
+      expect(state.session.liveData.linescore.outs).equals(1)
+      const out = state.log.findLast(action => action.type === 'runnerMovement')
+      expect(out).deep.includes({
+        to: '1B',
+        out: true,
+        reason: 'Out at First',
+        fielders: [SS, FIRST]
+      })
+      const stored = batterOut(state)
+      expect(stored).deep.includes({
+        reason: 'Out at First',
+        outSubtype: 'Out at First',
+        outBy: 'first'
+      })
+      expect(stored.credits).deep.equals([
+        `f_assist ${SS}`,
+        `f_putout ${FIRST}`
+      ])
+    })
+
+  it('records a bunt Out at First the same way', function () {
+    const state = outAtFirst(SS, { contactKind: 'bunt' })
+    expect(batterOut(state).credits).deep.equals([
+      `f_assist ${SS}`,
+      `f_putout ${FIRST}`
+    ])
+  })
+
+  it("asks who took the first baseman's own ball, and the last receiver gets the putout", function () {
+    let state = outAtFirst(FIRST)
+    expect(state.phase).equals('chooseDefender')
+    expect(state.runnerAction).includes({
+      purpose: 'batterRetirement',
+      thrower: FIRST
+    })
+    expect(state.session.liveData.linescore.outs).equals(0)
+    // The pitcher covers first.
+    state = completeMotions(
+      scoringReducer(state, {
+        type: 'DEFENDER',
+        id: PITCHER,
+        point: { ...BASES[1] },
+        generation: state.generation
+      })
+    )
+    expect(state.phase).equals('chooseDefender')
+    state = completeMotions(
+      scoringReducer(state, { type: 'DEFENDER', generation: state.generation })
+    )
+    expect(state.session.liveData.linescore.outs).equals(1)
+    expect(batterOut(state).credits).deep.equals([
+      `f_assist ${FIRST}`,
+      `f_putout ${PITCHER}`
+    ])
+  })
+
+  for (const presentation of [false, true])
+    it(`throws to a nameless stand-in at an empty first, credited to nobody${presentation ? ', drawn' : ''}`, function () {
+      const state = outAtFirst(SS, { empty: '1B', presentation })
+      expect(state.session.liveData.linescore.outs).equals(1)
+      const out = state.log.findLast(action => action.type === 'runnerMovement')
+      expect(out).deep.includes({
+        fielders: [SS, '1B'],
+        reason: 'Out at First'
+      })
+      const closed = scoringReducer(state, {
+        type: 'CLOSE_PLAY',
+        generation: state.generation
+      })
+      const play = closed.session.liveData.plays.allPlays.at(-1)!
+      const runner = play.runners.find(row => row.movement.isOut)!
+      expect(runner.credits).deep.equals([
+        {
+          player: runner.credits[0].player,
+          credit: 'f_assist',
+          position: 'SS'
+        },
+        { credit: 'f_putout', position: '1B' }
+      ])
+      expect(runner.credits[0].player?.id).equals(SS)
+    })
+
+  it('asks for a receiver when a stand-in at an empty first fields it himself', function () {
+    const state = outAtFirst('1B', { empty: '1B' })
+    expect(state.phase).equals('chooseDefender')
+    expect(state.session.liveData.linescore.outs).equals(0)
+  })
+
+  it('still lets the scorer choose the first baseman on a Ground Out', function () {
+    let state = outAtFirst(SS, { outcome: 'Ground Out' })
+    expect(state.phase).equals('chooseDefender')
+    expect(state.session.liveData.linescore.outs).equals(0)
+    state = completeMotions(
+      scoringReducer(state, {
+        type: 'DEFENDER',
+        id: FIRST,
+        point: { ...BASES[1] },
+        generation: state.generation
+      })
+    )
+    state = completeMotions(
+      scoringReducer(state, { type: 'DEFENDER', generation: state.generation })
+    )
+    const stored = batterOut(state)
+    expect(stored).deep.includes({
+      reason: 'Ground Out',
+      outSubtype: 'Ground Out',
+      outBy: 'throw'
+    })
+    expect(stored.credits).deep.equals([`f_assist ${SS}`, `f_putout ${FIRST}`])
+  })
+
+  it('still asks for the fielder of a Ball Caught', function () {
+    const chosen = scoringReducer(
+      initialScoringState(scoringSession(gameFixture)),
+      { type: 'OUTCOME', outcome: 'Ball Caught' }
+    )
+    expect(chosen.phase).equals('locateFielder')
+    const caught = presented(
+      scoringReducer(
+        scoringReducer(chosen, {
+          type: 'FIELDER',
+          id: SS,
+          point: { x: -20, z: -60 },
+          generation: 0
+        }),
+        { type: 'TRAJECTORY', angle: 40, generation: 0 }
+      )
+    )
+    expect(caught.session.liveData.linescore.outs).equals(1)
+    expect(
+      caught.log.some(
+        action => action.type === 'runnerMovement' && action.fielders != null
+      )
+    ).equals(false)
   })
 })

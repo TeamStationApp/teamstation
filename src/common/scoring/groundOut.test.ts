@@ -35,22 +35,34 @@ const RUNNER = { first: 7, second: 8, third: 9 } as const
 const batter = (state: GameState): number =>
   state.liveData.plays.currentPlay!.matchup.batter.id
 
-function groundOut(contact: 'swing' | 'bunt' = 'swing'): ScoringAction[] {
+/** A ground ball to short: a Ground Out (`throw`) or an Out at First. */
+function groundOut(
+  contact: 'swing' | 'bunt' = 'swing',
+  outBy: 'throw' | 'first' = 'throw'
+): ScoringAction[] {
   return [
     { type: 'ballInPlay', contact, fielder: F.SS, launchAngle: -10 },
     {
       type: 'result',
       eventType: 'field_out',
-      outBy: 'throw',
+      outBy,
       advance: 'ground'
     }
   ]
 }
+/** Both outs the scorer can call on a ground ball, as the engine names them. */
+const GROUND_OUT_KINDS = [
+  { outBy: 'throw', outcome: 'Ground Out' },
+  { outBy: 'first', outcome: 'Out at First' }
+] as const
 const batterOut = (state: GameState): ScoringAction => ({
   type: 'runnerMovement',
   runner: batter(state),
   to: '1B',
   out: true,
+  ...(state.pending?.outcome === 'Out at First'
+    ? { reason: 'Out at First' as const }
+    : {}),
   fielders: [F.SS, F['1B']]
 })
 const back = (runner: number, to: '1B' | '2B' | '3B'): ScoringAction => ({
@@ -68,42 +80,83 @@ const OCCUPANCIES = Array.from({ length: 8 }, (_, mask) =>
 
 describe('a ground out with fewer than two out', function () {
   it('sends every other runner up one base, and the runner from third waits on home', function () {
-    for (const occupied of OCCUPANCIES)
-      for (const out of [0, 1]) {
-        const label = `${occupied.join(',')} with ${out} out`
-        const state = after(setUp(occupied, out), ...groundOut())
-        const expected = [null, null, null] as Array<number | null>
-        occupied.forEach((on, index) => {
-          if (on && index < 2) expected[index + 1] = 7 + index
-        })
-        expect(bases(state), label).deep.equals(expected)
-        expect(state.homeQueue, label).deep.equals(
-          occupied[2] ? [RUNNER.third] : []
-        )
-        expect(runs(state), label).equals(0)
-        expect(nextDecision(state), label).equals('batterOut')
-        // Each advance short of home is on the play, as the ground out.
-        const play = state.liveData.plays.currentPlay!
-        expect(
-          play.runners.map(runner => [
-            runner.details.runner.id,
-            runner.movement.start,
-            runner.movement.end,
-            runner.details.movementReason
-          ]),
-          label
-        ).deep.equals(
-          [1, 0]
-            .filter(index => occupied[index])
-            .map(index => [7 + index, index + 1, index + 2, 'Ground Out'])
-        )
-        const done = after(state, batterOut(state))
-        expect(outs(done), label).equals(out + 1)
-        expect(runs(done), label).equals(0)
-        expect(nextDecision(done), label).equals(
-          occupied[2] ? 'homeDecision' : 'close'
-        )
-      }
+    for (const { outBy, outcome } of GROUND_OUT_KINDS)
+      for (const occupied of OCCUPANCIES)
+        for (const out of [0, 1]) {
+          const label = `${outcome}: ${occupied.join(',')} with ${out} out`
+          const state = after(
+            setUp(occupied, out),
+            ...groundOut('swing', outBy)
+          )
+          expect(state.pending!.outcome, label).equals(outcome)
+          const expected = [null, null, null] as Array<number | null>
+          occupied.forEach((on, index) => {
+            if (on && index < 2) expected[index + 1] = 7 + index
+          })
+          expect(bases(state), label).deep.equals(expected)
+          expect(state.homeQueue, label).deep.equals(
+            occupied[2] ? [RUNNER.third] : []
+          )
+          expect(runs(state), label).equals(0)
+          expect(nextDecision(state), label).equals('batterOut')
+          // Each advance short of home is on the play, as the ground out.
+          const play = state.liveData.plays.currentPlay!
+          expect(
+            play.runners.map(runner => [
+              runner.details.runner.id,
+              runner.movement.start,
+              runner.movement.end,
+              runner.details.movementReason
+            ]),
+            label
+          ).deep.equals(
+            [1, 0]
+              .filter(index => occupied[index])
+              .map(index => [7 + index, index + 1, index + 2, 'Ground Out'])
+          )
+          const done = after(state, batterOut(state))
+          expect(outs(done), label).equals(out + 1)
+          expect(runs(done), label).equals(0)
+          expect(nextDecision(done), label).equals(
+            occupied[2] ? 'homeDecision' : 'close'
+          )
+        }
+  })
+
+  it('names an Out at First by its own name, the batter out at first by a throw', function () {
+    const state = after(
+      setUp([true, false, true]),
+      ...groundOut('swing', 'first')
+    )
+    expect(state.pending!.outcome).equals('Out at First')
+    expect(
+      state.pending!.movements.map(move => [move.playerId, move.to])
+    ).deep.equals([
+      [RUNNER.third, 4],
+      [RUNNER.first, 2]
+    ])
+    const done = after(state, batterOut(state), {
+      type: 'runnerMovement',
+      runner: RUNNER.third,
+      to: 'home'
+    })
+    const play = after(done, close).liveData.plays.allPlays.at(-1)!
+    expect(play.source.teamstation.outSubtype).equals('Out at First')
+    expect(play.result.event).equals('Out at First')
+    expect(play.result.eventType).equals('field_out')
+    expect(play.result.rbi).equals(1)
+    const out = play.runners.find(
+      runner => runner.details.runner.id === play.matchup.batter.id
+    )!
+    expect(out.details.movementReason).equals('Out at First')
+    expect(out.movement.isOut).equals(true)
+    expect(out.movement.end).equals(1)
+    expect(
+      out.credits.map(credit => [credit.credit, credit.player?.id])
+    ).deep.equals([
+      ['f_assist', F.SS],
+      ['f_putout', F['1B']]
+    ])
   })
 
   it('names the out a ground out, forced runners forced, the batter out at first', function () {
@@ -137,21 +190,22 @@ describe('a ground out with fewer than two out', function () {
 
 describe('a ground out with two out', function () {
   it('moves nobody, and the batter out ends the half with the score unchanged', function () {
-    for (const occupied of OCCUPANCIES) {
-      const label = occupied.join(',')
-      const start = setUp(occupied, 2)
-      const state = after(start, ...groundOut())
-      expect(bases(state), label).deep.equals(bases(start))
-      expect(state.homeQueue, label).deep.equals([])
-      const third = after(state, batterOut(state))
-      expect(outs(third), label).equals(3)
-      expect(nextDecision(third), label).equals('close')
-      const done = after(third, close)
-      expect(done.liveData.linescore.isTopInning, label).equals(false)
-      expect(outs(done), label).equals(0)
-      expect(runs(done), label).equals(0)
-      expect(done.liveData.linescore.teams.away.runs, label).equals(0)
-    }
+    for (const { outBy, outcome } of GROUND_OUT_KINDS)
+      for (const occupied of OCCUPANCIES) {
+        const label = `${outcome}: ${occupied.join(',')}`
+        const start = setUp(occupied, 2)
+        const state = after(start, ...groundOut('swing', outBy))
+        expect(bases(state), label).deep.equals(bases(start))
+        expect(state.homeQueue, label).deep.equals([])
+        const third = after(state, batterOut(state))
+        expect(outs(third), label).equals(3)
+        expect(nextDecision(third), label).equals('close')
+        const done = after(third, close)
+        expect(done.liveData.linescore.isTopInning, label).equals(false)
+        expect(outs(done), label).equals(0)
+        expect(runs(done), label).equals(0)
+        expect(done.liveData.linescore.teams.away.runs, label).equals(0)
+      }
   })
 })
 
@@ -301,6 +355,14 @@ describe('a ground out with the bases loaded', function () {
 })
 
 describe('a bunt ground out', function () {
+  it('moves the runners on a bunt Out at First as a swung one does', function () {
+    for (const occupied of OCCUPANCIES) {
+      const swung = after(setUp(occupied), ...groundOut('swing', 'first'))
+      const bunted = after(setUp(occupied), ...groundOut('bunt', 'first'))
+      expect(bases(bunted), occupied.join(',')).deep.equals(bases(swung))
+      expect(bunted.homeQueue).deep.equals(swung.homeQueue)
+    }
+  })
   it('moves the runners as a swung ground out does', function () {
     for (const occupied of OCCUPANCIES) {
       const swung = after(setUp(occupied), ...groundOut('swing'))

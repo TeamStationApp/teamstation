@@ -479,6 +479,7 @@ export type ResolutionOutcome =
   | "Fielder's Choice"
   | 'Error'
   | 'Ground Out'
+  | 'Out at First'
   | 'Ball Caught'
   | 'Batter Interference'
   | 'Walk'

@@ -89,7 +89,9 @@ export function outcomeOf(result: ResultAction | undefined): Outcome {
       ? 'Ball Caught'
       : result.outBy === 'interference'
         ? 'Batter Interference'
-        : 'Ground Out'
+        : result.outBy === 'first'
+          ? 'Out at First'
+          : 'Ground Out'
   return HIT_OUTCOMES[result.eventType] ?? 'Single'
 }
 

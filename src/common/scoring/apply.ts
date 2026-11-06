@@ -1141,7 +1141,8 @@ const BATTED: Partial<Record<ResultAction['eventType'], ResolutionOutcome>> = {
 const OUT_OUTCOMES = {
   throw: 'Ground Out',
   catch: 'Ball Caught',
-  interference: 'Batter Interference'
+  interference: 'Batter Interference',
+  first: 'Out at First'
 } as const
 const AWARDS = {
   hit_by_pitch: 'Hit by Pitch',

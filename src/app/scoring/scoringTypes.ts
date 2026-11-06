@@ -130,6 +130,8 @@ export interface RunnerAction {
   throwerPoint?: GroundPoint
   defender?: FielderRef
   defenderPoint?: GroundPoint
+  /** The throw under way retires him on arrival: an Out at First. */
+  throwOut?: boolean
 }
 /** How long the scorekeeper has to move another runner before the play closes. */
 export const CORRECTION_WINDOW_MS = 7000

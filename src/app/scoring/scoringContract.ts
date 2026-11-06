@@ -15,6 +15,7 @@ export const outcomeEvents = {
   "Fielder's Choice": 'fielders_choice',
   Error: 'field_error',
   'Ground Out': 'field_out',
+  'Out at First': 'field_out',
   'Ball Caught': 'field_out',
   'Batter Interference': 'field_out'
 } as const

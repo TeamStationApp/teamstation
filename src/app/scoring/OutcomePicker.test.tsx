@@ -57,7 +57,12 @@ describe('ball-in-play outcome menu', function () {
       Array.from(
         button('Batter Out options').querySelectorAll('[data-outcome]')
       ).map(n => n.getAttribute('data-outcome'))
-    ).deep.equals(['Ground Out', 'Ball Caught', 'Batter Interference'])
+    ).deep.equals([
+      'Ground Out',
+      'Out at First',
+      'Ball Caught',
+      'Batter Interference'
+    ])
     expect(button('Ground Out')).not.equals(null)
     expect(chosen).has.length(0)
     await click('Batter Out')
@@ -72,13 +77,16 @@ describe('ball-in-play outcome menu', function () {
       'Home Run',
       "Fielder's Choice",
       'Error',
+      'Out at First',
       'Batter Interference'
     ]) {
       await click('Swing in Play')
-      if (label === 'Batter Interference') await click('Batter Out')
+      if (label === 'Out at First' || label === 'Batter Interference')
+        await click('Batter Out')
       await click(label)
     }
-    expect(chosen).has.length(8)
+    expect(chosen).has.length(9)
+    expect(chosen.at(-2)).equals('Out at First')
     await click('Swing in Play')
     await click('Swing in Play')
     expect(document.querySelector('[role="menu"]')).equals(null)
@@ -227,6 +235,28 @@ describe('the phone in-play control', () => {
     await click('Ball Caught')
     expect(chosen).deep.equals(['Ball Caught'])
   })
+  for (const contactKind of ['swing', 'bunt'] as const)
+    it(`lists Ground Out, Out at First, Ball Caught and Batter Interference under Batter Out on a ${contactKind}`, async () => {
+      const chosen: string[] = []
+      await mountNative({ contactKind }, chosen, [])
+      await click(`${contactKind === 'bunt' ? 'Bunt' : 'Swing'} in Play`)
+      await click('Batter Out')
+      const rows = [
+        'Ground Out',
+        'Out at First',
+        'Ball Caught',
+        'Batter Interference'
+      ]
+      for (const row of rows) expect(button(row)).not.equals(null)
+      const order = Array.from(
+        document.querySelectorAll<HTMLElement>('[aria-label]')
+      )
+        .map(node => node.getAttribute('aria-label'))
+        .filter(label => rows.includes(label!))
+      expect(order).deep.equals(rows)
+      await click('Out at First')
+      expect(chosen).deep.equals(['Out at First'])
+    })
   it("offers a bunt no home run, and no fielder's choice with the bases empty", async () => {
     await mountNative({ contactKind: 'bunt', hasRunners: false }, [], [])
     await click('Bunt in Play')
@@ -314,6 +344,7 @@ describe('swing and bunt paired controls', () => {
     await click("Fielder's Choice")
     for (const outcome of [
       'Ground Out',
+      'Out at First',
       'Ball Caught',
       'Batter Interference'
     ]) {
@@ -321,6 +352,16 @@ describe('swing and bunt paired controls', () => {
       await click('Batter Out')
       await click(outcome)
     }
+    expect(choices.slice(-4)).deep.equals([
+      'bunt:Ground Out',
+      'bunt:Out at First',
+      'bunt:Ball Caught',
+      'bunt:Batter Interference'
+    ])
+    await click('Swing in Play')
+    await click('Batter Out')
+    await click('Out at First')
+    expect(choices.at(-1)).equals('swing:Out at First')
     await click('Bunt in Play')
     await render(true)
     expect(document.querySelector('[role="menu"]')).equals(null)

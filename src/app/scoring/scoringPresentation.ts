@@ -415,9 +415,12 @@ export function hitPresentation(
     },
     batSide: state.session.liveData.plays.currentPlay!.matchup.batSide.code,
     slowRunner: pending.outcome !== 'Ball Caught',
-    out: ['Ball Caught', 'Ground Out', 'Batter Interference'].includes(
-      pending.outcome
-    )
+    out: [
+      'Ball Caught',
+      'Ground Out',
+      'Out at First',
+      'Batter Interference'
+    ].includes(pending.outcome)
   }
 }
 export interface PresentationRuntime {

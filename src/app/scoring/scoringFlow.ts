@@ -256,7 +256,10 @@ export function settleRunners(state: ScoringState): void {
       thrower: outcome === 'Batter Out — Other' ? undefined : pending?.fielder
     }
     if (outcome === 'Batter Out — Other') state.phase = 'chooseThrower'
-    else beginDefense(state)
+    else {
+      beginDefense(state)
+      throwOutAtFirst(state)
+    }
     return
   }
   if (decision === 'homeDecision') {
@@ -309,6 +312,34 @@ export function beginDefense(state: ScoringState): void {
     action.defensiveRoute = [{ id: holder, point: { ...point } }]
     state.phase = 'chooseDefender'
   } else state.phase = 'chooseThrower'
+}
+
+/**
+ * An Out at First the first baseman did not field is the fielder's throw to
+ * first: it retires the batter with no receiver to choose, the fielder
+ * assisting and the first baseman (or a stand-in at an empty first) taking
+ * the putout. One the first baseman fielded asks who took his throw, as a
+ * ground out does. It waits for the ball in play to be drawn first.
+ */
+export function throwOutAtFirst(state: ScoringState): void {
+  const action = state.runnerAction
+  const route = action?.defensiveRoute
+  const receiver: FielderRef =
+    state.session.liveData.linescore.defense['1B']?.id ?? '1B'
+  if (
+    state.phase !== 'chooseDefender' ||
+    state.presentation != null ||
+    state.session.pending?.outcome !== 'Out at First' ||
+    action?.purpose !== 'batterRetirement' ||
+    route?.length !== 1 ||
+    route[0].id === receiver
+  )
+    return
+  action.throwOut = true
+  action.defender = receiver
+  const sequence = throwPresentation(state, receiver, BASES[1])
+  if (state.presentationEnabled === true) state.presentation = sequence
+  else completeDefense(state, sequence)
 }
 
 /**
@@ -393,6 +424,8 @@ export function completeDefense(
       { id: sequence.thrower, point: { ...sequence.holderOrigin } }
     ]
     action.defensiveRoute.push({ id: sequence.receiver, point })
+  }
+  if (sequence.stage === 'transfer' && action.throwOut !== true) {
     if (state.pendingPlay != null) {
       state.pendingPlay.ballHolder = sequence.receiver
       state.pendingPlay.ballLocation = { ...point }
