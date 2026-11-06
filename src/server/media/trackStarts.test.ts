@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { expect } from 'chai'
@@ -400,6 +400,37 @@ describe('reading boxes from a file', function () {
     await writeFile(join(vod, 'video.m3u8'), playlist)
     // Picture only: nothing to measure, and no reason to read it twice.
     expect(await checkTrackStarts(join(vod, 'video.m3u8'))).equals(undefined)
+  })
+
+  it('reads no piece of a recording with no sound track, or no picture track', async function () {
+    const plain = join(dir, 'plain')
+    await mkdir(plain)
+    const playlist =
+      '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:2,\nseg0.m4s\n#EXTINF:2,\nseg1.m4s\n#EXT-X-ENDLIST\n'
+    await writeFile(join(plain, 'master.m3u8'), playlist)
+    for (const moov of [
+      Buffer.concat([
+        trak(VIDEO, 'vide', 90_000),
+        box('mvex', trex(VIDEO, 3000))
+      ]),
+      Buffer.concat([
+        trak(AUDIO, 'soun', 48_000),
+        box('mvex', trex(AUDIO, 1024))
+      ])
+    ]) {
+      const read: string[] = []
+      // As a tailed close reads them: every piece from the Space.
+      const readPart = async (path: string): Promise<Uint8Array> => {
+        read.push(basename(path))
+        return path.endsWith('init.mp4')
+          ? box('moov', moov)
+          : box('moof', moof(picture(0)))
+      }
+      expect(
+        await checkTrackStarts(join(plain, 'master.m3u8'), { readPart })
+      ).equals(undefined)
+      expect(read).deep.equals(['init.mp4'])
+    }
   })
 
   it('has nothing to say about a playlist with no init segment, or a broken one', async function () {
