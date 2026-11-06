@@ -986,7 +986,8 @@ describe("saving a side's lineup (U8)", function () {
     batted: makeId('game'),
     appeared: makeId('game'),
     leftAfterPlaying: makeId('game'),
-    imported: makeId('game')
+    imported: makeId('game'),
+    slot: makeId('game')
   }
   const TEAMS = {
     away: { id: away, name: 'Visitors' },
@@ -1162,7 +1163,8 @@ describe("saving a side's lineup (U8)", function () {
       games.race,
       games.busy,
       games.stale,
-      games.between
+      games.between,
+      games.slot
     ])
       await score(gameId, [{ type: 'pitch', call: 'B' }])
     const guest = await createGuestPlayer(
@@ -2641,6 +2643,25 @@ describe("saving a side's lineup (U8)", function () {
     const after = await scoring(games.live)
     expect(after.state.liveData.linescore.balls).equals(1)
     expect(written.filter(id => id === games.live)).lengthOf(1)
+  })
+
+  it('keeps the batting slot of an order saved after the first pitch', async function () {
+    const session = await scoring(games.slot)
+    const body = bodyOf(session.state, 'away')
+    // The leadoff man has a ball on him; the visitors swap their first two.
+    const [first, second, ...rest] = body.battingOrder
+    body.battingOrder = [second, first, ...rest]
+    const swapped = body.players[second].gumboId
+    const answer = await save(games.slot, AWAY_COACH, body)
+    expect(answer.status, JSON.stringify(answer.body)).equals(200)
+    const after = await scoring(games.slot)
+    const roster = after.actions.findLast(
+      action => action.type === 'lineup' && action.kind === 'roster'
+    )
+    expect(roster).includes({ keepSlot: true })
+    expect(after.state.liveData.boxscore.teams.away.battingIndex).equals(0)
+    expect(after.state.liveData.linescore.offense.batter?.id).equals(swapped)
+    expect(after.state.liveData.linescore.balls).equals(1)
   })
 
   it('keeps existing guests by identity and adds a newly persisted guest', async function () {

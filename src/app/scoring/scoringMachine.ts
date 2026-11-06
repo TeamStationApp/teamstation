@@ -3,6 +3,7 @@ import {
   type Problem,
   type ScoringAction
 } from '../../common/scoring/actions'
+import { pitchThrown } from '../../common/scoring/lineup'
 import { confirmedSides } from '../../common/scoring/lineupHistory'
 import type { StagedRunner } from '../../common/scoring/rosterCommands'
 import {
@@ -171,7 +172,8 @@ export function screenOf(state: ScoringState): ScoringScreenState {
  * The roster save the screen logs: the setup, then each pinch runner, as one
  * Undo step. A side still in the roster order a save left, because that save
  * could not see the team, is not confirmed, so the first pitch does not take
- * that order as the team's default. Every other side is confirmed.
+ * that order as the team's default. Every other side is confirmed. After the
+ * first pitch the save keeps each side's batting slot (`keepSlot`).
  */
 function applyRosterSave(
   next: ScoringSnapshot,
@@ -186,6 +188,7 @@ function applyRosterSave(
     kind: 'roster',
     setup,
     ...(confirmed.length === 0 ? {} : { confirmed }),
+    ...(pitchThrown(next.session) ? { keepSlot: true } : {}),
     ...(nextBatter == null ? {} : { nextBatter })
   })
   // One Undo step: a refused runner takes back the setup too.

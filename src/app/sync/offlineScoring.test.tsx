@@ -361,10 +361,10 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     expect(document.body.textContent).includes('1 balls')
     expect(status()).equals(OFFLINE_BANNER)
 
-    // Add a named player to the batting team's roster, and into its lineup.
+    // Add a named player to the batting team's roster, and into its lineup:
+    // a pitch is in, so nobody is taken out; he bats at its end.
     await click('Open scoring menu')
     await click('Set Team Rosters')
-    await click('Remove Player 9')
     await click('Create Player')
     await input('First Name', 'Mookie')
     await input('Last Name', 'Betts')
@@ -678,12 +678,17 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     ).equals(OFFLINE_BANNER)
 
     await click('Lineup')
-    const remove = document.querySelector<HTMLElement>(
-      '[aria-label^="Remove "]'
+    // A pitch is in: no removal, so he moves his leadoff man down a place.
+    expect(document.querySelector('[aria-label^="Remove "]')).equals(null)
+    const leadoff = document.querySelector<HTMLElement>(
+      '[aria-label^="Reorder "]'
     )!
-    await act(async () => {
-      remove.click()
-    })
+    for (const key of ['Enter', 'ArrowDown', 'Enter'])
+      await act(async () => {
+        leadoff.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key, bubbles: true })
+        )
+      })
     await settle()
     await click('Save Rosters')
     await settle(50)

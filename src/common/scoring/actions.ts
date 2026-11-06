@@ -370,6 +370,11 @@ const actionCleaners = {
      * server holds it.
      */
     shown: asOptional(asLiteral(true)),
+    /**
+     * A roster saved after the first pitch: each side keeps its batting slot,
+     * and whoever now stands in it bats. Absent, the man due stays due.
+     */
+    keepSlot: asOptional(asLiteral(true)),
     nextBatter: asOptional(asSessionId),
     order: asOptional(asArray(asSessionId)),
     position: asOptional(asPosition),

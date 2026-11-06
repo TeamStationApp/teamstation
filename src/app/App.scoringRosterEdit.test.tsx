@@ -32,6 +32,29 @@ const press = async (label: string): Promise<void> => {
   })
   await settle()
 }
+/** The lineup slot a batter's row stands in, as its drop target names it. */
+const slotOf = (name: string): string | null =>
+  document
+    .querySelector(`[aria-label="Reorder ${name}"]`)
+    ?.getAttribute('data-roster-target') ?? null
+/**
+ * Moves a batter down one place with the keyboard: after the first pitch the
+ * lineup offers no removal, so this is the draft's change.
+ */
+const moveDown = async (name: string): Promise<string | null> => {
+  const was = slotOf(name)
+  const row = document.querySelector<HTMLElement>(
+    `[aria-label="Reorder ${name}"]`
+  )!
+  for (const key of ['Enter', 'ArrowDown', 'Enter'])
+    await act(async () => {
+      row.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key, bubbles: true })
+      )
+    })
+  await waitFor(() => slotOf(name) !== was)
+  return was
+}
 const type = async (label: string, value: string): Promise<void> => {
   await waitFor(() => document.querySelector(`[aria-label="${label}"]`) != null)
   const input = document.querySelector<HTMLInputElement>(
@@ -48,8 +71,14 @@ const type = async (label: string, value: string): Promise<void> => {
   await settle()
 }
 
+/**
+ * Waits until `check` holds, however long a loaded machine takes. It gives
+ * up only just inside the test's own timeout (`this.timeout` below), so a
+ * check that never holds fails here and stops polling.
+ */
 const waitFor = async (check: () => boolean): Promise<void> => {
-  for (let count = 0; count < 80 && !check(); count++) await settle()
+  const deadline = Date.now() + 50000
+  while (!check() && Date.now() < deadline) await settle()
   expect(check()).equals(true)
 }
 const withScoringApp = async (
@@ -99,6 +128,7 @@ const openEditor = async (): Promise<void> => {
 }
 
 describe('actual App scoring player Settings return', function () {
+  this.timeout(60000)
   // The Shell reads the account's chat age on mount: confirmed here.
   confirmedChatAgeHooks()
   for (const role of ['scorekeeper', 'admin'] as const) {
@@ -260,7 +290,7 @@ describe('actual App scoring player Settings return', function () {
       await press('Ball')
       await openEditor()
       await press('Lineup')
-      await press('Remove Aaron J')
+      const was = await moveDown('Aaron J')
       await press('Roster')
       await press('Mookie Betts,')
       await waitFor(
@@ -282,9 +312,7 @@ describe('actual App scoring player Settings return', function () {
       expect(document.body.textContent).includes('JERSEY NUMBER')
       await press('Back')
       await press('Lineup')
-      expect(document.querySelector('[aria-label="Remove Aaron J"]')).equals(
-        null
-      )
+      expect(slotOf('Aaron J')).not.equals(was)
       await press('Roster')
       await press('Mookie Betts,')
       await waitFor(
@@ -853,7 +881,7 @@ describe('actual App scoring player Settings return', function () {
       await press('Ball')
       await press('Open scoring menu')
       await press('Set Team Rosters')
-      await press('Remove Aaron J')
+      const was = await moveDown('Aaron J')
       await press('Roster')
       await press('Mookie Betts,')
       expect(currentRoute()).includes({
@@ -913,9 +941,7 @@ describe('actual App scoring player Settings return', function () {
       await settle()
       expect(currentRoute()).includes({ name: 'scoreGame' })
       await press('Lineup')
-      expect(document.querySelector('[aria-label="Remove Aaron J"]')).equals(
-        null
-      )
+      expect(slotOf('Aaron J')).not.equals(was)
       await press('Cancel')
       expect(document.querySelector('[aria-label^="Undo Ball"]')).not.equals(
         null

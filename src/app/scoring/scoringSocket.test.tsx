@@ -277,12 +277,16 @@ describe('the scoring screen on the game socket', function () {
     await click('Open scoring menu')
     await click('Set Team Rosters')
     await settle()
-    const remove = [
-      ...document.querySelectorAll<HTMLElement>('[aria-label^="Remove "]')
-    ].at(-1)
-    await act(async () => {
-      remove!.click()
-    })
+    // A pitch is in: the last two batters change places.
+    const last = [
+      ...document.querySelectorAll<HTMLElement>('[aria-label^="Reorder "]')
+    ].at(-1)!
+    for (const key of ['Enter', 'ArrowUp', 'Enter'])
+      await act(async () => {
+        last.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key, bubbles: true })
+        )
+      })
     await click('Save Rosters')
     await settle()
     expect(shown('Undo Set team roster')).equals(true)

@@ -2135,7 +2135,8 @@ function lineup(ctx: Ctx, action: LineupAction): void {
     setup,
     action.nextBatter,
     replaced,
-    ctx.replay
+    ctx.replay,
+    action.keepSlot === true
   )
   if (applied.state == null)
     refuse('illegal', applied.error ?? 'Invalid lineup')

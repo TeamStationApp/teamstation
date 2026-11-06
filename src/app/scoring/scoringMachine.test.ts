@@ -700,7 +700,8 @@ describe('a saved roster with pinch runners', function () {
         type: 'lineup',
         kind: 'roster',
         setup: setupOf(draft),
-        confirmed: ['away', 'home']
+        confirmed: ['away', 'home'],
+        keepSlot: true
       },
       {
         type: 'lineup',
@@ -733,6 +734,33 @@ describe('a saved roster with pinch runners', function () {
     expect(
       rosterRefusal(state, draft, undefined, [{ base: '2B', player: runner }])
     ).equals('Nobody is on 2B')
+  })
+})
+
+describe('a roster saved around the first pitch (U30)', function () {
+  it('keeps the batting slot only once a pitch is thrown', function () {
+    const swap = (state: ScoringState): ScoringState => {
+      const draft = copyState(state.session)
+      const order = draft.liveData.boxscore.teams.away.battingOrder
+      ;[order[0], order[1]] = [order[1], order[0]]
+      return completeMotions(scoringReducer(state, { type: 'ROSTER', draft }))
+    }
+    const before = initial()
+    const opening = swap(before)
+    const first = opening.log.at(-1)!
+    expect(first).includes({ type: 'lineup', kind: 'roster' })
+    expect(first).not.has.property('keepSlot')
+    const pitched = pitch(initial(), 'ball')
+    const due = pitched.session.liveData.boxscore.teams.away.battingOrder[1]
+    const saved = swap(pitched)
+    expect(saved.log.at(-1)).includes({
+      type: 'lineup',
+      kind: 'roster',
+      keepSlot: true
+    })
+    // The slot is kept: the man swapped into it bats.
+    expect(saved.session.liveData.boxscore.teams.away.battingIndex).equals(0)
+    expect(saved.session.liveData.linescore.offense.batter!.id).equals(due)
   })
 })
 

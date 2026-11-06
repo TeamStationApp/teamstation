@@ -26,6 +26,7 @@ import {
   type ExistingRosterPlayer,
   PLAYER_POSITIONS as STORED_POSITIONS
 } from '../../common/playerSettings'
+import { pitchThrown } from '../../common/scoring/lineup'
 import {
   type ChosenRosterCommand,
   ROSTER_TAB,
@@ -45,6 +46,7 @@ import { Button } from '../components/Button'
 import { Icon } from '../components/Icon'
 import { lstrings, plural, sprintf } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
+import { BatIcon } from './BatIcon'
 import { withRosterDetails } from './currentSetup'
 import { DefensiveField } from './DefensiveField'
 import { EditRosterList } from './EditRosterList'
@@ -621,7 +623,40 @@ export function RosterEditor({
       list.battingOrder = list.battingOrder.filter(player => player !== id)
     })
   }
-  const validation = rosterError(state.session, setupOf(draft), nextBatter)
+  // From the first pitch the lineup can't be reordered by insertion or have
+  // players removed (no Clear and no X): a player dropped on a row replaces
+  // the batter in that slot, and a late arrival can still be added at the end.
+  const locked = pitchThrown(state.session)
+  /**
+   * Puts `id` in slot `index`: a bench player replaces the man there, who
+   * goes back to the roster; a man already in the order swaps slots with him.
+   */
+  const replace = (id: number, index: number): void => {
+    if (!team.players.includes(id)) return
+    edit(next => {
+      const order = next.liveData.boxscore.teams[side].battingOrder
+      if (index < 0 || index >= order.length) return
+      const old = order.indexOf(id)
+      if (old >= 0) order[old] = order[index]
+      order[index] = id
+    })
+  }
+  /** Clear: the side bats nobody; every player stays on the roster. */
+  const clearLineup = (): void => {
+    const cleared = team.battingOrder
+    setNextBatter(previous =>
+      previous != null && cleared.includes(previous) ? undefined : previous
+    )
+    edit(next => {
+      next.liveData.boxscore.teams[side].battingOrder = []
+    })
+  }
+  const validation = rosterError(
+    state.session,
+    setupOf(draft),
+    nextBatter,
+    locked
+  )
   const dirty = rosterDirty(base, draft, runners, nextBatter)
   useEffect(() => {
     onDirtyChange?.(dirty)
@@ -924,13 +959,22 @@ export function RosterEditor({
                 gap: 6
               }}
             >
-              {!dense && (
-                <Text style={{ ...text, fontWeight: '700' }}>Roster</Text>
+              {(!dense || !defense) && (
+                <Text
+                  style={{
+                    ...text,
+                    fontWeight: '700',
+                    // Level with the Lineup header beside it.
+                    lineHeight: defense ? undefined : dense ? 20 : 28
+                  }}
+                >
+                  Roster
+                </Text>
               )}
               <RosterScrollArea name="Roster players">
                 <RosterDrag
                   targetId="roster"
-                  onDropPlayer={defense ? undefined : remove}
+                  onDropPlayer={defense || locked ? undefined : remove}
                 >
                   <View
                     testID={defense ? 'Defense roster grid' : undefined}
@@ -981,7 +1025,7 @@ export function RosterEditor({
                         )
                       })}
                   </View>
-                  {!defense && (
+                  {!defense && !locked && (
                     <Text
                       style={{
                         ...text,
@@ -997,9 +1041,40 @@ export function RosterEditor({
             </View>
             {!defense && (
               <View style={{ flex: 1, minHeight: 0, gap: 6 }}>
-                {!dense && (
-                  <Text style={{ ...text, fontWeight: '700' }}>Lineup</Text>
-                )}
+                <View
+                  testID="Lineup header"
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    height: dense ? 20 : 28
+                  }}
+                >
+                  <Text style={{ ...text, fontWeight: '700', flexShrink: 0 }}>
+                    Lineup
+                  </Text>
+                  {!locked && (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Clear Lineup"
+                      hitSlop={8}
+                      onPress={clearLineup}
+                    >
+                      <Text
+                        selectable={false}
+                        style={{
+                          ...text,
+                          fontWeight: '700',
+                          flexShrink: 0,
+                          color: theme.scoringOutColor
+                        }}
+                      >
+                        Clear
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
                 <RosterScrollArea name="Batting lineup">
                   <>
                     {team.battingOrder.map((id, index) => (
@@ -1008,13 +1083,15 @@ export function RosterEditor({
                         playerId={id}
                         label={`Reorder ${names[id].fullName}`}
                         targetId={`lineup-${index}`}
-                        insertion="row"
+                        insertion={locked ? undefined : 'row'}
                         onDropPlayer={(player, edge) => {
-                          place(
-                            player,
-                            index + (edge === 'after' ? 1 : 0),
-                            true
-                          )
+                          if (locked) replace(player, index)
+                          else
+                            place(
+                              player,
+                              index + (edge === 'after' ? 1 : 0),
+                              true
+                            )
                         }}
                         onReorder={delta => {
                           place(id, index + delta)
@@ -1035,12 +1112,21 @@ export function RosterEditor({
                           >
                             {index + 1}. {display(id)}
                           </Text>
-                          <RosterRemoveButton
-                            label={`Remove ${names[id].fullName}`}
-                            onPress={() => {
-                              remove(id)
-                            }}
-                          />
+                          {!locked ? (
+                            <RosterRemoveButton
+                              label={`Remove ${names[id].fullName}`}
+                              onPress={() => {
+                                remove(id)
+                              }}
+                            />
+                          ) : index === team.battingIndex ? (
+                            <BatIcon
+                              label={`${names[id].fullName} bats`}
+                              color={theme.primaryTextColor}
+                            />
+                          ) : (
+                            <View style={{ width: 32, height: 32 }} />
+                          )}
                         </View>
                       </RosterDrag>
                     ))}
