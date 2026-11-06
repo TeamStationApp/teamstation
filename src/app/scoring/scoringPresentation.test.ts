@@ -2,18 +2,30 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { scoringSession } from '../../test/scoringSession'
-import { BASES, createPlayers } from '../field/fieldModel'
-import { foulPoint, sampleHit, samplePitch } from '../field/playAnimationModel'
+import { BASES, createPlayers, OUT_APPROACH_SPEED } from '../field/fieldModel'
+import {
+  FOUL_FADE_MS,
+  foulPoint,
+  sampleHit,
+  samplePitch
+} from '../field/playAnimationModel'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
 import {
+  CAROM_MS,
+  FOUL_FLIGHT_MAX_MS,
+  foulFlightMs,
   HIT_UNPITCHED_CONTACT_MS,
   type HitSequence,
   PITCH_TIMING,
   pitchPresentation,
   presentationRuntime,
+  SCORING_SPEED,
   stepPresentation,
+  tagMs,
+  THROW_MS,
+  THROW_RELEASE_MS,
   throwSequence
 } from './scoringPresentation'
 import type { ScoringState } from './scoringTypes'
@@ -33,9 +45,10 @@ describe('pitch presentation coordination', function () {
       expect(stepPresentation(runtime, sequence, 300, true).cues).has.length(0)
       expect(runtime.elapsedMs).equals(0)
       expect(stepPresentation(runtime, sequence, 0, false).done).equals(false)
-      expect(
-        stepPresentation(runtime, sequence, PITCH_TIMING.release, false).cues
-      ).deep.equals(['swish'])
+      // The ball leaves the hand as the picture starts: no windup.
+      expect(stepPresentation(runtime, sequence, 1, false).cues).deep.equals([
+        'swish'
+      ])
       const atRelease = samplePitch(sequence, PITCH_TIMING.release)
       expect(atRelease.visible).equals(true)
       expect(atRelease.ball).deep.equals(sequence.from)
@@ -102,13 +115,102 @@ describe('pitch presentation coordination', function () {
         180) /
       Math.PI
     expect(angle).within(44, 46)
-    expect(samplePitch(sequence, sequence.durationMs - 100).opacity).equals(0.5)
+    expect(
+      samplePitch(sequence, sequence.durationMs - FOUL_FADE_MS / 2).opacity
+    ).equals(0.5)
     expect(samplePitch(sequence, 0).visible).equals(true)
     const caught = samplePitch(
       pitchPresentation(state, 'called'),
       PITCH_TIMING.catch
     )
     expect(caught.catch).greaterThan(0)
+  })
+})
+
+describe('scoring at speed (U45)', function () {
+  it('ends every pitch but a foul within 400 ms, with no windup', function () {
+    expect(PITCH_TIMING).deep.equals({
+      release: 0,
+      plate: 240,
+      catch: 260,
+      finish: 280,
+      foulFinish: 540
+    })
+    for (const kind of ['ball', 'called', 'swing'] as const)
+      expect(pitchPresentation(initial(), kind).durationMs).at.most(280)
+    expect(pitchPresentation(initial(), 'foul').durationMs).equals(540)
+  })
+  it('plays every other scoring picture in half its natural time', function () {
+    expect(SCORING_SPEED).equals(2)
+    // The natural durations, halved.
+    expect(HIT_UNPITCHED_CONTACT_MS).equals(450 / 2)
+    expect(CAROM_MS).equals(600 / 2)
+    expect(FOUL_FLIGHT_MAX_MS).equals(2000 / 2)
+    expect(THROW_MS).equals(900 / 2)
+    expect(THROW_RELEASE_MS).equals(150 / 2)
+    expect(OUT_APPROACH_SPEED).equals(1.4 * 17 * 2)
+    // A short foul's floor and a deeper one's pace.
+    expect(foulFlightMs({ x: 3, z: 3 })).equals(900 / 2)
+    expect(foulFlightMs({ x: 18, z: 24 })).equals(((30 / 20) * 1000) / 2)
+    // A tag's floor; a long one at twice the runner's pace.
+    const at = { x: 0, z: 0 }
+    expect(tagMs(at, at, at, 650)).equals(650 / 2)
+    expect(tagMs(at, { x: 0, z: -100 }, at, 650)).closeTo(
+      (100 / (1.4 * 17) / 2) * 1000,
+      1e-9
+    )
+    // A ball in play: its flight's floor and its pace.
+    const hit = (point: { x: number; z: number }): HitSequence => {
+      let state = scoringReducer(initial(), {
+        type: 'OUTCOME',
+        outcome: 'Single'
+      })
+      state = scoringReducer(state, {
+        type: 'FIELDER',
+        id: 10,
+        point,
+        generation: 0
+      })
+      state = scoringReducer(state, {
+        type: 'TRAJECTORY',
+        angle: 10,
+        generation: 0
+      })
+      return state.presentation as HitSequence
+    }
+    const long = hit({ x: 25, z: -75 })
+    const short = hit({
+      x: long.fielderStart.x + 2,
+      z: long.fielderStart.z - 2
+    })
+    expect(short.flightEndMs - short.contactMs).equals(1100 / 2)
+    const travel = Math.hypot(
+      long.arc.target.x - long.fielderStart.x,
+      long.arc.target.z - long.fielderStart.z
+    )
+    expect(long.flightEndMs - long.contactMs).closeTo(
+      Math.max(1100, (travel / 20) * 1000) / 2,
+      1e-9
+    )
+    // A throw between fielders, and its release.
+    const state = initial()
+    const players = scoringFieldPlayers(state)
+    const sequence = throwSequence(state, {
+      players,
+      thrower: 13,
+      receiver: 11,
+      runner: players.find(p => p.playerId === 1)!.playerId!,
+      from: { x: -20, z: -60 },
+      to: { x: 20, z: -40 },
+      runnerPoint: { x: 0, z: 0 },
+      final: false
+    })
+    expect(sequence.durationMs).equals(900 / 2)
+    const runtime = presentationRuntime()
+    expect(stepPresentation(runtime, sequence, 74, false).cues).deep.equals([])
+    expect(stepPresentation(runtime, sequence, 1, false).cues).deep.equals([
+      'swish'
+    ])
   })
 })
 
@@ -405,15 +507,16 @@ describe('the pitch before a ball in play', function () {
     return seq
   }
 
-  it('winds the pitcher up and throws the ball to the plate, where the bat meets it', function () {
+  it('throws the ball to the plate with no windup, where the bat meets it', function () {
     const seq = single()
     expect(seq.pitcher).equals(10)
     expect(seq.from).not.equals(undefined)
     expect(seq.plate).deep.equals({ x: 0, y: seq.plate!.y, z: 0 })
-    // Before the release the ball is in the pitcher's hand, and shown.
+    // The ball is out of the pitcher's hand at once, and shown.
+    expect(sampleHit(seq, 0).ball).deep.equals(seq.from)
     const early = sampleHit(seq, 100)
     expect(early.visible).equals(true)
-    expect(early.windup).greaterThan(0)
+    expect(early.windup).equals(0)
     // Between the release and the plate it is on the pitch's line.
     const halfway = (PITCH_TIMING.release + seq.contactMs) / 2
     const flying = sampleHit(seq, halfway).ball

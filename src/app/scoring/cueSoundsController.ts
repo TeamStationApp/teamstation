@@ -52,16 +52,22 @@ export function makeNativeScoringAudio(
     if (otherAudioActive()) return
     if (category !== AMBIENT) native.useAmbientSession()
   }
+  const load = (native: CueSoundsModule): void => {
+    if (loaded) return
+    for (const kind of CUES)
+      native.load(kind, int16Of(samples(kind, SAMPLE_RATE)), SAMPLE_RATE)
+    loaded = true
+  }
   const ready = (native: CueSoundsModule): void => {
     ensureSession(native)
-    if (!loaded) {
-      for (const kind of CUES)
-        native.load(kind, int16Of(samples(kind, SAMPLE_RATE)), SAMPLE_RATE)
-      loaded = true
-    }
+    load(native)
     if (!native.isRunning()) native.start()
   }
   return {
+    // Loading touches neither the audio session nor the engine.
+    prepare() {
+      attempt(load)
+    },
     unlock() {
       attempt(ready)
     },

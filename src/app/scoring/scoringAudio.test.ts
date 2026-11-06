@@ -66,6 +66,55 @@ describe('synthesized scoring sound', function () {
     audio.stop()
     expect(stopped).equals(5)
   })
+  it('makes the context and every cue before the first gesture, and resumes it only on one', async function () {
+    let created = 0
+    let buffers = 0
+    let resumed = 0
+    let started = 0
+    const context = {
+      state: 'suspended',
+      sampleRate: 8000,
+      destination: {},
+      resume: async () => {
+        resumed++
+        context.state = 'running'
+      },
+      createBuffer: (_channels: number, length: number) => {
+        buffers++
+        const samples = new Float32Array(length)
+        return { getChannelData: () => samples }
+      },
+      createBufferSource: () => ({
+        connect() {},
+        disconnect() {},
+        start() {
+          started++
+        },
+        stop() {},
+        buffer: null
+      })
+    }
+    const audio = makeScoringAudio(() => {
+      created++
+      return context as unknown as AudioContext
+    })
+    audio.prepare()
+    audio.prepare()
+    expect([created, buffers, resumed]).deep.equals([1, 3, 0])
+    audio.cue('pop')
+    expect(started).equals(0)
+    audio.unlock()
+    await Promise.resolve()
+    audio.cue('pop')
+    audio.cue('bat')
+    expect([created, buffers, resumed, started]).deep.equals([1, 3, 1, 2])
+    const failing = makeScoringAudio(() => {
+      throw new Error('No device')
+    })
+    expect(() => {
+      failing.prepare()
+    }).not.throws()
+  })
   it('contains unlock and playback failures without affecting scoring', function () {
     let attempts = 0
     const audio = makeScoringAudio(() => {

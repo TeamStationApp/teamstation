@@ -1,5 +1,7 @@
 import type { ScoringAudio, ScoringCue } from './scoringAudioTypes'
 import { cueSamples } from './scoringCueSamples'
+
+const CUES: ScoringCue[] = ['swish', 'pop', 'bat']
 /** The field cues in the browser, from the shared samples. */
 export function makeScoringAudio(
   createContext: () => AudioContext = () => new AudioContext()
@@ -19,7 +21,26 @@ export function makeScoringAudio(
     }
     voices.clear()
   }
+  const bufferOf = (kind: ScoringCue, audio: AudioContext): AudioBuffer => {
+    let buffer = buffers.get(kind)
+    if (buffer == null) {
+      const samples = cueSamples(kind, audio.sampleRate)
+      buffer = audio.createBuffer(1, samples.length, audio.sampleRate)
+      buffer.getChannelData(0).set(samples)
+      buffers.set(kind, buffer)
+    }
+    return buffer
+  }
   return {
+    // A context made without a gesture stays suspended until `unlock`.
+    prepare() {
+      try {
+        context ??= createContext()
+        for (const kind of CUES) bufferOf(kind, context)
+      } catch {
+        /* Made on the gesture instead. */
+      }
+    },
     unlock() {
       try {
         context ??= createContext()
@@ -38,15 +59,8 @@ export function makeScoringAudio(
       if (!enabled || context?.state !== 'running') return
       try {
         if (voices.size >= 4) stop()
-        let buffer = buffers.get(kind)
-        if (buffer == null) {
-          const samples = cueSamples(kind, context.sampleRate)
-          buffer = context.createBuffer(1, samples.length, context.sampleRate)
-          buffer.getChannelData(0).set(samples)
-          buffers.set(kind, buffer)
-        }
         const source = context.createBufferSource()
-        source.buffer = buffer
+        source.buffer = bufferOf(kind, context)
         source.connect(context.destination)
         voices.add(source)
         source.onended = () => {
