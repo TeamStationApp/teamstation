@@ -3079,6 +3079,35 @@ describe('prior-play runner field corrections and scoring sheet', () => {
     ).equals(false)
     expect(field().interaction!.retreatIds ?? []).not.includes('offense-100')
   })
+  it('leaves a runner dragged home and called safe off the field, through the next pitch (U22)', async () => {
+    const { session } = priorRunnerFixture('occupied')
+    for (const action of [
+      { type: 'ballInPlay', contact: 'swing', fielder: 207 },
+      { type: 'result', eventType: 'single' },
+      { type: 'runnerMovement', runner: 100, to: 'home' },
+      { type: 'gameFlow', kind: 'closePlay' }
+    ] as ScoringAction[])
+      expect(session.apply(action).problems).deep.equals([])
+    await mount(
+      { persistent: false, open: async () => session },
+      { away: priorRunnerRoster('away'), home: priorRunnerRoster('home') }
+    )
+    const gone = (): void => {
+      expect(session.state.liveData.linescore.teams.away.runs).equals(1)
+      expect(
+        players().some(
+          player => player.playerId === 100 && player.team === 'runner'
+        )
+      ).equals(false)
+      expect(field().interaction?.retreatIds ?? []).not.includes('offense-100')
+    }
+    gone()
+    await step(() => {
+      props().onPitch('ball')
+    })
+    expect(props().summary).includes('1 balls')
+    gone()
+  })
   for (const [scenario, to] of [
     ['first', 1],
     ['second', 2]

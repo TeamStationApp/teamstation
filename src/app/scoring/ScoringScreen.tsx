@@ -121,10 +121,7 @@ import {
   type PlayerDraft,
   rosterPlayerBody
 } from './playerDraft'
-import {
-  priorRunnerPlayers,
-  usePriorRunnerCorrection
-} from './priorRunnerCorrection'
+import { usePriorRunnerCorrection } from './priorRunnerCorrection'
 import { useDictationHandover } from './rosterDictation'
 import { sameValue } from './rosterDirty'
 import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
@@ -2258,20 +2255,18 @@ function ScoringPanel(props: {
     const labels = shortPlayerNames(
       Object.values(displaySession.gameData.players)
     )
-    const named = priorRunnerPlayers(next, priorRunner.candidates, session).map(
-      player => {
-        if (player.playerId == null) return player
-        const person = displaySession.gameData.players[player.playerId]
-        if (person == null) return player
-        const label = labels.get(person.id) ?? ''
-        return {
-          ...player,
-          name: label,
-          displayName: label,
-          jersey: person.jersey
-        }
+    const named = next.map(player => {
+      if (player.playerId == null) return player
+      const person = displaySession.gameData.players[player.playerId]
+      if (person == null) return player
+      const label = labels.get(person.id) ?? ''
+      return {
+        ...player,
+        name: label,
+        displayName: label,
+        jersey: person.jersey
       }
-    )
+    })
     // A position a play's stand-in is playing is drawn by him, not its plate.
     const complete = [
       ...named,
@@ -2284,7 +2279,6 @@ function ScoringPanel(props: {
   }, [
     session,
     displaySession,
-    priorRunner.candidates,
     phase,
     pendingPlay,
     motions,
@@ -2430,16 +2424,7 @@ function ScoringPanel(props: {
     state.phase === 'correctionWindow' || state.phase === 'homeDecision'
       ? hitOfferRetreatIds
       : priorRunner.candidates.map(item => `offense-${item.runner}`)
-  const advanceIds = homeWaiting
-    ? hitOfferAdvanceIds
-    : priorRunner.candidates.some(item => item.from === 4)
-      ? runnerIds.filter(
-          id =>
-            !priorRunner.candidates.some(
-              item => item.from === 4 && id === `offense-${item.runner}`
-            )
-        )
-      : undefined
+  const advanceIds = homeWaiting ? hitOfferAdvanceIds : undefined
   const instruction =
     state.presentation != null
       ? undefined

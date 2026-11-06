@@ -7,13 +7,10 @@ import {
   returnPriorRunner,
   type ScoringSession
 } from '../../common/scoring/session'
-import type { GameState } from '../../common/scoring/state'
 import { Button } from '../components/Button'
 import { CancelAction } from '../components/CancelAction'
-import type { FieldPlayer } from '../field/fieldModel'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
-import { homeQueuePoint } from './scoringMotion'
 import { ScoringSheet } from './ScoringSheet'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 
@@ -215,41 +212,4 @@ export function PriorRunnerOverlay({
       )}
     </>
   )
-}
-
-/** Scoring-only handles for runners who have already crossed home. */
-export function priorRunnerPlayers(
-  players: FieldPlayer[],
-  candidates: PriorRunner[],
-  state: GameState
-): FieldPlayer[] {
-  return [
-    ...players,
-    ...candidates
-      .filter(item => item.from === 4)
-      .map((item, index) => {
-        const person = state.gameData.players[item.runner]
-        // Separate the return handle from the current batter beside the plate.
-        const position = homeQueuePoint(index + 15)
-        return {
-          id: `offense-${item.runner}`,
-          playerId: item.runner,
-          label: 'Runner',
-          name: person.fullName,
-          displayName: person.fullName,
-          jersey: person.jersey,
-          team: 'runner' as const,
-          uniformSide:
-            person.teamId === state.gameData.teams.home.id
-              ? ('home' as const)
-              : ('away' as const),
-          position,
-          target: { ...position },
-          runnerBase: 4,
-          speed: 0,
-          heading: 0,
-          stride: 0
-        }
-      })
-  ]
 }
