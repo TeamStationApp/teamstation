@@ -6,6 +6,7 @@ import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 
@@ -460,11 +461,21 @@ async function streamPutFile(options: {
 }): Promise<string | undefined> {
   const { space, key, path, contentType, start, end, query } = options
   const length = end - start + 1
+  // Opened before the request: a source that cannot be read throws here, with
+  // no request left open to time out later. An empty file is an empty body;
+  // a read stream refuses an `end` before its `start`.
+  const source =
+    length > 0 ? createReadStream(path, { start, end }) : Readable.from([])
+  let sent = 0
+  async function* counted(
+    chunks: AsyncIterable<Buffer>
+  ): AsyncGenerator<Buffer> {
+    for await (const chunk of chunks) {
+      sent += chunk.length
+      yield chunk
+    }
+  }
   const url = new URL(signedSpaceUrl(space, key, 'PUT', query))
-  // Ahead of the request: this throws for a file with nothing in the range, and
-  // a request left open would fail later with nobody listening, which ends the
-  // process.
-  const body = createReadStream(path, { start, end })
   const send = url.protocol === 'https:' ? httpsRequest : httpRequest
   const request = send({
     protocol: url.protocol,
@@ -511,6 +522,10 @@ async function streamPutFile(options: {
     })
     request.once('error', reject)
   })
+  // Every path below awaits `answered` or has already settled it, but a
+  // rejection that arrives after this function has thrown must not be one
+  // nobody handles: in the ingest that ends the process.
+  answered.catch(() => undefined)
 
   // The answer is listened for *while* the file goes out, not after it. A
   // Space that refuses — a stale signature, a bucket over quota — says so in
@@ -519,9 +534,20 @@ async function streamPutFile(options: {
   // refusal already in hand. Measured: the 403 at 12 ms, the write giving up
   // at 6 s.
   let sendFailed: Error | undefined
-  const sending = pipeline(body, request).catch((error: unknown) => {
-    sendFailed = error instanceof Error ? error : new Error(String(error))
-  })
+  const sending = pipeline(source, counted, request)
+    .then(() => {
+      // A file truncated since its size was read ends early, and the Space
+      // would wait a minute for the bytes the stated length still owes.
+      if (sent < length) {
+        sendFailed = new Error(
+          `Upload of ${key}: the file is shorter than it was (${sent} of ${length} bytes)`
+        )
+        request.destroy(sendFailed)
+      }
+    })
+    .catch((error: unknown) => {
+      sendFailed = error instanceof Error ? error : new Error(String(error))
+    })
   const result = await Promise.race([
     answered,
     sending.then(async () => await answered)

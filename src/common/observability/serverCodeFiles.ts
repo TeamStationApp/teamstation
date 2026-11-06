@@ -192,6 +192,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/live/originFixtures.js',
   'server/live/originPublish.js',
   'server/live/originPublisher.js',
+  'server/live/playlistTail.js',
   'server/live/quietStream.js',
   'server/live/receiving.js',
   'server/live/revokeStreams.js',
