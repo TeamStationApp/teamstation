@@ -8,9 +8,11 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { startFakeSpace } from '../server/dev/fakeSpace'
 import { putObject } from '../server/media/images'
 import type { SpaceSettings } from '../server/media/spacesHls'
+import { videoKey } from '../server/media/videoPrefix'
 import { livePieceReader, type LivePieceSpace } from './livePieces'
 
 describe('livePieceReader', function () {
+  const secret = '0123456789abcdef0123456789abcdef'
   let folder: string
   let dir: string
   let space: SpaceSettings
@@ -41,7 +43,7 @@ describe('livePieceReader', function () {
     store.server.on('request', req => {
       if (req.method === 'GET') gets.push(req.url!)
     })
-    source = { space, videoId: 'vid_pieces' }
+    source = { space, video: { id: 'vid_pieces', spaceSecret: secret } }
     asked = 0
   })
 
@@ -54,7 +56,7 @@ describe('livePieceReader', function () {
     await writeFile(join(dir, 'seg000001.m4s'), 'on disk')
     await putObject({
       space,
-      key: `videos/${source.videoId}/seg000001.m4s`,
+      key: videoKey(source.video, 'seg000001.m4s'),
       body: Buffer.from('in the space'),
       contentType: 'video/iso.segment'
     })
@@ -66,11 +68,11 @@ describe('livePieceReader', function () {
     expect(gets).deep.equals([])
   })
 
-  it('reads a piece the disk tail deleted from the Space', async function () {
+  it('reads a piece the disk tail deleted from the Space, under the secret path', async function () {
     for (const name of ['seg000001.m4s', 'seg000002.m4s'])
       await putObject({
         space,
-        key: `videos/${source.videoId}/${name}`,
+        key: videoKey(source.video, name),
         body: Buffer.from(`${name} in the space`),
         contentType: 'video/iso.segment'
       })
@@ -83,8 +85,8 @@ describe('livePieceReader', function () {
     ).equals('seg000002.m4s in the space')
     expect(asked).equals(1)
     expect(gets.map(url => new URL(url, store.url).pathname)).deep.equals([
-      '/test/videos/vid_pieces/seg000001.m4s',
-      '/test/videos/vid_pieces/seg000002.m4s'
+      `/test/videos/vid_pieces-${secret}/seg000001.m4s`,
+      `/test/videos/vid_pieces-${secret}/seg000002.m4s`
     ])
   })
 

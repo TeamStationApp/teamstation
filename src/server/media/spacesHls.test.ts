@@ -2,14 +2,22 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  mediaBase,
   mediaVariant,
   PlaylistCache,
   rewriteMasterPlaylist,
   rewriteMediaPlaylist,
   spaceConfigured,
   spaceKey,
-  SpacePlayback
+  SpacePlayback,
+  type SpaceSettings
 } from './spacesHls'
+import type { VideoPath } from './videoPrefix'
+
+const SECRET = '0123456789abcdef0123456789abcdef'
+
+/** A video on its old path, with no secret. */
+const old = (id: string): VideoPath => ({ id, spaceSecret: null })
 
 const SPACE = {
   endpoint: 'https://sfo3.digitaloceanspaces.com',
@@ -50,10 +58,13 @@ describe('serving HLS out of a Space', function () {
     expect(spaceConfigured({ ...SPACE, bucket: '' })).equals(false)
   })
 
-  it('names objects by video id alone', function () {
-    expect(spaceKey('vid_abc', 'master.m3u8')).equals(
+  it('names a video’s objects under its secret path, or its id alone with none', function () {
+    expect(spaceKey(old('vid_abc'), 'master.m3u8')).equals(
       'videos/vid_abc/master.m3u8'
     )
+    expect(
+      spaceKey({ id: 'vid_abc', spaceSecret: SECRET }, 'master.m3u8')
+    ).equals(`videos/vid_abc-${SECRET}/master.m3u8`)
   })
 
   it('points every reference to the video at the presigned URL', function () {
@@ -96,8 +107,8 @@ describe('serving HLS out of a Space', function () {
       }) as unknown as typeof fetch
     })
 
-    expect(await cache.get('vid_abc', 'video.m3u8')).equals(MEDIA_PLAYLIST)
-    expect(await cache.get('vid_abc', 'video.m3u8')).equals(MEDIA_PLAYLIST)
+    expect(await cache.get(old('vid_abc'), 'video.m3u8')).equals(MEDIA_PLAYLIST)
+    expect(await cache.get(old('vid_abc'), 'video.m3u8')).equals(MEDIA_PLAYLIST)
     expect(calls).equals(1)
     expect(lastUrl).contains(
       'https://example-media-bkt.sfo3.digitaloceanspaces.com/videos/vid_abc/video.m3u8?'
@@ -116,8 +127,8 @@ describe('serving HLS out of a Space', function () {
       }) as unknown as typeof fetch
     })
 
-    expect(await cache.get('vid_missing', 'video.m3u8')).equals(undefined)
-    expect(await cache.get('vid_missing', 'video.m3u8')).equals(undefined)
+    expect(await cache.get(old('vid_missing'), 'video.m3u8')).equals(undefined)
+    expect(await cache.get(old('vid_missing'), 'video.m3u8')).equals(undefined)
     expect(calls).equals(2)
   })
 })
@@ -170,32 +181,32 @@ describe('live Space playback cache', function () {
       },
       () => time
     )
-    const first = cache.get('live', 'index.m3u8', false)
+    const first = cache.get(old('live'), 'index.m3u8', false)
     time += 5000
-    const second = cache.get('live', 'index.m3u8', false)
+    const second = cache.get(old('live'), 'index.m3u8', false)
     expect(requests).equals(1)
     release()
     expect(await first).equals(await second)
-    await cache.get('live', 'index.m3u8', false)
+    await cache.get(old('live'), 'index.m3u8', false)
     expect(requests).equals(1)
     time += 1000
     body = MEDIA_PLAYLIST.replace('#EXT-X-ENDLIST', '')
-    expect(await cache.get('live', 'index.m3u8', false)).not.contains(
+    expect(await cache.get(old('live'), 'index.m3u8', false)).not.contains(
       '#EXT-X-ENDLIST'
     )
     expect(requests).equals(2)
     body = MEDIA_PLAYLIST
-    expect(await cache.get('live', 'index.m3u8', true)).contains(
+    expect(await cache.get(old('live'), 'index.m3u8', true)).contains(
       '#EXT-X-ENDLIST'
     )
     time += 60_001
-    await cache.get('other', 'index.m3u8', false)
-    await cache.get('live', 'index.m3u8', true)
+    await cache.get(old('other'), 'index.m3u8', false)
+    await cache.get(old('live'), 'index.m3u8', true)
     expect(requests).equals(4)
-    await cache.get('live', 'video.m3u8', false)
+    await cache.get(old('live'), 'video.m3u8', false)
     expect(requests).equals(5)
     cache.playlists.clear()
-    await cache.get('live', 'index.m3u8', true)
+    await cache.get(old('live'), 'index.m3u8', true)
     expect(requests).equals(6)
   })
 
@@ -205,25 +216,25 @@ describe('live Space playback cache', function () {
       { space: SPACE, expiresSec: 3600 },
       () => time
     )
-    const one = cache.sign('live', 'video.mp4')
+    const one = cache.sign(old('live'), 'video.mp4')
     const url = new URL(one)
     expect(url.searchParams.get('X-Amz-Date')).equals('19700101T001500Z')
     expect(url.searchParams.get('X-Amz-Expires')).equals('4500')
-    const rewritten = cache.rewrite('live', 'video.m3u8', MEDIA_PLAYLIST)
-    expect(cache.rewrite('live', 'video.m3u8', MEDIA_PLAYLIST)).equals(
+    const rewritten = cache.rewrite(old('live'), 'video.m3u8', MEDIA_PLAYLIST)
+    expect(cache.rewrite(old('live'), 'video.m3u8', MEDIA_PLAYLIST)).equals(
       rewritten
     )
     expect(rewritten.split(one)).length(4)
     time += 899_998
-    expect(cache.sign('live', 'video.mp4')).equals(one)
+    expect(cache.sign(old('live'), 'video.mp4')).equals(one)
     time += 1
-    expect(cache.sign('live', 'video.mp4')).not.equals(one)
-    expect(cache.rewrite('live', 'video.m3u8', MEDIA_PLAYLIST)).not.equals(
+    expect(cache.sign(old('live'), 'video.mp4')).not.equals(one)
+    expect(cache.rewrite(old('live'), 'video.m3u8', MEDIA_PLAYLIST)).not.equals(
       rewritten
     )
-    expect(cache.sign('live', 'init000012.mp4')).contains('init000012.mp4')
-    expect(() => cache.sign('live', 'init12.mp4')).throws('Invalid media')
-    expect(() => cache.sign('live', '../other/video.mp4')).throws(
+    expect(cache.sign(old('live'), 'init000012.mp4')).contains('init000012.mp4')
+    expect(() => cache.sign(old('live'), 'init12.mp4')).throws('Invalid media')
+    expect(() => cache.sign(old('live'), '../other/video.mp4')).throws(
       'Invalid media'
     )
   })
@@ -243,15 +254,150 @@ describe('live Space playback cache', function () {
       },
       () => time
     )
-    expect(await cache.get('live', 'index.m3u8', false)).equals(undefined)
+    expect(await cache.get(old('live'), 'index.m3u8', false)).equals(undefined)
     time += 1000
     try {
-      await cache.get('live', 'index.m3u8', false)
+      await cache.get(old('live'), 'index.m3u8', false)
       throw new Error('Expected failure')
     } catch (error) {
       expect(String(error)).contains('disconnected')
     }
     time += 1000
-    expect(await cache.get('live', 'index.m3u8', false)).equals(MEDIA_PLAYLIST)
+    expect(await cache.get(old('live'), 'index.m3u8', false)).equals(
+      MEDIA_PLAYLIST
+    )
+  })
+})
+
+describe('media under a secret path', function () {
+  const LIVE_BODY =
+    '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg000000.m4s\n#EXTINF:4,\nseg000001.m4s\n'
+  const video = { id: 'vid_live-1', spaceSecret: SECRET }
+
+  /** Every URI a rewritten playlist lists, maps included. */
+  const uris = (body: string): string[] =>
+    body
+      .split('\n')
+      .flatMap(line =>
+        line.startsWith('#EXT-X-MAP:')
+          ? [/URI="([^"]+)"/.exec(line)?.[1] ?? '']
+          : line === '' || line.startsWith('#')
+            ? []
+            : [line]
+      )
+
+  it('lists plain URLs on mediaBaseUrl, with no query string, maps too', function () {
+    const playback = new SpacePlayback({
+      space: { ...SPACE, mediaBaseUrl: 'https://media.example.test' },
+      expiresSec: 3600
+    })
+    const out = playback.rewrite(video, 'index.m3u8', LIVE_BODY)
+    expect(uris(out)).deep.equals([
+      `https://media.example.test/videos/vid_live-1-${SECRET}/init.mp4`,
+      `https://media.example.test/videos/vid_live-1-${SECRET}/seg000000.m4s`,
+      `https://media.example.test/videos/vid_live-1-${SECRET}/seg000001.m4s`
+    ])
+    expect(out).not.contains('?')
+    expect(out).contains('#EXTINF:4,')
+  })
+
+  it('rewrites a finished video.mp4 playlist the same way', function () {
+    const playback = new SpacePlayback({
+      space: { ...SPACE, mediaBaseUrl: 'https://media.example.test/' },
+      expiresSec: 3600
+    })
+    const out = playback.rewrite(video, 'video.m3u8', MEDIA_PLAYLIST)
+    const url = `https://media.example.test/videos/vid_live-1-${SECRET}/video.mp4`
+    expect(out).contains(`#EXT-X-MAP:URI="${url}",BYTERANGE="3775@0"`)
+    expect(out.split('\n').filter(line => line === url)).has.length(2)
+    expect(out).contains('#EXT-X-BYTERANGE:267727@3775')
+  })
+
+  it('keeps a path in mediaBaseUrl, and uses the bucket’s own base when it is empty', function () {
+    const key = `videos/vid_live-1-${SECRET}/seg000000.m4s`
+    const sign = (space: SpaceSettings): string =>
+      new SpacePlayback({ space, expiresSec: 60 }).sign(video, 'seg000000.m4s')
+    expect(
+      sign({ ...SPACE, mediaBaseUrl: 'https://cdn.example.test/media/' })
+    ).equals(`https://cdn.example.test/media/${key}`)
+    expect(sign(SPACE)).equals(
+      `https://example-media-bkt.sfo3.digitaloceanspaces.com/${key}`
+    )
+    expect(sign({ ...SPACE, mediaBaseUrl: '' })).equals(
+      `https://example-media-bkt.sfo3.digitaloceanspaces.com/${key}`
+    )
+    expect(
+      sign({ ...SPACE, endpoint: 'http://127.0.0.1:9199', pathStyle: true })
+    ).equals(`http://127.0.0.1:9199/example-media-bkt/${key}`)
+    expect(
+      mediaBase({
+        ...SPACE,
+        endpoint: 'http://127.0.0.1:9199',
+        pathStyle: true
+      })
+    ).equals('http://127.0.0.1:9199/example-media-bkt')
+  })
+
+  it('signs a video with no secret, as before', function () {
+    const playback = new SpacePlayback({
+      space: { ...SPACE, mediaBaseUrl: 'https://media.example.test' },
+      expiresSec: 3600
+    })
+    const out = playback.rewrite(old('vid_old'), 'index.m3u8', LIVE_BODY)
+    for (const uri of uris(out)) {
+      const url = new URL(uri)
+      expect(url.host).equals('example-media-bkt.sfo3.digitaloceanspaces.com')
+      expect(url.pathname).matches(/^\/videos\/vid_old\/(?:init|seg)/)
+      expect(url.searchParams.get('X-Amz-Signature')).not.equals(null)
+    }
+  })
+
+  it('keeps signed URLs for a read-only-source object', function () {
+    const readOnlySource = {
+      endpoint: 'https://nyc3.digitaloceanspaces.com',
+      region: 'nyc3',
+      bucket: 'shared-media-bkt',
+      accessKeyId: 'AKIAREADONLYEXAMPLE0',
+      secretAccessKey: 'readonly',
+      keys: ['videos/demo/video.mp4', `videos/vid_live-1-${SECRET}/init.mp4`]
+    }
+    const playback = new SpacePlayback({
+      space: {
+        ...SPACE,
+        mediaBaseUrl: 'https://media.example.test',
+        readOnlySource
+      },
+      expiresSec: 3600
+    })
+    const demo = new URL(playback.sign(old('demo'), 'video.mp4'))
+    expect(demo.host).equals('shared-media-bkt.nyc3.digitaloceanspaces.com')
+    expect(demo.searchParams.get('X-Amz-Signature')).not.equals(null)
+    // Even under a secret path, an object the read-only source names is
+    // in that other bucket, and not public.
+    const listed = new URL(playback.sign(video, 'init.mp4'))
+    expect(listed.host).equals('shared-media-bkt.nyc3.digitaloceanspaces.com')
+    expect(listed.searchParams.get('X-Amz-Signature')).not.equals(null)
+    expect(playback.sign(video, 'seg000000.m4s')).equals(
+      `https://media.example.test/videos/vid_live-1-${SECRET}/seg000000.m4s`
+    )
+  })
+
+  it('reads a secret-path video’s playlists from its secret prefix, signed', async function () {
+    const asked: string[] = []
+    const playback = new SpacePlayback({
+      space: SPACE,
+      expiresSec: 3600,
+      fetch: async (url: string | URL | Request) => {
+        asked.push(url instanceof Request ? url.url : url.toString())
+        return new Response(LIVE_BODY)
+      }
+    })
+    await playback.get(video, 'index.m3u8', false)
+    await playback.playlists.get(video, 'master.m3u8')
+    expect(asked.map(url => new URL(url).pathname)).deep.equals([
+      `/videos/vid_live-1-${SECRET}/index.m3u8`,
+      `/videos/vid_live-1-${SECRET}/master.m3u8`
+    ])
+    for (const url of asked) expect(url).contains('X-Amz-Signature=')
   })
 })

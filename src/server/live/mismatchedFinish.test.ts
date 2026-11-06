@@ -475,6 +475,22 @@ describe('two configurations apart on the clock', function () {
     ).equals(true)
   })
 
+  it('reads the span through a reader of pieces the disk no longer holds', async function () {
+    expect(spanLive).above(0)
+    // The first piece gone from disk, as the tail deletes it; the reader has it.
+    const first = /seg\d+\.m4s/.exec(live)![0]
+    const held = await readFile(join(dir, first))
+    await rm(join(dir, first))
+    try {
+      expect(await recordingSpanSec(dir, live)).equals(undefined)
+      const read = async (path: string): Promise<Uint8Array> =>
+        path.endsWith(first) ? held : await readFile(path)
+      expect(await recordingSpanSec(dir, live, read)).equals(spanLive)
+    } finally {
+      await writeFile(join(dir, first), held)
+    }
+  })
+
   it('has no span to read from a playlist of one configuration or none it can read', async function () {
     expect(await recordingSpanSec(dir, '#EXTM3U\n')).equals(undefined)
     const missing = live.replace(/seg\d+\.m4s/g, 'seg999999.m4s')

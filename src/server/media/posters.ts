@@ -49,6 +49,8 @@ export interface PosterVideo {
   gameId: string
   videoId: string
   storage: 'peertube' | 'local' | 'spaces'
+  /** Where its media is in the Space, for the frame the poster is cut from. */
+  spaceSecret: string | null
   durationSec: number | null
 }
 
@@ -66,7 +68,14 @@ export async function postersFor(
   if (gameIds.length === 0) return new Map()
   const rows = await db
     .selectFrom('videos')
-    .select(['id', 'game_id', 'storage', 'duration_sec', 'num_cameras'])
+    .select([
+      'id',
+      'game_id',
+      'storage',
+      'space_secret',
+      'duration_sec',
+      'num_cameras'
+    ])
     .where('game_id', 'in', gameIds)
     .where('hidden', '=', false)
     .where('status', '=', 'ready')
@@ -86,6 +95,7 @@ export async function postersFor(
         gameId: row.game_id,
         videoId: row.id,
         storage: row.storage,
+        spaceSecret: row.space_secret,
         durationSec: row.duration_sec
       }
     })
@@ -109,7 +119,8 @@ export async function warmPosters(
         mediaRoot: media.mediaRoot,
         space: media.space,
         storage: poster.storage,
-        videoId: poster.videoId
+        videoId: poster.videoId,
+        spaceSecret: poster.spaceSecret
       })
       if (source == null) continue
       await warmStills({
