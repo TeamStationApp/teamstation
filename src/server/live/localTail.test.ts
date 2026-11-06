@@ -451,6 +451,47 @@ describe('the ingest keeps only the newest pieces on disk (M4)', function () {
     )
   })
 
+  it('closes a tailed recording with the same anchors when its reads back from the Space fail once each', async () => {
+    await live(5)
+    const count = stamped.segments.length
+    const startMs = Date.now() - 60_000
+    for (const step of [10, 20, count]) {
+      await grow(stamped, Math.min(step, count), startMs)
+      await settle(Math.min(step, count))
+    }
+    expect(await pieces()).not.includes('seg000001.m4s')
+    const expected = await readRecordingStamps(stamped.dir, {
+      playlistFile: 'master.m3u8'
+    })
+    // The anchors read every deleted piece back; each answers 503 the first
+    // time it is asked, as a Space slowing down does.
+    for (let n = 1; n < 20; n++)
+      f.store.faults.set({
+        method: 'GET',
+        key: new RegExp(`seg${String(n).padStart(6, '0')}\\.m4s$`),
+        status: 503,
+        times: 1
+      })
+    f.requests.length = 0
+    await finishStream(f.options, f.stream.id, 'Finished')
+    await drainPublishForTest(f.videoId)
+    expect((await f.row())?.spaces_verified_at).not.equals(null)
+    const actual = await f.f.h.db
+      .selectFrom('video_wall_anchors')
+      .selectAll()
+      .where('video_id', '=', f.videoId)
+      .where('source', '=', 'sei')
+      .orderBy('media_ms')
+      .execute()
+    expect(
+      actual.map(a => [a.media_ms, new Date(a.wall).getTime()])
+    ).deep.equals(expected.points.map(p => [p.mediaMs, p.wallMs]))
+    const asked = f.requests.filter(
+      r => r.method === 'GET' && r.key.endsWith('seg000001.m4s')
+    )
+    expect(asked.length).at.least(2)
+  })
+
   it('gets the same duration and sound check from a tailed close as from the recording whole on disk', async () => {
     await live(20)
     const startMs = Date.now() - 100_000

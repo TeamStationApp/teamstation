@@ -28,6 +28,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { startFakeSpace } from '../dev/fakeSpace'
 import type { ProbedStream } from '../media/ffmpeg'
 import type { SpaceSettings } from '../media/spacesHls'
+import type { PartReader } from '../media/wallClockScan'
 import type { PictureSize } from './finishVideo'
 import {
   OriginPublisher,
@@ -1139,6 +1140,66 @@ describe('publishing a live origin', function () {
 })
 
 describe('reading a deleted piece back from the Space', function () {
+  /** A Space answering each GET with the next status, then 200 and the piece. */
+  async function answering(
+    statuses: number[]
+  ): Promise<{ read: PartReader; asked: () => number; close: () => void }> {
+    let asked = 0
+    const server = createServer((_req, res) => {
+      const status = statuses[asked++] ?? 200
+      res.writeHead(status).end(status === 200 ? 'fragment 0' : '')
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    return {
+      read: spacePartReader(
+        {
+          endpoint: `http://127.0.0.1:${port}`,
+          region: 'test',
+          bucket: 'test',
+          accessKeyId: 'example',
+          secretAccessKey: 'example',
+          pathStyle: true
+        },
+        { id: 'vid_origin', spaceSecret: null },
+        { retryMs: 0 }
+      ),
+      asked: () => asked,
+      close: () => {
+        server.closeAllConnections()
+        server.close()
+      }
+    }
+  }
+  const gone = join(tmpdir(), 'tsPartReaderGone', segment(0))
+
+  it('asks again after a 5xx or a slow-down, three times in all', async () => {
+    const once = await answering([503])
+    try {
+      expect(Buffer.from(await once.read(gone)).toString()).equals('fragment 0')
+      expect(once.asked()).equals(2)
+    } finally {
+      once.close()
+    }
+    const always = await answering([500, 429, 503, 200])
+    try {
+      expect(await failure(always.read(gone))).contains('answered 503')
+      expect(always.asked()).equals(3)
+    } finally {
+      always.close()
+    }
+  })
+
+  it('fails at once on an answer the Space will give again', async () => {
+    const missing = await answering([404])
+    try {
+      expect(await failure(missing.read(gone))).contains('answered 404')
+      expect(missing.asked()).equals(1)
+    } finally {
+      missing.close()
+    }
+  })
+
   it('gives up on a read that stalls, rather than holding the close', async () => {
     // Accepts the connection and never answers.
     const server = createServer(() => {})
@@ -1156,7 +1217,7 @@ describe('reading a deleted piece back from the Space', function () {
           pathStyle: true
         },
         { id: 'vid_origin', spaceSecret: null },
-        100
+        { timeoutMs: 100, attempts: 2, retryMs: 0 }
       )
       const started = Date.now()
       expect(await failure(read(join(folder, segment(0))))).matches(
