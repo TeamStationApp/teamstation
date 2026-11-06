@@ -29,11 +29,14 @@ export function rosterResponder(
   // The lists lock the moment the hold fires, while the finger is still: on
   // iOS the first move would otherwise start the list's own pan, which takes
   // the touch before this row can be granted it.
-  const hold = new RosterHold(p => {
-    const latest = current()
-    if (latest.playerId != null && latest.disabled !== true)
-      engine.begin(latest.playerId, latest.label ?? '', p, source)
-  })
+  const hold = new RosterHold(
+    p => {
+      const latest = current()
+      if (latest.playerId != null && latest.disabled !== true)
+        engine.begin(latest.playerId, latest.label ?? '', p, source)
+    },
+    () => current().immediate === true
+  )
   const cancel = (): void => {
     hold.cancel()
     owned = false
@@ -72,7 +75,12 @@ export function rosterResponder(
       if (!owned) end(e)
     },
     onTouchCancel: cancel,
-    onMoveShouldSetResponder: () => hold.active,
+    // An immediate card's drag starts on the move that crosses its distance;
+    // it claims the touch on that same move, before a parent pan can.
+    onMoveShouldSetResponder: e => {
+      hold.move(point(e))
+      return hold.active
+    },
     onResponderGrant: () => {
       owned = true
     },
@@ -146,6 +154,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       measure: async () => await measureRosterView(ref.current),
       clip,
       insertion: props.insertion,
+      fixed: props.fixed,
       drop: (id, edge) => {
         latest.current.onDropPlayer?.(id, edge)
       }
@@ -158,7 +167,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       clearInterval(timer)
       engine.targets.delete(token)
     }
-  }, [engine, clip, token, props.onDropPlayer, props.insertion])
+  }, [engine, clip, token, props.onDropPlayer, props.insertion, props.fixed])
   return (
     <View
       ref={ref}

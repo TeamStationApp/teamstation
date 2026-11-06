@@ -19,7 +19,11 @@ export const DEFENSE_LOCATIONS: Record<Position, readonly [number, number]> = {
   C: [50, 86]
 }
 
-/** Every position remains visible while only the roster scrolls. */
+/**
+ * Every position remains visible while only the roster scrolls. An assigned
+ * card drags with no hold, so its player moves to an empty position or swaps
+ * with the fielder at an occupied one; a tap clears it.
+ */
 export function DefensiveField({
   defense,
   compact = false,
@@ -75,6 +79,9 @@ export function DefensiveField({
             >
               <RosterDrag
                 targetId={`defense-${position}`}
+                playerId={assigned ? id : undefined}
+                immediate
+                fixed
                 value={assigned ? display(id) : undefined}
                 label={assigned ? `Clear ${position}` : `Assign ${position}`}
                 onTap={

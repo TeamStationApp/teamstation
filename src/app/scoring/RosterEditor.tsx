@@ -86,11 +86,12 @@ import { ScoringPlayerCard, scoringPlayerCardStyle } from './ScoringPlayerCard'
 import { editRosterRows, lineupQrOffer } from './scoringRosterEdit'
 import { baseIds, battingSide } from './scoringSelectors'
 import { ScoringError, ScoringSheetHeight } from './ScoringSheet'
-import type {
-  Position,
-  ScoringSessionState,
-  ScoringState,
-  Side
+import {
+  type Position,
+  POSITIONS,
+  type ScoringSessionState,
+  type ScoringState,
+  type Side
 } from './scoringTypes'
 
 /** The roster screen's tabs: a coach's begins with the game's box score. */
@@ -101,6 +102,13 @@ export type RosterMode = 'boxScore' | RosterTab
  * team's, saves without leaving, and leaves by the screen's back chevron.
  */
 export type RosterAudience = 'scorekeeper' | 'coach'
+/**
+ * The Defense tab's instruction. A fielder on the field drags on his first
+ * move and clears on a tap; a roster card still takes a brief hold on touch,
+ * so the list scrolls.
+ */
+const DEFENSE_INSTRUCTION =
+  'Drag a player into position (on touch, hold a roster card briefly first). Drag a fielder to move or swap him; tap him to clear.'
 /** Each tab's label, which is also its accessible name. */
 export const ROSTER_MODE_LABELS: Record<RosterMode, string> = {
   boxScore: 'Box',
@@ -651,6 +659,13 @@ export function RosterEditor({
       next.liveData.boxscore.teams[side].battingOrder = []
     })
   }
+  /** Clear: every position, the pitcher's too, is empty. */
+  const clearDefense = (): void => {
+    edit(next => {
+      const field = next.liveData.boxscore.teams[side].defense
+      for (const position of POSITIONS) field[position] = null
+    })
+  }
   const validation = rosterError(
     state.session,
     setupOf(draft),
@@ -804,9 +819,9 @@ export function RosterEditor({
           <GameRosterHeader information={coach} />
         ) : (
           !boxScore && (
-            <Text numberOfLines={defense ? 1 : undefined} style={text}>
+            <Text numberOfLines={defense ? 3 : undefined} style={text}>
               {defense
-                ? 'Drag player into position. On touch, hold briefly first.'
+                ? DEFENSE_INSTRUCTION
                 : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
             </Text>
           )
@@ -935,14 +950,15 @@ export function RosterEditor({
                 compact={height < 500}
                 display={display}
                 onPlace={(player, position) => {
-                  if (
-                    !team.players.includes(player) ||
-                    assigned.includes(player)
-                  )
-                    return
+                  if (!team.players.includes(player)) return
                   edit(next => {
-                    next.liveData.boxscore.teams[side].defense[position] =
-                      player
+                    const field = next.liveData.boxscore.teams[side].defense
+                    const from = POSITIONS.find(p => field[p] === player)
+                    if (from === position) return
+                    // A fielder dropped on another position swaps with the
+                    // man there; a roster card replaces him.
+                    if (from != null) field[from] = field[position] ?? null
+                    field[position] = player
                   })
                 }}
                 onClear={(position: Position) => {
@@ -959,13 +975,46 @@ export function RosterEditor({
                 gap: 6
               }}
             >
-              {(!dense || !defense) && (
+              {defense ? (
+                <View
+                  testID="Defense roster header"
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    height: dense ? 18 : 22
+                  }}
+                >
+                  <Text style={{ ...text, fontWeight: '700', flexShrink: 0 }}>
+                    Roster
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear Defense"
+                    hitSlop={8}
+                    onPress={clearDefense}
+                  >
+                    <Text
+                      selectable={false}
+                      style={{
+                        ...text,
+                        fontWeight: '700',
+                        flexShrink: 0,
+                        color: theme.scoringOutColor
+                      }}
+                    >
+                      Clear
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : (
                 <Text
                   style={{
                     ...text,
                     fontWeight: '700',
                     // Level with the Lineup header beside it.
-                    lineHeight: defense ? undefined : dense ? 20 : 28
+                    lineHeight: dense ? 20 : 28
                   }}
                 >
                   Roster

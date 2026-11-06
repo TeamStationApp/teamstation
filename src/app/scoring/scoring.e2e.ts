@@ -7924,3 +7924,220 @@ describe('lineup clear', function () {
     }
   })
 })
+
+/**
+ * E6: fielders drag between positions with no hold, and the defense has a red
+ * Clear. On the hosts' Defense tab a touch that moves 9 px is a tap and clears
+ * the position; one that moves 10 px lifts the card at once; a fielder dropped
+ * on an empty position moves there and one dropped on an occupied position
+ * swaps with the man there. Clear, level with Roster, empties every position,
+ * the pitcher's too, and scoring then waits for a pitcher. With
+ * TS_CAPTURE_ONLY=1 (the before pictures, taken on the base revision) only the
+ * pictures are taken, and nothing is asserted; pictures go to
+ * TS_SCORING_ARTIFACT_DIR as `<name>-<TS_ARTIFACT_PHASE>.png`.
+ */
+describe('fielder drag', function () {
+  this.timeout(180000)
+  const capturing = process.env.TS_CAPTURE_ONLY === '1'
+  const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
+  before(async function () {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.TS_CHROME_PATH,
+      args: [
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+        '--enable-unsafe-swiftshader'
+      ]
+    })
+  })
+  after(async function () {
+    await browser?.close()
+  })
+
+  async function openPhone(): Promise<Page> {
+    const { page } = await open('/games/g1/score')
+    await page.setViewport({
+      width: 402,
+      height: 874,
+      deviceScaleFactor: 2,
+      isMobile: true,
+      hasTouch: true
+    })
+    await page.waitForSelector('canvas[data-field-ready="true"]', {
+      timeout: 30000
+    })
+    return page
+  }
+  async function settle(page: Page): Promise<void> {
+    await page.waitForFunction(() =>
+      document
+        .getAnimations()
+        .every(animation => animation.playState !== 'running')
+    )
+    await new Promise(resolve => setTimeout(resolve, 300))
+  }
+  async function picture(page: Page, name: string): Promise<void> {
+    const dir = process.env.TS_SCORING_ARTIFACT_DIR
+    if (dir == null || dir === '') return
+    await mkdir(dir, { recursive: true })
+    await settle(page)
+    await page.screenshot({ path: join(dir, `${name}-${phase}.png`) })
+  }
+  /** The hosts' roster sheet, on its Defense tab: they field first. */
+  async function defenseTab(page: Page): Promise<void> {
+    await click(page, 'Open scoring menu')
+    await click(page, 'Set Team Rosters')
+    await page.waitForSelector('[aria-label="Save Rosters"]')
+    await click(page, 'Home Team')
+    await click(page, 'Defense')
+    await page.waitForSelector('[data-roster-target="defense-P"]', {
+      visible: true
+    })
+  }
+  const card = (position: string): string =>
+    `[data-roster-target="defense-${position}"]`
+  /** The player id at a position, or null when it is empty. */
+  async function fielder(page: Page, position: string): Promise<string | null> {
+    return await page.$eval(card(position), node =>
+      node.getAttribute('data-roster-player')
+    )
+  }
+  async function centre(
+    page: Page,
+    selector: string
+  ): Promise<[number, number]> {
+    return await page.$eval(selector, node => {
+      const r = node.getBoundingClientRect()
+      return [r.x + r.width / 2, r.y + r.height / 2] as [number, number]
+    })
+  }
+  /**
+   * A touch on `position`'s card that travels `distance` px right, with no
+   * hold, then on to `target` when given. Resolves whether the card lifted
+   * within 400 ms of the move.
+   */
+  async function touchDrag(
+    page: Page,
+    position: string,
+    distance: number,
+    target?: string
+  ): Promise<boolean> {
+    const [x, y] = await centre(page, card(position))
+    await page.touchscreen.touchStart(x, y)
+    await page.touchscreen.touchMove(x + distance, y)
+    const lifted = await page
+      .waitForSelector('[data-testid="Roster dragged card"]', { timeout: 400 })
+      .then(
+        () => true,
+        () => false
+      )
+    if (target != null) {
+      const [tx, ty] = await centre(page, card(target))
+      for (let step = 1; step <= 8; step++)
+        await page.touchscreen.touchMove(
+          x + distance + ((tx - x - distance) * step) / 8,
+          y + ((ty - y) * step) / 8
+        )
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    await page.touchscreen.touchEnd()
+    await settle(page)
+    return lifted
+  }
+
+  it('drags fielders with no hold, swaps on an occupied position, and clears the defense from the red Clear level with Roster', async function () {
+    const page = await openPhone()
+    try {
+      await defenseTab(page)
+      await picture(page, 'defense-header')
+      if (!capturing) {
+        const header = await page.$eval(
+          '[data-testid="Defense roster header"]',
+          node => {
+            const words = Array.from(node.querySelectorAll('*'))
+              .filter(
+                each =>
+                  each.children.length === 0 &&
+                  ['Roster', 'Clear'].includes(String(each.textContent))
+              )
+              .map(each => {
+                const r = each.getBoundingClientRect()
+                return {
+                  text: String(each.textContent),
+                  left: r.left,
+                  right: r.right,
+                  top: r.top,
+                  color: window.getComputedStyle(each).color,
+                  clipped: each.scrollWidth > each.clientWidth + 1
+                }
+              })
+            return { words, right: node.getBoundingClientRect().right }
+          }
+        )
+        const roster = header.words.find(word => word.text === 'Roster')!
+        const clear = header.words.find(word => word.text === 'Clear')!
+        expect(roster, 'Roster').not.equals(undefined)
+        expect(clear, 'Clear').not.equals(undefined)
+        // One row: Roster on the left, a red Clear right-justified.
+        expect(clear.left).greaterThan(roster.right)
+        expect(Math.abs(clear.right - header.right)).lessThan(2)
+        expect(Math.abs(clear.top - roster.top)).lessThan(4)
+        expect(clear.clipped || roster.clipped).equals(false)
+        expect(clear.color).equals('rgb(168, 53, 53)')
+      }
+      // Swap: first base's man dropped on short trades places with him.
+      const first = await fielder(page, '1B')
+      const short = await fielder(page, 'SS')
+      const swapLifted = await touchDrag(page, '1B', 12, 'SS')
+      await picture(page, 'fielder-swap')
+      if (capturing) return
+      expect(swapLifted, 'lifted with no hold').equals(true)
+      expect(await fielder(page, 'SS')).equals(first)
+      expect(await fielder(page, '1B')).equals(short)
+      // A 9 px touch is a tap: the catcher's spot empties.
+      const catcher = await fielder(page, 'C')
+      expect(catcher).not.equals(null)
+      expect(await touchDrag(page, 'C', 9)).equals(false)
+      expect(await fielder(page, 'C')).equals(null)
+      // A 10 px touch lifts the pitcher at once; dropped on the empty
+      // catcher's spot he moves there and the mound empties.
+      const pitcher = await fielder(page, 'P')
+      expect(await touchDrag(page, 'P', 10, 'C')).equals(true)
+      expect(await fielder(page, 'C')).equals(pitcher)
+      expect(await fielder(page, 'P')).equals(null)
+      // Clear empties every position.
+      await click(page, 'Clear Defense')
+      for (const position of [
+        'P',
+        'C',
+        '1B',
+        '2B',
+        'SS',
+        '3B',
+        'LF',
+        'CF',
+        'RF'
+      ])
+        expect(await fielder(page, position), position).equals(null)
+      await click(page, 'Save Rosters')
+      await page.waitForFunction(
+        () => document.querySelector('[aria-label="Save Rosters"]') == null,
+        { timeout: 30000 }
+      )
+      // Scoring waits for a pitcher.
+      await page.waitForFunction(
+        () => document.body.innerText.includes('Assign a pitcher'),
+        { timeout: 30000 }
+      )
+      expect(
+        await page.$eval(
+          '[aria-label="Ball"]',
+          node => node.getAttribute('aria-disabled') === 'true'
+        )
+      ).equals(true)
+    } finally {
+      await page.close()
+    }
+  })
+})
