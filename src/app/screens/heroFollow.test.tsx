@@ -26,15 +26,30 @@ function control(label: string): HTMLElement | undefined {
   )
 }
 
+const NAMES = {
+  team: 'Demo Hawks',
+  season: 'Demo Spring',
+  league: 'Demo League'
+} as const
+const SETTINGS = {
+  team: 'Team settings',
+  season: 'Season settings',
+  league: 'League settings'
+} as const
+
 function client(
-  kind: 'team' | 'season',
-  access: { canManage: boolean; canViewPrivate: boolean },
+  kind: 'team' | 'season' | 'league',
+  access: {
+    canManage: boolean
+    canViewPrivate: boolean
+    canSeePeople?: boolean
+  },
   followed: boolean
 ): { api: TeamStationClient; calls: string[] } {
   const group = asPublicGroup({
     id: `${kind}_demo`,
     kind,
-    name: kind === 'team' ? 'Demo Hawks' : 'Demo Spring',
+    name: NAMES[kind],
     imageUrl: null,
     locality: null
   })
@@ -50,7 +65,12 @@ function client(
       games: [],
       staff: [],
       nonMemberView: false,
-      ...access
+      ...access,
+      // A league member reads its people. canViewPrivate stays a team and
+      // season signal, so a league says belonging here.
+      ...(kind === 'league' && access.canSeePeople == null
+        ? { canSeePeople: access.canViewPrivate }
+        : {})
     })
   api.follows = async () => (followed ? [group] : [])
   api.follow = async ref => {
@@ -94,10 +114,10 @@ async function mount(api: TeamStationClient, kind: GroupKind): Promise<void> {
   await settle()
 }
 
-describe('Follow on a team or season hero', () => {
-  for (const kind of ['team', 'season'] as const) {
-    const name = kind === 'team' ? 'Demo Hawks' : 'Demo Spring'
-    const settings = kind === 'team' ? 'Team settings' : 'Season settings'
+describe('Follow on a league, season or team hero', () => {
+  for (const kind of ['league', 'team', 'season'] as const) {
+    const name = NAMES[kind]
+    const settings = SETTINGS[kind]
     it(`lets a visitor follow and unfollow a ${kind} where the gear would be`, async () => {
       const { api, calls } = client(
         kind,
@@ -149,4 +169,15 @@ describe('Follow on a team or season hero', () => {
       expect(control(`Unfollow ${name}`)).equals(undefined)
     })
   }
+  it('offers no Follow to a league member, who can see its people', async () => {
+    const { api } = client(
+      'league',
+      { canManage: false, canViewPrivate: false, canSeePeople: true },
+      true
+    )
+    await mount(api, 'league')
+    expect(control('League settings')).equals(undefined)
+    expect(control('Follow Demo League')).equals(undefined)
+    expect(control('Unfollow Demo League')).equals(undefined)
+  })
 })

@@ -5,9 +5,9 @@ import type { GroupRef } from '../../common/groupCreation'
 import { Button } from './Button'
 
 /**
- * Follow, or Following to stop, for a team or season somebody neither runs
- * nor belongs to. It asks for the person's follows itself, and draws nothing
- * until it knows — or at all when nobody is signed in.
+ * Follow, or Following to stop, for a league, season or team somebody neither
+ * runs nor belongs to. It asks for the person's follows itself, and draws
+ * nothing until it knows — or at all when nobody is signed in.
  *
  * Following changes no access: it only puts the group on the person's Home.
  */

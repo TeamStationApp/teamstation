@@ -19,6 +19,7 @@ import {
   teamsPlayedOnNow,
   teamsUnder
 } from '../access'
+import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
 import { heldAt } from '../invites/grants'
@@ -149,7 +150,8 @@ export async function teamRoster(
       family,
       songs: await teamWalkUpSongs(db, teamId),
       teamId,
-      includeFullNames
+      includeFullNames,
+      selfIds: await viewerIds(db, viewer)
     }
   )
 }
@@ -172,7 +174,8 @@ export async function teamRoster(
 export async function levelPeople(
   db: Kysely<Database>,
   space: MediaContext['space'] | undefined,
-  ref: { kind: 'season' | 'league'; id: string }
+  ref: { kind: 'season' | 'league'; id: string },
+  viewer?: { userId: string; isAdmin: boolean }
 ): Promise<RosterEntry[] | undefined> {
   let levels: { seasonIds: string[]; leagueIds: string[] }
   if (ref.kind === 'season') {
@@ -281,8 +284,23 @@ export async function levelPeople(
         new Set(players.keys())
       ))
     ],
-    { ownLevel: ref.kind, given, memberLevels, family }
+    {
+      ownLevel: ref.kind,
+      given,
+      memberLevels,
+      family,
+      selfIds: await viewerIds(db, viewer)
+    }
   )
+}
+
+/** Every id of the signed-in person, so a merged row still matches. */
+async function viewerIds(
+  db: Kysely<Database>,
+  viewer: { userId: string } | undefined
+): Promise<ReadonlySet<string>> {
+  if (viewer == null) return new Set()
+  return new Set((await onePerson(db, viewer.userId)).userIds)
 }
 
 /** A team's roster, or a season's or league's people list. */
@@ -293,7 +311,7 @@ export async function peopleAt(
   viewer?: { userId: string; isAdmin: boolean }
 ): Promise<RosterEntry[] | undefined> {
   if (ref.kind !== 'team')
-    return await levelPeople(db, space, { kind: ref.kind, id: ref.id })
+    return await levelPeople(db, space, { kind: ref.kind, id: ref.id }, viewer)
   const team = await db
     .selectFrom('teams')
     .select('id')
@@ -482,6 +500,8 @@ async function sectionPeople(
      * a team's roster read by whoever manages it, as the route decides.
      */
     includeFullNames?: boolean
+    /** Ids of the signed-in person. Every other row is somebody else. */
+    selfIds?: ReadonlySet<string>
   }
 ): Promise<RosterEntry[]> {
   const headCoach =
@@ -607,6 +627,7 @@ async function sectionPeople(
         jersey: row.jersey,
         positions: row.positions,
         isPlayer: row.isPlayer,
+        self: facts.selfIds?.has(row.userId) === true,
         role: row.role,
         ...place,
         ...(headCoach?.userId === row.userId ? { isHeadCoach: true } : {}),

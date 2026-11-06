@@ -34,6 +34,7 @@ export function mintedRosterEntry(
     jersey: player.jersey,
     positions: [...player.positions],
     isPlayer: true,
+    self: false,
     role: 'member',
     bats: player.bats,
     throws: player.throws,

@@ -1368,6 +1368,10 @@ const cleanRosterEntry = asObject({
   positions: asArray(asString),
   isPlayer: asBoolean,
   /**
+   * The signed-in person, including a merged id of theirs. Absent means no.
+   */
+  self: asOptional(asBoolean, false),
+  /**
    * A guest who already existed, added for this game only: their name and
    * hands are their own, and only their jersey and positions are the game's.
    */
@@ -2462,7 +2466,12 @@ export const asProfileSection = asObject({
   roles: asArray(asRole),
   member: asBoolean,
   follower: asBoolean,
-  editable: asBoolean
+  editable: asBoolean,
+  /**
+   * A team membership that is a player. Absent, and every season or league
+   * section, means no.
+   */
+  player: asOptional(asBoolean, false)
 })
 export type ProfileSection = Omit<
   ReturnType<typeof asProfileSection>,
@@ -2499,7 +2508,11 @@ export const asPersonProfile = asObject({
     /** An administrator, coach or assistant of the level: the role switches. */
     manages: asBoolean,
     /** An administrator of it: the Admin row too. */
-    admin: asBoolean
+    admin: asBoolean,
+    /**
+     * The signed-in person, including a merged id of theirs. Absent means no.
+     */
+    self: asOptional(asBoolean, false)
   })
 })
 export type PersonProfile = Omit<
