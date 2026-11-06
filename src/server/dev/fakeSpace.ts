@@ -29,6 +29,8 @@ export interface FakeSpaceFault {
   status?: number
   truncateTo?: number
   readBack?: Buffer
+  /** Applies to this many requests, then no more; every one by default. */
+  times?: number
 }
 
 export class FakeSpaceFaults {
@@ -43,12 +45,15 @@ export class FakeSpaceFaults {
   }
 
   matching(method: string, key: string): FakeSpaceFault[] {
-    return this.rules.filter(rule => {
+    const matched = this.rules.filter(rule => {
       if (rule.method != null && rule.method !== method) return false
       if (rule.key == null) return true
       rule.key.lastIndex = 0
       return rule.key.test(key)
     })
+    for (const rule of matched) if (rule.times != null) rule.times--
+    this.rules = this.rules.filter(rule => rule.times == null || rule.times > 0)
+    return matched
   }
 }
 

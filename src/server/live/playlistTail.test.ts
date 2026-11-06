@@ -15,7 +15,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 import { parseMediaPlaylist } from '../media/wallClockScan'
-import { publishedPlaylist } from './originPublish'
+import { publishedPlaylist, segmentEndsMs } from './originPublish'
 import {
   HELD_PLAYLISTS,
   PlaylistTail,
@@ -94,6 +94,9 @@ function expectParsedAs(view: PlaylistView, text: string): void {
     start += segment.durationSec * 1000
   }
   expect(view.startMs(media.length)).equals(start)
+  expect(
+    Array.from({ length: view.count }, (_, i) => view.endMs(i))
+  ).deep.equals(segmentEndsMs(text))
   const listed = listedSegments(text)
   expect(view.listedCount).equals(listed.length)
   expect(
