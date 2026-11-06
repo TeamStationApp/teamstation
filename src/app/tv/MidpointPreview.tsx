@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react'
+import React, { useMemo, useRef, useState } from 'react'
 import { Platform, StyleSheet } from 'react-native'
 import Video, { type VideoRef } from 'react-native-video'
 
@@ -27,6 +27,7 @@ export function MidpointPreview({
   uri,
   live,
   muted,
+  paused = false,
   testID,
   onError,
   onPosition
@@ -34,10 +35,12 @@ export function MidpointPreview({
   uri: string
   live: boolean
   muted: boolean
+  paused?: boolean
   testID: string
   onError: () => void
   onPosition?: (seconds: number) => void
 }): React.ReactElement {
+  const source = useMemo(() => ({ uri }), [uri])
   const ref = useRef<VideoRef>(null)
   const midpoint = useRef<number | null>(null)
   const [ready, setReady] = useState(false)
@@ -48,12 +51,12 @@ export function MidpointPreview({
       testID={testID}
       accessibilityLabel="Video preview"
       accessibilityValue={{ text: `${position} seconds` }}
-      source={{ uri }}
+      source={source}
       style={[StyleSheet.absoluteFill, { opacity: ready ? 1 : 0 }]}
       resizeMode="cover"
-      muted={muted}
+      muted={muted || paused}
       volume={Platform.OS === 'web' ? 60 : 0.6}
-      paused={!ready}
+      paused={!ready || paused}
       repeat={false}
       controls={false}
       playInBackground={false}

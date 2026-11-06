@@ -470,6 +470,15 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
   [poster removeReactSubview:video]; [poster didUpdateReactSubviews];
   XCTAssertTrue(poster.previewSurface.hidden);
 }
+- (void)testFocusIsVisibleBeforePosterArtworkLoads {
+  TVPosterView *poster = [[TVPosterView alloc] initWithFrame:CGRectMake(0,0,300,170)];
+  UIColor *idle = poster.backgroundColor;
+  XCTAssertNil(poster.image);
+  poster.previewFocused = YES;
+  XCTAssertNotEqualObjects(poster.backgroundColor,idle);
+  poster.previewFocused = NO;
+  XCTAssertEqualObjects(poster.backgroundColor,idle);
+}
 - (void)testPosterReuseAndFailure {
   [NSURLProtocol registerClass:TVFixtureProtocol.class];
   TVPosterView *poster = [[TVPosterView alloc] initWithFrame:CGRectMake(0,0,300,180)];

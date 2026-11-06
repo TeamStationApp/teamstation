@@ -8,6 +8,15 @@ import {
   type ViewProps
 } from 'react-native'
 
+// UIKit stops lifting the poster in Reduce Motion; its container clips the still and video together.
+export const reducedMotionThumbnail = {
+  borderRadius: 12,
+  overflow: 'hidden'
+} as const
+export const focusMagnification = 1.16
+/** With Reduce Motion, change size immediately instead of lifting or tilting. */
+export const staticTileFocus = { transform: [{ scale: focusMagnification }] }
+
 export interface TvSearchItem {
   id: string
   title: string

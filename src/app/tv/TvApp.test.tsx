@@ -113,14 +113,18 @@ describe('TV app presentation', () => {
     await act(async () => {
       await pause(3200)
     })
-    expect(document.body.textContent).contains('Welcome, Babe Ruth')
+    expect(document.body.textContent)
+      .contains('Welcome, Babe')
+      .and.not.contains('Welcome, Babe Ruth')
     await press('Sign out')
     expect(document.body.textContent).contains('ABCD–EFGH')
   })
   it('restores a saved session and retries recoverable failures', async () => {
     setup(JSON.stringify({ origin: 'https://example.test/api/v1', session }))
     await render()
-    expect(document.body.textContent).contains('Welcome, Babe Ruth')
+    expect(document.body.textContent)
+      .contains('Welcome, Babe')
+      .and.not.contains('Welcome, Babe Ruth')
     await act(async () => {
       root!.unmount()
     })
