@@ -103,6 +103,11 @@ import {
 const LOCAL_TICK_MS = 1000
 /** How long a sync waits after a notice, so a burst of them is one sync. */
 const NOTICE_COALESCE_MS = 100
+/**
+ * How long the listing of an old video's prefix may take before the video
+ * stays on that path, as if it could not be listed.
+ */
+const ORIGIN_LIST_TIMEOUT_MS = 5000
 /** How far past a row's deadline its sync runs, so the deadline has passed. */
 const DEADLINE_SLACK_MS = 5
 /** Why a stream whose recording an upload replaced was closed. */
@@ -183,6 +188,8 @@ export interface LiveControllerOptions {
   playlistPrefix?: string
   /** The local timer's period: a test runs it faster. */
   tickMs?: number
+  /** How long the listing that decides an old video's secret may take. */
+  listTimeoutMs?: number
 }
 
 interface Tracked {
@@ -365,15 +372,17 @@ async function originSecret(
 ): Promise<string | null> {
   const { db, space } = current
   if (held != null || space == null || !spaceConfigured(space)) return held
-  // A Space that cannot be listed leaves it on its old path, as it was.
-  const listed = await listSpaceObjects(space, oldVideoPrefix(videoId)).catch(
-    (error: unknown) => {
-      ;(current.log ?? console.log)(
-        `live: ${videoId} stays on its old path: ${String(error)}`
-      )
-      return undefined
-    }
-  )
+  // A Space that cannot be listed leaves it on its old path, as it was; so
+  // does one that does not answer in time, which would otherwise hold the
+  // start (every stream's restore waits on it) or the reconnect for minutes.
+  const listed = await listSpaceObjects(space, oldVideoPrefix(videoId), {
+    timeoutMs: current.listTimeoutMs ?? ORIGIN_LIST_TIMEOUT_MS
+  }).catch((error: unknown) => {
+    ;(current.log ?? console.log)(
+      `live: ${videoId} stays on its old path: ${String(error)}`
+    )
+    return undefined
+  })
   // Stills stay under the old prefix whatever the secret, as the move script
   // leaves them: only media there would split the recording.
   if (

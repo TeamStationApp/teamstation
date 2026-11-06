@@ -105,6 +105,22 @@ describe('a live origin under its secret path', function () {
     ).deep.equals([`videos/${f.videoId}/stills/3.jpg`])
   })
 
+  it('keeps a row from before secrets on its old path when the Space does not answer the listing in time', async () => {
+    await forgetSecret()
+    f.options.listTimeoutMs = 200
+    // The listing of its old prefix hangs, as a stalled Space does.
+    f.store.faults.set({ method: 'GET', key: /^$/, delayMs: 3000, times: 1 })
+    await f.stage(3)
+    const started = Date.now()
+    await f.begin()
+    await drainPublishForTest(f.videoId)
+    expect(Date.now() - started).below(2500)
+    expect(await secretOf()).equals(null)
+    expect(
+      await listSpaceObjects(f.f.h.space, `videos/${f.videoId}/`)
+    ).includes(`videos/${f.videoId}/index.m3u8`)
+  })
+
   it('keeps a row with objects on its old path there, private, with no secret', async () => {
     await forgetSecret()
     const sent: Array<string | undefined> = []

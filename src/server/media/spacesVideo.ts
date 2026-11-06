@@ -239,9 +239,17 @@ function signed(
 /** Every key under a prefix, following the continuation token to the end. */
 export async function listSpaceObjects(
   space: SpaceSettings,
-  prefix: string
+  prefix: string,
+  options: ListOptions = {}
 ): Promise<string[]> {
-  return (await listSpaceObjectEntries(space, prefix)).map(entry => entry.key)
+  return (await listSpaceObjectEntries(space, prefix, options)).map(
+    entry => entry.key
+  )
+}
+
+/** A listing whose every page must answer within `timeoutMs`, when given. */
+export interface ListOptions {
+  timeoutMs?: number
 }
 
 export interface SpaceObjectEntry {
@@ -253,7 +261,8 @@ export interface SpaceObjectEntry {
 /** List metadata lets a restarted publisher recognize unchanged single PUTs. */
 export async function listSpaceObjectEntries(
   space: SpaceSettings,
-  prefix: string
+  prefix: string,
+  { timeoutMs }: ListOptions = {}
 ): Promise<SpaceObjectEntry[]> {
   const entries: SpaceObjectEntry[] = []
   let token: string | undefined
@@ -262,7 +271,8 @@ export async function listSpaceObjectEntries(
     const query: Record<string, string> = { 'list-type': '2', prefix }
     if (token != null) query['continuation-token'] = token
     const response = await fetch(
-      signed(space, { method: 'GET', key: '', query })
+      signed(space, { method: 'GET', key: '', query }),
+      timeoutMs == null ? {} : { signal: AbortSignal.timeout(timeoutMs) }
     )
     if (!response.ok) {
       await response.body?.cancel()
