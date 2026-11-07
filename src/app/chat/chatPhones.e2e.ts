@@ -557,6 +557,10 @@ async function main(): Promise<void> {
     device: required('CHAT_DEVICE'),
     platform,
     appId: APP,
+    // A real iPhone clears the app's state by reinstalling it from this file.
+    ...(process.env.CHAT_APP_FILE == null
+      ? {}
+      : { appFile: process.env.CHAT_APP_FILE }),
     artifacts: 'on-failure'
   })
   try {
