@@ -132,6 +132,23 @@ describe('the feed relay', function () {
     )
     for (const feed of feeds) await feed.close()
     await poker.end()
+    // A relay waits only HANG_UP_WAIT_MS for its connection to close, so on a
+    // slow machine the connection outlives `stop()`. Dropped with force under
+    // it, its client hears the termination with nothing listening, and the
+    // whole file fails here. Wait until nothing is connected.
+    const connected = async (database: string): Promise<number> =>
+      (
+        await admin.query(
+          'select pid from pg_stat_activity where datname = $1',
+          [database]
+        )
+      ).rows.length
+    await until(
+      async () =>
+        (await connected(scratchName)) === 0 &&
+        (await connected(otherName)) === 0,
+      'the test databases with no connection left'
+    )
     await admin.query(`drop database if exists ${scratchName} with (force)`)
     await admin.query(`drop database if exists ${otherName} with (force)`)
     await admin.end()
@@ -687,13 +704,19 @@ describe('the feed relay', function () {
     expect(config.connectionTimeoutMillis).greaterThan(0)
     const client = new Client(config)
     await client.connect()
-    const show = async (name: string): Promise<string> =>
-      (await client.query<Record<string, string>>(`show ${name}`)).rows[0][name]
-    expect(await show('tcp_user_timeout')).matches(/^(30000|30s)$/)
-    expect(await show('tcp_keepalives_idle')).equals('10')
-    expect(await show('tcp_keepalives_interval')).equals('5')
-    expect(await show('tcp_keepalives_count')).equals('3')
-    await client.end()
+    // Closed whatever the settings say, or the teardown's forced drop finds it.
+    try {
+      const show = async (name: string): Promise<string> =>
+        (await client.query<Record<string, string>>(`show ${name}`)).rows[0][
+          name
+        ]
+      expect(await show('tcp_user_timeout')).matches(/^(30000|30s)$/)
+      expect(await show('tcp_keepalives_idle')).equals('10')
+      expect(await show('tcp_keepalives_interval')).equals('5')
+      expect(await show('tcp_keepalives_count')).equals('3')
+    } finally {
+      await client.end()
+    }
   })
 
   describe('feedProbe', function () {
