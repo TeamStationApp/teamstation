@@ -709,6 +709,10 @@ async function main(): Promise<void> {
     device = await daemon.attach({
       device: deviceId,
       platform,
+      // A leased iPhone adds photos on the device itself, through devicelab.
+      ...(process.env.CHAT_UI_NATIVE_DRIVER == null
+        ? {}
+        : { driver: process.env.CHAT_UI_NATIVE_DRIVER }),
       appId: fixture.appId,
       appFile,
       artifacts: 'none',
