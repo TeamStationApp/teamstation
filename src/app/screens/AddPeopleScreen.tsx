@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
@@ -11,6 +11,10 @@ import { adminLabel, flagLabel } from '../components/roleLabels'
 import { RoleSwitches } from '../components/RoleSwitches'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import {
+  PeopleAccountSearch,
+  type SelectedAccount
+} from './PeopleAccountSearch'
 
 export function AddPeopleScreen({
   client,
@@ -27,6 +31,7 @@ export function AddPeopleScreen({
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const [addresses, setAddresses] = useState('')
+  const [selected, setSelected] = useState<SelectedAccount[]>([])
   const [roles, setRoles] = useState<{ admin: boolean; flags: RoleFlag[] }>({
     admin: false,
     flags: []
@@ -39,11 +44,16 @@ export function AddPeopleScreen({
   const keys = useRef(new Map<string, string>())
   const working = useRef(false)
   const begin = useLatestRequest()
+  const [dismissSearch, setDismissSearch] = useState(0)
+  useEffect(() => {
+    begin()
+    setSelected([])
+  }, [group.kind, group.id, begin])
   const parsed = parseEmailList(addresses)
   const send = async (): Promise<void> => {
     if (
       working.current ||
-      parsed.valid.length === 0 ||
+      (parsed.valid.length === 0 && selected.length === 0) ||
       parsed.invalid.length > 0
     )
       return
@@ -53,8 +63,39 @@ export function AddPeopleScreen({
     const current = begin()
     let added = 0
     let invited = 0
+    const failedAccounts: SelectedAccount[] = []
+    const counted = new Set<string>()
+    const labels = new Map<string, string>()
     const failed: Array<{ email: string; message: string }> = []
     try {
+      for (const account of selected) {
+        if (!current()) return
+        const body = JSON.stringify({ group, userId: account.userId, roles })
+        let key = keys.current.get(body)
+        if (key == null) {
+          key = `people-${Date.now()}-${Math.random().toString(36).slice(2)}`
+          keys.current.set(body, key)
+        }
+        try {
+          const result = await client.addPersonAccount(group, account.userId, {
+            ...roles,
+            idempotencyKey: key
+          })
+          labels.set(account.userId, account.displayName)
+          if (result.person != null) counted.add(result.person.userId)
+          if (result.added) added++
+        } catch (error) {
+          failedAccounts.push(account)
+          failed.push({
+            email: account.displayName,
+            message:
+              error instanceof Error
+                ? error.message
+                : 'Account could not be added. Try again.'
+          })
+        }
+      }
+      const failedAddresses: string[] = []
       for (const email of parsed.valid) {
         if (!current()) return
         const body = JSON.stringify({ group, email, roles })
@@ -68,9 +109,17 @@ export function AddPeopleScreen({
             ...roles,
             idempotencyKey: key
           })
-          if (result.added) added++
+          if (
+            result.added &&
+            (result.person == null || !counted.has(result.person.userId))
+          )
+            added++
+          const identity = result.person?.userId ?? email
+          if (!labels.has(identity)) labels.set(identity, email)
+          if (result.person != null) counted.add(result.person.userId)
           else if (result.invited != null) invited++
         } catch (error) {
+          failedAddresses.push(email)
           failed.push({
             email,
             message:
@@ -83,10 +132,11 @@ export function AddPeopleScreen({
       if (!current()) return
       if (failed.length === 0)
         onDone(
-          `${scopeName}: Added ${added}, invited ${invited} — ${parsed.valid.join(', ')}`
+          `${scopeName}: Added ${added}, invited ${invited} — ${[...labels.values()].join(', ')}`
         )
       else {
-        setAddresses(failed.map(row => row.email).join(', '))
+        setAddresses(failedAddresses.join(', '))
+        setSelected(failedAccounts)
         setErrors(failed)
         setNotice(`Added ${added}, invited ${invited}, ${failed.length} failed`)
       }
@@ -96,13 +146,27 @@ export function AddPeopleScreen({
     }
   }
   return (
-    <Screen>
+    <Screen
+      onScroll={() => {
+        setDismissSearch(value => value + 1)
+      }}
+    >
       <View style={styles.page}>
         <Text accessibilityRole="header" style={styles.title}>
           Add People
         </Text>
         <Text style={styles.hint}>{scopeName}</Text>
         <Card>
+          <View style={styles.accountSearch}>
+            <PeopleAccountSearch
+              client={client}
+              dismissKey={dismissSearch}
+              group={group}
+              selected={selected}
+              onChange={setSelected}
+              disabled={busy}
+            />
+          </View>
           <TextField
             label="E-mail addresses"
             value={addresses}
@@ -146,9 +210,13 @@ export function AddPeopleScreen({
         {notice !== '' && <Text style={styles.hint}>{notice}</Text>}
         <Button
           label="Add people"
+          testID="add-people-submit"
           block
           busy={busy}
-          disabled={parsed.valid.length === 0 || parsed.invalid.length > 0}
+          disabled={
+            (parsed.valid.length === 0 && selected.length === 0) ||
+            parsed.invalid.length > 0
+          }
           onPress={() => {
             send().catch(() => undefined)
           }}
@@ -160,6 +228,7 @@ export function AddPeopleScreen({
 }
 const getStyles = cacheStyles((theme: Theme) => ({
   page: { gap: theme.rem(1) },
+  accountSearch: { paddingBottom: theme.rem(1) },
   title: {
     fontSize: theme.rem(1.5),
     fontFamily: theme.semiBoldTextFont,

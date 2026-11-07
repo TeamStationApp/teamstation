@@ -22,6 +22,7 @@ import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { peopleCandidates, peopleQueryOf } from '../users/peopleCandidates'
 import { candidateQueryOf, rosterCandidates } from '../users/rosterCandidates'
 import { teamsOf } from './players'
 import { externalIdsAsked } from './seasons'
@@ -67,6 +68,15 @@ export function userRoutes(
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
+      if (
+        req.query.forGroupKind !== undefined ||
+        req.query.forGroupId !== undefined
+      ) {
+        res.json(
+          await peopleCandidates(db, actor, peopleQueryOf(req.query), space)
+        )
+        return
+      }
       if (hasVideoFilter(req.query)) {
         const filter = videoCollectionFilter(req.query)
         const games = await accessibleVideoGames(db, actor, filter)

@@ -6900,6 +6900,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary:
             'Who people are here, by the ids another service has, or the players you guard',
           description:
+            'With forGroupKind and forGroupId, only administrators of that group may search sign-in accounts. q matches only the name mayEditName permits: full name or first name and last initial. Returns at most five {userId, displayName, avatarUrl, affiliations} rows with a signed photo URL (or null) and team/guardian affiliations using privacy-formatted related names, prefix matches first and stable name/id ties. Empty q returns []. Repeated exclude removes selected account IDs before the limit. This mode cannot be combined with other filters. ' +
             'A play names people by their numeric gumboId, so a sender ' +
             'asks this with the ids it holds first. Each answer is ' +
             '`{ userId, gumboId, externalIds, shortName, avatarUrl }`: a person, ' +
@@ -6937,6 +6938,28 @@ export function openApiDocument(version: string): OpenApiDocument {
             'see but may not add to is 403.',
           security: [{ bearer: [] }],
           parameters: [
+            {
+              name: 'forGroupKind',
+              in: 'query',
+              schema: { type: 'string', enum: ['team', 'season', 'league'] },
+              description:
+                'Account search destination kind; requires forGroupId. Omitted: existing collection modes.'
+            },
+            {
+              name: 'forGroupId',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Account search destination; requires forGroupKind.'
+            },
+            {
+              name: 'exclude',
+              in: 'query',
+              schema: { type: 'array', maxItems: 100, items: userIdSchema },
+              style: 'form',
+              explode: true,
+              description:
+                'With forGroupKind: selected accounts to omit. Default: none.'
+            },
             ...videoCollectionParameters,
             {
               name: 'view',
@@ -9148,8 +9171,9 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/manage/{scopeType}/{scopeId}/people': {
         post: {
-          summary: 'Add one person by address',
+          summary: 'Add one person by address or selected account',
           description:
+            'Send exactly one of email or userId. A selected userId must still be a sign-in account; its person response contains userId and the name the caller may read, without email. Selected accounts use the same grant, notification and mail rules. ' +
             'An address an account has verified adds that account at once, ' +
             'as a member of this level with the roles asked for, Admin ' +
             'included: `added` true and `person` (`added` false when they ' +
@@ -9170,9 +9194,13 @@ export function openApiDocument(version: string): OpenApiDocument {
               'application/json': {
                 schema: {
                   type: 'object',
-                  required: ['email'],
+                  oneOf: [
+                    { required: ['email'], not: { required: ['userId'] } },
+                    { required: ['userId'], not: { required: ['email'] } }
+                  ],
                   properties: {
                     email: { type: 'string', format: 'email' },
+                    userId: userIdSchema,
                     admin: { type: 'boolean', default: false },
                     flags: {
                       type: 'array',

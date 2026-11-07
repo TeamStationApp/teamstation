@@ -2665,7 +2665,11 @@ export type ManagePage = Omit<ManagePageFromServer, 'scope' | 'people'> & {
 export const asAddedPerson = asObject({
   added: asBoolean,
   person: asOptional(
-    asObject({ userId: asUserId, displayName: asString, email: asString })
+    asObject({
+      userId: asUserId,
+      displayName: asString,
+      email: asOptional(asString)
+    })
   ),
   invited: asOptional(asPendingPerson)
 })
@@ -6890,6 +6894,55 @@ export class TeamStationClient {
       `/manage/${kind}/${encodeURIComponent(id)}/people`,
       asAddedPerson,
       { email, ...options }
+    )
+  }
+
+  async searchPeopleAccounts(
+    group: GroupRef,
+    q: string,
+    exclude: string[] = []
+  ): Promise<
+    Array<{
+      userId: string
+      displayName: string
+      avatarUrl: string | null
+      affiliations: string
+    }>
+  > {
+    const query = new URLSearchParams({
+      forGroupKind: group.kind,
+      forGroupId: group.id,
+      q
+    })
+    for (const id of exclude) query.append('exclude', id)
+    return await this.request(
+      'GET',
+      `/users?${query}`,
+      asArray(
+        asObject({
+          userId: asUserId,
+          displayName: asString,
+          avatarUrl: asOptional(asNullable(asString), null),
+          affiliations: asOptional(asString, '')
+        })
+      )
+    )
+  }
+
+  async addPersonAccount(
+    group: GroupRef,
+    userId: string,
+    options: {
+      admin?: boolean
+      flags?: RoleFlag[]
+      idempotencyKey?: string
+    } = {}
+  ): Promise<AddedPerson> {
+    return await this.request(
+      'POST',
+      `/manage/${group.kind}/${encodeURIComponent(group.id)}/people`,
+      asAddedPerson,
+      { userId, ...options }
     )
   }
 

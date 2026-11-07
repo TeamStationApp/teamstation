@@ -1,7 +1,7 @@
 import { type Kysely, sql } from 'kysely'
 
 import { asAccountEmail } from '../../common/accountSettings'
-import { badRequest, conflict } from '../../common/errors'
+import { badRequest, conflict, notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import type { RequestTerms } from '../../common/notifications'
 import { asRoleFlags } from '../../common/roles'
@@ -21,6 +21,7 @@ import {
   type StoredRequest
 } from '../groups/requests'
 import { cleanBody } from '../jsonBody'
+import { accountName } from '../users/peopleCandidates'
 import {
   accountForAddress,
   type AddedMail,
@@ -123,7 +124,7 @@ export type AddedByAddress =
       applied: {
         userId: string
         displayName: string
-        email: string
+        email?: string
         /** What was new, `member` first when the membership was. */
         added: Grantable[]
         notificationId?: string
@@ -173,6 +174,78 @@ export async function addPersonByAddress(
         clock
       )
     }
+  return await grantAccount(
+    db,
+    actor,
+    scope,
+    account,
+    { admin, flags, email },
+    clock,
+    mail
+  )
+}
+
+/** Adds a selected sign-in account without disclosing its address. */
+export async function addPersonById(
+  db: Kysely<Database>,
+  actor: Actor,
+  scope: GroupRef,
+  options: {
+    userId: string
+    admin?: boolean
+    flags?: unknown
+    idempotencyKey: string
+  },
+  clock: Clock = realClock,
+  mail?: AddedMail
+): Promise<AddedByAddress> {
+  if (options.idempotencyKey.length < 8 || options.idempotencyKey.length > 120)
+    throw badRequest('Sending needs a retry key')
+  const flags = cleanBody(asRoleFlags, options.flags ?? [])
+  return await atomic(db, async trx => {
+    await lockKeys(trx, ['creation:parent-graph'])
+    const row = await trx
+      .selectFrom('users')
+      .select([
+        'id',
+        'display_name as displayName',
+        'first_name as firstName',
+        'last_name as lastName'
+      ])
+      .where('id', '=', options.userId)
+      .where('login_enabled', '=', true)
+      .where('disabled_at', 'is', null)
+      .where('merged_into', 'is', null)
+      .forUpdate()
+      .executeTakeFirst()
+    if (row == null) throw notFound('This account is no longer available')
+    const displayName = await accountName(trx, actor, row)
+    return await grantAccount(
+      trx,
+      actor,
+      scope,
+      { id: row.id, displayName },
+      { admin: options.admin === true, flags },
+      clock,
+      mail
+    )
+  })
+}
+
+async function grantAccount(
+  db: Kysely<Database>,
+  actor: Actor,
+  scope: GroupRef,
+  account: { id: string; displayName: string },
+  options: {
+    admin: boolean
+    flags: ReturnType<typeof asRoleFlags>
+    email?: string
+  },
+  clock: Clock,
+  mail?: AddedMail
+): Promise<AddedByAddress> {
+  const { admin, flags, email } = options
   return await atomic(db, async trx => {
     await lockKeys(trx, ['creation:parent-graph'])
     if (

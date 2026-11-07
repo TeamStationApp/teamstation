@@ -31,7 +31,7 @@ import {
   rolesAt,
   setScopeRoles
 } from '../invites/people'
-import { addPersonByAddress } from '../invites/personRequests'
+import { addPersonByAddress, addPersonById } from '../invites/personRequests'
 import { cleanBody } from '../jsonBody'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
@@ -56,8 +56,9 @@ import { inviteUrl } from './invites'
 
 const asScopeType = asLiteral('league', 'season', 'team')
 
-const asPersonByEmail = asObject({
-  email: asString,
+const asPersonAddition = asObject({
+  email: asOptional(asString),
+  userId: asOptional(asUserId),
   /** Shown in the invitation when there is no account to add yet. */
   displayName: asOptional(asString),
   admin: asOptional(asBoolean, false),
@@ -190,13 +191,17 @@ export function manageRoutes(
         scopeType,
         scopeId
       )
-      const body = cleanBody(asPersonByEmail, req.body)
-      const result = await addPersonByAddress(
+      const body = cleanBody(asPersonAddition, req.body)
+      if ((body.email == null) === (body.userId == null))
+        throw badRequest('Send an email or a userId, not both')
+      const add = body.userId == null ? addPersonByAddress : addPersonById
+      const result = await add(
         db,
         actor,
         { kind: scopeType, id: scopeId },
         {
-          email: body.email,
+          email: body.email!,
+          userId: body.userId!,
           admin: body.admin,
           flags: body.flags,
           idempotencyKey: body.idempotencyKey ?? makeId('invite')

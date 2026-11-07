@@ -296,10 +296,13 @@ export const lentFormat = (
  * restrictive among the teams they play for now, as `teamsPlayedOnNow` reads
  * it, or the built-in format for somebody who plays for none. A team holding
  * them only by an open add is not theirs yet, and has no say.
+ * Callers resolving merged identities can supply all aliases and their map;
+ * formats then combine under the survivor without defaults from empty aliases.
  */
 export async function currentFormats(
   db: Db,
-  userIds: Iterable<string>
+  userIds: Iterable<string>,
+  canonicalIds?: ReadonlyMap<string, string>
 ): Promise<Map<string, PlayerNamePrivacy>> {
   const wanted = [...new Set(userIds)]
   if (wanted.length === 0) return new Map()
@@ -322,11 +325,16 @@ export async function currentFormats(
   const byUser = new Map<string, PlayerNamePrivacy[]>()
   for (const play of plays) {
     const format = formats.get(play.teamId)
-    if (format != null && open.get(play.teamId)?.has(play.userId) !== true)
-      byUser.set(play.userId, [...(byUser.get(play.userId) ?? []), format])
+    const personId = canonicalIds?.get(play.userId) ?? play.userId
+    if (
+      format != null &&
+      open.get(play.teamId)?.has(play.userId) !== true &&
+      open.get(play.teamId)?.has(personId) !== true
+    )
+      byUser.set(personId, [...(byUser.get(personId) ?? []), format])
   }
   return new Map(
-    wanted.map(userId => {
+    [...new Set(wanted.map(id => canonicalIds?.get(id) ?? id))].map(userId => {
       const held = byUser.get(userId) ?? []
       return [
         userId,

@@ -438,7 +438,10 @@
         "Can invite people to %s, remove them, and change what everybody here is.",
         "From %s",
         "Admins can do all of this",
-        "Scorekeepers can do this"
+        "Scorekeepers can do this",
+        "Search users",
+        "Search users.",
+        "No accounts match"
       ]
     },
     {
@@ -484,7 +487,10 @@
         "Can invite people to %s, remove them, and change what everybody here is.",
         "From %s",
         "Admins can do all of this",
-        "Scorekeepers can do this"
+        "Scorekeepers can do this",
+        "Search users",
+        "Search users.",
+        "No accounts match"
       ]
     },
     {

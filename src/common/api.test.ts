@@ -3512,3 +3512,55 @@ describe('who is signed in, with no signal', function () {
     expect(aborting.offline).equals(false)
   })
 })
+
+describe('account selection client', () => {
+  const group = { kind: 'team' as const, id: 'tem_demo' }
+  const person = { userId: userIdOfGumbo(401), displayName: 'Mookie B' }
+  it('encodes group, query and repeated exclusions and cleans minimal account results', async () => {
+    const stub = stubFetch(200, [person])
+    const api = new TeamStationClient({ baseUrl: '/api/v1', fetch: stub.fetch })
+    expect(
+      await api.searchPeopleAccounts(group, 'Mookie &', [
+        person.userId,
+        userIdOfGumbo(402)
+      ])
+    ).deep.equals([{ ...person, avatarUrl: null, affiliations: '' }])
+    const url = new URL(stub.calls[0].url, 'https://example.test')
+    expect(url.pathname).equals('/api/v1/users')
+    expect(url.searchParams.get('q')).equals('Mookie &')
+    expect(url.searchParams.get('forGroupKind')).equals('team')
+    expect(url.searchParams.get('forGroupId')).equals(group.id)
+    expect(url.searchParams.getAll('exclude')).deep.equals([
+      person.userId,
+      userIdOfGumbo(402)
+    ])
+    await api.searchPeopleAccounts(group, '')
+    expect(stub.calls[1].url).not.contains('exclude=')
+  })
+  it('adds an account without needing an email and preserves roles and retry identity', async () => {
+    const stub = stubFetch(200, { added: true, person })
+    const api = new TeamStationClient({ baseUrl: '/api/v1', fetch: stub.fetch })
+    const options = {
+      admin: false,
+      flags: ['coach' as const],
+      idempotencyKey: 'account-selection-client'
+    }
+    expect(
+      await api.addPersonAccount(group, person.userId, options)
+    ).deep.equals({
+      added: true,
+      person: { ...person, email: undefined },
+      invited: undefined
+    })
+    expect(stub.calls[0].method).equals('POST')
+    expect(stub.calls[0].url).equals('/api/v1/manage/team/tem_demo/people')
+    expect(JSON.parse(stub.calls[0].body!)).deep.equals({
+      userId: person.userId,
+      ...options
+    })
+    await api.addPersonAccount(group, person.userId)
+    expect(JSON.parse(stub.calls[1].body!)).deep.equals({
+      userId: person.userId
+    })
+  })
+})
