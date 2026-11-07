@@ -12,6 +12,7 @@ import {
   resolvePlayerNamePrivacy,
   spokenFormat
 } from '../../common/playerNamePrivacy'
+import { anyOf } from '../db/anyOf'
 import type { Database } from '../db/database'
 import { isWithdrawnKey } from '../games/withdrawn'
 import { openAddsOf } from '../openAdds'
@@ -48,7 +49,7 @@ async function leagueSources(
   const rows = await db
     .selectFrom('leagues')
     .select(['id', 'name', 'player_name_privacy'])
-    .where('id', 'in', ids)
+    .where('id', '=', anyOf(ids))
     .execute()
   return new Map(rows.map(row => [row.id, sourceOf('league', row)]))
 }
@@ -62,7 +63,7 @@ async function resolveTeams(
   const teams = await db
     .selectFrom('teams')
     .select(['id', 'name', 'league_id', 'player_name_privacy'])
-    .where('id', 'in', teamIds)
+    .where('id', '=', anyOf(teamIds))
     .execute()
   const parents = await db
     .selectFrom('season_team_parents')
@@ -74,7 +75,7 @@ async function resolveTeams(
       'seasons.league_id as leagueId',
       'seasons.player_name_privacy as player_name_privacy'
     ])
-    .where('season_team_parents.team_id', 'in', teamIds)
+    .where('season_team_parents.team_id', '=', anyOf(teamIds))
     .execute()
   const leagues = await leagueSources(db, [
     ...teams.map(team => team.league_id),
@@ -186,7 +187,7 @@ export async function teamFormats(
   const merged = await db
     .selectFrom('teams')
     .select('id')
-    .where('id', 'in', wanted)
+    .where('id', '=', anyOf(wanted))
     .where('merged_into', 'is not', null)
     .execute()
   const survivors = new Map<string, string>()
@@ -235,8 +236,8 @@ export async function lentPlayers(
     .where('game_guest_details.pool', '=', true)
     .where(eb =>
       eb.or([
-        eb('games.home_team_id', 'in', teamIds),
-        eb('games.away_team_id', 'in', teamIds)
+        eb('games.home_team_id', '=', anyOf(teamIds)),
+        eb('games.away_team_id', '=', anyOf(teamIds))
       ])
     )
     .execute()
@@ -255,6 +256,8 @@ export async function lentPlayers(
   const candidates = pairs.filter(pair =>
     guested.has(`${pair.teamId} ${pair.userId}`)
   )
+  // One array parameter each: a team's lent players can outnumber a
+  // statement's 65535.
   const own =
     candidates.length === 0
       ? []
@@ -264,13 +267,13 @@ export async function lentPlayers(
           .where('is_player', '=', true)
           .where(
             'team_id',
-            'in',
-            candidates.map(pair => pair.teamId)
+            '=',
+            anyOf([...new Set(candidates.map(pair => pair.teamId))])
           )
           .where(
             'user_id',
-            'in',
-            candidates.map(pair => pair.userId)
+            '=',
+            anyOf([...new Set(candidates.map(pair => pair.userId))])
           )
           .execute()
   const players = new Set(own.map(row => `${row.team_id} ${row.user_id}`))
@@ -293,10 +296,13 @@ export const lentFormat = (
  * restrictive among the teams they play for now, as `teamsPlayedOnNow` reads
  * it, or the built-in format for somebody who plays for none. A team holding
  * them only by an open add is not theirs yet, and has no say.
+ * Callers resolving merged identities can supply all aliases and their map;
+ * formats then combine under the survivor without defaults from empty aliases.
  */
 export async function currentFormats(
   db: Db,
-  userIds: Iterable<string>
+  userIds: Iterable<string>,
+  canonicalIds?: ReadonlyMap<string, string>
 ): Promise<Map<string, PlayerNamePrivacy>> {
   const wanted = [...new Set(userIds)]
   if (wanted.length === 0) return new Map()
@@ -304,7 +310,7 @@ export async function currentFormats(
     .selectFrom('memberships')
     .innerJoin('teams', 'teams.id', 'memberships.team_id')
     .select(['memberships.user_id as userId', 'memberships.team_id as teamId'])
-    .where('memberships.user_id', 'in', wanted)
+    .where('memberships.user_id', '=', anyOf(wanted))
     .where('memberships.is_player', '=', true)
     .where('teams.merged_into', 'is', null)
     .execute()
@@ -319,11 +325,16 @@ export async function currentFormats(
   const byUser = new Map<string, PlayerNamePrivacy[]>()
   for (const play of plays) {
     const format = formats.get(play.teamId)
-    if (format != null && open.get(play.teamId)?.has(play.userId) !== true)
-      byUser.set(play.userId, [...(byUser.get(play.userId) ?? []), format])
+    const personId = canonicalIds?.get(play.userId) ?? play.userId
+    if (
+      format != null &&
+      open.get(play.teamId)?.has(play.userId) !== true &&
+      open.get(play.teamId)?.has(personId) !== true
+    )
+      byUser.set(personId, [...(byUser.get(personId) ?? []), format])
   }
   return new Map(
-    wanted.map(userId => {
+    [...new Set(wanted.map(id => canonicalIds?.get(id) ?? id))].map(userId => {
       const held = byUser.get(userId) ?? []
       return [
         userId,

@@ -205,7 +205,7 @@ describe('runner advance attribution and pitch choice', () => {
         credit:
           reason === 'Throwing Error' ? 'f_throwing_error' : 'f_fielding_error'
       })
-      expect(record.credits[0].player.id).equals(10)
+      expect(record.credits[0].player?.id).equals(10)
       const cleaned = cleanAction(JSON.parse(JSON.stringify(final.log.at(-1))))
       if ('problem' in cleaned) throw new Error(cleaned.problem.message)
       expect(

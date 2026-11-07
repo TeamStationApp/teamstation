@@ -14,16 +14,22 @@ import { DEPTHS, FOUL_DEPTHS, FOUL_SIDES } from './depth'
 import { PITCH_DATA_CLEANERS, PITCH_DATA_TOOL_FIELDS } from './pitchLocation'
 import { idOfWrittenTag, positionSaid, tagOf, writtenTag } from './playerTags'
 import {
+  asFielderRef,
   asGameSetup,
   asSessionId,
+  type FielderRef,
   type GameState,
+  isPosition,
   type Optional,
   type PlayerRef,
+  type Position,
   POSITIONS,
   type Side,
   withoutUndefined
 } from './state'
 import { DICTATION_TERMS } from './vocabulary'
+
+export { asFielderRef }
 
 /**
  * The middle ground between whoever watched the game and the rules that score
@@ -88,9 +94,14 @@ export const RESULT_TYPES = [
 ] as const
 export type ResultType = (typeof RESULT_TYPES)[number]
 
-/** How a batter was put out on a ball in play. */
-export const OUT_KINDS = ['throw', 'catch', 'interference'] as const
+/**
+ * How a batter was put out on a ball in play. `first`: thrown out at first,
+ * the Out at First a scorer picks.
+ */
+export const OUT_KINDS = ['throw', 'catch', 'interference', 'first'] as const
 export type OutKind = (typeof OUT_KINDS)[number]
+/** The out kinds dictation offers: an Out at First is said as a throw. */
+const DICTATED_OUT_KINDS = OUT_KINDS.filter(kind => kind !== 'first')
 
 export const BASES = ['1B', '2B', '3B'] as const
 export type Base = (typeof BASES)[number]
@@ -116,6 +127,10 @@ export const RUNNER_REASONS = [
   'Safe from Pickoff',
   'Safe at home',
   'Out at home',
+  'Ground Out',
+  'Out at First',
+  'Tag Out',
+  /** The name a ground out was stored with before it was Ground Out. */
   'Throw Out',
   'Ball Caught',
   'Batter Interference',
@@ -123,6 +138,31 @@ export const RUNNER_REASONS = [
   'Other'
 ] as const
 export type RunnerReason = (typeof RUNNER_REASONS)[number]
+/**
+ * The reasons dictation offers: the ones it offered before the rename, so a
+ * ground out is still said Throw Out, which `asRunnerReason` reads as Ground
+ * Out. Naming it Ground Out, Out at First or Tag Out to the model made it
+ * misread force plays and pop ups it scored before.
+ */
+export const SPOKEN_RUNNER_REASONS = RUNNER_REASONS.filter(
+  reason => !['Ground Out', 'Out at First', 'Tag Out'].includes(reason)
+)
+
+/**
+ * A runner's reason, reading a stored `Throw Out` as the `Ground Out` it was
+ * renamed to, so an old action still cleans and means the same out.
+ */
+export const asRunnerReason: Cleaner<RunnerReason> = raw => {
+  const reason = asOneOf(RUNNER_REASONS)(raw)
+  return reason === 'Throw Out' ? 'Ground Out' : reason
+}
+
+/**
+ * How a result moves the runners on base. `ground`: a ground out that sends
+ * every other runner up one base. Only new actions carry it, so a stored game
+ * replays as it was scored.
+ */
+export const ADVANCE_KINDS = ['ground'] as const
 
 export const BASE_RUNNING_KINDS = [
   'steal',
@@ -252,7 +292,7 @@ const actionCleaners = {
      */
     launchAngleDragged: asOptional(asBoolean),
     location: asOptional(asPoint),
-    fielder: asOptional(asSessionId),
+    fielder: asOptional(asFielderRef),
     direction: asOptional(asOneOf(DIRECTIONS)),
     landingHeight: asOptional(asNumber),
     homeRunKind: asOptional(asOneOf(HOME_RUN_KINDS)),
@@ -266,13 +306,14 @@ const actionCleaners = {
     type: asLiteral('result'),
     eventType: asOneOf(RESULT_TYPES),
     outBy: asOptional(asOneOf(OUT_KINDS)),
+    advance: asOptional(asOneOf(ADVANCE_KINDS)),
     base: asOptional(asOneOf(BASES)),
     foulCaught: asOptional(asBoolean)
   }),
   fieldingPlay: asObject({
     type: asLiteral('fieldingPlay'),
-    fielders: asArray(asSessionId),
-    error: asOptional(asSessionId),
+    fielders: asArray(asFielderRef),
+    error: asOptional(asFielderRef),
     errorKind: asOptional(asOneOf(ERROR_KINDS)),
     locations: asOptional(asArray(asPoint))
   }),
@@ -281,14 +322,14 @@ const actionCleaners = {
     runner: asSessionId,
     to: asOneOf(DESTINATIONS),
     out: asOptional(asBoolean),
-    reason: asOptional(asOneOf(RUNNER_REASONS)),
-    error: asOptional(asSessionId),
+    reason: asOptional(asRunnerReason),
+    error: asOptional(asFielderRef),
     errorEvent: asOptional(asNumber),
-    fielders: asOptional(asArray(asSessionId)),
+    fielders: asOptional(asArray(asFielderRef)),
     locations: asOptional(asArray(asPoint)),
     runnerLocation: asOptional(asPoint),
     fieldingRoute: asOptional(
-      asArray(asObject({ id: asSessionId, point: asPoint }))
+      asArray(asObject({ id: asFielderRef, point: asPoint }))
     )
   }),
   baseRunning: asObject({
@@ -329,6 +370,11 @@ const actionCleaners = {
      * server holds it.
      */
     shown: asOptional(asLiteral(true)),
+    /**
+     * A roster saved after the first pitch: each side keeps its batting slot,
+     * and whoever now stands in it bats. Absent, the man due stays due.
+     */
+    keepSlot: asOptional(asLiteral(true)),
     nextBatter: asOptional(asSessionId),
     order: asOptional(asArray(asSessionId)),
     position: asOptional(asPosition),
@@ -381,6 +427,42 @@ export type ScoringAction =
   | BatteryEventAction
   | LineupAction
   | GameFlowAction
+
+/** A fielder field with every stand-in left out: ids only. */
+type ById<T> =
+  T extends ReadonlyArray<infer U>
+    ? Array<ById<U>>
+    : T extends { id: FielderRef }
+      ? Omit<T, 'id'> & { id: number }
+      : Exclude<T, Position>
+/**
+ * An action with every fielder named by his id. Dictation writes these: a
+ * spoken position resolves to whoever plays it (`untaggedAction`), never to
+ * a stand-in, which only the scorer's tap on an empty position names.
+ */
+export type ByIdAction<A> = A extends unknown
+  ? {
+      [K in keyof A]: K extends
+        'fielder' | 'error' | 'fielders' | 'fieldingRoute'
+        ? ById<A[K]>
+        : A[K]
+    }
+  : never
+export type DictatedAction = ByIdAction<ScoringAction>
+/** Whether every fielder an action names is a player, as dictation's are. */
+export function namesFieldersById(
+  action: ScoringAction
+): action is ScoringAction & DictatedAction {
+  const refs: unknown[] = []
+  if ('fielder' in action) refs.push(action.fielder)
+  if ('error' in action) refs.push(action.error)
+  if ('fielders' in action) refs.push(...(action.fielders ?? []))
+  if ('fieldingRoute' in action)
+    refs.push(...(action.fieldingRoute ?? []).map(hop => hop.id))
+  return !refs.some(isPosition)
+}
+export type DictatedBallInPlay = ByIdAction<BallInPlayAction>
+export type DictatedRunnerMovement = ByIdAction<RunnerMovementAction>
 
 export interface Problem {
   code:
@@ -469,34 +551,46 @@ const PLAYER_FIELDS = [
   'pitcher'
 ]
 const PLAYERS_FIELDS = ['fielders', 'order', 'bases']
+/** The fields that may name an empty position's stand-in (`FielderRef`). */
+const STAND_IN_FIELDS = new Set(['fielder', 'error', 'fielders'])
 
 /**
  * Each player an action names, through `each`, field by field: a runner of a
  * battery event's advances too. A null among `bases` is an empty base.
+ * With `keepPositions`, a fielder named by his position (a stand-in at an
+ * empty position, as a stored action holds it) passes through untouched:
+ * it is no player id. Dictation leaves it off, so a spoken position still
+ * resolves to whoever plays there.
  */
 export function mapPlayers(
   raw: Record<string, unknown>,
-  each: (value: unknown, field: string) => unknown
+  each: (value: unknown, field: string) => unknown,
+  options: { keepPositions?: boolean } = {}
 ): Record<string, unknown> {
+  const keep = options.keepPositions === true
+  const map = (value: unknown, field: string): unknown =>
+    keep && STAND_IN_FIELDS.has(field) && isPosition(value)
+      ? value
+      : each(value, field)
   const out: Record<string, unknown> = { ...raw }
   for (const field of PLAYER_FIELDS)
-    if (out[field] != null) out[field] = each(out[field], field)
+    if (out[field] != null) out[field] = map(out[field], field)
   for (const field of PLAYERS_FIELDS)
     if (Array.isArray(out[field]))
       out[field] = (out[field] as unknown[]).map(value =>
-        value == null ? value : each(value, field)
+        value == null ? value : map(value, field)
       )
   if (Array.isArray(out.advances))
     out.advances = out.advances.map((advance: unknown) =>
       advance != null && typeof advance === 'object'
-        ? mapPlayers(advance as Record<string, unknown>, each)
+        ? mapPlayers(advance as Record<string, unknown>, each, options)
         : advance
     )
   if (Array.isArray(out.fieldingRoute))
     out.fieldingRoute = out.fieldingRoute.map((step: unknown) => {
       if (step == null || typeof step !== 'object') return step
       const held = step as Record<string, unknown>
-      return held.id == null ? step : { ...held, id: each(held.id, 'fielders') }
+      return held.id == null ? step : { ...held, id: map(held.id, 'fielders') }
     })
   return out
 }
@@ -637,16 +731,20 @@ export function actionFromTagSlots(
   action: ScoringAction,
   order: readonly number[]
 ): ScoringAction {
-  const mapped = mapPlayers(action, value => {
-    if (
-      typeof value !== 'number' ||
-      !Number.isSafeInteger(value) ||
-      value < 0 ||
-      order[value] == null
-    )
-      throw new Error('Unknown player tag')
-    return order[value]
-  })
+  const mapped = mapPlayers(
+    action,
+    value => {
+      if (
+        typeof value !== 'number' ||
+        !Number.isSafeInteger(value) ||
+        value < 0 ||
+        order[value] == null
+      )
+        throw new Error('Unknown player tag')
+      return order[value]
+    },
+    { keepPositions: true }
+  )
   const result = cleanAction(mapped)
   if ('problem' in result) throw new Error(result.problem.message)
   return result.action
@@ -777,7 +875,7 @@ export function toolSchema(): Tool[] {
       {
         eventType: oneOf(RESULT_TYPES, 'The outcome'),
         outBy: oneOf(
-          OUT_KINDS,
+          DICTATED_OUT_KINDS,
           'For field_out: thrown out, caught, or interference'
         ),
         base: oneOf(BASES, 'For manual_placement: where the batter was put'),
@@ -803,7 +901,7 @@ export function toolSchema(): Tool[] {
         runner: id('The runner'),
         to: oneOf(DESTINATIONS, 'Where the runner ended up or was put out'),
         out: { type: 'boolean', description: 'The runner was put out' },
-        reason: oneOf(RUNNER_REASONS, 'Why'),
+        reason: oneOf(SPOKEN_RUNNER_REASONS, 'Why'),
         fielders: ids(
           "For an out: the fielders who handled the ball, last one made the putout. For the Safe batter on a fielder's choice: the remaining relay, including late throws, starting with the current ball holder. These Safe throws award no putout or assist."
         ),

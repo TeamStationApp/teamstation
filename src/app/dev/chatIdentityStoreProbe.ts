@@ -2,6 +2,7 @@ import { utf8 } from '../../common/chatCrypto/bytes'
 import { b64 } from '../chat/keyRecord'
 import { KEY_DATABASE, webKeyStore } from '../chat/keyStore'
 import {
+  FIXTURE_USER_ID,
   type IdentityProbeResult,
   type IdentityProbeStorage,
   runIdentityStoreProbe
@@ -127,7 +128,9 @@ export async function openIdentityProbeStorage(
         const transaction = database.transaction('keys', 'readwrite')
         const complete = committed(transaction)
         transaction.objectStore('keys').put(wrap, 'wrap')
-        transaction.objectStore('keys').put({ iv, ciphertext }, 'record')
+        transaction
+          .objectStore('keys')
+          .put({ iv, ciphertext }, `record:${FIXTURE_USER_ID}`)
         await complete
       },
       fingerprint: async () => {
@@ -136,7 +139,7 @@ export async function openIdentityProbeStorage(
         const store = transaction.objectStore('keys')
         const [key, record] = await Promise.all([
           done(store.get('wrap')),
-          done(store.get('record'))
+          done(store.get(`record:${FIXTURE_USER_ID}`))
         ])
         await complete
         // Check the actual non-extractable wrapping key as well as the sealed bytes.

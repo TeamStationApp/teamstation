@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { Kysely } from 'kysely'
@@ -6,7 +6,6 @@ import type { Kysely } from 'kysely'
 import type { Database } from '../db/database'
 import {
   type MediaPlaylist,
-  parseMediaPlaylist,
   type Placement,
   type PlaylistSegment,
   readPart,
@@ -18,6 +17,7 @@ import {
   type WallPoint
 } from '../media/wallClockScan'
 import type { StoredWallPoint } from '../media/wallTimeline'
+import { playlistTail, type PlaylistView } from './playlistTail'
 import { FIRST_INIT } from './segmentClock'
 import { LIVE_PLAYLIST_NAME } from './splitter'
 
@@ -99,13 +99,17 @@ export async function scanNewSegments(
   /** Each segment passed over, and why. */
   unreadable: string[]
 }> {
-  const playlist = await readPlaylist(directory)
+  const playlist = readPlaylistView(directory)
   const seenAt = now()
   if (playlist == null) return { points: [], cursor, unreadable: [] }
-  const fresh = playlist.segments.slice(
-    cursor.segments,
-    cursor.segments + limit
+  const count = playlist.count
+  const fresh: PlaylistSegment[] = []
+  for (
+    let index = cursor.segments;
+    index < Math.min(count, cursor.segments + limit);
+    index++
   )
+    fresh.push(playlist.segment(index))
   if (fresh.length === 0) return { points: [], cursor, unreadable: [] }
 
   // No init segment, so nothing can be read out of a segment: it is placed by
@@ -123,22 +127,17 @@ export async function scanNewSegments(
   const points: StoredWallPoint[] = []
   const unreadable: string[] = []
   let { last, placement, placementSegment, latest } = cursor
-  const starts: number[] = []
-  let end = 0
-  for (const segment of playlist.segments) {
-    starts.push(end)
-    end += segment.durationSec * 1000
-  }
-  let startMs = starts[cursor.segments] ?? end
-  if (placementSegment != null) {
-    const reference = playlist.segments[placementSegment]
-    const track = reference == null ? null : await trackOf(reference)
+  // Where each segment starts, kept by the reader as the playlist grows.
+  let startMs = playlist.startMs(cursor.segments)
+  if (placementSegment != null && placementSegment < count) {
+    const reference = playlist.segment(placementSegment)
+    const track = await trackOf(reference)
     if (track != null) {
       placement = scanSegment(
         await readPart(join(directory, reference.uri)),
         track,
         {
-          startMs: starts[placementSegment],
+          startMs: playlist.startMs(placementSegment),
           durationMs: reference.durationSec * 1000,
           discontinuity: true
         }
@@ -219,8 +218,52 @@ export async function scanNewSegments(
  * frames after it in that segment were under half a second from it. Its run
  * is placed again from the run's first segment, one read, as the scan placed
  * it the first time. With no point stored, the scan starts at the beginning.
+ *
+ * The ingest's disk tail deletes pieces the scan has read. When the piece it
+ * would carry on from is gone, which only happens once the newest point is
+ * older than the tail, it carries on from the first piece still on disk: the
+ * pieces between were read before they went, so no point is stored twice.
  */
 export async function resumeScan(
+  db: Kysely<Database>,
+  videoId: string,
+  directory: string
+): Promise<ScanCursor> {
+  const cursor = await resumeFrom(db, videoId, directory)
+  // With no point stored nothing was read, so nothing was deleted: a piece
+  // missing then is one the scan should say it could not read.
+  if (cursor.latest == null) return cursor
+  const playlist = readPlaylist(directory)
+  if (playlist == null || cursor.segments >= playlist.segments.length)
+    return cursor
+  const onDisk = async (index: number): Promise<boolean> =>
+    (await stat(join(directory, playlist.segments[index].uri)).catch(
+      () => undefined
+    )) != null
+  if (await onDisk(cursor.segments)) return cursor
+  let next = cursor.segments + 1
+  while (next < playlist.segments.length && !(await onDisk(next))) next++
+  let startMs = 0
+  for (const segment of playlist.segments.slice(0, next))
+    startMs += segment.durationSec * 1000
+  // A run that began among the deleted pieces is placed again from the
+  // first piece read, as a run with its first piece unreadable is.
+  const sameRun = playlist.segments
+    .slice(cursor.segments + 1, next + 1)
+    .every(segment => !segment.discontinuity)
+  const placementOnDisk =
+    cursor.placementSegment != null && (await onDisk(cursor.placementSegment))
+  return {
+    ...cursor,
+    segments: next,
+    startMs,
+    placement: sameRun && placementOnDisk ? cursor.placement : undefined,
+    placementSegment:
+      sameRun && placementOnDisk ? cursor.placementSegment : undefined
+  }
+}
+
+async function resumeFrom(
   db: Kysely<Database>,
   videoId: string,
   directory: string
@@ -233,7 +276,7 @@ export async function resumeScan(
     .limit(1)
     .executeTakeFirst()
   if (newest == null) return SCAN_FROM_START
-  const playlist = await readPlaylist(directory)
+  const playlist = readPlaylist(directory)
   if (playlist == null) return SCAN_FROM_START
 
   const starts: number[] = []
@@ -287,15 +330,21 @@ export async function resumeScan(
   }
 }
 
-/** The playlist the splitter writes, or null before it has written one. */
-async function readPlaylist(directory: string): Promise<MediaPlaylist | null> {
+/**
+ * The playlist the splitter writes, read on from the last read
+ * (`playlistTail`), or null before it has written one.
+ */
+function readPlaylistView(directory: string): PlaylistView | null {
   try {
-    return parseMediaPlaylist(
-      await readFile(join(directory, LIVE_PLAYLIST_NAME), 'utf8')
-    )
+    return playlistTail(join(directory, LIVE_PLAYLIST_NAME)).read() ?? null
   } catch {
     return null
   }
+}
+
+/** The whole playlist the splitter writes, or null before it has written one. */
+function readPlaylist(directory: string): MediaPlaylist | null {
+  return readPlaylistView(directory)?.mediaPlaylist() ?? null
 }
 
 /**

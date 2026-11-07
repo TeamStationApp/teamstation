@@ -2045,9 +2045,12 @@ describe('scheduling a team’s games over HTTP', function () {
         await new Promise(resolve => setTimeout(resolve, 10))
       }
       await new Promise(resolve => setTimeout(resolve, 50))
-      expect(heard).deep.equals(
-        ['game', 'lineups', 'plays'].map(kind => ({ game: gameId, kind }))
-      )
+      // The plays are read again: their credits name the new team.
+      expect(heard).deep.equals([
+        { game: gameId, kind: 'game' },
+        { game: gameId, kind: 'lineups' },
+        { game: gameId, kind: 'playEdits', generation: 0 }
+      ])
     } finally {
       await listener.end()
     }

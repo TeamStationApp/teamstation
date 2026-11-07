@@ -1,13 +1,14 @@
 import { asEither, asNumber, asObject, asOptional, asString } from 'cleaners'
-import { type Kysely, sql } from 'kysely'
-import { Client } from 'pg'
+import type { Kysely } from 'kysely'
 
 import { asLiteral } from '../../common/asLiteral'
 import type { ChatSocketFrame } from '../../common/gameSocket'
 import { asUserId } from '../../common/userId'
+import type { ChangeFeed } from '../changeFeed/feed'
 import { blockingRecipientIds } from '../chat/blocks'
 import { CHAT_CHANGES_CHANNEL } from '../chat/membershipLog'
-import type { Database } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
+import { spread } from './spread'
 
 /**
  * What every chat writer notifies on `chat_changes`, inside its
@@ -50,14 +51,12 @@ export type MemberReader = (
 
 export interface ChatFanoutOptions {
   db: Kysely<Database>
-  /**
-   * Where the `LISTEN` connection goes: the database's own address
-   * (`serverConfig.databaseUrl`), never a transaction-mode pool, where
-   * `LISTEN` does not work.
-   */
-  databaseUrl: string
-  /** How long to wait before listening again after the connection is lost. */
+  /** The process's feed, on the same database as `db`. */
+  feed: ChangeFeed
+  /** How long to wait before trying an owed `resync` again. */
   retryMs?: number
+  /** The window `resync` frames are spread over; 0, the default, sends at once. */
+  resyncSpreadMs?: number
   /** How many conversations' member sets are kept. */
   cacheSize?: number
   readMembers?: MemberReader
@@ -80,38 +79,44 @@ export const readMembers: MemberReader = async (db, conversationId) =>
 
 /**
  * Relays a typist's hint to the conversation's other members, on every
- * worker, without storing anything: the notify is all there is.
+ * worker, without storing anything: the notice is all there is.
  */
 export async function notifyTyping(
+  feed: ChangeFeed,
   db: Kysely<Database>,
   conversationId: string,
   userId: string
 ): Promise<void> {
   const payload = JSON.stringify({ c: conversationId, k: 'typing', u: userId })
-  await sql`select pg_notify(${CHAT_CHANGES_CHANNEL}, ${payload})`.execute(db)
+  await feed.publishEphemeral(CHAT_CHANGES_CHANNEL, payload, db)
 }
 
 /**
  * One worker's end of `chat_changes`.
  *
  * Every signed-in socket on the worker is registered here by its user id,
- * with nothing to subscribe to. The worker holds one `LISTEN chat_changes`.
+ * with nothing to subscribe to. It hears `chat_changes` on the worker's feed.
  * A conversation's hint goes to the sockets of its current members, read
- * once per conversation and cached until a `members` hint for it (or a lost
- * listen) drops the set; a `typing` hint goes to every member but the
+ * once per conversation and cached until a `members` hint for it (or a gap
+ * in the feed) drops the set; a `typing` hint goes to every member but the
  * typist; a user's hint goes to that user's sockets. Nothing of a message is
  * sent, only that something changed: clients fetch it over REST.
  *
- * Like `GameFanout`, a lost `LISTEN` connection is listened again after
- * `retryMs`. Hints sent meanwhile were never heard, so every chat socket on
- * the worker is told to `resync`.
+ * Like `GameFanout`, it acts once the feed returns after a gap. Hints sent
+ * meanwhile were never heard, so every chat socket on the worker is told to
+ * `resync`, each at its own moment within `resyncSpreadMs`.
+ *
+ * A hint whose member set cannot be read for want of a connection cannot be
+ * sent, and who to tell is exactly what could not be read. So the read is
+ * tried again every `retryMs`, once per conversation, and when it succeeds
+ * that conversation's members are told to `resync`.
  */
 export class ChatFanout {
-  /** Settles once the first `LISTEN` is in place, or has failed. */
+  /** Settles once the channel is first in place, or that attempt has failed. */
   readonly listening: Promise<void>
   private readonly db: Kysely<Database>
-  private readonly databaseUrl: string
   private readonly retryMs: number
+  private readonly resyncSpreadMs: number
   private readonly cacheSize: number
   private readonly readMembers: MemberReader
   private readonly now: () => Date
@@ -120,15 +125,18 @@ export class ChatFanout {
   private readonly subscribers = new Map<string, Set<ChatSubscriber>>()
   /** Member sets by conversation, oldest first. */
   private readonly members = new Map<string, Promise<Set<string>>>()
-  private client: Client | undefined
-  private readonly hangingUp = new Set<Promise<void>>()
-  private retry: ReturnType<typeof setTimeout> | undefined
+  /** Conversations whose members are owed a `resync`, with its next try. */
+  private readonly owed = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Sockets with a spread `resync` still to come, and its timers. */
+  private readonly resyncDue = new Set<ChatSubscriber>()
+  private readonly spreadTimers = new Set<ReturnType<typeof setTimeout>>()
+  private readonly stopListening: () => void
   private closed = false
 
   constructor(options: ChatFanoutOptions) {
     this.db = options.db
-    this.databaseUrl = options.databaseUrl
     this.retryMs = options.retryMs ?? 1000
+    this.resyncSpreadMs = options.resyncSpreadMs ?? 0
     this.cacheSize = options.cacheSize ?? 1000
     this.readMembers = options.readMembers ?? readMembers
     this.now = options.now ?? (() => new Date())
@@ -137,7 +145,16 @@ export class ChatFanout {
       (message => {
         console.error(`chat socket: ${message}`)
       })
-    this.listening = this.listen()
+    const subscription = options.feed.subscribe(CHAT_CHANGES_CHANNEL, {
+      onPayload: payload => {
+        this.notified(payload)
+      },
+      onListening: first => {
+        if (!first) this.returned()
+      }
+    })
+    this.listening = subscription.listening
+    this.stopListening = subscription.stop
   }
 
   /** A signed-in socket opened. Twice is once. */
@@ -172,16 +189,17 @@ export class ChatFanout {
 
   async close(): Promise<void> {
     this.closed = true
-    clearTimeout(this.retry)
+    this.stopListening()
+    for (const timer of this.owed.values()) clearTimeout(timer)
+    this.owed.clear()
+    for (const timer of this.spreadTimers) clearTimeout(timer)
+    this.spreadTimers.clear()
+    this.resyncDue.clear()
     this.subscribers.clear()
     this.members.clear()
-    const client = this.client
-    this.client = undefined
-    if (client != null) this.hangUp(client)
-    await Promise.all([...this.hangingUp])
   }
 
-  /** A notify, as the `LISTEN` connection hands it over. */
+  /** A notify, as the feed hands it over. */
   notified(payload: string | undefined): void {
     if (payload == null || this.closed) return
     this.deliver(payload).catch((error: unknown) => {
@@ -205,7 +223,16 @@ export class ChatFanout {
     if (change.k === 'members') this.members.delete(change.c)
     // Nobody here to tell: the set is not read at all.
     if (this.subscribers.size === 0) return
-    const members = await this.membersOf(change.c)
+    let members: Set<string>
+    try {
+      members = await this.membersOf(change.c)
+    } catch (error) {
+      if (!isConnectionUnavailable(error)) throw error
+      // A typing hint is over by the time anyone could hear it: nothing to
+      // read again.
+      if (change.k !== 'typing') this.oweResync(change.c)
+      return
+    }
     if (change.k === 'typing') {
       const frame: ChatSocketFrame = {
         type: 'chatTyping',
@@ -227,6 +254,56 @@ export class ChatFanout {
       at: this.now().toISOString()
     }
     for (const userId of members) this.sendTo(userId, frame)
+  }
+
+  /** Tries again shortly to tell a conversation's members to read again. */
+  private oweResync(conversationId: string): void {
+    if (this.closed || this.owed.has(conversationId)) return
+    this.log(`owing ${conversationId} a resync: no database connection in time`)
+    this.owed.set(
+      conversationId,
+      setTimeout(() => {
+        this.owed.delete(conversationId)
+        this.payResync(conversationId).catch((error: unknown) => {
+          this.log(`resyncing ${conversationId}: ${String(error)}`)
+        })
+      }, this.retryMs)
+    )
+  }
+
+  private async payResync(conversationId: string): Promise<void> {
+    let members: Set<string>
+    try {
+      members = await this.membersOf(conversationId)
+    } catch (error) {
+      if (!isConnectionUnavailable(error)) throw error
+      this.oweResync(conversationId)
+      return
+    }
+    this.resync([...members])
+  }
+
+  /**
+   * Tells these users' sockets of this moment to read again. A frame still to
+   * come covers whatever is missed before it, so a socket waiting on one gets
+   * no second. One that left meanwhile is skipped.
+   */
+  private resync(userIds: string[]): void {
+    const due = userIds
+      .flatMap(userId => [...(this.subscribers.get(userId) ?? [])])
+      .filter(subscriber => !this.resyncDue.has(subscriber))
+    for (const subscriber of due) this.resyncDue.add(subscriber)
+    spread(
+      'resync',
+      due,
+      this.resyncSpreadMs,
+      subscriber => {
+        this.resyncDue.delete(subscriber)
+        if (this.subscribers.get(subscriber.userId)?.has(subscriber) === true)
+          subscriber.send({ type: 'resync' })
+      },
+      this.spreadTimers
+    )
   }
 
   private sendTo(userId: string, frame: ChatSocketFrame): void {
@@ -260,54 +337,13 @@ export class ChatFanout {
     }
   }
 
-  /** Ends a connection, remembered until it has. */
-  private hangUp(client: Client): void {
-    const ending: Promise<void> = client
-      .end()
-      .catch(() => undefined)
-      .finally(() => {
-        this.hangingUp.delete(ending)
-      })
-    this.hangingUp.add(ending)
-  }
-
-  private async listen(): Promise<void> {
-    if (this.closed) return
-    const client = new Client({ connectionString: this.databaseUrl })
-    this.client = client
-    client.on('notification', message => {
-      if (this.client === client) this.notified(message.payload)
-    })
-    client.on('error', error => {
-      this.lost(client, String(error))
-    })
-    client.on('end', () => {
-      this.lost(client, 'the connection ended')
-    })
-    try {
-      await client.connect()
-      await client.query(`listen ${CHAT_CHANGES_CHANNEL}`)
-    } catch (error) {
-      this.lost(client, String(error))
-    }
-  }
-
   /**
-   * The `LISTEN` connection failed or went. Hints sent meanwhile were never
-   * heard, and a `members` hint among them would have dropped a set, so
-   * every set goes, every chat socket is told to resync, and it listens
-   * again.
+   * The feed has returned after a gap. Hints sent meanwhile were never heard,
+   * and a `members` hint among them would have dropped a set, so every set
+   * goes and every chat socket is told to resync.
    */
-  private lost(client: Client, why: string): void {
-    if (this.client !== client || this.closed) return
-    this.client = undefined
-    this.log(`lost the ${CHAT_CHANGES_CHANNEL} listener: ${why}`)
-    this.hangUp(client)
+  private returned(): void {
     this.members.clear()
-    for (const userId of [...this.subscribers.keys()])
-      this.sendTo(userId, { type: 'resync' })
-    this.retry = setTimeout(() => {
-      this.listen().catch(() => undefined)
-    }, this.retryMs)
+    this.resync([...this.subscribers.keys()])
   }
 }

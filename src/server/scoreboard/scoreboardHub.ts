@@ -19,10 +19,21 @@ import {
   radarPacket,
   type RadarReading
 } from '../../common/scoring/radarSpeeds'
-import { adminScopes, canSeeGame, visibleScopes } from '../access'
-import { type Actor, actorForToken, keyAllows } from '../auth/sessions'
+import {
+  adminScopes,
+  canSeeGame,
+  type GameScope,
+  visibleScopes,
+  visibleScopesForUsers
+} from '../access'
+import {
+  type Actor,
+  actorForToken,
+  actorsForTokens,
+  keyAllows
+} from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
-import type { Database } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
 import { mayRunGame } from '../director/runGames'
 import { refreshRadarSpeeds } from '../events/radarSpeeds'
 import { speedHoldMs as nodeSpeedHoldMs } from '../nodeSettings'
@@ -93,6 +104,10 @@ interface Room {
   members: Set<Member>
   /** This game's work, one step at a time, in order. */
   chain: Promise<void>
+  /** When its checks began finding no connection, while they still do. */
+  starvedSince?: number
+  /** The next of those checks, sooner than the regular one. */
+  recheck?: ReturnType<typeof setTimeout>
 }
 
 export interface ScoreboardHubOptions {
@@ -104,6 +119,10 @@ export interface ScoreboardHubOptions {
   now?: () => number
   /** How often each game with sockets is checked for having closed. */
   checkMs?: number
+  /** How soon a check that found no connection is asked again, on average. */
+  starvedCheckMs?: number
+  /** How long checks may keep finding none before a game's `timeline=1` sockets close. */
+  starvedCloseMs?: number
   /** How often every socket is pinged; one that missed the last is dropped. */
   pingMs?: number
   /**
@@ -130,6 +149,9 @@ const KIND_OF: Record<string, Kind> = {
 }
 /** Close code for a server that cannot reach Redis: retry, as after 1006. */
 const UNAVAILABLE = 1011
+/** After a check finds no connection: how soon it asks again, and for how long. */
+const STARVED_CHECK_MS = 10_000
+const STARVED_CLOSE_MS = 5 * 60_000
 const GOING_AWAY = 1001
 const BAD_REQUEST = 'HTTP/1.1 400 Bad Request\r\n\r\n'
 const CHANGED = JSON.stringify({ type: 'changed' })
@@ -145,6 +167,8 @@ export function makeScoreboardHub(
   // hold is armed in the middle of a message, with nothing to await.
   let speedHoldMs =
     options.speedHoldMs ?? defaultScoreboardSettings.speedHoldSec * 1000
+  const starvedCheckMs = options.starvedCheckMs ?? STARVED_CHECK_MS
+  const starvedCloseMs = options.starvedCloseMs ?? STARVED_CLOSE_MS
   const readHold = (): void => {
     if (options.speedHoldMs != null) return
     nodeSpeedHoldMs(db)
@@ -252,8 +276,24 @@ export function makeScoreboardHub(
     hash: ScoreboardHash,
     only?: Member
   ): Promise<void> {
-    for (const member of only == null ? room.members : [only])
-      if (member.kind === 'dashboard') await authorizeCurrent(room, member)
+    // One finding no connection speaks for those after it, who would each wait
+    // as long. They stay unsent, not shut: `lastVersion` still owes them this
+    // state, and the check that next finds a connection sends it.
+    const unasked = new Set<Member>()
+    for (const member of only == null ? room.members : [only]) {
+      if (member.kind !== 'dashboard') continue
+      if (unasked.size > 0) {
+        unasked.add(member)
+        continue
+      }
+      try {
+        await authorizeCurrent(room, member)
+      } catch (error) {
+        if (!isConnectionUnavailable(error)) throw error
+        unasked.add(member)
+        starved(room, error)
+      }
+    }
     const overrides = hash.overrides ?? NO_OVERRIDES
     const { automated, final } = composeScoreboard({
       baseline: room.record,
@@ -272,6 +312,7 @@ export function makeScoreboardHub(
     })
     for (const member of only == null ? room.members : [only]) {
       if (member.kind === 'publisher' || member.timeline) continue
+      if (unasked.has(member)) continue
       if (hash.version <= member.lastVersion) continue
       if (member.socket.readyState !== WebSocket.OPEN) continue
       member.lastVersion = hash.version
@@ -366,30 +407,84 @@ export function makeScoreboardHub(
   const checker = setInterval(() => {
     for (const room of rooms.values()) {
       enqueue(room, async () => {
-        const record = await gameRecord(db, room.gameId)
-        const keyExists = await store.exists(room.gameId)
-        if (record != null) room.record = record
-        if (scoreboardOpen(record, keyExists, now())) {
-          for (const member of room.members) {
-            if (member.kind !== 'viewer') await authorizeCurrent(room, member)
-            else if (member.timeline) await stillSees(room, member)
-          }
-          return
-        }
+        await checkRoom(room)
+      })
+    }
+  }, options.checkMs ?? 60_000)
+
+  async function checkRoom(room: Room): Promise<void> {
+    try {
+      const record = await gameRecord(db, room.gameId)
+      const keyExists = await store.exists(room.gameId)
+      if (record != null) room.record = record
+      if (scoreboardOpen(record, keyExists, now())) {
+        for (const member of room.members)
+          if (member.kind !== 'viewer') await authorizeCurrent(room, member)
+        await stillSee(
+          room,
+          [...room.members].filter(
+            member => member.kind === 'viewer' && member.timeline
+          )
+        )
+      } else {
+        const staying = [...room.members].filter(
+          member => member.timeline && record != null
+        )
         for (const member of room.members) {
-          if (member.timeline && record != null) {
-            await stillSees(room, member)
-            continue
-          }
+          if (staying.includes(member)) continue
           shut(
             member.socket,
             SCOREBOARD_CLOSE.closed,
             'The scoreboard is closed'
           )
         }
-      })
+        await stillSee(room, staying)
+      }
+      const owing = room.starvedSince != null
+      room.starvedSince = undefined
+      // A dashboard that could not be asked was not sent what it was owed.
+      if (owing) await catchUp(room)
+    } catch (error) {
+      if (!isConnectionUnavailable(error)) throw error
+      starved(room, error)
     }
-  }, options.checkMs ?? 60_000)
+  }
+
+  /**
+   * A check found no connection, which says nothing of who may see the game.
+   * Sockets closed now would come straight back for the same connections, so
+   * they stay and are asked for again soon, each room at its own moment. Who
+   * cannot be asked has authority nobody is checking, so every socket that is
+   * asked closes if connections stay short for `starvedCloseMs`; a plain viewer,
+   * which is public, is not one. A failure on any path counts, and only a check
+   * that succeeds starts the time again.
+   */
+  function starved(room: Room, error: unknown): void {
+    // A socket that closed while being admitted has a room nobody is in.
+    if (rooms.get(room.gameId) !== room) return
+    const at = now()
+    room.starvedSince ??= at
+    log(`scoreboard ${room.gameId}: asking again: ${describe(error)}`)
+    if (at - room.starvedSince >= starvedCloseMs) {
+      room.starvedSince = undefined
+      for (const member of room.members)
+        if (member.kind !== 'viewer' || member.timeline)
+          shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
+      return
+    }
+    // Already asking: a publisher's messages must not keep putting it off.
+    if (room.recheck != null) return
+    room.recheck = setTimeout(
+      () => {
+        room.recheck = undefined
+        if (closing) return
+        enqueue(room, async () => {
+          await checkRoom(room)
+        })
+      },
+      starvedCheckMs * (0.5 + Math.random())
+    )
+  }
 
   /** Every 30 s: a socket that missed the last ping is gone. */
   const pinger = setInterval(() => {
@@ -420,7 +515,10 @@ export function makeScoreboardHub(
     const room = rooms.get(gameId)
     if (room == null) return
     room.members.delete(member)
-    if (room.members.size === 0) rooms.delete(gameId)
+    if (room.members.size === 0) {
+      clearTimeout(room.recheck)
+      rooms.delete(gameId)
+    }
   }
 
   /**
@@ -540,7 +638,17 @@ export function makeScoreboardHub(
     actor: { userId: string; isAdmin: boolean },
     gameId: string
   ): Promise<boolean> {
-    const game = await db
+    const game = await gameScopeOf(gameId)
+    if (game == null) return false
+    return canSeeGame(
+      await visibleScopes(db, actor.userId, actor.isAdmin),
+      game
+    )
+  }
+
+  /** The teams and season that decide who may see this game. */
+  async function gameScopeOf(gameId: string): Promise<GameScope | undefined> {
+    return await db
       .selectFrom('games')
       .select([
         'home_team_id as homeTeamId',
@@ -549,42 +657,58 @@ export function makeScoreboardHub(
       ])
       .where('id', '=', gameId)
       .executeTakeFirst()
-    if (game == null) return false
-    return canSeeGame(
-      await visibleScopes(db, actor.userId, actor.isAdmin),
-      game
-    )
   }
 
   /**
    * A `timeline=1` socket outlives the board, so the credential it opened
    * with and the membership it was admitted on are asked again at each check:
-   * a session signed out, or a team left, ends it.
+   * a session signed out, or a team left, ends it. Asked of all a room's such
+   * sockets together, in the same reads however many there are.
    */
-  async function stillSees(room: Room, member: Member): Promise<void> {
+  async function stillSee(room: Room, members: Member[]): Promise<void> {
+    if (members.length === 0) return
     try {
-      const actor =
-        member.token == null
-          ? undefined
-          : await actorForToken(db, member.token, { recordUse: false })
-      if (actor == null || actor.userId !== member.userId) {
+      const actors = await actorsForTokens(
+        db,
+        members.flatMap(member => (member.token == null ? [] : [member.token]))
+      )
+      const signedIn = members.filter(member => {
+        const actor =
+          member.token == null ? undefined : actors.get(member.token)
+        if (actor != null && actor.userId === member.userId) return true
         shut(member.socket, SCOREBOARD_CLOSE.notSignedIn, 'Sign in to continue')
-        return
-      }
-      if (!(await maySeeGame(actor, room.gameId))) {
-        shut(
-          member.socket,
-          SCOREBOARD_CLOSE.notAllowed,
-          'This game is for members'
-        )
+        return false
+      })
+      if (signedIn.length === 0) return
+      const game = await gameScopeOf(room.gameId)
+      const scopes =
+        game == null
+          ? undefined
+          : await visibleScopesForUsers(
+              db,
+              signedIn.map(member => member.userId!)
+            )
+      for (const member of signedIn) {
+        const seen = scopes?.get(member.userId!)
+        if (game == null || seen == null || !canSeeGame(seen, game))
+          shut(
+            member.socket,
+            SCOREBOARD_CLOSE.notAllowed,
+            'This game is for members'
+          )
       }
     } catch (error) {
+      if (isConnectionUnavailable(error)) throw error
       log(`scoreboard ${room.gameId}: authorization: ${describe(error)}`)
-      shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
+      for (const member of members)
+        shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
     }
   }
 
-  /** Recheck the credential and current matchup before a private read or write. */
+  /**
+   * Recheck the credential and current matchup before a private read or write.
+   * Finding no connection decides nothing, so that is thrown for the caller.
+   */
   async function authorizeCurrent(
     room: Room,
     member: Member
@@ -619,6 +743,7 @@ export function makeScoreboardHub(
       }
       return true
     } catch (error) {
+      if (isConnectionUnavailable(error)) throw error
       log(`scoreboard ${room.gameId}: authorization: ${describe(error)}`)
       shut(member.socket, UNAVAILABLE, 'The scoreboard is unavailable')
       return false
@@ -631,13 +756,22 @@ export function makeScoreboardHub(
     member: Member,
     data: RawData
   ): Promise<void> {
-    if (!(await authorizeCurrent(room, member))) return
     const { socket } = member
-    const refuse = (message: string): void => {
+    const refuse = (message: string, retry?: true): void => {
       if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ error: message }))
+        socket.send(JSON.stringify({ error: message, retry }))
       }
     }
+    let allowed: boolean
+    try {
+      allowed = await authorizeCurrent(room, member)
+    } catch (error) {
+      if (!isConnectionUnavailable(error)) throw error
+      starved(room, error)
+      refuse('The server is busy; send that again', true)
+      return
+    }
+    if (!allowed) return
     let raw: unknown
     try {
       raw = JSON.parse(textOf(data))
@@ -783,6 +917,7 @@ export function makeScoreboardHub(
       clearInterval(checker)
       clearInterval(pinger)
       clearInterval(holdReader)
+      for (const room of rooms.values()) clearTimeout(room.recheck)
       for (const timer of speedHolds.values()) clearTimeout(timer)
       speedHolds.clear()
       for (const member of everyone) {

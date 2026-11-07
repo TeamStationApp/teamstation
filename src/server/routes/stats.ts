@@ -26,7 +26,7 @@ import {
 } from '../stats'
 import { playerSplits } from '../stats/playerSplits'
 import { playerFilterOf, statRows } from '../stats/rows'
-import { seasonParticipants } from '../stats/seasonTeams'
+import { seasonParticipants, seasonResults } from '../stats/seasonTeams'
 
 /**
  * A player's stats by season and for their career, a season's standings, and
@@ -215,21 +215,17 @@ export function statsRoutes(
       const asked = req.query.includeExhibitions
       if (asked !== undefined && asked !== 'true' && asked !== 'false')
         throw badRequest('includeExhibitions must be true or false')
-      const participants = await seasonParticipants(db, seasonId)
+      const { teams: participants } = await seasonParticipants(db, seasonId)
       res.json(
         seasonStandings(
-          participants.teams.filter(
+          participants.filter(
             team =>
               asked !== 'false' ||
               team.activeMember ||
               team.parentMember ||
-              participants.games.some(
-                game =>
-                  !game.exhibition &&
-                  (game.homeTeamId === team.id || game.awayTeamId === team.id)
-              )
+              team.playsInSeason
           ),
-          participants.games,
+          await seasonResults(db, seasonId),
           asked !== 'false'
         ).map(({ logoPath, ...row }) => ({
           ...row,

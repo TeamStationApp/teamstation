@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 
 import { asSessionUser, TeamStationClient } from '../common/api'
+import { GAME_SOCKET_PROTOCOL } from '../common/gameSocket'
 import { userIdOfGumbo } from '../common/userId'
 import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { type FakeSocket, fakeSockets } from '../test/fakeScoreboardSocket'
@@ -21,16 +22,11 @@ function scopeFrames(socket: FakeSocket): Array<Record<string, unknown>> {
 }
 
 /** The server registers the scope the app asked for last. */
-function acknowledge(socket: FakeSocket, revision: string): void {
+function acknowledge(socket: FakeSocket): void {
   const asked = scopeFrames(socket).filter(frame => frame.type === 'subscribe')
   const last = asked.at(-1)
   if (last == null) throw new Error('no scope was asked for')
-  socket.receive({
-    type: 'subscribed',
-    scope: last.scope,
-    id: last.id,
-    revision
-  })
+  socket.receive({ type: 'subscribed', scope: last.scope, id: last.id })
 }
 
 describe('the scope the visible route holds', () => {
@@ -146,11 +142,16 @@ describe('the scope the visible route holds', () => {
     })
     await settle(50)
     expect(scopeFrames(socket)).deep.equals([
-      { type: 'subscribe', scope: 'home', id: 'c1' }
+      {
+        type: 'subscribe',
+        scope: 'home',
+        id: 'c1',
+        protocol: GAME_SOCKET_PROTOCOL
+      }
     ])
     expect(reads, 'Home reads nothing before the ack').deep.equals([])
     await act(async () => {
-      acknowledge(socket, '3')
+      acknowledge(socket)
     })
     await settle(50)
     expect(reads).deep.equals(['home'])
@@ -158,11 +159,12 @@ describe('the scope the visible route holds', () => {
     await tab('Schedule')
     expect(scopeFrames(socket).at(-1)).deep.include({
       type: 'subscribe',
-      scope: 'schedule'
+      scope: 'schedule',
+      protocol: GAME_SOCKET_PROTOCOL
     })
     expect(reads).deep.equals(['home'])
     await act(async () => {
-      acknowledge(socket, '3')
+      acknowledge(socket)
     })
     await settle(50)
     expect(reads).deep.equals(['home', 'games'])
@@ -188,15 +190,23 @@ describe('the scope the visible route holds', () => {
     })
     await settle(50)
     expect(
-      scopeFrames(socket).map(({ type, scope, gameId }) => ({
+      scopeFrames(socket).map(({ type, scope, gameId, protocol }) => ({
         type,
         scope,
-        gameId
+        gameId,
+        protocol
       }))
-    ).deep.equals([{ type: 'subscribe', scope: 'event', gameId: 'g1' }])
+    ).deep.equals([
+      {
+        type: 'subscribe',
+        scope: 'event',
+        gameId: 'g1',
+        protocol: GAME_SOCKET_PROTOCOL
+      }
+    ])
     expect(reads).not.includes('game')
     await act(async () => {
-      acknowledge(socket, '8')
+      acknowledge(socket)
     })
     await settle(50)
     expect(reads).includes('game')
@@ -223,7 +233,7 @@ describe('the scope the visible route holds', () => {
     })
     await settle(50)
     await act(async () => {
-      acknowledge(socket, '3')
+      acknowledge(socket)
     })
     await settle(50)
     expect(asked.some(url => url.endsWith('/me/home'))).equals(true)
@@ -236,7 +246,7 @@ describe('the scope the visible route holds', () => {
     expect(socket.readyState).equals(1)
     const stopped = scopeFrames(socket)
     await act(async () => {
-      socket.receive({ type: 'changed', scope: 'home', revision: '4' })
+      socket.receive({ type: 'changed', scope: 'home' })
     })
     await settle(1200)
     expect(scopeFrames(socket)).deep.equals(stopped)

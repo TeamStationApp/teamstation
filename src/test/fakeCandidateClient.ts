@@ -57,6 +57,21 @@ export class FakeCandidateClient {
     return () => this.listeners.delete(listener)
   }
 
+  /** The people the phone keeps, by team: `candidates.<teamId>`. */
+  kept: Record<string, RosterCandidate[]> = {}
+  /** The keys the cache was read for. */
+  cacheReads: string[] = []
+
+  async cached<T>(
+    key: string,
+    cleaner: (raw: unknown) => T
+  ): Promise<T | undefined> {
+    this.cacheReads.push(key)
+    const team = key.startsWith('candidates.') ? key.slice(11) : undefined
+    const held = team == null ? undefined : this.kept[team]
+    return held == null ? undefined : cleaner(held)
+  }
+
   async rosterCandidates(
     ask: Omit<CandidateAsk, 'resolve' | 'reject'>
   ): Promise<RosterCandidate[]> {

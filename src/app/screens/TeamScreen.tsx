@@ -612,8 +612,9 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                   onOpen={person => {
                     // A player has a page, for anybody who may see it: a
                     // non-member is answered `404` there, so their rows open
-                    // nothing. Anybody else opens their profile, for the
-                    // team's administrators, coaches and assistants.
+                    // nothing. Your own other row opens your profile even
+                    // when you do not manage people. Anybody else's does, for
+                    // the team's administrators, coaches and assistants.
                     if (
                       person.isPlayer &&
                       !nonMemberView &&
@@ -624,7 +625,11 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                           onTeam: team.id
                         })
                       }
-                    if (!nonMemberView && managesPeople && onOpenPerson != null)
+                    if (
+                      !nonMemberView &&
+                      onOpenPerson != null &&
+                      (person.self || managesPeople)
+                    )
                       return () => {
                         onOpenPerson(person.userId, person.shortName, team.id)
                       }

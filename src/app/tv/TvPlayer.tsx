@@ -2,6 +2,7 @@ import React, {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -11,6 +12,8 @@ import {
   Animated,
   AppState,
   BackHandler,
+  Easing,
+  LayoutAnimation,
   Platform,
   Pressable,
   ScrollView,
@@ -31,19 +34,25 @@ import type {
 import type { ScoreboardOverlay } from '../../common/nodeSettings'
 import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
+import { useMotionPreference } from '../components/useMotionPreference'
+import type { Rect as TileRect } from '../player/multiCam/layout'
 import { angleLabels } from '../player/multiCam/takes'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
 import {
+  focusMagnification,
   NativeGradient,
   PlaybackBoundary,
+  reducedMotionThumbnail,
+  staticTileFocus,
   TvPoster
 } from './NativePresentation'
 import { NativeSeekQueue } from './nativeSeekQueue'
 import { PlaybackClock } from './playbackClock'
 import {
   initialPlayback,
+  type PlaybackAction,
   playbackReducer,
   type SidePanel
 } from './playbackState'
@@ -60,6 +69,10 @@ import { TransportVideo } from './TransportVideo'
 import type { TvPlayRequest } from './TvBrowser'
 import { TvButton } from './TvButton'
 import { angleNeighbor, tvLayout } from './tvLayout'
+
+const HIGHLIGHTS_PANEL_WIDTH = 420
+const LAYOUT_DURATION = 240
+const STATS_SCROLL_SENSITIVITY = 0.5
 
 interface Angle {
   name: string
@@ -89,6 +102,8 @@ export function TvPlayer({
   const [error, setError] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
   const screen = useWindowDimensions()
+  const reducedMotion = useMotionPreference()
+  const lastExpanded = useRef<number | null>(null)
   const [boardSize, setBoardSize] = useState<{ width: number; height: number }>(
     SCOREBOARD_BOARD_SIZE
   )
@@ -422,14 +437,31 @@ export function TvPlayer({
     },
     [angles]
   )
+  const changeLayout = useCallback(
+    (
+      action: Extract<
+        PlaybackAction,
+        { type: 'toggle' | 'enlarge' | 'collapse' }
+      >
+    ): void => {
+      if (Platform.isTV && !reducedMotion) {
+        LayoutAnimation.configureNext(
+          LayoutAnimation.create(LAYOUT_DURATION, 'easeInEaseOut', 'scaleXY')
+        )
+      }
+      if (action.type === 'enlarge') lastExpanded.current = action.index
+      dispatch(action)
+    },
+    [reducedMotion]
+  )
   const back = useCallback((): void => {
     transport.current?.cancel()
     const held = current.current
     if (held.side !== null || held.box !== 'closed')
       dispatch({ type: 'dismiss' })
-    else if (held.full !== null) dispatch({ type: 'collapse' })
+    else if (held.full !== null) changeLayout({ type: 'collapse' })
     else onClose()
-  }, [onClose])
+  }, [onClose, changeLayout])
   useEffect(() => {
     const subscription = BackHandler.addEventListener(
       'hardwareBackPress',
@@ -506,7 +538,9 @@ export function TvPlayer({
   const glideStats = useCallback(
     (initialVelocity: number) => {
       stopStatsMomentum()
-      let velocity = Math.max(-2400, Math.min(2400, initialVelocity))
+      let velocity =
+        Math.max(-2400, Math.min(2400, initialVelocity)) *
+        STATS_SCROLL_SENSITIVITY
       let last = Date.now()
       const tick = (): void => {
         if (current.current.box === 'closed') return
@@ -527,7 +561,7 @@ export function TvPlayer({
         statsOffset.current = next
         statsScroll.current?.scrollTo({ y: next, animated: false })
         velocity *= Math.exp(-dt / 260)
-        if (Math.abs(velocity) > 12)
+        if (Math.abs(velocity) > 12 * STATS_SCROLL_SENSITIVITY)
           statsMomentum.current = requestAnimationFrame(tick)
       }
       statsMomentum.current = requestAnimationFrame(tick)
@@ -591,7 +625,7 @@ export function TvPlayer({
             0,
             statsExtent.current.content - statsExtent.current.viewport
           ),
-          statsOffset.current + delta
+          statsOffset.current + delta * STATS_SCROLL_SENSITIVITY
         )
       )
       statsScroll.current?.scrollTo({
@@ -678,7 +712,8 @@ export function TvPlayer({
             0,
             Math.min(
               statsExtent.current.content - statsExtent.current.viewport,
-              statsOffset.current + (direction === 'down' ? 100 : -100)
+              statsOffset.current +
+                (direction === 'down' ? 100 : -100) * STATS_SCROLL_SENSITIVITY
             )
           )
           statsScroll.current?.scrollTo({
@@ -873,25 +908,22 @@ export function TvPlayer({
         }}
       >
         {angles?.map((angle, index) => {
-          const rect = layout.tiles[state.visible.indexOf(index)] ?? {
-            x: 0,
-            y: 0,
-            w: screen.width / 2,
-            h: screen.height / 2
-          }
+          const rect = layout.tiles[state.visible.indexOf(index)]
           const available = clock.current.available(index)
           return (
-            <View
+            <CameraFrame
               key={angle.video.id}
-              style={{
-                position: 'absolute',
-                left: rect.x,
-                top: rect.y,
-                width: rect.w,
-                height: rect.h,
-                opacity: state.visible.includes(index) ? 1 : 0,
-                zIndex: state.full === index ? 2 : 1
-              }}
+              rect={rect}
+              reducedMotion={reducedMotion}
+              zIndex={
+                state.full === index
+                  ? 4
+                  : rect === undefined
+                    ? 3
+                    : lastExpanded.current === index
+                      ? 2
+                      : 1
+              }
             >
               <Pressable
                 ref={node => {
@@ -925,7 +957,7 @@ export function TvPlayer({
                   setFocus(null)
                 }}
                 onPress={() => {
-                  dispatch({ type: 'enlarge', index })
+                  changeLayout({ type: 'enlarge', index })
                 }}
                 style={{
                   position: 'absolute',
@@ -933,7 +965,12 @@ export function TvPlayer({
                   right: 0,
                   top: 0,
                   bottom: 0,
-                  borderWidth: focus === index ? 4 : 0,
+                  borderWidth:
+                    focus === index &&
+                    state.full === null &&
+                    state.visible.length > 1
+                      ? 4
+                      : 0,
                   borderColor: '#fff'
                 }}
               >
@@ -998,7 +1035,7 @@ export function TvPlayer({
                   </View>
                 )}
               </Pressable>
-            </View>
+            </CameraFrame>
           )
         })}
       </TvFocusGuide>
@@ -1013,29 +1050,28 @@ export function TvPlayer({
       {angles === null && error === null && (
         <Text style={styles.copy}>Opening game…</Text>
       )}
-      {board != null && placement?.show === true && (
+      {board != null && placement?.show === true && layout.board != null && (
         <View
           pointerEvents="none"
           testID="tv-scoreboard"
-          style={[StyleSheet.absoluteFill, { zIndex: 4 }]}
+          collapsable={false}
+          style={[styles.placedScore, frameStyle(layout.board)]}
         >
           <PlacedScoreboard
             step={boardAt(stats.board?.steps ?? [], wall) ?? null}
             onNaturalSize={measureBoard}
-            place={natural =>
-              tvLayout(state, screen, placement, true, line != null, natural)
-                .board
-            }
+            place={() => ({ ...layout.board!, x: 0, y: 0 })}
           />
         </View>
       )}
       {staticScore && layout.box !== null && line != null && (
         <View
           pointerEvents="none"
-          style={[StyleSheet.absoluteFill, { zIndex: 4 }]}
+          collapsable={false}
+          style={[styles.placedScore, frameStyle(layout.box)]}
         >
           <LineScoreBox
-            rect={layout.box}
+            rect={{ ...layout.box, x: 0, y: 0 }}
             line={line ?? null}
             teams={
               stats.teams ?? {
@@ -1055,7 +1091,7 @@ export function TvPlayer({
           styles.side,
           renderedSide === 'cameras'
             ? { left: 0, paddingTop: 40, width: 356 }
-            : { right: 0, width: 420 },
+            : { right: 0, width: HIGHLIGHTS_PANEL_WIDTH },
           {
             opacity: sideMotion,
             transform: [
@@ -1069,14 +1105,18 @@ export function TvPlayer({
           }
         ]}
       >
-        {renderedSide === 'highlights' && (
-          <View
-            pointerEvents="none"
-            style={[StyleSheet.absoluteFill, { left: -screen.width * 0.1 }]}
-          >
-            <PanelGradient direction="right" maxOpacity={0.75} />
-          </View>
-        )}
+        <View
+          pointerEvents="none"
+          style={[
+            styles.sideGradient,
+            { width: HIGHLIGHTS_PANEL_WIDTH + screen.width * 0.25 },
+            renderedSide === 'cameras' ? { left: 0 } : { right: 0 }
+          ]}
+        >
+          <PanelGradient
+            direction={renderedSide === 'cameras' ? 'left' : 'right'}
+          />
+        </View>
         <TvFocusGuide
           autoFocus
           focusable={state.side !== null}
@@ -1100,7 +1140,7 @@ export function TvPlayer({
                     index === (focus ?? state.visible[0]),
                   tvParallaxProperties: {
                     enabled: true,
-                    magnification: 1.16,
+                    magnification: focusMagnification,
                     shiftDistanceX: 10,
                     shiftDistanceY: 10,
                     tiltAngle: 0.08,
@@ -1115,7 +1155,7 @@ export function TvPlayer({
                   setCameraFocus(null)
                 }}
                 onPress={() => {
-                  dispatch({ type: 'toggle', index })
+                  changeLayout({ type: 'toggle', index })
                 }}
                 style={[
                   styles.angleOption,
@@ -1219,37 +1259,24 @@ export function TvPlayer({
                   }}
                   style={styles.clip}
                 >
-                  <>
-                    <View
-                      testID={`tv-highlight-frame-${index}`}
-                      style={[
-                        styles.previewFrame,
-                        highlightFocus === clip.eventId && styles.selected
-                      ]}
-                    >
-                      <View
-                        testID={`tv-highlight-thumbnail-${index}`}
-                        style={styles.preview}
-                      >
-                        <TvPoster
-                          uri={clip.stillUrl}
-                          focused={highlightFocus === clip.eventId}
-                        >
-                          <View
-                            pointerEvents="none"
-                            style={[
-                              StyleSheet.absoluteFill,
-                              styles.previewFrame,
-                              highlightFocus === clip.eventId && styles.selected
-                            ]}
-                          />
-                        </TvPoster>
-                      </View>
-                    </View>
-                    <Text style={[styles.copy, styles.clipText]}>
-                      {clip.title}
-                    </Text>
-                  </>
+                  <View
+                    testID={`tv-highlight-thumbnail-${index}`}
+                    style={[
+                      styles.preview,
+                      reducedMotion && reducedMotionThumbnail,
+                      reducedMotion &&
+                        highlightFocus === clip.eventId &&
+                        staticTileFocus
+                    ]}
+                  >
+                    <TvPoster
+                      uri={clip.stillUrl}
+                      focused={highlightFocus === clip.eventId}
+                    />
+                  </View>
+                  <Text style={[styles.copy, styles.clipText]}>
+                    {clip.title}
+                  </Text>
                 </Pressable>
               ))}
             </ScrollView>
@@ -1295,6 +1322,7 @@ export function TvPlayer({
           style={{ flex: 1, display: state.box === 'closed' ? 'none' : 'flex' }}
         >
           <ScrollView
+            testID="tv-stats-scroll"
             ref={statsScroll}
             scrollEnabled={false}
             onContentSizeChange={(_width, height) => {
@@ -1317,16 +1345,16 @@ export function TvPlayer({
                     onPress={() => {
                       statisticsRefresh.current?.().catch(() => undefined)
                     }}
-                    style={{ paddingVertical: 8 }}
+                    style={{ paddingVertical: 6 }}
                   >
-                    <Text style={styles.copy}>Retry statistics</Text>
+                    <Text style={styles.statsNote}>Retry statistics</Text>
                   </Pressable>
                 </View>
               )}
             {!staticScore && (
               <>
                 {line === undefined || line === null ? (
-                  <Text style={styles.copy}>{statsMessage}</Text>
+                  <Text style={styles.statsNote}>{statsMessage}</Text>
                 ) : (
                   <>
                     <ScrollView
@@ -1405,7 +1433,7 @@ export function TvPlayer({
             {!staticScore && renderedBox !== 'expanded' ? null : box ===
                 undefined || box === null ? (
               staticScore || line != null ? (
-                <Text style={styles.copy}>{statsMessage}</Text>
+                <Text style={styles.statsNote}>{statsMessage}</Text>
               ) : null
             ) : (
               <>
@@ -1476,7 +1504,7 @@ export function TvPlayer({
       </Animated.View>
       {error !== null && (
         <View style={styles.error}>
-          <Text style={styles.copy}>{error}</Text>
+          <Text style={styles.statsNote}>{error}</Text>
           <TvButton
             label="Retry video"
             preferred
@@ -1541,6 +1569,67 @@ function StatRow({
         </Text>
       ))}
     </View>
+  )
+}
+
+function frameStyle(rect: TileRect): {
+  left: number
+  top: number
+  width: number
+  height: number
+} {
+  return { left: rect.x, top: rect.y, width: rect.w, height: rect.h }
+}
+
+/** Keep the decoder and focus target mounted even after their picture shrinks away. */
+function CameraFrame({
+  rect,
+  reducedMotion,
+  zIndex,
+  children
+}: {
+  rect: TileRect | undefined
+  reducedMotion: boolean
+  zIndex: number
+  children: React.ReactNode
+}): React.ReactElement {
+  const shown = rect !== undefined
+  const lastRect = useRef<TileRect>({ x: 0, y: 0, w: 1, h: 1 })
+  const [visibility] = useState(() => new Animated.Value(shown ? 1 : 0))
+  useLayoutEffect(() => {
+    if (rect !== undefined) lastRect.current = rect
+  }, [rect])
+  useLayoutEffect(() => {
+    const toValue = shown ? 1 : 0
+    if (reducedMotion) {
+      visibility.setValue(toValue)
+      return
+    }
+    const animation = Animated.timing(visibility, {
+      toValue,
+      duration: LAYOUT_DURATION,
+      easing: Easing.inOut(value => Easing.ease(value)),
+      useNativeDriver: Platform.OS !== 'web',
+      isInteraction: false
+    })
+    animation.start()
+    return () => {
+      animation.stop()
+    }
+  }, [reducedMotion, shown, visibility])
+  return (
+    <Animated.View
+      collapsable={false}
+      pointerEvents={shown ? 'auto' : 'none'}
+      accessibilityElementsHidden={!shown}
+      style={[
+        styles.cameraFrame,
+        frameStyle(rect ?? lastRect.current),
+        { zIndex, opacity: visibility, transform: [{ scale: visibility }] }
+      ]}
+    >
+      {children}
+    </Animated.View>
   )
 }
 
@@ -1655,18 +1744,18 @@ const Scrubber = React.forwardRef<
 })
 
 const styles = StyleSheet.create({
-  statRow: { flexDirection: 'row', paddingVertical: 3, alignItems: 'center' },
+  statRow: { flexDirection: 'row', paddingVertical: 2, alignItems: 'center' },
   statName: { width: 300, paddingRight: 20 },
   statCell: { flex: 1, minWidth: 48, textAlign: 'center' },
   statText: {
     color: '#fff',
-    fontSize: 44,
+    fontSize: 33,
     textShadowColor: '#0009',
     textShadowRadius: 3,
     textShadowOffset: { width: 0, height: 1 }
   },
-  statLabel: { color: '#fff', fontSize: 39, fontWeight: '600' },
-  statsHeading: { color: '#fff', fontSize: 52, fontWeight: '700' },
+  statLabel: { color: '#fff', fontSize: 29.25, fontWeight: '600' },
+  statsHeading: { color: '#fff', fontSize: 39, fontWeight: '700' },
   statsColumns: { flexDirection: 'row', gap: 48 },
   hidden: { display: 'none' },
   scene: {
@@ -1677,7 +1766,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   copy: { color: '#fff', fontSize: 25 },
-  small: { color: '#ddd', fontSize: 22 },
+  small: { color: '#ddd', fontSize: 16.5 },
+  statsNote: { color: '#fff', fontSize: 18.75 },
   heading: { color: '#fff', fontSize: 30, fontWeight: '700', marginBottom: 16 },
   error: {
     zIndex: 8,
@@ -1731,8 +1821,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    paddingBottom: 8,
-    paddingTop: 16,
+    paddingBottom: 6,
+    paddingTop: 12,
     paddingHorizontal: 40,
     zIndex: 4
   },
@@ -1758,6 +1848,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12
   },
   cameraName: { color: '#fff', fontSize: 25, fontWeight: '600' },
+  cameraFrame: { position: 'absolute', overflow: 'hidden' },
+  placedScore: { position: 'absolute', zIndex: 4 },
+  sideGradient: { position: 'absolute', top: 0, bottom: 0 },
   clip: {
     width: 306,
     alignSelf: 'flex-start',
@@ -1766,15 +1859,9 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 20
   },
-  previewFrame: {
-    borderWidth: 3,
-    borderColor: 'transparent',
-    borderRadius: 12
-  },
-  selected: { borderColor: '#fff' },
-  preview: { width: 300, height: 170, borderRadius: 6 },
+  preview: { width: 300, height: 170, margin: 3, borderRadius: 6 },
   clipText: { alignSelf: 'stretch', fontSize: 31.25 },
-  statsTeam: { flex: 1, gap: 16, paddingVertical: 24 },
+  statsTeam: { flex: 1, gap: 8, paddingVertical: 12 },
   unavailable: {
     position: 'absolute',
     left: 0,

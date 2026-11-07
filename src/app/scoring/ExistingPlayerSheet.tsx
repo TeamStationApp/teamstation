@@ -18,6 +18,23 @@ import { ScoringPlayerSearchField } from './ScoringPlayerSearchField'
 import { ScoringSheet } from './ScoringSheet'
 import { useScoringSheetTheme } from './scoringSheetTheme'
 
+/**
+ * The names kept on the phone beside a queued add of `candidate`: his short
+ * name by user id, and by gumbo id when he has one, so the phone's roster
+ * lists him by name before the server answers.
+ */
+export function candidateNames(
+  candidate: RosterCandidate | undefined
+): Record<string, string> | undefined {
+  if (candidate == null) return undefined
+  return {
+    [candidate.userId]: candidate.shortName,
+    ...(candidate.gumboId == null
+      ? {}
+      : { [String(candidate.gumboId)]: candidate.shortName })
+  }
+}
+
 /** The home indicator's inset, which the keyboard covers. */
 const KEYBOARD_INSET = initialWindowMetrics?.insets.bottom ?? 0
 /** The field's height before it is measured, and the gap above it. */
@@ -34,6 +51,7 @@ export function ExistingPlayerSheet({
   client,
   teamId,
   gameId,
+  excluded,
   onChoose,
   onClose,
   children
@@ -41,6 +59,8 @@ export function ExistingPlayerSheet({
   client: TeamStationClient
   teamId: string
   gameId?: string
+  /** User ids already on the team's roster or in the game: never listed. */
+  excluded?: ReadonlySet<string>
   onChoose: (candidate: RosterCandidate) => void
   onClose: () => void
   /** A sheet opened over this one, such as Add to Roster for the choice. */
@@ -50,7 +70,16 @@ export function ExistingPlayerSheet({
   const surface = theme.scoringSurface
   const [query, setQuery] = useState('')
   const [fieldHeight, setFieldHeight] = useState(FIELD_HEIGHT)
-  const list = useRosterCandidates({ client, teamId, gameId, query })
+  // The people the phone keeps are listed at once, and offline; the
+  // server's join them as they come.
+  const list = useRosterCandidates({
+    client,
+    teamId,
+    gameId,
+    query,
+    cacheFirst: true,
+    excluded
+  })
   const covered = React.Children.toArray(children).length > 0
   const window = useWindowDimensions()
   const line = {

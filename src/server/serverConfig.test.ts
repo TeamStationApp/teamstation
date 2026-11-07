@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { tessSettings } from './serverConfig'
+import { requestDatabaseUrl, tessSettings } from './serverConfig'
 import { asServerConfig } from './serverConfigSchema'
 
 const readOnlySource = {
@@ -113,5 +113,59 @@ describe('Tess configuration', function () {
     })
     expect(() => asServerConfig({ tess: { apiKey: 42 } })).throws()
     expect(() => asServerConfig({ tess: 'on' })).throws()
+  })
+})
+
+describe('the database addresses', function () {
+  it('sends request traffic to the database when no pool is set', function () {
+    const config = asServerConfig({
+      databaseUrl: 'postgres://db.example.test/x'
+    })
+    expect(config.databasePoolUrl).equals('')
+    expect(requestDatabaseUrl(config)).equals('postgres://db.example.test/x')
+  })
+
+  it('sends request traffic to the pool when one is set', function () {
+    const config = asServerConfig({
+      databaseUrl: 'postgres://db.example.test/x',
+      databasePoolUrl: 'postgres://pool.example.test/pool'
+    })
+    expect(requestDatabaseUrl(config)).equals(
+      'postgres://pool.example.test/pool'
+    )
+    expect(config.databaseUrl).equals('postgres://db.example.test/x')
+  })
+
+  it('runs background jobs unless a node says otherwise', function () {
+    expect(asServerConfig({}).backgroundJobs).equals(true)
+    expect(asServerConfig({ backgroundJobs: false }).backgroundJobs).equals(
+      false
+    )
+  })
+
+  it('refuses game and scope subscribes below protocol 3 unless set otherwise', function () {
+    expect(asServerConfig({}).gameSocketMinimumProtocol).equals(3)
+    expect(
+      asServerConfig({ gameSocketMinimumProtocol: 2 }).gameSocketMinimumProtocol
+    ).equals(2)
+  })
+
+  it('logs no pool wait unless asked', function () {
+    expect(asServerConfig({}).logDatabaseWait).equals(false)
+    expect(asServerConfig({ logDatabaseWait: true }).logDatabaseWait).equals(
+      true
+    )
+  })
+
+  it('sizes each role, with defaults for what is left out', function () {
+    expect(asServerConfig({}).databasePoolSizes).deep.equals({
+      worker: 10,
+      primary: 3,
+      statsBuilder: 3,
+      ingest: 3
+    })
+    expect(
+      asServerConfig({ databasePoolSizes: { worker: 4 } }).databasePoolSizes
+    ).deep.equals({ worker: 4, primary: 3, statsBuilder: 3, ingest: 3 })
   })
 })

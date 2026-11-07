@@ -38,7 +38,6 @@ import {
   type ScheduleCursor
 } from '../schedule/scheduleCursor'
 import { scheduleRights } from '../schedule/scheduleGames'
-import { withRevision } from '../socket/syncRevision'
 import { teamRecords } from '../stats/records'
 import {
   seasonParticipantCounts,
@@ -70,7 +69,7 @@ export function seasonRoutes(
   router.get(
     '/seasons',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
@@ -189,7 +188,7 @@ export function seasonRoutes(
       const records = await teamRecords(db, { seasonId })
 
       res.json(
-        teams.map(({ activeMember, parentMember, ...team }) => {
+        teams.map(({ activeMember, parentMember, playsInSeason, ...team }) => {
           const record = records.find(row => row.teamId === team.id)
           return {
             ...team,

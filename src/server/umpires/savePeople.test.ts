@@ -207,7 +207,11 @@ describe('atomic umpire draft saves', function () {
     const visible = await profile(f.leagueA, 101)
     expect(visible.status).equals(200)
     const profileBody = await visible.json()
-    expect(profileBody.viewer).deep.equals({ manages: false, admin: false })
+    expect(profileBody.viewer).deep.equals({
+      manages: false,
+      admin: false,
+      self: false
+    })
     expect(
       profileBody.sections.every(
         (section: { editable: boolean }) => !section.editable

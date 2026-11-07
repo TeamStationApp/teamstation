@@ -1,3 +1,5 @@
+import { SCORING_SPEED } from './scoringSpeed'
+
 export const FIREWORK_BULBS = 64
 /** All coordinates are local to the scoreboard LED plane. */
 export function fireworkBulb(
@@ -7,7 +9,11 @@ export function fireworkBulb(
   const side = index < FIREWORK_BULBS / 2 ? -1 : 1
   const burst = Math.floor((index % 32) / 16)
   const phase =
-    ((Math.max(0, seconds) + burst * 0.8 + (side > 0 ? 0.35 : 0)) % 1.8) / 1.8
+    ((Math.max(0, seconds) * SCORING_SPEED +
+      burst * 0.8 +
+      (side > 0 ? 0.35 : 0)) %
+      1.8) /
+    1.8
   const angle = ((index % 16) * Math.PI) / 8
   const radius = 0.3 + 4.4 * Math.sqrt(phase)
   return {
@@ -17,5 +23,7 @@ export function fireworkBulb(
   }
 }
 export function celebrationPulse(seconds: number): number {
-  return 0.72 + 0.28 * (0.5 + 0.5 * Math.sin(seconds * Math.PI * 2))
+  return (
+    0.72 + 0.28 * (0.5 + 0.5 * Math.sin(seconds * SCORING_SPEED * Math.PI * 2))
+  )
 }

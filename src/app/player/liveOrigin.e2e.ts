@@ -18,6 +18,7 @@ import { createEmailCode } from '../../server/auth/emailCodes'
 import { startFakeSpace } from '../../server/dev/fakeSpace'
 import { presignGetUrl } from '../../server/media/presign'
 import { listSpaceObjects } from '../../server/media/spacesVideo'
+import { videoPrefix } from '../../server/media/videoPrefix'
 import { signInTestAccount } from '../../test/passwordFixtures'
 import { scratchDatabase } from '../../test/scoreboardKit'
 import { createLiveHarness } from './liveHarness.e2e'
@@ -409,7 +410,23 @@ export async function runOrigin(options: {
         )?.spaces_verified_at != null,
       120_000
     )
-    const keys = await listSpaceObjects(space, `videos/${camera.videoId}/`)
+    // The base build keeps a video under its id alone and has no secret
+    // column; the branch puts it under the row's secret path.
+    const prefix =
+      options.before === true
+        ? `videos/${camera.videoId}/`
+        : videoPrefix({
+            id: camera.videoId,
+            spaceSecret:
+              (
+                await database.db
+                  .selectFrom('videos')
+                  .select('space_secret')
+                  .where('id', '=', camera.videoId)
+                  .executeTakeFirst()
+              )?.space_secret ?? null
+          })
+    const keys = await listSpaceObjects(space, prefix)
     if (options.before === true) {
       if (!keys.some(key => key.endsWith('/video.mp4')))
         throw new Error('Base did not remux')
@@ -424,7 +441,7 @@ export async function runOrigin(options: {
         await fetch(
           presignGetUrl({
             ...space,
-            key: `videos/${camera.videoId}/index.m3u8`,
+            key: `${prefix}index.m3u8`,
             expiresSec: 300
           })
         )

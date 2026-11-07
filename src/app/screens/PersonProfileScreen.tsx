@@ -7,6 +7,7 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import type { Role } from '../../common/roles'
 import { PersonMessageButton } from '../chat/PersonMessageButton'
 import {
   Button,
@@ -180,6 +181,34 @@ export function PersonProfileScreen(
     }
   }
 
+  // A refusal stays in the confirm sheet, which is why this does not set the
+  // page error: the sheet already shows it.
+  const resign = async (run: () => Promise<unknown>): Promise<void> => {
+    if (writing.current) return
+    writing.current = true
+    const alive = beginWrite()
+    const sameOwner = (): boolean =>
+      alive() &&
+      identity.current.client === client &&
+      identity.current.kind === kind &&
+      identity.current.id === id &&
+      identity.current.userId === userId
+    setBusy(true)
+    setError(undefined)
+    try {
+      await run()
+      if (sameOwner()) {
+        onChanged?.()
+        await refreshSaved(sameOwner)
+      }
+    } finally {
+      if (sameOwner()) {
+        writing.current = false
+        setBusy(false)
+      }
+    }
+  }
+
   if (profile == null)
     return (
       <Screen>
@@ -309,6 +338,8 @@ export function PersonProfileScreen(
               ownerIdentity={`${kind}:${id}:${userId}`}
               canHoldRoles={person.canHoldRoles}
               viewer={viewer}
+              player={section.player && !viewer.manages}
+              home={section.level === context.kind}
               busy={busy}
               userId={userId}
               onAdd={async (role, current) => {
@@ -316,6 +347,16 @@ export function PersonProfileScreen(
               }}
               onRemove={async (role, current) => {
                 await change(role, false, current)
+              }}
+              onStepDown={async (role: Role) => {
+                await resign(async () => {
+                  await client.stepDown(kind, id, role)
+                })
+              }}
+              onLeave={async () => {
+                await resign(async () => {
+                  await client.leaveGroup(kind, id)
+                })
               }}
             />
           </View>

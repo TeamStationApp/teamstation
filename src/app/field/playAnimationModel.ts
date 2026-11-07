@@ -4,6 +4,8 @@ import {
   PITCH_TIMING,
   type PitchSequence,
   type Point3,
+  SCORING_SPEED,
+  THROW_RELEASE_MS,
   type ThrowSequence
 } from '../scoring/scoringPresentation'
 import { pitchingHand } from './athletePose'
@@ -18,6 +20,8 @@ export interface PitchSample {
   catch: number
 }
 export const DEFENDER_SPEED = 3
+/** A foul fades out over the end of its picture. */
+export const FOUL_FADE_MS = 200 / SCORING_SPEED
 const clamp = (n: number): number => Math.max(0, Math.min(1, n))
 function lerp(a: Point3, b: Point3, t: number): Point3 {
   return {
@@ -82,14 +86,8 @@ export function samplePitch(
 ): PitchSample {
   const foul = sequence.pitch === 'foul'
   let ball: Point3
-  if (time < PITCH_TIMING.release)
-    ball = pitchingHand(
-      sequence.players.find(p => p.playerId === sequence.pitcher)!.position,
-      time,
-      PITCH_TIMING.release,
-      sequence.throwSide
-    )
-  else if (time < PITCH_TIMING.plate)
+  // No windup: the ball is on its way from the pitcher's hand at once.
+  if (time < PITCH_TIMING.plate)
     ball = lerp(
       sequence.from,
       sequence.plate,
@@ -122,8 +120,10 @@ export function samplePitch(
     visible:
       time >= 0 &&
       (foul ? time < sequence.durationMs : time < PITCH_TIMING.catch),
-    opacity: foul ? 1 - clamp((time - (sequence.durationMs - 200)) / 200) : 1,
-    windup: Math.sin(clamp(time / (PITCH_TIMING.release * 2)) * Math.PI),
+    opacity: foul
+      ? 1 - clamp((time - (sequence.durationMs - FOUL_FADE_MS)) / FOUL_FADE_MS)
+      : 1,
+    windup: 0,
     swing: swinging
       ? Math.sin(clamp((time - (PITCH_TIMING.plate - 200)) / 500) * Math.PI)
       : 0,
@@ -157,23 +157,13 @@ function caromPoint(sequence: HitSequence, time: number): Point3 | undefined {
 }
 
 /**
- * Where the pitch a ball in play was hit off is before contact: in the
- * pitcher's hand to the release, then on its way to the plate.
+ * Where the pitch a ball in play was hit off is before contact: on its way
+ * from the pitcher's hand, which it leaves at once, to the plate.
  */
 function pitchedPoint(
   sequence: HitSequence & { from: Point3; plate: Point3 },
   time: number
 ): Point3 {
-  const mound = sequence.players.find(
-    player => player.playerId === sequence.pitcher
-  )?.position
-  if (time < PITCH_TIMING.release && mound != null)
-    return pitchingHand(
-      mound,
-      time,
-      PITCH_TIMING.release,
-      sequence.throwSide ?? 'R'
-    )
   return lerp(
     sequence.from,
     sequence.plate,
@@ -216,10 +206,7 @@ export function sampleHit(
       time < sequence.durationMs,
     // The swing meets the ball as it reaches the plate.
     swing: Math.sin(clamp((time - (sequence.contactMs - 200)) / 400) * Math.PI),
-    windup:
-      pitched == null
-        ? 0
-        : Math.sin(clamp(time / (PITCH_TIMING.release * 2)) * Math.PI),
+    windup: 0,
     fielder: {
       x:
         sequence.fielderStart.x +
@@ -251,17 +238,15 @@ export function sampleThrow(
   runnerProgress: number
   swing: number
 } {
-  const t = clamp(
-    (time - (sequence.unassisted ? 0 : 150)) /
-      (sequence.durationMs - (sequence.unassisted ? 0 : 150))
-  )
+  const release = sequence.unassisted ? 0 : THROW_RELEASE_MS
+  const t = clamp((time - release) / (sequence.durationMs - release))
   const defender = sequence.unassisted ? clamp(t * DEFENDER_SPEED) : t
   const ball =
-    !sequence.unassisted && time < 150
+    !sequence.unassisted && time < THROW_RELEASE_MS
       ? pitchingHand(
           sequence.holderOrigin,
           time,
-          150,
+          THROW_RELEASE_MS,
           sequence.throwSide,
           sequence.heading
         )

@@ -10,7 +10,8 @@ export const PRIMARY_OUTCOMES = [
 ] as const
 /** How the batter was put out, behind Batter Out. */
 export const OUT_TYPES = [
-  'Throw Out',
+  'Ground Out',
+  'Out at First',
   'Ball Caught',
   'Batter Interference'
 ] as const

@@ -7,13 +7,13 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { asTeamAdultsBody, asTeamPlayersBody } from '../../common/teamMembers'
 import { userIdOfGumbo } from '../../common/userId'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
-import { lockKeys } from '../db/advisoryLocks'
+import { lockKeys, teamKey } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import { playerRoutes } from '../routes/players'
 import { addAdults } from '../teams/addAdults'
 import { addPlayers } from '../teams/addPlayers'
 import { mergeTeams } from './mergeTeams'
-import { closeInto } from './people'
+import { closeInto, MERGE_LOCK } from './people'
 
 describe('roster writes concurrent with an account merge', function () {
   this.timeout(15000)
@@ -489,10 +489,13 @@ describe('roster writes concurrent with an account merge', function () {
       const deadline = Date.now() + 5000
       let waiting = false
       while (Date.now() < deadline) {
+        // On the kept team's key, which the import holds shared.
         const locks = await sql<{ waiting: boolean }>`
           select exists(select 1 from pg_locks
-            where locktype = 'advisory' and not granted
+            where locktype = 'advisory' and not granted and mode = 'ExclusiveLock'
             and database = (select oid from pg_database where datname = current_database())
+            and ((classid::bigint << 32) | objid::bigint)
+              = hashtextextended(${teamKey('tem_account')}, 0)
           ) as waiting`.execute(db)
         if (locks.rows[0].waiting) {
           waiting = true
@@ -500,9 +503,10 @@ describe('roster writes concurrent with an account merge', function () {
         }
         await setTimeout(10)
       }
-      expect(waiting, 'team merge waits before taking membership locks').equals(
-        true
-      )
+      expect(
+        waiting,
+        'team merge waits on the team key before taking membership locks'
+      ).equals(true)
       release()
       expect((await imported).counts.error).equals(0)
       expect((await merged).applied).equals(true)
@@ -579,10 +583,13 @@ describe('roster writes concurrent with an account merge', function () {
           const deadline = Date.now() + 5000
           let waiting = false
           while (Date.now() < deadline) {
+            // On the person merge's key, before any team key or row.
             const locks = await sql<{ waiting: boolean }>`
               select exists(select 1 from pg_locks
-                where locktype = 'advisory' and not granted
+                where locktype = 'advisory' and not granted and mode = 'ShareLock'
                 and database = (select oid from pg_database where datname = current_database())
+                and ((classid::bigint << 32) | objid::bigint)
+                  = hashtextextended(${MERGE_LOCK}, 0)
               ) as waiting`.execute(db)
             if (locks.rows[0].waiting) {
               waiting = true

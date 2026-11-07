@@ -4,7 +4,6 @@ import { expect } from 'chai'
 import express from 'express'
 import { after, before, describe, it } from 'mocha'
 
-import { REVISION_HEADER } from '../socket/syncRevision'
 import { withCors } from './withCors'
 
 describe('withCors', function () {
@@ -16,7 +15,6 @@ describe('withCors', function () {
     const app = express()
     app.use(withCors([ORIGIN]))
     app.get('/teams', (req, res) => {
-      res.setHeader(REVISION_HEADER, '42')
       res.json([])
     })
     server = app.listen(0, '127.0.0.1')
@@ -48,15 +46,14 @@ describe('withCors', function () {
     expect(response.headers.get('access-control-allow-origin')).equals(ORIGIN)
   })
 
-  it('lets a cross-origin GET read the revision (CORS)', async function () {
+  it('exposes no revision header to a cross-origin GET (CORS)', async function () {
     const response = await fetch(`${base}/teams`, {
       headers: { origin: ORIGIN }
     })
     expect(response.status).equals(200)
-    expect(response.headers.get('access-control-expose-headers')).equals(
-      REVISION_HEADER
-    )
-    expect(response.headers.get(REVISION_HEADER)).equals('42')
+    expect(response.headers.get('access-control-allow-origin')).equals(ORIGIN)
+    expect(response.headers.get('access-control-expose-headers')).equals(null)
+    expect(response.headers.get('x-teamstation-revision')).equals(null)
   })
 
   it('admits the app classifier with authenticated browser API requests', async () => {

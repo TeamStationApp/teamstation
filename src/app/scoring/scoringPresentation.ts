@@ -1,16 +1,19 @@
-import { pitchingHand } from '../field/athletePose'
+import { releaseHand } from '../field/athletePose'
 import { BALL_CONTACT, type BallArcState } from '../field/ballArcModel'
 import {
   BASES,
   clampToField,
+  createPlayers,
+  fielderKey,
   type FieldPlayer,
   type GroundPoint,
   OUT_APPROACH_SPEED
 } from '../field/fieldModel'
-import { fieldPlayersFor } from './fieldAdapter'
+import { SCORING_SPEED } from '../field/scoringSpeed'
+import { fieldPlayersFor, withStandIns } from './fieldAdapter'
 import type { ContactKind } from './scoringContract'
 import { scoringFieldPlayers } from './scoringMotion'
-import type { ScoringState } from './scoringTypes'
+import type { FielderRef, ScoringState } from './scoringTypes'
 export type PitchKind = 'ball' | 'called' | 'swing' | 'foul'
 export interface Point3 extends GroundPoint {
   y: number
@@ -36,25 +39,40 @@ export interface PitchSequence {
   /** Where a foul the scorer placed came down; the ball flies there. */
   foul?: GroundPoint
 }
+export { SCORING_SPEED }
+/**
+ * A pitch has no windup: the ball leaves the pitcher's hand as the picture
+ * starts, and its picture ends at 280 ms so that, with the frames and the
+ * commit that follow, the scorer can tap the next pitch within 400 ms.
+ */
 export const PITCH_TIMING = {
-  release: 650,
-  plate: 1050,
-  catch: 1220,
-  finish: 1500,
-  foulFinish: 1750
+  release: 0,
+  plate: 240,
+  catch: 260,
+  finish: 280,
+  foulFinish: 540
 } as const
+/** A thrower's windup, from the start of a throw to the ball leaving his hand. */
+export const THROW_RELEASE_MS = 150 / SCORING_SPEED
+/** How long a throw from one fielder to another takes. */
+export const THROW_MS = 900 / SCORING_SPEED
+/** What a placed foul's picture lasts after it came down. */
+const FOUL_SETTLE_MS = 400 / SCORING_SPEED
 /** When a ball in play meets the bat: as its pitch reaches the plate. */
 export const HIT_CONTACT_MS = PITCH_TIMING.plate
 /** When it meets the bat with no pitcher on the field to draw a pitch. */
-export const HIT_UNPITCHED_CONTACT_MS = 450
+export const HIT_UNPITCHED_CONTACT_MS = 450 / SCORING_SPEED
 /** The longest a placed foul is in the air: a deep one, into the seats. */
-export const FOUL_FLIGHT_MAX_MS = 2000
+export const FOUL_FLIGHT_MAX_MS = 2000 / SCORING_SPEED
 /** How long a placed foul is in the air, by how far it went. */
 export function foulFlightMs(foul: GroundPoint): number {
   // Its distance at a fly ball's pace, up to a deep fly's time in the air.
   return Math.min(
     FOUL_FLIGHT_MAX_MS,
-    Math.max(900, (Math.hypot(foul.x, foul.z) / 20) * 1000)
+    Math.max(
+      900 / SCORING_SPEED,
+      (Math.hypot(foul.x, foul.z) / (20 * SCORING_SPEED)) * 1000
+    )
   )
 }
 export function pitchPresentation(
@@ -69,8 +87,10 @@ export function pitchPresentation(
   const catcher = session.liveData.linescore.defense.C?.id ?? pitcher
   const throwSide =
     session.gameData.players[pitcher].throws === 'left' ? 'L' : 'R'
-  const location = (id: number): GroundPoint =>
-    players.find(player => player.playerId === id)!.position
+  // A replayed pitch with nobody on the mound comes from the mound.
+  const location = (id: number, spot: 'P' | 'C'): GroundPoint =>
+    players.find(player => player.playerId === id)?.position ??
+    createPlayers().find(player => player.id === spot)!.position
   return {
     id: `${state.generation}:${session.meta.sequence + 1}:pitch`,
     generation: state.generation,
@@ -82,7 +102,7 @@ export function pitchPresentation(
         ? PITCH_TIMING.finish
         : foul == null
           ? PITCH_TIMING.foulFinish
-          : PITCH_TIMING.plate + foulFlightMs(foul) + 400,
+          : PITCH_TIMING.plate + foulFlightMs(foul) + FOUL_SETTLE_MS,
     ...(kind === 'foul' && foul != null ? { foul: { ...foul } } : {}),
     players,
     pitcher,
@@ -90,14 +110,9 @@ export function pitchPresentation(
     batter: play.matchup.batter.id,
     batSide: play.matchup.batSide.code,
     throwSide,
-    from: pitchingHand(
-      location(pitcher),
-      PITCH_TIMING.release,
-      PITCH_TIMING.release,
-      throwSide
-    ),
+    from: releaseHand(location(pitcher, 'P'), throwSide),
     plate: { x: 0, y: BALL_CONTACT, z: 0 },
-    glove: { ...location(catcher), y: 5.2 }
+    glove: { ...location(catcher, 'C'), y: 5.2 }
   }
 }
 export interface HitSequence {
@@ -121,7 +136,7 @@ export interface HitSequence {
   fielderEndMs: number
   players: FieldPlayer[]
   batter: number
-  fielder?: number
+  fielder?: FielderRef
   fielderStart: GroundPoint
   arc: BallArcState
   batSide: 'R' | 'L'
@@ -155,8 +170,8 @@ export interface ThrowSequence {
   stage: 'transfer' | 'tag'
   durationMs: number
   players: FieldPlayer[]
-  thrower: number
-  receiver: number
+  thrower: FielderRef
+  receiver: FielderRef
   runner: number
   from: Point3
   to: Point3
@@ -207,7 +222,7 @@ export function outBatterPoint(
 }
 /**
  * How long a tag takes: the ball's way or the runner's, whichever is longer,
- * at the pace they share, and never under `floorMs`.
+ * at the pace they share, and never under `floorMs` at scoring's speed.
  */
 export function tagMs(
   from: GroundPoint,
@@ -216,7 +231,7 @@ export function tagMs(
   floorMs: number
 ): number {
   return Math.max(
-    floorMs,
+    floorMs / SCORING_SPEED,
     (Math.max(
       Math.hypot(to.x - from.x, to.z - from.z),
       Math.hypot(to.x - runnerFrom.x, to.z - runnerFrom.z)
@@ -229,8 +244,8 @@ export function tagMs(
 export interface ThrowParts {
   /** The field as the throw starts; the three below are placed on it. */
   players: FieldPlayer[]
-  thrower: number
-  receiver: number
+  thrower: FielderRef
+  receiver: FielderRef
   runner: number
   from: GroundPoint
   to: GroundPoint
@@ -252,17 +267,21 @@ export function throwSequence(
     runner.batting = false
   }
   for (const player of players) {
-    if (player.playerId === thrower) {
+    if (fielderKey(player) === thrower) {
       player.position = { ...from }
       player.target = { ...from }
-    } else if (player.playerId === receiver) {
+    } else if (fielderKey(player) === receiver) {
       player.position = { ...to }
       player.target = { ...to }
     }
   }
   const unassisted = final
+  // A stand-in at an empty position throws right-handed.
   const throwSide =
-    state.session.gameData.players[thrower].throws === 'left' ? 'L' : 'R'
+    typeof thrower === 'number' &&
+    state.session.gameData.players[thrower].throws === 'left'
+      ? 'L'
+      : 'R'
   const heading = Math.atan2(to.x - from.x, to.z - from.z)
   return {
     id: `${state.generation}:${state.session.meta.sequence + 1}:throw`,
@@ -278,17 +297,15 @@ export function throwSequence(
     runnerFrom: { ...runnerPoint },
     throwSide,
     heading,
-    from: final
-      ? { ...from, y: 6 }
-      : pitchingHand(from, 150, 150, throwSide, heading),
+    from: final ? { ...from, y: 6 } : releaseHand(from, throwSide, heading),
     to: { ...to, y: 5.2 },
     unassisted,
-    durationMs: unassisted ? tagMs(from, to, runnerPoint, 650) : 900
+    durationMs: unassisted ? tagMs(from, to, runnerPoint, 650) : THROW_MS
   }
 }
 export function throwPresentation(
   state: ScoringState,
-  receiver: number,
+  receiver: FielderRef,
   point?: GroundPoint,
   final = false
 ): ThrowSequence {
@@ -305,10 +322,10 @@ export function throwPresentation(
     holder?.point ??
     action.throwerPoint ??
     state.pendingPlay?.location ??
-    players.find(p => p.playerId === thrower)!.position
+    players.find(p => fielderKey(p) === thrower)!.position
   const to = final
     ? BASES[action.to % 4]
-    : (point ?? players.find(p => p.playerId === receiver)!.position)
+    : (point ?? players.find(p => fielderKey(p) === receiver)!.position)
   const runner = players.find(p => p.playerId === action.playerId)!
   const runnerPoint =
     action.runnerPoint ??
@@ -328,21 +345,26 @@ export function throwPresentation(
   })
 }
 /** How long a ball off the wall takes to drop and come back. */
-export const CAROM_MS = 600
+export const CAROM_MS = 600 / SCORING_SPEED
 
 export function hitPresentation(
   state: ScoringState,
   angle: number
 ): HitSequence {
   const pending = state.pendingPlay!
-  const players = fieldPlayersFor(state.session)
+  // A stand-in at an empty position starts from that position's plate.
+  const players = withStandIns(fieldPlayersFor(state.session), state.session, [
+    pending.fielder
+  ])
   const start =
-    players.find(player => player.playerId === pending.fielder)?.position ??
+    players.find(player => fielderKey(player) === pending.fielder)?.position ??
     pending.location!
   const target = pending.location!
   const flight = Math.max(
-    1100,
-    (Math.hypot(target.x - start.x, target.z - start.z) / 20) * 1000
+    1100 / SCORING_SPEED,
+    (Math.hypot(target.x - start.x, target.z - start.z) /
+      (20 * SCORING_SPEED)) *
+      1000
   )
   const pitcher = state.session.liveData.plays.currentPlay!.matchup.pitcher.id
   const mound = players.find(player => player.playerId === pitcher)?.position
@@ -383,12 +405,7 @@ export function hitPresentation(
       : {
           pitcher,
           throwSide,
-          from: pitchingHand(
-            mound,
-            PITCH_TIMING.release,
-            PITCH_TIMING.release,
-            throwSide
-          ),
+          from: releaseHand(mound, throwSide),
           plate: { x: 0, y: BALL_CONTACT, z: 0 }
         }),
     players,
@@ -404,9 +421,12 @@ export function hitPresentation(
     },
     batSide: state.session.liveData.plays.currentPlay!.matchup.batSide.code,
     slowRunner: pending.outcome !== 'Ball Caught',
-    out: ['Ball Caught', 'Throw Out', 'Batter Interference'].includes(
-      pending.outcome
-    )
+    out: [
+      'Ball Caught',
+      'Ground Out',
+      'Out at First',
+      'Batter Interference'
+    ].includes(pending.outcome)
   }
 }
 export interface PresentationRuntime {
@@ -447,7 +467,11 @@ export function stepPresentation(
         ]
       : sequence.kind === 'throw'
         ? [
-            ['release', sequence.unassisted ? Infinity : 150, 'swish'],
+            [
+              'release',
+              sequence.unassisted ? Infinity : THROW_RELEASE_MS,
+              'swish'
+            ],
             // A wild throw is never caught.
             [
               'catch',

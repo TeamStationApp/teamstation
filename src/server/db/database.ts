@@ -1,12 +1,14 @@
+import type * as Sentry from '@sentry/node'
 import {
   type ColumnType,
   type Generated,
   Kysely,
   PostgresDialect
 } from 'kysely'
-import { Pool } from 'pg'
+import { Pool, type PoolConfig } from 'pg'
 
 import type { Role } from '../../common/roles'
+import type * as Config from '../serverConfig'
 import { attachInt8Parser } from './int8'
 
 /** `timestamptz`: read as a Date, written as a Date or an ISO string. */
@@ -446,6 +448,12 @@ export interface VideosTable {
   size_bytes: string | null
   sha256: string | null
   spaces_verified_at: Timestamp | null
+  /**
+   * 32 lowercase hex characters: the video's objects are under
+   * `videos/<id>-<secret>/`, public where their kind is. Null for a video
+   * still on `videos/<id>/` (from before secrets, or a read-only source).
+   */
+  space_secret: string | null
   local_delete_after: Timestamp | null
   /** When a replaced recording may be deleted, objects and all. */
   purge_after: Timestamp | null
@@ -528,6 +536,21 @@ export interface GumboIdsTable {
   gumbo_id: number
   user_id: string
   created_at: Timestamp
+}
+
+/**
+ * One bump of a team's roster version, added by the 109teamRosterVersions
+ * triggers; the team's version is its newest row's.
+ */
+export interface TeamRosterBumpsTable {
+  team_id: string
+  version: number
+  bumped_at: Generated<Timestamp>
+}
+
+/** One row: this database's id in every roster cache key. */
+export interface RosterCacheEpochTable {
+  epoch: string
 }
 
 export interface EventPlayersTable {
@@ -741,16 +764,6 @@ export interface AuditLogTable {
   entity_id: string | null
   before: Json | null
   after: Json | null
-}
-
-/**
- * The one row whose `value` is the revision screen scopes are told about.
- * `value` is a bigint: read it as `value::text`, since the int8 parser
- * refuses one past a safe integer.
- */
-export interface SyncClockTable {
-  id: number
-  value: ColumnType<number | string, number | string, number | string>
 }
 
 /**
@@ -1625,6 +1638,8 @@ export interface Database {
   rate_events: RateEventsTable
   eventCredits: EventCreditsTable
   gumbo_ids: GumboIdsTable
+  team_roster_bumps: TeamRosterBumpsTable
+  roster_cache_epoch: RosterCacheEpochTable
   event_players: EventPlayersTable
   events: EventsTable
   external_ids: ExternalIdsTable
@@ -1650,7 +1665,6 @@ export interface Database {
   scoreboard_log: ScoreboardLogTable
   season_teams: SeasonTeamsTable
   seasons: SeasonsTable
-  sync_clock: SyncClockTable
   sync_idempotency: SyncIdempotencyTable
   system_settings: SystemSettingsTable
   team_follows: TeamFollowsTable
@@ -1672,11 +1686,274 @@ export interface Database {
   director_uploads: DirectorUploadsTable
 }
 
-export function makeDatabase(connectionString: string): Kysely<Database> {
+/** The kinds of long-running process, each with its own size of pool. */
+export type DatabaseRole = 'worker' | 'primary' | 'statsBuilder' | 'ingest'
+
+export interface PoolOptions {
+  role?: DatabaseRole
+  /** Whether a role's pool logs its `db-wait` line; `logDatabaseWait` if unset. */
+  logWait?: boolean
+  /** Milliseconds, for the wait log's timing and its minute. */
+  now?: () => number
+}
+
+/** How long a request waits for a connection before it is told to try again. */
+const CHECKOUT_TIMEOUT_MS = 5000
+/** How often a pool is looked at for waiters. */
+const STARVATION_SAMPLE_MS = 1000
+const STARVATION_LOG_MS = 30_000
+const STARVATION_REPORT_MS = 5 * 60_000
+/** How often a pool's wait log writes its line. */
+const WAIT_LOG_MS = 60_000
+
+export function makeDatabase(
+  connectionString: string,
+  options: PoolOptions = {}
+): Kysely<Database> {
   attachInt8Parser()
   return new Kysely<Database>({
-    dialect: new PostgresDialect({ pool: makePool(connectionString) })
+    dialect: new PostgresDialect({
+      pool: makePool(connectionString, undefined, options)
+    })
   })
+}
+
+/**
+ * What a pool is opened with. A long-running process names its role, which
+ * sets its size, tells `pg_stat_activity` whose the connection is, and limits
+ * how long a checkout may wait. Without one, as in a script or a test, a pool
+ * waits as long as it takes, and the server's configuration is not read at
+ * all: a command that handles a configuration that will not load imports this
+ * file before it finds out.
+ */
+export function poolSettings(
+  role: DatabaseRole | undefined,
+  sizes?: Record<DatabaseRole, number>
+): PoolConfig {
+  if (role == null) return { max: 10 }
+  const size = (sizes ??
+    (require('../serverConfig') as typeof Config).serverConfig
+      .databasePoolSizes)[role]
+  return {
+    max: size,
+    application_name: `teamstation-${role}`,
+    connectionTimeoutMillis: CHECKOUT_TIMEOUT_MS
+  }
+}
+
+/** What `pg` says when a pool gives up on a connection or one drops under it. */
+const CONNECTION_FAILURES = [
+  'timeout exceeded when trying to connect',
+  'Connection terminated due to connection timeout',
+  'Connection terminated unexpectedly',
+  'Client has encountered a connection error and is not queryable'
+]
+
+/**
+ * What PgBouncer says, as a FATAL to its client, when it gives up waiting for
+ * a server connection, has no room for another client, cannot reach the server
+ * or is going away. It sends all of these and more as SQLSTATE 08P01, which is
+ * also a protocol violation, so the words are what tell them apart. Not among
+ * them: `server login failed`, which is a configuration that will not mend.
+ */
+const POOLER_OUT_OF_REACH = [
+  'server login has been failing',
+  'pgbouncer cannot connect to server',
+  'server conn crashed?',
+  'pooler is shutting down'
+]
+const POOLER_REFUSALS = [
+  'query_wait_timeout',
+  'client_login_timeout',
+  'no more connections allowed',
+  ...POOLER_OUT_OF_REACH
+]
+
+/**
+ * What Postgres says when it is out of connections (53300) or is stopping or
+ * starting (57P01, 57P02, 57P03), by SQLSTATE: its words depend on the case.
+ */
+const SERVER_OUT_OF_REACH = new Set(['57P01', '57P02', '57P03'])
+const SERVER_REFUSALS = new Set(['53300', ...SERVER_OUT_OF_REACH])
+
+/**
+ * What the socket says, which `pg` passes on as it is, when the other end is
+ * down or goes away, a route to it is flapping, or DNS could not answer for now
+ * (EAI_AGAIN). Not a name that does not resolve (ENOTFOUND): that is a wrong
+ * address far more often than a brief failure.
+ */
+const SOCKET_FAILURES = new Set([
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'EPIPE',
+  'ETIMEDOUT'
+])
+
+/**
+ * Whether an error says no database connection was to be had, rather than
+ * anything about what was asked: a pool or pooler giving up, a pooler or server
+ * that is restarting or full, or a connection lost on the way. Nothing here
+ * says the statement ran or not, only that asking again is the right answer, so
+ * whoever asked can ask again. A failed query, a closed pool and a refused login
+ * are none of these: those are faults, and stay reported as faults.
+ */
+export function isConnectionUnavailable(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const { message } = error
+  const { code } = error as { code?: unknown }
+  return (
+    CONNECTION_FAILURES.includes(message) ||
+    POOLER_REFUSALS.some(refusal => message.startsWith(refusal)) ||
+    (typeof code === 'string' &&
+      (SERVER_REFUSALS.has(code) || SOCKET_FAILURES.has(code)))
+  )
+}
+
+/**
+ * Whether an error says the database itself could not be reached, rather than
+ * that connections to it are short: its socket failed, it is stopping or
+ * starting, or the pooler in front of it cannot reach it either. A process that
+ * has run can wait that out, but one that has not yet reached the database may
+ * be pointed at the wrong place, and should fail where its supervisor sees it.
+ */
+export function isDatabaseOutOfReach(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const { message } = error
+  const { code } = error as { code?: unknown }
+  return (
+    POOLER_OUT_OF_REACH.some(refusal => message.startsWith(refusal)) ||
+    (typeof code === 'string' &&
+      (SERVER_OUT_OF_REACH.has(code) || SOCKET_FAILURES.has(code)))
+  )
+}
+
+/**
+ * The check `makePool` runs on a role's pool: while requests wait for a
+ * connection, say so in the log and at a slower rate in crash reporting.
+ */
+export function starvationCheck(
+  pool: Pick<Pool, 'totalCount' | 'idleCount' | 'waitingCount'>,
+  role: DatabaseRole,
+  log: (message: string) => void,
+  report: (message: string) => void,
+  now: () => number = Date.now
+): () => void {
+  let loggedAt = Number.NEGATIVE_INFINITY
+  let reportedAt = Number.NEGATIVE_INFINITY
+  return () => {
+    if (pool.waitingCount === 0) return
+    const at = now()
+    if (at - loggedAt >= STARVATION_LOG_MS) {
+      loggedAt = at
+      log(
+        `database: ${role} pool starved: total ${pool.totalCount}, idle ${pool.idleCount}, waiting ${pool.waitingCount}`
+      )
+    }
+    if (at - reportedAt >= STARVATION_REPORT_MS) {
+      reportedAt = at
+      report(`database: ${role} pool starved`)
+    }
+  }
+}
+
+/** Nearest rank, so each figure is one that was measured. */
+function nearestRank(sorted: number[], p: number): number {
+  return sorted[Math.max(0, Math.ceil((p / 100) * sorted.length) - 1)]
+}
+
+/** A tenth of a millisecond is as fine as a wait is worth reading. */
+const tenths = (ms: number): number => Math.round(ms * 10) / 10
+
+/**
+ * The wait log `makePool` keeps on a role's pool when `logDatabaseWait` is on.
+ * `time` starts timing a checkout's first statement and returns what ends it.
+ * `check`, run with the pool's other checks, writes one line a minute of the
+ * times since the last, even when there were none, so a quiet process still
+ * says it was asked nothing:
+ * `db-wait {"role":"worker","n":120,"p50":0.4,"p95":2.1,"max":9.8}`, in ms.
+ * Each time is the first statement's round trip (`timeFirstStatements`): any
+ * wait at PgBouncer for a server connection plus that statement's own
+ * execution, and none of the time a request queued in Node for a client of
+ * the pool. A checkout that opens with a slow read rather than `begin` reads
+ * as a long wait.
+ */
+export function waitLog(
+  role: DatabaseRole,
+  log: (message: string) => void,
+  now: () => number = () => performance.now()
+): { time: () => () => void; check: () => void } {
+  let waits: number[] = []
+  let loggedAt = now()
+  return {
+    time() {
+      const startedAt = now()
+      return () => {
+        waits.push(now() - startedAt)
+      }
+    },
+    check() {
+      const at = now()
+      if (at - loggedAt < WAIT_LOG_MS) return
+      loggedAt = at
+      const sorted = waits.sort((a, b) => a - b)
+      waits = []
+      const figure = (p: number): number =>
+        sorted.length === 0 ? 0 : tenths(nearestRank(sorted, p))
+      log(
+        `db-wait ${JSON.stringify({
+          role,
+          n: sorted.length,
+          p50: figure(50),
+          p95: figure(95),
+          max: figure(100)
+        })}`
+      )
+    }
+  }
+}
+
+/**
+ * Times the first statement each checkout of `pool` sends, from the moment it
+ * is sent to its answer. In transaction pooling that is the statement that
+ * waits for PgBouncer's server connection, so the figure is that wait plus the
+ * statement's own execution; later statements of the same checkout already
+ * have the connection. The clock starts once Node's pool has handed the client
+ * over, so time spent queued for a client (`pool.connect`) is not in it. One
+ * sent as a submittable, such as a cursor, is not timed.
+ */
+function timeFirstStatements(pool: Pool, time: () => () => void): void {
+  const fresh = new WeakSet<object>()
+  pool.on('connect', client => {
+    const query = client.query.bind(client) as (...args: unknown[]) => unknown
+    ;(client as { query: unknown }).query = (...args: unknown[]): unknown => {
+      if (!fresh.delete(client)) return query(...args)
+      const done = time()
+      const last = args.length - 1
+      const callback = args[last]
+      if (typeof callback === 'function')
+        args[last] = (...answer: unknown[]): unknown => {
+          done()
+          return callback(...answer)
+        }
+      const result = query(...args)
+      if (result instanceof Promise) result.then(done, done)
+      return result
+    }
+  })
+  pool.on('acquire', client => {
+    fresh.add(client)
+  })
+}
+
+/**
+ * A timer that does not hold the process open. The app's type check reads this
+ * file too, and with the DOM's library in scope a timer is typed as a number.
+ */
+function unrefTimer(timer: number | NodeJS.Timeout): void {
+  if (typeof timer !== 'number') timer.unref()
 }
 
 /**
@@ -1695,9 +1972,19 @@ export function makePool(
   connectionString: string,
   log: (message: string) => void = message => {
     console.error(message)
-  }
+  },
+  options: PoolOptions = {}
 ): Pool {
-  const pool = new Pool({ connectionString, max: 10 })
+  const { role } = options
+  const pool = new Pool({ connectionString, ...poolSettings(role) })
+  const waits =
+    role != null &&
+    (options.logWait ??
+      (require('../serverConfig') as typeof Config).serverConfig
+        .logDatabaseWait)
+      ? waitLog(role, log, options.now)
+      : undefined
+  if (waits != null) timeFirstStatements(pool, waits.time)
   pool.on('connect', client => {
     client.on('error', (error: Error) => {
       log(`database: connection lost: ${error.message}`)
@@ -1706,6 +1993,22 @@ export function makePool(
   // The pool repeats an idle connection's error here, which the connection's
   // own listener has already logged. Unheard, the repeat would be fatal too.
   pool.on('error', () => undefined)
+  if (role != null) {
+    // Sentry is loaded here rather than above, so that the scripts that open
+    // a pool with no role do not load it.
+    const { captureMessage } = require('@sentry/node') as typeof Sentry
+    const check = starvationCheck(pool, role, log, message =>
+      captureMessage(message, 'warning')
+    )
+    const sampling = setInterval(() => {
+      if (pool.ended) clearInterval(sampling)
+      else {
+        check()
+        waits?.check()
+      }
+    }, STARVATION_SAMPLE_MS)
+    unrefTimer(sampling)
+  }
   return pool
 }
 

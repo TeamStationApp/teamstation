@@ -16,16 +16,25 @@ export interface RoleRowsProps {
   section: ProfileSection
   /** Whether they can hold a role at all: an account that signs in. */
   canHoldRoles: boolean
-  viewer: { manages: boolean; admin: boolean }
+  viewer: { manages: boolean; admin: boolean; self?: boolean }
   /**
    * A player's own rows, on their Settings: while they are on the team, the
    * Member row reads Player with no toggle, as a player's place on the team
    * is the roster's to change.
    */
   player?: boolean
+  /**
+   * This section is the level the profile was opened from. Step Down is only
+   * offered here; a season or league named on a team profile stays a status.
+   */
+  home?: boolean
   busy?: boolean
   onAdd: (role: RoleRowKind, current?: () => boolean) => Promise<void> | void
   onRemove: (role: RoleRowKind, current?: () => boolean) => Promise<void> | void
+  /** Steps down from one role of your own. A refusal stays in the sheet. */
+  onStepDown?: (role: Role) => Promise<void>
+  /** Leaves the level: the membership and every role held directly there. */
+  onLeave?: () => Promise<void>
   userId?: string
   ownerLabel?: string
   ownerIdentity?: string
@@ -63,13 +72,16 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
     player = false,
     busy = false,
     onAdd,
-    onRemove
+    onRemove,
+    home = false,
+    onStepDown,
+    onLeave
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const confirmation = useConfirmedAction(
     props.owner ?? props.section.level,
-    `${props.ownerIdentity ?? section.groups.map(g => g.id).join(',')}:${section.editable}:${viewer.manages}:${viewer.admin}:${section.roles.join(',')}:${section.member}:${section.headCoach?.userId ?? ''}`
+    `${props.ownerIdentity ?? section.groups.map(g => g.id).join(',')}:${section.editable}:${viewer.manages}:${viewer.admin}:${viewer.self === true}:${home}:${section.player}:${section.roles.join(',')}:${section.member}:${section.headCoach?.userId ?? ''}`
   )
   const holdsAdmin = section.roles.includes('admin')
   const implied = impliedRoles(section.roles)
@@ -97,6 +109,25 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
           // Read as Player only while they are on the team; anybody else's
           // Member row is the usual one.
           const playerRow = player && row === 'member' && section.member
+          const direct =
+            row === 'member'
+              ? section.member
+              : row === 'coach' ||
+                  row === 'videographer' ||
+                  row === 'scorekeeper' ||
+                  row === 'songkeeper'
+                ? section.roles.includes(row)
+                : false
+          // Your own row, on the level you opened, and only a role you hold
+          // yourself. A manager keeps the switches. Admin, Assistant, Head
+          // coach and Follower stay a status, and so does a role you hold
+          // only because another one grants it.
+          const canStepDown =
+            home &&
+            viewer.self === true &&
+            !viewer.manages &&
+            !playerRow &&
+            direct
           const changeable =
             section.editable &&
             viewer.manages &&
@@ -145,6 +176,41 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
                     else Promise.resolve(onAdd(row)).catch(() => undefined)
                   }}
                 />
+              ) : canStepDown ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Step down as ${label}`}
+                  disabled={busy || confirmation.busy}
+                  onPress={() => {
+                    const names = section.groups
+                      .map(group => group.name)
+                      .join(', ')
+                    confirmation.open({
+                      title:
+                        row === 'member'
+                          ? `Leave ${names}?`
+                          : `Step down as ${label}?`,
+                      detail:
+                        row === 'member'
+                          ? `You leave ${names} and lose every role held directly there. An administrator, a coach, or an assistant has to give this back.`
+                          : 'An administrator, a coach, or an assistant has to give this back.',
+                      label: 'Step Down',
+                      accessibilityLabel: 'Step Down',
+                      run: async () => {
+                        if (row === 'member') await onLeave?.()
+                        else if (
+                          row === 'coach' ||
+                          row === 'videographer' ||
+                          row === 'scorekeeper' ||
+                          row === 'songkeeper'
+                        )
+                          await onStepDown?.(row)
+                      }
+                    })
+                  }}
+                >
+                  <Text style={styles.stepDown}>Step Down</Text>
+                </Pressable>
               ) : (
                 <Text
                   style={
@@ -301,5 +367,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875),
     color: theme.secondaryTextColor
+  },
+  stepDown: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.875),
+    fontWeight: '600',
+    color: theme.dangerColor
   }
 }))

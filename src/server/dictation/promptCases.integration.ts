@@ -4,7 +4,12 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { depthOf } from '../../app/scoring/dictatedDepth'
-import { type ScoringAction, toolSchema } from '../../common/scoring/actions'
+import {
+  type DictatedAction as ScoringAction,
+  namesFieldersById,
+  type ScoringAction as EngineAction,
+  toolSchema
+} from '../../common/scoring/actions'
 import { writtenTag } from '../../common/scoring/playerTags'
 import {
   type PlayerSaid,
@@ -187,7 +192,7 @@ async function ask(
   ).start()
 }
 
-function ballWithoutResult(actions: readonly ScoringAction[]): boolean {
+function ballWithoutResult(actions: readonly EngineAction[]): boolean {
   return (
     actions.some(action => action.type === 'ballInPlay') &&
     !actions.some(action => action.type === 'result')
@@ -224,7 +229,10 @@ function decided(turn: Turn): {
     expect.fail(`asked: ${turn.question} ${JSON.stringify(turn.options)}`)
   if (turn.kind === 'error') expect.fail(turn.message)
   expect(problems(turn), JSON.stringify(problems(turn))).deep.equals([])
-  return { actions: turn.actions, roster: turn.roster ?? [] }
+  // A dictated play names every fielder by player.
+  const actions = turn.actions.filter(namesFieldersById)
+  expect(actions).has.length(turn.actions.length)
+  return { actions, roster: turn.roster ?? [] }
 }
 
 function resultType(actions: readonly ScoringAction[]): string | undefined {
@@ -407,7 +415,11 @@ const live = keys != null
         // The game repairs omitted relay details from these explicit words;
         // the app integration suite checks the complete animated/stored chain.
         if (safe?.type === 'runnerMovement' && safe.fielders != null)
-          expect(safe.fielders.every(id => id >= 11 && id <= 19)).equals(true)
+          expect(
+            safe.fielders.every(
+              id => typeof id === 'number' && id >= 11 && id <= 19
+            )
+          ).equals(true)
         expect(
           turn.actions.some(
             a => a.type === 'runnerMovement' && a.runner === 1 && a.out === true

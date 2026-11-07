@@ -9,6 +9,7 @@ import {
 import type { ExistingRosterPlayer } from '../../common/playerSettings'
 import { lockPlayerEdits, UnresolvedAccount } from '../admin/people'
 import type { Actor } from '../auth/sessions'
+import { lockTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
@@ -215,6 +216,7 @@ export async function addExistingRosterPlayer(
 ): Promise<ExistingAdd> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockTeams(trx, [teamId])
     const person = await candidatePerson(trx, teamId, body.userId)
     await lockPlayerAdds(trx, person.userId)
     const playing = await trx

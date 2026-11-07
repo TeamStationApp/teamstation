@@ -40,7 +40,12 @@ import {
 } from '../scoreboard/boardTimeline'
 import { scoreboardFromGame } from '../scoreboard/gameSource'
 import { gameNames, gameNamesDigest } from '../users/nameBook'
-import { namedScoringGame, resolveScoringGame, scoringIdsIn } from './openRow'
+import {
+  namedScoringGame,
+  resolveScoringGame,
+  resolveScoringPlays,
+  scoringIdsIn
+} from './openRow'
 
 // Full persisted rosters, including a guest whose account later closes into another.
 describe('opening scoring through account merges', function () {
@@ -616,6 +621,47 @@ describe('naming a scoring game from the accounts', function () {
       away: null,
       home: null
     })
+  })
+
+  it('names only the plays asked for, as the whole read names them, for the reader and for the public', async () => {
+    const { away, home } = REPLAY_TEAMS
+    const whole = await resolveScoringGame(fixture.db, stored, {
+      halves: [away.id, home.id]
+    })
+    const general = await resolveScoringGame(fixture.db, stored)
+    const asked = [
+      stored.plays[1].about.atBatIndex,
+      stored.plays[stored.plays.length - 1].about.atBatIndex,
+      // An index the game does not hold names nothing.
+      9998
+    ]
+    const before = JSON.stringify(stored)
+    const some = await resolveScoringPlays(fixture.db, stored, {
+      only: asked,
+      halves: [away.id, home.id]
+    })
+    expect(JSON.stringify(stored)).equals(before)
+    const at = (game: StoredGame, index: number): unknown =>
+      game.plays.find(play => play.about.atBatIndex === index)
+    expect(some.plays.map(play => play.about.atBatIndex)).deep.equals(
+      asked.slice(0, 2)
+    )
+    // The reader's with the halves of his teams, the public's with none:
+    // each the same as a read of the whole game gives that reader.
+    for (const index of asked.slice(0, 2)) {
+      expect(at(some, index)).deep.equals(at(whole, index))
+      expect(at(some.public, index)).deep.equals(at(general, index))
+    }
+    expect(some.currentPlay).deep.equals(whole.currentPlay)
+    expect(some.public.currentPlay).deep.equals(general.currentPlay)
+    expect(JSON.stringify(some.public)).not.includes('Ichiro Suzuki')
+    expect(JSON.stringify(some.currentPlay)).includes('Suzuki')
+
+    // Asked for no halves, both are the one naming.
+    const plain = await resolveScoringPlays(fixture.db, stored, { only: [] })
+    expect(plain.plays).deep.equals([])
+    expect(plain.public.currentPlay).equals(plain.currentPlay)
+    expect(plain.currentPlay).deep.equals(general.currentPlay)
   })
 
   it("answers no halves of a game's pool or withdrawn player, who keep their own names", async () => {

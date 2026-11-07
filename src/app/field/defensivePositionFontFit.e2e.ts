@@ -55,7 +55,7 @@ async function main(): Promise<void> {
     if (mode === 'safari')
       await m.openLink({ link: required('SCORING_TEST_URL'), browser: true })
     await m.assertVisible({
-      text: 'Missing defensive positions',
+      text: 'Assign a pitcher',
       timeout: 60000
     })
     await m.tapOn({ text: '^OK$', optional: true, timeout: 1000 })
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
       await m.stopApp({ appId })
       await m.launchApp({ appId })
       await m.assertVisible({
-        text: 'Missing defensive positions',
+        text: 'Assign a pitcher',
         timeout: 60000
       })
       await capture('large-text')

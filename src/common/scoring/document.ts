@@ -22,7 +22,7 @@ import {
   type SaidPlayer
 } from './lineup'
 import { PARK } from './park'
-import { trajectoryOf } from './rules'
+import { GROUND_OUTS, trajectoryOf } from './rules'
 import {
   fenceOf,
   type GamePlay,
@@ -157,7 +157,12 @@ function eventName(type: string, play: GamePlay): string {
   if (type !== 'field_out') return mlbEventName(type)
   const detail = play.source.teamstation
   const bunt = detail.contactKind === 'bunt' ? 'Bunt ' : ''
-  if (detail.outSubtype === 'Throw Out') return `${bunt}Groundout`
+  // Throw Out is the name a ground out was stored with before.
+  if (
+    detail.outSubtype === 'Throw Out' ||
+    (detail.outSubtype != null && GROUND_OUTS.includes(detail.outSubtype))
+  )
+    return `${bunt}Groundout`
   if (detail.outSubtype !== 'Ball Caught') return mlbEventName(type)
   switch (play.hitData?.trajectory) {
     case 'Pop Fly':
@@ -383,8 +388,10 @@ function runnersOf(
       },
       credits: runner.credits.map(credit => {
         const position = GAME_POSITIONS.get(credit.position)
+        // A stand-in at an empty position credits nobody: the position
+        // alone is written.
         return {
-          player: who(credit.player),
+          ...(credit.player == null ? {} : { player: who(credit.player) }),
           ...(position == null ? {} : { position: { ...position } }),
           credit: credit.credit
         }
@@ -1770,7 +1777,7 @@ function highlightCredits(
     const detail =
       assisted.length === 0
         ? ''
-        : ` from ${assisted.map(c => `${c.player.fullName} (${c.position})`).join(', ')}`
+        : ` from ${assisted.map(c => (c.player == null ? c.position : `${c.player.fullName} (${c.position})`)).join(', ')}`
     credits.push({
       eventType,
       label: `${head}: ${name}${position == null ? '' : ` (${position})`}${detail}`,
@@ -1779,12 +1786,15 @@ function highlightCredits(
       credit: { name, role, position },
       head,
       assists: assisted.map(c => {
-        const id = playerOf(state, setup, c.player.id)?.id ?? null
+        const id =
+          c.player == null
+            ? null
+            : (playerOf(state, setup, c.player.id)?.id ?? null)
         return id == null
           ? {
               creditUserId: null,
               position: c.position,
-              name: c.player.fullName
+              name: c.player?.fullName ?? c.position
             }
           : { creditUserId: id, position: c.position }
       }),
@@ -1799,7 +1809,8 @@ function highlightCredits(
     for (const runner of play.runners)
       if (runner.movement.isOut) {
         const putout = runner.credits.find(c => c.credit === 'f_putout')
-        if (putout == null) continue
+        // A stand-in's putout is nobody's highlight.
+        if (putout?.player == null) continue
         const assists = runner.credits.filter(c => c.credit === 'f_assist')
         add(
           putout.player,

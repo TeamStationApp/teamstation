@@ -1,0 +1,2506 @@
+import { randomBytes } from 'node:crypto'
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs'
+
+import { type Kysely, type RawBuilder, sql } from 'kysely'
+
+import { signEpoch, signPuk } from '../../src/common/chatCrypto/chain'
+import { epochAad, hpkeSeal, pukAad } from '../../src/common/chatCrypto/hpke'
+import {
+  newDeviceKeys,
+  newEpochKey,
+  newIdentityKey,
+  newPukKey
+} from '../../src/common/chatCrypto/keys'
+import {
+  newIdentityId,
+  newMessageId
+} from '../../src/common/chatCrypto/messageIds'
+import { sealMessage } from '../../src/common/chatCrypto/seal'
+import { asPostEventsBody } from '../../src/common/gumboPlay'
+import { makeId } from '../../src/common/ids'
+import { closeInto } from '../../src/server/admin/people'
+import { mergeTeams } from '../../src/server/admin/mergeTeams'
+import { addEmail } from '../../src/server/auth/emails'
+import { hashPassword } from '../../src/server/auth/passwords'
+import {
+  createSession,
+  revokeSession,
+  USER_API_KEY_PREFIX
+} from '../../src/server/auth/sessions'
+import { hashToken, makeToken } from '../../src/server/auth/tokens'
+import { createDm } from '../../src/server/chat/dms'
+import { createEpoch } from '../../src/server/chat/epochs'
+import { enrol, registerDevice } from '../../src/server/chat/keys'
+import { postMessage } from '../../src/server/chat/messages'
+import { reconcileScope } from '../../src/server/chat/reconciler'
+import { atomic } from '../../src/server/db/atomic'
+import type { Database } from '../../src/server/db/database'
+import { postGamePlays } from '../../src/server/events/postPlays'
+import { ownershipPreflight } from '../../src/server/groups/ownershipPreflight'
+import { addToScope } from '../../src/server/invites/people'
+import { sealSecret } from '../../src/server/live/secrets'
+import { linkGuardian } from '../../src/server/people/guardians'
+import { drain, gameStatsLock } from '../../src/server/statsBuilder/builder'
+import { requestGameStats } from '../../src/server/statsBuilder/request'
+import { ensureGumboId, insertUser } from '../../src/server/users/insertUser'
+import { type Amounts, amountsFor } from './amounts'
+import { type LoadDatabase, requireLoadDatabase } from './database'
+import {
+  asOlderRecord,
+  type GameSides,
+  POSITIONS,
+  randomFrom,
+  type RosterPlayer,
+  type ScriptedGame,
+  scriptedGame
+} from './scoredGames'
+
+/**
+ * Seeds a generated population through the application's own write functions:
+ * `insertUser`, `createSession`, `closeInto`, `mergeTeams`, `linkGuardian`,
+ * `postGamePlays`, `createDm`, `postMessage`. Only history is cloned, in SQL,
+ * from games written through those paths, because a large table is all it is
+ * there for.
+ *
+ * Every row it makes that matters is tagged in `external_ids` under the run,
+ * by a label that says what it is, so a run's rows can be found, compared and
+ * removed however random their ids are.
+ */
+
+/** What the seed's randomness starts from, so two seeds build the same shapes. */
+const FIXTURE_SEED = 0x7e57ab1e
+
+const USER_AGENT = 'dbload'
+
+/** How many writes run side by side, which is within the fixture's pool. */
+const CONCURRENCY = 4
+
+/** The kinds of consumable shape, each named for the event that uses it up. */
+export const CONSUMABLES = [
+  'teamMerge',
+  'personMerge',
+  'signOut',
+  'statsRebuild',
+  'chatAdd'
+] as const
+export type Consumable = (typeof CONSUMABLES)[number]
+
+export type AccountKind =
+  'viewer' | 'worstCase' | 'scorekeeper' | 'videographer' | 'person'
+
+/** One person with a token, as `tokens.json` holds them. */
+export interface SeededAccount {
+  label: string
+  kind: AccountKind
+  userId: string
+  token: string
+  /** The team they joined, and the live game of that team if there is one. */
+  teamId: string | null
+  gameIndex: number | null
+}
+
+export interface SeededGame {
+  id: string
+  sides: GameSides
+  seasonId: string
+  /** The account that scores it. */
+  scorekeeper: string
+}
+
+/** What the rig needs of a seeded run: `tokens.json`, at mode 0600. */
+export interface TokensFile {
+  runId: string
+  scale: string
+  accounts: SeededAccount[]
+  games: SeededGame[]
+}
+
+/** Somebody who signs in with a browser, as `credentials.json` holds them. */
+export interface BrowserAccount {
+  label: string
+  email: string
+  password: string
+  userId: string
+  teamId: string | null
+}
+
+/**
+ * What a browser run needs of a seeded run: `credentials.json`, at mode 0600.
+ * It holds generated accounts on generated addresses, and the seeded things
+ * those people are sent to, since the browser's machine cannot reach the
+ * database to look them up.
+ */
+export interface CredentialsFile {
+  runId: string
+  accounts: BrowserAccount[]
+  places: BrowserPlaces
+}
+
+export interface BrowserPlaces {
+  /** The live game the browser run scores, which the rig's crowd is not on. */
+  liveGameId: string
+  liveTeamId: string
+  finishedGameId: string
+  finishedTeamId: string
+  /** The long game, which has the largest box score. */
+  largeGameId: string
+  seasonId: string
+  leagueId: string
+  /** A player merged after his games were built, and the games he played. */
+  mergedPlayerId: string
+  mergedPlayerGames: number
+  /** The guardian's child. */
+  childId: string
+  /** A team chat, and one holding a member whose row was merged. */
+  teamChatTeamId: string
+  mergedChatTeamId: string
+}
+
+export interface SeedOptions {
+  /** Letters and digits. */
+  runId: string
+  scale: string
+  /** `--accounts`, and changes to the scale's table for a smaller seed. */
+  overrides?: Partial<Amounts>
+  /** `--streams`: enough videographers for this many at four cameras each. */
+  streams?: number
+  /** Where the tokens go. They are written even when a seed fails partway. */
+  tokensPath?: string
+  /** Where browser accounts' passwords go. Without it none are set. */
+  credentialsPath?: string
+  log?: (message: string) => void
+  now?: Date
+}
+
+/** The `external_ids.system` a run's rows are tagged under. */
+export function systemOf(runId: string): string {
+  if (!/^[a-zA-Z0-9]{1,26}$/.test(runId))
+    throw new Error(`A run id is 1 to 26 letters and digits, not ${runId}`)
+  return `dbload${runId}`
+}
+
+export function newRunId(now = Date.now()): string {
+  return now.toString(36)
+}
+
+export function readTokens(path: string): TokensFile {
+  const tokens = JSON.parse(readFileSync(path, 'utf8')) as TokensFile
+  if (!Array.isArray(tokens.accounts) || !Array.isArray(tokens.games))
+    throw new Error(`${path} is not a tokens file`)
+  return tokens
+}
+
+export function writeTokens(path: string, tokens: TokensFile): void {
+  writeFileSync(path, JSON.stringify(tokens), { mode: 0o600 })
+  // The mode above only applies to a file that did not exist.
+  chmodSync(path, 0o600)
+}
+
+export function readCredentials(path: string): CredentialsFile {
+  const credentials = JSON.parse(readFileSync(path, 'utf8')) as CredentialsFile
+  if (!Array.isArray(credentials.accounts))
+    throw new Error(`${path} is not a credentials file`)
+  return credentials
+}
+
+export function writeCredentials(
+  path: string,
+  credentials: CredentialsFile
+): void {
+  writeFileSync(path, JSON.stringify(credentials, null, 2), { mode: 0o600 })
+  chmodSync(path, 0o600)
+}
+
+/** Runs `work` over the items, a few at a time. */
+export async function inTurn<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  work: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await work(items[index], index)
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, worker)
+  )
+  return results
+}
+
+/** A membership row, written as an invitation accepted writes it. */
+async function joinScope(
+  db: Kysely<Database>,
+  scopeType: 'team' | 'season' | 'league',
+  scopeId: string,
+  userId: string
+): Promise<void> {
+  await atomic(db, async trx => {
+    await addToScope(trx, scopeType, scopeId, userId)
+  })
+}
+
+/** Who signs in with a password, for a browser run. */
+const BROWSER_LABELS = new Set([
+  'person.admin',
+  'person.coach',
+  'person.guardian',
+  'person.stranger',
+  'browser.scorekeeper',
+  'browser.coach',
+  'browser.viewer',
+  'browser.viewerAway',
+  'browser.revoked',
+  'browser.removed',
+  'browser.videographer',
+  'browser.chatKept',
+  'browser.chatFriend'
+])
+
+const pad = (value: number): string => String(value).padStart(5, '0')
+
+/** A chat identity, whose secret keys the server never holds. */
+interface ChatKeys {
+  userId: string
+  sessionId: string
+  identityId: string
+  identitySecret: Uint8Array
+  pukPublic: Uint8Array
+}
+
+/** A season of the run, and how full it is. */
+interface HeldSeason {
+  /** The label of the first season of its run of seasons. */
+  label: string
+  /** Which of that run of seasons it is: the first is 0. */
+  index: number
+  leagueId: string
+  games: number
+  /** The season it goes on in once full. */
+  next?: string
+}
+
+class Seeder {
+  readonly accounts: SeededAccount[] = []
+  readonly browserAccounts: BrowserAccount[] = []
+  readonly places: Partial<BrowserPlaces> = {}
+  readonly games: SeededGame[] = []
+  readonly system: string
+  private tags: Array<{
+    id: string
+    entity_type: string
+    entity_id: string
+    system: string
+    kind: string
+    external_id: string
+  }> = []
+
+  private readonly chatKeys = new Map<string, ChatKeys>()
+  private readonly sessions = new Map<string, string>()
+  private readonly seasons = new Map<string, HeldSeason>()
+  readonly now: Date
+
+  constructor(
+    readonly db: LoadDatabase,
+    readonly runId: string,
+    readonly scale: string,
+    readonly amounts: Amounts,
+    readonly videographers: number,
+    readonly browser: boolean,
+    now: Date | undefined,
+    readonly log: (message: string) => void
+  ) {
+    this.system = systemOf(runId)
+    this.now = now ?? new Date()
+  }
+
+  random(label: string): () => number {
+    let hash = FIXTURE_SEED
+    for (const char of label)
+      hash = Math.imul(hash ^ char.charCodeAt(0), 16777619)
+    return randomFrom(hash)
+  }
+
+  /** Remembers what `label` is, so cleanup and read-back can find it. */
+  async tag(kind: string, label: string, id: string): Promise<void> {
+    this.tags.push({
+      id: makeId('externalId'),
+      entity_type: kind,
+      entity_id: id,
+      system: this.system,
+      kind,
+      external_id: label
+    })
+    if (this.tags.length >= 200) await this.flushTags()
+  }
+
+  async flushTags(): Promise<void> {
+    const tags = this.tags
+    this.tags = []
+    if (tags.length > 0)
+      await this.db.insertInto('external_ids').values(tags).execute()
+  }
+
+  /** A person with no way to sign in: a player, or a row about to be merged. */
+  async person(
+    label: string,
+    values: {
+      first?: string
+      account?: boolean
+      admin?: boolean
+      browser?: boolean
+    } = {}
+  ): Promise<string> {
+    const password =
+      values.browser === true ? randomBytes(18).toString('base64url') : null
+    const passwordHash = password == null ? null : await hashPassword(password)
+    const last = label.replace(/[^a-zA-Z0-9]+/g, ' ')
+    const first = values.first ?? 'Load'
+    const displayName = `${first} ${last}`.slice(0, 120)
+    const email = `${label.toLowerCase()}.${this.runId.toLowerCase()}@example.test`
+    const userId = await this.db.transaction().execute(async trx => {
+      const id = await insertUser(trx, {
+        display_name: displayName,
+        first_name: first,
+        last_name: last,
+        is_admin: values.admin === true,
+        // Adults, which is what a direct message between two of them needs.
+        birth_year: 1985,
+        birth_month: 6,
+        login_enabled: values.account === true,
+        password_hash: passwordHash
+      })
+      if (values.account === true)
+        await addEmail(trx, id, email, {
+          isPrimary: true,
+          source: 'manual',
+          verifiedAt: this.now
+        })
+      return id
+    })
+    await this.tag('user', label, userId)
+    if (password != null)
+      this.browserAccounts.push({
+        label,
+        email,
+        password,
+        userId,
+        teamId: null
+      })
+    return userId
+  }
+
+  /** A signed-in account, and its entry in `tokens.json`. */
+  async account(
+    label: string,
+    kind: AccountKind,
+    options: {
+      teamId?: string | null
+      gameIndex?: number | null
+      admin?: boolean
+    } = {}
+  ): Promise<SeededAccount> {
+    const userId = await this.person(label, {
+      account: true,
+      admin: options.admin,
+      // Only a run writing credentials pays for their hashes.
+      browser: this.browser && BROWSER_LABELS.has(label),
+      first: kind === 'viewer' ? 'Viewer' : 'Load'
+    })
+    return await this.signIn(label, kind, userId, options)
+  }
+
+  async signIn(
+    label: string,
+    kind: AccountKind,
+    userId: string,
+    options: { teamId?: string | null; gameIndex?: number | null } = {}
+  ): Promise<SeededAccount> {
+    const session = await createSession(this.db, userId, USER_AGENT)
+    this.sessions.set(userId, session.sessionId)
+    if (options.teamId != null)
+      await joinScope(this.db, 'team', options.teamId, userId)
+    const account: SeededAccount = {
+      label,
+      kind,
+      userId,
+      token: session.token,
+      teamId: options.teamId ?? null,
+      gameIndex: options.gameIndex ?? null
+    }
+    this.accounts.push(account)
+    return account
+  }
+
+  userOf(label: string): string {
+    const account = this.accounts.find(row => row.label === label)
+    if (account == null) throw new Error(`No account ${label}`)
+    return account.userId
+  }
+
+  async league(label: string): Promise<string> {
+    const id = makeId('league')
+    await this.db
+      .insertInto('leagues')
+      .values({ id, name: `Load ${label}`, short_name: 'LOAD' })
+      .execute()
+    await this.tag('league', label, id)
+    return id
+  }
+
+  /** A season, empty, or the next of a run of them after `continuing`. */
+  async season(
+    label: string,
+    leagueId: string,
+    continuing?: HeldSeason
+  ): Promise<string> {
+    const id = makeId('season')
+    await this.db
+      .insertInto('seasons')
+      .values({
+        id,
+        league_id: leagueId,
+        name: `Load ${label}`,
+        year: 2026,
+        term: 'Spring',
+        starts_on: '2026-03-01',
+        ends_on: '2026-05-31'
+      })
+      .execute()
+    await this.tag('season', label, id)
+    this.seasons.set(id, {
+      label: continuing?.label ?? label,
+      index: (continuing?.index ?? -1) + 1,
+      leagueId,
+      games: 0
+    })
+    return id
+  }
+
+  /**
+   * The season of each of `count` games between `teams`, from `seasonId` on:
+   * as many as it has room for, then the season it goes on in, made in the
+   * same league once it fills, and so on. So no season holds more than
+   * `seasonGames`, and the history is all there however many seasons it takes.
+   * Each team joins a season it plays in.
+   */
+  async placeGames(
+    seasonId: string,
+    teams: string[],
+    count: number
+  ): Promise<string[]> {
+    const placed: string[] = []
+    let id = seasonId
+    for (;;) {
+      const season = this.seasons.get(id)
+      if (season == null) throw new Error(`${id} is not a season of this run`)
+      const taken = Math.min(
+        count - placed.length,
+        this.amounts.seasonGames - season.games
+      )
+      if (taken > 0) {
+        season.games += taken
+        placed.push(...new Array<string>(taken).fill(id))
+        if (id !== seasonId)
+          await this.db
+            .insertInto('season_teams')
+            .values(teams.map(team => ({ season_id: id, team_id: team })))
+            .onConflict(oc => oc.doNothing())
+            .execute()
+      }
+      if (placed.length === count) return placed
+      season.next ??= await this.season(
+        `${season.label}.after${pad(season.index + 1)}`,
+        season.leagueId,
+        season
+      )
+      id = season.next
+    }
+  }
+
+  async team(
+    label: string,
+    seasonId?: string,
+    kind: 'full' | 'external' = 'full'
+  ): Promise<string> {
+    const id = makeId('team')
+    await this.db
+      .insertInto('teams')
+      .values({ id, name: `Load ${label}`, kind })
+      .execute()
+    if (seasonId != null)
+      await this.db
+        .insertInto('season_teams')
+        .values({ season_id: seasonId, team_id: id })
+        .execute()
+    await this.tag('team', label, id)
+    return id
+  }
+
+  /** A team's twelve players: nine who start, by position, and three more. */
+  async roster(label: string, teamId: string): Promise<RosterPlayer[]> {
+    const players: RosterPlayer[] = []
+    for (let i = 0; i < 12; i++) {
+      const position = POSITIONS[i]
+      const userId = await this.person(`${label}.player${pad(i)}`)
+      await this.db
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: userId,
+          team_id: teamId,
+          role: 'member',
+          is_player: true,
+          jersey: String(i + 1),
+          positions: position == null ? [] : [position]
+        })
+        .execute()
+      const gumboId = await ensureGumboId(this.db, userId)
+      players.push({
+        gumboId,
+        first: 'Load',
+        last: `${label} ${i}`,
+        ...(position == null ? {} : { position })
+      })
+    }
+    return players
+  }
+
+  /** A game, in `seasonId` or the season it goes on in (`placeGames`). */
+  async game<Season extends string | null>(
+    label: string,
+    home: string,
+    away: string,
+    seasonId: Season,
+    status: 'scheduled' | 'inProgress' | 'final',
+    startAt: Date
+  ): Promise<{ id: string; seasonId: Season }> {
+    const id = makeId('game')
+    const placed = (
+      seasonId == null
+        ? null
+        : (await this.placeGames(seasonId, [home, away], 1))[0]
+    ) as Season
+    await this.db
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        season_id: placed,
+        start_at: startAt,
+        venue: 'Load Field',
+        status
+      })
+      .execute()
+    await this.tag('game', label, id)
+    return { id, seasonId: placed }
+  }
+
+  /** A team role, through the row the role screens write. */
+  async grant(
+    userId: string,
+    scopeType: 'team' | 'season' | 'league',
+    scopeId: string,
+    role: 'admin' | 'coach' | 'scorekeeper' | 'videographer'
+  ): Promise<void> {
+    await this.db
+      .insertInto('scope_roles')
+      .values({
+        id: makeId('scopeRole'),
+        user_id: userId,
+        scope_type: scopeType,
+        scope_id: scopeId,
+        role
+      })
+      .execute()
+  }
+
+  /** `depth` merges in a row: each row closed into the next. The last is open. */
+  async chain(
+    label: string,
+    depth: number,
+    teamId?: string
+  ): Promise<string[]> {
+    const rows: string[] = []
+    for (let i = 0; i <= depth; i++) {
+      const row = await this.person(`${label}.row${pad(i)}`)
+      if (teamId != null)
+        await this.db
+          .insertInto('memberships')
+          .values({
+            id: makeId('membership'),
+            user_id: row,
+            team_id: teamId,
+            role: 'member',
+            is_player: true
+          })
+          .onConflict(oc => oc.columns(['user_id', 'team_id']).doNothing())
+          .execute()
+      rows.push(row)
+    }
+    for (let i = 0; i < depth; i++) {
+      const merge = await closeInto(this.db, rows[i], rows[i + 1])
+      if (!merge.closed) throw new Error(`${label}: row ${i} did not close`)
+    }
+    return rows
+  }
+
+  /** Posts a scripted game as the scoring screen does, naming nobody. */
+  async postGame(gameId: string, game: ScriptedGame): Promise<void> {
+    await postGamePlays(
+      this.db,
+      gameId,
+      asPostEventsBody({
+        mode: 'live',
+        source: { system: 'teamstation' },
+        plays: game.plays,
+        currentPlay: game.currentPlay
+      }),
+      undefined,
+      undefined,
+      { answer: 'all' }
+    )
+  }
+
+  /**
+   * Copies of a written game, under the same teams at earlier dates: only the
+   * ids, dates and, once the source's season fills, seasons differ
+   * (`placeGames`). What the plays' triggers wrote for the source is
+   * copied with them, row for row, because running those triggers again for
+   * every play of thousands of games is most of a full seed's time. Their table
+   * is locked meanwhile, so this runs alone and with no server on the database.
+   */
+  async cloneGames(
+    source: string,
+    label: string,
+    count: number,
+    newestDaysAgo: number
+  ): Promise<string[]> {
+    if (count <= 0) return []
+    const ids = Array.from({ length: count }, () => makeId('game'))
+    const dates = ids.map(
+      (_, i) => new Date(this.now.getTime() - (newestDaysAgo + i) * 86_400_000)
+    )
+    const from = await this.db
+      .selectFrom('games')
+      .select(['home_team_id', 'away_team_id', 'season_id'])
+      .where('id', '=', source)
+      .executeTakeFirstOrThrow()
+    const seasons =
+      from.season_id == null
+        ? ids.map(() => null)
+        : await this.placeGames(
+            from.season_id,
+            [from.home_team_id, from.away_team_id],
+            count
+          )
+    const columns = await columnsOf(this.db, 'games', [
+      'id',
+      'start_at',
+      'season_id'
+    ])
+    const eventColumns = await columnsOf(this.db, 'events', ['id', 'gameId'])
+    const playerColumns = await columnsOf(this.db, 'event_players', [
+      'id',
+      'event_id'
+    ])
+    const creditColumns = await columnsOf(this.db, 'eventCredits', [
+      'id',
+      'eventId'
+    ])
+    await this.db.transaction().execute(async trx => {
+      await sql`alter table events disable trigger user`.execute(trx)
+      await sql`
+        insert into games (id, start_at, season_id, ${listOf(columns)})
+        select copy.id, copy.start_at, copy.season_id, ${listOf(columns, 'g')}
+        from games g,
+          unnest(
+            ${ids}::text[],
+            ${dates.map(date => date.toISOString())}::timestamptz[],
+            ${seasons}::text[]
+          ) as copy(id, start_at, season_id)
+        where g.id = ${source}
+      `.execute(trx)
+      await sql`
+        insert into events (id, "gameId", ${listOf(eventColumns)})
+        select 'evt_' || md5(copy.id || e.id), copy.id, ${listOf(eventColumns, 'e')}
+        from events e, unnest(${ids}::text[]) as copy(id)
+        where e."gameId" = ${source}
+      `.execute(trx)
+      await sql`
+        insert into event_players (id, event_id, ${listOf(playerColumns)})
+        select 'evp_' || md5(copy.id || p.id), 'evt_' || md5(copy.id || e.id),
+          ${listOf(playerColumns, 'p')}
+        from event_players p
+          join events e on e.id = p.event_id,
+          unnest(${ids}::text[]) as copy(id)
+        where e."gameId" = ${source}
+      `.execute(trx)
+      await sql`
+        insert into "eventCredits" (id, "eventId", ${listOf(creditColumns)})
+        select 'evc_' || md5(copy.id || c.id), 'evt_' || md5(copy.id || e.id),
+          ${listOf(creditColumns, 'c')}
+        from "eventCredits" c
+          join events e on e.id = c."eventId",
+          unnest(${ids}::text[]) as copy(id)
+        where e."gameId" = ${source}
+      `.execute(trx)
+      await sql`alter table events enable trigger user`.execute(trx)
+    })
+    await inTurn(ids, CONCURRENCY, async (id, i) => {
+      await this.tag('game', `${label}.${pad(i)}`, id)
+    })
+    return ids
+  }
+
+  async enrolInChat(userId: string): Promise<ChatKeys> {
+    const held = this.chatKeys.get(userId)
+    if (held != null) return held
+    const sessionId = this.sessions.get(userId)
+    if (sessionId == null)
+      throw new Error(`${userId} has no session to chat in`)
+    const caller = { userId, sessionId }
+    const device = newDeviceKeys()
+    const registered = await registerDevice(
+      this.db,
+      caller,
+      {
+        name: 'dbload',
+        platform: 'web',
+        boxPublicKey: device.box.publicKey,
+        signPublicKey: device.sign.publicKey
+      },
+      this.now
+    )
+    const identityId = newIdentityId()
+    const identity = newIdentityKey()
+    const puk = newPukKey()
+    await enrol(
+      this.db,
+      caller,
+      {
+        identityId,
+        identityPublicKey: identity.publicKey,
+        pukPublicKey: puk.publicKey,
+        pukSignature: signPuk(
+          { userId, generation: 1, publicKey: puk.publicKey },
+          identity.secretKey
+        ),
+        box: hpkeSeal(
+          'puk',
+          device.box.publicKey,
+          pukAad({
+            userId,
+            identityId,
+            generation: 1,
+            deviceId: registered.id
+          }),
+          puk.secretKey
+        )
+      },
+      this.now
+    )
+    const keys: ChatKeys = {
+      userId,
+      sessionId,
+      identityId,
+      identitySecret: identity.secretKey,
+      pukPublic: puk.publicKey
+    }
+    this.chatKeys.set(userId, keys)
+    return keys
+  }
+
+  /**
+   * History: `count` signed messages from one member, under an epoch boxed to
+   * every member who holds an identity, as a device writes them.
+   */
+  async speak(
+    conversationId: string,
+    speakerId: string,
+    count: number
+  ): Promise<void> {
+    const speaker = await this.enrolInChat(speakerId)
+    const members = await this.db
+      .selectFrom('chat_members')
+      .select('user_id')
+      .where('conversation_id', '=', conversationId)
+      .where('left_at', 'is', null)
+      .execute()
+    const epochKey = newEpochKey()
+    const boxes = members.flatMap(member => {
+      const keys = this.chatKeys.get(member.user_id)
+      if (keys == null) return []
+      return [
+        {
+          userId: keys.userId,
+          pukGeneration: 1,
+          box: hpkeSeal(
+            'epoch',
+            keys.pukPublic,
+            epochAad({
+              conversationId,
+              epoch: 1,
+              recipientUserId: keys.userId,
+              identityId: keys.identityId,
+              generation: 1
+            }),
+            epochKey
+          )
+        }
+      ]
+    })
+    const caller = { userId: speaker.userId, sessionId: speaker.sessionId }
+    await createEpoch(
+      this.db,
+      caller,
+      conversationId,
+      {
+        epoch: 1,
+        previousKeyBox: null,
+        signature: signEpoch(
+          { conversationId, epoch: 1, previousKeyBox: null },
+          speaker.identitySecret
+        ),
+        boxes
+      },
+      this.now
+    )
+    const plaintext = new TextEncoder().encode(
+      JSON.stringify({ text: 'Generated load test message' })
+    )
+    for (let i = 0; i < count; i++) {
+      const id = newMessageId()
+      const sealed = sealMessage({
+        conversationId,
+        epoch: 1,
+        messageId: id,
+        senderUserId: speaker.userId,
+        kind: 'post',
+        epochKey,
+        plaintext,
+        identitySecretKey: speaker.identitySecret
+      })
+      await postMessage(
+        this.db,
+        caller,
+        conversationId,
+        {
+          id,
+          epoch: 1,
+          kind: 'post',
+          senderIdentityId: speaker.identityId,
+          targetIds: null,
+          attachmentIds: [],
+          ...sealed
+        },
+        this.now
+      )
+    }
+  }
+
+  async copy(kind: Consumable, index: number): Promise<void> {
+    await this.tag('copy', `${kind}.${index}`, String(index))
+  }
+
+  tokens(): TokensFile {
+    return {
+      runId: this.runId,
+      scale: this.scale,
+      accounts: this.accounts,
+      games: this.games
+    }
+  }
+}
+
+async function columnsOf(
+  db: Kysely<Database>,
+  table: string,
+  leaving: string[]
+): Promise<string[]> {
+  const { rows } = await sql<{ name: string }>`
+    select column_name as name from information_schema.columns
+    where table_schema = 'public' and table_name = ${table}
+      and is_generated = 'NEVER'
+    order by ordinal_position
+  `.execute(db)
+  return rows.map(row => row.name).filter(name => !leaving.includes(name))
+}
+
+/** Columns for a statement, each under `table` if one is named. */
+function listOf(columns: string[], table?: string): RawBuilder<unknown> {
+  return sql.join(
+    columns.map(column =>
+      sql.ref(table == null ? column : `${table}.${column}`)
+    )
+  )
+}
+
+interface Groups {
+  seasons: string[]
+  teams: string[]
+  sides: GameSides[]
+}
+
+/** Leagues, seasons, teams with rosters, and the live games between them. */
+async function seedGroups(seeder: Seeder): Promise<Groups> {
+  const { amounts } = seeder
+  const leagues: string[] = []
+  for (let i = 0; i < amounts.leagues; i++)
+    leagues.push(await seeder.league(`league${pad(i)}`))
+  const seasons: string[] = []
+  for (let i = 0; i < amounts.seasons; i++)
+    seasons.push(
+      await seeder.season(`season${pad(i)}`, leagues[i % leagues.length])
+    )
+  // Pairs stay together, so a pair's game is within one season.
+  const teamIndexes = Array.from({ length: amounts.teams }, (_, i) => i)
+  const players = new Map<number, RosterPlayer[]>()
+  const teams = await inTurn(teamIndexes, CONCURRENCY, async i => {
+    const label = `team${pad(i)}`
+    const id = await seeder.team(
+      label,
+      seasons[Math.floor(i / 2) % seasons.length]
+    )
+    players.set(i, await seeder.roster(label, id))
+    return id
+  })
+  const sides: GameSides[] = []
+  for (let i = 0; i + 1 < teams.length; i += 2)
+    sides.push({
+      away: {
+        id: teams[i + 1],
+        name: `Load team${pad(i + 1)}`,
+        players: players.get(i + 1)!
+      },
+      home: {
+        id: teams[i],
+        name: `Load team${pad(i)}`,
+        players: players.get(i)!
+      }
+    })
+  return { seasons, teams, sides }
+}
+
+/**
+ * The live games, each with a scorekeeper. The first is the crowded game. The
+ * last, which few watch, is the long one: a game every play record version
+ * replays in, far into extra innings, with relievers and corrections on record.
+ */
+async function seedLiveGames(seeder: Seeder, groups: Groups): Promise<void> {
+  const { amounts } = seeder
+  if (groups.sides.length < amounts.liveGames)
+    throw new Error(
+      `${amounts.teams} teams cannot play ${amounts.liveGames} games at once`
+    )
+  for (let i = 0; i < amounts.liveGames; i++) {
+    const sides = groups.sides[i]
+    const { id, seasonId } = await seeder.game(
+      `live${pad(i)}`,
+      sides.home.id,
+      sides.away.id,
+      groups.seasons[i % groups.seasons.length],
+      'inProgress',
+      seeder.now
+    )
+    const scorekeeper = await seeder.account(
+      `scorekeeper${pad(i)}`,
+      'scorekeeper',
+      {
+        teamId: sides.home.id,
+        gameIndex: i
+      }
+    )
+    await seeder.grant(scorekeeper.userId, 'team', sides.home.id, 'scorekeeper')
+    seeder.games.push({ id, sides, seasonId, scorekeeper: scorekeeper.label })
+    if (i === amounts.liveGames - 1) {
+      const written = await scriptedGame(id, sides, {
+        innings: amounts.longGameInnings,
+        final: false,
+        random: seeder.random('longGame'),
+        reliefEvery: 6,
+        correctEvery: 25
+      })
+      await seeder.postGame(id, written)
+      // Every write stores a record in today's version, so the two older ones
+      // go in as the builds that wrote them left them, for a replay to read.
+      for (const version of [1, 2] as const) {
+        const older = asOlderRecord(written.plays[version - 1], sides, version)
+        await sql`
+          update events set gumbo = ${JSON.stringify(older)}::jsonb
+          where "gameId" = ${id} and "atBatIndex" = ${version - 1}
+        `.execute(seeder.db)
+      }
+    }
+  }
+}
+
+async function seedVideographers(seeder: Seeder): Promise<void> {
+  const labels = Array.from(
+    { length: seeder.videographers },
+    (_, i) => `videographer${pad(i)}`
+  )
+  await inTurn(labels, CONCURRENCY, async (label, i) => {
+    const gameIndex = i % seeder.games.length
+    const teamId = seeder.games[gameIndex].sides.home.id
+    const account = await seeder.account(label, 'videographer', {
+      teamId,
+      gameIndex
+    })
+    await seeder.grant(account.userId, 'team', teamId, 'videographer')
+  })
+}
+
+/**
+ * Who watches which game: the crowded game gets its own number, and the others
+ * fall away as one over their place, so some games have hundreds and most few.
+ */
+export function gameOfViewer(
+  index: number,
+  accounts: number,
+  crowded: number,
+  games: number
+): number {
+  if (index < crowded || games <= 1) return 0
+  const weights = Array.from({ length: games - 1 }, (_, i) => 1 / (i + 1))
+  const total = weights.reduce((sum, weight) => sum + weight, 0)
+  let at = ((index - crowded) / Math.max(1, accounts - crowded)) * total
+  for (const [i, weight] of weights.entries()) {
+    at -= weight
+    if (at < 0) return i + 1
+  }
+  return games - 1
+}
+
+async function seedViewers(seeder: Seeder): Promise<void> {
+  const { amounts } = seeder
+  const indexes = Array.from({ length: amounts.accounts }, (_, i) => i)
+  await inTurn(indexes, CONCURRENCY, async i => {
+    const gameIndex = gameOfViewer(
+      i,
+      amounts.accounts,
+      amounts.crowdedViewers,
+      seeder.games.length
+    )
+    await seeder.account(`viewer${pad(i)}`, 'viewer', {
+      teamId: seeder.games[gameIndex].sides.home.id,
+      gameIndex
+    })
+  })
+}
+
+/** Every kind of person the permission checks have to answer for. */
+async function seedKinds(seeder: Seeder, groups: Groups): Promise<void> {
+  const { db } = seeder
+  const teamId = groups.teams[0]
+  const seasonId = groups.seasons[0]
+  const league = await db
+    .selectFrom('seasons')
+    .select('league_id')
+    .where('id', '=', seasonId)
+    .executeTakeFirstOrThrow()
+  const leagueId = league.league_id as string
+
+  await seeder.account('person.admin', 'person', { admin: true })
+  await seeder.account('person.stranger', 'person')
+  const coach = await seeder.account('person.coach', 'person')
+  await seeder.grant(coach.userId, 'team', teamId, 'coach')
+  const scorer = await seeder.account('person.scorekeeper', 'person')
+  await seeder.grant(scorer.userId, 'team', teamId, 'scorekeeper')
+  await seeder.account('person.teamMember', 'person', { teamId })
+  const seasonMember = await seeder.account('person.seasonMember', 'person')
+  await joinScope(db, 'season', seasonId, seasonMember.userId)
+  const leagueMember = await seeder.account('person.leagueMember', 'person')
+  await joinScope(db, 'league', leagueId, leagueMember.userId)
+  const seasonRole = await seeder.account('person.seasonRole', 'person')
+  await seeder.grant(seasonRole.userId, 'season', seasonId, 'coach')
+  const leagueRole = await seeder.account('person.leagueRole', 'person')
+  await seeder.grant(leagueRole.userId, 'league', leagueId, 'coach')
+
+  const guardian = await seeder.account('person.guardian', 'person')
+  const [child] = await seeder.chain('person.child', 0, teamId)
+  seeder.places.childId = child
+  await atomic(db, async trx => {
+    await linkGuardian(trx, child, guardian.userId, teamId, null)
+  })
+
+  const merged = await seeder.account('person.merged', 'person')
+  const kept = await seeder.account('person.mergedKept', 'person')
+  await closeInto(db, merged.userId, kept.userId)
+
+  const disabled = await seeder.account('person.disabled', 'person')
+  await db
+    .updateTable('users')
+    .set({ disabled_at: seeder.now })
+    .where('id', '=', disabled.userId)
+    .execute()
+
+  const revoked = await seeder.account('person.revokedSession', 'person')
+  await revokeSession(db, revoked.token)
+
+  const expiredId = await seeder.person('person.expiredSession', {
+    account: true
+  })
+  const expired = await createSession(db, expiredId, USER_AGENT, { days: -1 })
+  seeder.accounts.push({
+    label: 'person.expiredSession',
+    kind: 'person',
+    userId: expiredId,
+    token: expired.token,
+    teamId: null,
+    gameIndex: null
+  })
+
+  const tokenHolder = await seeder.person('person.apiToken', { account: true })
+  const apiToken = makeToken()
+  await db
+    .insertInto('api_tokens')
+    .values({
+      id: makeId('apiToken'),
+      user_id: tokenHolder,
+      label: 'dbload',
+      token_hash: hashToken(apiToken),
+      created_at: seeder.now
+    })
+    .execute()
+  seeder.accounts.push({
+    label: 'person.apiToken',
+    kind: 'person',
+    userId: tokenHolder,
+    token: apiToken,
+    teamId: null,
+    gameIndex: null
+  })
+
+  const keyHolder = await seeder.person('person.userKey', { account: true })
+  const userKey = `${USER_API_KEY_PREFIX}${makeToken()}`
+  await db
+    .insertInto('user_api_keys')
+    .values({
+      id: makeId('userApiKey'),
+      user_id: keyHolder,
+      name: 'dbload',
+      token_hash: hashToken(userKey),
+      secret_sealed: sealSecret(randomBytes(32).toString('hex'), userKey),
+      permissions: ['games:read']
+    })
+    .execute()
+  seeder.accounts.push({
+    label: 'person.userKey',
+    kind: 'person',
+    userId: keyHolder,
+    token: userKey,
+    teamId: null,
+    gameIndex: null
+  })
+}
+
+/** The worst-case people, signed in as the survivors of their merges. */
+async function seedWorstPeople(seeder: Seeder, groups: Groups): Promise<void> {
+  const { amounts, db } = seeder
+
+  const mergedInto = await seeder.person('worst.mergedMany', { account: true })
+  for (let i = 0; i < amounts.mergedRows; i++) {
+    const row = await seeder.person(`worst.mergedMany.row${pad(i)}`)
+    await closeInto(db, row, mergedInto)
+  }
+  await seeder.signIn('worst.mergedMany', 'worstCase', mergedInto)
+
+  const chain = await seeder.chain('worst.chain', amounts.chainDepth)
+  await seeder.signIn('worst.chain', 'worstCase', chain[chain.length - 1])
+
+  const guardian = await seeder.account('worst.guardian', 'worstCase')
+  const guardedTeam = await seeder.team('worst.guardedTeam', groups.seasons[0])
+  for (let i = 0; i < amounts.guardianChildren; i++) {
+    const rows = await seeder.chain(
+      `worst.child${pad(i)}`,
+      amounts.guardianChildDepth,
+      guardedTeam
+    )
+    await atomic(db, async trx => {
+      await linkGuardian(
+        trx,
+        rows[rows.length - 1],
+        guardian.userId,
+        guardedTeam,
+        null
+      )
+    })
+  }
+
+  const rolePerson = await seeder.account('worst.manyRoles', 'worstCase')
+  for (let i = 0; i < amounts.roleLeagues; i++) {
+    const league = await seeder.league(`worst.roleLeague${pad(i)}`)
+    await seeder.grant(rolePerson.userId, 'league', league, 'coach')
+    if (i === 0) {
+      for (let s = 0; s < amounts.roleSeasons; s++) {
+        const season = await seeder.season(`worst.roleSeason${pad(s)}`, league)
+        await seeder.grant(rolePerson.userId, 'season', season, 'coach')
+      }
+    }
+  }
+  for (let i = 0; i < amounts.roleTeams; i++) {
+    const team = await seeder.team(`worst.roleTeam${pad(i)}`)
+    await seeder.grant(rolePerson.userId, 'team', team, 'coach')
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: rolePerson.userId,
+        team_id: team,
+        role: 'manager'
+      })
+      .execute()
+  }
+
+  const largeLeague = await seeder.league('worst.largeLeague')
+  const largeSeasons: string[] = []
+  for (let i = 0; i < amounts.largeLeagueSeasons; i++)
+    largeSeasons.push(
+      await seeder.season(`worst.largeSeason${pad(i)}`, largeLeague)
+    )
+  const teamIndexes = Array.from(
+    { length: amounts.largeLeagueTeams },
+    (_, i) => i
+  )
+  await inTurn(teamIndexes, CONCURRENCY, async i => {
+    await seeder.team(
+      `worst.largeTeam${pad(i)}`,
+      largeSeasons[i % largeSeasons.length]
+    )
+  })
+  const leagueMember = await seeder.account('worst.largeMember', 'worstCase')
+  await joinScope(db, 'league', largeLeague, leagueMember.userId)
+
+  const sessions = await seeder.account('worst.manySessions', 'worstCase')
+  for (let i = 1; i < amounts.manySessions; i++)
+    await createSession(db, sessions.userId, USER_AGENT)
+}
+
+/** Teams typed in again and again, then merged, and a chain of those merges. */
+async function seedWorstTeams(seeder: Seeder, groups: Groups): Promise<void> {
+  const { amounts, db } = seeder
+  const season = groups.seasons[0]
+  const kept = await seeder.team('worst.teamKept', season)
+  const opponent = await seeder.team('worst.teamOpponent', season)
+  for (let i = 0; i < amounts.duplicateTeams; i++) {
+    const copy = await seeder.team(
+      `worst.teamCopy${pad(i)}`,
+      season,
+      'external'
+    )
+    await seeder.game(
+      `worst.teamCopy${pad(i)}.game`,
+      copy,
+      opponent,
+      season,
+      'scheduled',
+      new Date(seeder.now.getTime() + (i + 1) * 3_600_000)
+    )
+    await mergeTeams(db, { fromTeamId: copy, intoTeamId: kept, apply: true })
+  }
+  const chain: string[] = []
+  for (let i = 0; i <= amounts.teamChainDepth; i++)
+    chain.push(await seeder.team(`worst.teamChain${pad(i)}`, season))
+  for (let i = 0; i < amounts.teamChainDepth; i++)
+    await mergeTeams(db, {
+      fromTeamId: chain[i],
+      intoTeamId: chain[i + 1],
+      apply: true
+    })
+}
+
+/** One finished game through the real paths, ready to be cloned. */
+async function writtenGame(
+  seeder: Seeder,
+  label: string,
+  sides: GameSides,
+  seasonId: string | null,
+  daysAgo: number,
+  innings = 9
+): Promise<string> {
+  const { id } = await seeder.game(
+    label,
+    sides.home.id,
+    sides.away.id,
+    seasonId,
+    'scheduled',
+    new Date(seeder.now.getTime() - daysAgo * 86_400_000)
+  )
+  await seeder.postGame(
+    id,
+    await scriptedGame(id, sides, {
+      innings,
+      final: true,
+      random: seeder.random(label)
+    })
+  )
+  return id
+}
+
+/**
+ * Finished games, whose stats the builder writes as it would have, then the
+ * history that only has to be there. The live teams never played these: a game
+ * is cloned under the teams of a pair the live games do not use, if any.
+ */
+async function seedFinished(seeder: Seeder, groups: Groups): Promise<void> {
+  const { amounts, db } = seeder
+  const season = groups.seasons[0]
+  const home = await seeder.team('finished.home', season)
+  const away = await seeder.team('finished.away', season)
+  const sides: GameSides = {
+    home: {
+      id: home,
+      name: 'Load finished.home',
+      players: await seeder.roster('finished.home', home)
+    },
+    away: {
+      id: away,
+      name: 'Load finished.away',
+      players: await seeder.roster('finished.away', away)
+    }
+  }
+  const written: string[] = []
+  for (let i = 0; i < amounts.writtenFinishedGames; i++)
+    written.push(
+      await writtenGame(seeder, `finished${pad(i)}`, sides, season, i + 1)
+    )
+  const clones = Math.max(0, amounts.finishedGames - written.length)
+  const finished = [...written]
+  for (const [i, source] of written.entries()) {
+    const share =
+      Math.floor(clones / written.length) +
+      (i < clones % written.length ? 1 : 0)
+    finished.push(
+      ...(await seeder.cloneGames(
+        source,
+        `finished${pad(i)}.copy`,
+        share,
+        written.length + 1 + i * 1000
+      ))
+    )
+  }
+  await inTurn(finished, CONCURRENCY, async id => {
+    await requestGameStats(db, id)
+  })
+  await drain(db, () => new Date())
+  if (seeder.browser) await mergeFinishedPlayer(seeder, finished, home)
+  if (amounts.historyGames > 0) {
+    const short = await writtenGame(
+      seeder,
+      'history.source',
+      sides,
+      season,
+      9_000,
+      amounts.historyInnings
+    )
+    await seeder.cloneGames(short, 'history', amounts.historyGames, 10_000)
+  }
+}
+
+/**
+ * A player closed into another row after his games were built, so his totals
+ * have to be found under a row that played none of them.
+ */
+async function mergeFinishedPlayer(
+  seeder: Seeder,
+  finished: string[],
+  teamId: string
+): Promise<void> {
+  const { db } = seeder
+  await seeder.flushTags()
+  const player = await taggedIn(db, seeder.runId, 'user').then(tags =>
+    tags.get('finished.home.player00000')
+  )
+  if (player == null) throw new Error('finished.home has no first player')
+  const kept = await seeder.person('finished.mergedPlayer')
+  const merge = await closeInto(db, player, kept)
+  if (!merge.closed) throw new Error('finished.home.player00000 did not close')
+  Object.assign(seeder.places, {
+    finishedGameId: finished[0],
+    finishedTeamId: teamId,
+    mergedPlayerId: kept,
+    mergedPlayerGames: finished.length
+  })
+}
+
+/** The fresh copies of each shape an event uses up, one for each use. */
+async function seedConsumables(seeder: Seeder, groups: Groups): Promise<void> {
+  const { amounts, db } = seeder
+  const season = groups.seasons[0]
+  for (let c = 0; c < amounts.consumableCopies; c++) {
+    const home = await seeder.team(`teamMerge.${c}.from`, season)
+    const away = await seeder.team(`teamMerge.${c}.opponent`, season)
+    await seeder.team(`teamMerge.${c}.into`, season)
+    const sides: GameSides = {
+      home: {
+        id: home,
+        name: `Load teamMerge ${c} from`,
+        players: await seeder.roster(`teamMerge.${c}.from`, home)
+      },
+      away: {
+        id: away,
+        name: `Load teamMerge ${c} opponent`,
+        players: await seeder.roster(`teamMerge.${c}.opponent`, away)
+      }
+    }
+    const source = await writtenGame(
+      seeder,
+      `teamMerge.${c}.game`,
+      sides,
+      season,
+      1
+    )
+    await seeder.cloneGames(
+      source,
+      `teamMerge.${c}.copy`,
+      amounts.longTeamGames - 1,
+      2 + c * 1000
+    )
+    await seeder.copy('teamMerge', c)
+
+    await seeder.chain(`personMerge.${c}.chain`, amounts.chainDepth)
+    await seeder.person(`personMerge.${c}.keep`)
+    await seeder.copy('personMerge', c)
+
+    const signingOut = await seeder.person(`signOut.${c}.person`, {
+      account: true
+    })
+    for (let i = 0; i < amounts.manySessions; i++)
+      await createSession(db, signingOut, USER_AGENT)
+    await seeder.copy('signOut', c)
+
+    await seeder.copy('statsRebuild', c)
+
+    for (let i = 0; i < amounts.chatAddPeople; i++)
+      await seeder.person(`chatAdd.${c}.person${pad(i)}`, { account: true })
+    await seeder.copy('chatAdd', c)
+  }
+}
+
+/**
+ * The viewers in label order. They were made side by side, so the accounts hold
+ * them in whatever order those writes finished, and a repeat seed must choose
+ * the same ones.
+ */
+export function viewersByLabel(accounts: SeededAccount[]): SeededAccount[] {
+  return accounts
+    .filter(account => account.kind === 'viewer')
+    .sort((a, b) => (a.label < b.label ? -1 : 1))
+}
+
+/** The team chats, the large chat, the person in many chats, and the DMs. */
+async function seedChats(seeder: Seeder, groups: Groups): Promise<void> {
+  const { amounts, db } = seeder
+  const viewers = viewersByLabel(seeder.accounts)
+
+  const largeTeam = await seeder.team('chat.largeTeam', groups.seasons[0])
+  const largeMembers = viewers.slice(0, amounts.largeChatMembers)
+  await inTurn(largeMembers, CONCURRENCY, async member => {
+    await joinScope(db, 'team', largeTeam, member.userId)
+  })
+  const large = await reconcileScope(db, 'teamMembers', largeTeam, seeder.now)
+  if (large.conversationId == null) throw new Error('The large chat has no one')
+  await seeder.tag('conversation', 'chat.large', large.conversationId)
+  if (largeMembers.length > 0)
+    await seeder.speak(
+      large.conversationId,
+      largeMembers[0].userId,
+      amounts.largeChatMessages
+    )
+
+  const inMany = await seeder.account('worst.manyChats', 'worstCase')
+  for (let i = 0; i < amounts.manyChats; i++) {
+    const team = await seeder.team(`chat.manyTeam${pad(i)}`, groups.seasons[0])
+    await joinScope(db, 'team', team, inMany.userId)
+    const chat = await reconcileScope(db, 'teamMembers', team, seeder.now)
+    if (chat.conversationId != null)
+      await seeder.tag(
+        'conversation',
+        `chat.many${pad(i)}`,
+        chat.conversationId
+      )
+  }
+
+  // Each team's chat, with a little history from a viewer on it.
+  for (const [i, teamId] of groups.teams.entries()) {
+    const chat = await reconcileScope(db, 'teamMembers', teamId, seeder.now)
+    if (chat.conversationId == null) continue
+    await seeder.tag('conversation', `chat.team${pad(i)}`, chat.conversationId)
+    const speaker = viewers.find(viewer => viewer.teamId === teamId)
+    if (speaker != null)
+      await seeder.speak(chat.conversationId, speaker.userId, 3)
+  }
+
+  // Direct messages between neighbours on one team, who share its chat.
+  const byTeam = new Map<string, SeededAccount[]>()
+  for (const viewer of viewers) {
+    const on = byTeam.get(viewer.teamId ?? '') ?? []
+    on.push(viewer)
+    byTeam.set(viewer.teamId ?? '', on)
+  }
+  const pairs: Array<[SeededAccount, SeededAccount]> = []
+  const wanted = Math.floor((amounts.accounts * amounts.dmShare) / 2)
+  for (const members of byTeam.values())
+    for (let i = 0; i + 1 < members.length && pairs.length < wanted; i += 2)
+      pairs.push([members[i], members[i + 1]])
+  for (const [i, [a, b]] of pairs.entries()) {
+    const dm = await createDm(db, a.userId, [b.userId], seeder.now)
+    await seeder.tag('conversation', `chat.dm${pad(i)}`, dm.conversationId)
+    await seeder.speak(dm.conversationId, a.userId, amounts.messagesPerDm)
+  }
+}
+
+/**
+ * The people a browser run signs in as. They watch a game of their own, so a
+ * run can revoke and remove them with the rig's crowd on another, and every one
+ * holds a password. The chat is for a member whose row is merged once in it.
+ */
+async function seedBrowserPeople(
+  seeder: Seeder,
+  groups: Groups
+): Promise<void> {
+  const { db, games } = seeder
+  const game = games[Math.min(1, games.length - 1)]
+  const teamId = game.sides.home.id
+  const scorer = await seeder.account('browser.scorekeeper', 'person', {
+    teamId
+  })
+  await seeder.grant(scorer.userId, 'team', teamId, 'scorekeeper')
+  const coach = await seeder.account('browser.coach', 'person', { teamId })
+  await seeder.grant(coach.userId, 'team', teamId, 'coach')
+  // A team keeps a direct administrator, whoever else is removed from it.
+  await seeder.grant(coach.userId, 'team', teamId, 'admin')
+  await seeder.account('browser.viewer', 'person', { teamId })
+  await seeder.account('browser.viewerAway', 'person', { teamId })
+  await seeder.account('browser.revoked', 'person', { teamId })
+  const removed = await seeder.account('browser.removed', 'person', { teamId })
+  // Somebody on the roster stays while they play, so this one only follows it.
+  await db
+    .updateTable('memberships')
+    .set({ is_player: false })
+    .where('user_id', '=', removed.userId)
+    .where('team_id', '=', teamId)
+    .execute()
+  const videographer = await seeder.account('browser.videographer', 'person', {
+    teamId
+  })
+  await seeder.grant(videographer.userId, 'team', teamId, 'videographer')
+
+  // Nothing is said in these chats yet, because whoever says it holds the keys.
+  const talkTeam = await seeder.team('browser.talkTeam', groups.seasons[0])
+  for (const label of [
+    'browser.viewer',
+    'browser.viewerAway',
+    'browser.removed'
+  ])
+    await joinScope(db, 'team', talkTeam, seeder.userOf(label))
+  const talk = await reconcileScope(db, 'teamMembers', talkTeam, seeder.now)
+  if (talk.conversationId == null) throw new Error('The talk has no members')
+
+  const chatTeam = await seeder.team('browser.chatTeam', groups.seasons[0])
+  const league = await db
+    .selectFrom('seasons')
+    .select('league_id')
+    .where('id', '=', game.seasonId)
+    .executeTakeFirstOrThrow()
+  const kept = await seeder.account('browser.chatKept', 'person')
+  const friend = await seeder.account('browser.chatFriend', 'person', {
+    teamId: chatTeam
+  })
+  const mergedRow = await seeder.person('browser.chatMerged', {
+    account: true
+  })
+  await joinScope(db, 'team', chatTeam, mergedRow)
+  const chat = await reconcileScope(db, 'teamMembers', chatTeam, seeder.now)
+  if (chat.conversationId == null) throw new Error('The chat has no members')
+  await seeder.tag('conversation', 'browser.chat', chat.conversationId)
+  const merge = await closeInto(db, mergedRow, kept.userId)
+  if (!merge.closed) throw new Error('browser.chatMerged did not close')
+
+  for (const account of seeder.browserAccounts)
+    account.teamId =
+      seeder.accounts.find(row => row.label === account.label)?.teamId ?? null
+  Object.assign(seeder.places, {
+    liveGameId: game.id,
+    liveTeamId: teamId,
+    largeGameId: games[games.length - 1].id,
+    seasonId: game.seasonId,
+    leagueId: league.league_id,
+    teamChatTeamId: talkTeam,
+    mergedChatTeamId: chatTeam
+  })
+}
+
+/**
+ * What a node administrator finishes before anybody may create a group: every
+ * group has a direct administrator, then the app's own cutover. A browser run
+ * creates groups, so a seed for one ends where a working node is.
+ */
+async function finishOrganizationSetup(seeder: Seeder): Promise<void> {
+  const { db } = seeder
+  const adminId = seeder.userOf('person.admin')
+  const held = await db
+    .selectFrom('scope_roles')
+    .select(['scope_type', 'scope_id'])
+    .where('role', '=', 'admin')
+    .execute()
+  const has = new Set(held.map(row => `${row.scope_type}:${row.scope_id}`))
+  const leagues = await db.selectFrom('leagues').select('id').execute()
+  const seasons = await db.selectFrom('seasons').select('id').execute()
+  const teams = await db
+    .selectFrom('teams')
+    .select('id')
+    .where('kind', '=', 'full')
+    .where('merged_into', 'is', null)
+    .execute()
+  const groups = [
+    ...leagues.map(row => ({
+      scope_type: 'league' as const,
+      scope_id: row.id
+    })),
+    ...seasons.map(row => ({
+      scope_type: 'season' as const,
+      scope_id: row.id
+    })),
+    ...teams.map(row => ({ scope_type: 'team' as const, scope_id: row.id }))
+  ].filter(group => !has.has(`${group.scope_type}:${group.scope_id}`))
+  await db
+    .insertInto('scope_roles')
+    .values(
+      groups.map(group => ({
+        id: makeId('scopeRole'),
+        user_id: adminId,
+        role: 'admin' as const,
+        ...group
+      }))
+    )
+    .execute()
+  const report = await ownershipPreflight(db, { dryRun: false })
+  if (!report.ready)
+    throw new Error(
+      `Organization setup did not finish: ${JSON.stringify(report.conflicts.slice(0, 3))}`
+    )
+}
+
+/**
+ * Puts worst-case people where they can watch something: the first few on the
+ * crowded game's team, and the rest on the long game's.
+ */
+async function placeWorstPeople(seeder: Seeder): Promise<void> {
+  const worst = seeder.accounts
+    .filter(account => account.kind === 'worstCase')
+    .sort((a, b) => (a.label < b.label ? -1 : 1))
+  for (const [i, account] of worst.entries()) {
+    const gameIndex =
+      i < seeder.amounts.crowdedWorstCaseViewers ? 0 : seeder.games.length - 1
+    const teamId = seeder.games[gameIndex].sides.home.id
+    await joinScope(seeder.db, 'team', teamId, account.userId)
+    account.teamId = teamId
+    account.gameIndex = gameIndex
+  }
+}
+
+/**
+ * Viewers in order with every twentieth place a worst-case account, while they
+ * last, so any number of the first accounts is 5% worst-case people. The rest
+ * of the accounts follow, as the rig reads them by kind.
+ */
+export function interleaved(accounts: SeededAccount[]): SeededAccount[] {
+  // They were made side by side, in whatever order those writes finished.
+  const inOrder = [...accounts].sort((a, b) => (a.label < b.label ? -1 : 1))
+  const viewers = inOrder.filter(account => account.kind === 'viewer')
+  const worst = inOrder.filter(account => account.kind === 'worstCase')
+  const rest = inOrder.filter(
+    account => account.kind !== 'viewer' && account.kind !== 'worstCase'
+  )
+  const mixed: SeededAccount[] = []
+  while (viewers.length > 0 || worst.length > 0) {
+    if (worst.length > 0 && (mixed.length % 20 === 19 || viewers.length === 0))
+      mixed.push(worst.shift()!)
+    else mixed.push(viewers.shift()!)
+  }
+  return [...mixed, ...rest]
+}
+
+/** Seeds a run. Refuses a database that is not marked as generated. */
+export async function seedFixture(
+  db: LoadDatabase,
+  options: SeedOptions
+): Promise<TokensFile> {
+  await requireLoadDatabase(
+    async text =>
+      await sql
+        .raw<{
+          comment: string | null
+          name: string
+        }>(text)
+        .execute(db)
+  )
+  const amounts = amountsFor(options.scale, options.overrides)
+  const videographers = Math.max(
+    amounts.videographers,
+    Math.ceil((options.streams ?? 0) / 4)
+  )
+  const log = options.log ?? (() => undefined)
+  const seeder = new Seeder(
+    db,
+    options.runId,
+    options.scale,
+    amounts,
+    videographers,
+    options.credentialsPath != null,
+    options.now,
+    log
+  )
+  const step = async (
+    name: string,
+    work: () => Promise<void>
+  ): Promise<void> => {
+    const started = Date.now()
+    await work()
+    await seeder.flushTags()
+    log(`seeded ${name} in ${((Date.now() - started) / 1000).toFixed(1)} s`)
+  }
+  try {
+    let groups: Groups = { seasons: [], teams: [], sides: [] }
+    await step('leagues, seasons and teams', async () => {
+      groups = await seedGroups(seeder)
+    })
+    await step('live games', async () => {
+      await seedLiveGames(seeder, groups)
+    })
+    await step('videographers', async () => {
+      await seedVideographers(seeder)
+    })
+    await step('viewers', async () => {
+      await seedViewers(seeder)
+    })
+    await step('kinds of person', async () => {
+      await seedKinds(seeder, groups)
+    })
+    await step('worst-case people', async () => {
+      await seedWorstPeople(seeder, groups)
+    })
+    await step('worst-case teams', async () => {
+      await seedWorstTeams(seeder, groups)
+    })
+    await step('finished games and history', async () => {
+      await seedFinished(seeder, groups)
+    })
+    await step('consumable shapes', async () => {
+      await seedConsumables(seeder, groups)
+    })
+    await step('chats', async () => {
+      await seedChats(seeder, groups)
+      await placeWorstPeople(seeder)
+    })
+    if (seeder.browser)
+      await step('browser people', async () => {
+        await seedBrowserPeople(seeder, groups)
+        await finishOrganizationSetup(seeder)
+      })
+    seeder.accounts.splice(
+      0,
+      seeder.accounts.length,
+      ...interleaved(seeder.accounts)
+    )
+    return seeder.tokens()
+  } finally {
+    await seeder.flushTags()
+    if (options.tokensPath != null)
+      writeTokens(options.tokensPath, seeder.tokens())
+    if (options.credentialsPath != null)
+      writeCredentials(options.credentialsPath, {
+        runId: seeder.runId,
+        accounts: seeder.browserAccounts,
+        places: seeder.places as BrowserPlaces
+      })
+  }
+}
+
+/** The ids a run tagged under `kind`, by label. */
+export async function taggedIn(
+  db: Kysely<Database>,
+  runId: string,
+  kind: string
+): Promise<Map<string, string>> {
+  const rows = await db
+    .selectFrom('external_ids')
+    .select(['external_id', 'entity_id'])
+    .where('system', '=', systemOf(runId))
+    .where('kind', '=', kind)
+    .execute()
+  return new Map(rows.map(row => [row.external_id, row.entity_id]))
+}
+
+/** The foreign keys that would refuse a delete of the rows they point at. */
+async function blockers(
+  db: Kysely<Database>,
+  table: string
+): Promise<
+  Array<{
+    child: string
+    column: string
+    references: string
+    selfReference: boolean
+  }>
+> {
+  const { rows } = await sql<{
+    child: string
+    column: string
+    references: string
+  }>`
+    select child.relname as child, fk.attname as column, pk.attname as references
+    from pg_constraint c
+    join pg_class child on child.oid = c.conrelid
+    join pg_class parent on parent.oid = c.confrelid
+    join pg_attribute fk on fk.attrelid = c.conrelid and fk.attnum = c.conkey[1]
+    join pg_attribute pk on pk.attrelid = c.confrelid and pk.attnum = c.confkey[1]
+    where c.contype = 'f' and c.confdeltype in ('a', 'r')
+      and cardinality(c.conkey) = 1 and parent.relname = ${table}
+  `.execute(db)
+  return rows.map(row => ({ ...row, selfReference: row.child === table }))
+}
+
+/**
+ * Deletes rows, first deleting what would refuse it: whatever else a server
+ * wrote about these rows during the run, so the delete does not depend on
+ * knowing every table. Nothing else can point at a row only this run made.
+ */
+async function deleteRows(
+  db: Kysely<Database>,
+  table: string,
+  column: string,
+  values: readonly string[]
+): Promise<void> {
+  if (values.length === 0) return
+  for (const blocker of await blockers(db, table)) {
+    if (blocker.selfReference) continue
+    const { rows } = await sql<{ value: string }>`
+      select ${sql.ref(blocker.child)}.${sql.ref(blocker.column)}::text as value
+      from ${sql.table(blocker.child)}
+      where ${sql.ref(blocker.column)}::text = any(${values.map(String)}::text[])
+      limit 1
+    `.execute(db)
+    if (rows.length > 0)
+      await deleteDependents(db, blocker.child, blocker.column, values)
+  }
+  await sql`
+    delete from ${sql.table(table)}
+    where ${sql.ref(column)}::text = any(${values.map(String)}::text[])
+  `.execute(db)
+}
+
+async function deleteDependents(
+  db: Kysely<Database>,
+  table: string,
+  column: string,
+  values: readonly string[]
+): Promise<void> {
+  for (const blocker of await blockers(db, table)) {
+    if (blocker.selfReference) continue
+    const { rows } = await sql<{ value: string }>`
+      select ${sql.ref(blocker.references)}::text as value
+      from ${sql.table(table)}
+      where ${sql.ref(column)}::text = any(${values.map(String)}::text[])
+    `.execute(db)
+    await deleteRows(
+      db,
+      blocker.child,
+      blocker.column,
+      rows.map(row => row.value)
+    )
+  }
+  await sql`
+    delete from ${sql.table(table)}
+    where ${sql.ref(column)}::text = any(${values.map(String)}::text[])
+  `.execute(db)
+}
+
+/** How many times a cleanup step runs before it gives up. */
+export const CLEANUP_ATTEMPTS = 3
+
+/** A cleanup step's games in one transaction, each holding an advisory lock. */
+const GAMES_PER_STEP = 100
+
+/**
+ * Runs one step of a cleanup in a transaction of its own, again when a
+ * running server's writers met it: a deadlock (`40P01`), or a row a writer
+ * pointed at what the step deletes after the step looked for such rows
+ * (`23503`). After a `23503` it runs `beforeRetry`, if given, to take away
+ * what that writer made, then the step again. Once the step has failed
+ * `CLEANUP_ATTEMPTS` times in a row it fails the cleanup, naming the tables
+ * the step and those writers lock.
+ */
+async function cleanupStep(
+  db: Kysely<Database>,
+  tables: readonly string[],
+  work: (trx: Kysely<Database>) => Promise<void>,
+  beforeRetry?: () => Promise<void>
+): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await db.transaction().execute(work)
+      return
+    } catch (error) {
+      const code = (error as { code?: unknown }).code
+      if (code !== '40P01' && code !== '23503') throw error
+      if (attempt >= CLEANUP_ATTEMPTS)
+        throw new Error(
+          `cleanup of ${tables.join(', ')} failed ${attempt} times in a row: ${(error as Error).message}`,
+          { cause: error }
+        )
+      if (code === '23503') await beforeRetry?.()
+    }
+  }
+}
+
+/**
+ * Removes exactly the rows of one run: the games of its teams, its teams,
+ * seasons and leagues, its conversations, its people, and its tags. Cascades
+ * take what hangs off them.
+ *
+ * A server may still be running, and its writers lock these rows in their own
+ * order, so each step is its own transaction, dependants before the table:
+ *
+ * - A game goes under the stats builder's lock on it (`gameStatsLock`). A
+ *   build deletes and rewrites the game's `game_player_stats`, whose foreign
+ *   key then shares the `games` row, while the game's delete cascades into
+ *   those same rows; without the lock each waits on the other. The builder
+ *   only tries the lock, so it skips a game being removed.
+ * - Teams, seasons and leagues go before the chats, since every membership
+ *   they cascade into marks its chats for the reconciler, which recreates a
+ *   scope chat whose audience is not yet empty and joins the run's people to
+ *   it. Once the scopes are gone their audiences are, and the chats are
+ *   removed before the people and again after, for one a reconcile already
+ *   under way made. A chat that joins the run's people after the first
+ *   removal holds them in its membership log, which the people's delete may
+ *   meet (`23503`): that step removes the chats again before it retries.
+ */
+export async function cleanupRun(
+  db: LoadDatabase,
+  runId: string
+): Promise<{ removed: Record<string, number> }> {
+  await requireLoadDatabase(
+    async text =>
+      await sql
+        .raw<{
+          comment: string | null
+          name: string
+        }>(text)
+        .execute(db)
+  )
+  const ids = async (kind: string): Promise<string[]> => [
+    ...(await taggedIn(db, runId, kind)).values()
+  ]
+  const conversations = await ids('conversation')
+  const users = await ids('user')
+  const teams = await ids('team')
+  const seasons = await ids('season')
+  const leagues = await ids('league')
+  const runTeams = sql.join(teams.length > 0 ? teams : [''])
+  const games = await sql<{ id: string }>`
+    select id from games
+    where home_team_id in (${runTeams}) or away_team_id in (${runTeams})
+  `.execute(db)
+  const gameIds = [
+    ...new Set([...(await ids('game')), ...games.rows.map(row => row.id)])
+  ].sort()
+
+  for (let at = 0; at < gameIds.length; at += GAMES_PER_STEP) {
+    const batch = gameIds.slice(at, at + GAMES_PER_STEP)
+    await cleanupStep(
+      db,
+      ['games', 'game_player_stats', 'plate_appearances', 'game_stats_state'],
+      async trx => {
+        await sql`
+          select pg_advisory_xact_lock(hashtext(key))
+          from unnest(${batch.map(gameStatsLock)}::text[]) as key
+        `.execute(trx)
+        await trx.deleteFrom('videos').where('game_id', 'in', batch).execute()
+        await deleteRows(trx, 'games', 'id', batch)
+      }
+    )
+  }
+  await cleanupStep(
+    db,
+    ['teams', 'memberships', 'team_roster_bumps'],
+    async trx => {
+      await deleteRows(trx, 'teams', 'id', teams)
+    }
+  )
+  await cleanupStep(
+    db,
+    ['seasons', 'season_teams', 'season_members'],
+    async trx => {
+      await deleteRows(trx, 'seasons', 'id', seasons)
+    }
+  )
+  await cleanupStep(db, ['leagues', 'league_members'], async trx => {
+    await deleteRows(trx, 'leagues', 'id', leagues)
+  })
+
+  // The chats of the run's teams and people, tagged or made by a reconcile since.
+  const removedChats = new Set<string>()
+  const removeChats = async (): Promise<void> => {
+    await cleanupStep(
+      db,
+      ['chat_conversations', 'chat_members', 'chat_membership_log'],
+      async trx => {
+        const held = await sql<{ id: string }>`
+          select id from chat_conversations
+          where scope_id in (${sql.join([...teams, ...seasons, ...leagues, ''])})
+            or created_by = any(${users}::text[])
+        `.execute(trx)
+        const chats = [
+          ...new Set([...conversations, ...held.rows.map(row => row.id)])
+        ]
+        await deleteRows(trx, 'chat_conversations', 'id', chats)
+        for (const chat of chats) removedChats.add(chat)
+      }
+    )
+  }
+  await removeChats()
+  await cleanupStep(db, ['chat_identities', 'chat_user_keys'], async trx => {
+    await deleteRows(trx, 'chat_identities', 'user_id', users)
+  })
+  await cleanupStep(
+    db,
+    ['users', 'chat_members', 'chat_membership_log'],
+    async trx => {
+      await deleteRows(trx, 'users', 'id', users)
+    },
+    removeChats
+  )
+  await removeChats()
+  await db
+    .deleteFrom('external_ids')
+    .where('system', '=', systemOf(runId))
+    .execute()
+  return {
+    removed: {
+      users: users.length,
+      teams: teams.length,
+      seasons: seasons.length,
+      leagues: leagues.length,
+      games: gameIds.length,
+      conversations: removedChats.size
+    }
+  }
+}
+
+/** The depth of the chain of merges above a row. */
+async function depthOf(
+  db: Kysely<Database>,
+  table: 'users' | 'teams',
+  id: string
+): Promise<number> {
+  let depth = 0
+  let at: string | null = id
+  while (at != null) {
+    const row: { merged_into: string | null } | undefined = await db
+      .selectFrom(table)
+      .select('merged_into')
+      .where('id', '=', at)
+      .executeTakeFirst()
+    at = row?.merged_into ?? null
+    if (at != null) depth += 1
+  }
+  return depth
+}
+
+export interface Shapes {
+  mergedRows: number
+  chainDepth: number
+  guardianChildren: number
+  guardianChildDepths: number[]
+  roleTeams: number
+  roleSeasons: number
+  roleLeagues: number
+  largeLeagueSeasons: number
+  largeLeagueTeams: number
+  duplicateTeams: number
+  teamChainDepth: number
+  longTeamGames: number[]
+  longGame: {
+    plays: number
+    innings: number
+    recordVersions: number[]
+    lineupChanges: number
+  }
+  crowdedViewers: number
+  largeChatMembers: number
+  largeChatMessages: number
+  manyChats: number
+  manySessions: number
+  finishedGames: number
+  statsBuilt: number
+  historyGames: number
+  /** The most games any season of the run holds. */
+  largestSeason: number
+  kinds: string[]
+  copies: Record<string, number>
+}
+
+/**
+ * What a run's data reads back as, through the rows rather than what the seed
+ * meant to write, in terms of labels and counts, so that two seeds compare.
+ */
+export async function describeShapes(
+  db: Kysely<Database>,
+  runId: string,
+  tokens: TokensFile
+): Promise<Shapes> {
+  const users = await taggedIn(db, runId, 'user')
+  const teams = await taggedIn(db, runId, 'team')
+  const games = await taggedIn(db, runId, 'game')
+  const leagues = await taggedIn(db, runId, 'league')
+  const seasons = await taggedIn(db, runId, 'season')
+  const copies = await taggedIn(db, runId, 'copy')
+  const labelled = (labels: Map<string, string>, prefix: string): string[] =>
+    [...labels.entries()]
+      .filter(([label]) => label.startsWith(prefix))
+      .map(([, id]) => id)
+  const count = async (query: {
+    executeTakeFirstOrThrow: () => Promise<{ n: unknown }>
+  }): Promise<number> => Number((await query.executeTakeFirstOrThrow()).n)
+
+  const mergedInto = users.get('worst.mergedMany') ?? ''
+  const mergedRows = await count(
+    db
+      .selectFrom('users')
+      .select(eb => eb.fn.countAll().as('n'))
+      .where('merged_into', '=', mergedInto)
+  )
+
+  const guardian = users.get('worst.guardian') ?? ''
+  const guarded = await db
+    .selectFrom('user_links')
+    .select('related_user_id')
+    .where('user_id', '=', guardian)
+    .where('kind', '=', 'guardian')
+    .execute()
+  const childLabels = [...users.keys()].filter(label =>
+    /^worst\.child\d+\.row00000$/.test(label)
+  )
+  const guardianChildDepths = await Promise.all(
+    childLabels.sort().map(async label => {
+      return await depthOf(db, 'users', users.get(label)!)
+    })
+  )
+
+  const rolePerson = users.get('worst.manyRoles') ?? ''
+  const roleRows = await db
+    .selectFrom('scope_roles')
+    .select('scope_type')
+    .where('user_id', '=', rolePerson)
+    .execute()
+  const roleCount = (kind: string): number =>
+    roleRows.filter(row => row.scope_type === kind).length
+
+  const largeSeasons = labelled(seasons, 'worst.largeSeason')
+  const largeLeagueTeams =
+    largeSeasons.length === 0
+      ? 0
+      : await count(
+          db
+            .selectFrom('season_teams')
+            .select(eb => eb.fn.countAll().as('n'))
+            .where('season_id', 'in', largeSeasons)
+        )
+
+  const kept = teams.get('worst.teamKept') ?? ''
+  const duplicateTeams = await count(
+    db
+      .selectFrom('teams')
+      .select(eb => eb.fn.countAll().as('n'))
+      .where('merged_into', '=', kept)
+  )
+
+  const copyKeys = [...copies.keys()].filter(key =>
+    key.startsWith('teamMerge.')
+  )
+  const longTeamGames = await Promise.all(
+    copyKeys.sort().map(async key => {
+      const teamId = teams.get(`${key}.from`) ?? ''
+      return await count(
+        db
+          .selectFrom('games')
+          .select(eb => eb.fn.countAll().as('n'))
+          .where(eb =>
+            eb.or([
+              eb('home_team_id', '=', teamId),
+              eb('away_team_id', '=', teamId)
+            ])
+          )
+      )
+    })
+  )
+
+  const longId = tokens.games[tokens.games.length - 1]?.id ?? ''
+  const longPlays = await db
+    .selectFrom('events')
+    .select(['gumbo', 'inning'])
+    .where('gameId', '=', longId)
+    .execute()
+  const recordVersions = new Set<number>()
+  let lineupChanges = 0
+  for (const play of longPlays) {
+    const record = (
+      play.gumbo as unknown as {
+        teamStation?: { version?: number; actions?: Array<{ type?: string }> }
+      }
+    ).teamStation
+    if (record?.version != null) recordVersions.add(record.version)
+    lineupChanges +=
+      record?.actions?.filter(action => action.type === 'lineup').length ?? 0
+  }
+
+  const crowdedTeam = tokens.games[0]?.sides.home.id ?? ''
+  const crowdedViewers = await count(
+    db
+      .selectFrom('memberships')
+      .select(eb => eb.fn.countAll().as('n'))
+      .where('team_id', '=', crowdedTeam)
+      .where('is_player', '=', false)
+  )
+
+  const conversations = await taggedIn(db, runId, 'conversation')
+  const large = conversations.get('chat.large') ?? ''
+  const largeChatMembers = await count(
+    db
+      .selectFrom('chat_members')
+      .select(eb => eb.fn.countAll().as('n'))
+      .where('conversation_id', '=', large)
+      .where('left_at', 'is', null)
+  )
+  const largeChatMessages = await count(
+    db
+      .selectFrom('chat_messages')
+      .select(eb => eb.fn.countAll().as('n'))
+      .where('conversation_id', '=', large)
+  )
+  const inMany = users.get('worst.manyChats') ?? ''
+  const manyChats = await count(
+    db
+      .selectFrom('chat_members')
+      .select(eb => eb.fn.countAll().as('n'))
+      .where('user_id', '=', inMany)
+      .where('left_at', 'is', null)
+  )
+  const manySessions = await count(
+    db
+      .selectFrom('auth_sessions')
+      .select(eb => eb.fn.countAll().as('n'))
+      .where('user_id', '=', users.get('worst.manySessions') ?? '')
+      .where('revoked_at', 'is', null)
+  )
+
+  const finishedIds = labelled(games, 'finished')
+  const statsBuilt =
+    finishedIds.length === 0
+      ? 0
+      : await count(
+          db
+            .selectFrom('game_stats_state')
+            .select(eb => eb.fn.countAll().as('n'))
+            .where('game_id', 'in', finishedIds)
+            .where('status', '=', 'built')
+        )
+
+  const seasonIds = [...seasons.values()]
+  const largestSeason =
+    seasonIds.length === 0
+      ? 0
+      : Number(
+          (
+            await db
+              .selectFrom('games')
+              .select(eb => eb.fn.countAll().as('n'))
+              .where('season_id', 'in', seasonIds)
+              .groupBy('season_id')
+              .orderBy('n', 'desc')
+              .limit(1)
+              .executeTakeFirst()
+          )?.n ?? 0
+        )
+
+  const copyCounts: Record<string, number> = {}
+  for (const key of copies.keys()) {
+    const [kind] = key.split('.')
+    copyCounts[kind] = (copyCounts[kind] ?? 0) + 1
+  }
+
+  return {
+    mergedRows,
+    chainDepth: await depthOf(
+      db,
+      'users',
+      users.get('worst.chain.row00000') ?? ''
+    ),
+    guardianChildren: guarded.length,
+    guardianChildDepths,
+    roleTeams: roleCount('team'),
+    roleSeasons: roleCount('season'),
+    roleLeagues: roleCount('league'),
+    largeLeagueSeasons: largeSeasons.length,
+    largeLeagueTeams,
+    duplicateTeams,
+    teamChainDepth: await depthOf(
+      db,
+      'teams',
+      teams.get('worst.teamChain00000') ?? ''
+    ),
+    longTeamGames,
+    longGame: {
+      plays: longPlays.length,
+      innings: Math.max(0, ...longPlays.map(play => play.inning ?? 0)),
+      recordVersions: [...recordVersions].sort(),
+      lineupChanges
+    },
+    crowdedViewers,
+    largeChatMembers,
+    largeChatMessages,
+    manyChats,
+    manySessions,
+    finishedGames: finishedIds.length,
+    statsBuilt,
+    historyGames: labelled(games, 'history.').length - 1,
+    largestSeason,
+    kinds: [...users.keys()]
+      .filter(label => label.startsWith('person.'))
+      .filter(label => !label.includes('.row'))
+      .sort(),
+    copies: copyCounts
+  }
+}
+
+/** Fails unless every shape reads back in the amounts the table says. */
+export function verifyShapes(shapes: Shapes, amounts: Amounts): void {
+  const wrong: string[] = []
+  const expect = (name: string, actual: unknown, wanted: unknown): void => {
+    if (JSON.stringify(actual) !== JSON.stringify(wanted))
+      wrong.push(
+        `${name}: ${JSON.stringify(actual)}, wanted ${JSON.stringify(wanted)}`
+      )
+  }
+  expect('merged rows', shapes.mergedRows, amounts.mergedRows)
+  expect('chain depth', shapes.chainDepth, amounts.chainDepth)
+  expect('guarded children', shapes.guardianChildren, amounts.guardianChildren)
+  expect(
+    'guarded children depths',
+    shapes.guardianChildDepths,
+    Array.from(
+      { length: amounts.guardianChildren },
+      () => amounts.guardianChildDepth
+    )
+  )
+  expect('role teams', shapes.roleTeams, amounts.roleTeams)
+  expect('role seasons', shapes.roleSeasons, amounts.roleSeasons)
+  expect('role leagues', shapes.roleLeagues, amounts.roleLeagues)
+  expect(
+    'large league seasons',
+    shapes.largeLeagueSeasons,
+    amounts.largeLeagueSeasons
+  )
+  expect(
+    'large league teams',
+    shapes.largeLeagueTeams,
+    amounts.largeLeagueTeams
+  )
+  expect('duplicate teams', shapes.duplicateTeams, amounts.duplicateTeams)
+  expect('team chain depth', shapes.teamChainDepth, amounts.teamChainDepth)
+  expect(
+    'teams with years of games',
+    shapes.longTeamGames,
+    Array.from(
+      { length: amounts.consumableCopies },
+      () => amounts.longTeamGames
+    )
+  )
+  expect('long game innings', shapes.longGame.innings, amounts.longGameInnings)
+  expect('record versions', shapes.longGame.recordVersions, [1, 2, 3])
+  expect(
+    'large chat members',
+    shapes.largeChatMembers,
+    amounts.largeChatMembers
+  )
+  expect(
+    'large chat messages',
+    shapes.largeChatMessages,
+    amounts.largeChatMessages
+  )
+  expect('many chats', shapes.manyChats, amounts.manyChats)
+  expect('many sessions', shapes.manySessions, amounts.manySessions)
+  expect('history', shapes.historyGames, amounts.historyGames)
+  if (shapes.largestSeason > amounts.seasonGames)
+    wrong.push(
+      `largest season: ${shapes.largestSeason} games, above ${amounts.seasonGames}`
+    )
+  if (shapes.crowdedViewers < amounts.crowdedViewers)
+    wrong.push(`crowded game: ${shapes.crowdedViewers} viewers`)
+  if (wrong.length > 0) throw new Error(`Shapes differ: ${wrong.join('; ')}`)
+}
+
+/**
+ * Which accounts this process connects: its slice of `users` of those who watch
+ * one of the first `games`, since a viewer may only see their own. They are
+ * taken evenly from all of them, as accounts are seeded a game at a time and the
+ * first of them would all be watching the crowded game.
+ */
+export function accountsForShard(
+  tokens: TokensFile,
+  users: number,
+  shard: { index: number; count: number } = { index: 0, count: 1 },
+  games = tokens.games.length
+): SeededAccount[] {
+  const connectable = tokens.accounts.filter(
+    account =>
+      (account.kind === 'viewer' || account.kind === 'worstCase') &&
+      (account.gameIndex ?? 0) < games
+  )
+  if (users > connectable.length)
+    throw new Error(
+      `--users ${users} is above the ${connectable.length} accounts seeded for ${games} game(s) of run ${tokens.runId}`
+    )
+  return Array.from(
+    { length: users },
+    (_, i) => connectable[Math.floor((i * connectable.length) / users)]
+  ).filter((_, i) => i % shard.count === shard.index)
+}
+
+/**
+ * Who opens each `timeline=1` socket on what: a person watching that game, since
+ * a socket on a game they may not see is refused. Dealt across the games that
+ * have someone in `accounts` to watch them.
+ */
+export function scoreboardWatchers<Game>(
+  accounts: readonly SeededAccount[],
+  games: readonly Game[],
+  count: number
+): Array<{ account: SeededAccount; game: Game }> {
+  const watched = games.flatMap((game, index) => {
+    const viewers = accounts.filter(row => (row.gameIndex ?? 0) === index)
+    return viewers.length === 0 ? [] : [{ game, viewers }]
+  })
+  if (watched.length === 0) return []
+  return Array.from({ length: count }, (_, i) => {
+    const { game, viewers } = watched[i % watched.length]
+    const round = Math.floor(i / watched.length)
+    return { game, account: viewers[round % viewers.length] }
+  })
+}
+
+export function parseShard(text: string): { index: number; count: number } {
+  const match = /^(\d+)\/(\d+)$/.exec(text)
+  const index = Number(match?.[1])
+  const count = Number(match?.[2])
+  if (match == null || count < 1 || index >= count)
+    throw new Error(`--shard takes i/n with i below n, not ${text}`)
+  return { index, count }
+}

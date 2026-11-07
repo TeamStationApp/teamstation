@@ -297,16 +297,25 @@ describe('scoring roster HTTP contract', function () {
       role: 'member'
     })
     expect(roster[0]).includes({ bats: null, throws: null })
-    // They read the roster as a member does; somebody in neither the team
-    // nor its season reads the same people in the non-member view, every
-    // name and no face.
+    // The people match. `self` follows whoever is reading. Somebody in
+    // neither the team nor its season reads the same people in the
+    // non-member view, every name and no face.
     const asMember = await fetch(address, {
       headers: { 'x-test-user': String(seasonMember) }
     })
     expect(asMember.status).equals(200)
-    expect(
-      ((await asMember.json()) as unknown[]).map(asRosterEntry)
-    ).deep.equals(roster)
+    const memberRoster = ((await asMember.json()) as unknown[]).map(
+      asRosterEntry
+    )
+    const asideFromSelf = (
+      rows: typeof roster
+    ): Array<Omit<(typeof roster)[number], 'self'>> =>
+      rows.map(({ self: _self, ...row }) => row)
+    expect(asideFromSelf(memberRoster)).deep.equals(asideFromSelf(roster))
+    expect(roster[0].self).equals(true)
+    expect(roster[2].self).equals(false)
+    expect(memberRoster[2].self).equals(true)
+    expect(memberRoster[0].self).equals(false)
     const outsideResponse = await fetch(address, {
       headers: { 'x-test-user': String(outsider) }
     })

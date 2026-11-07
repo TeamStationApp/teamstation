@@ -169,7 +169,7 @@ split can also send it onward to further RTMP destinations, also `-c copy`.
 | Turning a finished stream into a recording | `src/server/live/finishVideo.ts` |
 | The Space, and proving the copy arrived | `src/server/media/spacesVideo.ts` |
 
-Three things are worth knowing before changing any of it:
+Four things are worth knowing before changing any of it:
 
 - **The ingest is a process of its own.** Two processes run from the same
   build, read the same `serverConfig.json`, the same database and the same
@@ -180,12 +180,13 @@ Three things are worth knowing before changing any of it:
   | The API | `npm start` (`src/server/index.ts`) | HTTP, sockets, the stats builder; writes `live_streams` rows and mints playback and publish URLs |
   | The ingest | `npm run start.ingest` (`src/server/ingest/main.ts`) | the RTMP port and the ffmpeg children writing each game's HLS |
 
-  The API never calls the ingest: an endpoint writes the `live_streams` row
-  and the ingest's controller acts on it within the second. So an API that
-  crashes or is restarted for a deploy leaves every publisher connected and
-  every recording growing; viewers lose the picture until the API answers
-  again, and the playlist then has the gap in it. Locally, start both, in
-  either order.
+  The API never calls the ingest: an endpoint writes the `live_streams` row,
+  its trigger sends a `live_changes` notice on the change feed when the write
+  commits, and the ingest's controller acts on it within about 100 ms. So an
+  API that crashes or is restarted for a deploy leaves every publisher
+  connected and every recording growing; viewers lose the picture until the
+  API answers again, and the playlist then has the gap in it. Locally, start
+  both, in either order.
 
   The ingest starts nothing until it holds the RTMP port. Then — and only on
   its own cold start — it sets leftover `publishing` rows to `idle`, since the
@@ -217,6 +218,14 @@ Three things are worth knowing before changing any of it:
   incoming publish against) and a sealed copy (to show again). Changing
   `sessionSecret` makes the sealed copies unreadable, which means rotating
   every key rather than recovering them.
+- **Media under a secret path is public to whoever holds the path.** A video's
+  pieces and recording sit under `videos/<id>-<secret>/`
+  (`src/server/media/videoPrefix.ts`), public-read and served through the CDN
+  with no signature. The path is only handed out with a playlist, after the
+  playlist route's own checks. Nothing takes it back: hiding the video,
+  replacing it with an upload, or removing someone from the team stops the
+  API serving them a playlist, but a path they already hold keeps working
+  until the video is deleted (and, at the edge, for up to 10 minutes after).
 
 Locally, `npm run fake-space` stands in for the object store with
 signatures enforced, so the whole path — live, ended, packed up, uploaded,

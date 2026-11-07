@@ -7,7 +7,6 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { angleLabels } from '../../app/player/multiCam/takes'
-import { REVISION_HEADER } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -21,7 +20,6 @@ import { makeDatabase } from '../db/database'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
-import { readSyncClock } from '../socket/syncRevision'
 import { liveRoutes } from './live'
 import { mediaRoutes } from './media'
 
@@ -842,13 +840,12 @@ describe('a game’s stream key over the API', function () {
       expect(live[0].homeTeamName).equals('Demo Home')
       expect(JSON.stringify(live[0])).does.not.contain('ts_')
     }
-    // Home's scope gates this read, so it answers the revision its rows
-    // were read at, as the other reads of Home's load do.
+    // Home's scope gates this read by time: it answers no revision.
     const read = await fetch(`${base}/live`, {
       headers: { authorization: `Bearer ${MANAGER}` }
     })
     expect(read.status).equals(200)
-    expect(read.headers.get(REVISION_HEADER)).equals(await readSyncClock(db))
+    expect(read.headers.get('x-teamstation-revision')).equals(null)
   })
 
   it('stores a camera name on the stream and on its video', async function () {

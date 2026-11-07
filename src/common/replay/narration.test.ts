@@ -23,7 +23,7 @@ import {
 } from '../../test/scoringGames'
 import type { ScoringAction } from '../scoring/actions'
 import { applyAction } from '../scoring/apply'
-import type { GameState } from '../scoring/state'
+import { type GameState, setupOf } from '../scoring/state'
 import type { Transition } from '../scoring/transitions'
 import {
   direction,
@@ -530,5 +530,47 @@ describe('a stored run after the third out', function () {
     const next = walked[1].after.liveData.linescore
     expect(next.isTopInning).equals(false)
     expect(next.balls).equals(1)
+  })
+})
+
+describe('narrating a stand-in at an empty position (U48)', function () {
+  it('names the position he played, as for anyone there', function () {
+    const start = game()
+    const setup = setupOf(start)
+    setup.sides.home.defense.SS = null
+    setup.sides.home.defense['1B'] = null
+    const shortHanded = after(start, { type: 'lineup', kind: 'roster', setup })
+    expect(
+      say(
+        shortHanded,
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          fielder: 'SS',
+          launchAngle: 55,
+          location: { x: -10, z: -35 }
+        },
+        { type: 'result', eventType: 'field_out', outBy: 'catch' }
+      ).text
+    ).equals('Player 1 pops out to short.')
+    const grounder = say(
+      shortHanded,
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        fielder: 'SS',
+        launchAngle: -10,
+        location: { x: -10, z: -35 }
+      },
+      { type: 'result', eventType: 'field_out', outBy: 'throw' },
+      {
+        type: 'runnerMovement',
+        runner: 1,
+        to: '1B',
+        out: true,
+        fielders: ['SS', '1B']
+      }
+    ).text
+    expect(grounder).equals('Player 1 grounds out to short.')
   })
 })

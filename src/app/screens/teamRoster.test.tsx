@@ -85,7 +85,8 @@ const everybody: RosterEntry[] = [
 
 async function render(
   roster: RosterEntry[],
-  manager?: { people: string[] }
+  manager?: { people: string[] },
+  openedPeople?: string[]
 ): Promise<string[]> {
   const opened: string[] = []
   const client = {
@@ -124,6 +125,7 @@ async function render(
           onOpenPerson={(userId, _name, teamId) => {
             expect(teamId).equals('tem_hawks')
             manager?.people.push(userId)
+            openedPeople?.push(userId)
           }}
         />
       </ThemeProvider>
@@ -311,6 +313,32 @@ describe('a team’s roster in sections', function () {
       userIdOfGumbo(207)
     ])
   })
+
+  it('opens your own non-player row when you do not manage people, and still opens your player row on the player page', async function () {
+    const people: string[] = []
+    const opened = await render(
+      [
+        entry(208, 'Hank M', { self: true }),
+        entry(201, 'Alfonso S', {
+          section: 'player',
+          isPlayer: true,
+          self: true
+        })
+      ],
+      undefined,
+      people
+    )
+    await act(async () => {
+      rowNode('Hank M').click()
+      await delay(10)
+    })
+    await act(async () => {
+      rowNode('Alfonso S').click()
+      await delay(10)
+    })
+    expect(people).deep.equals([userIdOfGumbo(208)])
+    expect(opened).deep.equals([userIdOfGumbo(201)])
+  })
 })
 
 describe('a season’s and a league’s People tab', function () {
@@ -408,5 +436,19 @@ describe('a season’s and a league’s People tab', function () {
     })
     await tab('season', false)
     expect(text()).includes('People could not load here')
+  })
+
+  it('opens your own row on that level’s profile, including when you play on a team it reaches', async function () {
+    const mine = levelPeople.map(person =>
+      person.shortName === 'Alfonso S' ? { ...person, self: true } : person
+    )
+    const { players, people } = await tab('season', false, mine)
+    expect(rowNode('Tim R').getAttribute('role')).not.equals('button')
+    await act(async () => {
+      rowNode('Alfonso S').click()
+      await delay(10)
+    })
+    expect(people).deep.equals([userIdOfGumbo(201)])
+    expect(players).deep.equals([])
   })
 })

@@ -37,6 +37,13 @@ export const POSITIONS = [
   'RF'
 ] as const
 export type Position = (typeof POSITIONS)[number]
+export function isPosition(raw: unknown): raw is Position {
+  return POSITIONS.includes(raw as Position)
+}
+export function asPosition(raw: unknown): Position {
+  if (!isPosition(raw)) throw new TypeError('Expected a fielding position')
+  return raw
+}
 export type Side = 'away' | 'home'
 export type BatSide = 'R' | 'L'
 
@@ -47,14 +54,47 @@ export function asSessionId(raw: unknown): number {
   return id
 }
 
+/**
+ * `asEither(asNull, cleaner)` that does not throw and catch for every value
+ * that is not null. A record's setup and every play opened hold dozens of
+ * them, and the exceptions were a third of what a save cost in a long game.
+ */
+const asNullable =
+  <T>(cleaner: Cleaner<T>): Cleaner<T | null> =>
+  raw =>
+    raw === null ? null : cleaner(raw)
+
+/**
+ * A fielder in an action or a play: his scoring id, or, for a position nobody
+ * is playing, that position. The scorer can play a ball with a stand-in at an
+ * empty position, and nobody is credited for what the stand-in did.
+ */
+export type FielderRef = number | Position
+export function asFielderRef(raw: unknown): FielderRef {
+  if (isPosition(raw)) return raw
+  return asSessionId(raw)
+}
+
 const asPoint = asObject({ x: asNumber, z: asNumber })
 export type Point = ReturnType<typeof asPoint>
 
 export const asPlayerRef = asObject({ id: asSessionId, fullName: asString })
 export type PlayerRef = ReturnType<typeof asPlayerRef>
 const asCount = asObject({ balls: asNumber, strikes: asNumber, outs: asNumber })
-const asCredit = asObject({
-  player: asPlayerRef,
+type CreditKind =
+  | 'f_assist'
+  | 'f_putout'
+  | 'f_fielded_ball'
+  | 'f_fielding_error'
+  | 'f_throwing_error'
+/** A fielding credit. A stand-in at an empty position credits nobody. */
+export interface RunnerCredit {
+  player?: PlayerRef
+  credit: CreditKind
+  position: string
+}
+const asCredit: Cleaner<RunnerCredit> = asObject({
+  player: asOptional(asPlayerRef),
   credit: asLiteral(
     'f_assist',
     'f_putout',
@@ -64,8 +104,26 @@ const asCredit = asObject({
   ),
   position: asString
 })
-export type RunnerCredit = ReturnType<typeof asCredit>
-const asRoute = asArray(asObject({ player: asPlayerRef, location: asPoint }))
+/**
+ * One fielder of a route: the player, or, for a stand-in at an empty
+ * position, that position alone.
+ */
+export interface RouteHop {
+  player?: PlayerRef
+  position?: Position
+  location: Point
+}
+/** The fielder a route hop names: his id, or a stand-in's position. */
+export function hopFielder(hop: RouteHop): FielderRef | undefined {
+  return hop.player?.id ?? hop.position
+}
+const asRoute: Cleaner<RouteHop[]> = asArray(
+  asObject({
+    player: asOptional(asPlayerRef),
+    position: asOptional(asPosition),
+    location: asPoint
+  })
+)
 
 /**
  * A pitch's `pitchData` as the scorer gives it: its speed, its zone, and
@@ -163,7 +221,7 @@ const asPlayEvent = exactly(
 
 const asDefense = asObject(
   Object.fromEntries(
-    POSITIONS.map(position => [position, asEither(asNull, asSessionId)])
+    POSITIONS.map(position => [position, asNullable(asSessionId)])
   ) as Record<Position, Cleaner<number | null>>
 )
 /** Each side's batting order and fielders at one moment of the game. */
@@ -223,7 +281,7 @@ export const asGamePlay = asObject({
         runner: asPlayerRef,
         movementReason: asString,
         /** The pitcher this runner is charged to (`earnedRuns.ts`). */
-        responsiblePitcher: asOptional(asEither(asNull, asPlayerRef)),
+        responsiblePitcher: asOptional(asNullable(asPlayerRef)),
         /** A run that is earned to the responsible pitcher. */
         earned: asOptional(asBoolean),
         /** A run that is unearned to the team, reconstructed over the whole half. */
@@ -297,7 +355,16 @@ export const asGamePlay = asObject({
       /** Runner records included in that relay; later routes take precedence. */
       fieldingRouteRecordCount: asOptional(asNumber),
       errorCredit: asOptional(
-        asObject({ player: asPlayerRef, defensiveRoute: asRoute })
+        asObject({
+          // A stand-in at an empty position is charged by his position.
+          player: asOptional(asPlayerRef),
+          position: asOptional(asPosition),
+          defensiveRoute: asRoute
+        }) as Cleaner<{
+          player?: PlayerRef
+          position?: Position
+          defensiveRoute: RouteHop[]
+        }>
       ),
       runnerActions: asOptional(
         asArray(
@@ -403,6 +470,11 @@ export interface Movement {
    * `start` with no Safe/Out strip.
    */
   offeredTo?: number
+  /**
+   * A ground out sent this runner up one base: correction may drag him back
+   * to `start`, forced or not, and the relay may put him out where he stands.
+   */
+  groundOffer?: boolean
   force: boolean
   decision: 'pending' | 'safe' | 'out'
   resolved?: boolean
@@ -416,7 +488,8 @@ export type ResolutionOutcome =
   | 'Home Run'
   | "Fielder's Choice"
   | 'Error'
-  | 'Throw Out'
+  | 'Ground Out'
+  | 'Out at First'
   | 'Ball Caught'
   | 'Batter Interference'
   | 'Walk'
@@ -442,8 +515,8 @@ export interface Resolution {
   sameAppearance?: boolean
   choiceApplied?: boolean
   /** The fielder who first handled the ball, and who holds it now. */
-  fielder?: number
-  ballHolder?: number
+  fielder?: FielderRef
+  ballHolder?: FielderRef
   originalRunnerRecordCount: number
   originalBases: Array<number | null>
   originalRuns: number
@@ -549,8 +622,52 @@ export interface GameState {
   }
 }
 
+/**
+ * A copy of plain data, exactly what a trip through JSON makes of it, without
+ * writing and parsing the text: a replay copies its game for every action.
+ * What plain data does not hold (a `toJSON`, a class, a `__proto__` key, or
+ * nothing JSON can write at all) goes through JSON itself.
+ */
 export function copyState<T>(value: T): T {
+  if (typeof value === 'string' || typeof value === 'boolean') return value
+  // JSON writes -0 as 0, and what is not finite as null.
+  if (typeof value === 'number')
+    return (value === 0 ? 0 : Number.isFinite(value) ? value : null) as T
+  if (value === null) return value
+  if (typeof value === 'object' && !('toJSON' in value)) {
+    if (Array.isArray(value)) return copyList(value) as T
+    if (Object.getPrototypeOf(value) === Object.prototype) {
+      const copy = copyRecord(value as Record<string, unknown>)
+      if (copy != null) return copy as T
+    }
+  }
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+/** Whether JSON writes this value, when it stands in an object or a list. */
+function hasJson(item: unknown): boolean {
+  const kind = typeof item
+  return kind !== 'undefined' && kind !== 'function' && kind !== 'symbol'
+}
+
+function copyList(list: unknown[]): unknown[] {
+  const out = new Array<unknown>(list.length)
+  for (let i = 0; i < list.length; i++)
+    out[i] = hasJson(list[i]) ? copyState(list[i]) : null
+  return out
+}
+
+/** Null for a `__proto__` key, which assigning it here would not copy. */
+function copyRecord(
+  record: Record<string, unknown>
+): Record<string, unknown> | null {
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(record)) {
+    if (key === '__proto__') return null
+    const item = record[key]
+    if (hasJson(item)) out[key] = copyState(item)
+  }
+  return out
 }
 
 /**
@@ -628,7 +745,7 @@ const playerShape = {
   nameFormat: asOptional(asPlayerNamePrivacy),
   jersey: asString,
   bats: asLiteral('left', 'right', 'switch'),
-  throws: asEither(asNull, asLiteral('left', 'right')),
+  throws: asNullable(asLiteral('left', 'right')),
   positions: asArray(asString),
   local: asBoolean
 }
@@ -636,7 +753,7 @@ const asPlayer = asObject(playerShape)
 const { nameFormat: _readOnly, ...legacyPlayerShape } = playerShape
 const asLegacyPlayer = asObject({
   ...legacyPlayerShape,
-  userId: asEither(asNull, asNumber)
+  userId: asNullable(asNumber)
 })
 const asIdentities = asObject({
   sourceToSession: asObject(asNumber),
@@ -701,7 +818,7 @@ export function setupOf(state: GameState): GameSetup {
 }
 
 const asTeam = asObject({
-  logoUrl: asOptional(asEither(asNull, asString)),
+  logoUrl: asOptional(asNullable(asString)),
   id: asString,
   name: asString
 })
@@ -713,11 +830,12 @@ const asMovement = asObject({
   from: asNumber,
   to: asNumber,
   offeredTo: asOptional(asNumber),
+  groundOffer: asOptional(asBoolean),
   force: asBoolean,
   decision: asLiteral('pending', 'safe', 'out'),
   resolved: asOptional(asBoolean)
 })
-const asRef = asEither(asNull, asPlayerRef)
+const asRef = asNullable(asPlayerRef)
 const asCharge = asObject({ pitcher: asRef, reachedOnError: asBoolean })
 const asErrorlessOuts = asObject({
   team: asNumber,
@@ -789,7 +907,7 @@ export const asGameState: Cleaner<GameState> = exactly(
       boxscore: asObject({ teams: asObject({ away: asSide, home: asSide }) }),
       plays: asObject({
         allPlays: asArray(asGamePlay),
-        currentPlay: asEither(asNull, asGamePlay)
+        currentPlay: asNullable(asGamePlay)
       })
     }),
     pending: asEither(
@@ -802,10 +920,10 @@ export const asGameState: Cleaner<GameState> = exactly(
         homeRunKind: asOptional(asLiteral('out-of-park', 'in-park')),
         sameAppearance: asOptional(asBoolean),
         choiceApplied: asOptional(asBoolean),
-        fielder: asOptional(asSessionId),
-        ballHolder: asOptional(asSessionId),
+        fielder: asOptional(asFielderRef),
+        ballHolder: asOptional(asFielderRef),
         originalRunnerRecordCount: asNumber,
-        originalBases: asArray(asEither(asNull, asSessionId)),
+        originalBases: asArray(asNullable(asSessionId)),
         originalRuns: asNumber,
         originalOuts: asNumber,
         movements: asArray(asMovement),

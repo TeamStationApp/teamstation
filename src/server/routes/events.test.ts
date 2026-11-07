@@ -7,6 +7,7 @@ import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
 
 import { lineupQrOf } from '../../app/scoring/lineupQrExport'
+import { asPostedEdits } from '../../common/api'
 import {
   type TagDocument,
   tagMetadata,
@@ -42,6 +43,7 @@ import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import { playsReadAgainDuring } from '../../test/playNotices'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -49,6 +51,7 @@ import { atBatOf } from '../events/atBatInProgress'
 import { pregameFold } from '../events/currentPlay'
 import { type PlayWrite, replaceGameEvents } from '../events/eventWrite'
 import { postGamePlays, readPlays, RESET_SINCE_READ } from '../events/postPlays'
+import { type ListFields, listFieldsChanged } from '../events/postPlays'
 import {
   lineupContext,
   lineupsDigest,
@@ -61,6 +64,7 @@ import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { resolveScoringGame } from '../scoring/openRow'
 import { GAME_CHANGES_CHANNEL } from '../socket/gameChanges'
+import { gameNamesDigest } from '../users/nameBook'
 import {
   eventRoutes,
   statusAfterLivePost,
@@ -515,6 +519,8 @@ describe('posting and reading plays', function () {
     const read = await ask(`/games/${gameId}/events`)
     expect(read.status).equals(200)
     expect(read.body.plays).to.have.length(1)
+    // Its reader may save the lineups, so the read names their halves.
+    expect(read.body.halves).to.be.an('array').with.length(2)
 
     const halves = await ask(`/games/${gameId}/halves`)
     expect(halves.status).equals(200)
@@ -1692,6 +1698,7 @@ describe('posting and reading plays', function () {
     expect(owed.status).equals('pending')
   })
 
+  /** A live post, answered with every stored play, which these cases read. */
   const live = async (
     gameId: string,
     body: Record<string, unknown>,
@@ -1900,7 +1907,10 @@ describe('posting and reading plays', function () {
     expect(players).deep.equals([])
     expect(await gameRow(liveAtBatId)).deep.include({ status: 'inProgress' })
     const read = await ask(`/games/${liveAtBatId}/events`)
-    const { lineupsDigest, playsDigest, ...events } = read.body
+    const { lineupsDigest, playsDigest, namesDigest, halves, ...events } =
+      read.body
+    // The reader may save both sides' lineups.
+    expect(halves).length(2)
     expect(withoutTagTargets(events)).deep.equals({
       plays: [],
       // Named from the batter's account.
@@ -1911,6 +1921,10 @@ describe('posting and reading plays', function () {
     })
     expect(lineupsDigest).equals(posted.body.lineupsDigest)
     expect(playsDigest).equals(posted.body.playsDigest)
+    // The book the plays are named from, as the game socket names it; a
+    // post's answer, named for its sender, carries none.
+    expect(namesDigest).equals(await gameNamesDigest(db!, liveAtBatId))
+    expect(posted.body).not.to.have.property('namesDigest')
     await live(liveAtBatId, { plays: [] })
     // Stored naming nobody, as every play is.
     expect(
@@ -1960,6 +1974,90 @@ describe('posting and reading plays', function () {
     expect(replaced.body.playsDigest).equals(
       (await ask(`/games/${id}/events`)).body.playsDigest
     )
+  })
+
+  it('answers a live post asked for its edits with only what it wrote, and every play by default (M4)', async function () {
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const walk = (atBatIndex: number): unknown =>
+      play({
+        atBatIndex,
+        awayScore: 0,
+        homeScore: 0,
+        outs: 0,
+        eventType: 'walk'
+      })
+    const post = async (
+      body: Record<string, unknown>,
+      query = '?answer=edits'
+    ): Promise<{ status: number; body: Record<string, unknown> }> =>
+      await ask(`/games/${id}/events${query}`, 'POST', {
+        mode: 'live',
+        source: { system: 'teamstation' },
+        plays: [],
+        ...body
+      })
+    const first = await post({
+      plays: [walk(0), walk(1), walk(2)],
+      currentPlay: current(3)
+    })
+    expect(first.status).equals(200)
+    const read = await ask(`/games/${id}/events`)
+    const rows = read.body.plays as Array<{ id: string }>
+    expect(first.body).not.to.have.property('plays')
+    expect(first.body.edits).deep.equals(
+      rows.map(row => ({ op: 'put', play: row }))
+    )
+    expect(first.body.currentPlay).deep.equals(read.body.currentPlay)
+    expect(first.body.playsDigest).equals(read.body.playsDigest)
+    expect(first.body.generation).equals(read.body.generation)
+
+    // A play written again and another taken away: one put and one remove.
+    const next = await post({
+      plays: [walk(1)],
+      remove: [2],
+      currentPlay: current(2)
+    })
+    const after = await ask(`/games/${id}/events`)
+    const kept = after.body.plays as Array<{ id: string }>
+    expect(next.body.edits).deep.equals([
+      { op: 'put', play: kept[1] },
+      { op: 'remove', atBatIndex: 2 }
+    ])
+    expect(next.body.playsDigest).equals(after.body.playsDigest)
+    expect(next.body.priorPlaysDigest).equals(read.body.playsDigest)
+
+    // Asking for no answer, it answers every play as a read does.
+    const all = await post({ currentPlay: current(2, 1) }, '')
+    const now = await ask(`/games/${id}/events`)
+    expect(all.body).not.to.have.property('edits')
+    expect(all.body.plays).deep.equals(now.body.plays)
+    expect(all.body.playsDigest).equals(now.body.playsDigest)
+
+    // A replace post answers every play, even asked for its edits.
+    const replaced = await ask(`/games/${id}/events?answer=edits`, 'POST', {
+      source: { system: 'teamstation' },
+      plays: [walk(0)]
+    })
+    expect(replaced.body.plays).length(1)
+    expect(replaced.body).not.to.have.property('edits')
+
+    // An answer it does not give is refused, and nothing is written.
+    for (const query of ['?answer=all', '?answer=Edits'])
+      expect(await post({ plays: [walk(5)] }, query)).deep.include({
+        status: 400
+      })
+    const refused = await post({ plays: [walk(5)] }, '?answer=all')
+    expect(refused.body.message).equals('answer must be edits, or left out')
+    expect((await ask(`/games/${id}/events`)).body.plays).length(1)
   })
 
   it('refuses a live post built on lineups that have changed since, and writes nothing (stale)', async function () {
@@ -2113,9 +2211,13 @@ describe('posting and reading plays', function () {
       )
       const first = targets[0]
       const last = targets[3]
-      await ask(`/games/${id}/tags/${first.id}`, 'PUT', {
-        tag: 'surviving pitch'
+      const { games: tagged } = await playsReadAgainDuring(async () => {
+        await ask(`/games/${id}/tags/${first.id}`, 'PUT', {
+          tag: 'surviving pitch'
+        })
       })
+      // Its viewers read the tagged plays again.
+      expect(tagged).deep.equals([id])
       await ask(`/games/${id}/tags/${last.id}`, 'PUT', { tag: 'removed pitch' })
       const undone = await live(id, {
         plays: [],
@@ -3602,6 +3704,79 @@ describe('the status a live post leaves', function () {
   })
 })
 
+describe('the list fields a post compares', function () {
+  const at = (inning: number, top: boolean, balls = 0): object => ({
+    about: { atBatIndex: 3, inning, isTopInning: top },
+    count: { balls, strikes: 1, outs: 1 },
+    playEvents: [{ isPitch: true }]
+  })
+  /** A line score of `halves` halves played, the visitors with `hits`. */
+  const line = (halves: number, hits: number): object => ({
+    away: { runs: [0], h: hits },
+    home: { runs: [0], h: 0 },
+    innings: Array.from({ length: Math.ceil(halves / 2) }, (_, index) => ({
+      num: index + 1,
+      away: { runs: 0, hits: 0 },
+      home: index * 2 + 1 < halves ? { runs: 0, hits: 0 } : { hits: 0 }
+    }))
+  })
+  const game: ListFields = {
+    status: 'inProgress',
+    away_score: 1,
+    home_score: 0,
+    linescore: line(3, 2),
+    currentPlay: at(2, true),
+    start_at: new Date('2026-05-01T17:00:00Z'),
+    home_team_id: 'tem_home',
+    away_team_id: 'tem_away',
+    venue: 'North Field',
+    field_id: null,
+    cancellation_reason: null
+  }
+
+  it('finds nothing in a pitch, a count or a hit', function () {
+    expect(
+      listFieldsChanged(game, {
+        ...game,
+        linescore: line(3, 3),
+        currentPlay: at(2, true, 3),
+        start_at: new Date(game.start_at)
+      })
+    ).equals(false)
+    // A game's first lineups fold into an at-bat where its first will be.
+    expect(
+      listFieldsChanged(
+        { ...game, linescore: null, currentPlay: null },
+        { ...game, linescore: line(0, 0), currentPlay: at(1, true) }
+      )
+    ).equals(false)
+  })
+
+  it('finds a status, a score, a half, an inning, a start, a team, a venue, a field or a cancellation', function () {
+    for (const changed of [
+      { status: 'final' },
+      { away_score: 2 },
+      { home_score: null },
+      { currentPlay: at(2, false) },
+      { currentPlay: at(3, true) },
+      { currentPlay: null },
+      { linescore: line(4, 2) },
+      { linescore: line(5, 2) },
+      { linescore: null },
+      { start_at: new Date('2026-05-01T18:00:00Z') },
+      { home_team_id: 'tem_other' },
+      { away_team_id: 'tem_other' },
+      { venue: 'South Field' },
+      { field_id: 'fld_one' },
+      { status: 'cancelled', cancellation_reason: 'weather' }
+    ])
+      expect(
+        listFieldsChanged(game, { ...game, ...changed }),
+        JSON.stringify(changed)
+      ).equals(true)
+  })
+})
+
 describe('the status a post leaves', function () {
   it('finishes a game only when both scores are known', function () {
     const both = { away: 3, home: 2 }
@@ -3889,11 +4064,8 @@ describe('the team default lineup a live post keeps (U10)', function () {
           : { currentPlay: change.currentPlay })
       })
       expect(answer.status, JSON.stringify(answer.body)).equals(200)
-      const plays = answer.body.plays as Array<{ gumbo: GumboPlay }>
-      return {
-        plays: plays.map(row => row.gumbo),
-        currentPlay: answer.body.currentPlay
-      }
+      // A live post answers its edits: the session reads their digests.
+      return asPostedEdits(answer.body)
     }
   })
   async function scoring(gameId: string): Promise<ScoringSession> {

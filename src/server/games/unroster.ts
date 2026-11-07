@@ -32,6 +32,8 @@ import {
   UnresolvedAccount
 } from '../admin/people'
 import type { Actor } from '../auth/sessions'
+import type { ValkeyCache } from '../cache/valkeyCache'
+import { lockGameTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
@@ -41,7 +43,7 @@ import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
-import { gameAvailability } from './rosterAvailability'
+import { type GameAvailability, gameAvailability } from './rosterAvailability'
 import { hasScoringEventsSql } from './scoringActivity'
 
 /** A switch and its lineup change commit together, serialized with scoring writes. */
@@ -49,10 +51,13 @@ export async function setRostered(
   db: Kysely<Database>,
   actor: Actor,
   gameId: string,
-  body: UnrosterBody
+  body: UnrosterBody,
+  /** Where the replay's live post leaves the game socket's frame. */
+  cache?: ValkeyCache
 ): Promise<Unrostered> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockGameTeams(trx, gameId)
     const game = await trx
       .selectFrom('games')
       .selectAll()
@@ -74,7 +79,7 @@ export async function setRostered(
           throw badRequest('The player does not exist')
         throw error
       })
-    const availability = await gameAvailability(trx, game)
+    const availability = await gameAvailability(trx, game, { roster: true })
     const player = availability.roster[body.side].find(
       row => row.userId === userId && row.isPlayer
     )
@@ -136,7 +141,8 @@ export async function setRostered(
         stored,
         context,
         availability,
-        unrostered
+        unrostered,
+        cache
       )
     await notifyGameChange(trx, { game: gameId, kind: 'game' })
     noteScopeChange(trx, { gameId })
@@ -154,8 +160,9 @@ async function applyAvailability(
   gameId: string,
   stored: Awaited<ReturnType<typeof resolveScoringGame>>,
   context: NonNullable<Awaited<ReturnType<typeof contextOf>>>,
-  availability: Awaited<ReturnType<typeof gameAvailability>>,
-  unrostered: Unrostered
+  availability: GameAvailability<true>,
+  unrostered: Unrostered,
+  cache?: ValkeyCache
 ): Promise<void> {
   let failure: Error | undefined
   const session = await ScoringSession.open(
@@ -170,7 +177,11 @@ async function applyAvailability(
               ...change,
               mode: 'live',
               source: { system: 'teamstation' }
-            })
+            }),
+            undefined,
+            undefined,
+            // The replay reads every play the post leaves.
+            { answer: 'all', cache }
           )
           return {
             plays: posted.plays.map(row => row.gumbo as GumboPlay),
@@ -246,7 +257,7 @@ export async function reconcileUnbegunLineup(
       return
     const context = await contextOf(trx, gameId, game, stored)
     if (context == null) return
-    const availability = await gameAvailability(trx, game)
+    const availability = await gameAvailability(trx, game, { roster: true })
     await applyAvailability(
       trx,
       gameId,

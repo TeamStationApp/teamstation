@@ -23,6 +23,7 @@ import {
   PART_SIZE,
   receivedParts,
   reopenInterruptedUploads,
+  reopenInterruptedUploadsSoon,
   uploadDir
 } from '../director/uploads'
 import { withAudit } from '../middleware/withAudit'
@@ -377,6 +378,68 @@ describe('a Director sending a recording in', function () {
     expect(String(after.body.state)).equals('open')
     expect(after.body.step ?? null).equals(null)
     expect(String(after.body.message)).contains('restarted')
+  })
+
+  describe('reopening when the database is short of connections', function () {
+    const quiet = console.error
+    const said: string[] = []
+    before(function () {
+      console.error = (line: unknown) => said.push(String(line))
+    })
+    after(function () {
+      console.error = quiet
+    })
+
+    /** The database, whose first `refusals` updates fail with `message`. */
+    const refusing = (refusals: number, message: string): typeof db => {
+      let left = refusals
+      return new Proxy(db!, {
+        get(target, name) {
+          if (name === 'updateTable' && left-- > 0) throw new Error(message)
+          const value = Reflect.get(target, name, target) as unknown
+          return typeof value === 'function' ? value.bind(target) : value
+        }
+      })
+    }
+    const interrupted = async (): Promise<string> => {
+      const { body: made } = await open()
+      const id = made.uploadId as string
+      await db
+        ?.updateTable('director_uploads')
+        .set({ state: 'assembling', step: 'remuxing' })
+        .where('id', '=', id)
+        .execute()
+      return id
+    }
+    const stateOf = async (id: string): Promise<string> =>
+      String((await ask(`/director/uploads/${id}`, COACH)).body.state)
+
+    it('tries again until it finds one', async function () {
+      const id = await interrupted()
+      said.length = 0
+      reopenInterruptedUploadsSoon(
+        refusing(2, 'timeout exceeded when trying to connect')!,
+        10
+      )
+      const deadline = Date.now() + 5000
+      while ((await stateOf(id)) !== 'open' && Date.now() < deadline)
+        await new Promise(resolve => setTimeout(resolve, 10))
+      expect(await stateOf(id)).equals('open')
+      expect(said.length).equals(2)
+    })
+
+    it('logs any other failure and leaves it', async function () {
+      const id = await interrupted()
+      said.length = 0
+      reopenInterruptedUploadsSoon(
+        refusing(1, 'column "state" does not exist')!,
+        10
+      )
+      await new Promise(resolve => setTimeout(resolve, 80))
+      expect(said.join()).includes('column "state" does not exist')
+      expect(await stateOf(id)).equals('assembling')
+      await reopenInterruptedUploads(db!)
+    })
   })
 
   it('takes a failed upload again rather than making it a dead end', async function () {

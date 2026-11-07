@@ -4,6 +4,7 @@ import { describe, it } from 'mocha'
 import { GUMBO_EVENT_TYPES } from '../gumboEventTypes'
 import {
   ACTION_TYPES,
+  actionFromTagSlots,
   BASE_RUNNING_KINDS,
   baseDestination,
   BASES,
@@ -18,6 +19,8 @@ import {
   HOME_RUN_KINDS,
   keyterms,
   LINEUP_KINDS,
+  mapPlayers,
+  namesFieldersById,
   OUT_KINDS,
   PITCH_CALLS,
   PRODUCED_EVENT_TYPES,
@@ -204,6 +207,16 @@ describe('scoring actions', function () {
     expect(examples.map(action => action.type)).deep.equals([...ACTION_TYPES])
     for (const action of examples)
       expect(cleanAction(copyState(action))).deep.equals({ action })
+    // An Out at First is a result of its own.
+    const outAtFirst = {
+      type: 'result',
+      eventType: 'field_out',
+      outBy: 'first',
+      advance: 'ground'
+    } as const
+    expect(cleanAction(copyState(outAtFirst))).deep.equals({
+      action: outAtFirst
+    })
   })
 
   it('carries a whole setup on a roster change', function () {
@@ -282,7 +295,11 @@ describe('scoring actions', function () {
     expect(props('ballInPlay')).have.property('launchAngle')
     expect(props('ballInPlay')).not.have.property('launchAngleDragged')
     expect(props('result').eventType.enum).deep.equals(RESULT_TYPES)
-    expect(props('result').outBy.enum).deep.equals(OUT_KINDS)
+    // Out at First is the scorer's own: dictation says a throw.
+    expect(props('result').outBy.enum).deep.equals(
+      OUT_KINDS.filter(kind => kind !== 'first')
+    )
+    expect(OUT_KINDS).includes('first')
     expect(props('result').base.enum).deep.equals(BASES)
     expect(props('fieldingPlay').errorKind.enum).deep.equals(ERROR_KINDS)
     const fielding = toolSchema().find(tool => tool.name === 'fieldingPlay')!
@@ -293,7 +310,11 @@ describe('scoring actions', function () {
       /A hit already moves the batter and every runner/
     )
     expect(props('runnerMovement').to.enum).deep.equals(DESTINATIONS)
-    expect(props('runnerMovement').reason.enum).deep.equals(RUNNER_REASONS)
+    expect(props('runnerMovement').reason.enum).deep.equals(
+      RUNNER_REASONS.filter(
+        reason => !['Ground Out', 'Out at First', 'Tag Out'].includes(reason)
+      )
+    )
     expect(props('baseRunning').kind.enum).deep.equals(BASE_RUNNING_KINDS)
     expect(props('batteryEvent').kind.enum).deep.equals(BATTERY_KINDS)
     expect(props('lineup').kind.enum).deep.equals(LINEUP_KINDS)
@@ -1050,5 +1071,119 @@ describe('withoutBlankPlayers', function () {
     expect(
       withoutBlankPlayers({ type: 'lineup', kind: 'battingOrder', order })
     ).deep.equals({ type: 'lineup', kind: 'battingOrder', order })
+  })
+})
+
+describe('a fielder named by an empty position (U13)', function () {
+  it('cleans a stand-in in every field that names a fielder, and nowhere else', function () {
+    const cleaned = (raw: Record<string, unknown>): unknown => {
+      const result = cleanAction(raw)
+      return 'problem' in result ? result.problem.code : result.action
+    }
+    expect(
+      cleaned({ type: 'ballInPlay', contact: 'swing', fielder: 'SS' })
+    ).deep.equals({ type: 'ballInPlay', contact: 'swing', fielder: 'SS' })
+    expect(
+      cleaned({ type: 'fieldingPlay', fielders: ['SS', 12], error: 'SS' })
+    ).deep.equals({ type: 'fieldingPlay', fielders: ['SS', 12], error: 'SS' })
+    const route = {
+      type: 'runnerMovement',
+      runner: 3,
+      to: '2B',
+      out: true,
+      fielders: [14, '2B'],
+      error: '1B',
+      fieldingRoute: [{ id: 'CF', point: { x: 1, z: 2 } }]
+    }
+    expect(cleaned(route)).deep.equals(route)
+    // A position is no runner, and no other word is a fielder.
+    expect(cleaned({ ...route, runner: 'SS' })).equals('malformed')
+    expect(
+      cleaned({ type: 'ballInPlay', contact: 'swing', fielder: 'DH' })
+    ).equals('malformed')
+  })
+
+  it('passes a stand-in through a stored id mapping, and only with keepPositions', function () {
+    const action = {
+      type: 'runnerMovement',
+      runner: 3,
+      to: '1B',
+      out: true,
+      fielder: 'SS',
+      error: '2B',
+      fielders: [6, '1B'],
+      fieldingRoute: [
+        { id: 'SS', point: { x: 1, z: 2 } },
+        { id: 6, point: { x: 3, z: 4 } }
+      ]
+    }
+    const seen: unknown[] = []
+    const mapped = mapPlayers(
+      action,
+      value => {
+        seen.push(value)
+        return Number(value) * 10
+      },
+      { keepPositions: true }
+    )
+    expect(mapped).deep.equals({
+      ...action,
+      runner: 30,
+      fielders: [60, '1B'],
+      fieldingRoute: [
+        { id: 'SS', point: { x: 1, z: 2 } },
+        { id: 60, point: { x: 3, z: 4 } }
+      ]
+    })
+    expect(seen).deep.equals([3, 6, 6])
+    // Without it every value is the callback's, as dictation needs.
+    expect(mapPlayers({ fielder: 'SS' }, () => 7)).deep.equals({ fielder: 7 })
+    // A tag slot never names a stand-in, but keeps one stored.
+    expect(
+      actionFromTagSlots(
+        { type: 'ballInPlay', contact: 'swing', fielder: 'SS' },
+        [5]
+      )
+    ).deep.equals({ type: 'ballInPlay', contact: 'swing', fielder: 'SS' })
+  })
+
+  it('still reads a dictated position as whoever plays it, and nobody at an empty one', function () {
+    const game = new Set([3, 14])
+    expect(
+      untaggedAction(
+        { type: 'ballInPlay', contact: 'swing', fielder: 'SS' },
+        game,
+        new Map([['SS', 14]])
+      )
+    ).deep.equals({
+      raw: { type: 'ballInPlay', contact: 'swing', fielder: 14 }
+    })
+    const empty = untaggedAction(
+      { type: 'ballInPlay', contact: 'swing', fielder: 'SS' },
+      game,
+      new Map()
+    )
+    expect('problem' in empty && empty.problem.code).equals('unknownPlayer')
+  })
+
+  it('tells a dictated action from one that names a stand-in', function () {
+    expect(
+      namesFieldersById({ type: 'ballInPlay', contact: 'swing', fielder: 14 })
+    ).equals(true)
+    expect(
+      namesFieldersById({ type: 'ballInPlay', contact: 'swing', fielder: 'SS' })
+    ).equals(false)
+    expect(
+      namesFieldersById({
+        type: 'runnerMovement',
+        runner: 3,
+        to: '1B',
+        fieldingRoute: [{ id: 'SS', point: { x: 0, z: 0 } }]
+      })
+    ).equals(false)
+    expect(
+      namesFieldersById({ type: 'fieldingPlay', fielders: [1], error: 'C' })
+    ).equals(false)
+    expect(namesFieldersById({ type: 'pitch', call: 'B' })).equals(true)
   })
 })

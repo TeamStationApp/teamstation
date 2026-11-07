@@ -11,7 +11,6 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { distributionSettings } from '../nodeSettings'
 import { activeHuman } from '../oauth/provider'
-import { withRevision } from '../socket/syncRevision'
 
 /**
  * What the signed-in person may do, for the few buttons no other answer
@@ -57,7 +56,7 @@ export function meRoutes(
   router.get(
     '/me/roles',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
@@ -83,7 +82,7 @@ export function meRoutes(
   router.get(
     '/me/home',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       res.json(await homeLists(db, actor.userId, media.space))

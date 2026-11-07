@@ -1,6 +1,6 @@
 /* eslint-disable react/no-unknown-property -- React Three Fiber scene elements. */
 import { useFrame, useThree } from '@react-three/fiber'
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { type Mesh, MeshBasicMaterial, SphereGeometry } from 'three'
 
 import { scoringAudio } from '../scoring/scoringAudio'
@@ -9,11 +9,12 @@ import {
   PITCH_TIMING,
   presentationRuntime,
   type PresentationSequence,
-  stepPresentation
+  stepPresentation,
+  THROW_RELEASE_MS
 } from '../scoring/scoringPresentation'
 import { battingPose, buntingPose, pitchingPose } from './athletePose'
 import { BALL_CONTACT } from './ballArcModel'
-import type { FieldPlayer } from './fieldModel'
+import { fielderKey, type FieldPlayer } from './fieldModel'
 import {
   DEFENDER_SPEED,
   sampleHit,
@@ -100,20 +101,8 @@ export function PlayAnimation({
             : 0,
         throwSide: sequence.kind === 'throw' ? 'R' : (sequence.throwSide ?? 'R')
       }
-      // A ball in play was pitched too: the pitcher delivers it, and is
-      // himself again once the ball is hit — running to it when it is his.
-      if (
-        sequence.kind !== 'throw' &&
-        sequence.pitcher != null &&
-        player.playerId === sequence.pitcher &&
-        (sequence.kind !== 'hit' ||
-          runtime.current.elapsedMs <= sequence.contactMs)
-      )
-        player.pose.athlete = pitchingPose(
-          runtime.current.elapsedMs,
-          PITCH_TIMING.release,
-          sequence.throwSide ?? 'R'
-        )
+      // A pitch has no windup: the pitcher stands while the ball, out of
+      // his hand at once, goes to the plate.
       if (
         sequence.kind !== 'throw' &&
         player.playerId === sequence.batter &&
@@ -155,7 +144,7 @@ export function PlayAnimation({
         player.pose.run = 1
       }
       if (sequence.kind === 'throw' && 'progress' in sample) {
-        if (player.playerId === sequence.thrower) {
+        if (fielderKey(player) === sequence.thrower) {
           if (sequence.unassisted) {
             player.position = { x: sample.ball.x, z: sample.ball.z }
             player.target = { ...player.position }
@@ -168,7 +157,7 @@ export function PlayAnimation({
           } else {
             player.pose.athlete = pitchingPose(
               runtime.current.elapsedMs,
-              150,
+              THROW_RELEASE_MS,
               sequence.throwSide
             )
             player.pose.athleteHeading = sequence.heading
@@ -191,14 +180,14 @@ export function PlayAnimation({
           player.stride = runtime.current.elapsedMs * 0.012
           player.pose.run = sample.runnerProgress < 1 ? 1 : 0
         }
-        if (player.playerId === sequence.receiver)
+        if (fielderKey(player) === sequence.receiver)
           player.pose.catch = sample.progress > 0.8 ? 1 : 0
       }
       if (
         sequence.kind === 'hit' &&
         'fielder' in sample &&
         sequence.fielder != null &&
-        player.playerId === sequence.fielder
+        fielderKey(player) === sequence.fielder
       ) {
         player.position = { ...sample.fielder }
         player.target = { ...sample.fielder }
@@ -234,19 +223,69 @@ export function PlayAnimation({
 }
 
 /**
- * The ball's shape and look, one of each for every presentation. A look made
- * for each one was disposed with it, and three.js then dropped its shader, so
- * every pitch compiled it again on its first frame.
+ * Draws the pitched ball, see-through, on the field's first two frames on the
+ * pitch's path, then leaves. Its shader is compiled and its pixels first drawn
+ * with the field (a software GPU builds them on the first draw), so the first
+ * pitch after the screen opens starts as fast as every later one. `onDrawn`
+ * hears once the frame without it has been drawn.
  */
-let ball: { shape: SphereGeometry; look: MeshBasicMaterial } | null = null
-function ballParts(): { shape: SphereGeometry; look: MeshBasicMaterial } {
-  ball ??= {
-    shape: new SphereGeometry(0.45, 12, 8),
-    look: new MeshBasicMaterial({
+export function BallWarmup({
+  onDrawn
+}: {
+  onDrawn?: () => void
+}): React.ReactElement | null {
+  const frames = useRef(0)
+  const [drawn, setDrawn] = useState(false)
+  const invalidate = useThree(state => state.invalidate)
+  const heard = useRef(onDrawn)
+  heard.current = onDrawn
+  useFrame(() => {
+    frames.current += 1
+    if (frames.current < 2) invalidate()
+    else if (!drawn) setDrawn(true)
+  })
+  useEffect(() => {
+    if (!drawn) return
+    invalidate()
+    // The field's frame loop asked first, so it draws before this runs.
+    const frame = requestAnimationFrame(() => {
+      heard.current?.()
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+    }
+  }, [drawn, invalidate])
+  if (drawn) return null
+  return (
+    <mesh
+      name="ball-warmup"
+      position={[0, 3, -9]}
+      frustumCulled={false}
+      geometry={ballShape()}
+      material={ballParts().warmup}
+      // Shared parts, never disposed (see `ballParts`).
+      dispose={null}
+    />
+  )
+}
+
+interface BallParts {
+  shape: SphereGeometry
+  look: MeshBasicMaterial
+  /** The look with nothing showing, which shares its shader (`BallWarmup`). */
+  warmup: MeshBasicMaterial
+}
+let ball: BallParts | null = null
+function ballParts(): BallParts {
+  if (ball == null) {
+    const look = new MeshBasicMaterial({
       color: '#fff7de',
       transparent: true,
       toneMapped: false
     })
+    const warmup = look.clone()
+    warmup.opacity = 0
+    ball = { shape: new SphereGeometry(0.45, 12, 8), look, warmup }
   }
   return ball
 }

@@ -2,11 +2,16 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { BackHandler } from 'react-native'
+import {
+  AccessibilityInfo,
+  BackHandler,
+  LayoutAnimation,
+  Platform
+} from 'react-native'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
 import { nativeStatistics } from '../../test/gameStatisticsFixture'
-import { SHOWN_OVERLAY } from '../../test/overlayFixtures'
+import { boardStep, SHOWN_OVERLAY } from '../../test/overlayFixtures'
 import { replayContext, scored } from '../../test/replayGameFixture'
 import { windowSize } from '../../test/tessTestKit'
 import {
@@ -122,6 +127,14 @@ const client = {
       playOffsetSec: 6,
       endOffsetSec: 8,
       stillUrl: 'https://example.test/still.jpg'
+    },
+    {
+      eventId: 'second',
+      title: 'Strikeout',
+      startOffsetSec: 10,
+      playOffsetSec: 11,
+      endOffsetSec: 13,
+      stillUrl: null
     }
   ],
   playback: async (id: string) => {
@@ -628,6 +641,53 @@ describe('TV game playback entry', () => {
     await key('swipeUp')
     expect(document.querySelector('[data-testid="tv-box-panel"]')).equals(null)
   })
+  it('scrolls expanded stats at half speed on drag, directional clicks and release', async () => {
+    await render()
+    await press('Close panel')
+    await press('Box score')
+    await press('Team and player statistics')
+    type Measured = HTMLElement & {
+      __reactLayoutHandler: (event: unknown) => void
+    }
+    const scroll = document.querySelector<Measured>(
+      '[data-testid="tv-stats-scroll"]'
+    )!
+    const content = scroll.firstElementChild as Measured
+    await act(async () => {
+      for (const [node, height] of [
+        [scroll, 270],
+        [content, 1270]
+      ] as const)
+        node.__reactLayoutHandler({
+          nativeEvent: { layout: { x: 0, y: 0, width: 1920, height } }
+        })
+      emitTvPan('Began', 0, 0)
+      emitTvPan('Changed', 0, 200)
+    })
+    expect(scroll.scrollTop).equals(100)
+    await act(async () => {
+      emitTvPan('Cancelled', 0, 200)
+      emitTvDirection('down')
+    })
+    expect(scroll.scrollTop).equals(150)
+    const raf = globalThis.requestAnimationFrame
+    const now = Date.now
+    const frames: FrameRequestCallback[] = []
+    try {
+      let time = now()
+      Date.now = () => time
+      globalThis.requestAnimationFrame = callback => frames.push(callback)
+      emitTvPan('Ended', 0, 200, 1000)
+      expect(frames).length(1)
+      time += 20
+      frames.shift()!(time)
+      expect(scroll.scrollTop).equals(160)
+    } finally {
+      emitTvPan('Cancelled', 0, 200)
+      globalThis.requestAnimationFrame = raf
+      Date.now = now
+    }
+  })
   it('dismisses topmost stats with an upward swipe or continuous upward touch', async () => {
     await render()
     await press('Close panel')
@@ -742,6 +802,110 @@ describe('TV game playback entry', () => {
     expect(document.querySelector('[data-testid="tv-box-panel"]')).equals(null)
   })
 
+  it('keeps the streams through zoom and toggles, and outlines only a choice of pictures', async () => {
+    viewport = await windowSize(1920, 1080)
+    await render()
+    await press('Close panel')
+    const streams = [...document.querySelectorAll('video')]
+    const angle = document.querySelector<HTMLElement>(
+      '[data-testid="tv-angle-1"]'
+    )!
+    const focusAngle = async (): Promise<void> => {
+      await act(async () => {
+        angle.blur()
+        angle.focus()
+        await pause()
+      })
+    }
+    const border = (): string => getComputedStyle(angle).borderTopWidth
+    await focusAngle()
+    expect(border()).equals('4px')
+    await press('Camera Angle 1')
+    expect(border()).equals('0px')
+    expect(getComputedStyle(angle.parentElement!).width).equals('1920px')
+    await press('Back to cameras')
+    expect(getComputedStyle(angle.parentElement!).width).equals('960px')
+    await press('Cameras')
+    for (const i of [0, 2, 3]) await press(`Toggle Angle ${i}`)
+    await press('Close panel')
+    await focusAngle()
+    expect(getComputedStyle(angle.parentElement!).width).equals('1920px')
+    expect(border()).equals('0px')
+    await press('Cameras')
+    await press('Toggle Angle 0')
+    await press('Close panel')
+    await focusAngle()
+    expect(border()).equals('4px')
+    expect([...document.querySelectorAll('video')]).deep.equals(streams)
+  })
+  for (const reduced of [false, true]) {
+    it(`schedules TV layout transitions only when motion is allowed (reduce motion ${reduced})`, async () => {
+      const tvFlag = Object.getOwnPropertyDescriptor(Platform, 'isTV')
+      const preference =
+        AccessibilityInfo.isReduceMotionEnabled.bind(AccessibilityInfo)
+      const configure = LayoutAnimation.configureNext
+      const stats = client.gameStatistics.bind(client)
+      const animations: Array<Parameters<typeof configure>[0]> = []
+      try {
+        Object.defineProperty(Platform, 'isTV', {
+          configurable: true,
+          value: true
+        })
+        AccessibilityInfo.isReduceMotionEnabled = async () => reduced
+        LayoutAnimation.configureNext = config => {
+          animations.push(config)
+        }
+        client.gameStatistics = async id => {
+          const data = await stats(id)
+          data.board.steps = [boardStep(0)]
+          return data
+        }
+        viewport = await windowSize(1920, 1080)
+        await render()
+        await act(async () => {
+          for (const video of document.querySelectorAll('video')) {
+            Object.defineProperty(video, 'duration', {
+              configurable: true,
+              value: 60
+            })
+            video.dispatchEvent(new window.Event('durationchange'))
+          }
+          document
+            .querySelector('video')!
+            .dispatchEvent(new window.Event('timeupdate'))
+          await pause()
+        })
+        await press('Close panel')
+        const board = (): HTMLElement =>
+          document.querySelector<HTMLElement>('[data-testid="tv-scoreboard"]')!
+        const fourWidth = getComputedStyle(board()).width
+        await press('Camera Angle 1')
+        expect(animations).length(reduced ? 0 : 1)
+        await press('Back to cameras')
+        expect(animations).length(reduced ? 0 : 2)
+        await press('Cameras')
+        await press('Toggle Angle 0')
+        expect(animations).length(reduced ? 0 : 3)
+        expect(getComputedStyle(board()).width)
+          .equals('960px')
+          .and.not.equals(fourWidth)
+        await press('Toggle Angle 0')
+        expect(getComputedStyle(board()).width).equals(fourWidth)
+        expect(animations).deep.equals(
+          Array(reduced ? 0 : 4).fill(
+            LayoutAnimation.create(240, 'easeInEaseOut', 'scaleXY')
+          )
+        )
+      } finally {
+        if (tvFlag !== undefined)
+          Object.defineProperty(Platform, 'isTV', tvFlag)
+        else Reflect.deleteProperty(Platform, 'isTV')
+        AccessibilityInfo.isReduceMotionEnabled = preference
+        LayoutAnimation.configureNext = configure
+        client.gameStatistics = stats
+      }
+    })
+  }
   it('opens four authorized single-camera sources and enlarges the same player without remounting', async () => {
     await render()
     const videos = [...document.querySelectorAll('video')]
@@ -752,6 +916,46 @@ describe('TV game playback entry', () => {
     expect(closed).equals(false)
     await press('Back to games')
     expect(closed).equals(true)
+  })
+  it('moves the static highlight focus cue with the remote, even without a thumbnail', async () => {
+    const preference =
+      AccessibilityInfo.isReduceMotionEnabled.bind(AccessibilityInfo)
+    AccessibilityInfo.isReduceMotionEnabled = async () => true
+    try {
+      await render()
+      await press('Close panel')
+      await press('Highlights')
+      const clips = [0, 1].map(i =>
+        document.querySelector<HTMLElement>(
+          `[data-testid="tv-highlight-${i}"]`
+        )!
+      )
+      for (const selected of clips) {
+        await act(async () => {
+          selected.focus()
+          await pause()
+        })
+        for (const clip of clips) {
+          const thumbnail = clip.firstElementChild!
+          expect(
+            getComputedStyle(thumbnail).transform === 'scale(1.16)'
+          ).equals(clip === selected)
+          expect(getComputedStyle(thumbnail).overflowX).equals('hidden')
+          expect(getComputedStyle(thumbnail).borderTopLeftRadius).equals('12px')
+          const text = [...clip.querySelectorAll<HTMLElement>('*')].find(
+            node =>
+              node.childElementCount === 0 &&
+              node.textContent === clip.getAttribute('aria-label')
+          )!
+          expect(
+            getComputedStyle(text).textDecoration.includes('underline') ||
+              getComputedStyle(text).textDecorationLine === 'underline'
+          ).equals(false)
+        }
+      }
+    } finally {
+      AccessibilityInfo.isReduceMotionEnabled = preference
+    }
   })
   it('toggles persistent surfaces, transfers audio, seeks highlights and reopens their list while playback continues', async () => {
     await render()
@@ -771,6 +975,16 @@ describe('TV game playback entry', () => {
     expect(
       document.querySelector('[data-testid="tv-cameras-panel"]')
     ).not.equals(null)
+    const cameraGradient = document.querySelector<HTMLElement>(
+      '[data-testid="tv-cameras-panel"] [data-testid="tv-panel-gradient"]'
+    )!
+    expect(
+      cameraGradient.querySelector('linearGradient')?.getAttribute('x2')
+    ).equals('100%')
+    expect(
+      cameraGradient.querySelector('stop')?.getAttribute('stop-opacity')
+    ).equals('0.75')
+    const gradientWidth = cameraGradient.parentElement!.style.width
     const camera = document.querySelector<HTMLElement>(
       '[data-testid="tv-toggle-0"]'
     )!
@@ -795,23 +1009,31 @@ describe('TV game playback entry', () => {
     const clip = document.querySelector<HTMLElement>(
       '[data-testid="tv-highlight-0"]'
     )!
+    const highlightGradient = document.querySelector<HTMLElement>(
+      '[data-testid="tv-highlights-panel"] [data-testid="tv-panel-gradient"]'
+    )!
+    expect(
+      highlightGradient.querySelector('linearGradient')?.getAttribute('x1')
+    ).equals('100%')
+    expect(highlightGradient.parentElement!.style.width).equals(gradientWidth)
     expect(clip.textContent).contains('Home run')
     expect(clip.style.flexDirection).not.equals('row')
     expect(clip.style.borderWidth).equals('')
-    const frame = clip.querySelector<HTMLElement>(
-      '[data-testid="tv-highlight-frame-0"]'
-    )!
-    expect(getComputedStyle(frame).borderTopWidth).equals('3px')
-    expect(frame.textContent).equals('')
     await act(async () => {
       clip.focus()
       await pause()
     })
-    expect(getComputedStyle(frame).borderTopColor).equals('rgb(255, 255, 255)')
     expect(clip.style.borderWidth).equals('')
     const thumbnail = clip.querySelector<HTMLElement>(
       '[data-testid="tv-highlight-thumbnail-0"]'
     )!
+    for (const node of [thumbnail, ...thumbnail.querySelectorAll('*')]) {
+      const { borderTopStyle, borderTopWidth } = getComputedStyle(node)
+      expect(
+        ['', 'none', 'hidden'].includes(borderTopStyle) ||
+          borderTopWidth === '0px'
+      ).equals(true)
+    }
     expect(getComputedStyle(thumbnail).width).equals('300px')
     expect(getComputedStyle(thumbnail).height).equals('170px')
     await press('Home run')

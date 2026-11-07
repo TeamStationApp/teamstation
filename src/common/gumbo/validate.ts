@@ -89,7 +89,8 @@ const CREDIT: Shape = {
   position: ['object'],
   credit: ['string']
 }
-const CREDIT_REQUIRED = ['player', 'credit']
+// A stand-in at an empty position is credited by position, with no player.
+const CREDIT_REQUIRED = ['credit']
 
 const POSITION: Shape = {
   code: ['string'],

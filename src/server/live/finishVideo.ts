@@ -23,7 +23,11 @@ import {
   remuxToHls,
   VIDEO_FILE
 } from '../media/ffmpeg'
-import { isStampedAt, readRecordingStamps } from '../media/wallClockScan'
+import {
+  isStampedAt,
+  type PartReader,
+  readRecordingStamps
+} from '../media/wallClockScan'
 import { storeWallPoints } from '../media/wallTimeline'
 import { boxesIn, fillHoles } from './holeFiller'
 import {
@@ -177,12 +181,19 @@ export async function toRecording(
 /** Where a listed segment starts on the programme clock, when it can be read. */
 async function clockStartSec(
   dir: string,
-  segment: { name: string; init: string }
+  segment: { name: string; init: string },
+  read?: PartReader
 ): Promise<number | undefined> {
-  const init = await readFile(join(dir, segment.init)).catch(() => undefined)
-  const bytes = await readLeadingBoxes(join(dir, segment.name)).catch(
-    () => undefined
-  )
+  const init = await (
+    read == null
+      ? readFile(join(dir, segment.init))
+      : read(join(dir, segment.init)).then(bytes => Buffer.from(bytes))
+  ).catch(() => undefined)
+  const bytes = await (
+    read == null
+      ? readLeadingBoxes(join(dir, segment.name))
+      : read(join(dir, segment.name)).then(bytes => Buffer.from(bytes))
+  ).catch(() => undefined)
   return init == null || bytes == null
     ? undefined
     : timelineStartSec(init, bytes)
@@ -197,16 +208,20 @@ async function clockStartSec(
  * of the first part alone counts as reaching the stream's end. This is what the
  * row says while the recording is on the Space's live origin, whose playlist
  * cannot carry the gap, and for a gap too long to fill.
+ *
+ * `read` reads a piece the disk no longer holds, as a live close after the disk
+ * tail has deleted the first ones passes it; the disk alone by default.
  */
 export async function recordingSpanSec(
   dir: string,
-  playlist: string
+  playlist: string,
+  read?: PartReader
 ): Promise<number | undefined> {
   const listed = listedSegments(playlist)
   if (new Set(listed.map(segment => segment.init)).size < 2) return undefined
   const last = listed[listed.length - 1]
-  const startSec = await clockStartSec(dir, listed[0])
-  const lastSec = await clockStartSec(dir, last)
+  const startSec = await clockStartSec(dir, listed[0], read)
+  const lastSec = await clockStartSec(dir, last, read)
   return startSec == null || lastSec == null
     ? undefined
     : lastSec + last.durationSec - startSec
@@ -788,7 +803,9 @@ export async function replaceAnchorsFromRecording(
   db: Kysely<Database>,
   videoId: string,
   dir: string,
-  playlistFile: string = MEDIA_PLAYLIST
+  playlistFile: string = MEDIA_PLAYLIST,
+  /** How the recording's files are read; the disk by default. */
+  readPart?: PartReader
 ): Promise<number> {
   const stamped = await db
     .selectFrom('video_wall_anchors')
@@ -798,7 +815,7 @@ export async function replaceAnchorsFromRecording(
     .limit(1)
     .executeTakeFirst()
   if (stamped == null) return 0
-  const scan = await readRecordingStamps(dir, { playlistFile })
+  const scan = await readRecordingStamps(dir, { playlistFile, readPart })
   if (scan.points.length === 0) return 0
   await db.transaction().execute(async trx => {
     // Each arrival point, with the media time of the point after it.

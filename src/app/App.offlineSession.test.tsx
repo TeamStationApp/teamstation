@@ -9,6 +9,7 @@ import {
   TeamStationClient
 } from '../common/api'
 import { HttpError } from '../common/errors'
+import { COALESCE_MS } from '../common/screenScope'
 import { userIdOfGumbo } from '../common/userId'
 import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
@@ -398,24 +399,21 @@ describe('the phone session with no signal', () => {
           (frame as { scope?: string }).scope === 'home'
       )!
     await act(async () => {
-      socket.receive({
-        type: 'subscribed',
-        scope: 'home',
-        id: asked.id,
-        revision: '1'
-      })
+      socket.receive({ type: 'subscribed', scope: 'home', id: asked.id })
     })
     await settle(50)
     const reads = homeReads
     expect(ahead(), 'once, after Home').equals(1)
     // Somebody scores: a team's notice reads Home's lists again, and not
-    // everything ahead.
-    for (const revision of ['2', '3']) {
+    // everything ahead. The second, inside the gate's window, adds nothing;
+    // both are read once the window has passed.
+    for (let i = 0; i < 2; i++) {
       await act(async () => {
-        socket.receive({ type: 'changed', scope: 'home', revision })
+        socket.receive({ type: 'changed', scope: 'home' })
       })
       await settle(50)
     }
+    await settle(COALESCE_MS)
     expect(homeReads).greaterThan(reads)
     expect(ahead()).equals(1)
     // No signal, then the server answers again: it reads ahead once more.

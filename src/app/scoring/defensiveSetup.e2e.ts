@@ -656,11 +656,10 @@ describe('current defensive scoring setup browser', function () {
           {},
           slot
         )
-        if (index === 7) {
-          expect(await text(page)).includes('Missing defensive positions\nRF')
-        }
+        // Only a pitcher is waited for: the rest may stay empty.
+        expect(await text(page)).not.includes('Assign a pitcher')
       }
-      expect(await text(page)).not.includes('Missing defensive positions')
+      expect(await text(page)).not.includes('Assign a pitcher')
       await picture(page, 'complete-defense')
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label*="1 balls"]')
@@ -677,7 +676,8 @@ describe('current defensive scoring setup browser', function () {
       expect(await page.$$('[aria-label^="Assign P "]')).has.length(10)
       await choose(page, 'P', 1)
       await page.waitForSelector('[data-nameplate="empty-C"]')
-      expect(await text(page)).includes('Missing defensive positions\nC')
+      // A stand-in plays the vacated catcher's spot: scoring goes on.
+      expect(await text(page)).not.includes('Assign a pitcher')
       await picture(page, 'remaining-defense')
       await tapSlot(page, 'C')
       await choose(page, 'C', 9)
@@ -814,18 +814,18 @@ describe('current defensive scoring setup browser', function () {
   it('E5 evaluates only current half and routes newly current home lineup correctly', async () => {
     const { page, unexpected } = await open({
       homeCount: 8,
-      nextMissing: ['C']
+      nextMissing: ['P']
     })
     try {
-      expect(await text(page)).not.includes('Missing defensive positions')
+      expect(await text(page)).not.includes('Assign a pitcher')
       expect(await text(page)).not.includes('Insufficient batting lineup.')
       await click(page, 'Open scoring menu')
       await click(page, 'End Half Inning')
       await click(page, 'Confirm End Half Inning')
-      await page.waitForSelector('[data-nameplate="empty-C"]')
-      expect(await text(page)).includes('Missing defensive positions\nC')
-      await tapSlot(page, 'C')
-      await choose(page, 'C', 1)
+      await page.waitForSelector('[data-nameplate="empty-P"]')
+      expect(await text(page)).includes('Assign a pitcher')
+      await tapSlot(page, 'P')
+      await choose(page, 'P', 1)
       await page.waitForSelector('[aria-label="Set Lineup"]')
       expect(await text(page)).includes('Only eight players in lineup')
       await click(page, 'Set Lineup')
@@ -1008,16 +1008,16 @@ describe('current defensive scoring setup browser', function () {
       await page.close()
     }
   })
-  it('E10 closes the third strikeout before the next incomplete defense blocks another pitch', async () => {
+  it('E10 closes the third strikeout before the next missing pitcher blocks another pitch', async () => {
     const { page, unexpected, savedPlays } = await open({
-      nextMissing: ['C'],
+      nextMissing: ['P'],
       animationsOff: true
     })
     try {
       for (let i = 0; i < 9; i++) await click(page, 'Called Strike')
       await page.waitForSelector('[aria-label*="Bottom 1st"]')
-      await page.waitForSelector('[data-nameplate="empty-C"]')
-      expect(await text(page)).includes('Missing defensive positions\nC')
+      await page.waitForSelector('[data-nameplate="empty-P"]')
+      expect(await text(page)).includes('Assign a pitcher')
       expect(
         await page.$eval('[aria-label="Ball"]', el =>
           el.getAttribute('aria-disabled')
@@ -1070,7 +1070,7 @@ describe('current defensive scoring setup browser', function () {
       const { page, peer, unexpected, savedPlays } = await open({
         animationsOff: true,
         ...(problem === 'defense'
-          ? { nextMissing: ['C'] }
+          ? { nextMissing: ['P'] }
           : { homeCount: count })
       })
       try {
@@ -1081,14 +1081,14 @@ describe('current defensive scoring setup browser', function () {
         await page.reload()
         await page.waitForSelector('[aria-label*="Bottom 1st"]')
         if (problem === 'defense') {
-          await page.waitForSelector('[data-nameplate="empty-C"]')
-          await tapSlot(page, 'C')
+          await page.waitForSelector('[data-nameplate="empty-P"]')
+          await tapSlot(page, 'P')
           await page.waitForSelector('[aria-label="Defensive roster"]')
           await click(page, 'Create Player')
           await click(page, 'Create Placeholder Player')
           await click(page, 'Create')
           await page.waitForSelector('[aria-label="Defensive roster"]')
-          await choose(page, 'C', 1)
+          await choose(page, 'P', 1)
         } else {
           await page.waitForSelector('[aria-label="Set Lineup"]')
           await click(page, 'Set Lineup')
@@ -1114,7 +1114,7 @@ describe('current defensive scoring setup browser', function () {
         expect(savedPlays()).equals(3)
         await page.reload()
         await page.waitForSelector('[aria-label*="Bottom 1st"]')
-        expect(await text(page)).not.includes('Missing defensive positions')
+        expect(await text(page)).not.includes('Assign a pitcher')
         expect(await text(page)).not.includes('Insufficient batting lineup.')
         await click(page, 'Ball')
         await page.waitForSelector('[aria-label*="1 balls"]')

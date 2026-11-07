@@ -29,7 +29,13 @@ const chunkDir =
     .find(arg => arg.startsWith('--chunk-dir='))
     ?.slice('--chunk-dir='.length) ?? 'lib'
 const files = currentSetup
-  ? globSync(['src/app/scoring/*.test.tsx', 'src/app/field/*.test.tsx'])
+  ? globSync([
+      'src/app/scoring/*.test.tsx',
+      'src/app/field/*.test.tsx',
+      'src/app/sync/*.test.tsx',
+      'src/app/hooks/*.test.tsx',
+      'src/app/screens/CoachGameScreen.test.tsx'
+    ])
   : globSync('src/**/*.test.tsx')
 const extraFiles = rosterEdit
   ? globSync([

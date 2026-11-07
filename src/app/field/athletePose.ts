@@ -118,6 +118,14 @@ export function pitchingHand(
     z: origin.z + hand[2] * PLAYER_SCALE
   }
 }
+/** The throwing hand as the ball leaves it, whatever the windup took. */
+export function releaseHand(
+  origin: GroundPoint,
+  side: 'R' | 'L',
+  heading = 0
+): Point3 {
+  return pitchingHand(origin, 1, 1, side, heading)
+}
 /** The barrel's contact station is shared by rendered bat and ball flight. */
 export const BAT_CONTACT_DISTANCE = 1.35
 export function battingPose(

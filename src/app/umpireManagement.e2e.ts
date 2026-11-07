@@ -262,6 +262,8 @@ async function main(): Promise<void> {
             await open(settings)
             await tap(m, 'Manage Umpires')
             await fill(m, 'Search affiliated people', 'Uma')
+            await contains(page, 'Uma L')
+            await shot('candidate-row.png')
             await tap(m, 'Uma L')
             await m.tapOn({ text: 'Uma L, minors, Field', role: 'button' })
             await page.waitForFunction(() => {

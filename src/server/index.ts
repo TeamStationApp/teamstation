@@ -10,7 +10,12 @@ import express from 'express'
 
 import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
+import { type BackgroundJobs, startBackgroundJobs } from './backgroundJobs'
 import { versionOf } from './buildVersion'
+import { makeValkeyCache } from './cache/valkeyCache'
+import type { ChangeFeed } from './changeFeed/feed'
+import { makeChangeFeed } from './changeFeed/makeChangeFeed'
+import { type FeedRelay, startFeedRelay } from './changeFeed/relay'
 import { spaceObjectStore, startChatPurge } from './chat/attachments'
 import { startChatReconciler } from './chat/reconciler'
 import { makeDatabase } from './db/database'
@@ -20,7 +25,7 @@ import { attachDictation } from './dictation/route'
 import { dictationScopes } from './dictation/scopes'
 import { finishDiscards } from './director/discard'
 import { purgeReplacedRecordings } from './director/purge'
-import { reopenInterruptedUploads } from './director/uploads'
+import { reopenInterruptedUploadsSoon } from './director/uploads'
 import { deliverAccountMail } from './email/accountMail'
 import {
   type AddedNotice,
@@ -36,7 +41,7 @@ import { DIRECTOR_CLAIM_LABEL } from './live/streamKeys'
 import { livingWorkers } from './livingWorkers'
 import { eventGeocoder } from './location/eventGeocoder'
 import { googlePlaces } from './location/googlePlaces'
-import type { MediaContext } from './media/mediaContext'
+import { FeedHolder, type MediaContext } from './media/mediaContext'
 import { spaceConfigured } from './media/spacesHls'
 import { withApiKeyCeiling } from './middleware/apiKeyCeiling'
 import { withAudit } from './middleware/withAudit'
@@ -106,9 +111,16 @@ import { walkUpSongRoutes } from './routes/walkUpSongs'
 import { attachScoreboard } from './scoreboard/attachScoreboard'
 import { startScoreboard } from './scoreboard/scoreboardService'
 import {
+  makeScoreboardClient,
+  makeScoreboardSubscriber,
+  quit,
+  scoreboardPrefix
+} from './scoreboard/scoreboardStore'
+import {
   eventControlIssuerOf,
   primaryHost,
   publicUrl,
+  requestDatabaseUrl,
   serverConfig,
   tessSettings
 } from './serverConfig'
@@ -125,6 +137,7 @@ import {
   superviseStatsBuilder
 } from './statsBuilder/supervisor'
 import { stopWorker } from './stopWorker'
+import { rosterCacheOn, startRosterBumpPrune } from './teams/rosterCore'
 import { loopbackOrigin } from './tess/loopback'
 
 /**
@@ -266,13 +279,7 @@ function liveRouteOptions(): LiveRouteOptions {
  * and an upload interrupted there stayed `assembling` for ever.
  */
 function reopenInterrupted(db: ReturnType<typeof makeDatabase>): void {
-  reopenInterruptedUploads(db)
-    .then((count: number) => {
-      if (count > 0) console.log(`reopened ${count} interrupted upload(s)`)
-    })
-    .catch((error: unknown) => {
-      console.error(`reopening interrupted uploads: ${String(error)}`)
-    })
+  reopenInterruptedUploadsSoon(db)
 }
 
 /** How often replaced recordings whose month is up are looked for. */
@@ -407,30 +414,98 @@ function startChatAttachmentPurge(db: ReturnType<typeof makeDatabase>): void {
   startChatPurge(db, { space: serverConfig.space, uploadsDir: uploadsDir() })
 }
 
+/** Why a process's feed lost its connection, and the like, for its log. */
+function logFeed(message: string): void {
+  console.error(`change feed: ${message}`)
+}
+
+/** Each API primary is a candidate to carry Postgres's notices to Valkey. */
+function startRelayIfNeeded(): FeedRelay | undefined {
+  return serverConfig.changeFeed === 'valkey'
+    ? startFeedRelay(serverConfig, logFeed)
+    : undefined
+}
+
+/** Leaves the role at once, rather than a standby waiting out the key. */
+async function stopRelay(relay: FeedRelay | undefined): Promise<void> {
+  await relay?.stop().catch((error: unknown) => {
+    console.error(`change feed: the relay's stop failed: ${String(error)}`)
+  })
+}
+
+/** What runs on the node with `backgroundJobs`, on either way of starting. */
+function jobsOn(
+  db: ReturnType<typeof makeDatabase>,
+  feed: () => ChangeFeed
+): BackgroundJobs<StatsBuilderHandle> {
+  return {
+    reopenInterrupted: () => {
+      reopenInterrupted(db)
+    },
+    startPurge: () => {
+      startPurge(db)
+    },
+    startDiscardSweep: () => {
+      startDiscardSweep(db)
+    },
+    startLocalCopyWarnings: () => {
+      startLocalCopyWarnings(db)
+    },
+    startChatAttachmentPurge: () => {
+      startChatAttachmentPurge(db)
+    },
+    startChatReconciler: () => {
+      startChatReconciler(db, feed())
+    },
+    startRosterBumpPrune: () => {
+      startRosterBumpPrune(db, message => {
+        console.log(message)
+      })
+    },
+    startStatsBuilder: () =>
+      startStatsBuilder({
+        enabled: serverConfig.statsBuilder,
+        supervise: () =>
+          superviseStatsBuilder({
+            fork: (modulePath, args, options) =>
+              fork(modulePath, args, options) as SupervisedChild,
+            log: message => {
+              console.log(message)
+            },
+            clock: () => new Date()
+          }),
+        log: message => {
+          console.log(message)
+        }
+      })
+  }
+}
+
+/** Starts `jobs`, if this node runs them. Answers what to stop on the way down. */
+function startJobs(
+  jobs: BackgroundJobs<StatsBuilderHandle>
+): StatsBuilderHandle {
+  return startBackgroundJobs(
+    serverConfig.backgroundJobs,
+    jobs,
+    { stop: async () => undefined },
+    message => {
+      console.log(message)
+    }
+  )
+}
+
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
-  const primaryDb = makeDatabase(serverConfig.databaseUrl)
-  reopenInterrupted(primaryDb)
-  startPurge(primaryDb)
-  startDiscardSweep(primaryDb)
-  startKeySweep(primaryDb)
-  startLocalCopyWarnings(primaryDb)
-  startChatAttachmentPurge(primaryDb)
-  startChatReconciler(primaryDb, serverConfig.databaseUrl)
-  const builder = startStatsBuilder({
-    enabled: serverConfig.statsBuilder,
-    supervise: () =>
-      superviseStatsBuilder({
-        fork: (modulePath, args, options) =>
-          fork(modulePath, args, options) as SupervisedChild,
-        log: message => {
-          console.log(message)
-        },
-        clock: () => new Date()
-      }),
-    log: message => {
-      console.log(message)
+  const primaryDb = makeDatabase(requestDatabaseUrl(serverConfig), {
+    role: 'primary'
+  })
+  const relay = startRelayIfNeeded()
+  const builder = startJobs({
+    ...jobsOn(primaryDb, () => makeChangeFeed(serverConfig, logFeed)),
+    startKeySweep: () => {
+      startKeySweep(primaryDb)
     }
   })
   const exitWithBuilder = exitAfterBuilder(builder, code => {
@@ -477,6 +552,7 @@ function runPrimary(workerCount: number): void {
   const stop = (signal: string): void => {
     if (stopping) return
     stopping = true
+    stopRelay(relay).catch(() => undefined)
     builder.stop(signal).catch((error: unknown) => {
       console.error('stats builder: stop failed', error)
     })
@@ -516,19 +592,47 @@ function runPrimary(workerCount: number): void {
 }
 
 function runWorker(): void {
-  const db = makeDatabase(serverConfig.databaseUrl)
+  const db = makeDatabase(requestDatabaseUrl(serverConfig), { role: 'worker' })
   const mediaSecret = resolveMediaSecret()
+  // Redis is connected to and not waited for: the API comes up without it,
+  // and only the scoreboard notices that it is away.
+  const log = (message: string): void => {
+    console.error(`worker ${process.pid}: ${message}`)
+  }
+  // Live playlists are followed in Valkey: one connection reads the lists,
+  // one hears their notices. Without Valkey they are read from the Space.
+  const playlistClient = makeScoreboardClient(
+    serverConfig.redis.url,
+    log,
+    'live playlists',
+    serverConfig.redis.caFile
+  )
+  const playlistSubscriber = makeScoreboardSubscriber(
+    playlistClient,
+    log,
+    'live playlists subscriber'
+  )
+  for (const client of [playlistClient, playlistSubscriber])
+    client.connect().catch((error: unknown) => {
+      log(`live playlists: ${String(error)}`)
+    })
+  // Filled with the change feed once it is made, after the routes.
+  const liveFeed = new FeedHolder()
   const mediaContext: MediaContext = {
     ffmpegPath: serverConfig.ffmpegPath,
     mediaRoot: serverConfig.mediaDir,
     mediaSecret,
     publicUrl,
-    space: serverConfig.space
-  }
-  // Redis is connected to and not waited for: the API comes up without it,
-  // and only the scoreboard notices that it is away.
-  const log = (message: string): void => {
-    console.error(`worker ${process.pid}: ${message}`)
+    space: serverConfig.space,
+    liveFeed,
+    livePlaylists: {
+      client: playlistClient,
+      subscriber: playlistSubscriber,
+      prefix: scoreboardPrefix(
+        serverConfig.redis.prefix,
+        serverConfig.databaseUrl
+      )
+    }
   }
   const scoreboard = startScoreboard({
     db,
@@ -536,6 +640,18 @@ function runWorker(): void {
     databaseUrl: serverConfig.databaseUrl,
     log
   })
+  // Team rosters' cores, read through on every roster read outside a write,
+  // and the game socket's frames of a live post's edits; without Valkey they
+  // are read from Postgres, as before.
+  const rosterCache = rosterCacheOn(
+    makeValkeyCache({
+      redis: serverConfig.redis,
+      databaseUrl: serverConfig.databaseUrl,
+      log
+    }),
+    db,
+    { log }
+  )
   const app = express()
 
   app.set('trust proxy', 'loopback')
@@ -658,7 +774,10 @@ function runWorker(): void {
       geocoder: eventGeocoder(db, { googlePlaces: placesProvider })
     })
   )
-  app.use('/api/v1', teamRoutes(db, mediaContext, scoreboard.store))
+  app.use(
+    '/api/v1',
+    teamRoutes(db, mediaContext, scoreboard.store, rosterCache)
+  )
   app.use('/api/v1', chatRoutes(db, mediaContext))
   app.use('/api/v1', chatKeyRoutes(db))
   app.use('/api/v1', chatEpochRoutes(db))
@@ -686,18 +805,24 @@ function runWorker(): void {
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))
   app.use(
     '/api/v1',
-    eventRoutes(db, { onGameWritten: scoreboard.onGameWritten })
+    eventRoutes(db, {
+      onGameWritten: scoreboard.onGameWritten,
+      cache: rosterCache
+    })
   )
   app.use(
     '/api/v1',
-    lineupRoutes(db, { onGameWritten: scoreboard.onGameWritten })
+    lineupRoutes(db, {
+      onGameWritten: scoreboard.onGameWritten,
+      cache: rosterCache
+    })
   )
   app.use('/api/v1', narrationRoutes(db, speechSettings(serverConfig)))
   app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
   app.use('/api/v1', adminRoutes())
   const stopAnalytics = startAnalytics(app, db, serverConfig.analyticsReaderUrl)
   app.use('/api/v1', statsRoutes(db, mediaContext))
-  app.use('/api/v1', playerRoutes(db, mediaContext))
+  app.use('/api/v1', playerRoutes(db, mediaContext, rosterCache))
   app.use('/api/v1', walkUpSongRoutes(db))
   app.use('/api/v1', userRoutes(db, mediaContext.space))
   app.use('/api/v1', meRoutes(db, serverConfig.buildsUrl, mediaContext))
@@ -801,7 +926,12 @@ function runWorker(): void {
   )
   // One upgrade listener. Node delivers an upgrade to every listener on the
   // same socket, so each socket takes only the paths it owns.
+  const feed = makeChangeFeed(serverConfig, logFeed)
+  liveFeed.fill(feed)
   const gameSocket = attachGameSocket(server, db, serverConfig.databaseUrl, {
+    feed,
+    minimumProtocol: serverConfig.gameSocketMinimumProtocol,
+    fanout: { cache: rosterCache },
     listenForUpgrades: false
   })
   const closeScoreboard = attachScoreboard(server, scoreboard.hub, {
@@ -835,28 +965,10 @@ function runWorker(): void {
   let builder: StatsBuilderHandle = {
     stop: async () => undefined
   }
+  let relay: FeedRelay | undefined
   if (cluster.isPrimary) {
-    reopenInterrupted(db)
-    startPurge(db)
-    startDiscardSweep(db)
-    startLocalCopyWarnings(db)
-    startChatAttachmentPurge(db)
-    startChatReconciler(db, serverConfig.databaseUrl)
-    builder = startStatsBuilder({
-      enabled: serverConfig.statsBuilder,
-      supervise: () =>
-        superviseStatsBuilder({
-          fork: (modulePath, args, options) =>
-            fork(modulePath, args, options) as SupervisedChild,
-          log: message => {
-            console.log(message)
-          },
-          clock: () => new Date()
-        }),
-      log: message => {
-        console.log(message)
-      }
-    })
+    relay = startRelayIfNeeded()
+    builder = startJobs(jobsOn(db, () => feed))
   }
 
   let closing = false
@@ -875,6 +987,10 @@ function runWorker(): void {
       destroyDatabase: async () => {
         await stopAnalytics()
         await stopLogging()
+        await stopRelay(relay)
+        await feed.close()
+        await rosterCache.close()
+        await Promise.all([quit(playlistSubscriber), quit(playlistClient)])
         await db.destroy()
       },
       cutConnectionsMs: WORKER_CUT_CONNECTIONS_MS,

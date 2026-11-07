@@ -20,6 +20,7 @@ import { teamsOfRow } from '../../common/teamLists'
 import { canScore, lineupTeams, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
 import { lockPlayerEdits } from '../admin/people'
+import type { ValkeyCache } from '../cache/valkeyCache'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -27,6 +28,7 @@ import { answerOnce, idempotentCallOf } from '../db/syncIdempotency'
 import { atBatOf } from '../events/atBatInProgress'
 import { pregameFold } from '../events/currentPlay'
 import {
+  eventTagsNeedRepair,
   reconcileEventTags,
   tagChoices,
   writeEventTag
@@ -37,7 +39,8 @@ import {
   playJson,
   playsDigest,
   postGamePlays,
-  readPlays
+  readPlays,
+  type StoredPlay
 } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
 import { storedLineupsDigest } from '../events/teamLineups'
@@ -46,19 +49,17 @@ import { swapOrReset } from '../games/resetSwap'
 import { gameSwapEffect } from '../games/swapEffect'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
-import { resolveScoringGame } from '../scoring/openRow'
-import { notifyGameChange } from '../socket/gameChanges'
-import {
-  noteScopeChange,
-  readSyncClock,
-  REVISION_HEADER
-} from '../socket/syncRevision'
+import { namedScoringGame } from '../scoring/openRow'
+import { notifyPlaysChanged } from '../socket/gameChanges'
+import { noteScopeChange } from '../socket/syncRevision'
 import { modelNames } from '../users/nameBook'
 import { isSpoken } from '../users/readerNames'
 import { tellGameWritten } from './gameWritten'
 
 export interface EventRouteOptions {
   onGameWritten?: (gameId: string) => void
+  /** Where a live post leaves the game socket's frame of its edits. */
+  cache?: ValkeyCache
 }
 
 /**
@@ -104,10 +105,22 @@ export interface EventRouteOptions {
  * { stale: true, generation }`: its sender opens the game again.
  *
  * `GET` answers the game's `generation`, and `GET` and each live post's answer carry `playsDigest`, a digest of the
- * stored plays and the at-bat in progress, as the game socket's `plays`
- * notices do; a live post's answer also carries `priorPlaysDigest`, the same
+ * stored plays and the at-bat in progress, as the game socket's `playEdits`
+ * changes do; a live post's answer also carries `priorPlaysDigest`, the same
  * of the game as the post found it. A sender whose last digest that is holds
- * everything stored, and can pass over the notice of its own post.
+ * everything stored, and can pass over the notice of its own post. `GET` also
+ * answers `namesDigest`, the digest of the book its plays are named from: a
+ * player's public name can change with nothing written, when a hold lapses,
+ * so a `playEdits` change naming another digest does not apply to this read.
+ *
+ * A post answers every stored play as `GET` does, as builds before the
+ * edits answer read it and a phone's queue writes it over the game it holds.
+ * A live post with `?answer=edits` answers only what it wrote: `edits`, a
+ * put of each play it wrote or its tag repair rewrote and a remove of each
+ * index it took away, and the at-bat in progress, with those digests and the
+ * generation. Any other `answer` is refused. A live post asked for its edits
+ * and sent again under its `Idempotency-Key` answers every stored play as a
+ * put.
  *
  * The write itself is `postGamePlays` in `events/postPlays.ts`, which the
  * refold script calls too.
@@ -179,7 +192,7 @@ export function eventRoutes(
             actor.userId,
             tag
           )
-          await notifyGameChange(trx, { game: gameId, kind: 'plays' })
+          await notifyPlaysChanged(trx, gameId)
           noteScopeChange(trx, { gameId })
           return result
         })
@@ -219,6 +232,11 @@ export function eventRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asPostEventsBody, req.body)
+      // A live post asked for its edits answers only what it wrote. Every
+      // other answers every play, as builds before the edits answer read it
+      // and a phone's queue writes it over the game it holds.
+      const edits =
+        postAnswerOf(req.query.answer) === 'edits' && body.mode === 'live'
       // Only a live post, a play at a time, is sent again from a queue.
       const call =
         body.mode === 'live' ? idempotentCallOf(req, actor.userId) : undefined
@@ -264,7 +282,9 @@ export function eventRoutes(
                 lineupTeams(
                   await roleScopes(trx, actor.userId, actor.isAdmin),
                   game
-                )
+                ),
+              answer: edits ? 'edits' : 'all',
+              cache: options.cache
             }
           )
           wrote = true
@@ -273,11 +293,18 @@ export function eventRoutes(
         keepsAnswer: false,
         // The game's plays as they stand, which hold this post's, with the
         // digests it was answered: a later lineups change by somebody else
-        // still shows as stale to the queue's next post.
+        // still shows as stale to the queue's next post. Asked for its edits,
+        // the post answers every play as a put, which its sender already
+        // holds or takes up.
         rebuild: async held => {
           const kept = JSON.parse(held.resultId!) as LivePostDigests
-          // What a swap does is the read's, not a post's answer.
-          const { swap: _swap, ...current } = await folded(
+          // What a swap does, and the book's digest, are the read's, not a
+          // post's answer.
+          const {
+            swap: _swap,
+            namesDigest: _names,
+            ...current
+          } = await folded(
             await db
               .transaction()
               .setIsolationLevel('repeatable read')
@@ -291,7 +318,17 @@ export function eventRoutes(
                   )
               )
           )
-          return { status: 200, body: { ...current, ...kept } }
+          if (!edits) return { status: 200, body: { ...current, ...kept } }
+          const { plays, currentPlay, ...digests } = current
+          return {
+            status: 200,
+            body: {
+              edits: plays.map(play => ({ op: 'put', play })),
+              currentPlay,
+              ...digests,
+              ...kept
+            }
+          }
         }
       })
       if (wrote) tellGameWritten(options.onGameWritten, gameId)
@@ -308,34 +345,33 @@ export function eventRoutes(
       const gameId = pathParam(req.params.gameId)
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
       let teams: readonly string[] = []
-      const result = await db.transaction().execute(async trx => {
-        const locked = await trx
-          .selectFrom('games')
-          .select('id')
-          .where('id', '=', gameId)
-          .forUpdate()
-          .executeTakeFirst()
-        if (locked == null) throw notFound()
-        // Read committed, after the lock: a live post that commits while
-        // this holds the game waits, and takes a revision newer than this.
-        res.setHeader(REVISION_HEADER, await readSyncClock(trx))
-        await reconcileEventTags(trx, gameId)
-        // Players' halves for whoever may save their lineups.
-        return await storedGameRead(trx, gameId, async game => {
-          teams = lineupTeams(
-            await roleScopes(trx, actor.userId, actor.isAdmin),
-            game
+      const result = await readGameUnlocked(
+        db,
+        gameId,
+        async (trx, plays) =>
+          // Players' halves for whoever may save their lineups.
+          await storedGameRead(
+            trx,
+            gameId,
+            async game => {
+              teams = lineupTeams(
+                await roleScopes(trx, actor.userId, actor.isAdmin),
+                game
+              )
+              return teams
+            },
+            plays
           )
-          return teams
-        })
-      })
+      )
       // A game with nothing stored has no setup to hold anyone's halves, and
       // whoever may dictate still needs their first names.
       // Dictation's, so nothing Tess, who does not dictate, is told.
       const spoken = isSpoken() ? {} : await modelNames(db, teams)
       res.json({
         ...(await folded(result)),
-        ...(Object.keys(spoken).length === 0 ? {} : { modelNames: spoken })
+        ...(Object.keys(spoken).length === 0 ? {} : { modelNames: spoken }),
+        // Named with these teams' halves, unlike the game socket's edits.
+        ...(teams.length === 0 ? {} : { halves: teams })
       })
     })
   )
@@ -453,6 +489,16 @@ function asSwapSidesBody(raw: unknown): {
   }
 }
 
+/**
+ * The `answer` a post asks for: `edits`, or none for every play. Anything
+ * else is refused.
+ */
+function postAnswerOf(raw: unknown): 'edits' | undefined {
+  if (raw === undefined) return undefined
+  if (raw === 'edits') return 'edits'
+  throw badRequest('answer must be edits, or left out')
+}
+
 /** What a live post's key keeps of its answer: the rest is read again. */
 interface LivePostDigests {
   priorPlaysDigest: string | null
@@ -464,6 +510,12 @@ interface StoredGameAnswer {
   plays: unknown[]
   currentPlay: unknown
   playsDigest: string
+  /**
+   * The digest of the book the plays are named from (`NameBook.digest`), as
+   * the game socket's `playEdits` give it: a frame naming another was named
+   * otherwise than this read.
+   */
+  namesDigest: string
   lineupsDigest: string | null
   generation: number
   swap: SwapEffect
@@ -481,13 +533,14 @@ async function storedGameRead(
   halves: (game: {
     home_team_id: string
     away_team_id: string
-  }) => Promise<readonly string[]>
+  }) => Promise<readonly string[]>,
+  held?: StoredPlay[]
 ): Promise<{
   answer: StoredGameAnswer
   fold: () => Promise<unknown>
   teams: ReturnType<typeof teamsOfRow>
 }> {
-  const stored = await readPlays(db, gameId)
+  const stored = held ?? (await readPlays(db, gameId))
   const game = await db
     .selectFrom('games')
     .select([
@@ -504,7 +557,7 @@ async function storedGameRead(
     .executeTakeFirstOrThrow()
   const current = atBatOf(game, stored.length > 0)
   const lineups = await halves(game)
-  const resolved = await resolveScoringGame(
+  const { game: resolved, names } = await namedScoringGame(
     db,
     {
       plays: stored.map(row => row.gumbo as GumboPlay),
@@ -520,6 +573,7 @@ async function storedGameRead(
     })),
     currentPlay: playForWire(resolved.currentPlay, teams),
     playsDigest: playsDigest(stored, current),
+    namesDigest: names.digest,
     lineupsDigest: await storedLineupsDigest(db, {
       id: gameId,
       ...game
@@ -536,6 +590,59 @@ async function storedGameRead(
     fold: await pregameFold(db, gameId, game, resolved),
     teams
   }
+}
+
+/**
+ * Reads a game without taking its row, so readers wait on neither each other
+ * nor a post: one read-only `REPEATABLE READ` transaction, so its plays and
+ * its game row show one instant, a post's rows all or none of them. That
+ * needs the snapshot and no session state, so it holds through a
+ * transaction-mode pooler.
+ *
+ * A write that left event tags unreconciled is the one case that takes the
+ * game row: the read lets its snapshot go, repairs under the lock in a
+ * transaction of its own, and reads afresh. Should a further write leave them
+ * unreconciled again meanwhile, it reads under the lock after one more repair,
+ * in `READ COMMITTED`: a post to this game waits until the read is done.
+ */
+async function readGameUnlocked<T>(
+  db: Kysely<Database>,
+  gameId: string,
+  read: (trx: Kysely<Database>, plays: StoredPlay[]) => Promise<T>
+): Promise<T> {
+  const lockGame = async (trx: Kysely<Database>): Promise<void> => {
+    const locked = await trx
+      .selectFrom('games')
+      .select('id')
+      .where('id', '=', gameId)
+      .forUpdate()
+      .executeTakeFirst()
+    if (locked == null) throw notFound()
+  }
+  const snapshot = async (): Promise<{ result: T } | null> =>
+    await db
+      .transaction()
+      .setIsolationLevel('repeatable read')
+      .setAccessMode('read only')
+      .execute(async trx => {
+        // One read of a long game's documents, for both: one snapshot.
+        const plays = await readPlays(trx, gameId)
+        if (await eventTagsNeedRepair(trx, gameId, plays)) return null
+        return { result: await read(trx, plays) }
+      })
+  const first = await snapshot()
+  if (first != null) return first.result
+  await db.transaction().execute(async trx => {
+    await lockGame(trx)
+    await reconcileEventTags(trx, gameId)
+  })
+  const second = await snapshot()
+  if (second != null) return second.result
+  return await db.transaction().execute(async trx => {
+    await lockGame(trx)
+    await reconcileEventTags(trx, gameId)
+    return await read(trx, await readPlays(trx, gameId))
+  })
 }
 
 /** A read's answer, its at-bat folded. */

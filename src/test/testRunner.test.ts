@@ -7,7 +7,9 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 describe('default rendered test runner', function () {
-  this.timeout(60000)
+  // Each case runs whole bundle builds. Beside the rest of the suite on a CI
+  // runner one takes most of a minute, so a minute is not enough to hold them to.
+  this.timeout(180000)
 
   it('builds native navigation and native text measurement with the default suites', () => {
     execFileSync(process.execPath, ['scripts/checkScoringLayering.mjs'])

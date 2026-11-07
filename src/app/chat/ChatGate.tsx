@@ -106,7 +106,11 @@ export function ChatGate(props: ChatGateProps): React.ReactElement {
   const unreadable = failure instanceof UnreadableKeyRecordError && !newer
   const reset = (): void => {
     setResetting(true)
-    resetUnreadableChat({ client, store: props.store ?? keyStore })
+    resetUnreadableChat({
+      client,
+      store: props.store ?? keyStore,
+      userId
+    })
       .then(() => {
         if (mounted.current) setRound(current => current + 1)
       })

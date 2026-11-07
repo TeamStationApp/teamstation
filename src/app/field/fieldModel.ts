@@ -1,4 +1,5 @@
 import type { AthletePose } from './athletePose'
+import { SCORING_SPEED } from './scoringSpeed'
 
 /** Ground coordinates are metres: home is (0, 0), centre field is negative z. */
 export interface GroundPoint {
@@ -37,6 +38,11 @@ export interface FieldPlayer {
   displayName: string
   jersey: string
   playerId?: number
+  /**
+   * A nameless stand-in playing an empty position for one play: the
+   * position he plays, in place of a player id.
+   */
+  standIn?: string
   batSide?: 'R' | 'L'
   team: 'defense' | 'runner'
   position: GroundPoint
@@ -48,6 +54,16 @@ export interface FieldPlayer {
   batting?: boolean
   droppedBat?: { x: number; z: number; heading: number }
   runnerBase?: number
+}
+/**
+ * Whom a drawn player is to the game: his player id, or a stand-in's
+ * position. A fielder named either way is found by comparing with this.
+ */
+export function fielderKey(player: {
+  playerId?: number
+  standIn?: string
+}): number | string | undefined {
+  return player.playerId ?? player.standIn
 }
 export type CameraView = 'home' | 'overhead' | 'infield' | 'scoreboard'
 export const BASE = 27.432 / Math.sqrt(2)
@@ -134,13 +150,18 @@ export function clampToField(point: GroundPoint): GroundPoint {
 export function setDestination(player: FieldPlayer, point: GroundPoint): void {
   player.target = clampToField(point)
 }
-export const OUT_APPROACH_SPEED = 1.4 * 17
+export const OUT_APPROACH_SPEED = 1.4 * 17 * SCORING_SPEED
 export function locomotionSpeed(
   distance: number,
   offense: boolean,
   slow = false
 ): number {
-  return 1.4 * Math.min(17, 4 + distance * 1.1) * (offense && !slow ? 2 : 1)
+  return (
+    1.4 *
+    Math.min(17, 4 + distance * 1.1) *
+    (offense && !slow ? 2 : 1) *
+    SCORING_SPEED
+  )
 }
 /** Frame-rate independent locomotion; cap elapsed time after a backgrounded tab. */
 export function advancePlayer(player: FieldPlayer, elapsed: number): void {

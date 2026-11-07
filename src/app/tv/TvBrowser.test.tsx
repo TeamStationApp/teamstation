@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { BackHandler } from 'react-native'
+import { AccessibilityInfo, BackHandler } from 'react-native'
 
 import {
   asTeamSummary,
@@ -180,7 +180,7 @@ describe('TV browser journeys', () => {
       '[data-testid="tv-hero-scrim"] stop'
     )
     expect(stops[0].getAttribute('stop-opacity')).equals('0.75')
-    expect(stops[1].getAttribute('offset')).equals('0.4')
+    expect(stops[1].getAttribute('offset')).equals('65%')
     expect(stops[1].getAttribute('stop-opacity')).equals('0')
     const headerStops = document.querySelectorAll(
       '[data-testid="tv-header-gradient"] stop'
@@ -193,7 +193,9 @@ describe('TV browser journeys', () => {
         .length
     ).equals(1)
     expect(
-      document.querySelector('[data-testid="tv-browse-backdrop"]')
+      document.querySelector(
+        '[data-testid="tv-browse-backdrop"] [data-testid="tv-hero-scrim"]'
+      )
     ).not.equals(null)
 
     await click('[data-testid="tv-watch-game"]')
@@ -213,25 +215,53 @@ describe('TV browser journeys', () => {
   })
 
   it('keeps a static thumbnail focus cue with or without artwork and native motion', async () => {
-    await render()
-    for (const id of ['recent-game-0', 'recent-game-1']) {
+    const preference =
+      AccessibilityInfo.isReduceMotionEnabled.bind(AccessibilityInfo)
+    AccessibilityInfo.isReduceMotionEnabled = async () => true
+    try {
+      await render()
+      for (const id of ['recent-game-0', 'recent-game-1']) {
+        await act(async () => {
+          document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.focus()
+        })
+        const cue = document.querySelector<HTMLElement>(
+          `[data-testid="${id}-focus-cue"]`
+        )!
+        expect(cue).not.equals(null)
+        expect(getComputedStyle(cue.parentElement!).overflowX).equals('hidden')
+        expect(getComputedStyle(cue.parentElement!).borderTopLeftRadius).equals(
+          '12px'
+        )
+        expect(getComputedStyle(cue.parentElement!).transform).equals(
+          'scale(1.16)'
+        )
+        for (const other of ['recent-game-0', 'recent-game-1'].filter(
+          value => value !== id
+        )) {
+          const thumbnail = document.querySelector(
+            `[data-testid="${other}"]`
+          )!.firstElementChild!
+          expect(getComputedStyle(thumbnail).transform).not.equals(
+            'scale(1.16)'
+          )
+        }
+        expect(window.getComputedStyle(cue).backgroundColor).equals(
+          'rgba(255, 255, 255, 0.16)'
+        )
+        expect(cue.parentElement!.textContent).not.contains('Demo Hawks')
+        expect(document.querySelectorAll('[data-testid$="-focus-cue"]')).length(
+          1
+        )
+      }
       await act(async () => {
-        document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.focus()
+        document
+          .querySelector<HTMLElement>('[data-testid="tv-search"]')!
+          .focus()
       })
-      const cue = document.querySelector<HTMLElement>(
-        `[data-testid="${id}-focus-cue"]`
-      )!
-      expect(cue).not.equals(null)
-      expect(window.getComputedStyle(cue).backgroundColor).equals(
-        'rgba(255, 255, 255, 0.16)'
-      )
-      expect(cue.parentElement!.textContent).not.contains('Demo Hawks')
-      expect(document.querySelectorAll('[data-testid$="-focus-cue"]')).length(1)
+      expect(document.querySelectorAll('[data-testid$="-focus-cue"]')).length(0)
+    } finally {
+      AccessibilityInfo.isReduceMotionEnabled = preference
     }
-    await act(async () => {
-      document.querySelector<HTMLElement>('[data-testid="tv-search"]')!.focus()
-    })
-    expect(document.querySelectorAll('[data-testid$="-focus-cue"]')).length(0)
   })
 
   it('arbitrates one muted focused preview and restores hero audio after leaving tiles', async () => {
@@ -264,9 +294,28 @@ describe('TV browser journeys', () => {
           await pause()
         })
       }
+      const hero = document.querySelector('video')!
+      await act(async () => {
+        Object.defineProperty(hero, 'duration', {
+          configurable: true,
+          value: 60
+        })
+        hero.dispatchEvent(new window.Event('durationchange'))
+        hero.dispatchEvent(new window.Event('seeked'))
+        hero.currentTime = 37
+      })
+      expect(
+        document
+          .querySelector('[data-testid="tv-hero-midpoint-still"] img')
+          ?.getAttribute('src')
+      ).contains('/videos/video-0/still?t=30')
       await focus('[data-testid="recent-game-0"]')
-      const first = document.querySelector('video')!
-      expect(document.querySelectorAll('video')).length(1)
+      const first = document.querySelector<HTMLVideoElement>(
+        '[data-testid="recent-game-0"] video'
+      )!
+      expect(hero.muted).equals(true)
+      expect(hero.currentTime).equals(37)
+      expect(document.querySelectorAll('video')).length(2)
       expect(first.muted).equals(true)
       await act(async () => {
         Object.defineProperty(first, 'duration', {
@@ -283,11 +332,17 @@ describe('TV browser journeys', () => {
       ).contains('Preview: 30 seconds')
       await focus('[data-testid="recent-game-1"]')
       expect(first.isConnected).equals(false)
-      expect(document.querySelectorAll('video')).length(1)
-      expect(document.querySelector('video')!.muted).equals(true)
+      expect(document.querySelectorAll('video')).length(2)
+      expect(
+        document.querySelector<HTMLVideoElement>(
+          '[data-testid="recent-game-1"] video'
+        )!.muted
+      ).equals(true)
       await focus('[data-testid="tv-search"]')
       expect(document.querySelectorAll('video')).length(1)
-      expect(document.querySelector('video')!.muted).equals(false)
+      expect(document.querySelector('video')).equals(hero)
+      expect(hero.currentTime).equals(37)
+      expect(hero.muted).equals(false)
     } finally {
       delete configured.game
       delete configured.playback

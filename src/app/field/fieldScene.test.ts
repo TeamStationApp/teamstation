@@ -1,14 +1,14 @@
 import { create } from '@react-three/test-renderer'
 import { expect } from 'chai'
-import { describe, it } from 'mocha'
-import React from 'react'
+import { afterEach, describe, it } from 'mocha'
+import React, { act } from 'react'
 import { type Camera, PerspectiveCamera, Ray, Vector2, Vector3 } from 'three'
 
 import type { BallArcState } from './ballArcModel'
 import { projectBases } from './baseProjection'
 import { fieldingLocation } from './fieldingLocation'
 import { createPlayers } from './fieldModel'
-import { FieldScene } from './FieldScene'
+import { FieldScene, whenDrawn } from './FieldScene'
 import type { BaseProjection, FieldPlacement } from './fieldTypes'
 import { nameplateSize, projectPlayerLabel } from './playerPresentation'
 import { TERRAIN } from './terrain'
@@ -683,6 +683,133 @@ describe('outcome-constrained defender gestures', function () {
       expect(players[0].target).deep.equals(players[0].position)
       await renderer.advanceFrames(20, 1 / 60)
       expect(players[0].position).deep.equals({ x: 0, z: -18.44 })
+    } finally {
+      await renderer.unmount()
+    }
+  })
+})
+
+describe('when the field has been drawn', function () {
+  const global = globalThis as { WebGL2RenderingContext?: unknown }
+  const saved = global.WebGL2RenderingContext
+  /** A WebGL 2 context whose fence the GPU signals after `busy` polls. */
+  class FakeGl2 {
+    readonly SYNC_GPU_COMMANDS_COMPLETE = 0x9117
+    readonly TIMEOUT_EXPIRED = 0x911b
+    readonly CONDITION_SATISFIED = 0x911c
+    calls: string[] = []
+    constructor(
+      private busy: number,
+      private readonly fences = true
+    ) {}
+
+    fenceSync(): object | null {
+      this.calls.push('fenceSync')
+      return this.fences ? {} : null
+    }
+
+    flush(): void {
+      this.calls.push('flush')
+    }
+
+    clientWaitSync(_fence: object, _flags: number, timeout: number): number {
+      this.calls.push(`clientWaitSync ${timeout}`)
+      if (this.busy-- > 0) return this.TIMEOUT_EXPIRED
+      return this.CONDITION_SATISFIED
+    }
+
+    deleteSync(): void {
+      this.calls.push('deleteSync')
+    }
+  }
+  afterEach(function () {
+    global.WebGL2RenderingContext = saved
+  })
+
+  it('waits, without blocking, for the GPU to finish the frames it was given', async function () {
+    global.WebGL2RenderingContext = FakeGl2
+    const gl = new FakeGl2(2)
+    let drawn = 0
+    whenDrawn(gl, () => {
+      drawn++
+    })
+    expect(drawn).equals(0)
+    await new Promise(resolve => setTimeout(resolve, 80))
+    expect(drawn).equals(1)
+    expect(gl.calls).deep.equals([
+      'fenceSync',
+      'flush',
+      'clientWaitSync 0',
+      'clientWaitSync 0',
+      'clientWaitSync 0',
+      'deleteSync'
+    ])
+  })
+
+  it('says so at once with no fence to wait on', function () {
+    let drawn = 0
+    global.WebGL2RenderingContext = undefined
+    whenDrawn({}, () => {
+      drawn++
+    })
+    global.WebGL2RenderingContext = FakeGl2
+    whenDrawn({}, () => {
+      drawn++
+    })
+    const fenceless = new FakeGl2(0, false)
+    whenDrawn(fenceless, () => {
+      drawn++
+    })
+    expect(drawn).equals(3)
+    expect(fenceless.calls).deep.equals(['fenceSync'])
+  })
+
+  it('says so at once on a phone, whose context throws from fenceSync', function () {
+    global.WebGL2RenderingContext = FakeGl2
+    const phone = new FakeGl2(0)
+    phone.fenceSync = () => {
+      throw new Error("EXGL: fenceSync() isn't implemented yet!")
+    }
+    let drawn = 0
+    whenDrawn(phone, () => {
+      drawn++
+    })
+    expect(drawn).equals(1)
+    expect(phone.calls).deep.equals([])
+  })
+
+  it('marks the canvas drawn after the ball warmup has left the field', async function () {
+    const attributes: Record<string, string> = {}
+    const renderer = await create(
+      React.createElement(FieldScene, {
+        players: createPlayers(),
+        selected: '',
+        onSelect: () => undefined,
+        view: 'home' as const,
+        zoom: 1
+      }),
+      {
+        width: 390,
+        height: 844,
+        onCreated: state => {
+          state.gl.domElement.setAttribute = (name: string, value: string) => {
+            attributes[name] = value
+          }
+        }
+      }
+    )
+    try {
+      await renderer.advanceFrames(1, 1 / 60)
+      expect(attributes['data-field-ready']).equals('true')
+      expect(attributes['data-field-drawn']).equals(undefined)
+      await act(async () => {
+        await renderer.advanceFrames(3, 1 / 60)
+      })
+      await act(async () => {
+        await new Promise(resolve => requestAnimationFrame(resolve))
+        await new Promise(resolve => setTimeout(resolve, 20))
+      })
+      expect(attributes['data-field-drawn']).equals('true')
     } finally {
       await renderer.unmount()
     }

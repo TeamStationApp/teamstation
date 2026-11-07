@@ -8,10 +8,12 @@ import {
 } from '../../common/scoring/actions'
 import { revealedSides } from '../../common/scoring/lineupHistory'
 import {
+  canField,
   closesAutomatically,
   completesHitOffer,
   DID_NOT_TAG_UP,
   forcedFrom,
+  groundOfferAt,
   hasEligiblePitch,
   homeBackProposal,
   nextDecision,
@@ -33,9 +35,10 @@ import {
 } from './scoringMachine'
 import { approachFirst, basePath, enqueue, sequencesFor } from './scoringMotion'
 import { throwPresentation, type ThrowSequence } from './scoringPresentation'
-import { baseIds, battingSide } from './scoringSelectors'
+import { baseIds, battingSide, fielderName } from './scoringSelectors'
 import {
   CORRECTION_WINDOW_MS,
+  type FielderRef,
   type RunnerAction,
   type ScoringEvent,
   type ScoringSnapshot,
@@ -253,7 +256,10 @@ export function settleRunners(state: ScoringState): void {
       thrower: outcome === 'Batter Out — Other' ? undefined : pending?.fielder
     }
     if (outcome === 'Batter Out — Other') state.phase = 'chooseThrower'
-    else beginDefense(state)
+    else {
+      beginDefense(state)
+      throwOutAtFirst(state)
+    }
     return
   }
   if (decision === 'homeDecision') {
@@ -309,10 +315,40 @@ export function beginDefense(state: ScoringState): void {
 }
 
 /**
+ * An Out at First the first baseman did not field is the fielder's throw to
+ * first: it retires the batter with no receiver to choose, the fielder
+ * assisting and the first baseman (or a stand-in at an empty first) taking
+ * the putout. One the first baseman fielded asks who took his throw, as a
+ * ground out does. It waits for the ball in play to be drawn first.
+ */
+export function throwOutAtFirst(state: ScoringState): void {
+  const action = state.runnerAction
+  const route = action?.defensiveRoute
+  const receiver: FielderRef =
+    state.session.liveData.linescore.defense['1B']?.id ?? '1B'
+  if (
+    state.phase !== 'chooseDefender' ||
+    state.presentation != null ||
+    state.session.pending?.outcome !== 'Out at First' ||
+    action?.purpose !== 'batterRetirement' ||
+    route?.length !== 1 ||
+    route[0].id === receiver
+  )
+    return
+  action.throwOut = true
+  action.defender = receiver
+  const sequence = throwPresentation(state, receiver, BASES[1])
+  if (state.presentationEnabled === true) state.presentation = sequence
+  else completeDefense(state, sequence)
+}
+
+/**
  * During the relay that retires the batter, a forced runner the throw beat to
  * the next base is out there: the fielder holding the ball puts him out, with
  * the relay so far behind him. The relay then goes on for the batter from that
- * fielder, so a 6-4-3 records the lead runner first and the batter second.
+ * fielder, so a 6-4-3 records the lead runner first and the batter second. A
+ * runner a ground out already stood on that base is dropped where he stands:
+ * forced out when he was forced from his own base, tagged out when not.
  */
 export function forceOutInRelay(
   state: ScoringState,
@@ -328,6 +364,11 @@ export function forceOutInRelay(
   const from =
     [offense.first?.id, offense.second?.id, offense.third?.id].indexOf(runner) +
     1
+  const offer = to === from ? groundOfferAt(game, runner, to) : undefined
+  const forced =
+    offer != null
+      ? forcedFrom(game, offer.start ?? offer.from)
+      : to === from + 1 && forcedFrom(game, from)
   if (
     state.phase !== 'chooseDefender' ||
     action?.purpose !== 'batterRetirement' ||
@@ -336,20 +377,19 @@ export function forceOutInRelay(
     generation !== state.generation ||
     route.length === 0 ||
     from === 0 ||
-    to !== from + 1 ||
-    !forcedFrom(game, from)
+    (offer == null && !forced)
   )
     return state
   return accepted(
     state,
-    `Force out ${game.gameData.players[runner].fullName}`,
+    `${forced ? 'Force' : 'Tag'} out ${game.gameData.players[runner].fullName}`,
     next => {
       act(next, {
         type: 'runnerMovement',
         runner,
         to: destination(to),
         out: true,
-        reason: 'Force Out',
+        reason: forced ? 'Force Out' : 'Tag Out',
         fielders: route.map(hop => hop.id),
         locations: route.map(hop => ({ ...hop.point })),
         runnerLocation: { ...BASES[to % 4] }
@@ -384,6 +424,8 @@ export function completeDefense(
       { id: sequence.thrower, point: { ...sequence.holderOrigin } }
     ]
     action.defensiveRoute.push({ id: sequence.receiver, point })
+  }
+  if (sequence.stage === 'transfer' && action.throwOut !== true) {
     if (state.pendingPlay != null) {
       state.pendingPlay.ballHolder = sequence.receiver
       state.pendingPlay.ballLocation = { ...point }
@@ -413,7 +455,7 @@ export function completeDefense(
 }
 
 /** The runner the scorer called out is out, by the fielders who handled it. */
-export function finishOut(state: ScoringState, defender: number): void {
+export function finishOut(state: ScoringState, defender: FielderRef): void {
   const action = state.runnerAction!
   const route = action.defensiveRoute
   const fielders =
@@ -524,16 +566,15 @@ function commitSafe(state: ScoringState): void {
     state.presentation = pickoff
 }
 
+/**
+ * Whether a fielder is in the field: a player on the defense, or a stand-in
+ * at a position nobody is playing.
+ */
 function validDefender(
   state: ScoringState,
-  id: number | undefined
-): id is number {
-  return (
-    id != null &&
-    Object.values(state.session.liveData.linescore.defense).some(
-      player => player?.id === id
-    )
-  )
+  id: FielderRef | undefined
+): id is FielderRef {
+  return id != null && canField(state.session.liveData.linescore.defense, id)
 }
 
 /**
@@ -798,7 +839,7 @@ export function runnerReducer(
       return state
     return accepted(
       state,
-      `Error by ${state.session.gameData.players[event.id].fullName}`,
+      `Error by ${fielderName(state.session, event.id)}`,
       next => {
         act(next, {
           type: 'fieldingPlay',
@@ -1057,7 +1098,7 @@ export function runnerReducer(
       return state
     return accepted(
       state,
-      `Thrower ${state.session.gameData.players[event.id].fullName}`,
+      `Thrower ${fielderName(state.session, event.id)}`,
       next => {
         next.runnerAction!.thrower = event.id
         next.runnerAction!.throwerPoint = { ...event.point }
@@ -1142,8 +1183,8 @@ export function runnerReducer(
     return accepted(
       state,
       event.id == null
-        ? `Out by ${state.session.gameData.players[id].fullName}`
-        : `Throw to ${state.session.gameData.players[id].fullName}`,
+        ? `Out by ${fielderName(state.session, id)}`
+        : `Throw to ${fielderName(state.session, id)}`,
       next => {
         next.runnerAction!.runnerPoint =
           event.runnerPoint ?? next.runnerAction!.runnerPoint

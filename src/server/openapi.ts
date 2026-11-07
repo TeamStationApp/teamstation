@@ -864,6 +864,39 @@ const idempotencyKeyParam = {
   schema: { type: 'string', minLength: 1, maxLength: 200 }
 }
 
+/** What every answer of a post says of the game it leaves. */
+const postedDigests = {
+  currentPlay: {
+    oneOf: [{ $ref: '#/components/schemas/GumboCurrentPlay' }, { type: 'null' }]
+  },
+  playsDigest: {
+    type: 'string',
+    description:
+      'A digest of the stored plays and the at-bat in progress once this ' +
+      'post is written, as `GET` gives it.'
+  },
+  priorPlaysDigest: {
+    type: ['string', 'null'],
+    description:
+      'On a live post, the same digest of the game as the post found it, ' +
+      'before writing: when it is the one the sender last had, everything ' +
+      'stored is its own, and a change carrying `playsDigest` is its own ' +
+      'echo. Null on a replace post.'
+  },
+  lineupsDigest: {
+    type: ['string', 'null'],
+    description:
+      "The digest the game keeps of both sides' lineups once this post is " +
+      'written, as `GET /games/{gameId}/lineups` gives it: the `lineupsBase` ' +
+      'of the next live post. Null only after a replace post to a game ' +
+      'never scored live.'
+  },
+  generation: {
+    type: 'integer',
+    description: "The game's play generation, which a post never changes."
+  }
+}
+
 const streamIdParam = {
   name: 'streamId',
   in: 'path',
@@ -1556,9 +1589,13 @@ const gumboSchemas = {
         type: 'array',
         items: {
           type: 'object',
-          required: ['player', 'credit'],
+          required: ['credit'],
           properties: {
-            player: gumboPerson,
+            player: {
+              ...gumboPerson,
+              description:
+                'Left out for a stand-in at a position nobody was playing: the position alone is credited.'
+            },
             position: {
               ...gumboPosition,
               description: 'Left out for a fielder not on defence.'
@@ -2101,6 +2138,18 @@ export function openApiDocument(version: string): OpenApiDocument {
                 generation: { type: 'integer' }
               }
             }
+          }
+        },
+        WirePlayRow: {
+          type: 'object',
+          description:
+            'A stored play as `GET /games/{gameId}/events` gives it: its id, ' +
+            'its game and its document.',
+          required: ['id', 'gameId', 'gumbo'],
+          properties: {
+            id: { type: 'string' },
+            gameId: { type: 'string' },
+            gumbo: { $ref: '#/components/schemas/GumboPlay' }
           }
         },
         BattingRow: battingSchema,
@@ -2711,6 +2760,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'jersey',
             'positions',
             'isPlayer',
+            'self',
             'role',
             'bats',
             'throws',
@@ -2763,6 +2813,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             jersey: { type: ['string', 'null'] },
             positions: { type: 'array', items: { type: 'string' } },
             isPlayer: { type: 'boolean' },
+            self: {
+              type: 'boolean',
+              description:
+                'The signed-in person, including another id merged into ' +
+                'theirs. False for everybody else.'
+            },
             role: {
               type: 'string',
               description: 'Their membership: `owner`, `manager` or `member`.'
@@ -2928,7 +2984,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                   'roles',
                   'member',
                   'follower',
-                  'editable'
+                  'editable',
+                  'player'
                 ],
                 properties: {
                   level: {
@@ -2962,13 +3019,20 @@ export function openApiDocument(version: string): OpenApiDocument {
                   },
                   member: { type: 'boolean' },
                   follower: { type: 'boolean' },
-                  editable: { type: 'boolean' }
+                  editable: { type: 'boolean' },
+                  player: {
+                    type: 'boolean',
+                    description:
+                      'A team section whose membership is a player. False ' +
+                      'on a season or league section, and on a team ' +
+                      'membership that is not a player.'
+                  }
                 }
               }
             },
             viewer: {
               type: 'object',
-              required: ['manages', 'admin'],
+              required: ['manages', 'admin', 'self'],
               properties: {
                 manages: {
                   type: 'boolean',
@@ -2978,6 +3042,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                 admin: {
                   type: 'boolean',
                   description: 'An administrator of it, who changes Admin.'
+                },
+                self: {
+                  type: 'boolean',
+                  description:
+                    'The signed-in person, including another id merged ' +
+                    'into theirs.'
                 }
               }
             }
@@ -5156,9 +5226,28 @@ export function openApiDocument(version: string): OpenApiDocument {
             'its changes on top of it. A live post naming a `generation` ' +
             'other than the game’s, made before a reset deleted its plays, ' +
             'is refused the same way with `details: { stale: true, ' +
-            'generation }`: the sender opens the game again.',
+            'generation }`: the sender opens the game again. A post answers ' +
+            'every stored play, unless it is a live post and `answer=edits` ' +
+            'asks for only what it wrote (`edits`).',
           security: [{ bearer: [] }],
-          parameters: [gameIdParam, idempotencyKeyParam],
+          parameters: [
+            gameIdParam,
+            idempotencyKeyParam,
+            {
+              name: 'answer',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['edits'] },
+              description:
+                'Optional. `edits` answers a live post with its edits: a put ' +
+                'of each play it wrote or its tag repair rewrote, a remove of ' +
+                'each index it took away, and the at-bat in progress. Left ' +
+                'out, a post answers every stored play, as `GET` gives them, ' +
+                'as a phone that keeps its own copy of the game asks. A ' +
+                'replace post answers every play either way. Any other value ' +
+                'is 400.'
+            }
+          ],
           requestBody: {
             required: true,
             content: {
@@ -5236,62 +5325,76 @@ export function openApiDocument(version: string): OpenApiDocument {
           },
           responses: {
             200: {
-              description: 'The stored plays, in atBatIndex order',
+              description:
+                'Every stored play, in atBatIndex order, or on a live post ' +
+                'with `answer=edits` only its edits. A live post sent again ' +
+                'under its `Idempotency-Key` answers every stored play: as ' +
+                'puts in its edits, when it asked for them. A put of a play ' +
+                'its sender already holds changes nothing.',
               content: {
                 'application/json': {
                   schema: {
-                    type: 'object',
-                    required: [
-                      'plays',
-                      'currentPlay',
-                      'playsDigest',
-                      'lineupsDigest'
-                    ],
-                    properties: {
-                      plays: {
-                        type: 'array',
-                        items: {
-                          type: 'object',
-                          required: ['id', 'gameId', 'gumbo'],
-                          properties: {
-                            id: { type: 'string' },
-                            gameId: { type: 'string' },
-                            gumbo: { $ref: '#/components/schemas/GumboPlay' }
-                          }
+                    oneOf: [
+                      {
+                        type: 'object',
+                        required: [
+                          'plays',
+                          'currentPlay',
+                          'playsDigest',
+                          'lineupsDigest'
+                        ],
+                        properties: {
+                          plays: {
+                            type: 'array',
+                            items: { $ref: '#/components/schemas/WirePlayRow' }
+                          },
+                          ...postedDigests
                         }
                       },
-                      currentPlay: {
-                        oneOf: [
-                          { $ref: '#/components/schemas/GumboCurrentPlay' },
-                          { type: 'null' }
-                        ]
-                      },
-                      playsDigest: {
-                        type: 'string',
-                        description:
-                          'A digest of the stored plays and the at-bat in ' +
-                          'progress once this post is written, as `GET` and ' +
-                          "the game socket's `plays` notices give it."
-                      },
-                      priorPlaysDigest: {
-                        type: ['string', 'null'],
-                        description:
-                          'On a live post, the same digest of the game as ' +
-                          'the post found it, before writing: when it is the ' +
-                          'one the sender last had, everything stored is its ' +
-                          'own, and the notice carrying `playsDigest` is its ' +
-                          'own echo. Null on a replace post.'
-                      },
-                      lineupsDigest: {
-                        type: ['string', 'null'],
-                        description:
-                          "The digest the game keeps of both sides' lineups " +
-                          'once this post is written, as `GET ' +
-                          '/games/{gameId}/lineups` gives it: the ' +
-                          '`lineupsBase` of the next live post. Null only ' +
-                          'after a replace post to a game never scored live.'
+                      {
+                        type: 'object',
+                        required: [
+                          'edits',
+                          'currentPlay',
+                          'playsDigest',
+                          'priorPlaysDigest',
+                          'lineupsDigest',
+                          'generation'
+                        ],
+                        properties: {
+                          edits: {
+                            type: 'array',
+                            description:
+                              'A put of each play the post wrote or its tag ' +
+                              'repair rewrote, in atBatIndex order, then a ' +
+                              'remove of each index it took away.',
+                            items: {
+                              oneOf: [
+                                {
+                                  type: 'object',
+                                  required: ['op', 'play'],
+                                  properties: {
+                                    op: { type: 'string', enum: ['put'] },
+                                    play: {
+                                      $ref: '#/components/schemas/WirePlayRow'
+                                    }
+                                  }
+                                },
+                                {
+                                  type: 'object',
+                                  required: ['op', 'atBatIndex'],
+                                  properties: {
+                                    op: { type: 'string', enum: ['remove'] },
+                                    atBatIndex: { type: 'integer' }
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          ...postedDigests
+                        }
                       }
-                    }
+                    ]
                   }
                 }
               }
@@ -5312,17 +5415,29 @@ export function openApiDocument(version: string): OpenApiDocument {
             200: {
               description:
                 '{ plays: [{ id, gameId, gumbo }], currentPlay, ' +
-                'playsDigest, lineupsDigest }: `gumbo` is a `GumboPlay`, ' +
+                'playsDigest, namesDigest, lineupsDigest }: `gumbo` is a ' +
+                '`GumboPlay`, ' +
                 '`currentPlay` a `GumboCurrentPlay` or null, `playsDigest` a ' +
                 'digest of both, as a live post answers it and the game ' +
-                "socket's `plays` notices carry it, and `lineupsDigest` the " +
+                "socket's `playEdits` changes carry it, and `lineupsDigest` the " +
                 "digest the game keeps of both sides' lineups, which a live " +
                 'post names as its `lineupsBase`, `generation` the ' +
                 'game’s play generation, one more after each reset, and ' +
                 '`swap` what swapping home and away does: `swap` before the ' +
                 'first pitch, `reset` once TeamStation scored a play, and ' +
                 '`scoredElsewhere` for a game it cannot swap, and `withdrawn` ' +
-                'for a game a team withdrew from, which is never swapped',
+                'for a game a team withdrew from, which is never swapped. ' +
+                '`halves`, present only when not empty, lists the teams whose ' +
+                "players' first and last names this read carries (those whose " +
+                'lineups the reader may save); a read without it is named as ' +
+                "the game socket's `playEdits` are, and only such a read has " +
+                'them applied to it. `namesDigest` is a digest of the names ' +
+                'and formats the plays are named from, as every `playEdits` ' +
+                'change carries it (null on a change that says only to read ' +
+                'again and names none): a player can be named otherwise with ' +
+                'nothing written, as when an add holding them on another team ' +
+                'lapses, so a change naming another digest is not applied to ' +
+                'this read, and the game is read again',
               content: {
                 'application/json': {
                   schema: {
@@ -5353,12 +5468,14 @@ export function openApiDocument(version: string): OpenApiDocument {
                         ]
                       },
                       playsDigest: { type: 'string' },
+                      namesDigest: { type: 'string' },
                       lineupsDigest: { type: 'string' },
                       generation: { type: 'integer' },
                       swap: {
                         type: 'string',
                         enum: ['swap', 'reset', 'scoredElsewhere', 'withdrawn']
-                      }
+                      },
+                      halves: { type: 'array', items: { type: 'string' } }
                     }
                   }
                 }
@@ -5731,6 +5848,17 @@ export function openApiDocument(version: string): OpenApiDocument {
                         'The play generation the saver opened the game on. ' +
                         'A game reset since refuses the save with 409 and ' +
                         '`details: { stale: true, generation }`.'
+                    },
+                    changedAt: {
+                      type: 'string',
+                      format: 'date-time',
+                      description:
+                        'When the change was made. The side’s lineup ' +
+                        'change is stored at that time (never later than ' +
+                        'now), and a change of the same side already ' +
+                        'stored with a later time refuses the save with 409 ' +
+                        'and `details: { stale: true, newer: true }`: the ' +
+                        'latest creation time wins.'
                     }
                   }
                 }
@@ -6787,6 +6915,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary:
             'Who people are here, by the ids another service has, or the players you guard',
           description:
+            'With forGroupKind and forGroupId, only administrators of that group may search sign-in accounts. q matches only the name mayEditName permits: full name or first name and last initial. Returns at most five {userId, displayName, avatarUrl, affiliations} rows with a signed photo URL (or null) and team/guardian affiliations using privacy-formatted related names, prefix matches first and stable name/id ties. Empty q returns []. Repeated exclude removes selected account IDs before the limit. This mode cannot be combined with other filters. ' +
             'A play names people by their numeric gumboId, so a sender ' +
             'asks this with the ids it holds first. Each answer is ' +
             '`{ userId, gumboId, externalIds, shortName, avatarUrl }`: a person, ' +
@@ -6824,6 +6953,28 @@ export function openApiDocument(version: string): OpenApiDocument {
             'see but may not add to is 403.',
           security: [{ bearer: [] }],
           parameters: [
+            {
+              name: 'forGroupKind',
+              in: 'query',
+              schema: { type: 'string', enum: ['team', 'season', 'league'] },
+              description:
+                'Account search destination kind; requires forGroupId. Omitted: existing collection modes.'
+            },
+            {
+              name: 'forGroupId',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Account search destination; requires forGroupKind.'
+            },
+            {
+              name: 'exclude',
+              in: 'query',
+              schema: { type: 'array', maxItems: 100, items: userIdSchema },
+              style: 'form',
+              explode: true,
+              description:
+                'With forGroupKind: selected accounts to omit. Default: none.'
+            },
             ...videoCollectionParameters,
             {
               name: 'view',
@@ -9035,8 +9186,9 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/manage/{scopeType}/{scopeId}/people': {
         post: {
-          summary: 'Add one person by address',
+          summary: 'Add one person by address or selected account',
           description:
+            'Send exactly one of email or userId. A selected userId must still be a sign-in account; its person response contains userId and the name the caller may read, without email. Selected accounts use the same grant, notification and mail rules. ' +
             'An address an account has verified adds that account at once, ' +
             'as a member of this level with the roles asked for, Admin ' +
             'included: `added` true and `person` (`added` false when they ' +
@@ -9057,9 +9209,13 @@ export function openApiDocument(version: string): OpenApiDocument {
               'application/json': {
                 schema: {
                   type: 'object',
-                  required: ['email'],
+                  oneOf: [
+                    { required: ['email'], not: { required: ['userId'] } },
+                    { required: ['userId'], not: { required: ['email'] } }
+                  ],
                   properties: {
                     email: { type: 'string', format: 'email' },
+                    userId: userIdSchema,
                     admin: { type: 'boolean', default: false },
                     flags: {
                       type: 'array',
@@ -10013,7 +10169,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             "`{ type: 'reset' }`, which clears every override and TS " +
             "Watcher's stored state, so the board shows the game's own " +
             'scoring. An unreadable message is answered with ' +
-            '`{ error }` and the socket stays open. **Who may call:** a site ' +
+            '`{ error }` and the socket stays open; one the server had no ' +
+            'database connection to check is answered with `{ error, retry: ' +
+            'true }`, was not stored, and may be sent again. **Who may call:** a site ' +
             'admin or an admin of either team; anybody else gets 404, or ' +
             'close 4403 on the socket. Socket close codes: 4401 not signed ' +
             'in, 4403 may not override this game, 4404 no such game or its ' +
@@ -10069,7 +10227,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`ScoreState` JSON object, merged into what Watcher has sent ' +
             'before. Team names are ignored: they come from the game. An ' +
             'unreadable message is answered with `{ error }` and the socket ' +
-            'stays open. **Who may call:** a site admin or an admin of ' +
+            'stays open; one the server had no database connection to check ' +
+            'is answered with `{ error, retry: true }`, was not stored, and ' +
+            'may be sent again. **Who may call:** a site admin or an admin of ' +
             'either team, by bearer token or session cookie. Close codes: ' +
             '4401 not signed in, 4403 may not publish this game, 4404 no ' +
             'such game or its scoreboard is closed, 1011 the store is ' +

@@ -236,4 +236,39 @@ describe('compact defensive field', function () {
       host.remove()
     }
   })
+  it('makes each assigned card a drag source with no hold, and leaves an empty one a drop target only (U32)', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => {
+        root.render(
+          <ThemeProvider>
+            <RosterDragGroup>
+              <DefensiveField
+                defense={{ P: 1, C: null }}
+                display={() => '#7 Mookie Betts'}
+                onPlace={() => undefined}
+                onClear={() => undefined}
+              />
+            </RosterDragGroup>
+          </ThemeProvider>
+        )
+      })
+      const pitcher = host.querySelector<HTMLElement>(
+        '[data-roster-target="defense-P"]'
+      )!
+      const catcher = host.querySelector<HTMLElement>(
+        '[data-roster-target="defense-C"]'
+      )!
+      expect(pitcher.getAttribute('data-roster-player')).equals('1')
+      expect(pitcher.style.touchAction).equals('none')
+      expect(catcher.getAttribute('data-roster-player')).equals(null)
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+    }
+  })
 })

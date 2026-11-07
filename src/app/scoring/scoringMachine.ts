@@ -1,4 +1,9 @@
-import type { Problem, ScoringAction } from '../../common/scoring/actions'
+import {
+  namesFieldersById,
+  type Problem,
+  type ScoringAction
+} from '../../common/scoring/actions'
+import { pitchThrown } from '../../common/scoring/lineup'
 import { confirmedSides } from '../../common/scoring/lineupHistory'
 import type { StagedRunner } from '../../common/scoring/rosterCommands'
 import {
@@ -36,14 +41,16 @@ import {
   forceOutInRelay,
   Refused,
   runnerReducer,
-  settleRunners
+  settleRunners,
+  throwOutAtFirst
 } from './scoringFlow'
 import { approachFirst } from './scoringMotion'
 import { outBatterPoint, pitchPresentation } from './scoringPresentation'
 import {
   battingSide,
   bottomActionsAllowed,
-  canSwitchBatter
+  canSwitchBatter,
+  fielderName
 } from './scoringSelectors'
 import {
   CORRECTION_WINDOW_MS,
@@ -165,7 +172,8 @@ export function screenOf(state: ScoringState): ScoringScreenState {
  * The roster save the screen logs: the setup, then each pinch runner, as one
  * Undo step. A side still in the roster order a save left, because that save
  * could not see the team, is not confirmed, so the first pitch does not take
- * that order as the team's default. Every other side is confirmed.
+ * that order as the team's default. Every other side is confirmed. After the
+ * first pitch the save keeps each side's batting slot (`keepSlot`).
  */
 function applyRosterSave(
   next: ScoringSnapshot,
@@ -180,6 +188,7 @@ function applyRosterSave(
     kind: 'roster',
     setup,
     ...(confirmed.length === 0 ? {} : { confirmed }),
+    ...(pitchThrown(next.session) ? { keepSlot: true } : {}),
     ...(nextBatter == null ? {} : { nextBatter })
   })
   // One Undo step: a refused runner takes back the setup too.
@@ -564,7 +573,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
         next.past = [
           ...next.past.slice(0, draft.historyLength),
           {
-            label: `Out by ${next.session.gameData.players[sequence.receiver].fullName}`,
+            label: `Out by ${fielderName(next.session, sequence.receiver)}`,
             logLength: draft.logLength,
             screen: copyState(draft.screen)
           }
@@ -592,6 +601,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
         )
     }
     settleRunners(next)
+    throwOutAtFirst(next)
     return next
   }
   // Above the presentation guard, so a sentence spoken mid-animation is told
@@ -1049,6 +1059,20 @@ function dictated(
 ): ScoringState {
   const { transcript } = event
   if (event.actions.length === 0) return state
+  // A sentence names fielders by player: a stand-in is only ever tapped.
+  const said = event.actions.filter(namesFieldersById)
+  if (said.length < event.actions.length)
+    return {
+      ...state,
+      dictationQuestion: undefined,
+      dictation: {
+        transcript,
+        problem: {
+          code: 'malformed',
+          message: 'A dictated play names its fielders by player'
+        }
+      }
+    }
   if (
     state.readOnly !== true &&
     state.session.pending == null &&
@@ -1066,7 +1090,7 @@ function dictated(
   // What was left to be assumed is filled in, a steal is the runner's on the
   // base before the one taken, and runners who move together go lead runner
   // first, however they were said.
-  const defaults = sentenceDefaults(state.session, event.actions, transcript)
+  const defaults = sentenceDefaults(state.session, said, transcript)
   // What the third out left out is told the scorer with the sentence, once
   // it is played, however long it waits for a reel or an answer.
   const note =
@@ -1148,7 +1172,7 @@ function dictated(
       if (
         index > 0 &&
         problem.code === 'notNow' &&
-        /^(Missing defensive positions:|No players in lineup|Accept the current batting lineup)/.test(
+        /^(Missing pitcher|No players in lineup|Accept the current batting lineup)/.test(
           problem.message
         )
       ) {

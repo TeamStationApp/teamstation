@@ -22,6 +22,7 @@ import { safeErrorEvent } from '../../common/observability/errors'
 import { userIdOfGumbo } from '../../common/userId'
 import { envelope } from '../../logServer/envelope'
 import type { Actor } from '../auth/sessions'
+import { hashToken } from '../auth/tokens'
 import { deployedVersion, versionOf } from '../buildVersion'
 import type { Database } from '../db/database'
 import { withActor } from '../middleware/withAuth'
@@ -242,7 +243,17 @@ describe('server errors reach Sentry', function () {
             revokedAt: null,
             isAdmin: true
           })
-        if (property === 'execute') return async () => []
+        if (property === 'execute')
+          return async () => [
+            {
+              sessionId: 1,
+              userId: userIdOfGumbo(7),
+              tokenHash: hashToken('token'),
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+              revokedAt: null,
+              isAdmin: true
+            }
+          ]
         if (property === 'then') return undefined
         return () => sessionDb
       }

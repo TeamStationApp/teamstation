@@ -2,10 +2,10 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
-  type BallInPlayAction,
   cleanAction,
-  type PitchAction,
-  type ScoringAction
+  type DictatedAction as ScoringAction,
+  type DictatedBallInPlay as BallInPlayAction,
+  type PitchAction
 } from '../../common/scoring/actions'
 import type { Depth, FOUL_DEPTHS } from '../../common/scoring/depth'
 import { distanceFeet } from '../../common/scoring/document'
@@ -30,7 +30,8 @@ import {
   foulFlightMs,
   hitPresentation,
   PITCH_TIMING,
-  type PitchSequence
+  type PitchSequence,
+  SCORING_SPEED
 } from './scoringPresentation'
 import type { ScoringState } from './scoringTypes'
 
@@ -606,7 +607,8 @@ describe('where a dictated foul went', function () {
     ).greaterThan(2)
     // A foul into the seats is in the air no longer than a deep fly.
     expect(foulFlightMs({ x: 86, z: -60 })).equals(FOUL_FLIGHT_MAX_MS)
-    expect(foulFlightMs({ x: 19, z: -13 })).closeTo(1151, 1)
+    // At scoring's pace: twice a fly ball's.
+    expect(foulFlightMs({ x: 19, z: -13 })).closeTo(1151 / SCORING_SPEED, 1)
     const plain = scoringReducer(base, {
       type: 'DICTATED',
       transcript: 'Fouled it off.',

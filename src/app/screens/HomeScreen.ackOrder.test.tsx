@@ -8,11 +8,11 @@ import {
   type TeamStationClient,
   type TeamSummary
 } from '../../common/api'
-import { ACK_GIVE_UP_MS } from '../../common/screenScope'
+import { ACK_GIVE_UP_MS, COALESCE_MS } from '../../common/screenScope'
 import {
   FakeScopeSocket,
   heldTimers,
-  revisionStamps
+  testClock
 } from '../../test/fakeScreenScope'
 import { ScreenScopeProvider } from '../hooks/useScreenScope'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -55,40 +55,36 @@ describe('S3: Home waits for the home scope before it reads', function () {
     document.body.replaceChildren()
   })
 
-  /**
-   * Home's client, writing each REST call into `log` and stamping it with
-   * the revision the test sets for its path, as `x-teamstation-revision`
-   * would.
-   */
+  /** Home's client, writing each REST call into `log`. */
   function homeClient(log: string[]): {
     client: TeamStationClient
-    stamps: ReturnType<typeof revisionStamps>
+    state: { offline: boolean }
   } {
-    const stamps = revisionStamps()
+    const state = { offline: false }
     const call =
-      <T,>(name: string, path: string, answer: T) =>
+      <T,>(name: string, answer: T) =>
       async (): Promise<T> => {
         log.push(`client.${name}`)
         await Promise.resolve()
-        stamps.answer(path)
         return answer
       }
-    const client = Object.assign(stamps, {
-      home: call('home', '/me/home', {
+    const client = Object.assign(state, {
+      home: call('home', {
         teams: [{ ...hawks, direct: true, source: 'member' }],
         seasons: [],
         leagues: []
       }),
-      recentGame: call('recentGame', '/events?played=1&limit=1', null),
-      liveNow: call('liveNow', '/live/now', []),
+      recentGame: call('recentGame', null),
+      liveNow: call('liveNow', []),
       cached: async () => undefined
     })
-    return { client: client as unknown as TeamStationClient, stamps }
+    return { client: client as unknown as TeamStationClient, state }
   }
 
   async function render(
     client: TeamStationClient,
-    socket: FakeScopeSocket
+    socket: FakeScopeSocket,
+    clock?: ReturnType<typeof testClock>
   ): Promise<void> {
     const host = document.createElement('div')
     document.body.appendChild(host)
@@ -96,7 +92,11 @@ describe('S3: Home waits for the home scope before it reads', function () {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <ScreenScopeProvider socket={socket} scope={{ scope: 'home' }}>
+          <ScreenScopeProvider
+            socket={socket}
+            scope={{ scope: 'home' }}
+            timers={clock}
+          >
             <HomeScreen
               client={client}
               onOpenTeam={() => undefined}
@@ -113,55 +113,63 @@ describe('S3: Home waits for the home scope before it reads', function () {
   const homeCalls = (log: string[]): number =>
     log.filter(line => line === 'client.home').length
 
-  it('asks for the teams only after subscribed, and again for a newer changed', async function () {
-    timers = heldTimers(ACK_GIVE_UP_MS)
+  it('asks for the teams only after subscribed, and again for a changed, at most every 3 s', async function () {
+    const clock = testClock(0)
     const log: string[] = []
     const socket = new FakeScopeSocket(log)
-    const { client, stamps } = homeClient(log)
-    for (const path of ['/me/home', '/events?played=1&limit=1'])
-      stamps.revisions.set(path, '3')
-    await render(client, socket)
+    const { client } = homeClient(log)
+    await render(client, socket, clock)
     expect(socket.asked()).deep.equals(['home'])
     // Rendered, and still waiting: inside the three seconds, nothing is read.
     expect(homeCalls(log), 'client.home before subscribed').equals(0)
     expect(log).deep.equals(['subscribe home'])
     expect(document.body.textContent).includes('Loading…')
-    expect(timers.pending(), 'each load waits for the ack').equals(3)
+    expect(clock.pending(), 'each load waits for the ack').deep.equals([
+      ACK_GIVE_UP_MS,
+      ACK_GIVE_UP_MS,
+      ACK_GIVE_UP_MS
+    ])
 
     await act(async () => {
-      socket.ack('3')
+      socket.ack()
     })
     await settle()
-    expect(log.indexOf('subscribed 3')).lessThan(log.indexOf('client.home'))
+    expect(log.indexOf('subscribed')).lessThan(log.indexOf('client.home'))
     expect(homeCalls(log), 'client.home after subscribed').equals(1)
     expect(log).includes('client.recentGame').and.includes('client.liveNow')
     expect(document.body.textContent).includes('Alta Hawks')
-    expect(timers.pending(), 'the give-up timers are cleared').equals(0)
+    expect(clock.pending(), 'the give-up timers are cleared').deep.equals([])
 
-    // A notice no newer than what Home read does not read again.
+    // A notice a second after that read waits for its 3 s.
+    clock.advance(1000)
     await act(async () => {
-      socket.changed('3')
+      socket.changed()
     })
     await settle()
     expect(homeCalls(log)).equals(1)
-
-    stamps.revisions.set('/me/home', '4')
     await act(async () => {
-      socket.changed('4')
+      clock.advance(COALESCE_MS - 1000)
     })
     await settle()
-    expect(homeCalls(log), 'client.home after a newer changed').equals(2)
-    trace('online: subscribe, ack, read, newer changed, read', log)
+    expect(homeCalls(log), 'client.home 3 s after the read').equals(2)
+    // One after the next 3 s reads at once.
+    clock.advance(COALESCE_MS)
+    await act(async () => {
+      socket.changed()
+    })
+    await settle()
+    expect(homeCalls(log), 'client.home at once').equals(3)
+    trace('online: subscribe, ack, read, changed, read', log)
   })
 
   it('lets a notice of one game alone pass its lists, and reads the recent game and what is live again', async function () {
-    timers = heldTimers(ACK_GIVE_UP_MS)
     const log: string[] = []
     const socket = new FakeScopeSocket(log)
     const { client } = homeClient(log)
-    await render(client, socket)
+    const clock = testClock(0)
+    await render(client, socket, clock)
     await act(async () => {
-      socket.ack('3')
+      socket.ack()
     })
     await settle()
     const count = (name: string): number =>
@@ -170,32 +178,32 @@ describe('S3: Home waits for the home scope before it reads', function () {
       1, 1, 1
     ])
     // A play: the game's score moved, and no team or season did.
+    clock.advance(COALESCE_MS)
     await act(async () => {
-      socket.deliver({ type: 'changed', revision: '9', gameId: 'g1' })
+      socket.changed('g1')
     })
     await settle()
     expect(count('home'), 'the lists let it pass').equals(1)
     expect(count('recentGame'), 'the recent game reads it').equals(2)
     expect(count('liveNow'), 'what is live reads it').equals(2)
     // A notice of a list still reads the lists.
+    clock.advance(COALESCE_MS)
     await act(async () => {
-      socket.changed('10')
+      socket.changed()
     })
     await settle()
     expect(count('home')).equals(2)
   })
 
   it('reads its teams again when a game goes final, and shows the record it moved', async function () {
-    timers = heldTimers(ACK_GIVE_UP_MS)
     const log: string[] = []
     const socket = new FakeScopeSocket(log)
-    const { client, stamps } = homeClient(log)
+    const { client } = homeClient(log)
     let record: TeamSummary['record'] = null
     Object.assign(client, {
       home: async () => {
         log.push('client.home')
         await Promise.resolve()
-        stamps.answer('/me/home')
         return {
           teams: [{ ...hawks, record, direct: true, source: 'member' }],
           seasons: [],
@@ -203,19 +211,21 @@ describe('S3: Home waits for the home scope before it reads', function () {
         }
       }
     })
-    await render(client, socket)
+    const clock = testClock(0)
+    await render(client, socket, clock)
     await act(async () => {
-      socket.ack('3')
+      socket.ack()
     })
     await settle()
     expect(homeCalls(log)).equals(1)
     expect(document.body.textContent).not.include('1–0')
-    // Going final, the server tells the game, and its teams and season at
-    // the same revision: the lists pass the first and read on the second.
+    // Going final, the server tells the game, and its teams and season: the
+    // lists pass the first and read on the second.
     record = { w: 1, l: 0, t: 0, seasonName: null }
+    clock.advance(COALESCE_MS)
     await act(async () => {
-      socket.deliver({ type: 'changed', revision: '9', gameId: 'g1' })
-      socket.changed('9')
+      socket.changed('g1')
+      socket.changed()
     })
     await settle()
     expect(homeCalls(log), 'the lists are read again').equals(2)
@@ -272,7 +282,7 @@ describe('S3: Home waits for the home scope before it reads', function () {
     expect(loaded).equals(0)
 
     await act(async () => {
-      socket.ack('3')
+      socket.ack()
     })
     await settle()
     expect(homeCalls(log)).equals(1)
@@ -290,7 +300,7 @@ describe('S3: Home waits for the home scope before it reads', function () {
     await render(client, socket)
     expect(document.body.textContent).includes('Loading…')
     await act(async () => {
-      socket.ack('1')
+      socket.ack()
     })
     await settle()
     expect(document.body.textContent).includes('Alta Hawks')
@@ -300,11 +310,11 @@ describe('S3: Home waits for the home scope before it reads', function () {
     timers = heldTimers(ACK_GIVE_UP_MS)
     const log: string[] = []
     const socket = new FakeScopeSocket(log)
-    const { client, stamps } = homeClient(log)
-    stamps.offline = true
+    const { client, state } = homeClient(log)
+    state.offline = true
     await render(client, socket)
     expect(homeCalls(log), 'client.home with no ack').equals(1)
-    expect(log).not.includes('subscribed 1')
+    expect(log).not.includes('subscribed')
     expect(document.body.textContent).includes('Alta Hawks')
     expect(document.body.textContent).not.includes('Loading…')
     expect(timers.pending(), 'nothing waits').equals(0)

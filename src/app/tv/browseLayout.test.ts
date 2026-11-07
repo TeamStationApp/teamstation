@@ -4,7 +4,7 @@ import { describe, it } from 'mocha'
 import { asVideoGame } from '../../common/api'
 import {
   browseGeometry,
-  collectionTop,
+  collectionGradientLayout,
   fourAcross,
   gameDate,
   heroDetailsScale,
@@ -87,11 +87,17 @@ describe('TV browsing layout', () => {
     }
     expect(heroDetailsScale(1000, 1, 640)).equals(1)
   })
-  it('moves the collection transition with scrolling and pins it at the viewport top', () => {
-    expect(collectionTop(500, 0)).equals(500)
-    expect(collectionTop(500, 250)).equals(250)
-    expect(collectionTop(500, 700)).equals(0)
-    expect(collectionTop(500, -30)).equals(500)
-    expect(browseGeometry(1280, 605, false).heroHeight).at.least(0)
+  it('scrolls the entire fade above the header while its dark tail still covers the screen', () => {
+    for (const rowHeight of [250, 400]) {
+      const screenHeight = 1080
+      const layout = collectionGradientLayout(650, rowHeight, screenHeight)
+      const fadeHeight = layout.height / 4
+      expect(layout.outputRange[0]).equals(650)
+      expect(layout.outputRange[1] + fadeHeight).equals(0)
+      expect(layout.outputRange[1] + layout.height).at.least(screenHeight)
+      expect(layout.inputRange[1]).equals(
+        layout.outputRange[0] - layout.outputRange[1]
+      )
+    }
   })
 })

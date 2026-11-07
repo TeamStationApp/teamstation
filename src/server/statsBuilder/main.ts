@@ -1,8 +1,18 @@
 import { captureException, flush } from '@sentry/node'
-import { Client } from 'pg'
 
-import { makeDatabase } from '../db/database'
-import { serverConfig } from '../serverConfig'
+import type { ChangeFeed } from '../changeFeed/feed'
+import { makeChangeFeed } from '../changeFeed/makeChangeFeed'
+import { PostgresFeed } from '../changeFeed/postgresFeed'
+import {
+  isConnectionUnavailable,
+  isDatabaseOutOfReach,
+  makeDatabase
+} from '../db/database'
+import {
+  requestDatabaseUrl,
+  type ServerConfig,
+  serverConfig
+} from '../serverConfig'
 import {
   type AfterReadHook,
   type Clock,
@@ -12,8 +22,19 @@ import {
 
 const MAX_TIMER_MS = 60_000
 
+/** How soon a drain that found no connection in time asks again. */
+const POOL_RETRY_MS = 5000
+
 export interface RunStatsBuilderOptions {
+  /** The database's own address. */
   databaseUrl: string
+  /**
+   * The process's feed, which the builder closes when it stops. A
+   * `PostgresFeed` on `databaseUrl` unless given.
+   */
+  feed?: ChangeFeed
+  /** Where its queries go. The same address unless a pooler is in front. */
+  requestUrl?: string
   clock?: Clock
   /** When set, used instead of wiring process signals (tests). */
   signals?: NodeJS.EventEmitter
@@ -40,13 +61,14 @@ export interface StatsBuilderHandle {
   stop: (signal?: NodeJS.Signals) => Promise<void>
   /** Most recent timer delay in ms; null before the first schedule. */
   lastTimerMs: () => number | null
-  /** Test access to the LISTEN client. */
-  listenClient: () => Client
+  /** The feed it hears pokes on. */
+  feed: ChangeFeed
 }
 
 /**
- * Open the database, LISTEN for pokes, drain on start and on every notify,
- * and schedule retries from `retry_at`.
+ * Open the database, hear pokes on the feed, drain on start, on every notify
+ * and whenever the feed returns after a gap, and schedule retries from
+ * `retry_at`.
  */
 export async function runStatsBuilder(
   options: RunStatsBuilderOptions
@@ -55,16 +77,23 @@ export async function runStatsBuilder(
   const report = options.report ?? reportFailure
   const setTimer = options.setTimeout ?? setTimeout
   const clearTimerFn = options.clearTimeout ?? clearTimeout
-  const db = makeDatabase(options.databaseUrl)
-  const listen = new Client({ connectionString: options.databaseUrl })
-  await listen.connect()
-  await listen.query('listen game_stats')
+  const db = makeDatabase(options.requestUrl ?? options.databaseUrl, {
+    role: 'statsBuilder'
+  })
+  const feed =
+    options.feed ??
+    new PostgresFeed({
+      databaseUrl: options.databaseUrl,
+      log: logFeed
+    })
 
   let draining = false
   let pokedDuringDrain = false
   let timer: ReturnType<typeof setTimeout> | null = null
   let stopping: Promise<void> | null = null
   let stopped = false
+  /** The first drain is over, however it went. */
+  let started = false
   /** Only the latest scheduleTimer may arm a timeout. */
   let scheduleGen = 0
   /** Last delay passed to setTimeout; tests read this. */
@@ -83,7 +112,7 @@ export async function runStatsBuilder(
     stopped = true
     clearTimer()
     process.exitCode = 1
-    listen.end().catch(() => undefined)
+    feed.close().catch(() => undefined)
     db.destroy().catch(() => undefined)
     // The failure is caught here, so Sentry's own handlers never see it.
     report(error)
@@ -108,6 +137,10 @@ export async function runStatsBuilder(
     if (next != null) {
       waitMs = Math.min(MAX_TIMER_MS, Math.max(0, next.getTime() - now))
     }
+    armTimer(waitMs)
+  }
+
+  const armTimer = (waitMs: number): void => {
     lastTimerMs = waitMs
     timer = setTimer(() => {
       runDrain().catch((error: unknown) => {
@@ -127,25 +160,42 @@ export async function runStatsBuilder(
     }
     draining = true
     try {
-      do {
-        pokedDuringDrain = false
-        await drain(db, clock, options.afterRead, () => stopped)
-        // eslint-disable-next-line no-unmodified-loop-condition -- stop() sets it while drain() is awaited
-      } while (pokedDuringDrain && !stopped)
-    } finally {
-      draining = false
+      try {
+        do {
+          pokedDuringDrain = false
+          await drain(db, clock, options.afterRead, () => stopped)
+          // eslint-disable-next-line no-unmodified-loop-condition -- stop() sets it while drain() is awaited
+        } while (pokedDuringDrain && !stopped)
+      } finally {
+        draining = false
+      }
+      if (!stopped) await scheduleTimer()
+    } catch (error) {
+      // Connections are short, not gone: a new process would find the same.
+      // What is owed stays owed, so a later attempt finds it.
+      if (!isConnectionUnavailable(error)) throw error
+      // A database never reached is for the supervisor to see, not to wait on.
+      if (!started && isDatabaseOutOfReach(error)) throw error
+      console.error(`stats builder: asking again: ${String(error)}`)
+      scheduleGen += 1
+      clearTimer()
+      if (!stopped) armTimer(POOL_RETRY_MS)
     }
-    if (!stopped) await scheduleTimer()
   }
 
-  listen.on('notification', () => {
+  const poke = (): void => {
     runDrain().catch((error: unknown) => {
       failHard('drain error', error)
     })
+  }
+  // The first drain is below, once the channel is in place.
+  const subscription = feed.subscribe('game_stats', {
+    onPayload: poke,
+    onListening: first => {
+      if (!first) poke()
+    }
   })
-  listen.on('error', error => {
-    failHard('listen error', error)
-  })
+  await subscription.listening
 
   const stop = async (signal: NodeJS.Signals = 'SIGTERM'): Promise<void> => {
     if (stopping != null) {
@@ -162,7 +212,7 @@ export async function runStatsBuilder(
         await new Promise(resolve => setTimeout(resolve, 10))
       }
       try {
-        await listen.end()
+        await feed.close()
       } finally {
         await db.destroy()
         await options.onStopped?.()
@@ -192,7 +242,18 @@ export async function runStatsBuilder(
   bus.on('SIGTERM', onTerm)
   bus.on('SIGINT', onInt)
 
-  await runDrain()
+  try {
+    await runDrain()
+    started = true
+  } catch (error) {
+    // Nothing will run on: leave nothing open behind the failure.
+    stopped = true
+    bus.off('SIGTERM', onTerm)
+    bus.off('SIGINT', onInt)
+    await feed.close()
+    await db.destroy()
+    throw error
+  }
 
   return {
     stop: async signal => {
@@ -201,13 +262,25 @@ export async function runStatsBuilder(
       await stop(signal)
     },
     lastTimerMs: () => lastTimerMs,
-    listenClient: () => listen
+    feed
   }
 }
 
+function logFeed(message: string): void {
+  console.error(`stats builder: change feed: ${message}`)
+}
+
 export async function runMain(
-  databaseUrl: string = serverConfig.databaseUrl,
+  config: Pick<
+    ServerConfig,
+    'databaseUrl' | 'databasePoolUrl' | 'changeFeed' | 'redis'
+  > = serverConfig,
   onStopped?: () => Promise<void>
 ): Promise<StatsBuilderHandle> {
-  return await runStatsBuilder({ databaseUrl, onStopped })
+  return await runStatsBuilder({
+    databaseUrl: config.databaseUrl,
+    requestUrl: requestDatabaseUrl(config),
+    feed: makeChangeFeed(config, logFeed),
+    onStopped
+  })
 }

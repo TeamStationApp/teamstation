@@ -8,10 +8,11 @@ import {
   defaultsUnaccepted,
   withVisibleDefaults
 } from '../../common/scoring/startingSetup'
-import { copyState } from '../../common/scoring/state'
+import { copyState, isPosition } from '../../common/scoring/state'
 import { createPlayers, type FieldPlayer } from '../field/fieldModel'
 import { fieldingSide } from './scoringSelectors'
 import {
+  type FielderRef,
   type Position,
   POSITIONS,
   type ScoringPlayer,
@@ -19,9 +20,30 @@ import {
   type ScoringState
 } from './scoringTypes'
 
-export function missingDefense(session: ScoringSessionState): Position[] {
+/** Every position nobody is playing: each is drawn as a plate to fill. */
+export function emptyPositions(session: ScoringSessionState): Position[] {
   const defense = session.liveData.boxscore.teams[fieldingSide(session)].defense
   return POSITIONS.filter(position => defense[position] == null)
+}
+/**
+ * The positions scoring waits for: only the pitcher. Any other position
+ * nobody is playing is played by a nameless stand-in when a ball goes there.
+ */
+export function missingDefense(session: ScoringSessionState): Position[] {
+  return emptyPositions(session).includes('P') ? ['P'] : []
+}
+/**
+ * The fielder a drawn player is to the game: his player id, or, for an
+ * empty position's plate (`empty-SS`), that position's stand-in.
+ */
+export function fielderRefOf(player: {
+  id: string
+  playerId?: number
+  standIn?: string
+}): FielderRef | undefined {
+  if (player.playerId != null) return player.playerId
+  const position = player.standIn ?? /^empty-(.+)$/.exec(player.id)?.[1]
+  return isPosition(position) ? position : undefined
 }
 export function setupEditable(state: ScoringState): boolean {
   return (
@@ -193,7 +215,7 @@ export function assignDefender(
 export function emptyDefensePlayers(
   session: ScoringSessionState
 ): FieldPlayer[] {
-  const missing = missingDefense(session)
+  const missing = emptyPositions(session)
   return createPlayers()
     .filter(player => missing.includes(player.id as Position))
     .map(player => ({

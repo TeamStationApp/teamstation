@@ -20,6 +20,8 @@ import {
   battingWarningKey,
   defensiveRosterLabel,
   emptyDefensePlayers,
+  emptyPositions,
+  fielderRefOf,
   lineupCountMessage,
   lineupsHeld,
   missingDefense,
@@ -87,7 +89,7 @@ describe('current scoring setup', function () {
   })
   it('closes and persists the valid dictated third-out prefix before blocking next defense', function () {
     const initial = game()
-    initial.liveData.boxscore.teams.away.defense.C = null
+    initial.liveData.boxscore.teams.away.defense.P = null
     let state = initialScoringState(initial)
     for (let i = 0; i < 8; i++)
       state = completeMotions(
@@ -113,7 +115,7 @@ describe('current scoring setup', function () {
     expect(
       next.log.some(action => action.type === 'pitch' && action.call === 'B')
     ).equals(false)
-    expect(next.dictation?.problem?.message).includes('C')
+    expect(next.dictation?.problem?.message).equals('Missing pitcher')
   })
   it('preserves an automatically closed third out before rejecting the next incomplete half pitch', async function () {
     const initial = game()
@@ -122,7 +124,7 @@ describe('current scoring setup', function () {
       requireCurrentSetup: true
     })
     const setup = setupOf(initial)
-    setup.sides.away.defense.C = null
+    setup.sides.away.defense.P = null
     let screen = scoringReducer(initialScoringState(initial), {
       type: 'ROSTER',
       draft: applyStoredAction(initial, {
@@ -140,12 +142,12 @@ describe('current scoring setup', function () {
     expect(session.state.liveData.plays.allPlays).has.length(3)
     expect(
       session.apply({ type: 'pitch', call: 'B' }).problems[0].message
-    ).includes('C')
+    ).equals('Missing pitcher')
     expect(session.state.liveData.plays.allPlays).has.length(3)
     await session.flush()
     expect(store.games.get('g1')!.plays).has.length(3)
   })
-  it('finishes an old partial-defense ball in play and gates the following appearance', async function () {
+  it('finishes an old partial-defense ball in play and lets the next appearance pitch with the catcher still empty', async function () {
     const initial = game()
     const setup = setupOf(initial)
     const store = memoryStore()
@@ -180,11 +182,10 @@ describe('current scoring setup', function () {
       live.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
     ).deep.equals([])
     expect(live.state.liveData.plays.allPlays).has.length(1)
-    expect(
-      live.apply({ type: 'pitch', call: 'B' }).problems[0].message
-    ).includes('C')
+    // Only a pitcher is needed: a stand-in plays the empty catcher's spot.
+    expect(live.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
     await live.flush()
-    expect(store.games.get('g1')!.plays).has.length(1)
+    expect(live.state.liveData.linescore.balls).equals(1)
   })
   it('blocks the next pitch after two balls and a defender move, while preserving the count', function () {
     const initial = game()
@@ -192,8 +193,8 @@ describe('current scoring setup', function () {
     pitched = applyAction(pitched, { type: 'pitch', call: 'B' }).state
     const moved = assignDefender(
       pitched,
-      'P',
-      pitched.liveData.boxscore.teams.home.defense.C!
+      'C',
+      pitched.liveData.boxscore.teams.home.defense.P!
     )
     const changed = applyAction(pitched, {
       type: 'lineup',
@@ -202,10 +203,10 @@ describe('current scoring setup', function () {
     })
     expect(changed.problems).deep.equals([])
     const next = applyAction(changed.state, { type: 'pitch', call: 'B' })
-    expect(next.problems[0].message).includes('C')
+    expect(next.problems[0].message).equals('Missing pitcher')
     expect(next.state.liveData.linescore.balls).equals(2)
   })
-  it('reports current setup problems consistently for dictation, including a missing pitcher', function () {
+  it('reports current setup problems consistently for dictation: only a missing pitcher', function () {
     for (const slot of ['C', 'P'] as const) {
       const initial = game()
       const setup = setupOf(initial)
@@ -221,10 +222,12 @@ describe('current scoring setup', function () {
         transcript: 'Ball',
         actions: [{ type: 'pitch', call: 'B' }]
       })
+      // A stand-in plays an empty catcher's spot; nobody pitches for an
+      // empty mound.
       expect(next.dictation?.problem?.message).equals(
-        `Missing defensive positions: ${slot}`
+        slot === 'P' ? 'Missing pitcher' : undefined
       )
-      expect(next.session.liveData.linescore.balls).equals(0)
+      expect(next.session.liveData.linescore.balls).equals(slot === 'P' ? 0 : 1)
     }
   })
   it('moves defenders uniquely, keeps the full roster and leaves the original untouched', function () {
@@ -233,7 +236,8 @@ describe('current scoring setup', function () {
       original.liveData.boxscore.teams.home.defense
     const moved = assignDefender(original, 'P', catcher!)
     expect(moved.liveData.boxscore.teams.home.defense.P).equals(catcher)
-    expect(missingDefense(moved)).deep.equals(['C'])
+    expect(missingDefense(moved)).deep.equals([])
+    expect(emptyPositions(moved)).deep.equals(['C'])
     expect(original.liveData.boxscore.teams.home.defense.P).equals(pitcher)
     expect(JSON.stringify(assignDefender(original, 'P', -1))).equals(
       JSON.stringify(original)
@@ -461,7 +465,7 @@ describe('current scoring setup', function () {
     ).deep.equals([])
     expect(
       session.apply({ type: 'pitch', call: 'B' }).problems[0].message
-    ).includes('P')
+    ).equals('Missing pitcher')
     await session.flush()
     const opened = await ScoringSession.open(store, 'g1', {
       gamePk: 'g1',
@@ -534,7 +538,7 @@ describe('current scoring setup', function () {
     const original = game()
     const draft = copyState(original)
     draft.liveData.boxscore.teams.home.battingOrder = []
-    draft.liveData.boxscore.teams.away.defense.C = null
+    draft.liveData.boxscore.teams.away.defense.P = null
     const changed = applyAction(original, {
       type: 'lineup',
       kind: 'roster',
@@ -549,10 +553,10 @@ describe('current scoring setup', function () {
       kind: 'endHalf'
     })
     expect(half.problems).deep.equals([])
-    expect(missingDefense(half.state)).deep.equals(['C'])
+    expect(missingDefense(half.state)).deep.equals(['P'])
     expect(
       applyAction(half.state, { type: 'pitch', call: 'B' }).problems[0].message
-    ).includes('C')
+    ).equals('Missing pitcher')
   })
   it('preserves awaiting-batter state on defense-only edits and placeholder creation, including Undo', async function () {
     const initial = game()
@@ -634,5 +638,27 @@ describe('names drawn on the field', function () {
     ])
     expect(names.get(1)).equals('Luis Ga')
     expect(names.get(2)).equals('Luis Gi')
+  })
+  it('waits only for a pitcher, and still draws every empty position to fill (U11)', function () {
+    const session = game()
+    const defense = session.liveData.boxscore.teams.home.defense
+    for (const slot of POSITIONS) if (slot !== 'P') defense[slot] = null
+    expect(missingDefense(session)).deep.equals([])
+    expect(emptyPositions(session)).deep.equals(
+      POSITIONS.filter(slot => slot !== 'P')
+    )
+    expect(emptyDefensePlayers(session).map(plate => plate.id)).deep.equals(
+      POSITIONS.filter(slot => slot !== 'P').map(slot => `empty-${slot}`)
+    )
+    defense.P = null
+    expect(missingDefense(session)).deep.equals(['P'])
+    expect(emptyDefensePlayers(session)).has.length(9)
+  })
+  it('names a stand-in by the position whose plate was tapped', function () {
+    expect(fielderRefOf({ id: 'defense-14', playerId: 14 })).equals(14)
+    expect(fielderRefOf({ id: 'empty-SS' })).equals('SS')
+    expect(fielderRefOf({ id: 'empty-1B', standIn: '1B' })).equals('1B')
+    expect(fielderRefOf({ id: 'empty-DH' })).equals(undefined)
+    expect(fielderRefOf({ id: 'offense-3', playerId: 3 })).equals(3)
   })
 })

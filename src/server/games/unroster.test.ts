@@ -254,7 +254,7 @@ describe('atomic game availability', function () {
     )
     expect((await row(id)).currentPlay).equals(null)
     expect(await readPlays(db, id)).deep.equals([])
-    const availability = await gameAvailability(db, changed)
+    const availability = await gameAvailability(db, changed, { roster: true })
     const teams = fixture().gameData.teams
     const setup = reconcileRoster(
       setupOf(fixture()),
@@ -366,7 +366,9 @@ describe('atomic game availability', function () {
       async () => await toggle('gam_empty', guest.userId, false),
       'badRequest'
     )
-    const availability = await gameAvailability(db, await row('gam_empty'))
+    const availability = await gameAvailability(db, await row('gam_empty'), {
+      roster: false
+    })
     expect(availability.guestPlayers.away[0]).includes({
       userId: guest.userId,
       jersey: '00',
@@ -375,7 +377,9 @@ describe('atomic game availability', function () {
     expect(availability.guestPlayers.away[0].positions).deep.equals(['P'])
     expect(availability.guests.away).deep.equals([guest.gumboId])
     await closeInto(db, guest.userId, userIdOfGumbo(2))
-    const merged = await gameAvailability(db, await row('gam_empty'))
+    const merged = await gameAvailability(db, await row('gam_empty'), {
+      roster: false
+    })
     expect(merged.guests.away).deep.equals([2])
     expect(merged.guestPlayers.away[0].userId).equals(userIdOfGumbo(2))
   })
@@ -525,7 +529,9 @@ describe('atomic game availability', function () {
       .execute()
     expect((await toggle(id, 129, false)).away).deep.equals([3129])
     expect(await unrosteredOf(id)).deep.equals({ away: [3129], home: [] })
-    const available = await gameAvailability(db, await row(id))
+    const available = await gameAvailability(db, await row(id), {
+      roster: true
+    })
     expect(
       available.roster.away.find(player => player.userId === userIdOfGumbo(129))
         ?.gumboId

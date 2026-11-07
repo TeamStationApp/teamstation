@@ -24,6 +24,7 @@ import {
 } from '../components'
 import { ActionList } from '../components/ActionRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
+import { FollowButton } from '../components/FollowButton'
 import { StickySectionLayout } from '../components/StickySectionLayout'
 import { TabPages } from '../components/TabPages'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -165,13 +166,23 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
               size={2.25}
             />
             <Text style={styles.name}>{group.name}</Text>
-            {detail.canManage && (
+            {detail.canManage ? (
               <SettingsGear
                 label="League settings"
                 onPress={() => {
                   props.onSettings(league)
                 }}
               />
+            ) : (
+              detail.canSeePeople !== true && (
+                // A visitor who neither runs this league nor belongs to it
+                // follows it where an administrator has the gear.
+                <FollowButton
+                  client={client}
+                  group={league}
+                  name={group.name}
+                />
+              )
             )}
           </View>
           <Text style={styles.meta}>

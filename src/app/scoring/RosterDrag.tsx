@@ -31,14 +31,17 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const contact = useRef<{ pointer: number; kind: string } | null>(null)
   const [hold] = useState(
     () =>
-      new RosterHold(point => {
-        const p = latest.current
-        if (p.playerId == null || p.disabled === true) return
-        moved.current = true
-        engine.begin(p.playerId, p.label ?? '', point, source)
-        if (contact.current?.kind !== 'touch' && contact.current != null)
-          node.current?.setPointerCapture(contact.current.pointer)
-      })
+      new RosterHold(
+        point => {
+          const p = latest.current
+          if (p.playerId == null || p.disabled === true) return
+          moved.current = true
+          engine.begin(p.playerId, p.label ?? '', point, source)
+          if (contact.current?.kind !== 'touch' && contact.current != null)
+            node.current?.setPointerCapture(contact.current.pointer)
+        },
+        () => latest.current.immediate === true
+      )
   )
   const cancel = useCallback((): void => {
     hold.cancel()
@@ -134,6 +137,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       },
       clip,
       insertion: props.insertion,
+      fixed: props.fixed,
       drop: (id, edge) => {
         latest.current.onDropPlayer?.(id, edge)
       }
@@ -146,7 +150,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       clearInterval(timer)
       engine.targets.delete(token)
     }
-  }, [engine, clip, token, props.onDropPlayer, props.insertion])
+  }, [engine, clip, token, props.onDropPlayer, props.insertion, props.fixed])
   const childButton = (target: EventTarget): boolean => {
     const button = (target as Element).closest('button,input,[role="button"]')
     return button != null && button !== node.current
@@ -200,7 +204,9 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         flexDirection: 'column',
         gap: ROSTER_CARD_GAP,
         marginBottom: lifted ? -ROSTER_CARD_GAP : undefined,
-        touchAction: 'auto',
+        // An immediate card owns its touches: the field it sits on never
+        // scrolls, and the browser must not take a short move for a pan.
+        touchAction: props.immediate === true ? 'none' : 'auto',
         WebkitTouchCallout: 'none',
         userSelect: 'none',
         WebkitUserSelect: 'none',
@@ -241,7 +247,16 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         } else hold.start(point)
       }}
       onPointerMove={event => {
-        if (event.pointerType === 'touch') return
+        if (event.pointerType === 'touch') {
+          // The browser holds back touchmove inside its slop, so an
+          // immediate card learns of a short touch move from its pointer.
+          if (props.immediate === true && contact.current?.kind === 'touch') {
+            const point = { x: event.clientX, y: event.clientY }
+            hold.move(point)
+            if (hold.active) engine.move(point).catch(cancel)
+          }
+          return
+        }
         hold.move({ x: event.clientX, y: event.clientY })
         if (props.playerId != null && engine.active?.id === props.playerId) {
           engine.move({ x: event.clientX, y: event.clientY }).catch(() => {
