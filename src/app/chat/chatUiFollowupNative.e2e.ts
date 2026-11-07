@@ -672,6 +672,18 @@ async function until<T>(
   }
 }
 
+/**
+ * A leased iPhone's keyboard can drop or reorder fast input (an e-mail lost
+ * its "@ch"): there, credentials are typed one character at a time.
+ */
+async function typeCredential(m: Device, text: string): Promise<void> {
+  if (process.env.CHAT_UI_NATIVE_PHYSICAL !== '1') {
+    await m.inputText({ text })
+    return
+  }
+  for (const character of text) await m.inputText({ text: character })
+}
+
 async function main(): Promise<void> {
   mkdirSync(artifactDirectory, { recursive: true })
   mkdirSync(resultDirectory, { recursive: true })
@@ -754,12 +766,12 @@ async function main(): Promise<void> {
         await m.assertVisible({ text: 'E-mail address', timeout: 60000 })
         await m.tapOn({ text: 'E-mail address' })
         await m.eraseText()
-        await m.inputText({ text: fixture.actor.email })
+        await typeCredential(m, fixture.actor.email)
         if (platform === 'android') await m.hideKeyboard()
         else await m.tapOn({ text: 'Sign in to TeamStation' })
         await m.tapOn({ text: 'Password' })
         await m.eraseText()
-        await m.inputText({ text: fixture.actor.password })
+        await typeCredential(m, fixture.actor.password)
         if (platform === 'android') await m.hideKeyboard()
         else {
           // Blur the secure field before tapping a button below the keyboard.
