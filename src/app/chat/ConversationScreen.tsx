@@ -278,6 +278,7 @@ export function ConversationScreen(
         restoreAnchor.current = { ...anchor }
         restoreTarget.current = physical?.offset ?? scrolled.current.offset
         atBottom.current = false
+        settlingAnchor.current = { id: anchor.id, checks: 0 }
       }
     }
     setView(
@@ -582,6 +583,13 @@ export function ConversationScreen(
   const initialScrollChosen = useRef(false)
   const restoringAnchor = useRef(false)
   const restoreAnchorDirty = useRef(false)
+  // A phone's list keeps its first visible row in place on its own when rows
+  // resize, sometimes after a restoration has already landed. The reader
+  // restored across history recovery is checked on screen until it settles.
+  const settlingAnchor = useRef<{ id: string; checks: number } | undefined>(
+    undefined
+  )
+  const lastScrollOffset = useRef(0)
   const exhaustedPageRestorer = useRef<() => void>(() => {})
   const atBottom = useRef(
     !scrolled.current.hasPosition || scrolled.current.followNewest
@@ -1261,6 +1269,48 @@ export function ConversationScreen(
       return
     scrolled.current.anchor = next
     onDraftChange?.(currentDraft())
+  }
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  )
+  const settleRestoredAnchor = (): void => {
+    if (settleTimer.current != null) return
+    settleTimer.current = setTimeout(() => {
+      settleTimer.current = undefined
+      const settling = settlingAnchor.current
+      const anchor = restoreAnchor.current
+      if (
+        settling == null ||
+        anchor?.id !== settling.id ||
+        !mounted.current ||
+        !paneActive.current ||
+        restoringAnchor.current ||
+        measuringJump.current != null
+      )
+        return
+      const cancelled = (): boolean =>
+        !mounted.current ||
+        !paneActive.current ||
+        restoreAnchor.current !== anchor
+      measurePosition(anchor.id, cancelled, true)
+        .then(y => {
+          if (y == null || cancelled()) return
+          settling.checks += 1
+          // Where the row actually is: the list's own correction may have
+          // moved it after the restoration's scroll was acknowledged.
+          const drift = y - anchor.relativeY
+          if (Math.abs(drift) > 1) {
+            const target = rememberPosition(
+              lastScrollOffset.current + drift,
+              anchor
+            )
+            scroller.current?.scrollTo({ y: target, animated: false })
+          }
+          if (settling.checks >= 3) settlingAnchor.current = undefined
+          else settleRestoredAnchor()
+        })
+        .catch(() => undefined)
+    }, 150)
   }
   const restoreReadingAnchor = (): void => {
     const anchor = restoreAnchor.current
@@ -2394,6 +2444,7 @@ export function ConversationScreen(
     // Actual native drag/momentum still records its position and cancels the jump.
     if (!userOwned && measuringJump.current != null) return
     const { contentOffset, layoutMeasurement } = event.nativeEvent
+    lastScrollOffset.current = Math.max(0, contentOffset.y)
     if (
       restoreAnchor.current != null &&
       (!widthLayoutReady() || restoringAnchor.current)
@@ -2418,6 +2469,8 @@ export function ConversationScreen(
                   : { readableTop: anchor.readableTop })
               }
         )
+        if (settlingAnchor.current?.id === restoreAnchor.current?.id)
+          settleRestoredAnchor()
       }
       return
     }
