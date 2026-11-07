@@ -1,7 +1,7 @@
 /** Normal browser enrollment and isolated reply fixtures for recovery regressions. */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -217,15 +217,27 @@ async function main(): Promise<void> {
     assert.equal(enrollment.normalUi, true)
     if (mode === 'host') {
       // An existing runner that drives a browser its parent attached
-      // (entityChats, chat117) runs while this process owns the browser.
+      // (entityChats, chat117, chatBlocks) runs while this process owns the
+      // browser.
       const [file, scenario] = process.argv.slice(3)
       assert(
         [
           'src/app/chat/entityChats.e2e.ts',
-          'src/app/chat/chat117.e2e.ts'
+          'src/app/chat/chat117.e2e.ts',
+          'src/app/chat/chatBlocks.e2e.ts'
         ].includes(file) && /^[a-z]+$/.test(scenario ?? '')
       )
+      const blocks = file === 'src/app/chat/chatBlocks.e2e.ts'
+      if (blocks) {
+        // chatBlocks also watches a second browser of the blocker: a copy of
+        // Hc's closed, enrolled profile, so the same signed-in linked device.
+        const second = join(setup.artifacts, 'profiles', 'actor-second')
+        if (!existsSync(second))
+          cpSync(setup.profiles.Hc, second, { recursive: true })
+        setup.profiles['Hc-second'] = second
+      }
       await attach('Hc')
+      if (blocks) await attach('Hc-second')
       execFileSync(
         process.execPath,
         ['-r', 'sucrase/register', file, scenario],
@@ -234,7 +246,14 @@ async function main(): Promise<void> {
           env: {
             ...process.env,
             MAESTRO_DEVICE: 'recovery-reply-fixture-Hc',
-            CHAT117_DEVICE: 'recovery-reply-fixture-Hc'
+            CHAT117_DEVICE: 'recovery-reply-fixture-Hc',
+            CHAT_BLOCKS_SEED: setup.seedFile,
+            CHAT_BLOCKS_API: setup.apiUrl,
+            CHAT_BLOCKS_WEB: origin,
+            CHAT_BLOCKS_STATE: join(setup.artifacts, 'chat-blocks-state'),
+            CHAT_BLOCKS_ARTIFACTS: join(setup.artifacts, 'chat-blocks-results'),
+            CHAT_BLOCKS_DEVICE: 'recovery-reply-fixture-Hc',
+            CHAT_BLOCKS_SECOND_DEVICE: 'recovery-reply-fixture-Hc-second'
           }
         }
       )
