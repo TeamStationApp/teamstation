@@ -6,6 +6,8 @@ import { FittedInitials } from './FittedInitials'
 import { Icon, type IconName } from './Icon'
 
 export interface EmblemProps {
+  /** Letter size in rem for compact identity rows. */
+  initialsSize?: number
   /** Opt-in large group preview; ordinary identity tiles keep their sizing. */
   fitInitials?: boolean
   /** Signed, short-lived, and often absent. */
@@ -74,6 +76,9 @@ export function Emblem(props: EmblemProps): React.ReactElement {
           <Text
             style={[
               styles.letters,
+              props.initialsSize != null && {
+                fontSize: theme.rem(props.initialsSize)
+              },
               // Two letters sized to the tile, so a smaller team mark keeps
               // the same margin round them as the larger default.
               tint != null && {

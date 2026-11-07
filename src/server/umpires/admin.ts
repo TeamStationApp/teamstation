@@ -17,6 +17,7 @@ import type { Database, UmpireLevelsTable } from '../db/database'
 import { publicNames } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
+import { affiliationText } from '../users/personAffiliations'
 import { requireType, types } from './types'
 
 export async function levels(
@@ -412,18 +413,15 @@ export async function people(
           members.some(m => m.team_id === t.id && ids.has(canon(m.user_id)))
         )
         .map(t => t.name)
-        .join(', ')
-      const affiliations = [
+      const affiliations = affiliationText(
         teamNames,
-        children.length === 0
-          ? ''
-          : `Guardian of ${[...new Set(children)].map(id => names.get(id)).join(', ')}`,
-        guardians.length === 0
-          ? ''
-          : `Guardians: ${[...new Set(guardians)].map(id => names.get(id)).join(', ')}`
-      ]
-        .filter(Boolean)
-        .join(' · ')
+        [...new Set(children)].flatMap(id =>
+          names.has(id) ? [names.get(id)!] : []
+        ),
+        [...new Set(guardians)].flatMap(id =>
+          names.has(id) ? [names.get(id)!] : []
+        )
+      )
       const certs = new Map<string, UmpireCertification>()
       for (const c of certifications.filter(c => canon(c.user_id) === u.id)) {
         const key = JSON.stringify([c.level_id, c.type_id])

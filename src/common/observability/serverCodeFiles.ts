@@ -422,6 +422,8 @@ export const SERVER_CODE_FILES = new Set([
   'server/users/insertUser.js',
   'server/users/mintUserId.js',
   'server/users/nameBook.js',
+  'server/users/peopleCandidates.js',
+  'server/users/personAffiliations.js',
   'server/users/readerNames.js',
   'server/users/rosterCandidates.js',
   'server/users/survivors.js',

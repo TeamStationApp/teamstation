@@ -11,7 +11,7 @@ import { IMPLIED_ROLES, type Role, ROLES } from '../common/roles'
 import { onePeople, type OnePerson, onePerson } from './admin/people'
 import { anyOf } from './db/anyOf'
 import type { Database } from './db/database'
-import { openAddTeams } from './openAdds'
+import { openAddsOf, openAddTeams } from './openAdds'
 
 export {
   heldByOpenAdd,
@@ -1411,48 +1411,92 @@ export async function mayEditName(
   about: { isAdmin: boolean },
   known: { player?: OnePerson } = {}
 ): Promise<boolean> {
-  if (about.isAdmin) return true
-  if (actorUserId === playerUserId) return true
+  return (
+    await mayEditNames(
+      db,
+      actorUserId,
+      [playerUserId],
+      about,
+      known.player == null ? new Map() : new Map([[playerUserId, known.player]])
+    )
+  ).has(playerUserId)
+}
 
-  const gathered =
-    known.player?.userIds.includes(playerUserId) === true
-      ? known.player
-      : undefined
-  const [actor, player] = await Promise.all([
-    onePerson(db, actorUserId),
-    gathered ?? onePerson(db, playerUserId)
+/** The same name authority for a batch, with shared identity and role reads. */
+export async function mayEditNames(
+  db: Kysely<Database>,
+  actorUserId: string,
+  playerUserIds: readonly string[],
+  about: { isAdmin: boolean },
+  known: ReadonlyMap<string, OnePerson> = new Map()
+): Promise<Set<string>> {
+  const allowed = new Set<string>()
+  if (about.isAdmin) return new Set(playerUserIds)
+  const asked = [...new Set(playerUserIds)]
+  if (asked.includes(actorUserId)) allowed.add(actorUserId)
+  const others = asked.filter(id => id !== actorUserId)
+  if (others.length === 0) return allowed
+  const gathered = await onePeople(db, [
+    actorUserId,
+    ...others.filter(id => known.get(id)?.userIds.includes(id) !== true)
   ])
-  // The asker's own row among the player's rows is the player themselves.
-  // Comparing where the two walks stopped is not enough: rows closed into
-  // each other stop each walk on the other row.
-  if (player.userIds.includes(actorUserId)) return true
-
-  const parent = await db
-    .selectFrom('user_links')
-    .select(['id'])
-    .where('user_id', 'in', actor.userIds)
-    .where('related_user_id', 'in', player.userIds)
-    .where('kind', 'in', ['guardian', 'family'])
-    .executeTakeFirst()
-  if (parent != null) return true
-
-  const scopes = await roleScopes(db, actorUserId, false)
-  // Preserve scorekeepers' full-name access: they may maintain the roster alone.
-  const staffOf = new Set(
-    (['admin', 'coach', 'assistant', 'scorekeeper'] as const).flatMap(role => [
-      ...scopes[role].teamIds
+  const actor = gathered.get(actorUserId)!
+  const players = new Map(
+    others.map(id => [
+      id,
+      known.get(id)?.userIds.includes(id) === true
+        ? known.get(id)!
+        : gathered.get(id)!
     ])
   )
-  if (staffOf.size === 0) return false
-  const plays = await db
-    .selectFrom('memberships')
-    .select(['team_id'])
-    .where('user_id', 'in', player.userIds)
-    .where('is_player', '=', true)
-    .where('team_id', 'in', [...staffOf])
+  const links = await db
+    .selectFrom('user_links')
+    .select('related_user_id')
+    .where('user_id', '=', anyOf(actor.userIds))
+    .where('kind', 'in', ['guardian', 'family'])
     .execute()
-  const held = await openAddTeams(db, player.userIds)
-  return plays.some(row => !held.includes(row.team_id))
+  const children = new Set(links.map(row => row.related_user_id))
+  for (const [id, player] of players)
+    if (
+      player.userIds.includes(actorUserId) ||
+      player.userIds.some(row => children.has(row))
+    )
+      allowed.add(id)
+  const remaining = [...players].filter(([id]) => !allowed.has(id))
+  if (remaining.length === 0) return allowed
+  const scopes = await roleScopes(db, actorUserId, false)
+  const staffOf = [
+    ...new Set(
+      (['admin', 'coach', 'assistant', 'scorekeeper'] as const).flatMap(
+        role => [...scopes[role].teamIds]
+      )
+    )
+  ]
+  if (staffOf.length === 0) return allowed
+  const rows = remaining.flatMap(([, player]) => player.userIds)
+  const [plays, held] = await Promise.all([
+    db
+      .selectFrom('memberships')
+      .select(['user_id', 'team_id'])
+      .where('user_id', '=', anyOf(rows))
+      .where('is_player', '=', true)
+      .where('team_id', '=', anyOf(staffOf))
+      .execute(),
+    openAddsOf(db, staffOf)
+  ])
+  const teamsByRow = new Map<string, string[]>()
+  for (const play of plays) listUnder(teamsByRow, play.user_id, play.team_id)
+  for (const [id, player] of remaining)
+    if (
+      player.userIds.some(row =>
+        (teamsByRow.get(row) ?? []).some(
+          team =>
+            !player.userIds.some(other => held.get(team)?.has(other) === true)
+        )
+      )
+    )
+      allowed.add(id)
+  return allowed
 }
 
 /**

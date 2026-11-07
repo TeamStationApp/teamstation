@@ -13,6 +13,7 @@ import {
   TextWidthButton
 } from '../components'
 import { ChoiceSheet } from '../components/ChoiceSheet'
+import { PersonSearchRow } from '../components/PersonSearchRow'
 import { UndoTicker } from '../scoring/UndoTicker'
 import { useTheme } from '../theme/ThemeContext'
 import {
@@ -196,12 +197,13 @@ export function LeagueUmpiresScreen({
         )}
         <ListCard>
           {results.map(p => (
-            <Pressable
+            <PersonSearchRow
               key={p.id}
-              accessibilityRole="button"
-              accessibilityLabel={p.name}
+              name={p.name}
+              avatarUrl={p.avatarUrl}
+              affiliations={p.affiliations}
+              affiliationTestID={`candidate-affiliation-${p.id}`}
               disabled={busy}
-              style={[s.row, { padding: 12 }]}
               onPress={() => {
                 setPeople(ps =>
                   [...ps, p].sort((a, b) =>
@@ -212,22 +214,7 @@ export function LeagueUmpiresScreen({
                 )
                 setQuery('')
               }}
-            >
-              <Emblem
-                fallback={p.name.slice(0, 1)}
-                uri={p.avatarUrl}
-                shape="circle"
-              />
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={s.text}>{p.name}</Text>
-                <UndoTicker
-                  text={p.affiliations}
-                  style={s.hint}
-                  enabled
-                  testID={`candidate-affiliation-${p.id}`}
-                />
-              </View>
-            </Pressable>
+            />
           ))}
         </ListCard>
         <Text style={s.hint}>
