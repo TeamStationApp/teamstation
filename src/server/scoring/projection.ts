@@ -140,7 +140,9 @@ function mapDocument<T>(document: T, resolve: (id: number) => number): T {
                   : { detail: visit(record.detail) }),
                 setupBefore: setup(record.setupBefore),
                 actions: record.actions.map(action => ({
-                  ...mapPlayers(action, value => resolve(asGumboId(value))),
+                  ...mapPlayers(action, value => resolve(asGumboId(value)), {
+                    keepPositions: true
+                  }),
                   ...('setup' in action && action.setup != null
                     ? { setup: setup(action.setup) }
                     : {})

@@ -148,7 +148,7 @@ describe('a runner who did not tag up on a caught ball', function () {
     expect(runnerOut(state, 2).details.movementReason).equals('Ball Caught')
     expect(
       runnerOut(state, 2).credits.map(credit => [
-        credit.player.id,
+        credit.player?.id,
         credit.credit
       ])
     ).deep.equals([
@@ -252,7 +252,7 @@ describe('a runner who did not tag up on a caught ball', function () {
       expect(runnerOut(state, 2).details.movementReason).equals(reason)
       expect(
         runnerOut(state, 2).credits.map(credit => [
-          credit.player.id,
+          credit.player?.id,
           credit.credit
         ])
       ).deep.equals([[defense(state, '1B'), 'f_putout']])

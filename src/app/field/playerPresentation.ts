@@ -19,6 +19,9 @@ export const NAMEPLATE_LINE_GAP = 2
 export const EMPTY_POSITION_SIZE = 48
 export const EMPTY_POSITION_FONT = 26
 export function hasPlayerLabel(player: FieldPlayer): boolean {
+  // A nameless stand-in at an empty position wears no plate, but for the
+  // ball when he holds it.
+  if (player.standIn != null) return player.hasBall === true
   // The batter and the pitcher are named on the scoreboard, not on the field.
   return (
     player.emptyPosition === true ||

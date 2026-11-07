@@ -31,6 +31,7 @@ import {
   sessionAt
 } from './scoringMachine'
 import { scoringPreferenceStore } from './scoringPreferenceStore'
+import { presentationRuntime, stepPresentation } from './scoringPresentation'
 import {
   baseIds,
   canSwitchBatter,
@@ -700,7 +701,8 @@ describe('a saved roster with pinch runners', function () {
         type: 'lineup',
         kind: 'roster',
         setup: setupOf(draft),
-        confirmed: ['away', 'home']
+        confirmed: ['away', 'home'],
+        keepSlot: true
       },
       {
         type: 'lineup',
@@ -733,6 +735,33 @@ describe('a saved roster with pinch runners', function () {
     expect(
       rosterRefusal(state, draft, undefined, [{ base: '2B', player: runner }])
     ).equals('Nobody is on 2B')
+  })
+})
+
+describe('a roster saved around the first pitch (U30)', function () {
+  it('keeps the batting slot only once a pitch is thrown', function () {
+    const swap = (state: ScoringState): ScoringState => {
+      const draft = copyState(state.session)
+      const order = draft.liveData.boxscore.teams.away.battingOrder
+      ;[order[0], order[1]] = [order[1], order[0]]
+      return completeMotions(scoringReducer(state, { type: 'ROSTER', draft }))
+    }
+    const before = initial()
+    const opening = swap(before)
+    const first = opening.log.at(-1)!
+    expect(first).includes({ type: 'lineup', kind: 'roster' })
+    expect(first).not.has.property('keepSlot')
+    const pitched = pitch(initial(), 'ball')
+    const due = pitched.session.liveData.boxscore.teams.away.battingOrder[1]
+    const saved = swap(pitched)
+    expect(saved.log.at(-1)).includes({
+      type: 'lineup',
+      kind: 'roster',
+      keepSlot: true
+    })
+    // The slot is kept: the man swapped into it bats.
+    expect(saved.session.liveData.boxscore.teams.away.battingIndex).equals(0)
+    expect(saved.session.liveData.linescore.offense.batter!.id).equals(due)
   })
 })
 
@@ -863,6 +892,35 @@ describe('the play animation setting', function () {
     const resumed = initialScoringState(session, false)
     expect(resumed.phase).equals('correctionWindow')
     expect(resumed.pendingPlay?.outcome).equals('Single')
+  })
+})
+
+describe('pitches in quick succession (U47)', function () {
+  it('takes the next pitch within 400 ms of the last, once its picture is done', function () {
+    let state = scoringReducer(initial(), {
+      type: 'PRESENTATION',
+      enabled: true
+    })
+    state = scoringReducer(state, { type: 'PITCH', kind: 'ball' })
+    const sequence = state.presentation!
+    expect(sequence.kind).equals('pitch')
+    expect(sequence.durationMs).equals(280)
+    // While the pitch is drawn the next one waits.
+    expect(scoringReducer(state, { type: 'PITCH', kind: 'ball' })).equals(state)
+    const runtime = presentationRuntime()
+    expect(stepPresentation(runtime, sequence, 279, false).done).equals(false)
+    expect(stepPresentation(runtime, sequence, 1, false).done).equals(true)
+    state = scoringReducer(state, {
+      type: 'PRESENTATION_DONE',
+      id: sequence.id,
+      generation: sequence.generation,
+      stage: sequence.stage
+    })
+    expect(state.presentation).equals(null)
+    const next = scoringReducer(state, { type: 'PITCH', kind: 'ball' })
+    expect(next).not.equals(state)
+    expect(next.session.liveData.linescore.balls).equals(2)
+    expect(next.presentation?.kind).equals('pitch')
   })
 })
 

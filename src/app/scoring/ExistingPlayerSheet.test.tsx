@@ -259,15 +259,57 @@ describe('ExistingPlayerSheet', function () {
     expect(fake.asks).has.length(3)
   })
 
-  it('says searching needs a connection, with the field off, while offline', async () => {
+  it('lists the people the phone keeps at once, and the server’s join them (U43)', async () => {
+    const fake = new FakeCandidateClient()
+    fake.kept.tem_falcons = [
+      candidate('Mookie Betts', { cursor: 'kept-1' }),
+      candidate('Shohei Ohtani', { cursor: 'kept-2' })
+    ]
+    await mount(fake)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(fake.cacheReads).deep.equals(['candidates.tem_falcons'])
+    // The phone's people before the server answers, with more on the way.
+    expect(node('Choose Mookie B')).not.equals(null)
+    expect(node('Choose Shohei O')).not.equals(null)
+    expect(
+      document.querySelector('[data-testid="Candidates loading more"]')
+    ).not.equals(null)
+    expect(fake.asks).has.length(1)
+    await act(async () => {
+      fake.last().resolve([candidate('Aaron Judge'), candidate('Mookie Betts')])
+    })
+    // The server's first, then the phone's it did not list, each once.
+    const labels = [
+      ...document.querySelectorAll('[aria-label^="Choose "]')
+    ].map(row => row.getAttribute('aria-label'))
+    expect(
+      [...labels].sort((a, b) => String(a).localeCompare(String(b)))
+    ).deep.equals(['Choose Aaron J', 'Choose Mookie B', 'Choose Shohei O'])
+    expect(listProps().keyExtractor(candidate('Aaron Judge'))).equals(
+      'usr_AaronJudge'
+    )
+    // Typing narrows the phone's people at once.
+    await type('aar')
+    expect(node('Choose Shohei O')).equals(null)
+  })
+
+  it('lists only the phone’s people offline, with the field on (U43)', async () => {
     const fake = new FakeCandidateClient()
     fake.offline = true
+    fake.kept.tem_falcons = [candidate('Mookie Betts')]
     await mount(fake)
-    expect(text()).includes('Searching needs a connection.')
-    expect(
-      (node('Search players') as HTMLInputElement).readOnly ||
-        (node('Search players') as HTMLInputElement).disabled
-    ).equals(true)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(text()).not.includes('Searching needs a connection.')
+    expect(node('Choose Mookie B')).not.equals(null)
+    const field = node('Search players') as HTMLInputElement
+    expect(field.readOnly || field.disabled).equals(false)
+    expect(fake.asks).has.length(0)
+    await type('zz')
+    expect(node('Choose Mookie B')).equals(null)
     expect(fake.asks).has.length(0)
   })
 })

@@ -73,10 +73,10 @@ describe('batted-ball error attribution', function () {
       expect(play.result.eventType).equals('field_error')
       expect(play.result.rbi).equals(0)
       expect(play.playEvents.filter(e => e.isPitch)).has.length(1)
-      expect(play.source.teamstation.errorCredit!.player.id).equals(10)
+      expect(play.source.teamstation.errorCredit!.player?.id).equals(10)
       expect(
         play.source.teamstation.errorCredit!.defensiveRoute.map(
-          hop => hop.player.id
+          hop => hop.player?.id
         )
       ).deep.equals([10])
     })

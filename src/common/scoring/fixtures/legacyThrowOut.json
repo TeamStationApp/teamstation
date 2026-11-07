@@ -1,0 +1,3938 @@
+{
+  "comment": "Stored plays scored by the engine of origin/develop d1ad5d7ef (Throw Out reasons, no advance, a slot swap with no keepSlot) and what replaying them gave there.",
+  "stored": {
+    "plays": [
+      {
+        "about": {
+          "atBatIndex": 0,
+          "inning": 1,
+          "halfInning": "top",
+          "isTopInning": true,
+          "isComplete": true,
+          "isScoringPlay": false,
+          "hasOut": false,
+          "hasReview": false,
+          "startTime": "2026-09-25T10:00:00Z",
+          "endTime": null
+        },
+        "count": {
+          "balls": 4,
+          "strikes": 0,
+          "outs": 0
+        },
+        "matchup": {
+          "batter": {
+            "id": 1,
+            "fullName": "Player 1"
+          },
+          "batSide": {
+            "code": "R",
+            "description": "Right"
+          },
+          "pitcher": {
+            "id": 10,
+            "fullName": "Player 1"
+          }
+        },
+        "runners": [
+          {
+            "movement": {
+              "originBase": null,
+              "start": null,
+              "end": "1B",
+              "outBase": null,
+              "isOut": false,
+              "outNumber": null
+            },
+            "details": {
+              "event": "Walk",
+              "eventType": "walk",
+              "movementReason": null,
+              "runner": {
+                "id": 1,
+                "fullName": "Player 1"
+              },
+              "responsiblePitcher": {
+                "id": 10
+              },
+              "isScoringEvent": false,
+              "rbi": false,
+              "earned": false,
+              "teamUnearned": false,
+              "playIndex": 3
+            },
+            "credits": []
+          }
+        ],
+        "playEvents": [
+          {
+            "index": 0,
+            "pitchNumber": 1,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "B",
+                "description": "Ball"
+              },
+              "code": "B",
+              "description": "Ball",
+              "isInPlay": false,
+              "isStrike": false,
+              "isBall": true,
+              "isOut": false,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 1,
+              "strikes": 0,
+              "outs": 0
+            },
+            "player": {
+              "id": 10,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          },
+          {
+            "index": 1,
+            "pitchNumber": 2,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "B",
+                "description": "Ball"
+              },
+              "code": "B",
+              "description": "Ball",
+              "isInPlay": false,
+              "isStrike": false,
+              "isBall": true,
+              "isOut": false,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 2,
+              "strikes": 0,
+              "outs": 0
+            },
+            "player": {
+              "id": 10,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          },
+          {
+            "index": 2,
+            "pitchNumber": 3,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "B",
+                "description": "Ball"
+              },
+              "code": "B",
+              "description": "Ball",
+              "isInPlay": false,
+              "isStrike": false,
+              "isBall": true,
+              "isOut": false,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 3,
+              "strikes": 0,
+              "outs": 0
+            },
+            "player": {
+              "id": 10,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          },
+          {
+            "index": 3,
+            "pitchNumber": 4,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "B",
+                "description": "Ball"
+              },
+              "code": "B",
+              "description": "Ball",
+              "isInPlay": false,
+              "isStrike": false,
+              "isBall": true,
+              "isOut": false,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 4,
+              "strikes": 0,
+              "outs": 0
+            },
+            "player": {
+              "id": 10,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          }
+        ],
+        "pitchIndex": [0, 1, 2, 3],
+        "actionIndex": [],
+        "runnerIndex": [0],
+        "teamStation": {
+          "version": 3,
+          "setupBefore": {
+            "players": {
+              "1": {
+                "id": 1,
+                "teamId": "team-away",
+                "fullName": "Player 1",
+                "jersey": "1",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "2": {
+                "id": 2,
+                "teamId": "team-away",
+                "fullName": "Player 2",
+                "jersey": "2",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "3": {
+                "id": 3,
+                "teamId": "team-away",
+                "fullName": "Player 3",
+                "jersey": "3",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "4": {
+                "id": 4,
+                "teamId": "team-away",
+                "fullName": "Player 4",
+                "jersey": "4",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "5": {
+                "id": 5,
+                "teamId": "team-away",
+                "fullName": "Player 5",
+                "jersey": "5",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "6": {
+                "id": 6,
+                "teamId": "team-away",
+                "fullName": "Player 6",
+                "jersey": "6",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "7": {
+                "id": 7,
+                "teamId": "team-away",
+                "fullName": "Player 7",
+                "jersey": "7",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "8": {
+                "id": 8,
+                "teamId": "team-away",
+                "fullName": "Player 8",
+                "jersey": "8",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "9": {
+                "id": 9,
+                "teamId": "team-away",
+                "fullName": "Player 9",
+                "jersey": "9",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "10": {
+                "id": 10,
+                "teamId": "team-home",
+                "fullName": "Player 1",
+                "jersey": "1",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "11": {
+                "id": 11,
+                "teamId": "team-home",
+                "fullName": "Player 2",
+                "jersey": "2",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "12": {
+                "id": 12,
+                "teamId": "team-home",
+                "fullName": "Player 3",
+                "jersey": "3",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "13": {
+                "id": 13,
+                "teamId": "team-home",
+                "fullName": "Player 4",
+                "jersey": "4",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "14": {
+                "id": 14,
+                "teamId": "team-home",
+                "fullName": "Player 5",
+                "jersey": "5",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "15": {
+                "id": 15,
+                "teamId": "team-home",
+                "fullName": "Player 6",
+                "jersey": "6",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "16": {
+                "id": 16,
+                "teamId": "team-home",
+                "fullName": "Player 7",
+                "jersey": "7",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "17": {
+                "id": 17,
+                "teamId": "team-home",
+                "fullName": "Player 8",
+                "jersey": "8",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "18": {
+                "id": 18,
+                "teamId": "team-home",
+                "fullName": "Player 9",
+                "jersey": "9",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              }
+            },
+            "teams": {
+              "team-away": {
+                "players": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "battingOrder": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "battingIndex": 0,
+                "defense": {
+                  "P": 1,
+                  "C": 2,
+                  "1B": 3,
+                  "2B": 4,
+                  "SS": 5,
+                  "3B": 6,
+                  "LF": 7,
+                  "CF": 8,
+                  "RF": 9
+                },
+                "pitchCounts": {}
+              },
+              "team-home": {
+                "players": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "battingOrder": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "battingIndex": 0,
+                "defense": {
+                  "P": 10,
+                  "C": 11,
+                  "1B": 12,
+                  "2B": 13,
+                  "SS": 14,
+                  "3B": 15,
+                  "LF": 16,
+                  "CF": 17,
+                  "RF": 18
+                },
+                "pitchCounts": {}
+              }
+            },
+            "tagOrder": [
+              1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+            ]
+          },
+          "actions": [
+            {
+              "type": "pitch",
+              "call": "B"
+            },
+            {
+              "type": "pitch",
+              "call": "B"
+            },
+            {
+              "type": "pitch",
+              "call": "B"
+            },
+            {
+              "type": "pitch",
+              "call": "B"
+            }
+          ],
+          "detail": {
+            "version": "estimated-v1",
+            "outcome": "Walk",
+            "runnerActions": [
+              {
+                "runner": {
+                  "id": 1,
+                  "fullName": "Player 1"
+                },
+                "origin": 0,
+                "destination": 1,
+                "reason": "Walk",
+                "isOut": false,
+                "forceOut": false,
+                "runScored": false,
+                "credits": []
+              }
+            ]
+          }
+        },
+        "result": {
+          "type": "atBat",
+          "event": "Walk",
+          "eventType": "walk",
+          "description": "Walk",
+          "rbi": 0,
+          "awayScore": 0,
+          "homeScore": 0,
+          "isOut": false
+        },
+        "credits": [
+          {
+            "eventType": "walk",
+            "label": "Walk: Player 1",
+            "teamId": "away",
+            "creditUserId": 1,
+            "credit": {
+              "name": "Player 1",
+              "role": "batter",
+              "position": null
+            },
+            "head": "Walk",
+            "assists": [],
+            "assistWord": "from"
+          }
+        ]
+      },
+      {
+        "about": {
+          "atBatIndex": 1,
+          "inning": 1,
+          "halfInning": "top",
+          "isTopInning": true,
+          "isComplete": true,
+          "isScoringPlay": false,
+          "hasOut": true,
+          "hasReview": false,
+          "startTime": "2026-09-25T10:00:00Z",
+          "endTime": null
+        },
+        "count": {
+          "balls": 0,
+          "strikes": 0,
+          "outs": 1
+        },
+        "matchup": {
+          "batter": {
+            "id": 2,
+            "fullName": "Player 2"
+          },
+          "batSide": {
+            "code": "R",
+            "description": "Right"
+          },
+          "pitcher": {
+            "id": 10,
+            "fullName": "Player 1"
+          }
+        },
+        "runners": [
+          {
+            "movement": {
+              "originBase": null,
+              "start": null,
+              "end": null,
+              "outBase": "1B",
+              "isOut": true,
+              "outNumber": 1
+            },
+            "details": {
+              "event": "Groundout",
+              "eventType": "field_out",
+              "movementReason": null,
+              "runner": {
+                "id": 2,
+                "fullName": "Player 2"
+              },
+              "responsiblePitcher": null,
+              "isScoringEvent": false,
+              "rbi": false,
+              "earned": false,
+              "teamUnearned": false,
+              "playIndex": 0
+            },
+            "credits": [
+              {
+                "player": {
+                  "id": 14,
+                  "fullName": "Player 5"
+                },
+                "position": {
+                  "code": "6",
+                  "name": "Shortstop",
+                  "type": "Infielder",
+                  "abbreviation": "SS"
+                },
+                "credit": "f_assist"
+              },
+              {
+                "player": {
+                  "id": 12,
+                  "fullName": "Player 3"
+                },
+                "position": {
+                  "code": "3",
+                  "name": "First Base",
+                  "type": "Infielder",
+                  "abbreviation": "1B"
+                },
+                "credit": "f_putout"
+              }
+            ]
+          }
+        ],
+        "playEvents": [
+          {
+            "index": 0,
+            "pitchNumber": 1,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "X",
+                "description": "In play, out(s)"
+              },
+              "code": "X",
+              "description": "In play, out(s)",
+              "isInPlay": true,
+              "isStrike": false,
+              "isBall": false,
+              "isOut": true,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 0,
+              "strikes": 0,
+              "outs": 0
+            },
+            "hitData": {
+              "trajectory": "ground_ball",
+              "location": "6"
+            },
+            "player": {
+              "id": 10,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          }
+        ],
+        "pitchIndex": [0],
+        "actionIndex": [],
+        "runnerIndex": [0],
+        "teamStation": {
+          "version": 3,
+          "setupBefore": {
+            "players": {
+              "1": {
+                "id": 1,
+                "teamId": "team-away",
+                "fullName": "Player 1",
+                "jersey": "1",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "2": {
+                "id": 2,
+                "teamId": "team-away",
+                "fullName": "Player 2",
+                "jersey": "2",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "3": {
+                "id": 3,
+                "teamId": "team-away",
+                "fullName": "Player 3",
+                "jersey": "3",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "4": {
+                "id": 4,
+                "teamId": "team-away",
+                "fullName": "Player 4",
+                "jersey": "4",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "5": {
+                "id": 5,
+                "teamId": "team-away",
+                "fullName": "Player 5",
+                "jersey": "5",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "6": {
+                "id": 6,
+                "teamId": "team-away",
+                "fullName": "Player 6",
+                "jersey": "6",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "7": {
+                "id": 7,
+                "teamId": "team-away",
+                "fullName": "Player 7",
+                "jersey": "7",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "8": {
+                "id": 8,
+                "teamId": "team-away",
+                "fullName": "Player 8",
+                "jersey": "8",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "9": {
+                "id": 9,
+                "teamId": "team-away",
+                "fullName": "Player 9",
+                "jersey": "9",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "10": {
+                "id": 10,
+                "teamId": "team-home",
+                "fullName": "Player 1",
+                "jersey": "1",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "11": {
+                "id": 11,
+                "teamId": "team-home",
+                "fullName": "Player 2",
+                "jersey": "2",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "12": {
+                "id": 12,
+                "teamId": "team-home",
+                "fullName": "Player 3",
+                "jersey": "3",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "13": {
+                "id": 13,
+                "teamId": "team-home",
+                "fullName": "Player 4",
+                "jersey": "4",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "14": {
+                "id": 14,
+                "teamId": "team-home",
+                "fullName": "Player 5",
+                "jersey": "5",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "15": {
+                "id": 15,
+                "teamId": "team-home",
+                "fullName": "Player 6",
+                "jersey": "6",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "16": {
+                "id": 16,
+                "teamId": "team-home",
+                "fullName": "Player 7",
+                "jersey": "7",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "17": {
+                "id": 17,
+                "teamId": "team-home",
+                "fullName": "Player 8",
+                "jersey": "8",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "18": {
+                "id": 18,
+                "teamId": "team-home",
+                "fullName": "Player 9",
+                "jersey": "9",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              }
+            },
+            "teams": {
+              "team-away": {
+                "players": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "battingOrder": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "battingIndex": 1,
+                "defense": {
+                  "P": 1,
+                  "C": 2,
+                  "1B": 3,
+                  "2B": 4,
+                  "SS": 5,
+                  "3B": 6,
+                  "LF": 7,
+                  "CF": 8,
+                  "RF": 9
+                },
+                "pitchCounts": {}
+              },
+              "team-home": {
+                "players": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "battingOrder": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "battingIndex": 0,
+                "defense": {
+                  "P": 10,
+                  "C": 11,
+                  "1B": 12,
+                  "2B": 13,
+                  "SS": 14,
+                  "3B": 15,
+                  "LF": 16,
+                  "CF": 17,
+                  "RF": 18
+                },
+                "pitchCounts": {
+                  "10": 4
+                }
+              }
+            },
+            "tagOrder": [
+              1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+            ]
+          },
+          "actions": [
+            {
+              "type": "gameFlow",
+              "kind": "closePlay"
+            },
+            {
+              "type": "ballInPlay",
+              "contact": "swing",
+              "fielder": 14,
+              "launchAngle": -10
+            },
+            {
+              "type": "result",
+              "eventType": "field_out",
+              "outBy": "throw"
+            },
+            {
+              "type": "runnerMovement",
+              "runner": 2,
+              "to": "1B",
+              "out": true,
+              "reason": "Throw Out",
+              "fielders": [14, 12]
+            }
+          ],
+          "detail": {
+            "version": "estimated-v1",
+            "outcome": "Throw Out",
+            "contactKind": "swing",
+            "trajectory": "ground_ball",
+            "launchAngle": -10,
+            "outSubtype": "Throw Out",
+            "runnerActions": [
+              {
+                "runner": {
+                  "id": 2,
+                  "fullName": "Player 2"
+                },
+                "origin": 0,
+                "destination": 1,
+                "reason": "Throw Out",
+                "isOut": true,
+                "forceOut": true,
+                "runScored": false,
+                "credits": [
+                  {
+                    "player": {
+                      "id": 14,
+                      "fullName": "Player 5"
+                    },
+                    "credit": "f_assist",
+                    "position": "SS"
+                  },
+                  {
+                    "player": {
+                      "id": 12,
+                      "fullName": "Player 3"
+                    },
+                    "credit": "f_putout",
+                    "position": "1B"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "result": {
+          "type": "atBat",
+          "event": "Groundout",
+          "eventType": "field_out",
+          "description": "Throw Out",
+          "rbi": 0,
+          "awayScore": 0,
+          "homeScore": 0,
+          "isOut": true
+        },
+        "credits": [
+          {
+            "eventType": "field_out",
+            "label": "Out at 1st: Player 3 (1B) from Player 5 (SS)",
+            "teamId": "home",
+            "creditUserId": 12,
+            "credit": {
+              "name": "Player 3",
+              "role": "fielder",
+              "position": "1B"
+            },
+            "head": "Out at 1st",
+            "assists": [
+              {
+                "creditUserId": 14,
+                "position": "SS"
+              }
+            ],
+            "assistWord": "from"
+          }
+        ]
+      },
+      {
+        "about": {
+          "atBatIndex": 2,
+          "inning": 1,
+          "halfInning": "top",
+          "isTopInning": true,
+          "isComplete": true,
+          "isScoringPlay": false,
+          "hasOut": false,
+          "hasReview": false,
+          "startTime": "2026-09-25T10:00:00Z",
+          "endTime": null
+        },
+        "count": {
+          "balls": 4,
+          "strikes": 0,
+          "outs": 1
+        },
+        "matchup": {
+          "batter": {
+            "id": 3,
+            "fullName": "Player 3"
+          },
+          "batSide": {
+            "code": "R",
+            "description": "Right"
+          },
+          "pitcher": {
+            "id": 10,
+            "fullName": "Player 1"
+          }
+        },
+        "runners": [
+          {
+            "movement": {
+              "originBase": "1B",
+              "start": "1B",
+              "end": "2B",
+              "outBase": null,
+              "isOut": false,
+              "outNumber": null
+            },
+            "details": {
+              "event": "Other Advance",
+              "eventType": "other_advance",
+              "movementReason": "r_adv_play",
+              "runner": {
+                "id": 1,
+                "fullName": "Player 1"
+              },
+              "responsiblePitcher": null,
+              "isScoringEvent": false,
+              "rbi": false,
+              "earned": false,
+              "teamUnearned": false,
+              "playIndex": 0
+            },
+            "credits": []
+          },
+          {
+            "movement": {
+              "originBase": null,
+              "start": null,
+              "end": "1B",
+              "outBase": null,
+              "isOut": false,
+              "outNumber": null
+            },
+            "details": {
+              "event": "Walk",
+              "eventType": "walk",
+              "movementReason": null,
+              "runner": {
+                "id": 3,
+                "fullName": "Player 3"
+              },
+              "responsiblePitcher": {
+                "id": 10
+              },
+              "isScoringEvent": false,
+              "rbi": false,
+              "earned": false,
+              "teamUnearned": false,
+              "playIndex": 4
+            },
+            "credits": []
+          }
+        ],
+        "playEvents": [
+          {
+            "index": 0,
+            "isPitch": false,
+            "isBaseRunningPlay": true,
+            "type": "action",
+            "details": {
+              "description": "Runner advance, Player 1 to 2nd.",
+              "event": "Other Advance",
+              "eventType": "other_advance",
+              "awayScore": 0,
+              "homeScore": 0,
+              "isScoringPlay": false,
+              "isOut": false,
+              "hasReview": false
+            },
+            "said": {
+              "kind": "action",
+              "eventType": "other_advance",
+              "lead": {
+                "player": 1,
+                "role": "runner"
+              }
+            },
+            "count": {
+              "balls": 0,
+              "strikes": 0,
+              "outs": 1
+            },
+            "player": {
+              "id": 1,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          },
+          {
+            "index": 1,
+            "pitchNumber": 1,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "B",
+                "description": "Ball"
+              },
+              "code": "B",
+              "description": "Ball",
+              "isInPlay": false,
+              "isStrike": false,
+              "isBall": true,
+              "isOut": false,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 1,
+              "strikes": 0,
+              "outs": 1
+            },
+            "player": {
+              "id": 10,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          },
+          {
+            "index": 2,
+            "pitchNumber": 2,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "B",
+                "description": "Ball"
+              },
+              "code": "B",
+              "description": "Ball",
+              "isInPlay": false,
+              "isStrike": false,
+              "isBall": true,
+              "isOut": false,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 2,
+              "strikes": 0,
+              "outs": 1
+            },
+            "player": {
+              "id": 10,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          },
+          {
+            "index": 3,
+            "pitchNumber": 3,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "B",
+                "description": "Ball"
+              },
+              "code": "B",
+              "description": "Ball",
+              "isInPlay": false,
+              "isStrike": false,
+              "isBall": true,
+              "isOut": false,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 3,
+              "strikes": 0,
+              "outs": 1
+            },
+            "player": {
+              "id": 10,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          },
+          {
+            "index": 4,
+            "pitchNumber": 4,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "B",
+                "description": "Ball"
+              },
+              "code": "B",
+              "description": "Ball",
+              "isInPlay": false,
+              "isStrike": false,
+              "isBall": true,
+              "isOut": false,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 4,
+              "strikes": 0,
+              "outs": 1
+            },
+            "player": {
+              "id": 10,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          }
+        ],
+        "pitchIndex": [1, 2, 3, 4],
+        "actionIndex": [0],
+        "runnerIndex": [0, 1],
+        "teamStation": {
+          "version": 3,
+          "setupBefore": {
+            "players": {
+              "1": {
+                "id": 1,
+                "teamId": "team-away",
+                "fullName": "Player 1",
+                "jersey": "1",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "2": {
+                "id": 2,
+                "teamId": "team-away",
+                "fullName": "Player 2",
+                "jersey": "2",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "3": {
+                "id": 3,
+                "teamId": "team-away",
+                "fullName": "Player 3",
+                "jersey": "3",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "4": {
+                "id": 4,
+                "teamId": "team-away",
+                "fullName": "Player 4",
+                "jersey": "4",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "5": {
+                "id": 5,
+                "teamId": "team-away",
+                "fullName": "Player 5",
+                "jersey": "5",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "6": {
+                "id": 6,
+                "teamId": "team-away",
+                "fullName": "Player 6",
+                "jersey": "6",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "7": {
+                "id": 7,
+                "teamId": "team-away",
+                "fullName": "Player 7",
+                "jersey": "7",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "8": {
+                "id": 8,
+                "teamId": "team-away",
+                "fullName": "Player 8",
+                "jersey": "8",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "9": {
+                "id": 9,
+                "teamId": "team-away",
+                "fullName": "Player 9",
+                "jersey": "9",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "10": {
+                "id": 10,
+                "teamId": "team-home",
+                "fullName": "Player 1",
+                "jersey": "1",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "11": {
+                "id": 11,
+                "teamId": "team-home",
+                "fullName": "Player 2",
+                "jersey": "2",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "12": {
+                "id": 12,
+                "teamId": "team-home",
+                "fullName": "Player 3",
+                "jersey": "3",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "13": {
+                "id": 13,
+                "teamId": "team-home",
+                "fullName": "Player 4",
+                "jersey": "4",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "14": {
+                "id": 14,
+                "teamId": "team-home",
+                "fullName": "Player 5",
+                "jersey": "5",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "15": {
+                "id": 15,
+                "teamId": "team-home",
+                "fullName": "Player 6",
+                "jersey": "6",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "16": {
+                "id": 16,
+                "teamId": "team-home",
+                "fullName": "Player 7",
+                "jersey": "7",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "17": {
+                "id": 17,
+                "teamId": "team-home",
+                "fullName": "Player 8",
+                "jersey": "8",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "18": {
+                "id": 18,
+                "teamId": "team-home",
+                "fullName": "Player 9",
+                "jersey": "9",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              }
+            },
+            "teams": {
+              "team-away": {
+                "players": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "battingOrder": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "battingIndex": 2,
+                "defense": {
+                  "P": 1,
+                  "C": 2,
+                  "1B": 3,
+                  "2B": 4,
+                  "SS": 5,
+                  "3B": 6,
+                  "LF": 7,
+                  "CF": 8,
+                  "RF": 9
+                },
+                "pitchCounts": {}
+              },
+              "team-home": {
+                "players": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "battingOrder": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "battingIndex": 0,
+                "defense": {
+                  "P": 10,
+                  "C": 11,
+                  "1B": 12,
+                  "2B": 13,
+                  "SS": 14,
+                  "3B": 15,
+                  "LF": 16,
+                  "CF": 17,
+                  "RF": 18
+                },
+                "pitchCounts": {
+                  "10": 5
+                }
+              }
+            },
+            "tagOrder": [
+              1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+            ]
+          },
+          "actions": [
+            {
+              "type": "gameFlow",
+              "kind": "closePlay"
+            },
+            {
+              "type": "runnerMovement",
+              "runner": 1,
+              "to": "2B",
+              "reason": "Advance"
+            },
+            {
+              "type": "pitch",
+              "call": "B"
+            },
+            {
+              "type": "pitch",
+              "call": "B"
+            },
+            {
+              "type": "pitch",
+              "call": "B"
+            },
+            {
+              "type": "pitch",
+              "call": "B"
+            }
+          ],
+          "detail": {
+            "version": "estimated-v1",
+            "outcome": "Walk",
+            "runnerActions": [
+              {
+                "runner": {
+                  "id": 1,
+                  "fullName": "Player 1"
+                },
+                "origin": 1,
+                "destination": 2,
+                "reason": "Advance",
+                "isOut": false,
+                "forceOut": false,
+                "runScored": false,
+                "credits": []
+              },
+              {
+                "runner": {
+                  "id": 3,
+                  "fullName": "Player 3"
+                },
+                "origin": 0,
+                "destination": 1,
+                "reason": "Walk",
+                "isOut": false,
+                "forceOut": false,
+                "runScored": false,
+                "credits": []
+              }
+            ]
+          }
+        },
+        "result": {
+          "type": "atBat",
+          "event": "Walk",
+          "eventType": "walk",
+          "description": "Walk",
+          "rbi": 0,
+          "awayScore": 0,
+          "homeScore": 0,
+          "isOut": false
+        },
+        "credits": [
+          {
+            "eventType": "walk",
+            "label": "Walk: Player 3",
+            "teamId": "away",
+            "creditUserId": 3,
+            "credit": {
+              "name": "Player 3",
+              "role": "batter",
+              "position": null
+            },
+            "head": "Walk",
+            "assists": [],
+            "assistWord": "from"
+          }
+        ]
+      },
+      {
+        "about": {
+          "atBatIndex": 3,
+          "inning": 1,
+          "halfInning": "top",
+          "isTopInning": true,
+          "isComplete": true,
+          "isScoringPlay": false,
+          "hasOut": true,
+          "hasReview": false,
+          "startTime": "2026-09-25T10:00:00Z",
+          "endTime": null
+        },
+        "count": {
+          "balls": 0,
+          "strikes": 0,
+          "outs": 3
+        },
+        "matchup": {
+          "batter": {
+            "id": 4,
+            "fullName": "Player 4"
+          },
+          "batSide": {
+            "code": "R",
+            "description": "Right"
+          },
+          "pitcher": {
+            "id": 10,
+            "fullName": "Player 1"
+          }
+        },
+        "runners": [
+          {
+            "movement": {
+              "originBase": "1B",
+              "start": "1B",
+              "end": null,
+              "outBase": "2B",
+              "isOut": true,
+              "outNumber": 2
+            },
+            "details": {
+              "event": "Grounded Into DP",
+              "eventType": "grounded_into_double_play",
+              "movementReason": "r_force_out",
+              "runner": {
+                "id": 3,
+                "fullName": "Player 3"
+              },
+              "responsiblePitcher": null,
+              "isScoringEvent": false,
+              "rbi": false,
+              "earned": false,
+              "teamUnearned": false,
+              "playIndex": 1
+            },
+            "credits": [
+              {
+                "player": {
+                  "id": 14,
+                  "fullName": "Player 5"
+                },
+                "position": {
+                  "code": "6",
+                  "name": "Shortstop",
+                  "type": "Infielder",
+                  "abbreviation": "SS"
+                },
+                "credit": "f_assist"
+              },
+              {
+                "player": {
+                  "id": 13,
+                  "fullName": "Player 4"
+                },
+                "position": {
+                  "code": "4",
+                  "name": "Second Base",
+                  "type": "Infielder",
+                  "abbreviation": "2B"
+                },
+                "credit": "f_putout"
+              }
+            ]
+          },
+          {
+            "movement": {
+              "originBase": null,
+              "start": null,
+              "end": null,
+              "outBase": "1B",
+              "isOut": true,
+              "outNumber": 3
+            },
+            "details": {
+              "event": "Grounded Into DP",
+              "eventType": "grounded_into_double_play",
+              "movementReason": null,
+              "runner": {
+                "id": 4,
+                "fullName": "Player 4"
+              },
+              "responsiblePitcher": null,
+              "isScoringEvent": false,
+              "rbi": false,
+              "earned": false,
+              "teamUnearned": false,
+              "playIndex": 1
+            },
+            "credits": [
+              {
+                "player": {
+                  "id": 13,
+                  "fullName": "Player 4"
+                },
+                "position": {
+                  "code": "4",
+                  "name": "Second Base",
+                  "type": "Infielder",
+                  "abbreviation": "2B"
+                },
+                "credit": "f_assist"
+              },
+              {
+                "player": {
+                  "id": 12,
+                  "fullName": "Player 3"
+                },
+                "position": {
+                  "code": "3",
+                  "name": "First Base",
+                  "type": "Infielder",
+                  "abbreviation": "1B"
+                },
+                "credit": "f_putout"
+              }
+            ]
+          }
+        ],
+        "playEvents": [
+          {
+            "index": 0,
+            "isPitch": false,
+            "isSubstitution": true,
+            "type": "action",
+            "details": {
+              "description": "Batting order change: Player 5 bats 4th, Player 4 bats 5th.",
+              "event": "Batting Order Change",
+              "eventType": "ts_batting_order",
+              "awayScore": 0,
+              "homeScore": 0,
+              "isScoringPlay": false,
+              "isOut": false,
+              "hasReview": false
+            },
+            "said": {
+              "kind": "order",
+              "moved": [
+                {
+                  "player": 5,
+                  "bats": 4
+                },
+                {
+                  "player": 4,
+                  "bats": 5
+                }
+              ]
+            },
+            "count": {
+              "balls": 0,
+              "strikes": 0,
+              "outs": 1
+            },
+            "player": {
+              "id": 5,
+              "fullName": "Player 5"
+            },
+            "startTime": null,
+            "endTime": null
+          },
+          {
+            "index": 1,
+            "pitchNumber": 1,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "X",
+                "description": "In play, out(s)"
+              },
+              "code": "X",
+              "description": "In play, out(s)",
+              "isInPlay": true,
+              "isStrike": false,
+              "isBall": false,
+              "isOut": true,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 0,
+              "strikes": 0,
+              "outs": 1
+            },
+            "hitData": {
+              "trajectory": "ground_ball",
+              "location": "6"
+            },
+            "player": {
+              "id": 10,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          }
+        ],
+        "pitchIndex": [1],
+        "actionIndex": [0],
+        "runnerIndex": [0, 1],
+        "teamStation": {
+          "version": 3,
+          "setupBefore": {
+            "players": {
+              "1": {
+                "id": 1,
+                "teamId": "team-away",
+                "fullName": "Player 1",
+                "jersey": "1",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "2": {
+                "id": 2,
+                "teamId": "team-away",
+                "fullName": "Player 2",
+                "jersey": "2",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "3": {
+                "id": 3,
+                "teamId": "team-away",
+                "fullName": "Player 3",
+                "jersey": "3",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "4": {
+                "id": 4,
+                "teamId": "team-away",
+                "fullName": "Player 4",
+                "jersey": "4",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "5": {
+                "id": 5,
+                "teamId": "team-away",
+                "fullName": "Player 5",
+                "jersey": "5",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "6": {
+                "id": 6,
+                "teamId": "team-away",
+                "fullName": "Player 6",
+                "jersey": "6",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "7": {
+                "id": 7,
+                "teamId": "team-away",
+                "fullName": "Player 7",
+                "jersey": "7",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "8": {
+                "id": 8,
+                "teamId": "team-away",
+                "fullName": "Player 8",
+                "jersey": "8",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "9": {
+                "id": 9,
+                "teamId": "team-away",
+                "fullName": "Player 9",
+                "jersey": "9",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "10": {
+                "id": 10,
+                "teamId": "team-home",
+                "fullName": "Player 1",
+                "jersey": "1",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "11": {
+                "id": 11,
+                "teamId": "team-home",
+                "fullName": "Player 2",
+                "jersey": "2",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "12": {
+                "id": 12,
+                "teamId": "team-home",
+                "fullName": "Player 3",
+                "jersey": "3",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "13": {
+                "id": 13,
+                "teamId": "team-home",
+                "fullName": "Player 4",
+                "jersey": "4",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "14": {
+                "id": 14,
+                "teamId": "team-home",
+                "fullName": "Player 5",
+                "jersey": "5",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "15": {
+                "id": 15,
+                "teamId": "team-home",
+                "fullName": "Player 6",
+                "jersey": "6",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "16": {
+                "id": 16,
+                "teamId": "team-home",
+                "fullName": "Player 7",
+                "jersey": "7",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "17": {
+                "id": 17,
+                "teamId": "team-home",
+                "fullName": "Player 8",
+                "jersey": "8",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "18": {
+                "id": 18,
+                "teamId": "team-home",
+                "fullName": "Player 9",
+                "jersey": "9",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              }
+            },
+            "teams": {
+              "team-away": {
+                "players": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "battingOrder": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "battingIndex": 3,
+                "defense": {
+                  "P": 1,
+                  "C": 2,
+                  "1B": 3,
+                  "2B": 4,
+                  "SS": 5,
+                  "3B": 6,
+                  "LF": 7,
+                  "CF": 8,
+                  "RF": 9
+                },
+                "pitchCounts": {}
+              },
+              "team-home": {
+                "players": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "battingOrder": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "battingIndex": 0,
+                "defense": {
+                  "P": 10,
+                  "C": 11,
+                  "1B": 12,
+                  "2B": 13,
+                  "SS": 14,
+                  "3B": 15,
+                  "LF": 16,
+                  "CF": 17,
+                  "RF": 18
+                },
+                "pitchCounts": {
+                  "10": 9
+                }
+              }
+            },
+            "tagOrder": [
+              1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+            ]
+          },
+          "actions": [
+            {
+              "type": "gameFlow",
+              "kind": "closePlay"
+            },
+            {
+              "type": "lineup",
+              "kind": "roster",
+              "setup": {
+                "players": {
+                  "1": {
+                    "id": 1,
+                    "teamId": "team-away",
+                    "fullName": "Player 1",
+                    "jersey": "1",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "2": {
+                    "id": 2,
+                    "teamId": "team-away",
+                    "fullName": "Player 2",
+                    "jersey": "2",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "3": {
+                    "id": 3,
+                    "teamId": "team-away",
+                    "fullName": "Player 3",
+                    "jersey": "3",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "4": {
+                    "id": 4,
+                    "teamId": "team-away",
+                    "fullName": "Player 4",
+                    "jersey": "4",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "5": {
+                    "id": 5,
+                    "teamId": "team-away",
+                    "fullName": "Player 5",
+                    "jersey": "5",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "6": {
+                    "id": 6,
+                    "teamId": "team-away",
+                    "fullName": "Player 6",
+                    "jersey": "6",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "7": {
+                    "id": 7,
+                    "teamId": "team-away",
+                    "fullName": "Player 7",
+                    "jersey": "7",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "8": {
+                    "id": 8,
+                    "teamId": "team-away",
+                    "fullName": "Player 8",
+                    "jersey": "8",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "9": {
+                    "id": 9,
+                    "teamId": "team-away",
+                    "fullName": "Player 9",
+                    "jersey": "9",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "10": {
+                    "id": 10,
+                    "teamId": "team-home",
+                    "fullName": "Player 1",
+                    "jersey": "1",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "11": {
+                    "id": 11,
+                    "teamId": "team-home",
+                    "fullName": "Player 2",
+                    "jersey": "2",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "12": {
+                    "id": 12,
+                    "teamId": "team-home",
+                    "fullName": "Player 3",
+                    "jersey": "3",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "13": {
+                    "id": 13,
+                    "teamId": "team-home",
+                    "fullName": "Player 4",
+                    "jersey": "4",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "14": {
+                    "id": 14,
+                    "teamId": "team-home",
+                    "fullName": "Player 5",
+                    "jersey": "5",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "15": {
+                    "id": 15,
+                    "teamId": "team-home",
+                    "fullName": "Player 6",
+                    "jersey": "6",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "16": {
+                    "id": 16,
+                    "teamId": "team-home",
+                    "fullName": "Player 7",
+                    "jersey": "7",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "17": {
+                    "id": 17,
+                    "teamId": "team-home",
+                    "fullName": "Player 8",
+                    "jersey": "8",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  },
+                  "18": {
+                    "id": 18,
+                    "teamId": "team-home",
+                    "fullName": "Player 9",
+                    "jersey": "9",
+                    "bats": "right",
+                    "throws": null,
+                    "positions": [],
+                    "local": false
+                  }
+                },
+                "teams": {
+                  "team-away": {
+                    "players": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                    "battingOrder": [1, 2, 3, 5, 4, 6, 7, 8, 9],
+                    "battingIndex": 3,
+                    "defense": {
+                      "P": 1,
+                      "C": 2,
+                      "1B": 3,
+                      "2B": 4,
+                      "SS": 5,
+                      "3B": 6,
+                      "LF": 7,
+                      "CF": 8,
+                      "RF": 9
+                    },
+                    "pitchCounts": {}
+                  },
+                  "team-home": {
+                    "players": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                    "battingOrder": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                    "battingIndex": 0,
+                    "defense": {
+                      "P": 10,
+                      "C": 11,
+                      "1B": 12,
+                      "2B": 13,
+                      "SS": 14,
+                      "3B": 15,
+                      "LF": 16,
+                      "CF": 17,
+                      "RF": 18
+                    },
+                    "pitchCounts": {
+                      "10": 9
+                    }
+                  }
+                },
+                "tagOrder": [
+                  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+                ]
+              }
+            },
+            {
+              "type": "ballInPlay",
+              "contact": "swing",
+              "fielder": 14,
+              "launchAngle": -10
+            },
+            {
+              "type": "result",
+              "eventType": "field_out",
+              "outBy": "throw"
+            },
+            {
+              "type": "runnerMovement",
+              "runner": 3,
+              "to": "2B",
+              "out": true,
+              "reason": "Force Out",
+              "fielders": [14, 13]
+            },
+            {
+              "type": "runnerMovement",
+              "runner": 4,
+              "to": "1B",
+              "out": true,
+              "reason": "Throw Out",
+              "fielders": [13, 12]
+            }
+          ],
+          "detail": {
+            "version": "estimated-v1",
+            "outcome": "Throw Out",
+            "lineupChanged": true,
+            "contactKind": "swing",
+            "trajectory": "ground_ball",
+            "launchAngle": -10,
+            "outSubtype": "Throw Out",
+            "runnerActions": [
+              {
+                "runner": {
+                  "id": 3,
+                  "fullName": "Player 3"
+                },
+                "origin": 1,
+                "destination": 2,
+                "reason": "Force Out",
+                "isOut": true,
+                "forceOut": true,
+                "runScored": false,
+                "credits": [
+                  {
+                    "player": {
+                      "id": 14,
+                      "fullName": "Player 5"
+                    },
+                    "credit": "f_assist",
+                    "position": "SS"
+                  },
+                  {
+                    "player": {
+                      "id": 13,
+                      "fullName": "Player 4"
+                    },
+                    "credit": "f_putout",
+                    "position": "2B"
+                  }
+                ]
+              },
+              {
+                "runner": {
+                  "id": 4,
+                  "fullName": "Player 4"
+                },
+                "origin": 0,
+                "destination": 1,
+                "reason": "Throw Out",
+                "isOut": true,
+                "forceOut": true,
+                "runScored": false,
+                "credits": [
+                  {
+                    "player": {
+                      "id": 13,
+                      "fullName": "Player 4"
+                    },
+                    "credit": "f_assist",
+                    "position": "2B"
+                  },
+                  {
+                    "player": {
+                      "id": 12,
+                      "fullName": "Player 3"
+                    },
+                    "credit": "f_putout",
+                    "position": "1B"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "result": {
+          "type": "atBat",
+          "event": "Grounded Into DP",
+          "eventType": "grounded_into_double_play",
+          "description": "Throw Out",
+          "rbi": 0,
+          "awayScore": 0,
+          "homeScore": 0,
+          "isOut": true
+        },
+        "credits": [
+          {
+            "eventType": "grounded_into_double_play",
+            "label": "Out at 2nd: Player 4 (2B) from Player 5 (SS)",
+            "teamId": "home",
+            "creditUserId": 13,
+            "credit": {
+              "name": "Player 4",
+              "role": "fielder",
+              "position": "2B"
+            },
+            "head": "Out at 2nd",
+            "assists": [
+              {
+                "creditUserId": 14,
+                "position": "SS"
+              }
+            ],
+            "assistWord": "from"
+          },
+          {
+            "eventType": "grounded_into_double_play",
+            "label": "Out at 1st: Player 3 (1B) from Player 4 (2B)",
+            "teamId": "home",
+            "creditUserId": 12,
+            "credit": {
+              "name": "Player 3",
+              "role": "fielder",
+              "position": "1B"
+            },
+            "head": "Out at 1st",
+            "assists": [
+              {
+                "creditUserId": 13,
+                "position": "2B"
+              }
+            ],
+            "assistWord": "from"
+          }
+        ]
+      },
+      {
+        "about": {
+          "atBatIndex": 4,
+          "inning": 1,
+          "halfInning": "bottom",
+          "isTopInning": false,
+          "isComplete": true,
+          "isScoringPlay": false,
+          "hasOut": false,
+          "hasReview": false,
+          "startTime": "2026-09-25T10:00:00Z",
+          "endTime": null
+        },
+        "count": {
+          "balls": 4,
+          "strikes": 0,
+          "outs": 0
+        },
+        "matchup": {
+          "batter": {
+            "id": 10,
+            "fullName": "Player 1"
+          },
+          "batSide": {
+            "code": "R",
+            "description": "Right"
+          },
+          "pitcher": {
+            "id": 1,
+            "fullName": "Player 1"
+          }
+        },
+        "runners": [
+          {
+            "movement": {
+              "originBase": null,
+              "start": null,
+              "end": "1B",
+              "outBase": null,
+              "isOut": false,
+              "outNumber": null
+            },
+            "details": {
+              "event": "Walk",
+              "eventType": "walk",
+              "movementReason": null,
+              "runner": {
+                "id": 10,
+                "fullName": "Player 1"
+              },
+              "responsiblePitcher": {
+                "id": 1
+              },
+              "isScoringEvent": false,
+              "rbi": false,
+              "earned": false,
+              "teamUnearned": false,
+              "playIndex": 3
+            },
+            "credits": []
+          }
+        ],
+        "playEvents": [
+          {
+            "index": 0,
+            "pitchNumber": 1,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "B",
+                "description": "Ball"
+              },
+              "code": "B",
+              "description": "Ball",
+              "isInPlay": false,
+              "isStrike": false,
+              "isBall": true,
+              "isOut": false,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 1,
+              "strikes": 0,
+              "outs": 0
+            },
+            "player": {
+              "id": 1,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          },
+          {
+            "index": 1,
+            "pitchNumber": 2,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "B",
+                "description": "Ball"
+              },
+              "code": "B",
+              "description": "Ball",
+              "isInPlay": false,
+              "isStrike": false,
+              "isBall": true,
+              "isOut": false,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 2,
+              "strikes": 0,
+              "outs": 0
+            },
+            "player": {
+              "id": 1,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          },
+          {
+            "index": 2,
+            "pitchNumber": 3,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "B",
+                "description": "Ball"
+              },
+              "code": "B",
+              "description": "Ball",
+              "isInPlay": false,
+              "isStrike": false,
+              "isBall": true,
+              "isOut": false,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 3,
+              "strikes": 0,
+              "outs": 0
+            },
+            "player": {
+              "id": 1,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          },
+          {
+            "index": 3,
+            "pitchNumber": 4,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "B",
+                "description": "Ball"
+              },
+              "code": "B",
+              "description": "Ball",
+              "isInPlay": false,
+              "isStrike": false,
+              "isBall": true,
+              "isOut": false,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 4,
+              "strikes": 0,
+              "outs": 0
+            },
+            "player": {
+              "id": 1,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          }
+        ],
+        "pitchIndex": [0, 1, 2, 3],
+        "actionIndex": [],
+        "runnerIndex": [0],
+        "teamStation": {
+          "version": 3,
+          "setupBefore": {
+            "players": {
+              "1": {
+                "id": 1,
+                "teamId": "team-away",
+                "fullName": "Player 1",
+                "jersey": "1",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "2": {
+                "id": 2,
+                "teamId": "team-away",
+                "fullName": "Player 2",
+                "jersey": "2",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "3": {
+                "id": 3,
+                "teamId": "team-away",
+                "fullName": "Player 3",
+                "jersey": "3",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "4": {
+                "id": 4,
+                "teamId": "team-away",
+                "fullName": "Player 4",
+                "jersey": "4",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "5": {
+                "id": 5,
+                "teamId": "team-away",
+                "fullName": "Player 5",
+                "jersey": "5",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "6": {
+                "id": 6,
+                "teamId": "team-away",
+                "fullName": "Player 6",
+                "jersey": "6",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "7": {
+                "id": 7,
+                "teamId": "team-away",
+                "fullName": "Player 7",
+                "jersey": "7",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "8": {
+                "id": 8,
+                "teamId": "team-away",
+                "fullName": "Player 8",
+                "jersey": "8",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "9": {
+                "id": 9,
+                "teamId": "team-away",
+                "fullName": "Player 9",
+                "jersey": "9",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "10": {
+                "id": 10,
+                "teamId": "team-home",
+                "fullName": "Player 1",
+                "jersey": "1",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "11": {
+                "id": 11,
+                "teamId": "team-home",
+                "fullName": "Player 2",
+                "jersey": "2",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "12": {
+                "id": 12,
+                "teamId": "team-home",
+                "fullName": "Player 3",
+                "jersey": "3",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "13": {
+                "id": 13,
+                "teamId": "team-home",
+                "fullName": "Player 4",
+                "jersey": "4",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "14": {
+                "id": 14,
+                "teamId": "team-home",
+                "fullName": "Player 5",
+                "jersey": "5",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "15": {
+                "id": 15,
+                "teamId": "team-home",
+                "fullName": "Player 6",
+                "jersey": "6",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "16": {
+                "id": 16,
+                "teamId": "team-home",
+                "fullName": "Player 7",
+                "jersey": "7",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "17": {
+                "id": 17,
+                "teamId": "team-home",
+                "fullName": "Player 8",
+                "jersey": "8",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "18": {
+                "id": 18,
+                "teamId": "team-home",
+                "fullName": "Player 9",
+                "jersey": "9",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              }
+            },
+            "teams": {
+              "team-away": {
+                "players": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "battingOrder": [1, 2, 3, 5, 4, 6, 7, 8, 9],
+                "battingIndex": 5,
+                "defense": {
+                  "P": 1,
+                  "C": 2,
+                  "1B": 3,
+                  "2B": 4,
+                  "SS": 5,
+                  "3B": 6,
+                  "LF": 7,
+                  "CF": 8,
+                  "RF": 9
+                },
+                "pitchCounts": {}
+              },
+              "team-home": {
+                "players": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "battingOrder": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "battingIndex": 0,
+                "defense": {
+                  "P": 10,
+                  "C": 11,
+                  "1B": 12,
+                  "2B": 13,
+                  "SS": 14,
+                  "3B": 15,
+                  "LF": 16,
+                  "CF": 17,
+                  "RF": 18
+                },
+                "pitchCounts": {
+                  "10": 10
+                }
+              }
+            },
+            "tagOrder": [
+              1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+            ]
+          },
+          "actions": [
+            {
+              "type": "gameFlow",
+              "kind": "closePlay"
+            },
+            {
+              "type": "pitch",
+              "call": "B"
+            },
+            {
+              "type": "pitch",
+              "call": "B"
+            },
+            {
+              "type": "pitch",
+              "call": "B"
+            },
+            {
+              "type": "pitch",
+              "call": "B"
+            }
+          ],
+          "detail": {
+            "version": "estimated-v1",
+            "outcome": "Walk",
+            "runnerActions": [
+              {
+                "runner": {
+                  "id": 10,
+                  "fullName": "Player 1"
+                },
+                "origin": 0,
+                "destination": 1,
+                "reason": "Walk",
+                "isOut": false,
+                "forceOut": false,
+                "runScored": false,
+                "credits": []
+              }
+            ]
+          }
+        },
+        "result": {
+          "type": "atBat",
+          "event": "Walk",
+          "eventType": "walk",
+          "description": "Walk",
+          "rbi": 0,
+          "awayScore": 0,
+          "homeScore": 0,
+          "isOut": false
+        },
+        "credits": [
+          {
+            "eventType": "walk",
+            "label": "Walk: Player 1",
+            "teamId": "home",
+            "creditUserId": 10,
+            "credit": {
+              "name": "Player 1",
+              "role": "batter",
+              "position": null
+            },
+            "head": "Walk",
+            "assists": [],
+            "assistWord": "from"
+          }
+        ]
+      },
+      {
+        "about": {
+          "atBatIndex": 5,
+          "inning": 1,
+          "halfInning": "bottom",
+          "isTopInning": false,
+          "isComplete": true,
+          "isScoringPlay": false,
+          "hasOut": true,
+          "hasReview": false,
+          "startTime": "2026-09-25T10:00:00Z",
+          "endTime": null
+        },
+        "count": {
+          "balls": 0,
+          "strikes": 0,
+          "outs": 1
+        },
+        "matchup": {
+          "batter": {
+            "id": 11,
+            "fullName": "Player 2"
+          },
+          "batSide": {
+            "code": "R",
+            "description": "Right"
+          },
+          "pitcher": {
+            "id": 1,
+            "fullName": "Player 1"
+          }
+        },
+        "runners": [
+          {
+            "movement": {
+              "originBase": null,
+              "start": null,
+              "end": null,
+              "outBase": "1B",
+              "isOut": true,
+              "outNumber": 1
+            },
+            "details": {
+              "event": "Groundout",
+              "eventType": "field_out",
+              "movementReason": null,
+              "runner": {
+                "id": 11,
+                "fullName": "Player 2"
+              },
+              "responsiblePitcher": null,
+              "isScoringEvent": false,
+              "rbi": false,
+              "earned": false,
+              "teamUnearned": false,
+              "playIndex": 0
+            },
+            "credits": [
+              {
+                "player": {
+                  "id": 5,
+                  "fullName": "Player 5"
+                },
+                "position": {
+                  "code": "6",
+                  "name": "Shortstop",
+                  "type": "Infielder",
+                  "abbreviation": "SS"
+                },
+                "credit": "f_assist"
+              },
+              {
+                "player": {
+                  "id": 3,
+                  "fullName": "Player 3"
+                },
+                "position": {
+                  "code": "3",
+                  "name": "First Base",
+                  "type": "Infielder",
+                  "abbreviation": "1B"
+                },
+                "credit": "f_putout"
+              }
+            ]
+          }
+        ],
+        "playEvents": [
+          {
+            "index": 0,
+            "pitchNumber": 1,
+            "isPitch": true,
+            "type": "pitch",
+            "details": {
+              "call": {
+                "code": "X",
+                "description": "In play, out(s)"
+              },
+              "code": "X",
+              "description": "In play, out(s)",
+              "isInPlay": true,
+              "isStrike": false,
+              "isBall": false,
+              "isOut": true,
+              "hasReview": false
+            },
+            "count": {
+              "balls": 0,
+              "strikes": 0,
+              "outs": 0
+            },
+            "hitData": {
+              "trajectory": "ground_ball",
+              "location": "6"
+            },
+            "player": {
+              "id": 1,
+              "fullName": "Player 1"
+            },
+            "startTime": null,
+            "endTime": null
+          }
+        ],
+        "pitchIndex": [0],
+        "actionIndex": [],
+        "runnerIndex": [0],
+        "teamStation": {
+          "version": 3,
+          "setupBefore": {
+            "players": {
+              "1": {
+                "id": 1,
+                "teamId": "team-away",
+                "fullName": "Player 1",
+                "jersey": "1",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "2": {
+                "id": 2,
+                "teamId": "team-away",
+                "fullName": "Player 2",
+                "jersey": "2",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "3": {
+                "id": 3,
+                "teamId": "team-away",
+                "fullName": "Player 3",
+                "jersey": "3",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "4": {
+                "id": 4,
+                "teamId": "team-away",
+                "fullName": "Player 4",
+                "jersey": "4",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "5": {
+                "id": 5,
+                "teamId": "team-away",
+                "fullName": "Player 5",
+                "jersey": "5",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "6": {
+                "id": 6,
+                "teamId": "team-away",
+                "fullName": "Player 6",
+                "jersey": "6",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "7": {
+                "id": 7,
+                "teamId": "team-away",
+                "fullName": "Player 7",
+                "jersey": "7",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "8": {
+                "id": 8,
+                "teamId": "team-away",
+                "fullName": "Player 8",
+                "jersey": "8",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "9": {
+                "id": 9,
+                "teamId": "team-away",
+                "fullName": "Player 9",
+                "jersey": "9",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "10": {
+                "id": 10,
+                "teamId": "team-home",
+                "fullName": "Player 1",
+                "jersey": "1",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "11": {
+                "id": 11,
+                "teamId": "team-home",
+                "fullName": "Player 2",
+                "jersey": "2",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "12": {
+                "id": 12,
+                "teamId": "team-home",
+                "fullName": "Player 3",
+                "jersey": "3",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "13": {
+                "id": 13,
+                "teamId": "team-home",
+                "fullName": "Player 4",
+                "jersey": "4",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "14": {
+                "id": 14,
+                "teamId": "team-home",
+                "fullName": "Player 5",
+                "jersey": "5",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "15": {
+                "id": 15,
+                "teamId": "team-home",
+                "fullName": "Player 6",
+                "jersey": "6",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "16": {
+                "id": 16,
+                "teamId": "team-home",
+                "fullName": "Player 7",
+                "jersey": "7",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "17": {
+                "id": 17,
+                "teamId": "team-home",
+                "fullName": "Player 8",
+                "jersey": "8",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              },
+              "18": {
+                "id": 18,
+                "teamId": "team-home",
+                "fullName": "Player 9",
+                "jersey": "9",
+                "bats": "right",
+                "throws": null,
+                "positions": [],
+                "local": false
+              }
+            },
+            "teams": {
+              "team-away": {
+                "players": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "battingOrder": [1, 2, 3, 5, 4, 6, 7, 8, 9],
+                "battingIndex": 5,
+                "defense": {
+                  "P": 1,
+                  "C": 2,
+                  "1B": 3,
+                  "2B": 4,
+                  "SS": 5,
+                  "3B": 6,
+                  "LF": 7,
+                  "CF": 8,
+                  "RF": 9
+                },
+                "pitchCounts": {
+                  "1": 4
+                }
+              },
+              "team-home": {
+                "players": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "battingOrder": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "battingIndex": 1,
+                "defense": {
+                  "P": 10,
+                  "C": 11,
+                  "1B": 12,
+                  "2B": 13,
+                  "SS": 14,
+                  "3B": 15,
+                  "LF": 16,
+                  "CF": 17,
+                  "RF": 18
+                },
+                "pitchCounts": {
+                  "10": 10
+                }
+              }
+            },
+            "tagOrder": [
+              1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+            ]
+          },
+          "actions": [
+            {
+              "type": "gameFlow",
+              "kind": "closePlay"
+            },
+            {
+              "type": "ballInPlay",
+              "contact": "swing",
+              "fielder": 5,
+              "launchAngle": -10
+            },
+            {
+              "type": "result",
+              "eventType": "field_out",
+              "outBy": "throw"
+            },
+            {
+              "type": "runnerMovement",
+              "runner": 11,
+              "to": "1B",
+              "out": true,
+              "reason": "Throw Out",
+              "fielders": [5, 3]
+            }
+          ],
+          "detail": {
+            "version": "estimated-v1",
+            "outcome": "Throw Out",
+            "contactKind": "swing",
+            "trajectory": "ground_ball",
+            "launchAngle": -10,
+            "outSubtype": "Throw Out",
+            "runnerActions": [
+              {
+                "runner": {
+                  "id": 11,
+                  "fullName": "Player 2"
+                },
+                "origin": 0,
+                "destination": 1,
+                "reason": "Throw Out",
+                "isOut": true,
+                "forceOut": true,
+                "runScored": false,
+                "credits": [
+                  {
+                    "player": {
+                      "id": 5,
+                      "fullName": "Player 5"
+                    },
+                    "credit": "f_assist",
+                    "position": "SS"
+                  },
+                  {
+                    "player": {
+                      "id": 3,
+                      "fullName": "Player 3"
+                    },
+                    "credit": "f_putout",
+                    "position": "1B"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "result": {
+          "type": "atBat",
+          "event": "Groundout",
+          "eventType": "field_out",
+          "description": "Throw Out",
+          "rbi": 0,
+          "awayScore": 0,
+          "homeScore": 0,
+          "isOut": true
+        },
+        "credits": [
+          {
+            "eventType": "field_out",
+            "label": "Out at 1st: Player 3 (1B) from Player 5 (SS)",
+            "teamId": "away",
+            "creditUserId": 3,
+            "credit": {
+              "name": "Player 3",
+              "role": "fielder",
+              "position": "1B"
+            },
+            "head": "Out at 1st",
+            "assists": [
+              {
+                "creditUserId": 5,
+                "position": "SS"
+              }
+            ],
+            "assistWord": "from"
+          }
+        ]
+      }
+    ],
+    "currentPlay": {
+      "about": {
+        "atBatIndex": 6,
+        "inning": 1,
+        "halfInning": "bottom",
+        "isTopInning": false,
+        "isComplete": false,
+        "isScoringPlay": false,
+        "hasOut": false,
+        "hasReview": false,
+        "startTime": null,
+        "endTime": null
+      },
+      "count": {
+        "balls": 1,
+        "strikes": 0,
+        "outs": 1
+      },
+      "matchup": {
+        "batter": {
+          "id": 12,
+          "fullName": "Player 3"
+        },
+        "batSide": {
+          "code": "R",
+          "description": "Right"
+        },
+        "pitcher": {
+          "id": 1,
+          "fullName": "Player 1"
+        }
+      },
+      "runners": [],
+      "playEvents": [
+        {
+          "index": 0,
+          "pitchNumber": 1,
+          "isPitch": true,
+          "type": "pitch",
+          "details": {
+            "call": {
+              "code": "B",
+              "description": "Ball"
+            },
+            "code": "B",
+            "description": "Ball",
+            "isInPlay": false,
+            "isStrike": false,
+            "isBall": true,
+            "isOut": false,
+            "hasReview": false
+          },
+          "count": {
+            "balls": 1,
+            "strikes": 0,
+            "outs": 1
+          },
+          "player": {
+            "id": 1,
+            "fullName": "Player 1"
+          },
+          "startTime": null,
+          "endTime": null
+        }
+      ],
+      "pitchIndex": [0],
+      "actionIndex": [],
+      "runnerIndex": [],
+      "teamStation": {
+        "version": 3,
+        "setupBefore": {
+          "players": {
+            "1": {
+              "id": 1,
+              "teamId": "team-away",
+              "fullName": "Player 1",
+              "jersey": "1",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "2": {
+              "id": 2,
+              "teamId": "team-away",
+              "fullName": "Player 2",
+              "jersey": "2",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "3": {
+              "id": 3,
+              "teamId": "team-away",
+              "fullName": "Player 3",
+              "jersey": "3",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "4": {
+              "id": 4,
+              "teamId": "team-away",
+              "fullName": "Player 4",
+              "jersey": "4",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "5": {
+              "id": 5,
+              "teamId": "team-away",
+              "fullName": "Player 5",
+              "jersey": "5",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "6": {
+              "id": 6,
+              "teamId": "team-away",
+              "fullName": "Player 6",
+              "jersey": "6",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "7": {
+              "id": 7,
+              "teamId": "team-away",
+              "fullName": "Player 7",
+              "jersey": "7",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "8": {
+              "id": 8,
+              "teamId": "team-away",
+              "fullName": "Player 8",
+              "jersey": "8",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "9": {
+              "id": 9,
+              "teamId": "team-away",
+              "fullName": "Player 9",
+              "jersey": "9",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "10": {
+              "id": 10,
+              "teamId": "team-home",
+              "fullName": "Player 1",
+              "jersey": "1",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "11": {
+              "id": 11,
+              "teamId": "team-home",
+              "fullName": "Player 2",
+              "jersey": "2",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "12": {
+              "id": 12,
+              "teamId": "team-home",
+              "fullName": "Player 3",
+              "jersey": "3",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "13": {
+              "id": 13,
+              "teamId": "team-home",
+              "fullName": "Player 4",
+              "jersey": "4",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "14": {
+              "id": 14,
+              "teamId": "team-home",
+              "fullName": "Player 5",
+              "jersey": "5",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "15": {
+              "id": 15,
+              "teamId": "team-home",
+              "fullName": "Player 6",
+              "jersey": "6",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "16": {
+              "id": 16,
+              "teamId": "team-home",
+              "fullName": "Player 7",
+              "jersey": "7",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "17": {
+              "id": 17,
+              "teamId": "team-home",
+              "fullName": "Player 8",
+              "jersey": "8",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            },
+            "18": {
+              "id": 18,
+              "teamId": "team-home",
+              "fullName": "Player 9",
+              "jersey": "9",
+              "bats": "right",
+              "throws": null,
+              "positions": [],
+              "local": false
+            }
+          },
+          "teams": {
+            "team-away": {
+              "players": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+              "battingOrder": [1, 2, 3, 5, 4, 6, 7, 8, 9],
+              "battingIndex": 5,
+              "defense": {
+                "P": 1,
+                "C": 2,
+                "1B": 3,
+                "2B": 4,
+                "SS": 5,
+                "3B": 6,
+                "LF": 7,
+                "CF": 8,
+                "RF": 9
+              },
+              "pitchCounts": {
+                "1": 5
+              }
+            },
+            "team-home": {
+              "players": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+              "battingOrder": [10, 11, 12, 13, 14, 15, 16, 17, 18],
+              "battingIndex": 2,
+              "defense": {
+                "P": 10,
+                "C": 11,
+                "1B": 12,
+                "2B": 13,
+                "SS": 14,
+                "3B": 15,
+                "LF": 16,
+                "CF": 17,
+                "RF": 18
+              },
+              "pitchCounts": {
+                "10": 10
+              }
+            }
+          },
+          "tagOrder": [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+          ]
+        },
+        "actions": [
+          {
+            "type": "gameFlow",
+            "kind": "closePlay"
+          },
+          {
+            "type": "pitch",
+            "call": "B"
+          }
+        ],
+        "detail": {
+          "version": "estimated-v1",
+          "outcome": ""
+        }
+      }
+    }
+  },
+  "snapshot": {
+    "plays": [
+      {
+        "result": {
+          "event": "Walk",
+          "eventType": "walk",
+          "description": "Walk",
+          "awayScore": 0,
+          "homeScore": 0,
+          "rbi": 0
+        },
+        "count": {
+          "balls": 4,
+          "strikes": 0,
+          "outs": 0
+        },
+        "batter": 1,
+        "runners": [
+          {
+            "movement": {
+              "originBase": 0,
+              "start": 0,
+              "end": 1,
+              "isOut": false,
+              "forceOut": false,
+              "forced": true,
+              "runScored": false
+            },
+            "runner": 1,
+            "reason": "Walk",
+            "rbi": false,
+            "credits": []
+          }
+        ],
+        "outSubtype": null
+      },
+      {
+        "result": {
+          "event": "Throw Out",
+          "eventType": "field_out",
+          "description": "Throw Out",
+          "awayScore": 0,
+          "homeScore": 0,
+          "rbi": 0
+        },
+        "count": {
+          "balls": 0,
+          "strikes": 0,
+          "outs": 1
+        },
+        "batter": 2,
+        "runners": [
+          {
+            "movement": {
+              "originBase": 0,
+              "start": 0,
+              "end": 1,
+              "isOut": true,
+              "forceOut": true,
+              "forced": false,
+              "runScored": false,
+              "outNumber": 1
+            },
+            "runner": 2,
+            "reason": "Throw Out",
+            "rbi": false,
+            "credits": ["f_assist 14", "f_putout 12"]
+          }
+        ],
+        "outSubtype": "Throw Out"
+      },
+      {
+        "result": {
+          "event": "Walk",
+          "eventType": "walk",
+          "description": "Walk",
+          "awayScore": 0,
+          "homeScore": 0,
+          "rbi": 0
+        },
+        "count": {
+          "balls": 4,
+          "strikes": 0,
+          "outs": 1
+        },
+        "batter": 3,
+        "runners": [
+          {
+            "movement": {
+              "originBase": 1,
+              "start": 1,
+              "end": 2,
+              "isOut": false,
+              "forceOut": false,
+              "forced": false,
+              "runScored": false
+            },
+            "runner": 1,
+            "reason": "Advance",
+            "rbi": false,
+            "credits": []
+          },
+          {
+            "movement": {
+              "originBase": 0,
+              "start": 0,
+              "end": 1,
+              "isOut": false,
+              "forceOut": false,
+              "forced": true,
+              "runScored": false
+            },
+            "runner": 3,
+            "reason": "Walk",
+            "rbi": false,
+            "credits": []
+          }
+        ],
+        "outSubtype": null
+      },
+      {
+        "result": {
+          "event": "Throw Out",
+          "eventType": "grounded_into_double_play",
+          "description": "Throw Out",
+          "awayScore": 0,
+          "homeScore": 0,
+          "rbi": 0
+        },
+        "count": {
+          "balls": 0,
+          "strikes": 0,
+          "outs": 3
+        },
+        "batter": 4,
+        "runners": [
+          {
+            "movement": {
+              "originBase": 1,
+              "start": 1,
+              "end": 2,
+              "isOut": true,
+              "forceOut": true,
+              "forced": false,
+              "runScored": false,
+              "outNumber": 2
+            },
+            "runner": 3,
+            "reason": "Force Out",
+            "rbi": false,
+            "credits": ["f_assist 14", "f_putout 13"]
+          },
+          {
+            "movement": {
+              "originBase": 0,
+              "start": 0,
+              "end": 1,
+              "isOut": true,
+              "forceOut": true,
+              "forced": false,
+              "runScored": false,
+              "outNumber": 3
+            },
+            "runner": 4,
+            "reason": "Throw Out",
+            "rbi": false,
+            "credits": ["f_assist 13", "f_putout 12"]
+          }
+        ],
+        "outSubtype": "Throw Out"
+      },
+      {
+        "result": {
+          "event": "Walk",
+          "eventType": "walk",
+          "description": "Walk",
+          "awayScore": 0,
+          "homeScore": 0,
+          "rbi": 0
+        },
+        "count": {
+          "balls": 4,
+          "strikes": 0,
+          "outs": 0
+        },
+        "batter": 10,
+        "runners": [
+          {
+            "movement": {
+              "originBase": 0,
+              "start": 0,
+              "end": 1,
+              "isOut": false,
+              "forceOut": false,
+              "forced": true,
+              "runScored": false
+            },
+            "runner": 10,
+            "reason": "Walk",
+            "rbi": false,
+            "credits": []
+          }
+        ],
+        "outSubtype": null
+      },
+      {
+        "result": {
+          "event": "Throw Out",
+          "eventType": "field_out",
+          "description": "Throw Out",
+          "awayScore": 0,
+          "homeScore": 0,
+          "rbi": 0
+        },
+        "count": {
+          "balls": 0,
+          "strikes": 0,
+          "outs": 1
+        },
+        "batter": 11,
+        "runners": [
+          {
+            "movement": {
+              "originBase": 0,
+              "start": 0,
+              "end": 1,
+              "isOut": true,
+              "forceOut": true,
+              "forced": false,
+              "runScored": false,
+              "outNumber": 1
+            },
+            "runner": 11,
+            "reason": "Throw Out",
+            "rbi": false,
+            "credits": ["f_assist 5", "f_putout 3"]
+          }
+        ],
+        "outSubtype": "Throw Out"
+      },
+      {
+        "result": {
+          "event": "",
+          "eventType": "",
+          "description": "",
+          "awayScore": 0,
+          "homeScore": 0,
+          "rbi": 0
+        },
+        "count": {
+          "balls": 1,
+          "strikes": 0,
+          "outs": 1
+        },
+        "batter": 12,
+        "runners": [],
+        "outSubtype": null
+      }
+    ],
+    "linescore": {
+      "currentInning": 1,
+      "currentInningOrdinal": "1st",
+      "inningState": "Bottom",
+      "isTopInning": false,
+      "balls": 1,
+      "strikes": 0,
+      "outs": 1,
+      "teams": {
+        "away": {
+          "runs": 0,
+          "hits": 0,
+          "errors": 0
+        },
+        "home": {
+          "runs": 0,
+          "hits": 0,
+          "errors": 0
+        }
+      },
+      "offense": {
+        "batter": {
+          "id": 12,
+          "fullName": "Player 3"
+        },
+        "first": {
+          "id": 10,
+          "fullName": "Player 1"
+        },
+        "second": null,
+        "third": null,
+        "responsiblePitcher": {
+          "first": {
+            "id": 1,
+            "fullName": "Player 1"
+          },
+          "second": null,
+          "third": null
+        },
+        "reachedOnError": {
+          "first": false,
+          "second": false,
+          "third": false
+        }
+      },
+      "defense": {
+        "P": {
+          "id": 1,
+          "fullName": "Player 1"
+        },
+        "C": {
+          "id": 2,
+          "fullName": "Player 2"
+        },
+        "1B": {
+          "id": 3,
+          "fullName": "Player 3"
+        },
+        "2B": {
+          "id": 4,
+          "fullName": "Player 4"
+        },
+        "SS": {
+          "id": 5,
+          "fullName": "Player 5"
+        },
+        "3B": {
+          "id": 6,
+          "fullName": "Player 6"
+        },
+        "LF": {
+          "id": 7,
+          "fullName": "Player 7"
+        },
+        "CF": {
+          "id": 8,
+          "fullName": "Player 8"
+        },
+        "RF": {
+          "id": 9,
+          "fullName": "Player 9"
+        }
+      },
+      "errorlessOuts": {
+        "team": 1,
+        "pitchers": [
+          {
+            "pitcher": {
+              "id": 1,
+              "fullName": "Player 1"
+            },
+            "outs": 1
+          }
+        ]
+      }
+    },
+    "battingOrder": {
+      "away": [1, 2, 3, 5, 4, 6, 7, 8, 9],
+      "home": [10, 11, 12, 13, 14, 15, 16, 17, 18]
+    }
+  }
+}

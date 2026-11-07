@@ -12,13 +12,19 @@ import {
   walk
 } from '../../test/scoringGames'
 import type { ScoringAction } from './actions'
-import { statLines } from './credits'
-import type { GamePlay, GameState } from './state'
+import { applyAction } from './apply'
+import { fielderOf, positionOf, statLines } from './credits'
+import {
+  type FielderRef,
+  type GamePlay,
+  type GameState,
+  setupOf
+} from './state'
 
 const out = (
   runner: number,
   to: '1B' | '2B' | '3B' | 'home' | 'batter',
-  fielders: number[]
+  fielders: FielderRef[]
 ): ScoringAction => ({
   type: 'runnerMovement',
   runner,
@@ -281,5 +287,112 @@ describe('a pinch hitter at two strikes (U25, 9.15(b))', function () {
     expect(line(first, 1)).deep.equals({ pa: 1, ab: 1, k: 1, bb: 0 })
     expect(line(first, 19)).equals(undefined)
     expect(line(first, 20)).equals(undefined)
+  })
+})
+
+describe('a stand-in at an empty position (U13)', function () {
+  // The hosts field with nobody at short or first.
+  function shortHanded(): GameState {
+    const start = game()
+    const setup = setupOf(start)
+    setup.sides.home.defense.SS = null
+    setup.sides.home.defense['1B'] = null
+    return after(start, { type: 'lineup', kind: 'roster', setup })
+  }
+
+  it('credits the position and no player for a putout and an assist', function () {
+    const state = after(
+      shortHanded(),
+      { type: 'ballInPlay', contact: 'swing', fielder: 'SS' },
+      { type: 'result', eventType: 'field_out', outBy: 'throw' },
+      out(1, 'batter', ['SS', '1B']),
+      close
+    )
+    const play = last(state)
+    expect(play.hitData?.position).equals('SS')
+    expect(play.hitData?.fielder).equals(undefined)
+    const credited = play.runners.flatMap(runner => runner.credits)
+    expect(credited).deep.equals([
+      { credit: 'f_assist', position: 'SS' },
+      { credit: 'f_putout', position: '1B' }
+    ])
+    expect(credited.some(credit => credit.player != null)).equals(false)
+  })
+
+  it('credits a player beside the stand-in he threw to', function () {
+    const state = after(
+      shortHanded(),
+      { type: 'ballInPlay', contact: 'swing', fielder: F['3B'] },
+      { type: 'result', eventType: 'field_out', outBy: 'throw' },
+      out(1, 'batter', [F['3B'], '1B']),
+      close
+    )
+    expect(credits(last(state))).deep.equals(['3B f_assist', '1B f_putout'])
+    const [assist, putout] = last(state).runners[0].credits
+    expect(assist.player?.id).equals(F['3B'])
+    expect(putout.player).equals(undefined)
+  })
+
+  it('charges an error to the position, nobody named', function () {
+    const state = after(
+      shortHanded(),
+      { type: 'ballInPlay', contact: 'swing', fielder: 'SS' },
+      { type: 'result', eventType: 'field_error' },
+      { type: 'fieldingPlay', fielders: ['SS'], error: 'SS' },
+      close
+    )
+    const play = last(state)
+    expect(credits(play)).deep.equals([
+      'SS f_fielded_ball',
+      'SS f_fielding_error'
+    ])
+    expect(play.runners[0].credits.every(c => c.player == null)).equals(true)
+    expect(play.source.teamstation.errorCredit?.position).equals('SS')
+    expect(play.source.teamstation.errorCredit?.player).equals(undefined)
+    expect(
+      play.source.teamstation.errorCredit?.defensiveRoute.map(
+        hop => hop.position
+      )
+    ).deep.equals(['SS'])
+  })
+
+  it('refuses a stand-in at a position somebody is playing', function () {
+    const refused = applyAction(shortHanded(), {
+      type: 'ballInPlay',
+      contact: 'swing',
+      fielder: '3B'
+    })
+    expect(refused.problems.map(problem => problem.code)).deep.equals([
+      'unknownPlayer'
+    ])
+    const relay = applyAction(
+      after(
+        shortHanded(),
+        { type: 'ballInPlay', contact: 'swing', fielder: F['3B'] },
+        { type: 'result', eventType: 'field_out', outBy: 'throw' }
+      ),
+      {
+        type: 'fieldingPlay',
+        fielders: ['2B'],
+        error: '2B'
+      }
+    )
+    expect(relay.problems).has.length(1)
+  })
+
+  it('names the position in the play-by-play', function () {
+    const state = after(
+      shortHanded(),
+      { type: 'ballInPlay', contact: 'swing', fielder: 'SS' },
+      { type: 'result', eventType: 'field_out', outBy: 'throw' },
+      out(1, 'batter', ['SS', '1B']),
+      close
+    )
+    expect(positionOf(state, 'SS')).equals('SS')
+    expect(fielderOf(state, '1B')).deep.equals({ position: '1B' })
+    expect(fielderOf(state, F['3B'])).deep.equals({
+      player: { id: F['3B'], fullName: 'Player 6' },
+      position: '3B'
+    })
   })
 })

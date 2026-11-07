@@ -107,6 +107,31 @@ describe('home-run landing and automatic arrivals', function () {
           expect(undo.pendingPlay!.homeRunKind).equals(kind)
           expect(undo.session.liveData.linescore.teams.away.runs).equals(0)
         })
+  for (const outside of [false, true])
+    for (const mask of [0, 7])
+      it(`walks every ${outside ? 'stands' : 'in-park'} home-run runner to the dugout with occupancy ${mask} (U23)`, function () {
+        let state = completeMotions(homer(initial(mask), outside))
+        const play = state.session.liveData.plays.allPlays.at(-1)!
+        const scorers = play.runners.map(row => row.details.runner.id)
+        expect(scorers).length(
+          1 + [0, 1, 2].filter(i => (mask & (1 << i)) !== 0).length
+        )
+        const dugout = { x: -32, z: 6 }
+        state = homer(initial(mask), outside)
+        for (const runner of scorers) {
+          const motion = state.motions.find(m => m.playerId === runner)!
+          expect(motion, `runner ${runner}`).not.equals(undefined)
+          expect(motion.waypoints.at(-1)).deep.equals(dugout)
+        }
+        state = completeMotions(state)
+        expect(
+          // The fixture's next batter can be one of the runners it placed.
+          scoringFieldPlayers(state).filter(
+            player =>
+              player.batting !== true && scorers.includes(player.playerId!)
+          )
+        ).deep.equals([])
+      })
   it('keeps a stands flight elevated and defenders in the field without a fictional catch', function () {
     let state = homer(initial(7, true), true)
     const seq = state.presentation!

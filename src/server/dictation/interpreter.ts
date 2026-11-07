@@ -1566,7 +1566,9 @@ export class Interpretation {
    * from the words.
    */
   private onlyDefenders(action: ScoringAction): ScoringAction {
-    const defenders = new Set(this.players.fielding.values())
+    const defenders: ReadonlySet<unknown> = new Set(
+      this.players.fielding.values()
+    )
     if (
       defenders.size < 9 ||
       !('fielders' in action) ||

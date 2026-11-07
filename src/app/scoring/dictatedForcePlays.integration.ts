@@ -18,6 +18,7 @@ import { Interpretation, type Turn } from '../../server/dictation/interpreter'
 import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { atRest, initialScoringState, scoringReducer } from './scoringMachine'
+import { HIT_CONTACT_MS } from './scoringPresentation'
 import { playerRef } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
 
@@ -164,7 +165,11 @@ const CASES: Case[] = [
     bases: {},
     outs: 0,
     check: ended => {
-      expect(ended.hit).deep.equals({ contactMs: 1050, pitched: true })
+      // The hit meets the bat as its pitch reaches the plate.
+      expect(ended.hit).deep.equals({
+        contactMs: HIT_CONTACT_MS,
+        pitched: true
+      })
     }
   }
 ]

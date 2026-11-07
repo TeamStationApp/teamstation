@@ -14,6 +14,7 @@ import {
 import { heldTimers } from '../../test/fakeScreenScope'
 import {
   CANDIDATE_PAGE,
+  candidateMatches,
   type RosterCandidates,
   useRosterCandidates
 } from './useRosterCandidates'
@@ -25,23 +26,39 @@ let state: RosterCandidates
 function Probe({
   client,
   query,
-  gameId
+  gameId,
+  cacheFirst
 }: {
   client: TeamStationClient
   query: string
   gameId?: string
+  cacheFirst?: boolean
 }): null {
-  state = useRosterCandidates({ client, teamId: 'tem_falcons', gameId, query })
+  state = useRosterCandidates({
+    client,
+    teamId: 'tem_falcons',
+    gameId,
+    query,
+    ...(cacheFirst == null ? {} : { cacheFirst })
+  })
   return null
 }
 
 async function show(
   fake: FakeCandidateClient,
   query: string,
-  gameId?: string
+  gameId?: string,
+  cacheFirst?: boolean
 ): Promise<void> {
   await act(async () => {
-    root!.render(<Probe client={fake.client} query={query} gameId={gameId} />)
+    root!.render(
+      <Probe
+        client={fake.client}
+        query={query}
+        gameId={gameId}
+        cacheFirst={cacheFirst}
+      />
+    )
   })
 }
 async function settle(): Promise<void> {
@@ -232,5 +249,132 @@ describe('useRosterCandidates', function () {
       fake.offline = true
     })
     expect(fake.last().signal?.aborted).equals(true)
+  })
+
+  describe('cache first (U43)', function () {
+    const kept = [
+      candidate('Mookie Betts', { cursor: 'kept-1' }),
+      candidate('Shohei Ohtani', { cursor: 'kept-2' })
+    ]
+    const openFirst = async (
+      fake = new FakeCandidateClient()
+    ): Promise<FakeCandidateClient> => {
+      fake.kept.tem_falcons = kept
+      timers = heldTimers(500)
+      root = createRoot(document.createElement('div'))
+      await show(fake, '', undefined, true)
+      await act(async () => {
+        await Promise.resolve()
+      })
+      return fake
+    }
+
+    it('lists the kept people at once, and pages on from the server’s own last row', async () => {
+      const fake = await openFirst()
+      expect(state.rows.map(row => row.shortName)).deep.equals([
+        'Mookie B',
+        'Shohei O'
+      ])
+      expect(state.loading).equals(false)
+      expect(state.loadingMore).equals(true)
+      // No server row yet: nothing to page on from.
+      await act(async () => {
+        state.loadMore()
+      })
+      expect(fake.asks).has.length(1)
+      await answer(fake.last(), page(30))
+      expect(state.rows).has.length(32)
+      expect(state.loadingMore).equals(false)
+      await act(async () => {
+        state.loadMore()
+      })
+      expect(fake.last().after).equals(page(30)[29].cursor)
+      await answer(fake.last(), page(2, 30))
+      expect(state.rows.slice(30, 32).map(row => row.shortName)).deep.equals([
+        'Player30 O',
+        'Player31 O'
+      ])
+    })
+
+    it('pages a new search on only from its own first page', async () => {
+      const fake = await openFirst()
+      await answer(fake.last(), page(30))
+      // A new search: its first page has not come when the end is reached.
+      await show(fake, 'Mookie', undefined, true)
+      await settle()
+      expect(fake.asks).has.length(2)
+      expect(fake.last().q).equals('Mookie')
+      await act(async () => {
+        state.loadMore()
+      })
+      expect(fake.asks).has.length(2)
+      await answer(fake.last(), [candidate('Mookie Betts')])
+      expect(state.ended).equals(true)
+      await act(async () => {
+        state.loadMore()
+      })
+      expect(fake.asks).has.length(2)
+    })
+
+    it('takes no signal as no failure, and asks nothing offline', async () => {
+      const fake = await openFirst()
+      await fail(fake.last(), new HttpError('offline', 'No connection'))
+      expect(state.error).equals(undefined)
+      expect(state.ended).equals(true)
+      expect(state.rows).has.length(2)
+      await act(async () => {
+        fake.offline = true
+      })
+      expect(state.offline).equals(false)
+      expect(state.rows).has.length(2)
+      expect(state.loading).equals(false)
+      await show(fake, 'sho', undefined, true)
+      await settle()
+      expect(fake.asks).has.length(1)
+      expect(state.rows.map(row => row.shortName)).deep.equals(['Shohei O'])
+      // A refusal is still one.
+      await act(async () => {
+        fake.offline = false
+      })
+      await fail(fake.last(), new HttpError('forbidden', 'Not yours'))
+      expect(state.error).equals('Not yours')
+    })
+
+    it('lists what this session found for the team at once where the client keeps no file', async () => {
+      const fake = new FakeCandidateClient()
+      timers = heldTimers(500)
+      root = createRoot(document.createElement('div'))
+      await show(fake, '', undefined, true)
+      expect(state.rows).deep.equals([])
+      expect(state.loading).equals(true)
+      await answer(fake.last(), page(3))
+      await act(async () => {
+        root!.unmount()
+      })
+      // Opened again: the people found a moment ago, before any answer.
+      root = createRoot(document.createElement('div'))
+      await show(fake, '', undefined, true)
+      expect(state.rows.map(row => row.shortName)).deep.equals(
+        page(3).map(row => row.shortName)
+      )
+      expect(state.loading).equals(false)
+      expect(fake.asks).has.length(2)
+      // Another client's session finds none of them.
+      await act(async () => {
+        root!.unmount()
+      })
+      root = createRoot(document.createElement('div'))
+      await show(new FakeCandidateClient(), '', undefined, true)
+      expect(state.rows).deep.equals([])
+    })
+
+    it('matches a query word by word at the start of a name', () => {
+      const mookie = candidate('Mookie Betts')
+      expect(candidateMatches(mookie, '')).equals(true)
+      expect(candidateMatches(mookie, 'moo')).equals(true)
+      expect(candidateMatches(mookie, 'MOOKIE b')).equals(true)
+      expect(candidateMatches(mookie, 'ookie')).equals(false)
+      expect(candidateMatches(mookie, 'moo x')).equals(false)
+    })
   })
 })

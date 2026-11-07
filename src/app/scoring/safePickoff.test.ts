@@ -71,7 +71,7 @@ describe('safe pickoff from a runner drag', () => {
           destination: base
         })
         expect(attempt.credits).deep.equals([])
-        expect(attempt.defensiveRoute!.map(hop => hop.player.id)).deep.equals([
+        expect(attempt.defensiveRoute!.map(hop => hop.player?.id)).deep.equals([
           defense.P!.id,
           receiver
         ])

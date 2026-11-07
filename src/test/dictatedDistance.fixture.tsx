@@ -80,8 +80,11 @@ function landsAt(sequence: NonNullable<ScoringState['presentation']>): number {
         foulFlightMs?: (point: { x: number; z: number }) => number
       }
     ).foulFlightMs
+    // Scoring's speed, read optionally too: the game before played at one.
+    const speed =
+      (presentation as { SCORING_SPEED?: number }).SCORING_SPEED ?? 1
     return foul == null || flight == null
-      ? presentation.PITCH_TIMING.plate + 400
+      ? presentation.PITCH_TIMING.plate + 400 / speed
       : presentation.PITCH_TIMING.plate + flight(foul)
   }
   return sequence.durationMs

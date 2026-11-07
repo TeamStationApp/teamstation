@@ -268,8 +268,8 @@ try {
   }
   if (['field', 'bunt'].includes(process.env.SCORING_FEEDBACK_PHASE))
     for (const outcome of process.env.SCORING_FEEDBACK_PHASE === 'bunt'
-      ? ['Single', 'Throw Out']
-      : ['Single', 'Ball Caught', 'Throw Out']) {
+      ? ['Single', 'Ground Out']
+      : ['Single', 'Ball Caught', 'Ground Out']) {
       const caught = outcome === 'Ball Caught'
       await freshGame()
       await tap(
@@ -293,7 +293,7 @@ try {
         y: g.field.y + g.field.height * 0.6
       }
       await gesture([start, { x: start.x, y: start.y - 25 }], 80)
-      if (outcome === 'Throw Out') {
+      if (outcome === 'Ground Out') {
         await visible('Tap or drag the next defender')
         const receiver = g.project(defender['1B'].x, defender['1B'].z, 6)
         await m.tapOnPoint({
@@ -302,7 +302,7 @@ try {
         })
         await tap('Finish defensive play')
       }
-      if (caught || outcome === 'Throw Out') await visible('Batter Player 2')
+      if (caught || outcome === 'Ground Out') await visible('Batter Player 2')
       else {
         await visible('Finish at-bat')
         await tap('Finish at-bat')

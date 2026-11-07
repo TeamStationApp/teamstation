@@ -111,7 +111,7 @@ async function main(): Promise<void> {
     } else {
       await m.openBrowser({ url: appId })
       await m.assertVisible({
-        text: 'Missing defensive positions',
+        text: 'Assign a pitcher',
         timeout: 30000
       })
       await fieldTap('Assign P')

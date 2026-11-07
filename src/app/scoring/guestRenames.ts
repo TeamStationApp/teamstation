@@ -1,4 +1,8 @@
-import type { RosterEntry, TeamStationClient } from '../../common/api'
+import type {
+  RosterEntry,
+  TeamStationClient,
+  WriteOptions
+} from '../../common/api'
 import type { GameState } from '../../common/scoring/state'
 import { draftOfLocalPlayer } from './playerDraft'
 
@@ -54,7 +58,9 @@ export async function sendGuestRenames(
   gameId: string,
   renames: readonly GuestRename[],
   guests: Iterable<GuestAccount>,
-  lookUp?: () => Promise<Iterable<GuestAccount>>
+  lookUp?: () => Promise<Iterable<GuestAccount>>,
+  /** `background`: queued on the phone, for a screen that does not wait. */
+  options?: WriteOptions
 ): Promise<void> {
   const userOf = new Map<number, string>()
   // A pool player keeps their own name: nothing to send, whatever was typed.
@@ -79,6 +85,7 @@ export async function sendGuestRenames(
       gameId,
       userOf.get(rename.gumboId)!,
       { firstName: rename.firstName, lastName: rename.lastName },
-      rename.gumboId
+      rename.gumboId,
+      options
     )
 }

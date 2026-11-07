@@ -358,7 +358,7 @@ async function say(
 describe('Coach Game (U25)', function () {
   // The Shell reads the account's chat age on mount: confirmed here.
   confirmedChatAgeHooks()
-  it('disables availability switches until the lineup save finishes refreshing', async () => {
+  it('keeps availability switches live while a lineup save is still out (U40)', async () => {
     const held = server()
     const save = held.client.saveLineups.bind(held.client)
     let finish!: () => void
@@ -375,7 +375,7 @@ describe('Coach Game (U25)', function () {
       document.querySelector<HTMLInputElement>(
         `[data-testid="Rostered ${userIdOfGumbo(201)}"] input`
       )!
-    expect(toggle().disabled).equals(true)
+    expect(toggle().disabled).equals(false)
     await act(async () => {
       finish()
     })
@@ -463,6 +463,86 @@ describe('Coach Game (U25)', function () {
       { side: 'home', userId: userIdOfGumbo(201), rostered: false },
       { side: 'home', userId: userIdOfGumbo(201), rostered: true }
     ])
+  })
+
+  it('keeps both of two quick switches when the later one is answered first', async () => {
+    const held = server()
+    let answerFirst!: () => void
+    held.client.setRostered = async (_id, body) => {
+      if (body.userId === userIdOfGumbo(201)) {
+        await new Promise<void>(resolve => {
+          answerFirst = resolve
+        })
+        return { away: [], home: [201] }
+      }
+      return { away: [], home: [201, 202] }
+    }
+    await coach(held)
+    await click('Roster', 'tab')
+    const toggle = (gumboId: number): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>(
+        `[data-testid="Rostered ${userIdOfGumbo(gumboId)}"] input`
+      )!
+    await act(async () => {
+      toggle(201).click()
+    })
+    await settle()
+    await act(async () => {
+      toggle(202).click()
+    })
+    await settle()
+    // The first change's answer, made before the second, comes last.
+    await act(async () => {
+      answerFirst()
+    })
+    await settle()
+    expect(toggle(201).checked).equals(false)
+    expect(toggle(202).checked).equals(false)
+    expect(node('Remove Hawk 2')).equals(null)
+  })
+
+  it('undoes only the refused one of two quick switches, keeping the other', async () => {
+    const held = server()
+    let refuseFirst!: () => void
+    held.client.setRostered = async (_id, body) => {
+      if (body.userId === userIdOfGumbo(201)) {
+        await new Promise<void>(resolve => {
+          refuseFirst = resolve
+        })
+        throw new HttpError('conflict', 'Finish the current play first')
+      }
+      held.game = {
+        ...held.game,
+        unrostered: { away: [], home: body.rostered ? [] : [202] }
+      }
+      return held.game.unrostered
+    }
+    await coach(held)
+    await click('Roster', 'tab')
+    const toggle = (gumboId: number): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>(
+        `[data-testid="Rostered ${userIdOfGumbo(gumboId)}"] input`
+      )!
+    await act(async () => {
+      toggle(201).click()
+    })
+    await settle()
+    await act(async () => {
+      toggle(202).click()
+    })
+    await settle()
+    // The second is answered first: the server's lists are shown.
+    expect(toggle(202).checked).equals(false)
+    await act(async () => {
+      refuseFirst()
+    })
+    await settle()
+    expect(document.body.textContent).includes('Finish the current play first')
+    // The refused one is back, in his slot; the other stays off.
+    expect(toggle(201).checked).equals(true)
+    expect(node('Remove Hawk 1')).not.equals(null)
+    expect(toggle(202).checked).equals(false)
+    expect(node('Remove Hawk 2')).equals(null)
   })
 
   it("renames a corrected game-only player's account once, before the lineup is saved", async () => {
@@ -791,7 +871,42 @@ describe('Coach Game (U25)', function () {
     )
   })
 
-  it('saves a staged pinch runner onto a clean draft, and keeps the chat when the save is refused', async function () {
+  it('keeps a later save on screen when an earlier one is refused, and reads the server’s lineups', async function () {
+    const held = server()
+    let refuse!: () => void
+    let first = true
+    const answer = held.answer
+    held.answer = async body => {
+      if (first) {
+        first = false
+        await new Promise<void>(resolve => {
+          refuse = resolve
+        })
+        throw new HttpError('conflict', 'Finish the current play first')
+      }
+      return await answer(body)
+    }
+    await coach(held)
+    const removed = await stageChange()
+    await click('Save Rosters')
+    await stageChange()
+    await click('Save Rosters')
+    await settle()
+    await act(async () => {
+      refuse()
+    })
+    await waitFor(
+      () =>
+        document.body.textContent!.includes('Finish the current play first'),
+      'the refusal'
+    )
+    await settle()
+    // The first save's draft is not staged again over the later one: the
+    // server's lineups are read in, with the player it removed.
+    await waitFor(() => node(removed) != null, 'the server’s lineups')
+  })
+
+  it('saves a staged pinch runner onto a clean draft at once, and stages it again when the save is refused', async function () {
     const held = server({ coachSides: ['away'] })
     held.client.health = dictatingHealth
     // After the save lands, a later read of the lineups is the saved one.
@@ -837,7 +952,7 @@ describe('Coach Game (U25)', function () {
       'the refusal'
     )
     expect(held.saved[0].runners).has.length(1)
-    expect(node('Dictation chat')).not.equals(null)
+    // The refused change is staged again over the game as it was.
     expect(saveDisabled()).equals(false)
     held.answer = async () => {
       savedLineup = true
@@ -845,6 +960,7 @@ describe('Coach Game (U25)', function () {
     }
     await click('Save Rosters')
     await waitFor(() => saveDisabled(), 'a clean draft')
+    expect(held.saved[1].runners).has.length(1)
     expect(node('Dictation chat')).equals(null)
     await click('Back')
     expect(screen.exits()).equals(1)
@@ -1054,7 +1170,10 @@ describe('Coach Game (U25)', function () {
     }
     held.client.rosterCandidates = async ask => {
       sent.push({ search: ask.teamId, game: ask.gameId })
-      return [candidate('Mookie Betts', { userId: betts.userId })]
+      return [
+        candidate('Mookie Betts', { userId: betts.userId }),
+        candidate('Aaron Judge', { userId: userIdOfGumbo(302) })
+      ]
     }
     held.client.addExistingRosterPlayer = async (teamId, body) => {
       sent.push({ roster: teamId, body })
@@ -1075,7 +1194,9 @@ describe('Coach Game (U25)', function () {
         'Mookie B was added. Their guardians were notified.'
       )
       await click('Add Existing Player')
-      await click('Choose Mookie B')
+      // He is on the roster now: the search no longer lists him.
+      expect(node('Choose Mookie B')).equals(null)
+      await click('Choose Aaron J')
       await click('Add as Pool Player')
       expect(document.body.textContent).includes('This needs approval first.')
       expect(sent).deep.equals([
@@ -1087,7 +1208,7 @@ describe('Coach Game (U25)', function () {
         { search: 'home', game: 'g1' },
         {
           guest: { gameId: 'g1', side: 'home', teamId: 'home' },
-          body: { userId: betts.userId, jersey: null, positions: [] }
+          body: { userId: userIdOfGumbo(302), jersey: null, positions: [] }
         }
       ])
       // Back out of Add to Roster, then the search.
@@ -1098,7 +1219,7 @@ describe('Coach Game (U25)', function () {
           )
           cancels[cancels.length - 1].click()
         })
-      expect(node('Choose Mookie B')).equals(null)
+      expect(node('Choose Aaron J')).equals(null)
     } finally {
       restore()
     }

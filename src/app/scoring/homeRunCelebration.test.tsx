@@ -7,7 +7,11 @@ import type { InstancedMesh, Mesh, MeshBasicMaterial } from 'three'
 
 import { completeMotions } from '../../test/scoringHelpers'
 import { scoringSession } from '../../test/scoringSession'
-import { FIREWORK_BULBS, fireworkBulb } from '../field/homeRunFireworks'
+import {
+  celebrationPulse,
+  FIREWORK_BULBS,
+  fireworkBulb
+} from '../field/homeRunFireworks'
 import { Scoreboard } from '../field/Scoreboard'
 import { DEMO_SCOREBOARD } from '../field/scoreboardModel'
 import { gameFixture } from './isUnscoredGame.test'
@@ -19,7 +23,7 @@ import type {
   ScoringEvent,
   ScoringState
 } from './scoringTypes'
-import { useHomeRunCelebration } from './useHomeRunCelebration'
+import { CELEBRATION_MS, useHomeRunCelebration } from './useHomeRunCelebration'
 import { useHomeRunCelebration as nativeCelebration } from './useHomeRunCelebration.native'
 
 function acceptedHomeRun(
@@ -143,6 +147,19 @@ describe('home-run scoreboard celebration', () => {
         expect(p.scale).within(0, 1)
       }
   })
+  it('bursts and pulses the LED fireworks at twice their natural pace', () => {
+    // A burst's 1.8 s cycle now takes 0.9 s, and the pulse's one second half.
+    for (let i = 0; i < FIREWORK_BULBS; i++) {
+      const later = fireworkBulb(i, 0.9 + 0.3)
+      const now = fireworkBulb(i, 0.3)
+      expect(later.x).closeTo(now.x, 1e-9)
+      expect(later.y).closeTo(now.y, 1e-9)
+      expect(later.scale).closeTo(now.scale, 1e-9)
+    }
+    expect(fireworkBulb(0, 0.45)).not.deep.equals(fireworkBulb(0, 0))
+    expect(celebrationPulse(0.5 + 0.1)).closeTo(celebrationPulse(0.1), 1e-12)
+    expect(celebrationPulse(0.125)).closeTo(1, 1e-12)
+  })
   it('renders pulsing letters, moving LED bursts and disposes the texture on clear', async () => {
     for (const kind of ['in-park', 'out-of-park'] as const) {
       const state = {
@@ -197,7 +214,7 @@ describe('home-run scoreboard celebration', () => {
       await renderer.unmount()
     }
   })
-  it('expires after six active seconds, pauses, rejects stale callbacks and cleans up', async () => {
+  it('expires after three active seconds, pauses, rejects stale callbacks and cleans up', async () => {
     let time = 0
     let callback = (): void => {}
     let delay = 0
@@ -240,9 +257,11 @@ describe('home-run scoreboard celebration', () => {
       await act(async () => {
         root.render(<Clock value={token} />)
       })
-      expect(delay).equals(6000)
+      // Twice as fast as the six seconds it once took.
+      expect(CELEBRATION_MS).equals(3000)
+      expect(delay).equals(3000)
       const stale = callback
-      time = 2000
+      time = 1000
       await act(async () => {
         root.render(<Clock value={token} paused />)
       })
@@ -252,7 +271,7 @@ describe('home-run scoreboard celebration', () => {
       await act(async () => {
         root.render(<Clock value={token} />)
       })
-      expect(delay).equals(4000)
+      expect(delay).equals(2000)
       callback()
       expect(events).deep.equals([
         { type: 'CELEBRATION_DONE', id: 'one', generation: 0 }
@@ -260,7 +279,7 @@ describe('home-run scoreboard celebration', () => {
       await act(async () => {
         root.render(<Clock value={{ ...token, id: 'two' }} />)
       })
-      expect(delay).equals(6000)
+      expect(delay).equals(3000)
       const removed = callback
       await act(async () => {
         root.unmount()

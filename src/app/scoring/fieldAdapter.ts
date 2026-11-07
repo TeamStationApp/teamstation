@@ -1,8 +1,13 @@
+import { isPosition } from '../../common/scoring/state'
 import { createStartingPlayers } from '../field/batterModel'
 import { BASES, createPlayers, type FieldPlayer } from '../field/fieldModel'
 import { shortPlayerNames } from './currentSetup'
-import { baseIds } from './scoringSelectors'
-import { POSITIONS, type ScoringSessionState } from './scoringTypes'
+import { baseIds, fieldingSide } from './scoringSelectors'
+import {
+  type FielderRef,
+  POSITIONS,
+  type ScoringSessionState
+} from './scoringTypes'
 
 /** Every nested vector belongs to the renderer, never to the reducer/history. */
 export function fieldPlayersFor(session: ScoringSessionState): FieldPlayer[] {
@@ -72,6 +77,38 @@ export function fieldPlayersFor(session: ScoringSessionState): FieldPlayer[] {
       position,
       target: { ...position },
       heading: side === 'R' ? Math.PI / 2 : -Math.PI / 2
+    })
+  }
+  return players
+}
+
+/**
+ * The field with a nameless stand-in drawn at each empty position the play
+ * names: an athlete, not the position's plate, with no name. He plays the
+ * ball, throws and catches like anyone; once the play is over the position
+ * is an empty plate again.
+ */
+export function withStandIns(
+  players: FieldPlayer[],
+  session: ScoringSessionState,
+  refs: Iterable<FielderRef | undefined>
+): FieldPlayer[] {
+  const defense = session.liveData.linescore.defense
+  const templates = createPlayers()
+  const fielding = fieldingSide(session)
+  for (const ref of refs) {
+    if (!isPosition(ref) || defense[ref] != null) continue
+    if (players.some(player => player.standIn === ref)) continue
+    const template = templates.find(player => player.id === ref)
+    if (template == null) continue
+    players.push({
+      ...template,
+      id: `empty-${ref}`,
+      standIn: ref,
+      name: '',
+      displayName: '',
+      jersey: '',
+      uniformSide: fielding
     })
   }
   return players

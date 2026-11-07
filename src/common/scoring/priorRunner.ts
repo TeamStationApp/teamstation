@@ -42,17 +42,14 @@ export function priorRunners(state: GameState): PriorRunner[] {
       ) ||
       row.movement.isOut ||
       row.movement.forced === true ||
-      // Called safe at home from third: that choice was made before the plate.
-      (row.details.movementReason === 'Safe at home' &&
-        row.movement.start === 3 &&
-        from === 4) ||
-      (previous.result.eventType === 'home_run' &&
-        previous.matchup.batter.id !== runner) ||
+      // A runner who scored has left the field: the home-run batter and his
+      // runners, and anyone called safe at home. Undo takes a run back.
+      from === 4 ||
       from == null ||
       from < 2 ||
       row.movement.start == null ||
       row.movement.start >= from ||
-      (from < 4 ? bases[from - 1] !== runner : bases.includes(runner)) ||
+      bases[from - 1] !== runner ||
       bases[from - 2] != null
     )
       return []

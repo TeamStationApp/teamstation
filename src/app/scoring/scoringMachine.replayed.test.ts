@@ -82,13 +82,14 @@ describe('a replayed step', function () {
 
   it('applies a stored pitch the setup check would refuse, as replayPlays does', function () {
     const unset = watching()
-    unset.session.liveData.boxscore.teams.home.defense.RF = null
-    unset.session.liveData.linescore.defense.RF = null
+    unset.session.liveData.boxscore.teams.home.defense.P = null
+    unset.session.liveData.linescore.defense.P = null
     const dictated = scoringReducer(
       { ...unset, watching: false },
       { type: 'DICTATED', transcript: 'ball', actions: [ball] }
     )
     expect(dictated.session).equals(unset.session)
+    // With nobody on the mound the pitch is drawn from the mound.
     const replayed = scoringReducer(unset, {
       type: 'REPLAYED',
       actions: [ball]

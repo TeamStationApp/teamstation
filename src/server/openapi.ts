@@ -1589,9 +1589,13 @@ const gumboSchemas = {
         type: 'array',
         items: {
           type: 'object',
-          required: ['player', 'credit'],
+          required: ['credit'],
           properties: {
-            player: gumboPerson,
+            player: {
+              ...gumboPerson,
+              description:
+                'Left out for a stand-in at a position nobody was playing: the position alone is credited.'
+            },
             position: {
               ...gumboPosition,
               description: 'Left out for a fielder not on defence.'
@@ -5844,6 +5848,17 @@ export function openApiDocument(version: string): OpenApiDocument {
                         'The play generation the saver opened the game on. ' +
                         'A game reset since refuses the save with 409 and ' +
                         '`details: { stale: true, generation }`.'
+                    },
+                    changedAt: {
+                      type: 'string',
+                      format: 'date-time',
+                      description:
+                        'When the change was made. The side’s lineup ' +
+                        'change is stored at that time (never later than ' +
+                        'now), and a change of the same side already ' +
+                        'stored with a later time refuses the save with 409 ' +
+                        'and `details: { stale: true, newer: true }`: the ' +
+                        'latest creation time wins.'
                     }
                   }
                 }

@@ -2,8 +2,11 @@ import type { ErrorKind } from './actions'
 import { storedEventType } from './document'
 import { playerRef } from './lineup'
 import {
+  type FielderRef,
   type GamePlay,
   type GameState,
+  isPosition,
+  type PlayerRef,
   POSITIONS,
   type RunnerCredit
 } from './state'
@@ -17,8 +20,12 @@ import {
  * for a hit, or that the batter reached on, is credited with fielding it.
  */
 
-/** The position a fielder is playing, or '' when he is not in the field. */
-export function positionOf(state: GameState, id: number): string {
+/**
+ * The position a fielder is playing, or '' when he is not in the field. A
+ * stand-in at an empty position is named by that position.
+ */
+export function positionOf(state: GameState, id: FielderRef): string {
+  if (isPosition(id)) return id
   return (
     POSITIONS.find(
       position => state.liveData.linescore.defense[position]?.id === id
@@ -26,22 +33,34 @@ export function positionOf(state: GameState, id: number): string {
   )
 }
 
+/**
+ * A fielder as a play records him: the player and his position, or, for a
+ * stand-in at an empty position, the position alone, with nobody credited.
+ */
+export function fielderOf(
+  state: GameState,
+  id: FielderRef
+): { player?: PlayerRef; position: string } {
+  return isPosition(id)
+    ? { position: id }
+    : { player: playerRef(state, id), position: positionOf(state, id) }
+}
+
 function credit(
   state: GameState,
-  id: number,
+  id: FielderRef,
   kind: RunnerCredit['credit']
 ): RunnerCredit {
-  return {
-    player: playerRef(state, id),
-    credit: kind,
-    position: positionOf(state, id)
-  }
+  const { player, position } = fielderOf(state, id)
+  return player == null
+    ? { credit: kind, position }
+    : { player, credit: kind, position }
 }
 
 /** The assists and the putout for one out, from the fielders in order. */
 export function outCredits(
   state: GameState,
-  fielders: readonly number[]
+  fielders: readonly FielderRef[]
 ): RunnerCredit[] {
   const putout = fielders.at(-1)
   if (putout == null) return []
@@ -53,13 +72,16 @@ export function outCredits(
 }
 
 /** The fielder who first handled a ball the batter reached on. */
-export function fieldedCredit(state: GameState, fielder: number): RunnerCredit {
+export function fieldedCredit(
+  state: GameState,
+  fielder: FielderRef
+): RunnerCredit {
   return credit(state, fielder, 'f_fielded_ball')
 }
 
 export function errorCredit(
   state: GameState,
-  fielder: number,
+  fielder: FielderRef,
   kind: ErrorKind = 'fielding'
 ): RunnerCredit {
   return credit(

@@ -54,7 +54,7 @@ function sources(dir) {
 // as a phone's copy of a game is named; making the stored form is the
 // session's and the server's.
 const READ_ONLY_EXPORTS = {
-  lineup: ['ordinal', 'begun'],
+  lineup: ['ordinal', 'begun', 'pitchThrown'],
   lineupHistory: ['revealedSides', 'confirmedSides'],
   storedNames: ['namesIn', 'withNames']
 }

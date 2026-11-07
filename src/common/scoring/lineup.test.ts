@@ -10,6 +10,7 @@ import {
   freshGame,
   newSetup,
   overrideOf,
+  pitchThrown,
   validateRoster
 } from './lineup'
 import { applyRosterCommands, rosterSituation } from './rosterCommands'
@@ -328,6 +329,130 @@ describe('roster checks', function () {
     expect(applied.state!.liveData.plays.currentPlay!.matchup.batter.id).equals(
       1
     )
+  })
+})
+
+describe('the first pitch (U24, U25)', function () {
+  it('is thrown only once a pitch is, not by a lineup, a defense change or a substitution', function () {
+    let state = game()
+    expect(pitchThrown(state)).equals(false)
+    state = after(state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup: setupOf(state)
+    })
+    expect(pitchThrown(state)).equals(false)
+    state = after(state, {
+      type: 'lineup',
+      kind: 'position',
+      side: 'home',
+      position: 'LF',
+      player: 18
+    })
+    expect(pitchThrown(state)).equals(false)
+    const bench = addPlayer(state, 'away', 19, 'Lindor')
+    state = after(state, {
+      type: 'lineup',
+      kind: 'substitute',
+      side: 'away',
+      player: bench,
+      replaces: 9
+    })
+    expect(pitchThrown(state)).equals(false)
+    state = after(state, { type: 'pitch', call: 'B' })
+    expect(pitchThrown(state)).equals(true)
+    // A finished play keeps its pitches.
+    expect(pitchThrown(walk(game()))).equals(true)
+  })
+
+  it('keeps the batting slot through a swap when the save says so', function () {
+    // Two walks: the third batter is due, with a ball on him.
+    const state = after(walk(walk(game())), { type: 'pitch', call: 'B' })
+    expect(state.liveData.boxscore.teams.away.battingIndex).equals(2)
+    const setup = setupOf(state)
+    setup.sides.away.battingOrder = [1, 2, 4, 3, 5, 6, 7, 8, 9]
+    const kept = applyAction(state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup,
+      keepSlot: true
+    })
+    expect(kept.problems).deep.equals([])
+    expect(kept.state.liveData.boxscore.teams.away.battingIndex).equals(2)
+    expect(kept.state.liveData.linescore.offense.batter!.id).equals(4)
+    expect(kept.state.liveData.plays.currentPlay!.matchup.batter.id).equals(4)
+    // Without it the man due follows his slot, as stored games did.
+    const followed = applyAction(state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup
+    })
+    expect(followed.problems).deep.equals([])
+    expect(followed.state.liveData.boxscore.teams.away.battingIndex).equals(3)
+    expect(followed.state.liveData.linescore.offense.batter!.id).equals(3)
+  })
+
+  it('follows the man due when a save that keeps the slot shortens the order', function () {
+    // Four walks: the first man has scored, the fifth is due with a ball.
+    const state = after(walk(walk(walk(walk(game())))), {
+      type: 'pitch',
+      call: 'B'
+    })
+    expect(state.liveData.boxscore.teams.away.battingIndex).equals(4)
+    const roster = (order: number[]): ReturnType<typeof applyAction> => {
+      const setup = setupOf(state)
+      setup.sides.away.battingOrder = order
+      return applyAction(state, {
+        type: 'lineup',
+        kind: 'roster',
+        setup,
+        keepSlot: true
+      })
+    }
+    // A man above him is taken out: he still bats.
+    const above = roster([2, 3, 4, 5, 6, 7, 8, 9])
+    expect(above.problems).deep.equals([])
+    expect(above.state.liveData.linescore.offense.batter!.id).equals(5)
+    expect(above.state.liveData.boxscore.teams.away.battingIndex).equals(3)
+    // He is taken out himself: the man after his slot bats.
+    const himself = roster([1, 2, 3, 4, 6, 7, 8, 9])
+    expect(himself.problems).deep.equals([])
+    expect(himself.state.liveData.linescore.offense.batter!.id).equals(6)
+  })
+
+  it('bats the top of the order when the last batter is taken out while he is due', function () {
+    let state = game()
+    for (let i = 0; i < 8; i++) state = walk(state)
+    expect(state.liveData.boxscore.teams.away.battingIndex).equals(8)
+    state = after(state, { type: 'pitch', call: 'B' })
+    const setup = setupOf(state)
+    setup.sides.away.battingOrder = [1, 2, 3, 4, 5, 6, 7, 8]
+    const applied = applyAction(state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup,
+      keepSlot: true
+    })
+    expect(applied.problems).deep.equals([])
+    expect(applied.state.liveData.boxscore.teams.away.battingIndex).equals(0)
+    expect(applied.state.liveData.linescore.offense.batter!.id).equals(1)
+  })
+
+  it('refuses a kept slot that would bat a runner, and wraps a shorter order to the top', function () {
+    const state = after(walk(walk(game())), { type: 'pitch', call: 'B' })
+    const onBase = setupOf(state)
+    onBase.sides.away.battingOrder = [1, 3, 2, 4, 5, 6, 7, 8, 9]
+    expect(applyRoster(state, onBase, undefined, {}, false, true).error).equals(
+      'Choose a next batter in the lineup who is not already on base.'
+    )
+    // The fielding side's slot past the end of a shorter order is its last.
+    const home = state.liveData.boxscore.teams.home
+    home.battingIndex = 8
+    const shorter = setupOf(state)
+    shorter.sides.home.battingOrder = [10, 11, 12, 13, 14, 15, 16, 17]
+    const applied = applyRoster(state, shorter, undefined, {}, false, true)
+    expect(applied.error).equals(undefined)
+    expect(applied.state!.liveData.boxscore.teams.home.battingIndex).equals(0)
   })
 })
 

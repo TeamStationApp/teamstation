@@ -16,6 +16,7 @@ import {
 import { asGameDetail, type RosterEntry } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
+import { browserCoverageCollector } from '../browserCoverage.e2e'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
 import { initialHitTarget } from '../field/trajectoryGuide'
@@ -53,6 +54,22 @@ interface SceneProbeWindow {
   __REACT_DEVTOOLS_GLOBAL_HOOK__: unknown
 }
 const base = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
+/**
+ * With TS_BROWSER_COVERAGE_OUT, every page this file opens counts its JS
+ * coverage, written there as istanbul JSON once the file's tests end. The
+ * counts map back through `dist/`, so the run serves the production build
+ * (`scripts/serveDist.mjs`).
+ */
+const coverageOut = process.env.TS_BROWSER_COVERAGE_OUT
+const coverage =
+  coverageOut == null || coverageOut === ''
+    ? null
+    : browserCoverageCollector(new URL(base).origin)
+after(async function () {
+  this.timeout(600000)
+  if (coverage != null && coverageOut != null)
+    await coverage.record(coverageOut)
+})
 let browser: Browser
 /** Leaves every save unanswered, as a server that never replies would. */
 let holdSaves = false
@@ -71,6 +88,7 @@ async function open(
   const createdRoster: Record<string, RosterEntry[]> = {}
   const context = await browser.createBrowserContext()
   const page = await context.newPage()
+  await coverage?.track(page)
   page.once('close', () => {
     context.close().catch(() => undefined)
   })
@@ -517,6 +535,60 @@ async function placeDefenderWithKeyboard(
   await page.keyboard.press('ArrowUp')
   await page.keyboard.press('Enter')
 }
+async function overrideBases(
+  page: Page,
+  bases: Array<['First base' | 'Second base' | 'Third base', string]>
+): Promise<void> {
+  await click(page, 'Open scoring menu')
+  await click(page, 'Overrides')
+  for (const [base, player] of bases) {
+    await click(page, base)
+    await click(page, `Choose ${base} ${player}`)
+  }
+  await click(page, 'Apply Override')
+}
+
+async function dragRunner(
+  page: Page,
+  fromBase: number,
+  toBase: number
+): Promise<void> {
+  const from = await projectBase(page, fromBase, 6)
+  const to = await projectBase(page, toBase, 0)
+  await page.touchscreen.touchStart(...from)
+  await new Promise(resolve => setTimeout(resolve, 400))
+  await page.touchscreen.touchMove(to[0], to[1])
+}
+
+async function runnerNearBase(page: Page, base: number): Promise<boolean> {
+  await captureScene(page)
+  const { x, z } = BASES[base]
+  return await page.evaluate(
+    (tx, tz) => {
+      const scene = (window as unknown as SceneProbeWindow).qaScene
+      if (scene == null) return false
+      let best = Infinity
+      scene.traverse(obj => {
+        if (!obj.name.startsWith('player-offense-')) return
+        const dx = obj.position.x - tx
+        const dz = obj.position.z - tz
+        best = Math.min(best, dx * dx + dz * dz)
+      })
+      return best < 36
+    },
+    x,
+    z
+  )
+}
+
+async function waitRunnerNearBase(page: Page, base: number): Promise<void> {
+  for (let i = 0; i < 60; i++) {
+    if (await runnerNearBase(page, base)) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  expect(await runnerNearBase(page, base), `runner near ${base}`).equals(true)
+}
+
 describe('scoring browser', function () {
   this.timeout(60000)
   before(async function () {
@@ -771,7 +843,7 @@ describe('scoring browser', function () {
         if (defensive) {
           await click(page, 'Swing in Play')
           await click(page, 'Batter Out')
-          await click(page, 'Throw Out')
+          await click(page, 'Ground Out')
           await page.waitForSelector('canvas[data-field-ready="true"]')
           await placeDefenderWithKeyboard(page)
           await page.keyboard.press('Enter')
@@ -866,7 +938,7 @@ describe('scoring browser', function () {
       try {
         await click(page, 'Swing in Play')
         await click(page, 'Batter Out')
-        await click(page, 'Throw Out')
+        await click(page, 'Ground Out')
         await page.waitForSelector('canvas[data-field-ready="true"]')
         await placeDefenderWithKeyboard(page)
         if (process.env.TS_SCORING_ARTIFACT_DIR != null && assisted)
@@ -1050,8 +1122,14 @@ describe('scoring browser', function () {
     const { page } = await open('/games/g1/score')
     try {
       await page.waitForSelector('canvas[data-field-ready="true"]')
-      await click(page, 'Ball')
-      await click(page, 'Open scoring menu')
+      // A pitch's picture lasts 280 ms: the menu opens in the same task as
+      // the tap, before it can end.
+      await page.evaluate(() => {
+        for (const label of ['Ball', 'Open scoring menu'])
+          document
+            .querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+            .click()
+      })
       await new Promise(resolve => setTimeout(resolve, 1400))
       await page.keyboard.press('Escape')
       expect(
@@ -1060,9 +1138,13 @@ describe('scoring browser', function () {
         )
       ).equals('true')
       await waitReady(page)
-      await click(page, 'Foul Ball')
+      // Hidden first, then the foul tapped: its 540 ms picture waits.
       const background = await page.browserContext().newPage()
       await background.bringToFront()
+      await page.waitForFunction(() => document.hidden)
+      await page.evaluate(() => {
+        document.querySelector<HTMLElement>('[aria-label="Foul Ball"]')!.click()
+      })
       await new Promise(resolve => setTimeout(resolve, 1700))
       expect(await page.evaluate(() => document.hidden)).equals(true)
       expect(
@@ -1112,11 +1194,14 @@ describe('scoring browser', function () {
         'Swing and Miss',
         'Foul Ball'
       ]) {
-        await click(page, label)
+        await waitReady(page)
+        // The pitch and two rapid taps in one task: a pitch's picture lasts
+        // 280 ms, shorter than a puppeteer click's round trip.
         await page.evaluate(label => {
           const button = document.querySelector<HTMLElement>(
             `[aria-label="${label}"]`
           )!
+          button.click()
           button.click()
           button.click()
         }, label)
@@ -2740,7 +2825,7 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
-  for (const out of ['Ball Caught', 'Throw Out'])
+  for (const out of ['Ball Caught', 'Ground Out'])
     it(`opens ${out} under one drag and returns to the right without a Back button`, async function () {
       const { page, unexpected } = await open('/games/g1/score')
       try {
@@ -2759,10 +2844,12 @@ describe('scoring browser', function () {
         await page.waitForSelector('[aria-label="Batter Out"]')
         const parent = await center('Batter Out')
         await page.mouse.move(parent.x, parent.y, { steps: 3 })
-        await page.waitForSelector('[aria-label="Throw Out"]')
+        await page.waitForSelector('[aria-label="Ground Out"]')
         const right = await center('Single')
         await page.mouse.move(right.x, right.y, { steps: 3 })
-        await page.waitForSelector('[aria-label="Throw Out"]', { hidden: true })
+        await page.waitForSelector('[aria-label="Ground Out"]', {
+          hidden: true
+        })
         await page.mouse.move(parent.x, parent.y, { steps: 3 })
         await page.waitForSelector('[aria-label="Ball Caught"]')
         const leaf = await center(out)
@@ -3070,13 +3157,13 @@ describe('scoring browser', function () {
         await click(page, 'Swing in Play')
         await click(page, 'Batter Out')
         expect(
-          await page.$eval('[aria-label="Throw Out"]', n => ({
+          await page.$eval('[aria-label="Ground Out"]', n => ({
             font: getComputedStyle(n).fontSize,
             weight: getComputedStyle(n).fontWeight
           }))
         ).deep.equals({ font: '13px', weight: '700' })
         for (const label of [
-          'Throw Out',
+          'Ground Out',
           'Ball Caught',
           'Batter Interference'
         ]) {
@@ -3541,7 +3628,7 @@ describe('scoring browser', function () {
     try {
       await click(page, 'Swing in Play')
       await click(page, 'Batter Out')
-      await click(page, 'Throw Out')
+      await click(page, 'Ground Out')
       const reject = async (): Promise<void> => {
         const undo = await page.$eval('[aria-label^="Undo "]', n =>
           n.getAttribute('aria-label')
@@ -5152,7 +5239,7 @@ describe('scoring browser', function () {
         await page.close()
       }
     })
-  for (const outcome of ['Single', 'Throw Out'])
+  for (const outcome of ['Single', 'Ground Out'])
     it(`completes a bunt ${outcome} with distinct menus and Undo`, async () => {
       const { page } = await open('/games/g1/score')
       try {
@@ -5162,7 +5249,7 @@ describe('scoring browser', function () {
           null
         )
         expect(await page.$('[aria-label="Fielder\'s Choice"]')).equals(null)
-        if (outcome === 'Throw Out') await click(page, 'Batter Out')
+        if (outcome === 'Ground Out') await click(page, 'Batter Out')
         await click(page, outcome)
         await page.waitForSelector(`[aria-label="Undo Bunt: ${outcome}"]`)
         await page.focus('[role="application"]')
@@ -5173,7 +5260,7 @@ describe('scoring browser', function () {
           '[aria-label^="Drag up and down for ball trajectory"]'
         )
         await page.keyboard.press('Enter')
-        if (outcome === 'Throw Out') {
+        if (outcome === 'Ground Out') {
           await page.waitForSelector(
             '[aria-label^="Tap or drag the next defender"]'
           )
@@ -6224,60 +6311,6 @@ describe('unforced hit-offer on a single (E1–E4)', function () {
     await browser?.close()
   })
 
-  async function overrideBases(
-    page: Page,
-    bases: Array<['First base' | 'Second base' | 'Third base', string]>
-  ): Promise<void> {
-    await click(page, 'Open scoring menu')
-    await click(page, 'Overrides')
-    for (const [base, player] of bases) {
-      await click(page, base)
-      await click(page, `Choose ${base} ${player}`)
-    }
-    await click(page, 'Apply Override')
-  }
-
-  async function dragRunner(
-    page: Page,
-    fromBase: number,
-    toBase: number
-  ): Promise<void> {
-    const from = await projectBase(page, fromBase, 6)
-    const to = await projectBase(page, toBase, 0)
-    await page.touchscreen.touchStart(...from)
-    await new Promise(resolve => setTimeout(resolve, 400))
-    await page.touchscreen.touchMove(to[0], to[1])
-  }
-
-  async function runnerNearBase(page: Page, base: number): Promise<boolean> {
-    await captureScene(page)
-    const { x, z } = BASES[base]
-    return await page.evaluate(
-      (tx, tz) => {
-        const scene = (window as unknown as SceneProbeWindow).qaScene
-        if (scene == null) return false
-        let best = Infinity
-        scene.traverse(obj => {
-          if (!obj.name.startsWith('player-offense-')) return
-          const dx = obj.position.x - tx
-          const dz = obj.position.z - tz
-          best = Math.min(best, dx * dx + dz * dz)
-        })
-        return best < 36
-      },
-      x,
-      z
-    )
-  }
-
-  async function waitRunnerNearBase(page: Page, base: number): Promise<void> {
-    for (let i = 0; i < 60; i++) {
-      if (await runnerNearBase(page, base)) return
-      await new Promise(resolve => setTimeout(resolve, 100))
-    }
-    expect(await runnerNearBase(page, base)).equals(true)
-  }
-
   it('E1 auto-advances an unforced runner second to third on a single', async function () {
     const { page } = await open(
       '/games/g1/score',
@@ -6408,6 +6441,2043 @@ describe('unforced hit-offer on a single (E1–E4)', function () {
         timeout: 30000
       })
       await page.waitForSelector('[aria-label*="Owls 1 · Hawks 0"]')
+    } finally {
+      await page.close()
+    }
+  })
+})
+
+/**
+ * E1: a ground out sends every other runner up a base. With TS_CAPTURE_ONLY=1
+ * (the before pictures, taken on the base revision) only the scenarios that
+ * take a picture run, and nothing is asserted. Pictures go to
+ * TS_SCORING_ARTIFACT_DIR as `<name>-<TS_ARTIFACT_PHASE>.png` (after by
+ * default).
+ */
+describe('ground outs', function () {
+  this.timeout(180000)
+  const capturing = process.env.TS_CAPTURE_ONLY === '1'
+  const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
+  before(async function () {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.TS_CHROME_PATH,
+      args: [
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+        '--enable-unsafe-swiftshader'
+      ]
+    })
+  })
+  after(async function () {
+    await browser?.close()
+  })
+
+  async function openPhone(): Promise<Page> {
+    const { page } = await open(
+      '/games/g1/score',
+      false,
+      false,
+      false,
+      'switch',
+      true
+    )
+    await page.setViewport({
+      width: 402,
+      height: 874,
+      deviceScaleFactor: 2,
+      isMobile: true,
+      hasTouch: true
+    })
+    await page.waitForSelector('canvas[data-field-ready="true"]', {
+      timeout: 30000
+    })
+    return page
+  }
+  async function frame(page: Page): Promise<void> {
+    await page.evaluate(
+      async () =>
+        await new Promise(resolve => {
+          requestAnimationFrame(resolve)
+        })
+    )
+  }
+  async function picture(
+    page: Page,
+    name: string,
+    settleMs = 1500
+  ): Promise<void> {
+    const dir = process.env.TS_SCORING_ARTIFACT_DIR
+    if (dir == null || dir === '') return
+    await mkdir(dir, { recursive: true })
+    // Let the last motion settle before the picture.
+    await new Promise(resolve => setTimeout(resolve, settleMs))
+    await page.screenshot({ path: join(dir, `${name}-${phase}.png`) })
+  }
+  /** The play stays open for correction for a few seconds: drag at once. */
+  async function correcting(page: Page): Promise<void> {
+    await page.waitForSelector('[aria-label="Time to edit play"]', {
+      timeout: 30000
+    })
+  }
+  /** The ground ball to the shortstop, the fifth player the field offers. */
+  async function groundOut(
+    page: Page,
+    contact: 'Swing' | 'Bunt' = 'Swing'
+  ): Promise<void> {
+    await waitReady(page)
+    await click(page, `${contact} in Play`)
+    await click(page, 'Batter Out')
+    // The base revision calls it Throw Out.
+    await page.waitForSelector(
+      '[aria-label="Ground Out"], [aria-label="Throw Out"]'
+    )
+    await click(
+      page,
+      (await page.$('[aria-label="Ground Out"]')) == null
+        ? 'Throw Out'
+        : 'Ground Out'
+    )
+    await page.waitForSelector(
+      '[aria-label^="Tap or drag a player to where the ball was fielded"]'
+    )
+    await page.focus('[role="application"]')
+    for (let i = 0; i <= 4; i++) await page.keyboard.press(']')
+    await frame(page)
+    await page.keyboard.press('Space')
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Enter')
+    await page.waitForSelector(
+      '[aria-label^="Drag up and down for ball trajectory."]'
+    )
+    if (contact === 'Swing')
+      for (let value = 45; value > -10; value--)
+        await page.keyboard.press('ArrowDown')
+    await frame(page)
+    await page.keyboard.press('Enter')
+    await page.waitForSelector(
+      '[aria-label^="Tap or drag the next defender"]',
+      {
+        timeout: 30000
+      }
+    )
+  }
+  /** Places the player `presses` steps along the field's choosable list. */
+  async function place(page: Page, presses: number): Promise<void> {
+    await frame(page)
+    await frame(page)
+    await page.focus('[role="application"]')
+    for (let i = 0; i < presses; i++) await page.keyboard.press(']')
+    await frame(page)
+    await page.keyboard.press('Space')
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Enter')
+  }
+  async function tapEither(page: Page, label: string): Promise<void> {
+    const selector = `[aria-label="${label}"], [aria-label="Bottom ${label}"]`
+    await page.waitForSelector(selector, { timeout: 30000 })
+    await click(
+      page,
+      (await page.$(`[aria-label="${label}"]`)) == null
+        ? `Bottom ${label}`
+        : label
+    )
+  }
+  /** The shortstop holds the ball: the first baseman is third, and takes it. */
+  async function batterOutAtFirst(page: Page): Promise<void> {
+    await place(page, 3)
+    await tapEither(page, 'Finish defensive play')
+  }
+  async function outsShown(page: Page, outs: number): Promise<void> {
+    await page.waitForSelector(`[aria-label*=" ${outs} outs"]`, {
+      timeout: 30000
+    })
+  }
+  async function score(page: Page, away: number): Promise<void> {
+    await page.waitForSelector(`[aria-label*="Owls ${away} · Hawks 0"]`, {
+      timeout: 30000
+    })
+  }
+  async function stillNear(page: Page, base: number): Promise<void> {
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect(await runnerNearBase(page, base), `runner on ${base}`).equals(true)
+  }
+  /**
+   * A dropped runner is set back on the base he left and runs to the one he
+   * was dropped on, so a base he passes through is not empty until the field
+   * moves nobody.
+   */
+  async function atRest(page: Page): Promise<void> {
+    await page.waitForSelector('[role="application"][data-moving=""]', {
+      timeout: 30000
+    })
+  }
+  async function nobodyNear(page: Page, base: number): Promise<void> {
+    expect(await runnerNearBase(page, base), `nobody on ${base}`).equals(false)
+  }
+
+  it('sends the runner on first to second, and he drags back to first', async function () {
+    const page = await openPhone()
+    try {
+      await overrideBases(page, [['First base', 'Player 7']])
+      await groundOut(page)
+      await batterOutAtFirst(page)
+      await correcting(page)
+      if (!capturing) await waitRunnerNearBase(page, 2)
+      await picture(page, 'ground-out-runner-on-first', 0)
+      if (capturing) return
+      await outsShown(page, 1)
+      await dragRunner(page, 2, 1)
+      await page.touchscreen.touchEnd()
+      await atRest(page)
+      await waitRunnerNearBase(page, 1)
+      await nobodyNear(page, 2)
+      await tapEither(page, 'Finish at-bat')
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 30000
+      })
+      await stillNear(page, 1)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('sends runners on first and second to second and third, and refuses the lead back onto the trail', async function () {
+    if (capturing) this.skip()
+    const page = await openPhone()
+    try {
+      await overrideBases(page, [
+        ['First base', 'Player 6'],
+        ['Second base', 'Player 7']
+      ])
+      await groundOut(page)
+      await batterOutAtFirst(page)
+      await correcting(page)
+      await waitRunnerNearBase(page, 3)
+      await waitRunnerNearBase(page, 2)
+      // Second is taken: the field offers the lead runner no way back, and
+      // he stays on third.
+      await dragRunner(page, 3, 2)
+      await page.touchscreen.touchEnd()
+      await waitRunnerNearBase(page, 3)
+      // The trailing runner goes back to first; the lead keeps third.
+      await dragRunner(page, 2, 1)
+      await page.touchscreen.touchEnd()
+      await atRest(page)
+      await waitRunnerNearBase(page, 1)
+      await waitRunnerNearBase(page, 3)
+      await nobodyNear(page, 2)
+    } finally {
+      await page.close()
+    }
+  })
+
+  for (const call of ['Safe', 'Out', 'Back'] as const)
+    it(`asks Safe, Out or Back for the runner from third, and he is ${call}`, async function () {
+      if (capturing) this.skip()
+      const page = await openPhone()
+      try {
+        await overrideBases(page, [['Third base', 'Player 8']])
+        await groundOut(page)
+        await batterOutAtFirst(page)
+        await page.waitForSelector(
+          '[aria-label="Home plate decision for Player 8"]',
+          { timeout: 30000 }
+        )
+        // The run is not on the board until he is called safe.
+        await score(page, 0)
+        expect(await page.$('[aria-label="Back"]')).not.equals(null)
+        await click(page, call)
+        if (call === 'Safe') await score(page, 1)
+        else if (call === 'Out') {
+          await place(page, 0)
+          await tapEither(page, 'Finish defensive play')
+          await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+            timeout: 30000
+          })
+          await outsShown(page, 2)
+          await score(page, 0)
+        } else {
+          await waitRunnerNearBase(page, 3)
+          await score(page, 0)
+          await tapEither(page, 'Finish at-bat')
+          await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+            timeout: 30000
+          })
+          await stillNear(page, 3)
+          await score(page, 0)
+        }
+      } finally {
+        await page.close()
+      }
+    })
+
+  it('scores the lead runner with the bases loaded and moves the others up a base', async function () {
+    if (capturing) this.skip()
+    const page = await openPhone()
+    try {
+      await overrideBases(page, [
+        ['First base', 'Player 6'],
+        ['Second base', 'Player 7'],
+        ['Third base', 'Player 8']
+      ])
+      await groundOut(page)
+      await batterOutAtFirst(page)
+      await page.waitForSelector(
+        '[aria-label="Home plate decision for Player 8"]',
+        { timeout: 30000 }
+      )
+      await score(page, 0)
+      await click(page, 'Safe')
+      await score(page, 1)
+      await waitRunnerNearBase(page, 2)
+      await waitRunnerNearBase(page, 3)
+      await outsShown(page, 1)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('moves the runner up on a bunt ground out too', async function () {
+    if (capturing) this.skip()
+    const page = await openPhone()
+    try {
+      await overrideBases(page, [['First base', 'Player 7']])
+      await groundOut(page, 'Bunt')
+      await batterOutAtFirst(page)
+      await waitRunnerNearBase(page, 2)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('puts the runner from first out on second in a 6-4-3, then the batter at first', async function () {
+    const page = await openPhone()
+    try {
+      await overrideBases(page, [['First base', 'Player 7']])
+      await groundOut(page)
+      // The shortstop holds the ball, so the second baseman is fourth.
+      await place(page, 4)
+      await page.waitForSelector(
+        '[aria-label^="Tap or drag the next defender"]'
+      )
+      if (!capturing)
+        await page.waitForSelector(
+          '[aria-label^="Tap or drag the next defender, hold a runner to put him out on his base"]'
+        )
+      // The runner is the last player the field offers: held where he stands.
+      await frame(page)
+      await frame(page)
+      await page.focus('[role="application"]')
+      await page.keyboard.press('[')
+      await frame(page)
+      await page.keyboard.press('Space')
+      await page.keyboard.press('o')
+      await page.keyboard.press('Enter')
+      if (!capturing) {
+        await page.waitForSelector(
+          '[aria-label^="Tap or drag the next defender, or hit Done"]'
+        )
+      }
+      // The second baseman still holds it, so the first baseman is third.
+      await batterOutAtFirst(page)
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 30000
+      })
+      await picture(page, 'ground-out-double-play')
+      if (capturing) return
+      await outsShown(page, 2)
+      for (const at of [1, 2, 3]) await nobodyNear(page, at)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('moves nobody with two out: the batter out ends the half', async function () {
+    if (capturing) this.skip()
+    const page = await openPhone()
+    try {
+      for (let i = 0; i < 6; i++) {
+        await waitReady(page)
+        await click(page, 'Swing and Miss')
+      }
+      await waitReady(page)
+      await overrideBases(page, [['First base', 'Player 7']])
+      await groundOut(page)
+      await stillNear(page, 1)
+      await nobodyNear(page, 2)
+      await batterOutAtFirst(page)
+      await page.waitForSelector('[aria-label*="Bottom 1st"]', {
+        timeout: 30000
+      })
+      await score(page, 0)
+    } finally {
+      await page.close()
+    }
+  })
+})
+
+/**
+ * E2: scoring waits only for a pitcher, and a ball to an empty position is
+ * played by a nameless stand-in. With TS_CAPTURE_ONLY=1 (the before
+ * pictures, taken on the base revision) nothing is asserted, and pictures go
+ * to TS_SCORING_ARTIFACT_DIR as `<name>-<TS_ARTIFACT_PHASE>.png`.
+ */
+describe('pitcher only', function () {
+  this.timeout(180000)
+  const capturing = process.env.TS_CAPTURE_ONLY === '1'
+  const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
+  before(async function () {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.TS_CHROME_PATH,
+      args: [
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+        '--enable-unsafe-swiftshader'
+      ]
+    })
+  })
+  after(async function () {
+    await browser?.close()
+  })
+
+  async function openPhone(): Promise<Page> {
+    const { page } = await open(
+      '/games/g1/score',
+      false,
+      false,
+      false,
+      'switch',
+      true
+    )
+    await page.setViewport({
+      width: 402,
+      height: 874,
+      deviceScaleFactor: 2,
+      isMobile: true,
+      hasTouch: true
+    })
+    await page.waitForSelector('canvas[data-field-ready="true"]', {
+      timeout: 30000
+    })
+    return page
+  }
+  async function frame(page: Page): Promise<void> {
+    await page.evaluate(
+      async () =>
+        await new Promise(resolve => {
+          requestAnimationFrame(resolve)
+        })
+    )
+  }
+  async function picture(
+    page: Page,
+    name: string,
+    settleMs = 1500
+  ): Promise<void> {
+    const dir = process.env.TS_SCORING_ARTIFACT_DIR
+    if (dir == null || dir === '') return
+    await mkdir(dir, { recursive: true })
+    await new Promise(resolve => setTimeout(resolve, settleMs))
+    await page.screenshot({ path: join(dir, `${name}-${phase}.png`) })
+  }
+  /** Leaves on the hosts' defense only the positions named. */
+  async function fieldOnly(page: Page, kept: readonly string[]): Promise<void> {
+    await click(page, 'Open scoring menu')
+    await click(page, 'Set Team Rosters')
+    // The hosts take the field in the top of the first.
+    await click(page, 'Home Team')
+    await click(page, 'Defense')
+    for (const position of ['P', 'C', '1B', '2B', 'SS', '3B', 'LF', 'CF', 'RF'])
+      if (!kept.includes(position)) await click(page, `Clear ${position}`)
+    await click(page, 'Save Rosters')
+    await page.waitForFunction(
+      () => document.querySelector('[aria-label="Save Rosters"]') == null,
+      { timeout: 30000 }
+    )
+  }
+  async function shown(page: Page, text: string): Promise<boolean> {
+    return await page.evaluate(
+      said => document.body.innerText.includes(said),
+      text
+    )
+  }
+  async function ballEnabled(page: Page): Promise<boolean> {
+    return await page.$eval(
+      '[aria-label="Ball"]',
+      node => node.getAttribute('aria-disabled') !== 'true'
+    )
+  }
+  /** Places the player `presses` steps along the field's choosable list. */
+  async function place(page: Page, presses: number): Promise<void> {
+    await frame(page)
+    await frame(page)
+    await page.focus('[role="application"]')
+    for (let i = 0; i < presses; i++) await page.keyboard.press(']')
+    await frame(page)
+    await page.keyboard.press('Space')
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Enter')
+  }
+  async function tapEither(page: Page, label: string): Promise<void> {
+    const selector = `[aria-label="${label}"], [aria-label="Bottom ${label}"]`
+    await page.waitForSelector(selector, { timeout: 30000 })
+    await click(
+      page,
+      (await page.$(`[aria-label="${label}"]`)) == null
+        ? `Bottom ${label}`
+        : label
+    )
+  }
+
+  /** The label of the player the field has selected: '' for none. */
+  async function selectedOnField(page: Page): Promise<string> {
+    return await page.evaluate(() => {
+      const host = window as unknown as SceneProbeWindow
+      interface FieldProps {
+        selected?: unknown
+        onSelect?: unknown
+        players?: Array<{ id: string; label: string }>
+      }
+      let found = ''
+      let seen = false
+      const scan = (fiber?: ProbeFiber): void => {
+        if (fiber == null || seen) return
+        const props = fiber.memoizedProps as FieldProps | undefined
+        if (
+          props != null &&
+          typeof props.selected === 'string' &&
+          typeof props.onSelect === 'function' &&
+          Array.isArray(props.players)
+        ) {
+          const player = props.players.find(each => each.id === props.selected)
+          seen = true
+          if (player != null) found = player.label
+          return
+        }
+        scan(fiber.child)
+        scan(fiber.sibling)
+      }
+      for (const root of host.qaRoots) scan(root.current)
+      return found
+    })
+  }
+
+  /**
+   * Places the fielder at `position`: steps along the field's choosable list
+   * one press at a time, each press waiting until the field shows it, until
+   * that position is the one selected.
+   */
+  async function placePosition(page: Page, position: string): Promise<void> {
+    await frame(page)
+    await page.focus('[role="application"]')
+    for (let step = 0; step < 20; step++) {
+      const before = await selectedOnField(page)
+      if (before === position) break
+      await page.keyboard.press(']')
+      for (let wait = 0; wait < 50; wait++) {
+        if ((await selectedOnField(page)) !== before) break
+        await frame(page)
+      }
+    }
+    expect(await selectedOnField(page)).equals(position)
+    await page.keyboard.press('Space')
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Enter')
+  }
+
+  it('scores with only a pitcher, and plays a ground ball to an empty short with a nameless fielder', async function () {
+    const page = await openPhone()
+    try {
+      await fieldOnly(page, ['P'])
+      await picture(page, 'missing-defense')
+      if (!capturing) {
+        // No prompt: the pitch controls are live.
+        expect(await shown(page, 'Missing defensive positions')).equals(false)
+        expect(await shown(page, 'Assign a pitcher')).equals(false)
+        await waitReady(page)
+        expect(await ballEnabled(page)).equals(true)
+        // Every empty position still has its plate to fill.
+        for (const position of ['C', '1B', 'SS', 'RF'])
+          expect(
+            await page.$(`[aria-label="Assign ${position}"]`),
+            position
+          ).not.equals(null)
+        await click(page, 'Ball')
+        await page.waitForSelector('[aria-label*="1 ball"]', { timeout: 30000 })
+      }
+      if (
+        capturing &&
+        !(await page.evaluate(() =>
+          Array.from(
+            document.querySelectorAll(
+              '[aria-label="Swing in Play"]:not([aria-disabled="true"]):not(:disabled)'
+            )
+          ).some(node => node.checkVisibility())
+        ))
+      ) {
+        // The base revision puts no ball in play without a whole defense:
+        // nobody can play the empty shortstop's spot.
+        await picture(page, 'stand-in-fielder', 0)
+        return
+      }
+      await click(page, 'Swing in Play')
+      await click(page, 'Batter Out')
+      await page.waitForSelector(
+        '[aria-label="Ground Out"], [aria-label="Throw Out"]'
+      )
+      await click(
+        page,
+        (await page.$('[aria-label="Ground Out"]')) == null
+          ? 'Throw Out'
+          : 'Ground Out'
+      )
+      await page.waitForSelector(
+        '[aria-label^="Tap or drag a player to where the ball was fielded"]'
+      )
+      if (capturing) {
+        // The pitcher is first among the players the field offers, then the
+        // empty positions in order: C, 1B, 2B, SS.
+        await place(page, 5)
+        // The base revision offers no empty position: the play cannot use
+        // the shortstop's spot.
+        await picture(page, 'stand-in-fielder', 500)
+        return
+      }
+      // The empty shortstop's spot fields it.
+      await placePosition(page, 'SS')
+      await page.waitForSelector(
+        '[aria-label^="Drag up and down for ball trajectory."]'
+      )
+      // While the play is open the shortstop's spot is a fielder, with no
+      // name and no plate. The plates follow the field's next drawn frame.
+      await page.waitForFunction(
+        () => document.querySelector('[aria-label="Assign SS"]') == null,
+        { timeout: 2000 }
+      )
+      expect(await page.$('[aria-label="Assign 1B"]')).not.equals(null)
+      // The angle the control starts at will do for a ground ball.
+      await frame(page)
+      await page.keyboard.press('Enter')
+      await page.waitForSelector(
+        '[aria-label^="Tap or drag the next defender"]',
+        {
+          timeout: 30000
+        }
+      )
+      await picture(page, 'stand-in-fielder', 300)
+      // The stand-in at short throws to the stand-in at first.
+      await placePosition(page, '1B')
+      await tapEither(page, 'Finish defensive play')
+      await page.waitForSelector(
+        '[aria-label*=" 1 outs"], [aria-label*=" 1 out"]',
+        {
+          timeout: 30000
+        }
+      )
+      // With nobody on, the play closes once its correction time is up.
+      if ((await page.$('[aria-label="Finish at-bat"]')) != null)
+        await click(page, 'Finish at-bat')
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 30000
+      })
+      // The play over, short is an empty plate again.
+      await page.waitForSelector('[aria-label="Assign SS"]', { timeout: 30000 })
+      await page.waitForSelector('[aria-label="Assign 1B"]', { timeout: 30000 })
+      expect(await shown(page, 'Assign a pitcher')).equals(false)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('waits for a pitcher once Clear P empties the mound', async function () {
+    if (capturing) this.skip()
+    const page = await openPhone()
+    try {
+      await fieldOnly(page, [])
+      await page.waitForFunction(
+        () => document.body.innerText.includes('Assign a pitcher'),
+        { timeout: 30000 }
+      )
+      expect(await ballEnabled(page)).equals(false)
+      expect(await page.$('[aria-label="Assign P"]')).not.equals(null)
+    } finally {
+      await page.close()
+    }
+  })
+})
+
+/**
+ * E3: Out at First is a Batter Out row of its own on a swing and a bunt. A
+ * ball the shortstop fields goes to first with no receiver to choose, the
+ * shortstop assisting and the first baseman taking the putout; a ball the
+ * first baseman fields asks who took it; with nobody at first a nameless
+ * stand-in takes the throw and nobody is credited. Each play's box score is
+ * printed (`box:` lines) from what the page saved. With TS_CAPTURE_ONLY=1
+ * (the before picture, taken on the base revision) only the menu picture is
+ * taken and nothing is asserted; pictures go to TS_SCORING_ARTIFACT_DIR as
+ * `<name>-<TS_ARTIFACT_PHASE>.png`.
+ */
+describe('out at first', function () {
+  this.timeout(180000)
+  const capturing = process.env.TS_CAPTURE_ONLY === '1'
+  const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
+  before(async function () {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.TS_CHROME_PATH,
+      args: [
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+        '--enable-unsafe-swiftshader'
+      ]
+    })
+  })
+  after(async function () {
+    await browser?.close()
+  })
+
+  /** A fielding credit as the saved play document writes it. */
+  interface SavedCredit {
+    credit: string
+    position: { abbreviation: string }
+    player?: { id: number }
+  }
+  interface SavedPlay {
+    about: { atBatIndex: number }
+    runners?: Array<{
+      details: { runner: { id: number }; event?: string }
+      movement: { isOut: boolean; outBase?: string | null }
+      credits: SavedCredit[]
+    }>
+  }
+  /** The plays the page saved, the latest version of each. */
+  type Saved = Map<number, SavedPlay>
+
+  async function openPhone(): Promise<{ page: Page; saved: Saved }> {
+    const { page } = await open(
+      '/games/g1/score',
+      false,
+      false,
+      false,
+      'switch',
+      true
+    )
+    const saved: Saved = new Map()
+    // The save each play was last seen in, so a later save always wins.
+    const seenIn = new Map<number, number>()
+    let saves = 0
+    page.on('request', request => {
+      const url = new URL(request.url())
+      if (
+        request.method() !== 'POST' ||
+        url.pathname !== '/api/v1/games/g1/events'
+      )
+        return
+      const save = ++saves
+      const read = async (): Promise<void> => {
+        const change = JSON.parse((await request.fetchPostData()) ?? '{}') as {
+          plays?: SavedPlay[]
+          currentPlay?: SavedPlay | null
+        }
+        for (const play of [...(change.plays ?? []), change.currentPlay]) {
+          if (play?.about == null) continue
+          const index = play.about.atBatIndex
+          if ((seenIn.get(index) ?? 0) > save) continue
+          seenIn.set(index, save)
+          saved.set(index, play)
+        }
+      }
+      read().catch(() => undefined)
+    })
+    await page.setViewport({
+      width: 402,
+      height: 874,
+      deviceScaleFactor: 2,
+      isMobile: true,
+      hasTouch: true
+    })
+    await page.waitForSelector('canvas[data-field-ready="true"]', {
+      timeout: 30000
+    })
+    return { page, saved }
+  }
+  async function frame(page: Page): Promise<void> {
+    await page.evaluate(
+      async () =>
+        await new Promise(resolve => {
+          requestAnimationFrame(resolve)
+        })
+    )
+  }
+  async function picture(
+    page: Page,
+    name: string,
+    settleMs = 1500
+  ): Promise<void> {
+    const dir = process.env.TS_SCORING_ARTIFACT_DIR
+    if (dir == null || dir === '') return
+    await mkdir(dir, { recursive: true })
+    await new Promise(resolve => setTimeout(resolve, settleMs))
+    await page.screenshot({ path: join(dir, `${name}-${phase}.png`) })
+  }
+  /** The Batter Out rows the open menu lists, in order. */
+  async function batterOutRows(page: Page): Promise<string[]> {
+    return await page.evaluate(() =>
+      Array.from(document.querySelectorAll('[aria-label]'))
+        .map(node => node.getAttribute('aria-label')!)
+        .filter(label =>
+          [
+            'Throw Out',
+            'Ground Out',
+            'Out at First',
+            'Ball Caught',
+            'Batter Interference'
+          ].includes(label)
+        )
+    )
+  }
+  /** Places the player `presses` steps along the field's choosable list. */
+  async function place(page: Page, presses: number): Promise<void> {
+    await frame(page)
+    await frame(page)
+    await page.focus('[role="application"]')
+    for (let i = 0; i < presses; i++) await page.keyboard.press(']')
+    await frame(page)
+    await page.keyboard.press('Space')
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Enter')
+  }
+  async function tapEither(page: Page, label: string): Promise<void> {
+    const selector = `[aria-label="${label}"], [aria-label="Bottom ${label}"]`
+    await page.waitForSelector(selector, { timeout: 30000 })
+    await click(
+      page,
+      (await page.$(`[aria-label="${label}"]`)) == null
+        ? `Bottom ${label}`
+        : label
+    )
+  }
+  /**
+   * An Out at First fielded by the player `presses` steps along the list
+   * the field offers: P, C, 1B, 2B, SS with the whole defense out.
+   */
+  async function outAtFirst(page: Page, presses: number): Promise<void> {
+    await waitReady(page)
+    await click(page, 'Swing in Play')
+    await click(page, 'Batter Out')
+    await click(page, 'Out at First')
+    await page.waitForSelector(
+      '[aria-label^="Tap or drag a player to where the ball was fielded"]'
+    )
+    await place(page, presses)
+    await page.waitForSelector(
+      '[aria-label^="Drag up and down for ball trajectory."]'
+    )
+    for (let value = 45; value > -10; value--)
+      await page.keyboard.press('ArrowDown')
+    await frame(page)
+    await page.keyboard.press('Enter')
+  }
+  async function oneOut(page: Page): Promise<void> {
+    await page.waitForSelector(
+      '[aria-label*=" 1 outs"], [aria-label*=" 1 out"]',
+      { timeout: 30000 }
+    )
+  }
+  /** Ends the play: with nobody on it closes once its correction time is up. */
+  async function nextBatter(page: Page): Promise<void> {
+    if ((await page.$('[aria-label="Finish at-bat"]')) != null)
+      await click(page, 'Finish at-bat')
+    await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+      timeout: 30000
+    })
+  }
+  /**
+   * The fielding box score of the saved plays, a line per credit: putouts
+   * and assists by position, and the player credited (nobody for a
+   * stand-in). Printed for the proving log.
+   */
+  /** The fixture's names: the hosts are Player 1–9 (201–209). */
+  function name(id: number): string {
+    return id > 200
+      ? `Player ${id - 200}`
+      : id === 101
+        ? 'Jordan K.'
+        : `Player ${id - 100}`
+  }
+  async function boxScore(saved: Saved, title: string): Promise<string[]> {
+    for (let wait = 0; wait < 100; wait++) {
+      if (
+        [...saved.values()].some(play =>
+          (play.runners ?? []).some(runner => runner.movement.isOut)
+        )
+      )
+        break
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    const lines = [...saved.values()]
+      .sort((a, b) => a.about.atBatIndex - b.about.atBatIndex)
+      .flatMap(play =>
+        (play.runners ?? []).flatMap(runner =>
+          runner.credits.map(
+            credit =>
+              `${credit.credit === 'f_putout' ? 'PO' : credit.credit === 'f_assist' ? 'A' : credit.credit} ${credit.position.abbreviation} ${credit.player == null ? '(nobody)' : name(credit.player.id)}`
+          )
+        )
+      )
+    const outs = [...saved.values()].flatMap(play =>
+      (play.runners ?? [])
+        .filter(runner => runner.movement.isOut)
+        .map(
+          runner =>
+            `${name(runner.details.runner.id)} ${runner.details.event ?? ''}, out at ${runner.movement.outBase ?? ''}`
+        )
+    )
+    console.log(`box: ${title}`)
+    for (const line of [...outs.map(out => `out: ${out}`), ...lines])
+      console.log(`box:   ${line}`)
+    return lines
+  }
+
+  for (const contact of ['Swing', 'Bunt'] as const)
+    it(`lists Out at First under Batter Out on a ${contact.toLowerCase()}`, async function () {
+      if (capturing && contact === 'Bunt') this.skip()
+      const { page } = await openPhone()
+      try {
+        await waitReady(page)
+        await click(page, `${contact} in Play`)
+        await click(page, 'Batter Out')
+        await page.waitForSelector(
+          '[aria-label="Ground Out"], [aria-label="Throw Out"]'
+        )
+        if (contact === 'Swing') await picture(page, 'batter-out-menu', 300)
+        if (capturing) return
+        expect(await batterOutRows(page)).deep.equals([
+          'Ground Out',
+          'Out at First',
+          'Ball Caught',
+          'Batter Interference'
+        ])
+      } finally {
+        await page.close()
+      }
+    })
+
+  it("throws the shortstop's ball to first with no prompt: SS assist, 1B putout", async function () {
+    if (capturing) this.skip()
+    const { page, saved } = await openPhone()
+    try {
+      await outAtFirst(page, 5)
+      await oneOut(page)
+      expect(
+        await page.$('[aria-label^="Tap or drag the next defender"]')
+      ).equals(null)
+      await nextBatter(page)
+      expect(await boxScore(saved, 'shortstop to first')).deep.equals([
+        'A SS Player 5',
+        'PO 1B Player 3'
+      ])
+    } finally {
+      await page.close()
+    }
+  })
+
+  it("asks who took the first baseman's own ball", async function () {
+    if (capturing) this.skip()
+    const { page, saved } = await openPhone()
+    try {
+      await outAtFirst(page, 3)
+      await page.waitForSelector(
+        '[aria-label^="Tap or drag the next defender"]',
+        { timeout: 30000 }
+      )
+      // Nobody is out until the scorer says who took it.
+      expect(await page.$('[aria-label*=" 1 out"]')).equals(null)
+      // The pitcher covers first: first among the players the field offers.
+      await place(page, 1)
+      await tapEither(page, 'Finish defensive play')
+      await oneOut(page)
+      await nextBatter(page)
+      expect(await boxScore(saved, 'first baseman to pitcher')).deep.equals([
+        'A 1B Player 3',
+        'PO P Player 1'
+      ])
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('throws to a nameless stand-in at an empty first, crediting nobody', async function () {
+    if (capturing) this.skip()
+    const { page, saved } = await openPhone()
+    try {
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Home Team')
+      await click(page, 'Defense')
+      await click(page, 'Clear 1B')
+      await click(page, 'Save Rosters')
+      await page.waitForFunction(
+        () => document.querySelector('[aria-label="Save Rosters"]') == null,
+        { timeout: 30000 }
+      )
+      await page.waitForSelector('[aria-label="Assign 1B"]', { timeout: 30000 })
+      // The players on the field come first: P, C, 2B, SS.
+      await outAtFirst(page, 4)
+      await oneOut(page)
+      expect(
+        await page.$('[aria-label^="Tap or drag the next defender"]')
+      ).equals(null)
+      await nextBatter(page)
+      await page.waitForSelector('[aria-label="Assign 1B"]', { timeout: 30000 })
+      expect(await boxScore(saved, 'shortstop to an empty first')).deep.equals([
+        'A SS Player 5',
+        'PO 1B (nobody)'
+      ])
+    } finally {
+      await page.close()
+    }
+  })
+})
+
+/**
+ * E4: a runner who scores leaves the field. After a home run, in the park or
+ * over the fence, with the bases empty or loaded, nobody stays beside home
+ * and there is no handle there to drag back; a runner dragged home and
+ * called safe is gone, and still gone after the next pitch. With
+ * TS_CAPTURE_ONLY=1 (the before pictures, taken on the base revision) only
+ * the scenarios that take a picture run, and nothing is asserted; pictures go
+ * to TS_SCORING_ARTIFACT_DIR as `<name>-<TS_ARTIFACT_PHASE>.png`.
+ */
+describe('scorers leave the field', function () {
+  this.timeout(180000)
+  const capturing = process.env.TS_CAPTURE_ONLY === '1'
+  const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
+  before(async function () {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.TS_CHROME_PATH,
+      args: [
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+        '--enable-unsafe-swiftshader'
+      ]
+    })
+  })
+  after(async function () {
+    await browser?.close()
+  })
+
+  async function openPhone(): Promise<Page> {
+    const { page } = await open(
+      '/games/g1/score',
+      false,
+      false,
+      false,
+      'switch',
+      true
+    )
+    await page.setViewport({
+      width: 402,
+      height: 874,
+      deviceScaleFactor: 2,
+      isMobile: true,
+      hasTouch: true
+    })
+    await page.waitForSelector('canvas[data-field-ready="true"]', {
+      timeout: 30000
+    })
+    return page
+  }
+  async function picture(page: Page, name: string): Promise<void> {
+    const dir = process.env.TS_SCORING_ARTIFACT_DIR
+    if (dir == null || dir === '') return
+    await mkdir(dir, { recursive: true })
+    await page.screenshot({ path: join(dir, `${name}-${phase}.png`) })
+  }
+  /** Where a ground point sits on the canvas, in the home view. */
+  async function project(
+    page: Page,
+    x: number,
+    z: number,
+    y = 0
+  ): Promise<[number, number]> {
+    const rect = await page.$eval('canvas', canvas => {
+      const r = canvas.getBoundingClientRect()
+      return { x: r.x, y: r.y, width: r.width, height: r.height }
+    })
+    const camera = new PerspectiveCamera()
+    applyFieldCamera(camera, {
+      width: rect.width,
+      height: rect.height,
+      view: 'home',
+      zoom: 1.25,
+      tilt: (-11 * Math.PI) / 180,
+      heightOffset: 33,
+      bottomExtension: 112
+    })
+    const point = new Vector3(x, y, z).project(camera)
+    return [
+      rect.x + ((point.x + 1) * rect.width) / 2,
+      rect.y + ((1 - point.y) * rect.height) / 2
+    ]
+  }
+  /** The offense players drawn on the field, by gumbo id. */
+  async function offense(page: Page): Promise<number[]> {
+    await captureScene(page)
+    return await page.evaluate(() => {
+      const scene = (window as unknown as SceneProbeWindow).qaScene
+      if (scene == null) return []
+      const ids: number[] = []
+      scene.traverse(obj => {
+        if (!obj.name.startsWith('player-offense-')) return
+        let shown = true
+        for (
+          let node: typeof obj | null = obj;
+          node != null;
+          node = node.parent
+        )
+          if (!node.visible) shown = false
+        if (shown) ids.push(Number(obj.name.slice('player-offense-'.length)))
+      })
+      return ids.sort((a, b) => a - b)
+    })
+  }
+  /** Waits for the walk to the dugout to end with exactly `ids` drawn. */
+  async function onlyOffense(page: Page, ids: number[]): Promise<void> {
+    let drawn: number[] = []
+    for (let i = 0; i < 100; i++) {
+      drawn = await offense(page)
+      if (JSON.stringify(drawn) === JSON.stringify(ids)) return
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    expect(drawn, 'offense players drawn').deep.equals(ids)
+  }
+  /**
+   * The old drag-back handle stood in the home queue, well behind the
+   * batter: a drag from there to third changes nothing.
+   */
+  async function noHandleAtHome(page: Page, runs: number): Promise<void> {
+    const distance = 1.2 + 15 * 0.61
+    const from = await project(
+      page,
+      -distance / Math.SQRT2,
+      -distance / Math.SQRT2,
+      6
+    )
+    const to = await project(page, BASES[3].x, BASES[3].z)
+    await page.touchscreen.touchStart(...from)
+    await new Promise(resolve => setTimeout(resolve, 400))
+    await page.touchscreen.touchMove(...to)
+    await page.touchscreen.touchEnd()
+    await new Promise(resolve => setTimeout(resolve, 500))
+    expect(await page.content()).not.includes('Runner did not advance')
+    await page.waitForSelector(`[aria-label*="Owls ${runs} · Hawks 0"]`)
+    expect(await runnerNearBase(page, 3), 'nobody on 3').equals(false)
+  }
+  /** Aims the ball in the park or over the fence, as the scorer drags it. */
+  async function homeRun(page: Page, outside: boolean): Promise<void> {
+    await waitReady(page)
+    await click(page, 'Swing in Play')
+    await click(page, 'Home Run')
+    await page.waitForSelector('[aria-label^="Drag where the ball was hit"]')
+    const origin = await project(page, -32, -25)
+    const start = initialHitTarget('R')
+    const initial = await project(page, start.x, start.z, 0.7)
+    const target = await project(
+      page,
+      0,
+      outside ? -133 : -100,
+      outside ? 8 : 0.7
+    )
+    await page.mouse.move(...origin)
+    await page.mouse.down()
+    await page.mouse.move(
+      origin[0] + target[0] - initial[0],
+      origin[1] + target[1] - initial[1],
+      { steps: 10 }
+    )
+    if (!capturing)
+      await page.waitForSelector(
+        `[aria-label="Home run type: ${outside ? 'Home Run' : 'In-the-park Home Run'}"]`
+      )
+    await page.mouse.up()
+    await page.focus('[role="application"]')
+    await page.keyboard.press('Enter')
+    await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+      timeout: 45000
+    })
+  }
+
+  for (const outside of [false, true])
+    for (const loaded of [false, true])
+      it(`sends everyone off after ${outside ? 'an over-the-fence' : 'an in-the-park'} home run with the bases ${loaded ? 'loaded' : 'empty'}`, async function () {
+        // The before picture is the plainest case.
+        if (capturing && (outside || loaded)) this.skip()
+        const page = await openPhone()
+        try {
+          if (loaded)
+            await overrideBases(page, [
+              ['First base', 'Player 6'],
+              ['Second base', 'Player 7'],
+              ['Third base', 'Player 8']
+            ])
+          await homeRun(page, outside)
+          const runs = loaded ? 4 : 1
+          if (capturing) {
+            await new Promise(resolve => setTimeout(resolve, 4000))
+            await picture(page, 'home-run-end')
+            return
+          }
+          await page.waitForSelector(`[aria-label*="Owls ${runs} · Hawks 0"]`)
+          // Only the next batter, Player 2, is left on the offense.
+          await onlyOffense(page, [102])
+          if (!loaded && !outside) await picture(page, 'home-run-end')
+          await noHandleAtHome(page, runs)
+          await onlyOffense(page, [102])
+        } finally {
+          await page.close()
+        }
+      })
+
+  it('sends a runner dragged home and called safe off, and keeps him off after the next pitch', async function () {
+    const page = await openPhone()
+    try {
+      await overrideBases(page, [['Second base', 'Player 7']])
+      await chooseHit(page, 'Single')
+      await page.waitForSelector('[aria-label="Time to edit play"]', {
+        timeout: 30000
+      })
+      if (!capturing) await waitRunnerNearBase(page, 3)
+      // Drag him home and drop him on Safe.
+      await dragRunner(page, 3, 0)
+      const safe = await page.waitForSelector(
+        '[aria-label="Safe drag target"]',
+        { timeout: 10000 }
+      )
+      const box = (await safe!.boundingBox())!
+      await page.touchscreen.touchMove(
+        box.x + box.width / 2,
+        box.y + box.height / 2
+      )
+      await page.touchscreen.touchEnd()
+      await page.waitForSelector('[aria-label*="Owls 1 · Hawks 0"]', {
+        timeout: 30000
+      })
+      await tapSettled(page, 'Finish at-bat')
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 30000
+      })
+      if (!capturing) {
+        // The batter on first and the next batter; Player 7 (107) is gone.
+        await onlyOffense(page, [101, 102])
+        await noHandleAtHome(page, 1)
+      }
+      await waitReady(page)
+      await click(page, 'Ball')
+      await page.waitForSelector(
+        '[aria-label*="1 balls 0 strikes 1 outs"], [aria-label*="1 balls 0 strikes 0 outs"]',
+        {
+          timeout: 30000
+        }
+      )
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      await picture(page, 'safe-at-home-next-play')
+      if (capturing) return
+      await onlyOffense(page, [101, 102])
+      await page.waitForSelector('[aria-label*="Owls 1 · Hawks 0"]')
+    } finally {
+      await page.close()
+    }
+  })
+})
+
+/**
+ * E5: the lineup's Clear and its lock at the first pitch. Before the first
+ * pitch the Lineup header has a red Clear on its right, each row a red X, and
+ * Clear empties the order; after a pitch there is neither, a bench player
+ * dropped on a row takes that slot, a swap of slots 3 and 4 bats the man now
+ * in slot 3, and the bat icon marks that slot. With TS_CAPTURE_ONLY=1 (the
+ * before pictures, taken on the base revision) only the pictures are taken,
+ * and nothing is asserted; pictures go to TS_SCORING_ARTIFACT_DIR as
+ * `<name>-<TS_ARTIFACT_PHASE>.png`.
+ */
+describe('lineup clear', function () {
+  this.timeout(180000)
+  const capturing = process.env.TS_CAPTURE_ONLY === '1'
+  const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
+  before(async function () {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.TS_CHROME_PATH,
+      args: [
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+        '--enable-unsafe-swiftshader'
+      ]
+    })
+  })
+  after(async function () {
+    await browser?.close()
+  })
+
+  async function openPhone(): Promise<Page> {
+    const { page } = await open('/games/g1/score')
+    await page.setViewport({ width: 402, height: 874, deviceScaleFactor: 2 })
+    await page.waitForSelector('canvas[data-field-ready="true"]', {
+      timeout: 30000
+    })
+    return page
+  }
+  async function picture(page: Page, name: string): Promise<void> {
+    const dir = process.env.TS_SCORING_ARTIFACT_DIR
+    if (dir == null || dir === '') return
+    await mkdir(dir, { recursive: true })
+    await settle(page)
+    await page.screenshot({ path: join(dir, `${name}-${phase}.png`) })
+  }
+  async function settle(page: Page): Promise<void> {
+    await page.waitForFunction(() =>
+      document
+        .getAnimations()
+        .every(animation => animation.playState !== 'running')
+    )
+    await new Promise(resolve => setTimeout(resolve, 300))
+  }
+  /** The away team's roster sheet, on its Lineup tab. */
+  async function lineupTab(page: Page): Promise<void> {
+    await click(page, 'Open scoring menu')
+    await click(page, 'Set Team Rosters')
+    await page.waitForSelector('[aria-label="Save Rosters"]')
+    await click(page, 'Lineup')
+    await page.waitForSelector('[data-roster-target="lineup-0"]', {
+      visible: true
+    })
+  }
+  /** The batting order shown, by name. */
+  async function order(page: Page): Promise<string[]> {
+    return await page.$$eval(
+      '[data-roster-target^="lineup-"][data-roster-player]',
+      nodes =>
+        nodes.map(node =>
+          String(node.textContent)
+            .replace(/^\D*\d+\. (#\S+ )?/, '')
+            .replace(/\W+$/, '')
+        )
+    )
+  }
+  /** A mouse drag, held until the card lifts, from `source` onto `target`. */
+  async function dragOnto(
+    page: Page,
+    source: string,
+    target: string
+  ): Promise<void> {
+    await page.$eval(source, node => {
+      node.scrollIntoView({ block: 'center' })
+    })
+    const centre = async (selector: string): Promise<[number, number]> =>
+      await page.$eval(selector, node => {
+        const r = node.getBoundingClientRect()
+        return [r.x + Math.min(40, r.width / 2), r.y + r.height / 2] as [
+          number,
+          number
+        ]
+      })
+    const from = await centre(source)
+    await page.mouse.move(...from)
+    await page.mouse.down()
+    await page.waitForSelector('[data-testid="Roster dragged card"]')
+    const to = await centre(target)
+    await page.mouse.move(...to, { steps: 12 })
+    await new Promise(resolve => setTimeout(resolve, 200))
+    await page.mouse.up()
+    await settle(page)
+  }
+  /** Four balls to the batter, and the next one up. */
+  async function walk(page: Page, next: string): Promise<void> {
+    for (let i = 0; i < 4; i++) {
+      await waitReady(page)
+      await click(page, 'Ball')
+    }
+    await page.waitForSelector(`[aria-label*="Batter ${next}"]`, {
+      timeout: 45000
+    })
+  }
+
+  it('offers a red Clear on the Lineup header and an X per row before the first pitch, and Clear empties the order', async function () {
+    const page = await openPhone()
+    try {
+      await lineupTab(page)
+      await picture(page, 'lineup-header')
+      if (capturing) return
+      const header = await page.$eval('[data-testid="Lineup header"]', node => {
+        const words = Array.from(node.querySelectorAll('*'))
+          .filter(
+            each =>
+              each.children.length === 0 &&
+              ['Lineup', 'Clear'].includes(String(each.textContent))
+          )
+          .map(each => {
+            const r = each.getBoundingClientRect()
+            const style = window.getComputedStyle(each)
+            return {
+              text: String(each.textContent),
+              left: r.left,
+              right: r.right,
+              top: r.top,
+              bottom: r.bottom,
+              color: style.color,
+              clipped: each.scrollWidth > each.clientWidth + 1
+            }
+          })
+        const r = node.getBoundingClientRect()
+        return { words, right: r.right }
+      })
+      const lineup = header.words.find(word => word.text === 'Lineup')!
+      const clear = header.words.find(word => word.text === 'Clear')!
+      expect(lineup, 'Lineup').not.equals(undefined)
+      expect(clear, 'Clear').not.equals(undefined)
+      // One row: Lineup on the left, Clear right-justified, both whole.
+      expect(clear.left).greaterThan(lineup.right)
+      expect(Math.abs(clear.right - header.right)).lessThan(2)
+      expect(Math.abs(clear.top - lineup.top)).lessThan(4)
+      expect(clear.clipped || lineup.clipped).equals(false)
+      expect(clear.color).equals('rgb(168, 53, 53)')
+      const rows = (await order(page)).length
+      expect(rows).equals(9)
+      expect(
+        await page.$$eval(
+          '[data-roster-target^="lineup-"] [aria-label^="Remove "]',
+          nodes => nodes.length
+        )
+      ).equals(rows)
+      await click(page, 'Clear Lineup')
+      await page.waitForFunction(
+        () =>
+          document.querySelectorAll(
+            '[data-roster-target^="lineup-"][data-roster-player]'
+          ).length === 0
+      )
+      // Every player is back in the roster column.
+      expect(
+        await page.$$eval(
+          '[data-roster-target="roster"] [data-roster-player]',
+          nodes => nodes.length
+        )
+      ).equals(9)
+      await click(page, 'Cancel')
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('locks the lineup at the first pitch: no Clear or X, a bench drop replaces, and a swap of slots 3 and 4 bats the new slot 3 under the bat', async function () {
+    const page = await openPhone()
+    try {
+      // Player 9 sits before the game; two walks bring up slot 3.
+      await lineupTab(page)
+      await click(page, 'Remove Player 9')
+      await click(page, 'Save Rosters')
+      await page.waitForSelector('[aria-label="Undo Set team roster"]')
+      // Eight batters: the scorer accepts the short lineup.
+      await click(page, 'Accept Lineup')
+      await walk(page, 'Player 2')
+      await walk(page, 'Player 3')
+      await lineupTab(page)
+      await picture(page, 'lineup-after-pitch')
+      if (capturing) return
+      expect(await page.$('[aria-label="Clear Lineup"]')).equals(null)
+      expect(await page.$('[aria-label^="Remove Player"]')).equals(null)
+      const batSlot = async (): Promise<string | null> =>
+        await page.$eval('[data-testid="batIcon"]', node =>
+          node
+            .closest('[data-roster-target]')!
+            .getAttribute('data-roster-target')
+        )
+      expect(await batSlot()).equals('lineup-2')
+      // The bench player dropped on slot 6 replaces Player 6 there.
+      const shown = await order(page)
+      expect(shown[5]).equals('Player 6')
+      await dragOnto(
+        page,
+        '[data-roster-target="roster"] [aria-label="Add Player 9 to Lineup"]',
+        '[data-roster-target="lineup-5"]'
+      )
+      expect(await order(page)).deep.equals(
+        shown.map((name, slot) => (slot === 5 ? 'Player 9' : name))
+      )
+      expect(
+        await page.$('[aria-label="Add Player 6 to Lineup"]'),
+        'Player 6 on the roster'
+      ).not.equals(null)
+      // Slot 4 dropped on slot 3: the two swap, and the bat stays on slot 3.
+      await dragOnto(
+        page,
+        '[aria-label="Reorder Player 4"]',
+        '[data-roster-target="lineup-2"]'
+      )
+      expect((await order(page)).slice(2, 4)).deep.equals([
+        'Player 4',
+        'Player 3'
+      ])
+      expect(await batSlot()).equals('lineup-2')
+      expect(
+        await page.$eval('[data-testid="batIcon"]', node =>
+          node.getAttribute('aria-label')
+        )
+      ).equals('Player 4 bats')
+      await click(page, 'Save Rosters')
+      await page.waitForSelector('[aria-label*="Batter Player 4"]', {
+        timeout: 30000
+      })
+    } finally {
+      await page.close()
+    }
+  })
+})
+
+/**
+ * E6: fielders drag between positions with no hold, and the defense has a red
+ * Clear. On the hosts' Defense tab a touch that moves 9 px is a tap and clears
+ * the position; one that moves 10 px lifts the card at once; a fielder dropped
+ * on an empty position moves there and one dropped on an occupied position
+ * swaps with the man there. Clear, level with Roster, empties every position,
+ * the pitcher's too, and scoring then waits for a pitcher. With
+ * TS_CAPTURE_ONLY=1 (the before pictures, taken on the base revision) only the
+ * pictures are taken, and nothing is asserted; pictures go to
+ * TS_SCORING_ARTIFACT_DIR as `<name>-<TS_ARTIFACT_PHASE>.png`.
+ */
+describe('fielder drag', function () {
+  this.timeout(180000)
+  const capturing = process.env.TS_CAPTURE_ONLY === '1'
+  const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
+  before(async function () {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.TS_CHROME_PATH,
+      args: [
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+        '--enable-unsafe-swiftshader'
+      ]
+    })
+  })
+  after(async function () {
+    await browser?.close()
+  })
+
+  async function openPhone(): Promise<Page> {
+    const { page } = await open('/games/g1/score')
+    await page.setViewport({
+      width: 402,
+      height: 874,
+      deviceScaleFactor: 2,
+      isMobile: true,
+      hasTouch: true
+    })
+    await page.waitForSelector('canvas[data-field-ready="true"]', {
+      timeout: 30000
+    })
+    return page
+  }
+  async function settle(page: Page): Promise<void> {
+    await page.waitForFunction(() =>
+      document
+        .getAnimations()
+        .every(animation => animation.playState !== 'running')
+    )
+    await new Promise(resolve => setTimeout(resolve, 300))
+  }
+  async function picture(page: Page, name: string): Promise<void> {
+    const dir = process.env.TS_SCORING_ARTIFACT_DIR
+    if (dir == null || dir === '') return
+    await mkdir(dir, { recursive: true })
+    await settle(page)
+    await page.screenshot({ path: join(dir, `${name}-${phase}.png`) })
+  }
+  /** The hosts' roster sheet, on its Defense tab: they field first. */
+  async function defenseTab(page: Page): Promise<void> {
+    await click(page, 'Open scoring menu')
+    await click(page, 'Set Team Rosters')
+    await page.waitForSelector('[aria-label="Save Rosters"]')
+    await click(page, 'Home Team')
+    await click(page, 'Defense')
+    await page.waitForSelector('[data-roster-target="defense-P"]', {
+      visible: true
+    })
+  }
+  const card = (position: string): string =>
+    `[data-roster-target="defense-${position}"]`
+  /** The player id at a position, or null when it is empty. */
+  async function fielder(page: Page, position: string): Promise<string | null> {
+    return await page.$eval(card(position), node =>
+      node.getAttribute('data-roster-player')
+    )
+  }
+  async function centre(
+    page: Page,
+    selector: string
+  ): Promise<[number, number]> {
+    return await page.$eval(selector, node => {
+      const r = node.getBoundingClientRect()
+      return [r.x + r.width / 2, r.y + r.height / 2] as [number, number]
+    })
+  }
+  /**
+   * A touch on `position`'s card that travels `distance` px right, with no
+   * hold, then on to `target` when given. Resolves whether the card lifted
+   * within 400 ms of the move.
+   */
+  async function touchDrag(
+    page: Page,
+    position: string,
+    distance: number,
+    target?: string
+  ): Promise<boolean> {
+    const [x, y] = await centre(page, card(position))
+    await page.touchscreen.touchStart(x, y)
+    await page.touchscreen.touchMove(x + distance, y)
+    const lifted = await page
+      .waitForSelector('[data-testid="Roster dragged card"]', { timeout: 400 })
+      .then(
+        () => true,
+        () => false
+      )
+    if (target != null) {
+      const [tx, ty] = await centre(page, card(target))
+      for (let step = 1; step <= 8; step++)
+        await page.touchscreen.touchMove(
+          x + distance + ((tx - x - distance) * step) / 8,
+          y + ((ty - y) * step) / 8
+        )
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    await page.touchscreen.touchEnd()
+    await settle(page)
+    return lifted
+  }
+
+  it('drags fielders with no hold, swaps on an occupied position, and clears the defense from the red Clear level with Roster', async function () {
+    const page = await openPhone()
+    try {
+      await defenseTab(page)
+      await picture(page, 'defense-header')
+      if (!capturing) {
+        const header = await page.$eval(
+          '[data-testid="Defense roster header"]',
+          node => {
+            const words = Array.from(node.querySelectorAll('*'))
+              .filter(
+                each =>
+                  each.children.length === 0 &&
+                  ['Roster', 'Clear'].includes(String(each.textContent))
+              )
+              .map(each => {
+                const r = each.getBoundingClientRect()
+                return {
+                  text: String(each.textContent),
+                  left: r.left,
+                  right: r.right,
+                  top: r.top,
+                  color: window.getComputedStyle(each).color,
+                  clipped: each.scrollWidth > each.clientWidth + 1
+                }
+              })
+            return { words, right: node.getBoundingClientRect().right }
+          }
+        )
+        const roster = header.words.find(word => word.text === 'Roster')!
+        const clear = header.words.find(word => word.text === 'Clear')!
+        expect(roster, 'Roster').not.equals(undefined)
+        expect(clear, 'Clear').not.equals(undefined)
+        // One row: Roster on the left, a red Clear right-justified.
+        expect(clear.left).greaterThan(roster.right)
+        expect(Math.abs(clear.right - header.right)).lessThan(2)
+        expect(Math.abs(clear.top - roster.top)).lessThan(4)
+        expect(clear.clipped || roster.clipped).equals(false)
+        expect(clear.color).equals('rgb(168, 53, 53)')
+      }
+      // Swap: first base's man dropped on short trades places with him.
+      const first = await fielder(page, '1B')
+      const short = await fielder(page, 'SS')
+      const swapLifted = await touchDrag(page, '1B', 12, 'SS')
+      await picture(page, 'fielder-swap')
+      if (capturing) return
+      expect(swapLifted, 'lifted with no hold').equals(true)
+      expect(await fielder(page, 'SS')).equals(first)
+      expect(await fielder(page, '1B')).equals(short)
+      // A 9 px touch is a tap: the catcher's spot empties.
+      const catcher = await fielder(page, 'C')
+      expect(catcher).not.equals(null)
+      expect(await touchDrag(page, 'C', 9)).equals(false)
+      expect(await fielder(page, 'C')).equals(null)
+      // A 10 px touch lifts the pitcher at once; dropped on the empty
+      // catcher's spot he moves there and the mound empties.
+      const pitcher = await fielder(page, 'P')
+      expect(await touchDrag(page, 'P', 10, 'C')).equals(true)
+      expect(await fielder(page, 'C')).equals(pitcher)
+      expect(await fielder(page, 'P')).equals(null)
+      // Clear empties every position.
+      await click(page, 'Clear Defense')
+      for (const position of [
+        'P',
+        'C',
+        '1B',
+        '2B',
+        'SS',
+        '3B',
+        'LF',
+        'CF',
+        'RF'
+      ])
+        expect(await fielder(page, position), position).equals(null)
+      await click(page, 'Save Rosters')
+      await page.waitForFunction(
+        () => document.querySelector('[aria-label="Save Rosters"]') == null,
+        { timeout: 30000 }
+      )
+      // Scoring waits for a pitcher.
+      await page.waitForFunction(
+        () => document.body.innerText.includes('Assign a pitcher'),
+        { timeout: 30000 }
+      )
+      expect(
+        await page.$eval(
+          '[aria-label="Ball"]',
+          node => node.getAttribute('aria-disabled') === 'true'
+        )
+      ).equals(true)
+    } finally {
+      await page.close()
+    }
+  })
+})
+
+/**
+ * E9: a pitch has no windup and its controls are back within 400 ms, and the
+ * other scoring pictures play in half their old time. Each test prints the
+ * in-page `performance.now()` times it measured as `pitch-timing:` lines. With
+ * TS_CAPTURE_ONLY=1 (the before run, on the base revision) the same times are
+ * printed and nothing is asserted.
+ */
+describe('pitch animation, hit flight and celebration timing (E9)', function () {
+  this.timeout(180000)
+  const capturing = process.env.TS_CAPTURE_ONLY === '1'
+  before(async function () {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.TS_CHROME_PATH,
+      args: [
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+        '--enable-unsafe-swiftshader'
+      ]
+    })
+  })
+  after(async function () {
+    await browser?.close()
+  })
+
+  interface Frame {
+    t: number
+    presentation: string
+    ballVisible: boolean
+    ballZ: number
+    windup: boolean
+    ready: boolean
+    celebration: boolean
+  }
+  interface TimelineWindow {
+    qaTimeline: Frame[]
+    qaStop: boolean
+  }
+  async function openField(): Promise<Page> {
+    const { page } = await open(
+      '/games/g1/score',
+      false,
+      false,
+      false,
+      'right',
+      true
+    )
+    // A phone's field: software WebGL draws it fast enough to time.
+    await page.setViewport({ width: 390, height: 844 })
+    // The field's opening frames finished on the GPU: software WebGL takes
+    // a second over them after the page shows the field, and a tap meanwhile
+    // waits. A revision before `data-field-drawn` (the before run) is timed
+    // from the field's first frame, as it was.
+    await page.waitForSelector(
+      capturing
+        ? 'canvas[data-field-ready="true"]'
+        : 'canvas[data-field-drawn="true"]',
+      { timeout: 30000 }
+    )
+    await captureScene(page)
+    return page
+  }
+  /* eslint-disable @typescript-eslint/prefer-optional-chain -- Browser evaluation cannot reference generated Sucrase helpers. */
+  /** Records, every 10 ms, what the field and the controls show. */
+  async function record(page: Page): Promise<void> {
+    await page.evaluate(() => {
+      const host = window as unknown as SceneProbeWindow & TimelineWindow
+      host.qaTimeline = []
+      host.qaStop = false
+      // The pitcher is the fielder on the mound.
+      let pitcher: { getObjectByName: (name: string) => unknown } | undefined
+      host.qaScene!.traverse(object => {
+        if (
+          object.name.startsWith('player-defense-') &&
+          Math.abs(object.position.x) < 1 &&
+          Math.abs(object.position.z + 18.44) < 1
+        )
+          pitcher = object
+      })
+      const step = (): void => {
+        if (host.qaStop) {
+          clearInterval(timer)
+          return
+        }
+        const scene = host.qaScene!
+        const ball = scene.getObjectByName('animated-baseball')
+        const rig =
+          pitcher == null ? undefined : pitcher.getObjectByName('athlete-rig')
+        const field = document.querySelector('[data-presentation]')
+        const control = document.querySelector('[aria-label="Ball"]')
+        host.qaTimeline.push({
+          t: performance.now(),
+          presentation:
+            field == null
+              ? 'none'
+              : String(field.getAttribute('data-presentation')),
+          ballVisible: ball != null && ball.visible,
+          ballZ: ball == null ? 0 : ball.position.z,
+          // The articulated rig is drawn only while the pitcher is posed in
+          // a delivery.
+          windup: rig != null && (rig as { visible: boolean }).visible,
+          ready:
+            control != null && control.getAttribute('aria-disabled') !== 'true',
+          // The scoreboard's summary names the home run while it is
+          // celebrated.
+          celebration:
+            document.querySelector('[aria-label*="HOME RUN · "]') != null
+        })
+      }
+      // Sampled on a timer as well as drawn frames: a slow frame must not
+      // hide when the page changed.
+      const timer = setInterval(step, 10)
+      step()
+    })
+  }
+  /** Taps a control in the page and returns when, by the page's clock. */
+  async function tap(page: Page, label: string): Promise<number> {
+    return await page.evaluate(label => {
+      const t = performance.now()
+      document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.click()
+      return t
+    }, label)
+  }
+  async function timeline(page: Page): Promise<Frame[]> {
+    return await page.evaluate(() => {
+      const host = window as unknown as TimelineWindow
+      host.qaStop = true
+      return host.qaTimeline
+    })
+  }
+  /* eslint-enable @typescript-eslint/prefer-optional-chain */
+  /** The first frame at or after `from` that `test` holds for. */
+  function first(
+    frames: Frame[],
+    from: number,
+    test: (frame: Frame) => boolean
+  ): Frame | undefined {
+    return frames.find(frame => frame.t >= from && test(frame))
+  }
+  const since = (frame: Frame | undefined, from: number): number | undefined =>
+    frame == null ? undefined : frame.t - from
+  const ms = (n: number | undefined): string =>
+    n == null ? 'never' : `${Math.round(n)} ms`
+
+  it('pitch animation: takes the next tap within 400 ms, and the pitcher never winds up', async function () {
+    const page = await openField()
+    try {
+      await waitReady(page)
+      await record(page)
+      // Three pitches, each tapped as soon as the last one's controls are
+      // back. The first is the screen's first: the field warmed the ball's
+      // shader and the cues when it opened, so it is as fast as the others.
+      const taps: number[] = []
+      for (const count of [1, 2, 3]) {
+        taps.push(await tap(page, 'Ball'))
+        await page.waitForSelector(`[aria-label*="Pitches ${count}"]`, {
+          timeout: 5000
+        })
+        await waitReady(page)
+      }
+      const frames = await timeline(page)
+      const pitches = taps.map((tapped, index) => {
+        const until = taps[index + 1] ?? Infinity
+        const own = frames.filter(f => f.t >= tapped && f.t < until)
+        const shown = first(own, tapped, f => f.presentation !== 'none')
+        return {
+          tapped,
+          shown,
+          // Two feet off the mound, on its way to the plate.
+          ballOut: first(own, tapped, f => f.ballVisible && f.ballZ > -16.44),
+          done: first(own, shown?.t ?? tapped, f => f.presentation === 'none'),
+          ready: first(
+            own,
+            shown?.t ?? tapped,
+            f => f.ready && f.presentation === 'none'
+          ),
+          windup: own.filter(f => f.windup).length,
+          samples: own.length
+        }
+      })
+      pitches.forEach((pitch, index) => {
+        console.log(
+          `pitch-timing: pitch ${index + 1} tap=0 ms; picture shown ${ms(since(pitch.shown, pitch.tapped))}; ` +
+            `ball out of the hand toward the plate ${ms(since(pitch.ballOut, pitch.tapped))}; ` +
+            `PRESENTATION_DONE (picture none) ${ms(since(pitch.done, pitch.tapped))}; ` +
+            `picture lasted ${ms(pitch.done == null || pitch.shown == null ? undefined : pitch.done.t - pitch.shown.t)}; ` +
+            `controls ready ${ms(since(pitch.ready, pitch.tapped))}; ` +
+            (index + 1 < taps.length
+              ? `next tap taken ${ms(taps[index + 1] - pitch.tapped)}; `
+              : '') +
+            `windup samples ${pitch.windup} of ${pitch.samples}`
+        )
+      })
+      if (capturing) return
+      for (const pitch of pitches) {
+        expect(pitch.windup).equals(0)
+        expect(pitch.done).not.equals(undefined)
+        expect(pitch.ready).not.equals(undefined)
+      }
+      for (const pitch of pitches) {
+        // The ball is on its way on the picture's first drawn frames.
+        expect(pitch.ballOut!.t - pitch.tapped).lessThan(150)
+        // The picture lasts 280 ms of its own clock; software WebGL's frames
+        // and React's commit add a frame or two, and the controls take the
+        // next tap within 400 ms of this one.
+        expect(pitch.done!.t - pitch.shown!.t).within(260, 400)
+        expect(pitch.ready!.t - pitch.tapped).at.most(400)
+      }
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('hit flight: plays a single in half its old time', async function () {
+    const page = await openField()
+    try {
+      await click(page, 'Swing in Play')
+      await click(page, 'Single')
+      await page.waitForSelector(
+        '[aria-label^="Tap or drag a player to where the ball was fielded"]'
+      )
+      await page.focus('[role="application"]')
+      await page.keyboard.press('Space')
+      await page.keyboard.press('ArrowUp')
+      await page.keyboard.press('Enter')
+      await page.waitForSelector(
+        '[aria-label^="Drag up and down for ball trajectory."]'
+      )
+      await record(page)
+      const pressed = await page.evaluate(() => performance.now())
+      await page.keyboard.press('Enter')
+      await page.waitForSelector('[aria-label="Time to edit play"]', {
+        timeout: 30000
+      })
+      await page.waitForSelector('[data-presentation="none"]', {
+        timeout: 30000
+      })
+      const frames = await timeline(page)
+      const swing = first(frames, pressed, f => f.presentation === 'hit:swing')
+      const flight = first(
+        frames,
+        pressed,
+        f => f.presentation === 'hit:flight'
+      )
+      const done = first(
+        frames,
+        flight?.t ?? pressed,
+        f => f.presentation === 'none'
+      )
+      const flightMs = flight != null && done != null ? done.t - flight.t : NaN
+      console.log(
+        `pitch-timing: hit flight (Single) trajectory set=0 ms; swing ${ms(since(swing, pressed))}; ` +
+          `contact (flight) ${ms(since(flight, pressed))}; ` +
+          `motion end (picture none) ${ms(since(done, pressed))}; ` +
+          `contact to end ${ms(flightMs)}`
+      )
+      await click(page, 'Finish at-bat')
+      if (capturing) return
+      // On the base revision this single's contact to end measured 1245 to
+      // 1340 ms (pitch-timing.log): half of it, within a few frames.
+      expect(flightMs).within(1290 / 2 - 150, 1290 / 2 + 150)
+    } finally {
+      await page.close()
+    }
+  })
+
+  it('celebration: shows the home run for at most three seconds, half its old time', async function () {
+    this.timeout(90000)
+    const page = await openField()
+    try {
+      await click(page, 'Swing in Play')
+      await click(page, 'Home Run')
+      await page.waitForSelector('canvas[data-field-ready="true"]')
+      await page.waitForSelector('[aria-label^="Drag where the ball was hit"]')
+      await captureScene(page)
+      await page.focus('[role="application"]')
+      await page.keyboard.press('Enter')
+      await page.waitForSelector(
+        '[aria-label^="Drag up and down for ball trajectory."]'
+      )
+      await record(page)
+      const pressed = await page.evaluate(() => performance.now())
+      await page.keyboard.press('Enter')
+      await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+        timeout: 45000
+      })
+      await page.waitForFunction(
+        () => document.querySelector('[aria-label*="HOME RUN · "]') == null,
+        { timeout: 20000 }
+      )
+      await waitReady(page)
+      const frames = await timeline(page)
+      const shown = first(frames, pressed, f => f.celebration)
+      const gone = first(frames, shown?.t ?? pressed, f => !f.celebration)
+      const flight = first(
+        frames,
+        pressed,
+        f => f.presentation === 'hit:flight'
+      )
+      const landed = first(
+        frames,
+        flight?.t ?? pressed,
+        f => f.presentation === 'none'
+      )
+      const ready = first(frames, gone?.t ?? pressed, f => f.ready)
+      const celebrationMs =
+        shown != null && gone != null ? gone.t - shown.t : NaN
+      console.log(
+        `pitch-timing: home run trajectory set=0 ms; contact ${ms(since(flight, pressed))}; ` +
+          `ball picture end ${ms(since(landed, pressed))}; ` +
+          `celebration shown ${ms(since(shown, pressed))}; ` +
+          `celebration end ${ms(since(gone, pressed))}; ` +
+          `celebration lasted ${ms(celebrationMs)}; ` +
+          `controls ready ${ms(since(ready, pressed))}; ` +
+          `frames ${frames.length}, last ${ms(since(frames.at(-1), pressed))}`
+      )
+      if (capturing) return
+      // At most its three seconds; the home run's play closes sooner, and
+      // with it the celebration: on the base revision it ended 5194 to 5227
+      // ms after the trajectory was set, and now in half that, as its
+      // runners run twice as fast.
+      expect(since(gone, pressed)).within(5200 / 2 - 400, 3000 + 300)
+      expect(celebrationMs).at.most(3000 + 150)
     } finally {
       await page.close()
     }

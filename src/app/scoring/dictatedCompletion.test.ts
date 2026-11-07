@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import type { ScoringAction } from '../../common/scoring/actions'
+import type { DictatedAction as ScoringAction } from '../../common/scoring/actions'
 import { nextDecision } from '../../common/scoring/rules'
 import { scoringSession } from '../../test/scoringSession'
 import {
@@ -95,7 +95,7 @@ describe('a dictated sentence finishes the play', function () {
       runner: BATTER,
       to: '1B',
       out: true,
-      reason: 'Throw Out',
+      reason: 'Ground Out',
       fielders: [SS, FIRST_BASEMAN]
     })
     const state = settle(say(game(), grounder, thrown))
@@ -103,7 +103,7 @@ describe('a dictated sentence finishes the play', function () {
     const play = state.session.liveData.plays.allPlays.at(-1)
     expect(
       play?.runners.flatMap(runner =>
-        (runner.credits ?? []).map(c => `${c.credit} ${c.player.id}`)
+        (runner.credits ?? []).map(c => `${c.credit} ${c.player?.id}`)
       )
     ).deep.equals([`f_assist ${SS}`, `f_putout ${FIRST_BASEMAN}`])
     nothingToTap(state)
@@ -131,7 +131,7 @@ describe('a dictated sentence finishes the play', function () {
       runner: BATTER,
       to: '1B',
       out: true,
-      reason: 'Throw Out'
+      reason: 'Ground Out'
     })
     // An out not said to be thrown is not given a throw.
     const unsaid = completeSentence(game().session, [
@@ -1636,7 +1636,7 @@ describe('a dictated throw credits the fielder who covered the base', function (
       (currentPlay?.runners.length ?? 0) > 0 ? currentPlay : allPlays.at(-1)
     return (play?.runners ?? [])
       .flatMap(runner =>
-        (runner.credits ?? []).map(c => `${c.credit} ${c.player.id}`)
+        (runner.credits ?? []).map(c => `${c.credit} ${c.player?.id}`)
       )
       .sort()
   }
@@ -1928,7 +1928,7 @@ describe('a dictated double play', function () {
       (currentPlay?.runners.length ?? 0) > 0 ? currentPlay : allPlays.at(-1)
     return (play?.runners ?? [])
       .flatMap(runner =>
-        (runner.credits ?? []).map(c => `${c.credit} ${c.player.id}`)
+        (runner.credits ?? []).map(c => `${c.credit} ${c.player?.id}`)
       )
       .sort()
   }
@@ -3092,7 +3092,7 @@ describe('a base an infielder took for the out', function () {
         runner: 8,
         to: '3B',
         out: true,
-        reason: 'Throw Out',
+        reason: 'Ground Out',
         fielders: [THIRD_BASEMAN]
       }
     ])
@@ -3375,7 +3375,7 @@ describe('a base an infielder took for the out', function () {
         runner: BATTER,
         to: '2B',
         out: true,
-        reason: 'Throw Out',
+        reason: 'Ground Out',
         fielders: [LF, SECOND_BASEMAN]
       }
       const done = sentenceDefaults(
@@ -3481,7 +3481,7 @@ describe('a base an infielder took for the out', function () {
             runner: 7,
             to: '3B',
             out: true,
-            reason: 'Throw Out',
+            reason: 'Ground Out',
             fielders: [18, THIRD_BASEMAN]
           },
           { type: 'runnerMovement', runner: 8, to: 'home' }
@@ -3534,7 +3534,7 @@ describe('a base an infielder took for the out', function () {
           runner: 8,
           to: 'home',
           out: true,
-          reason: 'Throw Out',
+          reason: 'Ground Out',
           fielders: [18, 11]
         }
       ]
@@ -3641,7 +3641,7 @@ describe('a base an infielder took for the out', function () {
         runner: BATTER,
         to: '2B',
         out: true,
-        reason: 'Throw Out',
+        reason: 'Ground Out',
         fielders: [18, SS]
       }
       for (const [said, actions] of [
@@ -4044,7 +4044,7 @@ describe('a base an infielder took for the out', function () {
             runner: 7,
             to: 'home',
             out: true,
-            reason: 'Throw Out',
+            reason: 'Ground Out',
             fielders: [FIRST_BASEMAN, 11]
           }
         )

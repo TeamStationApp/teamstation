@@ -12,6 +12,7 @@ import {
   runnerDecisionError,
   runnerReasons
 } from './scoringFlow'
+import { fielderName } from './scoringSelectors'
 import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
 import { useScoringSheetTheme } from './scoringSheetTheme'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
@@ -43,7 +44,7 @@ export function RunnerControls({
       >
         {choice.route.slice(first).map((hop, offset) => {
           const index = first + offset
-          const name = state.session.gameData.players[hop.id].fullName
+          const name = fielderName(state.session, hop.id)
           return (
             <Pressable
               key={index}
