@@ -684,7 +684,9 @@ async function main(): Promise<void> {
   let recording = false
   let restorePendingPreferences: (() => Promise<void>) | undefined
   try {
-    if (platform === 'ios') {
+    // A leased phone is already running and attached by its identifier; only
+    // an owned simulator is booted here.
+    if (platform === 'ios' && process.env.CHAT_UI_NATIVE_PHYSICAL !== '1') {
       assert(
         process.env.CHAT_UI_BOOT_OWNED_SIMULATOR === '1',
         'Explicit owned simulator boot permission required'
