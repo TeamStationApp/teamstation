@@ -920,7 +920,17 @@ describe('chat scenarios in the browser', function () {
     console.log(`      E5 six digits: B-1 ${asked}, B-2 ${shown}`)
     const pending = await apiGet(first, '/chat/links')
     expect(pending.body).length(1)
-    await press(first, `Approve ${pending.body[0].newDevice.name as string}`)
+    const approveLabel = `Approve ${pending.body[0].newDevice.name as string}`
+    // The devices page and the approval prompt both label this control.
+    // The prompt is the one on top.
+    const approve = await until(
+      `${approveLabel} in the approval prompt`,
+      async () =>
+        (await first.$(
+          `[data-testid="chat-device-approval-prompt"] [aria-label="${approveLabel}"]`
+        )) ?? undefined
+    )
+    await approve.click()
 
     await waitForText(second, 'YOUR DEVICES')
     for (const page of [first, second]) {
