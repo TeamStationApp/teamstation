@@ -494,7 +494,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     letterSpacing: theme.rem(0.0625)
   },
   eventDate: {
-    color: '#000000',
+    color: theme.isDark ? theme.primaryTextColor : '#000000',
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.6875 * 1.25),
     lineHeight: theme.rem(0.6875 * 1.25 * 1.4),

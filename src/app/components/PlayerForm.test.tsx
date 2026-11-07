@@ -4,7 +4,13 @@ import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { emptyPlayerForm, type PlayerFormValue } from '../../common/playerForm'
-import { ThemeProvider } from '../theme/ThemeContext'
+import {
+  ScopedThemeProvider,
+  type Theme,
+  ThemeProvider
+} from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { PlayerForm, type PlayerFormFields } from './PlayerForm'
 
 let root: Root | undefined
@@ -44,8 +50,9 @@ async function show(
   fields: PlayerFormFields = EVERYTHING,
   {
     disabled = false,
-    start = emptyPlayerForm()
-  }: { disabled?: boolean; start?: PlayerFormValue } = {}
+    start = emptyPlayerForm(),
+    theme = tsBallpark
+  }: { disabled?: boolean; start?: PlayerFormValue; theme?: Theme } = {}
 ): Promise<void> {
   latest = undefined
   const host = document.createElement('div')
@@ -54,7 +61,9 @@ async function show(
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <Harness fields={fields} disabled={disabled} start={start} />
+        <ScopedThemeProvider theme={theme}>
+          <Harness fields={fields} disabled={disabled} start={start} />
+        </ScopedThemeProvider>
       </ThemeProvider>
     )
   })
@@ -84,6 +93,25 @@ function propsWith(label: string, name: string): Record<string, any> {
 }
 
 describe('PlayerForm', function () {
+  it('keeps locked names readable on dark-theme input surfaces', async () => {
+    await show(
+      { ...EVERYTHING, name: 'readOnly' },
+      {
+        theme: tsDark,
+        start: { ...emptyPlayerForm(), firstName: 'Demo', lastName: 'Player' }
+      }
+    )
+    const rgb = (hex: string): string =>
+      `rgb(${[1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`
+    for (const name of ['First name', 'Last name']) {
+      const input = node(name) as HTMLInputElement
+      expect(input.readOnly).equals(true)
+      expect(getComputedStyle(input).color).equals(rgb(tsDark.inputTextColor))
+      expect(getComputedStyle(input).backgroundColor).equals(
+        rgb(tsDark.inputBackgroundColor)
+      )
+    }
+  })
   afterEach(async () => {
     await act(async () => {
       root?.unmount()

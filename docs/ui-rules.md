@@ -100,6 +100,9 @@ and every text column at the same left edge, regardless of the number of lines.
   teams, seasons or leagues in one `ListCard`, with padded rows and hairline
   dividers. Relationship lists with independent actions use `ActionList bounded`
   and `GroupRelationshipRow`. Each category may have its own shared card.
+  This includes Manage Players, League Seasons, League Teams and Season Teams,
+  even when the roster or collection is large. Keep headings, counts and
+  Add/Create actions outside the card, and do not draw an empty shared card.
 
 Navigation and a trailing action such as Follow remain separate touch targets.
 Do not nest the action inside the navigation button. Empty, loading and error
@@ -138,7 +141,12 @@ Use green for adding/enabling and red for removing/ending. Destructive actions
 open a confirmation modal; opening or cancelling it must not change the item.
 Use `ActionRow` and `ActionList` for these collections, with
 `GroupRelationshipRow` for groups. Navigation and the destructive action are
-separate touch targets. The confirmation names the item and the relationship,
+separate touch targets, with a thin vertical divider immediately before Leave
+instead of a chevron.
+Use the shared split-action row: its decorative divider is centered at about
+80% of the actual row height, including wrapped or enlarged text, leaving clear
+top and bottom gaps. Navigation-only rows retain their navigation affordance
+and have no orphan divider. The confirmation names the item and relationship,
 keeps failed writes retryable, blocks duplicate submissions, and ignores a
 completion after the user leaves its owning group or person. This includes
 ending season participation, disabling invite links, withdrawing invitations

@@ -399,7 +399,10 @@ export function UmpireScheduleScreen({
             onPress={onPress}
             style={{ minHeight: 48, justifyContent: 'center' }}
           >
-            <Text numberOfLines={2} style={[s.tableText, { color: '#1565C0' }]}>
+            <Text
+              numberOfLines={2}
+              style={[s.tableText, { color: theme.linkTextColor }]}
+            >
               {text}
             </Text>
           </Pressable>
@@ -409,7 +412,16 @@ export function UmpireScheduleScreen({
         const position = game.positions.find(p => p.slot === slot)
         const required = position != null
         if (!required || (assignment == null && game.status === 'final'))
-          return <Text style={s.tableHint}>—</Text>
+          return (
+            <Text
+              style={[
+                s.tableHint,
+                theme.isDark && { color: theme.inputTextColor }
+              ]}
+            >
+              —
+            </Text>
+          )
         if (assignment != null) {
           return (
             <Pressable
@@ -420,7 +432,7 @@ export function UmpireScheduleScreen({
                 setOpened({ game, slot })
               }}
             >
-              <TickerText style={[s.tableText, { color: '#1565C0' }]}>
+              <TickerText style={[s.tableText, { color: theme.linkTextColor }]}>
                 {assignment.name}
               </TickerText>
               {(assignment.teams?.length ?? 0) > 0 && (
@@ -451,7 +463,9 @@ export function UmpireScheduleScreen({
           style={[
             s.tableRow,
             game.conflicts.length > 0 && {
-              backgroundColor: '#FFF3E0'
+              backgroundColor: theme.isDark
+                ? theme.highlightRowBackground
+                : '#FFF3E0'
             }
           ]}
         >
@@ -584,6 +598,7 @@ export function UmpireScheduleScreen({
       roleWidth,
       run,
       s,
+      theme,
       view
     ]
   )
@@ -1007,7 +1022,11 @@ export function UmpireScheduleScreen({
                   <Text
                     style={[
                       s.text,
-                      { color: days.includes(i) ? '#FFFFFF' : '#1565C0' }
+                      {
+                        color: days.includes(i)
+                          ? '#FFFFFF'
+                          : theme.linkTextColor
+                      }
                     ]}
                   >
                     {day[0]}
@@ -1040,7 +1059,7 @@ export function UmpireScheduleScreen({
                 <Text style={s.hint}>
                   {endpoint === 'from' ? 'Start time' : 'End time'}
                 </Text>
-                <Text style={[s.text, { color: '#1565C0' }]}>
+                <Text style={[s.text, { color: theme.linkTextColor }]}>
                   {(endpoint === 'from' ? from : to) === ''
                     ? 'Any time'
                     : umpireClock(endpoint === 'from' ? from : to)}
@@ -1113,7 +1132,11 @@ export function UmpireScheduleScreen({
                 <Text
                   style={[
                     s.text,
-                    { color: levels.includes(l.id) ? '#FFFFFF' : '#1565C0' }
+                    {
+                      color: levels.includes(l.id)
+                        ? '#FFFFFF'
+                        : theme.linkTextColor
+                    }
                   ]}
                 >
                   {l.name}

@@ -149,6 +149,68 @@ function render(
 }
 
 describe('the league page', () => {
+  for (const state of ['mixed', 'single', 'kept-only', 'read-only', 'empty']) {
+    it(`shares one card for its ${state} teams and only separates adjacent rows`, async () => {
+      const api = new TeamStationClient({ baseUrl: '/api/v1' })
+      const child = team('team_child', 'Demo Zebras')
+      const kept = team('team_kept', 'Demo Asters', true)
+      const children = state === 'empty' || state === 'kept-only' ? [] : [child]
+      const keptTeams = state === 'empty' || state === 'single' ? [] : [kept]
+      api.group = async () => ({
+        ...detail,
+        children,
+        // A team appearing in both sources must still have only one row.
+        keptTeams: state === 'mixed' ? [...keptTeams, child] : keptTeams,
+        canManage: state !== 'read-only'
+      })
+      const opened: GroupRef[] = []
+      await mount(render(api, opened))
+      await press('Teams')
+      const card = document.querySelector<HTMLElement>(
+        '[data-testid="league-teams-card"]'
+      )!
+      expect(card).not.equals(null)
+      const count = children.length + keptTeams.length
+      const rows = card.querySelectorAll(
+        '[data-testid="relationship-action-row"]'
+      )
+      expect(rows.length).equals(count)
+      expect(card.children.length).equals(Math.max(0, count * 2 - 1))
+      expect(card.contains(button('Add team') ?? null)).equals(false)
+      expect(card.contains(button('Create team') ?? null)).equals(false)
+      if (count === 0) {
+        expect(getComputedStyle(card).backgroundColor).equals(
+          'rgba(0, 0, 0, 0)'
+        )
+        expect(document.body.textContent).includes(
+          'No teams in this league yet.'
+        )
+      } else {
+        expect(getComputedStyle(card).backgroundColor).not.equals(
+          'rgba(0, 0, 0, 0)'
+        )
+        expect(
+          parseFloat(getComputedStyle(card).borderTopLeftRadius)
+        ).greaterThan(0)
+        expect(getComputedStyle(card).paddingTop).not.equals('16px')
+        for (const row of rows) expect(row.parentElement).equals(card)
+        if (count === 2) {
+          expect(rows[0].textContent).includes('Demo Asters')
+          expect(rows[1].textContent).includes('Demo Zebras')
+          expect(getComputedStyle(card.children[1]).height).equals('1px')
+        }
+        const first = keptTeams[0] ?? child
+        await press(`Open ${first.name}`)
+        expect(opened).deep.equals([{ kind: 'team', id: first.id }])
+        expect(button('Leave Demo Asters from Demo League')).equals(undefined)
+        if (state === 'read-only' || state === 'kept-only') {
+          expect(
+            card.querySelector('[data-testid="relationship-action-divider"]')
+          ).equals(null)
+        }
+      }
+    })
+  }
   it('lists seasons newest first by time frame, with no schedule', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     api.group = async () => detail
