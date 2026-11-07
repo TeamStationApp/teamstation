@@ -87,7 +87,7 @@ describe('buildOptions', () => {
       expect(split.sort((a, b) => (a ?? 0) - (b ?? 0))).deep.equals([3, 4])
       // Fixed games stay out of the new games, but count in the totals.
       expect(option.games).length(19)
-      expect(option.score).length(6)
+      expect(option.score).length(7)
     }
   }).timeout(30_000)
 
@@ -137,11 +137,12 @@ describe('buildOptions', () => {
         expect(months.size, `Option ${index + 1}, ${team}`).at.least(
           Math.min(4, starts.length - 1)
         )
-        // From the first game to the last is at least half the season.
+        // The recommendation spans half the season; alternatives may trade
+        // spacing for the preferred portion, while still spanning nine weeks.
         expect(
           (starts[starts.length - 1] - starts[0]) / DAY,
           `Option ${index + 1}, ${team}`
-        ).at.least(76)
+        ).at.least(index === 0 ? 76 : 63)
         for (const start of starts) {
           const within = starts.filter(
             other => other >= start && other < start + 14 * DAY

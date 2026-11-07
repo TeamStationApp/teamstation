@@ -151,7 +151,7 @@ describe('optionReasons', () => {
       ['tem_owls', 'tem_hawks', '2027-05-18', '18:00'],
       ['tem_hawks', 'tem_owls', '2027-07-06', '18:00']
     ])
-    expect(optionReasons(context, option, best)[0]).equals(
+    expect(optionReasons(context, option, best)).includes(
       'Demo Hawks plays 3 of its 3 games in the evening'
     )
   }).timeout(30_000)

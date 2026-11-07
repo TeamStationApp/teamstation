@@ -1402,7 +1402,7 @@ async function e8(run: Run): Promise<void> {
   await capture(admin.m, artifacts, 'season-schedule-published.png')
   const outside = await run.session('autoScheduler-e8-visitors', 103)
   await run.visit(outside, '/notifications')
-  await tapLabel(outside, 'History')
+  await tapText(outside, 'History')
   await contains(
     outside.page,
     'Demo Regular schedule updated for Demo Visitors'

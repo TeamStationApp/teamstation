@@ -51,6 +51,7 @@ export interface SeasonContext {
   firstDay: number
   lastDay: number
   fixed: FixedPoint[]
+  weeklyGames: Array<{ teamIds: string[]; point: GamePoint }>
   /** Per slot, whether the field is free before any new game is placed. */
   fieldFree: Uint8Array
   /** TeamAvailability per team and slot, before placement. Only Free has its low bit set. */
@@ -133,6 +134,18 @@ export function buildContext(input: EngineInput): RunContext {
         .filter(game => game.seasonId === season.id)
         .map(game => ({
           game,
+          point: clock.pointOf(game.start, zoneOf(game.fieldId))
+        })),
+      weeklyGames: (
+        input.weeklyGames ??
+        input.fixed.map(game => ({
+          ...game,
+          teamIds: [game.homeTeamId, game.awayTeamId]
+        }))
+      )
+        .filter(game => game.seasonId === season.id)
+        .map(game => ({
+          teamIds: game.teamIds,
           point: clock.pointOf(game.start, zoneOf(game.fieldId))
         })),
       fieldFree: new Uint8Array(slots.length),

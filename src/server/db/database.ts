@@ -1202,6 +1202,9 @@ export interface SeasonScheduleSettingsTable {
   regular_games: number
   exhibition_games: number
   doubleheaders: 'never' | 'ifNecessary' | 'allowed'
+  max_games_on_weekdays: Generated<number>
+  max_games_on_weekend: Generated<number>
+  prefer_game_on: Generated<'weekend' | 'weekdays'>
   starts_on: ColumnType<unknown, string, string>
   ends_on: ColumnType<unknown, string, string>
   blackouts: CalendarDates
