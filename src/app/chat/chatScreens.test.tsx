@@ -31,6 +31,7 @@ import {
 } from '../../common/chatCrypto/keys'
 import { linkCode } from '../../common/chatCrypto/linkCode'
 import { HttpError } from '../../common/errors'
+import { lstrings } from '../locales/strings'
 import type { ChatSocketEvent } from '../../common/gameSocket'
 import type { Notification } from '../../common/notifications'
 import { userIdOfGumbo } from '../../common/userId'
@@ -50,7 +51,7 @@ import {
   DeviceApprovalContext,
   DeviceApprovalPrompt
 } from './DeviceApprovalPrompt'
-import { DeviceApprovals } from './deviceApprovals'
+import { approvalHoldMs, DeviceApprovals } from './deviceApprovals'
 import { type EngineContext, KeyHolder } from './engine/context'
 import { ChatEngine } from './engine/engine'
 import {
@@ -544,6 +545,124 @@ describe('shared chat device approvals', function () {
     })
   })
 
+  it('waits out a web hold before reading, and Approve reads immediately', async function () {
+    expect(approvalHoldMs('web')).equals(2000)
+    expect(approvalHoldMs('web', 0)).equals(0)
+    expect(approvalHoldMs('ios')).equals(0)
+    const fake = new FakeKeys()
+    const memory = new MemoryStore()
+    const client = fake.client()
+    const setup = { client, userId: USER, store: memory, device: DEVICE }
+    await ensureEnrolled(setup)
+    fake.bound = undefined
+    client.chatResumeChallenge = async () => {
+      fake.calls.push('chatResumeChallenge')
+      return {
+        nonce: b64(new Uint8Array(32)),
+        sessionId: 'session',
+        expiresAt: ''
+      }
+    }
+    client.resumeChatDevice = async id => {
+      fake.calls.push('resumeChatDevice')
+      fake.bound = id
+      return fake.devices.find(device => device.id === id)!
+    }
+    let loads = 0
+    const read = memory.load.bind(memory)
+    memory.load = async userId => {
+      loads += 1
+      return await read(userId)
+    }
+    const held = new DeviceApprovals(setup, undefined, 50)
+    controllers.push(held)
+    held.start()
+    await held.refresh()
+    expect(loads).equals(0)
+    await delay(20)
+    expect(loads).equals(0)
+    const resumed = Date.now() + 2000
+    while (!fake.calls.includes('resumeChatDevice') && Date.now() < resumed)
+      await delay(20)
+    expect(loads).to.be.greaterThan(0)
+    expect(fake.calls).includes('myChatKeys')
+    expect(fake.calls).includes('chatResumeChallenge')
+    expect(fake.calls).includes('resumeChatDevice')
+
+    const fake2 = new FakeKeys()
+    const memory2 = new MemoryStore()
+    const client2 = fake2.client()
+    const setup2 = {
+      client: client2,
+      userId: USER,
+      store: memory2,
+      device: DEVICE
+    }
+    await ensureEnrolled(setup2)
+    let loads2 = 0
+    const read2 = memory2.load.bind(memory2)
+    memory2.load = async userId => {
+      loads2 += 1
+      return await read2(userId)
+    }
+    const pending = request(fake2)
+    const deciding = new DeviceApprovals(setup2, undefined, 5000)
+    controllers.push(deciding)
+    deciding.start()
+    expect(loads2).equals(0)
+    await deciding.decide(pending.id, 'approve')
+    expect(loads2).to.be.greaterThan(0)
+    expect(fake2.calls).includes('approveChatLink')
+
+    const fake3 = new FakeKeys()
+    const memory3 = new MemoryStore()
+    const client3 = fake3.client()
+    const setup3 = {
+      client: client3,
+      userId: USER,
+      store: memory3,
+      device: DEVICE
+    }
+    await ensureEnrolled(setup3)
+    let loads3 = 0
+    const read3 = memory3.load.bind(memory3)
+    memory3.load = async userId => {
+      loads3 += 1
+      return await read3(userId)
+    }
+    const leaving = new DeviceApprovals(setup3, undefined, 5000)
+    controllers.push(leaving)
+    leaving.start()
+    const PageEvent = document.defaultView?.Event ?? Event
+    document.dispatchEvent(new PageEvent('pagehide'))
+    await leaving.refresh()
+    await delay(20)
+    expect(loads3).equals(0)
+  })
+
+  it('shows the loading string until the held approval read publishes', async function () {
+    const fake = new FakeKeys()
+    const store = new MemoryStore()
+    const client = fake.client()
+    const setup = { client, userId: USER, store, device: DEVICE }
+    await ensureEnrolled(setup)
+    const pending = request(fake)
+    const controller = new DeviceApprovals(setup, undefined, 80)
+    controllers.push(controller)
+    controller.start()
+    await render(
+      <DeviceApprovalContext.Provider value={controller}>
+        <DeviceApprovalActions id={pending.id} />
+      </DeviceApprovalContext.Provider>
+    )
+    expect(text()).includes(lstrings.common_loading)
+    await until(
+      'the approve control',
+      () => text().includes(lstrings.chat_devices_approve),
+      3000
+    )
+  })
+
   function request(fake: FakeKeys, id = 'clk_request'): ChatPendingLink {
     const keys = newBoxKeyPair()
     const deviceId = fake.addDevice('Test phone', 'ios', keys.publicKey)
@@ -576,14 +695,18 @@ describe('shared chat device approvals', function () {
     if (enroll) await ensureEnrolled(setup)
     const pending = request(fake)
     let listener: ((event: ChatSocketEvent) => void) | undefined
-    const controller = new DeviceApprovals(setup, {
-      onChat: next => {
-        listener = next
-        return () => {
-          listener = undefined
+    const controller = new DeviceApprovals(
+      setup,
+      {
+        onChat: next => {
+          listener = next
+          return () => {
+            listener = undefined
+          }
         }
-      }
-    })
+      },
+      0
+    )
     controllers.push(controller)
     const notice = (): Notification => {
       const done = fake.links.find(link => link.id === pending.id)
@@ -820,7 +943,7 @@ describe('shared chat device approvals', function () {
     const setup = { client, store, userId: USER, device: DEVICE }
     await ensureEnrolled(setup)
     const pending = request(fake)
-    const controller = new DeviceApprovals(setup)
+    const controller = new DeviceApprovals(setup, undefined, 0)
     controllers.push(controller)
     controller.start()
     await until('ready controller', () => controller.snapshot().ready)
@@ -867,7 +990,7 @@ describe('shared chat device approvals', function () {
       fake.held.set(enrolled.record.deviceId, new Set([1, 2]))
       const pending = request(fake)
       const holder = new KeyHolder(store, enrolled.record)
-      const controller = new DeviceApprovals(setup)
+      const controller = new DeviceApprovals(setup, undefined, 0)
       controllers.push(controller)
       controller.start()
       await until('ready approval', () => controller.snapshot().ready)
@@ -926,7 +1049,7 @@ describe('shared chat device approvals', function () {
         releases.push(resolve)
       })
     }
-    const controller = new DeviceApprovals(setup)
+    const controller = new DeviceApprovals(setup, undefined, 0)
     controllers.push(controller)
     controller.start()
     await until('request', () => calls === 1)
@@ -1270,12 +1393,16 @@ describe('Chat devices', function () {
       await blocked
       return await mine()
     }
-    const controller = new DeviceApprovals({
-      client,
-      store,
-      userId: USER,
-      device: DEVICE
-    })
+    const controller = new DeviceApprovals(
+      {
+        client,
+        store,
+        userId: USER,
+        device: DEVICE
+      },
+      undefined,
+      0
+    )
     controller.start()
     await render(
       <DeviceApprovalContext.Provider value={controller}>
@@ -1325,7 +1452,7 @@ describe('Chat devices', function () {
     client.myChatKeys = async () => {
       throw new Error('offline')
     }
-    const controller = new DeviceApprovals(setup)
+    const controller = new DeviceApprovals(setup, undefined, 0)
     controller.start()
     await render(
       <DeviceApprovalContext.Provider value={controller}>

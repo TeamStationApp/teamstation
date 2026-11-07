@@ -282,6 +282,21 @@ describe('ChatBenchScreen', () => {
     expect(text()).contains('done')
   })
 
+  it('shows a core that failed to instantiate', async () => {
+    await render(
+      <ChatBenchScreen
+        loadCore={async () => ({
+          ready: false,
+          reason: 'instantiateFailed'
+        })}
+      />
+    )
+    await act(async () => {
+      await delay(50)
+    })
+    expect(text()).contains('no chat crypto core: instantiateFailed')
+  })
+
   it('shows a loader that throws', async () => {
     await render(
       <ChatBenchScreen
