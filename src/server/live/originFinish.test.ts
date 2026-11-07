@@ -14,6 +14,7 @@ import {
   drainLiveController,
   drainPublishForTest,
   finishStream,
+  localTickForTest,
   queueLiveWorkForTest,
   RECONNECT_GRACE_MS,
   stopLiveController,
@@ -65,11 +66,9 @@ describe('closing a live Space origin', function () {
     expect(row?.status).equals('ready')
     expect(await f.body()).contains('#EXT-X-ENDLIST')
     expect(await files.stat(f.dir).catch(() => undefined)).equals(undefined)
-    const names = await files.readdir(join(f.remote, 'videos', f.videoId))
+    const names = await files.readdir(f.remoteDir)
     expect(names).not.contains('video.mp4')
-    const stills = await files.readdir(
-      join(f.remote, 'videos', f.videoId, 'stills')
-    )
+    const stills = await files.readdir(join(f.oldRemoteDir, 'stills'))
     expect(stills.some(name => name.endsWith('.jpg'))).equals(true)
     expect(
       f.requests.filter(r => r.method === 'PUT' && r.key.endsWith('.m4s'))
@@ -119,10 +118,7 @@ describe('closing a live Space origin', function () {
     expect(row?.width).equals(1280)
     expect(row?.height).equals(720)
     expect(
-      await files.readFile(
-        join(f.remote, 'videos', f.videoId, 'master.m3u8'),
-        'utf8'
-      )
+      await files.readFile(join(f.remoteDir, 'master.m3u8'), 'utf8')
     ).contains('RESOLUTION=1280x720')
   })
 
@@ -289,9 +285,8 @@ describe('closing a live Space origin', function () {
     f.store.faults.clear()
     await sync(f.options)
     await drainPublishForTest(f.videoId)
-    expect(
-      await files.readdir(join(f.remote, 'videos', f.videoId))
-    ).deep.equals([])
+    expect(await files.readdir(f.remoteDir)).deep.equals([])
+    expect(await f.objects()).deep.equals([])
   })
 
   it('retries prefix deletion when a queued close finds its video already deleted', async () => {
@@ -310,16 +305,13 @@ describe('closing a live Space origin', function () {
       release()
       await drainPublishForTest(f.videoId)
       expect(await files.stat(f.dir).catch(() => undefined)).equals(undefined)
-      expect(
-        (await files.readdir(join(f.remote, 'videos', f.videoId))).length
-      ).greaterThan(0)
+      expect((await files.readdir(f.remoteDir)).length).greaterThan(0)
       f.store.faults.clear()
       await sync(f.options)
       await sweepLocalCopies(f.options)
       await drainPublishForTest(f.videoId)
-      expect(
-        await files.readdir(join(f.remote, 'videos', f.videoId))
-      ).deep.equals([])
+      expect(await files.readdir(f.remoteDir)).deep.equals([])
+      expect(await f.objects()).deep.equals([])
     } finally {
       release()
     }
@@ -387,6 +379,8 @@ describe('closing a live Space origin', function () {
     expect((await f.row())?.spaces_verified_at).not.equals(null)
     expect((await f.row())?.local_delete_after).not.equals(null)
     expect((await files.stat(f.dir)).isDirectory()).equals(true)
+    // The sweep takes rows whose marker is strictly before its own now.
+    await new Promise(resolve => setTimeout(resolve, 5))
     await sweepLocalCopies(f.options)
     expect((await f.row())?.local_delete_after).equals(null)
     expect(await files.stat(f.dir).catch(() => undefined)).equals(undefined)
@@ -453,16 +447,11 @@ describe('closing a live Space origin', function () {
     await finish()
     expect((await f.row())?.spaces_verified_at).not.equals(null)
     expect(
-      await files.readFile(
-        join(f.remote, 'videos', f.videoId, 'master.m3u8'),
-        'utf8'
-      )
+      await files.readFile(join(f.remoteDir, 'master.m3u8'), 'utf8')
     ).contains('video.m3u8')
-    expect(
-      (
-        await files.stat(join(f.remote, 'videos', f.videoId, 'video.mp4'))
-      ).isFile()
-    ).equals(true)
+    expect((await files.stat(join(f.remoteDir, 'video.mp4'))).isFile()).equals(
+      true
+    )
   })
 
   it('reconciles settled frame clocks at close and preserves unstamped arrival spans', async () => {
@@ -474,11 +463,14 @@ describe('closing a live Space origin', function () {
     await writeLive(stamped, f.dir, { seconds: 2 })
     await f.begin()
     await sync(f.options)
+    await localTickForTest(f.options)
     await drainPublishForTest(f.videoId)
     await writeLive(plain, f.dir, { fromSec: 2, seconds: 2, startNumber: 2 })
     await sync(f.options)
+    await localTickForTest(f.options)
     await writeLive(stamped, f.dir, { fromSec: 5, seconds: 2, startNumber: 4 })
     await sync(f.options)
+    await localTickForTest(f.options)
     const init = await files.readFile(join(f.dir, 'init.mp4'))
     const playlist = parseMediaPlaylist(
       await files.readFile(join(f.dir, 'master.m3u8'), 'utf8')

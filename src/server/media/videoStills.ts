@@ -13,6 +13,8 @@ export async function warmVideoStills(
   media: MediaContext,
   storage: 'peertube' | 'local' | 'spaces',
   videoId: string,
+  /** The video's, so a still is cut from its media under its secret path. */
+  spaceSecret: string | null,
   highlights: Array<{ playOffsetSec: number }>
 ): Promise<void> {
   try {
@@ -20,7 +22,8 @@ export async function warmVideoStills(
       mediaRoot: media.mediaRoot,
       space: media.space,
       storage,
-      videoId
+      videoId,
+      spaceSecret
     })
     if (source == null) return
     await warmStills({

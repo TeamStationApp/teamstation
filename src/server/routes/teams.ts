@@ -607,6 +607,7 @@ export function teamRoutes(
           'title',
           'status',
           'storage',
+          'space_secret',
           'start_at',
           'duration_sec',
           'width',
@@ -684,6 +685,7 @@ export function teamRoutes(
             gameId,
             videoId: video.id,
             storage: video.storage,
+            spaceSecret: video.space_secret,
             durationSec: video.duration_sec
           }))
       ).catch(() => undefined)
@@ -846,6 +848,7 @@ export function teamRoutes(
           'videos.id as id',
           'videos.game_id as gameId',
           'videos.storage as storage',
+          'videos.space_secret as spaceSecret',
           'videos.start_at as startAt',
           'videos.sync_offset_sec as syncOffsetSec',
           'videos.duration_sec as durationSec',
@@ -967,9 +970,13 @@ export function teamRoutes(
       // these; until a game can be ingested with its video already in place,
       // opening the list is what warms it, and a still that is not ready yet
       // is a missing thumbnail rather than a slow response.
-      warmVideoStills(media, video.storage, videoId, highlights).catch(
-        () => undefined
-      )
+      warmVideoStills(
+        media,
+        video.storage,
+        videoId,
+        video.spaceSecret,
+        highlights
+      ).catch(() => undefined)
     })
   )
 

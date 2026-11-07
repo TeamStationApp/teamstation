@@ -1,3 +1,5 @@
+import type { ChangeFeed } from '../changeFeed/feed'
+import type { LivePlaylistClients } from './livePlaylists'
 import type { SpaceSettings } from './spacesHls'
 
 /**
@@ -18,4 +20,34 @@ export interface MediaContext {
   publicUrl: string
   /** The bucket finished videos and their stills live in. */
   space: SpaceSettings
+  /**
+   * The worker's change feed, once it has one. The routes are mounted before
+   * the feed is made, so this is filled later; until then nothing that needs
+   * its notices is cached.
+   */
+  liveFeed?: FeedHolder
+  /** The Valkey connections live playlists are followed through. */
+  livePlaylists?: LivePlaylistClients
+}
+
+/** A change feed that is made after the code that needs it. */
+export class FeedHolder {
+  private feed?: ChangeFeed
+  private readonly waiting: Array<(feed: ChangeFeed) => void> = []
+
+  get filled(): boolean {
+    return this.feed != null
+  }
+
+  fill(feed: ChangeFeed): void {
+    if (this.feed != null) throw new Error('The feed holder is already filled')
+    this.feed = feed
+    for (const take of this.waiting.splice(0)) take(feed)
+  }
+
+  /** Runs once the feed exists: at once, if it already does. */
+  onFill(take: (feed: ChangeFeed) => void): void {
+    if (this.feed != null) take(this.feed)
+    else this.waiting.push(take)
+  }
 }

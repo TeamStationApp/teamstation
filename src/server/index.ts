@@ -41,7 +41,7 @@ import { DIRECTOR_CLAIM_LABEL } from './live/streamKeys'
 import { livingWorkers } from './livingWorkers'
 import { eventGeocoder } from './location/eventGeocoder'
 import { googlePlaces } from './location/googlePlaces'
-import type { MediaContext } from './media/mediaContext'
+import { FeedHolder, type MediaContext } from './media/mediaContext'
 import { spaceConfigured } from './media/spacesHls'
 import { withApiKeyCeiling } from './middleware/apiKeyCeiling'
 import { withAudit } from './middleware/withAudit'
@@ -110,6 +110,12 @@ import { venueRoutes } from './routes/venues'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
 import { attachScoreboard } from './scoreboard/attachScoreboard'
 import { startScoreboard } from './scoreboard/scoreboardService'
+import {
+  makeScoreboardClient,
+  makeScoreboardSubscriber,
+  quit,
+  scoreboardPrefix
+} from './scoreboard/scoreboardStore'
 import {
   eventControlIssuerOf,
   primaryHost,
@@ -588,17 +594,45 @@ function runPrimary(workerCount: number): void {
 function runWorker(): void {
   const db = makeDatabase(requestDatabaseUrl(serverConfig), { role: 'worker' })
   const mediaSecret = resolveMediaSecret()
+  // Redis is connected to and not waited for: the API comes up without it,
+  // and only the scoreboard notices that it is away.
+  const log = (message: string): void => {
+    console.error(`worker ${process.pid}: ${message}`)
+  }
+  // Live playlists are followed in Valkey: one connection reads the lists,
+  // one hears their notices. Without Valkey they are read from the Space.
+  const playlistClient = makeScoreboardClient(
+    serverConfig.redis.url,
+    log,
+    'live playlists',
+    serverConfig.redis.caFile
+  )
+  const playlistSubscriber = makeScoreboardSubscriber(
+    playlistClient,
+    log,
+    'live playlists subscriber'
+  )
+  for (const client of [playlistClient, playlistSubscriber])
+    client.connect().catch((error: unknown) => {
+      log(`live playlists: ${String(error)}`)
+    })
+  // Filled with the change feed once it is made, after the routes.
+  const liveFeed = new FeedHolder()
   const mediaContext: MediaContext = {
     ffmpegPath: serverConfig.ffmpegPath,
     mediaRoot: serverConfig.mediaDir,
     mediaSecret,
     publicUrl,
-    space: serverConfig.space
-  }
-  // Redis is connected to and not waited for: the API comes up without it,
-  // and only the scoreboard notices that it is away.
-  const log = (message: string): void => {
-    console.error(`worker ${process.pid}: ${message}`)
+    space: serverConfig.space,
+    liveFeed,
+    livePlaylists: {
+      client: playlistClient,
+      subscriber: playlistSubscriber,
+      prefix: scoreboardPrefix(
+        serverConfig.redis.prefix,
+        serverConfig.databaseUrl
+      )
+    }
   }
   const scoreboard = startScoreboard({
     db,
@@ -893,6 +927,7 @@ function runWorker(): void {
   // One upgrade listener. Node delivers an upgrade to every listener on the
   // same socket, so each socket takes only the paths it owns.
   const feed = makeChangeFeed(serverConfig, logFeed)
+  liveFeed.fill(feed)
   const gameSocket = attachGameSocket(server, db, serverConfig.databaseUrl, {
     feed,
     minimumProtocol: serverConfig.gameSocketMinimumProtocol,
@@ -955,6 +990,7 @@ function runWorker(): void {
         await stopRelay(relay)
         await feed.close()
         await rosterCache.close()
+        await Promise.all([quit(playlistSubscriber), quit(playlistClient)])
         await db.destroy()
       },
       cutConnectionsMs: WORKER_CUT_CONNECTIONS_MS,

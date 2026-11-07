@@ -9,6 +9,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   statSync,
   writeFileSync
@@ -432,6 +433,27 @@ function discontinuities(playlist: string): number {
   return playlist.split('\n').filter(l => l === '#EXT-X-DISCONTINUITY').length
 }
 
+/**
+ * The Space's copy of one of a video's files, under the secret path the
+ * controller gives the video when its stream starts: none until then.
+ */
+function spaceFileOf(
+  spaceDir: string,
+  videoId: string,
+  name: string
+): string | undefined {
+  let prefixes: string[]
+  try {
+    prefixes = readdirSync(join(spaceDir, 'videos'))
+  } catch {
+    return undefined
+  }
+  const prefix = prefixes.find(entry => entry.startsWith(`${videoId}-`))
+  return prefix == null
+    ? undefined
+    : pathOfKey(spaceDir, `videos/${prefix}/${name}`)
+}
+
 function readIfThere(file: string): string {
   return existsSync(file) ? readFileSync(file, 'utf8') : ''
 }
@@ -827,7 +849,6 @@ describe('G1: a camera that comes back keeps init.mp4 whole, locally and in the 
     const dir = liveVideoDir(settings.mediaDir, stream.videoId)
     const playlistFile = join(dir, LIVE_PLAYLIST_NAME)
     const initFile = join(dir, 'init.mp4')
-    const spaceInit = pathOfKey(spaceDir, `videos/${stream.videoId}/init.mp4`)!
     const lines: string[] = []
     const say = (line: string): void => {
       lines.push(line)
@@ -922,7 +943,8 @@ describe('G1: a camera that comes back keeps init.mp4 whole, locally and in the 
         }
         local.push(sample)
         if (tick % 5 === 0) {
-          const held = sizeOf(spaceInit)
+          const spaceInit = spaceFileOf(spaceDir, stream.videoId, 'init.mp4')
+          const held = spaceInit == null ? undefined : sizeOf(spaceInit)
           if (held != null || remote.length > 0)
             remote.push({ atMs, size: held })
         }
@@ -1080,6 +1102,7 @@ describe('G1: a camera that comes back keeps init.mp4 whole, locally and in the 
     )
     expect(emptyLocal, 'local init.mp4 empty or missing').deep.equals([])
     expect(unparsed, 'local init.mp4 unparseable').deep.equals([])
+    expect(remote.length, 'Space init.mp4 samples').greaterThan(0)
     expect(emptyRemote, 'Space init.mp4 empty').deep.equals([])
     expect(failedPuts, 'init.mp4 PUTs not 2xx').deep.equals([])
     expect(segments.length).greaterThan(listedBefore)
