@@ -126,6 +126,7 @@ import { BoxScore } from './BoxScore'
 import { EventInfoTab } from './EventInfoTab'
 import { defaultEventTab, eventEndTime } from './eventTabPolicy'
 import { gameStatusLine, winnerOf } from './format'
+import { GameRecapSection } from './GameRecapSection'
 import { gameActions, gameTabs, heroCoachSides } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { watchHandoff } from './gameWatchLayoutProps'
@@ -252,7 +253,7 @@ export interface GameScreenProps {
   ) => void
 }
 
-type Tab = 'info' | 'boxScore' | 'watch'
+type Tab = 'recap' | 'info' | 'boxScore' | 'watch'
 
 /**
  * What each of a game's videos is called on the strip under the picture.
@@ -564,8 +565,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   useEffect(() => {
     if (game == null) return
     if (game.eventKind === 'event') setTab('info')
+    else if (tab === 'recap' && game.status !== 'final')
+      setTab(defaultEventTab(game, clockNow))
     else if (!explicitSelection.current) setTab(defaultEventTab(game, clockNow))
-  }, [game, clockNow, requestedTab])
+  }, [game, clockNow, requestedTab, tab])
   useEffect(() => {
     if (game == null) return
     const start = game.startAt == null ? NaN : Date.parse(game.startAt)
@@ -1973,7 +1976,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           props.onReplay?.()
           return
         }
-        if (next !== 'info' && next !== 'boxScore' && next !== 'watch') return
+        if (
+          next !== 'recap' &&
+          next !== 'info' &&
+          next !== 'boxScore' &&
+          next !== 'watch'
+        )
+          return
         selectSection(next)
       }}
       size="compact"
@@ -2487,6 +2496,27 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                   styles.watchStacked,
                   { paddingBottom: screenBottom }
                 ]}
+              />
+            ) : tab === 'recap' ? (
+              <GameRecapSection
+                key={gameId}
+                client={client}
+                game={game}
+                pinned={pinned}
+                head={scoreboard}
+                tabs={tabs}
+                membership={
+                  <MembershipAccess
+                    key={`${game.id}:${props.signedIn === true}`}
+                    client={client}
+                    signedIn={props.signedIn === true}
+                    teams={[
+                      { id: game.homeTeamId, name: game.homeTeamName },
+                      { id: game.awayTeamId, name: game.awayTeamName }
+                    ]}
+                    onSignIn={() => props.onSignIn?.()}
+                  />
+                }
               />
             ) : (
               <Screen key="sections" {...pinned.screen} wide>

@@ -10,6 +10,10 @@ import {
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import istanbul from 'istanbul-lib-coverage'
+
+const { createCoverageMap } = istanbul
+
 const base = process.env.TS_COVERAGE_BASE
 if (base == null) throw new Error('Supply TS_COVERAGE_BASE')
 const report = resolve('coverage/gameRecap')
@@ -42,7 +46,21 @@ run(
     'src/server/tess/sitemap.test.ts',
     'src/server/serverConfig.test.ts',
     'src/server/openapi.test.ts',
-    'src/server/highlights.test.ts'
+    'src/server/highlights.test.ts',
+    'src/app/navigation/routes.test.ts',
+    'src/app/screens/eventTabPolicy.test.ts',
+    'src/app/screens/gameTabs.test.ts'
+  ],
+  { NODE_V8_COVERAGE: temp }
+)
+run('node', ['scripts/build-scoring-tests.mjs'])
+run(
+  'node_modules/.bin/mocha',
+  [
+    ...mocha,
+    'lib/scoring-tests.cjs',
+    '--grep',
+    'Game recap article|Recap player request|event page|videos page|game’s highlights|another angle|browser that cannot play'
   ],
   { NODE_V8_COVERAGE: temp }
 )
@@ -108,7 +126,11 @@ gate(unit, 90, [
   'src/server/recap/model.ts',
   'src/server/recap/clips.ts',
   'src/server/serverConfigSchema.ts',
-  'src/server/openapi.ts'
+  'src/server/openapi.ts',
+  'src/app/screens/GameRecapSection.tsx',
+  'src/app/screens/gameTabs.ts',
+  'src/app/screens/eventTabPolicy.ts',
+  'src/app/navigation/routes.ts'
 ])
 run(
   'node_modules/.bin/mocha',
@@ -128,4 +150,15 @@ run(
   { NODE_V8_COVERAGE: temp }
 )
 collect(temp, report)
+const browser = process.env.TS_RECAP_BROWSER_COVERAGE
+if (browser == null)
+  throw new Error('Supply same-revision TS_RECAP_BROWSER_COVERAGE')
+const merged = createCoverageMap(
+  JSON.parse(readFileSync(resolve(report, 'coverage-final.json'), 'utf8'))
+)
+merged.merge(JSON.parse(readFileSync(browser, 'utf8')))
+writeFileSync(
+  resolve(report, 'coverage-final.json'),
+  JSON.stringify(merged.toJSON())
+)
 gate(report, 95, ['src'])

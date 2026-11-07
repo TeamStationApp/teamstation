@@ -57,7 +57,7 @@ export async function browserSession(
   width: number,
   height: number,
   artifacts: string,
-  browserName: 'chromium' | 'chrome' = 'chromium'
+  browserName: string = 'chromium'
 ): Promise<BrowserSession> {
   const profile = join(artifacts, 'support', 'browser-profiles', device)
   await mkdir(profile, { recursive: true })

@@ -59,6 +59,11 @@ function fixture(): { client: TeamStationClient; game: GameDetail } {
   })
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => ({ ...game })
+  client.gameRecap = async () => ({
+    status: 'absent',
+    document: null,
+    clips: {}
+  })
   client.teams = async () => []
   client.boxScore = async () => ({
     batting: [],
@@ -311,11 +316,11 @@ describe('the event page’s automatic and explicit sections', () => {
       })
     }
     await render({ client, gameId: 'g1' })
-    expect(selected()).equals('Box score')
+    expect(selected()).equals('Recap')
     await show('watch')
     expect(selected()).equals('Videos')
     await show()
-    expect(selected()).equals('Box score')
+    expect(selected()).equals('Recap')
     game.eventKind = 'event'
     game.title = 'Team dinner'
     game.venue = 'Demo Park'

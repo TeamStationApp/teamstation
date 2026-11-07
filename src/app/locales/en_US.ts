@@ -121,6 +121,10 @@ export const enUs = {
 
   // One game
   game_videos: 'Videos',
+  game_recap: 'Recap',
+  game_recap_pending: 'waiting for recap',
+  game_recap_failed: 'The recap could not be written.',
+  game_recap_absent: 'No recap is available for this game yet.',
   game_highlights: 'Highlights',
   video_primary: 'Video',
   video_multi_angle: 'Multi-angle',

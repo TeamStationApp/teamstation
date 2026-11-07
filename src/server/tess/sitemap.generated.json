@@ -202,6 +202,12 @@
       "tabs": [
         {
           "param": "tab",
+          "id": "recap",
+          "label": "Recap",
+          "path": "/games/:gameId?tab=recap"
+        },
+        {
+          "param": "tab",
           "id": "info",
           "label": "Info",
           "path": "/games/:gameId?tab=info"

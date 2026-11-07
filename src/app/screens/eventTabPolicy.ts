@@ -20,7 +20,7 @@ export function eventEnded(event: EventTabState, now = Date.now()): boolean {
   return event.status === 'final' || (end != null && now >= end)
 }
 
-export type GameSection = 'info' | 'boxScore' | 'watch'
+export type GameSection = 'recap' | 'info' | 'boxScore' | 'watch'
 
 export interface GameSectionInput extends EventTabState {
   /** A video whose status is `live` is streaming now. */
@@ -47,6 +47,7 @@ export function gameSectionOrder(
   now = Date.now()
 ): GameSection[] {
   if (event.eventKind === 'event') return ['info']
+  if (event.status === 'final') return ['recap', 'boxScore', 'watch', 'info']
   const scored = event.hasScoringEvents === true
   const live = event.videos?.some(video => video.status === 'live') === true
   if (live && (scored || startReached(event, now)))

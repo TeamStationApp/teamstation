@@ -124,7 +124,12 @@ describe('the pills across a game', function () {
       awayScore: 4,
       scoreboard: { open: false, mayOverride: true }
     })
-    expect(ids(gameTabs({ game }))).deep.equals(['boxScore', 'watch', 'info'])
+    expect(ids(gameTabs({ game }))).deep.equals([
+      'recap',
+      'boxScore',
+      'watch',
+      'info'
+    ])
     expect(gameActions({ game })).deep.equals([])
   })
 
@@ -308,15 +313,21 @@ describe('the pills across a game', function () {
 
     it('follows Videos for a member once a game TeamStation scored is over', function () {
       const pills = gameTabs({ game: finished, onReplay })
-      expect(ids(pills)).deep.equals(['boxScore', 'watch', 'replay', 'info'])
-      expect(pills[2]).deep.equals({
+      expect(ids(pills)).deep.equals([
+        'recap',
+        'boxScore',
+        'watch',
+        'replay',
+        'info'
+      ])
+      expect(pills[3]).deep.equals({
         id: 'replay',
         label: 'Replay',
         role: 'button'
       })
       expect(
         ids(gameTabs({ game: { ...finished, canScore: true }, onReplay }))
-      ).deep.equals(['boxScore', 'watch', 'replay', 'info'])
+      ).deep.equals(['recap', 'boxScore', 'watch', 'replay', 'info'])
     })
 
     it('is a red Live pill while the game is scored', function () {

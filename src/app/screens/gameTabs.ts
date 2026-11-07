@@ -9,7 +9,7 @@ import {
 } from './eventTabPolicy'
 
 export type GameTab =
-  'info' | 'boxScore' | 'watch' | 'replay' | 'score' | 'coach' | 'dj'
+  'recap' | 'info' | 'boxScore' | 'watch' | 'replay' | 'score' | 'coach' | 'dj'
 
 export interface GameTabPill {
   id: GameTab
@@ -53,6 +53,7 @@ export interface GameTabsInput {
 }
 
 const sectionLabel: Record<GameSection, string> = {
+  recap: lstrings.game_recap,
   info: 'Info',
   boxScore: lstrings.game_box_score,
   watch: lstrings.game_videos
