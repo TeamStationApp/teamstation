@@ -546,20 +546,25 @@ export async function startLiveController(
     .where('live_streams.ended_at', 'is', null)
     .where('videos.spaces_verified_at', 'is', null)
     .execute()
-  for (const row of restoring) {
-    if (
-      (await hasMedia(next.mediaRoot, row.videoId)) &&
-      generation === originGeneration
-    ) {
-      const spaceSecret = await originSecret(next, row.videoId, row.spaceSecret)
-      if (generation !== originGeneration) break
-      const origin = startOrigin(next, row.videoId, row.id, {
-        storage: null,
-        spacesVerifiedAt: null,
-        spaceSecret
-      })
-      if (origin != null) queueOrigin(row.videoId, origin)
-    }
+  // Every stream's secret at once: a Space slow to list holds the start for
+  // one listing, not one per stream. The origins then start in order.
+  const secrets = await Promise.all(
+    restoring.map(async row =>
+      (await hasMedia(next.mediaRoot, row.videoId))
+        ? await originSecret(next, row.videoId, row.spaceSecret)
+        : undefined
+    )
+  )
+  for (const [index, row] of restoring.entries()) {
+    const spaceSecret = secrets[index]
+    if (spaceSecret === undefined) continue
+    if (generation !== originGeneration) break
+    const origin = startOrigin(next, row.videoId, row.id, {
+      storage: null,
+      spacesVerifiedAt: null,
+      spaceSecret
+    })
+    if (origin != null) queueOrigin(row.videoId, origin)
   }
 
   if (generation !== originGeneration) return false
@@ -1405,8 +1410,7 @@ export async function sync(
       'games.end_at as gameEndAt',
       'videos.start_at as videoStartAt',
       'videos.storage as videoStorage',
-      'videos.spaces_verified_at as videoSpacesVerifiedAt',
-      'videos.space_secret as videoSpaceSecret'
+      'videos.spaces_verified_at as videoSpacesVerifiedAt'
     ])
     .where(eb =>
       eb.or([
@@ -1608,7 +1612,6 @@ async function settleOrigins(
     videoId: string | null
     videoStorage: string | null
     videoSpacesVerifiedAt: Date | null
-    videoSpaceSecret: string | null
   }>,
   generation: number
 ): Promise<void> {
@@ -1943,10 +1946,17 @@ async function finishStreamRecording(
   const dir = liveVideoDir(mediaRoot, row.videoId)
   // Once the disk tail has deleted pieces, what is left here cannot be
   // probed: the closed playlist's own lengths are the duration, and the
-  // sound check reads the deleted pieces from the Space. The span of a
-  // recording in parts needs its first piece, so it counts only while that
-  // is still here.
+  // sound check and the span of a recording in parts read the deleted pieces
+  // from the Space.
   const tailed = await tailedRecording(current, dir)
+  // What the disk tail deleted, read back from the Space.
+  const fromSpace =
+    tailed && current.space != null
+      ? spacePartReader(current.space, {
+          id: row.videoId,
+          spaceSecret: await publishedSecret(current, row.videoId)
+        })
+      : undefined
   const probedSec = await (
     tailed
       ? playlistDuration(join(dir, LIVE_PLAYLIST_NAME))
@@ -1959,7 +1969,8 @@ async function finishStreamRecording(
           probedSec,
           (await recordingSpanSec(
             dir,
-            await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8')
+            await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8'),
+            fromSpace
           ).catch(() => undefined)) ?? 0
         )
 
@@ -1989,14 +2000,7 @@ async function finishStreamRecording(
   const soundProblem = soundStepProblem(
     await checkTrackStarts(
       join(dir, LIVE_PLAYLIST_NAME),
-      tailed && current.space != null
-        ? {
-            readPart: spacePartReader(current.space, {
-              id: row.videoId,
-              spaceSecret: await publishedSecret(current, row.videoId)
-            })
-          }
-        : {}
+      fromSpace == null ? {} : { readPart: fromSpace }
     ).catch(() => undefined)
   )
   if (soundProblem != null) {

@@ -340,6 +340,20 @@ function decodeXml(value: string): string {
  * Individual signed deletes with bounded concurrency avoid a separate signed
  * batch-payload implementation while keeping large fragment sets practical.
  */
+/**
+ * Every key under any secret prefix of this video, `videos/<id>-<32 hex>/`,
+ * found by listing `videos/<id>-` and keeping only that exact segment: another
+ * video's id can start with this one's and a dash.
+ */
+export async function secretKeysOf(
+  space: SpaceSettings,
+  videoId: string
+): Promise<string[]> {
+  return (await listSpaceObjects(space, `videos/${videoId}-`)).filter(key =>
+    isSecretKeyOf(videoId, key)
+  )
+}
+
 export async function deleteVideoFromSpace(options: {
   space: SpaceSettings
   videoId: string
@@ -348,9 +362,7 @@ export async function deleteVideoFromSpace(options: {
   const { space, videoId, spaceSecret } = options
   const secretKeys =
     spaceSecret == null
-      ? (await listSpaceObjects(space, `videos/${videoId}-`)).filter(key =>
-          isSecretKeyOf(videoId, key)
-        )
+      ? await secretKeysOf(space, videoId)
       : await listSpaceObjects(space, videoPrefix({ id: videoId, spaceSecret }))
   const fromSecret = await deleteSpaceKeys(space, secretKeys)
   const fromOld = await deleteSpacePrefix(space, oldVideoPrefix(videoId))

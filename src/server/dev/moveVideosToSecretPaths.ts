@@ -9,10 +9,10 @@ import {
   contentTypeFor,
   deleteSpaceKeys,
   listSpaceObjectEntries,
+  secretKeysOf,
   type SpaceObjectEntry
 } from '../media/spacesVideo'
 import {
-  isSecretKeyOf,
   isSpaceSecret,
   newSpaceSecret,
   oldVideoPrefix,
@@ -279,9 +279,8 @@ async function copiedSecret(
   videoId: string
 ): Promise<string | undefined> {
   const secrets = new Set<string>()
-  for (const entry of await listSpaceObjectEntries(space, `videos/${videoId}-`))
-    if (isSecretKeyOf(videoId, entry.key))
-      secrets.add(entry.key.split('/')[1].slice(videoId.length + 1))
+  for (const key of await secretKeysOf(space, videoId))
+    secrets.add(key.split('/')[1].slice(videoId.length + 1))
   return [...secrets].sort()[0]
 }
 
