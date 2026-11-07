@@ -561,10 +561,22 @@ describe('live playlists through Valkey', function () {
       ranges.push([start, stop])
       return await lRange(key, start, stop)
     }
+    // A MULTI that reads the whole list is a reload; one that reads a range
+    // of it is an update, as a bare LRANGE was.
     const multi = reader.multi.bind(reader)
     ;(reader as { multi: unknown }).multi = () => {
-      reloads++
-      return multi()
+      const real = multi()
+      const inner = real.lRange.bind(real)
+      ;(real as { lRange: unknown }).lRange = (
+        key: string,
+        start: number,
+        stop: number
+      ) => {
+        if (start === 0 && stop === -1) reloads++
+        else ranges.push([start, stop])
+        return inner(key, start, stop)
+      }
+      return real
     }
     playback = followingPlayback()
     const sign = playback.sign.bind(playback)
@@ -677,6 +689,29 @@ describe('live playlists through Valkey', function () {
     expect(next).equals(rewritten(body(5)))
     expect(reloads).equals(1)
     expect(spaceReads).equals(0)
+  })
+
+  it('reloads, not appends, when a stale notice meets a list replaced and grown past it', async function () {
+    await sink.replace(video.id, body(2))
+    expect(await served()).equals(rewritten(body(2)))
+    const stale = await gen()
+    // The list replaced and grown, its own notices not yet heard.
+    const key = livePlaylistKey(prefix, video.id)
+    const replaced = body(2).replace('VERSION:7', 'VERSION:8')
+    await client
+      .multi()
+      .del(key)
+      .rPush(key, [replaced, piece(2), piece(3), piece(4)])
+      .incr(livePlaylistGenKey(prefix, video.id))
+      .exec()
+    await client.publish(
+      livePlaylistChannel(prefix),
+      JSON.stringify({ v: video.id, n: 4, g: stale })
+    )
+    await until('the reload', () => reloads === 2)
+    expect(await served()).equals(
+      rewritten(replaced + piece(2) + piece(3) + piece(4))
+    )
   })
 
   it('serves a replaced list after a reconnect rewrote the header', async function () {
@@ -946,11 +981,9 @@ describe('live playlists when Valkey stalls', function () {
     client: ScoreboardClient
     subscriber: ScoreboardClient
     reloads: Array<Pending<[string[], string | null]>>
-    ranges: Array<Pending<string[]>>
     notify: (n: number, g: number) => void
   } {
     const reloads: Array<Pending<[string[], string | null]>> = []
-    const ranges: Array<Pending<string[]>> = []
     let listener: (message: string) => void = () => {}
     const multi = {
       lRange: () => multi,
@@ -962,11 +995,7 @@ describe('live playlists when Valkey stalls', function () {
     }
     const client = {
       isReady: true,
-      multi: () => multi,
-      lRange: async () =>
-        await new Promise((resolve, reject) => {
-          ranges.push({ resolve, reject })
-        })
+      multi: () => multi
     }
     const subscriber = {
       on: () => subscriber,
@@ -978,7 +1007,6 @@ describe('live playlists when Valkey stalls', function () {
       client: client as unknown as ScoreboardClient,
       subscriber: subscriber as unknown as ScoreboardClient,
       reloads,
-      ranges,
       notify: (n, g) => {
         listener(JSON.stringify({ v: video.id, n, g }))
       }
@@ -1090,17 +1118,18 @@ describe('live playlists when Valkey stalls', function () {
     expect(await first).equals(rewritten(body(2)))
     valkey.notify(3, 3)
     await new Promise(resolve => setImmediate(resolve))
-    expect(valkey.ranges).length(1)
+    // The update's read of the new entries and the generation, one MULTI.
+    expect(valkey.reloads).length(2)
     expect(await stalled.live(video)).equals(fromSpace())
     expect(stalled.following?.size).equals(0)
-    // Its LRANGE answers late, on a copy nobody holds: not applied.
-    valkey.ranges[0].resolve([piece(2)])
+    // It answers late, on a copy nobody holds: not applied.
+    valkey.reloads[1].resolve([[piece(2)], '3'])
     await new Promise(resolve => setImmediate(resolve))
     time += 1000
     const again = stalled.live(video)
     await new Promise(resolve => setImmediate(resolve))
-    expect(valkey.reloads).length(2)
-    valkey.reloads[1].resolve([[body(4)], '4'])
+    expect(valkey.reloads).length(3)
+    valkey.reloads[2].resolve([[body(4)], '4'])
     expect(await again).equals(rewritten(body(4)))
     // Logged once a minute per video, however many reads stall.
     time += 1000

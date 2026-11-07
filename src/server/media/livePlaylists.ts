@@ -304,6 +304,7 @@ export class LivePlaylists {
   private readonly stills = new Map<string, number>()
   private following = false
   private down = false
+  private sweptAt = -Infinity
   private readonly now: () => number
 
   constructor(private readonly options: LivePlaylistOptions) {
@@ -363,7 +364,11 @@ export class LivePlaylists {
   ): Promise<string | undefined> {
     if (!this.usable()) return undefined
     const at = this.now()
-    this.sweep(at)
+    // Every viewer's reload asks: the maps are walked at most once a second.
+    if (at - this.sweptAt >= RETRY_MS) {
+      this.sweptAt = at
+      this.sweep(at)
+    }
     const failedAt = this.missing.get(video.id)
     if (failedAt != null && at - failedAt < RETRY_MS) return undefined
     let held = this.followed.get(video.id)
@@ -478,16 +483,25 @@ export class LivePlaylists {
       await this.reload(held)
       return
     }
-    const key = livePlaylistKey(this.options.prefix, held.video.id)
+    const { client, prefix } = this.options
     try {
       // Only up to the notice's own length: a later push has its own notice.
-      const entries = await this.options.client.lRange(
-        key,
-        held.count,
-        notice.n - 1
-      )
+      // With the generation, in one MULTI: a list replaced since the notice
+      // could have grown past it, and its entries are not this copy's.
+      const [entries, gen] = (await client
+        .multi()
+        .lRange(
+          livePlaylistKey(prefix, held.video.id),
+          held.count,
+          notice.n - 1
+        )
+        .get(livePlaylistGenKey(prefix, held.video.id))
+        .exec()) as unknown as [string[], string | null]
       if (this.followed.get(held.video.id) !== held) return
-      if (entries.length !== notice.n - held.count) {
+      if (
+        Number(gen ?? 0) !== held.gen ||
+        entries.length !== notice.n - held.count
+      ) {
         await this.reload(held)
         return
       }
