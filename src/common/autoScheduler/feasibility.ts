@@ -1,3 +1,4 @@
+import { gameWeekPart, weekPartMaximum } from '../gameWeekPart'
 import type { FieldSize } from '../venues'
 import type { RunContext, SeasonContext } from './context'
 import { DAY, MINUTE, type Slot } from './slots'
@@ -75,6 +76,7 @@ export class Occupancy {
   private readonly managers = new Map<string, DayBuckets>()
   private readonly teams = new Map<string, DayBuckets>()
   private readonly dayCounts = new Map<string, Map<number, number>>()
+  private readonly weeklyCounts = new Map<string, Map<number, number>>()
   private readonly switchMs = new Map<string, number>()
 
   constructor(readonly context: RunContext) {
@@ -115,10 +117,14 @@ export class Occupancy {
           game.start,
           season.zoneOf(game.fieldId)
         ).day
-        this.count(season, game.homeTeamId, day, 1)
-        this.count(season, game.awayTeamId, day, 1)
+        this.count(this.dayCounts, season, game.homeTeamId, day, 1)
+        this.count(this.dayCounts, season, game.awayTeamId, day, 1)
       }
     }
+    for (const season of context.seasons)
+      for (const { teamIds, point } of season.weeklyGames)
+        for (const team of teamIds)
+          this.count(this.weeklyCounts, season, team, point.day, 1)
   }
 
   private managerHolds(teams: string[], hold: Hold, add: boolean): void {
@@ -145,15 +151,16 @@ export class Occupancy {
   }
 
   private count(
+    counts: Map<string, Map<number, number>>,
     season: SeasonContext,
     team: string,
     day: number,
     by: number
   ): void {
-    let days = this.dayCounts.get(team)
+    let days = counts.get(team)
     if (days == null) {
       days = new Map()
-      this.dayCounts.set(team, days)
+      counts.set(team, days)
     }
     const key = season.index * 1_000_000 + day
     days.set(key, (days.get(key) ?? 0) + by)
@@ -201,6 +208,13 @@ export class Occupancy {
         .some(hold => hold.start < slot.end && slot.start < hold.end) === true
     )
       return TeamAvailability.ManagerBusy
+    const portion = gameWeekPart(slot.day)
+    let count = 0
+    for (let day = portion.first; day <= portion.last; day++)
+      count +=
+        this.weeklyCounts.get(team)?.get(season.index * 1_000_000 + day) ?? 0
+    if (count >= weekPartMaximum(season.season.settings, portion.part))
+      return TeamAvailability.Busy
     return TeamAvailability.Free
   }
 
@@ -245,8 +259,10 @@ export class Occupancy {
     this.bucketsOf(this.fields, slot.fieldId).add(hold)
     this.bucketsOf(this.teams, homeTeamId).add(hold)
     this.bucketsOf(this.teams, awayTeamId).add(hold)
-    this.count(season, homeTeamId, slot.day, 1)
-    this.count(season, awayTeamId, slot.day, 1)
+    for (const counts of [this.dayCounts, this.weeklyCounts]) {
+      this.count(counts, season, homeTeamId, slot.day, 1)
+      this.count(counts, season, awayTeamId, slot.day, 1)
+    }
   }
 
   /** Takes a placed game back out. */
@@ -262,7 +278,9 @@ export class Occupancy {
     this.bucketsOf(this.fields, slot.fieldId).remove(hold)
     this.bucketsOf(this.teams, homeTeamId).remove(hold)
     this.bucketsOf(this.teams, awayTeamId).remove(hold)
-    this.count(season, homeTeamId, slot.day, -1)
-    this.count(season, awayTeamId, slot.day, -1)
+    for (const counts of [this.dayCounts, this.weeklyCounts]) {
+      this.count(counts, season, homeTeamId, slot.day, -1)
+      this.count(counts, season, awayTeamId, slot.day, -1)
+    }
   }
 }

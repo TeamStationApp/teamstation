@@ -79,6 +79,15 @@ export interface EngineInput {
   fields: EngineField[]
   bookings: EngineBooking[]
   fixed: FixedGame[]
+  /** Live games/proposals for weekly caps, independently of matchup totals.
+   * Pending changes replace their game's weekly holding. Older inputs use fixed.
+   */
+  weeklyGames?: Array<{
+    seasonId: string
+    fieldId: string | null
+    teamIds: string[]
+    start: number
+  }>
   /** Team names, for the reasons and unmet lines. */
   teamNames: Record<string, string>
   /**

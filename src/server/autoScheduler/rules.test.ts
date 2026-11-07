@@ -70,6 +70,42 @@ const tooClose = (
 }
 
 describe('the scheduler’s hard rules', () => {
+  it('enforces one shared weekly portion cap per team with live holdings and self exclusion', () => {
+    const checked = game('candidate', 'sea_a', '14:00', '15:00', [
+      'home',
+      'away'
+    ])
+    const prior = game('prior', 'sea_a', '08:00', '09:00', ['home', 'visitor'])
+    expect(ruleProblem(checked, context([prior]))).includes(
+      'maximum of 1 games on weekend'
+    )
+    expect(
+      ruleProblem(checked, context([{ ...prior, seasonId: 'sea_b' }]))
+    ).equals(null)
+    expect(
+      ruleProblem(checked, context([{ ...prior, managerOnly: true }]))
+    ).equals(null)
+    expect(
+      ruleProblem(checked, context([{ ...prior, key: checked.key }]))
+    ).equals(null)
+    expect(
+      ruleProblem(checked, { ...context([prior]), weeklyOthers: [] })
+    ).equals(null)
+    const rules = context([])
+    rules.seasons.set('sea_a', {
+      bufferMinutes: 0,
+      doubleheaders: 'allowed',
+      maxGamesOnWeekend: 0
+    })
+    expect(ruleProblem(checked, rules)).includes('maximum of 0')
+    rules.seasons.set('sea_a', {
+      bufferMinutes: 0,
+      doubleheaders: 'allowed',
+      maxGamesOnWeekend: 2
+    })
+    expect(ruleProblem(checked, { ...rules, others: [prior] })).equals(null)
+  })
+
   it('a manager-only interval holds the coach but leaves the field and other teams free', () => {
     const outside = {
       ...game('outside', 'sea_b', '10:00', '11:00', ['external', 'visitor']),

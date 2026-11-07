@@ -8,6 +8,7 @@ import {
   compareScores,
   DOUBLEHEADERS,
   mixDeviation,
+  PREFERENCE,
   SCARCITY,
   SeasonLedger,
   SPACING,
@@ -31,6 +32,7 @@ describe('compareScores', () => {
     expect(TRUE_ORDER).deep.equals([
       UNPLACED,
       DOUBLEHEADERS,
+      PREFERENCE,
       TIME_OF_DAY,
       SPACING,
       WEEKDAY,

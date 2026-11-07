@@ -89,6 +89,7 @@ const tsSuites = [
   'src/server/autoScheduler/publish.test.ts',
   'src/server/autoScheduler/reschedule.test.ts',
   'src/server/autoScheduler/rules.test.ts',
+  'src/server/autoScheduler/managerPreview.unit.test.ts',
   'src/server/autoScheduler/buildOffThread.test.ts',
   // Fixes M2: a season is dates, scheduled in each field’s local time.
   'src/common/eventTime.test.ts',

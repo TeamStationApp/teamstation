@@ -171,7 +171,8 @@ describe('manager-aware preview decisions without a database', () => {
         ['pg_advisory_xact_lock', []],
         ['from "games"', []],
         ['from "group_requests"', []],
-        ['from "teams"', []]
+        ['from "teams"', []],
+        ['from "season_schedule_settings"', []]
       ],
       async db => {
         await assert.rejects(
@@ -197,6 +198,7 @@ describe('manager-aware preview decisions without a database', () => {
       await withQueryReplies(
         [
           ['from "schedule_previews"', [preview]],
+          ['from "season_schedule_settings"', []],
           ...(!overlap
             ? ([
                 ['update "schedule_previews"', []],
@@ -289,7 +291,8 @@ describe('manager-aware preview decisions without a database', () => {
     await withQueryReplies(
       [
         ['from "schedule_previews"', [published]],
-        ['pg_advisory_xact_lock', []]
+        ['pg_advisory_xact_lock', []],
+        ['from "season_schedule_settings"', []]
       ],
       async db => {
         await assert.rejects(

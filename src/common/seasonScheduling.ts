@@ -32,6 +32,10 @@ export function doubleheadersLabel(value: Doubleheaders): string {
       : 'Allowed'
 }
 
+export const GAME_WEEK_PARTS = ['weekend', 'weekdays'] as const
+export type GameWeekPart = (typeof GAME_WEEK_PARTS)[number]
+export const asGameWeekPart = asLiteral(...GAME_WEEK_PARTS)
+
 /** Games and the gaps between them start and run in 5-minute steps. */
 export const MINUTE_STEP = 5
 export const GAME_MINUTES = { min: 30, max: 600 } as const
@@ -50,6 +54,10 @@ export interface ScheduleSettings {
   /** Exhibition games each participant plays. */
   exhibitionGames: number
   doubleheaders: Doubleheaders
+  /** Maximum games per team across each portion of a Monday–Sunday week. */
+  maxGamesOnWeekdays?: number
+  maxGamesOnWeekend?: number
+  preferGameOn?: GameWeekPart
   startsOn: string
   endsOn: string
   blackouts: string[]
@@ -197,6 +205,15 @@ export function asScheduleSettings(raw: unknown): ScheduleSettings {
     regularGames: asGameCount('the regular-season games')(raw.regularGames),
     exhibitionGames: asGameCount('the exhibition games')(raw.exhibitionGames),
     doubleheaders: asDoubleheadersOf(raw.doubleheaders),
+    maxGamesOnWeekdays: asGameCount('the weekday maximum')(
+      raw.maxGamesOnWeekdays === undefined ? 1 : raw.maxGamesOnWeekdays
+    ),
+    maxGamesOnWeekend: asGameCount('the weekend maximum')(
+      raw.maxGamesOnWeekend === undefined ? 1 : raw.maxGamesOnWeekend
+    ),
+    preferGameOn: asGameWeekPart(
+      raw.preferGameOn === undefined ? 'weekend' : raw.preferGameOn
+    ),
     startsOn,
     endsOn,
     blackouts: asBlackouts(raw.blackouts ?? []),
@@ -237,6 +254,9 @@ export function defaultScheduleSettings(season: {
     regularGames: 0,
     exhibitionGames: 0,
     doubleheaders: 'ifNecessary',
+    maxGamesOnWeekdays: 1,
+    maxGamesOnWeekend: 1,
+    preferGameOn: 'weekend',
     startsOn: season.startsOn ?? `${season.year}-01-01`,
     endsOn: season.endsOn ?? `${season.year}-12-31`,
     blackouts: [],
@@ -258,13 +278,16 @@ function asWirePeriod(raw: unknown): WindowPeriod {
   return until == null ? period : { ...period, until }
 }
 
-const asWireSettings = asObject({
+const asWireSettings: Cleaner<ScheduleSettings> = asObject({
   fieldSize: asFieldSize,
   gameMinutes: asNumber,
   bufferMinutes: asNumber,
   regularGames: asNumber,
   exhibitionGames: asNumber,
   doubleheaders: asDoubleheaders,
+  maxGamesOnWeekdays: asOptional(asNumber, 1),
+  maxGamesOnWeekend: asOptional(asNumber, 1),
+  preferGameOn: asOptional(asGameWeekPart, 'weekend'),
   startsOn: asString,
   endsOn: asString,
   blackouts: asArray(asString),
