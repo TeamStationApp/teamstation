@@ -36,6 +36,22 @@ export interface WebKeyStoreOptions {
   /** Defaults to the browser's own, read when first used. */
   indexedDB?: IDBFactory
   subtle?: SubtleCrypto
+  /** Called with each connection as soon as it is open. Tests use it. */
+  onOpen?: (db: IDBDatabase) => void
+}
+
+const OPEN_TIMEOUT_MS = 5000
+
+function bounded<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error('Chat keys could not be opened'))
+    }, OPEN_TIMEOUT_MS)
+  })
+  return Promise.race([work, timeout]).finally(() => {
+    if (timer != null) clearTimeout(timer)
+  })
 }
 
 interface Sealed {
@@ -77,13 +93,57 @@ function isSealed(value: unknown): value is Sealed {
 export function webKeyStore(options: WebKeyStoreOptions = {}): ChatKeyStore {
   const factory = (): IDBFactory => options.indexedDB ?? globalThis.indexedDB
   const subtle = (): SubtleCrypto => options.subtle ?? globalThis.crypto.subtle
+  let chain: Promise<void> = Promise.resolve()
+  let generation = 0
+  let live: IDBDatabase | undefined
+  let listing: Promise<boolean> | undefined
+
+  function hide(): void {
+    generation += 1
+    const db = live
+    live = undefined
+    db?.close()
+  }
+  globalThis.window?.addEventListener?.('pagehide', hide)
+
+  function run<T>(ticket: number, op: () => Promise<T>): Promise<T> {
+    const result = chain.then(async () => {
+      if (ticket !== generation) {
+        throw new Error('Chat keys could not be opened')
+      }
+      if (listing != null) await listing
+      return await op()
+    })
+    chain = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
 
   async function open(): Promise<IDBDatabase> {
+    const openedAt = generation
     const request = factory().open(KEY_DATABASE, 1)
     request.onupgradeneeded = () => {
       request.result.createObjectStore(STORE)
     }
-    return await done(request)
+    const db = await bounded(done(request))
+    live = db
+    options.onOpen?.(db)
+    if (openedAt !== generation) {
+      finish(db)
+      throw new Error('Chat keys could not be opened')
+    }
+    return db
+  }
+
+  function finish(db: IDBDatabase): void {
+    if (live === db) live = undefined
+    try {
+      db.close()
+    } catch {
+      // pagehide already closed it.
+    }
   }
 
   async function read<T>(db: IDBDatabase, key: string): Promise<T | undefined> {
@@ -92,9 +152,13 @@ export function webKeyStore(options: WebKeyStoreOptions = {}): ChatKeyStore {
       T | undefined
   }
 
-  async function listed(): Promise<boolean> {
-    const names = await factory().databases()
-    return names.some(found => found.name === KEY_DATABASE)
+  function listed(): Promise<boolean> {
+    listing ??= bounded(Promise.resolve().then(() => factory().databases()))
+      .then(names => names.some(found => found.name === KEY_DATABASE))
+      .finally(() => {
+        listing = undefined
+      })
+    return listing
   }
 
   /**
@@ -208,99 +272,118 @@ export function webKeyStore(options: WebKeyStoreOptions = {}): ChatKeyStore {
 
   return {
     async load(userId: string): Promise<ChatKeyRecord | undefined> {
-      // Opening would create `ts-chat`. A browser with no record stays without one.
-      if (!(await listed())) return undefined
-      const db = await open()
-      try {
-        const own = await read<unknown>(db, recordKey(userId))
-        if (own != null) {
-          const record = await openSealed(db, own)
-          await dropLegacyIfOwner(db, userId)
-          return record
+      const ticket = generation
+      const present = listed()
+      return await run(ticket, async () => {
+        // Opening would create `ts-chat`. A browser with no record stays without one.
+        if (!(await present)) return undefined
+        const db = await open()
+        try {
+          const own = await read<unknown>(db, recordKey(userId))
+          if (own != null) {
+            const record = await openSealed(db, own)
+            await dropLegacyIfOwner(db, userId)
+            return record
+          }
+          return await migrate(db, userId)
+        } finally {
+          finish(db)
         }
-        return await migrate(db, userId)
-      } finally {
-        db.close()
-      }
+      })
     },
 
     async save(record: ChatKeyRecord): Promise<void> {
-      const db = await open()
-      try {
-        const key = await wrappingKey(db)
-        const iv = globalThis.crypto.getRandomValues(new Uint8Array(12))
-        const ciphertext = await subtle().encrypt(
-          { name: 'AES-GCM', iv, additionalData: AAD },
-          key,
-          utf8(recordToJson(record))
-        )
-        const transaction = db.transaction(STORE, 'readwrite')
-        transaction
-          .objectStore(STORE)
-          .put({ iv, ciphertext }, recordKey(record.userId))
-        await committed(transaction)
-      } finally {
-        db.close()
-      }
+      const ticket = generation
+      return await run(ticket, async () => {
+        const db = await open()
+        try {
+          const key = await wrappingKey(db)
+          const iv = globalThis.crypto.getRandomValues(new Uint8Array(12))
+          const ciphertext = await subtle().encrypt(
+            { name: 'AES-GCM', iv, additionalData: AAD },
+            key,
+            utf8(recordToJson(record))
+          )
+          const transaction = db.transaction(STORE, 'readwrite')
+          transaction
+            .objectStore(STORE)
+            .put({ iv, ciphertext }, recordKey(record.userId))
+          await committed(transaction)
+        } finally {
+          finish(db)
+        }
+      })
     },
 
     async wipe(userId: string): Promise<void> {
-      if (!(await listed())) return
-      const db = await open()
-      try {
-        const transaction = db.transaction(STORE, 'readwrite')
-        transaction.objectStore(STORE).delete(recordKey(userId))
-        await committed(transaction)
-        await dropWrapIfIdle(db)
-      } finally {
-        db.close()
-      }
+      const ticket = generation
+      const present = listed()
+      return await run(ticket, async () => {
+        if (!(await present)) return
+        const db = await open()
+        try {
+          const transaction = db.transaction(STORE, 'readwrite')
+          transaction.objectStore(STORE).delete(recordKey(userId))
+          await committed(transaction)
+          await dropWrapIfIdle(db)
+        } finally {
+          finish(db)
+        }
+      })
     },
 
     async exists(userId: string): Promise<boolean> {
-      // Asked of the list first: opening `ts-chat` would make it.
-      if (!(await listed())) return false
-      const db = await open()
-      try {
-        const own = await read<unknown>(db, recordKey(userId))
-        if (own != null) {
-          await dropLegacyIfOwner(db, userId)
-          return true
+      const ticket = generation
+      const present = listed()
+      return await run(ticket, async () => {
+        // Asked of the list first: opening `ts-chat` would make it.
+        if (!(await present)) return false
+        const db = await open()
+        try {
+          const own = await read<unknown>(db, recordKey(userId))
+          if (own != null) {
+            await dropLegacyIfOwner(db, userId)
+            return true
+          }
+          return (await migrate(db, userId)) != null
+        } finally {
+          finish(db)
         }
-        return (await migrate(db, userId)) != null
-      } finally {
-        db.close()
-      }
+      })
     },
 
     async discardLegacy(userId: string): Promise<void> {
-      if (!(await listed())) return
-      const db = await open()
-      try {
-        const legacy = await read<unknown>(db, LEGACY_RECORD_KEY)
-        if (legacy == null) {
+      const ticket = generation
+      const present = listed()
+      return await run(ticket, async () => {
+        if (!(await present)) return
+        const db = await open()
+        try {
+          const legacy = await read<unknown>(db, LEGACY_RECORD_KEY)
+          if (legacy == null) {
+            const transaction = db.transaction(STORE, 'readwrite')
+            transaction.objectStore(STORE).delete(LEGACY_RECORD_KEY)
+            await committed(transaction)
+            await dropWrapIfIdle(db)
+            return
+          }
+          let remove = false
+          try {
+            const record = await openSealed(db, legacy)
+            remove = record.userId === userId
+          } catch (error) {
+            if (!(error instanceof UnreadableKeyRecordError)) throw error
+            remove = true
+          }
+          if (!remove) return
           const transaction = db.transaction(STORE, 'readwrite')
           transaction.objectStore(STORE).delete(LEGACY_RECORD_KEY)
           await committed(transaction)
           await dropWrapIfIdle(db)
-          return
+        } finally {
+          finish(db)
         }
-        let remove = false
-        try {
-          const record = await openSealed(db, legacy)
-          remove = record.userId === userId
-        } catch (error) {
-          if (!(error instanceof UnreadableKeyRecordError)) throw error
-          remove = true
-        }
-        if (!remove) return
-        const transaction = db.transaction(STORE, 'readwrite')
-        transaction.objectStore(STORE).delete(LEGACY_RECORD_KEY)
-        await committed(transaction)
-        await dropWrapIfIdle(db)
-      } finally {
-        db.close()
-      }
+      })
     }
   }
 }
