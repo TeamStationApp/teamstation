@@ -798,4 +798,96 @@ describe('chat key store in the browser', function () {
       })
     expect(String(failed)).contains('blocked')
   })
+
+  it('shares one databases() call across overlapping loads', async function () {
+    const factory = new IDBFactory()
+    let calls = 0
+    let release: () => void = () => undefined
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const databases = factory.databases.bind(factory)
+    factory.databases = async () => {
+      calls += 1
+      await gate
+      return await databases()
+    }
+    const store = webKeyStore({ indexedDB: factory })
+    const first = store.load(userIdOfGumbo(12))
+    const second = store.load(userIdOfGumbo(12))
+    release()
+    expect(await first).equals(undefined)
+    expect(await second).equals(undefined)
+    expect(calls).equals(1)
+    expect(await factory.databases()).deep.equals([])
+  })
+
+  it('rejects a databases() that never settles, then loads again', async function () {
+    this.timeout(12000)
+    const started = Date.now()
+    let hung = true
+    const factory = {
+      databases: () =>
+        hung ? new Promise(() => undefined) : Promise.resolve([]),
+      open: () => {
+        throw new Error('must not open')
+      }
+    } as unknown as IDBFactory
+    const store = webKeyStore({ indexedDB: factory })
+    let failed: unknown
+    await store.load(userIdOfGumbo(12)).catch((error: unknown) => {
+      failed = error
+    })
+    expect(failed).instanceOf(Error)
+    expect((failed as Error).message).equals('Chat keys could not be opened')
+    expect(Date.now() - started).to.be.below(6000)
+    hung = false
+    expect(await store.load(userIdOfGumbo(12))).equals(undefined)
+  })
+
+  it('rejects an open() that never settles, then loads again', async function () {
+    this.timeout(12000)
+    const started = Date.now()
+    let hung = true
+    const factory = {
+      databases: async () => (hung ? [{ name: KEY_DATABASE }] : []),
+      open: () => ({}) as IDBOpenDBRequest
+    } as unknown as IDBFactory
+    const store = webKeyStore({ indexedDB: factory })
+    let failed: unknown
+    await store.load(userIdOfGumbo(12)).catch((error: unknown) => {
+      failed = error
+    })
+    expect(failed).instanceOf(Error)
+    expect((failed as Error).message).equals('Chat keys could not be opened')
+    expect(Date.now() - started).to.be.below(6000)
+    hung = false
+    expect(await store.load(userIdOfGumbo(12))).equals(undefined)
+  })
+
+  it('closes the open connection on pagehide and loads the saved record afterwards', async function () {
+    const factory = new IDBFactory()
+    let opens = 0
+    let closes = 0
+    const store = webKeyStore({
+      indexedDB: factory,
+      onOpen(db) {
+        opens += 1
+        if (opens !== 2) return
+        const close = db.close.bind(db)
+        db.close = () => {
+          closes += 1
+          close()
+        }
+        window.dispatchEvent(new window.Event('pagehide'))
+      }
+    })
+    const record = sample()
+    await store.save(record)
+    await store.load(record.userId).catch(() => undefined)
+    expect(closes).to.be.greaterThan(0)
+    const loaded = await store.load(record.userId)
+    expect(loaded?.userId).equals(record.userId)
+    expect(loaded?.deviceId).equals(record.deviceId)
+  })
 })
