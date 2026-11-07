@@ -674,10 +674,12 @@ async function until<T>(
 
 /**
  * A leased iPhone's keyboard can drop or reorder fast input (an e-mail lost
- * its "@ch"): there, credentials are typed one character at a time.
+ * its "@ch"): there, credentials are typed one character at a time. A
+ * physical Android 17 phone replaces the field on every input, so Android
+ * always types the whole credential at once.
  */
 async function typeCredential(m: Device, text: string): Promise<void> {
-  if (process.env.CHAT_UI_NATIVE_PHYSICAL !== '1') {
+  if (process.env.CHAT_UI_NATIVE_PHYSICAL !== '1' || platform !== 'ios') {
     await m.inputText({ text })
     return
   }
