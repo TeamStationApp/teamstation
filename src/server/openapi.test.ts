@@ -52,6 +52,7 @@ import { onboardingRoutes } from './routes/onboarding'
 import { peopleRoutes } from './routes/people'
 import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
+import { recapRoutes } from './routes/recap'
 import { scheduleRoutes } from './routes/schedule'
 import { schedulePreviewRoutes } from './routes/schedulePreviews'
 import { schedulingSetupRoutes } from './routes/schedulingSetup'
@@ -171,6 +172,7 @@ describe('the API document', function () {
       ),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(teamMemberRoutes(db, media)),
+      ...routesOf(recapRoutes(db)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
       ...routesOf(narrationRoutes(db, null)),
@@ -243,6 +245,7 @@ describe('the API document', function () {
       ),
       ...routesOf(scheduleRoutes(db)),
       ...routesOf(teamMemberRoutes(db, media)),
+      ...routesOf(recapRoutes(db)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
       ...routesOf(narrationRoutes(db, null)),

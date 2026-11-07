@@ -1553,7 +1553,20 @@ export interface ChatMessagePinsTable {
   pinned_at: Generated<Date>
 }
 
+export interface GameRecapsTable {
+  game_id: string
+  request_id: string
+  digest: string
+  context_digest: string | null
+  status: 'pending' | 'ready' | 'failed'
+  attempts: number
+  available_at: Timestamp
+  lease_id: string | null
+  document: Json | null
+}
+
 export interface Database {
+  game_recaps: GameRecapsTable
   umpire_note_types: UmpireLevelsTable
   game_umpire_notes: { game_id: string; note_type_id: string; value: string }
   league_umpires: LeagueUmpiresTable

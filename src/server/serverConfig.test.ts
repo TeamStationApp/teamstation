@@ -169,3 +169,27 @@ describe('the database addresses', function () {
     ).deep.equals({ worker: 4, primary: 3, statsBuilder: 3, ingest: 3 })
   })
 })
+
+describe('recap configuration', function () {
+  it('keeps its key dedicated even when dictation has an Anthropic key', function () {
+    expect(
+      asServerConfig({
+        dictation: {
+          apiKey: 'speech-placeholder',
+          anthropic: { apiKey: 'dictation-placeholder' }
+        }
+      }).recap
+    ).equals(undefined)
+    expect(
+      asServerConfig({ recap: { apiKey: 'recap-placeholder' } }).recap
+    ).deep.equals({
+      apiKey: 'recap-placeholder',
+      baseUrl: 'https://api.anthropic.com/v1'
+    })
+    expect(
+      asServerConfig({ recap: { baseUrl: 'https://model.example.test/v1' } })
+        .recap?.apiKey
+    ).equals(undefined)
+    expect(() => asServerConfig({ recap: { apiKey: 1 } })).throws()
+  })
+})

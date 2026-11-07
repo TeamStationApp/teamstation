@@ -6288,6 +6288,27 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games/{gameId}/recap': {
+        get: {
+          summary: 'Read a finalized game recap (members only)',
+          description:
+            'Returns status absent, pending, failed, or ready. Ready includes a headline, dateLine and paragraphs of sentences with text, kind (play, summary, totals) and source play indexes. Clips are keyed by play index and contain videoId, start and end seconds. Playback still requires the video playback resource. Non-final games return absent. A first member read queues a missing final-game recap and returns pending. Generation also runs asynchronously after a final-game play post; three failures wait for another post. Completion or failure sends an event screen-scope change over the socket so viewers read the result without polling.',
+          parameters: [
+            {
+              name: 'gameId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            '200': { description: 'Recap state and member content' },
+            '401': { description: 'Sign in required' },
+            '403': { description: 'Membership required' },
+            '404': { description: 'Game not found' }
+          }
+        }
+      },
       '/games/{gameId}/box-score': {
         get: {
           summary: "A game's totals or historical playback statistics",
