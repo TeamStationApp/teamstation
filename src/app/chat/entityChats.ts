@@ -63,8 +63,14 @@ export function entityPreviewLoader(
         )
           return
         await engine.start(true)
-      })().catch(() => undefined)
-      await starting
+      })()
+      try {
+        await starting
+      } catch {
+        // A rejected start is tried again on the next call.
+      } finally {
+        if (engine.status !== 'ready') starting = undefined
+      }
     }
     if (engine.status !== 'ready') return
     await Promise.all(
