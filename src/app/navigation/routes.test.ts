@@ -875,3 +875,11 @@ describe('where sign-in sends you afterwards', function () {
     expect(safeNext('')).equals(undefined)
   })
 })
+
+describe('Recap addresses', () => {
+  it('round-trips an explicitly selected recap', () => {
+    const route = parseRoute('/games/gam_recap', '?tab=recap')
+    expect(route).includes({ name: 'game', gameId: 'gam_recap', tab: 'recap' })
+    expect(routePath(route)).equals('/games/gam_recap?tab=recap')
+  })
+})

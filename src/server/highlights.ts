@@ -391,7 +391,7 @@ export function leadFor(
     : settings.leadSec
 }
 
-function toOffset(
+export function toOffset(
   atMs: number,
   videoStartMs: number,
   syncOffsetSec: number

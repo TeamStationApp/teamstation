@@ -315,7 +315,7 @@ export type Pushed =
       gameId: string
       title: string
       /** Which half of the game screen to open on. */
-      tab?: 'info' | 'boxScore' | 'watch' | 'score'
+      tab?: 'recap' | 'info' | 'boxScore' | 'watch' | 'score'
       /** Start the video rather than waiting to be asked. */
       autoPlay?: boolean
       /** Which video, and where in it, from a link to a moment. */
@@ -4414,7 +4414,7 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
 /** A game's page, beneath a screen opened from it. */
 function gameUnder(
   gameId: string,
-  section?: 'info' | 'boxScore' | 'watch' | 'score'
+  section?: 'recap' | 'info' | 'boxScore' | 'watch' | 'score'
 ): Pushed {
   return { name: 'game', gameId, title: '', tab: section }
 }

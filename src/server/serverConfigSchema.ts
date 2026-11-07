@@ -368,6 +368,14 @@ export const asServerConfig = asObject({
     })
   ),
 
+  /** A dedicated recap key; never falls back to another model feature's key. */
+  recap: asOptional(
+    asObject({
+      apiKey: asOptional(asString),
+      baseUrl: asOptional(asString, 'https://api.anthropic.com/v1')
+    })
+  ),
+
   /**
    * Tess, the assistant: Anthropic's Messages API. `apiKey` falls back to
    * dictation's Anthropic key; with neither, Tess is off and `/health` says

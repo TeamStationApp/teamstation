@@ -55,6 +55,8 @@ import { oauthInteractionRoutes } from './oauth/routes'
 import { requestLogs, startServerLogging } from './observability/logging'
 import { startAnalytics } from './observability/service'
 import { openApiDocument } from './openapi'
+import { recapWriter } from './recap/model'
+import { startRecaps } from './recap/worker'
 import { speechSettings } from './replay/speech'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
@@ -94,6 +96,7 @@ import { onboardingRoutes } from './routes/onboarding'
 import { peopleRoutes } from './routes/people'
 import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
+import { recapRoutes } from './routes/recap'
 import { scheduleRoutes } from './routes/schedule'
 import { schedulePreviewRoutes } from './routes/schedulePreviews'
 import { schedulingSetupRoutes } from './routes/schedulingSetup'
@@ -456,8 +459,9 @@ function jobsOn(
         console.log(message)
       })
     },
-    startStatsBuilder: () =>
-      startStatsBuilder({
+    startStatsBuilder: () => {
+      const recaps = startRecaps(db, recapWriter(serverConfig.recap))
+      const stats = startStatsBuilder({
         enabled: serverConfig.statsBuilder,
         supervise: () =>
           superviseStatsBuilder({
@@ -472,6 +476,13 @@ function jobsOn(
           console.log(message)
         }
       })
+      return {
+        stop: async signal => {
+          await recaps.stop()
+          await stats.stop(signal)
+        }
+      }
+    }
   }
 }
 
@@ -783,6 +794,7 @@ function runWorker(): void {
       cache: rosterCache
     })
   )
+  app.use('/api/v1', recapRoutes(db))
   app.use('/api/v1', narrationRoutes(db, speechSettings(serverConfig)))
   app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
   app.use('/api/v1', adminRoutes())

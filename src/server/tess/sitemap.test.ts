@@ -181,6 +181,7 @@ describe('Tess sitemap', function () {
     expect(
       routeOf(sitemap, 'game').tabs.map(tab => [tab.param, tab.id, tab.label])
     ).deep.equals([
+      ['tab', 'recap', 'Recap'],
       ['tab', 'info', 'Info'],
       ['tab', 'boxScore', 'Box score'],
       ['tab', 'watch', 'Videos']

@@ -41,7 +41,7 @@ describe('event default and scheduled end policy', () => {
     )
     expect(eventEndTime({ status: 'scheduled' })).equals(null)
     expect(defaultEventTab({ status: 'scheduled' })).equals('info')
-    expect(defaultEventTab({ status: 'final' })).equals('boxScore')
+    expect(defaultEventTab({ status: 'final' })).equals('recap')
   })
   it('keeps non-game Info before and after their end or a supplied scoring flag', () => {
     const dinner = {
@@ -81,5 +81,22 @@ describe('event default and scheduled end policy', () => {
     expect(
       gameSectionOrder({ ...event, videos: live }, Date.parse(startAt))
     ).deep.equals(['watch', 'boxScore', 'info'])
+  })
+})
+
+describe('Recap section eligibility', () => {
+  it('leads every final game including a live recording, but no other status or event', () => {
+    expect(
+      gameSectionOrder({
+        status: 'final',
+        videos: [{ status: 'live' }],
+        hasScoringEvents: true
+      })
+    ).deep.equals(['recap', 'boxScore', 'watch', 'info'])
+    for (const status of ['scheduled', 'inProgress', 'cancelled'])
+      expect(gameSectionOrder({ status })).not.includes('recap')
+    expect(
+      gameSectionOrder({ status: 'final', eventKind: 'event' })
+    ).deep.equals(['info'])
   })
 })

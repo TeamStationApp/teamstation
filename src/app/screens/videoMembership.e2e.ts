@@ -27,6 +27,8 @@ async function main(): Promise<void> {
     out,
     'chrome'
   )
+  // The isolated fixture's fake object store uses a random localhost port.
+  await s.page.setBypassCSP(true)
   const game = f.games[0]
   const gamePath = `/games/${game.id}?tab=watch`
   const playbackCalls: string[] = []

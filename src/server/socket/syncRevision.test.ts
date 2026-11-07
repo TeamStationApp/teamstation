@@ -115,18 +115,21 @@ describe('announcing screen scope changes', function () {
         )
       ).rows
     try {
-      const before = migrations.filter(m => m.name < '110dropSyncClock')
+      const throughSyncClock = migrations.filter(
+        m => m.name <= '110dropSyncClock'
+      )
+      const before = throughSyncClock.filter(m => m.name < '110dropSyncClock')
       await migrateUp(pool, before)
       await pool.query('update sync_clock set value = 41 where id = 1')
-      await migrateUp(pool, migrations)
+      await migrateUp(pool, throughSyncClock)
       expect(await clock()).deep.equals([])
-      expect(await migrateDown(pool, migrations, 1)).deep.equals([
+      expect(await migrateDown(pool, throughSyncClock, 1)).deep.equals([
         '110dropSyncClock'
       ])
       expect(
         (await pool.query('select id, value::text from sync_clock')).rows
       ).deep.equals([{ id: 1, value: '0' }])
-      await migrateUp(pool, migrations)
+      await migrateUp(pool, throughSyncClock)
       expect(await clock()).deep.equals([])
     } finally {
       await pool.end()

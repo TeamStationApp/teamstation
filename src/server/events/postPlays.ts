@@ -33,6 +33,7 @@ import type { Database, EventsTable } from '../db/database'
 import { resolvedFenceDistance } from '../games/fenceDistance'
 import { scoringActivitySql } from '../games/scoringActivity'
 import { radarSettings } from '../nodeSettings'
+import { requestRecap } from '../recap/queue'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
 import {
   type NamedPlays,
@@ -656,6 +657,7 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       priorPlaysDigest: prior,
       generation: game.play_generation
     }
+    await requestRecap(trx, gameId, finalNow, digests.playsDigest)
     const senderHalves = (await options.halves?.(trx, game)) ?? []
     // Every viewer of the game may be sent what this post wrote, named as
     // they read it: never with the sender's halves. Not when the game's book

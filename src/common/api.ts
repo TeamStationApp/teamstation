@@ -44,6 +44,7 @@ import {
   type GameProposal,
   type GameScheduleProposal
 } from './gameApprovals'
+import { asGameRecap, type GameRecap } from './gameRecap'
 import type { GameStatistics, StatisticsQuery } from './gameStatistics'
 import {
   asGroupRef,
@@ -5653,6 +5654,14 @@ export class TeamStationClient {
       `/games/${encodeURIComponent(gameId)}/live-streams/${encodeURIComponent(streamId)}/end`,
       asLiveStream,
       {}
+    )
+  }
+
+  async gameRecap(gameId: string): Promise<GameRecap> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/recap`,
+      asGameRecap
     )
   }
 
