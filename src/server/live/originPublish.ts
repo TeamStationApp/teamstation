@@ -115,7 +115,10 @@ export function segmentEndsMs(text: string): number[] {
   return ends
 }
 
-/** A playlist without the pieces `drop` names, and the tags that went with them. */
+/**
+ * A playlist without the pieces `drop` names, and the tags that went with
+ * them, but for a later part's map.
+ */
 export function withoutSegments(
   text: string,
   drop: (name: string) => boolean
@@ -123,10 +126,27 @@ export function withoutSegments(
   const kept: string[] = []
   let pending: string[] = []
   let media = false
+  let keptAny = false
   for (const line of text.split('\n')) {
     const value = line.trim()
     if (value !== '' && !value.startsWith('#')) {
-      if (!drop(value)) kept.push(...pending, line)
+      if (!drop(value)) {
+        kept.push(...pending, line)
+        keptAny = true
+      } else if (pending.some(held => held.trim().startsWith('#EXT-X-MAP:'))) {
+        // A later part's map stays with the pieces under it, and the break
+        // into it after any piece kept before: dropping its first piece must
+        // not leave the rest under the earlier part's init segment.
+        kept.push(
+          ...pending.filter(held => {
+            const tag = held.trim()
+            return (
+              tag.startsWith('#EXT-X-MAP:') ||
+              (keptAny && tag === '#EXT-X-DISCONTINUITY')
+            )
+          })
+        )
+      }
       pending = []
       media = true
     } else if (
