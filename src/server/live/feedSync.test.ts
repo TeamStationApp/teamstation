@@ -38,7 +38,12 @@ import {
 } from './controller'
 import { OriginPublisher } from './originPublisher'
 import { revokeStreams } from './revokeStreams'
-import { liveKeys, resetForTest, statusFor } from './splitter'
+import {
+  liveKeys,
+  reportPublishingForTest,
+  resetForTest,
+  statusFor
+} from './splitter'
 
 /**
  * The controller syncs on `live_changes` notices, its own deadlines, feed
@@ -420,6 +425,40 @@ describe('the live controller on the change feed', function () {
       5000
     )
     expect(closed - begun).within(1200, 2500)
+  })
+
+  it('closes the playlist within a tick of the publisher being gone, when the grace ran out while it was still reported', async function () {
+    const stream = await addStream()
+    await fixture!.db
+      .updateTable('live_streams')
+      .set({
+        first_published_at: new Date(Date.now() - 2 * RECONNECT_GRACE_MS),
+        // The grace runs out soon after the start, with the publisher reported.
+        last_published_at: new Date(Date.now() - RECONNECT_GRACE_MS + 800)
+      })
+      .where('id', '=', stream.id)
+      .execute()
+    const dir = liveVideoDir(mediaRoot, stream.videoId)
+    await mkdir(dir, { recursive: true })
+    const playlist = join(dir, 'master.m3u8')
+    await run('sh', [
+      '-c',
+      `printf '#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nseg000000.m4s\n' > '${playlist}'`
+    ])
+    // The ingest still says a publisher is there, so the due close waits.
+    await start({}, { resyncMs: 60_000 })
+    reportPublishingForTest(stream.key, true)
+    await wait(2000)
+    expect(await readFile(playlist, 'utf8')).not.contains('#EXT-X-ENDLIST')
+    // Gone: no notice and no resync for a minute, yet the close follows soon.
+    const gone = Date.now()
+    reportPublishingForTest(stream.key, false)
+    const closed = await until(
+      async () => (await readFile(playlist, 'utf8')).includes('#EXT-X-ENDLIST'),
+      'the playlist closed',
+      5000
+    )
+    expect(closed - gone).below(2500)
   })
 
   it('runs the safety resync every live.resyncMs', async function () {

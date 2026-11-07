@@ -256,8 +256,6 @@ const work = new Map<string, Promise<void>>()
 const anchorCursors = new Map<string, ScanCursor>()
 /** What the controller last read of an origin's video row. */
 interface OriginVideo {
-  storage: string | null
-  spacesVerifiedAt: Date | null
   /**
    * Where its objects go, fixed when the origin starts: one recording never
    * spans two prefixes, so a secret the row gains later is not taken up.
@@ -559,11 +557,7 @@ export async function startLiveController(
     const spaceSecret = secrets[index]
     if (spaceSecret === undefined) continue
     if (generation !== originGeneration) break
-    const origin = startOrigin(next, row.videoId, row.id, {
-      storage: null,
-      spacesVerifiedAt: null,
-      spaceSecret
-    })
+    const origin = startOrigin(next, row.videoId, row.id, { spaceSecret })
     if (origin != null) queueOrigin(row.videoId, origin)
   }
 
@@ -1197,8 +1191,6 @@ export async function beganPublishing(
       : await originSecret(current, videoId, row.videoSpaceSecret)
     if (generation !== originGeneration) return
     const origin = startOrigin(current, videoId, liveStreamId, {
-      storage: null,
-      spacesVerifiedAt: null,
       spaceSecret
     })
     if (origin != null) queueOrigin(videoId, origin)
@@ -1408,9 +1400,7 @@ export async function sync(
       'live_streams.last_error as lastError',
       'live_streams.local_recording as localRecording',
       'games.end_at as gameEndAt',
-      'videos.start_at as videoStartAt',
-      'videos.storage as videoStorage',
-      'videos.spaces_verified_at as videoSpacesVerifiedAt'
+      'videos.start_at as videoStartAt'
     ])
     .where(eb =>
       eb.or([
@@ -1461,6 +1451,12 @@ export async function sync(
   let soonest = Infinity
   const changesAt = (at: number | undefined): void => {
     if (at != null && at > now.getTime() && at < soonest) soonest = at
+  }
+  // A moment that has come but whose action waits on the ingest (work in
+  // flight, a publisher still reported) writes no row and sends no notice:
+  // asked again a tick from now, not at the next resync.
+  const deferred = (): void => {
+    soonest = Math.min(soonest, Date.now() + LOCAL_TICK_MS)
   }
   try {
     const authorized = await publishingAuthority(
@@ -1520,9 +1516,10 @@ export async function sync(
           finish(row.id, 'the stream was quiet after the scheduled game end')
           continue
         }
+        deferred()
       }
       if (row.videoId == null) continue
-      await closeAfterGrace(current, row, now)
+      if (await closeAfterGrace(current, row, now)) deferred()
 
       // A stream already running is left alone: cutting a game off part way
       // through is worse than letting it use the last of the disk, and ffmpeg
@@ -1597,10 +1594,10 @@ export async function sync(
 }
 
 /**
- * What a sync's rows say about the origins held here. A video among them
- * keeps what the row says of it on its origin; one that is not is looked up,
- * all of them in one read, and one whose row has gone is removed from the
- * Space. The rows' videos are the ones whose own notices wake a sync.
+ * What a sync's rows say about the origins held here. A video not among them
+ * is looked up, all of them in one read, and one whose row has gone is
+ * removed from the Space. The rows' videos are the ones whose own notices
+ * wake a sync.
  *
  * The row's `space_secret` is not taken up by an origin already publishing:
  * its objects stay under the prefix it started on (its `spaceSecret`), and
@@ -1608,21 +1605,13 @@ export async function sync(
  */
 async function settleOrigins(
   current: LiveControllerOptions,
-  rows: ReadonlyArray<{
-    videoId: string | null
-    videoStorage: string | null
-    videoSpacesVerifiedAt: Date | null
-  }>,
+  rows: ReadonlyArray<{ videoId: string | null }>,
   generation: number
 ): Promise<void> {
   const listed = new Set<string>()
   for (const row of rows) {
     if (row.videoId == null) continue
     listed.add(row.videoId)
-    const origin = origins.get(row.videoId)
-    if (origin == null) continue
-    origin.storage = row.videoStorage
-    origin.spacesVerifiedAt = row.videoSpacesVerifiedAt
   }
   syncedVideos = listed
   const unlisted = [...origins.keys()].filter(videoId => !listed.has(videoId))
@@ -1647,7 +1636,8 @@ async function settleOrigins(
  * process too. A stream the ingest says is publishing again is left alone
  * whatever the row says: the row learns of a reconnect a moment after the
  * ingest does, and closing the playlist then would put an `ENDLIST` under a
- * writer that has just started appending to it.
+ * writer that has just started appending to it. Says whether the close is
+ * due and waits on that, so the sync asks again soon.
  */
 async function closeAfterGrace(
   current: LiveControllerOptions,
@@ -1658,19 +1648,20 @@ async function closeAfterGrace(
     lastPublishedAt: Date | string | null
   },
   now: Date
-): Promise<void> {
+): Promise<boolean> {
   if (row.state !== 'idle' || row.lastPublishedAt == null) {
     closedAfterGrace.delete(row.id)
-    return
+    return false
   }
   const leftAt = new Date(row.lastPublishedAt).getTime()
-  if (now.getTime() - leftAt <= RECONNECT_GRACE_MS) return
-  if (closedAfterGrace.get(row.id) === leftAt) return
+  if (now.getTime() - leftAt <= RECONNECT_GRACE_MS) return false
+  if (closedAfterGrace.get(row.id) === leftAt) return false
   const key = tracked.get(row.id)?.key
   const away = (): boolean =>
     key == null || statusFor(key)?.ingress.publishing !== true
-  if (!away()) return
-  if (row.videoId == null) return
+  // Due, but the ingest still reports the publisher: the caller asks again.
+  if (!away()) return true
+  if (row.videoId == null) return false
   closedAfterGrace.set(row.id, leftAt)
   await closePlaylist(
     current.mediaRoot,
@@ -1678,6 +1669,7 @@ async function closeAfterGrace(
     current.log ?? console.log,
     away
   )
+  return false
 }
 
 /**
@@ -2177,8 +2169,6 @@ async function closeOrigin(
     // A held origin keeps the prefix it published under; one retried after a
     // restart publishes under the row's.
     const origin = startOrigin(current, videoId, liveStreamId, {
-      storage: null,
-      spacesVerifiedAt: null,
       spaceSecret: closing.spaceSecret
     })
     if (origin == null || space == null)
