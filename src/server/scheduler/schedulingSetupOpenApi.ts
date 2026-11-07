@@ -67,6 +67,29 @@ export function schedulingSetupPaths(
         type: 'string',
         enum: ['never', 'ifNecessary', 'allowed']
       },
+      maxGamesOnWeekdays: {
+        type: 'integer',
+        minimum: 0,
+        maximum: 200,
+        default: 1,
+        description:
+          'Maximum games per team across Monday–Friday of each week. Omitted on update preserves the saved value.'
+      },
+      maxGamesOnWeekend: {
+        type: 'integer',
+        minimum: 0,
+        maximum: 200,
+        default: 1,
+        description:
+          'Maximum games per team across Saturday–Sunday of each week. Omitted on update preserves the saved value.'
+      },
+      preferGameOn: {
+        type: 'string',
+        enum: ['weekend', 'weekdays'],
+        default: 'weekend',
+        description:
+          'Preferred portion of the week; omitted on update preserves the saved value.'
+      },
       startsOn: { type: 'string', format: 'date' },
       endsOn: { type: 'string', format: 'date' },
       blackouts: {

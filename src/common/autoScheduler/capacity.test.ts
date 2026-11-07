@@ -71,6 +71,12 @@ describe('capacityCause', () => {
     const cause =
       'Demo Hawks’s Manager/Head Coach is booked during otherwise available game times'
     expect(buildOptions(run)).includes({ blocking: cause })
+    run.seasons[0].settings.maxGamesOnWeekend = 0
+    expect(buildOptions(run)).includes({
+      blocking:
+        'this season’s weekday/weekend game maximums leave too few available games'
+    })
+    run.seasons[0].settings.maxGamesOnWeekend = 200
     run.required = [
       {
         key: 'replace',
