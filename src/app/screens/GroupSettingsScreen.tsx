@@ -19,6 +19,7 @@ import { LocationRow } from '../components/LocationRow'
 import { useSceneReveals } from '../components/sceneShown'
 import { useTitleHandoff } from '../components/useTitleHandoff'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   UmpireSettingsCard,
@@ -39,6 +40,7 @@ export function GroupSettingsScreen({
   onRequest,
   onLocation,
   onOpenTimeFrame,
+  onOpenPlayingTime,
   onAddPeople,
   onInvites,
   onPromote,
@@ -53,6 +55,8 @@ export function GroupSettingsScreen({
   onLocation?: (ref: GroupRef) => void
   /** A season's Time frame row: opens the screen that sets its date range. */
   onOpenTimeFrame?: (ref: GroupRef) => void
+  /** A season's or team's Playing Time Rules row: opens the rules. */
+  onOpenPlayingTime?: (ref: { kind: 'season' | 'team'; id: string }) => void
   onAddPeople?: (ref: GroupRef) => void
   onInvites?: (ref: GroupRef) => void
   onUmpires?: (screen: UmpireSettingsDestination) => void
@@ -283,6 +287,20 @@ export function GroupSettingsScreen({
                     update({ playerNamePrivacy }).catch(() => undefined)
                   }}
                 />
+                {detail.group.kind !== 'league' && (
+                  <ListRow
+                    title={lstrings.playing_time_title}
+                    subtitle={playingTimeRowDetail(detail)}
+                    disabled={busy}
+                    onPress={() => {
+                      if (detail.group.kind !== 'league')
+                        onOpenPlayingTime?.({
+                          kind: detail.group.kind,
+                          id: detail.group.id
+                        })
+                    }}
+                  />
+                )}
               </ListCard>
             </View>
             <ManagementCard
@@ -381,6 +399,19 @@ export function GroupSettingsScreen({
     </Screen>
   )
 }
+/** The detail line of the Playing Time Rules row: whose rules apply. */
+export function playingTimeRowDetail(detail: GroupDetail): string {
+  if (detail.playingTimeRules != null)
+    return detail.group.kind === 'season'
+      ? lstrings.playing_time_row_season
+      : detail.seasonPlayingTimeRules != null
+        ? lstrings.playing_time_row_overridden
+        : lstrings.playing_time_row_team
+  return detail.seasonPlayingTimeRules != null
+    ? lstrings.playing_time_row_season
+    : lstrings.playing_time_row_off
+}
+
 export function settingsTitle(kind: GroupRef['kind']): string {
   return kind === 'league'
     ? 'League Settings'

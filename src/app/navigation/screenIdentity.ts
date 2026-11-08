@@ -24,6 +24,7 @@ const SCREEN_IDS: { [Name in Pushed['name']]: Ids<Name> } = {
   teamAddPlayer: frame => [frame.id],
   groupLocation: frame => [frame.kind, frame.id],
   seasonTimeFrame: frame => [frame.kind, frame.id],
+  playingTimeRules: frame => [frame.kind, frame.id],
   nodeAdministration: () => [],
   createGame: frame => [frame.kind, frame.id, frame.gameId],
   gameSettings: frame => [frame.gameId],

@@ -4,6 +4,7 @@ import React, { act } from 'react'
 
 import { asManagePage, TeamStationClient } from '../../common/api'
 import type { GroupRef } from '../../common/groupCreation'
+import { DEFAULT_PLAYING_TIME_RULES } from '../../common/playingTimeRules'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
 import {
   fill,
@@ -586,5 +587,79 @@ describe('group settings identity and individual saves', () => {
       finish!()
     })
     expect(changed).equals(0)
+  })
+})
+
+describe('the Playing Time Rules row on settings', () => {
+  afterEach(unmount)
+  const set = DEFAULT_PLAYING_TIME_RULES
+  const season = { season: { id: 'sea1', name: 'Demo Regular' }, rules: set }
+
+  it('opens a team’s and a season’s rules from a chevron row that says whose apply', async () => {
+    for (const [kind, own, inherited, line] of [
+      ['team', null, null, 'Off'],
+      ['team', null, season, 'Season rules'],
+      ['team', set, season, 'Overridden for this team'],
+      ['team', set, null, 'Team rules'],
+      ['season', null, null, 'Off'],
+      ['season', set, null, 'Season rules']
+    ] as const) {
+      const f = fixture(kind)
+      const read = f.client.group.bind(f.client)
+      f.client.group = async ref => ({
+        ...(await read(ref)),
+        playingTimeRules: own,
+        seasonPlayingTimeRules: inherited
+      })
+      const opened: unknown[] = []
+      await mount(
+        <GroupSettingsScreen
+          client={f.client}
+          groupRef={{ kind, id: 'canonical' }}
+          onOpenPlayingTime={ref => opened.push(ref)}
+        />
+      )
+      await settle()
+      // In the Details card, below Player Name Privacy.
+      expect(text().indexOf('Playing Time Rules')).greaterThan(
+        text().indexOf('Player Name Privacy')
+      )
+      expect(find('Playing Time Rules')?.getAttribute('aria-label')).equals(
+        `Playing Time Rules, ${line}`
+      )
+      await press('Playing Time Rules')
+      expect(opened, `${kind} ${line}`).deep.equals([{ kind, id: 'canonical' }])
+      await unmount()
+    }
+  })
+
+  it('has no row on a league, or for somebody who cannot change the settings', async () => {
+    const league = fixture('league')
+    await mount(
+      <GroupSettingsScreen
+        client={league.client}
+        groupRef={{ kind: 'league', id: 'canonical' }}
+        onOpenPlayingTime={() => undefined}
+      />
+    )
+    await settle()
+    expect(text()).includes('Player Name Privacy')
+    expect(text()).not.includes('Playing Time Rules')
+    await unmount()
+    for (const kind of ['team', 'season'] as const) {
+      const viewer = fixture(kind)
+      viewer.controls.allowed = false
+      await mount(
+        <GroupSettingsScreen
+          client={viewer.client}
+          groupRef={{ kind, id: 'canonical' }}
+          onOpenPlayingTime={() => undefined}
+        />
+      )
+      await settle()
+      expect(text()).includes('Only a current administrator')
+      expect(text()).not.includes('Playing Time Rules')
+      await unmount()
+    }
   })
 })

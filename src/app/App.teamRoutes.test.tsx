@@ -10,7 +10,11 @@ import {
   asSessionUser,
   TeamStationClient
 } from '../common/api'
-import { asGroupDetail } from '../common/publicGroups'
+import {
+  DEFAULT_PLAYING_TIME_RULES,
+  type PlayingTimeRules
+} from '../common/playingTimeRules'
+import { asGroupDetail, type GroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
 import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { candidate } from '../test/fakeCandidateClient'
@@ -36,6 +40,149 @@ describe('team route frames', () => {
       id: 'sea1'
     })
   })
+  it('puts team or season settings under Playing Time Rules opened by its address', () => {
+    for (const kind of ['team', 'season'] as const) {
+      const route = { name: 'playingTimeRules' as const, kind, id: 'g1' }
+      const stack = stackFor(route).home!
+      expect(stack.at(-1)).deep.equals(route)
+      expect(stack.at(-2)).deep.equals(
+        stackFor({ name: 'groupSettings', kind, id: 'g1' }).home!.at(-1)
+      )
+    }
+  })
+  it('opens Playing Time Rules over its settings by address and from the settings row, and Save goes back to refreshed settings', async () => {
+    const proto = TeamStationClient.prototype
+    const originals = Object.getOwnPropertyDescriptors(proto)
+    const saved: unknown[] = []
+    let reads = 0
+    let own: PlayingTimeRules | null = null
+    const read = (kind: 'team' | 'season'): GroupDetail =>
+      asGroupDetail({
+        nonMemberView: false,
+        group: {
+          kind,
+          id: 'canonical',
+          name: kind === 'team' ? 'Demo Hawks' : 'Demo Regular',
+          imageUrl: null,
+          locality: null,
+          startsOn: kind === 'season' ? '2027-03-01' : null,
+          endsOn: kind === 'season' ? '2027-05-31' : null
+        },
+        parents: [],
+        children: [],
+        participatingSeasons: [],
+        competingTeams: [],
+        games: [],
+        staff: [],
+        canViewPrivate: false,
+        canManage: true,
+        playingTimeRules: own,
+        seasonPlayingTimeRules:
+          kind === 'team'
+            ? {
+                season: { id: 'sea1', name: 'Demo Regular' },
+                rules: { ...DEFAULT_PLAYING_TIME_RULES, mandatoryPlay: true }
+              }
+            : null
+      })
+    proto.whoAmI = async () =>
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo Admin',
+        isAdmin: false
+      })
+    proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
+    proto.hasNotifications = async () => false
+    proto.group = async ref => {
+      reads++
+      return read(ref.kind === 'season' ? 'season' : 'team')
+    }
+    proto.gameProposals = async () => []
+    proto.updateGroup = async (ref, fields) => {
+      saved.push([ref, fields])
+      own = fields.playingTimeRules ?? null
+      return read(ref.kind === 'season' ? 'season' : 'team').group
+    }
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 60))
+      })
+    }
+    const top = (): string =>
+      document.querySelector('[data-scene-role="top"]')?.textContent ?? ''
+    const press = async (label: string): Promise<void> => {
+      const button = [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-scene-role="top"] [role="button"], [data-scene-role="top"] [role="switch"]'
+        )
+      ].find(node =>
+        [node.getAttribute('aria-label'), node.textContent].some(
+          name => name === label || name?.startsWith(label + ', ') === true
+        )
+      )
+      expect(button, label).not.equals(undefined)
+      await act(async () => {
+        button!.click()
+      })
+      await settle()
+    }
+    try {
+      for (const kind of ['team', 'season'] as const) {
+        own = null
+        saved.length = 0
+        const settings = `/groups/${kind}/canonical/settings`
+        window.history.replaceState(null, '', `${settings}/playing-time`)
+        const host = document.createElement('div')
+        document.body.append(host)
+        const root = createRoot(host)
+        try {
+          await act(async () => {
+            root.render(<App />)
+          })
+          await settle()
+          expect(top()).includes(
+            `Configures the playing time rules for this ${kind}.`
+          )
+          // Its settings are underneath: Cancel lands there.
+          await press('Cancel')
+          expect(window.location.pathname).equals(settings)
+          expect(top()).includes(`${kind.toUpperCase()} DETAILS`)
+          expect(top()).includes(kind === 'team' ? 'Season rules' : 'Off')
+          await press('Playing Time Rules')
+          expect(window.location.pathname).equals(`${settings}/playing-time`)
+          if (kind === 'team') await press('Override season rules')
+          else await press('Mandatory Play')
+          const before = reads
+          await press('Save')
+          expect(saved).deep.equals([
+            [
+              { kind, id: 'canonical' },
+              {
+                playingTimeRules: {
+                  ...DEFAULT_PLAYING_TIME_RULES,
+                  mandatoryPlay: true
+                }
+              }
+            ]
+          ])
+          // Back on settings, read again: the row says whose rules apply.
+          expect(window.location.pathname).equals(settings)
+          expect(reads).greaterThan(before)
+          expect(top()).includes(
+            kind === 'team' ? 'Overridden for this team' : 'Season rules'
+          )
+        } finally {
+          await act(async () => {
+            root.unmount()
+          })
+          host.remove()
+        }
+      }
+    } finally {
+      Object.defineProperties(proto, originals)
+      window.history.replaceState(null, '', '/')
+    }
+  }).timeout(20000)
   it('reconstructs Settings under every directly opened management child', () => {
     for (const name of [
       'groupLocation',

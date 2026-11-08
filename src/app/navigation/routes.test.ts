@@ -86,6 +86,25 @@ describe('addresses', function () {
         parseRoute(`/groups/${kind}/g1/settings/time-frame`, '')
       ).deep.include({ name: 'groupSettings', kind, id: 'g1' })
   })
+  it('round-trips a season’s and a team’s Playing Time Rules, which a league has none of', () => {
+    for (const kind of ['season', 'team'] as const) {
+      const route: Route = { name: 'playingTimeRules', kind, id: 'g 1' }
+      expect(routePath(route)).equals(
+        `/groups/${kind}/g%201/settings/playing-time`
+      )
+      expect(roundTrip(route)).deep.equals(route)
+    }
+    // A team's settings return is the settings' own, not the rules'.
+    expect(
+      parseRoute(
+        '/groups/team/tem1/settings/playing-time',
+        'teamId=alias&teamAddress=team'
+      )
+    ).deep.equals({ name: 'playingTimeRules', kind: 'team', id: 'tem1' })
+    expect(
+      parseRoute('/groups/league/lea1/settings/playing-time', '')
+    ).deep.include({ name: 'groupSettings', kind: 'league', id: 'lea1' })
+  })
   it('round-trips team settings return addresses, including aliases and selected sections', () => {
     for (const address of ['team', 'group'] as const)
       for (const tab of [undefined, 'schedule', 'roster']) {

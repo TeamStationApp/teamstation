@@ -62,6 +62,8 @@ export type CreationRoute =
     } & SettingsContext)
   /** A season's date range, set from its settings. */
   | { name: 'seasonTimeFrame'; kind: 'season'; id: string }
+  /** A season's or a team's Playing Time Rules, set from its settings. */
+  | { name: 'playingTimeRules'; kind: 'season' | 'team'; id: string }
   | { name: 'nodeAdministration' }
   | { name: 'createGame'; kind: 'team' | 'season'; id: string; gameId?: string }
   | { name: 'gameSettings'; gameId: string }
@@ -120,6 +122,7 @@ export function isCreationRoute(route: {
     'groupSettings',
     'groupLocation',
     'seasonTimeFrame',
+    'playingTimeRules',
     'groupAddPeople',
     'groupInvites',
     'teamCreatePlayer',
@@ -449,6 +452,8 @@ export function parseRoute(path: string, search = ''): Route {
           return { name: 'groupLocation', kind: id, id: groupId, ...context }
         if (parts[4] === 'time-frame' && id === 'season')
           return { name: 'seasonTimeFrame', kind: 'season', id: groupId }
+        if (parts[4] === 'playing-time' && id !== 'league')
+          return { name: 'playingTimeRules', kind: id, id: groupId }
         return { name: 'groupSettings', kind: id, id: groupId, ...context }
       }
       if (parts[3] === 'scheduler' && id === 'league')
@@ -826,6 +831,8 @@ export function routePath(route: Route): string {
       return settingsChildPath(route, 'location')
     case 'seasonTimeFrame':
       return settingsChildPath(route, 'time-frame')
+    case 'playingTimeRules':
+      return settingsChildPath(route, 'playing-time')
     case 'autoScheduler':
       return `/groups/league/${encodeURIComponent(route.leagueId)}/scheduler`
     case 'fieldManager':
