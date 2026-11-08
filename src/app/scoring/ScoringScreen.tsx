@@ -38,12 +38,14 @@ import {
 } from '../../common/scoring/playsLost'
 import {
   awaitingResult,
+  closesAutomatically,
   completesHitOffer,
   forcedFrom,
   groundOfferAt,
   runnerDecisionError as baseOccupiedError,
   undoesHitOffer
 } from '../../common/scoring/rules'
+import type { ScoringMutation } from '../../common/scoring/scoringMutation'
 import type { ScoringSession as GameSession } from '../../common/scoring/session'
 import type { DefaultLineups } from '../../common/scoring/startingSetup'
 import { type GameState, setupOf } from '../../common/scoring/state'
@@ -133,7 +135,7 @@ import type { RunnerDragView } from './runnerDrag'
 import { RunnerDragTargets } from './RunnerDragTargets'
 import { scoringAudio } from './scoringAudio'
 import { runnerDecisionError } from './scoringFlow'
-import { authoredScoringEvent, ScoringFollow } from './scoringFollow'
+import { ScoringFollow } from './scoringFollow'
 import {
   actsOnOpening,
   atRest,
@@ -951,14 +953,31 @@ function ScoringPanel(props: {
   // does something from there.
   const visibleDefaults = props.visibleDefaults
   const follow = useRef(new ScoringFollow())
+  const latestInput = useRef<ScoringMutation | undefined>(undefined)
   const followAllowed = useRef(false)
   const beforeAction = useRef<() => boolean>(() => true)
   const [followNotice, setFollowNotice] = useState<string | null>(null)
   const [model, reduceEvent] = useReducer(
-    (model: ScoringScreenModel, event: ScoringEvent | SavedUndone) =>
-      reduceVisible(model, event, visibleDefaults),
+    (
+      model: ScoringScreenModel & { authorship?: ScoringMutation },
+      input: {
+        event: ScoringEvent | SavedUndone
+        authorship?: ScoringMutation
+      }
+    ) => {
+      const next = reduceVisible(model, input.event, visibleDefaults)
+      return next === model
+        ? model
+        : {
+            ...next,
+            authorship:
+              input.event.type === 'RESET'
+                ? undefined
+                : (input.authorship ?? model.authorship)
+          }
+    },
     props.game,
-    game => {
+    (game): ScoringScreenModel & { authorship?: ScoringMutation } => {
       const resumed = game.resumable()
       return scoringScreenModel(
         withVisibleLineups(
@@ -968,14 +987,25 @@ function ScoringPanel(props: {
       )
     }
   )
-  const dispatch = useCallback((event: ScoringEvent | SavedUndone): void => {
-    if (authoredScoringEvent(event)) {
-      if (!beforeAction.current()) return
-      setFollowNotice(null)
-      follow.current.authored()
-    }
-    reduceEvent(event)
-  }, [])
+  const dispatch = useCallback(
+    (event: ScoringEvent | SavedUndone): void => {
+      const authored = follow.current.input(event)
+      if (authored) {
+        if (!beforeAction.current()) return
+        setFollowNotice(null)
+      }
+      const authorship =
+        authored && event.type !== 'GESTURE'
+          ? props.game.captureScoringAction()
+          : undefined
+      if (authorship != null) latestInput.current = authorship
+      reduceEvent({
+        event,
+        ...(authorship == null ? {} : { authorship })
+      })
+    },
+    [props.game]
+  )
   useEffect(() => {
     const owner = follow.current
     owner.mounted = true
@@ -1097,6 +1127,27 @@ function ScoringPanel(props: {
     digest: string
   }> | null>([])
   useEffect(() => {
+    if (!(props.client instanceof CachingClient)) return
+    return props.client.subscribeOutboxNotices(notice => {
+      if (notice.gameId !== props.gameId || notice.reconcileScoring !== true)
+        return
+      const rejected = notice.rejectedScoring
+      const input = latestInput.current
+      if (
+        rejected != null &&
+        input?.id === rejected.id &&
+        input.at === rejected.at
+      )
+        follow.current.adopt(follow.current.snapshot())
+      // A reconnect notice may have read the optimistic cache before the
+      // rejected queue drained. Its final landing is a new read opportunity;
+      // use the same input and pending-save guards as a peer socket update.
+      stale.current = true
+      echoes.current = null
+      setStaleCheck(value => value + 1)
+    })
+  }, [props.client, props.gameId])
+  useEffect(() => {
     // What the screen shows of the save is read in a task of its own: the
     // count folds the whole game (`ScoringSession.picture`), which would add
     // to the stall of the tap that changed it, and the save reads the same
@@ -1125,10 +1176,13 @@ function ScoringPanel(props: {
       // again from that log, so its next change is not synced over theirs.
       if (props.game.rebases !== rebases) {
         rebases = props.game.rebases
+        const following = props.game.rebaseFollowsPeer
+        if (following) follow.current.adopt(follow.current.snapshot())
         dispatch({
           type: 'RESET',
           session: props.game.state,
-          log: [...props.game.actions]
+          log: [...props.game.actions],
+          following
         })
       }
       // Refused, the session went back to what the server holds, and so
@@ -1156,8 +1210,9 @@ function ScoringPanel(props: {
       return
     }
     refreshedLog.current = undefined
-    if (state.log !== openedLog.current) props.game.sync(state.log)
-  }, [props.game, state.log])
+    if (state.log !== openedLog.current)
+      props.game.sync(state.log, [], false, model.authorship ?? null)
+  }, [props.game, state.log, model.authorship])
   // Undo taps into play scored before this screen opened, one at a time,
   // each from the game the one before it left: the game steps back one
   // action, and on past any step the screen cannot rest on — a ball in play
@@ -1168,13 +1223,13 @@ function ScoringPanel(props: {
     if (model.savedUndos === 0 || takingBack.current === model.savedUndone)
       return
     takingBack.current = model.savedUndone
-    props.game.sync(state.log)
-    let undone = props.game.undo()
+    props.game.sync(state.log, [], false, model.authorship ?? null)
+    let undone = props.game.undo(model.authorship)
     while (
       undone.problems.length === 0 &&
       (awaitingResult(props.game.state) || actsOnOpening(props.game.state))
     )
-      undone = props.game.undo()
+      undone = props.game.undo(model.authorship)
     dispatch({
       type: 'SAVED_UNDONE',
       ...(undone.problems.length === 0
@@ -1183,7 +1238,14 @@ function ScoringPanel(props: {
           }
         : {})
     })
-  }, [props.game, model.savedUndos, model.savedUndone, state.log, dispatch])
+  }, [
+    props.game,
+    model.savedUndos,
+    model.savedUndone,
+    model.authorship,
+    state.log,
+    dispatch
+  ])
   const [sound, setSound] = useState(true)
   // Once the scorer has tapped the speaker, the stored setting read as the
   // screen opened no longer decides it.
@@ -1903,7 +1965,9 @@ function ScoringPanel(props: {
    * back leaves it, and its Undo, alone. Gives the game as read, and whether
    * it is the play this screen opened on, still waiting for its result.
    */
-  const followServer = async (deferForInput = false): Promise<{
+  const followServer = async (
+    deferForInput = false
+  ): Promise<{
     session: GameState
     oldUnresolved: boolean
   }> => {
@@ -1954,6 +2018,25 @@ function ScoringPanel(props: {
         session: refreshed.session,
         log: refreshed.log
       })
+    }
+    // A roster-triggered read may defer behind a save or another read. The
+    // eventual automatic follow must refresh the open clean editor too.
+    if (
+      changed &&
+      canAdopt() &&
+      currentSheet.current === 'rosters' &&
+      !rosterDirty.current
+    ) {
+      setRosterInitial(held => ({
+        draft: refreshed.session,
+        side: held?.side ?? battingSide(refreshed.session),
+        mode: held?.mode ?? 'lineup',
+        ...(held?.scrollOffsets == null
+          ? {}
+          : { scrollOffsets: held.scrollOffsets }),
+        base: refreshed.session
+      }))
+      setRosterRead(value => value + 1)
     }
     return { session: refreshed.session, oldUnresolved }
   }
@@ -2047,10 +2130,15 @@ function ScoringPanel(props: {
   }, [socket, persistent, gameId])
   const settled =
     (follow.current.observing ||
+      // A committed third out or automatic award has no unfinished user
+      // decision. Its presentation must not hold a peer correction hostage.
+      (closesAutomatically(state.session) &&
+        state.runnerDraft == null &&
+        state.moreDraft == null &&
+        state.reel == null) ||
       ((state.phase === 'ready' || state.phase === 'awaitingBatter') &&
         atRest(state))) &&
     (sheet == null || sheet === 'rosters') &&
-    !menu &&
     !rosterLoading &&
     !defensiveOpen &&
     !gestureActive &&
@@ -2167,21 +2255,7 @@ function ScoringPanel(props: {
     read: async () => (await props.client.gameLineups(gameId)).digest,
     onReload: () => {
       if (currentSheet.current !== 'rosters') return
-      followServer()
-        .then(({ session: fresh }) => {
-          if (currentSheet.current !== 'rosters') return
-          setRosterInitial(held => ({
-            draft: fresh,
-            side: held?.side ?? battingSide(fresh),
-            mode: held?.mode ?? 'lineup',
-            ...(held?.scrollOffsets == null
-              ? {}
-              : { scrollOffsets: held.scrollOffsets }),
-            base: fresh
-          }))
-          setRosterRead(value => value + 1)
-        })
-        .catch(() => undefined)
+      followServer().catch(() => undefined)
     }
   })
   const rosterDirty = useRef(rosterChanged)
@@ -3139,6 +3213,7 @@ function ScoringPanel(props: {
               }
               dispatch({
                 type: 'CLOSE_PLAY',
+                authored: true,
                 generation: state.generation,
                 revision: state.correctionWindow?.revision,
                 sequence: session.meta.sequence

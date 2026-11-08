@@ -72,6 +72,8 @@ export interface OutboxRow {
    * row writes read named (`appliedEvents`). Null for a row with none.
    */
   names: string | null
+  /** Device-only lineup replay baseline and context, persisted across restart. */
+  lineupRecovery?: string | null
   /**
    * Queued by a screen that does not wait for the server
    * (`Outbox.submitBackground`): the kinds only such a screen queues
@@ -127,7 +129,16 @@ export interface CacheTransaction {
   update: (
     id: string,
     fields: Partial<
-      Pick<OutboxRow, 'body' | 'state' | 'attempts' | 'leaseUntil' | 'message'>
+      Pick<
+        OutboxRow,
+        | 'body'
+        | 'state'
+        | 'attempts'
+        | 'leaseUntil'
+        | 'message'
+        | 'lineupRecovery'
+        | 'idempotencyKey'
+      >
     >
   ) => Promise<void>
   remove: (id: string) => Promise<void>
@@ -196,6 +207,7 @@ const SCHEMA = [
 const ADDED_COLUMNS: Array<[table: string, column: string, type: string]> = [
   ['outbox', 'message', 'text'],
   ['outbox', 'names', 'text'],
+  ['outbox', 'lineup_recovery', 'text'],
   ['outbox', 'background', 'integer NOT NULL DEFAULT 0']
 ]
 
@@ -216,12 +228,16 @@ function outboxRowOf(row: SqlRow): OutboxRow {
     gameId: typeof row.game_id === 'string' ? row.game_id : null,
     message: typeof row.message === 'string' ? row.message : null,
     names: typeof row.names === 'string' ? row.names : null,
+    lineupRecovery:
+      typeof row.lineup_recovery === 'string' ? row.lineup_recovery : null,
     background: Number(row.background ?? 0) === 1
   }
 }
 
 const OUTBOX_COLUMNS: Record<string, string> = {
   body: 'body',
+  lineupRecovery: 'lineup_recovery',
+  idempotencyKey: 'idempotency_key',
   state: 'state',
   attempts: 'attempts',
   leaseUntil: 'lease_until',
@@ -273,8 +289,8 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
       await tx.execute(
         `INSERT INTO outbox (id, idempotency_key, seq, chain, method, path,
            body, depends_on, state, attempts, lease_until, game_id, message,
-           names, background)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           names, background, lineup_recovery)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           queued.id,
           queued.idempotencyKey,
@@ -290,7 +306,8 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
           queued.gameId,
           queued.message,
           queued.names,
-          queued.background ? 1 : 0
+          queued.background ? 1 : 0,
+          queued.lineupRecovery ?? null
         ]
       )
       return queued
