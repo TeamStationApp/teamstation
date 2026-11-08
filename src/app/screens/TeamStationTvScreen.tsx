@@ -102,8 +102,7 @@ function Approval({
               ? 'This TV uses a different TeamStation server. Open it in your browser to continue.'
               : 'Unable to verify this TV link. Try again.'
           )
-          if (ours === false && issuer != null)
-            setBrowserUrl(tvBrowserUrl(issuer, value))
+          if (issuer != null) setBrowserUrl(tvBrowserUrl(issuer, value))
           return
         }
         const device = await client.inspectTvLogin(value)

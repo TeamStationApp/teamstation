@@ -119,6 +119,22 @@ describe('TeamStation TV approval screen', () => {
     expect(f.inspected).deep.equals(['a'.repeat(43)])
   })
 
+  for (const discovery of [null, undefined]) {
+    it(`keeps safe browser approval available when alias discovery is ${discovery === null ? 'disabled' : 'unavailable'}`, async () => {
+      const f = fixture('https://app.teamstation.app/api/v1')
+      f.client.issuer = async () => discovery
+      await render(
+        f.client,
+        'a'.repeat(43),
+        undefined,
+        'https://web.teamstation.app'
+      )
+      expect(f.inspected).length(0)
+      expect(f.approvals).length(0)
+      expect(text()).includes('Open in browser')
+    })
+  }
+
   it('focuses one input, normalizes paste and submits only on the eighth letter', async () => {
     const f = fixture()
     await render(f.client)
