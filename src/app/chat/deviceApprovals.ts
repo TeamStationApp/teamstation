@@ -61,6 +61,14 @@ export class DeviceApprovals {
     this.cancelHold()
   }
 
+  /** A restored page, including one kept in the back-forward cache. */
+  private readonly onPageShow = (): void => {
+    if (!this.active || !this.holdCancelled) return
+    this.holdCancelled = false
+    this.holdUntil = 0
+    this.refresh().catch(() => undefined)
+  }
+
   constructor(
     private readonly setup: ChatSetup,
     private readonly socket?: Pick<GameSocket, 'onChat'>,
@@ -94,6 +102,7 @@ export class DeviceApprovals {
     this.holdCancelled = false
     this.holdUntil = Date.now() + this.holdMs
     globalThis.document?.addEventListener?.('pagehide', this.onPageHide)
+    globalThis.document?.addEventListener?.('pageshow', this.onPageShow)
     try {
       this.unsubscribe = this.socket?.onChat(event => {
         if (
@@ -119,6 +128,7 @@ export class DeviceApprovals {
 
   stop(): void {
     globalThis.document?.removeEventListener?.('pagehide', this.onPageHide)
+    globalThis.document?.removeEventListener?.('pageshow', this.onPageShow)
     this.cancelHold()
     this.active = false
     this.lifetime++

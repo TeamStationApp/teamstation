@@ -640,6 +640,29 @@ describe('shared chat device approvals', function () {
     expect(loads3).equals(0)
   })
 
+  it('reads again when the page is shown after pagehide', async function () {
+    const fake = new FakeKeys()
+    const memory = new MemoryStore()
+    const client = fake.client()
+    const setup = { client, userId: USER, store: memory, device: DEVICE }
+    await ensureEnrolled(setup)
+    let loads = 0
+    const read = memory.load.bind(memory)
+    memory.load = async userId => {
+      loads += 1
+      return await read(userId)
+    }
+    const restored = new DeviceApprovals(setup, undefined, 5000)
+    controllers.push(restored)
+    restored.start()
+    const PageEvent = document.defaultView?.Event ?? Event
+    document.dispatchEvent(new PageEvent('pagehide'))
+    await restored.refresh()
+    expect(loads).equals(0)
+    document.dispatchEvent(new PageEvent('pageshow'))
+    await until('the read after pageshow', () => loads > 0, 2000)
+  })
+
   it('shows the loading string until the held approval read publishes', async function () {
     this.timeout(30000)
     const fake = new FakeKeys()
