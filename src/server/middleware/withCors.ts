@@ -1,5 +1,7 @@
 import type { RequestHandler } from 'express'
 
+import { SCORING_FEATURE_HEADER } from '../../common/scoring/teamRecord'
+
 /**
  * Lets the app call the API from its own origin during development, and from
  * wherever it is served in production.
@@ -24,7 +26,7 @@ export function withCors(allowedOrigins: string[]): RequestHandler {
       // A queued write names itself with `idempotency-key`.
       res.setHeader(
         'access-control-allow-headers',
-        'authorization,content-type,idempotency-key,x-teamstation-app'
+        `authorization,content-type,idempotency-key,x-teamstation-app,${SCORING_FEATURE_HEADER}`
       )
       res.setHeader(
         'access-control-allow-methods',

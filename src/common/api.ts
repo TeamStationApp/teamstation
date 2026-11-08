@@ -147,8 +147,13 @@ import {
   asSaidRosterCommand,
   type SaidRosterCommand
 } from './scoring/rosterCommands'
-import type { SaveChange, StoredGame } from './scoring/session'
+import {
+  asScoringMutation,
+  type ScoringMutation
+} from './scoring/scoringMutation'
+import type { LineupRecovery, SaveChange, StoredGame } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
+import { SCORING_FEATURE_HEADER, SCORING_FEATURES } from './scoring/teamRecord'
 import {
   asScheduleSetup,
   asSeasonScheduleSettings,
@@ -1497,6 +1502,7 @@ export type RosterEntry = Omit<
 export const asRosterEntry: (raw: unknown) => RosterEntry = cleanRosterEntry
 
 const asStoredGame = asObject({
+  scoringMutation: asOptional(asNullable(asScoringMutation)),
   plays: asArray(
     asObject({ id: asString, gameId: asString, gumbo: asGumboPlay })
   ),
@@ -1514,6 +1520,9 @@ const asStoredGame = asObject({
 /** A game's plays as a session reads them, with the digests that were sent. */
 function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
   return {
+    ...(stored.scoringMutation == null
+      ? {}
+      : { scoringMutation: stored.scoringMutation }),
     plays: stored.plays.map(row => row.gumbo),
     currentPlay: stored.currentPlay,
     ...(stored.playsDigest == null ? {} : { playsDigest: stored.playsDigest }),
@@ -1538,6 +1547,8 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
  * the game was left with, each only when the answer has it.
  */
 export interface PostedEdits {
+  scoringMutation?: ScoringMutation
+  superseded?: boolean
   playsDigest?: string
   priorPlaysDigest?: string
   lineupsDigest?: string
@@ -1545,6 +1556,8 @@ export interface PostedEdits {
 }
 
 const asPostedFields = asObject({
+  scoringMutation: asOptional(asNullable(asScoringMutation)),
+  superseded: asOptional(asBoolean),
   playsDigest: asOptional(asNullable(asString)),
   priorPlaysDigest: asOptional(asNullable(asString)),
   lineupsDigest: asOptional(asNullable(asString)),
@@ -1564,6 +1577,12 @@ const asPostedFields = asObject({
 export function asPostedEdits(raw: unknown): PostedEdits {
   const posted = asPostedFields(raw)
   return {
+    ...(posted.scoringMutation == null
+      ? {}
+      : { scoringMutation: posted.scoringMutation }),
+    ...(posted.superseded === undefined
+      ? {}
+      : { superseded: posted.superseded }),
     ...(posted.playsDigest == null ? {} : { playsDigest: posted.playsDigest }),
     ...(posted.priorPlaysDigest == null
       ? {}
@@ -1582,6 +1601,15 @@ export function asPostedEdits(raw: unknown): PostedEdits {
 export function liveEventsBody(change: SaveChange): Record<string, unknown> {
   return {
     mode: 'live',
+    ...(change.scoringHistory == null
+      ? {}
+      : { scoringHistory: change.scoringHistory }),
+    ...(change.scoringBase === undefined
+      ? {}
+      : { scoringBase: change.scoringBase }),
+    ...(change.scoringMutation == null
+      ? {}
+      : { scoringMutation: change.scoringMutation }),
     source: { system: 'teamstation' },
     plays: change.plays,
     remove: change.remove,
@@ -3266,6 +3294,8 @@ export interface RequestOptions {
    * of the game reads named before the server answers.
    */
   deviceNames?: Record<string, string>
+  /** Original lineup baseline kept only in the device outbox. */
+  deviceLineupRecovery?: LineupRecovery
   /**
    * The screen does not wait for the server: the phone's client queues the
    * write and answers its own answer at once, sending it in the background.
@@ -5971,7 +6001,10 @@ export class TeamStationClient {
       `/games/${encodeURIComponent(gameId)}/events?answer=edits`,
       asPostedEdits,
       liveEventsBody(change),
-      change.names == null ? undefined : { deviceNames: change.names }
+      {
+        deviceNames: change.names,
+        deviceLineupRecovery: change.deviceLineupRecovery
+      }
     )
   }
 
@@ -7432,7 +7465,8 @@ export class TeamStationClient {
   ): Promise<T> {
     const headers: Record<string, string> = {
       ...options.headers,
-      accept: 'application/json'
+      accept: 'application/json',
+      [SCORING_FEATURE_HEADER]: SCORING_FEATURES
     }
     // Bytes (an attachment's part) go as they are; anything else as JSON.
     const bytes = body instanceof Uint8Array ? body : undefined
