@@ -22,6 +22,7 @@ import {
 import { deleteObject, putObjectFile } from '../media/images'
 import { presignGetUrl } from '../media/presign'
 import { spaceConfigured, type SpaceSettings } from '../media/spacesHls'
+import { blockedSenderIds } from './blocks'
 import type { ChatCaller } from './keys'
 import { type ChatObjectStore, mayPost } from './messages'
 import { memberNow } from './reconciler'
@@ -288,6 +289,10 @@ export async function readAttachment(
   ) {
     throw notFound()
   }
+  if (
+    (await blockedSenderIds(db, caller.userId)).includes(row.uploader_user_id)
+  )
+    throw notFound()
   if (row.completed_at == null) {
     if (row.uploader_user_id !== caller.userId) throw notFound()
     const total = partCount(Number(row.size), CHAT_PART_SIZE)

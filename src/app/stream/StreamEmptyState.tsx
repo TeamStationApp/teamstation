@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Platform, Text, View } from 'react-native'
 
 import type { StreamAccess, TeamStationClient } from '../../common/api'
@@ -6,6 +6,10 @@ import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { StreamPill } from './StreamPill'
+
+/** A fresh key for one ask to film. */
+const askKey = (): string =>
+  `videographer-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
 export interface StreamEmptyStateProps {
   client: TeamStationClient
@@ -30,35 +34,59 @@ export function StreamEmptyState(
   const styles = getStyles(theme)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
-  /** One key for this ask, so a retry cannot leave two requests. */
+  /**
+   * One key per ask: a tap whose send failed is retried under the same key,
+   * so the server answers that ask once, as the request route's retry key
+   * promises. That holds whatever the server also does to find a request
+   * already waiting, which is its own rule and could change. The ask is over
+   * once the server has it waiting, whether its answer came or was lost; from
+   * then on the next tap is a new ask, which the server would otherwise answer
+   * with the old one once a coach declined it.
+   */
   const key = useRef<string | undefined>(undefined)
-
-  const request = (teamId: string): void => {
-    if (busy) return
-    key.current ??= `videographer-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    setBusy(true)
+  const asked = access?.requested === true
+  useEffect(() => {
+    if (asked) key.current = undefined
+    // Whichever way it moved, what the last send said is out of date.
     setError(undefined)
-    client
-      .inviteRelationship({
+  }, [asked])
+
+  /**
+   * Sends the ask under its key. A key whose answer was lost and whose request
+   * a coach has since decided gets that request back, neither waiting nor
+   * approved: the ask is over, and it is sent once more under a fresh key.
+   */
+  const ask = async (teamId: string): Promise<void> => {
+    for (let tries = 0; tries < 2; tries += 1) {
+      key.current ??= askKey()
+      const answer = await client.inviteRelationship({
         kind: 'videographer',
         teamId,
         idempotencyKey: key.current
       })
-      .then(
-        () => {
-          setBusy(false)
-          onRequested()
-        },
-        (caught: unknown) => {
-          setBusy(false)
-          setError(
-            caught instanceof Error ? caught.message : lstrings.common_retry
-          )
-        }
-      )
+      key.current = undefined
+      if (answer.status === 'pending' || answer.status === 'accepted') return
+    }
   }
 
-  const asked = access?.requested === true
+  const request = (teamId: string): void => {
+    if (busy) return
+    setBusy(true)
+    setError(undefined)
+    ask(teamId).then(
+      () => {
+        setBusy(false)
+        onRequested()
+      },
+      (caught: unknown) => {
+        setBusy(false)
+        setError(
+          caught instanceof Error ? caught.message : lstrings.common_retry
+        )
+      }
+    )
+  }
+
   return (
     <View style={styles.empty} testID="stream-empty-state">
       <Icon name="videocam" size={4.5} color={theme.secondaryTextColor} />
@@ -96,7 +124,7 @@ export function StreamEmptyState(
               request(access.teamId)
             }}
           />
-          {error != null && <Text style={styles.error}>{error}</Text>}
+          {error != null && !asked && <Text style={styles.error}>{error}</Text>}
         </>
       )}
     </View>

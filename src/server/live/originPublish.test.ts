@@ -1,7 +1,13 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { isSegmentName, objectKey, publishedPlaylist } from './originPublish'
+import type { VideoPath } from '../media/videoPrefix'
+import {
+  isSegmentName,
+  objectKey,
+  publishedPlaylist,
+  withoutSegments
+} from './originPublish'
 
 const header =
   '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-MAP:URI="init.mp4"\n'
@@ -11,56 +17,87 @@ const third =
   '#EXT-X-DISCONTINUITY\n#EXTINF:2.500000,\n#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:08.000Z\nseg000002.m4s\n'
 const whole = header + first + second + third + '#EXT-X-ENDLIST\n'
 const set = (...names: string[]): Set<string> => new Set(names)
+/** Published pieces, by sequence number. */
+const numbers = (...pieces: number[]): Set<number> => new Set(pieces)
+
+/** A video on its old path, with no secret. */
+const old = (id: string): VideoPath => ({ id, spaceSecret: null })
 
 describe('the published live playlist', function () {
+  it('keeps a later part’s map, and its break, when the part’s first piece is dropped', function () {
+    const later =
+      '#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000002.mp4"\n#EXTINF:4.000000,\nseg000002.m4s\n#EXTINF:4.000000,\nseg000003.m4s\n'
+    const body = header + first + second + later
+    // The tail deleted the first part and the second's first piece.
+    expect(withoutSegments(body, name => name < 'seg000003.m4s')).equals(
+      header +
+        '#EXT-X-MAP:URI="init000002.mp4"\n#EXTINF:4.000000,\nseg000003.m4s\n'
+    )
+    // With a piece of the first part still listed, the break stays too.
+    expect(withoutSegments(body, name => name === 'seg000002.m4s')).equals(
+      header +
+        first +
+        second +
+        '#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000002.mp4"\n#EXTINF:4.000000,\nseg000003.m4s\n'
+    )
+  })
+
   it('keeps a later map with the segment it opens, and names it as an object', function () {
     const later =
       '#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init000002.mp4"\n#EXTINF:4.000000,\nseg000002.m4s\n'
     const body = header + first + second + later
     const two = set('seg000000.m4s', 'seg000001.m4s')
-    expect(publishedPlaylist(body, two, set())).equals(header + first + second)
-    expect(publishedPlaylist(body, set(...two, 'seg000002.m4s'), set())).equals(
-      body
+    expect(publishedPlaylist(body, two, numbers())).equals(
+      header + first + second
     )
-    expect(objectKey('vid_a', 'init000002.mp4')).equals(
+    expect(
+      publishedPlaylist(body, set(...two, 'seg000002.m4s'), numbers())
+    ).equals(body)
+    expect(objectKey(old('vid_a'), 'init000002.mp4')).equals(
       'videos/vid_a/init000002.mp4'
     )
-    expect(() => objectKey('vid_a', 'init2.mp4')).throws('Invalid live object')
-    expect(() => objectKey('vid_a', '../init000002.mp4')).throws(
+    expect(() => objectKey(old('vid_a'), 'init2.mp4')).throws(
+      'Invalid live object'
+    )
+    expect(() => objectKey(old('vid_a'), '../init000002.mp4')).throws(
       'Invalid live object'
     )
   })
 
   it('publishes only the unbroken acknowledged prefix', function () {
     expect(
-      publishedPlaylist(whole, set('seg000000.m4s', 'seg000002.m4s'), set())
+      publishedPlaylist(whole, set('seg000000.m4s', 'seg000002.m4s'), numbers())
     ).equals(header + first)
-    expect(publishedPlaylist(whole, set(), set())).equals(header)
+    expect(publishedPlaylist(whole, set(), numbers())).equals(header)
     expect(
       publishedPlaylist(
         header + '#EXT-X-DISCONTINUITY-SEQUENCE:0\n' + first,
         set(),
-        set()
+        numbers()
       )
     ).equals(header + '#EXT-X-DISCONTINUITY-SEQUENCE:0\n')
     expect(
-      publishedPlaylist(whole, set('seg000000.m4s', 'seg000001.m4s'), set())
+      publishedPlaylist(whole, set('seg000000.m4s', 'seg000001.m4s'), numbers())
     ).equals(header + first + second)
   })
 
   it('keeps discontinuity and program time with their segment, and closes only after all acknowledgements', function () {
     const all = set('seg000000.m4s', 'seg000001.m4s', 'seg000002.m4s')
-    expect(publishedPlaylist(whole, all, set())).equals(whole)
+    expect(publishedPlaylist(whole, all, numbers())).equals(whole)
     expect(
-      publishedPlaylist(whole.replace('#EXT-X-ENDLIST\n', ''), all, all)
+      publishedPlaylist(
+        whole.replace('#EXT-X-ENDLIST\n', ''),
+        all,
+        numbers(0, 1, 2)
+      )
     ).equals(header + first + second + third)
     expect(
-      publishedPlaylist(whole.replaceAll('\n', '\r\n'), all, set())
+      publishedPlaylist(whole.replaceAll('\n', '\r\n'), all, numbers())
     ).equals(whole)
   })
 
   it('retains the previously exposed prefix while a restamped object awaits replacement', function () {
-    const published = set('seg000000.m4s', 'seg000001.m4s')
+    const published = numbers(0, 1)
     expect(publishedPlaylist(whole, set('seg000000.m4s'), published)).equals(
       header + first + second
     )
@@ -80,11 +117,11 @@ describe('the published live playlist', function () {
   })
 
   it('never exposes temporary or unexpected URIs, nor an empty end tag', function () {
-    expect(publishedPlaylist(header + '#EXT-X-ENDLIST\n', set(), set())).equals(
-      header
-    )
     expect(
-      publishedPlaylist(header + '\n' + first, set('seg000000.m4s'), set())
+      publishedPlaylist(header + '#EXT-X-ENDLIST\n', set(), numbers())
+    ).equals(header)
+    expect(
+      publishedPlaylist(header + '\n' + first, set('seg000000.m4s'), numbers())
     ).equals(header + '\n' + first)
     for (const name of [
       'seg000000.m4s.tmp',
@@ -92,7 +129,7 @@ describe('the published live playlist', function () {
       'https://elsewhere.example.test/seg000000.m4s'
     ]) {
       expect(() =>
-        publishedPlaylist(header + '#EXTINF:4,\n' + name, set(name), set())
+        publishedPlaylist(header + '#EXTINF:4,\n' + name, set(name), numbers())
       ).throws('Invalid live segment URI')
     }
   })
@@ -105,7 +142,11 @@ describe('the published live playlist', function () {
       'seg000001.m4s',
       'seg1000000.m4s'
     ])
-      expect(objectKey('vid_one', name)).equals(`videos/vid_one/${name}`)
+      expect(objectKey(old('vid_one'), name)).equals(`videos/vid_one/${name}`)
+    const secret = '0123456789abcdef0123456789abcdef'
+    expect(
+      objectKey({ id: 'vid_one', spaceSecret: secret }, 'seg000001.m4s')
+    ).equals(`videos/vid_one-${secret}/seg000001.m4s`)
     for (const name of [
       'seg000001.m4s.tmp',
       'notes.txt',
@@ -113,12 +154,12 @@ describe('the published live playlist', function () {
       'seg1.m4s'
     ]) {
       expect(isSegmentName(name)).equals(false)
-      expect(() => objectKey('vid_one', name)).throws(
+      expect(() => objectKey(old('vid_one'), name)).throws(
         'Invalid live object name'
       )
     }
     expect(isSegmentName('seg000001.m4s')).equals(true)
-    expect(() => objectKey('../vid_one', 'init.mp4')).throws(
+    expect(() => objectKey(old('../vid_one'), 'init.mp4')).throws(
       'Invalid live object name'
     )
   })

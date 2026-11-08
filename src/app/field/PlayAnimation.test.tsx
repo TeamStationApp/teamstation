@@ -1,15 +1,15 @@
 import { create } from '@react-three/test-renderer'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
-import React from 'react'
-import { type Mesh, Vector3 } from 'three'
+import React, { act } from 'react'
+import { type Mesh, type MeshBasicMaterial, Vector3 } from 'three'
 
 import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { scoringAudio } from '../scoring/scoringAudio'
 import { initialScoringState, scoringReducer } from '../scoring/scoringMachine'
 import { pitchPresentation } from '../scoring/scoringPresentation'
-import { PlayAnimation } from './PlayAnimation'
+import { BallWarmup, PlayAnimation } from './PlayAnimation'
 import { Player } from './Player'
 describe('rendered pitch timeline', function () {
   it('moves a visible ball and player poses from one clock, pauses, and completes once', async function () {
@@ -40,21 +40,30 @@ describe('rendered pitch timeline', function () {
         ))}
       </>
     )
+    const pitcher = players.find(p => p.playerId === sequence.pitcher)!
+    // A pitch has no windup: the pitcher is never posed in a delivery.
+    const standing = (): void => {
+      expect(pitcher.pose?.windup ?? 0).equals(0)
+      expect(pitcher.pose?.athlete).equals(undefined)
+    }
     const renderer = await create(view(false))
     try {
-      await renderer.advanceFrames(14, 0.05)
+      // The first frame starts the clock; three more are 150 ms of it.
+      await renderer.advanceFrames(4, 0.05)
       const ball = renderer.scene.findByProps({ name: 'animated-baseball' })
         .instance as Mesh
       expect(ball.visible).equals(true)
       expect(ball.scale.toArray()).deep.equals([1, 1, 1])
       expect(cues).deep.equals(['swish'])
+      standing()
       const before = ball.position.clone()
       await renderer.update(view(true))
       await renderer.advanceFrames(20, 0.05)
       expect(ball.position.toArray()).deep.equals(before.toArray())
       expect(cues).has.length(1)
       await renderer.update(view(false))
-      await renderer.advanceFrames(10, 0.05)
+      await renderer.advanceFrames(5, 0.05)
+      standing()
       expect(ball.position.z).greaterThan(0)
       expect(cues).deep.equals(['swish', 'pop', 'bat'])
       expect(
@@ -63,6 +72,7 @@ describe('rendered pitch timeline', function () {
       await renderer.advanceFrames(30, 0.05)
       expect(completed).equals(1)
       expect(ball.visible).equals(false)
+      standing()
     } finally {
       await renderer.unmount()
       scoringAudio.cue = oldCue
@@ -113,10 +123,11 @@ describe('rendered hit timeline', function () {
         const fielder = players.find(p => p.playerId === sequence.fielder)!
         await renderer.advanceFrames(5, 0.05)
         expect(fielder.position).deep.equals(sequence.fielderStart)
-        // The ball in play was pitched: its pitcher is in his windup.
+        // The ball in play was pitched, with no windup: the ball is on its
+        // way and its pitcher stands.
         const pitcher = players.find(p => p.playerId === sequence.pitcher)!
-        expect(pitcher.pose?.windup).greaterThan(0)
-        expect(pitcher.pose?.athlete).not.equals(undefined)
+        expect(pitcher.pose?.windup).equals(0)
+        expect(pitcher.pose?.athlete).equals(undefined)
         expect(contacts).equals(0)
         await renderer.advanceFrames(20, 0.05)
         expect(contacts).equals(1)
@@ -137,7 +148,10 @@ describe('rendered hit timeline', function () {
           expect(fielder.position).not.deep.equals(sequence.fielderStart)
         }
         // Advance to just after landing without crossing the delayed pickup.
-        const frames = Math.ceil((sequence.flightEndMs - 1200) / 50)
+        const frames = Math.max(
+          1,
+          Math.ceil((sequence.flightEndMs - 1200) / 50)
+        )
         await renderer.advanceFrames(frames, 0.05)
         if (outcome === 'Single') {
           expect(fielder.position).not.deep.equals(sequence.arc.target)
@@ -161,7 +175,7 @@ describe('rendered defensive transfers', function () {
   for (const unassisted of [false, true])
     it(`animates ${unassisted ? 'a touch without a self-throw' : 'a visible throw to a receiver'}`, async function () {
       let state = initialScoringState(scoringSession(gameFixture), true)
-      state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Throw Out' })
+      state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Ground Out' })
       state = scoringReducer(state, {
         type: 'FIELDER',
         id: 10,
@@ -364,4 +378,80 @@ describe('rendered bunt timeline', () => {
       expect(player.pose).equals(undefined)
     })
   }
+})
+
+describe('ball warmup', function () {
+  it("draws the pitched ball's shape and shader, see-through, on the field's first frames, then leaves and says so once", async function () {
+    let drawn = 0
+    const renderer = await create(
+      <BallWarmup
+        onDrawn={() => {
+          drawn++
+        }}
+      />
+    )
+    try {
+      const warm = renderer.scene.findByProps({ name: 'ball-warmup' })
+        .instance as Mesh
+      const look = warm.material as MeshBasicMaterial
+      expect(warm.visible).equals(true)
+      expect(warm.frustumCulled).equals(false)
+      expect(look.opacity).equals(0)
+      expect(look.transparent).equals(true)
+      await renderer.advanceFrames(1, 0.016)
+      expect(drawn).equals(0)
+      await act(async () => {
+        await renderer.advanceFrames(2, 0.016)
+      })
+      expect(
+        renderer.scene.findAll(node => node.props.name === 'ball-warmup')
+      ).length(0)
+      await act(async () => {
+        await new Promise(resolve => requestAnimationFrame(resolve))
+      })
+      expect(drawn).equals(1)
+      await renderer.advanceFrames(3, 0.016)
+      expect(drawn).equals(1)
+    } finally {
+      await renderer.unmount()
+    }
+    // The pitch draws the same shape, and a look its shader shares.
+    const sequence = pitchPresentation(
+      initialScoringState(scoringSession(gameFixture), true),
+      'ball'
+    )
+    const pitch = await create(<BallWarmup />)
+    try {
+      const warm = pitch.scene.findByProps({ name: 'ball-warmup' })
+        .instance as Mesh
+      await pitch.update(
+        <>
+          <BallWarmup />
+          <PlayAnimation
+            sequence={sequence}
+            players={sequence.players}
+            paused={false}
+            onComplete={() => undefined}
+          />
+        </>
+      )
+      const ball = pitch.scene.findByProps({ name: 'animated-baseball' })
+        .instance as Mesh
+      const look = ball.material as MeshBasicMaterial
+      const seeThrough = warm.material as MeshBasicMaterial
+      expect(warm.geometry).equals(ball.geometry)
+      expect(seeThrough).not.equals(look)
+      expect(seeThrough.customProgramCacheKey()).equals(
+        look.customProgramCacheKey()
+      )
+      expect([
+        seeThrough.type,
+        seeThrough.transparent,
+        seeThrough.toneMapped
+      ]).deep.equals([look.type, look.transparent, look.toneMapped])
+      expect(seeThrough.color.getHex()).equals(look.color.getHex())
+    } finally {
+      await pitch.unmount()
+    }
+  })
 })

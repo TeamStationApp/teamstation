@@ -5,7 +5,12 @@ import { applyAction } from '../scoring/apply'
 import { positionOf } from '../scoring/credits'
 import { ordinal } from '../scoring/lineup'
 import { trajectoryOf } from '../scoring/rules'
-import { copyGame, type GameState, type Side } from '../scoring/state'
+import {
+  copyGame,
+  type FielderRef,
+  type GameState,
+  type Side
+} from '../scoring/state'
 import type { Transition } from '../scoring/transitions'
 import { namesOf } from './replayNames'
 import { isClose, type ReplayStep, type ReplayTimeline } from './replayTimeline'
@@ -183,7 +188,7 @@ function pitchSentence(
 
 /** `short to second to first`: the fielders who made a play's outs, in turn. */
 function chainOf(actions: readonly ScoringAction[], before: GameState): string {
-  const chain: number[] = []
+  const chain: FielderRef[] = []
   for (const action of actions)
     if (action.type === 'runnerMovement' && action.out === true)
       for (const fielder of action.fielders ?? [])

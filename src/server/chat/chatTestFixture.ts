@@ -111,6 +111,7 @@ export async function openChatFixture(
   options: {
     now?: Date
     reconcile?: boolean
+    freshEpochsEnabled?: () => boolean
     leagueName?: string
     /** The Space attachments go to (none by default); deletes reach it too. */
     space?: SpaceSettings
@@ -286,7 +287,9 @@ export async function openChatFixture(
     )
     app.use(
       '/api/v1',
-      chatEpochRoutes(db, () => fixture.now)
+      chatEpochRoutes(db, () => fixture.now, {
+        freshEpochsEnabled: options.freshEpochsEnabled
+      })
     )
     app.use(
       '/api/v1',

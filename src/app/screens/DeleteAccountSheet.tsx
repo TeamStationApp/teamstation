@@ -3,6 +3,9 @@ import { Modal, Pressable, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { releaseChat } from '../chat/engine/links'
+import type { ChatKeyStore } from '../chat/keyRecord'
+import { keyStore } from '../chat/keyStore'
 import { Button } from '../components'
 import { lstrings } from '../locales/strings'
 import { SlideToStop } from '../stream/overlay/SlideToStop'
@@ -10,6 +13,10 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface DeleteAccountSheetProps {
   client: TeamStationClient
+  /** The account being deleted. Its chat keys are wiped once that succeeds. */
+  userId: string
+  /** This device's chat key store; the platform's own by default. */
+  store?: ChatKeyStore
   onCancel: () => void
   /** The account is gone, or the session that would delete it: sign in. */
   onLeave: () => void
@@ -25,7 +32,7 @@ export interface DeleteAccountSheetProps {
 export function DeleteAccountSheet(
   props: DeleteAccountSheetProps
 ): React.ReactElement {
-  const { client, onCancel, onLeave } = props
+  const { client, userId, store = keyStore, onCancel, onLeave } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const [busy, setBusy] = useState(false)
@@ -50,8 +57,23 @@ export function DeleteAccountSheet(
     setError('')
     client.deleteAccount().then(
       () => {
-        working.current = false
-        onLeave()
+        // Stop an enrolment that is still saving, then drop this account's
+        // slot and its legacy record. Another account's legacy record stays.
+        releaseChat(store)
+          .then(async () => {
+            await store.wipe(userId)
+          })
+          .then(async () => await store.discardLegacy?.(userId))
+          .then(
+            () => {
+              working.current = false
+              onLeave()
+            },
+            () => {
+              working.current = false
+              onLeave()
+            }
+          )
       },
       (failure: unknown) => {
         working.current = false

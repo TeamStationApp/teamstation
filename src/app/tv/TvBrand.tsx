@@ -30,7 +30,11 @@ export function TvBackdrop(): React.ReactElement {
     </View>
   )
 }
-export function TvBrand(): React.ReactElement {
+export function TvBrand({
+  title = 'TeamStation TV'
+}: {
+  title?: string
+}): React.ReactElement {
   return (
     <View style={{ alignItems: 'center', gap: 16 }}>
       <View
@@ -82,7 +86,7 @@ export function TvBrand(): React.ReactElement {
         </View>
       </View>
       <Text style={{ color: '#fff', fontSize: 30, fontWeight: '700' }}>
-        TeamStation TV
+        {title}
       </Text>
     </View>
   )

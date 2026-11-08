@@ -8,9 +8,10 @@ import {
 } from 'kysely'
 
 import { IMPLIED_ROLES, type Role, ROLES } from '../common/roles'
-import { type OnePerson, onePerson } from './admin/people'
+import { onePeople, type OnePerson, onePerson } from './admin/people'
+import { anyOf } from './db/anyOf'
 import type { Database } from './db/database'
-import { openAddTeams, peopleOf } from './openAdds'
+import { openAddsOf, openAddTeams } from './openAdds'
 
 export {
   heldByOpenAdd,
@@ -61,25 +62,53 @@ export interface VisibleScopes {
  */
 async function guardedPeople(
   db: Kysely<Database>,
-  userId: string,
-  /** The asker as `onePerson` read them, when the caller already has it. */
-  known?: OnePerson
+  userId: string
 ): Promise<OnePerson[]> {
-  const actor = known ?? (await onePerson(db, userId))
+  const actor = await onePerson(db, userId)
+  const guarded = await guardedPeopleOfEach(db, new Map([[userId, actor]]))
+  return guarded.get(userId)!
+}
+
+/**
+ * `guardedPeople` of each of these people at once, by the key each came under:
+ * one read of the links for all of their rows, one of the merges of everybody
+ * linked.
+ */
+async function guardedPeopleOfEach(
+  db: Kysely<Database>,
+  actors: ReadonlyMap<string, OnePerson>
+): Promise<Map<string, OnePerson[]>> {
+  const rows = new Set([...actors.values()].flatMap(actor => actor.userIds))
   const links = await db
     .selectFrom('user_links')
-    .select(['related_user_id'])
-    .where('user_id', 'in', actor.userIds)
+    .select(['user_id', 'related_user_id'])
+    .where('user_id', '=', anyOf([...rows]))
     .where('kind', 'in', ['guardian', 'family'])
     .execute()
-  const people = new Map<string, OnePerson>()
-  for (const relatedId of new Set(links.map(row => row.related_user_id))) {
-    const child = await onePerson(db, relatedId)
-    // Somebody closed into the asker is the asker, not their child.
-    if (child.userIds.some(id => actor.userIds.includes(id))) continue
-    people.set(child.userId, child)
+  const related = new Map<string, string[]>()
+  for (const link of links)
+    listUnder(related, link.user_id, link.related_user_id)
+  const linked = await onePeople(
+    db,
+    links.map(link => link.related_user_id)
+  )
+  const guarded = new Map<string, OnePerson[]>()
+  for (const [key, actor] of actors) {
+    const own = new Set(actor.userIds)
+    const people = new Map<string, OnePerson>()
+    for (const row of actor.userIds)
+      for (const relatedId of related.get(row) ?? []) {
+        const child = linked.get(relatedId)!
+        // Somebody closed into the asker is the asker, not their child.
+        if (child.userIds.some(id => own.has(id))) continue
+        people.set(child.userId, child)
+      }
+    guarded.set(
+      key,
+      [...people.values()].sort((a, b) => a.userId.localeCompare(b.userId))
+    )
   }
-  return [...people.values()].sort((a, b) => a.userId.localeCompare(b.userId))
+  return guarded
 }
 
 /**
@@ -137,20 +166,20 @@ export async function guardiansOfEach(
   playerUserIds: readonly string[],
   { signsIn = false }: { signsIn?: boolean } = {}
 ): Promise<Map<string, string[]>> {
-  const players = [...(await peopleOf(db, playerUserIds)).values()]
+  const players = [...(await onePeople(db, playerUserIds)).values()]
   if (players.length === 0) return new Map()
   const links = await db
     .selectFrom('user_links')
     .select(['user_id', 'related_user_id'])
     .where(
       'related_user_id',
-      'in',
-      players.flatMap(player => player.userIds)
+      '=',
+      anyOf(players.flatMap(player => player.userIds))
     )
     .where('kind', 'in', ['guardian', 'family'])
     .execute()
   if (links.length === 0) return new Map()
-  const parents = await peopleOf(
+  const parents = await onePeople(
     db,
     links.map(link => link.user_id)
   )
@@ -168,7 +197,7 @@ export async function guardiansOfEach(
   const enabled = await db
     .selectFrom('users')
     .select('id')
-    .where('id', 'in', [...guardians.keys()])
+    .where('id', '=', anyOf([...guardians.keys()]))
     .where('disabled_at', 'is', null)
     .$if(signsIn, query =>
       query.where('login_enabled', '=', true).where('merged_into', 'is', null)
@@ -255,17 +284,27 @@ export async function teamsPlayedOnNow(
   db: Kysely<Database>,
   userIds: readonly string[]
 ): Promise<string[]> {
-  if (userIds.length === 0) return []
+  const byRow = await teamsPlayedOnNowByRow(db, userIds)
+  return [...new Set([...byRow.values()].flat())]
+}
+
+/** `teamsPlayedOnNow` in one read, with the teams each row plays on. */
+async function teamsPlayedOnNowByRow(
+  db: Kysely<Database>,
+  userIds: readonly string[]
+): Promise<Map<string, string[]>> {
+  const teams = new Map<string, string[]>()
+  if (userIds.length === 0) return teams
   const plays = await db
     .selectFrom('memberships')
     .innerJoin('teams', 'teams.id', 'memberships.team_id')
-    .select(['memberships.team_id'])
-    .distinct()
-    .where('memberships.user_id', 'in', userIds)
+    .select(['memberships.user_id', 'memberships.team_id'])
+    .where('memberships.user_id', '=', anyOf(userIds))
     .where('memberships.is_player', '=', true)
     .where('teams.merged_into', 'is', null)
     .execute()
-  return plays.map(row => row.team_id)
+  for (const row of plays) listUnder(teams, row.user_id, row.team_id)
+  return teams
 }
 
 export interface AdminScopes {
@@ -280,24 +319,45 @@ export async function visibleScopes(
   userId: string,
   _isAdmin: boolean
 ): Promise<VisibleScopes> {
-  const user = await db
-    .selectFrom('users')
-    .select(['is_admin', 'disabled_at', 'merged_into'])
-    .where('id', '=', userId)
-    .executeTakeFirst()
-  if (user == null || user.disabled_at != null || user.merged_into != null)
-    return {
+  const scopes = await visibleScopesForUsers(db, [userId])
+  return scopes.get(userId)!
+}
+
+/**
+ * `visibleScopes` of each of these people at once, with an answer for each,
+ * in the same few reads however many there are: what one person takes, for
+ * all of their rows together, with each person's sets then worked out here.
+ * The one definition of who sees what; `visibleScopes` is this with one id.
+ */
+export async function visibleScopesForUsers(
+  db: Kysely<Database>,
+  userIds: readonly string[]
+): Promise<Map<string, VisibleScopes>> {
+  const answers = new Map<string, VisibleScopes>()
+  for (const userId of userIds)
+    answers.set(userId, {
       teamIds: new Set(),
       seasonIds: new Set(),
       isAdmin: false,
       guardedIds: new Set()
-    }
+    })
+  if (answers.size === 0) return answers
+  const users = await db
+    .selectFrom('users')
+    .select(['id', 'is_admin', 'disabled_at', 'merged_into'])
+    .where('id', '=', anyOf([...answers.keys()]))
+    .execute()
+  const open = users.filter(
+    user => user.disabled_at == null && user.merged_into == null
+  )
+  if (open.length === 0) return answers
+  const openIds = open.map(user => user.id)
+
   const memberships = await db
     .selectFrom('memberships')
-    .select(['team_id'])
-    .where('user_id', '=', userId)
+    .select(['user_id', 'team_id'])
+    .where('user_id', '=', anyOf(openIds))
     .execute()
-  const teamIds = new Set(memberships.map(row => row.team_id))
 
   // A member of a season or a league is the same member a team has, of every
   // team below it, carried down as a role is: a league's seasons and teams,
@@ -305,58 +365,88 @@ export async function visibleScopes(
   // season created next spring is in the league the moment it exists. Read
   // across every row of the person, because a merge moves team memberships
   // onto the row kept but leaves these where they were written.
-  const actor = await onePerson(db, userId)
+  const actors = await onePeople(db, openIds)
+  const everyRow = [
+    ...new Set([...actors.values()].flatMap(actor => actor.userIds))
+  ]
   const seasonMemberships = await db
     .selectFrom('season_members')
-    .select(['season_id'])
-    .where('user_id', 'in', actor.userIds)
+    .select(['user_id', 'season_id'])
+    .where('user_id', '=', anyOf(everyRow))
     .execute()
   const leagueMemberships = await db
     .selectFrom('league_members')
-    .select(['league_id'])
-    .where('user_id', 'in', actor.userIds)
+    .select(['user_id', 'league_id'])
+    .where('user_id', '=', anyOf(everyRow))
     .execute()
 
   // Only actual memberships and true management roles supply private scopes.
   // Competition links never widen a member's access, even when a host opens
   // itself. The roles are carried down in the same pass as the membership,
   // as `roleScopes` carries them.
-  const { member, ...roles } = await inheritScopes(db, {
-    ...(await directRoles(db, userId)),
-    member: {
-      leagueIds: new Set(leagueMemberships.map(row => row.league_id)),
-      seasonIds: new Set(seasonMemberships.map(row => row.season_id)),
-      teamIds: new Set<string>()
-    }
-  })
-  for (const teamId of member.teamIds) teamIds.add(teamId)
-  const memberSeasonIds = [...member.seasonIds]
+  const directs = await directRolesOfEach(db, openIds)
+  const leaguesOfRow = new Map<string, string[]>()
+  for (const row of leagueMemberships)
+    listUnder(leaguesOfRow, row.user_id, row.league_id)
+  const seasonsOfRow = new Map<string, string[]>()
+  for (const row of seasonMemberships)
+    listUnder(seasonsOfRow, row.user_id, row.season_id)
+  const members = new Map<string, ScopeSet>()
+  for (const userId of openIds) {
+    const rows = actors.get(userId)!.userIds
+    members.set(userId, {
+      leagueIds: new Set(rows.flatMap(row => leaguesOfRow.get(row) ?? [])),
+      seasonIds: new Set(rows.flatMap(row => seasonsOfRow.get(row) ?? [])),
+      teamIds: new Set()
+    })
+  }
+  await inheritSets(db, [
+    ...members.values(),
+    ...[...directs.values()].flatMap(direct => ROLES.map(role => direct[role]))
+  ])
 
   // A guardian is a member of every team their child plays on, for as long
   // as the child does: read from the child's memberships now, never written
   // down, so leaving a team takes it away again unless the guardian belongs
   // to it themselves.
-  const guarded = await guardedPeople(db, userId, actor)
-  const guardedIds = new Set(guarded.map(child => child.userId))
-  const childRows = guarded.flatMap(child => child.userIds)
-  for (const teamId of await teamsPlayedOnNow(db, childRows))
-    teamIds.add(teamId)
+  const guarded = await guardedPeopleOfEach(
+    db,
+    new Map(openIds.map(id => [id, actors.get(id)!]))
+  )
+  const childTeams = await teamsPlayedOnNowByRow(db, [
+    ...new Set([...guarded.values()].flat().flatMap(child => child.userIds))
+  ])
 
-  const memberTeamIds = new Set(teamIds)
+  const teamsOfUser = new Map<string, string[]>()
+  for (const row of memberships)
+    listUnder(teamsOfUser, row.user_id, row.team_id)
 
-  // Every role's sets, unioned. The implied roles are not added first: they
-  // only copy their givers' sets, which this union already holds.
-  for (const role of ROLES) {
-    for (const teamId of roles[role].teamIds) teamIds.add(teamId)
-    memberSeasonIds.push(...roles[role].seasonIds)
+  for (const user of open) {
+    const member = members.get(user.id)!
+    const direct = directs.get(user.id)!
+    const children = guarded.get(user.id)!
+    const teamIds = new Set(member.teamIds)
+    for (const teamId of teamsOfUser.get(user.id) ?? []) teamIds.add(teamId)
+    for (const child of children)
+      for (const row of child.userIds)
+        for (const teamId of childTeams.get(row) ?? []) teamIds.add(teamId)
+    const memberTeamIds = new Set(teamIds)
+    // Every role's sets, unioned. The implied roles are not added first: they
+    // only copy their givers' sets, which this union already holds.
+    const seasonIds = new Set(member.seasonIds)
+    for (const role of ROLES) {
+      for (const teamId of direct[role].teamIds) teamIds.add(teamId)
+      for (const seasonId of direct[role].seasonIds) seasonIds.add(seasonId)
+    }
+    answers.set(user.id, {
+      teamIds,
+      memberTeamIds,
+      seasonIds,
+      isAdmin: user.is_admin,
+      guardedIds: new Set(children.map(child => child.userId))
+    })
   }
-  return {
-    teamIds,
-    memberTeamIds,
-    seasonIds: new Set(memberSeasonIds),
-    isAdmin: user.is_admin,
-    guardedIds
-  }
+  return answers
 }
 
 /** The leagues, seasons and teams one role reaches, inherited downwards. */
@@ -423,48 +513,65 @@ export async function inheritScopes<K extends string>(
   db: Kysely<Database>,
   direct: Record<K, ScopeSet>
 ): Promise<Record<K, ScopeSet>> {
-  const sets = Object.values<ScopeSet>(direct)
+  await inheritSets(db, Object.values<ScopeSet>(direct))
+  return direct
+}
+
+/** Adds `value` to the list under `key`. */
+function listUnder(
+  lists: Map<string, string[]>,
+  key: string,
+  value: string
+): void {
+  const list = lists.get(key)
+  if (list == null) lists.set(key, [value])
+  else list.push(value)
+}
+
+/**
+ * `inheritScopes` over any number of sets, however many people they belong to:
+ * the links of the union of their ids are read once, then each set is filled
+ * from them here.
+ */
+async function inheritSets(
+  db: Kysely<Database>,
+  sets: readonly ScopeSet[]
+): Promise<void> {
   const leagueIds = new Set(sets.flatMap(set => [...set.leagueIds]))
   if (leagueIds.size > 0) {
     const seasons = await db
       .selectFrom('seasons')
       .select(['id', 'league_id'])
-      .where('league_id', 'in', [...leagueIds])
+      .where('league_id', '=', anyOf([...leagueIds]))
       .execute()
-    for (const set of sets) {
-      for (const row of seasons) {
-        if (row.league_id != null && set.leagueIds.has(row.league_id)) {
-          set.seasonIds.add(row.id)
-        }
-      }
-    }
-  }
-  if (leagueIds.size > 0) {
     const leagueTeams = await db
       .selectFrom('teams')
       .select(['id', 'league_id'])
-      .where('league_id', 'in', [...leagueIds])
+      .where('league_id', '=', anyOf([...leagueIds]))
       .execute()
+    const seasonsOf = new Map<string, string[]>()
+    const teamsOf = new Map<string, string[]>()
+    for (const row of seasons) listUnder(seasonsOf, row.league_id!, row.id)
+    for (const row of leagueTeams) listUnder(teamsOf, row.league_id!, row.id)
     for (const set of sets)
-      for (const team of leagueTeams) {
-        if (team.league_id != null && set.leagueIds.has(team.league_id))
-          set.teamIds.add(team.id)
+      for (const leagueId of set.leagueIds) {
+        for (const id of seasonsOf.get(leagueId) ?? []) set.seasonIds.add(id)
+        for (const id of teamsOf.get(leagueId) ?? []) set.teamIds.add(id)
       }
   }
   const seasonIds = new Set(sets.flatMap(set => [...set.seasonIds]))
   if (seasonIds.size > 0) {
-    const teams = await db
+    const links = await db
       .selectFrom(permissionParents(db))
       .select(['season_id', 'team_id'])
-      .where('season_id', 'in', [...seasonIds])
+      .where('season_id', '=', anyOf([...seasonIds]))
       .execute()
-    for (const set of sets) {
-      for (const row of teams) {
-        if (set.seasonIds.has(row.season_id)) set.teamIds.add(row.team_id)
-      }
-    }
+    const teamsOf = new Map<string, string[]>()
+    for (const row of links) listUnder(teamsOf, row.season_id, row.team_id)
+    for (const set of sets)
+      for (const seasonId of set.seasonIds)
+        for (const id of teamsOf.get(seasonId) ?? []) set.teamIds.add(id)
   }
-  return direct
 }
 
 /**
@@ -504,17 +611,48 @@ export async function roleScopes(
   userId: string,
   _isAdmin: boolean
 ): Promise<RoleScopes> {
-  const user = await db
-    .selectFrom('users')
-    .select(['is_admin', 'disabled_at', 'merged_into'])
-    .where('id', '=', userId)
-    .executeTakeFirst()
-  if (user == null || user.disabled_at != null || user.merged_into != null)
-    return { ...noRoles(), isAdmin: false }
+  const scopes = await roleScopesForUsers(db, [userId])
+  return scopes.get(userId)!
+}
 
-  const inherited = await inheritScopes(db, await directRoles(db, userId))
-  addImpliedRoles(inherited)
-  return { ...inherited, isAdmin: user.is_admin }
+/**
+ * `roleScopes` of each of these rows at once, in one set of reads however many
+ * there are, each answer as though it had been asked for alone. Somebody who
+ * has no open row holds nothing.
+ */
+export async function roleScopesForUsers(
+  db: Kysely<Database>,
+  userIds: readonly string[]
+): Promise<Map<string, RoleScopes>> {
+  const answers = new Map<string, RoleScopes>()
+  for (const userId of userIds)
+    answers.set(userId, { ...noRoles(), isAdmin: false })
+  if (answers.size === 0) return answers
+
+  const users = await db
+    .selectFrom('users')
+    .select(['id', 'is_admin', 'disabled_at', 'merged_into'])
+    .where('id', '=', anyOf([...answers.keys()]))
+    .execute()
+  const open = users.filter(
+    user => user.disabled_at == null && user.merged_into == null
+  )
+  if (open.length === 0) return answers
+
+  const directs = await directRolesOfEach(
+    db,
+    open.map(user => user.id)
+  )
+  await inheritSets(
+    db,
+    [...directs.values()].flatMap(roles => Object.values<ScopeSet>(roles))
+  )
+  for (const user of open) {
+    const inherited = directs.get(user.id)!
+    addImpliedRoles(inherited)
+    answers.set(user.id, { ...inherited, isAdmin: user.is_admin })
+  }
+  return answers
 }
 
 function noRoles(): Record<Role, ScopeSet> {
@@ -525,21 +663,22 @@ function noRoles(): Record<Role, ScopeSet> {
 }
 
 /**
- * Where this person was given each role, before it is carried down: the
- * `scope_roles` rows, and a team's owner or manager as its administrator.
+ * Where each of these rows was given each role, before it is carried down: the
+ * `scope_roles` rows, and a team's owner or manager as its administrator. Two
+ * reads however many rows there are.
  */
-async function directRoles(
+async function directRolesOfEach(
   db: Kysely<Database>,
-  userId: string
-): Promise<Record<Role, ScopeSet>> {
-  const direct = noRoles()
+  userIds: readonly string[]
+): Promise<Map<string, Record<Role, ScopeSet>>> {
+  const directs = new Map(userIds.map(id => [id, noRoles()]))
   const rows = await db
     .selectFrom('scope_roles')
-    .select(['scope_type', 'scope_id', 'role'])
-    .where('user_id', '=', userId)
+    .select(['user_id', 'scope_type', 'scope_id', 'role'])
+    .where('user_id', '=', anyOf(userIds))
     .execute()
   for (const row of rows) {
-    const set = direct[row.role]
+    const set = directs.get(row.user_id)![row.role]
     if (row.scope_type === 'league') set.leagueIds.add(row.scope_id)
     if (row.scope_type === 'season') set.seasonIds.add(row.scope_id)
     if (row.scope_type === 'team') set.teamIds.add(row.scope_id)
@@ -547,12 +686,13 @@ async function directRoles(
 
   const owned = await db
     .selectFrom('memberships')
-    .select(['team_id'])
-    .where('user_id', '=', userId)
+    .select(['user_id', 'team_id'])
+    .where('user_id', '=', anyOf(userIds))
     .where('role', 'in', ['owner', 'manager'])
     .execute()
-  for (const row of owned) direct.admin.teamIds.add(row.team_id)
-  return direct
+  for (const row of owned)
+    directs.get(row.user_id)!.admin.teamIds.add(row.team_id)
+  return directs
 }
 
 /**
@@ -866,7 +1006,7 @@ export async function membersOfLevels(
             .execute()
         ).map(row => ({ userId: row.user_id, level: 'league' as const })))
   ]
-  const people = await peopleOf(
+  const people = await onePeople(
     db,
     rows.map(row => row.userId)
   )
@@ -1271,48 +1411,92 @@ export async function mayEditName(
   about: { isAdmin: boolean },
   known: { player?: OnePerson } = {}
 ): Promise<boolean> {
-  if (about.isAdmin) return true
-  if (actorUserId === playerUserId) return true
+  return (
+    await mayEditNames(
+      db,
+      actorUserId,
+      [playerUserId],
+      about,
+      known.player == null ? new Map() : new Map([[playerUserId, known.player]])
+    )
+  ).has(playerUserId)
+}
 
-  const gathered =
-    known.player?.userIds.includes(playerUserId) === true
-      ? known.player
-      : undefined
-  const [actor, player] = await Promise.all([
-    onePerson(db, actorUserId),
-    gathered ?? onePerson(db, playerUserId)
+/** The same name authority for a batch, with shared identity and role reads. */
+export async function mayEditNames(
+  db: Kysely<Database>,
+  actorUserId: string,
+  playerUserIds: readonly string[],
+  about: { isAdmin: boolean },
+  known: ReadonlyMap<string, OnePerson> = new Map()
+): Promise<Set<string>> {
+  const allowed = new Set<string>()
+  if (about.isAdmin) return new Set(playerUserIds)
+  const asked = [...new Set(playerUserIds)]
+  if (asked.includes(actorUserId)) allowed.add(actorUserId)
+  const others = asked.filter(id => id !== actorUserId)
+  if (others.length === 0) return allowed
+  const gathered = await onePeople(db, [
+    actorUserId,
+    ...others.filter(id => known.get(id)?.userIds.includes(id) !== true)
   ])
-  // The asker's own row among the player's rows is the player themselves.
-  // Comparing where the two walks stopped is not enough: rows closed into
-  // each other stop each walk on the other row.
-  if (player.userIds.includes(actorUserId)) return true
-
-  const parent = await db
-    .selectFrom('user_links')
-    .select(['id'])
-    .where('user_id', 'in', actor.userIds)
-    .where('related_user_id', 'in', player.userIds)
-    .where('kind', 'in', ['guardian', 'family'])
-    .executeTakeFirst()
-  if (parent != null) return true
-
-  const scopes = await roleScopes(db, actorUserId, false)
-  // Preserve scorekeepers' full-name access: they may maintain the roster alone.
-  const staffOf = new Set(
-    (['admin', 'coach', 'assistant', 'scorekeeper'] as const).flatMap(role => [
-      ...scopes[role].teamIds
+  const actor = gathered.get(actorUserId)!
+  const players = new Map(
+    others.map(id => [
+      id,
+      known.get(id)?.userIds.includes(id) === true
+        ? known.get(id)!
+        : gathered.get(id)!
     ])
   )
-  if (staffOf.size === 0) return false
-  const plays = await db
-    .selectFrom('memberships')
-    .select(['team_id'])
-    .where('user_id', 'in', player.userIds)
-    .where('is_player', '=', true)
-    .where('team_id', 'in', [...staffOf])
+  const links = await db
+    .selectFrom('user_links')
+    .select('related_user_id')
+    .where('user_id', '=', anyOf(actor.userIds))
+    .where('kind', 'in', ['guardian', 'family'])
     .execute()
-  const held = await openAddTeams(db, player.userIds)
-  return plays.some(row => !held.includes(row.team_id))
+  const children = new Set(links.map(row => row.related_user_id))
+  for (const [id, player] of players)
+    if (
+      player.userIds.includes(actorUserId) ||
+      player.userIds.some(row => children.has(row))
+    )
+      allowed.add(id)
+  const remaining = [...players].filter(([id]) => !allowed.has(id))
+  if (remaining.length === 0) return allowed
+  const scopes = await roleScopes(db, actorUserId, false)
+  const staffOf = [
+    ...new Set(
+      (['admin', 'coach', 'assistant', 'scorekeeper'] as const).flatMap(
+        role => [...scopes[role].teamIds]
+      )
+    )
+  ]
+  if (staffOf.length === 0) return allowed
+  const rows = remaining.flatMap(([, player]) => player.userIds)
+  const [plays, held] = await Promise.all([
+    db
+      .selectFrom('memberships')
+      .select(['user_id', 'team_id'])
+      .where('user_id', '=', anyOf(rows))
+      .where('is_player', '=', true)
+      .where('team_id', '=', anyOf(staffOf))
+      .execute(),
+    openAddsOf(db, staffOf)
+  ])
+  const teamsByRow = new Map<string, string[]>()
+  for (const play of plays) listUnder(teamsByRow, play.user_id, play.team_id)
+  for (const [id, player] of remaining)
+    if (
+      player.userIds.some(row =>
+        (teamsByRow.get(row) ?? []).some(
+          team =>
+            !player.userIds.some(other => held.get(team)?.has(other) === true)
+        )
+      )
+    )
+      allowed.add(id)
+  return allowed
 }
 
 /**

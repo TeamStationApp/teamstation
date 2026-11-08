@@ -33,12 +33,16 @@ import {
   asRosterPlayerBody
 } from '../../common/playerSettings'
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
-import { addPlayer } from '../../common/scoring/lineup'
+import { addPlayer, pitchThrown } from '../../common/scoring/lineup'
 import {
   type Lineup,
   NO_DEFAULT_LINEUP,
   placeholderSidesOf
 } from '../../common/scoring/lineupHistory'
+import {
+  latestLineupChanges,
+  olderThan
+} from '../../common/scoring/lineupTimes'
 import {
   appearedIn,
   reconcileRoster
@@ -68,6 +72,7 @@ import {
   roleScopes,
   visibleScopes
 } from '../access'
+import type { ValkeyCache } from '../cache/valkeyCache'
 import type { Database } from '../db/database'
 import {
   type Answer,
@@ -91,7 +96,10 @@ import {
   createGuestPlayer,
   renameGuestPlayer
 } from '../games/guestPlayers'
-import { gameAvailability } from '../games/rosterAvailability'
+import {
+  type GameAvailability,
+  gameAvailability
+} from '../games/rosterAvailability'
 import { setRostered } from '../games/unroster'
 import { publicNames } from '../groups/playerNamePrivacy'
 import { cleanBody } from '../jsonBody'
@@ -101,7 +109,6 @@ import { withAsync } from '../middleware/withErrors'
 import { scoringUsers } from '../scoring/gumboIds'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
-import { withRevision } from '../socket/syncRevision'
 import { tellGameWritten } from './gameWritten'
 import { teamWalkUpSongs } from './walkUpSongs'
 
@@ -119,6 +126,11 @@ export interface LineupRouteOptions {
    * where a test posts a scorer's play, as one arriving mid-save would.
    */
   beforeSave?: (gameId: string) => Promise<void>
+  /**
+   * Where a save's live post, and an unroster's, leaves the game socket's
+   * frame of its edits.
+   */
+  cache?: ValkeyCache
   /**
    * Called once a save has committed, before its answer is read: where a test
    * saves another device's change, as one landing in between would.
@@ -189,7 +201,7 @@ export function lineupRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asUnrosterBody, req.body)
-      res.json(await setRostered(db, actor, gameId, body))
+      res.json(await setRostered(db, actor, gameId, body, options.cache))
       tellGameWritten(options.onGameWritten, gameId)
     })
   )
@@ -275,7 +287,7 @@ export function lineupRoutes(
   router.get(
     '/teams/:teamId/default-lineup',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
@@ -297,7 +309,7 @@ export function lineupRoutes(
   router.get(
     '/games/:gameId/lineups',
     requireActor,
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
@@ -509,6 +521,10 @@ class GameMoved extends Error {
   }
 }
 
+/** A save older than a change of the same side already stored. */
+export const NEWER_LINEUP =
+  'This lineup was changed later on another device; that change stands.'
+
 /** What a save replayed: the game's lineups digest, at-bat and plays. */
 function snapshotOf(
   game: {
@@ -571,7 +587,8 @@ async function saveSide(
           'lineups_digest',
           'play_generation',
           'guests',
-          'unrostered'
+          'unrostered',
+          'updated_at'
         ])
         .where('id', '=', gameId)
         .executeTakeFirst()
@@ -588,7 +605,11 @@ async function saveSide(
       const context =
         (await contextOf(trx, gameId, game, stored)) ??
         (await startingContext(trx, gameId, game, sees))
-      const availability = await gameAvailability(trx, { id: gameId, ...game })
+      const availability = await gameAvailability(
+        trx,
+        { id: gameId, ...game },
+        { roster: true }
+      )
       return {
         stored,
         context,
@@ -607,7 +628,10 @@ async function saveSide(
             )
         ),
         snapshot: snapshotOf(game, rows),
-        digest: await storedLineupsDigest(trx, { id: gameId, ...game })
+        digest: await storedLineupsDigest(trx, { id: gameId, ...game }),
+        // Every write of the game sets it: no action stored was received
+        // after it.
+        received: new Date(game.updated_at).getTime()
       }
     })
 
@@ -652,7 +676,12 @@ async function saveSide(
                   resultId: posted.lineupsDigest ?? read.digest
                 })
               },
-          { expectedGeneration: body.generation }
+          // The replay reads every play the post leaves.
+          {
+            expectedGeneration: body.generation,
+            answer: 'all',
+            cache: options.cache
+          }
         )
         // A live post always keeps one.
         wrote = posted.lineupsDigest ?? read.digest
@@ -694,12 +723,50 @@ async function saveSide(
     sees
   )
   if (actions.length === 0) return { outcome: 'unchanged', digest: read.digest }
+  // A device whose clock runs ahead is not let to claim the future.
+  const changedAt =
+    body.changedAt == null
+      ? undefined
+      : Date.parse(body.changedAt) > Date.now()
+        ? new Date().toISOString()
+        : body.changedAt
+  // The latest creation time wins: a stored change of this side made after
+  // this one stands, and this one changes nothing. A save made on the
+  // lineups as they stand (its base is the current digest) saw every change
+  // stored and is never refused. Once the digest has moved, every stored
+  // lineup change of the side is weighed, not only those since the base,
+  // which the digest cannot place in the log. A stored stamp counts no later
+  // than the game's last write (`updated_at`), so a device whose clock runs
+  // ahead does not win every save after its own.
+  if (
+    changedAt != null &&
+    body.base !== read.digest &&
+    olderThan(
+      [body.side],
+      changedAt,
+      latestLineupChanges(
+        session.lineupSides,
+        session.actionStamps.map(stamp => {
+          const time = stamp == null ? NaN : Date.parse(stamp)
+          return Number.isNaN(time) || time <= read.received
+            ? stamp
+            : new Date(read.received).toISOString()
+        })
+      )
+    )
+  )
+    throw conflict(NEWER_LINEUP, { stale: true, newer: true })
   // The game takes a lineup change with a ball in play; the scorer's screen
   // offers none until the play has its result, and nor does this.
   if (awaitingResult(session.state))
     throw conflict('Finish the current play first')
   for (const action of actions) {
-    const problem = session.apply(action).problems[0]
+    // Stored at the time the change was made, so a later one can tell; it
+    // plays, and its event is recorded, at the time it entered the log.
+    const problem = session.apply(
+      action,
+      changedAt == null ? {} : { time: changedAt }
+    ).problems[0]
     if (problem != null) throw refusal(problem)
   }
   await options.beforeSave?.(gameId)
@@ -731,7 +798,7 @@ export async function startingContext(
     .selectAll()
     .where('id', '=', gameId)
     .executeTakeFirstOrThrow()
-  const availability = await gameAvailability(db, gameRow)
+  const availability = await gameAvailability(db, gameRow, { roster: true })
   const rows = await db
     .selectFrom('teams')
     .select(['id', 'name', 'logo_path', 'default_lineup'])
@@ -829,7 +896,7 @@ function sideActions(
   held: boolean,
   roster: readonly RosterEntry[],
   guests: readonly number[],
-  availability: Awaited<ReturnType<typeof gameAvailability>>
+  availability: GameAvailability<true>
 ): ScoringAction[] {
   // Who this side fields, read as the app reads it to build this body: with
   // the setup and who has played, or no body could ever be saved.
@@ -940,6 +1007,8 @@ function sideActions(
       type: 'lineup',
       kind: 'roster',
       setup,
+      // After the first pitch a saved order keeps each side's batting slot.
+      ...(pitchThrown(state) ? { keepSlot: true as const } : {}),
       ...(body.nextBatter == null ? {} : { nextBatter: ids[body.nextBatter] })
     },
     ...runners.map((runner): ScoringAction => ({

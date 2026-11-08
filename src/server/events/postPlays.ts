@@ -5,6 +5,11 @@ import { type Kysely, type Selectable, sql, type Transaction } from 'kysely'
 import { badRequest, conflict, notFound } from '../../common/errors'
 import { withPreviousTagIdentities } from '../../common/eventTags'
 import type {
+  PlayEdit,
+  PlayEditsData,
+  WirePlayRow
+} from '../../common/gameSocket'
+import type {
   CurrentPlay,
   GumboPlay,
   PostEventsBody
@@ -16,24 +21,38 @@ import {
   withHalfOuts
 } from '../../common/scoring/linescore'
 import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
+import type { StoredGame } from '../../common/scoring/session'
 import { pregameRecord } from '../../common/scoring/sideSwap'
 import { withoutNames } from '../../common/scoring/storedNames'
 import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
+import type { ValkeyCache } from '../cache/valkeyCache'
+import { lockGameTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, EventsTable } from '../db/database'
 import { resolvedFenceDistance } from '../games/fenceDistance'
 import { scoringActivitySql } from '../games/scoringActivity'
 import { radarSettings } from '../nodeSettings'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
-import { resolveScoringGame } from '../scoring/openRow'
+import {
+  type NamedPlays,
+  resolveScoringGame,
+  resolveScoringPlays,
+  scoringIdsIn
+} from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { assertAuthoredRosters } from '../scoring/rosterWrites'
-import { notifyGameChange } from '../socket/gameChanges'
+import {
+  MAX_NOTICE_INDEXES,
+  notifyGameChange,
+  PLAY_EDITS_TTL_MS,
+  playEditsKey
+} from '../socket/gameChanges'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
-import { atBatOf, postedAtBat } from './atBatInProgress'
+import { type GamePlayerRow, gamePlayers } from '../users/nameBook'
+import { atBatOf, postedAtBat, PREGAME_ABOUT } from './atBatInProgress'
 import { pregameFold } from './currentPlay'
-import { reconcileEventTags } from './eventTags'
+import { repairEventTags } from './eventTags'
 import {
   type PlaySource,
   type PlayWrite,
@@ -60,9 +79,15 @@ export interface PostedGame {
   away_team_id: string
 }
 
-export interface PostedPlays {
-  plays: Array<{ id: string; gameId: string; gumbo: unknown }>
-  currentPlay: unknown
+/**
+ * What a post answers: every stored play (`all`), or on a live post only the
+ * plays it wrote (`edits`), as `PostedEdits`. A post that is not live
+ * answers every play whichever is asked.
+ */
+export type PostAnswer = 'edits' | 'all'
+
+/** What every post's answer says of the game it leaves. */
+export interface PostedDigests {
   /**
    * The digest the game keeps of its lineups once this post is written, read
    * in its transaction: the base a sender's next live post names. Null only
@@ -71,7 +96,7 @@ export interface PostedPlays {
   lineupsDigest: string | null
   /**
    * A digest of the stored plays and the at-bat in progress once this post
-   * is written, as `GET /events` and the game socket's `plays` give it.
+   * is written, as `GET /events` and the game socket's `playEdits` give it.
    */
   playsDigest: string
   /**
@@ -83,6 +108,51 @@ export interface PostedPlays {
   /** The game's play generation, which a post never changes. */
   generation: number
 }
+
+/** A post's answer of every stored play (`all`). */
+export interface PostedPlays extends PostedDigests {
+  plays: WirePlayRow[]
+  currentPlay: unknown
+}
+
+/**
+ * A live post's answer of only what it wrote (`edits`): a put of each play it
+ * wrote and each one its tag repair rewrote, in index order, then a remove
+ * of each index it took away, and the at-bat in progress.
+ */
+export interface PostedEdits extends PostedDigests {
+  edits: PlayEdit[]
+  currentPlay: unknown
+}
+
+/**
+ * The plays a live post wrote, named as every viewer of the game is answered
+ * them (no player's halves): what the game socket may send each viewer of
+ * the post, as delivery would name it.
+ */
+interface PublicPlayEdits {
+  generation: number
+  /** The digest of the game as the post found it, which the edits apply to. */
+  fromDigest: string | null
+  /** The digest of the game once the edits are applied. */
+  digest: string
+  /** The digest of the book the edits are named from (`NameBook.digest`). */
+  namesDigest: string
+  /** The indexes of the plays put, in index order. */
+  indexes: number[]
+  /** The indexes taken away. */
+  removed: number[]
+  edits: PlayEdit[]
+  currentPlay: unknown
+}
+
+/**
+ * What a post asking for `A` answers: every play when it asks for them, and
+ * when it asks for its edits, those or (not being live) every play.
+ */
+export type PostedAnswer<A extends PostAnswer> = A extends 'all'
+  ? PostedPlays
+  : PostedPlays | PostedEdits
 
 /** What a client's post says about the game it was made against. */
 export interface PostOptions {
@@ -98,6 +168,17 @@ export interface PostOptions {
    * absent.
    */
   halves?: (trx: Trx, game: PostedGame) => Promise<readonly string[]>
+  /**
+   * What the answer holds (`PostAnswer`). Every play when absent: a caller
+   * inside the server reads `plays` whole.
+   */
+  answer?: PostAnswer
+  /**
+   * Where a live post leaves the game socket's frame of what it wrote, named
+   * as the public reads it (`playEditsKey`). Without one, each worker
+   * delivering the notice reads and names the plays itself.
+   */
+  cache?: ValkeyCache
 }
 
 /** The refusal of a post made against the game before its last reset. */
@@ -110,18 +191,27 @@ export const RESET_SINCE_READ = 'This game was reset since it was read'
  * sees the locked game row first and throws to refuse the post; the route
  * asks there whether its sender may score the game. The refold script, which
  * rewrites TeamStation's own plays, passes none. `written` is told the
- * answer last, in the post's transaction, before the clock: where a queued
+ * answer last, in the post's transaction, before it announces: where a queued
  * post's `Idempotency-Key` keeps it. It sees a pregame at-bat as stored,
  * since the answer folds it only after the commit.
+ *
+ * A live post that leaves more than the pregame lineups names the plays it
+ * wrote as the public reads them too, in the same pass as its answer, and the
+ * game socket is sent those (`notifyPlayEdits`). One that names a person the
+ * game's plays and at-bat did not, which can change the short names of others
+ * on plays it did not write, has every viewer read the game again.
  */
-export async function postGamePlays(
+export async function postGamePlays<A extends PostAnswer = 'all'>(
   db: Kysely<Database>,
   gameId: string,
   sentBody: PostEventsBody,
   authorize?: (trx: Trx, game: PostedGame) => Promise<void>,
-  written?: (trx: Transaction<Database>, posted: PostedPlays) => Promise<void>,
-  options: PostOptions = {}
-): Promise<PostedPlays> {
+  written?: (
+    trx: Transaction<Database>,
+    posted: PostedPlays | PostedEdits
+  ) => Promise<void>,
+  options: PostOptions & { answer?: A } = {}
+): Promise<PostedAnswer<A>> {
   // TeamStation and a person typing name themselves. Every other sender, and
   // a post that names none, is an outside scorer: the least trusted one.
   const sent = sentBody.source?.system
@@ -147,8 +237,9 @@ export async function postGamePlays(
       }
     | undefined
 
-  return await atomic(db, async (trx): Promise<PostedPlays> => {
+  return await atomic(db, async (trx): Promise<PostedPlays | PostedEdits> => {
     await lockPlayerEdits(trx)
+    await lockGameTeams(trx, gameId)
     // The game row stays locked until this post commits, so a second
     // post to the same game waits and then sees the plays, the final
     // status and the scoring owner this one leaves behind.
@@ -168,7 +259,12 @@ export async function postGamePlays(
         'pregame',
         'lineup_started_at',
         'lineups_digest',
-        'play_generation'
+        'play_generation',
+        // The rest of what a list shows of the game (`listFieldsChanged`).
+        'linescore',
+        'start_at',
+        'venue',
+        'field_id'
       ])
       .where('id', '=', gameId)
       .forUpdate()
@@ -260,12 +356,20 @@ export async function postGamePlays(
         live ? body.currentPlay : undefined
       ) as CurrentPlay | null
     }
+    // The game's `event_players` as this post finds them, read at most once.
+    let playersRead: Promise<GamePlayerRow[]> | undefined
+    const playersBefore = async (): Promise<GamePlayerRow[]> =>
+      await (playersRead ??= gamePlayers(trx, [gameId]).then(
+        read => read.get(gameId) ?? []
+      ))
     if (
       [...next.plays, next.currentPlay].some(
         play => storedRecordOf(play) != null
       )
     ) {
-      const projected = await resolveScoringGame(trx, next, { gameId })
+      // Nothing is written yet, so both reads name over the same players.
+      const players = await playersBefore()
+      const projected = await resolveScoringGame(trx, next, { gameId, players })
       await assertStoredScoringRoles(
         trx,
         { id: gameId, ...game },
@@ -274,11 +378,29 @@ export async function postGamePlays(
       )
       const context = (await contextOf(trx, gameId, game, projected))!
       assertAuthoredRosters(
-        await resolveScoringGame(trx, previous, { gameId }),
+        await resolveScoringGame(trx, previous, { gameId, players }),
         projected,
         context
       )
     } else await assertStoredScoringRoles(trx, { id: gameId, ...game }, next)
+    // Everyone the game's book was made over before this post (`scopeOf`):
+    // its plays, its at-bat and its `event_players`. A post that leaves the
+    // plays and at-bat naming the same people, and rewrites or removes no
+    // stored play, leaves the `event_players` naming them too, since those
+    // are copied from each play's own people (`eventChildren`): the rows are
+    // read, before the writes, only for a post that may move the scope.
+    const idsBefore = new Set(live ? scoringIdsIn(previous) : [])
+    const storedBefore = new Set(
+      previous.plays.map(play => play.about.atBatIndex)
+    )
+    const mayMoveScope =
+      live &&
+      (!sameIds(idsBefore, new Set(scoringIdsIn(next))) ||
+        (body.remove ?? []).some(index => storedBefore.has(index)) ||
+        body.plays.some(play => storedBefore.has(play.about.atBatIndex)))
+    const scopeBefore = new Set(idsBefore)
+    if (mayMoveScope)
+      for (const row of await playersBefore()) scopeBefore.add(row.gumboId)
 
     const teams = {
       homeTeamId: game.home_team_id,
@@ -390,7 +512,11 @@ export async function postGamePlays(
     } else {
       await replaceGameEvents(trx, write)
     }
-    const stored = await readPlays(trx, gameId)
+    // A live post writes the plays it names and no other, and this one holds
+    // the game's row: the rest stand as they were read.
+    const stored = live
+      ? await playsAfterLivePost(trx, gameId, priorRows, plays, body.remove)
+      : await readPlays(trx, gameId)
     const documents = stored.map(documentOf)
     const posted = scoresOf(stored)
     const decision = live
@@ -468,26 +594,31 @@ export async function postGamePlays(
       })
       .where('id', '=', gameId)
       .execute()
-    await reconcileEventTags(trx, gameId)
-    const taggedStored = await readPlays(trx, gameId)
+    // This post holds the game's row, so unless the repair writes them, its
+    // plays are the ones just read.
+    const { rewritten } = await repairEventTags(trx, gameId, stored)
+    const taggedStored =
+      rewritten.length > 0 ? await readPlays(trx, gameId) : stored
     const taggedGame = await trx
       .selectFrom('games')
-      .select(['currentPlay', 'pregame'])
+      .select(['currentPlay', 'pregame', ...LIST_FIELDS])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
     const taggedCurrent = atBatOf(taggedGame, taggedStored.length > 0)
-    // Told to the game socket when this commits. The lineups only when their
-    // digest moves from the one the game answered before: the digest is of
-    // their stored form, so a pitch leaves it alone and an undone change
-    // moves it.
-    await notifyGameChange(trx, { game: gameId, kind: 'plays' })
-    await notifyGameChange(trx, { game: gameId, kind: 'game' })
-    if ('lineups_digest' in lineups && lineups.lineups_digest !== lineupsBefore)
-      await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
+    // Before the first pitch a reader is answered the pregame lineups folded
+    // into an at-bat, which only a replay after the commit can give.
+    const folds =
+      taggedStored.length === 0 &&
+      taggedGame.currentPlay == null &&
+      taggedCurrent != null
     // And to the screens of that game: its event, and home and schedule,
-    // from the clock this transaction bumps last. A post that makes the
-    // game final, unmakes it, or changes a final score moves its teams'
-    // records too, so Home's lists are told; a play otherwise is not.
+    // announced as this transaction's last statement, when the post changed
+    // something a list shows of it. A pitch that moves only the count tells
+    // no screen scope: every screen of the game hears it as a play frame.
+    // The notice is the post's (`byPost`), which those frames read already.
+    // A post that makes the game final, unmakes it, or changes a final score
+    // moves its teams' records too, so Home's lists are told; a play
+    // otherwise is not.
     const nowStatus =
       game.cancellation_reason === 'withdrawal' ? 'cancelled' : status
     const finalBefore = game.status === 'final'
@@ -497,28 +628,107 @@ export async function postGamePlays(
       (finalNow &&
         (posted.away !== game.away_score || posted.home !== game.home_score))
     )
-      await noteGameFigures(trx, gameId)
-    else noteScopeChange(trx, { gameId })
-    const resolved = await resolveScoringGame(
-      trx,
-      {
-        plays: taggedStored.map(row => row.gumbo as GumboPlay),
-        currentPlay: taggedCurrent as CurrentPlay | null
-      },
-      { halves: (await options.halves?.(trx, game)) ?? [], gameId }
+      await noteGameFigures(trx, gameId, undefined, { byPost: true })
+    else if (
+      listFieldsChanged(
+        { ...game, currentPlay: atBatOf(game, hadPlays) },
+        { ...taggedGame, currentPlay: taggedCurrent }
+      )
     )
+      noteScopeChange(trx, { gameId, byPost: true })
     const sides = teamsOfRow(game)
-    const answer: PostedPlays = {
-      plays: taggedStored.map((row, index) => ({
-        ...playJson(row),
-        gumbo: playForWire(resolved.plays[index], sides)
-      })),
-      currentPlay: playForWire(resolved.currentPlay, sides),
+    const whole = {
+      plays: taggedStored.map(row => row.gumbo as GumboPlay),
+      currentPlay: taggedCurrent as CurrentPlay | null
+    }
+    // What this post wrote: the plays it sent and those its tag repair
+    // rewrote; the indexes it took away that it did not write again.
+    const edited = new Set([...indexes, ...rewritten])
+    const storedAt = new Set(taggedStored.map(row => row.atBatIndex))
+    const removed = [...new Set(body.remove ?? [])].filter(
+      index => !storedAt.has(index)
+    )
+    const editsOf = (named: NamedPlays): PlayEdit[] =>
+      playEditsOf(taggedStored, named, removed, sides)
+    const digests: PostedDigests = {
       lineupsDigest: lineups.lineups_digest ?? game.lineups_digest,
       playsDigest: playsDigest(taggedStored, taggedCurrent),
       priorPlaysDigest: prior,
       generation: game.play_generation
     }
+    const senderHalves = (await options.halves?.(trx, game)) ?? []
+    // Every viewer of the game may be sent what this post wrote, named as
+    // they read it: never with the sender's halves. Not when the game's book
+    // is made over other people than before, someone brought in or the last
+    // play naming someone taken away, which can change how the book tells
+    // others apart on plays it did not write: then viewers read again.
+    const told =
+      live &&
+      !folds &&
+      !(await scopeMoved(trx, gameId, {
+        before: scopeBefore,
+        read: mayMoveScope,
+        idsBefore,
+        after: whole
+      }))
+    // Only what this post wrote is named for an edits answer, every play for
+    // any other, and in the same pass what it wrote for the public, over the
+    // whole game's book.
+    const edits = live && options.answer === 'edits'
+    const resolved = await resolveScoringPlays(trx, whole, {
+      ...(edits ? { only: edited } : {}),
+      publicOnly: told ? edited : [],
+      halves: senderHalves,
+      gameId
+    })
+    const answer: PostedPlays | PostedEdits = edits
+      ? {
+          edits: editsOf(resolved),
+          currentPlay: playForWire(resolved.currentPlay, sides),
+          ...digests
+        }
+      : {
+          plays: taggedStored.map((row, index) => ({
+            ...playJson(row),
+            gumbo: playForWire(resolved.plays[index], sides)
+          })),
+          currentPlay: playForWire(resolved.currentPlay, sides),
+          ...digests
+        }
+    const everyone = resolved.public
+    const shared: PublicPlayEdits | undefined = told
+      ? {
+          generation: game.play_generation,
+          fromDigest: prior,
+          digest: digests.playsDigest,
+          namesDigest: resolved.namesDigest,
+          indexes: taggedStored
+            .filter(row => edited.has(row.atBatIndex))
+            .map(row => row.atBatIndex),
+          removed,
+          edits: editsOf(everyone),
+          currentPlay: playForWire(everyone.currentPlay, sides)
+        }
+      : undefined
+    // Told to the game socket when this commits: what this post wrote, or,
+    // when that cannot be told, that the plays are to be read again. The
+    // lineups only when their digest moves from the one the game answered
+    // before: the digest is of their stored form, so a pitch leaves it alone
+    // and an undone change moves it.
+    await notifyPlayEdits(
+      trx,
+      gameId,
+      {
+        generation: game.play_generation,
+        digest: digests.playsDigest,
+        namesDigest: resolved.namesDigest
+      },
+      shared,
+      options
+    )
+    await notifyGameChange(trx, { game: gameId, kind: 'game' })
+    if ('lineups_digest' in lineups && lineups.lineups_digest !== lineupsBefore)
+      await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
     await written?.(trx, answer)
     folding = {
       fold: await pregameFold(
@@ -539,12 +749,130 @@ export async function postGamePlays(
       // in a caller's transaction, once this post's part of it is done.
       if (folding != null)
         result.currentPlay = playForWire(await folding.fold(), folding.sides)
-      return result
+      // Every play unless asked for edits, and edits only on a live post.
+      return result as PostedAnswer<A>
     })
     .catch((error: unknown) => {
       // Which user a failed post named reads the same in either record.
       throw unknownUser(error, withHalfOuts(sentBody.plays)) ?? error
     })
+}
+
+/**
+ * Tells the game socket how a post changed the game's plays. A live post that
+ * leaves more than the pregame lineups names the digests it took the game
+ * between and the indexes it put and took away, and leaves the frame each
+ * viewer is sent in Valkey, inside the post's transaction, so a worker
+ * delivering the notice reads no play. Any other post, and one that wrote
+ * too many plays to name, says only that the plays are to be read again,
+ * with the digest it left them at: a screen that holds that digest, as the
+ * post's own sender does, has nothing to read. Either names the digest of
+ * the book the post named its plays from, which every viewer compares with
+ * the one it read.
+ */
+async function notifyPlayEdits(
+  trx: Trx,
+  gameId: string,
+  left: { generation: number; digest: string | null; namesDigest: string },
+  shared: PublicPlayEdits | undefined,
+  options: { cache?: ValkeyCache }
+): Promise<void> {
+  const { generation } = left
+  if (
+    shared?.fromDigest == null ||
+    shared.indexes.length + shared.removed.length > MAX_NOTICE_INDEXES
+  ) {
+    await notifyGameChange(trx, {
+      game: gameId,
+      kind: 'playEdits',
+      generation,
+      ...(left.digest == null ? {} : { digest: left.digest }),
+      namesDigest: left.namesDigest
+    })
+    return
+  }
+  const notice = {
+    game: gameId,
+    kind: 'playEdits' as const,
+    generation,
+    fromDigest: shared.fromDigest,
+    digest: shared.digest,
+    namesDigest: shared.namesDigest,
+    indexes: shared.indexes,
+    removed: shared.removed
+  }
+  const frame: PlayEditsData = {
+    generation,
+    fromDigest: shared.fromDigest,
+    digest: shared.digest,
+    namesDigest: shared.namesDigest,
+    edits: shared.edits,
+    currentPlay: shared.currentPlay
+  }
+  await options.cache?.set(
+    playEditsKey(notice),
+    JSON.stringify(frame),
+    PLAY_EDITS_TTL_MS
+  )
+  await notifyGameChange(trx, notice)
+}
+
+/**
+ * Whether a post left the game's book made over other people than `before`,
+ * the scope it found: a newcomer, whose short name can make others' longer,
+ * or the last mention of someone gone, whose leaving can make them shorter.
+ * With `read` false the post could not move the `event_players`, so only
+ * the plays and at-bat are compared; `before` then holds just those, and a
+ * change there, which `read` would have foreseen, is a move.
+ */
+async function scopeMoved(
+  trx: Trx,
+  gameId: string,
+  scope: {
+    before: ReadonlySet<number>
+    read: boolean
+    idsBefore: ReadonlySet<number>
+    after: StoredGame
+  }
+): Promise<boolean> {
+  const after = new Set(scoringIdsIn(scope.after))
+  if (!scope.read) return !sameIds(scope.idsBefore, after)
+  for (const row of (await gamePlayers(trx, [gameId])).get(gameId) ?? [])
+    after.add(row.gumboId)
+  return !sameIds(scope.before, after)
+}
+
+/** Whether two sets of ids hold the same ids. */
+function sameIds(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
+  return a.size === b.size && [...a].every(id => b.has(id))
+}
+
+/**
+ * The edits that take a game's stored plays to `stored`: a put of each of
+ * `named`'s plays as its stored row, named, in index order, then a remove of
+ * each index of `removed`.
+ */
+export function playEditsOf(
+  stored: readonly StoredPlay[],
+  named: NamedPlays,
+  removed: readonly number[],
+  sides: ReturnType<typeof teamsOfRow>
+): PlayEdit[] {
+  const byIndex = new Map(
+    named.plays.map(play => [play.about.atBatIndex, play])
+  )
+  return [
+    ...stored
+      .filter(row => byIndex.has(row.atBatIndex))
+      .map((row): PlayEdit => ({
+        op: 'put',
+        play: {
+          ...playJson(row),
+          gumbo: playForWire(byIndex.get(row.atBatIndex), sides)
+        }
+      })),
+    ...removed.map((atBatIndex): PlayEdit => ({ op: 'remove', atBatIndex }))
+  ]
 }
 
 /**
@@ -638,7 +966,10 @@ const PLAY_COLUMNS = [
   'gumbo'
 ] as const
 
-type StoredPlay = Pick<Selectable<EventsTable>, (typeof PLAY_COLUMNS)[number]>
+export type StoredPlay = Pick<
+  Selectable<EventsTable>,
+  (typeof PLAY_COLUMNS)[number]
+>
 
 /**
  * A game's stored plays in index order, with the columns the line score and
@@ -654,6 +985,34 @@ export async function readPlays(
     .where('gameId', '=', gameId)
     .orderBy('atBatIndex')
     .execute()
+}
+
+/**
+ * A game's stored plays after a live post, reading again only those it wrote:
+ * in a long game the rest are most of what the post would otherwise read, and
+ * the documents kept need nothing worked out from them again.
+ */
+async function playsAfterLivePost(
+  db: Trx,
+  gameId: string,
+  prior: StoredPlay[],
+  written: PlayWrite[],
+  removed: readonly number[] = []
+): Promise<StoredPlay[]> {
+  const indexes = written.map(play => play.gumbo.about.atBatIndex)
+  const gone = new Set([...indexes, ...removed])
+  const rewritten =
+    indexes.length === 0
+      ? []
+      : await db
+          .selectFrom('events')
+          .select(PLAY_COLUMNS)
+          .where('gameId', '=', gameId)
+          .where('atBatIndex', 'in', indexes)
+          .execute()
+  return [...prior.filter(row => !gone.has(row.atBatIndex)), ...rewritten].sort(
+    (a, b) => a.atBatIndex - b.atBatIndex
+  )
 }
 
 /**
@@ -757,6 +1116,82 @@ export async function gamePlaysDigest(
 ): Promise<string> {
   const rows = await readPlays(db, game.id)
   return playsDigest(rows, atBatOf(game, rows.length > 0))
+}
+
+/** The columns of a game that a list of games shows, beside its at-bat. */
+const LIST_FIELDS = [
+  'status',
+  'away_score',
+  'home_score',
+  'linescore',
+  'start_at',
+  'home_team_id',
+  'away_team_id',
+  'venue',
+  'field_id',
+  'cancellation_reason'
+] as const
+
+/** A game as a list shows it: `LIST_FIELDS` and the at-bat readers get. */
+export interface ListFields {
+  status: string
+  away_score: number | null
+  home_score: number | null
+  linescore: unknown
+  currentPlay: unknown
+  start_at: Date
+  home_team_id: string
+  away_team_id: string
+  venue: string | null
+  field_id: string | null
+  cancellation_reason: string | null
+}
+
+/**
+ * Whether a list of games shows `after` differently from `before`: its
+ * status, score, inning or half, start, teams, venue or field, or why it was
+ * cancelled. The inning and half are the at-bat's and the line score's
+ * halves; a pitch, a count or a hit changes none of these.
+ */
+export function listFieldsChanged(
+  before: ListFields,
+  after: ListFields
+): boolean {
+  return (
+    before.status !== after.status ||
+    before.away_score !== after.away_score ||
+    before.home_score !== after.home_score ||
+    halfOf(before) !== halfOf(after) ||
+    new Date(before.start_at).getTime() !==
+      new Date(after.start_at).getTime() ||
+    before.home_team_id !== after.home_team_id ||
+    before.away_team_id !== after.away_team_id ||
+    before.venue !== after.venue ||
+    before.field_id !== after.field_id ||
+    before.cancellation_reason !== after.cancellation_reason
+  )
+}
+
+/**
+ * The half a game is in, as its at-bat and its line score place it: the
+ * line score's innings, and whether the last has had its bottom half. A game
+ * with no at-bat yet is where its first will be, the top of the 1st.
+ */
+function halfOf(game: Pick<ListFields, 'linescore' | 'currentPlay'>): string {
+  const innings =
+    (game.linescore as { innings?: unknown[] } | null)?.innings ?? []
+  const last = innings.at(-1) as { home?: { runs?: unknown } } | undefined
+  const about = (
+    game.currentPlay as {
+      about?: { inning?: unknown; isTopInning?: unknown }
+    } | null
+  )?.about
+  return JSON.stringify([
+    innings.length,
+    last?.home?.runs != null,
+    about?.inning ?? PREGAME_ABOUT.inning,
+    about?.isTopInning ?? PREGAME_ABOUT.isTopInning
+  ])
 }
 
 /**

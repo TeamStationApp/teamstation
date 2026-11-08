@@ -13,7 +13,8 @@ import {
   battingPose,
   buntingPose,
   pitchingHand,
-  pitchingPose
+  pitchingPose,
+  releaseHand
 } from './athletePose'
 import { BALL_CONTACT } from './ballArcModel'
 import { createStartingPlayers } from './batterModel'
@@ -33,17 +34,24 @@ describe('articulated athlete motion', function () {
         p => p.playerId === sequence.pitcher
       )!.position
       for (const time of [0, 100, 300, 450, 649, 650, 1000, 1500]) {
-        const pose = pitchingPose(time, PITCH_TIMING.release, side)
+        const pose = pitchingPose(time, 650, side)
         expect(
           Object.values(pose)
             .flat(Infinity)
             .every(n => typeof n !== 'number' || Number.isFinite(n))
         ).equals(true)
-        if (time <= PITCH_TIMING.release)
-          expect(samplePitch(sequence, time).ball).deep.equals(
-            pitchingHand(origin, time, PITCH_TIMING.release, side)
-          )
       }
+      // A pitch has no windup: the ball leaves the release hand at once,
+      // and the pitcher never winds up.
+      expect(PITCH_TIMING.release).equals(0)
+      expect(samplePitch(sequence, 0).ball).deep.equals(
+        releaseHand(origin, side)
+      )
+      expect(releaseHand(origin, side)).deep.equals(
+        pitchingHand(origin, 650, 650, side)
+      )
+      for (const time of [0, 100, 300, PITCH_TIMING.finish])
+        expect(samplePitch(sequence, time).windup).equals(0)
       const coil = pitchingPose(280, 650, side)
       const opening = pitchingPose(390, 650, side)
       const sign = side === 'R' ? 1 : -1

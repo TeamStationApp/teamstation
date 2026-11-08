@@ -1,3 +1,4 @@
+import type { PostedEdits } from '../api'
 import { HttpError } from '../errors'
 import {
   eventSignature,
@@ -22,6 +23,12 @@ import {
   segmentAfter
 } from './gumbo'
 import { reconcileShownLineup } from './lineupHistory'
+import {
+  latestLineupChanges,
+  lineupSides,
+  olderThan,
+  stampTime
+} from './lineupTimes'
 import type { SwapEffect } from './playsLost'
 import { awaitingResult, nextDecision } from './rules'
 import {
@@ -92,6 +99,12 @@ export interface StoredGame {
    */
   modelNames?: Record<string, string>
   /**
+   * The teams whose players' first and last names this read carries, as
+   * `GET /games/:gameId/events` answers it. Absent or empty: named as the
+   * public reads the game, as the game socket's `playEdits` are.
+   */
+  halves?: string[]
+  /**
    * The digest the server keeps of the game's lineups, as it read them or as
    * this save left them: what the next save names as its `lineupsBase`.
    * Absent from a store that keeps none.
@@ -99,6 +112,12 @@ export interface StoredGame {
   lineupsDigest?: string
   /** A digest of the stored plays and the at-bat in progress, as read or left. */
   playsDigest?: string
+  /**
+   * The digest of the book `GET /games/:gameId/events` named the plays from,
+   * which a `playEdits` change must name to apply to them. Absent from a
+   * store that keeps none, and from a save's answer.
+   */
+  namesDigest?: string
   /** On a save's answer, the same digest of the game as the save found it. */
   priorPlaysDigest?: string
   /**
@@ -152,10 +171,18 @@ export interface SaveChange {
    */
   generation?: number
 }
-/** Where a session reads and writes its game. It does no I/O of its own. */
+/**
+ * Where a session reads and writes its game. It does no I/O of its own. A
+ * save answers the digests and the generation it left the game with
+ * (`PostedEdits`), or the whole game, which holds them: the session reads
+ * only those, each when present.
+ */
 export interface EventStore {
   load: (gameId: string) => Promise<StoredGame>
-  save: (gameId: string, change: SaveChange) => Promise<StoredGame>
+  save: (
+    gameId: string,
+    change: SaveChange
+  ) => Promise<PostedEdits | StoredGame>
 }
 export interface SessionContext {
   gamePk: string
@@ -808,14 +835,33 @@ export class ScoringSession {
     }
   }
 
-  apply(action: ScoringAction): Applied {
-    return this.append(action, true)
+  /**
+   * Applies `action` and saves it. `time`, an ISO time, is when the change
+   * was made, when not now: a lineup saved from another device's queue. It
+   * is the action's time; the action plays at the time it is applied.
+   */
+  apply(action: ScoringAction, options: { time?: string } = {}): Applied {
+    return this.append(action, true, false, options.time)
+  }
+
+  /**
+   * The sides each action of `actions` changes the lineup of, or null for
+   * one that is no lineup change (`lineupSides`).
+   */
+  get lineupSides(): Array<readonly Side[] | null> {
+    return lineupSides(this.base, this.log)
+  }
+
+  /** When each action of `actions` was taken, as an ISO time, where known. */
+  get actionStamps(): ReadonlyArray<string | undefined> {
+    return this.actionTimes
   }
 
   private append(
     action: ScoringAction,
     save: boolean,
-    replay = false
+    replay = false,
+    time?: string
   ): Applied {
     if (this.refusal != null) {
       return {
@@ -850,9 +896,13 @@ export class ScoringSession {
         state: this.game,
         play: this.game.liveData.plays.currentPlay
       }
+    // `time` is when the change was made, on another device and maybe long
+    // before: its action time, for the latest change to win. It plays, and
+    // its event is recorded, now, as it enters the log after what was
+    // logged meanwhile, so the log's play times run forward.
     const now = this.now().toISOString()
     this.log.push(action)
-    this.actionTimes.push(now)
+    this.actionTimes.push(time ?? now)
     this.playbackTimes.push(now)
     this.displaced?.stamped.push(now)
     this.record(action, applied, now)
@@ -1171,6 +1221,8 @@ export class ScoringSession {
    * is dropped, and `problem` says so.
    */
   private async rebase(): Promise<void> {
+    // No stored action reached the server after this read began.
+    const readAt = this.now().getTime()
     const fresh = await ScoringSession.open(
       this.store,
       this.gameId,
@@ -1195,6 +1247,25 @@ export class ScoringSession {
     const kept = agree(this.savedLog, fresh.log)
     const ours = this.log.slice(same)
     const theirs = fresh.log.slice(kept)
+    // The latest creation time wins a lineup: each side's latest change of
+    // theirs, against which each of our lineup changes is weighed.
+    const ourSides = this.lineupSides.slice(same)
+    // Only what other devices stored counts: the read's own actions (a roster
+    // its open reconciled, stamped with the rebase's now) are no device's.
+    // Each counts no later than this read, as the lineups route counts a
+    // stored stamp no later than the game's last write: a device whose clock
+    // runs ahead does not win every change after its own.
+    const theirLatest = latestLineupChanges(
+      fresh.lineupSides,
+      fresh.actionTimes.map((time, index) => {
+        if (fresh.readActions.has(fresh.log[index])) return undefined
+        const at = stampTime(time)
+        return at == null || at <= readAt
+          ? time
+          : new Date(readAt).toISOString()
+      }),
+      kept
+    )
     // Each action put back keeps the time it was taken, not the rebase's.
     const ourTimes = this.actionTimes.slice(same)
     const theirTimes = fresh.actionTimes.slice(kept)
@@ -1232,7 +1303,15 @@ export class ScoringSession {
     for (const [index, time] of times)
       if (!this.times.has(index)) this.times.set(index, time)
     const refused: string[] = []
+    const oursFrom = same < kept ? theirs.length : 0
     for (const [index, action] of replay.entries()) {
+      // Our lineup change of a side another device changed later is
+      // dropped: theirs stands.
+      const sides = index >= oursFrom ? ourSides[index - oursFrom] : null
+      if (sides != null && olderThan(sides, replayTimes[index], theirLatest)) {
+        refused.push('another device changed that lineup later')
+        continue
+      }
       // A roster the screen logged while showing a default in place of an
       // unseen order. It replaces only a side that is still that order.
       // Every other side stays as the server holds it, and the pitch that
@@ -1673,7 +1752,7 @@ export class ScoringSession {
         change.currentPlay === undefined
       )
         return
-      let answer: StoredGame | undefined
+      let answer: PostedEdits | StoredGame | undefined
       try {
         answer = await this.store.save(this.gameId, {
           ...storedChange(change),

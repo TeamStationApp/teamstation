@@ -9,6 +9,7 @@ import puppeteer, {
   type Page
 } from 'puppeteer'
 
+import { browserCoverageCollector } from '../../../e2e/rigs/browserCoverage'
 import type { GameDetail, RosterEntry } from '../../common/api'
 import {
   dictatedAction,
@@ -21,7 +22,11 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
-import type { GameSetup, GameState } from '../../common/scoring/state'
+import type {
+  FielderRef,
+  GameSetup,
+  GameState
+} from '../../common/scoring/state'
 import { signInTestAccount } from '../../test/passwordFixtures'
 import { createDevelopmentSession, teamsOf } from './developmentSession'
 
@@ -37,8 +42,19 @@ import { createDevelopmentSession, teamsOf } from './developmentSession'
  * Needs the API (`npm start`), the web app built against it (`npm run
  * start.web`, `TS_API_BASE_URL` pointing at the API), a scorer made with
  * `npm run seed`, and `npm run scoring-game` for fresh games.
+ *
+ * With TS_BROWSER_COVERAGE_OUT, every page counts its JS coverage, written
+ * there as istanbul JSON once the file's tests end. The counts map back
+ * through `dist/`, so that run serves the production build:
+ * `npm run build.web`, then `TS_API_PROXY=http://127.0.0.1:9100 node
+ * scripts/serveDist.mjs 8080`.
  */
 const APP = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
+const coverageOut = process.env.TS_BROWSER_COVERAGE_OUT
+const coverage =
+  coverageOut == null || coverageOut === ''
+    ? null
+    : browserCoverageCollector(new URL(APP).origin)
 const API = process.env.TS_API_TEST_URL ?? 'http://127.0.0.1:9100/api/v1'
 const DATABASE = process.env.TS_E2E_DATABASE ?? 'AppDb_scoringCore'
 const SCORER = {
@@ -75,8 +91,19 @@ function scoringGame(games = 1): Fixture {
       .split('\n')
       .filter(line => line.startsWith(`${key}=`))
       .map(line => line.slice(key.length + 1))
+  const made = value('GAME_ID')
+  // The fixture makes its league, season and teams afresh and names nobody
+  // their scorekeeper, so the scorer is made one of each game's season.
+  for (const game of made)
+    sql(
+      `INSERT INTO scope_roles (id, user_id, scope_type, scope_id, role)
+       SELECT 'rol_e2e' || md5(random()::text), e.user_id, 'season', g.season_id, 'scorekeeper'
+       FROM games g, user_emails e
+       WHERE g.id = '${game}' AND e.email = '${SCORER.email.toLowerCase()}'
+       ON CONFLICT DO NOTHING`
+    )
   return {
-    games: value('GAME_ID'),
+    games: made,
     away: value('AWAY')[0].split(',').map(Number),
     home: value('HOME')[0].split(',').map(Number)
   }
@@ -115,6 +142,7 @@ async function openAs(
   context?: BrowserContext
 ): Promise<Page> {
   const page = await (context ?? browser).newPage()
+  await coverage?.track(page)
   page.setDefaultTimeout(15000)
   page.on('pageerror', error => {
     console.error('Browser error:', error)
@@ -187,7 +215,7 @@ async function pitch(page: Page, label: string): Promise<void> {
 async function chooseHit(page: Page, outcome: string): Promise<void> {
   await waitReady(page)
   await click(page, 'Swing in Play')
-  if (['Throw Out', 'Ball Caught', 'Batter Interference'].includes(outcome))
+  if (['Ground Out', 'Ball Caught', 'Batter Interference'].includes(outcome))
     await click(page, 'Batter Out')
   await click(page, outcome)
   await page.waitForSelector('canvas[data-field-ready="true"]')
@@ -224,7 +252,7 @@ async function hitTo(
 ): Promise<void> {
   await waitReady(page)
   await click(page, 'Swing in Play')
-  if (['Throw Out', 'Ball Caught'].includes(outcome))
+  if (['Ground Out', 'Ball Caught'].includes(outcome))
     await click(page, 'Batter Out')
   await click(page, outcome)
   await page.waitForSelector('canvas[data-field-ready="true"]')
@@ -374,6 +402,9 @@ describe('scoring into the server', function () {
     })
   })
   after(async function () {
+    this.timeout(600000)
+    if (coverage != null && coverageOut != null)
+      await coverage.record(coverageOut)
     await browser?.close()
   })
 
@@ -391,26 +422,25 @@ describe('scoring into the server', function () {
       await pitch(page, 'Ball')
       await pitch(page, 'Called Strike')
       await pitch(page, 'Swing and Miss')
-      // A ground ball to the shortstop: 6 to 4, forcing the runner at
-      // second, then 4 to 3 for the batter.
-      await hitTo(page, 'Throw Out', 4, -10)
+      // A ground ball to the shortstop: 6 to 4, the runner from first
+      // already standing on second, then 4 to 3 for the batter.
+      await hitTo(page, 'Ground Out', 4, -10)
       await page.waitForSelector(
-        '[aria-label^="Tap or drag the next defender, drag a forced runner"]'
+        '[aria-label^="Tap or drag the next defender, hold a runner"]'
       )
       // The shortstop holds the ball, so the second baseman is fourth.
       await placeWithKeyboard(page, 4)
       await page.waitForSelector(
-        '[aria-label^="Tap or drag the next defender, drag a forced runner"]'
+        '[aria-label^="Tap or drag the next defender, hold a runner"]'
       )
-      // The forced runner is the last player the field offers: [ from
-      // nothing selected goes to him. The throw beat him to second.
+      // The runner is the last player the field offers: [ from nothing
+      // selected goes to him. The throw beat him to second, where he stands.
       await frame(page)
       await frame(page)
       await page.focus('[role="application"]')
       await page.keyboard.press('[')
       await frame(page)
       await page.keyboard.press('Space')
-      for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
       await page.keyboard.press('o')
       await page.keyboard.press('Enter')
       // The second baseman still holds it, so the first baseman is third.
@@ -547,8 +577,9 @@ describe('scoring into the server', function () {
       await pitch(page, 'Swing and Miss')
       await pitch(page, 'Swing and Miss')
       await finishAtBat(page)
-      // Short to first for the batter, the runner taking second.
-      await hitTo(page, 'Throw Out', 4, -10)
+      // Short to first for the batter; the ground out takes the runner to
+      // second.
+      await hitTo(page, 'Ground Out', 4, -10)
       await page.waitForSelector(
         '[aria-label^="Tap or drag the next defender"]'
       )
@@ -559,10 +590,6 @@ describe('scoring into the server', function () {
       await page.keyboard.press('ArrowUp')
       await page.keyboard.press('Enter')
       await click(page, 'Finish defensive play')
-      await page.waitForSelector('[aria-label="Time to edit play"]', {
-        timeout: 30000
-      })
-      await dropRunnerWithKeyboard(page, 'Safe', true)
       await finishAtBat(page)
       // A fly to left for the third out.
       await hitTo(page, 'Ball Caught', 6, 40)
@@ -601,8 +628,10 @@ describe('scoring into the server', function () {
             ]!
           )
     }
-    const mapped = (id: number): number => {
-      const found = idOf.get(id)
+    const mapped = <T extends FielderRef>(id: T): T => {
+      // A stand-in's position is no fixture id.
+      if (typeof id !== 'number') return id
+      const found = idOf.get(id) as T | undefined
       if (found == null) throw new Error(`No player for fixture id ${id}`)
       return found
     }
@@ -628,36 +657,53 @@ describe('scoring into the server', function () {
           'utf8'
         )
       ) as unknown[]
-    ).map(entry => {
+    ).flatMap((entry): ScoringAction[] => {
       const cleaned = dictatedAction(
         String((entry as { type?: unknown }).type),
         entry
       )
       if ('problem' in cleaned) throw new Error(cleaned.problem.message)
       const action = cleaned.action
+      // A tapped ground out sends the runner on first to second itself: the
+      // script's ground out carries that advance in place of its own.
+      if (
+        action.type === 'result' &&
+        action.eventType === 'field_out' &&
+        action.outBy === 'throw'
+      )
+        return [{ ...action, advance: 'ground' }]
+      if (action.type === 'runnerMovement' && action.reason === 'Advance')
+        return []
       if (action.type === 'ballInPlay' && action.location != null) {
         const from = placed.shift()
         if (from?.type !== 'ballInPlay') throw new Error('No tapped hit')
-        return {
-          ...action,
-          fielder: mapped(action.fielder!),
-          location: from.location
-        }
+        return [
+          {
+            ...action,
+            fielder: mapped(action.fielder!),
+            location: from.location
+          }
+        ]
       }
       if (action.type === 'runnerMovement') {
         const from = action.locations == null ? undefined : placed.shift()
-        return {
-          ...action,
-          runner: mapped(action.runner),
-          ...(action.fielders == null
-            ? {}
-            : { fielders: action.fielders.map(mapped) }),
-          ...(from?.type === 'runnerMovement'
-            ? { locations: from.locations, runnerLocation: from.runnerLocation }
-            : {})
-        }
+        return [
+          {
+            ...action,
+            runner: mapped(action.runner),
+            ...(action.fielders == null
+              ? {}
+              : { fielders: action.fielders.map(mapped) }),
+            ...(from?.type === 'runnerMovement'
+              ? {
+                  locations: from.locations,
+                  runnerLocation: from.runnerLocation
+                }
+              : {})
+          }
+        ]
       }
-      return action
+      return [action]
     })
     expect(placed).deep.equals([])
 
@@ -971,7 +1017,7 @@ describe('scoring into the server', function () {
       await decideHome(page)
       await finishAtBat(page)
       // A ground-out, and the half ends there.
-      await hitTo(page, 'Throw Out', 4, -10)
+      await hitTo(page, 'Ground Out', 4, -10)
       await page.waitForSelector(
         '[aria-label^="Tap or drag the next defender"]'
       )

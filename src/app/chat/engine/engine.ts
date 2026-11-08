@@ -1,6 +1,9 @@
 import type {
+  ChatBlock,
   ChatConversation,
   ChatDmPerson,
+  ChatGrantRequest,
+  ChatHistoryRequest,
   ChatKindName,
   ChatMember,
   ChatMessage,
@@ -11,7 +14,6 @@ import type { AttachmentRef, ChatContent } from '../../../common/chatContent'
 import { fromUtf8 } from '../../../common/chatCrypto/bytes'
 import { safetyWords as safetyNumber } from '../../../common/chatCrypto/safetyNumber'
 import { messageKey, openWithMessageKey } from '../../../common/chatCrypto/seal'
-import { HttpError } from '../../../common/errors'
 import type { ChatSocketEvent, GameSocket } from '../../../common/gameSocket'
 import { lstrings, sprintf } from '../../locales/strings'
 import { messagePreview } from '../chatModel'
@@ -21,10 +23,21 @@ import {
   type ChatEngineClient,
   ChatEngineError,
   type EngineContext,
+  isGone,
   KeyHolder
 } from './context'
 import { fieldsOf, IdentityCache } from './decrypt'
 import { approveGrant, fillGrants } from './grants'
+import {
+  type HistoryRecovery,
+  type SendReadiness,
+  sendReadinessOf
+} from './historyReadiness'
+import {
+  approveHistoryGrant,
+  fillHistoryGrants,
+  heldHistoryEpoch
+} from './historyRecovery'
 import {
   type ChatSetup,
   type Enrolment,
@@ -48,11 +61,13 @@ import {
   type ConversationState
 } from './store'
 import {
+  historyStreaming,
   holdsLatest,
   loadEarlier,
   openPending,
   stateOf,
   syncEpochs,
+  syncHistoryBoxes,
   syncList,
   syncMembers,
   syncMessages,
@@ -151,6 +166,8 @@ export interface ConversationView {
   typing: Array<{ userId: string; name: string | undefined }>
   /** "History is locked — it unlocks when another member opens TeamStation". */
   historyLocked: boolean
+  sendReadiness?: SendReadiness
+  historyRecovery?: HistoryRecovery
   /** "Earlier messages can't be opened". */
   earlierLost: boolean
   /** "Membership record could not be verified". */
@@ -175,7 +192,14 @@ export interface ConversationView {
 
 /** A reset identity's request, waiting for an approver to tap Approve. */
 export interface GrantApproval {
-  requestId: number
+  requestId: number | string
+  /**
+   * Approving also authorizes the chat's older history. A reset with a
+   * current and older segments is one approval, through whichever keys
+   * this device holds.
+   */
+  history?: boolean
+  canApprove?: boolean
   conversationId: string
   conversationTitle: string | undefined
   userId: string
@@ -203,10 +227,11 @@ export interface ChatEngineOptions {
   now?: () => number
 }
 
-/** Whether a refusal says the person is no longer in the chat. */
-const isGone = (error: unknown): boolean =>
-  (error instanceof HttpError && error.code === 'notFound') ||
-  (error instanceof ChatEngineError && error.code === 'notMember')
+/** One approval per reset identity in a chat. */
+const approvalKey = (request: {
+  conversationId: string
+  identityId: string
+}): string => `${request.conversationId}:${request.identityId}`
 
 /** What a hint asks to be read again. */
 type Part = 'members' | 'epochs' | 'messages' | 'reads'
@@ -262,9 +287,11 @@ export class ChatEngine {
   private unlisten: (() => void) | undefined
   private stopped = false
   private existingOnly = false
+  private blockPolicyPending = false
 
   constructor(options: ChatEngineOptions) {
     this.options = options
+    this.blockPolicyPending = options.client.chatBlocks != null
     this.identities = new IdentityCache(options.client)
   }
 
@@ -348,6 +375,7 @@ export class ChatEngine {
         ),
         identities: this.identities,
         pageSize: this.options.pageSize ?? 100,
+        ...this.contextHooks(),
         refreshKeys: async () => {
           await this.context?.keys.replace(
             async () => (await ensureEnrolled(this.setup)).record
@@ -365,6 +393,16 @@ export class ChatEngine {
       })
     }
     return this.status
+  }
+
+  /** Work the engine's parts start by themselves stays the engine's own. */
+  private contextHooks(): Pick<EngineContext, 'detach' | 'live'> {
+    return {
+      detach: work => {
+        this.track(work)
+      },
+      live: () => this.live
+    }
   }
 
   /** Stops hearing hints and drops every timer. */
@@ -388,7 +426,77 @@ export class ChatEngine {
    * each DM not read yet, or whose count or people no longer match the
    * list's (one left and another joined since they were read).
    */
+  isBlocked(userId: string): boolean {
+    return this.memory.blockedUserIds.has(userId)
+  }
+
+  private applyBlocks(blocks: ChatBlock[]): void {
+    if (!this.live) return
+    this.blockPolicyPending = false
+    const ids = new Set(blocks.flatMap(block => block.userIds))
+    const changed =
+      ids.size !== this.memory.blockedUserIds.size ||
+      [...ids].some(id => !this.memory.blockedUserIds.has(id))
+    this.memory.blocks = blocks
+    if (!changed) return
+    this.memory.blockedUserIds = ids
+    this.memory.blockRevision += 1
+    this.personalPins.clear()
+    this.previewVersions.clear()
+    this.pendingAlerts.clear()
+    for (const [id, state] of this.memory.conversations) {
+      if (state.oldestSeq != null)
+        state.blockHistoryFloor = Math.min(
+          state.blockHistoryFloor ?? state.oldestSeq,
+          state.oldestSeq
+        )
+      for (const [seq, envelope] of state.envelopes) {
+        if (!ids.has(envelope.senderUserId)) continue
+        state.opened.delete(envelope.id)
+        if (envelope.kind !== 'delete' && envelope.kind !== 'moderatorDelete')
+          state.envelopes.delete(seq)
+      }
+      for (const userId of ids) state.typing.delete(userId)
+      // Re-read the loaded range so unblocking cannot leave cached history gaps.
+      state.synced = false
+      state.newestSeq = 0
+      state.oldestSeq = undefined
+      state.hasEarlier = true
+      state.summary = {
+        ...state.summary,
+        lastPostId: null,
+        lastPostSeq: 0,
+        lastPostAt: null
+      }
+      this.memory.emit({ type: 'conversation', conversationId: id })
+    }
+    this.memory.emit({ type: 'conversations' })
+  }
+
+  async setBlocked(userId: string, blocked: boolean): Promise<void> {
+    await this.serial('blocks', async () => {
+      const write = this.options.client.setChatBlock
+      if (write == null) throw new Error('Blocking is unavailable')
+      this.applyBlocks(await write.call(this.options.client, userId, blocked))
+    })
+    await this.refresh()
+  }
+
+  /**
+   * Reads the list and the open chats again. An open chat showing locked
+   * history also reads its box stream, so keys granted while no hint reached
+   * this device arrive on a refresh.
+   */
   async refresh(): Promise<ConversationListItem[]> {
+    return await this.reread(true)
+  }
+
+  private async reread(history: boolean): Promise<ConversationListItem[]> {
+    await this.serial('blocks', async () => {
+      const blocks = await this.options.client.chatBlocks?.()
+      if (blocks != null) this.applyBlocks(blocks)
+      else this.blockPolicyPending = false
+    })
     await this.serial('list', async () => {
       await syncList({ client: this.options.client, memory: this.memory })
       for (const state of this.memory.conversations.values()) {
@@ -462,7 +570,14 @@ export class ChatEngine {
         await this.serial(id, async () => {
           const state = this.memory.state(id)
           try {
+            // A hint's list read stays cheap: the chat it names reads its own
+            // parts, and the grant pass runs on the hints that open requests.
+            if (history) {
+              await syncEpochs(this.ctx, id)
+              await openPending(this.ctx, await stateOf(this.ctx, id))
+            }
             await this.readPins(id)
+            if (history) this.readLockedHistory(id)
           } catch (error) {
             if (!isGone(error)) throw error
             if (this.stopped || this.memory.state(id) !== state) return
@@ -476,7 +591,11 @@ export class ChatEngine {
         })
       }
     }
+    if (history) this.grants()
     this.memory.emit({ type: 'conversations' })
+    for (const id of this.active.keys()) {
+      if (this.memory.state(id)?.synced === false) this.want(id, ['messages'])
+    }
     return this.conversations()
   }
 
@@ -495,7 +614,11 @@ export class ChatEngine {
       at: summary.lastPostAt
     }
     for (const envelope of state.envelopes.values()) {
-      if (envelope.kind === 'post' && envelope.seq > lastPost.seq) {
+      if (
+        envelope.kind === 'post' &&
+        !this.isBlocked(envelope.senderUserId) &&
+        envelope.seq > lastPost.seq
+      ) {
         lastPost = {
           id: envelope.id,
           seq: envelope.seq,
@@ -506,6 +629,7 @@ export class ChatEngine {
     const latestMessage =
       lastPost.seq > 0 && state.synced
         ? foldMessages({
+            blockedUserIds: this.memory.blockedUserIds,
             envelopes: state.envelopes.values(),
             opened: state.opened,
             me: this.options.userId,
@@ -564,8 +688,9 @@ export class ChatEngine {
                   )
                   .map(person => ({ ...person, left: true, avatarUrl: null }))
               ],
-      preview:
-        lastPost.seq === 0
+      preview: this.blockPolicyPending
+        ? undefined
+        : lastPost.seq === 0
           ? ''
           : state.synced
             ? messagePreview(latestMessage)
@@ -714,6 +839,7 @@ export class ChatEngine {
     this.active.set(conversationId, holders)
     let opened: ConversationView
     try {
+      if (this.blockPolicyPending) await this.refresh()
       opened = await this.serial(conversationId, async () => {
         await syncMembers(ctx, conversationId)
         await syncLog(ctx, conversationId)
@@ -721,6 +847,7 @@ export class ChatEngine {
         await syncMessages(ctx, conversationId)
         await syncReads(ctx, conversationId)
         await this.readPins(conversationId)
+        this.readLockedHistory(conversationId)
         // Keep the visit's synchronized cursor before any queued acknowledgement.
         return this.mustView(conversationId)
       })
@@ -730,6 +857,18 @@ export class ChatEngine {
     }
     this.memory.emit({ type: 'conversation', conversationId })
     return opened
+  }
+
+  /**
+   * Reads the chat's historical box stream when it shows locked history: on
+   * each visit and each refresh, so recovery never waits on a hint.
+   */
+  private readLockedHistory(conversationId: string): void {
+    if (
+      this.memory.state(conversationId)?.historyRecoveryVersion === 1 &&
+      this.view(conversationId)?.historyLocked === true
+    )
+      this.track(syncHistoryBoxes(this.ctx, conversationId))
   }
 
   /** The screen left the chat: hints no longer read it. */
@@ -767,13 +906,16 @@ export class ChatEngine {
       members.map(member => [member.userId, member.shortName])
     )
     const conversation = this.item(state)
-    const messages = foldMessages({
-      envelopes: state.envelopes.values(),
-      opened: state.opened,
-      me: this.options.userId,
-      names,
-      reads: state.reads
-    })
+    const messages = this.blockPolicyPending
+      ? []
+      : foldMessages({
+          blockedUserIds: this.memory.blockedUserIds,
+          envelopes: state.envelopes.values(),
+          opened: state.opened,
+          me: this.options.userId,
+          names,
+          reads: state.reads
+        })
     let earlierLost = [...state.opened.values()].some(
       opened => opened.status === 'lost'
     )
@@ -789,32 +931,99 @@ export class ChatEngine {
     }
     const head = record?.logs[conversationId]
     const now = this.now
-    const historyLocked = conversation.locked && !conversation.noHolder
+    const sendReadiness = sendReadinessOf({
+      linked: record?.identity != null,
+      closed: conversation.closed,
+      canPost: conversation.canPost,
+      verified: head?.broken !== true,
+      latest: state.latest,
+      holdsLatest:
+        record != null &&
+        epochKeyOf(record, conversationId, state.latest) != null,
+      noHolder: state.noHolder,
+      recoverySupported: state.historyRecoveryVersion === 1,
+      freshEnabled: state.freshEpochsEnabled,
+      hasServerBox: state.latestHasServerBox
+    })
+    const oldLocked =
+      messages.some(
+        message => message.status === 'locked' || message.status === 'lost'
+      ) || earlierLost
+    const historyLocked =
+      state.historyRecoveryVersion === 1
+        ? oldLocked
+        : conversation.locked && !conversation.noHolder
+    const currentSegmentStart = Math.max(
+      1,
+      ...[...state.epochs.values()]
+        .filter(epoch => epoch.valid && epoch.record.chainBreak)
+        .map(epoch => epoch.record.epoch)
+    )
+    // Completed requests disappear from discovery. Retained keys still prove
+    // partial recovery when another closed segment remains unavailable.
+    const hasHistoricalKey =
+      record != null &&
+      [...state.epochs.values()].some(
+        epoch =>
+          epoch.valid &&
+          epoch.record.epoch < currentSegmentStart &&
+          epochKeyOf(record, conversationId, epoch.record.epoch) != null
+      )
+    const historyFailed = state.historyError || state.currentKeysMissing
+    const historyRecovery: HistoryRecovery = historyFailed
+      ? 'retryableError'
+      : !historyLocked
+        ? 'none'
+        : this.context != null && historyStreaming(this.context, conversationId)
+          ? 'recovering'
+          : this.memory.historyGrants.some(
+                r =>
+                  r.conversationId === conversationId &&
+                  r.userId === this.options.userId &&
+                  r.requiresApproval
+              )
+            ? 'awaitingApproval'
+            : hasHistoricalKey ||
+                this.memory.historyGrants.some(
+                  r =>
+                    r.conversationId === conversationId &&
+                    r.userId === this.options.userId &&
+                    r.coveredThroughEpoch >= r.segmentStartEpoch
+                )
+              ? 'partial'
+              : 'waitingForHolder'
+    if (state.historyRecoveryVersion === 1) earlierLost = false
     return {
       conversation,
-      pins: (this.personalPins.get(conversationId) ?? []).filter(
-        pin =>
-          !messages.some(
-            message =>
-              message.id === pin.messageId && message.status === 'removed'
-          )
-      ),
+      pins: this.blockPolicyPending
+        ? []
+        : (this.personalPins.get(conversationId) ?? []).filter(
+            pin =>
+              !messages.some(
+                message =>
+                  message.id === pin.messageId && message.status === 'removed'
+              )
+          ),
       messages,
       members: members.map(member => ({
         ...member,
         safetyNumberChanged: record?.previousPins[member.userId] != null
       })),
-      typing: [...state.typing]
-        .filter(([, until]) => until > now)
-        .map(([userId]) => ({ userId, name: names.get(userId) })),
+      typing: this.blockPolicyPending
+        ? []
+        : [...state.typing]
+            .filter(([id, until]) => until > now && !this.isBlocked(id))
+            .map(([userId]) => ({ userId, name: names.get(userId) })),
       historyLocked,
+      sendReadiness,
+      historyRecovery,
       earlierLost,
       unverified: head?.broken === true,
       composer: conversation.closed
         ? 'closed'
         : !conversation.canPost
           ? 'readOnly'
-          : historyLocked
+          : sendReadiness !== 'ready' && sendReadiness !== 'canStartFresh'
             ? 'locked'
             : 'enabled',
       hasEarlier: state.hasEarlier,
@@ -1006,7 +1215,8 @@ export class ChatEngine {
    */
   async report(
     conversationId: string,
-    messageId: string
+    messageId: string,
+    blockSender = false
   ): Promise<{ id: string; verified: boolean }> {
     const ctx = this.ctx
     const state = await stateOf(ctx, conversationId)
@@ -1042,10 +1252,31 @@ export class ChatEngine {
         messageKey: key
       })
     )
-    return await ctx.client.reportChatMessage({
-      messageId,
-      plaintext,
-      messageKey: b64(key)
+    return await this.serial('blocks', async () => {
+      const result = await ctx.client.reportChatMessage({
+        messageId,
+        plaintext,
+        messageKey: b64(key),
+        blockSender
+      })
+      if (blockSender) {
+        if (result.blockedUserIds == null) {
+          this.awaitBlockPolicy()
+        } else {
+          this.applyBlocks([
+            ...this.memory.blocks,
+            {
+              userId: envelope.senderUserId,
+              userIds: result.blockedUserIds,
+              shortName: shown.senderName ?? '',
+              avatarUrl: null,
+              createdAt: new Date(this.now).toISOString()
+            }
+          ])
+        }
+        this.relist()
+      }
+      return result
     })
   }
 
@@ -1148,11 +1379,18 @@ export class ChatEngine {
 
   /** Fetches, checks and opens an attachment. */
   async openAttachment(ref: AttachmentRef): Promise<Uint8Array> {
-    return await downloadAttachment(
+    const revision = this.memory.blockRevision
+    const bytes = await downloadAttachment(
       this.ctx,
       ref,
       this.options.fetchBytes ?? fetchBytes
     )
+    if (!this.live || revision !== this.memory.blockRevision)
+      throw new ChatEngineError(
+        'attachment',
+        'Attachment is no longer available'
+      )
+    return bytes
   }
 
   // --- Keys and trust ---------------------------------------------------
@@ -1171,42 +1409,134 @@ export class ChatEngine {
     const record = this.context?.keys.record
     const mine = record?.identity?.keys.publicKey
     if (record == null || mine == null) return []
-    return this.memory.grants
-      .filter(
-        request =>
-          request.identityReset &&
-          request.canApprove &&
-          request.userId !== this.options.userId
-      )
-      .map(request => {
-        const state = this.memory.state(request.conversationId)
-        const old = record.previousPins[request.userId]
-        return {
-          requestId: request.id,
-          conversationId: request.conversationId,
-          conversationTitle: state == null ? undefined : this.item(state).title,
-          userId: request.userId,
-          name: state?.members?.find(member => member.userId === request.userId)
-            ?.shortName,
-          oldSafetyNumber:
-            old == null || old === request.identityKey
-              ? undefined
-              : this.safetyWith(mine, request.userId, old),
-          newSafetyNumber: this.safetyWith(
-            mine,
-            request.userId,
-            request.identityKey
-          )
-        }
-      })
+    const card = (
+      request: ChatGrantRequest | ChatHistoryRequest
+    ): Omit<GrantApproval, 'requestId'> => {
+      const state = this.memory.state(request.conversationId)
+      const old = record.previousPins[request.userId]
+      return {
+        conversationId: request.conversationId,
+        conversationTitle: state == null ? undefined : this.item(state).title,
+        userId: request.userId,
+        name: state?.members?.find(member => member.userId === request.userId)
+          ?.shortName,
+        oldSafetyNumber:
+          old == null || old === request.identityKey
+            ? undefined
+            : this.safetyWith(mine, request.userId, old),
+        newSafetyNumber: this.safetyWith(
+          mine,
+          request.userId,
+          request.identityKey
+        )
+      }
+    }
+    // One person's reset is one approval: its legacy request for the current
+    // segment and its requests for the closed ones.
+    const legacy = this.memory.grants.filter(request => this.isReset(request))
+    const reset = new Set(legacy.map(approvalKey))
+    const historical = this.waitingHistory()
+    return [
+      ...legacy.map(request => ({
+        requestId: request.id,
+        ...(historical.has(approvalKey(request)) ? { history: true } : {}),
+        ...card(request)
+      })),
+      ...[...historical]
+        .filter(([key]) => !reset.has(key))
+        .map(([, request]) => ({
+          requestId: `history:${request.id}`,
+          history: true,
+          canApprove: heldHistoryEpoch(this.ctx, request) != null,
+          ...card(request)
+        }))
+    ]
   }
 
-  /** Approves a reset identity's request: boxes it the history. */
-  async approve(requestId: number): Promise<void> {
+  /** A reset's legacy request that someone else may approve. */
+  private isReset(request: ChatGrantRequest): boolean {
+    return (
+      request.identityReset &&
+      request.canApprove &&
+      request.userId !== this.options.userId
+    )
+  }
+
+  /**
+   * Historical requests waiting for approval, one per chat and identity:
+   * one whose range this device holds a key for, when there is one.
+   */
+  private waitingHistory(): Map<string, ChatHistoryRequest> {
+    const waiting = new Map<string, ChatHistoryRequest>()
+    for (const request of this.memory.historyGrants) {
+      if (
+        !request.requiresApproval ||
+        !request.canApprove ||
+        request.userId === this.options.userId
+      )
+        continue
+      const key = approvalKey(request)
+      if (!waiting.has(key) || heldHistoryEpoch(this.ctx, request) != null)
+        waiting.set(key, request)
+    }
+    return waiting
+  }
+
+  /**
+   * Approves a reset identity's request: boxes it the history. A reset with
+   * both kinds of request approves both: the current key when this device
+   * can supply it, which also approves the older history on the server, and
+   * the older keys it holds; else the older keys alone.
+   */
+  async approve(requestId: number | string): Promise<void> {
     const ctx = this.ctx
     await this.serial('grants', async () => {
-      await approveGrant(ctx, requestId)
+      if (typeof requestId === 'string') {
+        if (!/^history:[1-9][0-9]*$/.test(requestId))
+          throw new ChatEngineError('target', 'Unknown approval reference')
+        const id = requestId.slice(8)
+        const asked = this.memory.historyGrants.find(r => r.id === id)
+        const legacy =
+          asked == null
+            ? undefined
+            : this.memory.grants.find(
+                request =>
+                  this.isReset(request) &&
+                  approvalKey(request) === approvalKey(asked)
+              )
+        if (asked == null || legacy == null) await approveHistoryGrant(ctx, id)
+        else
+          await this.approveReset(
+            legacy,
+            this.waitingHistory().get(approvalKey(asked)) ?? asked
+          )
+        return
+      }
+      const legacy = this.memory.grants.find(r => r.id === requestId)
+      const history =
+        legacy == null
+          ? undefined
+          : this.waitingHistory().get(approvalKey(legacy))
+      if (legacy == null || history == null) await approveGrant(ctx, requestId)
+      else await this.approveReset(legacy, history)
     })
+  }
+
+  private async approveReset(
+    legacy: ChatGrantRequest,
+    history: ChatHistoryRequest
+  ): Promise<void> {
+    const ctx = this.ctx
+    try {
+      await approveGrant(ctx, legacy.id)
+    } catch (error) {
+      if (!(error instanceof ChatEngineError && error.code === 'locked'))
+        throw error
+      await approveHistoryGrant(ctx, history.id)
+      return
+    }
+    // The server approved the older history with the reset.
+    await fillHistoryGrants(ctx)
   }
 
   private safetyWith(mine: Uint8Array, userId: string, key: string): string {
@@ -1242,7 +1572,7 @@ export class ChatEngine {
   ): void {
     const pending = this.pendingAlerts.get(conversationId)
     const state = this.memory.state(conversationId)
-    if (pending == null || state == null) return
+    if (pending == null || state == null || this.blockPolicyPending) return
     const known =
       received == null
         ? state.envelopes
@@ -1260,6 +1590,7 @@ export class ChatEngine {
       this.alertedSeq.set(conversationId, seq)
       if (
         envelope.senderUserId !== this.options.userId &&
+        !this.isBlocked(envelope.senderUserId) &&
         !state.summary.preferences?.muted
       )
         announce = true
@@ -1272,6 +1603,11 @@ export class ChatEngine {
     if (this.stopped) return
     switch (event.type) {
       case 'chatUser':
+        if (event.kind === 'blocks') {
+          this.awaitBlockPolicy()
+          this.relist()
+          return
+        }
         if (event.kind === 'preferences') {
           this.relist()
           for (const id of this.active.keys())
@@ -1289,7 +1625,11 @@ export class ChatEngine {
         this.typed(event.conversationId, event.userId)
         return
       case 'resync':
+        this.awaitBlockPolicy()
         this.pendingAlerts.clear()
+        // Grants may have landed while no hint could reach this device.
+        for (const state of this.memory.conversations.values())
+          state.historyDue = true
         this.relist()
         for (const id of this.active.keys()) {
           this.want(id, ['members', 'epochs', 'messages', 'reads'])
@@ -1321,19 +1661,42 @@ export class ChatEngine {
         this.grants()
         return
       case 'epoch':
+        this.historyDue(id)
         this.relist()
         this.want(id, ['epochs'])
+        // A new epoch can open historical requests, announced by this hint only.
+        this.grants()
         return
       case 'grant':
+        this.historyDue(id)
         this.relist()
         this.want(id, ['epochs'])
         this.grants()
     }
   }
 
+  /** The chat's next epochs read also reads its historical box stream. */
+  private historyDue(conversationId: string): void {
+    const state = this.memory.state(conversationId)
+    if (state != null) state.historyDue = true
+  }
+
+  private awaitBlockPolicy(): void {
+    if (this.options.client.chatBlocks == null) return
+    this.blockPolicyPending = true
+    for (const conversationId of this.memory.conversations.keys())
+      this.memory.emit({ type: 'conversation', conversationId })
+    this.memory.emit({ type: 'conversations' })
+  }
+
   private typed(conversationId: string, userId: string): void {
     const state = this.memory.state(conversationId)
-    if (state == null || userId === this.options.userId) return
+    if (
+      state == null ||
+      userId === this.options.userId ||
+      this.isBlocked(userId)
+    )
+      return
     const ms = this.options.typingMs ?? 6000
     state.typing.set(userId, this.now + ms)
     this.memory.emit({ type: 'conversation', conversationId })
@@ -1347,7 +1710,7 @@ export class ChatEngine {
   private relist(): void {
     if (!this.memory.listed) return
     this.later('relist', async () => {
-      await this.refresh()
+      await this.reread(false)
     })
   }
 

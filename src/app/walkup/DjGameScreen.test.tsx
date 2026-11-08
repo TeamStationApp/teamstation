@@ -356,7 +356,7 @@ describe('DJ Game’s team pill (U29)', function () {
     const change = {
       type: 'change',
       gameId: 'g1',
-      kind: 'plays',
+      kind: 'playEdits',
       at: '',
       data: {}
     } as unknown as GameSocketEvent
@@ -441,7 +441,7 @@ describe('DJ Game on the socket (U29)', function () {
     ])
     await render({ client, socket })
     expect(client.reads).equals(1)
-    const change = (kind: 'lineups' | 'plays'): GameSocketEvent =>
+    const change = (kind: 'lineups' | 'playEdits'): GameSocketEvent =>
       ({
         type: 'change',
         gameId: 'g1',
@@ -452,7 +452,7 @@ describe('DJ Game on the socket (U29)', function () {
     await socket.emit('g1', change('lineups'))
     expect(client.reads).equals(2)
     expect(names()[1]).includes('Pinch')
-    await socket.emit('g1', change('plays'))
+    await socket.emit('g1', change('playEdits'))
     expect(client.reads).equals(3)
     await socket.emit('g1', { type: 'resync', gameId: 'g1' })
     expect(client.reads).equals(4)

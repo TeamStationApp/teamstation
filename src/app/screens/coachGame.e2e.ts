@@ -54,6 +54,9 @@ const APP = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8180'
 const API = process.env.TS_API_TEST_URL ?? 'http://127.0.0.1:9180/api/v1'
 const PASSWORD = process.env.TS_LINEUP_PASSWORD ?? ''
 const ARTIFACTS = process.env.TS_LINEUP_ARTIFACTS
+/** C10's pictures: `coach-lineup-header-<phase>.png`; capture only skips its checks. */
+const PHASE = process.env.TS_ARTIFACT_PHASE ?? 'after'
+const CAPTURING = process.env.TS_CAPTURE_ONLY === '1'
 const WIDTH = 402
 const HEIGHT = 874
 const CLIPS = resolve('src/app/scoring/fixtures/audio')
@@ -481,8 +484,17 @@ describe('Coach Game', function () {
     await coach.coachGame(fixture.gameId)
     await coach.tap('Roster', 'tab')
     await checked(true)
+    // The switch turns at once; the change is read back once it has landed.
+    const unrostered = async (): Promise<unknown> =>
+      await coach.page.waitForResponse(
+        response =>
+          response.request().method() === 'PUT' &&
+          response.url().endsWith('/unroster')
+      )
+    const leftOff = unrostered()
     await coach.session.m.tapOn({ css: selector })
     await checked(false)
+    await leftOff
     await coach.shot('roster-switch-off.png')
     const client = new TeamStationClient({
       baseUrl: API,
@@ -498,8 +510,10 @@ describe('Coach Game', function () {
     await coach.coachGame(fixture.gameId)
     await coach.tap('Roster', 'tab')
     await checked(false)
+    const putBack = unrostered()
     await coach.session.m.tapOn({ css: selector })
     await checked(true)
+    await putBack
     const on = (await client.gameLineups(fixture.gameId)).home.current!
     expect(
       on.batters.some(
@@ -546,6 +560,33 @@ describe('Coach Game', function () {
       await coach.page.$eval(`${pendingSelector} input`, input => input.checked)
     ).equals(true)
     expect((await client.game(pending.gameId)).unrostered.home).deep.equals([])
+  })
+
+  it('C10: offers a red Clear on his Lineup header before the first pitch', async function () {
+    const fixture = lineupFixture()
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.tap('Lineup', 'tab')
+    await coach.page.waitForSelector('[data-roster-target="lineup-0"]')
+    await coach.shot(`coach-lineup-header-${PHASE}.png`)
+    if (CAPTURING) return
+    const header = await coach.box('[data-testid="Lineup header"]')
+    const clear = await coach.box('[aria-label="Clear Lineup"]')
+    // On the header's line, right-justified.
+    expect(clear.x + clear.width).closeTo(header.x + header.width, 2)
+    expect(clear.y + clear.height / 2).within(
+      header.y,
+      header.y + header.height
+    )
+    expect(
+      await coach.page.$$eval(
+        '[data-roster-target^="lineup-"] [aria-label^="Remove "]',
+        nodes => nodes.length
+      )
+    ).equals(HOSTS.length)
+    await coach.tap('Clear Lineup')
+    await coach.waitLineup([])
+    await coach.tap('Cancel')
   })
 
   it('C1: puts Coach Game in the head coach’s pills after Videos, and in nobody else’s', async function () {

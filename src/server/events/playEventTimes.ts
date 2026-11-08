@@ -10,10 +10,11 @@ import {
   withoutNames
 } from '../../common/scoring/storedNames'
 import { lockPlayerEdits } from '../admin/people'
+import { lockGameTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
-import { notifyGameChange } from '../socket/gameChanges'
+import { notifyPlaysChanged } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { gameNames } from '../users/nameBook'
 import { type PlaySource, withoutDescriptions } from './eventWrite'
@@ -119,6 +120,7 @@ export async function addPlayEvents(
     throw badRequest('Two plays share an atBatIndex')
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockGameTeams(trx, gameId)
     const game = await trx
       .selectFrom('games')
       .select([
@@ -224,7 +226,7 @@ export async function addPlayEvents(
       .set({ updated_at: now })
       .where('id', '=', gameId)
       .execute()
-    await notifyGameChange(trx, { game: gameId, kind: 'plays' })
+    await notifyPlaysChanged(trx, gameId)
     noteScopeChange(trx, { gameId })
     return {
       plays: writes.length,

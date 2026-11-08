@@ -21,6 +21,7 @@ import {
 import { type ApiKey, type ApiKeyCreate, asApiKey, asApiKeys } from './apiKeys'
 import { asLiteral } from './asLiteral'
 import { asChatAge, type ChatAge, type ChatAgeSource } from './chatAge'
+import { asChatBoxCursor } from './chatHistory'
 import { type Approval, asApproval, asBuildsLink } from './distribution'
 import { type ApiError, asApiError, HttpError } from './errors'
 import {
@@ -58,7 +59,7 @@ import {
   type ParentPreview
 } from './groupLinks'
 import { asGuests } from './guests'
-import { asCount, asCurrentPlay, asGumboPlay } from './gumboPlay'
+import { asCount, asCurrentPlay, asGumboPlay, asIsoTime } from './gumboPlay'
 import { asLocality, type Locality } from './locality'
 import {
   asNodeAccounts,
@@ -470,6 +471,15 @@ export const asChatPerson = asObject({
 })
 export type ChatPerson = ReturnType<typeof asChatPerson>
 
+export const asChatBlock = asObject({
+  userId: asUserId,
+  shortName: asString,
+  avatarUrl: asEither(asString, asValue(null)),
+  userIds: asArray(asUserId),
+  createdAt: asString
+})
+export type ChatBlock = ReturnType<typeof asChatBlock>
+
 /**
  * An adult who may be included beside a player, from `GET
  * /chat/included-adults`, with a label such as "Guardian" or "Coach · Hawks".
@@ -653,7 +663,11 @@ export const asChatEpoch = asObject({
 export type ChatEpoch = ReturnType<typeof asChatEpoch>
 
 /** A chat's epochs after `after`, and the caller's boxes from `after` on. */
-export const asChatEpochs = asObject({
+const cleanChatEpochs = asObject({
+  historyRecoveryVersion: asOptional(asLiteral(1)),
+  freshEpochsEnabled: asOptional(asBoolean),
+  nextBoxesCursor: asOptional(asChatBoxCursor),
+  hasMoreBoxes: asOptional(asBoolean),
   latest: asNumber,
   needsRotation: asBoolean,
   noHolder: asBoolean,
@@ -668,10 +682,29 @@ export const asChatEpochs = asObject({
     })
   )
 })
-export type ChatEpochs = ReturnType<typeof asChatEpochs>
+type ChatEpochsOptional =
+  | 'historyRecoveryVersion'
+  | 'freshEpochsEnabled'
+  | 'nextBoxesCursor'
+  | 'hasMoreBoxes'
+export type ChatEpochs = Omit<
+  ReturnType<typeof cleanChatEpochs>,
+  ChatEpochsOptional
+> &
+  Partial<Pick<ReturnType<typeof cleanChatEpochs>, ChatEpochsOptional>>
+export function asChatEpochs(raw: unknown): ChatEpochs {
+  const result = cleanChatEpochs(raw)
+  if (result.historyRecoveryVersion === undefined)
+    delete result.historyRecoveryVersion
+  if (result.freshEpochsEnabled === undefined) delete result.freshEpochsEnabled
+  if (result.nextBoxesCursor === undefined) delete result.nextBoxesCursor
+  if (result.hasMoreBoxes === undefined) delete result.hasMoreBoxes
+  return result
+}
 
 /** Epoch n+1, signed, boxed to the eligible members. Bytes are base64url. */
 export interface ChatEpochPublication {
+  mode?: 'continue' | 'fresh'
   epoch: number
   previousKeyBox: string | null
   signature: string
@@ -726,6 +759,48 @@ export const asChatGrantsPosted = asObject({
   )
 })
 export type ChatGrantsPosted = ReturnType<typeof asChatGrantsPosted>
+
+/** Fixed historical segment goal and the prefix already distributed. */
+export const asChatHistoryRequest = asObject({
+  id: asChatBoxCursor,
+  conversationId: asString,
+  segmentStartEpoch: asNumber,
+  targetEpoch: asNumber,
+  coveredThroughEpoch: asNumber,
+  userId: asUserId,
+  identityId: asString,
+  identityKey: asString,
+  pukGeneration: asNumber,
+  pukPublicKey: asString,
+  pukSignature: asString,
+  requiresApproval: asBoolean,
+  canApprove: asBoolean,
+  openedAt: asString
+})
+export type ChatHistoryRequest = ReturnType<typeof asChatHistoryRequest>
+export const asChatHistoryRequests = asObject({
+  requests: asArray(asChatHistoryRequest),
+  nextCursor: asNullable(asChatBoxCursor)
+})
+export type ChatHistoryRequests = ReturnType<typeof asChatHistoryRequests>
+export interface ChatHistoryGrantBox extends ChatGrantBox {
+  requestId: string
+  targetEpoch: number
+  approveHistory?: boolean
+}
+export const asChatHistoryGrantsPosted = asObject({
+  filled: asNumber,
+  results: asArray(
+    asObject({
+      requestId: asChatBoxCursor,
+      status: asLiteral('completed', 'partial', 'alreadyCovered', 'skipped'),
+      coveredThroughEpoch: asNumber
+    })
+  )
+})
+export type ChatHistoryGrantsPosted = ReturnType<
+  typeof asChatHistoryGrantsPosted
+>
 
 /** What the server sees of a message: its envelope `kind`. */
 export const asChatEnvelopeKind = asLiteral(
@@ -1359,6 +1434,10 @@ const cleanRosterEntry = asObject({
   positions: asArray(asString),
   isPlayer: asBoolean,
   /**
+   * The signed-in person, including a merged id of theirs. Absent means no.
+   */
+  self: asOptional(asBoolean, false),
+  /**
    * A guest who already existed, added for this game only: their name and
    * hands are their own, and only their jersey and positions are the game's.
    */
@@ -1424,10 +1503,12 @@ const asStoredGame = asObject({
   currentPlay: asOptional(asNullable(asCurrentPlay), null),
   playsDigest: asOptional(asNullable(asString), null),
   priorPlaysDigest: asOptional(asNullable(asString), null),
+  namesDigest: asOptional(asNullable(asString), null),
   lineupsDigest: asOptional(asNullable(asString), null),
   generation: asOptional(asNullable(asNumber), null),
   swap: asSwapEffect,
-  modelNames: asOptional(asObject(asString))
+  modelNames: asOptional(asObject(asString)),
+  halves: asOptional(asArray(asString))
 })
 
 /** A game's plays as a session reads them, with the digests that were sent. */
@@ -1439,12 +1520,83 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
     ...(stored.priorPlaysDigest == null
       ? {}
       : { priorPlaysDigest: stored.priorPlaysDigest }),
+    ...(stored.namesDigest == null ? {} : { namesDigest: stored.namesDigest }),
     ...(stored.lineupsDigest == null
       ? {}
       : { lineupsDigest: stored.lineupsDigest }),
     ...(stored.generation == null ? {} : { generation: stored.generation }),
     ...(stored.swap === undefined ? {} : { swap: stored.swap }),
-    ...(stored.modelNames == null ? {} : { modelNames: stored.modelNames })
+    ...(stored.modelNames == null ? {} : { modelNames: stored.modelNames }),
+    ...(stored.halves == null || stored.halves.length === 0
+      ? {}
+      : { halves: stored.halves })
+  }
+}
+
+/**
+ * What a session reads of a save's answer: the digests and the generation
+ * the game was left with, each only when the answer has it.
+ */
+export interface PostedEdits {
+  playsDigest?: string
+  priorPlaysDigest?: string
+  lineupsDigest?: string
+  generation?: number
+}
+
+const asPostedFields = asObject({
+  playsDigest: asOptional(asNullable(asString)),
+  priorPlaysDigest: asOptional(asNullable(asString)),
+  lineupsDigest: asOptional(asNullable(asString)),
+  generation: asOptional(asNullable(asNumber))
+})
+
+/**
+ * A live post's answer as a session reads it, whichever shape it has: a
+ * live post's edits (`{ edits, currentPlay, … }`, as `?answer=edits` asks),
+ * or every stored play as a post asking for no `answer`, an older server or
+ * a phone's queue answers (a `StoredGame`),
+ * or a bare `{ plays, currentPlay }` with no digests, as a mocked server or
+ * the phone's own copy of a queued post may give. It keeps the digests and
+ * the generation, each only when present and not null. Throws on anything
+ * that is not an object.
+ */
+export function asPostedEdits(raw: unknown): PostedEdits {
+  const posted = asPostedFields(raw)
+  return {
+    ...(posted.playsDigest == null ? {} : { playsDigest: posted.playsDigest }),
+    ...(posted.priorPlaysDigest == null
+      ? {}
+      : { priorPlaysDigest: posted.priorPlaysDigest }),
+    ...(posted.lineupsDigest == null
+      ? {}
+      : { lineupsDigest: posted.lineupsDigest }),
+    ...(posted.generation == null ? {} : { generation: posted.generation })
+  }
+}
+
+/**
+ * The body of the live post a session's save is: the change, as TeamStation
+ * scored it. The device's names stay on the device.
+ */
+export function liveEventsBody(change: SaveChange): Record<string, unknown> {
+  return {
+    mode: 'live',
+    source: { system: 'teamstation' },
+    plays: change.plays,
+    remove: change.remove,
+    ...(change.currentPlay === undefined
+      ? {}
+      : { currentPlay: change.currentPlay }),
+    ...(change.fenceDistanceFt === undefined
+      ? {}
+      : { fenceDistanceFt: change.fenceDistanceFt }),
+    ...(change.lineupsBase === undefined
+      ? {}
+      : { lineupsBase: change.lineupsBase }),
+    ...(change.generation === undefined
+      ? {}
+      : { generation: change.generation })
   }
 }
 
@@ -2453,7 +2605,12 @@ export const asProfileSection = asObject({
   roles: asArray(asRole),
   member: asBoolean,
   follower: asBoolean,
-  editable: asBoolean
+  editable: asBoolean,
+  /**
+   * A team membership that is a player. Absent, and every season or league
+   * section, means no.
+   */
+  player: asOptional(asBoolean, false)
 })
 export type ProfileSection = Omit<
   ReturnType<typeof asProfileSection>,
@@ -2490,7 +2647,11 @@ export const asPersonProfile = asObject({
     /** An administrator, coach or assistant of the level: the role switches. */
     manages: asBoolean,
     /** An administrator of it: the Admin row too. */
-    admin: asBoolean
+    admin: asBoolean,
+    /**
+     * The signed-in person, including a merged id of theirs. Absent means no.
+     */
+    self: asOptional(asBoolean, false)
   })
 })
 export type PersonProfile = Omit<
@@ -2570,7 +2731,11 @@ export type ManagePage = Omit<ManagePageFromServer, 'scope' | 'people'> & {
 export const asAddedPerson = asObject({
   added: asBoolean,
   person: asOptional(
-    asObject({ userId: asUserId, displayName: asString, email: asString })
+    asObject({
+      userId: asUserId,
+      displayName: asString,
+      email: asOptional(asString)
+    })
   ),
   invited: asOptional(asPendingPerson)
 })
@@ -3086,26 +3251,14 @@ export const asTessUsageWeek = asObject({
 })
 export type TessUsageWeek = ReturnType<typeof asTessUsageWeek>
 
-/** The response header a screen's read carries its revision in. */
-export const REVISION_HEADER = 'x-teamstation-revision'
-
 /**
  * The request header a queued write is sent with: the same request with
  * the same key is answered once and written once.
  */
 export const IDEMPOTENCY_HEADER = 'idempotency-key'
 
-/** One response's revision, as a screen's load collects them. */
-export interface RevisionRead {
-  path: string
-  /** `x-teamstation-revision`, a decimal string: compare with `BigInt`. */
-  revision: string
-}
-
 /** How one call to the API is made, beside its method, path and body. */
 export interface RequestOptions {
-  /** Whether a screen's load collects the answer's revision. */
-  collect?: boolean
   headers?: Record<string, string>
   /**
    * The names of the players a live post's plays name, by gumbo id: never
@@ -3113,8 +3266,36 @@ export interface RequestOptions {
    * of the game reads named before the server answers.
    */
   deviceNames?: Record<string, string>
+  /**
+   * The screen does not wait for the server: the phone's client queues the
+   * write and answers its own answer at once, sending it in the background.
+   * The plain client sends it as any other.
+   */
+  background?: boolean
   /** Cancels the call; a cancelled call is not the network going away. */
   signal?: AbortSignal
+}
+
+/**
+ * How a screen makes a write it does not wait for: `background` queues it on
+ * the phone (`RequestOptions.background`), with `deviceNames` kept beside it.
+ */
+export interface WriteOptions {
+  background?: boolean
+  deviceNames?: Record<string, string>
+}
+
+/** The request options a write's `WriteOptions` asks for, or none. */
+function writeOptions(
+  options: WriteOptions | undefined
+): RequestOptions | undefined {
+  if (options == null) return undefined
+  const { background, deviceNames } = options
+  if (background !== true && deviceNames == null) return undefined
+  return {
+    ...(background === true ? { background } : {}),
+    ...(deviceNames == null ? {} : { deviceNames })
+  }
 }
 
 /**
@@ -3207,6 +3388,12 @@ export interface SaveLineupsBody {
    * refuses the save. An older app sends none.
    */
   generation?: number
+  /**
+   * When the change was made, as an ISO time: the side's lineup action is
+   * stored at that time, and a later change of that side already stored
+   * refuses it (409 `{ stale: true, newer: true }`). An older app sends none.
+   */
+  changedAt?: string
 }
 
 const asIndex: Cleaner<number> = raw => {
@@ -3236,7 +3423,8 @@ const asSaveLineupsShape = asObject({
   runners: asOptional(
     asArray(asObject({ base: asLiteral('1B', '2B', '3B'), player: asIndex }))
   ),
-  generation: asOptional(asCount)
+  generation: asOptional(asCount),
+  changedAt: asOptional(asIsoTime)
 })
 
 /** Cleans a lineup save, and refuses an index past the players it names. */
@@ -3273,7 +3461,8 @@ export const asSaveLineupsBody: Cleaner<SaveLineupsBody> = raw => {
     defense,
     ...(body.nextBatter == null ? {} : { nextBatter: body.nextBatter }),
     ...(body.runners == null ? {} : { runners: body.runners }),
-    ...(body.generation == null ? {} : { generation: body.generation })
+    ...(body.generation == null ? {} : { generation: body.generation }),
+    ...(body.changedAt == null ? {} : { changedAt: body.changedAt })
   }
 }
 
@@ -3848,15 +4037,6 @@ export class TeamStationClient {
    * refused (`POST /auth/...`) is not that.
    */
   onSessionRefused?: () => void
-  /** The revision each path last answered with. */
-  private readonly revisions = new Map<string, string>()
-  /**
-   * Where the screen loads now running collect the revisions they read. Home
-   * runs three at once, and an answer cannot say which load asked for it, so
-   * each running load collects every answer: the least of them is never
-   * newer than the least of its own.
-   */
-  private readonly collectors = new Set<RevisionRead[]>()
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
@@ -3866,25 +4046,6 @@ export class TeamStationClient {
     this.token = options.token
     this.doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.newStreamingRequest = options.streamingRequest
-  }
-
-  /** The revision the last answer from `path` carried, if any did. */
-  revisionFor(path: string): string | undefined {
-    return this.revisions.get(path)
-  }
-
-  /**
-   * Collects `{ path, revision }` from every answer that carries one, until
-   * `stopCollecting`. A screen's load sets this around the calls it makes,
-   * and holds the least of them as the revision of what it shows.
-   */
-  collectRevisions(collector: RevisionRead[]): void {
-    this.collectors.add(collector)
-  }
-
-  /** Stops collecting into `collector`. */
-  stopCollecting(collector: RevisionRead[]): void {
-    this.collectors.delete(collector)
   }
 
   async accountSettings(): Promise<AccountSettings> {
@@ -5637,13 +5798,15 @@ export class TeamStationClient {
    */
   async saveLineups(
     gameId: string,
-    body: SaveLineupsBody
+    body: SaveLineupsBody,
+    options?: WriteOptions
   ): Promise<GameLineupsResponse> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/lineups`,
       asGameLineupsResponse,
-      body
+      body,
+      writeOptions(options)
     )
   }
 
@@ -5789,37 +5952,23 @@ export class TeamStationClient {
    * Scores into a game as it is played: the plays that changed, the indexes
    * an undo took away, and the at-bat in progress when it changed. Naming
    * the lineups digest it was built on, it is refused as stale (409,
-   * `details.stale`) once somebody else has saved the lineups since.
+   * `details.stale`) once somebody else has saved the lineups since. It
+   * answers the digests and the generation the save left the game with
+   * (`asPostedEdits`). It asks for the edits answer (`?answer=edits`); a
+   * phone's queue takes it off, since its answer is written as the phone's
+   * copy of the game.
    */
   async saveGameEvents(
     gameId: string,
     change: SaveChange
-  ): Promise<StoredGame> {
-    const stored = await this.request(
+  ): Promise<PostedEdits> {
+    return await this.request(
       'POST',
-      `/games/${encodeURIComponent(gameId)}/events`,
-      asStoredGame,
-      {
-        mode: 'live',
-        source: { system: 'teamstation' },
-        plays: change.plays,
-        remove: change.remove,
-        ...(change.currentPlay === undefined
-          ? {}
-          : { currentPlay: change.currentPlay }),
-        ...(change.fenceDistanceFt === undefined
-          ? {}
-          : { fenceDistanceFt: change.fenceDistanceFt }),
-        ...(change.lineupsBase === undefined
-          ? {}
-          : { lineupsBase: change.lineupsBase }),
-        ...(change.generation === undefined
-          ? {}
-          : { generation: change.generation })
-      },
+      `/games/${encodeURIComponent(gameId)}/events?answer=edits`,
+      asPostedEdits,
+      liveEventsBody(change),
       change.names == null ? undefined : { deviceNames: change.names }
     )
-    return storedGameOf(stored)
   }
 
   /**
@@ -5898,25 +6047,29 @@ export class TeamStationClient {
    */
   async createRosterPlayer(
     teamId: string,
-    player: NewRosterPlayer
+    player: NewRosterPlayer,
+    options?: WriteOptions
   ): Promise<RosterEntry> {
     return await this.request(
       'POST',
       `/teams/${encodeURIComponent(teamId)}/roster-players`,
       asRosterEntry,
-      player
+      player,
+      writeOptions(options)
     )
   }
 
   async setRostered(
     gameId: string,
-    body: UnrosterBody
+    body: UnrosterBody,
+    options?: WriteOptions
   ): Promise<ReturnType<typeof asUnrostered>> {
     return await this.request(
       'PUT',
       `/games/${encodeURIComponent(gameId)}/unroster`,
       asUnrostered,
-      body
+      body,
+      writeOptions(options)
     )
   }
 
@@ -5927,13 +6080,15 @@ export class TeamStationClient {
    */
   async addExistingRosterPlayer(
     teamId: string,
-    body: ExistingRosterPlayer
+    body: ExistingRosterPlayer,
+    options?: WriteOptions
   ): Promise<ExistingPlayerAnswer> {
     return await this.request(
       'POST',
       `/teams/${encodeURIComponent(teamId)}/roster-players`,
       asExistingPlayerAnswer,
-      body
+      body,
+      writeOptions(options)
     )
   }
 
@@ -5942,13 +6097,15 @@ export class TeamStationClient {
     gameId: string,
     side: 'away' | 'home',
     body: ExistingRosterPlayer,
-    teamId?: string
+    teamId?: string,
+    options?: WriteOptions
   ): Promise<ExistingPlayerAnswer> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/guest-players`,
       asExistingPlayerAnswer,
-      { side, ...(teamId == null ? {} : { teamId }), ...body }
+      { side, ...(teamId == null ? {} : { teamId }), ...body },
+      writeOptions(options)
     )
   }
 
@@ -5987,13 +6144,15 @@ export class TeamStationClient {
     gameId: string,
     side: 'away' | 'home',
     player: NewRosterPlayer,
-    teamId?: string
+    teamId?: string,
+    options?: WriteOptions
   ): Promise<RosterEntry> {
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/guest-players`,
       asRosterEntry,
-      { side, ...(teamId == null ? {} : { teamId }), ...player }
+      { side, ...(teamId == null ? {} : { teamId }), ...player },
+      writeOptions(options)
     )
   }
 
@@ -6008,22 +6167,26 @@ export class TeamStationClient {
     gameId: string,
     userId: string,
     name: { firstName: string; lastName: string },
-    gumboId?: number | null
+    gumboId?: number | null,
+    options?: WriteOptions
   ): Promise<RosterEntry> {
     return await this.request(
       'PUT',
       `/games/${encodeURIComponent(gameId)}/guest-players/${encodeURIComponent(userId)}`,
       asRosterEntry,
       { firstName: name.firstName, lastName: name.lastName },
-      gumboId == null
-        ? undefined
-        : {
-            deviceNames: {
-              [String(gumboId)]: [name.firstName, name.lastName]
-                .filter(part => part !== '')
-                .join(' ')
-            }
-          }
+      writeOptions({
+        ...options,
+        ...(gumboId == null
+          ? {}
+          : {
+              deviceNames: {
+                [String(gumboId)]: [name.firstName, name.lastName]
+                  .filter(part => part !== '')
+                  .join(' ')
+              }
+            })
+      })
     )
   }
 
@@ -6154,6 +6317,18 @@ export class TeamStationClient {
   }
 
   /** Every chat the caller is in. */
+  async chatBlocks(): Promise<ChatBlock[]> {
+    return await this.request('GET', '/chat/blocks', asArray(asChatBlock))
+  }
+
+  async setChatBlock(userId: string, blocked: boolean): Promise<ChatBlock[]> {
+    return await this.request(
+      blocked ? 'PUT' : 'DELETE',
+      `/chat/blocks/${encodeURIComponent(userId)}`,
+      asArray(asChatBlock)
+    )
+  }
+
   async chatConversations(): Promise<ChatConversation[]> {
     return await this.request(
       'GET',
@@ -6435,10 +6610,18 @@ export class TeamStationClient {
   }
 
   /** A chat's epochs after `after` (0 for all), and the caller's boxes. */
-  async chatEpochs(conversationId: string, after = 0): Promise<ChatEpochs> {
+  async chatEpochs(
+    conversationId: string,
+    after = 0,
+    delivery?: { boxesAfter: string; boxLimit?: number }
+  ): Promise<ChatEpochs> {
+    const boxQuery =
+      delivery == null
+        ? ''
+        : `&boxesAfter=${encodeURIComponent(asChatBoxCursor(delivery.boxesAfter))}&boxLimit=${delivery.boxLimit ?? 100}`
     return await this.request(
       'GET',
-      `${chatPath(conversationId)}/epochs?after=${encodeURIComponent(after)}`,
+      `${chatPath(conversationId)}/epochs?after=${encodeURIComponent(after)}${boxQuery}`,
       asChatEpochs
     )
   }
@@ -6470,6 +6653,29 @@ export class TeamStationClient {
     return await this.request('POST', '/chat/grants', asChatGrantsPosted, {
       boxes
     })
+  }
+
+  /** Historical grants are a separate queue; old servers are probed first. */
+  async chatHistoryGrants(
+    cursor = '0',
+    limit = 100
+  ): Promise<ChatHistoryRequests> {
+    return await this.request(
+      'GET',
+      `/chat/grants?scope=history&cursor=${encodeURIComponent(asChatBoxCursor(cursor))}&limit=${limit}`,
+      asChatHistoryRequests
+    )
+  }
+
+  async postChatHistoryGrants(
+    boxes: ChatHistoryGrantBox[]
+  ): Promise<ChatHistoryGrantsPosted> {
+    return await this.request(
+      'POST',
+      '/chat/grants?scope=history',
+      asChatHistoryGrantsPosted,
+      { boxes }
+    )
   }
 
   /** Posts a sealed message; a repeat of its id answers the stored one. */
@@ -6528,14 +6734,19 @@ export class TeamStationClient {
 
   /** Reports one message, disclosing its text and its own key. */
   async reportChatMessage(report: {
+    blockSender?: boolean
     messageId: string
     plaintext: string
     messageKey: string
-  }): Promise<{ id: string; verified: boolean }> {
+  }): Promise<{ id: string; verified: boolean; blockedUserIds?: string[] }> {
     return await this.request(
       'POST',
       '/chat/reports',
-      asObject({ id: asString, verified: asBoolean }),
+      asObject({
+        id: asString,
+        verified: asBoolean,
+        blockedUserIds: asOptional(asArray(asUserId))
+      }),
       report
     )
   }
@@ -6835,6 +7046,55 @@ export class TeamStationClient {
     )
   }
 
+  async searchPeopleAccounts(
+    group: GroupRef,
+    q: string,
+    exclude: string[] = []
+  ): Promise<
+    Array<{
+      userId: string
+      displayName: string
+      avatarUrl: string | null
+      affiliations: string
+    }>
+  > {
+    const query = new URLSearchParams({
+      forGroupKind: group.kind,
+      forGroupId: group.id,
+      q
+    })
+    for (const id of exclude) query.append('exclude', id)
+    return await this.request(
+      'GET',
+      `/users?${query}`,
+      asArray(
+        asObject({
+          userId: asUserId,
+          displayName: asString,
+          avatarUrl: asOptional(asNullable(asString), null),
+          affiliations: asOptional(asString, '')
+        })
+      )
+    )
+  }
+
+  async addPersonAccount(
+    group: GroupRef,
+    userId: string,
+    options: {
+      admin?: boolean
+      flags?: RoleFlag[]
+      idempotencyKey?: string
+    } = {}
+  ): Promise<AddedPerson> {
+    return await this.request(
+      'POST',
+      `/manage/${group.kind}/${encodeURIComponent(group.id)}/people`,
+      asAddedPerson,
+      { userId, ...options }
+    )
+  }
+
   /** Take away what this level grants, and only that. */
   async removePerson(
     kind: 'league' | 'season' | 'team',
@@ -6991,9 +7251,8 @@ export class TeamStationClient {
   }
 
   /**
-   * Every call to the API. `collect: false` keeps the answer's revision out
-   * of the screen loads now collecting, as a prefetch's is. `headers` are
-   * sent beside the usual ones: a queued write's `Idempotency-Key`.
+   * Every call to the API. `headers` are sent beside the usual ones: a
+   * queued write's `Idempotency-Key`.
    */
   protected async request<T>(
     method: string,
@@ -7235,13 +7494,6 @@ export class TeamStationClient {
       )
     }
     if (!response.ok) throw errorFrom(response.status, text)
-    const revision = revisionOf(response)
-    if (revision != null) {
-      this.revisions.set(path, revision)
-      if (options.collect !== false)
-        for (const collector of this.collectors)
-          collector.push({ path, revision })
-    }
     if (text === '') return cleaner(undefined)
 
     let parsed: unknown
@@ -7260,12 +7512,6 @@ function guardiansPath(teamId: string, userId: string): string {
 
 function walkUpSongPath(teamId: string, userId: string): string {
   return `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/walk-up-song`
-}
-
-/** The answer's revision. A stand-in response may carry no headers. */
-function revisionOf(response: Response): string | null {
-  const headers = (response as Partial<Response>).headers
-  return headers == null ? null : headers.get(REVISION_HEADER)
 }
 
 function attachmentPath(attachmentId: string): string {

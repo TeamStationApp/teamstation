@@ -58,7 +58,7 @@ async function main(): Promise<void> {
     await m.stopApp({})
     await m.launchApp({ permissions: { all: 'unset' } })
     await m.assertVisible({
-      text: 'Missing defensive positions',
+      text: 'Assign a pitcher',
       timeout: 60000
     })
     const start = Date.now()
@@ -138,7 +138,7 @@ async function main(): Promise<void> {
     await m.assertVisible({ text: '^Assign left field$' })
     await tap('Assign LF #50 Mookie B')
     await m.assertNotVisible({
-      text: 'Missing defensive positions',
+      text: 'Assign a pitcher',
       timeout: 15000
     })
     await m.assertVisible({ text: '^Mookie B$', timeout: 15000 })

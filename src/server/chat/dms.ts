@@ -16,6 +16,7 @@ import {
   seasonStaffIds,
   teamStaffIds
 } from './audiences'
+import { assertDmAllowed, lockBlockPolicy } from './blocks'
 import {
   closeConversation,
   currentMembers,
@@ -572,8 +573,10 @@ export async function createDm(
     )
   }
   return await inTransaction(db, async trx => {
+    await lockBlockPolicy(trx)
     const facts = new DmFacts(trx, now)
     const members = [creatorId, ...others]
+    await assertDmAllowed(trx, members)
     await facts.load(members)
     await mustName(facts, creatorId, others, members)
     const broken = await facts.ruleBreak(members)
@@ -647,6 +650,7 @@ export async function addDmMembers(
   now: Date = new Date()
 ): Promise<string[]> {
   return await inTransaction(db, async trx => {
+    await lockBlockPolicy(trx)
     const dm = await lockDm(trx, conversationId)
     const current = await currentMembers(trx, conversationId)
     if (!current.includes(adderId)) throw notFound()
@@ -664,6 +668,7 @@ export async function addDmMembers(
     }
     const facts = new DmFacts(trx, now)
     const members = [...current, ...added]
+    await assertDmAllowed(trx, members)
     await facts.load(members)
     await mustName(facts, adderId, added, members)
     const broken = await facts.ruleBreak(members)
@@ -796,9 +801,11 @@ export async function mergeChats(
     .where('chat_members.left_at', 'is', null)
     .where('chat_conversations.kind', '=', 'dm')
     .where('chat_conversations.closed_at', 'is', null)
-    .orderBy('chat_conversations.id')
     .execute()
-  for (const { id } of dms) {
+  // closeInto can retain every lock until its outer transaction commits.
+  // Match grants and identity changes regardless of database collation.
+  const ids = dms.map(dm => dm.id).sort()
+  for (const id of ids) {
     await inTransaction(db, async trx => {
       await lockDm(trx, id)
       const current = await currentMembers(trx, id)
@@ -809,7 +816,7 @@ export async function mergeChats(
       await notifyChat(trx, id, 'members')
     })
   }
-  return dms.map(dm => dm.id)
+  return ids
 }
 
 export interface Candidate {

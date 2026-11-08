@@ -17,7 +17,7 @@ import {
   type RunnerMovementAction,
   type ScoringAction
 } from './actions'
-import { errorCredit, fieldedCredit, outCredits, positionOf } from './credits'
+import { errorCredit, fieldedCredit, fielderOf, outCredits } from './credits'
 import {
   addErrorlessOut,
   type ChargeBook,
@@ -52,11 +52,14 @@ import { homeRunKind, isFair } from './park'
 import { pitchZone } from './pitchLocation'
 import { pitchTypeOf } from './pitchType'
 import {
+  canField,
   choiceOpen,
   closesFirst,
   completesHitOffer,
   currentSetupError,
   forcedFrom,
+  GROUND_OUTS,
+  groundOfferAt,
   hasEligiblePitch,
   HIT_BASES,
   homeBackProposal,
@@ -73,16 +76,20 @@ import {
 import {
   BASE_KEYS,
   copyState,
+  type FielderRef,
   type GamePlay,
   type GameState,
+  isPosition,
   lineupsOf,
   type Movement,
   type PitchData,
   type PlayerRef,
   type PlayEvent,
   type Point,
+  type Position,
   type Resolution,
   type ResolutionOutcome,
+  type RouteHop,
   type RunnerCredit,
   setupOf,
   withoutUndefined
@@ -166,7 +173,7 @@ interface Recorded {
   /** The play event that made it, when that event is already written. */
   playIndex?: number
   credits?: RunnerCredit[]
-  route?: Array<{ id: number; point: Point }>
+  route?: Array<{ id: FielderRef; point: Point }>
   thrower?: Point
   defender?: Point
 }
@@ -235,10 +242,7 @@ function recordRunner(ctx: Ctx, movement: Movement, record: Recorded): void {
     credits,
     throwerLocation: record.thrower,
     defenderLocation: record.defender,
-    defensiveRoute: record.route?.map(hop => ({
-      player: playerRef(state, hop.id),
-      location: hop.point
-    }))
+    defensiveRoute: record.route?.map(hop => routeHop(state, hop.id, hop.point))
   })
   play.count = count(ctx)
 }
@@ -492,7 +496,8 @@ function refineEventType(play: GamePlay, pending: Resolution | null): void {
       runner.movement.end > runner.movement.start
   )
   const grounder =
-    pending.outcome === 'Throw Out' || pending.outcome === "Fielder's Choice"
+    GROUND_OUTS.includes(pending.outcome) ||
+    pending.outcome === "Fielder's Choice"
   const forced = made.some(
     runner => runner.movement.isOut && runner.movement.forceOut
   )
@@ -507,7 +512,7 @@ function refineEventType(play: GamePlay, pending: Resolution | null): void {
     play.result.eventType = outs >= 2 ? 'sac_fly_double_play' : 'sac_fly'
   else if (
     pending.contactKind === 'bunt' &&
-    pending.outcome === 'Throw Out' &&
+    GROUND_OUTS.includes(pending.outcome) &&
     batterOut &&
     advanced &&
     pending.originalOuts < 2
@@ -695,6 +700,43 @@ function prepareHit(ctx: Ctx): void {
 }
 
 /**
+ * A ground out with fewer than two out sends every other runner up one base,
+ * lead runner first. Each keeps the base he started from, so the scorer can
+ * drag him back there, forced or not; the runner from third waits on the home
+ * call, and his run counts only once he is safe. With two out the batter's
+ * out ends the half and nobody moves.
+ */
+function prepareGroundOut(ctx: Ctx): void {
+  const pending = ctx.state.pending!
+  if (!GROUND_OUTS.includes(pending.outcome) || pending.originalOuts >= 2)
+    return
+  const runners = pending.originalBases
+    .map((id, index) => ({ id, from: index + 1 }))
+    .filter((row): row is { id: number; from: number } => row.id != null)
+    .reverse()
+  pending.movements = runners.map(row => ({
+    playerId: row.id,
+    start: row.from,
+    from: row.from,
+    to: row.from + 1,
+    offeredTo: row.from + 1,
+    groundOffer: true,
+    force: forcedFrom(ctx.state, row.from),
+    decision: row.from + 1 === 4 ? 'pending' : 'safe',
+    resolved: false
+  }))
+  rebuildQueue(ctx)
+  for (const key of BASE_KEYS) line(ctx).offense[key] = null
+  for (const movement of pending.movements) {
+    if (movement.to < 4) {
+      setBase(ctx, movement.playerId, movement.to)
+      recordRunner(ctx, movement, { reason: 'Ground Out' })
+    }
+    moved(ctx, movement)
+  }
+}
+
+/**
  * Puts each runner of an award where it sends him. Only the batter and the
  * runners he forced move; a runner the award did not force stays on his base
  * and, as in the feed, has no entry on the play.
@@ -796,7 +838,7 @@ interface OutCall {
   from: number
   to: number
   reason: string
-  fielders: number[]
+  fielders: FielderRef[]
   locations?: Point[]
   runnerLocation?: Point
 }
@@ -1040,18 +1082,16 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
     ctx.out.push({ type: 'ballFielded', fielder: action.fielder })
   }
   if (angle != null || action.location != null || action.fielder != null) {
+    // A stand-in at an empty position leaves the fielder out: only his
+    // position is known.
+    const fielder =
+      action.fielder == null ? undefined : fielderOf(ctx.state, action.fielder)
     play.hitData = withoutUndefined({
       launchAngle: angle,
       trajectory: angle == null ? undefined : trajectoryLabel(angle),
       coordinates: action.location == null ? undefined : { ...action.location },
-      fielder:
-        action.fielder == null
-          ? undefined
-          : playerRef(ctx.state, action.fielder),
-      position:
-        action.fielder == null
-          ? undefined
-          : positionOf(ctx.state, action.fielder)
+      fielder: fielder?.player,
+      position: fielder?.position
     })
     // The scorer's own pick, which the label and MLB's list both lose.
     const detail = play.source.teamstation
@@ -1075,8 +1115,19 @@ function ballInPlay(ctx: Ctx, action: BallInPlayAction): void {
     play.source.teamstation.landingHeight = action.landingHeight
 }
 
-function isFielder(ctx: Ctx, id: number): boolean {
-  return Object.values(line(ctx).defense).some(player => player?.id === id)
+/**
+ * Whether a fielder is in the field now: a player on the defense, or a
+ * stand-in at a position nobody is playing.
+ */
+function isFielder(ctx: Ctx, id: FielderRef): boolean {
+  return canField(line(ctx).defense, id)
+}
+
+/** One hop of a stored route: the player, or a stand-in's position. */
+function routeHop(state: GameState, id: FielderRef, location: Point): RouteHop {
+  return isPosition(id)
+    ? { position: id, location }
+    : { player: playerRef(state, id), location }
 }
 
 const BATTED: Partial<Record<ResultAction['eventType'], ResolutionOutcome>> = {
@@ -1088,9 +1139,10 @@ const BATTED: Partial<Record<ResultAction['eventType'], ResolutionOutcome>> = {
   fielders_choice: "Fielder's Choice"
 }
 const OUT_OUTCOMES = {
-  throw: 'Throw Out',
+  throw: 'Ground Out',
   catch: 'Ball Caught',
-  interference: 'Batter Interference'
+  interference: 'Batter Interference',
+  first: 'Out at First'
 } as const
 const AWARDS = {
   hit_by_pitch: 'Hit by Pitch',
@@ -1214,7 +1266,10 @@ function battedResult(
     !baseIds(ctx.state).some(id => id != null)
   )
     refuse('illegal', "A fielder's choice needs a runner on base")
-  const fielder = play.hitData?.fielder?.id
+  // A stand-in at an empty position is known by his position alone.
+  const standIn = play.hitData?.position
+  const fielder =
+    play.hitData?.fielder?.id ?? (isPosition(standIn) ? standIn : undefined)
   const kind = play.source.teamstation.homeRunKind
   ctx.state.pending = newResolution(ctx, outcome, {
     contactKind: contact,
@@ -1226,7 +1281,7 @@ function battedResult(
   play.result.eventType = action.eventType
   play.result.description = outcome
   play.source.teamstation.outcome = outcome
-  if (outcome === 'Throw Out' || outcome === 'Ball Caught')
+  if (GROUND_OUTS.includes(outcome) || outcome === 'Ball Caught')
     play.source.teamstation.outSubtype = outcome
   if (outcome === 'Home Run')
     play.source.teamstation.homeRunKind = kind ?? 'in-park'
@@ -1236,13 +1291,13 @@ function battedResult(
   }
   const landed = play.hitData?.coordinates
   const foul =
-    action.foulCaught ??
-    (landed != null && play.hitData?.fielder != null && !isFair(landed))
+    action.foulCaught ?? (landed != null && fielder != null && !isFair(landed))
   if (foul && outcome === 'Ball Caught') {
     play.source.teamstation.foulCaught = true
     play.result.description = 'Foul ball caught'
   }
   prepareHit(ctx)
+  if (action.advance === 'ground') prepareGroundOut(ctx)
   prepareBatterResult(ctx)
 }
 
@@ -1256,12 +1311,14 @@ function fieldingPlay(ctx: Ctx, action: FieldingPlayAction): void {
     if (!isFielder(ctx, id))
       refuse('unknownPlayer', 'That player is not in the field')
   const play = current(ctx)
+  const charged = fielderOf(ctx.state, action.error)
   play.source.teamstation.errorCredit = {
-    player: playerRef(ctx.state, action.error),
-    defensiveRoute: action.fielders.map((id, i) => ({
-      player: playerRef(ctx.state, id),
-      location: action.locations?.[i] ?? { x: 0, z: 0 }
-    }))
+    ...(charged.player == null
+      ? { position: action.error as Position }
+      : { player: charged.player }),
+    defensiveRoute: action.fielders.map((id, i) =>
+      routeHop(ctx.state, id, action.locations?.[i] ?? { x: 0, z: 0 })
+    )
   }
   const batterRecord = play.runners.find(
     runner =>
@@ -1302,10 +1359,9 @@ function saveChoiceRoute(
     )
   )
     refuse('illegal', 'Choose the fielders and their locations')
-  current(ctx).source.teamstation.fieldingRoute = route.map(hop => ({
-    player: playerRef(ctx.state, hop.id),
-    location: { ...hop.point }
-  }))
+  current(ctx).source.teamstation.fieldingRoute = route.map(hop =>
+    routeHop(ctx.state, hop.id, { ...hop.point })
+  )
 }
 
 /**
@@ -1427,9 +1483,18 @@ function runnerMovement(
   } else if (to < where) {
     refuse('illegal', 'A runner cannot go back')
   }
-  if (decision === 'batterOut' && action.out !== true)
+  if (decision === 'batterOut' && action.out !== true && !retakingOffer)
     refuse('notNow', 'Say who put the batter out')
   if (action.out === true) {
+    // Put out on the base a ground out sent him to, he is out going there
+    // from his own base: the advance he never made leaves the play.
+    const offer =
+      to === where ? groundOfferAt(state, action.runner, where) : undefined
+    if (offer != null) {
+      const start = offer.start ?? offer.from
+      removeAdvanceRow(current(ctx), action.runner, start, where)
+      where = start
+    }
     finishOut(ctx, {
       runner: action.runner,
       from: where,
@@ -2070,7 +2135,8 @@ function lineup(ctx: Ctx, action: LineupAction): void {
     setup,
     action.nextBatter,
     replaced,
-    ctx.replay
+    ctx.replay,
+    action.keepSlot === true
   )
   if (applied.state == null)
     refuse('illegal', applied.error ?? 'Invalid lineup')

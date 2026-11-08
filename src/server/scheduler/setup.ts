@@ -121,6 +121,9 @@ export async function settingsOf(
               regularGames: row.regular_games,
               exhibitionGames: row.exhibition_games,
               doubleheaders: row.doubleheaders,
+              maxGamesOnWeekdays: row.max_games_on_weekdays,
+              maxGamesOnWeekend: row.max_games_on_weekend,
+              preferGameOn: row.prefer_game_on,
               startsOn: calendarDateText(row.starts_on)!,
               endsOn: calendarDateText(row.ends_on)!,
               blackouts: datesOf(row.blackouts),
@@ -154,6 +157,15 @@ export async function saveSeasonScheduleSettings(
     regular_games: settings.regularGames,
     exhibition_games: settings.exhibitionGames,
     doubleheaders: settings.doubleheaders,
+    ...(settings.maxGamesOnWeekdays === undefined
+      ? {}
+      : { max_games_on_weekdays: settings.maxGamesOnWeekdays }),
+    ...(settings.maxGamesOnWeekend === undefined
+      ? {}
+      : { max_games_on_weekend: settings.maxGamesOnWeekend }),
+    ...(settings.preferGameOn === undefined
+      ? {}
+      : { prefer_game_on: settings.preferGameOn }),
     starts_on: settings.startsOn,
     ends_on: settings.endsOn,
     blackouts: settings.blackouts,

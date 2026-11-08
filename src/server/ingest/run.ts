@@ -2,18 +2,28 @@ import { createServer, type Server } from 'node:http'
 
 import type { Kysely } from 'kysely'
 
-import type { Database } from '../db/database'
+import type { ChangeFeed } from '../changeFeed/feed'
+import type { Database, PoolOptions } from '../db/database'
 import type { LiveControllerOptions } from '../live/controller'
-import type { ServerConfig } from '../serverConfig'
+import {
+  quit,
+  type ScoreboardClient,
+  scoreboardPrefix
+} from '../scoreboard/scoreboardStore'
+import { requestDatabaseUrl, type ServerConfig } from '../serverConfig'
 
 /**
  * The live ingest, as a process of its own.
  *
  * It owns the RTMP port and the ffmpeg children writing each game's HLS, and
  * nothing else. The API never calls it: an endpoint writes the `live_streams`
- * row and this process's controller acts on it within the second, so an API
- * that crashes or is restarted for a deploy leaves every publisher connected
- * and every recording growing. See CONTRIBUTING.md, "Live streaming".
+ * row, the row's `live_changes` notice reaches this process's change feed, and
+ * its controller acts on it, so an API that crashes or is restarted for a
+ * deploy leaves every publisher connected and every recording growing. See
+ * CONTRIBUTING.md, "Live streaming".
+ *
+ * It holds one change feed and one Valkey client for the controller, made
+ * here and closed here once the live work has drained.
  */
 
 /** How long a stop may wait on the database before it is taken. */
@@ -26,7 +36,16 @@ export type IngestSignal = 'SIGTERM' | 'SIGINT'
 
 export interface IngestDeps {
   config: ServerConfig
-  makeDatabase: (url: string) => Kysely<Database>
+  makeDatabase: (url: string, options: PoolOptions) => Kysely<Database>
+  /** The change feed the controller hears `live_changes` on (`makeChangeFeed`). */
+  makeFeed: (config: ServerConfig, log: (message: string) => void) => ChangeFeed
+  /** The playlist sink's Valkey client (`makeScoreboardClient`). */
+  makeValkey: (
+    url: string,
+    log: (message: string) => void,
+    name: string,
+    caFile: string
+  ) => ScoreboardClient
   startLiveController: (options: LiveControllerOptions) => Promise<boolean>
   stopLiveController: () => void
   /** What the stopped controller still has in hand, before the pool goes. */
@@ -70,7 +89,32 @@ export async function runIngest(
     return undefined
   }
 
-  const db = deps.makeDatabase(config.databaseUrl)
+  const db = deps.makeDatabase(requestDatabaseUrl(config), { role: 'ingest' })
+  const feed = deps.makeFeed(config, message => {
+    log(`live feed: ${message}`)
+  })
+  const valkey = deps.makeValkey(
+    config.redis.url,
+    message => {
+      log(`live playlists: ${message}`)
+    },
+    'live playlists',
+    config.redis.caFile
+  )
+  valkey.connect().catch((error: unknown) => {
+    logError(`live playlists: ${String(error)}`)
+  })
+  // The feed and Valkey go before the pool: a stop drains the live work
+  // first, and that work may still be hearing notices.
+  const close = async (): Promise<void> => {
+    await Promise.all([
+      feed.close().catch((error: unknown) => {
+        logError(`closing the change feed: ${String(error)}`)
+      }),
+      quit(valkey)
+    ])
+    await db.destroy()
+  }
   const started = await deps.startLiveController({
     db,
     live: config.live,
@@ -78,11 +122,14 @@ export async function runIngest(
     mediaRoot: config.mediaDir,
     workDir: config.workDir,
     sessionSecret: config.sessionSecret,
-    space: config.space
+    space: config.space,
+    feed,
+    playlistClient: valkey,
+    playlistPrefix: scoreboardPrefix(config.redis.prefix, config.databaseUrl)
   })
   if (!started) {
     logError('live ingest did not start')
-    await db.destroy().catch(() => undefined)
+    await close().catch(() => undefined)
     exit(1)
     return undefined
   }
@@ -94,7 +141,7 @@ export async function runIngest(
     logError(`ingest health did not start: ${String(error)}`)
     deps.stopLiveController()
     await deps.drainLiveController().catch(() => undefined)
-    await db.destroy().catch(() => undefined)
+    await close().catch(() => undefined)
     exit(1)
     return undefined
   }
@@ -128,9 +175,7 @@ export async function runIngest(
       .catch((error: unknown) => {
         logError(`finishing live work: ${String(error)}`)
       })
-      .then(async () => {
-        await db.destroy()
-      })
+      .then(close)
       .then(finish, (error: unknown) => {
         logError(`closing the database: ${String(error)}`)
         finish()

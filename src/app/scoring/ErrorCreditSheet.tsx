@@ -23,8 +23,13 @@ export function ErrorCreditSheet({
       }}
     >
       {ids.map(id => {
-        const player = state.session.gameData.players[id]
-        const label = [player.jersey, player.fullName].filter(Boolean).join(' ')
+        // A stand-in at an empty position is named by the position.
+        const player =
+          typeof id === 'number' ? state.session.gameData.players[id] : null
+        const label =
+          player == null
+            ? String(id)
+            : [player.jersey, player.fullName].filter(Boolean).join(' ')
         return (
           <ScoringPlayerCard
             key={id}

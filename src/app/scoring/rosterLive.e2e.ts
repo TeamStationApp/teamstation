@@ -7,7 +7,7 @@ import { join } from 'node:path'
    turns ?. and ?? into helpers the page does not have. */
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
-import type { Page } from 'puppeteer'
+import type { HTTPRequest, Page } from 'puppeteer'
 
 import {
   type BrowserSession,
@@ -34,6 +34,11 @@ import { signInTestAccount } from '../../test/passwordFixtures'
  *
  * `TS_LINEUP_ARTIFACTS=<dir>` saves L2's warning there as
  * `roster-conflict-banner.png`.
+ *
+ * L4 holds every API request open with request interception, then takes
+ * Chromium offline: each roster, lineup and defense change shows at once.
+ * L5 has both profiles change one side's lineup, the earlier change saved
+ * last: the later creation time wins on both screens.
  */
 const APP = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8180'
 const API = process.env.TS_API_TEST_URL ?? 'http://127.0.0.1:9180/api/v1'
@@ -183,6 +188,29 @@ class Scorer {
     await new Promise(resolve => setTimeout(resolve, 200))
     await this.page.mouse.up()
     await new Promise(resolve => setTimeout(resolve, 300))
+  }
+
+  /** The roster sheet's editor is up, with no spinner in its place. */
+  async editorShownWithin(ms: number): Promise<number> {
+    const started = Date.now()
+    await this.tap('Open scoring menu')
+    await this.tap('Set Team Rosters')
+    await this.page.waitForSelector('[aria-label="Save Rosters"]', {
+      timeout: ms
+    })
+    expect(await this.page.$('[aria-label="Refreshing game"]')).equals(null)
+    return Date.now() - started
+  }
+
+  /** Taps Save Rosters and answers how long the sheet took to close. */
+  async saveShownWithin(ms: number): Promise<number> {
+    const started = Date.now()
+    await this.tapEnabled('Save Rosters')
+    await this.page.waitForSelector('[aria-label="Save Rosters"]', {
+      hidden: true,
+      timeout: ms
+    })
+    return Date.now() - started
   }
 
   /** Every save has gone out and come back. */
@@ -378,5 +406,160 @@ describe('two scorekeepers on one game', function () {
     ).deep.equals(['B', 'C'])
     // And B, reading the game again, sees both.
     await b.waitScoreboard('1 balls 1 strikes')
+  })
+
+  it('L4: shows lineup, roster and defense changes at once with every request held, then offline', async function () {
+    const fixture = lineupFixture()
+    await a.scoreGame(fixture.gameId)
+    await a.page.waitForNetworkIdle({ idleTime: 500, timeout: 30000 })
+    // Every API request from here is held open: none is answered.
+    const held: Array<{ url: string }> = []
+    await a.page.setRequestInterception(true)
+    const hold = (request: HTTPRequest): void => {
+      if (request.url().includes('/api/')) {
+        held.push({ url: request.url() })
+        return
+      }
+      request.continue().catch(() => undefined)
+    }
+    a.page.on('request', hold)
+    try {
+      const opened = await a.editorShownWithin(3000)
+      console.log(
+        `      held: the roster editor showed ${opened} ms after the menu tap, no spinner`
+      )
+      await a.tap('Away Team', 'tab')
+      await a.tap('Lineup', 'tab')
+      await a.page.waitForSelector('[data-roster-target="lineup-0"]')
+      // Lineup and roster: Maldonado out of the order, onto the roster.
+      await a.tap('Remove Maldonado')
+      expect(await a.lineup()).not.includes('Maldonado')
+      await a.page.waitForSelector('[aria-label="Add Maldonado to Lineup"]')
+      const saved = await a.saveShownWithin(3000)
+      console.log(
+        `      held: Save Rosters closed the sheet ${saved} ms after the tap`
+      )
+      const reopened = await a.editorShownWithin(3000)
+      console.log(
+        `      held: the editor showed again ${reopened} ms after the menu tap`
+      )
+      await a.tap('Away Team', 'tab')
+      await a.tap('Lineup', 'tab')
+      expect(await a.lineup()).not.includes('Maldonado')
+      // Defense: the fielding side cleared, and the field waits for a pitcher.
+      await a.tap('Home Team', 'tab')
+      await a.tap('Defense', 'tab')
+      await a.tap('Clear Defense')
+      const cleared = await a.saveShownWithin(3000)
+      console.log(
+        `      held: the cleared defense saved on screen ${cleared} ms after the tap`
+      )
+      await a.page.waitForFunction(
+        () => String(document.body.textContent).includes('Assign a pitcher'),
+        { timeout: 3000 }
+      )
+      console.log(`      held: ${held.length} API requests still unanswered`)
+      expect(held.length).greaterThan(0)
+    } finally {
+      a.page.off('request', hold)
+      await a.page.setRequestInterception(false)
+    }
+    // Offline: the same, with nothing to reach.
+    await a.scoreGame(fixture.gameId)
+    await a.page.waitForNetworkIdle({ idleTime: 500, timeout: 30000 })
+    await a.page.setOfflineMode(true)
+    try {
+      const opened = await a.editorShownWithin(3000)
+      console.log(
+        `      offline: the roster editor showed ${opened} ms after the menu tap, no spinner`
+      )
+      await a.tap('Away Team', 'tab')
+      await a.tap('Lineup', 'tab')
+      await a.page.waitForSelector('[data-roster-target="lineup-0"]')
+      const before = await a.lineup()
+      await a.tap(`Add Maldonado to Lineup`)
+      expect(await a.lineup()).deep.equals([...before, 'Maldonado'])
+      const saved = await a.saveShownWithin(3000)
+      console.log(
+        `      offline: Save Rosters closed the sheet ${saved} ms after the tap`
+      )
+      await a.editorShownWithin(3000)
+      await a.tap('Away Team', 'tab')
+      await a.tap('Lineup', 'tab')
+      expect(await a.lineup()).deep.equals([...before, 'Maldonado'])
+      await a.tap('Cancel')
+    } finally {
+      await a.page.setOfflineMode(false)
+    }
+  })
+
+  it('L5: keeps the later lineup change of a side on both screens, the earlier one saved last', async function () {
+    const fixture = lineupFixture()
+    await a.scoreGame(fixture.gameId)
+    await b.scoreGame(fixture.gameId)
+    await a.page.waitForNetworkIdle({ idleTime: 500, timeout: 30000 })
+    // A makes his change first, with no signal: it waits on his phone.
+    await a.page.setOfflineMode(true)
+    await a.openRosters()
+    await a.tap('Remove Maldonado')
+    const earlier = await a.lineup()
+    await a.saveShownWithin(3000)
+    const madeA = Date.now()
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    // B makes his later, online, and it lands first.
+    await b.openRosters()
+    await b.dragAfter(0, 2)
+    const later = await b.lineup()
+    expect(later).not.deep.equals(earlier)
+    await b.saveShownWithin(3000)
+    const madeB = Date.now()
+    await b.waitSaved()
+    console.log(
+      `      A's change made ${madeB - madeA} ms before B's; B's saved first`
+    )
+    // A's signal comes back: his older change is the one dropped.
+    await a.page.setOfflineMode(false)
+    // His queued save goes, is refused as stale, and is put on top of B's
+    // without his older change.
+    let status: string | null = null
+    for (let i = 0; i < 120; i++) {
+      status = await a.page.evaluate(() => {
+        const node = document.querySelector('[aria-label="Save status"]')
+        return node == null ? null : String(node.textContent)
+      })
+      if (status == null || status.includes('another device')) break
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+    console.log(`      A's save status once back online: ${String(status)}`)
+    await a.openRosters()
+    await a.waitLineup(later)
+    await a.tap('Cancel')
+    const stored = (await (
+      await fetch(`${API}/games/${fixture.gameId}/lineups`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    ).json()) as {
+      away: { current: { batters: Array<{ name: string } | null> } | null }
+    }
+    const names = stored.away.current!.batters.map(batter =>
+      String(batter?.name ?? '')
+    )
+    console.log(`      stored away order: ${names.join(', ')}`)
+    expect(names.some(name => name.includes('Maldonado'))).equals(true)
+    await b.openRosters()
+    await b.waitLineup(later)
+    await b.tap('Cancel')
+    // Made later and saved later: A's change stands over B's.
+    await a.openRosters()
+    await a.tap('Remove Maldonado')
+    const latest = await a.lineup()
+    await a.saveShownWithin(3000)
+    await a.waitSaved()
+    await b.openRosters()
+    await b.waitLineup(latest)
+    await b.tap('Cancel')
+    console.log(
+      '      the later change stood on both screens, whichever saved first'
+    )
   })
 })

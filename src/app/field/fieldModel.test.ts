@@ -11,6 +11,7 @@ import {
   setDestination
 } from './fieldModel'
 import { PLAYER_SCALE } from './playerPresentation'
+import { SCORING_SPEED } from './scoringSpeed'
 
 describe('field locomotion', function () {
   it('creates nine defenders and three independently movable runners', function () {
@@ -48,7 +49,8 @@ describe('field locomotion', function () {
   })
   it('doubles normal offense while out approaches retain the slower pace', () => {
     for (const distance of [0.5, 5, 40]) {
-      const prior = 1.4 * Math.min(17, 4 + distance * 1.1)
+      // Scoring plays at twice the natural pace.
+      const prior = 1.4 * Math.min(17, 4 + distance * 1.1) * SCORING_SPEED
       expect(locomotionSpeed(distance, false)).equals(prior)
       expect(locomotionSpeed(distance, true)).equals(prior * 2)
       expect(locomotionSpeed(distance, true, true)).equals(prior)
@@ -96,7 +98,7 @@ describe('field locomotion', function () {
     expect(Math.hypot(player.target.x, player.target.z)).at.most(110.00001)
     advancePlayer(player, 30)
     expect(Math.hypot(player.position.x, player.position.z + 18.44)).at.most(
-      1.2
+      1.2 * SCORING_SPEED
     )
     expect(clampToField({ x: NaN, z: Infinity })).deep.equals({ x: 0, z: 0 })
   })

@@ -93,8 +93,18 @@ export function browseGeometry(
     heroHeight: Math.max(0, viewportHeight - rowHeight)
   }
 }
-export function collectionTop(heroHeight: number, scrollY: number): number {
-  return Math.max(0, heroHeight - Math.max(0, scrollY))
+/** The first quarter of the ramp image fades in; its remaining three quarters stay dark. */
+export function collectionGradientLayout(
+  firstRowTop: number,
+  rowHeight: number,
+  screenHeight: number
+): { height: number; inputRange: number[]; outputRange: number[] } {
+  const fadeHeight = Math.max(rowHeight, screenHeight / 3)
+  return {
+    height: 4 * fadeHeight,
+    inputRange: [0, firstRowTop + fadeHeight],
+    outputRange: [firstRowTop, -fadeHeight]
+  }
 }
 
 /** Fit wrapped matchup names and venue text inside the reserved hero area. */

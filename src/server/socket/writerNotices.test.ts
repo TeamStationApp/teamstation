@@ -12,6 +12,7 @@ import {
   groupFixture
 } from '../../test/groupFixtures'
 import {
+  announcedDuring,
   databaseUrlOf,
   listenScreenScopes,
   openScopeSocket,
@@ -19,12 +20,11 @@ import {
   type ScreenScopeNotices
 } from '../../test/screenScopeNotices'
 import { attachGameSocket, type GameSocketHandle } from './gameSocket'
-import { REVISION_HEADER } from './syncRevision'
 
 /**
  * The writes that change what home, schedule and an event show, each heard
- * on `screen_scopes` with the id the worker matches on, at the revision its
- * own transaction took. A write that fails tells nobody.
+ * on `screen_scopes` with the id the worker matches on, once its own
+ * transaction commits. A write that fails tells nobody.
  *
  * The fixture's people: 101 runs league, season and team A; 102 runs B; 103
  * runs the standalone season and team; 104 belongs to nothing.
@@ -61,6 +61,8 @@ describe('notices from the writes', function () {
     socket = attachGameSocket(server, f.h.db, await databaseUrlOf(f.h.db), {
       pingMs: 60_000,
       stopSignals: null,
+      // What each write tells, at once; the spread is screenScope.test's.
+      screenNoticeSpreadMs: 0,
       log: () => undefined,
       fanout: { log: () => undefined },
       screenScopes: { log: () => undefined }
@@ -100,13 +102,14 @@ describe('notices from the writes', function () {
     return response
   }
 
-  const livePost = (homeScore: number): object => ({
+  /** A post that moves the game to `inning`, past the 1st: a change its lists show. */
+  const livePost = (inning: number): object => ({
     mode: 'live',
     source: { system: 'manual' },
     plays: [],
     currentPlay: {
-      about: { atBatIndex: 0, inning: 1, halfInning: 'top', isComplete: false },
-      result: { awayScore: 0, homeScore }
+      about: { atBatIndex: 0, inning, halfInning: 'top', isComplete: false },
+      result: { awayScore: 0, homeScore: 0 }
     }
   })
 
@@ -121,10 +124,11 @@ describe('notices from the writes', function () {
     await new Promise(resolve => setTimeout(resolve, 400))
   }
 
-  it('tells a live play’s game, at the revision a later read of it answers (Commit order)', async function () {
+  it('tells a live play’s game, with no revision, committed before a later read of it (Commit order)', async function () {
     const mark = notices.mark()
-    await ok('POST', `/games/${gameId}/events`, livePost(0), 101)
+    await ok('POST', `/games/${gameId}/events`, livePost(2), 101)
     const notice = await notices.named(mark, { gameId })
+    expect(notice).deep.equals({ gameId, byPost: true })
     const read = await f.h.request(
       'GET',
       `/games/${gameId}/lineups`,
@@ -132,7 +136,8 @@ describe('notices from the writes', function () {
       101
     )
     expect(read.status).equals(200)
-    expect(read.headers.get(REVISION_HEADER)).equals(notice.revision)
+    // A list read takes no revision, and says none.
+    expect(read.headers.get('x-teamstation-revision')).equals(null)
   })
 
   it('tells nobody of a write that fails (Rollback)', async function () {
@@ -172,10 +177,7 @@ describe('notices from the writes', function () {
     const heard = await notices.since(mark)
     expect(heard.length).equals(2)
     for (const payload of heard)
-      expect(payload).deep.equals({
-        revision: payload.revision,
-        gameId: unscored
-      })
+      expect(payload).deep.equals({ gameId: unscored })
   })
 
   it('tells a team’s schedule of a team event made and moved', async function () {
@@ -240,10 +242,10 @@ describe('notices from the writes', function () {
     const from = [sees, others, nobody].map(each => each.frames.length)
     const mark = notices.mark()
     await ok('PUT', `/groups/team/${f.teamA}`, { name: 'Demo Falcons' }, 101)
-    const notice = await notices.named(mark, { teamId: f.teamA })
+    await notices.named(mark, { teamId: f.teamA })
     await quiet()
     expect(sees.changes(from[0])).deep.equals([
-      { type: 'changed', scope: 'schedule', revision: notice.revision }
+      { type: 'changed', scope: 'schedule' }
     ])
     expect(others.changes(from[1])).deep.equals([])
     expect(nobody.changes(from[2])).deep.equals([])
@@ -282,22 +284,20 @@ describe('notices from the writes', function () {
     // Still a proposal: there is no game row for its id to be matched on.
     expect(request.status).equals('pending')
     expect(request.gameId).equals(null)
-    let notice = await notices.named(mark, { teamId: f.teamB })
+    await notices.named(mark, { teamId: f.teamB })
     await quiet()
     expect(receiving.changes(from)).deep.include({
       type: 'changed',
-      scope: 'schedule',
-      revision: notice.revision
+      scope: 'schedule'
     })
     from = receiving.frames.length
     mark = notices.mark()
     await ok('POST', `/game-requests/${request.id}/withdraw`, {}, 101)
-    notice = await notices.named(mark, { teamId: f.teamB })
+    await notices.named(mark, { teamId: f.teamB })
     await quiet()
     expect(receiving.changes(from)).deep.include({
       type: 'changed',
-      scope: 'schedule',
-      revision: notice.revision
+      scope: 'schedule'
     })
   })
 
@@ -375,20 +375,20 @@ describe('notices from the writes', function () {
     await quiet()
     const from = [event, home, stranger].map(each => each.frames.length)
     const mark = notices.mark()
-    await ok('POST', `/games/${gameId}/events`, livePost(1), 101)
-    const notice = await notices.named(mark, { gameId })
+    await ok('POST', `/games/${gameId}/events`, livePost(3), 101)
+    await notices.named(mark, { gameId })
     await quiet()
     expect(event.changes(from[0])).deep.equals([
-      { type: 'changed', scope: 'event', revision: notice.revision, gameId }
+      { type: 'changed', scope: 'event', gameId, byPost: true }
     ])
     // The away side's administrator sees the game too.
     expect(home.changes(from[1])).deep.equals([
-      { type: 'changed', scope: 'home', revision: notice.revision, gameId }
+      { type: 'changed', scope: 'home', gameId, byPost: true }
     ])
     expect(stranger.changes(from[2])).deep.equals([])
   })
 
-  it('sends two plays inside the window as one changed, at the later revision (Coalesce)', async function () {
+  it('sends two plays inside the window as one changed (Coalesce)', async function () {
     const event = await scopeSocket(103)
     expect(
       await event.ask({ type: 'subscribe', scope: 'event', gameId })
@@ -397,14 +397,14 @@ describe('notices from the writes', function () {
     const from = event.frames.length
     const mark = notices.mark()
     await Promise.all([
-      ok('POST', `/games/${gameId}/events`, livePost(2), 101),
-      ok('POST', `/games/${gameId}/events`, livePost(3), 101)
+      ok('POST', `/games/${gameId}/events`, livePost(4), 101),
+      ok('POST', `/games/${gameId}/events`, livePost(5), 101)
     ])
     const heard = await notices.since(mark)
     expect(heard.map(payload => payload.gameId)).deep.equals([gameId, gameId])
     await quiet()
     expect(event.changes(from)).deep.equals([
-      { type: 'changed', scope: 'event', revision: heard[1].revision, gameId }
+      { type: 'changed', scope: 'event', gameId, byPost: true }
     ])
   })
 
@@ -464,5 +464,186 @@ describe('notices from the writes', function () {
     const mark = notices.mark()
     await ok('PUT', `/games/${unscored}/field`, { fenceDistanceFt: 210 }, 101)
     await notices.named(mark, { gameId: unscored })
+  })
+
+  /**
+   * A post tells the screen scopes only of a change a list shows of its game,
+   * as the post's (`byPost`); every viewer of the game hears each post as a
+   * play frame.
+   */
+  describe('only shown changes', function () {
+    const about = (
+      atBatIndex: number,
+      inning = 1,
+      top = true
+    ): Record<string, unknown> => ({
+      atBatIndex,
+      inning,
+      halfInning: top ? 'top' : 'bottom',
+      isTopInning: top,
+      isComplete: false
+    })
+    const pitchesOf = (calls: readonly string[]): object[] =>
+      calls.map((code, index) => ({
+        type: 'pitch',
+        isPitch: true,
+        index,
+        details: { call: { code } }
+      }))
+    /** The at-bat in progress, `calls` pitched, as a scorer posts it. */
+    const atBat = (calls: readonly string[], at = about(0)): object => ({
+      mode: 'live',
+      source: { system: 'manual' },
+      plays: [],
+      currentPlay: {
+        about: at,
+        count: {
+          balls: calls.filter(code => code === 'B').length,
+          strikes: Math.min(2, calls.filter(code => code !== 'B').length),
+          outs: 0
+        },
+        playEvents: pitchesOf(calls)
+      }
+    })
+    /** A home run on at-bat 0 for the visitors, then at-bat 1 begins. */
+    const homeRun = {
+      mode: 'live',
+      source: { system: 'manual' },
+      plays: [
+        {
+          about: { ...about(0), isComplete: true, isScoringPlay: true },
+          playEvents: pitchesOf(['B', 'X']),
+          result: {
+            type: 'atBat',
+            eventType: 'home_run',
+            awayScore: 1,
+            homeScore: 0,
+            rbi: 1
+          }
+        }
+      ],
+      currentPlay: {
+        about: about(1),
+        count: { balls: 0, strikes: 0, outs: 0 },
+        playEvents: []
+      }
+    }
+
+    /** A game of team A at home and the standalone team away, under way. */
+    const begun = async (): Promise<string> => {
+      const id = makeId('game')
+      await f.h.db
+        .insertInto('games')
+        .values({
+          id,
+          home_team_id: f.teamA,
+          away_team_id: f.standaloneTeam,
+          season_id: f.seasonA,
+          start_at: new Date(Date.now() - 600_000)
+        })
+        .execute()
+      await ok('POST', `/games/${id}/events`, atBat(['B']), 101)
+      return id
+    }
+
+    /** An event screen and a game frame on the game, home for one side and schedule for the other. */
+    const watching = async (
+      gameId: string
+    ): Promise<{
+      event: ScopeSocket
+      home: ScopeSocket
+      schedule: ScopeSocket
+    }> => {
+      const event = await scopeSocket(101)
+      const home = await scopeSocket(101)
+      const schedule = await scopeSocket(103)
+      expect(
+        await event.ask({ type: 'subscribe', scope: 'event', gameId })
+      ).deep.include({ type: 'subscribed', scope: 'event' })
+      expect(await event.ask({ type: 'subscribe', gameId })).deep.include({
+        type: 'subscribed',
+        gameId
+      })
+      expect(await home.ask({ type: 'subscribe', scope: 'home' })).deep.include(
+        { type: 'subscribed' }
+      )
+      expect(
+        await schedule.ask({ type: 'subscribe', scope: 'schedule' })
+      ).deep.include({ type: 'subscribed' })
+      await quiet()
+      return { event, home, schedule }
+    }
+
+    it('tells no screen scope of a pitch that changes only the count, and the game’s viewers hear its frame', async function () {
+      const gameId = await begun()
+      const { event, home, schedule } = await watching(gameId)
+      const from = [event, home, schedule].map(each => each.frames.length)
+      const sent = await announcedDuring(async () => {
+        await ok('POST', `/games/${gameId}/events`, atBat(['B', 'C']), 101)
+        await ok('POST', `/games/${gameId}/events`, atBat(['B', 'C', 'F']), 101)
+      })
+      expect(sent).deep.equals([])
+      await quiet()
+      expect(
+        event.frames
+          .slice(from[0])
+          .some(
+            frame =>
+              frame.type === 'change' &&
+              frame.gameId === gameId &&
+              frame.kind === 'playEdits'
+          )
+      ).equals(true)
+      expect(event.changes(from[0])).deep.equals([])
+      expect(home.changes(from[1])).deep.equals([])
+      expect(schedule.changes(from[2])).deep.equals([])
+    })
+
+    it('tells home and schedule, as the post’s, of a run, a half, an inning and a final', async function () {
+      const gameId = await begun()
+      const { home, schedule } = await watching(gameId)
+      const shown = async (body: object): Promise<void> => {
+        const from = [home.frames.length, schedule.frames.length]
+        const sent = await announcedDuring(async () => {
+          await ok('POST', `/games/${gameId}/events`, body, 101)
+        })
+        expect(sent).lengthOf(1)
+        expect(sent[0]).deep.include({ gameId, byPost: true })
+        await quiet()
+        for (const [index, each] of [home, schedule].entries())
+          expect(each.changes(from[index])).deep.include({
+            type: 'changed',
+            scope: index === 0 ? 'home' : 'schedule',
+            gameId,
+            byPost: true
+          })
+      }
+      // A run scored.
+      await shown(homeRun)
+      // The half turns, then the inning.
+      await shown(atBat([], about(1, 1, false)))
+      await shown(atBat([], about(1, 2, true)))
+      // The game ends: its teams' records and season are told, as before.
+      const final = {
+        mode: 'live',
+        source: { system: 'manual' },
+        plays: [
+          {
+            about: { ...about(1, 2), isComplete: true },
+            result: { eventType: 'final_score', awayScore: 1, homeScore: 0 }
+          }
+        ]
+      }
+      const sent = await announcedDuring(async () => {
+        await ok('POST', `/games/${gameId}/events`, final, 101)
+      })
+      expect(sent).lengthOf(1)
+      expect(sent[0]).deep.members([
+        { gameId, byPost: true },
+        { teamId: f.teamA },
+        { teamId: f.standaloneTeam },
+        { seasonId: f.seasonA }
+      ])
+    })
   })
 })

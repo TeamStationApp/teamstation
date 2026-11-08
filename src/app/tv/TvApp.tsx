@@ -91,7 +91,7 @@ export function TvApp({
         ) : state.phase === 'login' && state.request != null ? (
           <View style={styles.login}>
             <View style={styles.column}>
-              <TvBrand />
+              <TvBrand title="TeamStation" />
               <Text style={styles.title}>Your games. On the big screen.</Text>
               <Text style={styles.copy}>
                 Scan the QR code with your phone’s camera, or open TeamStation
@@ -143,7 +143,7 @@ export function TvApp({
           </>
         ) : (
           <View style={styles.column}>
-            <TvBrand />
+            <TvBrand title="TeamStation" />
             <Text style={styles.copy}>
               {state.phase === 'error' ? state.error : 'Connecting…'}
             </Text>

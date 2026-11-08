@@ -32,6 +32,8 @@ export interface ChatInfoScreenProps {
     | 'safetyNumber'
     | 'refresh'
     | 'setPreferences'
+    | 'setBlocked'
+    | 'isBlocked'
   >
   client: Pick<TeamStationClient, 'leaveDm'>
   conversationId: string
@@ -316,6 +318,11 @@ export function ChatInfoScreen(props: ChatInfoScreenProps): React.ReactElement {
                   {lstrings.chat_new_safety_number}
                 </Text>
                 <SafetyWordsGrid words={approval.newSafetyNumber} />
+                {approval.canApprove === false && (
+                  <Text style={shared.bannerText}>
+                    {lstrings.chat_history_approve_unavailable}
+                  </Text>
+                )}
                 <Button
                   label={lstrings.chat_approve}
                   accessibilityLabel={sprintf(
@@ -324,7 +331,7 @@ export function ChatInfoScreen(props: ChatInfoScreenProps): React.ReactElement {
                   )}
                   kind="primary"
                   busy={busy === String(approval.requestId)}
-                  disabled={busy != null}
+                  disabled={busy != null || approval.canApprove === false}
                   onPress={() => {
                     approve(approval)
                   }}

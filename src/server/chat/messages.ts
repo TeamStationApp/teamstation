@@ -11,6 +11,12 @@ import { makeId } from '../../common/ids'
 import { asUserId, userIdOfGumbo } from '../../common/userId'
 import type { ChatKind, ChatMessagesTable, Database } from '../db/database'
 import type { MediaContext } from '../media/mediaContext'
+import {
+  assertDmSendAllowed,
+  blockedSenderIds,
+  lockBlockPolicy,
+  setBlock
+} from './blocks'
 import { latestEpoch, lockConversation } from './epochs'
 import { type ChatCaller, requireHolder } from './keys'
 import { chatPeople, moderatorsOf } from './listing'
@@ -120,6 +126,7 @@ export interface ChatMessageView {
 }
 
 export interface ReportBody {
+  blockSender?: boolean
   messageId: string
   plaintext: string
   messageKey: Uint8Array
@@ -245,6 +252,13 @@ export async function mayPost(
     .where('id', '=', conversationId)
     .executeTakeFirstOrThrow()
   if (conversation.closed_at != null) return 'reader'
+  if (conversation.kind === 'dm') {
+    try {
+      await assertDmSendAllowed(db, conversationId, userId)
+    } catch {
+      return 'reader'
+    }
+  }
   if (
     conversation.kind === 'seasonAnnouncements' &&
     !(await moderatorsOf(db, conversation, [userId])).has(userId)
@@ -267,7 +281,10 @@ export async function postMessage(
 ): Promise<{ message: ChatMessageView; created: boolean }> {
   try {
     return await db.transaction().execute(async trx => {
+      await lockBlockPolicy(trx)
       const conversation = await lockConversation(trx, conversationId)
+      if (conversation.kind === 'dm')
+        await assertDmSendAllowed(trx, conversationId, caller.userId)
       const existing = await messageRow(trx, body.id)
       if (existing != null) {
         if (
@@ -526,12 +543,21 @@ async function clearTargets(
 export async function messagesOf(
   db: Kysely<Database>,
   conversationId: string,
-  page: { after?: number; before?: number; limit: number }
+  page: { after?: number; before?: number; limit: number; userId?: string }
 ): Promise<ChatMessageView[]> {
+  const hidden =
+    page.userId == null ? [] : await blockedSenderIds(db, page.userId)
   let query = db
     .selectFrom('chat_messages')
     .selectAll()
     .where('conversation_id', '=', conversationId)
+  if (hidden.length > 0)
+    query = query.where(eb =>
+      eb.or([
+        eb('sender_user_id', 'not in', hidden),
+        eb('kind', 'in', ['delete', 'moderatorDelete'])
+      ])
+    )
   if (page.after != null) query = query.where('seq', '>', page.after)
   if (page.before != null) query = query.where('seq', '<', page.before)
   const newestFirst = page.after == null && page.before != null
@@ -540,7 +566,18 @@ export async function messagesOf(
     .limit(page.limit)
     .execute()
   if (newestFirst) rows.reverse()
-  return await views(db, rows)
+  const messages = await views(db, rows)
+  return messages.map(message =>
+    hidden.includes(message.senderUserId)
+      ? {
+          ...message,
+          ciphertext: '',
+          nonce: '',
+          signature: '',
+          clearedAt: message.createdAt
+        }
+      : message
+  )
 }
 
 /**
@@ -624,8 +661,9 @@ export async function reportMessage(
   reporterUserId: string,
   body: ReportBody,
   now: Date
-): Promise<{ id: string; verified: boolean }> {
+): Promise<{ id: string; verified: boolean; blockedUserIds?: string[] }> {
   return await db.transaction().execute(async trx => {
+    await lockBlockPolicy(trx, body.blockSender === true)
     const row = await trx
       .selectFrom('chat_messages')
       .innerJoin('chat_identities', join =>
@@ -679,6 +717,10 @@ export async function reportMessage(
       signature: b64(row.signature),
       createdAt: iso(row.created_at)
     }
+    const blockedUserIds =
+      body.blockSender === true
+        ? await setBlock(trx, reporterUserId, row.sender_user_id, true, now)
+        : undefined
     const id = makeId('chatReport')
     await trx
       .insertInto('chat_reports')
@@ -694,7 +736,11 @@ export async function reportMessage(
         created_at: now
       })
       .execute()
-    return { id, verified }
+    return {
+      id,
+      verified,
+      ...(blockedUserIds == null ? {} : { blockedUserIds })
+    }
   })
 }
 

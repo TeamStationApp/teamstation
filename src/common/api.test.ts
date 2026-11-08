@@ -10,9 +10,11 @@ import {
   asPage,
   asPlayerHighlight,
   asPlayerStats,
+  asPostedEdits,
   asSaveLineupsBody,
   asScopeGrant,
   asStandingsRow,
+  type RequestOptions,
   type SaveLineupsBody,
   TeamStationClient
 } from './api'
@@ -1917,13 +1919,27 @@ describe('api client', function () {
     const reported = client({ id: 'crp_1', verified: true })
     expect(await reported.client.reportChatMessage(disclosure)).deep.equals({
       id: 'crp_1',
-      verified: true
+      verified: true,
+      blockedUserIds: undefined
     })
     expect(reported.calls[0]).deep.include({
       method: 'POST',
       url: 'http://x/api/v1/chat/reports'
     })
     expect(JSON.parse(reported.calls[0].body ?? '')).deep.equals(disclosure)
+
+    const blockedUserIds = [userIdOfGumbo(7), userIdOfGumbo(9)]
+    const combined = client({ id: 'crp_2', verified: true, blockedUserIds })
+    expect(
+      await combined.client.reportChatMessage({
+        ...disclosure,
+        blockSender: true
+      })
+    ).deep.equals({ id: 'crp_2', verified: true, blockedUserIds })
+    expect(JSON.parse(combined.calls[0].body ?? '')).deep.equals({
+      ...disclosure,
+      blockSender: true
+    })
 
     const report = {
       id: 'crp_1',
@@ -2150,6 +2166,24 @@ describe('api client', function () {
       refused = error
     }
     expect(refused).instanceOf(Error)
+  })
+
+  it('reads an answer the same whatever revision header it carries, and keeps none', async function () {
+    const answers: Array<Record<string, string>> = [
+      {},
+      { 'x-teamstation-revision': '4' }
+    ]
+    const read = await Promise.all(
+      answers.map(async headers => {
+        const client = new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: async () => new Response('[]', { status: 200, headers })
+        })
+        return { teams: await client.teams(), client }
+      })
+    )
+    expect(read[1].teams).deep.equals(read[0].teams).deep.equals([])
+    expect('revisionFor' in read[1].client).equals(false)
   })
 
   it('refuses a response of the wrong shape rather than passing it on', async function () {
@@ -2486,6 +2520,17 @@ describe('api client', function () {
       plays: [],
       currentPlay: null
     })
+    // The teams whose players' halves the read carries, when there are any.
+    const managing = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { plays: [], halves: ['tem_home'] }).fetch
+    })
+    expect((await managing.gameEvents('g')).halves).deep.equals(['tem_home'])
+    const nobody = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { plays: [], halves: [] }).fetch
+    })
+    expect(await nobody.gameEvents('g')).not.to.have.property('halves')
   })
 
   it('scores into a game live, naming TeamStation and only what changed', async function () {
@@ -2493,6 +2538,10 @@ describe('api client', function () {
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     await client.saveGameEvents('gam_1', { plays: [], remove: [3] })
     expect(calls[0].method).equals('POST')
+    // Only what it wrote is asked for back.
+    expect(calls[0].url).equals(
+      'http://x/api/v1/games/gam_1/events?answer=edits'
+    )
     expect(JSON.parse(calls[0].body!)).deep.equals({
       mode: 'live',
       source: { system: 'teamstation' },
@@ -2555,6 +2604,70 @@ describe('api client', function () {
       plays: [],
       currentPlay: null
     })
+  })
+
+  it('reads a save of either shape for its digests and generation (asPostedEdits)', async function () {
+    const digests = {
+      playsDigest: 'after',
+      priorPlaysDigest: 'found',
+      lineupsDigest: 'lineups',
+      generation: 2
+    }
+    const play = {
+      id: 'evt_1',
+      gameId: 'gam_1',
+      gumbo: { about: { atBatIndex: 0 } }
+    }
+    // A live post's edits (`?answer=edits`), and a whole game (no answer
+    // asked for, or an older server), keep the same four fields.
+    expect(
+      asPostedEdits({
+        edits: [
+          { op: 'put', play },
+          { op: 'remove', atBatIndex: 4 }
+        ],
+        currentPlay: null,
+        ...digests
+      })
+    ).deep.equals(digests)
+    expect(
+      asPostedEdits({ plays: [play], currentPlay: null, ...digests })
+    ).deep.equals(digests)
+    // A mocked server's bare list, and the phone's own copy of a queued
+    // post, carry none, or none that are not null.
+    expect(asPostedEdits({ plays: [play], currentPlay: null })).deep.equals({})
+    expect(
+      asPostedEdits({
+        plays: [],
+        currentPlay: null,
+        playsDigest: null,
+        priorPlaysDigest: null,
+        lineupsDigest: null,
+        generation: null
+      })
+    ).deep.equals({})
+    expect(asPostedEdits({ playsDigest: 'only' })).deep.equals({
+      playsDigest: 'only'
+    })
+    for (const raw of [null, 'plays', 3, undefined])
+      expect(() => asPostedEdits(raw), String(raw)).to.throw(TypeError)
+    expect(() => asPostedEdits({ generation: 'two' })).to.throw(TypeError)
+
+    // `saveGameEvents` answers what it reads of either.
+    const edits = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { edits: [], currentPlay: null, ...digests }).fetch
+    })
+    expect(
+      await edits.saveGameEvents('gam_1', { plays: [], remove: [] })
+    ).deep.equals(digests)
+    const bare = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { plays: [play], currentPlay: null }).fetch
+    })
+    expect(
+      await bare.saveGameEvents('gam_1', { plays: [], remove: [] })
+    ).deep.equals({})
   })
 
   it('reads sacrifice bunts on a batting line, and none from an older server', async function () {
@@ -3398,5 +3511,230 @@ describe('who is signed in, with no signal', function () {
       })
     expect((aborted as Error).name).equals('AbortError')
     expect(aborting.offline).equals(false)
+  })
+})
+
+describe('account selection client', () => {
+  const group = { kind: 'team' as const, id: 'tem_demo' }
+  const person = { userId: userIdOfGumbo(401), displayName: 'Mookie B' }
+  it('encodes group, query and repeated exclusions and cleans minimal account results', async () => {
+    const stub = stubFetch(200, [person])
+    const api = new TeamStationClient({ baseUrl: '/api/v1', fetch: stub.fetch })
+    expect(
+      await api.searchPeopleAccounts(group, 'Mookie &', [
+        person.userId,
+        userIdOfGumbo(402)
+      ])
+    ).deep.equals([{ ...person, avatarUrl: null, affiliations: '' }])
+    const url = new URL(stub.calls[0].url, 'https://example.test')
+    expect(url.pathname).equals('/api/v1/users')
+    expect(url.searchParams.get('q')).equals('Mookie &')
+    expect(url.searchParams.get('forGroupKind')).equals('team')
+    expect(url.searchParams.get('forGroupId')).equals(group.id)
+    expect(url.searchParams.getAll('exclude')).deep.equals([
+      person.userId,
+      userIdOfGumbo(402)
+    ])
+    await api.searchPeopleAccounts(group, '')
+    expect(stub.calls[1].url).not.contains('exclude=')
+  })
+  it('adds an account without needing an email and preserves roles and retry identity', async () => {
+    const stub = stubFetch(200, { added: true, person })
+    const api = new TeamStationClient({ baseUrl: '/api/v1', fetch: stub.fetch })
+    const options = {
+      admin: false,
+      flags: ['coach' as const],
+      idempotencyKey: 'account-selection-client'
+    }
+    expect(
+      await api.addPersonAccount(group, person.userId, options)
+    ).deep.equals({
+      added: true,
+      person: { ...person, email: undefined },
+      invited: undefined
+    })
+    expect(stub.calls[0].method).equals('POST')
+    expect(stub.calls[0].url).equals('/api/v1/manage/team/tem_demo/people')
+    expect(JSON.parse(stub.calls[0].body!)).deep.equals({
+      userId: person.userId,
+      ...options
+    })
+    await api.addPersonAccount(group, person.userId)
+    expect(JSON.parse(stub.calls[1].body!)).deep.equals({
+      userId: person.userId
+    })
+  })
+})
+
+describe('writes a screen does not wait for (U37, U44)', function () {
+  /** A client that records each call's options and answers what it is told. */
+  class Recording extends TeamStationClient {
+    calls: Array<{ method: string; path: string; options?: RequestOptions }> =
+      []
+
+    answer: unknown = {}
+    protected override async request<T>(
+      method: string,
+      path: string,
+      cleaner: (raw: unknown) => T,
+      _body?: unknown,
+      options?: RequestOptions
+    ): Promise<T> {
+      this.calls.push({ method, path, options })
+      return cleaner(this.answer)
+    }
+  }
+  const save: SaveLineupsBody = {
+    side: 'home',
+    base: 'd0',
+    players: [],
+    battingOrder: [],
+    defense: {}
+  }
+  const player = {
+    firstName: 'Mookie',
+    lastName: 'Betts',
+    jersey: '50',
+    positions: ['RF' as const],
+    bats: 'right' as const,
+    throws: 'right' as const
+  }
+  const entry = mintedRosterEntry(player, 700002)
+
+  it('forwards background to the request of each listed write, and nothing without it', async () => {
+    const client = new Recording({ baseUrl: '/api/v1' })
+    const background = { background: true }
+    client.answer = {
+      away: {
+        teamId: 'a',
+        teamName: 'A',
+        start: null,
+        changes: [],
+        current: null
+      },
+      home: {
+        teamId: 'h',
+        teamName: 'H',
+        start: null,
+        changes: [],
+        current: null
+      },
+      digest: 'd1'
+    }
+    await client.saveLineups('g1', save, background)
+    await client.saveLineups('g1', save)
+    client.answer = { away: [], home: [] }
+    await client.setRostered(
+      'g1',
+      { side: 'home', userId: 'usr_a', rostered: false },
+      background
+    )
+    client.answer = entry
+    await client.createRosterPlayer('t1', player, background)
+    await client.createGuestPlayer('g1', 'home', player, 't1', background)
+    await client.addExistingRosterPlayer(
+      't1',
+      { userId: 'usr_a', jersey: null, positions: [] },
+      { background: true, deviceNames: { usr_a: 'Mookie B' } }
+    )
+    await client.addExistingGuest(
+      'g1',
+      'home',
+      { userId: 'usr_a', jersey: null, positions: [] },
+      undefined,
+      background
+    )
+    await client.renameGuestPlayer(
+      'g1',
+      'usr_a',
+      { firstName: 'Mookie', lastName: 'Betts' },
+      12,
+      background
+    )
+    await client.renameGuestPlayer('g1', 'usr_a', {
+      firstName: 'Mookie',
+      lastName: ''
+    })
+    expect(client.calls.map(call => call.options)).deep.equals([
+      { background: true },
+      undefined,
+      { background: true },
+      { background: true },
+      { background: true },
+      { background: true, deviceNames: { usr_a: 'Mookie B' } },
+      { background: true },
+      { background: true, deviceNames: { '12': 'Mookie Betts' } },
+      undefined
+    ])
+  })
+
+  it('reads changedAt on a lineup save as an ISO time, and refuses anything else', () => {
+    expect(
+      asSaveLineupsBody({ ...save, changedAt: '2026-11-06T12:00:00.000Z' })
+        .changedAt
+    ).equals('2026-11-06T12:00:00.000Z')
+    expect('changedAt' in asSaveLineupsBody(save)).equals(false)
+    expect(() => asSaveLineupsBody({ ...save, changedAt: 'yesterday' })).throws(
+      TypeError
+    )
+  })
+})
+
+describe('chat recovery API compatibility', () => {
+  it('keeps legacy epoch URLs and independently requests precise box delivery', async () => {
+    const answer = {
+      latest: 0,
+      needsRotation: false,
+      noHolder: false,
+      epochs: [],
+      boxes: []
+    }
+    const stub = stubFetch(200, answer)
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: stub.fetch
+    })
+    await client.chatEpochs('cnv_one', 2)
+    await client.chatEpochs('cnv_one', 2, {
+      boxesAfter: '9007199254740993',
+      boxLimit: 1
+    })
+    await client.chatEpochs('cnv_one', 2, { boxesAfter: '0' })
+    expect(stub.calls.map(call => call.url)).deep.equals([
+      'https://example.test/api/v1/chat/conversations/cnv_one/epochs?after=2',
+      'https://example.test/api/v1/chat/conversations/cnv_one/epochs?after=2&boxesAfter=9007199254740993&boxLimit=1',
+      'https://example.test/api/v1/chat/conversations/cnv_one/epochs?after=2&boxesAfter=0&boxLimit=100'
+    ])
+  })
+  it('uses scoped history queues with distinct typed responses', async () => {
+    const stub = stubFetch(200, { requests: [], nextCursor: null })
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: stub.fetch
+    })
+    expect(await client.chatHistoryGrants()).deep.equals({
+      requests: [],
+      nextCursor: null
+    })
+    await client.chatHistoryGrants('7', 2)
+    expect(stub.calls[1].url).equals(
+      'https://example.test/api/v1/chat/grants?scope=history&cursor=7&limit=2'
+    )
+    const posted = stubFetch(200, {
+      filled: 0,
+      results: [{ requestId: '7', status: 'partial', coveredThroughEpoch: 1 }]
+    })
+    const writer = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: posted.fetch
+    })
+    expect((await writer.postChatHistoryGrants([])).results[0].status).equals(
+      'partial'
+    )
+    expect(posted.calls[0].url).equals(
+      'https://example.test/api/v1/chat/grants?scope=history'
+    )
+    expect(posted.calls[0].method).equals('POST')
+    expect(JSON.parse(posted.calls[0].body!)).deep.equals({ boxes: [] })
   })
 })

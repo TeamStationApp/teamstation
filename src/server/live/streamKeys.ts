@@ -8,6 +8,7 @@ import { rtmpOrigin } from '../../common/primaryUrl'
 import { hashToken } from '../auth/tokens'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
+import { newSpaceSecret } from '../media/videoPrefix'
 import type { LiveSettings } from '../serverConfig'
 import { openSecret, sealSecret } from './secrets'
 
@@ -131,6 +132,13 @@ export const MAX_CAMERAS = 4
 
 /** How many cameras one game may have active at once, whoever holds them. */
 export const MAX_GAME_CAMERAS = 6
+
+/**
+ * `details.reason` on the refusal of a camera over either limit, so a client
+ * can tell it from every other 400 without reading the sentence: TS Director
+ * shows it and stops, where it would let another refusal pass quietly.
+ */
+export const CAMERA_LIMIT_REASON = 'cameraLimit'
 
 /**
  * Whether a camera still holds its place: not ended, not revoked, and nobody
@@ -342,7 +350,8 @@ export function freeSlot(mine: LiveStreamRow[]): number | undefined {
 
 /**
  * The slot a new camera of this person's takes, or the refusal when they or
- * the game are full. Only active cameras count, and a Director's is one.
+ * the game are full, marked `CAMERA_LIMIT_REASON`. Only active cameras count,
+ * and a Director's is one.
  *
  * Every path that creates a camera calls this under the game's
  * `liveStreams:<gameId>` lock, so two asking at once cannot both pass.
@@ -358,12 +367,14 @@ export async function checkCameraLimits(
   const slot = freeSlot(active.filter(row => row.userId === userId))
   if (slot == null) {
     throw badRequest(
-      `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
+      `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`,
+      { reason: CAMERA_LIMIT_REASON }
     )
   }
   if (active.length >= MAX_GAME_CAMERAS) {
     throw badRequest(
-      `This game already has ${MAX_GAME_CAMERAS} cameras. End one to add another.`
+      `This game already has ${MAX_GAME_CAMERAS} cameras. End one to add another.`,
+      { reason: CAMERA_LIMIT_REASON }
     )
   }
   return slot
@@ -433,6 +444,9 @@ export async function createLiveStream(
         storage: 'local',
         status: 'processing',
         hidden: true,
+        // With the id, before any publish: the origin uploads under
+        // `videos/<id>-<secret>/` from its first piece.
+        space_secret: newSpaceSecret(),
         created_at: now,
         updated_at: now
       })
@@ -645,8 +659,9 @@ async function placeVideoStart(
 /**
  * Replaces the key, leaving everything else as it was.
  *
- * The old key stops working the moment this returns — the ingest re-reads the
- * row within the second — which is the point of rotating one.
+ * The old key stops working the moment this returns — the write's
+ * `live_changes` notice has the ingest re-read the row within about 100 ms —
+ * which is the point of rotating one.
  */
 export async function rotateLiveStreamKey(
   db: Kysely<Database>,

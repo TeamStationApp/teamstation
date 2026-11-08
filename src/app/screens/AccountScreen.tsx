@@ -3,11 +3,13 @@ import { Platform, Pressable, Switch, Text, View } from 'react-native'
 
 import type { AccountSettings } from '../../common/accountSettings'
 import type { Session, SessionUser, TeamStationClient } from '../../common/api'
+import type { GameSocket } from '../../common/gameSocket'
 import {
   type ClientPasswordCosts,
   newPasswordRequirements
 } from '../../common/passwordProtocol'
-import { leaveChat } from '../chat/engine/links'
+import { BlockedPeople } from '../chat/BlockedPeople'
+import { releaseChat } from '../chat/engine/links'
 import type { ChatKeyStore } from '../chat/keyRecord'
 import { keyStore } from '../chat/keyStore'
 import {
@@ -43,10 +45,11 @@ import { DeleteAccountSheet } from './DeleteAccountSheet'
 export interface AccountScreenProps {
   session: Session
   /**
-   * The signed-in client. Signing out first removes this device from chat
-   * and wipes its chat keys.
+   * The signed-in client. Signing out leaves this account's chat keys on
+   * the device and leaves the device linked.
    */
   client: TeamStationClient
+  socket?: Pick<GameSocket, 'onChat'>
   onAccountChanged?: (user: SessionUser) => void
   /** This device's chat key store; the platform's own by default. */
   chatStore?: ChatKeyStore
@@ -92,6 +95,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   // Mounted once opened, so it can slide away; never on a visit without it.
   const [appleMusicSetupUsed, setAppleMusicSetupUsed] = useState(false)
   const [account, setAccount] = useState<AccountSettings>()
+  const [blockedPeople, setBlockedPeople] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [reload, setReload] = useState(0)
   const [name, setName] = useState(session.user.displayName)
@@ -236,9 +240,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const [signingOut, setSigningOut] = useState(false)
 
   /**
-   * This device leaves chat before the session ends: the server revokes it
-   * (which ends the session too) and its keys are wiped, so whoever signs in
-   * on it next reads nothing of this person's chats.
+   * The session ends. This account's chat keys stay, and the device stays
+   * linked, so the same account opens chat on this device next time.
    */
   const signOut = (): void => {
     if (onSignOutRequest != null) {
@@ -246,7 +249,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       return
     }
     setSigningOut(true)
-    leaveChat({ client, store: chatStore })
+    releaseChat(chatStore)
       .finally(onSignOut)
       .catch(() => undefined)
   }
@@ -671,28 +674,46 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           />
         </ListCard>
       )}
-      {onChatDevices != null && (
-        <View style={styles.section}>
-          <SectionHeader title={lstrings.account_chat} />
-          <ListCard>
+      <View style={styles.section}>
+        <SectionHeader title={lstrings.account_chat} />
+        <ListCard>
+          {onChatDevices != null && (
             <ListRow
               title={lstrings.account_chat_devices}
               subtitle={lstrings.account_chat_devices_detail}
               emblemIcon="settings"
               onPress={onChatDevices}
             />
-            {onChatReports != null && user.isAdmin && (
-              <>
-                <ListRow
-                  title={lstrings.chat_reports_title}
-                  subtitle={lstrings.account_chat_reports_detail}
-                  emblemIcon="star"
-                  onPress={onChatReports}
-                />
-              </>
-            )}
-          </ListCard>
-        </View>
+          )}
+          <ListRow
+            title={lstrings.chat_blocked_people}
+            subtitle={lstrings.chat_blocked_people_detail}
+            emblemIcon="settings"
+            onPress={() => {
+              setBlockedPeople(true)
+            }}
+          />
+          {onChatReports != null && user.isAdmin && (
+            <>
+              <ListRow
+                title={lstrings.chat_reports_title}
+                subtitle={lstrings.account_chat_reports_detail}
+                emblemIcon="star"
+                onPress={onChatReports}
+              />
+            </>
+          )}
+        </ListCard>
+      </View>
+      {blockedPeople && (
+        <BlockedPeople
+          key={session.user.id}
+          client={client}
+          socket={props.socket}
+          onClose={() => {
+            setBlockedPeople(false)
+          }}
+        />
       )}
       {Platform.OS === 'ios' && (
         <View style={styles.section}>
@@ -773,6 +794,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       {deleteOpen && (
         <DeleteAccountSheet
           client={client}
+          userId={session.user.id}
+          store={chatStore}
           onCancel={() => {
             setDeleteOpen(false)
           }}

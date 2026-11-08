@@ -154,7 +154,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
     if (latest() && stored != null) setRecent(inWindow(stored[0]))
   }, [client, beginRecent, inWindow])
   // Each of Home's three loads waits for the home scope's acknowledgement,
-  // and reads again when that scope moves past what it read.
+  // and reads again, through its own gate, on that scope's notices.
   useForegroundRefresh(useScreenScope(refreshRecent, client, paintRecent))
 
   /**

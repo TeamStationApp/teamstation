@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { actor, type GroupFixture } from '../../test/groupFixtures'
-import { listenScreenScopes } from '../../test/screenScopeNotices'
+import {
+  announcedDuring,
+  listenScreenScopes
+} from '../../test/screenScopeNotices'
 import { UMPIRE_TEST_NOW, umpireFixture } from '../../test/umpireFixture'
 import { closeInto } from '../admin/people'
 import { atomic } from '../db/atomic'
@@ -73,13 +76,20 @@ describe('umpire assignment revalidation through game editors', function () {
     const notices = await listenScreenScopes(f.h.db)
     try {
       const mark = notices.mark()
-      await updateEventInfo(f.h.db, actor(101), 'gam_playing', {
-        endAt: '2027-04-03T01:00:00Z'
+      const announced = await announcedDuring(async () => {
+        await updateEventInfo(f.h.db, actor(101), 'gam_playing', {
+          endAt: '2027-04-03T01:00:00Z'
+        })
       })
       await expectCleared()
-      const affected = await notices.named(mark, { gameId: 'gam_umpire' })
-      const edited = await notices.named(mark, { gameId: 'gam_playing' })
-      expect(affected.revision).equals(edited.revision)
+      await notices.named(mark, { gameId: 'gam_umpire' })
+      await notices.named(mark, { gameId: 'gam_playing' })
+      // Both in the edit's one commit, announced by its one statement.
+      expect(announced).length(1)
+      expect(announced[0]).to.deep.include.members([
+        { gameId: 'gam_umpire' },
+        { gameId: 'gam_playing' }
+      ])
     } finally {
       await notices.close()
     }
@@ -392,10 +402,20 @@ describe('umpire assignment revalidation through game editors', function () {
     const notices = await listenScreenScopes(f.h.db)
     try {
       const mark = notices.mark()
-      await move('detach', f.leagueA)
-      const affected = await notices.named(mark, { gameId: 'gam_umpire' })
-      const empty = await notices.named(mark, { gameId: 'gam_playing' })
-      expect(affected.revision).equals(empty.revision)
+      const announced = await announcedDuring(async () => {
+        await move('detach', f.leagueA)
+      })
+      await notices.named(mark, { gameId: 'gam_umpire' })
+      await notices.named(mark, { gameId: 'gam_playing' })
+      // Both in the move's one commit, announced by its one statement.
+      const games = announced.filter(each =>
+        each.some(notice => notice.gameId != null)
+      )
+      expect(games).length(1)
+      expect(games[0]).to.deep.include.members([
+        { gameId: 'gam_umpire' },
+        { gameId: 'gam_playing' }
+      ])
       const events = (await notices.since(mark)).filter(n => n.gameId != null)
       expect(events.map(n => n.gameId)).have.members([
         'gam_playing',

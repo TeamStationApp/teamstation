@@ -1,10 +1,11 @@
 import type {
-  BallInPlayAction,
   Destination,
+  DictatedAction as ScoringAction,
+  DictatedBallInPlay as BallInPlayAction,
+  DictatedRunnerMovement as RunnerMovementAction,
   Direction,
   ResultAction,
-  RunnerMovementAction,
-  ScoringAction
+  ScoringAction as EngineAction
 } from '../../common/scoring/actions'
 import {
   baseDestination,
@@ -189,7 +190,8 @@ function decide(
             action.out === true &&
             action.runner !== batter &&
             !(
-              action.reason === 'Throw Out' &&
+              (action.reason === 'Ground Out' ||
+                action.reason === 'Throw Out') &&
               (action.fielders?.length ?? 0) > 1
             )
         )
@@ -1191,7 +1193,7 @@ function baseOuts(
       runner,
       to: out.base,
       out: true,
-      reason: forced ? 'Force Out' : 'Throw Out',
+      reason: forced ? 'Force Out' : 'Ground Out',
       ...(fielders == null ? {} : { fielders })
     })
   }
@@ -2046,9 +2048,12 @@ function choiceRelayLocations(
     )
     if (relays.length === 0) continue
     const earlier = start < 0 ? scoringDefensiveRoute(game) : []
+    // A stand-in at an empty position is no id a dictated action can carry:
+    // the screen finishes that route.
+    if (earlier.some(hop => hop.player == null)) continue
     const route = [
       ...earlier.map(hop => ({
-        id: hop.player.id,
+        id: hop.player!.id,
         point: { ...hop.location }
       })),
       ...ordered
@@ -2193,9 +2198,12 @@ function creditThrowOuts(
       .filter(p => p.team === 'defense')
       .map(p => [p.playerId, p.position])
   )
+  const lastHop = scoringDefensiveRoute(game).at(-1)
+  const heldBy = lastHop == null ? game.pending?.fielder : lastHop.player?.id
+  // A stand-in at an empty position throws for nobody dictation can name.
   let thrower: number | undefined =
-    game.pending?.outcome === "Fielder's Choice"
-      ? (scoringDefensiveRoute(game).at(-1)?.player.id ?? game.pending.fielder)
+    game.pending?.outcome === "Fielder's Choice" && typeof heldBy === 'number'
+      ? heldBy
       : undefined
   const withFielders = (
     action: RunnerMovementAction,
@@ -2256,7 +2264,7 @@ function creditThrowOuts(
             ].includes(result.eventType)
           positions.set(
             thrower,
-            fieldingLocation(fair ? "Fielder's Choice" : 'Throw Out', point)
+            fieldingLocation(fair ? "Fielder's Choice" : 'Ground Out', point)
           )
         }
       }
@@ -3934,7 +3942,7 @@ export function completeSentence(
 export function answerOf(
   question: DictationQuestion,
   answer: { option?: number; picks?: readonly number[] }
-): ScoringAction[] | undefined {
+): EngineAction[] | undefined {
   if (question.options != null)
     return answer.option == null
       ? undefined

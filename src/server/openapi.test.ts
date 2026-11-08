@@ -627,6 +627,22 @@ describe('the API document', function () {
     expect(eventsDescription).includes('game_player_stats')
   })
 
+  it('describes when a lineup change was made, and the later one winning (U44)', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const body =
+      paths['/games/{gameId}/lineups'].post.requestBody.content[
+        'application/json'
+      ].schema
+    expect(body.properties.changedAt).deep.include({
+      type: 'string',
+      format: 'date-time'
+    })
+    expect(body.required ?? []).not.includes('changedAt')
+    expect(body.properties.changedAt.description).includes(
+      '`details: { stale: true, newer: true }`'
+    )
+  })
+
   it('describes the stored play as Gumbo, with its codes and extensions', function () {
     const document = openApiDocument('0.0.0')
     const schemas = (document.components as { schemas: Record<string, any> })

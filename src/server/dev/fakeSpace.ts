@@ -13,13 +13,24 @@ import {
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
-import { Transform } from 'node:stream'
+import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 import { presignGetUrl } from '../media/presign'
 import type { SpaceSettings } from '../media/spacesHls'
 
-/** A local, signature-checking S3 stand-in for development and HTTP tests. */
+/**
+ * A local, signature-checking S3 stand-in for development and HTTP tests.
+ *
+ * It checks a presigned URL's signature over the headers its
+ * `X-Amz-SignedHeaders` names, and refuses an `x-amz-*` header the signature
+ * does not cover, as S3 does. An object keeps the `x-amz-acl` and
+ * `cache-control` it was written with: a request with no signature at all
+ * reads a `public-read` object (with its cache header) and is refused (403)
+ * anything else. A `PUT` with `x-amz-copy-source` copies a stored object,
+ * and multipart uploads (`POST ?uploads`, part `PUT`s, `POST ?uploadId`,
+ * `DELETE ?uploadId`) are put together the same way.
+ */
 export const FAKE_SPACE_PORT = 9199
 
 export interface FakeSpaceFault {
@@ -29,6 +40,8 @@ export interface FakeSpaceFault {
   status?: number
   truncateTo?: number
   readBack?: Buffer
+  /** Applies to this many requests, then no more; every one by default. */
+  times?: number
 }
 
 export class FakeSpaceFaults {
@@ -43,12 +56,15 @@ export class FakeSpaceFaults {
   }
 
   matching(method: string, key: string): FakeSpaceFault[] {
-    return this.rules.filter(rule => {
+    const matched = this.rules.filter(rule => {
       if (rule.method != null && rule.method !== method) return false
       if (rule.key == null) return true
       rule.key.lastIndex = 0
       return rule.key.test(key)
     })
+    for (const rule of matched) if (rule.times != null) rule.times--
+    this.rules = this.rules.filter(rule => rule.times == null || rule.times > 0)
+    return matched
   }
 }
 
@@ -106,6 +122,9 @@ export async function startFakeSpace(
   return { server, url: `http://${host}:${address.port}`, faults }
 }
 
+/** What is kept beside each object, in a file of its own. */
+const SIDECARS = ['.content-type', '.acl', '.cache-control'] as const
+
 /** A key must stay inside its own object directory. Sidecars are private. */
 export function pathOfKey(dir: string, key: string): string | undefined {
   const parts = key.split('/')
@@ -117,7 +136,7 @@ export function pathOfKey(dir: string, key: string): string | undefined {
         part === '..' ||
         part.includes('\\') ||
         part.includes('\0') ||
-        part.endsWith('.content-type') ||
+        SIDECARS.some(sidecar => part.endsWith(sidecar)) ||
         part.startsWith('.upload-')
     )
   )
@@ -153,6 +172,7 @@ async function handle(
     method !== 'GET' &&
     method !== 'HEAD' &&
     method !== 'PUT' &&
+    method !== 'POST' &&
     method !== 'DELETE'
   ) {
     res.writeHead(405).end()
@@ -175,6 +195,33 @@ async function handle(
   const query = Object.fromEntries(
     [...url.searchParams].filter(([name]) => !name.startsWith('X-Amz-'))
   )
+  // No signature at all is an anonymous request: it may read a public object.
+  if ([...url.searchParams.keys()].every(name => !name.startsWith('X-Amz-'))) {
+    await anonymous(method, path, req, res)
+    return
+  }
+  const signedNames = (url.searchParams.get('X-Amz-SignedHeaders') ?? '')
+    .split(';')
+    .filter(name => name !== '' && name !== 'host')
+  const signedHeaders: Record<string, string> = {}
+  for (const name of signedNames) {
+    const value = req.headers[name]
+    if (typeof value !== 'string') {
+      res.writeHead(403).end(`signed header ${name} not sent`)
+      return
+    }
+    signedHeaders[name] = value
+  }
+  // An `x-amz-*` header the signature does not cover is refused, as S3 does.
+  if (
+    Object.keys(req.headers).some(
+      name => name.startsWith('x-amz-') && !signedNames.includes(name)
+    )
+  ) {
+    req.resume()
+    res.writeHead(403).end('unsigned x-amz header')
+    return
+  }
   const expires = Number(url.searchParams.get('X-Amz-Expires') ?? '0')
   const expected = new URL(
     presignGetUrl({
@@ -183,7 +230,8 @@ async function handle(
       key,
       query,
       expiresSec: expires,
-      now: parseAmzDate(url.searchParams.get('X-Amz-Date') ?? '')
+      now: parseAmzDate(url.searchParams.get('X-Amz-Date') ?? ''),
+      signedHeaders
     })
   )
   if (
@@ -249,6 +297,71 @@ async function handle(
   }
   // path has been checked above; a listing has already returned.
   const file = path!
+  const access = {
+    acl: signedHeaders['x-amz-acl'],
+    cacheControl: signedHeaders['cache-control']
+  }
+  if (method === 'POST') {
+    await multipart(dir, file, url, req, res, access)
+    return
+  }
+  if (method === 'PUT' && url.searchParams.has('uploadId')) {
+    await putPart(dir, url, req, res)
+    return
+  }
+  if (method === 'DELETE' && url.searchParams.has('uploadId')) {
+    await rm(uploadDir(dir, url.searchParams.get('uploadId')!), {
+      recursive: true,
+      force: true
+    })
+    res.writeHead(204).end()
+    return
+  }
+  const copySource = signedHeaders['x-amz-copy-source']
+  if (method === 'PUT' && copySource != null) {
+    req.resume()
+    const sourceKey = decodeURIComponent(copySource).replace(
+      new RegExp(`^/?${space.bucket}/`),
+      ''
+    )
+    const source = pathOfKey(dir, sourceKey)
+    const held =
+      source == null ? undefined : await stat(source).catch(() => undefined)
+    if (source == null || held?.isFile() !== true) {
+      res.writeHead(404).end('<Error><Code>NoSuchKey</Code></Error>')
+      return
+    }
+    await mkdir(dirname(file), { recursive: true })
+    const temp = join(dirname(file), `.upload-${randomUUID()}`)
+    try {
+      await pipeline(
+        truncateTo == null
+          ? createReadStream(source)
+          : Readable.from([
+              (await readFile(source)).subarray(0, Math.max(0, truncateTo))
+            ]),
+        createWriteStream(temp)
+      )
+      await rename(temp, file)
+    } finally {
+      await rm(temp, { force: true })
+    }
+    // REPLACE: the request's type and headers, not the source's.
+    await writeSidecars(file, {
+      contentType:
+        req.headers['content-type'] ??
+        (await readFile(`${source}.content-type`, 'utf8').catch(() =>
+          contentType(file)
+        )),
+      ...access
+    })
+    res
+      .writeHead(200, { 'content-type': 'application/xml' })
+      .end(
+        '<CopyObjectResult><ETag>&quot;copied&quot;</ETag></CopyObjectResult>'
+      )
+    return
+  }
   if (method === 'PUT') {
     await mkdir(dirname(file), { recursive: true })
     const temp = join(dirname(file), `.upload-${randomUUID()}`)
@@ -266,10 +379,10 @@ async function handle(
     try {
       await pipeline(req, trim, createWriteStream(temp))
       await rename(temp, file)
-      await writeFile(
-        `${file}.content-type`,
-        req.headers['content-type'] ?? contentType(file)
-      )
+      await writeSidecars(file, {
+        contentType: req.headers['content-type'] ?? contentType(file),
+        ...access
+      })
     } finally {
       await rm(temp, { force: true })
     }
@@ -278,10 +391,172 @@ async function handle(
   }
   if (method === 'DELETE') {
     await rm(file, { force: true })
-    await rm(`${file}.content-type`, { force: true })
+    for (const sidecar of SIDECARS)
+      await rm(`${file}${sidecar}`, { force: true })
     res.writeHead(204).end()
     return
   }
+  await serve(method, file, req, res, readBack)
+}
+
+/** A read with no signature: a public object is served, anything else is 403. */
+async function anonymous(
+  method: string,
+  path: string | undefined,
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
+  req.resume()
+  const acl =
+    path == null
+      ? undefined
+      : await readFile(`${path}.acl`, 'utf8').catch(() => undefined)
+  const info =
+    path == null ? undefined : await stat(path).catch(() => undefined)
+  if (
+    (method !== 'GET' && method !== 'HEAD') ||
+    acl !== 'public-read' ||
+    info?.isFile() !== true
+  ) {
+    res.writeHead(403).end('<Error><Code>AccessDenied</Code></Error>')
+    return
+  }
+  await serve(method, path!, req, res, undefined)
+}
+
+/** Writes what is kept beside an object; a header not sent is not kept. */
+async function writeSidecars(
+  file: string,
+  meta: { contentType: string; acl?: string; cacheControl?: string }
+): Promise<void> {
+  await writeFile(`${file}.content-type`, meta.contentType)
+  if (meta.acl == null) await rm(`${file}.acl`, { force: true })
+  else await writeFile(`${file}.acl`, meta.acl)
+  if (meta.cacheControl == null)
+    await rm(`${file}.cache-control`, { force: true })
+  else await writeFile(`${file}.cache-control`, meta.cacheControl)
+}
+
+/** Where a multipart upload's parts wait: outside every key's directory. */
+function uploadDir(dir: string, uploadId: string): string {
+  if (!/^[0-9a-f-]{36}$/.test(uploadId)) throw new Error('bad upload id')
+  return join(dir, '.multipart', uploadId)
+}
+
+/** `POST ?uploads` starts an upload; `POST ?uploadId` puts it together. */
+async function multipart(
+  dir: string,
+  file: string,
+  url: URL,
+  req: IncomingMessage,
+  res: ServerResponse,
+  access: { acl?: string; cacheControl?: string }
+): Promise<void> {
+  if (url.searchParams.has('uploads')) {
+    req.resume()
+    const uploadId = randomUUID()
+    await mkdir(uploadDir(dir, uploadId), { recursive: true })
+    await writeFile(
+      join(uploadDir(dir, uploadId), 'meta.json'),
+      JSON.stringify({
+        contentType: req.headers['content-type'] ?? contentType(file),
+        ...access
+      })
+    )
+    res
+      .writeHead(200, { 'content-type': 'application/xml' })
+      .end(
+        `<InitiateMultipartUploadResult><UploadId>${uploadId}</UploadId></InitiateMultipartUploadResult>`
+      )
+    return
+  }
+  const uploadId = url.searchParams.get('uploadId')
+  if (uploadId == null) {
+    req.resume()
+    res.writeHead(400).end()
+    return
+  }
+  const held = uploadDir(dir, uploadId)
+  const body = await new Promise<string>((resolve, reject) => {
+    let text = ''
+    req.setEncoding('utf8')
+    req.on('data', (chunk: string) => (text += chunk))
+    req.on('end', () => {
+      resolve(text)
+    })
+    req.on('error', reject)
+  })
+  const meta = JSON.parse(
+    await readFile(join(held, 'meta.json'), 'utf8').catch(() => 'null')
+  ) as { contentType: string; acl?: string; cacheControl?: string } | null
+  if (meta == null) {
+    res.writeHead(404).end('<Error><Code>NoSuchUpload</Code></Error>')
+    return
+  }
+  const numbers = [...body.matchAll(/<PartNumber>(\d+)<\/PartNumber>/g)].map(
+    match => match[1]
+  )
+  await mkdir(dirname(file), { recursive: true })
+  const temp = join(dirname(file), `.upload-${randomUUID()}`)
+  try {
+    const out = createWriteStream(temp)
+    for (const number of numbers)
+      await pipeline(createReadStream(join(held, `part-${number}`)), out, {
+        end: false
+      })
+    out.end()
+    await new Promise<void>((resolve, reject) => {
+      out.once('finish', resolve)
+      out.once('error', reject)
+    })
+    await rename(temp, file)
+  } finally {
+    await rm(temp, { force: true })
+  }
+  await writeSidecars(file, meta)
+  await rm(held, { recursive: true, force: true })
+  res
+    .writeHead(200, { 'content-type': 'application/xml' })
+    .end('<CompleteMultipartUploadResult/>')
+}
+
+/** One part of a multipart upload, kept until the upload is put together. */
+async function putPart(
+  dir: string,
+  url: URL,
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
+  const held = uploadDir(dir, url.searchParams.get('uploadId')!)
+  const number = Number(url.searchParams.get('partNumber'))
+  if (!Number.isInteger(number) || number < 1 || !(await exists(held))) {
+    req.resume()
+    res.writeHead(404).end('<Error><Code>NoSuchUpload</Code></Error>')
+    return
+  }
+  const hash = createHash('md5')
+  const tap = new Transform({
+    transform(chunk: Buffer, _encoding, done) {
+      hash.update(chunk)
+      done(null, chunk)
+    }
+  })
+  await pipeline(req, tap, createWriteStream(join(held, `part-${number}`)))
+  res.writeHead(200, { etag: `"${hash.digest('hex')}"` }).end()
+}
+
+async function exists(path: string): Promise<boolean> {
+  return (await stat(path).catch(() => undefined)) != null
+}
+
+/** A stored object, whole or a range of it, with its type and cache header. */
+async function serve(
+  method: string,
+  file: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  readBack: Buffer | undefined
+): Promise<void> {
   const info = await stat(file).catch(() => undefined)
   if (info?.isFile() !== true) {
     res.writeHead(404).end('no such object')
@@ -290,6 +565,10 @@ async function handle(
   const type = await readFile(`${file}.content-type`, 'utf8').catch(() =>
     contentType(file)
   )
+  const cacheControl = await readFile(`${file}.cache-control`, 'utf8').catch(
+    () => undefined
+  )
+  if (cacheControl != null) res.setHeader('cache-control', cacheControl)
   const size = readBack?.length ?? info.size
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
   let start = 0

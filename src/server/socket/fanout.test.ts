@@ -1,24 +1,43 @@
+import {
+  type AddressInfo,
+  connect as connectTo,
+  createServer,
+  type Socket
+} from 'node:net'
+
 import { expect } from 'chai'
-import type { Kysely } from 'kysely'
+import { Kysely, PostgresDialect } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
 
-import type { GameChange } from '../../common/gameSocket'
+import type { GameChange, PlayEditsData } from '../../common/gameSocket'
 import { asPostEventsBody, type GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
+import * as storedNames from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import { silentValkey, untilAsked } from '../../test/silentValkey'
 import type { GameScope } from '../access'
+import { createSession } from '../auth/sessions'
+import { makeValkeyCache, type ValkeyCache } from '../cache/valkeyCache'
+import { FEED_APPLICATION_NAME, PostgresFeed } from '../changeFeed/postgresFeed'
 import { type Database, makeDatabase } from '../db/database'
-import { atBatOf } from '../events/atBatInProgress'
 import { playsDigest, postGamePlays, readPlays } from '../events/postPlays'
+import { lineupsRead } from '../events/teamLineups'
 import { readWalkUpSong } from '../routes/walkUpSongs'
-import { GameFanout } from './fanout'
-import { GAME_CHANGES_CHANNEL } from './gameChanges'
+import * as openRow from '../scoring/openRow'
+import { gameNamesDigest } from '../users/nameBook'
+import {
+  type FanoutAuthorize,
+  type FanoutSubscriber,
+  GameFanout
+} from './fanout'
+import { asGameChangePayload, GAME_CHANGES_CHANNEL } from './gameChanges'
+import { authorizeSubscribers } from './gameSocket'
 
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_fanout_${Date.now()}_${process.pid}`
@@ -37,18 +56,36 @@ async function until(ready: () => boolean, what: string): Promise<void> {
   }
 }
 
+/** A subscriber whose rights the test decides. */
+interface Seeing {
+  maySee: (game: GameScope) => Promise<boolean>
+}
+
 /** A subscriber that keeps what it is sent. */
 function subscriber(sees = true): {
   sent: GameChange[]
+  resynced: { count: number }
   send: (message: GameChange) => void
+  token: string
+  userId: string
+  signedOut: () => void
   maySee: (game: GameScope) => Promise<boolean>
+  resync: () => void
 } {
   const sent: GameChange[] = []
+  const resynced = { count: 0 }
   return {
     sent,
+    resynced,
+    resync: () => {
+      resynced.count++
+    },
     send: message => {
       sent.push(message)
     },
+    token: 'token',
+    userId: 'usr',
+    signedOut: () => undefined,
     maySee: async () => sees
   }
 }
@@ -61,6 +98,7 @@ describe('the game socket fan-out (U15)', function () {
   let db: Kysely<Database> | undefined
   let poker: Client | undefined
   const fanouts: GameFanout[] = []
+  const feeds: PostgresFeed[] = []
   const logs: string[] = []
   const taken = new Set<number>()
   const mint = (): { userId: number; legacyId: string } => {
@@ -82,13 +120,31 @@ describe('the game socket fan-out (U15)', function () {
     seasonId: null
   })
 
+  const feedOf = (retryMs: number): PostgresFeed => {
+    const made = new PostgresFeed({
+      databaseUrl: scratchUrl,
+      retryMs,
+      log: message => {
+        logs.push(message)
+      }
+    })
+    feeds.push(made)
+    return made
+  }
+
   const fanout = (
     options: Partial<ConstructorParameters<typeof GameFanout>[0]> = {}
   ): GameFanout => {
     const made = new GameFanout({
       db: db!,
-      databaseUrl: scratchUrl,
-      retryMs: 50,
+      feed: feedOf(50),
+      authorize: async (subscribers, game) =>
+        await Promise.all(
+          subscribers.map(
+            async subscriber =>
+              await (subscriber as unknown as Seeing).maySee(game)
+          )
+        ),
       log: message => {
         logs.push(message)
       },
@@ -189,6 +245,7 @@ describe('the game socket fan-out (U15)', function () {
 
   after(async function () {
     for (const made of fanouts) await made.close()
+    for (const made of feeds) await made.close()
     await poker?.end()
     if (db != null) await db.destroy()
     if (adminPool != null) {
@@ -242,123 +299,940 @@ describe('the game socket fan-out (U15)', function () {
     await one.listening
     const heard = subscriber()
     one.watch(today, scopeOf(team, rival), heard)
-    await notify({ game: today, kind: 'plays' })
-    await notify({ game: today, kind: 'plays' })
-    await notify({ game: today, kind: 'plays' })
+    const again = { game: today, kind: 'playEdits', generation: 0 }
+    await notify(again)
+    await notify(again)
+    await notify(again)
     await until(() => heard.sent.length > 0, 'the plays')
     await wait(250)
     expect(heard.sent).lengthOf(1)
-    // With the digest `GET /events` and a post's answer give the same plays.
+    // A writer that names no edits has the game read again.
+    expect(heard.sent[0]).to.include({ kind: 'playEdits' })
     expect(heard.sent[0].data).deep.equals({
-      plays: [],
-      currentPlay: null,
-      digest: playsDigest([], null)
+      generation: 0,
+      fromDigest: null,
+      digest: null,
+      namesDigest: null,
+      edits: null
     })
     // A later one, outside the window, is sent again.
-    await notify({ game: today, kind: 'plays' })
+    await notify(again)
     await until(() => heard.sent.length === 2, 'the second plays')
     await one.close()
   })
 
-  it('sends the plays named from the accounts, with the digest of the stored rows', async function () {
-    const named = makeId('game')
-    await db!
-      .insertInto('games')
-      .values({
-        id: named,
-        home_team_id: team,
-        away_team_id: rival,
-        start_at: new Date()
-      })
-      .execute()
-    for (const [user, given, family] of [
-      [first, 'Babe', 'Ruth'],
-      [second, 'Cy', 'Young']
-    ] as const)
-      await db!
-        .updateTable('users')
-        .set({
-          display_name: `${given} ${family}`,
-          first_name: given,
-          last_name: family
-        })
-        .where('id', '=', userIdOfGumbo(user.userId))
-        .execute()
-    await postGamePlays(
-      db!,
-      named,
-      asPostEventsBody({
-        source: { system: 'manual' },
-        plays: [
-          {
-            about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
-            result: { eventType: 'single', awayScore: 0, homeScore: 0 },
-            matchup: {
-              batter: { id: first.userId, fullName: 'Stale Batter' },
-              pitcher: { id: second.userId, fullName: 'Stale Pitcher' }
-            }
-          }
-        ]
-      })
-    )
+  it('reads an older worker’s plays notice as a read again', async function () {
+    expect(asGameChangePayload({ game: today, kind: 'plays' })).deep.equals({
+      game: today,
+      kind: 'playEdits',
+      generation: -1
+    })
     const one = fanout()
-    try {
-      const heard = subscriber()
-      one.watch(named, scopeOf(team, rival), heard)
-      await one.deliver(JSON.stringify({ game: named, kind: 'plays' }))
-      const data = heard.sent[0].data as {
-        plays: Array<{ gumbo: GumboPlay }>
-        digest: string
-      }
-      expect(data.plays[0].gumbo.matchup).deep.include({
-        batter: { id: first.userId, fullName: 'Babe R' },
-        pitcher: { id: second.userId, fullName: 'Cy Y' }
-      })
-      const rows = await readPlays(db!, named)
-      // The stored row names nobody: the name it was posted with is gone.
-      expect(JSON.stringify(rows[0].gumbo)).not.includes('Stale Batter')
-      expect(data.digest).equals(playsDigest(rows, null))
-    } finally {
-      await one.close()
-    }
+    await one.listening
+    const heard = subscriber()
+    one.watch(today, scopeOf(team, rival), heard)
+    await notify({ game: today, kind: 'plays' })
+    await until(() => heard.sent.length > 0, 'the plays')
+    expect(heard.sent[0]).to.include({ kind: 'playEdits' })
+    // Under the game's own generation.
+    expect(heard.sent[0].data).deep.equals({
+      generation: 0,
+      fromDigest: null,
+      digest: null,
+      namesDigest: null,
+      edits: null
+    })
+    await one.close()
   })
 
-  it('sends a game before its first pitch with its pregame lineups as the at-bat', async function () {
-    const pregame = {
-      version: 3,
-      setupBefore: { players: {}, teams: {}, tagOrder: [] },
-      actions: []
+  it('sends each of a live post’s edits within 100 ms, in order, even one that repeats an earlier one', async function () {
+    const frames = new Map(
+      [
+        ['d0', 'd1'],
+        ['d1', 'd0']
+      ].map(([fromDigest, digest]) => [
+        `playEdits:${today}:0:${fromDigest}:${digest}`,
+        JSON.stringify({
+          generation: 0,
+          fromDigest,
+          digest,
+          edits: [],
+          currentPlay: null
+        })
+      ])
+    )
+    const cache: ValkeyCache = {
+      get: async key => frames.get(key) ?? null,
+      set: async () => undefined,
+      close: async () => undefined
     }
-    await db!
-      .updateTable('games')
-      .set({ pregame })
-      .where('id', '=', today)
-      .execute()
-    const one = fanout()
-    try {
-      const heard = subscriber()
-      one.watch(today, scopeOf(team, rival), heard)
-      await one.deliver(JSON.stringify({ game: today, kind: 'plays' }))
-      const data = heard.sent[0].data as {
-        currentPlay: { about: { atBatIndex: number; inning: number } }
-        digest: string
+    const one = fanout({ cache })
+    await one.listening
+    const heard = subscriber()
+    one.watch(today, scopeOf(team, rival), heard)
+    const step = (fromDigest: string, digest: string): unknown => ({
+      game: today,
+      kind: 'playEdits',
+      generation: 0,
+      fromDigest,
+      digest,
+      indexes: [5],
+      removed: []
+    })
+    // A put, the remove that undoes it, and the same put again: the third is
+    // the first's twin, still waiting, and is sent all the same.
+    await notify(step('d0', 'd1'))
+    await notify(step('d1', 'd0'))
+    await notify(step('d0', 'd1'))
+    await until(() => heard.sent.length === 3, 'three edits')
+    await wait(150)
+    expect(
+      heard.sent.map(message => (message.data as PlayEditsData).digest)
+    ).deep.equals(['d1', 'd0', 'd1'])
+    await one.close()
+  })
+
+  describe('a live post’s edits', function () {
+    /** A Valkey of the test's own, which counts what it is asked. */
+    const memoryCache = (): ValkeyCache & {
+      held: Map<string, string>
+      gets: string[]
+    } => {
+      const held = new Map<string, string>()
+      const gets: string[] = []
+      return {
+        held,
+        gets,
+        get: async key => {
+          gets.push(key)
+          return held.get(key) ?? null
+        },
+        set: async (key, value) => {
+          held.set(key, value)
+        },
+        close: async () => undefined
       }
-      expect(data.currentPlay.about).deep.include({ atBatIndex: 0, inning: 1 })
-      // The digest is of what is stored, as `GET /events` gives it.
-      const stored = await db!
-        .selectFrom('games')
-        .select(['currentPlay', 'pregame'])
-        .where('id', '=', today)
-        .executeTakeFirstOrThrow()
-      expect(data.digest).equals(playsDigest([], atBatOf(stored, false)))
-    } finally {
-      await one.close()
+    }
+    /** A database whose statements, `begin` and `commit` among them, are kept. */
+    const logged = (): { db: Kysely<Database>; statements: string[] } => {
+      const statements: string[] = []
+      return {
+        statements,
+        db: new Kysely<Database>({
+          dialect: new PostgresDialect({
+            pool: new Pool({ connectionString: scratchUrl })
+          }),
+          log: event => {
+            if (event.level === 'query') statements.push(event.query.sql)
+          }
+        })
+      }
+    }
+    const play = (
+      index: number,
+      batter: { userId: number },
+      pitcher: { userId: number }
+    ): Record<string, unknown> => ({
+      about: { atBatIndex: index, inning: 1, halfInning: 'top' },
+      result: { eventType: 'single', awayScore: 0, homeScore: 0 },
+      matchup: {
+        batter: { id: batter.userId, fullName: 'Stale Batter' },
+        pitcher: { id: pitcher.userId, fullName: 'Stale Pitcher' }
+      }
+    })
+    /** What `game_changes` carries for `game` while `act` runs. */
+    const hearing = async (
+      game: string,
+      act: () => Promise<unknown>
+    ): Promise<Array<Record<string, unknown>>> => {
+      const listener = new Client({ connectionString: scratchUrl })
+      await listener.connect()
+      const heard: Array<Record<string, unknown>> = []
+      listener.on('notification', message => {
+        const payload = JSON.parse(message.payload ?? 'null') as Record<
+          string,
+          unknown
+        > | null
+        if (payload?.game === game) heard.push(payload)
+      })
+      try {
+        await listener.query(`listen ${GAME_CHANGES_CHANNEL}`)
+        await act()
+        await listener.query('select 1')
+        await wait(50)
+        return heard
+      } finally {
+        await listener.end()
+      }
+    }
+    const playNotices = (
+      heard: Array<Record<string, unknown>>
+    ): Array<Record<string, unknown>> =>
+      heard.filter(payload => payload.kind === 'playEdits')
+    /** The digest a post's answer says it left. */
+    const digestOf = (answer: unknown): string =>
+      (answer as { playsDigest: string }).playsDigest
+    /** A new game between the test's teams, its first play posted. */
+    const posted = async (): Promise<string> => {
+      const id = makeId('game')
+      await db!
+        .insertInto('games')
+        .values({
+          id,
+          home_team_id: team,
+          away_team_id: rival,
+          start_at: new Date()
+        })
+        .execute()
+      await postGamePlays(
+        db!,
+        id,
+        asPostEventsBody({
+          mode: 'live',
+          source: { system: 'manual' },
+          plays: [play(0, first, second)]
+        })
+      )
+      return id
+    }
+    /** Posts one more play live, and gives what was announced of it. */
+    const postAnother = async (
+      id: string,
+      options: Parameters<typeof postGamePlays>[5] = {},
+      body: Record<string, unknown> = { plays: [play(1, second, first)] }
+    ): Promise<{
+      notice: Record<string, unknown>
+      answer: unknown
+    }> => {
+      let answer: unknown
+      const heard = await hearing(id, async () => {
+        answer = await postGamePlays(
+          db!,
+          id,
+          asPostEventsBody({
+            mode: 'live',
+            source: { system: 'manual' },
+            ...body
+          }),
+          undefined,
+          undefined,
+          options
+        )
+      })
+      const notices = playNotices(heard)
+      expect(notices).lengthOf(1)
+      return { notice: notices[0], answer }
+    }
+
+    before(async function () {
+      for (const [user, given, family] of [
+        [first, 'Babe', 'Ruth'],
+        [second, 'Cy', 'Young']
+      ] as const)
+        await db!
+          .updateTable('users')
+          .set({
+            display_name: `${given} ${family}`,
+            first_name: given,
+            last_name: family
+          })
+          .where('id', '=', userIdOfGumbo(user.userId))
+          .execute()
+    })
+
+    it('are announced once, with the digests, the indexes and the removes', async function () {
+      const id = await posted()
+      const before = await readPlays(db!, id)
+      const { notice } = await postAnother(
+        id,
+        { answer: 'edits' },
+        { plays: [play(1, second, first)], remove: [0] }
+      )
+      const after = await readPlays(db!, id)
+      expect(notice).deep.equals({
+        game: id,
+        kind: 'playEdits',
+        generation: 0,
+        fromDigest: playsDigest(before, null),
+        digest: playsDigest(after, null),
+        // The book every viewer's read of the game is named from.
+        namesDigest: await gameNamesDigest(db!, id),
+        indexes: [1],
+        removed: [0]
+      })
+    })
+
+    it('are announced as a read again when they name more than 200 plays', async function () {
+      const id = await posted()
+      const many = Array.from({ length: 201 }, (_, index) =>
+        play(index + 1, second, first)
+      )
+      const cache = memoryCache()
+      const { notice, answer } = await postAnother(
+        id,
+        { answer: 'edits', cache },
+        { plays: many }
+      )
+      // With the digest it left, which its sender holds.
+      expect(notice).deep.equals({
+        game: id,
+        kind: 'playEdits',
+        generation: 0,
+        digest: digestOf(answer),
+        namesDigest: await gameNamesDigest(db!, id)
+      })
+      // Nobody will ask for a frame of them.
+      expect(cache.held.size).equals(0)
+    })
+
+    it('are announced as a read again when they bring in somebody outside the game’s plays, at-bat and event_players', async function () {
+      const id = await posted()
+      const newcomer = mint()
+      await insertFixtureUsers(db!, [
+        {
+          id: newcomer.userId,
+          legacyId: newcomer.legacyId,
+          display_name: 'Babe Adams',
+          created_at: new Date(),
+          updated_at: new Date()
+        }
+      ])
+      const cache = memoryCache()
+      // Babe Ruth's short name can grow once another Babe is in the book,
+      // on plays this post did not write.
+      const { notice, answer } = await postAnother(
+        id,
+        { answer: 'edits', cache },
+        { plays: [play(1, newcomer, first)] }
+      )
+      expect(notice).deep.equals({
+        game: id,
+        kind: 'playEdits',
+        generation: 0,
+        digest: digestOf(answer),
+        namesDigest: await gameNamesDigest(db!, id)
+      })
+      expect(cache.held.size).equals(0)
+      // The same people again are edits.
+      const again = await postAnother(
+        id,
+        { answer: 'edits', cache },
+        { plays: [play(2, newcomer, second)] }
+      )
+      expect(again.notice.indexes).deep.equals([2])
+    })
+
+    it('are announced as a read again when they take away the only play naming somebody, and as edits when the people stay', async function () {
+      const id = await posted()
+      const leaving = mint()
+      await insertFixtureUsers(db!, [
+        {
+          id: leaving.userId,
+          legacyId: leaving.legacyId,
+          display_name: 'Babe Adams',
+          created_at: new Date(),
+          updated_at: new Date()
+        }
+      ])
+      await postAnother(
+        id,
+        { answer: 'edits' },
+        { plays: [play(1, leaving, first)] }
+      )
+      await postAnother(
+        id,
+        { answer: 'edits' },
+        { plays: [play(2, second, first)] }
+      )
+      const cache = memoryCache()
+      // Undone, the only play naming the other Babe leaves the book, and
+      // its event_players with it: Babe Ruth's short name can shrink on
+      // plays this post did not write.
+      const { notice, answer } = await postAnother(
+        id,
+        { answer: 'edits', cache },
+        { plays: [], remove: [1] }
+      )
+      expect(notice).deep.equals({
+        game: id,
+        kind: 'playEdits',
+        generation: 0,
+        digest: digestOf(answer),
+        namesDigest: await gameNamesDigest(db!, id)
+      })
+      expect(cache.held.size).equals(0)
+      // A play whose people the game names elsewhere is an edit to undo.
+      const again = await postAnother(
+        id,
+        { answer: 'edits', cache },
+        { plays: [], remove: [2] }
+      )
+      expect(again.notice).deep.include({ indexes: [], removed: [2] })
+      expect(cache.held.size).equals(1)
+    })
+
+    it('are announced as edits when they bring in a player the game’s event_players already hold', async function () {
+      const id = await posted()
+      const rostered = mint()
+      await insertFixtureUsers(db!, [
+        {
+          id: rostered.userId,
+          legacyId: rostered.legacyId,
+          display_name: 'Babe Adams',
+          created_at: new Date(),
+          updated_at: new Date()
+        }
+      ])
+      // Imported as a fielder of the first play, which names him nowhere:
+      // the book already tells him and Babe Ruth apart.
+      const [event] = await readPlays(db!, id)
+      await db!
+        .insertInto('event_players')
+        .values({
+          id: makeId('eventPlayer'),
+          event_id: event.id,
+          gumbo_id: rostered.userId,
+          team_id: rival,
+          role: 'fielder',
+          position: null
+        })
+        .execute()
+      const cache = memoryCache()
+      // His first time at the plate, as the at-bat in progress.
+      const { notice } = await postAnother(
+        id,
+        { answer: 'edits', cache },
+        {
+          plays: [],
+          currentPlay: {
+            ...play(1, rostered, first),
+            about: {
+              atBatIndex: 1,
+              inning: 1,
+              halfInning: 'top',
+              isComplete: false
+            }
+          }
+        }
+      )
+      expect(notice).deep.include({ game: id, kind: 'playEdits', indexes: [] })
+      expect(notice.fromDigest).to.be.a('string')
+      const [frame] = [...cache.held.values()].map(
+        value => JSON.parse(value) as PlayEditsData
+      )
+      expect(frame.edits).deep.equals([])
+      expect(frame.currentPlay).to.have.nested.property(
+        'matchup.batter.id',
+        rostered.userId
+      )
+    })
+
+    it('are announced as a read again by a replace post, and by a live post that leaves only the pregame lineups', async function () {
+      const replaced = makeId('game')
+      const pregame = makeId('game')
+      await db!
+        .insertInto('games')
+        .values(
+          [replaced, pregame].map(id => ({
+            id,
+            home_team_id: team,
+            away_team_id: rival,
+            start_at: new Date()
+          }))
+        )
+        .execute()
+      let answer: unknown
+      const heard = await hearing(replaced, async () => {
+        answer = await postGamePlays(
+          db!,
+          replaced,
+          asPostEventsBody({
+            source: { system: 'manual' },
+            plays: [play(0, first, second)]
+          })
+        )
+      })
+      expect(playNotices(heard)).deep.equals([
+        {
+          game: replaced,
+          kind: 'playEdits',
+          generation: 0,
+          digest: digestOf(answer),
+          namesDigest: await gameNamesDigest(db!, replaced)
+        }
+      ])
       await db!
         .updateTable('games')
-        .set({ pregame: null })
-        .where('id', '=', today)
+        .set({
+          pregame: {
+            version: 3,
+            setupBefore: { players: {}, teams: {}, tagOrder: [] },
+            actions: []
+          }
+        })
+        .where('id', '=', pregame)
         .execute()
-    }
+      // A post that removes nothing that is there leaves the lineups alone:
+      // the at-bat a reader is answered is their fold.
+      const lineups = await hearing(pregame, async () => {
+        answer = await postGamePlays(
+          db!,
+          pregame,
+          asPostEventsBody({
+            mode: 'live',
+            source: { system: 'manual' },
+            plays: [],
+            remove: [3]
+          }),
+          undefined,
+          undefined,
+          { answer: 'edits' }
+        )
+      })
+      expect(playNotices(lineups)).deep.equals([
+        {
+          game: pregame,
+          kind: 'playEdits',
+          generation: 0,
+          digest: digestOf(answer),
+          namesDigest: await gameNamesDigest(db!, pregame)
+        }
+      ])
+    })
+
+    for (const answer of ['edits', 'all'] as const)
+      it(`leave in Valkey the frame delivery would read (answer ${answer})`, async function () {
+        const id = await posted()
+        const cache = memoryCache()
+        const { notice } = await postAnother(id, { answer, cache })
+        expect(cache.held.size).equals(1)
+        const [[key, value]] = [...cache.held]
+        expect(key).equals(
+          `playEdits:${id}:0:${String(notice.fromDigest)}:${String(notice.digest)}:${String(notice.namesDigest)}`
+        )
+        const frame = JSON.parse(value) as PlayEditsData
+        expect(frame.edits).lengthOf(1)
+        expect(frame.namesDigest).equals(await gameNamesDigest(db!, id))
+        // Named from the accounts, as every viewer reads them.
+        expect(
+          (frame.edits![0] as { play: { gumbo: GumboPlay } }).play.gumbo.matchup
+        ).deep.include({
+          batter: { id: second.userId, fullName: 'Cy Y' },
+          pitcher: { id: first.userId, fullName: 'Babe R' }
+        })
+        // A worker with no frame to hand reads and names the same.
+        const reading = fanout()
+        try {
+          const heard = subscriber()
+          reading.watch(id, scopeOf(team, rival), heard)
+          await reading.deliver(JSON.stringify(notice))
+          expect(heard.sent[0]).to.include({ kind: 'playEdits' })
+          expect(heard.sent[0].data).deep.equals(frame)
+        } finally {
+          await reading.close()
+        }
+      })
+
+    it('reach 200 sockets on two workers with one Valkey read each and no read of the plays', async function () {
+      const id = await posted()
+      const cache = memoryCache()
+      const { notice } = await postAnother(id, { answer: 'edits', cache })
+      const frame = JSON.parse([...cache.held.values()][0]) as PlayEditsData
+      const { db: loggedDb, statements } = logged()
+      const workers = [
+        fanout({ db: loggedDb, cache }),
+        fanout({ db: loggedDb, cache })
+      ]
+      try {
+        const sockets = workers.map(worker =>
+          Array.from({ length: 100 }, () => {
+            const heard = subscriber()
+            worker.watch(id, scopeOf(team, rival), heard)
+            return heard
+          })
+        )
+        cache.gets.length = 0
+        await Promise.all(
+          workers.map(async worker => {
+            await worker.deliver(JSON.stringify(notice))
+          })
+        )
+        for (const heard of sockets.flat())
+          expect(heard.sent.map(message => message.data)).deep.equals([frame])
+        expect(cache.gets).lengthOf(2)
+        expect(
+          statements.filter(sql => sql.includes('from "events"'))
+        ).deep.equals([])
+      } finally {
+        for (const worker of workers) await worker.close()
+        await loggedDb.destroy()
+      }
+    })
+
+    it('are read once the transaction is done when Valkey has lost the frame', async function () {
+      const id = await posted()
+      const cache = memoryCache()
+      const { notice } = await postAnother(id, { answer: 'edits', cache })
+      const frame = JSON.parse([...cache.held.values()][0]) as PlayEditsData
+      cache.held.clear()
+      const { db: loggedDb, statements } = logged()
+      const worker = fanout({ db: loggedDb, cache })
+      try {
+        const heard = subscriber()
+        worker.watch(id, scopeOf(team, rival), heard)
+        await worker.deliver(JSON.stringify(notice))
+        expect(heard.sent.map(message => message.data)).deep.equals([frame])
+        const committed = statements.indexOf('commit')
+        const read = statements.findIndex(sql => sql.includes('from "events"'))
+        expect(committed).above(-1)
+        expect(read).above(committed)
+      } finally {
+        await worker.close()
+        await loggedDb.destroy()
+      }
+    })
+
+    it('send a read again when the plays have moved on, or the game was reset', async function () {
+      const id = await posted()
+      const cache = memoryCache()
+      const { notice } = await postAnother(id, { answer: 'edits', cache })
+      const worker = fanout({ cache })
+      const again = {
+        generation: 0,
+        fromDigest: null,
+        digest: null,
+        namesDigest: null,
+        edits: null
+      }
+      try {
+        const heard = subscriber()
+        worker.watch(id, scopeOf(team, rival), heard)
+        // Not in Valkey, and the plays are no longer the ones it left.
+        await worker.deliver(
+          JSON.stringify({ ...notice, digest: 'somebody else' })
+        )
+        // With the digest the post left, which its own sender holds.
+        expect(heard.sent[0].data).deep.equals({
+          ...again,
+          digest: 'somebody else',
+          namesDigest: notice.namesDigest
+        })
+        // A post's re-read form passes on the digests it names.
+        await worker.deliver(
+          JSON.stringify({
+            game: id,
+            kind: 'playEdits',
+            generation: 0,
+            digest: 'left at',
+            namesDigest: 'named from'
+          })
+        )
+        expect(heard.sent[1].data).deep.equals({
+          ...again,
+          digest: 'left at',
+          namesDigest: 'named from'
+        })
+        // The frame is there, but the game was reset since: the digest is
+        // of another generation, and none goes with it.
+        await db!
+          .updateTable('games')
+          .set({ play_generation: 1 })
+          .where('id', '=', id)
+          .execute()
+        await worker.deliver(JSON.stringify(notice))
+        expect(heard.sent[2].data).deep.equals({ ...again, generation: 1 })
+      } finally {
+        await worker.close()
+      }
+    })
+
+    it('read a frame that does not read as lost', async function () {
+      const id = await posted()
+      const cache = memoryCache()
+      const { notice } = await postAnother(id, { answer: 'edits', cache })
+      const frame = JSON.parse([...cache.held.values()][0]) as PlayEditsData
+      for (const key of cache.held.keys()) cache.held.set(key, '{')
+      const worker = fanout({ cache })
+      try {
+        const heard = subscriber()
+        worker.watch(id, scopeOf(team, rival), heard)
+        await worker.deliver(JSON.stringify(notice))
+        expect(heard.sent[0].data).deep.equals(frame)
+      } finally {
+        await worker.close()
+      }
+    })
+
+    it('are posted and delivered in good time when Valkey stops answering', async function () {
+      const valkey = await silentValkey()
+      const silent = makeValkeyCache({
+        redis: { url: valkey.url, prefix: 'fanout' },
+        databaseUrl: scratchUrl,
+        log: message => {
+          logs.push(message)
+        }
+      })
+      const worker = fanout({ cache: silent })
+      try {
+        await untilAsked(silent, valkey)
+        valkey.silence()
+        const id = await posted()
+        let startedAt = Date.now()
+        // The post gives up on its frame, and still names its edits.
+        const { notice } = await postAnother(id, {
+          answer: 'edits',
+          cache: silent
+        })
+        expect(Date.now() - startedAt).below(1000)
+        expect(notice.indexes).deep.equals([1])
+        const heard = subscriber()
+        worker.watch(id, scopeOf(team, rival), heard)
+        startedAt = Date.now()
+        // The delivery gives up on the frame and reads the plays itself.
+        await worker.deliver(JSON.stringify(notice))
+        expect(Date.now() - startedAt).below(1000)
+        const data = heard.sent[0].data as PlayEditsData
+        expect(data.digest).equals(notice.digest)
+        expect(data.edits).lengthOf(1)
+      } finally {
+        await worker.close()
+        await silent.close()
+        await valkey.close()
+      }
+    })
+
+    /** M6: the delivery holds the game row only while it authorizes. */
+    describe('hold the game row only while they are authorized', function () {
+      const viewerId = userIdOfGumbo(first.userId)
+      const membership = makeId('membership')
+      let token = ''
+      /** The socket's own authorization, on the delivery's connection. */
+      const authorize: FanoutAuthorize = async (subscribers, game, source) =>
+        await authorizeSubscribers(subscribers, game, source, log)
+      /**
+       * A database whose `commit` waits for `release`, so a transaction is
+       * held open with everything before its commit done.
+       */
+      const heldAtCommit = (): {
+        db: Kysely<Database>
+        committing: () => boolean
+        release: () => void
+      } => {
+        let release: () => void = () => undefined
+        const released = new Promise<void>(resolve => {
+          release = resolve
+        })
+        let committing = false
+        const pool = new Pool({ connectionString: scratchUrl })
+        pool.on('connect', client => {
+          const query = client.query.bind(client) as (
+            ...args: unknown[]
+          ) => unknown
+          ;(client as unknown as { query: typeof query }).query = (
+            ...args: unknown[]
+          ) => {
+            if (args[0] !== 'commit') return query(...args)
+            committing = true
+            return released.then(() => query(...args))
+          }
+        })
+        return {
+          db: new Kysely<Database>({ dialect: new PostgresDialect({ pool }) }),
+          committing: () => committing,
+          release
+        }
+      }
+      const log = (message: string): void => {
+        logs.push(message)
+      }
+      const viewer = (): FanoutSubscriber & { sent: GameChange[] } => {
+        const sent: GameChange[] = []
+        return {
+          sent,
+          send: message => {
+            sent.push(message)
+          },
+          token,
+          userId: viewerId,
+          signedOut: () => undefined,
+          resync: () => undefined
+        }
+      }
+      /** The statements a transaction ran, after its `begin`, to its `commit`. */
+      const inTransaction = (statements: string[]): string[] => {
+        const begun = statements.indexOf('begin')
+        const committed = statements.indexOf('commit')
+        expect(begun).above(-1)
+        expect(committed).above(begun)
+        return statements.slice(begun + 1, committed)
+      }
+      /** What the authorization alone runs for one viewer of `id`. */
+      const authorizing = async (id: string): Promise<string[]> => {
+        const { db: loggedDb, statements } = logged()
+        try {
+          const game = await loggedDb
+            .selectFrom('games')
+            .selectAll()
+            .where('id', '=', id)
+            .executeTakeFirstOrThrow()
+          statements.length = 0
+          const seeing = await authorizeSubscribers(
+            [viewer()],
+            {
+              homeTeamId: game.home_team_id,
+              awayTeamId: game.away_team_id,
+              seasonId: game.season_id
+            },
+            loggedDb,
+            log
+          )
+          expect(seeing).deep.equals([true])
+          return [...statements]
+        } finally {
+          await loggedDb.destroy()
+        }
+      }
+      /** Counts calls of a module's export while the test runs. */
+      const counting = (
+        module: unknown,
+        name: string
+      ): { calls: () => number; restore: () => void } => {
+        const exports = module as Record<
+          string,
+          (...args: unknown[]) => unknown
+        >
+        const real = exports[name]
+        let calls = 0
+        exports[name] = (...args: unknown[]) => {
+          calls += 1
+          return real(...args)
+        }
+        return {
+          calls: () => calls,
+          restore: () => {
+            exports[name] = real
+          }
+        }
+      }
+      /** A notice of each kind for game `id`, the edits' frame lost. */
+      const notices = async (
+        id: string
+      ): Promise<Record<'playEdits' | 'lineups' | 'game', unknown>> => {
+        const cache = memoryCache()
+        const { notice } = await postAnother(id, { answer: 'edits', cache })
+        return {
+          playEdits: notice,
+          lineups: { game: id, kind: 'lineups' },
+          game: { game: id, kind: 'game' }
+        }
+      }
+
+      before(async function () {
+        await db!
+          .insertInto('memberships')
+          .values({
+            id: membership,
+            user_id: viewerId,
+            team_id: team,
+            role: 'member'
+          })
+          .execute()
+        token = (await createSession(db!, viewerId, 'fanout')).token
+      })
+
+      after(async function () {
+        await db!
+          .deleteFrom('memberships')
+          .where('id', '=', membership)
+          .execute()
+      })
+
+      for (const kind of ['playEdits', 'lineups', 'game'] as const)
+        it(`read only the game row and authorize in the transaction (${kind})`, async function () {
+          const id = await posted()
+          const notice = (await notices(id))[kind]
+          const authorization = await authorizing(id)
+          expect(authorization).not.deep.equals([])
+          const { db: loggedDb, statements } = logged()
+          const worker = fanout({ db: loggedDb, authorize })
+          try {
+            let lineupReads: string[] = []
+            if (kind === 'lineups') {
+              const game = await loggedDb
+                .selectFrom('games')
+                .selectAll()
+                .where('id', '=', id)
+                .executeTakeFirstOrThrow()
+              statements.length = 0
+              await lineupsRead(loggedDb, game)
+              lineupReads = [...statements]
+              expect(lineupReads).not.deep.equals([])
+            }
+            statements.length = 0
+            const heard = viewer()
+            worker.watch(id, scopeOf(team, rival), heard)
+            await worker.deliver(JSON.stringify(notice))
+            expect(heard.sent.map(message => message.kind)).deep.equals([kind])
+            const held = inTransaction(statements)
+            expect(held[0]).match(
+              /^select \* from "games" where "id" = \$1 for share$/
+            )
+            expect(held.slice(1)).deep.equals([
+              ...authorization,
+              ...lineupReads
+            ])
+            // The edits' plays, with no frame to send, are read once
+            // committed; the lineups' are read with the row.
+            const after = statements.slice(statements.indexOf('commit') + 1)
+            expect(after.some(sql => sql.includes('from "events"'))).equals(
+              kind === 'playEdits'
+            )
+          } finally {
+            await worker.close()
+            await loggedDb.destroy()
+          }
+        })
+
+      for (const kind of ['playEdits', 'lineups', 'game'] as const)
+        it(`name and build nothing while the transaction is open (${kind})`, async function () {
+          const id = await posted()
+          const notice = (await notices(id))[kind]
+          const counted = [
+            counting(openRow, 'resolveScoringPlays'),
+            counting(openRow, 'resolveScoringGame'),
+            counting(storedNames, 'withNames')
+          ]
+          const held = heldAtCommit()
+          const worker = fanout({ db: held.db, authorize })
+          try {
+            const heard = viewer()
+            worker.watch(id, scopeOf(team, rival), heard)
+            const delivered = worker.deliver(JSON.stringify(notice))
+            await until(held.committing, 'the commit')
+            await wait(50)
+            // Everything before the commit done, the row still held: nothing
+            // named, built or sent.
+            expect(counted.map(count => count.calls())).deep.equals([0, 0, 0])
+            expect(heard.sent).deep.equals([])
+            held.release()
+            await delivered
+            expect(heard.sent.map(message => message.kind)).deep.equals([kind])
+            const [plays, whole] = counted.map(count => count.calls())
+            expect({ plays, whole }).deep.equals(
+              kind === 'playEdits'
+                ? { plays: 1, whole: 0 }
+                : kind === 'lineups'
+                  ? { plays: 0, whole: 1 }
+                  : { plays: 0, whole: 0 }
+            )
+          } finally {
+            held.release()
+            for (const count of counted) count.restore()
+            await worker.close()
+            await held.db.destroy()
+          }
+        })
+    })
   })
 
   it("sends a game's notices in the order their data was read, one delivery at a time", async function () {
@@ -372,17 +1246,24 @@ describe('the game socket fan-out (U15)', function () {
       })
       const asked: string[] = []
       const sent: string[] = []
-      one.watch(today, scopeOf(team, rival), {
+      const holding: FanoutSubscriber & Seeing = {
         send: message => {
           sent.push(message.kind)
         },
+        token: 'token',
+        userId: 'usr',
+        signedOut: () => undefined,
         maySee: async () => {
           asked.push(String(asked.length))
           if (asked.length === 1) await held
           return true
-        }
-      })
-      const first = one.deliver(JSON.stringify({ game: today, kind: 'plays' }))
+        },
+        resync: () => undefined
+      }
+      one.watch(today, scopeOf(team, rival), holding)
+      const first = one.deliver(
+        JSON.stringify({ game: today, kind: 'playEdits', generation: 0 })
+      )
       await until(() => asked.length === 1, 'the first delivery')
       const second = one.deliver(JSON.stringify({ game: today, kind: 'game' }))
       await wait(50)
@@ -391,10 +1272,186 @@ describe('the game socket fan-out (U15)', function () {
       expect(sent).deep.equals([])
       release()
       await Promise.all([first, second])
-      expect(sent).deep.equals(['plays', 'game'])
+      expect(sent).deep.equals(['playEdits', 'game'])
     } finally {
       await one.close()
     }
+  })
+
+  describe('with no connection to be had in time', function () {
+    const poolTimeout = 'timeout exceeded when trying to connect'
+    /** A database whose one connection is taken, so a checkout times out. */
+    const starved = async (): Promise<{
+      db: Kysely<Database>
+      free: () => Promise<void>
+    }> => {
+      const pool = new Pool({
+        connectionString: scratchUrl,
+        max: 1,
+        connectionTimeoutMillis: 50
+      })
+      const held = await pool.connect()
+      const starvedDb = new Kysely<Database>({
+        dialect: new PostgresDialect({ pool })
+      })
+      return {
+        db: starvedDb,
+        free: async () => {
+          held.release()
+          await starvedDb.destroy()
+        }
+      }
+    }
+
+    it('resyncs the game’s subscribers, and only that game’s', async function () {
+      const { db: starvedDb, free } = await starved()
+      const one = fanout({ db: starvedDb })
+      await one.listening
+      const onToday = subscriber()
+      const onLater = subscriber()
+      one.watch(today, scopeOf(team, rival), onToday)
+      one.watch(later, scopeOf(rival, team), onLater)
+      await one.deliver(
+        JSON.stringify({ game: today, kind: 'playEdits', generation: 0 })
+      )
+      expect(onToday.sent).deep.equals([])
+      expect(onToday.resynced.count).equals(1)
+      expect(onLater.resynced.count).equals(0)
+      expect(logs.some(line => line.startsWith(`resyncing ${today}`))).equals(
+        true
+      )
+      await one.close()
+      await free()
+    })
+
+    it('resyncs every game of the team, whose song it could not read', async function () {
+      const one = fanout({
+        readSong: async () => {
+          throw new Error(poolTimeout)
+        }
+      })
+      await one.listening
+      const onToday = subscriber()
+      const onElsewhere = subscriber()
+      one.watch(today, scopeOf(team, rival), onToday)
+      one.watch(elsewhere, scopeOf(other, rival), onElsewhere)
+      await one.deliver(
+        JSON.stringify({
+          team,
+          userId: userIdOfGumbo(first.userId),
+          kind: 'walkUpSong'
+        })
+      )
+      expect(onToday.resynced.count).equals(1)
+      expect(onElsewhere.resynced.count).equals(0)
+      await one.close()
+    })
+
+    it('carries on with the team’s other games', async function () {
+      let reads = 0
+      // A method of the real database, on the real database.
+      const flaky = new Proxy(db!, {
+        get(target, name) {
+          if (name === 'transaction' && reads++ === 0)
+            throw new Error(poolTimeout)
+          const value = Reflect.get(target, name, target) as unknown
+          return typeof value === 'function' ? value.bind(target) : value
+        }
+      })
+      const two = fanout({ db: flaky })
+      const onToday = subscriber()
+      const onLater = subscriber()
+      two.watch(today, scopeOf(team, rival), onToday)
+      two.watch(later, scopeOf(rival, team), onLater)
+      await two.listening
+      await two.deliver(
+        JSON.stringify({
+          team,
+          userId: userIdOfGumbo(first.userId),
+          kind: 'walkUpSong'
+        })
+      )
+      expect(onToday.resynced.count).equals(1)
+      expect(onToday.sent).deep.equals([])
+      expect(onLater.resynced.count).equals(0)
+      expect(onLater.sent).to.have.length(1)
+      await two.close()
+    })
+
+    it('resyncs a game whose delivery loses the pooler, and one after it has gone', async function () {
+      // Stands between the fanout and the database, as a pooler does.
+      const target = new URL(scratchUrl)
+      const sockets = new Set<Socket>()
+      const pooler = createServer(near => {
+        const far = connectTo(Number(target.port), target.hostname)
+        for (const socket of [near, far]) {
+          sockets.add(socket)
+          socket.on('error', () => undefined)
+        }
+        near.pipe(far).pipe(near)
+      })
+      await new Promise<void>(resolve => {
+        pooler.listen(0, '127.0.0.1', resolve)
+      })
+      const proxied = new URL(scratchUrl)
+      proxied.hostname = '127.0.0.1'
+      proxied.port = String((pooler.address() as AddressInfo).port)
+      const pool = new Pool({ connectionString: proxied.toString() })
+      pool.on('connect', client => {
+        client.on('error', () => undefined)
+      })
+      pool.on('error', () => undefined)
+      const proxiedDb = new Kysely<Database>({
+        dialect: new PostgresDialect({ pool })
+      })
+      const one = fanout({
+        db: proxiedDb,
+        authorize: async subscribers => {
+          // The pooler dies with the game's transaction open and in hand.
+          for (const socket of sockets) socket.destroy()
+          pooler.close()
+          await new Promise(resolve => setTimeout(resolve, 50))
+          return subscribers.map(() => true)
+        }
+      })
+      await one.listening
+      const onToday = subscriber()
+      one.watch(today, scopeOf(team, rival), onToday)
+      await one.deliver(JSON.stringify({ game: today, kind: 'game' }))
+      expect(onToday.resynced.count).equals(1)
+      expect(onToday.sent).deep.equals([])
+      // Nothing listens now, so the next one cannot even connect.
+      await one.deliver(JSON.stringify({ game: today, kind: 'game' }))
+      expect(onToday.resynced.count).equals(2)
+      await one.close()
+      await proxiedDb.destroy()
+    })
+
+    it('still throws any other failure, resyncing nobody', async function () {
+      const one = fanout({
+        readSong: async () => {
+          throw new Error('something else')
+        }
+      })
+      await one.listening
+      const onToday = subscriber()
+      one.watch(today, scopeOf(team, rival), onToday)
+      let failure: unknown
+      await one
+        .deliver(
+          JSON.stringify({
+            team,
+            userId: userIdOfGumbo(first.userId),
+            kind: 'walkUpSong'
+          })
+        )
+        .catch((error: unknown) => {
+          failure = error
+        })
+      expect(String(failure)).contains('something else')
+      expect(onToday.resynced.count).equals(0)
+      await one.close()
+    })
   })
 
   it('sends two players’ songs, to every game of the team, whenever it is', async function () {
@@ -535,17 +1592,28 @@ describe('the game socket fan-out (U15)', function () {
     const heard = subscriber()
     one.watch(gone, scopeOf(team, rival), heard)
     await db!.deleteFrom('games').where('id', '=', gone).execute()
-    await one.deliver(JSON.stringify({ game: gone, kind: 'plays' }))
+    await one.deliver(
+      JSON.stringify({ game: gone, kind: 'playEdits', generation: 0 })
+    )
     expect(heard.sent).lengthOf(0)
     logs.length = 0
     await one.deliver('not json')
     await one.deliver(JSON.stringify({ game: gone, kind: 'weather' }))
-    expect(logs).lengthOf(2)
+    // A play notice with no generation.
+    await one.deliver(JSON.stringify({ game: gone, kind: 'playEdits' }))
+    expect(logs).lengthOf(3)
     expect(logs[0]).match(/does not read/)
+    // Heard twice in one window, it is read once each time it is heard, and
+    // merged, so logged once.
+    logs.length = 0
+    one.notified('not json')
+    one.notified('not json')
+    await wait(150)
+    expect(logs).deep.equals(['ignoring a notify that does not read: not json'])
     one.notified(undefined)
     await one.close()
     // Closed, a notify is dropped.
-    one.notified(JSON.stringify({ game: gone, kind: 'plays' }))
+    one.notified(JSON.stringify({ game: gone, kind: 'game' }))
   })
 
   it('logs a send that fails', async function () {
@@ -565,47 +1633,36 @@ describe('the game socket fan-out (U15)', function () {
     await one.close()
   })
 
-  it('reports a lost listener, and listens again', async function () {
-    let lost = 0
+  it('resyncs once the feed has returned, not while it is away, and hears the next change', async function () {
+    let resyncs = 0
+    const before = logs.length
     const one = fanout({
-      onLost: () => {
-        lost++
+      feed: feedOf(300),
+      onResync: () => {
+        resyncs++
       }
     })
     await one.listening
+    expect(resyncs).equals(0)
     const heard = subscriber()
     one.watch(today, scopeOf(team, rival), heard)
     await adminPool!.query(
       `select pg_terminate_backend(pid) from pg_stat_activity
-       where datname = $1 and query ilike 'listen %'`,
-      [scratchName]
+       where datname = $1 and application_name = $2`,
+      [scratchName, FEED_APPLICATION_NAME]
     )
-    await until(() => lost === 1, 'the loss')
-    expect(logs.some(line => line.includes('lost the game_changes'))).equals(
-      true
+    await until(
+      () => logs.slice(before).some(line => line.includes('lost the feed')),
+      'the loss'
     )
-    // Listening again, it hears the next change.
+    expect(resyncs).equals(0)
+    await until(() => resyncs === 1, 'the return')
     await until(() => {
       notify({ game: today, kind: 'game' }).catch(() => undefined)
       return heard.sent.length > 0
-    }, 'a change after listening again')
+    }, 'a change after the return')
+    expect(resyncs).equals(1)
     await one.close()
-  })
-
-  it('retries a listener that cannot connect, and stops when closed', async function () {
-    let lost = 0
-    const one = fanout({
-      databaseUrl: adminUrl.replace(/\/[^/]*$/, '/teamstation_no_such_db'),
-      onLost: () => {
-        lost++
-      }
-    })
-    await one.listening
-    await until(() => lost >= 2, 'two failed attempts')
-    await one.close()
-    const counted = lost
-    await wait(150)
-    expect(lost).equals(counted)
   })
 
   it('reads no song for a player who has none', async function () {

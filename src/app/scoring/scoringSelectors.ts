@@ -8,7 +8,11 @@ import {
 } from '../../common/scoring/rules'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
 import type { ScoreboardState } from '../field/scoreboardModel'
-import type { ScoringSessionState, ScoringSnapshot } from './scoringTypes'
+import type {
+  FielderRef,
+  ScoringSessionState,
+  ScoringSnapshot
+} from './scoringTypes'
 
 /**
  * What the screen shows and when it lets the scorer act. Who is where, and
@@ -16,6 +20,14 @@ import type { ScoringSessionState, ScoringSnapshot } from './scoringTypes'
  */
 export { baseIds, battingSide, canSwitchBatter, fieldingSide }
 export const playerRef = refOf
+
+/** A fielder's name: the player's, or a stand-in's position (`SS`). */
+export function fielderName(
+  session: ScoringSessionState,
+  ref: FielderRef
+): string {
+  return typeof ref === 'number' ? session.gameData.players[ref].fullName : ref
+}
 
 export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
   const board = scoreboardOfGame(session)

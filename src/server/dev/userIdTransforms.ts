@@ -392,6 +392,7 @@ export function expectedPlaceholders(
           bats: null,
           throws: null,
           isPlayer: true,
+          self: false,
           role: 'player',
           section: 'player',
           staffRoles: [],

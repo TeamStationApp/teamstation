@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { after, afterEach, before, describe, it } from 'mocha'
-import React from 'react'
+import React, { act } from 'react'
 
 import type { TeamStationClient } from '../../common/api'
 import type {
@@ -8,7 +8,14 @@ import type {
   ScheduleSetup,
   SetupSeason
 } from '../../common/seasonScheduling'
-import { mount, press, settle, text, unmount } from '../../test/gameFormDom'
+import {
+  fill,
+  mount,
+  press,
+  settle,
+  text,
+  unmount
+} from '../../test/gameFormDom'
 import {
   chooseCalendarDate,
   chooseDateRange,
@@ -143,6 +150,84 @@ describe('a season of the next schedule', () => {
   after(() => {
     if (zone == null) delete process.env.TZ
     else process.env.TZ = zone
+  })
+
+  it('shows and saves weekly maximums and the preferred portion, preserving other settings', async () => {
+    const record = fakeClient(SEASON)
+    await show(record.client)
+    const field = (label: string): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!
+    expect(field('Max games on weekdays').value).equals('1')
+    expect(field('Max games on weekend').value).equals('1')
+    expect(text().indexOf('Max games on weekdays')).lessThan(
+      text().indexOf('Max games on weekend')
+    )
+    expect(text().indexOf('Max games on weekend')).lessThan(
+      text().indexOf('Prefer game on:')
+    )
+    await act(async () => {
+      field('Max games on weekdays').focus()
+    })
+    await fill('Max games on weekdays', '2')
+    await act(async () => {
+      field('Max games on weekdays').blur()
+    })
+    await settle()
+    expect(record.saves.at(-1)).includes({
+      maxGamesOnWeekdays: 2,
+      gameMinutes: 90
+    })
+    await act(async () => {
+      field('Max games on weekend').focus()
+    })
+    await fill('Max games on weekend', '0')
+    await act(async () => {
+      field('Max games on weekend').blur()
+    })
+    await settle()
+    await tapLabel('weekdays')
+    expect(record.saves.at(-1)).includes({
+      maxGamesOnWeekdays: 2,
+      maxGamesOnWeekend: 0,
+      preferGameOn: 'weekdays'
+    })
+    const count = record.saves.length
+    await act(async () => {
+      field('Max games on weekend').focus()
+    })
+    await fill('Max games on weekend', '201')
+    await act(async () => {
+      field('Max games on weekend').blur()
+    })
+    await settle()
+    expect(record.saves).length(count)
+    expect(text()).includes('Choose a maximum from 0 to 200.')
+    await act(async () => {
+      field('Max games on weekend').focus()
+    })
+    await fill('Max games on weekend', '0')
+    await act(async () => {
+      field('Max games on weekend').blur()
+    })
+    await settle()
+    expect(record.saves).length(count)
+    expect(text()).not.includes('Choose a maximum from 0 to 200.')
+    await act(async () => {
+      field('Max games on weekend').focus()
+    })
+    await fill('Max games on weekend', '201')
+    await act(async () => {
+      field('Max games on weekend').blur()
+    })
+    await settle()
+    await tapLabel('weekend')
+    expect(text()).includes('Game preference saved.')
+    expect(text()).not.includes('Choose a maximum from 0 to 200.')
+    expect(field('Max games on weekend').value).equals('0')
+    expect(record.saves.at(-1)).includes({
+      maxGamesOnWeekend: 0,
+      preferGameOn: 'weekend'
+    })
   })
 
   it('loads after a failure, and says when the season has left the league', async () => {

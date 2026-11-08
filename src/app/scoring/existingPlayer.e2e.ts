@@ -23,6 +23,11 @@ import { signInTestAccount } from '../../test/passwordFixtures'
  * (`TS_API_BASE_URL=… node src/build.mjs --serve`), both on this machine,
  * and the fixture written into its fresh database. `TS_E2E_FIXTURE` names
  * the fixture file; `TS_E2E_ARTIFACT_DIR`, when set, receives screenshots.
+ *
+ * W8 lists the people already found at once, lets the server's join them
+ * over a slow network, and shows them alone offline with the field on.
+ * `TS_CAPTURE_ONLY=1` runs it with its checks off, for screenshots of a
+ * build without that behaviour.
  */
 const APP = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8171'
 const API = process.env.TS_API_TEST_URL ?? 'http://127.0.0.1:9171/api/v1'
@@ -33,6 +38,11 @@ const FIXTURE_FILE =
   process.env.TS_E2E_FIXTURE ??
   '/private/tmp/teamstation-existingPlayer/fixture.json'
 const artifacts = process.env.TS_E2E_ARTIFACT_DIR
+const captureOnly = process.env.TS_CAPTURE_ONLY === '1'
+/** A check, skipped when only capturing. */
+const check = (run: () => void): void => {
+  if (!captureOnly) run()
+}
 const stamp = Date.now().toString(36)
 
 interface Fixture {
@@ -435,5 +445,108 @@ describe('adding an existing player from Set Team Rosters', function () {
       (await apiGet(heron, `/players/${fixture.players['Freddie Freeman']}`))
         .status
     ).equals(404)
+  })
+
+  it('W8 lists the people already found at once, the server’s join them, and offline only those, with the field on', async function () {
+    coachToken = await openAs(
+      fixture.emails.coach,
+      `/games/${fixture.gameId}/score`
+    )
+    await openRosters()
+    await tap('Home Team')
+    // Online: the first page, and a search, found once.
+    await tap('Add Existing Player')
+    await browser.assertVisible({
+      css: label('Choose Aaron J'),
+      timeout: 30000
+    })
+    await tap('Search players')
+    await browser.inputText({ text: 'Betts' })
+    await browser.assertVisible({
+      css: label('Choose Mookie B'),
+      timeout: 15000
+    })
+    const closeSearch = async (): Promise<void> => {
+      await browser.evalBrowserScript({
+        script: `const all = document.querySelectorAll('[aria-label="Cancel"]'); all[all.length - 1].click(); return ''`,
+        output: 'cancelled'
+      })
+      await new Promise(resolve => setTimeout(resolve, 800))
+    }
+    await closeSearch()
+    const shownWithin = async (name: string): Promise<number> => {
+      const started = Date.now()
+      await tap('Add Existing Player')
+      for (;;) {
+        const listed = await candidates()
+        if (listed.includes(name) || Date.now() - started > 20000) break
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      return Date.now() - started
+    }
+    // A slow network: the people found before are listed at once, and the
+    // server's answer joins them when it comes.
+    await browser.setNetworkConditions({ latency: 4000 })
+    try {
+      const took = await shownWithin('Aaron J')
+      console.log(
+        `      slow network: the people already found showed ${took} ms after the tap`
+      )
+      const loadingMore = await probe<boolean>(
+        `document.querySelector('[data-testid="Candidates loading more"]') != null`
+      )
+      console.log(`      the server's page still on its way: ${loadingMore}`)
+      check(() => {
+        expect(took).lessThan(2500)
+        expect(loadingMore).equals(true)
+      })
+      await tap('Search players')
+      await browser.inputText({ text: 'ram' })
+      const started = Date.now()
+      await browser.assertVisible({
+        css: label('Choose Jose R'),
+        timeout: 30000
+      })
+      console.log(
+        `      a person not found before arrived from the server ${Date.now() - started} ms after typing`
+      )
+      await closeSearch()
+    } finally {
+      await browser.setNetworkConditions({ latency: 0 })
+    }
+    // Offline: only the people found before, and the field still takes text.
+    await browser.setNetworkConditions({ offline: true })
+    try {
+      const took = await shownWithin('Aaron J')
+      const text = await pageText()
+      const field = await probe<{ disabled: boolean; readOnly: boolean }>(
+        `(n => ({ disabled: n.disabled, readOnly: n.readOnly }))(document.querySelector('[aria-label="Search players"]'))`
+      )
+      console.log(
+        `      offline: listed ${JSON.stringify((await candidates()).slice(0, 3))}… ${took} ms after the tap; field ${JSON.stringify(field)}`
+      )
+      await shot(
+        captureOnly
+          ? 'player-search-offline-before'
+          : 'player-search-offline-after'
+      )
+      check(() => {
+        expect(text).not.includes('Searching needs a connection.')
+        expect(field).deep.equals({ disabled: false, readOnly: false })
+      })
+      if (!captureOnly) {
+        // Matched on the phone by the names it shows.
+        await tap('Search players')
+        await browser.inputText({ text: 'Moo' })
+        await browser.assertVisible({
+          css: label('Choose Mookie B'),
+          timeout: 5000
+        })
+        expect(await candidates()).not.includes('Aaron J')
+      }
+      await closeSearch()
+    } finally {
+      await browser.setNetworkConditions({ offline: false })
+    }
   })
 })

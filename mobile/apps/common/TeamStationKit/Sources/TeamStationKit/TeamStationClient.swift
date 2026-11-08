@@ -490,13 +490,23 @@ public struct TeamStationClient: Sendable {
       throw TeamStationError.unavailable(Self.message(from: data, status: status))
     }
     guard (200 ..< 300).contains(status) else {
-      throw TeamStationError.server(Self.message(from: data, status: status))
+      throw Self.refusal(from: data, status: status)
     }
     do {
       return try Self.decoder.decode(Reply.self, from: data)
     } catch {
       throw TeamStationError.server("TeamStation sent something unreadable")
     }
+  }
+
+  /// A refusal the server answered: a camera limit when it says so, else its sentence.
+  static func refusal(from data: Data, status: Int) -> TeamStationError {
+    if let api = try? JSONDecoder().decode(TeamStationApiError.self, from: data),
+      api.reason == "cameraLimit"
+    {
+      return .cameraLimit(api.message)
+    }
+    return .server(message(from: data, status: status))
   }
 
   /// The server's own sentence where there is one, rather than a status number.

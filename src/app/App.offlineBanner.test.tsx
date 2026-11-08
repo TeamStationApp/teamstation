@@ -14,6 +14,7 @@ import { fill, find, mount, press, settle, unmount } from '../test/gameFormDom'
 import legacyChatRecord from '../test/legacyChatKeyRecord.json'
 import { nodeSqliteExecutor } from '../test/nodeSqliteExecutor'
 import { App } from './App'
+import { ensureEnrolled, holdsStore } from './chat/engine/links'
 import { recordFromJson } from './chat/keyRecord'
 import { keyStore } from './chat/keyStore'
 import { showRoute } from './navigation/useAddressBar'
@@ -339,10 +340,6 @@ describe('the phone shell offline', () => {
     const trace: string[] = []
     const saved = JSON.stringify(legacyChatRecord)
     let held: string | undefined = saved
-    let finishRevocation!: () => void
-    const revoking = new Promise<void>(resolve => {
-      finishRevocation = resolve
-    })
     const original = {
       exists: keyStore.exists,
       load: keyStore.load,
@@ -366,8 +363,7 @@ describe('the phone shell offline', () => {
     }
     TeamStationClient.prototype.revokeChatDevice = async () => {
       trace.push('revoke')
-      await revoking
-      throw new TypeError('Load failed')
+      throw new Error('revoke was not expected')
     }
     try {
       showRoute({ name: 'account' }, true)
@@ -401,23 +397,11 @@ describe('the phone shell offline', () => {
       expect(find('Sign out'), 'still signed in').not.equals(undefined)
       await press('Sign out')
       await press('Sign Out')
-      await settle(50)
-      expect(trace).deep.equals(['exists', 'load', 'revoke'])
-      expect(held).equals(saved)
-      expect(queuedOnDisk()).equals(1)
-      finishRevocation()
       await settle(100)
       expect(queuedOnDisk(), 'the file is gone').equals(undefined)
-      expect(held).equals(undefined)
-      expect(trace).deep.equals([
-        'exists',
-        'load',
-        'revoke',
-        'wipe',
-        'session cleared'
-      ])
+      expect(held, 'the chat key bytes stay').equals(saved)
+      expect(trace).deep.equals(['session cleared'])
     } finally {
-      finishRevocation()
       Object.assign(keyStore, original)
       Object.defineProperty(
         TeamStationClient.prototype,
@@ -426,6 +410,92 @@ describe('the phone shell offline', () => {
       )
     }
   })
+  it('switches OAuth account without revoking the device or wiping its keys', async () => {
+    await earlierLaunch()
+    const trace: string[] = []
+    const saved = JSON.stringify(legacyChatRecord)
+    let held: string | undefined = saved
+    const original = {
+      exists: keyStore.exists,
+      load: keyStore.load,
+      wipe: keyStore.wipe
+    }
+    const prototype = TeamStationClient.prototype
+    const originalRevoke = Object.getOwnPropertyDescriptor(
+      prototype,
+      'revokeChatDevice'
+    )!
+    const originalSignOut = Object.getOwnPropertyDescriptor(
+      prototype,
+      'signOut'
+    )!
+    keyStore.exists = async () => held != null
+    keyStore.load = async () =>
+      held == null ? undefined : recordFromJson(held)
+    keyStore.wipe = async () => {
+      trace.push('wipe')
+      held = undefined
+    }
+    prototype.revokeChatDevice = async () => {
+      trace.push('revoke')
+      throw new Error('revoke was not expected')
+    }
+    prototype.signOut = async function (this: TeamStationClient) {
+      expect(holdsStore(keyStore, BETTS.id), 'releaseChat ran first').equals(
+        false
+      )
+      trace.push('signOut')
+      this.token = undefined
+    }
+    // This account owns the store, so sign-out's release is what clears it.
+    await ensureEnrolled({
+      client: new TeamStationClient({ baseUrl: '/api/v1', token: 'token-one' }),
+      store: keyStore,
+      userId: BETTS.id,
+      device: { name: 'test', platform: 'web' },
+      existingOnly: true
+    }).catch(() => undefined)
+    expect(holdsStore(keyStore, BETTS.id)).equals(true)
+    const fetchBefore = globalThis.fetch
+    globalThis.fetch = async (url, init) => {
+      const address =
+        typeof url === 'string' ? url : url instanceof URL ? url.href : url.url
+      if (address.endsWith('/oauth/approve/test-approval/details')) {
+        return new Response(
+          JSON.stringify({ clientName: 'Fixture app', scopes: ['openid'] }),
+          { status: 200 }
+        )
+      }
+      return await fetchBefore(url, init)
+    }
+    try {
+      showRoute({ name: 'oauthApprove', uid: 'test-approval' }, true)
+      await mount(
+        <App
+          initialToken="token-one"
+          initialUser={BETTS}
+          documentCache={openCache}
+          onToken={token => {
+            if (token == null) trace.push('session cleared')
+          }}
+        />
+      )
+      await settle(100)
+      await press('Use a different account')
+      await settle(100)
+      expect(trace).deep.equals(['signOut', 'session cleared'])
+      expect(held).equals(saved)
+      expect(
+        document.querySelector('[aria-label="E-mail address"]')
+      ).not.equals(null)
+    } finally {
+      Object.assign(keyStore, original)
+      Object.defineProperty(prototype, 'revokeChatDevice', originalRevoke)
+      Object.defineProperty(prototype, 'signOut', originalSignOut)
+      globalThis.fetch = fetchBefore
+    }
+  })
+
   it('sends nothing of a refused person’s queue under the next person’s token, and sends it once they are back', async () => {
     await earlierLaunch()
     net.sentWith = []

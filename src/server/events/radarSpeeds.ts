@@ -12,7 +12,7 @@ import {
 } from '../../common/scoring/radarSpeeds'
 import type { Database } from '../db/database'
 import { radarSettings } from '../nodeSettings'
-import { notifyGameChange } from '../socket/gameChanges'
+import { notifyPlaysChanged } from '../socket/gameChanges'
 
 /** Query only the requested pitches' windows, using explicit packet metadata. */
 export async function radarReadings(
@@ -97,7 +97,7 @@ export async function refreshRadarSpeeds(
         .set({ currentPlay, updated_at: new Date() })
         .where('id', '=', gameId)
         .execute()
-      await notifyGameChange(trx, { game: gameId, kind: 'plays' })
+      await notifyPlaysChanged(trx, gameId)
     }
   })
 }

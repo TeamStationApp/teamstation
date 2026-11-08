@@ -22,6 +22,7 @@ import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { atRest, initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
+import type { FielderRef } from './scoringTypes'
 
 /** Explicit live Haiku run; absence of credentials is a failure, never a skip. */
 describe('real dictated fielder choice animation and defensive credits', function () {
@@ -82,7 +83,7 @@ describe('real dictated fielder choice animation and defensive credits', functio
         state.dictationQuestion,
         JSON.stringify({ turn, question: state.dictationQuestion })
       ).equals(undefined)
-      const throws: number[][] = []
+      const throws: FielderRef[][] = []
       for (let step = 0; step < 150 && !atRest(state); step++) {
         const p = state.presentation
         if (p != null) {
@@ -129,7 +130,7 @@ describe('real dictated fielder choice animation and defensive credits', functio
         play.runners.flatMap(r =>
           r.credits
             .filter(c => c.credit === 'f_putout' || c.credit === 'f_assist')
-            .map(c => [r.details.runner.id, c.player.id, c.credit])
+            .map(c => [r.details.runner.id, c.player?.id, c.credit])
         ),
         JSON.stringify(turn)
       ).deep.equals(example.credits)

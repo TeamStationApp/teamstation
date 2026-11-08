@@ -251,7 +251,7 @@ async function main(): Promise<void> {
     )
     await new Promise(resolve => setTimeout(resolve, 1500))
     await shown('^Open scoring menu$')
-    await shown(missing ? 'Missing defensive positions' : '^Ball$')
+    await shown(missing ? 'Assign a pitcher' : '^Ball$')
     console.log('Opened synthetic game', gameId)
   }
   const menu = async (label: string): Promise<void> => {

@@ -120,6 +120,7 @@ describe('relationship list access regression', () => {
               client={api}
               teamId="team"
               userId={userIdOfGumbo(104)}
+              onChanged={() => notices++}
             />
           ) : (
             <PersonProfileScreen
@@ -135,7 +136,7 @@ describe('relationship list access regression', () => {
         await press('Confirm removal')
         expect(writes).equals(1)
         expect(reads).equals(2)
-        expect(notices).equals(player ? 0 : 1)
+        expect(notices).equals(1)
         expect(find('Confirm removal')).equals(undefined)
         expect(text()).includes('Change saved.')
         expect(document.querySelector('[role="switch"]')).equals(null)
@@ -318,7 +319,8 @@ describe('relationship list access regression', () => {
         roles: [],
         member: true,
         follower: false,
-        editable: true
+        editable: true,
+        player: false
       },
       viewer: { manages: true, admin: true },
       canHoldRoles: true

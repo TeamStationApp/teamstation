@@ -1,4 +1,5 @@
 import type { TeamStationClient } from '../../../common/api'
+import { HttpError } from '../../../common/errors'
 import type { ChatKeyRecord, ChatKeyStore } from '../keyRecord'
 import type { IdentityCache } from './decrypt'
 import { type ChatKeysClient, StaleChatSetupError } from './links'
@@ -12,6 +13,7 @@ import type { ChatMemory } from './store'
 
 /** Every API call the engine makes. */
 export type ChatEngineClient = ChatKeysClient &
+  Partial<Pick<TeamStationClient, 'chatBlocks' | 'setChatBlock'>> &
   Pick<
     TeamStationClient,
     | 'chatConversations'
@@ -22,6 +24,8 @@ export type ChatEngineClient = ChatKeysClient &
     | 'chatIdentity'
     | 'chatEpochs'
     | 'postChatEpoch'
+    | 'chatHistoryGrants'
+    | 'postChatHistoryGrants'
     | 'chatGrants'
     | 'postChatGrants'
     | 'postChatMessage'
@@ -40,6 +44,8 @@ export type ChatEngineClient = ChatKeysClient &
 export type ChatEngineErrorCode =
   /** The device holds no key for the chat's latest epoch. */
   | 'locked'
+  | 'repairRequired'
+  | 'freshStartsDisabled'
   /** The chat's membership record failed to verify on this device. */
   | 'unverified'
   /** The server's box set names someone the verified record does not. */
@@ -67,6 +73,11 @@ export class ChatEngineError extends Error {
     this.name = 'ChatEngineError'
   }
 }
+
+/** Whether a refusal says the person is no longer in the chat. */
+export const isGone = (error: unknown): boolean =>
+  (error instanceof HttpError && error.code === 'notFound') ||
+  (error instanceof ChatEngineError && error.code === 'notMember')
 
 /**
  * The device's key record, written through to its store. Every change goes
@@ -126,4 +137,8 @@ export interface EngineContext {
   pageSize: number
   /** Opens per-user key generations this device lacks (a PUK sync). */
   refreshKeys: () => Promise<void>
+  /** Keeps work nobody awaits (the historical stream) where `idle()` sees it. */
+  detach?: (work: Promise<unknown>) => void
+  /** False once the engine stopped: detached work ends at its next step. */
+  live?: () => boolean
 }

@@ -1663,6 +1663,20 @@ export async function submitPasswordSignIn(
         await ui.text('Clear ' + label)
       await ui.text(label)
       await ui.append(value)
+      // The simulator keyboard can drop typed characters; the address is
+      // read back from its field and typed again until it is exact.
+      if (ui.surface === 'ios' && label === 'E-mail address')
+        for (let retype = 0; ; retype++) {
+          const typed = (
+            await ui.iosRead({ text: exactText(label) }, 'TextField')
+          ).value
+          if (typed === value) break
+          assert(retype < 3, 'Typed e-mail address must read back exactly')
+          observation.emailRetyped = retype + 1
+          await ui.text('Clear ' + label)
+          await ui.text(label)
+          await ui.append(value)
+        }
     }
     await ui.device.pressKey({ key: 'ENTER' })
     if (
@@ -1862,7 +1876,9 @@ export class Scenarios {
   constructor(
     readonly f: Chat2Fixture,
     readonly ui: Chat2UI,
-    scenario = ui.scenario
+    // In one surface session the UI's command is 'surface'; each scenario
+    // still resolves its own viewer and peer.
+    readonly scenario: string = ui.scenario
   ) {
     this.group = f.conversations.group.id
     this.viewerKey = need(
@@ -1934,7 +1950,7 @@ export class Scenarios {
   }
 
   async protocolPeer(
-    key = this.f.scenarioPeers[this.ui.scenario] ?? this.f.peer
+    key = this.f.scenarioPeers[this.scenario] ?? this.f.peer
   ): Promise<Peer> {
     let peer = this.peers.get(key)
     if (peer == null) {
@@ -2202,6 +2218,43 @@ export class Scenarios {
     }
   }
 
+  /**
+   * The header picture for the signed-in account. The iOS simulator's
+   * snapshot stops at a node cap, so a long open history can leave the header
+   * out: there each exact label the picture can carry is also looked up by
+   * the driver's own element query, which a pattern cannot use.
+   */
+  async accountVisible(label: string, timeout = 30000): Promise<void> {
+    if (this.ui.surface !== 'ios') {
+      await this.ui.device.assertVisible({ text: accountText(label), timeout })
+      return
+    }
+    const deadline = Date.now() + timeout
+    for (;;) {
+      try {
+        await this.ui.device.assertVisible({
+          text: accountText(label),
+          timeout: 1000
+        })
+        return
+      } catch (error) {
+        if (
+          error == null ||
+          typeof error !== 'object' ||
+          !('code' in error) ||
+          error.code !== 'COMMAND_FAILED'
+        )
+          throw error
+      }
+      for (const text of [label, label + ', notifications waiting'])
+        if (await this.ui.visible({ text }, 1000)) return
+      assert(
+        Date.now() < deadline,
+        'Signed-in account picture required: ' + label
+      )
+    }
+  }
+
   async signIn(key = this.viewerKey): Promise<void> {
     const ui = this.ui
     const m = ui.device
@@ -2300,10 +2353,7 @@ export class Scenarios {
       }
     }
     if (retainedI2) {
-      await m.assertVisible({
-        text: accountText(actor.accountLabel),
-        timeout: 30000
-      })
+      await this.accountVisible(actor.accountLabel)
       await ui.present('chat-conversation-list')
     } else this.observations.push(await submitPasswordSignIn(ui, actor))
     if (await ui.visible({ text: exactText('Not Now') }, 500))
@@ -2357,10 +2407,7 @@ export class Scenarios {
         provider.close()
       }
     }
-    await m.assertVisible({
-      text: accountText(actor.accountLabel),
-      timeout: 30000
-    })
+    await this.accountVisible(actor.accountLabel)
     await ui.present('chat-conversation-list')
     assert.equal(
       (await (await fixtureClient(this.f, key)).whoAmI())?.id,
@@ -2616,6 +2663,34 @@ export class Scenarios {
     await ui.tapObserved({
       bounds: need(clear, 'Exposed pinned list backdrop required')
     })
+    // A tap while the list is still sliding in does not reach its backdrop:
+    // while the row stays, tap the backdrop the list then exposes again.
+    for (
+      let attempt = 0;
+      attempt < 2 && (await ui.visible({ id: exactText(row) }, 1500));
+      attempt++
+    ) {
+      const current = await ui.nodes()
+      const cancel = current
+        .filter(n => n.text === 'Cancel' && n.bounds != null)
+        .map(n => n.bounds!)
+        .sort((a, b) => b.width * b.height - a.width * a.height)[0]
+      const card = current
+        .filter(n => n.text === 'Pinned messages' && n.bounds != null)
+        .map(n => n.bounds!)
+        .sort((a, b) => b.width * b.height - a.width * a.height)[0]
+      if (cancel == null || card == null) break
+      const exposed = [
+        { ...cancel, height: card.y - cancel.y - 8 },
+        {
+          ...cancel,
+          y: card.y + card.height + 8,
+          height: cancel.y + cancel.height - (card.y + card.height + 8)
+        }
+      ].find(b => b.height >= 44)
+      if (exposed == null) break
+      await ui.tapObserved({ bounds: exposed })
+    }
     await ui.absent(row)
   }
 
@@ -2655,17 +2730,21 @@ export class Scenarios {
         let signature: string | undefined
         let band: { top: number; bottom: number } | undefined
         if (!pending && box != null && box.height > 0) {
-          const bounds = (id: string): NonNullable<PublicNode['bounds']> => {
+          // A long history can fill the iOS simulator driver's capped
+          // snapshot before the fixed chrome: an element the snapshot left
+          // out is measured by its own lookup.
+          const bounds = async (
+            id: string
+          ): Promise<NonNullable<PublicNode['bounds']>> => {
             const matches = nodes.filter(node => node.id === id)
-            assert.equal(
-              matches.length,
-              1,
+            assert(
+              matches.length <= 1,
               'Unique native pin geometry required: ' + id
             )
-            const b = need(
-              matches[0].bounds,
-              'Actual native pin bounds required'
-            )
+            const b =
+              matches.length === 1
+                ? need(matches[0].bounds, 'Actual native pin bounds required')
+                : await ui.publicBounds(id)
             assert(
               [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
                 b.width > 0 &&
@@ -2674,12 +2753,14 @@ export class Scenarios {
             )
             return b
           }
-          const history = bounds('chat-message-history')
-          const header = bounds('chat-conversation-identity')
-          const composer = bounds('chat-composer-band')
+          const history = await bounds('chat-message-history')
+          const header = await bounds('chat-conversation-identity')
+          const composer = await bounds('chat-composer-band')
           const pins = nodes.filter(node => node.id === 'chat-pinned-band')
           assert(pins.length <= 1, 'Unique native pin band required')
-          const pin = pins.length === 1 ? bounds('chat-pinned-band') : undefined
+          // A capped iOS snapshot has the band appended by its own lookup.
+          const pin =
+            pins.length === 1 ? await bounds('chat-pinned-band') : undefined
           band = {
             top: Math.max(
               history.y,
@@ -2692,7 +2773,7 @@ export class Scenarios {
             band.bottom - band.top > 64,
             'Actual unobscured native pin reading band required'
           )
-          bounds('chat-bubble-' + target.id)
+          await bounds('chat-bubble-' + target.id)
           if (box.y < band.bottom && box.y + box.height > band.top)
             signature = JSON.stringify({
               box,
@@ -2750,6 +2831,25 @@ export class Scenarios {
     parentSignal = this.ui.deadline,
     // Set on the one retry after a scroll to top carried the reader past it.
     recovered = false
+  ): Promise<PublicNode[]> {
+    const release = this.seek(target)
+    try {
+      return await this.nativeAnchorReadyFor(
+        target,
+        earlier,
+        parentSignal,
+        recovered
+      )
+    } finally {
+      release()
+    }
+  }
+
+  private async nativeAnchorReadyFor(
+    target: Chat2Message,
+    earlier: boolean,
+    parentSignal: AbortSignal,
+    recovered: boolean
   ): Promise<PublicNode[]> {
     const ui = this.ui
     assert(ui.native, 'Native anchor geometry required')
@@ -2859,12 +2959,12 @@ export class Scenarios {
     // Each earlier page puts the next one ~10,000 pt further up a growing
     // QA history, and an iOS read takes seconds; the climbs below share it.
     if (earlier) end = startedAt + (ui.surface === 'ios' ? 900000 : 600000)
-    // A page loaded above a phone's reader can leave the next earlier control
-    // outside the rendered window, so it is in no tree at all. There the
-    // status bar's scroll to top climbs toward the history's start (where the
-    // control is the list's header) until the control mounts; each touch must
-    // mount a different set of rows.
-    if (earlier && ui.surface === 'ios' && ui.physical) {
+    // A page loaded above an iPhone's reader, a phone's or a simulator's, can
+    // leave the next earlier control outside the rendered window, so it is in
+    // no tree at all. There the status bar's scroll to top climbs toward the
+    // history's start (where the control is the list's header) until the
+    // control mounts; each touch must mount a different set of rows.
+    if (earlier && ui.surface === 'ios') {
       const climb: Json[] = []
       for (;;) {
         const nodes = await ui.nodes(undefined, signal())
@@ -2878,6 +2978,13 @@ export class Scenarios {
             node.id?.startsWith('chat-bubble-') === true ? [node.id] : []
           )
           .join('\n')
+        if (!ui.physical && climb.length > 0 && climb.at(-1)!.rows === rows) {
+          // The simulator's capped snapshot holds the rendered window's first
+          // rows, which a touch at the history's start leaves as they were:
+          // with no earlier control there, every page is loaded.
+          proof.earlierControlAbsentAtStart = true
+          return nodes
+        }
         assert(
           climb.length === 0 || climb.at(-1)!.rows !== rows,
           'System scroll to top must move toward the earlier control'
@@ -3256,6 +3363,26 @@ export class Scenarios {
 
   /** Fetch absent native rows through the actual public earlier-page button. */
   async nativeHistoryTarget(target: Chat2Message): Promise<void> {
+    const release = this.seek(target)
+    try {
+      await this.nativeHistoryTargetSearch(target)
+    } finally {
+      release()
+    }
+  }
+
+  /**
+   * The row a native search looks for, read past the iOS simulator's capped
+   * snapshot while it is on the screen (see Chat2UI.seek).
+   */
+  private seek(target: Chat2Message): () => void {
+    // Test doubles of the UI may not carry seek.
+    return typeof this.ui.seek === 'function'
+      ? this.ui.seek('chat-bubble-' + target.id)
+      : () => {}
+  }
+
+  private async nativeHistoryTargetSearch(target: Chat2Message): Promise<void> {
     const ui = this.ui
     assert(ui.native, 'Native history paging required')
     const id = 'chat-bubble-' + target.id
@@ -3347,6 +3474,16 @@ export class Scenarios {
           node.text === 'Load earlier messages' &&
           /(?:^|\.)Button$/.test(node.type ?? '')
       )
+      // A simulator's climb that reached the history's start without an
+      // earlier control leaves the target among the loaded rows below.
+      if (control.length === 0 && ui.surface === 'ios' && !ui.physical) {
+        assert(
+          await this.nativeLoadedTarget(target, signal, 'latest'),
+          'Loaded native history target required below the history start'
+        )
+        proof.outcome = 'passed'
+        return
+      }
       assert(
         control.length === 1 && enabled(control[0]),
         'Actual earlier Button must remain enabled'
@@ -4604,17 +4741,30 @@ export class Scenarios {
     const composerBand = await ui.publicBounds('chat-composer-band')
     const tabs: Array<{ label: string; bounds: Box }> = []
     for (const label of ['Home', 'Videos', 'Schedule', 'Chat']) {
-      if (await ui.visible({ text: exactText(label) }, 200))
-        tabs.push({
-          label,
-          bounds: need(
-            ui.surface === 'ios'
-              ? innermostLabelled(nodes, label)
-              : (await ui.device.copyTextFrom({ text: exactText(label) }))
-                  .element?.bounds,
-            'Visible public navigation tab bounds required'
-          )
-        })
+      if (!(await ui.visible({ text: exactText(label) }, 200))) continue
+      if (ui.surface === 'ios') {
+        // The selected tab's whole screen carries its label too; with the
+        // bar hidden under the keyboard it is the only one. A tab is the
+        // labelled element shorter than a third of the screen.
+        const tab = nodes.filter(
+          n =>
+            n.text === label &&
+            n.bounds != null &&
+            n.bounds.height > 0 &&
+            n.bounds.height < Number(screen.screenHeight) / 3
+        )
+        if (tab.length > 0)
+          tabs.push({ label, bounds: innermostLabelled(tab, label) })
+        continue
+      }
+      tabs.push({
+        label,
+        bounds: need(
+          (await ui.device.copyTextFrom({ text: exactText(label) })).element
+            ?.bounds,
+          'Visible public navigation tab bounds required'
+        )
+      })
     }
     const tabUnion =
       tabs.length > 0 ? union(tabs.map(tab => tab.bounds)) : undefined
@@ -5030,16 +5180,35 @@ export class Scenarios {
         )
         target = actual.matches[0] as typeof target
       }
+      samples.push({ ...target, top, bottom, width })
       assert(
         finite(target.bounds) &&
           target.bounds.x >= 0 &&
           target.bounds.x + target.bounds.width <= width &&
-          target.bounds.height < bottom - top
+          target.bounds.height < bottom - top,
+        'Safety row must fit the actual Info reading band'
       )
-      samples.push({ ...target, top, bottom })
       return { ...target, top, bottom }
     }
-    let target = await read()
+    // A wide browser's Info panel slides in from the side: its rows are read
+    // again until the panel has arrived within the viewport.
+    const arrived = async (): Promise<Awaited<ReturnType<typeof read>>> => {
+      const deadline = Date.now() + 10000
+      for (;;)
+        try {
+          return await read()
+        } catch (error) {
+          if (
+            !String(error).includes(
+              'Safety row must fit the actual Info reading band'
+            ) ||
+            Date.now() >= deadline
+          )
+            throw error
+          await new Promise(resolve => setTimeout(resolve, 300))
+        }
+    }
+    let target = await arrived()
     for (
       let step = 0;
       step < 8 &&
@@ -5047,11 +5216,52 @@ export class Scenarios {
         target.bounds.y + target.bounds.height > target.bottom);
       step++
     ) {
-      await ui.device.scroll(
-        { direction: target.bounds.y < target.top ? 'UP' : 'DOWN' },
-        { signal: AbortSignal.timeout(15000) }
-      )
+      if (ui.native) {
+        // A page scroll overshoots a row just past the band: drag the
+        // content slowly, inside the band, by the row's measured offset.
+        const center = (target.top + target.bottom) / 2
+        const reach = (target.bottom - target.top) / 2 - 16
+        const offset = Math.max(
+          -2 * reach,
+          Math.min(
+            2 * reach,
+            target.bounds.y + target.bounds.height / 2 - center
+          )
+        )
+        const x = target.bounds.x + target.bounds.width / 2
+        await ui.measuredSwipe(
+          {
+            startX: x,
+            startY: center + offset / 2,
+            endX: x,
+            endY: center - offset / 2,
+            duration: 1200
+          },
+          AbortSignal.timeout(15000)
+        )
+      } else
+        await ui.device.scroll(
+          { direction: target.bounds.y < target.top ? 'UP' : 'DOWN' },
+          { signal: AbortSignal.timeout(15000) }
+        )
       target = await read()
+    }
+    // A tap on a list that still coasts after the drag only stops it: the
+    // row is tapped once two reads find it where it was.
+    if (ui.native) {
+      const deadline = Date.now() + 10000
+      for (;;) {
+        await new Promise(resolve => setTimeout(resolve, 300))
+        const again = await read()
+        const still =
+          JSON.stringify(again.bounds) === JSON.stringify(target.bounds)
+        target = again
+        if (still) break
+        assert(
+          Date.now() < deadline,
+          'Safety row must hold still before its tap'
+        )
+      }
     }
     assert(
       target.bounds.y >= target.top &&
@@ -6756,10 +6966,21 @@ export class Scenarios {
           text: exactText('This message will be removed for everyone.')
         })
         await ui.text('Delete')
-        await ui.device.assertNotVisible({
-          text: exactText(body),
-          timeout: 15000
-        })
+        // Where a removed post's text still appears is recorded, whichever
+        // element carries it, before the same 15 s requirement fails.
+        const lingering: Json[] = []
+        try {
+          await ui.device.assertNotVisible({
+            text: exactText(body),
+            timeout: 15000
+          })
+        } catch (error) {
+          for (const node of await ui.nodes())
+            if (node.text?.includes(body) === true)
+              lingering.push({ id: node.id, type: node.type, text: node.text })
+          this.observations.push({ deletedTextLingering: lingering })
+          throw error
+        }
         const peer = await this.protocolPeer()
         await until(
           async () =>
@@ -7512,6 +7733,9 @@ export class Scenarios {
           'Editing inside a selected token removes stale identity'
         )
         assert.equal(await ui.draft(), 'A newer synthetic draft')
+        // In one surface session E9 opens this conversation next: leave no
+        // retained draft behind for it.
+        await ui.replaceDraft('')
       }
     )
   }
@@ -7563,13 +7787,21 @@ export class Scenarios {
         await this.openGroup(locked.conversation.id)
         await ui.device.assertVisible({
           text: exactText(
-            'History is locked — it unlocks when another member opens TeamStation'
+            'Older messages are unavailable on this device. They may unlock when a member with the keys returns.'
           ),
           timeout: ui.surface === 'ios' ? 45000 : 15000
         })
-        this.observations.push({
-          lockedComposer: await ui.assertComposerNotEditable()
-        })
+        // Fresh composition no longer waits for older keys: the composer takes
+        // a draft while that history stays locked.
+        const lockedDraft = 'A fresh note while older history is locked'
+        await ui.replaceDraft(lockedDraft)
+        assert.equal(
+          await ui.draft(),
+          lockedDraft,
+          'Locked older history must leave the composer writable'
+        )
+        await ui.replaceDraft('')
+        this.observations.push({ lockedHistoryComposerWritable: true })
         await ui.device.assertNotVisible({
           text: exactText(locked.message.body),
           timeout: 2000
@@ -8938,193 +9170,221 @@ export class Scenarios {
       'reduced-transparency'
     ]) {
       await this.check('E12 ' + variant + ' changed-state sweep', async () => {
-        // Android's launch after a Settings recipe restarts the app on its
-        // Home tab, and each variant first measures the composer; the sweep
-        // anchors the reader itself.
+        // A phone's launch after a Settings recipe can restart the app on
+        // its Home tab (Android always, iOS when it ended the app while
+        // Settings was in front), and each variant first measures the
+        // composer; the sweep anchors the reader itself.
         if (
-          ui.surface === 'android' &&
+          ui.native &&
           !(await ui.visible({ id: exactText('chat-composer') }, 2000))
         )
           await this.openGroup()
-        await ui.variant(variant, async () => {
-          await this.openGroup()
-          await this.anchor()
-          await this.readable()
-          await ui.present('chat-conversation-identity')
-          await ui.present('chat-jump-latest')
-          await ui.shot(
-            variant + '-conversation',
-            'Actual ' +
-              variant +
-              ' header, composer, pins and chevron reachability/composition'
-          )
-          // A phone's screen has no host-side recorder on iOS.
-          const recordable = ui.native && !(ui.surface === 'ios' && ui.physical)
-          if (
-            ui.native &&
-            !recordable &&
-            (variant === 'light' || variant === 'reduced-motion')
-          )
-            this.observations.push({
-              variant,
-              transitionCapture: 'unavailable on a physical iPhone'
-            })
-          const recording =
-            recordable && (variant === 'light' || variant === 'reduced-motion')
-              ? join(ui.runDir, variant + '-spotlight.mp4')
-              : undefined
-          const transition = async (): Promise<void> => {
-            await this.action(this.f.messages.target)
-            await this.menuState()
-            const effects = await ui.renderedEffects()
-            this.observations.push({ variant, actualRenderedEffects: effects })
-            for (const label of this.touchActions
-              ? ['Reply', this.copyLabel]
-              : [this.copyLabel])
-              await ui.device.assertVisible({ text: exactText(label) })
-            if (this.touchActions)
-              this.observations.push(
-                await observeSpotlightCaptureReady(
-                  ui,
-                  8000,
-                  this.f.messages.target
-                )
-              )
+        await ui.variant(
+          variant,
+          async () => {
+            await this.openGroup()
+            await this.anchor()
+            await this.readable()
+            await ui.present('chat-conversation-identity')
+            await ui.present('chat-jump-latest')
             await ui.shot(
-              variant + '-spotlight',
+              variant + '-conversation',
               'Actual ' +
                 variant +
-                (this.touchActions
-                  ? ' sharp preview and accessible actions; static composition only'
-                  : ' desktop More menu and accessible controls; touch spotlight not applicable')
+                ' header, composer, pins and chevron reachability/composition'
             )
-            await this.dismiss()
-            this.observations.push(await observeComposerCaptureReady(ui))
-          }
-          if (recording == null) await transition()
-          else {
-            await ui.recordTransition(recording, transition)
+            // A phone's screen has no host-side recorder on iOS.
+            const recordable =
+              ui.native && !(ui.surface === 'ios' && ui.physical)
+            if (
+              ui.native &&
+              !recordable &&
+              (variant === 'light' || variant === 'reduced-motion')
+            )
+              this.observations.push({
+                variant,
+                transitionCapture: 'unavailable on a physical iPhone'
+              })
+            const recording =
+              recordable &&
+              (variant === 'light' || variant === 'reduced-motion')
+                ? join(ui.runDir, variant + '-spotlight.mp4')
+                : undefined
+            const transition = async (): Promise<void> => {
+              await this.action(this.f.messages.target)
+              await this.menuState()
+              const effects = await ui.renderedEffects()
+              this.observations.push({
+                variant,
+                actualRenderedEffects: effects
+              })
+              for (const label of this.touchActions
+                ? ['Reply', this.copyLabel]
+                : [this.copyLabel])
+                await ui.device.assertVisible({ text: exactText(label) })
+              if (this.touchActions)
+                this.observations.push(
+                  await observeSpotlightCaptureReady(
+                    ui,
+                    8000,
+                    this.f.messages.target
+                  )
+                )
+              await ui.shot(
+                variant + '-spotlight',
+                'Actual ' +
+                  variant +
+                  (this.touchActions
+                    ? ' sharp preview and accessible actions; static composition only'
+                    : ' desktop More menu and accessible controls; touch spotlight not applicable')
+              )
+              await this.dismiss()
+              this.observations.push(await observeComposerCaptureReady(ui))
+            }
+            if (recording == null) await transition()
+            else {
+              await ui.recordTransition(recording, transition)
+              this.observations.push({
+                variant,
+                transitionCapture: recording,
+                sha256: digest(recording),
+                entranceAndDismissalObserved: true,
+                claim:
+                  'Composition and reduced-motion transition comparison only; no pacing, smoothness or physical-haptic claim'
+              })
+            }
+            await this.openInfo()
+            await ui.present('chat-info-hero')
+            this.observations.push(await observeInfoCaptureReady(ui))
+            await ui.shot(
+              variant + '-info',
+              'Actual ' + variant + ' identity, mute control and member rows'
+            )
+            await this.showInfoMember()
+            await ui.shot(
+              variant + '-info-members',
+              'Actual ' +
+                variant +
+                ' current other-member safety row fully clear of header and bottom overlay'
+            )
+            await ui.back()
+            if (!ui.native && variant === 'large-text') {
+              await this.revealZoomedWebControl(
+                variant + '-composer-reveal',
+                zoomedComposer
+              )
+              await this.tapZoomedWebControl(zoomedComposer)
+              await ui.replaceDraft('', { focused: true })
+            } else await ui.replaceDraft('')
+            await ui.typeMentionTrigger()
+            await ui.device.assertVisible({
+              text: exactText('Mention a member')
+            })
+            this.observations.push(await observeMentionHeader(ui))
+            if (!ui.native && variant === 'large-text') {
+              await this.zoomedWebControlShot(
+                variant + '-mention-heading-search',
+                [
+                  {
+                    name: 'heading',
+                    css: '[data-testid="chat-picker-header"] *',
+                    text: 'Mention a member'
+                  },
+                  {
+                    name: 'search',
+                    css: '[data-testid="chat-picker-content"] [aria-label="Search members"]'
+                  }
+                ],
+                'Actual same-zoom chooser heading and focused editable Search region in the visual viewport'
+              )
+              await this.zoomedWebControlShot(
+                variant + '-mention-cancel',
+                [
+                  {
+                    name: 'cancel',
+                    css: '[data-testid="chat-picker-header"] button,[data-testid="chat-picker-header"] [role="button"]',
+                    text: 'Cancel'
+                  }
+                ],
+                'Actual same-zoom Cancel control in a separately revealed visual viewport; not a combined header claim'
+              )
+            }
+            // The chooser's own order decides which rows a phone shows first:
+            // the first current member it actually shows.
+            const candidates = this.f.members.filter(
+              m => m.userId !== this.viewerId
+            )
+            let member = need(candidates[0], 'Current mention member required')
+            for (const candidate of candidates)
+              if (
+                await ui.visible(
+                  { id: 'chat-mention-member-' + candidate.userId },
+                  1000
+                )
+              ) {
+                member = candidate
+                break
+              }
+            await ui.present('chat-mention-member-' + member.userId)
+            await ui.shot(
+              variant + '-mentions',
+              'Actual ' + variant + ' chooser row reachability and Cancel'
+            )
+            await ui.selectMention(member)
+            await ui.assertKeyboard()
+            this.observations.push(
+              await observeComposerCaptureReady(ui, {
+                focused: true,
+                reply: false
+              })
+            )
+            await this.nativeKeyboardGeometry()
+            assert((await ui.draft()).includes('@' + member.name))
+            await ui.shot(
+              variant + '-mention-composer',
+              'Actual ' + variant + ' selected token and composer line-box'
+            )
+            if (!ui.native && variant === 'large-text')
+              await this.zoomedWebControlShot(
+                variant + '-send-chevron',
+                [
+                  {
+                    name: 'send',
+                    css: '[data-testid="chat-composer-band"] [aria-label="Send"]'
+                  },
+                  { name: 'chevron', css: '[data-testid="chat-jump-latest"]' }
+                ],
+                'Actual same-zoom enabled Send and persistent chevron in the visual viewport; original draft remains unsent'
+              )
+            if (ui.native) await ui.hideKeyboard()
+            await this.readable()
             this.observations.push({
               variant,
-              transitionCapture: recording,
-              sha256: digest(recording),
-              entranceAndDismissalObserved: true,
-              claim:
-                'Composition and reduced-motion transition comparison only; no pacing, smoothness or physical-haptic claim'
+              changedStates: [
+                'header/composer',
+                this.touchActions
+                  ? 'spotlight/actions'
+                  : 'desktop More/actions',
+                'info/members',
+                'floating pins',
+                'mention chooser/token',
+                'persistent chevron'
+              ],
+              actualReachabilityAndBounds: true
             })
+            if (!ui.native && variant === 'large-text') {
+              await this.revealZoomedWebControl(
+                variant + '-composer-reveal-final',
+                zoomedComposer
+              )
+              await this.tapZoomedWebControl(zoomedComposer)
+              await ui.replaceDraft('', { focused: true })
+            } else await ui.replaceDraft('')
+          },
+          async () => {
+            await this.openGroup()
           }
-          await this.openInfo()
-          await ui.present('chat-info-hero')
-          this.observations.push(await observeInfoCaptureReady(ui))
-          await ui.shot(
-            variant + '-info',
-            'Actual ' + variant + ' identity, mute control and member rows'
-          )
-          await this.showInfoMember()
-          await ui.shot(
-            variant + '-info-members',
-            'Actual ' +
-              variant +
-              ' current other-member safety row fully clear of header and bottom overlay'
-          )
-          await ui.back()
-          if (!ui.native && variant === 'large-text') {
-            await this.revealZoomedWebControl(
-              variant + '-composer-reveal',
-              zoomedComposer
-            )
-            await this.tapZoomedWebControl(zoomedComposer)
-            await ui.replaceDraft('', { focused: true })
-          } else await ui.replaceDraft('')
-          await ui.typeMentionTrigger()
-          await ui.device.assertVisible({ text: exactText('Mention a member') })
-          this.observations.push(await observeMentionHeader(ui))
-          if (!ui.native && variant === 'large-text') {
-            await this.zoomedWebControlShot(
-              variant + '-mention-heading-search',
-              [
-                {
-                  name: 'heading',
-                  css: '[data-testid="chat-picker-header"] *',
-                  text: 'Mention a member'
-                },
-                {
-                  name: 'search',
-                  css: '[data-testid="chat-picker-content"] [aria-label="Search members"]'
-                }
-              ],
-              'Actual same-zoom chooser heading and focused editable Search region in the visual viewport'
-            )
-            await this.zoomedWebControlShot(
-              variant + '-mention-cancel',
-              [
-                {
-                  name: 'cancel',
-                  css: '[data-testid="chat-picker-header"] button,[data-testid="chat-picker-header"] [role="button"]',
-                  text: 'Cancel'
-                }
-              ],
-              'Actual same-zoom Cancel control in a separately revealed visual viewport; not a combined header claim'
-            )
-          }
-          const member = need(
-            this.f.members.find(m => m.userId !== this.viewerId),
-            'Current mention member required'
-          )
-          await ui.present('chat-mention-member-' + member.userId)
-          await ui.shot(
-            variant + '-mentions',
-            'Actual ' + variant + ' chooser row reachability and Cancel'
-          )
-          await ui.selectMention(member)
-          await ui.assertKeyboard()
-          this.observations.push(
-            await observeComposerCaptureReady(ui, {
-              focused: true,
-              reply: false
-            })
-          )
-          await this.nativeKeyboardGeometry()
-          assert((await ui.draft()).includes('@' + member.name))
-          await ui.shot(
-            variant + '-mention-composer',
-            'Actual ' + variant + ' selected token and composer line-box'
-          )
-          if (!ui.native && variant === 'large-text')
-            await this.zoomedWebControlShot(
-              variant + '-send-chevron',
-              [
-                {
-                  name: 'send',
-                  css: '[data-testid="chat-composer-band"] [aria-label="Send"]'
-                },
-                { name: 'chevron', css: '[data-testid="chat-jump-latest"]' }
-              ],
-              'Actual same-zoom enabled Send and persistent chevron in the visual viewport; original draft remains unsent'
-            )
-          if (ui.native) await ui.hideKeyboard()
-          await this.readable()
-          this.observations.push({
-            variant,
-            changedStates: [
-              'header/composer',
-              this.touchActions ? 'spotlight/actions' : 'desktop More/actions',
-              'info/members',
-              'floating pins',
-              'mention chooser/token',
-              'persistent chevron'
-            ],
-            actualReachabilityAndBounds: true
-          })
-          if (!ui.native && variant === 'large-text') {
-            await this.revealZoomedWebControl(
-              variant + '-composer-reveal-final',
-              zoomedComposer
-            )
-            await this.tapZoomedWebControl(zoomedComposer)
-            await ui.replaceDraft('', { focused: true })
-          } else await ui.replaceDraft('')
-        })
+        )
       })
     }
   }

@@ -3,29 +3,37 @@ import { mkdir, readFile, rm, stat } from 'fs/promises'
 import { type Kysely, sql } from 'kysely'
 import { join } from 'path'
 
-import { canFilm, roleScopes } from '../access'
+import { canFilm, roleScopesForUsers } from '../access'
 import { hashToken } from '../auth/tokens'
+import type { ChangeFeed, FeedSubscription } from '../changeFeed/feed'
+import { anyOf } from '../db/anyOf'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { freeBytes, roomToRecord } from '../media/diskSpace'
 import { ffprobeFor, probeDuration, VIDEO_FILE } from '../media/ffmpeg'
+import { ValkeyPlaylistSink } from '../media/livePlaylists'
 import { posterSecond } from '../media/posters'
 import { presignGetUrl } from '../media/presign'
 import type { SpaceSettings } from '../media/spacesHls'
-import { spaceConfigured } from '../media/spacesHls'
+import { spaceConfigured, spaceKey } from '../media/spacesHls'
 import {
   deleteVideoFromSpace,
+  listSpaceObjects,
   uploadVideoDirectory,
   verifyVideoDirectory
 } from '../media/spacesVideo'
-import { ensureStill } from '../media/stills'
+import { ensureStill, type FrameSource } from '../media/stills'
 import {
   checkTrackStarts,
   isSoundStepProblem,
   soundStepProblem
 } from '../media/trackStarts'
+import { newSpaceSecret, oldVideoPrefix } from '../media/videoPrefix'
+import { parseMediaPlaylist } from '../media/wallClockScan'
 import { storeWallPoints } from '../media/wallTimeline'
+import type { ScoreboardClient } from '../scoreboard/scoreboardStore'
 import type { LiveSettings } from '../serverConfig'
+import { LIVE_LOCAL_TAIL_SEC, LIVE_RESYNC_MS } from '../serverConfigSchema'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
 import {
   isRecordingShape,
@@ -35,26 +43,36 @@ import {
   toRecording
 } from './finishVideo'
 import { OriginPublisher } from './originPublisher'
-import { quietStreamCanEnd } from './quietStream'
+import { quietStreamCanEnd, quietStreamEndsAt } from './quietStream'
 import { openSecret } from './secrets'
+import { spacePartReader } from './spacePieceReader'
 import {
   absorbWriterPlaylist,
   clearLive,
   clearLiveSettled,
   configureIngest,
+  type FinalPieces,
   finalSegments,
+  heldBackMessage,
   ingestBound,
   LIVE_PLAYLIST_NAME,
   type LiveEvent,
   type LiveSpec,
   type LiveStatus,
+  movableSegments,
   setLive,
   startIngest,
   statusFor,
-  stopIngest
+  stopIngest,
+  unlistedWriterSegments
 } from './splitter'
 import { placeByFrameWall } from './streamKeys'
-import { resumeScan, type ScanCursor, scanNewSegments } from './wallAnchors'
+import {
+  resumeScan,
+  type ScanCursor,
+  scanNewSegments,
+  SEGMENTS_PER_SCAN
+} from './wallAnchors'
 
 /**
  * What keeps the ingest and the database in step.
@@ -63,16 +81,35 @@ import { resumeScan, type ScanCursor, scanNewSegments } from './wallAnchors'
  * publish and where their video goes, and it says what happened. Everything
  * else — who owns the key, whether the window is open, what the video row
  * should say — lives here, and reaches the ingest through one short
- * synchronisation every second.
+ * synchronisation, `sync()`.
  *
- * That loop is also how the API talks to a stream. Nothing calls the ingest
- * directly: an endpoint writes the row and the next tick acts on it. It means
- * rotating a key or revoking one behaves the same
- * whether the API is one process or eight, and there is no channel between
- * them to go wrong.
+ * That is also how the API talks to a stream. Nothing calls the ingest
+ * directly: an endpoint writes the row, the row's trigger sends a
+ * `live_changes` notice when the write commits, and the sync it wakes acts on
+ * it. It means rotating a key or revoking one behaves the same whether the
+ * API is one process or eight, and there is no channel between them to go
+ * wrong. A sync also runs at the earliest moment a row said something will
+ * change on its own (a window closing, the reconnect grace running out, a
+ * quiet stream's end), after a gap in the change feed, when notices may have
+ * gone unheard, and every `live.resyncMs` whatever happened, for what no
+ * notice covers: an account disabled, a role taken away.
+ *
+ * Between syncs, a local timer that reads no stream's row keeps the uploads
+ * going, scans each stream's new segments for their wall clock and writes the
+ * status reports the ingest gathered, all of them in one statement.
  */
 
-const SYNC_INTERVAL_MS = 1000
+/** The local timer's period. */
+const LOCAL_TICK_MS = 1000
+/** How long a sync waits after a notice, so a burst of them is one sync. */
+const NOTICE_COALESCE_MS = 100
+/**
+ * How long the listing of an old video's prefix may take before the video
+ * stays on that path, as if it could not be listed.
+ */
+const ORIGIN_LIST_TIMEOUT_MS = 5000
+/** How far past a row's deadline its sync runs, so the deadline has passed. */
+const DEADLINE_SLACK_MS = 5
 /** Why a stream whose recording an upload replaced was closed. */
 export const REPLACED_BY_UPLOAD =
   'the recording uploaded from the phone replaced it'
@@ -136,6 +173,23 @@ export interface LiveControllerOptions {
    * that again.
    */
   freeBytes?: (path: string) => Promise<number>
+  /**
+   * Where `live_changes` notices come from. Without one (a test, a script)
+   * a sync runs only at a row's deadline and on the safety resync.
+   */
+  feed?: ChangeFeed
+  /** The Valkey connection the ingest's playlist sink writes through. */
+  playlistClient?: ScoreboardClient
+  /**
+   * The key prefix the playlist sink writes under,
+   * `scoreboardPrefix(redis.prefix, databaseUrl)`. With no client and prefix,
+   * playlists go to the Space alone.
+   */
+  playlistPrefix?: string
+  /** The local timer's period: a test runs it faster. */
+  tickMs?: number
+  /** How long the listing that decides an old video's secret may take. */
+  listTimeoutMs?: number
 }
 
 interface Tracked {
@@ -145,16 +199,47 @@ interface Tracked {
   lookedUpAt?: number
 }
 
+/** The local timer, which reads no stream's row. */
 let timer: NodeJS.Timeout | undefined
 let sweepTimer: NodeJS.Timeout | undefined
 let options: LiveControllerOptions | undefined
-/** The sync still running, so a slow one is never overlapped by the next tick. */
+/** The sync still running, so a slow one is never overlapped by the next. */
 let syncing: Promise<void> | undefined
+/** The local tick still running, which the next one skips for. */
+let ticking: Promise<void> | undefined
+/** When a local tick last wrote the status reports, which sets the next. */
+let statusWrittenAt = 0
+/** What runs a sync when nothing asked for one: present while started. */
+let scheduler: { log: (message: string) => void; resyncMs: number } | undefined
+/** The one timer waiting to run the next sync, and when it fires. */
+let syncTimer: NodeJS.Timeout | undefined
+let syncAt = Infinity
+/** Somebody asked for a sync while one was running: one more follows it. */
+let syncAgain = false
+/** The earliest moment the last sync's rows said something will change. */
+let nextDeadline = Infinity
+/** The videos the last sync's rows named, whose own notices wake a sync. */
+let syncedVideos = new Set<string>()
+let feedSubscription: FeedSubscription | undefined
 /** The local-copy sweep still running, for a stop to wait on. */
 let sweeping: Promise<void> | undefined
 /** Live stream id → what the ingest was last told, so it can be untold. */
 const tracked = new Map<string, Tracked>()
-const lastStatusWrite = new Map<string, number>()
+/**
+ * Live stream id → its newest status report since the last write, and when
+ * a report last said it was publishing.
+ */
+const pendingStatus = new Map<
+  string,
+  { status: LiveStatus; at: Date; publishedAt: Date | null }
+>()
+/**
+ * Video id → its playlist's size and modification time when its wall clock
+ * was last scanned to its end, so an unchanged playlist is not read again.
+ */
+const scannedPlaylists = new Map<string, { size: number; mtimeMs: number }>()
+/** How many wall-clock scans have run, for a test to see one did not. */
+let wallScans = 0
 /** Publisher events newer than a sync's database snapshot. */
 const publisherActivity = new Map<string, Date>()
 /** In-flight key lookups must not restore a key removed while they awaited. */
@@ -169,37 +254,64 @@ const closedAfterGrace = new Map<string, number>()
 const work = new Map<string, Promise<void>>()
 /** Video id → how far its live wall-clock scan has got. */
 const anchorCursors = new Map<string, ScanCursor>()
-interface PublishingOrigin {
+/** What the controller last read of an origin's video row. */
+interface OriginVideo {
+  /**
+   * Where its objects go, fixed when the origin starts: one recording never
+   * spans two prefixes, so a secret the row gains later is not taken up.
+   */
+  spaceSecret: string | null
+}
+interface PublishingOrigin extends OriginVideo {
   publisher: OriginPublisher
   current: LiveControllerOptions
   queued: boolean
+  /** Its video has gone, and its objects are being removed. */
+  removing: boolean
   refreshFinal: () => void
 }
 const origins = new Map<string, PublishingOrigin>()
 let originGeneration = 0
+/** One sink per Valkey client, so each list's expected length is known once. */
+const sinks = new WeakMap<ScoreboardClient, ValkeyPlaylistSink>()
+
+/** Where published bodies go besides the Space: Valkey, when configured. */
+function playlistSinkOf(
+  current: LiveControllerOptions
+): ValkeyPlaylistSink | undefined {
+  const { playlistClient: client, playlistPrefix: prefix } = current
+  if (client == null || prefix == null) return undefined
+  let sink = sinks.get(client)
+  if (sink == null) {
+    sink = new ValkeyPlaylistSink(client, prefix, current.log ?? console.log)
+    sinks.set(client, sink)
+  }
+  return sink
+}
 
 function startOrigin(
   current: LiveControllerOptions,
   videoId: string,
-  liveStreamId: string
+  liveStreamId: string,
+  video: OriginVideo
 ): PublishingOrigin | undefined {
   const { space, db } = current
   if (space == null || !spaceConfigured(space)) return undefined
   const held = origins.get(videoId)
   if (held != null) return held
-  let final: ReadonlySet<string> | undefined
+  let final: FinalPieces | undefined
+  let movable: ReadonlySet<string> = new Set()
   const publisher = new OriginPublisher({
     space,
     videoId,
+    spaceSecret: video.spaceSecret,
     dir: liveVideoDir(current.mediaRoot, videoId),
     ffmpegPath: current.ffmpegPath,
     isFinal: name => final?.has(name) ?? true,
-    rowExists: async () =>
-      (await db
-        .selectFrom('videos')
-        .select('id')
-        .where('id', '=', videoId)
-        .executeTakeFirst()) != null,
+    mayMove: name => movable.has(name),
+    localTailSec: current.live.localTailSec ?? LIVE_LOCAL_TAIL_SEC,
+    scanned: () => anchorCursors.get(videoId),
+    playlistSink: playlistSinkOf(current),
     onFirstSegment: async probe => {
       await db
         .updateTable('videos')
@@ -229,15 +341,65 @@ function startOrigin(
     }
   })
   const origin = {
+    ...video,
     publisher,
     current,
     queued: false,
+    removing: false,
     refreshFinal: () => {
       final = finalSegments(liveStreamId)
+      movable = movableSegments(liveStreamId)
     }
   }
   origins.set(videoId, origin)
   return origin
+}
+
+/**
+ * The secret a video's origin publishes under. A row with one keeps it. A row
+ * from before secrets gets one here, only when nothing is listed under its
+ * old prefix `videos/<id>/`: one with objects there keeps publishing there,
+ * with no secret, so one recording never spans two prefixes, and the move
+ * script moves it later. A row that has gone, or a Space that cannot be
+ * asked, leaves it as it is.
+ */
+async function originSecret(
+  current: LiveControllerOptions,
+  videoId: string,
+  held: string | null
+): Promise<string | null> {
+  const { db, space } = current
+  if (held != null || space == null || !spaceConfigured(space)) return held
+  // A Space that cannot be listed leaves it on its old path, as it was; so
+  // does one that does not answer in time, which would otherwise hold the
+  // start (every stream's restore waits on it) or the reconnect for minutes.
+  const listed = await listSpaceObjects(space, oldVideoPrefix(videoId), {
+    timeoutMs: current.listTimeoutMs ?? ORIGIN_LIST_TIMEOUT_MS
+  }).catch((error: unknown) => {
+    ;(current.log ?? console.log)(
+      `live: ${videoId} stays on its old path: ${String(error)}`
+    )
+    return undefined
+  })
+  // Stills stay under the old prefix whatever the secret, as the move script
+  // leaves them: only media there would split the recording.
+  if (
+    listed == null ||
+    listed.some(key => !key.startsWith(`${oldVideoPrefix(videoId)}stills/`))
+  )
+    return null
+  const filled = await sql<{ space_secret: string | null }>`
+    update videos set space_secret = ${newSpaceSecret()}
+     where id = ${videoId} and space_secret is null
+    returning space_secret`.execute(db)
+  if (filled.rows.length > 0) return filled.rows[0].space_secret
+  // Somebody else gave it one first, or the row has gone.
+  const row = await db
+    .selectFrom('videos')
+    .select('space_secret')
+    .where('id', '=', videoId)
+    .executeTakeFirst()
+  return row?.space_secret ?? null
 }
 
 function stopOrigin(videoId: string): void {
@@ -252,21 +414,35 @@ function queueOrigin(videoId: string, origin: PublishingOrigin): void {
   queue(`publish:${videoId}`, async () => {
     try {
       if (generation !== originGeneration) return
-      const { current } = origin
-      const row = await current.db
-        .selectFrom('videos')
-        .select('id')
-        .where('id', '=', videoId)
-        .executeTakeFirst()
-      if (row == null) {
-        await removeDeletedOrigin(current, videoId)
-        return
-      }
-      if (origin.publisher.closing) return
+      if (origin.publisher.closing || origin.removing) return
       origin.refreshFinal()
       await origin.publisher.flush()
     } finally {
       origin.queued = false
+    }
+  })
+}
+
+/**
+ * A video the last sync found gone: its publisher stops now, and once any
+ * upload in flight has finished — the same queue — everything it put in the
+ * Space is removed. That runs after the last upload, so an object uploaded
+ * while the API was deleting the video goes too. A removal that fails leaves
+ * the origin held, and the next sync tries it again.
+ */
+function removeDeletedVideo(
+  current: LiveControllerOptions,
+  videoId: string
+): void {
+  const origin = origins.get(videoId)
+  if (origin == null || origin.removing) return
+  origin.removing = true
+  origin.publisher.stop()
+  queue(`publish:${videoId}`, async () => {
+    try {
+      await removeDeletedOrigin(current, videoId)
+    } finally {
+      origin.removing = false
     }
   })
 }
@@ -286,7 +462,7 @@ export function liveVideoDir(mediaRoot: string, videoId: string): string {
 const BIND_TIMEOUT_MS = 10_000
 
 /**
- * Starts the ingest and the loop that keeps it in step with the database.
+ * Starts the ingest and what keeps it in step with the database.
  *
  * Nothing is touched until this process holds the RTMP port. A port somebody
  * else holds — a leftover server, another seat — means somebody else's
@@ -315,6 +491,12 @@ export async function startLiveController(
     log,
     resolve: async key => await resolveKey(key),
     onEvent: event => {
+      // A report is only held for the next batched write: nothing to wait
+      // behind.
+      if (event.type === 'status') {
+        if (generation === originGeneration) gatherStatus(event.status)
+        return
+      }
       queue(event.key, async () => {
         if (generation === originGeneration) await handle(event)
       })
@@ -354,25 +536,53 @@ export async function startLiveController(
   const restoring = await next.db
     .selectFrom('live_streams')
     .innerJoin('videos', 'videos.id', 'live_streams.video_id')
-    .select(['live_streams.id', 'videos.id as videoId'])
+    .select([
+      'live_streams.id',
+      'videos.id as videoId',
+      'videos.space_secret as spaceSecret'
+    ])
     .where('live_streams.ended_at', 'is', null)
     .where('videos.spaces_verified_at', 'is', null)
     .execute()
-  for (const row of restoring) {
-    if (
-      (await hasMedia(next.mediaRoot, row.videoId)) &&
-      generation === originGeneration
-    ) {
-      const origin = startOrigin(next, row.videoId, row.id)
-      if (origin != null) queueOrigin(row.videoId, origin)
-    }
+  // Every stream's secret at once: a Space slow to list holds the start for
+  // one listing, not one per stream. The origins then start in order.
+  const secrets = await Promise.all(
+    restoring.map(async row =>
+      (await hasMedia(next.mediaRoot, row.videoId))
+        ? await originSecret(next, row.videoId, row.spaceSecret)
+        : undefined
+    )
+  )
+  for (const [index, row] of restoring.entries()) {
+    const spaceSecret = secrets[index]
+    if (spaceSecret === undefined) continue
+    if (generation !== originGeneration) break
+    const origin = startOrigin(next, row.videoId, row.id, { spaceSecret })
+    if (origin != null) queueOrigin(row.videoId, origin)
   }
 
   if (generation !== originGeneration) return false
+  // Listening before the first sync, so nothing committed between that
+  // sync's read and the channel being in place goes unheard.
+  if (next.feed != null) {
+    feedSubscription = next.feed.subscribe('live_changes', {
+      onPayload: payload => {
+        if (wantsSync(payload)) scheduleSync(Date.now() + NOTICE_COALESCE_MS)
+      },
+      onListening: first => {
+        if (!first) scheduleSync(Date.now())
+      }
+    })
+    await feedSubscription.listening
+    if (generation !== originGeneration) return false
+  }
+  scheduler = { log, resyncMs: next.live.resyncMs ?? LIVE_RESYNC_MS }
+  statusWrittenAt = Date.now()
   timer = setInterval(() => {
-    syncOnce(log).catch(() => {})
-  }, SYNC_INTERVAL_MS)
+    localTick(next, generation, log)
+  }, next.tickMs ?? LOCAL_TICK_MS)
   timer.unref?.()
+  scheduleSync(Date.now())
 
   // Once on the way up as well as on the timer: a machine that was off for a
   // day comes back with a day's worth of copies to let go of, and waiting five
@@ -407,7 +617,7 @@ export async function drainLiveController(): Promise<void> {
   // finish from a sync or a sweep, an event from a writer that has just
   // exited.
   const inHand = (): Array<Promise<void>> =>
-    [syncing, sweeping, ...work.values()].filter(
+    [syncing, ticking, sweeping, ...work.values()].filter(
       (p): p is Promise<void> => p != null
     )
   for (let pending = inHand(); pending.length > 0; pending = inHand()) {
@@ -415,17 +625,91 @@ export async function drainLiveController(): Promise<void> {
   }
 }
 
-/** Test seam: whether the sync or the sweep is on its timer. */
+/** Test seam: whether the local timer, a sync's or the sweep's is set. */
 export function liveTimersRunningForTest(): boolean {
-  return timer != null || sweepTimer != null
+  return timer != null || syncTimer != null || sweepTimer != null
 }
 
 /**
- * One tick of the controller's timer: a sync, unless the last one is still
- * running. Under load a sync can take longer than the tick, and two at once
- * each read the ingest before the other wrote — the second then took a stream
- * the first had just opened for one that was no longer open, and dropped its
- * first publisher. Skipping the tick lets the next one see the settled state.
+ * Whether a `live_changes` payload asks for a sync: any stream or game
+ * notice, and a video's only when that video is one of the last sync's rows
+ * or has an origin here. Every other video's change — a programme's, an
+ * upload's — is somebody else's business. A payload that does not read is
+ * taken as a reason to look.
+ */
+function wantsSync(payload: string | undefined): boolean {
+  let notice: unknown
+  try {
+    notice = JSON.parse(payload ?? '')
+  } catch {
+    return true
+  }
+  if (notice == null || typeof notice !== 'object') return true
+  const { s, g, v } = notice as { s?: unknown; g?: unknown; v?: unknown }
+  if (s !== undefined || g !== undefined) return true
+  if (typeof v !== 'string') return true
+  return syncedVideos.has(v) || origins.has(v)
+}
+
+/**
+ * Runs a sync at `at`, or sooner if one is already due sooner. One timer
+ * holds the earliest: a notice's, a deadline's or the safety resync's.
+ */
+function scheduleSync(at: number): void {
+  if (scheduler == null || at >= syncAt) return
+  clearTimeout(syncTimer)
+  syncAt = at
+  syncTimer = setTimeout(
+    () => {
+      syncTimer = undefined
+      syncAt = Infinity
+      runSync()
+    },
+    Math.max(0, at - Date.now())
+  )
+  syncTimer.unref?.()
+}
+
+/**
+ * A sync now, and then the next one at the earliest of the deadlines it found
+ * and the safety resync. Asked for while one runs, another follows it at
+ * once: the running one may have read before what it was asked about
+ * committed.
+ */
+function runSync(): void {
+  const running = scheduler
+  if (running == null) return
+  if (syncing != null) {
+    syncAgain = true
+    return
+  }
+  syncOnce(running.log)
+    .then(() => {
+      if (scheduler !== running) {
+        // Stopped while it ran, and started again without a drain: the new
+        // start's sync, asked for while this one ran, follows it now, since
+        // nothing else will ask without a feed.
+        if (scheduler != null && syncAgain) {
+          syncAgain = false
+          scheduleSync(Date.now())
+        }
+        return
+      }
+      if (syncAgain) {
+        syncAgain = false
+        scheduleSync(Date.now())
+      }
+      scheduleSync(Math.min(Date.now() + running.resyncMs, nextDeadline))
+    })
+    .catch(() => {})
+}
+
+/**
+ * One sync, unless the last one is still running. Under load a sync can take
+ * a while, and two at once each read the ingest before the other wrote — the
+ * second then took a stream the first had just opened for one that was no
+ * longer open, and dropped its first publisher. The caller asks again once
+ * the running one has settled.
  */
 export async function syncOnce(
   log: (message: string) => void,
@@ -434,6 +718,11 @@ export async function syncOnce(
   if (syncing != null) return
   syncing = run()
     .catch((error: unknown) => {
+      // A failed sync found no deadline. The one that woke it has passed, and
+      // kept, it would schedule the next sync at once, which fails the same
+      // way for as long as the database does: the next waits for the resync
+      // or a notice instead.
+      nextDeadline = Infinity
       log(`live: ${String(error)}`)
     })
     .finally(() => {
@@ -512,7 +801,7 @@ async function retryTheSpace(current: LiveControllerOptions): Promise<void> {
   // moves. Left in, five of them would fill this window for that month.
   const rows = await db
     .selectFrom('videos')
-    .select(['id'])
+    .select(['id', 'space_secret'])
     .where('kind', '=', 'live')
     .where('status', '=', 'ready')
     .where('storage', '=', 'local')
@@ -539,7 +828,7 @@ async function retryTheSpace(current: LiveControllerOptions): Promise<void> {
       unpacked ??= row.id
       continue
     }
-    await toTheSpace(current, row.id, dir, RECORDING_FILES)
+    await toTheSpace(current, row.id, row.space_secret, dir, RECORDING_FILES)
     return
   }
   if (unpacked == null) return
@@ -549,12 +838,12 @@ async function retryTheSpace(current: LiveControllerOptions): Promise<void> {
   queue(`publish:${videoId}`, async () => {
     const still = await db
       .selectFrom('videos')
-      .select('id')
+      .select(['id', 'space_secret'])
       .where('id', '=', videoId)
       .where('storage', '=', 'local')
       .where('replaced_by', 'is', null)
       .executeTakeFirst()
-    if (still != null) await putAway(current, videoId)
+    if (still != null) await putAway(current, videoId, still.space_secret)
   })
 }
 
@@ -562,6 +851,17 @@ export function stopLiveController(): void {
   originGeneration++
   for (const origin of origins.values()) origin.publisher.stop()
   origins.clear()
+  scheduler = undefined
+  feedSubscription?.stop()
+  feedSubscription = undefined
+  if (syncTimer != null) {
+    clearTimeout(syncTimer)
+    syncTimer = undefined
+  }
+  syncAt = Infinity
+  syncAgain = false
+  nextDeadline = Infinity
+  syncedVideos = new Set()
   if (timer != null) {
     clearInterval(timer)
     timer = undefined
@@ -572,7 +872,8 @@ export function stopLiveController(): void {
   }
   stopIngest()
   tracked.clear()
-  lastStatusWrite.clear()
+  pendingStatus.clear()
+  scannedPlaylists.clear()
   publisherActivity.clear()
   anchorCursors.clear()
   closedAfterGrace.clear()
@@ -633,14 +934,7 @@ async function handle(
   const { db } = current
 
   if (event.type === 'status') {
-    const at = lastStatusWrite.get(event.key) ?? 0
-    const now = Date.now()
-    // Every tick of every stream would be a write a second for a whole game.
-    // A stale snapshot is only ever two seconds stale, which is well inside
-    // how long a person takes to read it.
-    if (now - at < STATUS_WRITE_MS) return
-    lastStatusWrite.set(event.key, now)
-    await writeStatus(db, event.status)
+    gatherStatus(event.status)
     return
   }
 
@@ -668,26 +962,147 @@ async function handle(
   await stoppedPublishing(current, event.liveStreamId, event.reason)
 }
 
-async function writeStatus(
-  db: Kysely<Database>,
-  status: LiveStatus
-): Promise<void> {
-  const now = new Date()
-  await db
-    .updateTable('live_streams')
-    .set({
-      status,
-      status_at: now,
-      // Moved every time video is arriving, not only when a publish starts and
-      // stops. It is what "this stream has been silent for ten minutes" is
-      // measured from, and a stamp that never moved meant any game longer than
-      // ten minutes looked silent the moment anything else made the row read
-      // `idle` — a restart, most of all. The recording was then closed under a
-      // game that was still being played.
-      ...(status.ingress.publishing ? { last_published_at: now } : {})
+/** Holds a stream's newest report for the next batched write. */
+function gatherStatus(status: LiveStatus): void {
+  const at = new Date()
+  const held = pendingStatus.get(status.liveStreamId)
+  pendingStatus.set(status.liveStreamId, {
+    status,
+    at,
+    publishedAt: status.ingress.publishing ? at : (held?.publishedAt ?? null)
+  })
+}
+
+/**
+ * Writes every report gathered since the last write, in one statement.
+ *
+ * Every report of every stream would be a write a second for a whole game.
+ * A snapshot is only ever two seconds stale, which is well inside how long a
+ * person takes to read it. These columns send no `live_changes` notice, so
+ * the ingest does not wake itself with them.
+ *
+ * `last_published_at` moves every time video is arriving, not only when a
+ * publish starts and stops. It is what "this stream has been silent for ten
+ * minutes" is measured from, and a stamp that never moved meant any game
+ * longer than ten minutes looked silent the moment anything else made the row
+ * read `idle` — a restart, most of all. The recording was then closed under a
+ * game that was still being played. It never moves back: a report gathered
+ * before the publisher left is written after the stop stamped the row.
+ */
+async function writeStatuses(db: Kysely<Database>): Promise<void> {
+  if (pendingStatus.size === 0) return
+  const reports = [...pendingStatus.entries()]
+  const values = reports.map(
+    ([, report]) =>
+      sql`(${report.status.liveStreamId}, ${JSON.stringify(report.status)}::jsonb, ${report.at}::timestamptz, ${report.publishedAt}::timestamptz)`
+  )
+  await sql`update live_streams set status = v.status, status_at = v.at,
+  last_published_at = greatest(v.published_at, live_streams.last_published_at)
+from (values ${sql.join(values)}) as v(id, status, at, published_at)
+where live_streams.id = v.id`.execute(db)
+  // Only once written, and only the reports this wrote: a write that failed
+  // leaves them for the next, and a report gathered while it ran is newer
+  // than the one it wrote and waits for the next write as well.
+  for (const [liveStreamId, report] of reports)
+    if (pendingStatus.get(liveStreamId) === report)
+      pendingStatus.delete(liveStreamId)
+}
+
+/**
+ * The local timer: no stream's row is read here. Each tick queues every
+ * origin's flush, writes the gathered status reports every
+ * `STATUS_WRITE_MS`, and scans the wall clock of every stream whose playlist
+ * has changed. A tick still running when the next is due is not overlapped.
+ */
+function localTick(
+  current: LiveControllerOptions,
+  generation: number,
+  log: (message: string) => void
+): void {
+  if (ticking != null || generation !== originGeneration) return
+  // Due by the time since the last write, not by which tick this is: a tick
+  // that outlasts its interval makes the next one skip, and every tick that
+  // runs could then be one a count of ticks says is not due. A write that
+  // came due during a skipped tick is the next running tick's. Half a tick
+  // early counts, for the timer's jitter. A test's faster tick writes as many
+  // ticks apart as production's.
+  const tickMs = current.tickMs ?? LOCAL_TICK_MS
+  const now = Date.now()
+  const statusDue =
+    now - statusWrittenAt >=
+    (STATUS_WRITE_MS / LOCAL_TICK_MS) * tickMs - tickMs / 2
+  if (statusDue) statusWrittenAt = now
+  ticking = (async () => {
+    for (const [videoId, origin] of origins) queueOrigin(videoId, origin)
+    if (statusDue) {
+      try {
+        await writeStatuses(current.db)
+      } catch (error) {
+        log(`live: status: ${String(error)}`)
+      }
+    }
+    await scanWallClocks(current, generation)
+  })()
+    .catch((error: unknown) => {
+      log(`live: ${String(error)}`)
     })
-    .where('id', '=', status.liveStreamId)
-    .execute()
+    .finally(() => {
+      ticking = undefined
+    })
+}
+
+/** Test seam: how many wall-clock scans have run in this process. */
+export function wallScansForTest(): number {
+  return wallScans
+}
+
+/** Test seam: one local tick, statuses included, settled. */
+export async function localTickForTest(
+  current: LiveControllerOptions
+): Promise<void> {
+  await ticking
+  for (const [videoId, origin] of origins) queueOrigin(videoId, origin)
+  await writeStatuses(current.db)
+  await scanWallClocks(current, originGeneration)
+}
+
+/**
+ * Scans the new segments of every stream the ingest holds a video for, with
+ * a Space or without one, whose playlist's size or modification time moved
+ * since its last scan to the end. A scan that failed, or stopped at
+ * `SEGMENTS_PER_SCAN` with more to read, is tried again on the next tick
+ * whatever the playlist says.
+ */
+async function scanWallClocks(
+  current: LiveControllerOptions,
+  generation: number
+): Promise<void> {
+  const seen = new Set<string>()
+  for (const { videoId } of [...tracked.values()]) {
+    if (videoId == null || seen.has(videoId)) continue
+    if (generation !== originGeneration) return
+    seen.add(videoId)
+    const dir = liveVideoDir(current.mediaRoot, videoId)
+    const info = await stat(join(dir, LIVE_PLAYLIST_NAME)).catch(
+      () => undefined
+    )
+    if (info == null) continue
+    const held = scannedPlaylists.get(videoId)
+    if (
+      held?.size === info.size &&
+      held.mtimeMs === info.mtimeMs &&
+      anchorCursors.has(videoId)
+    )
+      continue
+    scannedPlaylists.delete(videoId)
+    if (await recordWallPoints(current, videoId, dir))
+      scannedPlaylists.set(videoId, {
+        size: info.size,
+        mtimeMs: info.mtimeMs
+      })
+  }
+  for (const videoId of [...scannedPlaylists.keys()])
+    if (!seen.has(videoId)) scannedPlaylists.delete(videoId)
 }
 
 /**
@@ -708,14 +1123,16 @@ export async function beganPublishing(
   publisherActivity.set(liveStreamId, now)
   const row = await db
     .selectFrom('live_streams')
+    .leftJoin('videos', 'videos.id', 'live_streams.video_id')
     .select([
-      'video_id as videoId',
-      'first_published_at as firstPublishedAt',
-      'user_id as userId',
-      'game_id as gameId',
-      'team_id as teamId'
+      'live_streams.video_id as videoId',
+      'live_streams.first_published_at as firstPublishedAt',
+      'live_streams.user_id as userId',
+      'live_streams.game_id as gameId',
+      'live_streams.team_id as teamId',
+      'videos.space_secret as videoSpaceSecret'
     ])
-    .where('id', '=', liveStreamId)
+    .where('live_streams.id', '=', liveStreamId)
     .executeTakeFirst()
   if (row == null) return
   if (!(await mayPublish(db, row))) {
@@ -768,8 +1185,15 @@ export async function beganPublishing(
     row.videoId != null &&
     generation === originGeneration
   ) {
-    const origin = startOrigin(current, row.videoId, liveStreamId)
-    if (origin != null) queueOrigin(row.videoId, origin)
+    const videoId = row.videoId
+    const spaceSecret = origins.has(videoId)
+      ? null
+      : await originSecret(current, videoId, row.videoSpaceSecret)
+    if (generation !== originGeneration) return
+    const origin = startOrigin(current, videoId, liveStreamId, {
+      spaceSecret
+    })
+    if (origin != null) queueOrigin(videoId, origin)
   }
 }
 
@@ -842,12 +1266,12 @@ async function hasMedia(mediaRoot: string, videoId: string): Promise<boolean> {
 /**
  * One key, looked up the moment somebody tries to use it.
  *
- * The timer below keeps the ingest's set of keys current, but a stream created
- * seconds ago is not in it yet — and that is exactly when a URL gets used,
+ * The sync below keeps the ingest's set of keys current, but a stream created
+ * a moment ago may not be in it yet — and that is exactly when a URL gets used,
  * because the person was just handed it. So a key the ingest does not know is
  * checked against the database once, rather than refused.
  *
- * The check is the same one the timer makes: the key exists, it has not been
+ * The check is the same one the sync makes: the key exists, it has not been
  * revoked or finished, and now is inside its window.
  */
 export async function resolveKey(
@@ -944,8 +1368,10 @@ function millisOf(value: Date | string | null | undefined): number | undefined {
 }
 
 /**
- * Every second: hand the ingest the keys that may publish now, take away the
- * ones that may not, and close anything whose window has run out.
+ * Hands the ingest the keys that may publish now, takes away the ones that may
+ * not, and closes anything whose window has run out. Notes the earliest
+ * moment a row says that will change by itself, for the next sync to run
+ * then, and removes what a video that has gone left in the Space.
  */
 export async function sync(
   /** The running controller's, except in a test that has its own. */
@@ -991,7 +1417,7 @@ export async function sync(
     .orderBy('live_streams.id')
     .execute()
 
-  // One syscall a second, and only asked at all when there is something that
+  // One syscall a sync, and only asked at all when there is something that
   // might want to start.
   const measure = current.freeBytes ?? freeBytes
   const room =
@@ -1021,7 +1447,22 @@ export async function sync(
     )
   }
   let failure: { error: unknown } | undefined
+  // The moments a row says something will change with nobody writing it.
+  let soonest = Infinity
+  const changesAt = (at: number | undefined): void => {
+    if (at != null && at > now.getTime() && at < soonest) soonest = at
+  }
+  // A moment that has come but whose action waits on the ingest (work in
+  // flight, a publisher still reported) writes no row and sends no notice:
+  // asked again a tick from now, not at the next resync.
+  const deferred = (): void => {
+    soonest = Math.min(soonest, Date.now() + LOCAL_TICK_MS)
+  }
   try {
+    const authorized = await publishingAuthority(
+      db,
+      rows.filter(row => row.state !== 'revoked')
+    )
     for (const row of rows) {
       if (row.state === 'revoked' || row.state === 'ended') {
         finish(
@@ -1032,7 +1473,7 @@ export async function sync(
         )
         continue
       }
-      if (!(await mayPublish(db, row))) {
+      if (!authorized.has(row.id)) {
         await revokePublishing(db, row.id, now)
         finish(row.id, 'streaming permission was removed')
         continue
@@ -1061,6 +1502,11 @@ export async function sync(
                 )
               )
             }
+      changesAt(millisOf(row.opensAt))
+      changesAt(millisOf(row.closesAt))
+      changesAt(quietStreamEndsAt(quietRow))
+      if (row.state === 'idle' && row.lastPublishedAt != null)
+        changesAt((millisOf(row.lastPublishedAt) ?? 0) + RECONNECT_GRACE_MS + 1)
       if (quietStreamCanEnd(quietRow, now)) {
         const key = tracked.get(row.id)?.key
         if (
@@ -1070,9 +1516,10 @@ export async function sync(
           finish(row.id, 'the stream was quiet after the scheduled game end')
           continue
         }
+        deferred()
       }
       if (row.videoId == null) continue
-      await closeAfterGrace(current, row, now)
+      if (await closeAfterGrace(current, row, now)) deferred()
 
       // A stream already running is left alone: cutting a game off part way
       // through is worse than letting it use the last of the disk, and ffmpeg
@@ -1118,7 +1565,6 @@ export async function sync(
       })
       tracked.set(row.id, { key, videoId: row.videoId })
       wanted.add(key)
-      await recordWallPoints(current, row.videoId, hlsDir)
     }
 
     // Anything the ingest still holds that this pass did not ask for: a revoked
@@ -1131,6 +1577,9 @@ export async function sync(
       clearLive(entry.key, 'no longer open')
       tracked.delete(liveStreamId)
     }
+
+    await settleOrigins(current, rows, generation)
+    nextDeadline = soonest + DEADLINE_SLACK_MS
   } catch (error) {
     failure = { error }
   }
@@ -1141,10 +1590,41 @@ export async function sync(
   // finish's, as it was when they ran in turn.
   const finished = await Promise.all(finishing)
   failure ??= finished.find(one => one != null)
-  if (generation === originGeneration) {
-    for (const [videoId, origin] of origins) queueOrigin(videoId, origin)
-  }
   if (failure != null) throw failure.error
+}
+
+/**
+ * What a sync's rows say about the origins held here. A video not among them
+ * is looked up, all of them in one read, and one whose row has gone is
+ * removed from the Space. The rows' videos are the ones whose own notices
+ * wake a sync.
+ *
+ * The row's `space_secret` is not taken up by an origin already publishing:
+ * its objects stay under the prefix it started on (its `spaceSecret`), and
+ * only the move script, run while no game is live, moves a video.
+ */
+async function settleOrigins(
+  current: LiveControllerOptions,
+  rows: ReadonlyArray<{ videoId: string | null }>,
+  generation: number
+): Promise<void> {
+  const listed = new Set<string>()
+  for (const row of rows) {
+    if (row.videoId == null) continue
+    listed.add(row.videoId)
+  }
+  syncedVideos = listed
+  const unlisted = [...origins.keys()].filter(videoId => !listed.has(videoId))
+  if (unlisted.length === 0 || generation !== originGeneration) return
+  const present = await current.db
+    .selectFrom('videos')
+    .select('id')
+    .where('id', '=', anyOf(unlisted))
+    .execute()
+  if (generation !== originGeneration) return
+  const still = new Set(present.map(row => row.id))
+  for (const videoId of unlisted)
+    if (!still.has(videoId)) removeDeletedVideo(current, videoId)
 }
 
 /**
@@ -1156,7 +1636,8 @@ export async function sync(
  * process too. A stream the ingest says is publishing again is left alone
  * whatever the row says: the row learns of a reconnect a moment after the
  * ingest does, and closing the playlist then would put an `ENDLIST` under a
- * writer that has just started appending to it.
+ * writer that has just started appending to it. Says whether the close is
+ * due and waits on that, so the sync asks again soon.
  */
 async function closeAfterGrace(
   current: LiveControllerOptions,
@@ -1167,26 +1648,33 @@ async function closeAfterGrace(
     lastPublishedAt: Date | string | null
   },
   now: Date
-): Promise<void> {
+): Promise<boolean> {
   if (row.state !== 'idle' || row.lastPublishedAt == null) {
     closedAfterGrace.delete(row.id)
-    return
+    return false
   }
   const leftAt = new Date(row.lastPublishedAt).getTime()
-  if (now.getTime() - leftAt <= RECONNECT_GRACE_MS) return
-  if (closedAfterGrace.get(row.id) === leftAt) return
+  if (now.getTime() - leftAt <= RECONNECT_GRACE_MS) return false
+  if (closedAfterGrace.get(row.id) === leftAt) return false
   const key = tracked.get(row.id)?.key
   const away = (): boolean =>
     key == null || statusFor(key)?.ingress.publishing !== true
-  if (!away()) return
-  if (row.videoId == null) return
+  // Due, but the ingest still reports the publisher: the caller asks again.
+  if (!away()) return true
+  if (row.videoId == null) return false
   closedAfterGrace.set(row.id, leftAt)
-  await closePlaylist(current.mediaRoot, row.videoId, away)
+  await closePlaylist(
+    current.mediaRoot,
+    row.videoId,
+    current.log ?? console.log,
+    away
+  )
+  return false
 }
 
 /**
  * Adds the wall-clock points of the segments the stream has written since the
- * last tick.
+ * last scan. Says whether the scan reached the end of the playlist.
  *
  * Idle streams too, not only publishing ones: the writer finishes the last
  * segment of a publish after the publisher has gone, and a segment found only
@@ -1199,15 +1687,16 @@ async function closeAfterGrace(
  * points already stored (`resumeScan`), and one look reads a few segments at
  * most (`SEGMENTS_PER_SCAN`), so neither a long stream nor a backlog holds the
  * tick up. The scan reads the clock itself, once it has read the playlist:
- * the tick's own `now` comes before its database and disk work, which can
- * take seconds on a busy machine.
+ * a `now` taken before the tick's disk work, which can take seconds on a busy
+ * machine, would date segments listed meanwhile too early.
  */
 async function recordWallPoints(
   current: LiveControllerOptions,
   videoId: string,
   hlsDir: string
-): Promise<void> {
+): Promise<boolean> {
   const say = current.log ?? console.log
+  wallScans++
   try {
     const cursor =
       anchorCursors.get(videoId) ??
@@ -1217,8 +1706,10 @@ async function recordWallPoints(
     anchorCursors.set(videoId, scanned.cursor)
     for (const problem of scanned.unreadable)
       say(`live: wall clock of ${videoId}: passed over ${problem}`)
+    return scanned.cursor.segments - cursor.segments < SEGMENTS_PER_SCAN
   } catch (error) {
     say(`live: wall clock of ${videoId}: ${String(error)}`)
+    return false
   }
 }
 
@@ -1227,29 +1718,57 @@ async function mayPublish(
   db: Kysely<Database>,
   row: { userId: string; gameId: string; teamId: string }
 ): Promise<boolean> {
-  const user = await db
+  const may = await publishingAuthority(db, [{ ...row, id: 'this row' }])
+  return may.has('this row')
+}
+
+/**
+ * The ids of those rows whose key may publish now, in one set of reads however
+ * many rows there are: each sync asks about all of them.
+ */
+export async function publishingAuthority(
+  db: Kysely<Database>,
+  rows: ReadonlyArray<{
+    id: string
+    userId: string
+    gameId: string
+    teamId: string
+  }>
+): Promise<Set<string>> {
+  const authorized = new Set<string>()
+  if (rows.length === 0) return authorized
+  const users = await db
     .selectFrom('users')
-    .select(['is_admin', 'disabled_at', 'merged_into', 'login_enabled'])
-    .where('id', '=', row.userId)
-    .executeTakeFirst()
-  if (
-    user == null ||
-    user.disabled_at != null ||
-    user.merged_into != null ||
-    !user.login_enabled
-  )
-    return false
-  const game = await db
+    .select('id')
+    .where('id', '=', anyOf([...new Set(rows.map(row => row.userId))]))
+    .where('disabled_at', 'is', null)
+    .where('merged_into', 'is', null)
+    .where('login_enabled', '=', true)
+    .execute()
+  const active = new Set(users.map(user => user.id))
+  const ofActive = rows.filter(row => active.has(row.userId))
+  if (ofActive.length === 0) return authorized
+
+  const games = await db
     .selectFrom('games')
-    .select(['home_team_id', 'away_team_id'])
-    .where('id', '=', row.gameId)
-    .executeTakeFirst()
-  if (
-    game == null ||
-    ![game.home_team_id, game.away_team_id].includes(row.teamId)
+    .select(['id', 'home_team_id', 'away_team_id'])
+    .where('id', '=', anyOf([...new Set(ofActive.map(row => row.gameId))]))
+    .execute()
+  const sides = new Map(
+    games.map(game => [game.id, [game.home_team_id, game.away_team_id]])
   )
-    return false
-  return canFilm(await roleScopes(db, row.userId, user.is_admin), row.teamId)
+  const onASide = ofActive.filter(
+    row => sides.get(row.gameId)?.includes(row.teamId) === true
+  )
+  if (onASide.length === 0) return authorized
+
+  const scopes = await roleScopesForUsers(
+    db,
+    onASide.map(row => row.userId)
+  )
+  for (const row of onASide)
+    if (canFilm(scopes.get(row.userId)!, row.teamId)) authorized.add(row.id)
+  return authorized
 }
 
 /** Lost authority permanently invalidates the old key, even if later restored. */
@@ -1279,10 +1798,10 @@ async function revokePublishing(
 /**
  * Writes a reason on a stream's row, but only when it is news.
  *
- * This loop runs every second, and a condition it reports — no disk, a key it
- * cannot read — lasts until somebody does something about it. Writing the same
- * sentence eighty-six thousand times a day would say nothing new and would
- * move `updated_at` every second of it.
+ * The sync runs many times a day, and a condition it reports — no disk, a key
+ * it cannot read — lasts until somebody does something about it. Writing the
+ * same sentence every sync would say nothing new, and would move
+ * `updated_at` each time.
  */
 async function sayOnce(
   db: Kysely<Database>,
@@ -1411,11 +1930,29 @@ async function finishStreamRecording(
     return
   }
 
-  await closePlaylist(mediaRoot, row.videoId)
+  // Nothing more leaves the disk: what is there now is what the close probes,
+  // and the tail's next flush could otherwise delete pieces under ffprobe.
+  const holding = origins.get(row.videoId)
+  if (holding != null) holding.publisher.holdPieces = true
+  await closePlaylist(mediaRoot, row.videoId, current.log ?? console.log)
   const dir = liveVideoDir(mediaRoot, row.videoId)
-  const probedSec = await probeDuration(
-    ffprobeFor(ffmpegPath),
-    join(dir, LIVE_PLAYLIST_NAME)
+  // Once the disk tail has deleted pieces, what is left here cannot be
+  // probed: the closed playlist's own lengths are the duration, and the
+  // sound check and the span of a recording in parts read the deleted pieces
+  // from the Space.
+  const tailed = await tailedRecording(current, dir)
+  // What the disk tail deleted, read back from the Space.
+  const fromSpace =
+    tailed && current.space != null
+      ? spacePartReader(current.space, {
+          id: row.videoId,
+          spaceSecret: await publishedSecret(current, row.videoId)
+        })
+      : undefined
+  const probedSec = await (
+    tailed
+      ? playlistDuration(join(dir, LIVE_PLAYLIST_NAME))
+      : probeDuration(ffprobeFor(ffmpegPath), join(dir, LIVE_PLAYLIST_NAME))
   ).catch(() => null)
   const durationSec =
     probedSec == null
@@ -1424,7 +1961,8 @@ async function finishStreamRecording(
           probedSec,
           (await recordingSpanSec(
             dir,
-            await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8')
+            await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8'),
+            fromSpace
           ).catch(() => undefined)) ?? 0
         )
 
@@ -1452,7 +1990,10 @@ async function finishStreamRecording(
   // step for the whole recording. The video is still ready — the picture is
   // whole — but the row and the log say so.
   const soundProblem = soundStepProblem(
-    await checkTrackStarts(join(dir, LIVE_PLAYLIST_NAME)).catch(() => undefined)
+    await checkTrackStarts(
+      join(dir, LIVE_PLAYLIST_NAME),
+      fromSpace == null ? {} : { readPart: fromSpace }
+    ).catch(() => undefined)
   )
   if (soundProblem != null) {
     ;(current.log ?? console.log)(`live: ${row.videoId}: ${soundProblem}`)
@@ -1492,7 +2033,13 @@ function queueOriginClose(
     if (generation !== originGeneration) return
     const row = await current.db
       .selectFrom('videos')
-      .select(['storage', 'replaced_by', 'spaces_verified_at', 'duration_sec'])
+      .select([
+        'storage',
+        'replaced_by',
+        'spaces_verified_at',
+        'duration_sec',
+        'space_secret'
+      ])
       .where('id', '=', videoId)
       .executeTakeFirst()
     // Shutdown may have stopped and removed this publisher during the lookup.
@@ -1503,13 +2050,70 @@ function queueOriginClose(
     }
     if (row.storage === 'spaces') {
       if (row.spaces_verified_at == null)
-        await closeOrigin(current, videoId, liveStreamId, row.duration_sec ?? 0)
+        await closeOrigin(current, videoId, liveStreamId, {
+          durationSec: row.duration_sec ?? 0,
+          spaceSecret: row.space_secret
+        })
       return
     }
     stopOrigin(videoId)
     anchorCursors.delete(videoId)
-    if (row.replaced_by == null) await putAway(current, videoId)
+    if (row.replaced_by == null)
+      await putAway(current, videoId, row.space_secret)
   })
+}
+
+/**
+ * Whether the disk tail has deleted pieces of this closed recording: a Space
+ * is configured and a piece the playlist lists is no longer here.
+ */
+async function tailedRecording(
+  current: LiveControllerOptions,
+  dir: string
+): Promise<boolean> {
+  if (current.space == null || !spaceConfigured(current.space)) return false
+  let text: string
+  try {
+    text = await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8')
+  } catch {
+    return false
+  }
+  for (const segment of parseMediaPlaylist(text).segments) {
+    const held = await stat(join(dir, segment.uri)).catch(() => undefined)
+    if (held == null) return true
+  }
+  return false
+}
+
+/**
+ * A closed playlist's length, the sum of its `EXTINF`s, as ffprobe adds them
+ * up: each to the microsecond, truncated.
+ */
+export async function playlistDuration(path: string): Promise<number> {
+  const playlist = parseMediaPlaylist(await readFile(path, 'utf8'))
+  if (playlist.segments.length === 0) throw new Error(`No duration in ${path}`)
+  let micros = 0
+  for (const segment of playlist.segments)
+    micros += Math.trunc(segment.durationSec * 1_000_000)
+  return micros / 1_000_000
+}
+
+/**
+ * The secret a live video's pieces were published under: its held origin's,
+ * or, with none held, the row's.
+ */
+async function publishedSecret(
+  current: LiveControllerOptions,
+  videoId: string
+): Promise<string | null> {
+  const held = origins.get(videoId)
+  if (held != null) return held.spaceSecret
+  const row = await current.db
+    .selectFrom('videos')
+    .select('space_secret')
+    .where('id', '=', videoId)
+    .executeTakeFirst()
+  return row?.space_secret ?? null
 }
 
 async function removeDeletedOrigin(
@@ -1523,10 +2127,17 @@ async function removeDeletedOrigin(
     recursive: true,
     force: true
   })
+  // The row has gone, so the secret is the origin's. With no origin held (a
+  // close retried after a restart) nobody knows it, and the Space is asked.
   if (current.space != null && spaceConfigured(current.space))
-    await deleteVideoFromSpace({ space: current.space, videoId })
+    await deleteVideoFromSpace({
+      space: current.space,
+      videoId,
+      spaceSecret: origins.get(videoId)?.spaceSecret
+    })
   stopOrigin(videoId)
   anchorCursors.delete(videoId)
+  await playlistSinkOf(current)?.forget(videoId)
 }
 
 /** Clears up behind a video whose row has gone, if it has. */
@@ -1549,16 +2160,22 @@ async function closeOrigin(
   current: LiveControllerOptions,
   videoId: string,
   liveStreamId: string,
-  durationSec: number
+  closing: { durationSec: number; spaceSecret: string | null }
 ): Promise<void> {
   const { db, space } = current
+  const { durationSec } = closing
   const dir = liveVideoDir(current.mediaRoot, videoId)
   try {
-    const origin = startOrigin(current, videoId, liveStreamId)
+    // A held origin keeps the prefix it published under; one retried after a
+    // restart publishes under the row's.
+    const origin = startOrigin(current, videoId, liveStreamId, {
+      spaceSecret: closing.spaceSecret
+    })
     if (origin == null || space == null)
       throw new Error('No Space configured for live recording')
+    const video = { id: videoId, spaceSecret: origin.spaceSecret }
     origin.publisher.closing = true
-    await closePlaylist(current.mediaRoot, videoId)
+    await closePlaylist(current.mediaRoot, videoId, current.log ?? console.log)
     // Each pass stays bounded. A failed scan advances nothing and ends the drain.
     for (;;) {
       const before = anchorCursors.get(videoId)?.segments ?? -1
@@ -1566,7 +2183,15 @@ async function closeOrigin(
       const after = anchorCursors.get(videoId)?.segments ?? -1
       if (after <= before) break
     }
-    await replaceAnchorsFromRecording(db, videoId, dir, LIVE_PLAYLIST_NAME)
+    // Pieces the disk tail deleted are read back from the Space, so the
+    // anchors come from the whole recording.
+    await replaceAnchorsFromRecording(
+      db,
+      videoId,
+      dir,
+      LIVE_PLAYLIST_NAME,
+      spacePartReader(space, video)
+    )
     anchorCursors.delete(videoId)
     origin.refreshFinal()
     const result = await origin.publisher.flush({ close: true })
@@ -1575,7 +2200,7 @@ async function closeOrigin(
     const response = await fetch(
       presignGetUrl({
         ...space,
-        key: `videos/${videoId}/index.m3u8`,
+        key: spaceKey(video, 'index.m3u8'),
         expiresSec: 300
       })
     )
@@ -1585,7 +2210,14 @@ async function closeOrigin(
     }
     if ((await response.text()) !== result.body)
       throw new Error('Closed playlist came back different')
-    await keepAPicture(current, videoId, dir, durationSec, LIVE_PLAYLIST_NAME)
+    // The poster second is usually no longer on this disk.
+    await keepAPicture(current, videoId, durationSec, {
+      kind: 'space',
+      space,
+      videoId,
+      spaceSecret: origin.spaceSecret,
+      verified: true
+    })
     const row = await db
       .selectFrom('videos')
       .select('status_message')
@@ -1608,6 +2240,8 @@ async function closeOrigin(
       })
       .where('id', '=', videoId)
       .execute()
+    // Viewers read the closed body from the Space from here on.
+    await playlistSinkOf(current)?.forget(videoId)
     // The durable cleanup marker survives a crash or a failed removal.
     stopOrigin(videoId)
     await rm(dir, { recursive: true, force: true })
@@ -1664,7 +2298,9 @@ async function retryTheClose(
  */
 async function putAway(
   current: LiveControllerOptions,
-  videoId: string
+  videoId: string,
+  /** The row's: the recording goes under its prefix, and this never sets it. */
+  spaceSecret: string | null
 ): Promise<void> {
   const { db, ffmpegPath, mediaRoot, space } = current
   const log =
@@ -1679,7 +2315,7 @@ async function putAway(
   // recording, and doing it again would rewrite the file somebody may be
   // watching.
   if (await isRecordingShape(dir)) {
-    await toTheSpace(current, videoId, dir, RECORDING_FILES)
+    await toTheSpace(current, videoId, spaceSecret, dir, RECORDING_FILES)
     return
   }
 
@@ -1721,7 +2357,10 @@ async function putAway(
     .where('id', '=', videoId)
     .execute()
 
-  await keepAPicture(current, videoId, dir, recording.durationSec)
+  await keepAPicture(current, videoId, recording.durationSec, {
+    kind: 'file',
+    path: join(dir, VIDEO_FILE)
+  })
 
   if (space == null || !spaceConfigured(space)) {
     // Development, or a Space not configured yet. The recording stays here and
@@ -1730,7 +2369,7 @@ async function putAway(
     return
   }
 
-  await toTheSpace(current, videoId, dir, recording.files)
+  await toTheSpace(current, videoId, spaceSecret, dir, recording.files)
 }
 
 /**
@@ -1744,15 +2383,14 @@ async function putAway(
 async function keepAPicture(
   current: LiveControllerOptions,
   videoId: string,
-  dir: string,
   durationSec: number,
-  sourceFile: string = VIDEO_FILE
+  source: FrameSource
 ): Promise<void> {
   try {
     if (current.space == null) return
     await ensureStill({
       ffmpegPath: current.ffmpegPath,
-      source: { kind: 'file', path: join(dir, sourceFile) },
+      source,
       space: current.space,
       videoId,
       atSec: posterSecond(durationSec)
@@ -1778,6 +2416,7 @@ const RECORDING_FILES = ['master.m3u8', 'video.m3u8', 'video.mp4']
 async function toTheSpace(
   current: LiveControllerOptions,
   videoId: string,
+  spaceSecret: string | null,
   dir: string,
   files: string[]
 ): Promise<void> {
@@ -1790,10 +2429,17 @@ async function toTheSpace(
   if (space == null || !spaceConfigured(space)) return
 
   try {
-    const uploaded = await uploadVideoDirectory({ space, videoId, dir, files })
+    const uploaded = await uploadVideoDirectory({
+      space,
+      videoId,
+      spaceSecret,
+      dir,
+      files
+    })
     const verified = await verifyVideoDirectory({
       space,
       videoId,
+      spaceSecret,
       dir,
       files: uploaded.files
     })
@@ -1863,6 +2509,7 @@ async function toTheSpace(
 async function closePlaylist(
   mediaRoot: string,
   videoId: string,
+  log: (message: string) => void,
   /**
    * Whether the publisher is still away. Asked again at the last moment,
    * when it may have come back while the playlist was being read.
@@ -1878,7 +2525,12 @@ async function closePlaylist(
     return
   }
   // The last writer's segments, when one went down with this process.
-  if (stillAway()) absorbWriterPlaylist(dir)
+  if (stillAway() && !absorbWriterPlaylist(dir)) {
+    const unlisted = unlistedWriterSegments(dir)
+    if (unlisted.length > 0) {
+      log(`live: ${videoId}: ${heldBackMessage(unlisted)}`)
+    }
+  }
   if (playlist.includes('#EXT-X-ENDLIST')) return
   // The last look, the read and the write happen together, with nothing
   // awaited between them. A publisher coming back reopens the playlist the

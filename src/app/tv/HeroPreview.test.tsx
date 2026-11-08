@@ -107,6 +107,88 @@ describe('TV hero preview', () => {
     })
     expect(document.querySelector('video')).equals(null)
   })
+  it('shows the supplied poster when a recording has only a combined camera', async () => {
+    const client = {
+      game: async () => ({ videos: [{ ...video('combined'), numCameras: 4 }] })
+    } as unknown as TeamStationClient
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    const poster = 'https://example.test/recorded.jpg'
+    await act(async () => {
+      root!.render(
+        <HeroPreview
+          client={client}
+          gameId="g"
+          active
+          fallbackPoster={poster}
+        />
+      )
+    })
+    await act(tick)
+    expect(
+      document
+        .querySelector('[data-testid="tv-hero-fallback-poster"] img')
+        ?.getAttribute('src')
+    ).equals(poster)
+    expect(document.querySelector('video')).equals(null)
+  })
+  for (const duration of [null, 90]) {
+    it(`keeps a playable recording over its fallback when the midpoint still is ${duration === null ? 'unknown' : 'unavailable'}`, async () => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      root = createRoot(host)
+      const poster = 'https://example.test/recorded-fallback.jpg'
+      const client = {
+        baseUrl: 'https://example.test/api',
+        game: async () => ({
+          videos: [{ ...video('angle'), durationSec: duration }]
+        }),
+        playback: async () => ({
+          url: 'https://example.test/angle.mp4',
+          durationSec: duration
+        })
+      } as unknown as TeamStationClient
+      const OriginalImage = window.Image
+      const requests: HTMLImageElement[] = []
+      window.Image = function () {
+        const image = new OriginalImage()
+        requests.push(image)
+        return image
+      } as unknown as typeof Image
+      try {
+        await act(async () => {
+          root!.render(
+            <HeroPreview
+              client={client}
+              gameId="g"
+              active
+              fallbackPoster={poster}
+            />
+          )
+        })
+        await act(tick)
+        const player = document.querySelector('video')
+        expect(player).not.equals(null)
+        if (duration !== null) {
+          const still = requests.find(image =>
+            image.src.endsWith('/angle/still?t=45')
+          )!
+          await act(async () => {
+            still.dispatchEvent(new window.Event('error'))
+          })
+        }
+        expect(
+          document
+            .querySelector('[data-testid="tv-hero-fallback-poster"] img')
+            ?.getAttribute('src')
+        ).equals(poster)
+        expect(document.querySelector('video')).equals(player)
+      } finally {
+        window.Image = OriginalImage
+      }
+    })
+  }
   it('ignores a URL resolved after leaving and preserves the poster on discovery failure', async () => {
     let finish!: (value: { url: string }) => void
     const client = {

@@ -11,7 +11,6 @@ import {
   verifyPuk
 } from '../../../common/chatCrypto/chain'
 import { loadChatCore } from '../../../common/chatCrypto/core'
-import type { ChatCoreStatus } from '../../../common/chatCrypto/coreCall'
 import {
   hpkeOpen,
   hpkeSeal,
@@ -140,7 +139,7 @@ export function spacedCode(code: string): string {
 
 /**
  * The user each store's latest enrolment was for, or `SIGNED_OUT` once
- * `leaveChat` took the keys off it.
+ * `releaseChat` ended that user's session on it. The record stays.
  */
 const owners = new Map<ChatKeyStore, string>()
 const SIGNED_OUT = ''
@@ -210,7 +209,7 @@ export async function ensureEnrolled(setup: ChatSetup): Promise<Enrolment> {
 
 async function enrolOnce(setup: ChatSetup): Promise<Enrolment> {
   const { client, store, userId } = setup
-  let record = await store.load()
+  let record = await store.load(userId)
   if (
     setup.existingOnly === true &&
     (record?.userId !== userId ||
@@ -218,11 +217,9 @@ async function enrolOnce(setup: ChatSetup): Promise<Enrolment> {
       record.puks.length === 0)
   )
     throw new Error('Existing linked chat keys are unavailable')
-  if (record != null && record.userId !== userId) {
-    stillOwner(setup)
-    await store.wipe()
-    record = undefined
-  }
+  // Another account's record lives in its own slot. Enrolment here does
+  // not wipe it.
+  if (record != null && record.userId !== userId) record = undefined
   if (record != null) {
     const mine = await bindDevice(setup, record)
     if (mine != null) return await settle(setup, record, mine)
@@ -275,7 +272,7 @@ async function bindDevice(
     if (reason === 'deviceRevoked' || reason === 'unknownDevice') {
       if (setup.existingOnly === true) throw error
       stillOwner(setup)
-      await store.wipe()
+      await store.wipe(record.userId)
       return undefined
     }
     throw error
@@ -501,7 +498,7 @@ export async function readApprovalKeys(
   const current = (): boolean =>
     setup.current?.() !== false && holdsStore(setup.store, setup.userId)
   if (!current()) return
-  const record = await setup.store.load()
+  const record = await setup.store.load(setup.userId)
   if (!current() || record?.userId !== setup.userId || record.identity == null)
     return
   const core = await loadChatCore()
@@ -777,10 +774,10 @@ export async function revokeOtherDevice(
  * record, but the server names it too, as the device bound to this
  * session (`myChatKeys().deviceId`): this client registered or resumed it,
  * and its keys are the ones in this store. It is revoked with
- * `keepSession`, since revoking it the way sign-out does would end the
- * session and sign the person out.
+ * `keepSession`, so the reset does not end the session and sign the
+ * person out.
  *
- * Unlike `leaveChat`, the wipe waits for the revoke: if the server cannot
+ * The wipe waits for the revoke: if the server cannot
  * be asked, the record is kept and the error passes on, so the reset can
  * be tried again while this session still names the device. Wiping first
  * would register a new device on this session, which takes the binding
@@ -795,11 +792,11 @@ export async function revokeOtherDevice(
  * passes on with the record kept, as the gate's Try again does.
  */
 export async function resetUnreadableChat(
-  setup: Pick<ChatSetup, 'client' | 'store'>
+  setup: Pick<ChatSetup, 'client' | 'store' | 'userId'>
 ): Promise<void> {
-  const { client, store } = setup
+  const { client, store, userId } = setup
   try {
-    await store.load()
+    await store.load(userId)
     return
   } catch (error) {
     // A newer build wrote it: updating the app reads it, so nothing is reset.
@@ -813,85 +810,18 @@ export async function resetUnreadableChat(
   if (mine.deviceId != null) {
     await client.revokeChatDevice(mine.deviceId, { keepSession: true })
   }
-  await store.wipe()
-}
-
-/** How long sign-out waits for the core (a module still on its way). */
-export const LEAVE_CORE_WAIT_MS = 5000
-
-/** The core's status, or `loading` if it has not settled within `waitMs`. */
-async function coreWithin(
-  loadCore: () => Promise<ChatCoreStatus>,
-  waitMs: number
-): Promise<ChatCoreStatus> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const waited = new Promise<ChatCoreStatus>(resolve => {
-    timer = setTimeout(() => {
-      resolve({ ready: false, reason: 'loading' })
-    }, waitMs)
-  })
-  try {
-    return await Promise.race([
-      loadCore().catch((): ChatCoreStatus => ({
-        ready: false,
-        reason: 'instantiateFailed'
-      })),
-      waited
-    ])
-  } finally {
-    clearTimeout(timer)
-  }
+  await store.wipe(userId)
+  // The legacy slot goes when it is empty, unreadable, or this account.
+  // A readable record for someone else is their only copy and stays.
+  await store.discardLegacy?.(userId)
 }
 
 /**
- * Signing out: this device is removed from chat and its keys are wiped, so
- * nobody who picks it up later reads the user's chats. The wipe happens
- * whatever the server says.
- *
- * It waits for chat's crypto core first (at most `LEAVE_CORE_WAIT_MS`),
- * which may never have loaded on this page. Without it (no WebAssembly, a
- * phone build without the module, or a module still on its way) a store
- * with no record is left untouched, so signing out makes nothing; a record
- * that is there, or a store that cannot say, is revoked if this session
- * can and wiped either way, since proving the device to a new session would
- * need a signature only the core can make.
- *
- * From the start, chat work of the user signing out saves nothing more to
- * the store (`holdsStore`), so nothing it was still doing puts the keys
- * back after the wipe.
+ * Signing out. The store is marked signed out so an enrolment already
+ * running for the previous user saves nothing further and registers
+ * nothing. The record stays on the device, and the device stays linked,
+ * so the same account resumes it on the next sign-in.
  */
-export async function leaveChat(
-  setup: Pick<ChatSetup, 'client' | 'store'> & {
-    /** This platform's core loader; the real one by default. */
-    loadCore?: () => Promise<ChatCoreStatus>
-    /** How long sign-out waits for the core before going on without it. */
-    coreWaitMs?: number
-  }
-): Promise<void> {
-  const { client, store } = setup
+export async function releaseChat(store: ChatKeyStore): Promise<void> {
   owners.set(store, SIGNED_OUT)
-  // Nothing stored, nothing to do, and no core to wait for. A store that
-  // cannot say counts as one that may hold a record.
-  if (!(await store.exists().catch(() => true))) return
-  const core = await coreWithin(
-    setup.loadCore ?? loadChatCore,
-    setup.coreWaitMs ?? LEAVE_CORE_WAIT_MS
-  )
-  try {
-    const record = await store.load()
-    if (record == null) return
-    try {
-      await client.revokeChatDevice(record.deviceId)
-    } catch (error) {
-      // Not bound to this session (it changed since): prove the device, then
-      // remove it.
-      if (reasonOf(error) == null || !core.ready) throw error
-      await bindDevice({ client, store }, record)
-      await client.revokeChatDevice(record.deviceId)
-    }
-  } catch {
-    // Offline, or the session already ended: the keys go all the same.
-  } finally {
-    await store.wipe()
-  }
 }

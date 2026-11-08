@@ -4,6 +4,7 @@ import { Pressable, Text, type TextInput, View } from 'react-native'
 import type { RosterCandidate } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { Button } from '../components/Button'
+import { PENDING_APPROVAL_MESSAGE } from '../sync/outbox'
 import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import {
   emptyPlayerDraft,
@@ -234,7 +235,7 @@ export function PlayerEntrySheet({
       <>
         {pending && (
           <Text accessibilityRole="alert" style={text}>
-            This needs approval first. Use a placeholder for this game.
+            {PENDING_APPROVAL_MESSAGE}
           </Text>
         )}
         {onAddToRoster != null && (

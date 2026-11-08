@@ -455,7 +455,7 @@ try {
 
     await tap('Swing in Play')
     await tap('Batter Out')
-    await tap('Throw Out')
+    await tap('Ground Out')
     await fieldAndTrajectory()
     await visible('Tap and drag the next defender')
     await shot('receiver-choice')

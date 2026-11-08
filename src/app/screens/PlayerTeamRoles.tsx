@@ -3,6 +3,7 @@ import { Text, View } from 'react-native'
 
 import type { PersonProfile, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import type { Role } from '../../common/roles'
 import { Button, SectionHeader } from '../components'
 import { type RoleRowKind, RoleRows } from '../components/RoleRows'
 import { useLatestRequest } from '../hooks/useLatestRequest'
@@ -13,6 +14,8 @@ export interface PlayerTeamRolesProps {
   client: TeamStationClient
   teamId: string
   userId: string
+  /** After a role changes, so the shell reloads the viewer's own. */
+  onChanged?: () => void
 }
 
 /**
@@ -27,7 +30,7 @@ export interface PlayerTeamRolesProps {
 export function PlayerTeamRoles(
   props: PlayerTeamRolesProps
 ): React.ReactElement | null {
-  const { client, teamId, userId } = props
+  const { client, teamId, userId, onChanged } = props
   const styles = getStyles(useTheme())
   const [profile, setProfile] = useState<PersonProfile | undefined>()
   const [busy, setBusy] = useState(false)
@@ -131,7 +134,10 @@ export function PlayerTeamRoles(
           role === 'headCoach' ? section?.headCoach?.userId : undefined
         )
       else await client.removeRole('team', teamId, userId, role)
-      if (current()) await refreshSaved(sameOwner)
+      if (current()) {
+        onChanged?.()
+        await refreshSaved(sameOwner)
+      }
     } catch (caught) {
       if (
         role === 'headCoach' &&
@@ -146,6 +152,30 @@ export function PlayerTeamRoles(
           caught instanceof Error ? caught.message : 'Something went wrong'
         )
       throw caught
+    } finally {
+      if (sameOwner()) {
+        writing.current = false
+        setBusy(false)
+      }
+    }
+  }
+  const resign = async (run: () => Promise<unknown>): Promise<void> => {
+    if (writing.current) return
+    writing.current = true
+    const alive = beginWrite()
+    const sameOwner = (): boolean =>
+      alive() &&
+      identity.current.client === client &&
+      identity.current.teamId === teamId &&
+      identity.current.userId === userId
+    setBusy(true)
+    setError(undefined)
+    try {
+      await run()
+      if (sameOwner()) {
+        onChanged?.()
+        await refreshSaved(sameOwner)
+      }
     } finally {
       if (sameOwner()) {
         writing.current = false
@@ -169,6 +199,7 @@ export function PlayerTeamRoles(
         canHoldRoles={profile.person.canHoldRoles}
         viewer={profile.viewer}
         player
+        home
         busy={busy}
         userId={userId}
         onAdd={async (role, current) => {
@@ -176,6 +207,16 @@ export function PlayerTeamRoles(
         }}
         onRemove={async (role, current) => {
           await change(role, false, current)
+        }}
+        onStepDown={async (role: Role) => {
+          await resign(async () => {
+            await client.stepDown('team', teamId, role)
+          })
+        }}
+        onLeave={async () => {
+          await resign(async () => {
+            await client.leaveGroup('team', teamId)
+          })
         }}
       />
     </View>

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -19,6 +20,7 @@ import pg from 'pg'
 import { createLiveHarness } from '../../../e2e/rigs/liveHarness'
 import { TeamStationClient } from '../../common/api'
 import { serverConfig } from '../../server/serverConfig'
+import { serverLivePieceReader } from '../../test/livePieces'
 import { signInTestAccount } from '../../test/passwordFixtures'
 
 /**
@@ -30,6 +32,7 @@ import { signInTestAccount } from '../../test/passwordFixtures'
  *   MAESTRO_D_CLIENT_ROOT=<maestro-d npm package> \
  *   TS_API_TEST_URL=<API on this machine> TS_SCORING_TEST_URL=<web app> \
  *   [TS_E2E_ARTIFACT_DIR=<where the video goes>] [E20_FRAMES_DIR=<frame logs>] \
+ *   [E20_SOUND=1] \
  *     npx mocha -r sucrase/register --extension ts --timeout 1800000 \
  *     src/app/player/liveOutage.e2e.ts
  *
@@ -40,7 +43,12 @@ import { signInTestAccount } from '../../test/passwordFixtures'
  * makes its own administrator and game, with a password it draws and never
  * prints.
  *
- * The broadcaster publishes 150 s with a 20 s outage at 60 s. Three pages:
+ * The broadcaster publishes 150 s with a 20 s outage at 60 s, with no sound,
+ * or with an AAC track under `E20_SOUND=1`. With no sound the recording gets
+ * a silent track and the return continues it with an init segment of its
+ * own, under a new map; with sound the return shares the recording's init
+ * segment, which goes over `init.mp4` under the map the players hold. Three
+ * pages:
  * - **A** watches live from the start and is never reloaded. It must pick
  *   the stream up again on its own soon after the publisher comes back.
  * - **B** opens a second after the publisher comes back, before the new
@@ -69,6 +77,8 @@ const FRAME_MS = 1000 / 30
 const DURATION_SEC = 150
 const OUTAGE_AT_SEC = 60
 const OUTAGE_SEC = 20
+/** The broadcaster sends an AAC track too: see the header. */
+const SOUND = process.env.E20_SOUND === '1'
 const RETURN_SEC = OUTAGE_AT_SEC + OUTAGE_SEC
 /** "About ten seconds" from the publisher's return to pictures again. */
 const RESUME_WITHIN_MS = 10_000
@@ -99,8 +109,10 @@ const clock = kit('../../../scripts/e2e/liveOutage/playlistClock.ts') as {
     ffmpegPath: string,
     dir: string,
     segments: readonly Segment[],
-    nearMs: number
-  ) => Array<number | null>
+    nearMs: number,
+    size: { width: number; height: number } | undefined,
+    read: (path: string) => Promise<Uint8Array>
+  ) => Promise<Array<number | null>>
   wallAtPosition: (
     segments: readonly Segment[],
     markers: ReadonlyArray<number | null>,
@@ -368,6 +380,7 @@ describe('E20: live viewers through a publisher outage', function () {
       String(DURATION_SEC),
       '--outage',
       `${OUTAGE_AT_SEC}:${OUTAGE_SEC}`,
+      ...(SOUND ? ['--sound'] : []),
       '--ffmpeg',
       process.env.TS_E2E_FFMPEG ?? 'ffmpeg'
     ])
@@ -421,22 +434,53 @@ describe('E20: live viewers through a publisher outage', function () {
 
     const dir = join(serverConfig.mediaDir, 'work', 'videos', angle.videoId)
     const livePlaylist = readFileSync(join(dir, 'master.m3u8'), 'utf8')
-    if (framesDir != null)
-      cpSync(dir, join(framesDir, 'live'), { recursive: true })
     const { segments, mediaSequence, ended } = clock.parsePlaylist(livePlaylist)
-    const markers = clock.firstMarkers(
+    // With a Space, the ingest keeps only the newest minute on disk; the
+    // older pieces are read back from the Space.
+    const readPiece = serverLivePieceReader(angle.videoId)
+    if (framesDir != null) {
+      const copy = join(framesDir, 'live')
+      cpSync(dir, copy, { recursive: true })
+      for (const segment of segments)
+        if (!existsSync(join(copy, segment.uri)))
+          writeFileSync(
+            join(copy, segment.uri),
+            await readPiece(join(dir, segment.uri))
+          )
+    }
+    const markers = await clock.firstMarkers(
       serverConfig.ffmpegPath,
       dir,
       segments,
-      t0
+      t0,
+      undefined,
+      readPiece
     )
+    const maps = livePlaylist
+      .split('\n')
+      .filter(line => line.startsWith('#EXT-X-MAP:'))
+    const discontinuities = segments.filter(one => one.discontinuity).length
     print('the live playlist', {
       mediaSequence,
       ended,
       segments: segments.length,
-      discontinuities: segments.filter(one => one.discontinuity).length,
+      discontinuities,
+      maps,
       firstNumbers: segments.slice(0, 3).map(one => one.uri)
     })
+    if (SOUND) {
+      // A return with the recording's own configuration shares its init
+      // segment: under the map the pages hold, with no other.
+      check(
+        maps.length === 1 && maps[0] === '#EXT-X-MAP:URI="init.mp4"',
+        `the return shares init.mp4: one map (${maps.join(' ')})`
+      )
+      check(discontinuities === 1, `one join (${discontinuities})`)
+      check(
+        !existsSync(join(dir, '.writer-init.mp4')),
+        "the returning writer's init segment went over init.mp4"
+      )
+    }
     check(
       markers.every(one => one != null),
       `every segment's first frame was read (${markers.filter(one => one != null).length} of ${markers.length})`

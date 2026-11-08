@@ -177,12 +177,14 @@ describe('public chat engine list summaries', () => {
     }
   }
   function client(): TeamStationClient {
-    return new TeamStationClient({
+    const api = new TeamStationClient({
       baseUrl: 'https://api.example.test/api/v1',
       fetch: async () => {
         throw new Error('Unexpected network request')
       }
     })
+    api.chatBlocks = async () => []
+    return api
   }
   function engine(
     api: TeamStationClient,
@@ -615,7 +617,7 @@ describe('public chat engine list summaries', () => {
   for (const reason of ['deviceRevoked', 'unknownDevice']) {
     it(`does not replace a ${reason} device while starting previews`, async () => {
       const f = previewFixture()
-      const original = await f.store.load()
+      const original = await f.store.load(me)
       const mine = await f.api.myChatKeys()
       f.api.myChatKeys = async () => ({ ...mine, deviceId: null })
       f.api.chatResumeChallenge = async () => {
@@ -632,7 +634,7 @@ describe('public chat engine list summaries', () => {
       } catch (error) {
         expect(error).instanceOf(HttpError)
         expect(registrations).equals(0)
-        expect(await f.store.load()).equals(original)
+        expect(await f.store.load(me)).equals(original)
         expect(f.chat.status).equals('idle')
       } finally {
         f.chat.stop()
@@ -643,7 +645,7 @@ describe('public chat engine list summaries', () => {
   for (const state of ['missing', 'replaced', 'unlinked']) {
     it(`does not enroll a ${state} server identity while starting previews`, async () => {
       const f = previewFixture()
-      const original = await f.store.load()
+      const original = await f.store.load(me)
       const mine = await f.api.myChatKeys()
       f.api.myChatKeys = async () => ({
         ...mine,
@@ -666,7 +668,7 @@ describe('public chat engine list summaries', () => {
       } catch (error) {
         expect(String(error)).contains('Existing chat identity is unavailable')
         expect(enrollments).equals(0)
-        expect(await f.store.load()).equals(original)
+        expect(await f.store.load(me)).equals(original)
         expect(f.chat.status).equals('idle')
       } finally {
         f.chat.stop()

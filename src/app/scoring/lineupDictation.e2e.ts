@@ -233,6 +233,9 @@ describe('the roster screen for a scorekeeper', function () {
     await page.waitForSelector('[aria-label="Save Rosters"]', {
       timeout: 30000
     })
+    // The editor is drawn as the sheet starts to rise, over the game this
+    // screen holds: a tap waits for the sheet to come to rest.
+    await session.m.waitForAnimationToEnd()
     if (side != null) await tap(side, 'tab')
   }
   /**

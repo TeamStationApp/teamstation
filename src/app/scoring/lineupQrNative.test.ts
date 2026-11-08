@@ -9,6 +9,8 @@ import { describe, it } from 'mocha'
 import { act, createElement, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import { BAT_ICON_PATH } from './BatIcon'
+import type * as BatIconNative from './BatIcon.native'
 import { lineupQrFixture2 } from './lineupQr.fixtures'
 import type * as LineupQrGlyphNative from './LineupQrGlyph.native'
 import { lineupQrGlyphPaths } from './lineupQrGlyphs'
@@ -128,6 +130,29 @@ describe('lineup QR native twins', function () {
     expect(paths[0].props.strokeWidth).equals(1.7)
     expect(paths[1].props).deep.include({ stroke: '#0f0', strokeWidth: 1 })
     expect(drawn.find(node => node.type === 'svg')!.props.width).equals(24)
+  })
+})
+
+describe('the lineup’s bat icon, native', function () {
+  it('draws the bat the web draws, filled, under its label', function () {
+    const drawn: Drawn[] = []
+    const { BatIcon, BAT_ICON_PATH: nativePath } = loadNative<
+      typeof BatIconNative
+    >('./BatIcon.native', {
+      'react-native': { View: host('View', drawn) },
+      'react-native-svg': svgStandIn(drawn)
+    })
+    render(createElement(BatIcon, { label: 'Judge bats', color: '#eee' }))
+    expect(nativePath).equals(BAT_ICON_PATH)
+    expect(drawn.find(node => node.type === 'View')!.props).deep.include({
+      accessibilityLabel: 'Judge bats',
+      testID: 'batIcon'
+    })
+    expect(drawn.find(node => node.type === 'svg')!.props.width).equals(24)
+    expect(drawn.find(node => node.type === 'path')!.props).deep.include({
+      d: BAT_ICON_PATH,
+      fill: '#eee'
+    })
   })
 })
 

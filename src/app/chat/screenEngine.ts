@@ -29,4 +29,13 @@ export type ChatScreenEngine = Pick<
   | 'fillGrants'
   | 'safetyNumber'
 > &
-  Partial<Pick<ChatEngine, 'setPreferences' | 'pinMessage' | 'loadPreview'>>
+  Partial<
+    Pick<
+      ChatEngine,
+      | 'setPreferences'
+      | 'pinMessage'
+      | 'loadPreview'
+      | 'setBlocked'
+      | 'isBlocked'
+    >
+  >

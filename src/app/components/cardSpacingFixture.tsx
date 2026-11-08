@@ -329,6 +329,7 @@ export function CardSpacingFixture(): React.ReactElement {
                     member: true,
                     follower: false,
                     editable: true,
+                    player: false,
                     groups: []
                   }}
                   canHoldRoles

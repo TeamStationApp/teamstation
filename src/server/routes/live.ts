@@ -56,7 +56,6 @@ import {
   settleRecordingReminder
 } from '../notifications/recordingReminders'
 import type { LiveSettings } from '../serverConfig'
-import { withRevision } from '../socket/syncRevision'
 
 /**
  * The cameras pointed at a game: the URLs they publish to, and what each one
@@ -75,8 +74,9 @@ import { withRevision } from '../socket/syncRevision'
  * have six. An ended camera stays on the list with its video and counts against
  * neither limit.
  *
- * Nothing here talks to the ingest. These endpoints write rows; the ingest
- * reads them within the second and acts. See `server/live/controller.ts`.
+ * Nothing here talks to the ingest. These endpoints write rows; each write's
+ * `live_changes` notice wakes the ingest, which reads them and acts within
+ * about 100 ms. See `server/live/controller.ts`.
  */
 
 export interface LiveRouteOptions {
@@ -630,7 +630,7 @@ export function liveRoutes(
       // ingest holds the ffmpeg writing the playlist, and it is the only
       // thing that may close that playlist; ending it from an API worker
       // would write `EXT-X-ENDLIST` into a file another process is still
-      // appending to. It notices within the second.
+      // appending to. Its notice wakes the ingest within about 100 ms.
       await db
         .updateTable('live_streams')
         .set({ closes_at: new Date(), updated_at: new Date() })
@@ -832,9 +832,7 @@ export function liveRoutes(
   router.get(
     '/live',
     requireActor,
-    // Home's look at what is on is one of the reads its scope gates, so it
-    // carries the revision its rows were read at, as the others do.
-    withRevision(db, async (db, req, res) => {
+    withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)

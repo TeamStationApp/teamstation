@@ -319,7 +319,7 @@ describe('committed chat harness and application provenance', () => {
       verifyChat2HarnessSource(repo.root, repo.application, harness)
     ).throws('new build and capture archive')
   })
-  it('names the harness by test paths, keeping its six named files', () => {
+  it('names the harness by test paths, keeping its named files and fixture scripts', () => {
     for (const path of [
       'src/app/chat/chat2.e2e.ts',
       'e2e/rigs/chat2Maestro.ts',
@@ -329,6 +329,8 @@ describe('committed chat harness and application provenance', () => {
       'src/app/chat/chat2Actions.test.ts',
       'src/test/chat2FixtureIdentity.test.ts',
       'src/app/chat/engine/dmTitle.test.ts',
+      'scripts/chat-history-recovery-fixtures.ts',
+      'scripts/chat-history-recovery-relay.ts',
       'src/test/fixtures/anything.json',
       'scripts/socket.e2e.ts'
     ])
@@ -343,6 +345,7 @@ describe('committed chat harness and application provenance', () => {
       'src/apptest/x.ts',
       'scripts/socket.e2e/x.ts',
       'scripts/chat-socket-listen.mjs',
+      'scripts/chat-history-recovery-other.ts',
       'test/src/x.ts',
       ...CHAT2_APPLICATION_TEST_FILES
     ])

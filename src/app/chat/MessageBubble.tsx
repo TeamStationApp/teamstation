@@ -499,7 +499,9 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
             </View>
             {message.sentBeforeSafetyNumberChange && (
               <Text style={styles.meta}>
-                {sprintf(lstrings.chat_sent_before_change, sender)}
+                {message.mine
+                  ? lstrings.chat_sent_before_your_change
+                  : sprintf(lstrings.chat_sent_before_change, sender)}
               </Text>
             )}
           </BubbleContainer>

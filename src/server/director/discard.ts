@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises'
 
-import { type Kysely, sql } from 'kysely'
+import { type Kysely, type NotNull, sql } from 'kysely'
 
 import { HttpError } from '../../common/errors'
 import type { Database } from '../db/database'
@@ -180,12 +180,67 @@ export async function discardStream(
 }
 
 /**
+ * Deletes the videos of uploads given up on that still name one, and answers
+ * how many it deleted.
+ *
+ * A given-up upload's video goes, and its row stops naming it when it does
+ * (`on delete set null`), so one that still names a video is a delete that
+ * did not finish: the Space refused the cancel's, the process stopped after
+ * the cancel committed and before its delete, or a take-in failed after its
+ * video's commit and before its own. Nobody asks again — neither app resends
+ * a cancel — so the server finishes them. One that fails again is left for the
+ * next run, and does not stop the rest.
+ *
+ * Not an upload of a deleted camera: `discardStream` deletes those, keeping
+ * the camera's own videos hidden, where a delete from here would show its
+ * live recording again.
+ */
+export async function finishGivenUpUploads(
+  context: DeleteVideoContext
+): Promise<number> {
+  const rows = await context.db
+    .selectFrom('director_uploads')
+    .select(['id', 'video_id as videoId'])
+    .where('state', '=', 'abandoned')
+    .where('video_id', 'is not', null)
+    .where(eb =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('live_streams')
+            .select('live_streams.id')
+            .whereRef('live_streams.id', '=', 'director_uploads.live_stream_id')
+            .where('live_streams.discarded_at', 'is not', null)
+        )
+      )
+    )
+    .$narrowType<{ videoId: NotNull }>()
+    .execute()
+  let finished = 0
+  for (const row of rows) {
+    try {
+      await deleteVideoIfThere(context, row.videoId)
+      finished += 1
+    } catch (error) {
+      console.error(
+        `finishing the delete of ${row.id}'s video: ${String(error)}`
+      )
+    }
+  }
+  if (finished > 0)
+    console.log(`finished ${finished} given-up upload delete(s)`)
+  return finished
+}
+
+/**
  * Carries on every delete that stopped partway: the Space refused, or this
- * process died. Answers how many it finished. One that fails again is left for
- * the next run, and does not stop the rest.
+ * process died. Answers how many camera deletes it finished; the given-up
+ * uploads it finishes first say their own count. One that fails again is left
+ * for the next run, and does not stop the rest.
  */
 export async function finishDiscards(context: DiscardContext): Promise<number> {
   const { db } = context
+  await finishGivenUpUploads(context)
   const streams = await db
     .selectFrom('live_streams')
     .select('id')

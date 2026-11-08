@@ -206,7 +206,13 @@ export function applyRoster(
   /** Who took whose place in the order: a substitute bats when his man was due. */
   replaced: Record<number, number> = {},
   /** Stored actions may introduce another occurrence of a subsequently merged alias. */
-  replay = false
+  replay = false,
+  /**
+   * Each side keeps its place in the order (the slot) rather than following
+   * the man due: whoever the save put in that slot bats. Saves after the
+   * first pitch carry it (`keepSlot` on the roster action).
+   */
+  keepSlot = false
 ):
   | {
       state: GameState
@@ -294,6 +300,23 @@ export function applyRoster(
     }
     if (opening) {
       after.battingIndex = 0
+      next.liveData.boxscore.teams[side] = after
+      continue
+    }
+    // A replace or a swap keeps the slot; an order that grew or shrank
+    // follows the man due, as below.
+    if (
+      keepSlot &&
+      after.battingOrder.length === before.battingOrder.length &&
+      !(side === activeSide && state.awaitingBatter != null)
+    ) {
+      const slot = before.battingIndex
+      if (side === activeSide && occupied.includes(after.battingOrder[slot]))
+        return {
+          error:
+            'Choose a next batter in the lineup who is not already on base.'
+        }
+      after.battingIndex = slot
       next.liveData.boxscore.teams[side] = after
       continue
     }
@@ -729,6 +752,19 @@ export function begun(state: GameState): boolean {
       event => event.isSubstitution !== true
     ) === true
   )
+}
+
+/**
+ * A pitch has been thrown in the game: any event of a finished play or of
+ * the play under way is a pitch. From then the lineup is locked to
+ * replacements in place, and a saved order keeps each side's batting slot.
+ */
+export function pitchThrown(state: GameState): boolean {
+  const plays = state.liveData.plays
+  return [
+    ...plays.allPlays,
+    ...(plays.currentPlay == null ? [] : [plays.currentPlay])
+  ].some(play => play.playEvents.some(event => event.isPitch))
 }
 
 /**

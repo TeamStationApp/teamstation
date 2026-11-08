@@ -4,12 +4,16 @@ import { conflict } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import type { PlayerAddTerms } from '../../common/notifications'
 import { signOutEverywhere } from '../auth/sessions'
+import { lockBlockPolicy } from '../chat/blocks'
 import { mergeChats } from '../chat/dms'
+import { notifyChatUser } from '../chat/membershipLog'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { directAdminIds, requireDirectAdmin } from '../groups/adminGuard'
+import { MAX_MERGE_DEPTH, peopleOf } from '../openAdds'
 import { assertMergeScoringSafe } from '../scoring/mergeConflicts'
+import { notifyLiveGamesRenamed } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { rowsOfPeople } from '../teams/teamStaff'
 import { ensureGumboId } from '../users/insertUser'
@@ -39,50 +43,36 @@ export interface OnePerson {
   userIds: string[]
 }
 
-/** However deep a chain of merges can sensibly go before it is a mistake. */
-const MAX_DEPTH = 16
+/**
+ * Every row of each of these people, in one query however long their chains:
+ * each row asked about, keyed by itself, as the open row it is now and every
+ * row closed into that one, the open row first.
+ *
+ * This is `peopleOf`, the walk open adds and name formats read, so that every
+ * reader resolves a merged person the same way. It lives beside open adds
+ * because migrations read name formats and must not load the server.
+ */
+export async function onePeople(
+  db: Kysely<Database>,
+  userIds: readonly string[]
+): Promise<Map<string, OnePerson>> {
+  return await peopleOf(db, userIds)
+}
 
+/** `onePeople` of one row. */
 export async function onePerson(
   db: Kysely<Database>,
   userId: string
 ): Promise<OnePerson> {
-  // Up the chain to whoever is still open. A cycle would be a bug in whatever
-  // wrote it; the guard means it cannot become a hung request.
-  let survivor = userId
-  const walked = new Set<string>([userId])
-  for (let step = 0; step < MAX_DEPTH; step += 1) {
-    const row = await db
-      .selectFrom('users')
-      .select(['merged_into'])
-      .where('id', '=', survivor)
-      .executeTakeFirst()
-    const next = row?.merged_into
-    if (next == null || walked.has(next)) break
-    walked.add(next)
-    survivor = next
-  }
-
-  // And back down it, gathering everybody who became them.
-  const userIds = new Set<string>([survivor])
-  let frontier = [survivor]
-  for (let step = 0; step < MAX_DEPTH && frontier.length > 0; step += 1) {
-    const rows = await db
-      .selectFrom('users')
-      .select(['id'])
-      .where('merged_into', 'in', frontier)
-      .execute()
-    frontier = rows.map(row => row.id).filter(id => !userIds.has(id))
-    for (const id of frontier) userIds.add(id)
-  }
-
-  return { userId: survivor, userIds: [...userIds] }
+  const people = await onePeople(db, [userId])
+  return people.get(userId)!
 }
 
 /**
  * The open row that `userId` is now: itself when it is open, otherwise the row
  * at the end of its chain of merges.
  *
- * Undefined when the walk does not reach an open row within `MAX_DEPTH`
+ * Undefined when the walk does not reach an open row within `MAX_MERGE_DEPTH`
  * steps — a loop, or a chain too long to be anything but a mistake — and when
  * there is no such row at all. Signing in follows this, so a row it cannot
  * settle is answered as nobody rather than as a closed row.
@@ -92,7 +82,7 @@ export async function openRowOf(
   userId: string
 ): Promise<string | undefined> {
   let at = userId
-  for (let step = 0; step <= MAX_DEPTH; step += 1) {
+  for (let step = 0; step <= MAX_MERGE_DEPTH; step += 1) {
     const row = await db
       .selectFrom('users')
       .select(['merged_into'])
@@ -164,6 +154,7 @@ export async function closeInto(
       'node:administration',
       MERGE_LOCK
     ])
+    await lockBlockPolicy(trx, true)
     if (await closedInto(trx, keeping, closing)) return nothing
     const user = await trx
       .selectFrom('users')
@@ -347,9 +338,28 @@ export async function closeInto(
       noteScopeChange(trx, { userId: keeping })
       noteScopeChange(trx, { userId: closing })
     }
+    // A merge changes the historical sender ids covered by personal blocks.
+    // Refresh only their owners; the person being blocked receives no event.
+    const identities = await rowsOfPeople(trx, [final])
+    const blockOwners = await trx
+      .selectFrom('chat_user_blocks')
+      .select('blocker_user_id')
+      .where(eb =>
+        eb.or([
+          eb('blocker_user_id', 'in', identities),
+          eb('blocked_user_id', 'in', identities)
+        ])
+      )
+      .execute()
+    const ownersNow = await survivorsOf(
+      trx,
+      blockOwners.map(row => row.blocker_user_id)
+    )
+    for (const owner of new Set(ownersNow.values()))
+      await notifyChatUser(trx, owner, 'blocks')
     return { closed: true, moved }
   }
-  // Opened here, the merge's last statements bump the clock; inside a
+  // Opened here, the merge's last statement announces it; inside a
   // caller's transaction, the caller's opener does.
   if (!db.isTransaction) return await atomic(db, merge)
 
@@ -377,8 +387,10 @@ export const MERGE_LOCK = 'users.closeInto'
 
 /**
  * Roster writers take this before reading identities or locking any rows.
- * They may run together, but a merge must finish moving a person's rows
- * before another writer chooses their surviving account and membership.
+ * They may run together, but a person merge (`closeInto`) must finish moving
+ * a person's rows before another writer chooses their surviving account and
+ * membership. A team merge takes its own two teams' keys instead
+ * (`lockTeams`, `lockGameTeams`), which these writers take next.
  */
 export async function lockPlayerEdits(
   trx: Transaction<Database>
@@ -560,6 +572,9 @@ async function moveAndClose(
     .set({ merged_into: keeping })
     .where('id', '=', closing)
     .execute()
+  // Plays naming either now name the survivor, perhaps by the fuller name:
+  // the games in progress either plays in are read again by their viewers.
+  await notifyLiveGamesRenamed(db, { users: [closing, keeping] })
   await signOutEverywhere(db, closing)
   return moved
 }
@@ -719,7 +734,7 @@ export async function keepTheFullerName(
  * and there is no way to tell from the row itself whether it was tidied.
  *
  * Passes repeat until one moves nothing. A team row can land on a row that is
- * itself closed: `onePerson` stops counting after `MAX_DEPTH` rows, and another
+ * itself closed: `peopleOf`'s walk stops after `MAX_MERGE_DEPTH` steps, and another
  * merge can close the row a walk ended on before `closeInto` takes its lock.
  * The next pass moves it on. Every move goes up a chain that does not lead back
  * to the row it left (`closeInto` refuses that), so the passes end.

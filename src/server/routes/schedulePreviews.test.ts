@@ -480,6 +480,11 @@ describe('schedule preview routes', function () {
     )
     expect(sent.status).equals(201)
     // A zone sent with a build is not part of it, and is ignored.
+    await w.fx.f.h.db
+      .updateTable('season_schedule_settings')
+      .set({ prefer_game_on: 'weekdays' })
+      .where('season_id', '=', w.fx.f.seasonA)
+      .execute()
     const built = await build({
       mode: 'full',
       existing: 'workAround',

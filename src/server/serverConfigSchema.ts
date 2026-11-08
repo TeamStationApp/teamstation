@@ -4,7 +4,8 @@ import {
   asNumber,
   asObject,
   asOptional,
-  asString
+  asString,
+  asValue
 } from 'cleaners'
 
 import { asHttpsUrl } from '../common/distribution'
@@ -12,7 +13,18 @@ import { asAppLinksConfig, asOrigin } from './appLinks/config'
 import type { SpaceSettings } from './media/spacesHls'
 import { asOAuthConfig } from './oauth/config'
 
+/** How often the ingest syncs when nothing woke it sooner: `live.resyncMs`. */
+export const LIVE_RESYNC_MS = 15_000
+
+/**
+ * How many seconds of a live stream's newest pieces the ingest keeps on its
+ * own disk once the Space has them: `live.localTailSec`.
+ */
+export const LIVE_LOCAL_TAIL_SEC = 60
+
 export const asServerConfig = asObject({
+  /** Fresh publications only; history delivery remains enabled independently. */
+  chatHistoryRecoveryEnabled: asOptional(asBoolean, false),
   /** Separate restricted login; never substitute the application owner. */
   analyticsReaderUrl: asOptional(asString),
   logWriteToken: asOptional(asString),
@@ -47,11 +59,70 @@ export const asServerConfig = asObject({
    */
   statsBuilder: asOptional(asBoolean, true),
 
+  /**
+   * Whether this node's primary runs the purges, the key sweep, the hourly
+   * sweep that finishes discards, the warnings of expiring local copies, the
+   * reopening of interrupted uploads, the chat reconciler and the stats
+   * builder (which `statsBuilder` then still governs). True on exactly one
+   * node, false on the others. The relay is not among them: each API primary
+   * is a candidate.
+   *
+   * These act on the disk of the node they run on, so a second API node needs
+   * ownership first. A Director upload's parts are on the node that received
+   * it, and reopening has no owner filter: a node with this off leaves its own
+   * interrupted uploads `assembling`, and the jobs node's restart could reopen
+   * another node's. The discard sweep deletes part folders from its own node's
+   * uploads, so a discard's parts on another node are marked done and left
+   * behind. Chat attachment and replaced-recording purges have the same limit.
+   */
+  backgroundJobs: asOptional(asBoolean, true),
+
   /** Postgres for TeamStation's own data. */
   databaseUrl: asOptional(
     asString,
     'postgres://localhost:5432/teamstation_dev'
   ),
+
+  /**
+   * A transaction-mode connection pooler in front of the same database, which
+   * request traffic goes through. Empty means `databaseUrl`, so a deployment
+   * without a pooler connects directly. `LISTEN` and migrations never use it.
+   */
+  databasePoolUrl: asOptional(asString, ''),
+
+  /**
+   * How a process hears the server's notices. `postgres` holds a direct
+   * connection in every process. `valkey` holds one, in one elected API
+   * primary, which republishes to Valkey for the rest.
+   */
+  changeFeed: asOptional(asValue('postgres', 'valkey'), 'postgres'),
+
+  /**
+   * The oldest game socket protocol (`GAME_SOCKET_PROTOCOL`) a game or scope
+   * subscribe may name. An app that sends an older one, or none, is told to
+   * update, and follows no game live and no screen's notices.
+   */
+  gameSocketMinimumProtocol: asOptional(asNumber, 3),
+
+  /** How many connections each kind of process keeps in its pool. */
+  databasePoolSizes: asOptional(
+    asObject({
+      worker: asOptional(asNumber, 10),
+      primary: asOptional(asNumber, 3),
+      statsBuilder: asOptional(asNumber, 3),
+      ingest: asOptional(asNumber, 3)
+    }),
+    () => ({ worker: 10, primary: 3, statsBuilder: 3, ingest: 3 })
+  ),
+
+  /**
+   * Whether each process times the first statement of every checkout from its
+   * pool, which is where a transaction-mode pooler hands out a server
+   * connection, and logs a `db-wait` line of those times once a minute. Each
+   * time is that statement's round trip: the pooler's wait and the
+   * statement's execution, not Node's own queue for a pool client.
+   */
+  logDatabaseWait: asOptional(asBoolean, false),
 
   /**
    * PeerTube's database, read-only, used only by the importer. Empty when
@@ -92,6 +163,14 @@ export const asServerConfig = asObject({
       accessKeyId: asOptional(asString, ''),
       secretAccessKey: asOptional(asString, ''),
       pathStyle: asOptional(asBoolean, false),
+      /**
+       * Where viewers fetch public media (pieces and recordings under a
+       * video's secret path): the CDN endpoint's origin, or any base URL with
+       * a path. Empty means the bucket's own base. The web app's CSP allows
+       * its origin, and is fixed when the web app is built, so a change here
+       * means a build, not just a restart.
+       */
+      mediaBaseUrl: asOptional(asString, ''),
       readOnlySource: asOptional(
         asObject({
           endpoint: asString,
@@ -110,7 +189,8 @@ export const asServerConfig = asObject({
       bucket: 'media-bucket',
       accessKeyId: '',
       secretAccessKey: '',
-      pathStyle: false
+      pathStyle: false,
+      mediaBaseUrl: ''
     }
   ),
 
@@ -360,6 +440,23 @@ export const asServerConfig = asObject({
        */
       freeDiskFloorGb: asOptional(asNumber, 10),
       /**
+       * How often the ingest reads every stream's row when nothing told it
+       * to. A `live_changes` notice, a deadline it found on a row and a gap
+       * in the change feed each wake it sooner; this catches what no notice
+       * covers, such as an account disabled or a role removed.
+       */
+      resyncMs: asOptional(asNumber, LIVE_RESYNC_MS),
+      /**
+       * How much of a live stream stays on the ingest's disk during the
+       * game, in seconds of its newest pieces. A piece older than that goes
+       * once the Space holds it, the wall clock scan has read it, and its
+       * writer can no longer rewrite it; the playlist and the init file stay
+       * until the game closes. Only while the stream publishes to a
+       * configured Space: without one the whole recording stays here. 0
+       * keeps every piece.
+       */
+      localTailSec: asOptional(asNumber, LIVE_LOCAL_TAIL_SEC),
+      /**
        * Where the ingest process answers `GET /health`, on 127.0.0.1 only.
        *
        * Absent, it is `listenPort + 1000`: every deployment already has a
@@ -375,13 +472,24 @@ export const asServerConfig = asObject({
       app: 'live',
       segmentSeconds: 4,
       freeDiskFloorGb: 10,
+      resyncMs: LIVE_RESYNC_MS,
+      localTailSec: LIVE_LOCAL_TAIL_SEC,
       healthPort: undefined
     }
   )
 })
 export type ServerConfig = ReturnType<typeof asServerConfig>
 export type SmtpSettings = ServerConfig['smtp']
-/** `healthPort` is the ingest process's alone, and may be left out. */
-export type LiveSettings = Omit<ServerConfig['live'], 'healthPort'> & {
+/**
+ * `healthPort` is the ingest process's alone, and may be left out, as may
+ * `resyncMs` and `localTailSec`, which the ingest then takes as their
+ * defaults.
+ */
+export type LiveSettings = Omit<
+  ServerConfig['live'],
+  'healthPort' | 'resyncMs' | 'localTailSec'
+> & {
   healthPort?: number
+  resyncMs?: number
+  localTailSec?: number
 }

@@ -89,7 +89,7 @@ export function peopleRoutes(
         const actor = await actorOf(req.actor)
         const ref = { kind, id: pathParam(req.params.id) }
         if (!(await seesPeopleOf(db, actor, ref))) throw notFound()
-        const people = await levelPeople(db, media.space, ref)
+        const people = await levelPeople(db, media.space, ref, actor)
         if (people == null) throw notFound()
         const manages = await canManagePeople(db, actor, ref)
         res.json({

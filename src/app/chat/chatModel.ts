@@ -170,13 +170,21 @@ export function readLine(
 export const QUICK_REACTIONS = ['❤️', '👍', '👎', '😂', '😮', '😢'] as const
 
 export type MessageAction =
-  'reply' | 'react' | 'copy' | 'pin' | 'unpin' | 'delete' | 'deleteForEveryone'
+  | 'reply'
+  | 'react'
+  | 'copy'
+  | 'pin'
+  | 'unpin'
+  | 'delete'
+  | 'deleteForEveryone'
+  | 'block'
+  | 'report'
+  | 'reportAndBlock'
 
 /**
  * The requested message controls: readable reply/reaction/copy and personal
  * pin, plus author or moderator deletion where allowed. Locked placeholders
- * retain only an existing personal Unpin action; edit/report stay outside
- * these restricted menus.
+ * retain personal Unpin and Block; reporting requires readable evidence.
  */
 export function actionsFor(
   message: MessageView,
@@ -195,6 +203,7 @@ export function actionsFor(
       if (message.mine) actions.push('delete')
       else if (view.conversation.canModerate) actions.push('deleteForEveryone')
     }
+    if (!message.mine && message.status !== 'removed') actions.push('block')
     return actions
   }
   const actions: MessageAction[] = []
@@ -209,6 +218,7 @@ export function actionsFor(
   if (!message.mine && posting && view.conversation.canModerate) {
     actions.push('deleteForEveryone')
   }
+  if (!message.mine) actions.push('report', 'block', 'reportAndBlock')
   return actions
 }
 

@@ -11,7 +11,7 @@ import { adminScopes, canSeeGame, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { deleteVideo } from '../media/deleteVideo'
 import { locateVideo, videoFrameSource } from '../media/locations'
-import type { MediaContext } from '../media/mediaContext'
+import type { FeedHolder, MediaContext } from '../media/mediaContext'
 import {
   MEDIA_TOKEN_TTL_SEC,
   mediaUrlPath,
@@ -31,6 +31,7 @@ import {
   stillSpaceUrl,
   stillSubject
 } from '../media/stills'
+import type { VideoPath } from '../media/videoPrefix'
 import { readWallTimeline } from '../media/wallTimeline'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
@@ -48,12 +49,26 @@ export function mediaRoutes(
   db: Kysely<Database>,
   options: MediaContext
 ): Router {
-  const { ffmpegPath, mediaRoot, mediaSecret, publicUrl, space } = options
+  const { ffmpegPath, mediaRoot, mediaSecret, publicUrl, space, liveFeed } =
+    options
   const router = Router()
-  const playback = new SpacePlayback({
-    space,
-    expiresSec: MEDIA_TOKEN_TTL_SEC
-  })
+  const playback = new SpacePlayback(
+    {
+      space,
+      expiresSec: MEDIA_TOKEN_TTL_SEC
+    },
+    Date.now,
+    options.livePlaylists == null
+      ? undefined
+      : {
+          ...options.livePlaylists,
+          enabled: () => liveFeed?.filled === true,
+          log: message => {
+            console.error(message)
+          }
+        }
+  )
+  const hlsRows = hlsRowCache(db, liveFeed)
 
   router.get(
     '/videos/:videoId/playback',
@@ -74,6 +89,7 @@ export function mediaRoutes(
           'videos.status as status',
           'videos.duration_sec as durationSec',
           'videos.hidden as hidden',
+          'videos.space_secret as spaceSecret',
           'games.home_team_id as homeTeamId',
           'games.away_team_id as awayTeamId',
           'games.season_id as seasonId'
@@ -95,7 +111,8 @@ export function mediaRoutes(
         : await locateVideo({
             mediaRoot,
             storage: video.storage,
-            videoId
+            videoId,
+            spaceSecret: video.spaceSecret
           })
       if (location == null) {
         // The row says there is a video; its files are not there. Better to
@@ -116,15 +133,19 @@ export function mediaRoutes(
 
       let entry = 'master.m3u8'
       if (video.storage === 'spaces' && video.kind === 'live') {
-        const master = await playback.playlists.get(videoId, 'master.m3u8')
+        const master = await playback.playlists.get(
+          { id: videoId, spaceSecret: video.spaceSecret },
+          'master.m3u8'
+        )
         if (master != null && mediaVariant(master) === 'index.m3u8')
           entry = 'index.m3u8'
       }
       const now = Date.now()
       const url =
         video.storage === 'spaces'
-          ? // The API serves these playlists itself, rewriting the media entry
-            // to a presigned URL so the bytes come from the Space directly. A
+          ? // The API serves these playlists itself, pointing each media entry
+            // at the Space (unsigned under the video's secret path, presigned
+            // without one) so the bytes come from the Space directly. A
             // `<video>` element cannot send a bearer token, so the permission
             // rides in the query string.
             `${publicUrl}/api/v1/videos/${videoId}/hls/${entry}?t=${signQueryToken(
@@ -202,6 +223,7 @@ export function mediaRoutes(
           'videos.storage as storage',
           'videos.hidden as hidden',
           'videos.spaces_verified_at as spacesVerifiedAt',
+          'videos.space_secret as spaceSecret',
           'games.home_team_id as homeTeamId',
           'games.away_team_id as awayTeamId',
           'games.season_id as seasonId'
@@ -217,7 +239,7 @@ export function mediaRoutes(
       await redirectToStill(
         res,
         video.storage,
-        videoId,
+        { id: videoId, spaceSecret: video.spaceSecret },
         atSec,
         video.spacesVerifiedAt != null
       )
@@ -258,14 +280,14 @@ export function mediaRoutes(
       }
       const video = await db
         .selectFrom('videos')
-        .select(['storage', 'hidden', 'spaces_verified_at'])
+        .select(['storage', 'hidden', 'spaces_verified_at', 'space_secret'])
         .where('id', '=', videoId)
         .executeTakeFirst()
       if (video == null || video.hidden) throw notFound()
       await redirectToStill(
         res,
         video.storage,
-        videoId,
+        { id: videoId, spaceSecret: video.space_secret },
         atSec,
         video.spaces_verified_at != null
       )
@@ -276,15 +298,17 @@ export function mediaRoutes(
   async function redirectToStill(
     res: Response,
     storage: 'peertube' | 'local' | 'spaces',
-    videoId: string,
+    video: VideoPath,
     atSec: number,
     verified: boolean
   ): Promise<void> {
+    const videoId = video.id
     const source = await videoFrameSource({
       mediaRoot,
       space,
       storage,
       videoId,
+      spaceSecret: video.spaceSecret,
       verified
     })
     if (source == null) throw notFound()
@@ -335,24 +359,26 @@ export function mediaRoutes(
       if (!['master.m3u8', 'index.m3u8', 'video.m3u8'].includes(file))
         throw notFound()
       if (!spaceConfigured(space)) throw notFound()
-      const video = await db
-        .selectFrom('videos')
-        .select(['hidden', 'storage', 'spaces_verified_at'])
-        .where('id', '=', videoId)
-        .executeTakeFirst()
+      const video = await hlsRows.get(videoId)
       if (video == null || video.hidden || video.storage !== 'spaces')
         throw notFound()
       const verified = video.spaces_verified_at != null
-      const body = await playback.get(videoId, file, verified)
+      // Its media URLs carry the secret path, which only a viewer this route
+      // has let in (by the token `/playback` minted) ever sees.
+      const path = { id: videoId, spaceSecret: video.space_secret }
+      if (file === 'index.m3u8' && !verified) {
+        const open = await playback.live(path)
+        if (open == null) throw notFound()
+        res.type('application/vnd.apple.mpegurl')
+        res.setHeader('cache-control', 'private, max-age=1')
+        res.send(open)
+        return
+      }
+      const body = await playback.get(path, file, verified)
       if (body == null) throw notFound()
 
       res.type('application/vnd.apple.mpegurl')
-      res.setHeader(
-        'cache-control',
-        file === 'index.m3u8' && !verified
-          ? 'private, max-age=1'
-          : 'private, max-age=3600'
-      )
+      res.setHeader('cache-control', 'private, max-age=3600')
 
       if (file === 'master.m3u8') {
         const name = mediaVariant(body)
@@ -361,7 +387,7 @@ export function mediaRoutes(
         res.send(rewriteMasterPlaylist(body, variant))
         return
       }
-      res.send(playback.rewrite(videoId, file, body))
+      res.send(playback.rewrite(path, file, body))
     })
   )
 
@@ -399,6 +425,7 @@ export function mediaRoutes(
           'videos.kind as kind',
           'videos.storage as storage',
           'videos.status as status',
+          'videos.space_secret as spaceSecret',
           'games.id as gameId',
           'games.home_team_id as homeTeamId',
           'games.away_team_id as awayTeamId'
@@ -459,6 +486,110 @@ const STILL_URL_TTL_SEC = 60 * 60
 /** What an HLS token is signed against: this video's playlists, and no other. */
 function hlsSubject(videoId: string): string {
   return `hls:${videoId}`
+}
+
+/** What the playlist route reads of a video's row. */
+interface HlsRow {
+  hidden: boolean
+  storage: 'peertube' | 'local' | 'spaces'
+  spaces_verified_at: Date | null
+  space_secret: string | null
+}
+
+/** How long the playlist route trusts a row it read, notice or none. */
+export const HLS_ROW_TTL_MS = 30_000
+
+/**
+ * The rows the playlist route reads, kept per worker: a viewer reloads a
+ * live playlist every few seconds, and the row changes a few times a game.
+ *
+ * An entry lasts until a `live_changes` notice names its video, the feed is
+ * back after a gap (`onListening(false)`), or `HLS_ROW_TTL_MS`, whichever
+ * comes first. Nothing is kept until the worker's feed exists and is
+ * listening, and a read a notice overtook is not kept, so while the feed is
+ * up a hidden or deleted video is never served from a row older than its
+ * notice. Nothing says when a gap begins, so during one the TTL is the bound:
+ * a row read before it can be served for up to `HLS_ROW_TTL_MS`.
+ *
+ * Expired entries are dropped once every `HLS_ROW_TTL_MS`, so a worker keeps
+ * only the videos it served lately, not every one it ever served.
+ */
+export function hlsRowCache(
+  db: Kysely<Database>,
+  holder: FeedHolder | undefined,
+  now: () => number = Date.now
+): {
+  get: (videoId: string) => Promise<HlsRow | undefined>
+  /** How many rows are kept, expired or not. */
+  held: () => number
+} {
+  const rows = new Map<string, { row: HlsRow; at: number }>()
+  let swept = now()
+  let listening = false
+  /** Moves on every notice, so a read it overtook is not kept. */
+  let notices = 0
+  holder?.onFill(feed => {
+    feed.subscribe('live_changes', {
+      onPayload: payload => {
+        const named = noticeVideo(payload)
+        // A game's notice, or a stream's with no video, names no row here.
+        if (named === null) return
+        notices++
+        // One that cannot be read may name any video.
+        if (named === undefined) rows.clear()
+        else rows.delete(named)
+      },
+      onListening: () => {
+        // The first time, nothing is held; after a gap, notices went unheard.
+        notices++
+        rows.clear()
+        listening = true
+      }
+    })
+  })
+  const read = async (videoId: string): Promise<HlsRow | undefined> =>
+    await db
+      .selectFrom('videos')
+      .select(['hidden', 'storage', 'spaces_verified_at', 'space_secret'])
+      .where('id', '=', videoId)
+      .executeTakeFirst()
+  return {
+    held: () => rows.size,
+    get: async videoId => {
+      if (!listening) return await read(videoId)
+      const at = now()
+      if (at - swept >= HLS_ROW_TTL_MS) {
+        swept = at
+        for (const [id, entry] of rows)
+          if (at - entry.at >= HLS_ROW_TTL_MS) rows.delete(id)
+      }
+      const held = rows.get(videoId)
+      if (held != null && at - held.at < HLS_ROW_TTL_MS) return held.row
+      const before = notices
+      const row = await read(videoId)
+      // A video that is not there has no notice to come when it is.
+      if (row != null && listening && notices === before)
+        rows.set(videoId, { row, at })
+      else rows.delete(videoId)
+      return row
+    }
+  }
+}
+
+/**
+ * The video a `live_changes` notice names: its `v`, null when it names none
+ * (a game's `g`, or a stream's with no video), undefined when it cannot be
+ * read.
+ */
+function noticeVideo(payload: string | undefined): string | null | undefined {
+  if (payload == null) return undefined
+  try {
+    const value = JSON.parse(payload) as { v?: unknown } | null
+    if (typeof value?.v === 'string') return value.v
+    return typeof value === 'object' && value != null ? null : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**

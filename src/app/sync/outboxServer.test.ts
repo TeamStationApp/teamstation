@@ -14,9 +14,9 @@ import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
 import { startingContext } from '../../server/routes/lineups'
-import { readSyncClock } from '../../server/socket/syncRevision'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
+import { listenScreenScopes } from '../../test/screenScopeNotices'
 import { seedSettingsCleanup3 } from '../../test/settingsCleanup3Fixture'
 import { cacheFileName, openCacheStore } from './cacheStore'
 import { CachingClient } from './cachingClient'
@@ -211,11 +211,22 @@ describe('the outbox against the server', function () {
     expect(await playersNamed(f, f.teamA, 'Vladimir')).length(1)
     // And a lineup.
     const lineup = await homeLineup(f, lineupGame)
-    const clock = Number(await readSyncClock(f.h.db))
+    const notices = await listenScreenScopes(f.h.db)
+    const digest = async (): Promise<string | null> =>
+      (
+        await f.h.db
+          .selectFrom('games')
+          .select('lineups_digest')
+          .where('id', '=', lineupGame)
+          .executeTakeFirstOrThrow()
+      ).lineups_digest
+    const unsaved = await digest()
     transport.dropNext = true
     await client.saveLineups(lineupGame, lineup)
-    const saved = Number(await readSyncClock(f.h.db))
-    expect(saved).greaterThan(clock)
+    // The save committed: the game keeps its lineups.
+    const stored = await digest()
+    expect(stored).not.equals(unsaved)
+    const saved = notices.mark()
     expect((await client.outboxSummary()).count).equals(3)
 
     client.wakeOutbox(true)
@@ -227,10 +238,23 @@ describe('the outbox against the server', function () {
     for (const post of transport.posts)
       keys.set(post.key!, (keys.get(post.key!) ?? 0) + 1)
     expect([...keys.values()]).deep.equals([2, 2, 2])
+    // The live post asked for no answer both times, so the replay's answer
+    // is every play: the whole game the phone writes as its own copy.
+    expect(
+      transport.posts
+        .filter(post => post.path.startsWith(`/games/${gameId}/events`))
+        .map(post => [post.path, post.status])
+    ).deep.equals([
+      [`/games/${gameId}/events`, 200],
+      [`/games/${gameId}/events`, 200]
+    ])
     expect(await playCount(f, gameId)).equals(1)
     const made = await playersNamed(f, f.teamA, 'Vladimir')
     expect(made).length(1)
-    expect(Number(await readSyncClock(f.h.db))).equals(saved)
+    // Answered from what was stored, the second sends wrote nothing.
+    expect(await notices.since(saved)).deep.equals([])
+    expect(await digest()).equals(stored)
+    await notices.close()
     // The phone's copies are the server's now.
     const roster = await client.roster(f.teamA)
     const entry = roster.find(row => row.userId === made[0])!

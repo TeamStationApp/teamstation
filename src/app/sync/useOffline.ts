@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { CachingClient, OFFLINE_CREATE_MESSAGE } from './cachingClient'
-import type { HeldChain, OutboxSummary } from './outbox'
+import type { HeldChain, OutboxNotice, OutboxSummary } from './outbox'
 
 /**
  * What the shell and the screens say while the phone is offline. The web
@@ -116,6 +116,37 @@ export function useOutboxSummary(
     }
   }, [client, owner])
   return summary
+}
+
+/**
+ * The last notice a queued write of `gameId`, or of one of its `teamIds`,
+ * came to on the phone, until `dismiss`; nothing on the web.
+ */
+export function useOutboxNotice(
+  client: TeamStationClient,
+  gameId: string,
+  teamIds: readonly string[] = []
+): { text: string; reread: boolean; dismiss: () => void } | undefined {
+  const [notice, setNotice] = useState<OutboxNotice>()
+  const teams = teamIds.join('\u0000')
+  useEffect(() => {
+    setNotice(undefined)
+    if (!(client instanceof CachingClient)) return
+    const own = new Set(teams === '' ? [] : teams.split('\u0000'))
+    return client.subscribeOutboxNotices(next => {
+      if (
+        next.gameId === gameId ||
+        (next.teamId != null && own.has(next.teamId))
+      )
+        setNotice(next)
+    })
+  }, [client, gameId, teams])
+  const dismiss = useCallback(() => {
+    setNotice(undefined)
+  }, [])
+  return notice == null
+    ? undefined
+    : { text: notice.message, reread: notice.reread === true, dismiss }
 }
 
 /** Why `gameId`'s queued writes are held on the phone, if they are. */

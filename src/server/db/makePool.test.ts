@@ -1,9 +1,26 @@
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { type AddressInfo, createServer, type Socket } from 'node:net'
+import { tmpdir, userInfo } from 'node:os'
+import { join } from 'node:path'
+
 import { expect } from 'chai'
+import { Kysely, PostgresDialect, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
-import { Pool } from 'pg'
+import { Client, Pool } from 'pg'
 
 import { testDatabaseUrl } from '../../migrate/testDatabase'
-import { makePool } from './database'
+import { serverConfig } from '../serverConfig'
+import {
+  type DatabaseRole,
+  isConnectionUnavailable,
+  isDatabaseOutOfReach,
+  makeDatabase,
+  makePool,
+  poolSettings,
+  starvationCheck,
+  waitLog
+} from './database'
 
 describe('the database pool', () => {
   let admin: Pool
@@ -66,10 +83,622 @@ describe('the database pool', () => {
   })
 })
 
+describe('a pool with no role', () => {
+  it('is what a pool has always been: ten connections and no timeout', async () => {
+    const pool = makePool(testDatabaseUrl)
+    expect(pool.options.max).to.equal(10)
+    expect(pool.options.connectionTimeoutMillis).to.equal(undefined)
+    expect(pool.options.application_name).to.equal(undefined)
+    const { rows } = await pool.query<{ name: string }>(
+      `select current_setting('application_name') as name`
+    )
+    expect(rows[0].name).to.equal('')
+    await pool.end()
+  })
+})
+
+describe('a pool with a role', () => {
+  const sizes = { worker: 9, primary: 8, statsBuilder: 7, ingest: 6 }
+  const roles: DatabaseRole[] = ['worker', 'primary', 'statsBuilder', 'ingest']
+
+  it('takes its size from its role', () => {
+    for (const role of roles)
+      expect(poolSettings(role, sizes)).deep.equals({
+        max: sizes[role],
+        application_name: `teamstation-${role}`,
+        connectionTimeoutMillis: 5000
+      })
+  })
+
+  it('reads the configured sizes', () => {
+    for (const role of roles) {
+      const pool = makePool(testDatabaseUrl, undefined, { role })
+      expect(pool.options.max).to.equal(serverConfig.databasePoolSizes[role])
+      expect(pool.options.connectionTimeoutMillis).to.equal(5000)
+      pool.end().catch(() => undefined)
+    }
+  })
+
+  it('names itself to the database', async () => {
+    const db = makeDatabase(testDatabaseUrl, { role: 'ingest' })
+    const { rows } = await sql<{
+      name: string
+    }>`select current_setting('application_name') as name`.execute(db)
+    expect(rows[0].name).to.equal('teamstation-ingest')
+    await db.destroy()
+  })
+
+  it('stops looking for waiters once it has ended', async function () {
+    this.timeout(5000)
+    const logged: string[] = []
+    const pool = makePool(testDatabaseUrl, message => logged.push(message), {
+      role: 'worker'
+    })
+    await pool.end()
+    await new Promise(resolve => setTimeout(resolve, 1200))
+    expect(logged).deep.equals([])
+  })
+
+  it('reports waiters it finds while running', async function () {
+    this.timeout(5000)
+    const logged: string[] = []
+    const pool = makePool(testDatabaseUrl, message => logged.push(message), {
+      role: 'primary'
+    })
+    const held = await Promise.all(
+      Array.from({ length: pool.options.max ?? 0 }, async () => {
+        return await pool.connect()
+      })
+    )
+    const waiting = pool.connect()
+    await waitFor(() => logged.length > 0)
+    expect(logged[0]).to.match(/^database: primary pool starved: total \d+/)
+    for (const client of held) client.release()
+    ;(await waiting).release()
+    await pool.end()
+  })
+})
+
+describe('isConnectionUnavailable', () => {
+  const failureOf = async (attempt: Promise<unknown>): Promise<unknown> => {
+    try {
+      await attempt
+    } catch (error) {
+      return error
+    }
+    throw new Error('it should have failed')
+  }
+
+  it('knows a pool with nothing free past the timeout', async () => {
+    const pool = new Pool({
+      connectionString: testDatabaseUrl,
+      max: 1,
+      connectionTimeoutMillis: 50
+    })
+    const held = await pool.connect()
+    expect(
+      isConnectionUnavailable(await failureOf(pool.query('select 1')))
+    ).equals(true)
+    held.release()
+    await pool.end()
+  })
+
+  it('knows a connection that could not open in time', async () => {
+    // Accepts the connection and never answers it.
+    const sockets: Socket[] = []
+    const silent = createServer(socket => sockets.push(socket))
+    await new Promise<void>(resolve => silent.listen(0, '127.0.0.1', resolve))
+    const { port } = silent.address() as AddressInfo
+    const pool = new Pool({
+      connectionString: `postgres://127.0.0.1:${port}/none`,
+      connectionTimeoutMillis: 50
+    })
+    expect(
+      isConnectionUnavailable(await failureOf(pool.query('select 1')))
+    ).equals(true)
+    await pool.end()
+    for (const socket of sockets) socket.destroy()
+    silent.close()
+  })
+
+  it('knows what PgBouncer says when it gives up or has no room', () => {
+    for (const message of [
+      'query_wait_timeout',
+      'client_login_timeout',
+      'client_login_timeout (server down)',
+      'no more connections allowed (max_client_conn)',
+      'no more connections allowed (max_user_connections)',
+      'server login has been failing, cached error: connect failed (server_login_retry)',
+      'pgbouncer cannot connect to server',
+      'server conn crashed?',
+      'pooler is shutting down'
+    ])
+      expect(isConnectionUnavailable(new Error(message))).equals(true, message)
+    for (const message of [
+      'query_timeout',
+      'too many clients already',
+      'server login failed: wrong password type'
+    ])
+      expect(isConnectionUnavailable(new Error(message))).equals(false, message)
+  })
+
+  it('knows a connection that dropped', () => {
+    for (const message of [
+      'Connection terminated unexpectedly',
+      'Client has encountered a connection error and is not queryable'
+    ])
+      expect(isConnectionUnavailable(new Error(message))).equals(true, message)
+  })
+
+  const coded = (code: string): Error =>
+    Object.assign(new Error('whatever it says'), { code })
+
+  it('knows a server that is full or stopping or starting, by SQLSTATE', () => {
+    for (const code of ['53300', '57P01', '57P02', '57P03'])
+      expect(isConnectionUnavailable(coded(code))).equals(true, code)
+  })
+
+  it('knows a socket whose other end is down or gone', () => {
+    for (const code of [
+      'EAI_AGAIN',
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'EPIPE',
+      'ETIMEDOUT'
+    ])
+      expect(isConnectionUnavailable(coded(code))).equals(true, code)
+  })
+
+  it('tells a database out of reach from connections that are short', () => {
+    for (const code of [
+      '57P01',
+      '57P02',
+      '57P03',
+      'EAI_AGAIN',
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'EPIPE',
+      'ETIMEDOUT'
+    ])
+      expect(isDatabaseOutOfReach(coded(code))).equals(true, code)
+    for (const message of [
+      'server login has been failing, cached error: connect failed (server_login_retry)',
+      'pgbouncer cannot connect to server',
+      'server conn crashed?',
+      'pooler is shutting down'
+    ])
+      expect(isDatabaseOutOfReach(new Error(message))).equals(true, message)
+    expect(isDatabaseOutOfReach(coded('53300'))).equals(false)
+    expect(isDatabaseOutOfReach(coded('42P01'))).equals(false)
+    expect(isDatabaseOutOfReach('ECONNREFUSED')).equals(false)
+    for (const message of [
+      'timeout exceeded when trying to connect',
+      'Connection terminated unexpectedly',
+      'query_wait_timeout',
+      'no more connections allowed (max_client_conn)'
+    ])
+      expect(isDatabaseOutOfReach(new Error(message))).equals(false, message)
+  })
+
+  it('leaves as faults what asking again would not mend', () => {
+    for (const code of [
+      '42P01', // no such table
+      '57014', // cancelled by a statement timeout
+      '53100', // the disk is full
+      '53200', // out of memory
+      '28P01', // a wrong password
+      '3D000', // no such database
+      '08P01', // a protocol violation, when no pooler's words go with it
+      'ENOTFOUND',
+      'EACCES'
+    ])
+      expect(isConnectionUnavailable(coded(code))).equals(false, code)
+    for (const message of [
+      // What `pg` says to a query left behind by this process's own `end()`.
+      'Connection terminated',
+      'Client was closed and is not queryable',
+      'Cannot use a pool after calling end on the pool'
+    ])
+      expect(isConnectionUnavailable(new Error(message))).equals(false, message)
+  })
+
+  it('knows a connection the server ended, as it does in a restart', async () => {
+    const victim = new Client({ connectionString: testDatabaseUrl })
+    victim.on('error', () => undefined)
+    await victim.connect()
+    const { rows } = await victim.query<{ pid: number }>(
+      'select pg_backend_pid() as pid'
+    )
+    const failing = failureOf(victim.query('select pg_sleep(10)'))
+    const admin = new Client({ connectionString: testDatabaseUrl })
+    await admin.connect()
+    await admin.query('select pg_terminate_backend($1)', [rows[0].pid])
+    await admin.end()
+    expect(isConnectionUnavailable(await failing)).equals(true)
+    await victim.end().catch(() => undefined)
+  })
+
+  it('knows nothing else', async () => {
+    const pool = new Pool({ connectionString: testDatabaseUrl })
+    expect(
+      isConnectionUnavailable(
+        await failureOf(pool.query('select from no_such_table'))
+      )
+    ).equals(false)
+    await pool.end()
+    expect(
+      isConnectionUnavailable('timeout exceeded when trying to connect')
+    ).equals(false)
+    expect(isConnectionUnavailable(undefined)).equals(false)
+  })
+})
+
+describe('starvationCheck', () => {
+  const fixture = (): {
+    pool: { totalCount: number; idleCount: number; waitingCount: number }
+    logged: string[]
+    reported: string[]
+    clock: { at: number }
+    check: () => void
+  } => {
+    const pool = { totalCount: 10, idleCount: 0, waitingCount: 0 }
+    const logged: string[] = []
+    const reported: string[] = []
+    const clock = { at: 1000 }
+    const check = starvationCheck(
+      pool,
+      'worker',
+      message => logged.push(message),
+      message => reported.push(message),
+      () => clock.at
+    )
+    return { pool, logged, reported, clock, check }
+  }
+
+  it('says nothing while nothing waits', () => {
+    const f = fixture()
+    f.check()
+    f.clock.at += 600_000
+    f.check()
+    expect(f.logged).deep.equals([])
+    expect(f.reported).deep.equals([])
+  })
+
+  it('logs the counts and the role when something waits', () => {
+    const f = fixture()
+    f.pool.waitingCount = 4
+    f.check()
+    expect(f.logged).deep.equals([
+      'database: worker pool starved: total 10, idle 0, waiting 4'
+    ])
+    expect(f.reported).deep.equals(['database: worker pool starved'])
+  })
+
+  it('logs every 30 seconds and reports every 5 minutes', () => {
+    const f = fixture()
+    f.pool.waitingCount = 1
+    f.check()
+    f.clock.at += 29_999
+    f.check()
+    expect(f.logged).to.have.length(1)
+    f.clock.at += 1
+    f.check()
+    expect(f.logged).to.have.length(2)
+    expect(f.reported).to.have.length(1)
+    f.clock.at += 270_000
+    f.check()
+    expect(f.reported).to.have.length(2)
+  })
+})
+
+describe('waitLog', () => {
+  const fixture = (): {
+    logged: string[]
+    clock: { at: number }
+    log: ReturnType<typeof waitLog>
+    wait: (ms: number) => void
+  } => {
+    const logged: string[] = []
+    const clock = { at: 5000 }
+    const log = waitLog(
+      'worker',
+      message => logged.push(message),
+      () => clock.at
+    )
+    const wait = (ms: number): void => {
+      const done = log.time()
+      clock.at += ms
+      done()
+    }
+    return { logged, clock, log, wait }
+  }
+  const line = (logged: string): unknown =>
+    JSON.parse(logged.replace(/^db-wait /, ''))
+
+  it('writes one line a minute, from the clock, of the waits since the last', () => {
+    const f = fixture()
+    for (const ms of [3, 1, 2, 10, 0.25, 4, 5, 6, 7, 8, 9.04, 2.5]) f.wait(ms)
+    f.log.check()
+    expect(f.logged).deep.equals([])
+    f.clock.at = 5000 + 59_999
+    f.log.check()
+    expect(f.logged).deep.equals([])
+    f.clock.at = 5000 + 60_000
+    f.log.check()
+    f.log.check()
+    expect(f.logged).to.have.length(1)
+    expect(f.logged[0]).to.match(/^db-wait \{"role":"worker","n":12,/)
+    expect(line(f.logged[0])).deep.equals({
+      role: 'worker',
+      n: 12,
+      p50: 4,
+      p95: 10,
+      max: 10
+    })
+    f.wait(1.26)
+    f.clock.at += 60_000
+    f.log.check()
+    expect(line(f.logged[1])).deep.equals({
+      role: 'worker',
+      n: 1,
+      p50: 1.3,
+      p95: 1.3,
+      max: 1.3
+    })
+  })
+
+  it('still writes its line in a minute with nothing asked', () => {
+    const f = fixture()
+    f.clock.at += 60_000
+    f.log.check()
+    expect(f.logged).deep.equals([
+      'db-wait {"role":"worker","n":0,"p50":0,"p95":0,"max":0}'
+    ])
+  })
+
+  it('reads the clock of the process when given none', () => {
+    const logged: string[] = []
+    const log = waitLog('primary', message => logged.push(message))
+    log.time()()
+    log.check()
+    expect(logged).deep.equals([])
+  })
+})
+
+describe('a pool that logs its wait', () => {
+  /** A clock that counts its readings and moves only when told. */
+  const counted = (): { at: number; reads: number; now: () => number } => {
+    const clock = {
+      at: 0,
+      reads: 0,
+      now: () => {
+        clock.reads += 1
+        return clock.at
+      }
+    }
+    return clock
+  }
+  const waitLines = (logged: string[]): string[] =>
+    logged.filter(message => message.startsWith('db-wait '))
+
+  it('times nothing and logs nothing with logDatabaseWait off', async function () {
+    this.timeout(5000)
+    expect(serverConfig.logDatabaseWait).equals(false)
+    for (const logWait of [false, undefined]) {
+      const logged: string[] = []
+      const clock = counted()
+      const pool = makePool(testDatabaseUrl, message => logged.push(message), {
+        role: 'worker',
+        logWait,
+        now: clock.now
+      })
+      const client = await pool.connect()
+      expect(Object.hasOwn(client, 'query')).equals(false)
+      await client.query('select 1')
+      client.release()
+      await pool.query('select 1')
+      clock.at += 60_000
+      await new Promise(resolve => setTimeout(resolve, 1200))
+      expect(clock.reads).equals(0)
+      expect(waitLines(logged)).deep.equals([])
+      await pool.end()
+    }
+  })
+
+  it('logs no wait for a pool with no role', async () => {
+    const logged: string[] = []
+    const clock = counted()
+    const pool = makePool(testDatabaseUrl, message => logged.push(message), {
+      logWait: true,
+      now: clock.now
+    })
+    await pool.query('select 1')
+    expect(clock.reads).equals(0)
+    await pool.end()
+  })
+
+  it('times only the first statement of each checkout, and logs them once a minute', async function () {
+    this.timeout(8000)
+    const logged: string[] = []
+    const clock = counted()
+    const pool = makePool(testDatabaseUrl, message => logged.push(message), {
+      role: 'worker',
+      logWait: true,
+      now: clock.now
+    })
+    const db = new Kysely<Record<string, never>>({
+      dialect: new PostgresDialect({ pool })
+    })
+    // One checkout of four statements: begin, two selects, commit.
+    await db.transaction().execute(async trx => {
+      await sql`select 1`.execute(trx)
+      await sql`select 2`.execute(trx)
+    })
+    // One of three, by hand, and two of one, through the pool's own query.
+    const client = await pool.connect()
+    for (const n of [1, 2, 3]) await client.query(`select ${n}`)
+    client.release()
+    await pool.query('select 1')
+    await new Promise<void>((resolve, reject) => {
+      pool.query('select 2', error => {
+        if (error == null) resolve()
+        else reject(error)
+      })
+    })
+    expect(waitLines(logged)).deep.equals([])
+    clock.at += 60_000
+    await waitFor(() => waitLines(logged).length > 0)
+    expect(waitLines(logged)).deep.equals([
+      'db-wait {"role":"worker","n":4,"p50":0,"p95":0,"max":0}'
+    ])
+    await db.destroy()
+  })
+})
+
 async function waitFor(done: () => boolean): Promise<void> {
   const deadline = Date.now() + 5000
   while (!done()) {
     if (Date.now() > deadline) throw new Error('timed out')
     await new Promise(resolve => setTimeout(resolve, 10))
   }
+}
+
+/** Needs a PgBouncer on the machine, and skips without one. */
+describe('isConnectionUnavailable against a real PgBouncer', function () {
+  this.timeout(30000)
+  const wait = async (ms: number): Promise<void> => {
+    await new Promise(resolve => setTimeout(resolve, ms))
+  }
+  let dir: string
+  let bouncer: ChildProcess | undefined
+  let url: string
+
+  before(async function () {
+    const found = spawnSync('pgbouncer', ['--version'], { stdio: 'ignore' })
+    if (found.status !== 0) {
+      this.skip()
+      return
+    }
+    const target = new URL(testDatabaseUrl)
+    const port = await freePort()
+    dir = mkdtempSync(join(tmpdir(), 'poolerRefusals-'))
+    const config = join(dir, 'pgbouncer.ini')
+    const user = target.username === '' ? userInfo().username : target.username
+    writeFileSync(
+      config,
+      `[databases]
+* = host=${target.hostname === 'localhost' ? '127.0.0.1' : target.hostname} port=${target.port} user=${user}
+[pgbouncer]
+listen_addr = 127.0.0.1
+listen_port = ${port}
+unix_socket_dir =
+pool_mode = transaction
+auth_type = any
+default_pool_size = 1
+max_client_conn = 3
+query_wait_timeout = 1
+logfile = ${join(dir, 'pgbouncer.log')}
+ignore_startup_parameters = extra_float_digits,options
+`
+    )
+    bouncer = spawn('pgbouncer', [config], { stdio: 'ignore' })
+    url = `postgres://${user}@127.0.0.1:${port}/postgres`
+    const deadline = Date.now() + 5000
+    for (;;) {
+      const client = new Client({ connectionString: url })
+      const up = await client.connect().then(
+        () => true,
+        () => false
+      )
+      await client.end().catch(() => undefined)
+      if (up) break
+      if (Date.now() > deadline) throw new Error('PgBouncer never answered')
+      await wait(50)
+    }
+  })
+
+  after(async function () {
+    bouncer?.kill()
+    if (dir != null) rmSync(dir, { recursive: true, force: true })
+  })
+
+  const failure = async (attempt: Promise<unknown>): Promise<Error> =>
+    await attempt.then(
+      () => {
+        throw new Error('it should have failed')
+      },
+      (error: unknown) => error as Error
+    )
+
+  it('knows a query that waited too long for a server connection, past the pool’s own limit', async () => {
+    const pool = new Pool({
+      connectionString: url,
+      max: 3,
+      connectionTimeoutMillis: 5000
+    })
+    pool.on('error', () => undefined)
+    const holding = pool.query('select pg_sleep(2)')
+    await wait(100)
+    const error = await failure(pool.query('select 1'))
+    expect(error.message).equals('query_wait_timeout')
+    expect(isConnectionUnavailable(error)).equals(true)
+    await holding.catch(() => undefined)
+    await pool.end()
+  })
+
+  it('knows a client it has no room for', async () => {
+    const clients = Array.from(
+      { length: 3 },
+      () => new Client({ connectionString: url })
+    )
+    for (const client of clients) {
+      client.on('error', () => undefined)
+      await client.connect()
+    }
+    const extra = new Client({ connectionString: url })
+    extra.on('error', () => undefined)
+    const error = await failure(extra.connect())
+    expect(error.message).equals(
+      'no more connections allowed (max_client_conn)'
+    )
+    expect(isConnectionUnavailable(error)).equals(true)
+    await extra.end().catch(() => undefined)
+    for (const client of clients) await client.end()
+  })
+
+  it('knows the pooler dying under a query, the query after it, and the client left behind', async () => {
+    const pool = new Pool({ connectionString: url, max: 2 })
+    pool.on('error', () => undefined)
+    const held = await pool.connect()
+    held.on('error', () => undefined)
+    const inFlight = failure(pool.query('select pg_sleep(10)'))
+    await wait(100)
+    bouncer?.kill('SIGKILL')
+    const dropped = await inFlight
+    expect(dropped.message).equals('Connection terminated unexpectedly')
+    expect(isConnectionUnavailable(dropped)).equals(true)
+    await wait(50)
+    const left = await failure(held.query('select 1'))
+    expect(left.message).equals(
+      'Client has encountered a connection error and is not queryable'
+    )
+    expect(isConnectionUnavailable(left)).equals(true)
+    held.release(true)
+    const refused = await failure(pool.query('select 1'))
+    expect((refused as Error & { code?: string }).code).equals('ECONNREFUSED')
+    expect(isConnectionUnavailable(refused)).equals(true)
+    await pool.end()
+  })
+})
+
+async function freePort(): Promise<number> {
+  const probe = createServer()
+  await new Promise<void>(resolve => probe.listen(0, '127.0.0.1', resolve))
+  const { port } = probe.address() as AddressInfo
+  await new Promise(resolve => probe.close(resolve))
+  return port
 }

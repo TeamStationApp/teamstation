@@ -11,20 +11,20 @@ import { reconcileConversation } from './reconciler'
 
 class Store implements ChatKeyStore {
   record: ChatKeyRecord | undefined
-  async load(): Promise<ChatKeyRecord | undefined> {
-    return this.record
+  async load(userId: string): Promise<ChatKeyRecord | undefined> {
+    return this.record?.userId === userId ? this.record : undefined
   }
 
   async save(record: ChatKeyRecord): Promise<void> {
     this.record = record
   }
 
-  async wipe(): Promise<void> {
-    this.record = undefined
+  async wipe(userId: string): Promise<void> {
+    if (this.record?.userId === userId) this.record = undefined
   }
 
-  async exists(): Promise<boolean> {
-    return this.record != null
+  async exists(userId: string): Promise<boolean> {
+    return this.record?.userId === userId
   }
 }
 function deferred(): { promise: Promise<void>; resolve: () => void } {

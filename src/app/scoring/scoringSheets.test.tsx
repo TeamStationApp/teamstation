@@ -5,13 +5,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
 import { TeamStationClient } from '../../common/api'
-import { ScoringSession } from '../../common/scoring/session'
+import { applyAction, ScoringSession } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import { candidate } from '../../test/fakeCandidateClient'
 import { measureBoxes } from '../../test/measureBoxes'
 import { mintedRosterEntry } from '../../test/mintedRosterEntry'
 import { scoringSession } from '../../test/scoringSession'
-import { ThemeProvider } from '../theme/ThemeContext'
+import { getTheme, ThemeProvider } from '../theme/ThemeContext'
 import { gameFixture } from './isUnscoredGame.test'
 import { draftOfLocalPlayer, rosterPlayerBody } from './playerDraft'
 import {
@@ -128,7 +128,8 @@ async function mount(
   client.createRosterPlayer = async (_teamId, player) =>
     mintedRosterEntry(player)
   client.rosterCandidates = async () => [
-    candidate('Mookie Betts', { userId: 'usr_betts' })
+    candidate('Mookie Betts', { userId: 'usr_betts' }),
+    candidate('Aaron Judge', { userId: 'usr_judge' })
   ]
   const betts = (): ReturnType<typeof mintedRosterEntry> =>
     mintedRosterEntry({
@@ -422,14 +423,25 @@ describe('scoring slide-up sheets', function () {
     try {
       await mount()
       await menu('Set Team Rosters')
-      for (const action of ['Add to Roster', 'Add as Pool Player']) {
+      for (const [name, action] of [
+        ['Mookie B', 'Add to Roster'],
+        ['Aaron J', 'Add as Pool Player']
+      ]) {
         // Nothing answers the screen's own requests here, which leaves the
         // client offline; the search is answered.
         await act(async () => {
           mountedClient!.offline = false
         })
         await click('Add Existing Player')
-        await click('Choose Mookie B')
+        await act(async () => {
+          await new Promise(resolve => setTimeout(resolve, 20))
+        })
+        // Somebody added already is not listed again when the sheet reopens.
+        expect(
+          document.querySelector('[aria-label="Choose Mookie B"]') != null,
+          name
+        ).equals(name === 'Mookie B')
+        await click(`Choose ${name}`)
         await click(action)
       }
       expect(existingSent).deep.equals([
@@ -439,13 +451,78 @@ describe('scoring slide-up sheets', function () {
         },
         {
           guest: { gameId: 'g1', side: 'away', teamId: 'away' },
-          body: { userId: 'usr_betts', jersey: null, positions: [] }
+          body: { userId: 'usr_judge', jersey: null, positions: [] }
         }
       ])
       await click('Cancel')
     } finally {
       restore()
     }
+  })
+
+  it('opens the rosters at once while the game is still being read again (U39)', async function () {
+    HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
+    const session = scoringSession(gameFixture)
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.game = async () => gameFixture
+    client.roster = async () => []
+    client.myRoles = async () => ({
+      teams: { away: ['scorekeeper'], home: ['scorekeeper'] },
+      guardianOf: []
+    })
+    client.gameLineups = async () => await new Promise(() => undefined)
+    const store = memoryStore()
+    const load = store.load
+    let hold = false
+    let reads = 0
+    store.load = async gameId => {
+      if (hold) {
+        reads++
+        return await new Promise(() => undefined)
+      }
+      return await load(gameId)
+    }
+    const source: ScoringSource = {
+      persistent: true,
+      open: async () => {
+        const opened = ScoringSession.start(store, 'g1', session)
+        return opened
+      }
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <ScoringScreen
+            client={client}
+            gameId="g1"
+            source={source}
+            userId={12}
+            onExit={() => undefined}
+          />
+        </ThemeProvider>
+      )
+    })
+    hold = true
+    await menu('Set Team Rosters')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    // The game's read behind the sheet has not come back.
+    expect(reads).lessThan(2)
+    expect(document.querySelector('[aria-label="Refreshing game"]')).equals(
+      null
+    )
+    expect(document.querySelector('[aria-label="Save Rosters"]')).not.equals(
+      null
+    )
+    // An edit and Save go through with the read still out.
+    await click('Lineup')
+    await click('Clear Lineup')
+    await click('Save Rosters')
+    expect(document.querySelector('[aria-label="Save Rosters"]')).equals(null)
   })
 
   it('names the teams inside the Away/Home pill and nowhere else', async function () {
@@ -527,7 +604,7 @@ describe('scoring slide-up sheets', function () {
     expect(footer.textContent).includes('Save RostersCancel')
     await click('Defense')
     expect(document.body.textContent).includes(
-      'Drag player into position. On touch, hold briefly first.'
+      'Drag a player into position (on touch, hold a roster card briefly first). Drag a fielder to move or swap him; tap him to clear.'
     )
     expect(
       document.querySelector('[aria-label="Top-down baseball field"]')
@@ -579,6 +656,75 @@ describe('scoring slide-up sheets', function () {
     expect(
       document.querySelector('[data-roster-target="defense-P"]')!.textContent
     ).includes('Player 1')
+    await click('Cancel')
+  })
+  /** The player id at a position, or null when it is empty. */
+  const fielder = (position: string): string | null =>
+    document
+      .querySelector(`[data-roster-target="defense-${position}"]`)!
+      .getAttribute('data-roster-player')
+  const card = (position: string): string =>
+    `[data-roster-target="defense-${position}"]`
+  it('moves a fielder dragged to an empty position, swaps him with an occupied one, and clears on a tap (U32)', async function () {
+    this.timeout(10000)
+    await mount()
+    await menu('Set Team Rosters')
+    await click('Defense')
+    const pitcher = fielder('P')
+    const catcher = fielder('C')
+    const first = fielder('1B')
+    expect(pitcher).not.equals(null)
+    expect(catcher).not.equals(null)
+    // Swap: the pitcher dropped on the catcher's spot trades places with him.
+    await drag(card('P'), 'defense-C')
+    expect(fielder('C')).equals(pitcher)
+    expect(fielder('P')).equals(catcher)
+    // Tap: first base empties and his man goes back to the roster.
+    await click('Clear 1B')
+    expect(fielder('1B')).equals(null)
+    expect(
+      document.querySelector(
+        `[data-roster-target="roster"] [data-roster-player="${first}"]`
+      )
+    ).not.equals(null)
+    // Move: the man now pitching, dropped on empty first, leaves P empty.
+    await drag(card('P'), 'defense-1B')
+    expect(fielder('1B')).equals(catcher)
+    expect(fielder('P')).equals(null)
+    expect(document.querySelector(card('P'))!.textContent).includes(
+      'Unassigned'
+    )
+    // Dropped on his own spot nothing changes.
+    await drag(card('1B'), 'defense-1B')
+    expect(fielder('1B')).equals(catcher)
+    // A roster card dropped on an occupied spot replaces him.
+    await drag(
+      `[data-roster-target="roster"] [data-roster-player="${first}"]`,
+      'defense-C'
+    )
+    expect(fielder('C')).equals(first)
+    await click('Cancel')
+  })
+  it('clears every position, the pitcher too, from the red Clear level with Roster (U34)', async function () {
+    this.timeout(10000)
+    await mount()
+    await menu('Set Team Rosters')
+    await click('Defense')
+    const header = document.querySelector<HTMLElement>(
+      '[data-testid="Defense roster header"]'
+    )!
+    expect(header.textContent).equals('RosterClear')
+    expect(header.style.flexDirection).equals('row')
+    expect(header.style.justifyContent).equals('space-between')
+    const label = header.querySelector<HTMLElement>(
+      '[aria-label="Clear Defense"]'
+    )!.firstElementChild as HTMLElement
+    const red = document.createElement('div')
+    red.style.color = getTheme().scoringOutColor
+    expect(window.getComputedStyle(label).color).equals(red.style.color)
+    await click('Clear Defense')
+    for (const position of ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF'])
+      expect(fielder(position), position).equals(null)
     await click('Cancel')
   })
   it('adds placeholders through player entry while keeping additions in the roster draft', async function () {
@@ -721,7 +867,7 @@ describe('scoring slide-up sheets', function () {
       null
     )
   })
-  it('inserts at row boundaries, adjusts existing indices, and styles numbered roster rows', async function () {
+  it('inserts at row boundaries before the first pitch, adjusts existing indices, and styles numbered roster rows (U29)', async function () {
     this.timeout(5000)
     await mount()
     await menu('Set Team Rosters')
@@ -747,6 +893,82 @@ describe('scoring slide-up sheets', function () {
     expect(
       document.querySelector('[data-roster-target="roster"]')!.textContent
     ).not.includes('#1 Player 1')
+    await click('Cancel')
+  })
+  const lineupOrder = (): number[] =>
+    Array.from(
+      document.querySelectorAll(
+        '[data-roster-target^="lineup-"][data-roster-player]'
+      )
+    ).map(n => Number(n.getAttribute('data-roster-player')))
+  const benched = (id: number): boolean =>
+    document.querySelector(
+      `[data-roster-target="roster"] [data-roster-player="${id}"]`
+    ) != null
+  it('clears the lineup before the first pitch, every player back on the roster (U26)', async function () {
+    await mount()
+    await menu('Set Team Rosters')
+    await click('Lineup')
+    expect(lineupOrder()).deep.equals([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(document.querySelector('[aria-label="Remove Player 1"]')).not.equals(
+      null
+    )
+    await click('Clear Lineup')
+    expect(lineupOrder()).deep.equals([])
+    for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9])
+      expect(benched(id), String(id)).equals(true)
+    await click('Cancel')
+  })
+  it('locks the lineup at the first pitch: no Clear or X, a bat on the slot due, replace and swap in place (U27, U28)', async function () {
+    this.timeout(8000)
+    await mount(session => {
+      // Player 9 sits; the leadoff man takes a ball.
+      session.liveData.boxscore.teams.away.battingOrder.pop()
+      Object.assign(
+        session,
+        applyAction(session, { type: 'pitch', call: 'B' }).state
+      )
+    })
+    await menu('Set Team Rosters')
+    await click('Lineup')
+    expect(document.querySelector('[aria-label="Clear Lineup"]')).equals(null)
+    expect(document.querySelector('[aria-label^="Remove Player"]')).equals(null)
+    const bat = (): string | null =>
+      document
+        .querySelector('[data-testid="batIcon"]')!
+        .closest('[data-roster-target]')!
+        .getAttribute('data-roster-target')
+    expect(bat()).equals('lineup-0')
+    expect(
+      document.querySelector('[data-roster-target="roster"]')!.textContent
+    ).not.includes('Drop here to remove')
+    // The roster column takes no lineup drop.
+    await drag('[aria-label="Reorder Player 2"]', 'roster')
+    expect(lineupOrder()).deep.equals([1, 2, 3, 4, 5, 6, 7, 8])
+    // The bench player dropped on the second slot replaces him there.
+    await drag(
+      '[data-roster-target="roster"] [data-roster-player="9"]',
+      'lineup-1'
+    )
+    expect(lineupOrder()).deep.equals([1, 9, 3, 4, 5, 6, 7, 8])
+    expect(benched(2)).equals(true)
+    expect(benched(9)).equals(false)
+    // A lineup player dropped on another slot swaps with him; the bat stays
+    // on the first slot, now Player 9's.
+    await drag('[aria-label="Reorder Player 1"]', 'lineup-1')
+    expect(lineupOrder()).deep.equals([9, 1, 3, 4, 5, 6, 7, 8])
+    expect(bat()).equals('lineup-0')
+    expect(
+      document
+        .querySelector('[data-testid="batIcon"]')!
+        .getAttribute('aria-label')
+    ).equals('Player 9 bats')
+    // A late arrival still joins at the end of the order.
+    await drag(
+      '[data-roster-target="roster"] [data-roster-player="2"]',
+      'lineup-end'
+    )
+    expect(lineupOrder()).deep.equals([9, 1, 3, 4, 5, 6, 7, 8, 2])
     await click('Cancel')
   })
   it('validates override fields and player collisions, then reconciles the chosen half', async function () {

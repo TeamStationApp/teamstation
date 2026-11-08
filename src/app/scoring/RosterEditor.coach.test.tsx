@@ -4,12 +4,15 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
+import { applyAction } from '../../common/scoring/session'
 import { copyState } from '../../common/scoring/state'
 import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { gameFixture } from './isUnscoredGame.test'
 import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
 import { initialScoringState } from './scoringMachine'
+import { ScoringSheetHeight } from './ScoringSheet'
+import type { ScoringState } from './scoringTypes'
 
 let root: Root | undefined
 let host: HTMLDivElement
@@ -43,6 +46,8 @@ describe('the roster screen for a coach', function () {
       onReload?: () => void
       onSave?: () => void
       onCancel?: () => void
+      state?: ScoringState
+      sheetHeight?: number
     } = {}
   ): Promise<void> => {
     host = document.createElement('div')
@@ -51,16 +56,18 @@ describe('the roster screen for a coach', function () {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <RosterEditor
-            state={state}
-            audience="coach"
-            fixedSide="home"
-            renderBoxScore={() => <Text>Line score here</Text>}
-            initialDraft={props.initialDraft}
-            onReload={props.onReload}
-            onCancel={props.onCancel}
-            onSave={props.onSave ?? (() => undefined)}
-          />
+          <ScoringSheetHeight.Provider value={props.sheetHeight}>
+            <RosterEditor
+              state={props.state ?? state}
+              audience="coach"
+              fixedSide="home"
+              renderBoxScore={() => <Text>Line score here</Text>}
+              initialDraft={props.initialDraft}
+              onReload={props.onReload}
+              onCancel={props.onCancel}
+              onSave={props.onSave ?? (() => undefined)}
+            />
+          </ScoringSheetHeight.Provider>
         </ThemeProvider>
       )
     })
@@ -174,5 +181,85 @@ describe('the roster screen for a coach', function () {
     // His Cancel closes the sheet with the rest of the discarded edits.
     await click('Cancel')
     expect(document.querySelector('[aria-label="Save Player"]')).equals(null)
+  })
+
+  /** The lineup column's numbered rows, as their player ids. */
+  const lineupIds = (): number[] =>
+    Array.from(
+      host.querySelectorAll(
+        '[data-roster-target^="lineup-"][data-roster-player]'
+      )
+    ).map(each => Number(each.getAttribute('data-roster-player')))
+  /** Whether a text node is drawn whole: no ellipsis, no clipped line. */
+  const unclipped = (text: string): boolean => {
+    const found = Array.from(
+      host.querySelectorAll<HTMLElement>('[data-testid="Lineup header"] *')
+    ).find(each => each.textContent === text && each.children.length === 0)
+    expect(found, text).not.equals(undefined)
+    const style = window.getComputedStyle(found!)
+    return style.textOverflow !== 'ellipsis' && style.overflow !== 'hidden'
+  }
+
+  it('clears his lineup before the first pitch, the players back on the roster (U26)', async function () {
+    // A dense sheet still shows the header, both words whole.
+    await mount({ sheetHeight: 300 })
+    await click('Lineup')
+    expect(unclipped('Lineup')).equals(true)
+    expect(unclipped('Clear')).equals(true)
+    const order = [...home.battingOrder]
+    expect(lineupIds()).deep.equals(order)
+    await click('Clear Lineup')
+    expect(lineupIds()).deep.equals([])
+    const roster = host.querySelector('[data-roster-target="roster"]')!
+    for (const id of order)
+      expect(
+        roster.querySelector(`[data-roster-player="${id}"]`),
+        name(id)
+      ).not.equals(null)
+    expect(saveDisabled()).equals(null)
+  })
+
+  it('offers no Clear and no removal after the first pitch, and marks the slot that bats (U27)', async function () {
+    const pitched = initialScoringState(
+      applyAction(state.session, { type: 'pitch', call: 'B' }).state
+    )
+    await mount({ state: pitched })
+    await click('Lineup')
+    expect(node('Clear Lineup')).equals(null)
+    expect(node(`Remove ${name(home.battingOrder[0])}`)).equals(null)
+    // The hosts are due to lead off: the bat is on their first slot.
+    const bat = host.querySelector('[data-testid="batIcon"]')!
+    expect(bat.getAttribute('aria-label')).equals(
+      `${name(home.battingOrder[home.battingIndex])} bats`
+    )
+    expect(
+      bat.closest('[data-roster-target]')!.getAttribute('data-roster-target')
+    ).equals(`lineup-${home.battingIndex}`)
+    expect(host.querySelectorAll('[data-testid="batIcon"]')).lengthOf(1)
+    expect(host.textContent).not.includes('Drop here to remove')
+  })
+  it('clears his whole defense, the pitcher too, from the red Clear level with Roster (U34)', async function () {
+    await mount()
+    await click('Defense')
+    const header = host.querySelector<HTMLElement>(
+      '[data-testid="Defense roster header"]'
+    )!
+    expect(header.textContent).equals('RosterClear')
+    expect(header.style.justifyContent).equals('space-between')
+    expect(
+      host
+        .querySelector('[data-roster-target="defense-P"]')!
+        .getAttribute('data-roster-player')
+    ).not.equals(null)
+    await click('Clear Defense')
+    expect(host.querySelectorAll('[data-roster-target^="defense-"]')).lengthOf(
+      9
+    )
+    expect(
+      host.querySelectorAll(
+        '[data-roster-target^="defense-"][data-roster-player]'
+      )
+    ).lengthOf(0)
+    expect(saveDisabled()).equals(null)
   })
 })

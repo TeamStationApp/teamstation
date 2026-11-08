@@ -89,6 +89,21 @@ export async function createMigratedDatabase(
   await admin.query(
     `create database ${name} template ${template} strategy file_copy`
   )
+  // A copy holds its template's rows, the roster cache's epoch among them, as
+  // a restored database does. Like one, it gets an epoch of its own
+  // (`roster-cache-epoch`), or two copies would read each other's cache.
+  const copy = new Pool({ connectionString: testDatabaseUrlOf(name), max: 1 })
+  try {
+    await copy.query(
+      `do $$ begin
+        if to_regclass('roster_cache_epoch') is not null then
+          update roster_cache_epoch set epoch = gen_random_uuid()::text;
+        end if;
+      end $$`
+    )
+  } finally {
+    await copy.end()
+  }
 }
 
 async function templateFor(admin: Pool, schema: Migration[]): Promise<string> {

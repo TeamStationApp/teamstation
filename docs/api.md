@@ -214,3 +214,40 @@ and multi-angle view retry with their existing bounded backoff. An omitted
 flag is false for older servers. With Spaces configured, playback never
 exposes the ingest machine's temporary live files; no-Space playback keeps
 its local path.
+
+## Recovering encrypted chat history
+
+Epoch publication accepts optional `mode: "fresh"`. It is disabled by default
+and requires a linked current member who can post but whose current identity
+has no box for the latest epoch. The existing null-backlink signature starts a
+new independent segment. Existing epoch signatures and encrypted data stay
+unchanged. Future key access does not approve older history.
+
+Epoch responses advertise `historyRecoveryVersion: 1` separately from
+`freshEpochsEnabled`. An upgraded client must check support before requesting
+`GET /chat/grants?scope=history`. This returns a page of fixed historical segment
+goals with a `coveredThroughEpoch` watermark. `cursor` defaults to `"0"` and
+`limit` to 100 (1–100); both require historical scope. The default grants route
+retains its legacy array response.
+
+`POST /chat/grants?scope=history` accepts 1–100 boxes, each carrying `requestId`,
+`conversationId`, `targetEpoch`, actual supplied `epoch`, `userId`, `identityId`,
+`pukGeneration`, `box` and optional `approveHistory` (default false). HPKE uses
+the actual epoch in the existing grant domain and AAD. An earlier key recovers
+only its prefix; only reaching the fixed target completes the request. Reset
+history requires explicit approval by a different eligible approver holding a
+key in that requested range. Approval is durable for that identity/conversation;
+later holders can finish other ranges. Repeated grants are idempotent.
+
+`GET /chat/conversations/:id/epochs?after=N&boxesAfter=0&boxLimit=100` keeps
+epoch metadata and key-box delivery cursors independent. `nextBoxesCursor` is
+the last returned box's position; `hasMoreBoxes` signals another page. Cursors
+are decimal strings, exclusive, scoped to conversation/account/identity/server.
+Persist validated keys before advancing the cursor; replay is safe. Omitting
+`boxesAfter` retains legacy box filtering. `boxLimit` requires that cursor.
+
+Disabling fresh publication leaves recovery reads and grants operational.
+After fresh segments exist, retain the upgraded server when rolling back a
+feature flag. Older clients retaining keys continue verifying and reading
+messages; cross-segment recovery requires upgraded granting and receiving
+clients. Recoverability depends on an authorized device retaining old keys.

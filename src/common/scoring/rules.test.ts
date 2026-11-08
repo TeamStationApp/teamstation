@@ -10,21 +10,30 @@ import {
   ADVANCE_SAFE_REASONS,
   allowedAngle,
   awaitingResult,
+  canField,
   canSwitchBatter,
   CAUGHT_BALL_RETURN_OUT_REASONS,
   closesAutomatically,
+  currentSetupError,
   DID_NOT_TAG_UP,
   hasEligiblePitch,
   MAX_LAUNCH_ANGLE,
   moreEligibility,
   nextDecision,
   outcomeAvailable,
+  previousRunnerError,
   runnerOutReason,
   runnerReasons,
   STATIONARY_OUT_REASONS,
   trajectoryLabel
 } from './rules'
-import { copyState, type GameState } from './state'
+import {
+  copyState,
+  type GameState,
+  type Position,
+  POSITIONS,
+  setupOf
+} from './state'
 
 describe('the park', function () {
   it('calls a ball over the fence out of the park and one on it in play', function () {
@@ -339,5 +348,65 @@ describe('a pitch a wild pitch can follow (U14)', function () {
     expect(hasEligiblePitch(recoded)).equals(true)
     recoded.liveData.plays.currentPlay!.playEvents[0].details.call!.code = 'F'
     expect(hasEligiblePitch(recoded)).equals(false)
+  })
+})
+
+describe('what scoring waits for (U12)', function () {
+  const without = (...positions: Position[]): GameState => {
+    const state = copyState(game())
+    for (const position of positions)
+      state.liveData.boxscore.teams.home.defense[position] = null
+    return state
+  }
+
+  it('waits only for a pitcher: every other position may be empty', function () {
+    expect(currentSetupError(game())).equals(undefined)
+    const others = POSITIONS.filter(position => position !== 'P')
+    expect(currentSetupError(without(...others))).equals(undefined)
+    expect(currentSetupError(without('P'))).equals('Missing pitcher')
+    expect(currentSetupError(without(...POSITIONS))).equals('Missing pitcher')
+  })
+
+  it('still asks for a batting order once a pitcher is there', function () {
+    const state = without('SS')
+    state.liveData.boxscore.teams.away.battingOrder = []
+    expect(currentSetupError(state)).equals('No players in lineup')
+  })
+
+  it('finds an error charged to a stand-in by his position', function () {
+    const start = game()
+    const setup = setupOf(start)
+    setup.sides.home.defense.SS = null
+    const state = after(
+      start,
+      { type: 'lineup', kind: 'roster', setup },
+      { type: 'gameFlow', kind: 'placeRunner', runner: 5, base: '3B' }
+    )
+    const charged = applyAction(state, {
+      type: 'runnerMovement',
+      runner: 5,
+      to: 'home',
+      reason: 'Throwing Error',
+      error: 'SS'
+    })
+    expect(charged.problems).deep.equals([])
+    expect(
+      previousRunnerError(charged.state, 'Throwing Error', 'SS')
+    ).not.equals(undefined)
+    expect(
+      previousRunnerError(charged.state, 'Throwing Error', F['2B'])
+    ).equals(undefined)
+  })
+})
+
+describe('who can field a ball', function () {
+  it('is a player on defense, or a stand-in at a position nobody plays', function () {
+    const defense = copyState(game().liveData.linescore.defense)
+    expect(canField(defense, F.SS)).equals(true)
+    expect(canField(defense, 1)).equals(false)
+    expect(canField(defense, 'SS')).equals(false)
+    defense.SS = null
+    expect(canField(defense, 'SS')).equals(true)
+    expect(canField(defense, F.SS)).equals(false)
   })
 })

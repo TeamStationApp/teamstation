@@ -4,6 +4,7 @@ import { epochAad, hpkeSeal } from '../../../common/chatCrypto/hpke'
 import { b64, epochKeyOf, unb64 } from '../keyRecord'
 import { ChatEngineError, type EngineContext } from './context'
 import { pinCurrent } from './decrypt'
+import { fillHistoryGrants } from './historyRecovery'
 import { reasonOf } from './links'
 import { syncLog } from './log'
 import { syncEpochs } from './sync'
@@ -91,6 +92,17 @@ export async function readGrants(
  * lets this device fill by itself. Answers how many were filled.
  */
 export async function fillGrants(ctx: EngineContext): Promise<number> {
+  let filled = 0
+  try {
+    filled = await fillCurrentGrants(ctx)
+  } catch (error) {
+    await fillHistoryGrants(ctx)
+    throw error
+  }
+  return filled + (await fillHistoryGrants(ctx))
+}
+
+async function fillCurrentGrants(ctx: EngineContext): Promise<number> {
   const requests = await readGrants(ctx)
   const boxes: ChatGrantBox[] = []
   const heads = new Map<string, Set<string> | undefined>()
@@ -163,6 +175,21 @@ export async function approveGrant(
     )
   }
   await pinCurrent(ctx, request.userId, request.identityKey)
-  await ctx.client.postChatGrants([box])
+  const posted = await ctx.client.postChatGrants([box])
   await readGrants(ctx)
+  // A skipped box approved nothing, older history included: the chat moved
+  // on since the list was read.
+  if (
+    posted.skipped.some(
+      skip =>
+        skip.conversationId === box.conversationId &&
+        skip.userId === box.userId &&
+        skip.identityId === box.identityId
+    )
+  ) {
+    throw new ChatEngineError(
+      'target',
+      'The request changed; refresh and try again'
+    )
+  }
 }

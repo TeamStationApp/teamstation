@@ -126,7 +126,9 @@ async function labelled(
 ): Promise<void> {
   await b.page.waitForFunction(
     (wanted: string, there: boolean) =>
-      (document.querySelector(`[aria-label="${wanted}"]`) !== null) === there,
+      [...document.querySelectorAll(`[aria-label="${wanted}"]`)].some(
+        node => node.closest('[aria-hidden="true"]') === null
+      ) === there,
     { timeout: 15000 },
     label,
     present
@@ -529,6 +531,7 @@ async function tapText(
       [...document.querySelectorAll(selector)].some(
         node =>
           node.textContent === wanted &&
+          node.closest('[aria-hidden="true"]') === null &&
           node.getAttribute('aria-disabled') !== 'true'
       ),
     { timeout: 15000 },
@@ -538,7 +541,9 @@ async function tapText(
   await b.page.evaluate(
     (wanted: string, selector: string) => {
       const matches = [...document.querySelectorAll(selector)].filter(
-        node => node.textContent === wanted
+        node =>
+          node.textContent === wanted &&
+          node.closest('[aria-hidden="true"]') === null
       )
       ;(matches[matches.length - 1] as HTMLElement).click()
     },
@@ -556,8 +561,11 @@ async function clickLabel(b: BrowserSession, label: string): Promise<void> {
   const selector = `[aria-label="${label}"]`
   await b.page.waitForSelector(selector, { timeout: 15000 })
   await b.page.evaluate((wanted: string) => {
-    const node = document.querySelector(wanted)
-    if (node !== null) (node as HTMLElement).click()
+    const nodes = [...document.querySelectorAll(wanted)].filter(
+      node => node.closest('[aria-hidden="true"]') === null
+    )
+    const node = nodes[nodes.length - 1]
+    if (node !== undefined) (node as HTMLElement).click()
   }, selector)
 }
 
@@ -722,6 +730,12 @@ async function f2(run: Run): Promise<void> {
  */
 async function f2b(run: Run): Promise<void> {
   const { fx, b } = run
+  // This scenario exercises weekday wall times explicitly.
+  await fx.f.h.db
+    .updateTable('season_schedule_settings')
+    .set({ prefer_game_on: 'weekdays' })
+    .where('season_id', '=', fx.f.seasonA)
+    .execute()
   const lines = [
     '$ node -r sucrase/register src/app/autoSchedulerFixes.e2e.ts --only F2b',
     ''
@@ -847,7 +861,7 @@ async function f3(run: Run): Promise<void> {
           node => node.childElementCount === 0 && node.textContent === text
         )!
         .getBoundingClientRect()
-    const nav = document.querySelector('[role="tablist"]')
+    const nav = document.querySelector('[role="tablist"]:not([aria-label])')
     return {
       first: box('Mar 1 – May 20').top,
       second: box('From Jun 1').bottom,
@@ -976,6 +990,7 @@ async function chooseRange(
 async function rangeRows(b: BrowserSession): Promise<string[]> {
   return await b.page.evaluate(() =>
     [...document.querySelectorAll('[data-testid="relationship-action-row"]')]
+      .filter(row => row.closest('[aria-hidden="true"]') === null)
       .map(row =>
         [...row.querySelectorAll('div')]
           .filter(node => node.childElementCount === 0)

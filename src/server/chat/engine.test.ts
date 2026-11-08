@@ -70,7 +70,7 @@ import { type ChatFixture, openChatFixture } from './chatTestFixture'
 /** A store in memory, written through the same JSON the real ones keep. */
 class MemoryStore implements ChatKeyStore {
   text: string | undefined
-  async load(): Promise<ChatKeyRecord | undefined> {
+  async load(_userId: string): Promise<ChatKeyRecord | undefined> {
     return this.text == null ? undefined : recordFromJson(this.text)
   }
 
@@ -78,11 +78,11 @@ class MemoryStore implements ChatKeyStore {
     this.text = recordToJson(record)
   }
 
-  async wipe(): Promise<void> {
+  async wipe(_userId: string): Promise<void> {
     this.text = undefined
   }
 
-  async exists(): Promise<boolean> {
+  async exists(_userId: string): Promise<boolean> {
     return this.text != null
   }
 
@@ -686,7 +686,7 @@ describe('the chat engine (U12)', function () {
     expect(view.composer).equals('locked')
     expect(statuses(view)).deep.equals(['locked', 'locked'])
     expect(await engineRefusal(hk.engine.sendText(chatOf, 'x'))).equals(
-      'locked'
+      'freshStartsDisabled'
     )
     expect(
       hk.engine.conversations().find(item => item.id === chatOf)?.locked
@@ -803,7 +803,7 @@ describe('the chat engine (U12)', function () {
     const listed = hs.engine.conversations().find(item => item.id === chatOf)
     expect(listed).include({ locked: true, noHolder: true })
     let view = await hs.engine.open(chatOf)
-    expect(view.historyLocked).equals(false)
+    expect(view.historyLocked).equals(true)
     expect(view.composer).equals('enabled')
     expect(statuses(view)).deep.equals(['locked'])
 
@@ -817,13 +817,13 @@ describe('the chat engine (U12)', function () {
       { filled: false, superseded: true }
     ])
     view = hs.engine.view(chatOf)!
-    expect(view.earlierLost).equals(true)
-    expect(statuses(view)).deep.equals(['lost', 'ok'])
+    expect(view.earlierLost).equals(false)
+    expect(statuses(view)).deep.equals(['locked', 'ok'])
     expect(bodies(view)).deep.equals(['', 'still here'])
 
     view = await es.engine.open(chatOf)
-    expect(statuses(view)).deep.equals(['lost', 'ok'])
-    expect(view.earlierLost).equals(true)
+    expect(statuses(view)).deep.equals(['locked', 'ok'])
+    expect(view.earlierLost).equals(false)
 
     // Named by who is left in it, then, once Hs is alone, by who was.
     const titleOf = async (): Promise<string | undefined> =>

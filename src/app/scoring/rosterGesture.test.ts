@@ -400,6 +400,26 @@ describe('shared roster dragging', function () {
     engine.cancel()
   })
 
+  it('leaves a fixed target where it is when a card above it lifts', async function () {
+    const engine = new RosterGesture(() => undefined)
+    // The pitcher's card, and the catcher's spot below it on the field.
+    engine.sources.set('P', {
+      measure: async () => ({ x: 100, y: 40, width: 120, height: 36 }),
+      content: 'pitcher'
+    })
+    const drops: number[] = []
+    engine.targets.set('defense-C', {
+      measure: async () => ({ x: 100, y: 120, width: 120, height: 36 }),
+      fixed: true,
+      drop: id => drops.push(id)
+    })
+    engine.begin(1, 'One', { x: 160, y: 58 }, 'P')
+    await engine.move({ x: 160, y: 150 })
+    expect(engine.preview?.target).equals('defense-C')
+    expect(await engine.release({ x: 160, y: 150 })).equals(true)
+    expect(drops).deep.equals([1])
+  })
+
   it('ignores stale source measurements and cancels failed measurements', async function () {
     const engine = new RosterGesture(() => undefined)
     let finish!: (value: typeof box) => void

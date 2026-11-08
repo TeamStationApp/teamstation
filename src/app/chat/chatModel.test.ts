@@ -223,13 +223,19 @@ describe('what a long press offers', function () {
       'react',
       'copy',
       'pin',
-      'deleteForEveryone'
+      'deleteForEveryone',
+      'report',
+      'block',
+      'reportAndBlock'
     ])
     expect(actionsFor(message(), view('enabled'))).deep.equals([
       'reply',
       'react',
       'copy',
-      'pin'
+      'pin',
+      'report',
+      'block',
+      'reportAndBlock'
     ])
   })
 
@@ -237,7 +243,10 @@ describe('what a long press offers', function () {
     expect(actionsFor(message(), view('readOnly'))).deep.equals([
       'react',
       'copy',
-      'pin'
+      'pin',
+      'report',
+      'block',
+      'reportAndBlock'
     ])
     expect(actionsFor(message({ mine: true }), view('readOnly'))).deep.equals([
       'react',
@@ -249,9 +258,18 @@ describe('what a long press offers', function () {
   it('retains personal actions on readable posts in closed or locked chats', function () {
     expect(actionsFor(message(), view('closed', true))).deep.equals([
       'copy',
-      'pin'
+      'pin',
+      'report',
+      'block',
+      'reportAndBlock'
     ])
-    expect(actionsFor(message(), view('locked'))).deep.equals(['copy', 'pin'])
+    expect(actionsFor(message(), view('locked'))).deep.equals([
+      'copy',
+      'pin',
+      'report',
+      'block',
+      'reportAndBlock'
+    ])
     expect(actionsFor(message({ mine: true }), view('closed'))).deep.equals([
       'copy',
       'pin'
@@ -264,13 +282,13 @@ describe('what a long press offers', function () {
     ).deep.equals([])
     expect(
       actionsFor(message({ status: 'invalid' }), view('enabled', true))
-    ).deep.equals(['deleteForEveryone'])
+    ).deep.equals(['deleteForEveryone', 'block'])
     expect(
       actionsFor(message({ status: 'lost' }), view('enabled'))
-    ).deep.equals([])
+    ).deep.equals(['block'])
     expect(
       actionsFor(message({ status: 'lost' }), view('locked', true))
-    ).deep.equals([])
+    ).deep.equals(['block'])
     expect(
       actionsFor(message({ status: 'removed', mine: true }), view('enabled'))
     ).deep.equals([])

@@ -6,6 +6,7 @@ import {
   nativeKeyStore
 } from '../chat/keyStore.native'
 import {
+  FIXTURE_USER_ID,
   type IdentityProbeResult,
   type IdentityProbeStorage,
   runIdentityStoreProbe
@@ -13,6 +14,28 @@ import {
 
 export const PROBE_SERVICE = 'app.teamstation.chat.compatibility-fixture'
 let active = false
+
+/** The per-account fixture slot, never the real chat service. */
+export function probeAccountService(userId: string = FIXTURE_USER_ID): string {
+  return `${PROBE_SERVICE}.${userId}`
+}
+
+/**
+ * Maps a store service onto this diagnostic's namespace. The legacy name
+ * maps to the bare fixture service so a stray call never opens the real
+ * one. Any other name is refused.
+ */
+export function mapIdentityProbeService(requested?: string): string {
+  if (requested === KEY_SERVICE) return PROBE_SERVICE
+  const prefix = `${KEY_SERVICE}.`
+  if (
+    requested != null &&
+    requested.startsWith(prefix) &&
+    requested.length > prefix.length
+  )
+    return `${PROBE_SERVICE}.${requested.slice(prefix.length)}`
+  throw new Error('Unexpected diagnostic service')
+}
 
 /** The normal chat service is never read, written or reset by this diagnostic. */
 export async function openIdentityProbeStorage(
@@ -22,31 +45,29 @@ export async function openIdentityProbeStorage(
   active = true
   let owned = false
   let refuse = false
-  const service = (requested?: string): string => {
-    if (requested !== KEY_SERVICE)
-      throw new Error('Unexpected diagnostic service')
-    return PROBE_SERVICE
+  const slot = probeAccountService()
+  const slotOptions = {
+    service: slot,
+    cloudSync: true as const
   }
   try {
-    if (await keychain.hasGenericPassword({ service: PROBE_SERVICE })) {
+    if (await keychain.hasGenericPassword(slotOptions)) {
       // Only this diagnostic writes its service, as `chat`: a run stopped
       // before cleanup leaves it behind, and an iOS Keychain item outlives
       // a reinstall. Anything else there is never touched.
-      const leftover = await keychain.getGenericPassword({
-        service: PROBE_SERVICE
-      })
+      const leftover = await keychain.getGenericPassword(slotOptions)
       if (
         leftover === false ||
         leftover.username !== 'chat' ||
-        !(await keychain.resetGenericPassword({ service: PROBE_SERVICE })) ||
-        (await keychain.hasGenericPassword({ service: PROBE_SERVICE }))
+        !(await keychain.resetGenericPassword(slotOptions)) ||
+        (await keychain.hasGenericPassword(slotOptions))
       )
         throw new Error('Compatibility diagnostic storage is occupied')
     }
     // Exclusive to this app's diagnostic runner; no existing item is replaced.
     const allocated = await keychain.setGenericPassword('chat', 'allocated', {
-      service: PROBE_SERVICE,
-      accessible: keychain.ACCESSIBLE.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY
+      ...slotOptions,
+      accessible: keychain.ACCESSIBLE.AFTER_FIRST_UNLOCK
     })
     if (allocated === false)
       throw new Error('Compatibility storage unavailable')
@@ -56,15 +77,15 @@ export async function openIdentityProbeStorage(
       hasGenericPassword: async options =>
         await keychain.hasGenericPassword({
           ...options,
-          service: service(options?.service)
+          service: mapIdentityProbeService(options?.service)
         }),
       getGenericPassword: async options =>
         await keychain.getGenericPassword({
           ...options,
-          service: service(options?.service)
+          service: mapIdentityProbeService(options?.service)
         }),
       setGenericPassword: async (user, password, options) => {
-        const target = service(options?.service)
+        const target = mapIdentityProbeService(options?.service)
         if (refuse) {
           refuse = false
           return false
@@ -77,23 +98,21 @@ export async function openIdentityProbeStorage(
       resetGenericPassword: async options =>
         await keychain.resetGenericPassword({
           ...options,
-          service: service(options?.service)
+          service: mapIdentityProbeService(options?.service)
         })
     }
     return {
       store: nativeKeyStore(mapped),
       install: async text => {
         const saved = await keychain.setGenericPassword('chat', text, {
-          service: PROBE_SERVICE,
-          accessible: keychain.ACCESSIBLE.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY
+          ...slotOptions,
+          accessible: keychain.ACCESSIBLE.AFTER_FIRST_UNLOCK
         })
         if (saved === false)
           throw new Error('Compatibility storage unavailable')
       },
       fingerprint: async () => {
-        const saved = await keychain.getGenericPassword({
-          service: PROBE_SERVICE
-        })
+        const saved = await keychain.getGenericPassword(slotOptions)
         if (saved === false) throw new Error('Compatibility record missing')
         return saved.password
       },
@@ -102,13 +121,8 @@ export async function openIdentityProbeStorage(
       },
       cleanup: async () => {
         try {
-          const removed = await keychain.resetGenericPassword({
-            service: PROBE_SERVICE
-          })
-          if (
-            !removed ||
-            (await keychain.hasGenericPassword({ service: PROBE_SERVICE }))
-          )
+          const removed = await keychain.resetGenericPassword(slotOptions)
+          if (!removed || (await keychain.hasGenericPassword(slotOptions)))
             throw new Error('Compatibility cleanup failed')
         } finally {
           active = false
@@ -116,7 +130,7 @@ export async function openIdentityProbeStorage(
       }
     }
   } catch (error) {
-    if (owned) await keychain.resetGenericPassword({ service: PROBE_SERVICE })
+    if (owned) await keychain.resetGenericPassword(slotOptions)
     active = false
     throw error
   }

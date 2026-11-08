@@ -43,6 +43,8 @@
         "Chat",
         "Chat devices",
         "The devices that can read your chats",
+        "Blocked people",
+        "Manage the people you have blocked in chat.",
         "Reported messages",
         "Chat messages people reported, for site administrators",
         "Walk-up songs",
@@ -436,7 +438,10 @@
         "Can invite people to %s, remove them, and change what everybody here is.",
         "From %s",
         "Admins can do all of this",
-        "Scorekeepers can do this"
+        "Scorekeepers can do this",
+        "Search users",
+        "Search users.",
+        "No accounts match"
       ]
     },
     {
@@ -482,7 +487,10 @@
         "Can invite people to %s, remove them, and change what everybody here is.",
         "From %s",
         "Admins can do all of this",
-        "Scorekeepers can do this"
+        "Scorekeepers can do this",
+        "Search users",
+        "Search users.",
+        "No accounts match"
       ]
     },
     {

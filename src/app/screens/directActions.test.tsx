@@ -513,7 +513,7 @@ describe('direct action request forms', () => {
             ? {
                 added: true,
                 person: {
-                  userId: userIdOfGumbo(102),
+                  userId: userIdOfGumbo(101 + index),
                   displayName: 'Lou Gehrig',
                   email
                 }

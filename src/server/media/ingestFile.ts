@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { captureException } from '@sentry/node'
-import type { Kysely } from 'kysely'
+import type { Kysely, Transaction } from 'kysely'
 
 import { makeId } from '../../common/ids'
 import { atomic } from '../db/atomic'
@@ -25,6 +25,7 @@ import {
   uploadVideoDirectory,
   verifyVideoDirectory
 } from './spacesVideo'
+import { newSpaceSecret } from './videoPrefix'
 import { scanRecording, type WallPoint } from './wallClockScan'
 import { storeWallPoints } from './wallTimeline'
 
@@ -123,10 +124,11 @@ export function ffprobeBeside(ffmpegPath: string): string {
  */
 async function forgetTheCopy(
   space: SpaceSettings,
-  videoId: string
+  videoId: string,
+  spaceSecret: string
 ): Promise<void> {
   try {
-    await deleteVideoFromSpace({ space, videoId })
+    await deleteVideoFromSpace({ space, videoId, spaceSecret })
   } catch {
     // Nothing further can be done from here.
   }
@@ -301,6 +303,12 @@ export interface IngestOptions {
   onStep?: (step: 'probing' | 'remuxing' | 'uploading' | 'writing') => void
   /** Where a problem that does not stop the ingest is said; `console.error`. */
   log?: (message: string) => void
+  /**
+   * Run in the transaction that writes the video's row, so whatever has to
+   * name the video names it in the same commit. Written after it instead, a
+   * process stopped in between leaves a video on the game that nothing names.
+   */
+  onWritten?: (trx: Transaction<Database>, videoId: string) => Promise<void>
 }
 
 export interface Ingested {
@@ -326,8 +334,12 @@ export async function ingestVideoFile(
     videoId = makeId('video'),
     numCameras = 1,
     onStep,
-    log = console.error
+    log = console.error,
+    onWritten
   } = options
+  // Made with the id, before anything is uploaded: the video's objects go
+  // under its secret path from the first byte, and the row is written with it.
+  const spaceSecret = newSpaceSecret()
 
   onStep?.('probing')
   const probed = await probeVideoFile(ffmpegPath, file)
@@ -392,12 +404,14 @@ export async function ingestVideoFile(
       uploaded = await uploadVideoDirectory({
         space,
         videoId,
+        spaceSecret,
         dir: work,
         files
       })
       const verified = await verifyVideoDirectory({
         space,
         videoId,
+        spaceSecret,
         dir: work,
         files: uploaded.files
       })
@@ -405,7 +419,7 @@ export async function ingestVideoFile(
         throw new Error(`the Space did not verify: ${verified.reason}`)
       }
     } catch (error) {
-      await forgetTheCopy(space, videoId)
+      await forgetTheCopy(space, videoId, spaceSecret)
       throw error
     }
 
@@ -443,6 +457,7 @@ export async function ingestVideoFile(
             hidden: false,
             size_bytes: String(uploaded.bytes),
             spaces_verified_at: now,
+            space_secret: spaceSecret,
             created_at: now,
             updated_at: now
           })
@@ -454,9 +469,10 @@ export async function ingestVideoFile(
         )
         // A video counts on its season's row: Home's lists are told.
         await noteGameFigures(trx, gameId)
+        await onWritten?.(trx, videoId)
       })
     } catch (error) {
-      await forgetTheCopy(space, videoId)
+      await forgetTheCopy(space, videoId, spaceSecret)
       throw error
     }
 

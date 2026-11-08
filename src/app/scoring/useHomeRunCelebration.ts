@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
 
+import { SCORING_SPEED } from '../field/scoringSpeed'
 import { type ScoringClock, scoringClock } from './scoringClock'
 import type { HomeRunCelebration, ScoringEvent } from './scoringTypes'
-export const CELEBRATION_MS = 6000
+export const CELEBRATION_MS = 6000 / SCORING_SPEED
 export function useHomeRunCelebration(
   celebration: HomeRunCelebration | null | undefined,
   paused: boolean,

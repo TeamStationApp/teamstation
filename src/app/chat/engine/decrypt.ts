@@ -250,6 +250,7 @@ export async function openEpochKeys(
 
 /** Locked for now, or lost for good behind a chain break. */
 function withoutKey(state: ConversationState, epoch: number): Opened {
+  if (state.historyRecoveryVersion === 1) return { status: 'locked' }
   for (const [number, held] of state.epochs) {
     if (number > epoch && held.record.chainBreak) return { status: 'lost' }
   }

@@ -1,7 +1,9 @@
 import type {
+  ChatBlock,
   ChatConversation,
   ChatEpoch,
   ChatGrantRequest,
+  ChatHistoryRequest,
   ChatMember,
   ChatMessage,
   ChatRead
@@ -35,6 +37,21 @@ export interface ConversationState {
   epochs: Map<number, EpochState>
   /** The highest epoch read: the `after` of the next epochs request. */
   epochsAfter: number
+  boxesCursor: string
+  /**
+   * The historical box stream is read with the next epochs read: a hint or
+   * this device's own key change may have delivered to it, or pages remain.
+   */
+  historyDue: boolean
+  /** The identity and per-user key generations the stream was last read for. */
+  historyKeys?: string
+  historyRecoveryVersion?: 1
+  freshEpochsEnabled: boolean
+  latestHasServerBox: boolean
+  /** The historical stream's last read failed or lacked a per-user key. */
+  historyError: boolean
+  /** The last epochs read had a box under a per-user key this device lacks. */
+  currentKeysMissing: boolean
   /** From the last epochs request. */
   latest: number
   needsRotation: boolean
@@ -53,6 +70,8 @@ export interface ConversationState {
   newestSeq: number
   /** The lowest `seq` read. */
   oldestSeq: number | undefined
+  /** Oldest loaded history to restore after a block-policy change. */
+  blockHistoryFloor?: number
   /** Older messages remain on the server. */
   hasEarlier: boolean
   reads: ChatRead[]
@@ -90,6 +109,12 @@ export function newConversationState(
     opened: new Map(),
     epochs: new Map(),
     epochsAfter: 0,
+    boxesCursor: '0',
+    historyDue: false,
+    freshEpochsEnabled: false,
+    latestHasServerBox: false,
+    historyError: false,
+    currentKeysMissing: false,
     latest: 0,
     needsRotation: false,
     noHolder: false,
@@ -107,10 +132,17 @@ export function newConversationState(
 }
 
 export class ChatMemory {
+  blocks: ChatBlock[] = []
+  blockedUserIds = new Set<string>()
+  blockRevision = 0
+
   /** In the server's order. */
   readonly conversations = new Map<string, ConversationState>()
   /** The last `GET /chat/grants`. */
   grants: ChatGrantRequest[] = []
+  historyGrants: ChatHistoryRequest[] = []
+  recoveryVersion: 1 | undefined
+  recoveryProbed = false
   /** The list has been read at least once. */
   listed = false
   /** Counts reads, to tell which of two was later. */

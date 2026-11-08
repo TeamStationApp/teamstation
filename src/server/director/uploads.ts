@@ -5,7 +5,7 @@ import { pipeline } from 'node:stream/promises'
 
 import type { Kysely } from 'kysely'
 
-import type { Database } from '../db/database'
+import { type Database, isConnectionUnavailable } from '../db/database'
 
 /**
  * A recording arriving from TS Director, in parts.
@@ -342,6 +342,9 @@ export async function ensureUploadDir(
  * conversion and not the upload. The same reasoning as the live controller
  * resetting `publishing` streams on the way up — a fresh process cannot be
  * doing work the last one claimed.
+ *
+ * A video the stopped take-in had already made stays on the row: asking to
+ * finish again goes on from it, and giving the upload up deletes it.
  */
 export async function reopenInterruptedUploads(
   db: Kysely<Database>
@@ -357,4 +360,31 @@ export async function reopenInterruptedUploads(
     .where('state', '=', 'assembling')
     .executeTakeFirst()
   return Number(reopened.numUpdatedRows ?? 0)
+}
+
+/** How soon reopening is tried again after finding no connection. */
+const REOPEN_RETRY_MS = 5000
+
+/**
+ * Reopens what a stopped process left, once. It is the one chance these uploads
+ * get before the next restart, and a server coming up after a database resize
+ * can well find no connection at first, so that is tried again until it works.
+ * Any other failure is logged and left, as nothing says another try would help.
+ */
+export function reopenInterruptedUploadsSoon(
+  db: Kysely<Database>,
+  retryMs: number = REOPEN_RETRY_MS
+): void {
+  reopenInterruptedUploads(db)
+    .then((count: number) => {
+      if (count > 0) console.log(`reopened ${count} interrupted upload(s)`)
+    })
+    .catch((error: unknown) => {
+      console.error(`reopening interrupted uploads: ${String(error)}`)
+      if (!isConnectionUnavailable(error)) return
+      const retry = setTimeout(() => {
+        reopenInterruptedUploadsSoon(db, retryMs)
+      }, retryMs)
+      ;(retry as { unref?: () => void }).unref?.()
+    })
 }

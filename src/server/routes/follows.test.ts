@@ -7,6 +7,7 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 import WebSocket from 'ws'
 
+import { GAME_SOCKET_PROTOCOL } from '../../common/gameSocket'
 import { makeId } from '../../common/ids'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -585,7 +586,8 @@ describe('following a team (U1)', function () {
         JSON.stringify({
           type: 'subscribe',
           gameId: seed.games.hawksOwlsFinal,
-          id: 'c1'
+          id: 'c1',
+          protocol: GAME_SOCKET_PROTOCOL
         })
       )
       expect(await reply).deep.include({

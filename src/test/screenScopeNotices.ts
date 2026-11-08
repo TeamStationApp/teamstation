@@ -2,15 +2,19 @@ import { type Kysely, sql } from 'kysely'
 import { Client } from 'pg'
 import WebSocket from 'ws'
 
-import type { GameSocketReply } from '../common/gameSocket'
+import {
+  GAME_SOCKET_PROTOCOL,
+  type GameSocketReply
+} from '../common/gameSocket'
 import { testDatabaseUrl } from '../migrate/testDatabase'
 import type { Database } from '../server/db/database'
 import {
-  bumpSyncClock,
+  announceNotedScopes,
   SCREEN_SCOPES_CHANNEL,
   type ScreenScopeIds,
   type ScreenScopePayload
 } from '../server/socket/syncRevision'
+import { recordStatements } from './pgStatements'
 
 /**
  * Everything committed on `screen_scopes` in one test database, heard the
@@ -76,9 +80,9 @@ export async function listenScreenScopes(
     mark: () => heard.length,
     since: async mark => {
       const userId = `sentinel-${process.pid}-${++sentinels}`
-      await db
-        .transaction()
-        .execute(async trx => await bumpSyncClock(trx, { userId }))
+      await db.transaction().execute(async trx => {
+        await announceNotedScopes(trx, { userId })
+      })
       await wait(
         () => heard.find(payload => payload.userId === userId),
         `for ${userId}`
@@ -98,10 +102,41 @@ export async function listenScreenScopes(
   }
 }
 
+/**
+ * The notices each `pg_notify` statement sent while `work` ran, one list per
+ * statement. A write announces in one statement, as its transaction's last,
+ * so each list is one commit's notices. `since`'s own are left out.
+ */
+export async function announcedDuring(
+  work: () => Promise<unknown>
+): Promise<ScreenScopePayload[][]> {
+  const { sent } = await recordStatements(async () => await work())
+  return sent
+    .filter(
+      statement =>
+        statement.text.includes('pg_notify(') &&
+        statement.values[0] === SCREEN_SCOPES_CHANNEL
+    )
+    .map(statement =>
+      (statement.values[1] as string[]).map(
+        payload => JSON.parse(payload) as ScreenScopePayload
+      )
+    )
+    .filter(
+      notices =>
+        !notices.every(
+          notice => notice.userId?.startsWith('sentinel-') === true
+        )
+    )
+}
+
 /** A raw `/socket` connection, its frames kept in the order they came. */
 export interface ScopeSocket {
   frames: GameSocketReply[]
-  /** Sends a request and waits for the answer to its id. */
+  /**
+   * Sends a request and waits for the answer to its id. A subscribe without
+   * a `protocol` is sent with `GAME_SOCKET_PROTOCOL`.
+   */
   ask: (frame: Record<string, unknown>) => Promise<GameSocketReply>
   /** The `changed` frames since `from`. */
   changes: (from?: number) => GameSocketReply[]
@@ -134,7 +169,12 @@ export async function openScopeSocket(
     ask: async frame => {
       const from = frames.length
       const id = `ask-${++asked}`
-      ws.send(JSON.stringify({ ...frame, id }))
+      // A subscribe names the protocol, as the app's do, unless it says one.
+      const sent =
+        frame.type === 'subscribe' && !('protocol' in frame)
+          ? { ...frame, protocol: GAME_SOCKET_PROTOCOL }
+          : frame
+      ws.send(JSON.stringify({ ...sent, id }))
       const deadline = Date.now() + 3000
       for (;;) {
         const found = frames

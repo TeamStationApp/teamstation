@@ -38,6 +38,7 @@ import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
+import { candidateNames } from '../scoring/ExistingPlayerSheet'
 import { guestRenames, sendGuestRenames } from '../scoring/guestRenames'
 import { HeldGameNotice } from '../scoring/HeldGameNotice'
 import { rosterPlayerBody } from '../scoring/playerDraft'
@@ -66,6 +67,7 @@ import {
   OFFLINE_BANNER,
   SERVER_COPY_PENDING,
   useHeldGameControl,
+  useOutboxNotice,
   usePhoneOffline
 } from '../sync/useOffline'
 import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
@@ -292,6 +294,25 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   const [reopened, setReopened] = useState(0)
   /** The phone gave up its edits, and the server's copy has not come. */
   const copyPending = useRef(false)
+  /** Counts lineup saves: only the latest one's refusal is put back. */
+  const saves = useRef(0)
+  /** Counts availability changes: only the latest answer is the game's. */
+  const rosteredRequests = useRef(0)
+  // A save already shown that the server would not take once it was sent
+  // (another device changed that lineup later), or an add that waits on
+  // approval: said here, and the game read again to show the server's.
+  const teams = state?.session.gameData.teams
+  const outboxNotice = useOutboxNotice(
+    client,
+    gameId,
+    teams == null ? [] : [teams.away.id, teams.home.id]
+  )
+  useEffect(() => {
+    if (outboxNotice == null) return
+    setProblem(outboxNotice.text)
+    setReopened(value => value + 1)
+    outboxNotice.dismiss()
+  }, [outboxNotice])
 
   /**
    * What the server's lineups say: the digest, and which are held. His own
@@ -520,7 +541,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       if (
         event.type === 'resync' ||
         (event.type === 'change' &&
-          (event.kind === 'plays' || event.kind === 'game'))
+          (event.kind === 'playEdits' || event.kind === 'game'))
       )
         refreshBox()
     })
@@ -593,10 +614,14 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   ): void | Promise<void> => {
     if (opened == null || state == null) return
     const saving = opened
+    const saveNumber = ++saves.current
     setProblem(undefined)
+    // When the change was made: the latest change of a side wins.
+    const changedAt = new Date().toISOString()
     // A game-only player's corrected name is his account's: renamed first,
-    // then the lineup that shows it is saved. The corrections are told
-    // against the game the editor was opened over (`mountedOn`).
+    // then the lineup that shows it is saved, both queued behind the
+    // screen. The corrections are told against the game the editor was
+    // opened over (`mountedOn`).
     const renamed = sendGuestRenames(
       client,
       gameId,
@@ -604,29 +629,62 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       [
         ...Object.values((detail ?? saving.game).guestPlayers).flat(),
         ...createdGuests.current
-      ]
+      ],
+      undefined,
+      { background: true }
     )
     // Made on the plays the screen opened: a reset since refuses it.
     const posted = renamed.then(
       async () =>
-        await client.saveLineups(gameId, {
-          ...lineupsBody(
-            draft,
-            saving.side,
-            digest.current,
-            nextBatter,
-            runners
-          ),
-          generation: saving.game.generation
-        })
+        await client.saveLineups(
+          gameId,
+          {
+            ...lineupsBody(
+              draft,
+              saving.side,
+              digest.current,
+              nextBatter,
+              runners
+            ),
+            generation: saving.game.generation,
+            changedAt
+          },
+          { background: true }
+        )
     )
     live.saving(posted.then(lineups => lineups.digest))
-    // The chat closes when this resolves and stays when it is refused, so
-    // what was staged and said is still there to read.
-    return posted
-      .then(async lineups => {
+    // Shown at once: the game as saved, and the editor drawn again over it,
+    // clean. The server's answer is read in behind it. A refusal puts the
+    // game back as it was shown and the change back on the editor, staged,
+    // with the server's reason.
+    const shownBefore = { state, mountedOn: mountedOn.current }
+    const redraw = (
+      next: GameState,
+      base?: GameState,
+      staged = false
+    ): void => {
+      setHeld(last => ({
+        draft: next,
+        side: saving.side,
+        mode: last?.mode ?? 'boxScore',
+        ...(last?.scrollOffsets == null
+          ? {}
+          : { scrollOffsets: last.scrollOffsets }),
+        ...(base == null ? {} : { base }),
+        ...(staged && nextBatter != null ? { nextBatter } : {}),
+        ...(staged && runners != null && runners.length > 0 ? { runners } : {})
+      }))
+      setRead(value => value + 1)
+    }
+    mountedOn.current = draft
+    setState(current =>
+      current == null ? current : { ...current, session: draft }
+    )
+    redraw(draft)
+    posted
+      .then(lineups => {
         heard(lineups, saving.side)
-        await reload(true)
+        reload().catch(() => undefined)
       })
       .catch((caught: unknown) => {
         setProblem(
@@ -634,7 +692,16 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
             ? caught.message
             : lstrings.coach_save_failed
         )
-        throw caught
+        if (openedNow.current !== saving) return
+        // A later save is on screen, and may still land: the server's
+        // lineups are read in under it rather than this save's snapshot.
+        if (saveNumber !== saves.current) {
+          setReopened(value => value + 1)
+          return
+        }
+        mountedOn.current = shownBefore.mountedOn
+        setState(shownBefore.state)
+        redraw(draft, openedOver, true)
       })
   }
 
@@ -778,11 +845,11 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
               ]}
               unrostered={(detail ?? opened.game).unrostered}
               onRosteredChange={async (side, userId, rostered) => {
-                const posted = client.setRostered(gameId, {
-                  side,
-                  userId,
-                  rostered
-                })
+                const posted = client.setRostered(
+                  gameId,
+                  { side, userId, rostered },
+                  { background: true }
+                )
                 live.saving(
                   posted
                     .then(async () => {
@@ -792,7 +859,11 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
                     })
                     .catch(() => digest.current)
                 )
+                const request = ++rosteredRequests.current
                 const unrostered = await posted
+                // A change made since answers for the game itself: the
+                // editor takes this answer's own player from it.
+                if (request !== rosteredRequests.current) return unrostered
                 setDetail(current => ({
                   ...(current ?? opened.game),
                   unrostered
@@ -811,23 +882,28 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
               onCreatePlayer={async (id, player) => {
                 const entry = await client.createRosterPlayer(
                   id,
-                  rosterPlayerBody(player)
+                  rosterPlayerBody(player),
+                  { background: true }
                 )
                 holdRosterEntry(id, entry)
                 return entry
               }}
               client={client}
-              onAddExistingRosterPlayer={async (id, body) => {
-                const answer = await client.addExistingRosterPlayer(id, body)
+              onAddExistingRosterPlayer={async (id, body, candidate) => {
+                const answer = await client.addExistingRosterPlayer(id, body, {
+                  background: true,
+                  deviceNames: candidateNames(candidate)
+                })
                 if ('entry' in answer) holdRosterEntry(id, answer.entry)
                 return answer
               }}
-              onAddExistingGuest={async (side, body) => {
+              onAddExistingGuest={async (side, body, candidate) => {
                 const answer = await client.addExistingGuest(
                   gameId,
                   side,
                   body,
-                  teamId
+                  teamId,
+                  { background: true, deviceNames: candidateNames(candidate) }
                 )
                 if ('entry' in answer) createdGuests.current.push(answer.entry)
                 return answer
@@ -837,7 +913,8 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
                   gameId,
                   side,
                   rosterPlayerBody(player),
-                  teamId
+                  teamId,
+                  { background: true }
                 )
                 createdGuests.current.push(entry)
                 return entry

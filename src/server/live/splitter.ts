@@ -1,7 +1,16 @@
 import type { ChildProcess } from 'child_process'
 import { spawn } from 'child_process'
 import type { FSWatcher } from 'fs'
-import { readdirSync, readFileSync, rmSync, watch, writeFileSync } from 'fs'
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  watch,
+  writeFileSync
+} from 'fs'
 import type { Server } from 'net'
 
 import { CODEC_REFUSAL } from '../../common/api'
@@ -17,6 +26,7 @@ import {
   type SilentSound,
   soundHeaderOf
 } from './decoderConfig'
+import { playlistTail, type PlaylistView } from './playlistTail'
 import {
   FIRST_INIT,
   firstProgramDateMs,
@@ -283,9 +293,9 @@ interface OutputRuntime {
    */
   released: boolean
   /**
-   * Where an HLS writer that appends to an existing playlist carries on from:
-   * the playlist's own first sequence number, and how many seconds of video
-   * it already holds.
+   * Where an HLS writer continuing a recording carries on from: the number
+   * of its first segment, and how many seconds of video the recording
+   * already holds.
    */
   continuation?: Continuation
   hlsRestarted?: boolean
@@ -336,6 +346,14 @@ interface OutputRuntime {
    * for one that can: see `absorbWriterPlaylist`.
    */
   ownInit?: string
+  /**
+   * The file FFmpeg writes this writer's init segment to when it is not
+   * `init.mp4`: `ownInit` for a writer with one of its own, `WRITER_INIT_NAME`
+   * for one continuing a recording with its init segment. Such a writer lists
+   * its segments in a playlist of its own, which the ingest carries onto the
+   * recording's.
+   */
+  writerInit?: string
   /** What this writer adds as a sound track, for a publish with none. */
   silence?: SilentSound
   /** This writer leaves out sound, on an older recording that has none. */
@@ -356,6 +374,8 @@ interface OutputRuntime {
   placement?: WriterPlacement
   /** First number owned by the writer being prepared or currently running. */
   firstSegmentNumber?: number
+  /** What `finalSegments` last answered, and what that answer rested on. */
+  finalRead?: FinalRead
   /** Stops watching for those segments, after moving the last one. */
   stopStamp?: () => void
 }
@@ -401,6 +421,21 @@ interface WriterPlacement {
   settled: boolean
   /** The segments this writer has stamped, all at `offsetSec`. */
   stamped: Set<string>
+}
+
+/**
+ * The playlist's size and modification time when `finalSegments` last read
+ * it, the writer and placement it judged by, and its answer. While none of
+ * them has changed the answer stands, and the playlist is not read again.
+ */
+interface FinalRead {
+  size: number
+  mtimeMs: number
+  first: number
+  placement: WriterPlacement | undefined
+  /** `placement.stamped` only grows, so its size says whether it changed. */
+  stamped: number
+  names: FinalPieces
 }
 
 interface IngressRuntime {
@@ -456,10 +491,20 @@ interface LiveEntry {
 export const LIVE_PLAYLIST_NAME = 'master.m3u8'
 
 /**
- * What a writer with an init segment of its own lists its segments in, beside
- * the playlist. A dot file, so it is not sent to the Space with the recording.
+ * What a writer continuing a recording lists its segments in, beside the
+ * playlist. A dot file, so it is not sent to the Space with the recording.
  */
 export const WRITER_PLAYLIST_NAME = '.writer.m3u8'
+
+/**
+ * Where a writer continuing a recording with the recording's own init segment
+ * has FFmpeg write that init segment. FFmpeg empties its init file as it
+ * starts and fills it only when its first segment closes, seconds later, so it
+ * never writes `init.mp4` of a recording that lists segments: this file is
+ * renamed over `init.mp4` once it is whole (`promoteWriterInit`). A dot file,
+ * and not an init segment's name (`isInitName`), so nothing publishes it.
+ */
+export const WRITER_INIT_NAME = '.writer-init.mp4'
 
 const SAMPLE_INTERVAL_MS = 1000
 const BACKOFF_STEPS_MS = [1000, 2000, 5000, 10000]
@@ -924,10 +969,19 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
   // `omit_endlist` because the end of a game is the controller's to declare,
   // not the end of one connection's (see `draining`).
   //
-  // A restart adds `append_list`, so the stream continues the playlist it
-  // already has rather than starting a new one. That alone marks the join
-  // with an `EXT-X-DISCONTINUITY`: the publisher's encoder started again, and
-  // a player told so resets its decoder instead of decoding across the gap.
+  // A writer continuing a recording that lists segments writes a playlist and
+  // an init segment of its own (`writerInit`), and the ingest carries its
+  // segments across (`absorbWriterPlaylist`), behind an
+  // `EXT-X-DISCONTINUITY`: the publisher's encoder started again, and a player
+  // told so resets its decoder instead of decoding across the gap. FFmpeg
+  // empties the init file it is given as it starts and writes it only when its
+  // first segment closes, so it is never given `init.mp4` of a recording that
+  // lists segments: a crash, an End or an upload in those seconds would find
+  // the recording's init segment empty.
+  //
+  // A restart onto a playlist that lists nothing adds `append_list`, so the
+  // stream continues the playlist it already has rather than starting a new
+  // one, which also marks the join with an `EXT-X-DISCONTINUITY`.
   // `discont_start` is left off, because on top of that it writes another one
   // above the first segment on each restart, which changes the playlist above
   // segments a player already has, and an `EVENT` playlist may only grow at
@@ -936,12 +990,14 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
   // Two numbers make the continuation a player that kept the playlist can
   // follow:
   //
-  // - `-start_number` is the playlist's own first sequence number, not the
-  //   next free one. FFmpeg writes `EXT-X-MEDIA-SEQUENCE` from it and names
-  //   the new segments after it plus the segments already listed. Handing it
-  //   the next free number renumbered every segment already in the playlist,
-  //   and a player that held it took them for new ones and played the start
-  //   of the game again after the break.
+  // - `-start_number`. A writer with a playlist of its own gets the next free
+  //   number, and its segments are named from it. An `append_list` writer
+  //   gets the playlist's own first sequence number, not the next free one:
+  //   FFmpeg writes `EXT-X-MEDIA-SEQUENCE` from it and names the new segments
+  //   after it plus the segments already listed. Handing that writer the next
+  //   free number renumbered every segment already in the playlist, and a
+  //   player that held it took them for new ones and played the start of the
+  //   game again after the break.
   // - The continuation offset is where the new segments sit on the wall clock,
   //   measured from the playlist's first program date time. That is the
   //   length of the media already listed, plus the time since the last
@@ -953,11 +1009,11 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
   //   segment after ffmpeg closes it. Asking the muxer to apply it rewrites
   //   the init segment and moves the parts already listed onto the new time.
   //
-  // A writer with an init segment of its own writes a playlist of its own, and
-  // the ingest carries its segments across (`absorbWriterPlaylist`). FFmpeg's
-  // `append_list` keeps one `EXT-X-MAP`, naming the writer's init segment, at
-  // the head of everything it found listed: on the game's own playlist that
-  // would hand every earlier segment the wrong init segment.
+  // A writer with an init segment of its own writes a playlist of its own for
+  // one more reason: FFmpeg's `append_list` keeps one `EXT-X-MAP`, naming the
+  // writer's init segment, at the head of everything it found listed, and on
+  // the game's own playlist that would hand every earlier segment the wrong
+  // init segment.
   const flags = [
     'independent_segments',
     'temp_file',
@@ -970,7 +1026,7 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     0,
     output.target.length - LIVE_PLAYLIST_NAME.length - 1
   )
-  const own = output.ownInit
+  const writerInit = output.writerInit
   const silence = output.silence
   return [
     ...base,
@@ -1011,7 +1067,7 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     '-hls_segment_type',
     'fmp4',
     '-hls_fmp4_init_filename',
-    own ?? FIRST_INIT,
+    writerInit ?? FIRST_INIT,
     // A sound track that starts after the picture keeps its RTMP time rather
     // than being stamped from 0 s.
     ...KEEP_STREAM_TIMES,
@@ -1021,7 +1077,7 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     String(output.continuation?.startNumber ?? 0),
     '-hls_segment_filename',
     `${directory}/seg%06d.m4s`,
-    own == null ? output.target : `${directory}/${WRITER_PLAYLIST_NAME}`
+    writerInit == null ? output.target : `${directory}/${WRITER_PLAYLIST_NAME}`
   ]
 }
 
@@ -1140,12 +1196,13 @@ async function spawnPrepared(
     wallClock = () => Date.now() - waitedMs
     output.firstSegmentNumber = next
     output.ownInit = undefined
+    output.writerInit = undefined
     output.silence = undefined
     output.pictureOnly = undefined
     let placement: WriterPlacement | undefined
     if (next > 0) {
       output.hlsRestarted = true
-      retireWriterPlaylist(entry.hlsDir)
+      retireWriterPlaylist(entry.hlsDir, log, entry.liveStreamId)
       reopenPlaylist(entry.hlsDir)
       settleLastSegment(entry.hlsDir)
       const playlist = readPlaylist(entry.hlsDir)
@@ -1160,18 +1217,28 @@ async function spawnPrepared(
         listed.length > 0 && held != null && held.sound == null
       if (needsOwnInit(entry, listed.at(-1)?.init)) {
         output.ownInit = ownInitName(next)
+        output.writerInit = output.ownInit
         output.hlsRestarted = false
         output.silence = silenceFor(held, heardOf(entry)?.heard ?? {})
         log(
           `[live:${entry.liveStreamId}] this publish cannot share the recording's init segment: it carries on under ${output.ownInit}${output.silence == null ? '' : ', with a silent sound track'}`
         )
-      } else if (listed.length === 0 || held == null) {
-        output.silence = firstSilence(entry)
+      } else {
+        if (listed.length === 0 || held == null) {
+          output.silence = firstSilence(entry)
+        }
+        // A recording that lists segments keeps its init segment whole: this
+        // writer's goes over it once FFmpeg has finished writing it.
+        if (listed.length > 0) {
+          output.writerInit = WRITER_INIT_NAME
+          output.hlsRestarted = false
+        }
       }
-      // FFmpeg numbers a writer of its own from here, with nothing to append.
+      // FFmpeg numbers a writer with a playlist of its own from here, with
+      // nothing to append.
       const continueAt = (now: Date): Continuation => {
         const continuation = playlistContinuation(playlist, next, now)
-        return output.ownInit == null
+        return output.writerInit == null
           ? continuation
           : { ...continuation, startNumber: next }
       }
@@ -1184,8 +1251,9 @@ async function spawnPrepared(
       }
       output.continuation = continueAt(new Date(wallClock()))
       const offsetSec = output.continuation.offsetSec
-      // A writer of its own always has a stamper: it is what lists its segments.
-      if (offsetSec > 0 || output.ownInit != null) {
+      // A writer with a playlist of its own always has a stamper: it is what
+      // lists its segments.
+      if (offsetSec > 0 || output.writerInit != null) {
         // A segment closed before the last stamp is still on the publisher's
         // clock. Move it onto its programme date; every name already in the
         // directory is then on that clock and stays there.
@@ -1236,7 +1304,7 @@ async function spawnPrepared(
     }
     if (placement != null) {
       const held = placement
-      const ownInit = output.ownInit
+      const writerInit = output.writerInit
       installStamp = () => {
         held.startedAt = wallClock()
         // Every segment on disk now is placed, or recovered above. This
@@ -1261,7 +1329,16 @@ async function spawnPrepared(
           entry.hlsDir,
           held.continuing ? cursor : Number.POSITIVE_INFINITY
         )
+        let promoted = false
+        // What the last carry onto the recording saw: nothing new can be
+        // listed until the cursor or the writer's playlist moves on, and the
+        // carry's own write to the recording's playlist is a watch event too.
+        let carried = ''
         const stamp = (): void => {
+          // Before any segment of this writer's is read with `init.mp4`.
+          if (writerInit === WRITER_INIT_NAME && !promoted) {
+            promoted = promoteWriterInit(entry.hlsDir)
+          }
           if (!held.settled) {
             const fresh = unhandled()
             placeFromFrameWalls(entry, held, fresh)
@@ -1279,11 +1356,22 @@ async function spawnPrepared(
           }
           // Listed once on the programme clock, unlike FFmpeg's own: nothing
           // lists a segment of this writer's until that is done.
-          if (ownInit != null) {
+          if (writerInit == null) return
+          const carry = `${String(cursor)} ${fileStamp(`${entry.hlsDir}/${WRITER_PLAYLIST_NAME}`)}`
+          if (carry === carried) return
+          // One held back by the rename is tried again on the next event.
+          if (
             absorbWriterPlaylist(
               entry.hlsDir,
               name => (segmentNumber(name) ?? cursor) < cursor
             )
+          ) {
+            carried = carry
+          }
+          // Once this writer has a segment, its init segment was written
+          // before it: gone from beside the playlist means renamed.
+          if (writerInit === WRITER_INIT_NAME && !promoted && cursor > next) {
+            promoted = !existsSync(`${entry.hlsDir}/${WRITER_INIT_NAME}`)
           }
         }
         let watcher: FSWatcher | undefined
@@ -1298,7 +1386,7 @@ async function spawnPrepared(
         output.stopStamp = () => {
           watcher?.close()
           stamp()
-          if (ownInit != null) absorbWriterPlaylist(entry.hlsDir)
+          if (writerInit != null) absorbWriterPlaylist(entry.hlsDir)
           output.stampSegments = undefined
           output.stopStamp = undefined
           output.placement = undefined
@@ -1521,9 +1609,9 @@ async function spawnPrepared(
  * Whether the HLS writer has to wait to hear what this publish carries.
  *
  * A writer is not harmless to a recording while it decides: starting one takes
- * the playlist's end off and corrects its last line, FFmpeg replaces
- * `init.mp4` and the origin can carry that to the Space, and leaving writes a
- * part-made segment into the playlist. In a codec the recording cannot hold,
+ * the playlist's end off and corrects its last line, its init segment goes over
+ * `init.mp4` once written and the origin can carry that to the Space, and
+ * leaving lists a part-made segment. In a codec the recording cannot hold,
  * that loses every picture already here, and it is `pollSampler` that refuses
  * the publish, up to a second in. So a publish that has not shown it is HEVC
  * writes nothing, which leaves nothing to undo if it is refused or this
@@ -1633,18 +1721,22 @@ function acceptIfHevc(entry: LiveEntry): void {
 }
 
 /**
- * Whether the writer about to start must leave `init.mp4` alone. `lastInit` is
- * the init segment of the last segment listed. Once a writer has had one of
- * its own, each one after does too, whatever it carries: only the last of them
- * could be compared, and a name no segment uses yet cannot hurt anything.
+ * Whether the writer about to start needs an init segment of its own.
+ * `lastInit` is the init segment of the last segment listed. Once a writer has
+ * had one of its own, each one after does too, whatever it carries and whether
+ * or not there is a publisher to ask: only the last of them could be compared,
+ * a name no segment uses yet cannot hurt anything, and segments listed after
+ * that part would otherwise sit under its map.
  *
- * An init segment that cannot be read has nothing left to protect, and FFmpeg
- * writing a new one is all that can mend it. With no publisher to ask, as for
- * a test's forced publish, the writer continues as it always did.
+ * An init segment that cannot be read has nothing left to protect, and the
+ * writer's own, renamed over it (`promoteWriterInit`), is all that can mend
+ * it. With no publisher to ask, as for a test's forced publish, a writer after
+ * an `init.mp4` part shares `init.mp4`.
  */
 function needsOwnInit(entry: LiveEntry, lastInit: string | undefined): boolean {
-  if (lastInit == null || entry.ingress.session == null) return false
+  if (lastInit == null) return false
   if (lastInit !== FIRST_INIT) return true
+  if (entry.ingress.session == null) return false
   const held = readConfiguration(entry, FIRST_INIT)
   if (held == null) return false
   return publishDiffers(held, heardOf(entry)?.heard ?? {})
@@ -1672,8 +1764,8 @@ const FLV_CODEC_HEVC = 12
  * node-media-server reads those for H.264 and Enhanced RTMP. Any other codec
  * is all ordinary video to it, so it replays neither to a reader that joins
  * late: a writer that joined after the header, as one held for the codec
- * always does, gets a stream it cannot read, and FFmpeg empties `init.mp4` on
- * its way out.
+ * always does, gets a stream it cannot read, and FFmpeg empties its init file
+ * on its way out.
  */
 function classifyClassicHevc(packet: NmsPacket): void {
   if (packet.codec_id !== FLV_CODEC_HEVC || packet.data == null) return
@@ -2027,13 +2119,15 @@ export function reopenPlaylist(directory: string): void {
 /**
  * Carries a writer's segments from its own playlist onto the recording's.
  *
- * FFmpeg lists one init segment per playlist, so a writer whose init segment
- * cannot be the recording's writes a playlist of its own, and this is what
- * puts its segments on the end of the one everybody reads: behind a
- * discontinuity and an `EXT-X-MAP` naming that init segment, the first time it
- * has one to list. Nothing already listed changes, and an `EVENT` playlist may
- * only grow at the end anyway. An end the controller has closed the playlist
- * with stays the end.
+ * A writer continuing a recording writes a playlist of its own, and this is
+ * what puts its segments on the end of the one everybody reads, behind a
+ * discontinuity the first time it has one to list. A writer whose init segment
+ * cannot be the recording's lists them under an `EXT-X-MAP` naming that init
+ * segment. One sharing `init.mp4` lists them under the map already there,
+ * once its init segment has been renamed over `init.mp4`
+ * (`promoteWriterInit`). Nothing already listed changes, and an `EVENT`
+ * playlist may only grow at the end anyway. An end the controller has closed
+ * the playlist with stays the end.
  *
  * `ready` says which segments may be listed yet, stopping at the first that
  * may not, so they go on in order. The target duration rises as FFmpeg's does
@@ -2043,20 +2137,34 @@ export function reopenPlaylist(directory: string): void {
  * before anything reads the recording's end (`retireWriterPlaylist`,
  * `closePlaylist`). No segment listed in only the writer's playlist is lost to
  * a crash; a player just cannot have it until then.
+ *
+ * False when a sharing writer's init segment could not go over `init.mp4`
+ * yet, so nothing of its was listed; true otherwise, whether or not there was
+ * anything to list.
  */
 export function absorbWriterPlaylist(
   directory: string,
   ready: (name: string) => boolean = () => true
-): void {
+): boolean {
   let written: string
   try {
     written = readFileSync(`${directory}/${WRITER_PLAYLIST_NAME}`, 'utf8')
   } catch {
-    return
+    return true
   }
   const recording = readPlaylist(directory)
-  const init = /^#EXT-X-MAP:URI="([^"]+)"/m.exec(written)?.[1]
-  if (recording == null || init == null) return
+  const mapped = /^#EXT-X-MAP:URI="([^"]+)"/m.exec(written)?.[1]
+  if (recording == null || mapped == null) return true
+  const shares = mapped === WRITER_INIT_NAME
+  // Its segments go under `init.mp4` only once their init segment is there.
+  if (
+    shares &&
+    existsSync(`${directory}/${WRITER_INIT_NAME}`) &&
+    !promoteWriterInit(directory)
+  ) {
+    return false
+  }
+  const init = shares ? FIRST_INIT : mapped
   const known = new Set(listedSegments(recording).map(segment => segment.name))
   const added: string[] = []
   let targetSec = 0
@@ -2078,12 +2186,15 @@ export function absorbWriterPlaylist(
       entry = []
     }
   }
-  if (added.length === 0) return
+  if (added.length === 0) return true
   const end = '#EXT-X-ENDLIST'
   const closed = recording.includes(end)
-  const opening = recording.includes(`#EXT-X-MAP:URI="${init}"`)
+  const joined = shares
+    ? listedSegments(written).some(segment => known.has(segment.name))
+    : recording.includes(`#EXT-X-MAP:URI="${init}"`)
+  const opening = joined
     ? []
-    : ['#EXT-X-DISCONTINUITY', `#EXT-X-MAP:URI="${init}"`]
+    : ['#EXT-X-DISCONTINUITY', ...(shares ? [] : [`#EXT-X-MAP:URI="${init}"`])]
   const body = recording
     .replace(/#EXT-X-ENDLIST\s*$/, '')
     .replace(/\n*$/, '\n')
@@ -2096,15 +2207,116 @@ export function absorbWriterPlaylist(
       `${body}${[...opening, ...added, ...(closed ? [end] : [])].join('\n')}\n`
     )
   )
+  return true
+}
+
+/**
+ * Renames a continuing writer's init segment over `init.mp4`, once FFmpeg has
+ * written all of it. A rename within a directory is atomic, so whoever opens
+ * `init.mp4` gets the init segment the recording had or this one, never an
+ * empty or part-written file. FFmpeg writes the whole init segment, and closes
+ * it, before it writes its first segment, so this succeeds the first time
+ * the writer has a segment for anybody to read.
+ *
+ * A file that is missing, empty or not yet a whole init segment is left where
+ * it is, and so is `init.mp4`. Whether it was renamed.
+ */
+export function promoteWriterInit(directory: string): boolean {
+  const scratch = `${directory}/${WRITER_INIT_NAME}`
+  let bytes: Buffer
+  try {
+    bytes = readFileSync(scratch)
+  } catch {
+    return false
+  }
+  if (!isWholeInit(bytes)) return false
+  try {
+    renameSync(scratch, `${directory}/${FIRST_INIT}`)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether these bytes are a whole init segment: top-level boxes that end
+ * exactly at the end of the file, one of them a `moov` that configures HEVC.
+ */
+function isWholeInit(bytes: Buffer): boolean {
+  let at = 0
+  let moov = false
+  while (at < bytes.length) {
+    if (bytes.length - at < 8) return false
+    const size = bytes.readUInt32BE(at)
+    if (size < 8 || at + size > bytes.length) return false
+    if (bytes.toString('latin1', at + 4, at + 8) === 'moov') moov = true
+    at += size
+  }
+  return moov && configurationOfInit(bytes) != null
 }
 
 /**
  * Absorbs what the last writer left, and takes its playlist away: the next
- * writer with an init segment of its own starts a new one.
+ * writer continuing the recording starts a new one, and its init segment goes
+ * to the same name.
+ *
+ * An init segment of the last writer's still beside them is, almost always,
+ * one no segment was written with, from a writer that died before closing its
+ * first: `absorbWriterPlaylist` has renamed any that was whole. One that held
+ * the carry back, not whole or not renamable, leaves its segments unlisted,
+ * and that is said before it goes.
  */
-function retireWriterPlaylist(directory: string): void {
-  absorbWriterPlaylist(directory)
+function retireWriterPlaylist(
+  directory: string,
+  log: (message: string) => void,
+  liveStreamId: string
+): void {
+  const scratch = `${directory}/${WRITER_INIT_NAME}`
+  const unlisted = absorbWriterPlaylist(directory)
+    ? []
+    : unlistedWriterSegments(directory)
+  if (unlisted.length > 0) {
+    log(`[live:${liveStreamId}] ${heldBackMessage(unlisted)}`)
+  }
   rmSync(`${directory}/${WRITER_PLAYLIST_NAME}`, { force: true })
+  rmSync(scratch, { force: true })
+}
+
+/**
+ * The segments a writer's own playlist names that the recording's does not:
+ * what is left unlisted when its init segment cannot go over `init.mp4`.
+ */
+export function unlistedWriterSegments(directory: string): string[] {
+  let written: string
+  try {
+    written = readFileSync(`${directory}/${WRITER_PLAYLIST_NAME}`, 'utf8')
+  } catch {
+    return []
+  }
+  const listed = new Set(
+    listedSegments(readPlaylist(directory) ?? '').map(one => one.name)
+  )
+  return listedSegments(written)
+    .map(one => one.name)
+    .filter(name => !listed.has(name))
+}
+
+/**
+ * What is said of segments left unlisted because their writer's init segment
+ * never went over `init.mp4`.
+ */
+export function heldBackMessage(unlisted: string[]): string {
+  return `the last writer's init segment never went over ${FIRST_INIT}; ${unlisted.join(', ')} stay unlisted`
+}
+
+/** A file's identity and last change, or empty when there is none. */
+function fileStamp(path: string): string {
+  try {
+    const info = statSync(path)
+    return `${String(info.ino)} ${String(info.size)} ${String(info.mtimeMs)}`
+  } catch {
+    return ''
+  }
 }
 
 function startOutputs(entry: LiveEntry): void {
@@ -2964,10 +3176,15 @@ export function ingestPort(): number | undefined {
     : undefined
 }
 
-/** Listed fragments that the current writer has placed on the timeline. */
-export function finalSegments(
-  liveStreamId: string
-): ReadonlySet<string> | undefined {
+/**
+ * Listed fragments that the current writer has placed on the timeline.
+ *
+ * The uploader asks on every tick, for every stream. One `stat` answers while
+ * the playlist, the writer and its placement are as they were at the last
+ * read; a change reads only what the playlist added (`playlistTail`), and the
+ * answer is a view of it, so no change costs more late in a game than early.
+ */
+export function finalSegments(liveStreamId: string): FinalPieces | undefined {
   const entry = [...entries.values()].find(
     entry => entry.liveStreamId === liveStreamId
   )
@@ -2979,16 +3196,122 @@ export function finalSegments(
   )
     return undefined
   const first = output.firstSegmentNumber ?? 0
-  return new Set(
-    listedSegments(readPlaylist(entry.hlsDir) ?? '')
-      .filter(
-        segment =>
-          first === 0 ||
-          Number(segment.name.slice(3, -4)) < first ||
-          output.placement?.stamped.has(segment.name) === true
-      )
-      .map(segment => segment.name)
+  const placement = output.placement
+  const stamped = placement?.stamped.size ?? 0
+  let info: { size: number; mtimeMs: number } | undefined
+  try {
+    info = statSync(`${entry.hlsDir}/${LIVE_PLAYLIST_NAME}`)
+  } catch {
+    info = undefined
+  }
+  const held = output.finalRead
+  if (
+    info != null &&
+    held?.size === info.size &&
+    held.mtimeMs === info.mtimeMs &&
+    held.first === first &&
+    held.placement === placement &&
+    held.stamped === stamped
   )
+    return held.names
+  // Read after the stat: a playlist written in between is newer than the
+  // stamp held for it, so the next call reads it again.
+  let view: PlaylistView | undefined
+  try {
+    view = playlistTail(`${entry.hlsDir}/${LIVE_PLAYLIST_NAME}`).read()
+  } catch {
+    view = undefined
+  }
+  const names = new FinalPieces(
+    view,
+    first,
+    placement == null ? undefined : stampedOrder(placement),
+    stamped
+  )
+  output.finalRead =
+    info == null
+      ? undefined
+      : {
+          size: info.size,
+          mtimeMs: info.mtimeMs,
+          first,
+          placement,
+          stamped,
+          names
+        }
+  return names
+}
+
+/**
+ * The order `placement.stamped` took each name in, read on from where it was
+ * last read: the set only grows, and its iterator goes on to the names added
+ * after it was made, so long as it is never run to its end.
+ */
+const stampOrders = new WeakMap<
+  WriterPlacement,
+  { names: Iterator<string>; order: Map<string, number> }
+>()
+
+function stampedOrder(placement: WriterPlacement): ReadonlyMap<string, number> {
+  let held = stampOrders.get(placement)
+  if (held == null) {
+    held = { names: placement.stamped.values(), order: new Map() }
+    stampOrders.set(placement, held)
+  }
+  while (held.order.size < placement.stamped.size) {
+    const next = held.names.next()
+    if (next.done === true) break
+    held.order.set(next.value, held.order.size)
+  }
+  return held.order
+}
+
+/**
+ * The listed pieces a writer had placed when `finalSegments` was asked: those
+ * of an earlier writer (numbered below `first`), and those this one had
+ * stamped by then, or every one for a first writer. Asking costs the same
+ * however long the playlist is, and the answer stays what it was when given.
+ */
+export class FinalPieces implements Iterable<string> {
+  constructor(
+    private readonly view: PlaylistView | undefined,
+    private readonly first: number,
+    private readonly stampOrder: ReadonlyMap<string, number> | undefined,
+    private readonly stamped: number
+  ) {}
+
+  has(name: string): boolean {
+    if (this.view?.listedAt(name) == null) return false
+    if (this.first === 0 || Number(name.slice(3, -4)) < this.first) return true
+    const at = this.stampOrder?.get(name)
+    return at != null && at < this.stamped
+  }
+
+  *[Symbol.iterator](): Iterator<string> {
+    const view = this.view
+    if (view == null) return
+    for (let index = 0; index < view.listedCount; index++) {
+      const { name } = view.listed(index)
+      if (view.listedAt(name) === index && this.has(name)) yield name
+    }
+  }
+}
+
+/**
+ * Listed fragments a continuing writer stamped before its frame wall clocks
+ * placed it. Placing it moves them (`restampSegments`) after they may have
+ * been uploaded, so an uploader must keep checking them until then.
+ */
+export function movableSegments(liveStreamId: string): ReadonlySet<string> {
+  const entry = [...entries.values()].find(
+    entry => entry.liveStreamId === liveStreamId
+  )
+  const placement = entry?.outputs.find(
+    output => output.kind === 'hls'
+  )?.placement
+  return placement == null || !placement.continuing || placement.settled
+    ? new Set()
+    : new Set(placement.stamped)
 }
 
 /**
@@ -3066,6 +3389,12 @@ export function stopIngest(): void {
 
 export function tickSamplerForTest(): void {
   pollSampler()
+  // The directory watch and ffmpeg's progress lines call the stamper on a
+  // running ingest. A test drives the tick itself, and lists a segment when
+  // that watch delivers nothing.
+  for (const entry of entries.values()) {
+    for (const output of entry.outputs) output.stampSegments?.()
+  }
 }
 
 export function attachSessionForTest(
@@ -3125,6 +3454,18 @@ export function publishArrivedForTest(session: TestSession): void {
 /** node-media-server's `donePublish`, without the server. */
 export function publishGoneForTest(session: TestSession): void {
   publishGone(session as NmsSession)
+}
+
+/**
+ * Test seam: what the ingest reports of a key's publisher, and nothing else:
+ * no event, no writer. A controller deciding by the report sees this.
+ */
+export function reportPublishingForTest(
+  key: string,
+  publishing: boolean
+): void {
+  const entry = entries.get(key)
+  if (entry != null) entry.ingress.publishing = publishing
 }
 
 export function forcePublishForTest(key: string, publishing: boolean): void {

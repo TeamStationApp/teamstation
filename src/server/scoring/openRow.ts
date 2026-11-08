@@ -9,6 +9,7 @@ import { UnresolvedAccount } from '../admin/people'
 import type { Database } from '../db/database'
 import {
   booksOver,
+  type GamePlayerRow,
   gamePlayers,
   type GameScope,
   type NameBook,
@@ -41,6 +42,8 @@ export interface ScoringReadOptions {
    * named over (`scopeOf`), as every surface of the game names them.
    */
   gameId?: string
+  /** The game's `event_players`, by a caller that has read them already. */
+  players?: readonly GamePlayerRow[]
   /**
    * The names go to a speech model as well as the public: narration. Each
    * format is taken down to its spoken form (`spokenFormat`).
@@ -184,20 +187,12 @@ function playersOf(stored: StoredGame, teams: ReadonlySet<string>): number[] {
   return [...ids]
 }
 
-/**
- * A game as its reader is answered, the book it was named from, and the
- * scope of ids as stored the book was made over (`scopeOf`): merged
- * accounts read as their survivors (as `resolveScoringGame`), every play
- * and the at-bat in progress named from `users` (`withNames`) by short
- * names over the game's players, and first and last names only for the
- * players of `options.halves`. The documents given are left as they are.
- */
-export async function namedScoringGame<T extends StoredGame>(
+/** The survivor of each scoring id a game holds. */
+async function resolvedIdsOf(
   db: Kysely<Database>,
-  stored: T,
-  options: ScoringReadOptions = {}
-): Promise<{ game: T; names: NameBook; scope: GameScope }> {
-  const resolved = await resolveGumboIds(db, scoringIdsIn(stored)).catch(
+  stored: StoredGame
+): Promise<ReadonlyMap<number, number>> {
+  return await resolveGumboIds(db, scoringIdsIn(stored)).catch(
     (error: unknown) => {
       if (error instanceof UnresolvedAccount)
         throw conflict(
@@ -206,7 +201,51 @@ export async function namedScoringGame<T extends StoredGame>(
       throw error
     }
   )
-  const projected = [...resolved].every(([id, survivor]) => id === survivor)
+}
+
+function allThemselves(resolved: ReadonlyMap<number, number>): boolean {
+  return [...resolved].every(([id, survivor]) => id === survivor)
+}
+
+/**
+ * Whether a game names an account since merged into another, so that reading
+ * it resolves any id. With none, its named read holds the same people as its
+ * stored form, only with their names filled in.
+ */
+export async function namesMergedAccounts(
+  db: Kysely<Database>,
+  stored: StoredGame
+): Promise<boolean> {
+  return !allThemselves(await resolvedIdsOf(db, stored))
+}
+
+/** How a game's documents are named: built once, over the whole game. */
+interface GameNamer<T extends StoredGame> {
+  /** The game with merged accounts read as their survivors, still unnamed. */
+  projected: T
+  names: NameBook
+  scope: GameScope
+  /**
+   * A document as the reader is answered it, and the way to name it as the
+   * public is, worked out only when asked for.
+   */
+  name: <D extends GumboDocument>(document: D) => { reader: D; public: () => D }
+}
+
+/**
+ * Everything the naming of `stored` reads, read once: merged accounts
+ * resolved, and the book over the whole game's scope. The halves of
+ * `options.halves` are read only for the players of the documents `picked`
+ * keeps, which is every one unless it says otherwise.
+ */
+async function gameNamer<T extends StoredGame>(
+  db: Kysely<Database>,
+  stored: T,
+  options: ScoringReadOptions,
+  picked: (projected: T) => StoredGame = projected => projected
+): Promise<GameNamer<T>> {
+  const resolved = await resolvedIdsOf(db, stored)
+  const projected = allThemselves(resolved)
     ? stored
     : projectScoringGame(stored, id => {
         const survivor = resolved.get(id)
@@ -214,9 +253,10 @@ export async function namedScoringGame<T extends StoredGame>(
         return survivor
       })
   const players =
-    options.gameId == null
+    options.players ??
+    (options.gameId == null
       ? []
-      : ((await gamePlayers(db, [options.gameId])).get(options.gameId) ?? [])
+      : ((await gamePlayers(db, [options.gameId])).get(options.gameId) ?? []))
   // General scoring reads also feed public scoreboards. Disambiguate against
   // everyone in the game without adding private name parts to the projection.
   // Ids as stored and their survivors' read as the same accounts.
@@ -239,25 +279,118 @@ export async function namedScoringGame<T extends StoredGame>(
           await withoutBorrowed(
             db,
             options.gameId,
-            playersOf(projected, teams),
+            playersOf(picked(projected), teams),
             teams
           )
         )
-  const name = <D extends GumboDocument>(document: D): D => {
-    if (document == null) return document
+  const nobody = new Set<string>()
+  const none = new Map<number, NameHalves>()
+  const name = <D extends GumboDocument>(
+    document: D
+  ): { reader: D; public: () => D } => {
+    if (document == null) return { reader: document, public: () => document }
     const named = withNames(document, names.nameOf)
     const record = (named as { teamStation?: unknown }).teamStation
-    if (record == null) return named
-    return { ...named, teamStation: withHalves(record, teams, halves, names) }
+    if (record == null) return { reader: named, public: () => named }
+    const reader = {
+      ...named,
+      teamStation: withHalves(record, teams, halves, names)
+    }
+    return {
+      reader,
+      public: () =>
+        teams.size === 0
+          ? reader
+          : { ...named, teamStation: withHalves(record, nobody, none, names) }
+    }
   }
+  return { projected, names, scope: scopeOf(stored, players), name }
+}
+
+/**
+ * A game as its reader is answered, the book it was named from, and the
+ * scope of ids as stored the book was made over (`scopeOf`): merged
+ * accounts read as their survivors (as `resolveScoringGame`), every play
+ * and the at-bat in progress named from `users` (`withNames`) by short
+ * names over the game's players, and first and last names only for the
+ * players of `options.halves`. The documents given are left as they are.
+ */
+export async function namedScoringGame<T extends StoredGame>(
+  db: Kysely<Database>,
+  stored: T,
+  options: ScoringReadOptions = {}
+): Promise<{ game: T; names: NameBook; scope: GameScope }> {
+  const { projected, names, scope, name } = await gameNamer(db, stored, options)
   return {
     game: {
       ...projected,
-      plays: projected.plays.map(name),
-      currentPlay: name(projected.currentPlay)
+      plays: projected.plays.map(play => name(play).reader),
+      currentPlay: name(projected.currentPlay).reader
     },
     names,
-    scope: scopeOf(stored, players)
+    scope
+  }
+}
+
+/** Some of a game's plays and its at-bat in progress, named. */
+export interface NamedPlays {
+  /** The plays asked for that the game holds, in index order. */
+  plays: StoredGame['plays']
+  currentPlay: StoredGame['currentPlay']
+}
+
+/** What `resolveScoringPlays` names, and the book it named them from. */
+export interface ResolvedPlays extends NamedPlays {
+  public: NamedPlays
+  /**
+   * The digest of the book over the whole game (`NameBook.digest`), which
+   * names every play: it moves whenever any play's public name would.
+   */
+  namesDigest: string
+}
+
+/**
+ * The plays of `stored` at the indexes `only` names (every one when it names
+ * none), and the at-bat in progress, named exactly as `resolveScoringGame`
+ * names them in the whole game: the book is made over the whole game's scope,
+ * from the documents given, and only these documents are named from it. Each
+ * comes as its reader is answered, with the halves of `options.halves`, and in
+ * `public` as everybody is answered, with none: one naming serves both.
+ * `public` holds those of them `publicOnly` names, when it names any, so a
+ * reader answered every play can be given the public form of a few. The
+ * book's digest comes with them, for whoever holds them to compare.
+ */
+export async function resolveScoringPlays(
+  db: Kysely<Database>,
+  stored: StoredGame,
+  options: ScoringReadOptions & {
+    only?: Iterable<number>
+    publicOnly?: Iterable<number>
+  }
+): Promise<ResolvedPlays> {
+  const only = options.only == null ? undefined : new Set(options.only)
+  const shown =
+    options.publicOnly == null ? undefined : new Set(options.publicOnly)
+  const kept = (game: StoredGame): StoredGame =>
+    only == null
+      ? game
+      : {
+          ...game,
+          plays: game.plays.filter(play => only.has(play.about.atBatIndex))
+        }
+  const { projected, names, name } = await gameNamer(db, stored, options, kept)
+  const plays = kept(projected).plays.map(play => ({ play, ...name(play) }))
+  const current = name(projected.currentPlay)
+  return {
+    plays: plays.map(play => play.reader),
+    currentPlay: current.reader,
+    public: {
+      plays: plays
+        .filter(({ play }) => shown == null || shown.has(play.about.atBatIndex))
+        .map(play => play.public()),
+      currentPlay: current.public()
+    },
+    namesDigest: names.digest
   }
 }
 

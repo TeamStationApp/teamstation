@@ -462,12 +462,29 @@ export function directorUploadRoutes(
       const total = partCount(Number(row.size_bytes), row.part_size)
       const received = await receivedParts(dir)
       if (!isComplete(received, total)) {
+        // A cancel takes the parts, and can land after the read above: an
+        // upload given up on says so, rather than asking for its parts again.
+        const now = await mine(row.id, actor.userId)
+        if (now.state !== 'open' && now.state !== 'failed') {
+          throw badRequest(`This upload is ${now.state}.`)
+        }
         throw badRequest(
           `${missingParts(received, total).length} parts have not arrived yet.`
         )
       }
+      // Asked before the row is claimed. Refused after it, the upload would
+      // say `assembling` with no take-in behind it, and a cancel leaves the
+      // video of an upload assembling to a take-in that would never come.
+      const game = await gameIRun(row.game_id, actor.userId, actor.isAdmin)
 
-      await db
+      // Only from where it was read. A cancel, or another finish, can land
+      // between that read and this write: overwriting the cancel's
+      // `abandoned` would take in an upload its owner gave up, on a video the
+      // cancel is deleting, and a second `assembling` would start a second
+      // take-in. Either way this one answers as it would have, had it read
+      // the row a moment later. The take-in starts from the row as claimed,
+      // with whatever video another try wrote on it since.
+      const claimed = await db
         .updateTable('director_uploads')
         .set({
           state: 'assembling',
@@ -476,10 +493,18 @@ export function directorUploadRoutes(
           updated_at: new Date()
         })
         .where('id', '=', row.id)
-        .execute()
+        .where('state', 'in', ['open', 'failed'])
+        .returningAll()
+        .executeTakeFirst()
+      if (claimed == null) {
+        const now = await mine(row.id, actor.userId)
+        if (now.state === 'ready' && now.video_id != null) {
+          res.json({ videoId: now.video_id, state: now.state })
+          return
+        }
+        throw badRequest(`This upload is ${now.state}.`)
+      }
       setAudit(res.locals, { entityType: 'directorUpload', entityId: row.id })
-
-      const game = await gameIRun(row.game_id, actor.userId, actor.isAdmin)
 
       // Answered now, worked on behind. Everything that can be refused has
       // been refused above — the upload is the caller's, its parts are all
@@ -488,14 +513,14 @@ export function directorUploadRoutes(
       res.status(202).json({ state: 'assembling', step: 'assembling' })
 
       takeItIn({
-        row,
+        row: claimed,
         game,
         space,
         dir,
         total,
         app:
           req.header('x-teamstation-app') ??
-          (row.live_stream_id == null ? undefined : 'TS')
+          (claimed.live_stream_id == null ? undefined : 'TS')
       }).catch((error: unknown) => {
         // `takeItIn` writes every outcome to the row itself, so reaching here
         // means the writing failed too. Nothing is left to tell but the log.
@@ -535,10 +560,21 @@ export function directorUploadRoutes(
      * is no failure and no success: nothing of it stays and nobody is told.
      */
     const drop = async (): Promise<void> => {
-      if (videoId != null) {
+      // The row's own, where this try has none: an ingest can fail after the
+      // commit that wrote its video and named it on the row.
+      const named =
+        videoId ??
+        (
+          await db
+            .selectFrom('director_uploads')
+            .select('video_id')
+            .where('id', '=', row.id)
+            .executeTakeFirst()
+        )?.video_id
+      if (named != null) {
         await deleteVideoIfThere(
           { db, space, mediaRoot: options.mediaRoot },
-          videoId
+          named
         )
       }
       await db
@@ -588,6 +624,16 @@ export function directorUploadRoutes(
           // take's own archive index, so both say this; it reads like an app
           // name and is not one.
           startAtSource: 'distributor',
+          // On the row in the commit that makes the video: stopped after it,
+          // the row still names the video, so finishing again goes on from it
+          // and giving the upload up deletes it.
+          onWritten: async (trx, made) => {
+            await trx
+              .updateTable('director_uploads')
+              .set({ video_id: made, updated_at: new Date() })
+              .where('id', '=', row.id)
+              .execute()
+          },
           onStep: step => {
             notes(step).catch(() => {
               // A step nobody could write down is not worth failing an upload
@@ -705,23 +751,42 @@ export function directorUploadRoutes(
       const row = await mine(String(req.params.uploadId), actor.userId)
       // Abandoned before its parts go, so an upload assembling finds out why
       // they went. A finished one is a video on the game, and stays.
-      const given = await db
-        .updateTable('director_uploads')
-        .set({ state: 'abandoned', updated_at: new Date() })
-        .where('id', '=', row.id)
-        .where('state', '<>', 'ready')
-        .executeTakeFirst()
-      if (Number(given.numUpdatedRows) > 0) {
+      //
+      // Read under the row's lock in the same transaction, so what happens to
+      // its video goes by the row as it was given up, not as `mine` read it a
+      // moment before: a take-in can make it ready, or name a video on it, in
+      // between.
+      const given = await atomic(db, async trx => {
+        const held = await trx
+          .selectFrom('director_uploads')
+          .select(['state', 'video_id as videoId'])
+          .where('id', '=', row.id)
+          .forUpdate()
+          .executeTakeFirst()
+        if (held == null || held.state === 'ready') return undefined
+        await trx
+          .updateTable('director_uploads')
+          .set({ state: 'abandoned', updated_at: new Date() })
+          .where('id', '=', row.id)
+          .execute()
+        return held
+      })
+      if (given != null) {
         await rm(uploadDir(options.uploadsDir, row.id), {
           recursive: true,
           force: true
         })
-        // A failed try's video has nothing left that would go on to use it.
-        // One assembling is deleted by the work that is making it.
-        if (row.state === 'failed' && row.video_id != null) {
+        // Whatever video the row names goes with it: a failed try's, one a
+        // restart reopened with its video already made, one an earlier cancel
+        // could not finish deleting, or one a take-in is still working on. A
+        // take-in uses its video only in its ready step, which holds this row
+        // and refuses it once it is abandoned, and its `drop()` finds the
+        // video already gone. One it makes after this is named on the row in
+        // the commit that makes it, and `drop()` deletes that.
+        if (given.videoId != null) {
           await deleteVideoIfThere(
             { db, space: theSpace(), mediaRoot: options.mediaRoot },
-            row.video_id
+            given.videoId
           )
         }
       }

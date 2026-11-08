@@ -31,6 +31,21 @@ export const gameKey = (gameId: string): string => `game.${gameId}`
 export const eventsKey = (gameId: string): string => `events.${gameId}`
 export const defaultLineupKey = (teamId: string): string =>
   `defaultLineup.${teamId}`
+/**
+ * The people Add Existing Player has found for a team, gathered from every
+ * search's answer, so the scoring screen lists them at once and offline.
+ */
+export const candidatesKey = (teamId: string): string => `candidates.${teamId}`
+
+/** How many found people a team's candidates document keeps. */
+export const CANDIDATES_KEPT = 500
+
+/** The team a search of `GET /users?forTeam=` is for, or none. */
+export function candidatesTeamOf(path: string): string | undefined {
+  if (!path.startsWith('/users?')) return undefined
+  const team = new URLSearchParams(path.slice('/users?'.length)).get('forTeam')
+  return team == null || team === '' ? undefined : team
+}
 
 /** The key the first page of one of the feed's lists is stored under. */
 export function gamesKey(list: 'past' | 'upcoming' | 'all' | 'videos'): string {

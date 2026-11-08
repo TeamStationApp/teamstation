@@ -14,10 +14,15 @@ import { listsByTeam, teamsOfRow } from '../../common/teamLists'
 import { canManageRoster, canScore, lineupTeams, roleScopes } from '../access'
 import { lockPlayerEdits } from '../admin/people'
 import type { Actor } from '../auth/sessions'
+import { lockGameTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, GamesTable } from '../db/database'
 import { lockPlayerAdds } from '../groups/noticePolicy'
 import { type Clock, realClock } from '../groups/requests'
+import {
+  notifyLiveGamesRenamed,
+  notifyPlaysChanged
+} from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import {
   addByPolicy,
@@ -80,6 +85,7 @@ export async function createGuestPlayer(
 ): Promise<RosterEntry> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockGameTeams(trx, gameId)
     const { game } = await guestGate(trx, actor, gameId, side, expectedTeamId)
     const fullName = [player.firstName, player.lastName]
       .filter(Boolean)
@@ -127,6 +133,7 @@ export async function createGuestPlayer(
       bats: player.bats,
       throws: player.throws,
       isPlayer: true,
+      self: false,
       role: 'player',
       section: 'player',
       staffRoles: [],
@@ -170,6 +177,7 @@ export async function renameGuestPlayer(
 ): Promise<GuestRenamed> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockGameTeams(trx, gameId)
     const game = await trx
       .selectFrom('games')
       .select(['home_team_id', 'away_team_id', 'guests'])
@@ -236,7 +244,14 @@ export async function renameGuestPlayer(
         })
         .where('id', '=', userId)
         .execute()
-    if (changed) noteScopeChange(trx, { gameId })
+    if (changed) {
+      noteScopeChange(trx, { gameId })
+      // Its viewers hold plays named before: they read them again, as do
+      // those of every other game in progress the guest plays in. One
+      // notice per game: Postgres drops a payload repeated in a transaction.
+      await notifyPlaysChanged(trx, gameId)
+      await notifyLiveGamesRenamed(trx, { users: [userId] })
+    }
     return {
       changed,
       before: {
@@ -254,6 +269,7 @@ export async function renameGuestPlayer(
         bats: guest.bats,
         throws: guest.throws,
         isPlayer: true,
+        self: false,
         role: 'player',
         section: 'player',
         staffRoles: [],
@@ -292,6 +308,7 @@ export async function addExistingGuest(
 ): Promise<ExistingGuest> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
+    await lockGameTeams(trx, gameId)
     const { game, teamId } = await guestGate(
       trx,
       actor,
@@ -356,6 +373,7 @@ export async function addExistingGuest(
         bats: user.bats,
         throws: user.throws,
         isPlayer: true,
+        self: false,
         pool: true,
         role: 'player',
         section: 'player',

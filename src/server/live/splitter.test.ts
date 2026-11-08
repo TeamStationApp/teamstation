@@ -4,8 +4,10 @@ import { ChildProcess, execFileSync } from 'child_process'
 import {
   appendFileSync,
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  type openSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -14,15 +16,18 @@ import {
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import { createServer, type Server, Socket } from 'net'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { basename, join } from 'path'
 
 import { CODEC_REFUSAL } from '../../common/api'
 import { remuxToHls, remuxToHlsArgs, VIDEO_FILE } from '../media/ffmpeg'
 import { fileForRemux, timelineHole } from './finishVideo'
 import {
+  configuredInit,
+  hevcHeaderBody,
   hevcInit,
   hevcSegment,
   IDR_SLICE,
+  parameterSetNals,
   wallClockNal
 } from './frameWallFixture'
 import {
@@ -46,6 +51,7 @@ import {
   ingestBound,
   isPublishableKey,
   keyFromSession,
+  LIVE_PLAYLIST_NAME,
   type LiveEvent,
   nextSegmentNumber,
   playlistContinuation,
@@ -64,6 +70,8 @@ import {
   stopIngest,
   type TestSession,
   tickSamplerForTest,
+  WRITER_INIT_NAME,
+  WRITER_PLAYLIST_NAME,
   writerForTest,
   writerZeroCapturedAt
 } from './splitter'
@@ -961,7 +969,7 @@ describe('a live playlist through a reconnect', function () {
     expect(argAfter(args, '-hls_time')).equals('3.95')
   })
 
-  it('carries on the playlist it finds, under the same numbers, from where it stopped', async function () {
+  it('carries on the recording it finds in a playlist of its own, numbered after what is there', async function () {
     writeFileSync(
       join(dir, 'master.m3u8'),
       [
@@ -989,13 +997,14 @@ describe('a live playlist through a reconnect', function () {
     forcePublishForTest(KEY, true)
     const args = await writerArgs()
     const flags = argAfter(args, '-hls_flags')?.split('+') ?? []
-    expect(flags).includes('append_list')
-    // The join is marked by `append_list` itself; this would also mark one
-    // above segments a player already has.
+    // Its own playlist and init segment: the ingest lists its segments behind
+    // the join, and `init.mp4` is never FFmpeg's to empty.
+    expect(flags).not.includes('append_list')
     expect(flags).not.includes('discont_start')
-    // The playlist's own first number, so nothing already in it is
-    // renumbered, and the new timestamps start where the old ones stopped.
-    expect(argAfter(args, '-start_number')).equals('0')
+    expect(argAfter(args, '-hls_fmp4_init_filename')).equals(WRITER_INIT_NAME)
+    expect(args.at(-1)).equals(join(dir, WRITER_PLAYLIST_NAME))
+    // Numbered after the last segment, so nothing already listed is renamed.
+    expect(argAfter(args, '-start_number')).equals('3')
     // The continuation offset is applied to the new segments after they are
     // closed. The muxer is not asked to shift timestamps it has already written.
     expect(args).not.includes('-output_ts_offset')
@@ -1185,6 +1194,65 @@ describe('a live playlist through a reconnect', function () {
       )
     })
     expect(logs.join('\n')).contains('by its frame wall clocks')
+  })
+
+  it('answers which pieces are final from one stat while the playlist is unchanged, and reads only what it added once it grows', async function () {
+    const listing = (count: number): string =>
+      [
+        '#EXTM3U',
+        '#EXT-X-VERSION:7',
+        '#EXT-X-TARGETDURATION:4',
+        '#EXT-X-MAP:URI="init.mp4"',
+        ...Array.from({ length: count }, (_, n) => [
+          '#EXTINF:4.000000,',
+          `seg${String(n).padStart(6, '0')}.m4s`
+        ]).flat(),
+        ''
+      ].join('\n')
+    setLive(KEY, spec())
+    forcePublishForTest(KEY, true)
+    await writerArgs()
+    writeFileSync(join(dir, 'master.m3u8'), listing(2))
+    // The module object itself: the splitter reads `readFileSync` off it.
+    const fs = require('fs') as {
+      readFileSync: typeof readFileSync
+      openSync: typeof openSync
+    }
+    const read = fs.readFileSync
+    const open = fs.openSync
+    const reads: string[] = []
+    const opens: string[] = []
+    fs.readFileSync = ((path: string, ...rest: unknown[]) => {
+      if (String(path).startsWith(dir)) reads.push(basename(String(path)))
+      return (read as (...args: unknown[]) => unknown)(path, ...rest)
+    }) as typeof read
+    fs.openSync = ((path: string, ...rest: unknown[]) => {
+      if (String(path).startsWith(dir)) opens.push(basename(String(path)))
+      return (open as (...args: unknown[]) => unknown)(path, ...rest)
+    }) as typeof open
+    try {
+      const first = finalSegments('liv_test')
+      expect([...first!]).deep.equals(['seg000000.m4s', 'seg000001.m4s'])
+      expect(reads).deep.equals(['master.m3u8'])
+      reads.length = 0
+      opens.length = 0
+      // One tick a second, for every stream: nothing changed, nothing read.
+      for (let tick = 0; tick < 5; tick++)
+        expect(finalSegments('liv_test')).equals(first)
+      expect(reads).deep.equals([])
+      writeFileSync(join(dir, 'master.m3u8'), listing(3))
+      expect([...finalSegments('liv_test')!]).deep.equals([
+        'seg000000.m4s',
+        'seg000001.m4s',
+        'seg000002.m4s'
+      ])
+      // Opened for what it added, not read whole again.
+      expect(reads).deep.equals([])
+      expect(opens).deep.equals(['master.m3u8'])
+    } finally {
+      fs.readFileSync = read
+      fs.openSync = open
+    }
   })
 
   it('leaves a return its frame wall clocks placed where it is when this server restarts', async function () {
@@ -1514,7 +1582,7 @@ describe('a live playlist through a reconnect', function () {
     forcePublishForTest(KEY, true)
     const args = await writerArgs()
     await new Promise(resolve => setTimeout(resolve, 200))
-    expect(args.at(-1)).equals(join(dir, 'master.m3u8'))
+    expect(args.at(-1)).equals(join(dir, WRITER_PLAYLIST_NAME))
     expect(spawnCount()).equals(1)
   })
 
@@ -2310,7 +2378,12 @@ describe('a live publish that jumps (U19)', function () {
         .map(line => line.split(' '))
         .filter(
           args =>
-            args.some(arg => arg.endsWith('master.m3u8')) === (which === 'hls')
+            args.some(
+              arg =>
+                arg.endsWith(`/${LIVE_PLAYLIST_NAME}`) ||
+                arg.endsWith(`/${WRITER_PLAYLIST_NAME}`)
+            ) ===
+            (which === 'hls')
         )
     } catch {
       return []
@@ -2334,6 +2407,7 @@ describe('a live publish that jumps (U19)', function () {
     broadcastMessage: (packet: {
       flags: number
       dts: number
+      codec_id?: number
       data?: Buffer
     }) => void
     donePublish: (session: never) => void
@@ -2502,10 +2576,15 @@ describe('a live publish that jumps (U19)', function () {
     made.broadcastMessage({ flags: 3, dts: 29 * 33 + 5066 })
     await until(() => started('hls').length === 2)
     expect(Date.now() - at).lessThan(900)
+    // A writer continuing the recording, numbered after what the first left.
     const next = started('hls')[1]
     const flags = next[next.indexOf('-hls_flags') + 1].split('+')
-    expect(flags).includes('append_list')
-    expect(next[next.indexOf('-start_number') + 1]).equals('0')
+    expect(flags).not.includes('append_list')
+    expect(next[next.indexOf('-start_number') + 1]).equals('2')
+    expect(next[next.indexOf('-hls_fmp4_init_filename') + 1]).equals(
+      WRITER_INIT_NAME
+    )
+    expect(next.at(-1)).equals(join(dir, WRITER_PLAYLIST_NAME))
     expect(next.join(' ').toUpperCase()).not.includes('HOLD-BACK')
     expect(readFileSync(join(dir, 'master.m3u8'), 'utf8')).not.includes(
       'HOLD-BACK'
@@ -2585,17 +2664,60 @@ describe('a live publish that jumps (U19)', function () {
     setLive(KEY, spec())
     const made = broadcast()
     await publish(made)
+    // The camera's classic HEVC header, which the recording's init segment
+    // will carry.
+    made.broadcastMessage({
+      flags: 4,
+      dts: 0,
+      codec_id: 12,
+      data: hevcHeaderBody('classic', parameterSetNals(1))
+    })
     video(made, 0, 10)
+    writtenSoFar()
     made.broadcastMessage({ flags: 4, dts: 10_000 })
     await until(() => writerForTest(KEY) == null)
     made.broadcastMessage({ flags: 3, dts: 10_033 })
     await until(() => started('hls').length === 2)
     await until(() => writerForTest(KEY) != null)
+    // The writer after the cut continues the recording, and closes a segment
+    // as FFmpeg would: its whole init segment first, then the segment, then
+    // its own playlist.
+    // The same picture and sound as the publish: `showSound`'s AAC header.
+    const init = configuredInit(parameterSetNals(1), Buffer.from([0x11, 0x90]))
+    writeFileSync(join(dir, WRITER_INIT_NAME), init)
+    writeFileSync(join(dir, 'seg000002.m4s'), hevcSegment(0, [IDR_SLICE]))
+    writeFileSync(
+      join(dir, WRITER_PLAYLIST_NAME),
+      [
+        '#EXTM3U',
+        '#EXT-X-MAP:URI=".writer-init.mp4"',
+        '#EXTINF:4.000000,',
+        'seg000002.m4s',
+        ''
+      ].join('\n')
+    )
     writerForTest(KEY)?.kill('SIGKILL')
     await sleep(500)
     expect(started('hls'), 'not at once').length(2)
     await until(() => started('hls').length === 3, 6000)
     expect(started('hls')).length(3)
+    // The restart continues the recording too, after the dead writer's
+    // segment, which is listed behind one join under `init.mp4`.
+    const restarted = started('hls')[2]
+    expect(restarted[restarted.indexOf('-start_number') + 1]).equals('3')
+    expect(restarted[restarted.indexOf('-hls_fmp4_init_filename') + 1]).equals(
+      WRITER_INIT_NAME
+    )
+    const listed = readFileSync(join(dir, LIVE_PLAYLIST_NAME), 'utf8')
+    expect(listed.match(/^seg\d+\.m4s$/gm)).deep.equals([
+      'seg000000.m4s',
+      'seg000001.m4s',
+      'seg000002.m4s'
+    ])
+    expect(listed.match(/#EXT-X-DISCONTINUITY/g)).length(1)
+    expect(listed.match(/#EXT-X-MAP/g)).length(1)
+    expect(readFileSync(join(dir, 'init.mp4'))).deep.equals(init)
+    expect(existsSync(join(dir, WRITER_INIT_NAME))).equals(false)
   })
 
   it('keeps a cut when a publisher already replaced closes late', async function () {

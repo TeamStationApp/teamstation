@@ -64,13 +64,40 @@ export interface PresignOptions {
    */
   pathStyle?: boolean
   readOnlySource?: ReadOnlySpaceSource
+  /**
+   * Request headers the signature covers besides `host`, by lowercase name.
+   * An S3-compatible store refuses or ignores an `x-amz-*` header that is not
+   * signed, so an upload's ACL and cache header go here, and the request must
+   * send each with exactly this value. None signs `host` alone.
+   */
+  signedHeaders?: Record<string, string>
+}
+
+/**
+ * The names one configured list may be read from the shared Space.
+ *
+ * The list is an array in the config file. A page asks about it once per
+ * picture, and walking the array each time grows with every video segment.
+ * The set is built the first time that array is asked about and kept for the
+ * process. The array object is the set's identity, so an edit of it after
+ * that first question is not seen.
+ */
+const readOnlyKeySets = new WeakMap<readonly string[], ReadonlySet<string>>()
+
+function readOnlyKeySet(keys: readonly string[]): ReadonlySet<string> {
+  const cached = readOnlyKeySets.get(keys)
+  if (cached != null) return cached
+  const built = new Set(keys)
+  readOnlyKeySets.set(keys, built)
+  return built
 }
 
 export function isReadOnlySourceKey(
   options: Pick<PresignOptions, 'readOnlySource'>,
   key: string
 ): boolean {
-  return key !== '' && options.readOnlySource?.keys.includes(key) === true
+  const keys = options.readOnlySource?.keys
+  return key !== '' && keys != null && readOnlyKeySet(keys).has(key)
 }
 
 export function presignGetUrl(options: PresignOptions): string {
@@ -79,7 +106,8 @@ export function presignGetUrl(options: PresignOptions): string {
     key,
     expiresSec,
     query: extra = {},
-    now = new Date()
+    now = new Date(),
+    signedHeaders = {}
   } = options
   const readSource = options.readOnlySource
   const signingSpace =
@@ -99,6 +127,12 @@ export function presignGetUrl(options: PresignOptions): string {
   const host = pathStyle ? url.host : `${bucket}.${url.host}`
   const path = pathStyle ? `/${bucket}/${encodeKey(key)}` : `/${encodeKey(key)}`
 
+  const headers = new Map<string, string>([['host', host]])
+  for (const [name, value] of Object.entries(signedHeaders))
+    headers.set(name.toLowerCase(), value.trim())
+  const headerNames = [...headers.keys()].sort()
+  const signedHeaderList = headerNames.join(';')
+
   const amzDate = amzTimestamp(now)
   const dateStamp = amzDate.slice(0, 8)
   const scope = `${dateStamp}/${region}/s3/aws4_request`
@@ -109,7 +143,7 @@ export function presignGetUrl(options: PresignOptions): string {
     ['X-Amz-Credential', `${accessKeyId}/${scope}`],
     ['X-Amz-Date', amzDate],
     ['X-Amz-Expires', String(expiresSec)],
-    ['X-Amz-SignedHeaders', 'host'],
+    ['X-Amz-SignedHeaders', signedHeaderList],
     ...Object.entries(extra)
   ])
   const canonicalQuery = [...query.entries()]
@@ -122,8 +156,8 @@ export function presignGetUrl(options: PresignOptions): string {
     method,
     path,
     canonicalQuery,
-    `host:${host}\n`,
-    'host',
+    headerNames.map(name => `${name}:${headers.get(name)}\n`).join(''),
+    signedHeaderList,
     UNSIGNED_PAYLOAD
   ].join('\n')
 

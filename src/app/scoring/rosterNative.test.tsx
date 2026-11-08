@@ -149,6 +149,53 @@ describe('native roster responder', function () {
       host.querySelector('[aria-label="Remove Alex Demo"][role="button"]')
     ).not.equals(null)
   })
+  it('drags an assigned defensive card at 10 px with no hold and clears it on a shorter touch, while a lineup card still holds (U33)', async function () {
+    const drops: number[] = []
+    let taps = 0
+    const engine = new RosterGesture(() => undefined)
+    engine.targets.set('defense-SS', {
+      measure: async () => ({ x: 200, y: 300, width: 100, height: 50 }),
+      drop: id => drops.push(id)
+    })
+    const card = rosterResponder(engine, {
+      children: null,
+      playerId: 6,
+      targetId: 'defense-3B',
+      label: 'Clear 3B',
+      immediate: true,
+      onTap: () => {
+        taps++
+      }
+    })
+    const lineup = rosterResponder(engine, {
+      children: null,
+      playerId: 7,
+      label: 'Reorder Seven'
+    })
+    try {
+      card.onTouchStart!(event(10, 10))
+      card.onTouchMove!(event(19, 10))
+      card.onTouchEnd!(event(19, 10))
+      expect(taps).equals(1)
+      expect(engine.active).equals(null)
+      card.onTouchStart!(event(10, 10))
+      expect(card.onMoveShouldSetResponder!(event(20, 10))).equals(true)
+      expect(engine.active?.id).equals(6)
+      card.onResponderGrant!(event(20, 10))
+      card.onResponderMove!(event(230, 320))
+      await flush()
+      card.onResponderRelease!(event(230, 320))
+      await flush()
+      expect(drops).deep.equals([6])
+      expect(taps).equals(1)
+      lineup.onTouchStart!(event(10, 10))
+      expect(lineup.onMoveShouldSetResponder!(event(20, 10))).equals(false)
+      expect(engine.active).equals(null)
+    } finally {
+      card.dispose()
+      lineup.dispose()
+    }
+  })
   it('appends on a tap, yields until a half-second hold, drops by native window coordinates and never taps after a drag', async function () {
     const drops: number[] = []
     let taps = 0
