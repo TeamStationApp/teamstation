@@ -82,7 +82,10 @@ export async function fourInnings(
       await rig.tap(bottom, '^Safe$')
       await closed(bottom)
     } else if (inning === 2) {
-      for (let ball = 0; ball < 4; ball++) await rig.pitch(bottom, 'Ball')
+      // Ball four closes after its award animation. The boundary below waits
+      // for that completed save before allowing three seconds for peers.
+      for (let ball = 0; ball < 3; ball++) await rig.pitch(bottom, 'Ball')
+      await rig.tap(bottom, '^Ball$')
       await closed(bottom)
       await rig.hit(bottom, 'Home Run')
       await closed(bottom)

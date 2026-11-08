@@ -169,7 +169,9 @@ export class ConcurrentScoringRig {
   }
 
   async strikeout(index: number): Promise<void> {
-    for (let i = 0; i < 3; i++) await this.pitch(index, 'Called Strike')
+    for (let i = 0; i < 2; i++) await this.pitch(index, 'Called Strike')
+    // The caller's boundary verifies the saved completion after animation.
+    await this.tap(index, '^Called Strike$')
     await this.finish(index)
   }
 
