@@ -224,7 +224,13 @@ export async function storedFormDigest(
 
 /** `lineupsDigest` of everything a read of the lineups counts. */
 function digestOf(read: GameLineups): string {
-  return lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
+  return lineupsDigest(
+    read.sides,
+    read.bench,
+    read.courtesy,
+    read.due,
+    read.deferred
+  )
 }
 
 /**
@@ -286,7 +292,8 @@ export function lineupsDigest(
   sides: Record<Side, SideLineups>,
   bench: Record<Side, LineupPerson[]> = { away: [], home: [] },
   courtesy: CourtesyRunner[] = [],
-  due: DueBatter | null = null
+  due: DueBatter | null = null,
+  deferred: GameLineups['deferred'] = []
 ): string {
   const seen = (
     side: Side
@@ -306,9 +313,11 @@ export function lineupsDigest(
     home: ReturnType<typeof seen>
     courtesy?: CourtesyRunner[]
     due?: DueBatter
+    deferred?: GameLineups['deferred']
   } = { away: seen('away'), home: seen('home') }
   if (courtesy.length > 0) body.courtesy = courtesy
   if (due != null) body.due = due
+  if (deferred.length > 0) body.deferred = deferred
   return createHash('sha256').update(JSON.stringify(body)).digest('hex')
 }
 
