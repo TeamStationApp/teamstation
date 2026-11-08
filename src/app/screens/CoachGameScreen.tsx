@@ -432,17 +432,20 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     setReopened(value => value + 1)
   }, [])
   const reload = useCallback(
-    async (remount = false): Promise<void> => {
+    async (
+      remount = false,
+      canAdopt: () => boolean = () => true
+    ): Promise<void> => {
       const session = opened?.session
       if (session == null) return
       // And whether the game holds his side's lineup now, which somebody
       // else's save may have given it.
       const [, lineups] = await Promise.all([
-        session.reload(),
+        session.reload(canAdopt),
         client.gameLineups(gameId)
       ])
       // The screen moved on to another read of the game meanwhile.
-      if (openedNow.current !== opened) return
+      if (openedNow.current !== opened || !canAdopt()) return
       sessionRef.current = session
       // Home and away swapped under it: the session now replays on the new
       // teams, and his side is no longer the one the screen opened on.
@@ -466,7 +469,9 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       const next = presented(session, opened!.side, ownDefault.current)
       setState(next)
       // A reload that leaves the setup as the editor was drawn from leaves
-      // the editor, so its scroll and tab stay. A save draws it again even
+      // the editor, so its scroll and gestures stay. The state prop above
+      // still updates validation for the current batter and runners.
+      // A save draws it again even
       // then: a pinch runner keeps the order and the players, and the editor
       // would otherwise keep the runner it staged and stay dirty.
       const shown = mountedOn.current
@@ -489,6 +494,56 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     },
     [opened, client, gameId, heard, reopenSwapped]
   )
+
+  // Plays change who may bat or run even when the lineup digest is unchanged.
+  // Keep clean validation current, but never adopt a read over a staged edit.
+  const playRefreshPending = useRef(false)
+  useEffect(() => {
+    if (socket == null || opened == null) return
+    let live = true
+    let reading = false
+    let retry: ReturnType<typeof setTimeout> | undefined
+    const canAdopt = (): boolean =>
+      live && !dirtyNow.current && openedNow.current === opened
+    const refresh = async (): Promise<void> => {
+      if (reading || !canAdopt() || !playRefreshPending.current) return
+      reading = true
+      playRefreshPending.current = false
+      try {
+        await reload(false, canAdopt)
+        if (!canAdopt()) playRefreshPending.current = true
+      } catch {
+        playRefreshPending.current = true
+        if (live)
+          retry = setTimeout(() => {
+            retry = undefined
+            refresh().catch(() => undefined)
+          }, 1000)
+      } finally {
+        reading = false
+      }
+      if (live && retry == null && playRefreshPending.current)
+        refresh().catch(() => undefined)
+    }
+    const stop = listen(socket, gameId, event => {
+      if (
+        event.type !== 'resync' &&
+        !(event.type === 'change' && event.kind === 'playEdits')
+      )
+        return
+      playRefreshPending.current = true
+      refresh().catch(() => undefined)
+    })
+    refresh().catch(() => undefined)
+    return () => {
+      // Hand a read invalidated by a draft change to the next clean effect.
+      // Its completion may arrive after that replacement has already started.
+      if (reading) playRefreshPending.current = true
+      live = false
+      stop()
+      if (retry != null) clearTimeout(retry)
+    }
+  }, [socket, gameId, opened, dirty, reload])
 
   const live = useRosterLive({
     socket,
