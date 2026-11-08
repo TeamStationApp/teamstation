@@ -1,8 +1,5 @@
-import path from 'node:path'
-
 import { attach } from './maestroD'
 import {
-  appLinkHost,
   claimAppLinks,
   mailedLink,
   newestMail,
@@ -19,6 +16,8 @@ import {
  * APP_LINKS_USER_SELECTION=1 to approve the host by user selection instead.
  *
  *   MAESTRO_D=sign-in-link-app \
+ *   TS_E2E_APP_ID=app.teamstation.develop \
+ *   TS_E2E_APP_ORIGIN=https://develop.teamstation.app \
  *   TS_E2E_PLATFORM=ios|android \
  *   TS_E2E_DEVICE=<simulator or device UDID, or adb serial> \
  *   TS_E2E_EMAIL=<an address whose mail the command below can read> \
@@ -31,8 +30,16 @@ import {
  * the mailed link, and it signs in.
  */
 
-const APP_ID = 'app.teamstation.app'
-const LINK_HOST = appLinkHost(path.join(__dirname, '..', '..', 'clientConfig.json'))
+const APP_ID = required('TS_E2E_APP_ID')
+if (!['app.teamstation.app', 'app.teamstation.develop'].includes(APP_ID))
+  throw new Error('TS_E2E_APP_ID must name the installed TeamStation variant')
+const origin = new URL(required('TS_E2E_APP_ORIGIN'))
+if (
+  origin.protocol !== 'https:' ||
+  origin.origin !== required('TS_E2E_APP_ORIGIN')
+)
+  throw new Error('TS_E2E_APP_ORIGIN must be an HTTPS origin')
+const LINK_HOST = origin.host
 
 function required(key: string): string {
   const value = process.env[key]
