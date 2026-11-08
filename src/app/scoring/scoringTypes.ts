@@ -376,6 +376,8 @@ export type ScoringEvent =
   | { type: 'UNDO' }
   | {
       type: 'CLOSE_PLAY'
+      /** Explicit Finish input, even when guarded by a generation. */
+      authored?: boolean
       generation?: number
       revision?: number
       sequence?: number

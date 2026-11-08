@@ -8,8 +8,10 @@ import { HttpError } from '../../common/errors'
 import type { GameChangeData, GameSocketEvent } from '../../common/gameSocket'
 import { cleanAction, type ScoringAction } from '../../common/scoring/actions'
 import {} from '../../common/scoring/gumbo'
+import { overrideOf } from '../../common/scoring/rules'
 import {
   type EventStore,
+  type SaveChange,
   ScoringSession as GameSession,
   type StoredGame
 } from '../../common/scoring/session'
@@ -20,6 +22,7 @@ import {
   withoutNames
 } from '../../common/scoring/storedNames'
 import { scoringRoster } from '../../test/scoringSession'
+import type { BaseballScreen } from '../field/BaseballScreen'
 import { lstrings } from '../locales/strings'
 import { CachingClient } from '../sync/cachingClient'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -117,6 +120,27 @@ class FakeChanges implements GameChanges {
 }
 
 let root: Root | undefined
+// Drive the exact field callbacks used by a canceled physical runner drag.
+function field(): NonNullable<Parameters<typeof BaseballScreen>[0]['field']> {
+  interface Fiber {
+    type?: { name?: string }
+    memoizedProps?: Parameters<typeof BaseballScreen>[0]
+    child?: Fiber
+    sibling?: Fiber
+  }
+  const find = (fiber?: Fiber): Fiber | undefined => {
+    for (let node = fiber; node != null; node = node.sibling) {
+      if (node.type?.name === 'BaseballScreen') return node
+      const child = find(node.child)
+      if (child != null) return child
+    }
+    return undefined
+  }
+  return find(
+    (root as unknown as { _internalRoot: { current: Fiber } })._internalRoot
+      .current
+  )!.memoizedProps!.field
+}
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
 async function settle(): Promise<void> {
@@ -402,6 +426,107 @@ describe('the scoring screen on the game socket', function () {
     expect(document.body.textContent).includes('1 balls 0 strikes')
   })
 
+  it('follows a winning unfinished award after its own pitch is superseded', async () => {
+    const { other, store, session } = await scoring()
+    const peer = await other()
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const save = store.save
+    let saves = 0
+    store.save = async () => {
+      saves++
+      await held
+      return { ...(await store.load('g1')), superseded: true }
+    }
+    await click('Ball')
+    peer.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    // Save the peer independently while the screen's earlier request is held.
+    store.save = save
+    await peer.flush()
+    const stored = store.games.get('g1')!
+    stored.scoringMutation = {
+      at: Date.now() + 1000,
+      id: 'peer-award',
+      revision: 0,
+      frontier: 0
+    }
+    store.save = async () => {
+      saves++
+      return await store.load('g1')
+    }
+    const before = JSON.stringify(await store.load('g1'))
+    release()
+    await settle()
+    expect(session().rebaseFollowsPeer).equals(true)
+    expect(saves).equals(1)
+    expect(JSON.stringify(await store.load('g1'))).equals(before)
+    expect(
+      session().actions.some(
+        action => action.type === 'gameFlow' && action.kind === 'closePlay'
+      )
+    ).equals(false)
+  })
+
+  it('keeps a peer award passive after a roster-only Undo rebases', async () => {
+    const { other, store, session } = await scoring()
+    await click('Ball')
+    await click('Open scoring menu')
+    await click('Set Team Rosters')
+    await settle()
+    const last = [
+      ...document.querySelectorAll<HTMLElement>('[aria-label^="Reorder "]')
+    ].at(-1)!
+    for (const key of ['Enter', 'ArrowUp', 'Enter'])
+      await act(async () => {
+        last.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key, bubbles: true })
+        )
+      })
+    await click('Save Rosters')
+    await settle()
+    const peer = await other()
+    const save = store.save
+    let entered = false
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    store.save = async () => {
+      entered = true
+      await held
+      throw new HttpError('conflict', 'Scoring changed', { stale: true })
+    }
+    await click('Undo Set team roster')
+    for (let i = 0; i < 50 && !entered; i++) await settle()
+    expect(entered).equals(true)
+    store.save = save
+    peer.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    await peer.flush()
+    const posts: SaveChange[] = []
+    store.save = async (id, change) => {
+      posts.push(change)
+      return await save(id, change)
+    }
+    release()
+    await settle()
+    expect(session().rebases).equals(1)
+    expect(session().rebaseFollowsPeer).equals(true)
+    expect(
+      session().actions.some(
+        action => action.type === 'gameFlow' && action.kind === 'closePlay'
+      )
+    ).equals(false)
+    expect(
+      posts.every(
+        post => post.scoringMutation == null && post.plays.length === 0
+      )
+    ).equals(true)
+    const stored = await other()
+    expect(stored.state.pending).not.equals(null)
+  })
+
   it('never saves a close synthesized while displaying a remote award', async function () {
     const { changes, other, store } = await scoring()
     const peer = await other()
@@ -430,6 +555,117 @@ describe('the scoring screen on the game socket', function () {
     await changes.plays()
     expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
     expect(session().actions).deep.equals(peer.actions)
+  })
+
+  it('adopts a peer Undo while its own third-out presentation is still running', async () => {
+    const { changes, other, session } = await scoring()
+    const setup = await other()
+    const initial = overrideOf(setup.state)
+    expect(
+      setup.apply({
+        type: 'gameFlow',
+        kind: 'override',
+        ...initial,
+        batter: initial.batter ?? undefined,
+        pitcher: initial.pitcher ?? undefined,
+        outs: 2
+      }).problems
+    ).deep.equals([])
+    setup.apply({ type: 'pitch', call: 'C' })
+    setup.apply({ type: 'pitch', call: 'C' })
+    await setup.flush()
+    await changes.plays()
+    await click('Called Strike')
+    await session().flush()
+    const animated = field()
+    const motion = (
+      animated as unknown as {
+        players: Array<{ motion?: { id: string; generation: number } }>
+      }
+    ).players.find(player => player.motion != null)?.motion
+    expect(motion).not.equals(undefined)
+    const peer = await other()
+    expect(peer.undo().problems).deep.equals([])
+    while (peer.state.liveData.linescore.outs === 3)
+      expect(peer.undo().problems).deep.equals([])
+    await peer.flush()
+    await changes.plays()
+    expect(session().actions).deep.equals(peer.actions)
+    expect(document.body.textContent).includes('0 balls 2 strikes 2 outs')
+    await act(async () => {
+      animated.onMovementComplete?.(motion!.id, motion!.generation)
+    })
+    await session().flush()
+    expect(session().actions).deep.equals(peer.actions)
+  })
+
+  it('keeps following peer completion after a canceled runner drag', async () => {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    expect(shown('Finish at-bat')).equals(true)
+    await act(async () => {
+      field().onGestureActive?.(true)
+    })
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    expect(shown('Finish at-bat')).equals(true)
+    await act(async () => {
+      field().onGestureActive?.(false)
+    })
+    await settle()
+    expect(shown('Finish at-bat')).equals(false)
+    expect(session().actions).deep.equals(peer.actions)
+  })
+
+  it('authors the explicit Finish tap after following an unfinished play', async function () {
+    const { changes, other, session, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    await peer.flush()
+    await changes.plays()
+    const posts: SaveChange[] = []
+    const save = store.save.bind(store)
+    store.save = async (id, change) => {
+      posts.push(change)
+      return await save(id, change)
+    }
+    const before = Date.now()
+    await click('Finish at-bat')
+    await session().flush()
+    expect(posts).has.length(1)
+    expect(posts[0].scoringMutation?.at).within(before, Date.now())
+    expect(posts[0].plays).has.length(1)
+  })
+
+  it('passes the original Undo tap identity into saved history', async () => {
+    const { changes, other, session, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    const tap = {
+      at: Date.now() - 1000,
+      id: 'undo-input',
+      revision: 0,
+      frontier: 0
+    }
+    session().captureScoringAction = () => tap
+    const posts: SaveChange[] = []
+    const save = store.save.bind(store)
+    store.save = async (id, change) => {
+      posts.push(change)
+      return await save(id, change)
+    }
+    await click('Undo Last play')
+    await session().flush()
+    expect(posts).has.length(1)
+    expect(posts[0].scoringMutation).includes({ at: tap.at, id: tap.id })
+    expect(document.body.textContent).includes('0 balls 0 strikes')
   })
 
   for (const dropped of [false, true])

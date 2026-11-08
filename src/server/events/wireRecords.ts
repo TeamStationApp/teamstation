@@ -52,6 +52,13 @@ export function bodyFromWire(
   return {
     ...body,
     plays: body.plays.map(play => playFromWire(play, teams)),
+    ...(body.scoringHistory == null
+      ? {}
+      : {
+          scoringHistory: body.scoringHistory.map(play =>
+            playFromWire(play, teams)
+          )
+        }),
     ...(body.currentPlay == null
       ? {}
       : { currentPlay: playFromWire(body.currentPlay, teams) })
