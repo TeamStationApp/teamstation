@@ -1,6 +1,6 @@
 import { type Kysely, sql } from 'kysely'
 
-import type { GumboPlay } from '../../common/gumboPlay'
+import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { type Database, isConnectionUnavailable } from '../db/database'
 import { expandedGameStatLines } from '../stats/expandedStats'
@@ -175,7 +175,7 @@ export async function buildNext(
 
       const game = await trx
         .selectFrom('games')
-        .select(['home_team_id', 'away_team_id'])
+        .select(['home_team_id', 'away_team_id', 'currentPlay'])
         .where('id', '=', gameId)
         .executeTakeFirst()
       if (game == null) {
@@ -184,11 +184,17 @@ export async function buildNext(
 
       const eventRows = await trx
         .selectFrom('events')
-        .select(['gumbo'])
+        .select(['gumbo', 'atBatIndex'])
         .where('gameId', '=', gameId)
         .orderBy('atBatIndex', 'asc')
         .execute()
-      const plays = eventRows.map(row => row.gumbo as GumboPlay)
+      // Reopened at-bats retain their event identity and annotations. Their
+      // previous completed result is no longer part of the game's statistics.
+      const openIndex = (game.currentPlay as CurrentPlay | null)?.about
+        ?.atBatIndex
+      const plays = eventRows
+        .filter(row => row.atBatIndex !== openIndex)
+        .map(row => row.gumbo as GumboPlay)
 
       const named = namedPlayerIds(plays)
       const knownUsers = new Set<number>()
