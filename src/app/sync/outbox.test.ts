@@ -822,6 +822,96 @@ describe('the phone outbox', function () {
     ).deep.equals([41, 43, 44, 45, 47])
   })
 
+  for (const childBase of ['L0', 'local-parent'])
+    it(`keeps a superseded parent's lineup precondition for its child (${childBase})`, async function () {
+      let online = true
+      const bases: unknown[] = []
+      const p = phone(
+        server({ '/games/g1/events': eventsDoc('g1', 'L0') }, sent => {
+          if (!online) return 'offline'
+          const body = sent.body as SaveChange
+          if (body.scoringMutation?.id === 'parent')
+            return {
+              body: {
+                ...(eventsDoc('g1', 'coach') as object),
+                superseded: true
+              }
+            }
+          bases.push(body.lineupsBase)
+          if (body.lineupsBase !== 'coach')
+            return refusal(409, 'conflict', 'The coach changed the lineup', {
+              stale: true
+            })
+          return { body: eventsDoc('g1', 'overwritten') }
+        })
+      )
+      await p.client.gameEvents('g1')
+      online = false
+      for (const [id, base, at] of [
+        ['parent', 'L0', 1],
+        ['child', childBase, 3]
+      ] as const)
+        await p.client.saveGameEvents('g1', {
+          plays: [],
+          remove: [],
+          currentPlay: null,
+          lineupsBase: base,
+          scoringMutation: { at, id, revision: 0, frontier: 0 }
+        })
+      online = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      expect(bases).deep.equals(['L0'])
+      expect((await p.client.outboxSummary()).games.g1?.state).equals('parked')
+    })
+
+  it('keeps superseded on its acknowledgment, not the cached game or a later optimistic score', async function () {
+    let online = true
+    const p = phone(
+      server({ '/games/g1/events': eventsDoc('g1', 'L0') }, () =>
+        online
+          ? {
+              body: {
+                ...(eventsDoc('g1', 'L1') as Record<string, unknown>),
+                superseded: true
+              }
+            }
+          : 'offline'
+      )
+    )
+    await p.client.gameEvents('g1')
+    const change: SaveChange = {
+      plays: [],
+      remove: [],
+      currentPlay: { ...play(1), about: { atBatIndex: 1, isComplete: false } },
+      scoringMutation: { at: 1, id: 'older', revision: 0, frontier: 1 }
+    }
+    const answer = await p.client.saveGameEvents('g1', change)
+    expect(answer.superseded).equals(true)
+    expect(bodyOf(p.document(eventsKey('g1'))!)).not.has.property('superseded')
+    online = false
+    const optimistic = await p.client.saveGameEvents('g1', {
+      ...change,
+      scoringMutation: { at: 2, id: 'newer', revision: 0, frontier: 1 }
+    })
+    expect(optimistic.superseded).equals(undefined)
+    expect(optimistic.scoringMutation?.id).equals('newer')
+  })
+
+  it('removes old response-only status when applying an optimistic score', function () {
+    const applied = appliedEvents(
+      { superseded: true },
+      { plays: [], currentPlay: null },
+      {
+        gameId: 'g1',
+        plays: 'local-p',
+        lineups: null,
+        newPlayId: () => 'local-row'
+      }
+    )
+    expect(applied).not.has.property('superseded')
+  })
+
   it('applies a post onto a game with no plays, and a save onto lineups with no current lineup', function () {
     const applied = appliedEvents(
       {},

@@ -25,6 +25,13 @@ describe('scoring follow ownership', function () {
     expect(authoredScoringEvent({ type: 'CLOSE_PLAY', generation: 1 })).equals(
       false
     )
+    expect(
+      authoredScoringEvent({
+        type: 'CLOSE_PLAY',
+        generation: 1,
+        authored: true
+      })
+    ).equals(true)
     expect(authoredScoringEvent({ type: 'GESTURE', active: true })).equals(true)
     expect(authoredScoringEvent({ type: 'GESTURE', active: false })).equals(
       false
