@@ -5,7 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
 import { scoringSession } from '../../test/scoringSession'
-import { ThemeProvider } from '../theme/ThemeContext'
+import { fittedTextScale } from '../components/fittedText'
+import { getTheme, ThemeProvider } from '../theme/ThemeContext'
 import { gameFixture } from './isUnscoredGame.test'
 import { lineupQrFixture4 } from './lineupQr.fixtures'
 import { encodeLineupQr } from './lineupQrCodec'
@@ -13,9 +14,13 @@ import { createGuest } from './lineupShareSheet.test'
 import type { QrScannerProps } from './qrScannerProps'
 import {
   ROSTER_MODE_LABELS,
+  ROSTER_SAVE_FIT,
   RosterEditor,
+  rosterFooterDrop,
+  rosterFooterGap,
   rosterFooterSizes,
-  rosterModes
+  rosterModes,
+  rosterPillModes
 } from './RosterEditor'
 import { copyState, initialScoringState } from './scoringMachine'
 import { ScoringSheetHeight } from './ScoringSheet'
@@ -73,7 +78,7 @@ describe('roster screen bottom bar and slider', function () {
     root = undefined
     host?.remove()
   })
-  it('labels the tabs Roster, Lineup and Defense, with Box Score first for a coach', async function () {
+  it('labels the tabs Roster, Lineup and Defense, with a Box Score pill first for a coach', async function () {
     expect(rosterModes('scorekeeper')).deep.equals([
       'editRoster',
       'lineup',
@@ -85,11 +90,21 @@ describe('roster screen bottom bar and slider', function () {
       'lineup',
       'defense'
     ])
+    // The box score is a pill of its own, not one of the tabs.
+    expect(rosterPillModes('scorekeeper')).deep.equals(
+      rosterModes('scorekeeper')
+    )
+    expect(rosterPillModes('coach')).deep.equals([
+      'editRoster',
+      'lineup',
+      'defense'
+    ])
     expect(ROSTER_MODE_LABELS).deep.equals({
-      boxScore: 'Box',
+      boxScore: 'Box Score',
       editRoster: 'Roster',
       lineup: 'Lineup',
-      defense: 'Defense'
+      defense: 'Defense',
+      plan: 'Plan'
     })
     await render(<RosterEditor state={fresh()} onSave={() => undefined} />)
     expect(tabs()).deep.equals([
@@ -104,6 +119,7 @@ describe('roster screen bottom bar and slider', function () {
       expect(node(label)!.textContent).equals(label)
     // The roster first: who is on the team, and how to add somebody.
     expect(node('Roster')!.getAttribute('aria-selected')).equals('true')
+    expect(testId('Box Score pill')).equals(null)
     await act(async () => {
       root!.unmount()
     })
@@ -117,7 +133,10 @@ describe('roster screen bottom bar and slider', function () {
         onSave={() => undefined}
       />
     )
-    expect(tabs()).deep.equals(['Box', 'Roster', 'Lineup', 'Defense'])
+    expect(tabs()).deep.equals(['Box Score', 'Roster', 'Lineup', 'Defense'])
+    expect(testId('Box Score pill')!.getAttribute('aria-label')).equals(
+      'Box Score'
+    )
   })
 
   it('ends the roster with Create Player and Add Existing Player rows, and Create Player opens the player sheet', async function () {
@@ -165,9 +184,10 @@ describe('roster screen bottom bar and slider', function () {
   it('hides the microphone when the server does not dictate', async function () {
     await render(<RosterEditor state={fresh()} onSave={() => undefined} />)
     expect(testId('Roster mic')).equals(null)
-    // An empty half, where the microphone sits beside it, and Save Rosters.
+    // Cancel's half, where the microphone sits beside it, and Save Rosters.
     const bar = testId('Roster footer bar')!
     expect(bar.children).length(2)
+    expect(bar.textContent).equals('CancelSave Rosters')
   })
 
   it('centres a round microphone, twelve points taller than Save Rosters', async function () {
@@ -208,6 +228,124 @@ describe('roster screen bottom bar and slider', function () {
     await click('Defense')
     expect(node('Save Rosters')!.style.minHeight).equals('28px')
     expect(testId('Roster mic')!.style.width).equals('40px')
+  })
+
+  it('shrinks Save Rosters’ label to fit a narrow bar whole, down to three quarters of its size, and keeps its height', async function () {
+    // Its 87 points in 72 of room on a 320-point screen.
+    expect(fittedTextScale(87, 72, ROSTER_SAVE_FIT)).equals(0.81)
+    expect(fittedTextScale(87, 87, ROSTER_SAVE_FIT)).equals(1)
+    expect(fittedTextScale(87, 200, ROSTER_SAVE_FIT)).equals(1)
+    expect(fittedTextScale(87, 40, ROSTER_SAVE_FIT)).equals(0.75)
+    // Nothing measured yet: full size.
+    expect(fittedTextScale(0, 72, ROSTER_SAVE_FIT)).equals(1)
+    expect(fittedTextScale(87, 0, ROSTER_SAVE_FIT)).equals(1)
+    for (const audience of ['scorekeeper', 'coach'] as const) {
+      await render(
+        <RosterEditor
+          state={fresh()}
+          audience={audience}
+          {...(audience === 'coach' ? { fixedSide: 'away' as const } : {})}
+          dictationAvailable
+          onSave={() => undefined}
+        />
+      )
+      const save = node('Save Rosters')!
+      const label = save.querySelector<HTMLElement>('[dir="auto"]')!
+      expect(getComputedStyle(label).fontSize).equals('14px')
+      // The test page has no layout: the browser's widths at 320 points.
+      const lay = async (width: number, drawn: number): Promise<void> => {
+        Object.defineProperty(save, 'clientWidth', {
+          configurable: true,
+          value: width
+        })
+        Object.defineProperty(label, 'scrollWidth', {
+          configurable: true,
+          value: drawn
+        })
+        await act(async () => {
+          ;(
+            save as unknown as {
+              __reactLayoutHandler: (event: unknown) => void
+            }
+          ).__reactLayoutHandler({
+            nativeEvent: { layout: { x: 0, y: 0, width, height: 36 } }
+          })
+        })
+      }
+      await lay(108, 87)
+      expect(parseFloat(getComputedStyle(label).fontSize)).closeTo(
+        14 * 0.81,
+        0.001
+      )
+      expect(save.style.minHeight).equals('36px')
+      // A wider bar again: full size, read from the shrunken label's width.
+      await lay(200, 87 * 0.81)
+      expect(getComputedStyle(label).fontSize).equals('14px')
+      await act(async () => {
+        root!.unmount()
+      })
+      host.remove()
+    }
+  })
+
+  for (const audience of ['scorekeeper', 'coach'] as const)
+    it(`puts the ${audience}’s Cancel left of the microphone, on Save Rosters’ row`, async function () {
+      const cancels: number[] = []
+      const reloads: number[] = []
+      await render(
+        <RosterEditor
+          state={fresh()}
+          audience={audience}
+          {...(audience === 'coach' ? { fixedSide: 'away' as const } : {})}
+          dictationAvailable
+          onCancel={() => cancels.push(1)}
+          onReload={() => reloads.push(1)}
+          onSave={() => undefined}
+        />
+      )
+      const bar = testId('Roster footer bar')!
+      const cancel = testId('Roster cancel')!
+      expect(cancel).equals(node('Cancel'))
+      expect(bar.contains(cancel)).equals(true)
+      const mic = testId('Roster mic')!
+      expect(
+        cancel.compareDocumentPosition(mic) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).not.equals(0)
+      expect(
+        mic.compareDocumentPosition(node('Save Rosters')!) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).not.equals(0)
+      // Red words.
+      expect(getComputedStyle(cancel.firstElementChild!).color).equals(
+        rgb(getTheme().dangerColor)
+      )
+      // Nothing is left below the bar.
+      const footer = testId('Roster footer')!
+      expect(footer.lastElementChild).equals(bar)
+      await click('Cancel')
+      expect(audience === 'coach' ? reloads : cancels).deep.equals([1])
+      expect(audience === 'coach' ? cancels : reloads).deep.equals([])
+    })
+
+  it('lowers the bar ten points into the bottom safe area, or the whole of a smaller one, and keeps the scorekeeper’s bar off a bare bottom edge', async function () {
+    expect(rosterFooterDrop({ bottom: 34 })).equals(10)
+    expect(rosterFooterDrop({ bottom: 6 })).equals(6)
+    expect(rosterFooterDrop({ bottom: 0 })).equals(0)
+    expect(rosterFooterGap({ bottom: 0 }, 'scorekeeper')).equals(8)
+    expect(rosterFooterGap({ bottom: 34 }, 'scorekeeper')).equals(0)
+    expect(rosterFooterGap({ bottom: 0 }, 'coach')).equals(0)
+    await render(
+      <RosterEditor state={fresh()} bottomInset={34} onSave={() => undefined} />
+    )
+    expect(testId('Roster footer bar')!.style.marginBottom).equals('-10px')
+    await act(async () => {
+      root!.unmount()
+    })
+    host.remove()
+    // A browser has no inset: nothing moves.
+    await render(<RosterEditor state={fresh()} onSave={() => undefined} />)
+    const margin = testId('Roster footer bar')!.style.marginBottom
+    expect(margin === '' ? 0 : Number.parseFloat(margin)).equals(0)
   })
 
   it('draws dictation’s own control in the microphone’s place, and its chat above the tabs', async function () {
@@ -401,9 +539,9 @@ describe('roster screen Share Lineup', function () {
     )
     // As wide as the badge's inside, so its squares leave half the margin.
     expect(glyph.getAttribute('width')).equals('54')
-    // Share Lineup has left the footer; Cancel is alone in the middle again.
+    // Share Lineup has left the footer: Cancel and Save Rosters, on one row.
     const footer = testId('Roster footer')!
-    expect(footer.textContent).equals('Save RostersCancel')
+    expect(footer.textContent).equals('CancelSave Rosters')
     expect(testId('Roster footer actions')).equals(null)
   })
 
@@ -547,7 +685,7 @@ describe('roster screen Share Lineup', function () {
     expect(saves).deep.equals([])
   })
 
-  it('keeps a dense Defense tab’s problem in the footer row, before a Cancel in the middle', async function () {
+  it('keeps a dense Defense tab’s problem in the middle of the footer bar, after Cancel', async function () {
     const state = fresh()
     // An edit that puts the pitcher behind the plate as well.
     const draft = copyState(state.session)
@@ -565,21 +703,31 @@ describe('roster screen Share Lineup', function () {
       await render(
         <RosterEditor
           state={state}
+          dictationAvailable
           initialDraft={{ draft, side: 'away', mode: 'defense' }}
           onSave={() => undefined}
         />,
         400
       )
-      const cancel = node('Cancel')!
-      const row = cancel.parentElement!
-      expect(getComputedStyle(row).flexDirection).equals('row')
-      expect(row.children).has.length(3)
-      const problem = row.children[0].querySelector('[role="alert"]')!
+      const bar = testId('Roster footer bar')!
+      const [half, mic, save] = [...bar.children] as HTMLElement[]
+      // Cancel, then the problem in the flexible middle, in the bar's left
+      // half; the microphone; Save Rosters.
+      const [cancel, middle] = [...half.children] as HTMLElement[]
+      expect(cancel).equals(node('Cancel'))
+      expect(getComputedStyle(middle).flexGrow).equals('1')
+      const problem = middle.querySelector<HTMLElement>('[role="alert"]')!
       expect(problem.textContent).includes('invalid or duplicate defender')
-      // The problem, then Cancel, then a spacer as wide as the problem's cell.
-      expect(row.children[1]).equals(cancel)
-      expect(cancel.style.minWidth).equals('80px')
-      expect(getComputedStyle(row.children[2]).flexGrow).equals('1')
+      // One line, its whole text its name.
+      expect(problem.getAttribute('aria-label')).equals(problem.textContent)
+      expect(getComputedStyle(problem).whiteSpace).equals('nowrap')
+      expect(getComputedStyle(problem).textOverflow).equals('ellipsis')
+      expect(mic.getAttribute('data-testid')).equals('Roster mic')
+      expect(save.contains(node('Save Rosters'))).equals(true)
+      // It is not also drawn above the bar.
+      expect(
+        testId('Roster footer')!.querySelectorAll('[role="alert"]')
+      ).has.length(1)
       expect(node('Share Lineup')).equals(null)
     } finally {
       if (width == null) Reflect.deleteProperty(element, 'clientWidth')

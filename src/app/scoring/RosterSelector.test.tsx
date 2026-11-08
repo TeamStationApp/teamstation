@@ -117,6 +117,86 @@ describe('roster selector', function () {
     }
   })
 
+  it('draws no thumb and selects no tab for a value of -1, and a tap or a drag still chooses', async function () {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const chosen: number[] = []
+    const Chooser = (): React.ReactElement => {
+      const [value, setValue] = useState(-1)
+      return (
+        <ThemeProvider>
+          <RosterSelector
+            fitContent
+            labels={['Roster', 'Lineup', 'Defense']}
+            value={value}
+            onChange={index => {
+              chosen.push(index)
+              setValue(index)
+            }}
+          />
+        </ThemeProvider>
+      )
+    }
+    await act(async () => {
+      root!.render(<Chooser />)
+    })
+    const thumb = (): HTMLElement | null =>
+      host.querySelector<HTMLElement>('[data-testid="Roster selector thumb"]')
+    const tabs = (): HTMLElement[] => [
+      ...host.querySelectorAll<HTMLElement>('[role="tab"]')
+    ]
+    const selected = (): Array<string | null> =>
+      tabs().map(tab => tab.getAttribute('aria-selected'))
+    const colors = (): string[] =>
+      tabs().map(tab => getComputedStyle(tab.firstElementChild!).color)
+    expect(thumb()).equals(null)
+    expect(selected()).deep.equals(['false', 'false', 'false'])
+    // Every label in the idle colour: none is drawn as chosen.
+    expect(new Set(colors()).size).equals(1)
+    await act(async () => {
+      tabs()[1].click()
+    })
+    expect(chosen).deep.equals([1])
+    expect(selected()).deep.equals(['false', 'true', 'false'])
+    expect(thumb()).not.equals(null)
+    expect(new Set(colors()).size).equals(2)
+    // From none, a drag across the pill chooses where it is let go.
+    await act(async () => {
+      root!.render(<Chooser key="again" />)
+    })
+    expect(thumb()).equals(null)
+    const wrapper = host.firstElementChild!.firstElementChild as HTMLElement
+    wrapper.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      width: 300,
+      height: 36,
+      right: 300,
+      bottom: 36,
+      toJSON: () => ({})
+    })
+    for (const [type, x] of [
+      ['pointerdown', 20],
+      ['pointermove', 160],
+      ['pointerup', 260]
+    ] as const)
+      await act(async () => {
+        const event = new window.MouseEvent(type, {
+          bubbles: true,
+          button: 0,
+          clientX: x,
+          clientY: 10
+        })
+        Object.defineProperty(event, 'pointerId', { value: 1 })
+        wrapper.dispatchEvent(event)
+      })
+    expect(chosen).deep.equals([1, 2])
+    expect(selected()).deep.equals(['false', 'false', 'true'])
+  })
+
   it('uses themed halves and supports tap, immediate swipe, child capture loss and cancellation', async function () {
     host = document.createElement('div')
     document.body.appendChild(host)

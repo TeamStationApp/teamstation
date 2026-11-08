@@ -49,6 +49,8 @@ import { Button } from '../components/Button'
 import { Icon } from '../components/Icon'
 import { forgetFound } from '../hooks/useRosterCandidates'
 import { lstrings, plural, sprintf } from '../locales/strings'
+import type { Insets } from '../platform/insets'
+import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
 import { BatIcon } from './BatIcon'
 import { withRosterDetails } from './currentSetup'
@@ -98,8 +100,11 @@ import {
   type Side
 } from './scoringTypes'
 
-/** The roster screen's tabs: a coach's begins with the game's box score. */
-export type RosterMode = 'boxScore' | RosterTab
+/**
+ * The roster screen's modes: a coach's begins with the game's box score,
+ * which is a pill of its own above the tabs, and ends with his game plan.
+ */
+export type RosterMode = 'boxScore' | RosterTab | 'plan'
 /**
  * Who the roster screen is for. A scorekeeper edits either team's roster for
  * the scoring screen, and leaves by Save or Cancel; a coach edits his own
@@ -115,16 +120,20 @@ const DEFENSE_INSTRUCTION =
   'Drag a player into position (on touch, hold a roster card briefly first). Drag a fielder to move or swap him; tap him to clear.'
 /** Each tab's label, which is also its accessible name. */
 export const ROSTER_MODE_LABELS: Record<RosterMode, string> = {
-  boxScore: 'Box',
+  boxScore: lstrings.coach_box_score,
   editRoster: lstrings.scoring_roster_tab,
   lineup: 'Lineup',
-  defense: 'Defense'
+  defense: 'Defense',
+  plan: lstrings.coach_plan_tab
 }
-/** The tabs the mode slider offers, in order. */
+/** The modes an audience may be in, in order. */
 export const rosterModes = (audience: RosterAudience): RosterMode[] =>
   audience === 'coach'
     ? ['boxScore', 'editRoster', 'lineup', 'defense']
     : ['editRoster', 'lineup', 'defense']
+/** The tabs the mode slider offers: the box score is its own pill. */
+export const rosterPillModes = (audience: RosterAudience): RosterMode[] =>
+  rosterModes(audience).filter(mode => mode !== 'boxScore')
 /**
  * The bottom bar's sizes: Save Rosters' height, which a crowded Defense tab
  * shrinks, and the round microphone's diameter, twelve points more.
@@ -136,6 +145,26 @@ export function rosterFooterSizes(
   const save = dense && defense ? 28 : 36
   return { save, mic: save + 12 }
 }
+/**
+ * The smallest share of Save Rosters' 14-point label it shrinks to on a
+ * narrow screen: 10.5 points. A 320-point screen fits it whole at about 11.5.
+ */
+export const ROSTER_SAVE_FIT = 0.75
+/**
+ * How far the bottom bar lowers into the bottom safe area: ten points, or
+ * the whole inset when it is smaller, so nothing moves on the web.
+ */
+export const rosterFooterDrop = (insets: Pick<Insets, 'bottom'>): number =>
+  Math.min(10, insets.bottom)
+/**
+ * The gap under the scorekeeper's bar where the screen has no bottom inset,
+ * as on the web: his sheet has no padding of its own there, so without it
+ * the microphone would touch the bottom edge. The coach's screen pads itself.
+ */
+export const rosterFooterGap = (
+  insets: Pick<Insets, 'bottom'>,
+  audience: RosterAudience
+): number => (audience === 'scorekeeper' && insets.bottom === 0 ? 8 : 0)
 export interface RosterEditorDraft {
   draft: ScoringSessionState
   side: Side
@@ -222,6 +251,7 @@ export function RosterEditor({
   onAddExistingGuest,
   onCancel,
   onReload,
+  bottomInset,
   onSave
 }: {
   /** A coach's state is never read-only, so his game's own players stay editable. */
@@ -257,6 +287,11 @@ export function RosterEditor({
   }
   /** A scorekeeper's Cancel: the screen closes the sheet, dropping the draft. */
   onCancel?: () => void
+  /**
+   * The bottom safe-area inset the bar lowers into: the safe area around
+   * the editor (the scoring sheet's own, on a scorekeeper's) by default.
+   */
+  bottomInset?: number
   /**
    * A coach's Cancel, after every staged change is discarded: the screen
    * reloads the game, so the draft starts again from the latest copy.
@@ -347,6 +382,12 @@ export function RosterEditor({
 }): React.ReactElement {
   const coach = audience === 'coach'
   const theme = useTheme()
+  const insets = useInsets()
+  const footerDrop = rosterFooterDrop({ bottom: bottomInset ?? insets.bottom })
+  const footerGap = rosterFooterGap(
+    { bottom: bottomInset ?? insets.bottom },
+    audience
+  )
   const { height, width } = useWindowDimensions()
   const measuredHeight = useContext(ScoringSheetHeight)
   const availableHeight =
@@ -366,6 +407,7 @@ export function RosterEditor({
     if (defaultSide != null) setSide(defaultSide)
   }, [defaultSide, rosterLoading])
   const modes = rosterModes(audience)
+  const pillModes = rosterPillModes(audience)
   // The roster first: who is on the team and how to add somebody, then the
   // lineup. A draft reopened on another tab keeps it.
   const [mode, setMode] = useState<RosterMode>(
@@ -905,13 +947,23 @@ export function RosterEditor({
             </View>
           )}
           <View style={{ flex: dense ? 1 : undefined, minWidth: 0 }}>
+            {modes.includes('boxScore') && (
+              <BoxScorePill
+                selected={boxScore}
+                compact={narrowDefense}
+                onPress={() => {
+                  setMode('boxScore')
+                }}
+              />
+            )}
             <RosterSelector
               fitContent={!narrowDefense}
               compact={narrowDefense}
-              labels={modes.map(each => ROSTER_MODE_LABELS[each])}
-              value={Math.max(0, modes.indexOf(mode))}
+              labels={pillModes.map(each => ROSTER_MODE_LABELS[each])}
+              // On the box score no tab is chosen.
+              value={pillModes.indexOf(mode)}
               onChange={index => {
-                setMode(modes[index])
+                setMode(pillModes[index])
               }}
             />
           </View>
@@ -1456,11 +1508,71 @@ export function RosterEditor({
         )}
         <View
           testID="Roster footer bar"
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+            marginBottom: -footerDrop,
+            paddingBottom: footerGap
+          }}
         >
-          {/* Adding a player is a row at the end of the Roster tab; this
-              half keeps the microphone where it was. */}
-          <View style={{ flex: 1 }} />
+          {/* Cancel and a crowded Defense tab's problem share this half,
+              which keeps the microphone in the middle of the bar. */}
+          <View
+            style={{
+              flex: 1,
+              minWidth: 0,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8
+            }}
+          >
+            <Pressable
+              testID="Roster cancel"
+              accessibilityRole="button"
+              accessibilityLabel="Cancel"
+              onPress={() => {
+                if (!coach) {
+                  onCancel?.()
+                  return
+                }
+                setDraft(copyState(base))
+                setNextBatter(undefined)
+                setRunners([])
+                setAdding(false)
+                setEditingLocal(undefined)
+                spoken.note(lstrings.dictation_changes_discarded)
+                onReload?.()
+              }}
+              style={{
+                minHeight: dense ? (defense ? 28 : 36) : 44,
+                justifyContent: 'center'
+              }}
+            >
+              <Text
+                style={{
+                  ...text,
+                  color: theme.dangerColor,
+                  fontFamily: theme.semiBoldTextFont
+                }}
+              >
+                Cancel
+              </Text>
+            </Pressable>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              {inlineValidation && validation != null && (
+                <Text
+                  accessibilityRole="alert"
+                  accessibilityLabel={validation}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  style={{ color: theme.dangerColor, fontSize: 11 }}
+                >
+                  {validation}
+                </Text>
+              )}
+            </View>
+          </View>
           {shown != null ? (
             <View
               testID="Roster mic"
@@ -1482,6 +1594,9 @@ export function RosterEditor({
               color={theme.scoringMenuActiveBackground}
               textColor={theme.scoringMenuActiveText}
               compact
+              // Beside Cancel and the microphone on a 320-point screen the
+              // label gets smaller type rather than an ellipsis.
+              fit={ROSTER_SAVE_FIT}
               style={dense && defense ? { minHeight: sizes.save } : undefined}
               accessibilityLabel="Save Rosters"
               label="Save Rosters"
@@ -1511,61 +1626,68 @@ export function RosterEditor({
             />
           </View>
         </View>
-        <View
+      </View>
+    </View>
+  )
+}
+
+/**
+ * The coach's Box Score: a pill of its own on the row above the tabs,
+ * styled as one of their segments, and lit while the box score is shown.
+ */
+function BoxScorePill({
+  selected,
+  compact,
+  onPress
+}: {
+  selected: boolean
+  compact: boolean
+  onPress: () => void
+}): React.ReactElement {
+  const theme = useTheme()
+  const height = compact ? 40 : 36
+  return (
+    <View style={{ alignSelf: 'center', paddingTop: compact ? 0 : 6 }}>
+      <Pressable
+        testID="Box Score pill"
+        accessibilityRole="tab"
+        accessibilityLabel={lstrings.coach_box_score}
+        accessibilityState={{ selected }}
+        aria-selected={selected}
+        hitSlop={{ top: 6, bottom: 6 }}
+        onPress={onPress}
+        style={{
+          minHeight: height,
+          // Clears the pill's rounded ends (docs/ui-rules.md).
+          paddingHorizontal: height / 2,
+          justifyContent: 'center',
+          alignItems: 'center',
+          borderRadius: theme.radiusPill,
+          borderWidth: theme.scoringSheet === true ? 1 : 0,
+          borderColor: theme.scoringSurface.badges.green.border,
+          backgroundColor: selected
+            ? theme.scoringMenuActiveBackground
+            : theme.scoringSelectorIdle,
+          shadowColor: theme.buttonShadowColor,
+          shadowOpacity: 1,
+          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 3 },
+          elevation: 3
+        }}
+      >
+        <Text
+          selectable={false}
+          numberOfLines={1}
           style={{
-            flexDirection: inlineValidation ? 'row' : 'column',
-            alignItems: inlineValidation ? 'center' : undefined
+            fontFamily: theme.semiBoldTextFont,
+            color: selected
+              ? theme.scoringMenuActiveText
+              : theme.primaryTextColor
           }}
         >
-          {inlineValidation && (
-            <View style={{ flex: 1, minWidth: 0 }}>
-              {validation != null && (
-                <Text
-                  accessibilityRole="alert"
-                  numberOfLines={1}
-                  style={{ color: theme.dangerColor, fontSize: 11 }}
-                >
-                  {validation}
-                </Text>
-              )}
-            </View>
-          )}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Cancel"
-            onPress={() => {
-              if (!coach) {
-                onCancel?.()
-                return
-              }
-              setDraft(copyState(base))
-              setNextBatter(undefined)
-              setRunners([])
-              setAdding(false)
-              setEditingLocal(undefined)
-              spoken.note(lstrings.dictation_changes_discarded)
-              onReload?.()
-            }}
-            style={{
-              minHeight: dense ? (defense ? 28 : 36) : 44,
-              minWidth: inlineValidation ? 80 : undefined,
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-          >
-            <Text
-              style={{
-                ...text,
-                color: theme.dangerColor,
-                fontFamily: theme.semiBoldTextFont
-              }}
-            >
-              Cancel
-            </Text>
-          </Pressable>
-          {inlineValidation && <View style={{ flex: 1 }} />}
-        </View>
-      </View>
+          {lstrings.coach_box_score}
+        </Text>
+      </Pressable>
     </View>
   )
 }

@@ -148,6 +148,10 @@ export const enUs = {
   coach_not_coach: 'Only a head coach of this team can coach it here.',
   coach_load_failed: 'Unable to load the game. Please try again.',
   coach_save_failed: 'Unable to save the lineup. Please try again.',
+  /** The coaching screen's Box Score pill, on its own row above the tabs. */
+  coach_box_score: 'Box Score',
+  /** The coaching screen's tab for the per-inning game plan. */
+  coach_plan_tab: 'Plan',
   game_replay: 'Replay',
   game_live: 'Live',
   replay_exit: 'Exit',

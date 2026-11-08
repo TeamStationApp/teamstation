@@ -217,11 +217,12 @@ describe('adding an existing player from Set Team Rosters', function () {
       'Create Player',
       'Add Existing Player'
     ])
+    // One row: Cancel, the microphone when the server dictates, and Save.
     expect(
       await probe<string>(
-        `document.querySelector('[data-testid="Roster footer bar"]').textContent`
+        `Array.from(document.querySelector('[data-testid="Roster footer bar"]').children).filter(child => child.getAttribute('data-testid') !== 'Roster mic').map(child => child.textContent).join('|')`
       )
-    ).equals('Save Rosters')
+    ).equals('Cancel|Save Rosters')
     await shot('web-roster-rows')
   })
 

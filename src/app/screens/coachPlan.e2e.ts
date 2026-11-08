@@ -41,8 +41,12 @@ import {
  * `Box Score`, the `Defense` tab, and the scorekeeper's `Open scoring menu`
  * → `Set Team Rosters` → `Defense`.
  *
- * Otherwise the scenarios run: P3 reads the coach's Defense field, whose nine
- * cards sit on six rows with names at 13.75 points.
+ * Otherwise the scenarios run: P1 finds Box Score a pill of its own above
+ * Roster, Lineup and Defense; P2 finds Cancel left of the microphone on Save
+ * Rosters' row; P3 reads the coach's Defense field, whose nine cards sit on
+ * six rows with names at 13.75 points; P11 finds the scorekeeper's footer
+ * and field the same. P2 and P11 need a server that dictates, so the bar
+ * draws its microphone; no scenario presses it.
  */
 const APP = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8180'
 const API = process.env.TS_API_TEST_URL ?? 'http://127.0.0.1:9180/api/v1'
@@ -61,6 +65,20 @@ interface FieldCard {
   bottom: number
   lines: number
   nameFont: number
+}
+interface Box {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+interface Footer {
+  bar: Box
+  /** Cancel's word and Save Rosters' word, inside their buttons. */
+  cancel: Box
+  mic: Box
+  save: Box
+  cancelInBar: boolean
 }
 
 /** The positions whose cards share a vertical band, top to bottom. */
@@ -203,12 +221,66 @@ class Browser {
     })
   }
 
+  /** Where the roster footer bar draws Cancel, the microphone and Save. */
+  async footer(): Promise<Footer> {
+    await this.page.waitForSelector('[data-testid="Roster mic"]', {
+      visible: true,
+      timeout: 15000
+    })
+    // The scorekeeper's sheet slides up as it opens: read once it is still.
+    let last = ''
+    for (let read = 0; read < 20; read++) {
+      const now = await this.page.$eval(
+        '[data-testid="Roster footer bar"]',
+        node => String(node.getBoundingClientRect().bottom)
+      )
+      if (now === last) break
+      last = now
+      await new Promise(resolve => setTimeout(resolve, 250))
+    }
+    return await this.page.evaluate(() => {
+      const box = (node: Element): Box => {
+        const r = node.getBoundingClientRect()
+        return { x: r.x, y: r.y, width: r.width, height: r.height }
+      }
+      const word = (node: Element): Box => {
+        const label = node.querySelector('[dir="auto"]')
+        // No `??` here: the page has no sucrase helpers.
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+        return box(label == null ? node : label)
+      }
+      const bar = document.querySelector('[data-testid="Roster footer bar"]')!
+      const cancel = document.querySelector('[data-testid="Roster cancel"]')!
+      return {
+        bar: box(bar),
+        cancel: word(cancel),
+        mic: box(bar.querySelector('[data-testid="Roster mic"]')!),
+        save: word(bar.querySelector('[aria-label="Save Rosters"]')!),
+        cancelInBar: bar.contains(cancel)
+      }
+    })
+  }
+
   /** The whole phone frame, once it has settled. */
   async shot(name: string): Promise<void> {
     if (ARTIFACTS == null) return
     await this.session.m.waitForAnimationToEnd()
     await writeFile(join(ARTIFACTS, name), await this.session.m.screenshot())
   }
+}
+
+/** Cancel in the bar, left of the microphone, level with Save Rosters. */
+function expectFooterRow(footer: Footer): void {
+  const { bar, cancel, mic, save } = footer
+  expect(footer.cancelInBar).equals(true)
+  expect(cancel.x + cancel.width).lessThan(mic.x)
+  expect(mic.x + mic.width).lessThan(save.x + 1)
+  expect(Math.abs(cancel.y - save.y)).lessThan(4)
+  for (const each of [cancel, mic, save]) {
+    expect(each.y).at.least(bar.y - 0.5)
+    expect(each.y + each.height).at.most(bar.y + bar.height + 0.5)
+  }
+  expect(bar.y + bar.height).at.most(HEIGHT)
 }
 
 describe('Coach Plan', function () {
@@ -281,6 +353,74 @@ describe('Coach Plan', function () {
     await coach.shot(`scorekeeper-roster-${PHASE}.png`)
   })
 
+  it('P1 puts Box Score in a pill of its own above Roster, Lineup and Defense, none of them chosen', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = lineupFixture()
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    const read = async (): Promise<{
+      pill: Box & { selected: string | null }
+      tabs: Array<Box & { label: string; selected: string | null }>
+    }> =>
+      await coach.page.evaluate(() => {
+        const box = (node: Element): Box => {
+          const r = node.getBoundingClientRect()
+          return { x: r.x, y: r.y, width: r.width, height: r.height }
+        }
+        const pill = document.querySelector('[data-testid="Box Score pill"]')!
+        return {
+          pill: { ...box(pill), selected: pill.getAttribute('aria-selected') },
+          // The roster screen's own tabs: the game's are behind it.
+          tabs: [
+            ...document
+              .querySelector('[aria-label="Roster"][role="tab"]')!
+              .parentElement!.querySelectorAll('[role="tab"]')
+          ].map(tab => ({
+            ...box(tab),
+            label: String(tab.getAttribute('aria-label')),
+            selected: tab.getAttribute('aria-selected')
+          }))
+        }
+      })
+    const opened = await read()
+    expect(opened.tabs.map(tab => tab.label)).deep.equals([
+      'Roster',
+      'Lineup',
+      'Defense'
+    ])
+    expect(opened.pill.selected).equals('true')
+    for (const tab of opened.tabs)
+      expect(tab.selected, tab.label).not.equals('true')
+    // Its own row: wholly above the three, which share one.
+    for (const tab of opened.tabs) {
+      expect(opened.pill.y + opened.pill.height).at.most(tab.y + 0.5)
+      expect(tab.y).closeTo(opened.tabs[0].y, 0.5)
+    }
+    await coach.tap('Lineup', 'tab')
+    await coach.page.waitForSelector(
+      '[aria-label="Lineup"][role="tab"][aria-selected="true"]',
+      { timeout: 15000 }
+    )
+    const lineup = await read()
+    expect(lineup.pill.selected).equals('false')
+    expect(
+      lineup.tabs.filter(tab => tab.selected === 'true').map(tab => tab.label)
+    ).deep.equals(['Lineup'])
+  })
+
+  it('P2 puts the coach’s Cancel left of the microphone, on Save Rosters’ row', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = lineupFixture()
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.tap('Lineup', 'tab')
+    await coach.page.waitForSelector(
+      '[aria-label="Lineup"][role="tab"][aria-selected="true"]',
+      { timeout: 15000 }
+    )
+    expectFooterRow(await coach.footer())
+  })
+
   it('P3 lays the coach’s Defense field out on six rows with larger names', async function () {
     if (CAPTURING) this.skip()
     const fixture = lineupFixture()
@@ -349,5 +489,23 @@ describe('Coach Plan', function () {
     } finally {
       await session.browser.close()
     }
+  })
+
+  it('P11 puts the scorekeeper’s Cancel beside the microphone and Save Rosters, over a field with no row of three', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = lineupFixture()
+    await coach.as(fixture, 'scorekeeper')
+    await coach.scoreGame(fixture.gameId)
+    await coach.tap('Open scoring menu')
+    await coach.tap('Set Team Rosters')
+    await coach.page.waitForSelector('[aria-label="Save Rosters"]', {
+      timeout: 30000
+    })
+    expectFooterRow(await coach.footer())
+    await coach.defense()
+    expectFooterRow(await coach.footer())
+    const cards = await coach.fieldCards()
+    expect(Object.keys(cards)).has.length(9)
+    expect(Math.max(...cardRows(cards).map(row => row.length))).lessThan(3)
   })
 })

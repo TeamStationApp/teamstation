@@ -648,7 +648,7 @@ describe('Coach Game (U25)', function () {
 
   this.timeout(20000)
 
-  it('draws its own chevron and his team’s name on the right, over Box Score, Roster, Lineup and Defense', async function () {
+  it('draws its own chevron and his team’s name on the right, over a Box Score pill on its own row above Roster, Lineup and Defense', async function () {
     const held = server()
     await coach(held)
     expect(node('Back', 'button')).not.equals(null)
@@ -657,15 +657,51 @@ describe('Coach Game (U25)', function () {
     )!
     expect(header.textContent).equals('Hawks')
     expect(getComputedStyle(header).textAlign).equals('right')
-    for (const tab of ['Box', 'Roster', 'Lineup', 'Defense'])
+    for (const tab of ['Box Score', 'Roster', 'Lineup', 'Defense'])
       expect(node(tab, 'tab'), tab).not.equals(null)
-    expect(node('Box', 'tab')!.getAttribute('aria-selected')).equals('true')
+    // Box Score is a pill of its own, on the row above the other three, and
+    // he opens on it with none of them chosen.
+    const pill = document.querySelector<HTMLElement>(
+      '[data-testid="Box Score pill"]'
+    )!
+    expect(pill).equals(node('Box Score', 'tab'))
+    const tabs = node('Roster', 'tab')!.parentElement!
+    expect(tabs.contains(pill)).equals(false)
+    expect(
+      [...tabs.querySelectorAll('[role="tab"]')].map(tab =>
+        tab.getAttribute('aria-label')
+      )
+    ).deep.equals(['Roster', 'Lineup', 'Defense'])
+    expect(
+      pill.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    expect(pill.getAttribute('aria-selected')).equals('true')
+    for (const tab of ['Roster', 'Lineup', 'Defense'])
+      expect(node(tab, 'tab')!.getAttribute('aria-selected'), tab).equals(
+        'false'
+      )
+    expect(tabs.querySelector('[data-testid="Roster selector thumb"]')).equals(
+      null
+    )
+    expect(
+      document.querySelector('[data-testid="Roster box score"]')
+    ).not.equals(null)
     // His own team alone.
     expect(node('Away Team')).equals(null)
     expect(node('Home Team')).equals(null)
     expect(held.reads.boxScore).equals(1)
     // The game holds no lineup for his side yet: Save is lit as it stands.
     expect(saveDisabled()).equals(false)
+    // Lineup takes the choice from the pill.
+    await click('Lineup', 'tab')
+    expect(node('Lineup', 'tab')!.getAttribute('aria-selected')).equals('true')
+    expect(pill.getAttribute('aria-selected')).equals('false')
+    expect(
+      tabs.querySelector('[data-testid="Roster selector thumb"]')
+    ).not.equals(null)
+    await click('Box Score', 'tab')
+    expect(pill.getAttribute('aria-selected')).equals('true')
+    expect(node('Lineup', 'tab')!.getAttribute('aria-selected')).equals('false')
   })
 
   it('offers Save on his default when a blind save left his side unseen', async function () {

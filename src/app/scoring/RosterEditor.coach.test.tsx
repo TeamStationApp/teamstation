@@ -88,7 +88,7 @@ describe('the roster screen for a coach', function () {
     })
     expect(node('Away Team')).equals(null)
     expect(node('Home Team')).equals(null)
-    expect(node('Box')!.getAttribute('aria-selected')).equals('true')
+    expect(node('Box Score')!.getAttribute('aria-selected')).equals('true')
     expect(host.textContent).includes('Line score here')
     expect(host.querySelector('[aria-label="Batting lineup"]')).not.equals(null)
     // The box score has no instruction and no lineup of its own on show.
@@ -119,6 +119,12 @@ describe('the roster screen for a coach', function () {
     await click(`Remove ${last}`)
     expect(node(`Remove ${last}`)).equals(null)
     expect(saveDisabled()).equals(null)
+    // Cancel is on Save Rosters' row, in the footer bar.
+    expect(
+      host
+        .querySelector('[data-testid="Roster footer bar"]')!
+        .contains(node('Cancel'))
+    ).equals(true)
     await click('Cancel')
     expect(reloads).equals(1)
     expect(cancels).equals(0)

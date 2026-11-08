@@ -202,8 +202,8 @@ async function main(): Promise<void> {
       return
     }
 
-    // B1: the share row leads the Roster tab; the footer is Create Player
-    // and Save Rosters over a Cancel in the middle, and saves as before.
+    // B1: the share row leads the Roster tab; the footer is one row of
+    // Cancel, the microphone's place and Save Rosters, and saves as before.
     await click('Roster')
     await box(SHARE)
     const heights = await page.$$eval(
@@ -216,29 +216,34 @@ async function main(): Promise<void> {
       `The share row is as tall as a player row (${heights.join(', ')})`
     )
     const save = await box('Save Rosters')
-    const cancel = await box('Cancel')
     assert(
       !(await bodyText()).includes('Share Lineup'),
       'Share Lineup has left the footer'
     )
-    assert(cancel.y >= save.y + save.height - 1, 'Cancel is below Save')
-    // Cancel's word, not its stretched button, sits in the footer bar's middle.
+    // Cancel's word, in the footer bar, on Save's row and left of the bar's
+    // middle, where the microphone sits (this fixture's server does not
+    // dictate, so the bar draws none).
     const bar = await page.$eval('[data-testid="Roster footer bar"]', node => {
       const r = node.getBoundingClientRect()
       return { x: r.x, width: r.width }
     })
-    const word = await page.$$eval('[aria-label="Cancel"]', nodes => {
-      const button = nodes[nodes.length - 1]
+    const word = await page.$eval('[data-testid="Roster cancel"]', node => {
+      const label = node.querySelector('[dir="auto"]')
       // No `??` here: the page has no sucrase helpers.
-      const label = button.querySelector('[dir="auto"]')
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-      const r = (label == null ? button : label).getBoundingClientRect()
-      return { x: r.x, width: r.width }
+      const r = (label == null ? node : label).getBoundingClientRect()
+      const inBar = node.closest('[data-testid="Roster footer bar"]') != null
+      return { x: r.x, y: r.y, width: r.width, height: r.height, inBar }
     })
+    assert(word.inBar, 'Cancel is in the footer bar')
     assert(
-      word.width < bar.width / 3 &&
-        Math.abs(word.x + word.width / 2 - (bar.x + bar.width / 2)) < 2,
-      'Cancel is in the middle'
+      Math.abs(word.y + word.height / 2 - (save.y + save.height / 2)) < 4,
+      'Cancel is on Save Rosters’ row'
+    )
+    assert(
+      word.x + word.width <= bar.x + bar.width / 2 &&
+        save.x + save.width / 2 > bar.x + bar.width / 2,
+      'Cancel is left of the middle, Save right of it'
     )
     await page.screenshot({ path: join(artifacts, 'share-row-web.png') })
     await click('Lineup')

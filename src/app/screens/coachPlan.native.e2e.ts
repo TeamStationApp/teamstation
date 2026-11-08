@@ -12,12 +12,20 @@
 // logs without asserting. Never point it at a live service: the fixture
 // writes to the database the local `serverConfig.json` names.
 //
+// S4: the roster footer bar lowers ten points into the 34-point bottom inset
+// of an iPhone 16 Pro, on the coaching screen (whose root pads the inset and
+// eight points more) and on the scorekeeper's Set Team Rosters sheet; and on
+// the coaching screen, Cancel, left of the microphone, restores a lineup a
+// player was taken out of. It saves `coach-footer-phone.png`.
+//
 // S5: the coaching screen's Defense field on a phone. The nine position cards
 // sit on six rows, no three sharing a vertical band; CF is above LF and RF,
 // P below 3B and 1B; and each card holds its name, on two lines.
+//
+// The microphone is drawn only when the API dictates; no scenario presses it.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
@@ -58,6 +66,8 @@ interface Device {
   openLink: (options: { link: string }) => Promise<unknown>
   acceptAlert: () => Promise<unknown>
   waitForAnimationToEnd: () => Promise<unknown>
+  screenshot: () => Promise<Buffer>
+  tapOnPoint: (point: { x: number; y: number }) => Promise<unknown>
 }
 interface Daemon {
   attach: (options: {
@@ -70,6 +80,12 @@ interface Daemon {
 
 const APP = 'app.teamstation.app'
 const POSITIONS = ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF']
+/** The iPhone 16 Pro's home indicator inset, in points. */
+const BOTTOM_INSET = 34
+/** How far the footer bar lowers into it. */
+const FOOTER_DROP = 10
+/** The iPhone 16 Pro's width, in points. */
+const WINDOW_WIDTH = 402
 function required(name: string): string {
   const value = process.env[name]
   assert(value != null && value !== '', `${name} is required`)
@@ -125,7 +141,7 @@ async function main(): Promise<void> {
   assert((await fetch(`${api}/health`)).ok, `${api} answers`)
   const password = required('TS_LINEUP_PASSWORD')
   const artifacts = resolve(required('TEST_ARTIFACT_DIR'))
-  const only = (process.env.TEST_ONLY ?? 'S5').split(',')
+  const only = (process.env.TEST_ONLY ?? 'S4,S5').split(',')
   await mkdir(artifacts, { recursive: true })
   const requireClient = createRequire(
     join(resolve(required('MAESTRO_D_CLIENT_ROOT')), 'package.json')
@@ -175,14 +191,154 @@ async function main(): Promise<void> {
       await m.assertVisible({ text: 'Home', timeout: 30000 })
       await pause(2000)
     }
-    /** Coach Game for the head coach's team, on its Defense tab. */
-    const coachDefense = async (fixture: LineupFixture): Promise<void> => {
+    /** Coach Game for the head coach's team. */
+    const coachGame = async (fixture: LineupFixture): Promise<void> => {
       await signIn(fixture, 'headCoach')
       await link(`/games/${fixture.gameId}/coach/${fixture.teams.home}`)
       await m.assertVisible({ text: 'Save Rosters', timeout: 60000 })
+    }
+    /** Coach Game for the head coach's team, on its Defense tab. */
+    const coachDefense = async (fixture: LineupFixture): Promise<void> => {
+      await coachGame(fixture)
       await m.tapOn({ text: 'Defense', timeout: 15000 })
       await m.assertVisible({ text: '(Clear|Assign) CF', timeout: 15000 })
       await m.waitForAnimationToEnd()
+    }
+
+    /**
+     * A Debug build's warning toast sits over the footer bar, where it takes
+     * a tap meant for Cancel: close it by the cross at its right end, level
+     * with its line of text.
+     */
+    const closeWarnings = async (): Promise<void> => {
+      const toast = (await all()).find(
+        n =>
+          n.bounds != null &&
+          label(n).includes('Open debugger to view warnings')
+      )
+      if (toast?.bounds == null) return
+      await m.tapOnPoint({
+        x: WINDOW_WIDTH - 32,
+        y: Math.round(toast.bounds.y + toast.bounds.height / 2)
+      })
+      await pause(1000)
+    }
+    /** The window's height and the footer bar's bounds, once settled. */
+    const footer = async (): Promise<{ height: number; bar: Bounds }> => {
+      await m.waitForAnimationToEnd()
+      await pause(500)
+      const root = await m.hierarchy()
+      const nodes = flatten(root)
+      // The application's own frame: the window, not content scrolled past it.
+      const height = root.bounds?.height ?? 0
+      assert(height > 0, 'the window has a height')
+      const bar = nodes.find(
+        n => n.id === 'Roster footer bar' && n.bounds != null
+      )
+      assert(bar?.bounds != null, 'the footer bar is in the hierarchy')
+      return { height, bar: bar.bounds }
+    }
+    /** The lineup's Remove buttons, top to bottom: its batting order. */
+    const lineup = async (): Promise<string[]> =>
+      (await all())
+        .filter(n => n.bounds != null && label(n).startsWith('Remove '))
+        .sort((a, b) => a.bounds!.y - b.bounds!.y)
+        .map(label)
+
+    if (only.includes('S4')) {
+      const fixture = lineupFixture(password)
+      await coachGame(fixture)
+      await m.tapOn({ text: 'Lineup', timeout: 15000 })
+      await m.assertVisible({ text: 'Remove .*', timeout: 15000 })
+      const coaching = await footer()
+      const bottom = coaching.bar.y + coaching.bar.height
+      console.log(
+        `S4 coaching: window ${coaching.height}, bar bottom ${bottom}`
+      )
+      check(
+        Math.abs(bottom - (coaching.height - BOTTOM_INSET - 8 + FOOTER_DROP)) <=
+          1,
+        `the coaching bar ends ${FOOTER_DROP} points into the bottom inset`
+      )
+      const nodes = await all()
+      const at = (text: string): Bounds | undefined =>
+        nodes.find(n => label(n) === text && n.bounds != null)?.bounds
+      const cancel = at('Cancel')
+      const save = at('Save Rosters')
+      const mic = nodes.find(n => n.id === 'Roster mic' && n.bounds != null)
+      check(cancel != null && save != null, 'Cancel and Save Rosters are shown')
+      check(mic?.bounds != null, 'the microphone is shown')
+      if (cancel != null && save != null && mic?.bounds != null) {
+        check(
+          cancel.x + cancel.width <= mic.bounds.x + 1 &&
+            mic.bounds.x + mic.bounds.width <= save.x + 1,
+          'Cancel is left of the microphone, Save right of it'
+        )
+        check(
+          Math.abs(cancel.y + cancel.height / 2 - (save.y + save.height / 2)) <=
+            4,
+          'Cancel is on Save Rosters’ row'
+        )
+      }
+      await closeWarnings()
+      await writeFile(
+        join(artifacts, 'coach-footer-phone.png'),
+        await m.screenshot()
+      )
+      // Taking the leadoff batter out moves his card off the lineup;
+      // Cancel puts it back.
+      const order = await lineup()
+      console.log(`S4 lineup: ${JSON.stringify(order)}`)
+      check(order.length > 1, 'the lineup lists its batters')
+      await m.tapOn({ text: order[0] })
+      await pause(1000)
+      const moved = await lineup()
+      check(
+        JSON.stringify(moved) !== JSON.stringify(order),
+        'the lineup changed'
+      )
+      // A tap while the lineup still settles is lost: let it come to rest.
+      await m.waitForAnimationToEnd()
+      await pause(1500)
+      await closeWarnings()
+      await m.tapOn({ text: 'Cancel' })
+      // Cancel reads the game again; wait for its lineup.
+      let restored = await lineup()
+      for (
+        let tries = 0;
+        tries < 20 && JSON.stringify(restored) !== JSON.stringify(order);
+        tries++
+      ) {
+        await pause(500)
+        restored = await lineup()
+      }
+      console.log(`S4 restored: ${JSON.stringify(restored)}`)
+
+      await signIn(fixture, 'scorekeeper')
+      await link(`/games/${fixture.gameId}/score`)
+      await m.assertVisible({ text: 'Open scoring menu', timeout: 60000 })
+      await pause(2000)
+      for (const close of ['OK', 'Close'])
+        if ((await all()).some(n => label(n) === close))
+          await m.tapOn({ text: close })
+      await m.tapOn({ text: 'Open scoring menu' })
+      await m.tapOn({ text: 'Set Team Rosters', timeout: 15000 })
+      await m.assertVisible({ text: 'Save Rosters', timeout: 30000 })
+      const sheet = await footer()
+      const sheetBottom = sheet.bar.y + sheet.bar.height
+      console.log(
+        `S4 scorekeeper: window ${sheet.height}, bar bottom ${sheetBottom}`
+      )
+      check(
+        Math.abs(sheetBottom - (sheet.height - BOTTOM_INSET + FOOTER_DROP)) <=
+          1,
+        `the scorekeeper's bar ends ${FOOTER_DROP} points into the bottom inset`
+      )
+      // Checked last, so the scorekeeper's bar is read whatever Cancel did.
+      check(
+        JSON.stringify(restored) === JSON.stringify(order),
+        'Cancel restored the lineup'
+      )
     }
 
     if (only.includes('S5')) {

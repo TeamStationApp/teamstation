@@ -601,7 +601,8 @@ describe('scoring slide-up sheets', function () {
       document.querySelector('[aria-label="Create Placeholder Player"]')
     ).equals(null)
     const footer = document.querySelector('[data-testid="Roster footer"]')!
-    expect(footer.textContent).includes('Save RostersCancel')
+    // One row: Cancel on the left, Save Rosters on the right.
+    expect(footer.textContent).matches(/^Cancel.*Save Rosters$/)
     await click('Defense')
     expect(document.body.textContent).includes(
       'Drag a player into position (on touch, hold a roster card briefly first). Drag a fielder to move or swap him; tap him to clear.'
