@@ -69,18 +69,48 @@ async function paneScrollTop(web: TessWeb): Promise<number> {
   })
 }
 
-/** The team's Schedule tab, long enough to scroll, beside her microphone. */
+/**
+ * The team's Schedule tab, long enough to scroll, beside her microphone.
+ * The header's Schedule tab is the same label, and it leaves the team, so
+ * the press is the pill in the page, the one whose words are Schedule.
+ */
 async function schedule(web: TessWeb): Promise<void> {
-  await web.open(`/teams/${web.t.f.teamA}`)
-  await web.tap(paneTab('Schedule'))
+  await web.open('/')
   await web.openChat()
+  await web.goInApp(`/teams/${web.t.f.teamA}`)
+  await web.shown('Demo Hawks')
+  let point: { x: number; y: number } | null = null
+  await eventually(async () => {
+    point = await web.page.evaluate(() => {
+      const tabs = Array.from(document.querySelectorAll('[role="tab"]'))
+      const pill = tabs.find(node => {
+        const text = (node.textContent || '').replace(/\s+/g, ' ').trim()
+        const label = node.getAttribute('aria-label') || ''
+        const box = node.getBoundingClientRect()
+        return (
+          box.y > 120 &&
+          box.width > 0 &&
+          (text === 'Schedule' || label === 'Schedule')
+        )
+      })
+      if (pill == null) return null
+      const box = pill.getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    })
+    expect(point, 'the team Schedule pill').not.equals(null)
+  }, 15000)
+  await web.m.tapOnPoint({
+    x: Math.round(point!.x),
+    y: Math.round(point!.y)
+  })
+  await web.shown('to play')
   await scrollPaneToTop(web)
 }
 
 /**
  * Space held 800 ms while the microphone hears a sentence: not listening at 300 ms,
- * listening from 500, and what was heard sent as a message. Returns when it began
- * listening.
+ * listening from 500, and what was heard left in the field. Sending it is a
+ * separate press, which is what makes the message. Returns when it began listening.
  */
 async function holdAndHear(web: TessWeb): Promise<number> {
   const { HEARD } = await import('../../../../src/test/tessFixture')
@@ -98,6 +128,13 @@ async function holdAndHear(web: TessWeb): Promise<number> {
   await pause(Math.max(0, 800 - (Date.now() - down)))
   await space(web, 'keyup')
   await playing
+  await eventually(async () => {
+    expect(await web.fieldValue()).equals(HEARD)
+  }, 30000)
+  expect(await web.userBubbles(HEARD), 'a hold does not send').equals(
+    heardBefore
+  )
+  await web.m.pressKey({ key: 'Enter' })
   await eventually(async () => {
     expect(await web.userBubbles(HEARD)).greaterThan(heardBefore)
   }, 30000)
@@ -167,7 +204,7 @@ export default defineE2e({
   ...TESS_WEB_SPEC,
   id: 'assistant/chat/space-hold',
   title:
-    "Space held half a second talks to Tess; a quick press stays the page's, and with push-to-talk off so does a hold",
+    "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
   covers: [
     'src/app/tess/TessPanel.tsx',
     'src/app/scoring/spaceToTalk.ts',
@@ -302,29 +339,21 @@ export default defineE2e({
         })
       })
     },
-    'push-to-talk-off-leaves-space-to-the-page': async ctx => {
+    'a-tap-records-until-the-next-tap': async ctx => {
       await beside(ctx, async web => {
-        const { m, t } = web
-        const { begun } = t.dictation
+        const { HEARD } = await import('../../../../src/test/tessFixture')
+        const { m } = web
         await m.tapOn({ css: MIC })
-        await web.waitForStatus(null)
-        await focusPage(web)
-        await space(web, 'keydown')
-        await pause(800)
-        await space(web, 'keyup')
-        await pause(300)
-        expect(t.dictation.begun, 'no utterance started').equals(begun)
-        await m.pressKey({ key: 'Space' })
+        await web.waitForStatus('Recording', 5000)
+        await m.tapOn({ css: MIC })
+        await web.waitForStatus('Off')
         await eventually(async () => {
-          expect(
-            await paneScrollTop(web),
-            'Space scrolled the pane'
-          ).greaterThan(0)
+          expect(await web.fieldValue()).equals(HEARD)
         }, 5000)
-        expect(t.dictation.begun, 'no utterance started').equals(begun)
-        expect(await web.dictationStatus()).equals(null)
-        await ctx.checkpoint('pane-scrolled', {
-          expect: [{ id: 'Dictate', absent: true }]
+        expect(await web.userBubbles(HEARD), 'a tap does not send').equals(0)
+        await ctx.checkpoint('tap-heard', {
+          expect: [{ text: HEARD }],
+          golden: {}
         })
       })
     }

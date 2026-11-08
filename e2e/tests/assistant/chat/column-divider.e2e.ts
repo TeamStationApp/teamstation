@@ -38,8 +38,9 @@ async function dragBy(web: TessWeb, dx: number): Promise<void> {
 }
 
 async function onTeamBesideTess(web: TessWeb): Promise<void> {
-  await web.open(`/teams/${web.t.f.teamA}`)
+  await web.open('/')
   await web.openChat()
+  await web.goInApp(`/teams/${web.t.f.teamA}`)
   await web.see('[data-breakpoint]')
   await web.see(DIVIDER)
 }
@@ -80,7 +81,9 @@ export default defineE2e({
         await breakpointIs(web, 'tablet')
         await dragBy(web, 200)
         await m.openBrowser({ url: page.url() })
+        await web.open('/')
         await web.openChat()
+        await web.goInApp(`/teams/${web.t.f.teamA}`)
         await eventually(async () => {
           expect((await web.rectOf(COLUMN))?.width).equals(520)
         }, 10000)

@@ -116,6 +116,8 @@ export interface TessWeb {
   /** Becomes this fixture user, by the session cookie the harness made them. */
   identity: (id: number, on?: TessFixture) => Promise<void>
   open: (path: string, origin?: string) => Promise<void>
+  /** Moves to a path without a page load, so an open chat stays open. */
+  goInApp: (path: string) => Promise<void>
   see: (selector: string, timeout?: number) => Promise<void>
   gone: (selector: string, timeout?: number) => Promise<void>
   /** Waits for words on the screen. */
@@ -229,6 +231,16 @@ export async function withTess(
       },
       open: async (path, base = origin) => {
         await m.openBrowser({ url: base + path })
+      },
+      goInApp: async path => {
+        await page.evaluate(path => {
+          const state = history.state
+          const index = (state == null ? 0 : Number(state.tsRouteIndex)) + 1
+          history.pushState({ tsRouteIndex: index }, '', path)
+          window.dispatchEvent(
+            new PopStateEvent('popstate', { state: history.state })
+          )
+        }, path)
       },
       see,
       gone,

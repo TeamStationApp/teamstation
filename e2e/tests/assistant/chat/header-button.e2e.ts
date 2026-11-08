@@ -1,26 +1,34 @@
-/* eslint-disable @typescript-eslint/prefer-nullish-coalescing, @typescript-eslint/strict-boolean-expressions -- Serialized browser callbacks cannot capture Sucrase's generated helper functions. */
 import { expect } from 'chai'
 
 import { defineE2e } from '../../../core/spec'
 import {
+  ASK_TESS,
+  MARK_MENU,
   NOTIFICATIONS,
-  pause,
-  TESS_BUTTON,
   TESS_WEB_SPEC,
   type TessWeb,
   withTess
 } from '../../../rigs/tessWeb'
 
-const HEADER_BUTTONS = ['Tess', 'Notifications']
+const ACCOUNT = '[role="button"][aria-label^="Account, "]'
 
-async function headerButtons(web: TessWeb): Promise<string[]> {
-  return await web.page.evaluate(
-    (wanted: string[]) =>
-      Array.from(document.querySelectorAll('[role="button"][aria-label]'))
-        .map(node => node.getAttribute('aria-label') || '')
-        .filter(label => wanted.includes(label)),
-    HEADER_BUTTONS
+/** The mark, which offers Tess, sits to the left of the account menu. */
+async function markBeforeAccount(web: TessWeb): Promise<void> {
+  await web.see(MARK_MENU)
+  await web.see(ACCOUNT)
+  const before = await web.page.evaluate(
+    (mark: string, account: string) => {
+      const leftNode = document.querySelector(mark)
+      const rightNode = document.querySelector(account)
+      const left = leftNode == null ? null : leftNode.getBoundingClientRect().x
+      const right =
+        rightNode == null ? null : rightNode.getBoundingClientRect().x
+      return left != null && right != null && left < right
+    },
+    MARK_MENU,
+    ACCOUNT
   )
+  expect(before).equals(true)
 }
 
 export default defineE2e({
@@ -45,16 +53,17 @@ export default defineE2e({
         ] as const) {
           await web.identity(user)
           await web.open('/')
+          await markBeforeAccount(web)
+          await web.tap(MARK_MENU)
+          await web.see(ASK_TESS)
+          await web.tap('[role="button"][aria-label="Close menu"]')
+          await web.tap(ACCOUNT)
           await web.see(NOTIFICATIONS)
-          await web.see(TESS_BUTTON)
-          // Health is asked once a session is known; give the header that long.
-          await pause(1500)
-          expect(await headerButtons(web)).deep.equals([
-            'Tess',
-            'Notifications'
-          ])
           await ctx.checkpoint(checkpoint, {
-            expect: [{ id: 'Tess' }, { id: 'Notifications' }],
+            expect: [
+              { text: 'Notifications' },
+              { text: 'Ask Tess', absent: true }
+            ],
             golden: {}
           })
         }
@@ -65,12 +74,13 @@ export default defineE2e({
         ctx,
         async web => {
           await web.open('/')
+          await web.tap(MARK_MENU)
+          expect(await web.page.$(ASK_TESS)).equals(null)
+          await web.tap('[role="button"][aria-label="Close menu"]')
+          await web.tap(ACCOUNT)
           await web.see(NOTIFICATIONS)
-          // Health is asked once a session is known; give the header that long.
-          await pause(2000)
-          expect(await web.page.$(TESS_BUTTON)).equals(null)
           await ctx.checkpoint('header-without-tess', {
-            expect: [{ id: 'Notifications' }, { id: 'Tess', absent: true }],
+            expect: [{ text: 'Notifications' }],
             golden: {}
           })
         },

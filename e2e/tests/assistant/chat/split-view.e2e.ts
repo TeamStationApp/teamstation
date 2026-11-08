@@ -6,7 +6,6 @@ import {
   CHAT,
   COLUMN,
   LAYER,
-  NOTIFICATIONS,
   pause,
   TESS_BUTTON,
   TESS_WEB_SPEC,
@@ -54,10 +53,10 @@ export default defineE2e({
     },
     'team-screen-narrows-beside-her': async ctx => {
       await withTess(ctx, async web => {
-        await web.open(`/teams/${web.t.f.teamA}`)
-        await web.see('[data-breakpoint]')
-        expect(await breakpoint(web)).equals('desktop')
+        await web.open('/')
         await web.openChat()
+        await web.goInApp(`/teams/${web.t.f.teamA}`)
+        await web.see('[data-breakpoint]')
         await eventually(async () => {
           expect(await breakpoint(web)).equals('tablet')
         })
@@ -72,7 +71,9 @@ export default defineE2e({
         ctx,
         async web => {
           const { m, page, t } = web
-          await web.open(
+          await web.open('/')
+          await web.openChat()
+          await web.goInApp(
             `/games/${t.games.may3}?tab=watch&video=${t.videos.homePlate}`
           )
           await web.see('[aria-label="Home plate"]', 30000)
@@ -100,7 +101,6 @@ export default defineE2e({
             const video = document.querySelector('video')
             return video == null ? 0 : video.currentTime
           })
-          await web.openChat()
           await pause(2000)
           const after = await page.evaluate(() => {
             const video = document.querySelector('video') as any
@@ -173,37 +173,33 @@ export default defineE2e({
       )
     },
     'back-closes-her-and-keeps-the-address': async ctx => {
-      await withTess(
-        ctx,
-        async web => {
-          const { m, page, t } = web
-          await web.open('/')
-          // Into a team from Home, inside the app, so Back has a step of its own
-          // to take: f.teamA, the Demo Hawks with a season.
-          await web.tap(
-            '[role="button"][aria-label^="Demo Hawks, Demo Regular"]'
-          )
-          await web.pathIs(`/teams/${t.f.teamA}`)
-          await web.openChat(LAYER)
-          const address = await page.evaluate(() => location.href)
-          await m.back()
-          await web.gone(CHAT)
-          await pause(800)
-          expect(await page.evaluate(() => location.href)).equals(address)
-          await ctx.checkpoint('team-after-back', {
-            expect: [{ text: 'Demo Hawks' }],
-            golden: {}
-          })
-        },
-        { width: 1024, height: 900 }
-      )
+      await withTess(ctx, async web => {
+        const { page } = web
+        await web.open('/')
+        await web.openChat()
+        await web.tap('[role="button"][aria-label^="Demo Hawks, Demo Regular"]')
+        await web.pathIs(`/teams/${web.t.f.teamA}`)
+        await web.session.resize({ width: 1024, height: 900 })
+        await web.see(LAYER)
+        const address = await page.evaluate(() => location.href)
+        await page.evaluate(() => {
+          history.back()
+        })
+        await web.gone(CHAT)
+        await pause(800)
+        expect(await page.evaluate(() => location.href)).equals(address)
+        await ctx.checkpoint('team-after-back', {
+          expect: [{ text: 'Demo Hawks' }],
+          golden: {}
+        })
+      })
     },
     'scoring-takes-the-window': async ctx => {
       await withTess(ctx, async web => {
         const { m, page, t } = web
-        await web.open(`/games/${t.games.scheduled}`)
-        await web.see(TESS_BUTTON, 30000)
+        await web.open('/')
         await web.openChat()
+        await web.goInApp(`/games/${t.games.scheduled}`)
         await web.say(
           'Take me to score the next game',
           'Here is the scoring screen'
@@ -218,7 +214,7 @@ export default defineE2e({
         await pause(2500)
         await ctx.checkpoint('immersive', {
           expect: [{ text: 'Ask Tess', absent: true }],
-          ask: 'The scoring screen fills the whole window, and no chat column shows beside it.'
+          ask: 'A baseball field is on screen, with a scoreboard and buttons for calling pitches, and no chat column is open.'
         })
         await m.back()
         await web.see(COLUMN, 30000)
@@ -226,10 +222,19 @@ export default defineE2e({
     },
     'dj-screen-keeps-her': async ctx => {
       await withTess(ctx, async web => {
-        await web.open(`/games/${web.t.games.scheduled}/dj`)
-        await web.see(NOTIFICATIONS, 30000)
-        await web.see(TESS_BUTTON, 30000)
+        await web.open('/')
         await web.openChat()
+        await web.goInApp(`/games/${web.t.games.scheduled}/dj`)
+        await web.shown('Demo Hawks')
+        await web.shown('Demo Field')
+        await eventually(async () => {
+          const loading = await web.page.evaluate(() => {
+            return document.querySelectorAll(
+              '[role="progressbar"], [aria-busy="true"]'
+            ).length
+          })
+          expect(loading).equals(0)
+        }, 15000)
         await ctx.checkpoint('dj-beside-tess', {
           expect: [{ text: 'Demo Hawks' }, { text: 'Ask Tess' }],
           golden: {}

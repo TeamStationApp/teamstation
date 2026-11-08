@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 
 import { scheduleDate } from '../../../../src/app/screens/format'
+import { gamesFor } from '../../../../src/app/screens/whenFilter'
 import { userIdOfGumbo } from '../../../../src/common/userId'
 import {
   defineE2e,
@@ -62,6 +63,8 @@ const GAME = {
 }
 
 const RTMP_URL = 'rtmp://ingest.example/live/lst_own-key'
+/** The clock the scenarios pin, so a paged list can be cut the way the server cuts it. */
+const PINNED_NOW = Date.parse('2026-10-04T12:00:00.000Z')
 
 const OWN_CAMERA = {
   id: 'lst_own',
@@ -71,6 +74,7 @@ const OWN_CAMERA = {
   slot: 1,
   label: 'Dugout',
   keyPrefix: 'lst_own',
+  deviceId: 'dev_own',
   state: 'idle',
   opensAt: '2026-10-02T20:00:00.000Z',
   closesAt: null
@@ -121,10 +125,40 @@ async function open(path: string): Promise<Page> {
   })
   // A mock matches the first pattern that fits, and a parent path also
   // fits its children, so the longer paths are registered first.
+  const pageOfListed = (
+    games: typeof listed
+  ): {
+    items: typeof listed
+    nextCursor: null
+    prevCursor: null
+    anchorId: null
+    counts: null
+  } => ({
+    items: games,
+    nextCursor: null,
+    prevCursor: null,
+    anchorId: null,
+    counts: null
+  })
   const routes: Array<[string, number, unknown]> = [
     ['*/api/v1/auth/me', 200, USER],
     ['*/api/v1/me/roles', 200, { teams: {} }],
-    ['*/api/v1/events*', 200, listed],
+    [
+      '*/api/v1/events*when=upcoming*',
+      200,
+      pageOfListed(gamesFor(listed, 'upcoming', PINNED_NOW))
+    ],
+    [
+      '*/api/v1/events*when=past*',
+      200,
+      pageOfListed(gamesFor(listed, 'past', PINNED_NOW))
+    ],
+    [
+      '*/api/v1/events*hasVideo=1*',
+      200,
+      pageOfListed(listed.filter(game => game.videoCount > 0))
+    ],
+    ['*/api/v1/events*', 200, pageOfListed(listed)],
     [
       '*/api/v1/games/gam_box/box-score',
       200,
@@ -175,6 +209,16 @@ async function open(path: string): Promise<Page> {
           away: { runs: [1], r: 1, h: 2, e: 0 },
           home: { runs: [0], r: 0, h: 1, e: 0 }
         }
+      }
+    ],
+    [
+      '*/api/v1/games/gam_rtmp/stream-access',
+      200,
+      {
+        canFilm: true,
+        canRequest: false,
+        requested: false,
+        teamId: 'tem_home'
       }
     ],
     [
@@ -764,14 +808,27 @@ for (const size of SIZES) {
         }
       })
     })
+    await until('the other camera', async () => {
+      const text = await page.evaluate(() => document.body.textContent)
+      if (text == null) return undefined
+      if (!text.includes('Third base') || !text.includes('Dugout'))
+        return undefined
+      if (!text.includes('Show stream URL')) return undefined
+      return true
+    })
+    await page.evaluate(() => {
+      const found = Array.from(
+        document.querySelectorAll('[role="button"]')
+      ).find(node => node.textContent === 'Show stream URL')
+      if (found instanceof HTMLElement) found.click()
+    })
     const before = await until('the stream address', async () => {
       const read = await page.evaluate(address => {
         const text = document.body.textContent
         if (text == null) return undefined
         if (!text.includes(address)) return undefined
-        if (!text.includes('Tap to copy')) return undefined
-        if (!text.includes('Sam Fuld')) return undefined
-        if (!text.includes('Third base')) return undefined
+        if (document.querySelector('[aria-label="Copy stream URL"]') == null)
+          return undefined
         return { count: text.split('rtmp://').length - 1 }
       }, RTMP_URL)
       if (read == null) return undefined
@@ -780,9 +837,7 @@ for (const size of SIZES) {
     })
     expect(before.count).equals(1)
     await page.evaluate(() => {
-      const found = document.querySelector(
-        '[aria-label="Copy the URL for Dugout"]'
-      )
+      const found = document.querySelector('[aria-label="Copy stream URL"]')
       if (found instanceof HTMLElement) found.click()
     })
     const copied = await until('copied', async () => {

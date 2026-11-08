@@ -22,7 +22,7 @@ async function proposed(web: TessWeb): Promise<void> {
   await web.openChat()
   await web.say(
     'Add a game against Demo Eagles Saturday at 10',
-    'Hold Confirm on the card to add the game.'
+    'Hold Confirm under the table to add the game.'
   )
   await web.see(CHANGE)
   await web.see(HOLD)
@@ -69,9 +69,23 @@ export default defineE2e({
           CHANGE,
           node => node.textContent || ''
         )
-        expect(card).includes('Add a home game against Demo Eagles')
-        expect(card).includes(`POST /teams/${web.t.f.teamA}/games`)
-        expect(card).includes('"opponent"')
+        expect(card).includes('Demo Eagles')
+        expect(card).includes('Sat May 15')
+        expect(card).includes('10:00 AM')
+        expect(card).includes('Demo Field')
+        await web.m.tapOn({ text: 'Request details' })
+        await eventually(async () => {
+          const request = await web.page.$eval(
+            '[data-testid="Tess change request"]',
+            node => node.textContent || ''
+          )
+          const body = await web.page.$eval(
+            '[data-testid="Tess change body"]',
+            node => node.textContent || ''
+          )
+          expect(request).includes(`POST /teams/${web.t.f.teamA}/games`)
+          expect(body).includes('"opponent"')
+        })
         await ctx.checkpoint('change-card', {
           expect: [{ id: 'Tess change' }],
           golden: { mask: CARD_IDS }
@@ -130,7 +144,7 @@ export default defineE2e({
               expect(await gamesOfTeam(web)).equals(gamesBefore + 1)
             },
             golden: {
-              mask: [...CARD_IDS, { css: '[data-testid="Tess thought"]' }]
+              mask: [{ css: '[data-testid="Tess thought"]' }]
             }
           })
         },

@@ -33,6 +33,14 @@ export default defineE2e({
             })
             await holding
             await eventually(async () => {
+              expect(await web.fieldValue()).equals(HEARD)
+            }, 30000)
+            expect(
+              await web.userBubbles(HEARD),
+              'a hold leaves the words in the field'
+            ).equals(heardBefore)
+            await m.pressKey({ key: 'Enter' })
+            await eventually(async () => {
               expect(await web.userBubbles(HEARD)).greaterThan(heardBefore)
             }, 30000)
             await web.gone(THINKING)

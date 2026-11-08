@@ -2165,8 +2165,42 @@
       "costUsd": 0,
       "guards": [],
       "manual": false,
+      "id": "assistant/chat/space-hold#a-tap-records-until-the-next-tap",
+      "title": "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
+      "covers": [
+        "src/app/tess/TessPanel.tsx",
+        "src/app/scoring/spaceToTalk.ts",
+        "src/app/scoring/dictationControls.tsx",
+        "src/server/dictation/**"
+      ],
+      "minutes": 2,
+      "faults": [
+        "socket-drop",
+        "hidden-element"
+      ],
+      "spec": "assistant/chat/space-hold",
+      "file": "e2e/tests/assistant/chat/space-hold.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
       "id": "assistant/chat/space-hold#held-in-the-field-listens",
-      "title": "Space held half a second talks to Tess; a quick press stays the page's, and with push-to-talk off so does a hold",
+      "title": "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
       "covers": [
         "src/app/tess/TessPanel.tsx",
         "src/app/scoring/spaceToTalk.ts",
@@ -2200,41 +2234,7 @@
       "guards": [],
       "manual": false,
       "id": "assistant/chat/space-hold#held-on-the-page-listens",
-      "title": "Space held half a second talks to Tess; a quick press stays the page's, and with push-to-talk off so does a hold",
-      "covers": [
-        "src/app/tess/TessPanel.tsx",
-        "src/app/scoring/spaceToTalk.ts",
-        "src/app/scoring/dictationControls.tsx",
-        "src/server/dictation/**"
-      ],
-      "minutes": 2,
-      "faults": [
-        "socket-drop",
-        "hidden-element"
-      ],
-      "spec": "assistant/chat/space-hold",
-      "file": "e2e/tests/assistant/chat/space-hold.e2e.ts"
-    },
-    {
-      "kind": "e2e",
-      "stack": "isolated",
-      "fixtures": [],
-      "exclusive": false,
-      "surfaces": {
-        "web-chromium": {
-          "devices": []
-        }
-      },
-      "services": [
-        "web"
-      ],
-      "apps": [],
-      "secrets": [],
-      "costUsd": 0,
-      "guards": [],
-      "manual": false,
-      "id": "assistant/chat/space-hold#push-to-talk-off-leaves-space-to-the-page",
-      "title": "Space held half a second talks to Tess; a quick press stays the page's, and with push-to-talk off so does a hold",
+      "title": "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
       "covers": [
         "src/app/tess/TessPanel.tsx",
         "src/app/scoring/spaceToTalk.ts",
@@ -2268,7 +2268,7 @@
       "guards": [],
       "manual": false,
       "id": "assistant/chat/space-hold#quick-press-activates-a-focused-tab",
-      "title": "Space held half a second talks to Tess; a quick press stays the page's, and with push-to-talk off so does a hold",
+      "title": "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
       "covers": [
         "src/app/tess/TessPanel.tsx",
         "src/app/scoring/spaceToTalk.ts",
@@ -2302,7 +2302,7 @@
       "guards": [],
       "manual": false,
       "id": "assistant/chat/space-hold#quick-press-types-a-space",
-      "title": "Space held half a second talks to Tess; a quick press stays the page's, and with push-to-talk off so does a hold",
+      "title": "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
       "covers": [
         "src/app/tess/TessPanel.tsx",
         "src/app/scoring/spaceToTalk.ts",
@@ -2336,7 +2336,7 @@
       "guards": [],
       "manual": false,
       "id": "assistant/chat/space-hold#rolled-press-keeps-the-order",
-      "title": "Space held half a second talks to Tess; a quick press stays the page's, and with push-to-talk off so does a hold",
+      "title": "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
       "covers": [
         "src/app/tess/TessPanel.tsx",
         "src/app/scoring/spaceToTalk.ts",

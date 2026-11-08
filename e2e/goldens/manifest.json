@@ -1,34 +1,258 @@
 {
   "goldens": {
     "app-shell/lists/list-screens#location-row-desktop/videos-list/web-chromium@chromium-1440x900-128": {
-      "sha256": "fbd20f3d283af2ec6c6aef248564b960c5b64d0a997cf1522ad4f9c3ecd1aa88",
-      "size": 29021,
+      "sha256": "2ffa469c340756d3658d6ef3a113b4ceb6fbdc84777ce4ba42bb306b345f87e3",
+      "size": 26857,
       "masks": []
     },
     "app-shell/lists/list-screens#location-row-phone/videos-list/web-chromium@chromium-393x852-128": {
-      "sha256": "753233b003ce99a27f11b3945513155ec1744c1a2b8f4f0e625808ad05c16db4",
-      "size": 33496,
+      "sha256": "921c79b78b33409b515822f80a16968d0def86248631b5414e406997bbfdf72e",
+      "size": 31599,
       "masks": []
     },
     "app-shell/lists/list-screens#result-pill-desktop/videos-list/web-chromium@chromium-1440x900-128": {
-      "sha256": "f6b256b5085a4b3a1f4f1743069360107bb822845d7dec33ddfcb5031eb7fc3d",
-      "size": 25364,
+      "sha256": "098a87fe37efa4a2e6231c77e8bac7a9bc0e036bf8a93723e1ea9d3fbedd8726",
+      "size": 23423,
       "masks": []
     },
     "app-shell/lists/list-screens#result-pill-phone/videos-list/web-chromium@chromium-393x852-128": {
-      "sha256": "e00be343458fe558c94996301bc7205ccadd897d112ea3cb0d62827a2c863dc5",
-      "size": 23660,
+      "sha256": "15a0bb2ebbb28f980028994d1490874a569e9d2128537143a13927f8860114b6",
+      "size": 22107,
       "masks": []
     },
     "app-shell/lists/list-screens#thumbnails-desktop/videos-list/web-chromium@chromium-1440x900-128": {
-      "sha256": "f6b256b5085a4b3a1f4f1743069360107bb822845d7dec33ddfcb5031eb7fc3d",
-      "size": 25364,
+      "sha256": "098a87fe37efa4a2e6231c77e8bac7a9bc0e036bf8a93723e1ea9d3fbedd8726",
+      "size": 23423,
       "masks": []
     },
     "app-shell/lists/list-screens#thumbnails-phone/videos-list/web-chromium@chromium-393x852-128": {
-      "sha256": "e00be343458fe558c94996301bc7205ccadd897d112ea3cb0d62827a2c863dc5",
-      "size": 23660,
+      "sha256": "15a0bb2ebbb28f980028994d1490874a569e9d2128537143a13927f8860114b6",
+      "size": 22107,
       "masks": []
+    },
+    "assistant/chat/attachments#dropped-and-chosen-files-reach-the-model/attach-panel/web-chromium@chromium-1280x900-128": {
+      "sha256": "a4a83d3ba279ec55471a3afbd3981dd9bd4034ce73ff0a0150e5fdcda97fac24",
+      "size": 78353,
+      "masks": []
+    },
+    "assistant/chat/attachments#dropped-and-chosen-files-reach-the-model/files-sent/web-chromium@chromium-1280x900-128": {
+      "sha256": "09f4fbbb37e324f48f941fdf8663aab191340eb2e34286a0a63024e76744f263",
+      "size": 76908,
+      "masks": []
+    },
+    "assistant/chat/column-divider#drag-resizes-and-reload-keeps/column-wider/web-chromium@chromium-1280x900-128": {
+      "sha256": "299bcdb016bd88be9fa79d3613488ea23e1a40b2740a56f54a47c6900f93dc2b",
+      "size": 51336,
+      "masks": []
+    },
+    "assistant/chat/column-divider#drag-resizes-and-reload-keeps/width-after-reload/web-chromium@chromium-1280x900-128": {
+      "sha256": "299bcdb016bd88be9fa79d3613488ea23e1a40b2740a56f54a47c6900f93dc2b",
+      "size": 51336,
+      "masks": []
+    },
+    "assistant/chat/column-divider#keyboard-moves-it-16-points-a-press/column-moved-by-keys/web-chromium@chromium-1280x900-128": {
+      "sha256": "babbb39ec0bbd05a23df9761a11a2b029229bc1a7d7f909b417557e51df77e8c",
+      "size": 52145,
+      "masks": []
+    },
+    "assistant/chat/composer#shift-enter-is-a-new-line/two-lines/web-chromium@chromium-1280x900-128": {
+      "sha256": "c9aef214b9e23b34f97defd41ef16465ce1d8206ca7b7c9e26f3032e3fa244aa",
+      "size": 70157,
+      "masks": []
+    },
+    "assistant/chat/composer#title-and-plain-plus/header-and-composer/web-chromium@chromium-1280x900-128": {
+      "sha256": "1767d827ab05e1da06bbd9dd5fe52684b66efa37e28baf0c4b9c484e852279f6",
+      "size": 70869,
+      "masks": []
+    },
+    "assistant/chat/confirm-hold#card-shows-the-change/change-card/web-chromium@chromium-1280x900-128": {
+      "sha256": "551b5164a4fbe793b06943c64faef460cc182270b62d3c1200d4e716cbe0467f",
+      "size": 116819,
+      "masks": [
+        {
+          "enabled": true,
+          "id": "Tess change request"
+        },
+        {
+          "enabled": true,
+          "id": "Tess change body"
+        }
+      ]
+    },
+    "assistant/chat/confirm-hold#full-hold-makes-the-change/change-done/web-chromium@chromium-1280x900-128": {
+      "sha256": "31d6a05b63f9fb7b7ccae11d3063945a3da93ef14fd2085a49dd9b539252d993",
+      "size": 103124,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"Tess thought\"]"
+        }
+      ]
+    },
+    "assistant/chat/header-button#absent-without-tess/header-without-tess/web-chromium@chromium-1280x900-128": {
+      "sha256": "d6f70faf832001308f9180936730eb2bb30f6e1b056e19fa68de2397c9a1ca4b",
+      "size": 65810,
+      "masks": []
+    },
+    "assistant/chat/header-button#before-notifications/header-member/web-chromium@chromium-1280x900-128": {
+      "sha256": "0d3d2f84976a1ff2d97082abc8a576fad2ab999ec6cbe9c369c0592d70be3154",
+      "size": 51439,
+      "masks": []
+    },
+    "assistant/chat/header-button#before-notifications/header-umpire/web-chromium@chromium-1280x900-128": {
+      "sha256": "d6f70faf832001308f9180936730eb2bb30f6e1b056e19fa68de2397c9a1ca4b",
+      "size": 65810,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#bubble-closes-an-open-chart/settings-after-chart/web-chromium@chromium-1280x900-128": {
+      "sha256": "1777f6c8d5a826b9efe29cdb99bc3aa73f6e6b3e1e3f8aec3d83bc447f04d903",
+      "size": 89664,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#chart-opens-over-the-angle-view/chart-over-angle/web-chromium@chromium-1280x900-153": {
+      "sha256": "2167fdd13ea33742ba15b8eadfae9aaa01636270ff19cd14584b84b168fb784a",
+      "size": 45063,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#hidden-player-is-not-shown/back-at-home/web-chromium@chromium-1280x900-128": {
+      "sha256": "6965c7e8440b61b045dc3fbc1367ef4a6b28d53af1db5bd8f3ba16a34ccbc1c6",
+      "size": 71124,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#hidden-player-is-not-shown/player-denied/web-chromium@chromium-1280x900-128": {
+      "sha256": "473720a7c628e0afdc680a039c409bdadd9fc3436f52d16fffe395512e948853",
+      "size": 40016,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#player-name-links-to-the-profile/player-link/web-chromium@chromium-1280x900-128": {
+      "sha256": "e6841652252b3f59b3b190a6ff61a60afd3693ae8646494ed0558378e60c7d9c",
+      "size": 77327,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#player-name-links-to-the-profile/player-profile/web-chromium@chromium-1280x900-128": {
+      "sha256": "b923a862073912c6976ce4ea12151b6bee8defd1b555396e8824ad9e63fa83e0",
+      "size": 50717,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#way-bubble-opens-team-settings/settings-beside-chat/web-chromium@chromium-1280x900-128": {
+      "sha256": "3b2af0682d488d82b8bb2b8e6e3d5434cf5ea3aaa5e3b761cbbe753505792277",
+      "size": 78465,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#way-bubble-opens-team-settings/way-bubble/web-chromium@chromium-1280x900-128": {
+      "sha256": "ef1c9828ba67754f4fa5d6108b15c6b61f7f3a951bd5b6a9c1a4ea4175bf37ef",
+      "size": 77643,
+      "masks": []
+    },
+    "assistant/chat/push-to-talk#each-hold-becomes-a-message/two-messages-heard/web-chromium@chromium-1280x900-128": {
+      "sha256": "ed0c93be3a1740e0f8046d7f492af5a4ee5684eb0c609cf7602504a13cce35bc",
+      "size": 92131,
+      "masks": []
+    },
+    "assistant/chat/refusals#off-topic-declined-with-no-tool/declined/web-chromium@chromium-1280x900-128": {
+      "sha256": "1225dd8c30a2d55d133aeffe67316b43a74385884e2c0705be4aaf6fcbb314c2",
+      "size": 74757,
+      "masks": []
+    },
+    "assistant/chat/refusals#scoring-write-refused-before-any-card/refused/web-chromium@chromium-1280x900-128": {
+      "sha256": "b8a5d71e480ae997e5cb7d18c14f0590128b768e19ce24b83e70effd2153c6d0",
+      "size": 78014,
+      "masks": []
+    },
+    "assistant/chat/rich-content#chart-over-the-pane-loads-nothing-remote/chart-card/web-chromium@chromium-1280x900-128": {
+      "sha256": "11324edd1eb433f5347c95a078963c75f35d0b478b4168b42f4726f1d214cfa2",
+      "size": 74911,
+      "masks": []
+    },
+    "assistant/chat/rich-content#chart-over-the-pane-loads-nothing-remote/chart-over-pane/web-chromium@chromium-1280x900-128": {
+      "sha256": "73216300b0c1021156445058b98c84cb442bc95cecb131f64865e05def4e8917",
+      "size": 31054,
+      "masks": []
+    },
+    "assistant/chat/space-hold#a-tap-records-until-the-next-tap/tap-heard/web-chromium@chromium-1280x900-128": {
+      "sha256": "68f23347d8e04a8e5730b833a4c119cd980bd5060fe032a4507b438fb9d8e733",
+      "size": 89414,
+      "masks": []
+    },
+    "assistant/chat/space-hold#held-in-the-field-listens/heard-as-a-message/web-chromium@chromium-1280x900-128": {
+      "sha256": "c8d2b1ad7b21c9a41e42bfbbee7dea6e1f6f53df71c69270312a532002cb5830",
+      "size": 93492,
+      "masks": []
+    },
+    "assistant/chat/space-hold#held-on-the-page-listens/heard-from-the-page/web-chromium@chromium-1280x900-128": {
+      "sha256": "c8d2b1ad7b21c9a41e42bfbbee7dea6e1f6f53df71c69270312a532002cb5830",
+      "size": 93492,
+      "masks": []
+    },
+    "assistant/chat/space-hold#quick-press-activates-a-focused-tab/team-tab-selected/web-chromium@chromium-1280x900-128": {
+      "sha256": "4abda97248083197e4852ac2e39cd3a669e5f4cb91484f744d90b7cd61d06ccd",
+      "size": 55626,
+      "masks": []
+    },
+    "assistant/chat/space-hold#quick-press-types-a-space/field-holds-a-space/web-chromium@chromium-1280x900-128": {
+      "sha256": "7a94748fc649c13ee8b52b2e019d637c0f9d921e23e842b881416e375ecec2ad",
+      "size": 85723,
+      "masks": []
+    },
+    "assistant/chat/space-hold#rolled-press-keeps-the-order/field-in-order/web-chromium@chromium-1280x900-128": {
+      "sha256": "9f1262cbd5d9f32c27a1851bb50649ba5208283dcb7b3250d70f89ce640602c8",
+      "size": 86684,
+      "masks": []
+    },
+    "assistant/chat/split-view#back-closes-her-and-keeps-the-address/team-after-back/web-chromium@chromium-1024x900-128": {
+      "sha256": "0d35cc60a8ae8c7f68a627d789847b562c24b4d1b59d834e7681ec32d4747b9a",
+      "size": 36296,
+      "masks": []
+    },
+    "assistant/chat/split-view#back-closes-her-and-keeps-the-address/team-after-back/web-chromium@chromium-1280x900-128": {
+      "sha256": "bb11d474107728f2c582b7db011c9bd60fd5c75d580699915cb03417748292e6",
+      "size": 36052,
+      "masks": []
+    },
+    "assistant/chat/split-view#column-beside-pane/split/web-chromium@chromium-1280x900-128": {
+      "sha256": "1767d827ab05e1da06bbd9dd5fe52684b66efa37e28baf0c4b9c484e852279f6",
+      "size": 70869,
+      "masks": []
+    },
+    "assistant/chat/split-view#dj-screen-keeps-her/dj-beside-tess/web-chromium@chromium-1280x900-128": {
+      "sha256": "5c6c037412dda729ee0bafde6fd104109d8c2c1b5defff04b5e3d1e4699ea12f",
+      "size": 66970,
+      "masks": []
+    },
+    "assistant/chat/split-view#fills-window-when-narrow/closed-at-narrow-width/web-chromium@chromium-1024x900-128": {
+      "sha256": "0167137f85fd65b5b8082bb0042081cd8a3c637e883ae644fa7659958813f936",
+      "size": 54105,
+      "masks": []
+    },
+    "assistant/chat/split-view#fills-window-when-narrow/full-window/web-chromium@chromium-1024x900-128": {
+      "sha256": "7dc4d7223f73eade5b6d0f0e63b2c58bb978b7379d52e8aa75deaea3d21e532f",
+      "size": 27217,
+      "masks": []
+    },
+    "assistant/chat/split-view#team-screen-narrows-beside-her/team-beside-tess/web-chromium@chromium-1280x900-128": {
+      "sha256": "ba2cf3a214f7187748df4512b499303465ba7c8be06493f80ae7d7e4575251e5",
+      "size": 51568,
+      "masks": []
+    },
+    "assistant/chat/streaming-reply#thinking-steps-and-text-arrive-in-order/thought-collapsed/web-chromium@chromium-1280x900-128": {
+      "sha256": "7525f8f7fc1e57ffb6be707f0b88cc55285e09715b94b39f982dc415fa8db646",
+      "size": 86741,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"Tess thought\"] [role=\"button\"]"
+        }
+      ]
+    },
+    "assistant/chat/streaming-reply#thinking-steps-and-text-arrive-in-order/thought-expanded/web-chromium@chromium-1280x900-128": {
+      "sha256": "2d7a49de1f562e323d900858d2e4fe70f9b0f79d3e25b8c8d2fecf07ed88c6bf",
+      "size": 124768,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"Tess thought\"] [role=\"button\"]"
+        }
+      ]
     },
     "schedule/rsvp/eligibility#roster-removal/rsvp-after-removal/web-safari-ios@ios-simulator-402x874-27": {
       "sha256": "7ec34a848765cb42f0d550bda625368335e716c32d823059a8dc4cd3a24a4fee",
@@ -39,221 +263,6 @@
       "sha256": "6211aa37eac14489b6e8d10afc2b3b964d4915f87546fd1ce0cb32cce33ed71f",
       "size": 230366,
       "masks": []
-    },
-    "assistant/chat/attachments#dropped-and-chosen-files-reach-the-model/attach-panel/web-chromium@chromium-1280x900-128": {
-      "sha256": "38eba31db34fb68cc9c0e8d7a2d258a059d5474a03dcc1692b2b8d5700ac5279",
-      "size": 83057,
-      "masks": []
-    },
-    "assistant/chat/attachments#dropped-and-chosen-files-reach-the-model/files-sent/web-chromium@chromium-1280x900-128": {
-      "sha256": "78523a6384d5632de6502617632164b6db68636d649e51e2cd82cec399afc215",
-      "size": 81523,
-      "masks": []
-    },
-    "assistant/chat/column-divider#drag-resizes-and-reload-keeps/column-wider/web-chromium@chromium-1280x900-128": {
-      "sha256": "952168309d178f42e88caf6d5e43352f4192c28d4b94cc93325870d8f9f1d5b1",
-      "size": 56401,
-      "masks": []
-    },
-    "assistant/chat/column-divider#drag-resizes-and-reload-keeps/width-after-reload/web-chromium@chromium-1280x900-128": {
-      "sha256": "04e16fb38352aaf96c5e3992a2d097e55bd58e9a08b36d10e7bd248f2570ec12",
-      "size": 56403,
-      "masks": []
-    },
-    "assistant/chat/column-divider#keyboard-moves-it-16-points-a-press/column-moved-by-keys/web-chromium@chromium-1280x900-128": {
-      "sha256": "1dfb292eb522db942dadde49b6cf66974b5f3d0bb5bdf9e1a321f333738b2c6f",
-      "size": 57019,
-      "masks": []
-    },
-    "assistant/chat/composer#shift-enter-is-a-new-line/two-lines/web-chromium@chromium-1280x900-128": {
-      "sha256": "9d36cded363f49812e24235b18ac013f128bcbd92f0070bc72b047f202b97dc0",
-      "size": 75015,
-      "masks": []
-    },
-    "assistant/chat/composer#title-and-plain-plus/header-and-composer/web-chromium@chromium-1280x900-128": {
-      "sha256": "83f46a7082376a6a8a7c69dc12d1106216d684a4101e4ca546dcd483938ff071",
-      "size": 75660,
-      "masks": []
-    },
-    "assistant/chat/confirm-hold#card-shows-the-change/change-card/web-chromium@chromium-1280x900-128": {
-      "sha256": "f588313767c7311a96dde4a20219e3429b6ec6fc4e12a69c31cdbd6f99b0db13",
-      "size": 119142,
-      "masks": [
-        {
-          "id": "Tess change request"
-        },
-        {
-          "id": "Tess change body"
-        }
-      ]
-    },
-    "assistant/chat/confirm-hold#full-hold-makes-the-change/change-done/web-chromium@chromium-1280x900-128": {
-      "sha256": "dff561e5982813f6700fcbad55e72963017af69875b8274dcd60705c4ee6311c",
-      "size": 126541,
-      "masks": [
-        {
-          "id": "Tess change request"
-        },
-        {
-          "id": "Tess change body"
-        },
-        {
-          "css": "[data-testid=\"Tess thought\"]"
-        }
-      ]
-    },
-    "assistant/chat/header-button#absent-without-tess/header-without-tess/web-chromium@chromium-1280x900-128": {
-      "sha256": "8ce19102efcad4b4f96f68b0e8e6776c181a1a4e230e5d1e7c04b72ec6a40ed9",
-      "size": 55440,
-      "masks": []
-    },
-    "assistant/chat/header-button#before-notifications/header-member/web-chromium@chromium-1280x900-128": {
-      "sha256": "e5bb441e6d8bcf49f95e9dada5a032831b7dfcee7ad980d4a3db11ae2dee9cee",
-      "size": 41793,
-      "masks": []
-    },
-    "assistant/chat/header-button#before-notifications/header-umpire/web-chromium@chromium-1280x900-128": {
-      "sha256": "5cf638ec3e178eff03e1fbd66099038e67932ccd087bbfb6c57f4061395c1929",
-      "size": 56134,
-      "masks": []
-    },
-    "assistant/chat/links-in-pane#bubble-closes-an-open-chart/settings-after-chart/web-chromium@chromium-1280x900-128": {
-      "sha256": "750b39d1d29b5f8b2d173d555dd4429e5201737022274671c07d85e5694094b2",
-      "size": 94416,
-      "masks": []
-    },
-    "assistant/chat/links-in-pane#chart-opens-over-the-angle-view/chart-over-angle/web-chromium@chromium-1280x900-153": {
-      "sha256": "31108e4126852d2cd7e5d40b0b81b8c1bc362b477ca83489e47f3917ee6595de",
-      "size": 48641,
-      "masks": []
-    },
-    "assistant/chat/links-in-pane#hidden-player-is-not-shown/back-at-home/web-chromium@chromium-1280x900-128": {
-      "sha256": "183b714e8f8c011ed8d775bb396bcfb0f9a0a80cb1f33288b5efed6c7efc476d",
-      "size": 75901,
-      "masks": []
-    },
-    "assistant/chat/links-in-pane#hidden-player-is-not-shown/player-denied/web-chromium@chromium-1280x900-128": {
-      "sha256": "0e769bb1e0802ea72b0d58565b79a754880ccf3db0f060e0d5b8b8578dd39242",
-      "size": 44766,
-      "masks": []
-    },
-    "assistant/chat/links-in-pane#player-name-links-to-the-profile/player-link/web-chromium@chromium-1280x900-128": {
-      "sha256": "a8942079e705d7d63b690577c103b1c6628a59274fdf3d48c75480db245f2404",
-      "size": 81990,
-      "masks": []
-    },
-    "assistant/chat/links-in-pane#player-name-links-to-the-profile/player-profile/web-chromium@chromium-1280x900-128": {
-      "sha256": "1afa59b6174a98dec458425841a45de570cdc43c937312f301be6bd726abc739",
-      "size": 55765,
-      "masks": []
-    },
-    "assistant/chat/links-in-pane#way-bubble-opens-team-settings/settings-beside-chat/web-chromium@chromium-1280x900-128": {
-      "sha256": "627efb8955bb7c77288357979fec0e863c818cae996a27040838f558336baa43",
-      "size": 83186,
-      "masks": []
-    },
-    "assistant/chat/links-in-pane#way-bubble-opens-team-settings/way-bubble/web-chromium@chromium-1280x900-128": {
-      "sha256": "ac4ce866a26e56b1401878754de0dfbb03b6258e33ea736ff92683ba8c3ea173",
-      "size": 82326,
-      "masks": []
-    },
-    "assistant/chat/push-to-talk#each-hold-becomes-a-message/two-messages-heard/web-chromium@chromium-1280x900-128": {
-      "sha256": "adaeebe6a8a096bf5f509ea52b2dac33c190f6f85416e66e10cfdb48f4bac91a",
-      "size": 96775,
-      "masks": []
-    },
-    "assistant/chat/refusals#off-topic-declined-with-no-tool/declined/web-chromium@chromium-1280x900-128": {
-      "sha256": "00418b6d78b68580e18cd4c3cc666b3cf74456b36ae03542b9d0591b06bbf90e",
-      "size": 79285,
-      "masks": []
-    },
-    "assistant/chat/refusals#scoring-write-refused-before-any-card/refused/web-chromium@chromium-1280x900-128": {
-      "sha256": "aaa36c26b44ff916391083dd73f30ef8c7d4f1f05745859a2259ef6cb2c875d6",
-      "size": 82678,
-      "masks": []
-    },
-    "assistant/chat/rich-content#chart-over-the-pane-loads-nothing-remote/chart-card/web-chromium@chromium-1280x900-128": {
-      "sha256": "ff70a20befb5b407ed3992c10c9488e8ed9cd5b542bb30fb8de454ef160f04e6",
-      "size": 79365,
-      "masks": []
-    },
-    "assistant/chat/rich-content#chart-over-the-pane-loads-nothing-remote/chart-over-pane/web-chromium@chromium-1280x900-128": {
-      "sha256": "9acfb1ebd619b923ae6600025109a76e9e24b25bd00b0c80d42cad3e09b5f4f0",
-      "size": 35069,
-      "masks": []
-    },
-    "assistant/chat/space-hold#held-in-the-field-listens/heard-as-a-message/web-chromium@chromium-1280x900-128": {
-      "sha256": "282e4f3bb10bea9a3feea4d7deb61b4ab3ef7a15b4649d03879751aa5d858499",
-      "size": 99747,
-      "masks": []
-    },
-    "assistant/chat/space-hold#held-on-the-page-listens/heard-from-the-page/web-chromium@chromium-1280x900-128": {
-      "sha256": "282e4f3bb10bea9a3feea4d7deb61b4ab3ef7a15b4649d03879751aa5d858499",
-      "size": 99747,
-      "masks": []
-    },
-    "assistant/chat/space-hold#quick-press-activates-a-focused-tab/team-tab-selected/web-chromium@chromium-1280x900-128": {
-      "sha256": "2f7a3cf3634f2c32c999cb4d54eb77fc5be5a6818cbbcd819eddb0e0384cce89",
-      "size": 60579,
-      "masks": []
-    },
-    "assistant/chat/space-hold#quick-press-types-a-space/field-holds-a-space/web-chromium@chromium-1280x900-128": {
-      "sha256": "6fe94812d82f3ea4ab1e0fcddf99dc253e748456a1c473b4a45ae3fef9307a9a",
-      "size": 91961,
-      "masks": []
-    },
-    "assistant/chat/space-hold#rolled-press-keeps-the-order/field-in-order/web-chromium@chromium-1280x900-128": {
-      "sha256": "9dacf67fc266b60a00cde72a6027221b5c1d776d6f2d5e1a06be6bec53ec1515",
-      "size": 92999,
-      "masks": []
-    },
-    "assistant/chat/split-view#back-closes-her-and-keeps-the-address/team-after-back/web-chromium@chromium-1024x900-128": {
-      "sha256": "0d35cc60a8ae8c7f68a627d789847b562c24b4d1b59d834e7681ec32d4747b9a",
-      "size": 36296,
-      "masks": []
-    },
-    "assistant/chat/split-view#column-beside-pane/split/web-chromium@chromium-1280x900-128": {
-      "sha256": "83f46a7082376a6a8a7c69dc12d1106216d684a4101e4ca546dcd483938ff071",
-      "size": 75660,
-      "masks": []
-    },
-    "assistant/chat/split-view#dj-screen-keeps-her/dj-beside-tess/web-chromium@chromium-1280x900-128": {
-      "sha256": "ed601c0ae6e670a58fdb5879ada0a7b63b24dbb33ed8bef3b7640981a6897379",
-      "size": 65536,
-      "masks": []
-    },
-    "assistant/chat/split-view#fills-window-when-narrow/closed-at-narrow-width/web-chromium@chromium-1024x900-128": {
-      "sha256": "bc1651e5ce80afed7f39502647ecaf01df03c0eeab914653ae4b8f4201cd081c",
-      "size": 54958,
-      "masks": []
-    },
-    "assistant/chat/split-view#fills-window-when-narrow/full-window/web-chromium@chromium-1024x900-128": {
-      "sha256": "348bbfdfafdd21bcc07cea50e2c54c310fae2bcad786691b97f4c673d7717c3d",
-      "size": 31090,
-      "masks": []
-    },
-    "assistant/chat/split-view#team-screen-narrows-beside-her/team-beside-tess/web-chromium@chromium-1280x900-128": {
-      "sha256": "092048711741bc23e7c726bf1163e4abfefb41f9f091280a69db3c4e559b33de",
-      "size": 56556,
-      "masks": []
-    },
-    "assistant/chat/streaming-reply#thinking-steps-and-text-arrive-in-order/thought-collapsed/web-chromium@chromium-1280x900-128": {
-      "sha256": "15e46bc8dd421fbac3c6c28853abba232453c056fbafe0dafad6c49b805608dd",
-      "size": 91531,
-      "masks": [
-        {
-          "css": "[data-testid=\"Tess thought\"] [role=\"button\"]"
-        }
-      ]
-    },
-    "assistant/chat/streaming-reply#thinking-steps-and-text-arrive-in-order/thought-expanded/web-chromium@chromium-1280x900-128": {
-      "sha256": "ea0d779244d75d066dfba0adc736a4c1b5b1e016c32fd60d3a19f1d5ffe7d92a",
-      "size": 129642,
-      "masks": [
-        {
-          "css": "[data-testid=\"Tess thought\"] [role=\"button\"]"
-        }
-      ]
     }
   }
 }
