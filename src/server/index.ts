@@ -780,7 +780,12 @@ function runWorker(): void {
   )
   app.use('/api/v1', chatRoutes(db, mediaContext))
   app.use('/api/v1', chatKeyRoutes(db))
-  app.use('/api/v1', chatEpochRoutes(db))
+  app.use(
+    '/api/v1',
+    chatEpochRoutes(db, () => new Date(), {
+      freshEpochsEnabled: () => serverConfig.chatHistoryRecoveryEnabled
+    })
+  )
   // A delete takes the attachments only it referenced off the Space.
   app.use(
     '/api/v1',
