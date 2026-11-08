@@ -243,8 +243,12 @@ export class ConcurrentScoringRig {
     })
   }
 
-  async expectLineup(index: number, expected: string[]): Promise<void> {
-    const deadline = Date.now() + 3000
+  async expectLineup(
+    index: number,
+    expected: string[],
+    acknowledgedAt = Date.now()
+  ): Promise<void> {
+    const deadline = acknowledgedAt + 3000
     let actual: string[] = []
     const samples: Array<{ elapsed: number; lineup: string[] }> = []
     do {
@@ -438,14 +442,31 @@ export class ConcurrentScoringRig {
     const changed = await this.lineup(2)
     if (JSON.stringify(before) === JSON.stringify(changed))
       throw new Error('Coach reorder made no change')
+    // The button disables optimistically. Time peer adoption from the actual
+    // server acknowledgement, not from that optimistic local render.
+    const saved = this.clients[2]
+      .page!.waitForResponse(
+        response =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname.endsWith(
+            `/games/${this.fixture.ids.game}/lineups`
+          )
+      )
+      .then(async response => {
+        if (!response.ok())
+          throw new Error(`Coach lineup save failed: ${response.status()}`)
+        await response.json()
+        return Date.now()
+      })
     await this.tap(2, '^Save Rosters$')
+    const acknowledgedAt = await saved
     await this.clients[2].m.assertVisible({
       css: '[aria-label="Save Rosters"][aria-disabled="true"]',
       timeout: 15000
     })
     await Promise.all([
-      this.expectLineup(0, changed),
-      this.expectLineup(1, changed)
+      this.expectLineup(0, changed, acknowledgedAt),
+      this.expectLineup(1, changed, acknowledgedAt)
     ])
     await this.capture(`coach-reorder-${Date.now()}`)
     await this.tap(0, '^Cancel$')
