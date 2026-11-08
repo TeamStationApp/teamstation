@@ -62,7 +62,7 @@ export function TvBrand({
               <Stop
                 offset="0"
                 stopColor="#b46aff"
-                stopOpacity={subtleHalo ? 0.17 : 0.85}
+                stopOpacity={subtleHalo ? 0.34 : 0.85}
               />
               <Stop offset="1" stopColor="#8033db" stopOpacity={0} />
             </RadialGradient>
