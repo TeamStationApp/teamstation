@@ -1727,7 +1727,7 @@ describe('posting and reading plays', function () {
             }
           ]
         },
-        'Play 2: teamStation must be a valid version 1, 2 or 3 record'
+        'Play 2: teamStation must be a valid version 1, 2, 3 or 4 record'
       ],
       [
         {
@@ -1742,7 +1742,7 @@ describe('posting and reading plays', function () {
             teamStation: record('2')
           }
         },
-        'Play 5: teamStation must be a valid version 1, 2 or 3 record'
+        'Play 5: teamStation must be a valid version 1, 2, 3 or 4 record'
       ],
       [
         {
@@ -1753,7 +1753,7 @@ describe('posting and reading plays', function () {
             }
           ]
         },
-        'Play 0: teamStation must be a valid version 1, 2 or 3 record'
+        'Play 0: teamStation must be a valid version 1, 2, 3 or 4 record'
       ]
     ] as const) {
       const refused = await ask(`/games/${twiceId}/events`, 'POST', {
@@ -2162,10 +2162,17 @@ describe('posting and reading plays', function () {
     expect(players).deep.equals([])
     expect(await gameRow(liveAtBatId)).deep.include({ status: 'inProgress' })
     const read = await ask(`/games/${liveAtBatId}/events`)
-    const { lineupsDigest, playsDigest, namesDigest, halves, ...events } =
-      read.body
+    const {
+      lineupsDigest,
+      playsDigest,
+      namesDigest,
+      halves,
+      scoringMutation,
+      ...events
+    } = read.body
     // The reader may save both sides' lineups.
     expect(halves).length(2)
+    expect(scoringMutation).includes({ revision: 0, frontier: 0 })
     expect(withoutTagTargets(events)).deep.equals({
       plays: [],
       // Named from the batter's account.

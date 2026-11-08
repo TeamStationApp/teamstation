@@ -864,8 +864,40 @@ const idempotencyKeyParam = {
   schema: { type: 'string', minLength: 1, maxLength: 200 }
 }
 
+const scoringMutationSchema = {
+  type: 'object',
+  required: ['at', 'id', 'revision', 'frontier'],
+  properties: {
+    at: {
+      type: 'integer',
+      minimum: 0,
+      description:
+        'Original user action time, Unix milliseconds. At most five seconds ahead of server time.'
+    },
+    id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
+    revision: {
+      type: 'integer',
+      minimum: 0,
+      description:
+        'Automatic completion and rebase revisions retain the original at and id.'
+    },
+    frontier: {
+      type: 'integer',
+      minimum: 0,
+      description:
+        'Current at-bat index, or the index following the last completed at-bat. A winning mutation removes the superseded tail from this index.'
+    }
+  }
+}
+
 /** What every answer of a post says of the game it leaves. */
 const postedDigests = {
+  scoringMutation: scoringMutationSchema,
+  superseded: {
+    type: 'boolean',
+    description:
+      'True when an older scoring mutation was ignored. The response contains the canonical game; the client must adopt it instead of marking the older snapshot saved.'
+  },
   currentPlay: {
     oneOf: [{ $ref: '#/components/schemas/GumboCurrentPlay' }, { type: 'null' }]
   },
@@ -5192,6 +5224,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         post: {
           summary: "Replace a game's plays",
           description:
+            'Games with deferred lineup records require the header `x-teamstation-scoring: deferred-lineups-v1` for reads and writes; unsupported clients receive 409 and an update message. These records retain version 4 by-team envelopes on the wire instead of being downgraded to version 2. ' +
             'One body is the whole set. A play is replaced when its ' +
             '`about.atBatIndex` is already stored, and a stored index that is ' +
             'not in the body is deleted, including a legacy line-score-only ' +
@@ -5243,7 +5276,13 @@ export function openApiDocument(version: string): OpenApiDocument {
             'is refused the same way with `details: { stale: true, ' +
             'generation }`: the sender opens the game again. A post answers ' +
             'every stored play, unless it is a live post and `answer=edits` ' +
-            'asks for only what it wrote (`edits`).',
+            'asks for only what it wrote (`edits`). With `scoringMutation`, ' +
+            'the request must include currentPlay (null when none). Conflicting ' +
+            'scoring writes are ordered by original action time, ' +
+            'then id and revision. Older writes return the canonical game with ' +
+            '`superseded: true`, without changing it, even with `answer=edits`. ' +
+            'Retries retain the original identity; reuse with different content ' +
+            'is 409. Generation and team checks still precede this ordering.',
           security: [{ bearer: [] }],
           parameters: [
             gameIdParam,
@@ -5316,6 +5355,18 @@ export function openApiDocument(version: string): OpenApiDocument {
                         "a game's first plays fixes its fence at this one. " +
                         'Anything but whole feet from 1 to 600 is ignored, ' +
                         "and the game's resolved fence is fixed instead."
+                    },
+                    scoringMutation: scoringMutationSchema,
+                    scoringHistory: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/GumboPlay' },
+                      description:
+                        'Completed editable scoring ancestry for a stamped delta. Requires scoringBase; if that base was replaced, the server restores this history before applying the winning delta. Imported read-only plays are excluded.'
+                    },
+                    scoringBase: {
+                      anyOf: [scoringMutationSchema, { type: 'null' }],
+                      description:
+                        'The last observed scoring mutation, or null before any scoring. A changed scoring version returns stale 409 unless the stamped delta includes scoringHistory for reconciliation. Omission retains legacy behavior.'
                     },
                     lineupsBase: {
                       type: 'string',
@@ -5423,7 +5474,8 @@ export function openApiDocument(version: string): OpenApiDocument {
         },
         get: {
           summary: "A game's plays",
-          description: 'The stored plays in `atBatIndex` order.',
+          description:
+            'The stored plays in `atBatIndex` order. Games with deferred lineup records require the header `x-teamstation-scoring: deferred-lineups-v1` for reads and writes; unsupported clients receive 409 and an update message. These records retain version 4 by-team envelopes on the wire instead of being downgraded to version 2. ',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -5488,6 +5540,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                       },
                       playsDigest: { type: 'string' },
                       namesDigest: { type: 'string' },
+                      scoringMutation: scoringMutationSchema,
                       lineupsDigest: { type: 'string' },
                       generation: { type: 'integer' },
                       swap: {
