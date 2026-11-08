@@ -323,7 +323,8 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         req.body
       )
       const fallback =
-        options.tvAppOrigin ?? defaultTvAppOrigin(options.publicUrl)
+        options.tvAppOrigin ??
+        defaultTvAppOrigin(options.publicUrl, options.tvAppOrigins)
       const appOrigin =
         allowedAppOrigin(body.appOrigin, options.tvAppOrigins ?? [fallback]) ??
         fallback

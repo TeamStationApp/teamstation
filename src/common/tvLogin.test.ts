@@ -86,5 +86,11 @@ describe('TV link identity', () => {
       'https://app.teamstation.app'
     )
     expect(defaultTvAppOrigin(undefined)).equals('https://app.teamstation.app')
+    expect(defaultTvAppOrigin(undefined, ['https://tv.example.test'])).equals(
+      'https://tv.example.test'
+    )
+    expect(
+      defaultTvAppOrigin(undefined, ['https://app.teamstation.app'])
+    ).equals('https://app.teamstation.app')
   })
 })

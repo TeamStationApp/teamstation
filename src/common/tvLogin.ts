@@ -79,8 +79,16 @@ export function tvBrowserUrl(
   return `${server}/account/tv?token=${encodeURIComponent(token)}`
 }
 
-export function defaultTvAppOrigin(server: string | undefined): string {
-  return /^https:\/\/develop[1-8]?\.teamstation\.app$/.test(server ?? '')
+export function defaultTvAppOrigin(
+  server: string | undefined,
+  registered?: readonly string[]
+): string {
+  const selected = /^https:\/\/develop[1-8]?\.teamstation\.app$/.test(
+    server ?? ''
+  )
     ? 'https://develop.teamstation.app'
     : 'https://app.teamstation.app'
+  return registered?.length === 1 && !registered.includes(selected)
+    ? registered[0]
+    : selected
 }
