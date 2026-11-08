@@ -440,8 +440,9 @@ function closePlay(ctx: Ctx): void {
     atBatIndex: play.about.atBatIndex,
     eventType: play.result.eventType
   })
-  const lineup = state.liveData.boxscore.teams[battingSide(state)]
-  lineup.battingIndex = (lineup.battingIndex + 1) % lineup.battingOrder.length
+  const battingLineup = state.liveData.boxscore.teams[battingSide(state)]
+  battingLineup.battingIndex =
+    (battingLineup.battingIndex + 1) % battingLineup.battingOrder.length
   state.pending = null
   state.homeQueue = []
   if (line(ctx).outs >= 3) nextHalf(ctx)
@@ -454,6 +455,9 @@ function closePlay(ctx: Ctx): void {
       batter: line(ctx).offense.batter?.id ?? null
     })
   }
+  const deferred = ctx.state.deferredLineups ?? []
+  delete ctx.state.deferredLineups
+  for (const action of deferred) lineup(ctx, action)
 }
 
 /**
@@ -2056,6 +2060,22 @@ function courtesyRunner(ctx: Ctx, action: LineupAction): void {
 
 function lineup(ctx: Ctx, action: LineupAction): void {
   const state = ctx.state
+  const index =
+    state.liveData.plays.currentPlay?.about.atBatIndex ??
+    state.liveData.plays.allPlays.length
+  if (
+    action.effectiveAtBat != null &&
+    (action.effectiveAtBat > index || state.pending != null)
+  ) {
+    ;(state.deferredLineups ??= []).push({
+      ...action,
+      effectiveAtBat: Math.max(
+        action.effectiveAtBat,
+        index + (state.pending == null ? 0 : 1)
+      )
+    })
+    return
+  }
   if (state.pending != null) refuse('notNow', 'Finish the current play first')
   if (action.kind === 'runner') {
     courtesyRunner(ctx, action)
