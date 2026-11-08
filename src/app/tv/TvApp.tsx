@@ -5,7 +5,13 @@ import React, {
   useState,
   useSyncExternalStore
 } from 'react'
-import { NativeModules, StyleSheet, Text, View } from 'react-native'
+import {
+  NativeModules,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View
+} from 'react-native'
 import { Path, Rect, Svg } from 'react-native-svg'
 
 import { TeamStationClient } from '../../common/api'
@@ -17,6 +23,15 @@ import { TvBackdrop, TvBrand } from './TvBrand'
 import { TvBrowser, type TvPlayRequest } from './TvBrowser'
 import { TvButton } from './TvButton'
 import { TvPlayer } from './TvPlayer'
+
+const loginWidth = 1600
+const loginHeight = 940
+export function tvLoginScale(width: number, height: number): number {
+  return Math.max(
+    0,
+    Math.min(1, (width - 140) / loginWidth, (height - 140) / loginHeight)
+  )
+}
 
 export function TvQr({ value }: { value: string }): React.ReactElement {
   const qr = useMemo(() => {
@@ -31,15 +46,22 @@ export function TvQr({ value }: { value: string }): React.ReactElement {
     for (let x = 0; x < count; x++)
       if (qr.isDark(y, x)) path += `M${x + 4} ${y + 4}h1v1h-1z`
   return (
-    <Svg
-      accessibilityLabel="Scan to sign in"
-      width={310}
-      height={310}
-      viewBox={`0 0 ${count + 8} ${count + 8}`}
-    >
-      <Rect width={count + 8} height={count + 8} fill="#fff" />
-      <Path d={path} fill="#000" />
-    </Svg>
+    <View style={styles.qrCard}>
+      <Svg
+        accessibilityLabel="Scan to sign in"
+        width={620}
+        height={620}
+        viewBox={`0 0 ${count + 8} ${count + 8}`}
+      >
+        <Rect
+          width={count + 8}
+          height={count + 8}
+          rx={(24 * (count + 8)) / 620}
+          fill="#fff"
+        />
+        <Path d={path} fill="#000" />
+      </Svg>
+    </View>
   )
 }
 export function TvApp({
@@ -49,6 +71,7 @@ export function TvApp({
   apiBaseUrl?: string
   probeUrls?: string
 }): React.ReactElement {
+  const { width, height } = useWindowDimensions()
   const client = useMemo(
     () => new TeamStationClient({ baseUrl: apiBaseUrl }),
     [apiBaseUrl]
@@ -89,16 +112,27 @@ export function TvApp({
         {__DEV__ && probeUrls != null && probeUrls !== '' ? (
           <PlaybackProbe urls={probeUrls.split('|')} />
         ) : state.phase === 'login' && state.request != null ? (
-          <View style={styles.login}>
-            <View style={styles.column}>
-              <TvBrand title="TeamStation" />
+          <View
+            testID="tv-login-panel"
+            style={[
+              styles.login,
+              { transform: [{ scale: tvLoginScale(width, height) }] }
+            ]}
+          >
+            <View style={styles.loginColumn}>
+              <TvBrand
+                title="TeamStation"
+                titleSize={90}
+                iconScale={2}
+                subtleHalo
+              />
               <Text style={styles.title}>Your games. On the big screen.</Text>
-              <Text style={styles.copy}>
-                Scan the QR code with your phone’s camera, or open TeamStation
-                TV from your account on a signed-in phone or computer.
+              <Text style={styles.loginCopy}>
+                Scan the QR code with your phone's camera or open TeamStation
+                and enter the 8-digit code in your account settings.
               </Text>
             </View>
-            <View style={styles.column}>
+            <View style={styles.loginColumn}>
               <TvQr value={state.request.qrUrl} />
               <Text
                 testID="tv-login-code"
@@ -107,15 +141,12 @@ export function TvApp({
               >
                 {state.request.displayCode}
               </Text>
-              <Text style={styles.copy}>
-                New code in{' '}
-                {Math.max(0, Math.ceil((state.request.expiresAt - now) / 1000))}{' '}
-                seconds
-              </Text>
-              <Text style={styles.hint}>
-                Enter these eight letters on your signed-in device.
-              </Text>
             </View>
+            <Text style={styles.countdown}>
+              New code in{' '}
+              {Math.max(0, Math.ceil((state.request.expiresAt - now) / 1000))}{' '}
+              seconds
+            </Text>
           </View>
         ) : state.phase === 'ready' ? (
           <>
@@ -162,6 +193,16 @@ export function TvApp({
   )
 }
 const styles = StyleSheet.create({
+  qrCard: {
+    width: 620,
+    height: 620,
+    borderRadius: 24,
+    backgroundColor: '#fff',
+    shadowColor: '#a855f7',
+    shadowOpacity: 0.14,
+    shadowRadius: 32,
+    shadowOffset: { width: 0, height: 0 }
+  },
   browsing: { padding: 0 },
   browser: { flex: 1, width: '100%' },
   hidden: { display: 'none' },
@@ -176,16 +217,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 100,
-    maxWidth: 1600
+    width: loginWidth,
+    height: loginHeight
+  },
+  loginColumn: { alignItems: 'center', gap: 18, width: 750, flexShrink: 1 },
+  loginCopy: {
+    fontSize: 25,
+    lineHeight: 36,
+    color: '#ddd',
+    textAlign: 'center'
+  },
+  countdown: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    fontSize: 25,
+    lineHeight: 36,
+    color: '#ddd',
+    textAlign: 'center'
   },
   column: { alignItems: 'center', gap: 28, maxWidth: 680, flexShrink: 1 },
   title: {
-    fontSize: 40,
+    fontSize: 50,
     fontWeight: '700',
     color: '#fff',
     textAlign: 'center'
   },
   copy: { fontSize: 25, lineHeight: 36, color: '#ddd', textAlign: 'center' },
-  hint: { fontSize: 22, color: '#bbb', textAlign: 'center' },
   code: { fontSize: 52, letterSpacing: 8, fontWeight: '700', color: '#fff' }
 })
