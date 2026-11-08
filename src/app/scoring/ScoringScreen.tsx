@@ -58,7 +58,7 @@ import { scoringMenuFrame, WEB_MENU_BUTTON } from '../field/fieldSafeArea'
 import type { BaseProjection } from '../field/fieldTypes'
 import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
 import { useFieldSurface } from '../field/useFieldSurface'
-import { lstrings } from '../locales/strings'
+import { lstrings, sprintf } from '../locales/strings'
 import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
 import { CachingClient } from '../sync/cachingClient'
@@ -180,6 +180,7 @@ import {
 } from './scoringStatusPlacement'
 import {
   type HistoryEntry,
+  type PlanNotice,
   type Position,
   POSITIONS,
   type ScoringEvent,
@@ -857,6 +858,49 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     </>
   )
 }
+/**
+ * What an inning shift did, as the screen tells the scorer. With every
+ * planned side applied the teams go unnamed; with one refused, each line
+ * names its team, the side applied (at most one then) with its warnings.
+ */
+function planNoticeText(
+  notice: PlanNotice,
+  teams: Record<Side, { name: string }>
+): string {
+  if (notice.refused.length === 0)
+    return notice.summary === ''
+      ? sprintf(lstrings.scoring_plan_applied, notice.inning)
+      : sprintf(
+          lstrings.scoring_plan_applied_warnings,
+          notice.inning,
+          notice.summary
+        )
+  return [
+    ...notice.sides.map(side =>
+      notice.summary === ''
+        ? sprintf(
+            lstrings.scoring_plan_team_applied,
+            teams[side].name,
+            notice.inning
+          )
+        : sprintf(
+            lstrings.scoring_plan_team_applied_warnings,
+            teams[side].name,
+            notice.inning,
+            notice.summary
+          )
+    ),
+    ...notice.refused.map(({ side, reason }) =>
+      sprintf(
+        lstrings.scoring_plan_refused,
+        teams[side].name,
+        notice.inning,
+        reason
+      )
+    )
+  ].join('\n')
+}
+
 function statusOf(game: GameSession): SaveStatus {
   return {
     pending: game.pending,
@@ -2079,9 +2123,37 @@ function ScoringPanel(props: {
   noticed.current = props.game
   /** The status a game called scored elsewhere was last read again for. */
   const unmarked = useRef<string | undefined>(undefined)
+  // Both sides' game plans, read as the screen opens, again when a coach
+  // saves one, and again after the socket was down, since a notice missed
+  // then is never sent again. A read that fails keeps the plans the screen
+  // has (none, if it never read them): scoring goes on without a shift.
+  const plansRead = useRef(0)
+  const readPlans = useRef<() => void>(() => undefined)
+  readPlans.current = () => {
+    if (!persistent) return
+    const read = ++plansRead.current
+    client.gamePlans(gameId).then(
+      plans => {
+        if (read === plansRead.current) dispatch({ type: 'PLANS', plans })
+      },
+      () => undefined
+    )
+  }
+  useEffect(() => {
+    readPlans.current()
+    const reads = plansRead
+    return () => {
+      reads.current++
+    }
+  }, [client, persistent, gameId])
   useEffect(() => {
     if (socket == null || !persistent) return
     return listen(socket, gameId, event => {
+      if (
+        event.type === 'resync' ||
+        (event.type === 'change' && event.kind === 'plans')
+      )
+        readPlans.current()
       if (
         event.type === 'change' &&
         (event.kind === 'playEdits' || event.kind === 'lineups')
@@ -3680,6 +3752,37 @@ function ScoringPanel(props: {
               {statusPill}
             </HeldGameNotice>
           )}
+        </View>
+      )}
+      {state.planNotice != null && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            // Below the scoreboard, clear of its names, as the swap notice.
+            top: '30%',
+            left: 16,
+            right: 16,
+            zIndex: 98,
+            alignItems: 'center'
+          }}
+        >
+          <Text
+            testID="scoringPlanNotice"
+            accessibilityLiveRegion="polite"
+            style={{
+              color: theme.scoringSurface.text,
+              backgroundColor: theme.scoringSurface.background,
+              fontFamily: theme.regularTextFont,
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+              borderRadius: 12,
+              overflow: 'hidden',
+              textAlign: 'center'
+            }}
+          >
+            {planNoticeText(state.planNotice, state.session.gameData.teams)}
+          </Text>
         </View>
       )}
       {state.session.final && (

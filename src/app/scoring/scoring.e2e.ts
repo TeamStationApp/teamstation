@@ -205,6 +205,9 @@ async function open(
         source: 'self',
         confirmedAt: '2027-04-10T12:00:00.000Z'
       }
+    // No coach has planned this game: the scorer's inning ends move nobody.
+    else if (url.pathname === '/api/v1/games/g1/plans')
+      body = { away: null, home: null }
     else if (url.pathname === '/api/v1/games/g1/lineups') {
       status = 404
       body = { error: 'No saved lineup in this events-only fixture' }

@@ -401,6 +401,9 @@ async function open(fixture: Fixture = {}): Promise<{
           dictationModels: []
         }
       else if (u.pathname === '/api/v1/games/g1') body = game
+      // Nobody has planned the game, so no inning's end moves the defence.
+      else if (u.pathname === '/api/v1/games/g1/plans')
+        body = { away: null, home: null }
       else if (u.pathname.endsWith('/events')) {
         if (request.method === 'POST') {
           let bytes = ''

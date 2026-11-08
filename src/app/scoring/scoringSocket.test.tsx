@@ -3,7 +3,11 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { type GameLineupsResponse, TeamStationClient } from '../../common/api'
+import {
+  type GameLineupsResponse,
+  type GamePlansResponse,
+  TeamStationClient
+} from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { GameChangeData, GameSocketEvent } from '../../common/gameSocket'
 import { cleanAction, type ScoringAction } from '../../common/scoring/actions'
@@ -19,6 +23,11 @@ import {
   withNames,
   withoutNames
 } from '../../common/scoring/storedNames'
+import {
+  PLAN_SWAPPED,
+  scoringPlans,
+  scoringSidePlan
+} from '../../test/scoringPlans'
 import { scoringRoster } from '../../test/scoringSession'
 import { lstrings } from '../locales/strings'
 import { CachingClient } from '../sync/cachingClient'
@@ -162,8 +171,12 @@ async function scoring(
     digests?: boolean
     /** What every read says a swap does. */
     swap?: { value: StoredGame['swap'] }
+    /** What every read of the game plans answers. */
+    plans?: { value: GamePlansResponse }
   } = {}
 ): Promise<{
+  /** How many times the screen read the game plans. */
+  planReads: () => number
   changes: FakeChanges
   store: ReturnType<typeof memoryStore>
   other: () => Promise<GameSession>
@@ -236,6 +249,11 @@ async function scoring(
     scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
   client.gameLineups = async () =>
     ({ digest: digest.value }) as unknown as GameLineupsResponse
+  let planReads = 0
+  client.gamePlans = async () => {
+    planReads++
+    return options.plans?.value ?? { away: null, home: null }
+  }
   const changes = new FakeChanges()
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
   const node = document.createElement('div')
@@ -258,6 +276,7 @@ async function scoring(
   await settle()
   if (shown('OK')) await click('OK')
   return {
+    planReads: () => planReads,
     changes,
     store,
     other: open,
@@ -502,6 +521,41 @@ describe('the scoring screen on the game socket', function () {
     await settle()
     await changes.plays((await store.load('g1')).playsDigest)
     expect(reloads).deep.equals([false])
+  })
+
+  it('reads the game plans again on a plans change and a resync, not on a song', async function () {
+    const plans = { value: scoringPlans({}) }
+    const { changes, planReads } = await scoring({ plans })
+    expect(planReads()).equals(1)
+    // A coach turns his plan on: the next inning's end follows it.
+    plans.value = scoringPlans({
+      home: scoringSidePlan(10, { 2: PLAN_SWAPPED })
+    })
+    await changes.emit({
+      type: 'change',
+      gameId: 'g1',
+      kind: 'plans',
+      at: '2026-10-12T12:00:00Z',
+      data: { teamId: 'home' }
+    })
+    expect(planReads()).equals(2)
+    await changes.emit({
+      type: 'change',
+      gameId: 'g1',
+      kind: 'walkUpSong',
+      at: '2026-10-12T12:00:00Z',
+      data: { teamId: 'home', userId: 'u1', song: null }
+    })
+    expect(planReads()).equals(2)
+    await changes.emit({ type: 'resync', gameId: 'g1' })
+    expect(planReads()).equals(3)
+    for (let half = 0; half < 2; half++) {
+      await click('Open scoring menu')
+      await click('End Half Inning')
+      await click('Confirm End Half Inning')
+      await settle()
+    }
+    expect(document.body.textContent).includes('Inning 2 plan applied')
   })
 
   it('reads in again after the socket reconnects, and stops hearing on unmount', async function () {

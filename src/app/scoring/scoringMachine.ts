@@ -145,27 +145,40 @@ export function actsOnOpening(session: ScoringSessionState): boolean {
 
 export function snapshotOf(state: ScoringState): ScoringSnapshot {
   // The log is shared: nothing changes an action once it is logged, and a
-  // step that logs one makes a new log (`act`).
+  // step that logs one makes a new log (`act`). So are the game plans, which
+  // only a `PLANS` event replaces, whole.
   const {
     past: _past,
     checkpoints: _checkpoints,
     session,
     log,
+    plans,
     ...rest
   } = state
-  return { ...copyState(rest), log, session: copyGame(session) }
+  return {
+    ...copyState(rest),
+    log,
+    session: copyGame(session),
+    ...(plans == null ? {} : { plans })
+  }
 }
 
-/** A copy of the screen without the game or its history. */
+/** A copy of the screen without the game, its history or the game plans. */
 export function screenOf(state: ScoringState): ScoringScreenState {
   const {
     past: _past,
     checkpoints: _checkpoints,
     session: _session,
     log: _log,
+    plans: _plans,
     ...screen
   } = state
   return copyState(screen)
+}
+
+/** `state`'s game plans, for a state rebuilt without them. */
+function plansOf(state: ScoringState): Pick<ScoringState, 'plans'> {
+  return state.plans == null ? {} : { plans: state.plans }
 }
 
 /**
@@ -379,6 +392,7 @@ function restoreTo(
   const { session, checkpoints } = gameAt(state, where.logLength)
   return {
     ...copyState(where.screen),
+    ...plansOf(state),
     session,
     log: state.log.slice(0, where.logLength),
     past: state.past.slice(0, historyLength),
@@ -521,6 +535,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
     return state.presentationEnabled === event.enabled
       ? state
       : { ...state, presentationEnabled: event.enabled }
+  if (event.type === 'PLANS') return { ...state, plans: event.plans }
   if (event.type === 'RESET')
     return {
       ...resumedScoringState(
@@ -528,6 +543,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
         event.log,
         state.presentationEnabled
       ),
+      ...plansOf(state),
       ...(event.readOnly === true ? { readOnly: true } : {})
     }
   if (event.type === 'CELEBRATION_DONE')

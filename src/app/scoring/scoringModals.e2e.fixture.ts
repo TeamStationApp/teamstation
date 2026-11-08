@@ -197,7 +197,10 @@ export async function modalFixture(
           })),
           currentPlay: stored.currentPlay
         }
-      } else if (/\/games\/[^/]+$/.test(u.pathname)) {
+      } else if (/^\/api\/v1\/games\/[^/]+\/plans$/.test(u.pathname))
+        // No game here has a plan: inning ends move nobody.
+        body = { away: null, home: null }
+      else if (/\/games\/[^/]+$/.test(u.pathname)) {
         loaded = u.pathname.split('/').at(-1) ?? ''
         body = {
           id: loaded,

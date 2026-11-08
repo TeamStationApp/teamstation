@@ -15,6 +15,7 @@ import {
   asPlayingTimeRules,
   type PlayingTimeRules
 } from '../../common/playingTimeRules'
+import { POSITIONS } from '../../common/scoring/state'
 import { makeDatabase } from '../../server/db/database'
 import type { LineupFixture } from '../../server/dev/lineupFixture'
 import { serverConfig } from '../../server/serverConfig'
@@ -55,16 +56,22 @@ import {
  * sit on six rows with names at 13.75 points; P4 to P9 work the Plan tab:
  * its grid (P4), typing and pasting into a cell (P5), the field picker (P6),
  * moving a player's row (P7), the live playing-time warnings and the save's
- * summary (P8), and Clear (P9); P11 finds the scorekeeper's footer and field
+ * summary (P8), and Clear (P9); P10 scores the game with the plan's toggle
+ * on and then off, ending halves from the scoring menu, and reads the
+ * defence the game stores after each inning's end, with a mid-game edit of
+ * the plan made while the scoring screen is open; P11 finds the
+ * scorekeeper's footer and field
  * as P2 and P3 do. P12 fits the footer on a 320-point screen; P13 has the
  * scorekeeper reorder the lineup over the API after the coach's plan is
  * saved, and finds the coach's screen opening clean, Back asking nothing.
+ * P14 has the head coach turn his plan on and save before the first pitch,
+ * and reads the defence the game's lineup starts in: the plan's inning 1.
  * P2 and P11 need a server that dictates, so the bar draws
  * its microphone; no scenario presses it. P4, P5 and P8 save
  * `coach-plan.png`, `coach-plan-picker-web.png` and
  * `coach-plan-clear-confirm.png` into `TS_LINEUP_ARTIFACTS` when it is set.
  *
- * P8 gives the home team its Playing Time Rules in the fixture's database
+ * P8 and P10 give the home team its Playing Time Rules in the fixture's database
  * (`serverConfig.json`'s, which `lineup-fixture` writes to): the fixture's
  * head coach coaches the team but does not administer it, and the rules'
  * own `PUT /groups/team/:id` is tested with the settings screen.
@@ -206,6 +213,114 @@ async function teamRules(
   }
 }
 
+/**
+ * P10's plan for the home side's nine, in batting order (Ohtani, Lindor,
+ * Alonso, Nimmo, Marte, McNeil, Escobar, Canha, Senga), who open at P, C,
+ * 1B, 2B, SS, 3B, LF, CF and RF: inning 2 swaps the corners and LF with CF
+ * and sits Senga, leaving RF empty; inning 3 swaps them back and puts Senga
+ * in RF. The mid-game edit sits Senga in inning 3 as well, a third sit.
+ */
+const SHIFT_PLAN: PlanCell[][] = [
+  ['P', 'P', 'P', 'P', 'P', 'P'],
+  ['C', 'C', 'C', 'C', 'C', 'C'],
+  ['1B', '3B', '1B', '1B', '1B', '1B'],
+  ['2B', '2B', '2B', '2B', '2B', '2B'],
+  ['SS', 'SS', 'SS', 'SS', 'SS', 'SS'],
+  ['3B', '1B', '3B', '3B', '3B', '3B'],
+  ['LF', 'CF', 'LF', 'LF', 'LF', 'LF'],
+  ['CF', 'LF', 'CF', 'CF', 'CF', 'CF'],
+  ['-', '-', 'RF', 'RF', 'RF', 'RF']
+]
+const SHIFT_EDITED: PlanCell[][] = SHIFT_PLAN.map((row, at) =>
+  at === 8 ? ['-', '-', '-', 'RF', 'RF', 'RF'] : row
+)
+
+/**
+ * P14's plan: SHIFT_PLAN with its second inning first, so the lineup
+ * starts with the corners and LF and CF swapped from the defaults, and
+ * Senga sitting, RF empty.
+ */
+const OPENING_PLAN: PlanCell[][] = SHIFT_PLAN.map(row => [
+  row[1],
+  ...row.slice(1)
+])
+
+/** Who a plan's column puts at each position, by gumboId; null for none. */
+function columnDefense(
+  fixture: LineupFixture,
+  cells: PlanCell[][],
+  inning: number
+): Record<string, number | null> {
+  const defense: Record<string, number | null> = Object.fromEntries(
+    POSITIONS.map(position => [position, null])
+  )
+  cells.forEach((row, at) => {
+    const cell = row[inning - 1]
+    if (cell in defense) defense[cell] = fixture.players.home[at].gumboId
+  })
+  return defense
+}
+
+/** The home side's defence as the game's lineups hold it, by gumboId. */
+async function homeDefense(
+  fixture: LineupFixture
+): Promise<Record<string, number | null>> {
+  const answer = await fetch(`${API}/games/${fixture.gameId}/lineups`, {
+    headers: {
+      authorization: `Bearer ${await tokenOf(fixture, 'scorekeeper')}`
+    }
+  })
+  expect(answer.status).equals(200)
+  const { home } = (await answer.json()) as {
+    home: {
+      current: {
+        defense: Record<string, { gumboId: number | null } | null>
+      } | null
+    }
+  }
+  return Object.fromEntries(
+    POSITIONS.map(position => [
+      position,
+      home.current?.defense[position]?.gumboId ?? null
+    ])
+  )
+}
+
+/** A defence by gumboId, as names, for the log. */
+function named(
+  fixture: LineupFixture,
+  defense: Record<string, number | null>
+): string {
+  return POSITIONS.map(position => {
+    const player = fixture.players.home.find(
+      each => each.gumboId === defense[position]
+    )
+    return `${position} ${player?.name ?? '—'}`
+  }).join(', ')
+}
+
+/** Waits for the game as stored to have reached `inning`'s first pitch. */
+async function storedInning(
+  fixture: LineupFixture,
+  inning: number
+): Promise<void> {
+  const deadline = Date.now() + 30000
+  for (;;) {
+    const answer = await fetch(`${API}/games/${fixture.gameId}/events`, {
+      headers: {
+        authorization: `Bearer ${await tokenOf(fixture, 'scorekeeper')}`
+      }
+    })
+    const read = (await answer.json()) as {
+      currentPlay: { about: { inning: number } } | null
+    }
+    if ((read.currentPlay?.about.inning ?? 0) >= inning) return
+    if (Date.now() > deadline)
+      throw new Error(`The game was never saved into inning ${inning}`)
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+}
+
 /** One browser, and what the scenarios do in it. */
 class Browser {
   readonly errors: string[] = []
@@ -268,6 +383,36 @@ class Browser {
     for (const label of ['OK', 'Close'])
       if ((await this.page.$(`[aria-label="${label}"]`)) != null)
         await this.tap(label)
+  }
+
+  /** The scoring menu's End Half Inning, confirmed. */
+  async endHalf(): Promise<void> {
+    const half = await this.page.$eval('[aria-label="Open scoring menu"]', () =>
+      String(document.body.textContent)
+    )
+    await this.tap('Open scoring menu')
+    await this.tap('End Half Inning')
+    await this.tap('Confirm End Half Inning')
+    await this.page.waitForFunction(
+      before => String(document.body.textContent) !== before,
+      { timeout: 15000 },
+      half
+    )
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+
+  /** One ball to the batter up, once the screen takes it. */
+  async ball(): Promise<void> {
+    await this.tap('Ball')
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+
+  /** What the scoring screen says the last inning shift did, if anything. */
+  async planNotice(): Promise<string | null> {
+    return await this.page.evaluate(() => {
+      const node = document.querySelector('[data-testid="scoringPlanNotice"]')
+      return node == null ? null : String(node.textContent)
+    })
   }
 
   /** The Defense tab chosen and its field drawn, every card in place. */
@@ -1101,6 +1246,68 @@ describe('Coach Plan', function () {
     expect(cleared).has.length(9)
   })
 
+  it('P10 moves the scorekeeper’s defence to the plan’s next column at each inning’s end, and not with the toggle off', async function () {
+    if (CAPTURING) this.skip()
+    for (const enabled of [true, false]) {
+      const toggle = enabled ? 'on' : 'off'
+      const fixture = lineupFixture()
+      await savePlan(fixture, SHIFT_PLAN, enabled)
+      await coach.as(fixture, 'scorekeeper')
+      await coach.scoreGame(fixture.gameId)
+      await coach.ball()
+      await storedInning(fixture, 1)
+      const opening = await homeDefense(fixture)
+      // The defaults: the nine at P to RF in batting order.
+      expect(opening).deep.equals(columnDefense(fixture, SHIFT_PLAN, 3))
+      console.log(`    toggle ${toggle}, inning 1: ${named(fixture, opening)}`)
+      await coach.endHalf()
+      expect(await coach.planNotice()).equals(null)
+      await coach.ball()
+      await coach.endHalf()
+      const second = await coach.planNotice()
+      await coach.ball()
+      await storedInning(fixture, 2)
+      const afterFirst = await homeDefense(fixture)
+      console.log(
+        `    toggle ${toggle}, after the 1st (notice ${JSON.stringify(second)}): ${named(fixture, afterFirst)}`
+      )
+      if (enabled) {
+        expect(second).equals('Inning 2 plan applied')
+        expect(afterFirst).deep.equals(columnDefense(fixture, SHIFT_PLAN, 2))
+      } else {
+        expect(second).equals(null)
+        expect(afterFirst).deep.equals(opening)
+      }
+      // The coach sits Senga a third time in inning 3, against his team's
+      // Max Sits of one (sitting limits on, with only that rule of them),
+      // while the scoring screen stays open: it hears the save.
+      await teamRules(fixture, {
+        enforceSittingLimits: true,
+        noConsecutiveSits: false,
+        equalSittingOrder: 'off'
+      })
+      await savePlan(fixture, SHIFT_EDITED, enabled)
+      await new Promise(resolve => setTimeout(resolve, 3000))
+      await coach.endHalf()
+      await coach.ball()
+      await coach.endHalf()
+      const third = await coach.planNotice()
+      await coach.ball()
+      await storedInning(fixture, 3)
+      const afterSecond = await homeDefense(fixture)
+      console.log(
+        `    toggle ${toggle}, after the 2nd (notice ${JSON.stringify(third)}): ${named(fixture, afterSecond)}`
+      )
+      if (enabled) {
+        expect(third).equals('Inning 3 plan applied — 1 playing-time warning')
+        expect(afterSecond).deep.equals(columnDefense(fixture, SHIFT_EDITED, 3))
+      } else {
+        expect(third).equals(null)
+        expect(afterSecond).deep.equals(opening)
+      }
+    }
+  })
+
   it('P11 puts the scorekeeper’s Cancel beside the microphone and Save Rosters, over a field with no row of three', async function () {
     if (CAPTURING) this.skip()
     const fixture = lineupFixture()
@@ -1256,5 +1463,34 @@ describe('Coach Plan', function () {
     expect(
       await coach.page.evaluate(() => String(document.body.textContent))
     ).not.includes('Discard unsaved roster changes?')
+  })
+
+  it('P14 starts the lineup the head coach saves before the first pitch in his plan’s inning 1, once he turns the plan on', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = lineupFixture()
+    await savePlan(fixture, OPENING_PLAN, false)
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    await coach.tap('Enable per-inning game plan')
+    await coach.tap('Save Rosters')
+    await coach.page.waitForSelector(
+      '[aria-label="Save Rosters"][aria-disabled="true"]',
+      { timeout: 30000 }
+    )
+    const expected = columnDefense(fixture, OPENING_PLAN, 1)
+    // The save is sent behind the screen: read until the game holds it.
+    const deadline = Date.now() + 30000
+    let held = await homeDefense(fixture)
+    while (
+      JSON.stringify(held) !== JSON.stringify(expected) &&
+      Date.now() < deadline
+    ) {
+      await new Promise(resolve => setTimeout(resolve, 500))
+      held = await homeDefense(fixture)
+    }
+    console.log(`    toggle on, saved before the 1st: ${named(fixture, held)}`)
+    expect(held).deep.equals(expected)
+    expect(held).not.deep.equals(columnDefense(fixture, SHIFT_PLAN, 3))
   })
 })
