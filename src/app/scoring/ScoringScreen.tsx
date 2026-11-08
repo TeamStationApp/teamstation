@@ -44,6 +44,7 @@ import {
   runnerDecisionError as baseOccupiedError,
   undoesHitOffer
 } from '../../common/scoring/rules'
+import type { ScoringMutation } from '../../common/scoring/scoringMutation'
 import type { ScoringSession as GameSession } from '../../common/scoring/session'
 import type { DefaultLineups } from '../../common/scoring/startingSetup'
 import { type GameState, setupOf } from '../../common/scoring/state'
@@ -955,10 +956,26 @@ function ScoringPanel(props: {
   const beforeAction = useRef<() => boolean>(() => true)
   const [followNotice, setFollowNotice] = useState<string | null>(null)
   const [model, reduceEvent] = useReducer(
-    (model: ScoringScreenModel, event: ScoringEvent | SavedUndone) =>
-      reduceVisible(model, event, visibleDefaults),
+    (
+      model: ScoringScreenModel & { authorship?: ScoringMutation },
+      input: {
+        event: ScoringEvent | SavedUndone
+        authorship?: ScoringMutation
+      }
+    ) => {
+      const next = reduceVisible(model, input.event, visibleDefaults)
+      return next === model
+        ? model
+        : {
+            ...next,
+            authorship:
+              input.event.type === 'RESET'
+                ? undefined
+                : (input.authorship ?? model.authorship)
+          }
+    },
     props.game,
-    game => {
+    (game): ScoringScreenModel & { authorship?: ScoringMutation } => {
       const resumed = game.resumable()
       return scoringScreenModel(
         withVisibleLineups(
@@ -968,14 +985,25 @@ function ScoringPanel(props: {
       )
     }
   )
-  const dispatch = useCallback((event: ScoringEvent | SavedUndone): void => {
-    if (authoredScoringEvent(event)) {
-      if (!beforeAction.current()) return
-      setFollowNotice(null)
-      follow.current.authored()
-    }
-    reduceEvent(event)
-  }, [])
+  const dispatch = useCallback(
+    (event: ScoringEvent | SavedUndone): void => {
+      const authored = authoredScoringEvent(event)
+      if (authored) {
+        if (!beforeAction.current()) return
+        setFollowNotice(null)
+        // A local tap takes ownership immediately, including while a peer read
+        // is pending. Its generation guard prevents that read from adopting.
+        follow.current.authored()
+      }
+      reduceEvent({
+        event,
+        ...(authored && event.type !== 'GESTURE'
+          ? { authorship: props.game.captureScoringAction() }
+          : {})
+      })
+    },
+    [props.game]
+  )
   useEffect(() => {
     const owner = follow.current
     owner.mounted = true
@@ -1156,8 +1184,9 @@ function ScoringPanel(props: {
       return
     }
     refreshedLog.current = undefined
-    if (state.log !== openedLog.current) props.game.sync(state.log)
-  }, [props.game, state.log])
+    if (state.log !== openedLog.current)
+      props.game.sync(state.log, [], false, model.authorship ?? null)
+  }, [props.game, state.log, model.authorship])
   // Undo taps into play scored before this screen opened, one at a time,
   // each from the game the one before it left: the game steps back one
   // action, and on past any step the screen cannot rest on — a ball in play
@@ -1168,13 +1197,13 @@ function ScoringPanel(props: {
     if (model.savedUndos === 0 || takingBack.current === model.savedUndone)
       return
     takingBack.current = model.savedUndone
-    props.game.sync(state.log)
-    let undone = props.game.undo()
+    props.game.sync(state.log, [], false, model.authorship ?? null)
+    let undone = props.game.undo(model.authorship)
     while (
       undone.problems.length === 0 &&
       (awaitingResult(props.game.state) || actsOnOpening(props.game.state))
     )
-      undone = props.game.undo()
+      undone = props.game.undo(model.authorship)
     dispatch({
       type: 'SAVED_UNDONE',
       ...(undone.problems.length === 0
@@ -1183,7 +1212,14 @@ function ScoringPanel(props: {
           }
         : {})
     })
-  }, [props.game, model.savedUndos, model.savedUndone, state.log, dispatch])
+  }, [
+    props.game,
+    model.savedUndos,
+    model.savedUndone,
+    model.authorship,
+    state.log,
+    dispatch
+  ])
   const [sound, setSound] = useState(true)
   // Once the scorer has tapped the speaker, the stored setting read as the
   // screen opened no longer decides it.
@@ -1903,7 +1939,9 @@ function ScoringPanel(props: {
    * back leaves it, and its Undo, alone. Gives the game as read, and whether
    * it is the play this screen opened on, still waiting for its result.
    */
-  const followServer = async (deferForInput = false): Promise<{
+  const followServer = async (
+    deferForInput = false
+  ): Promise<{
     session: GameState
     oldUnresolved: boolean
   }> => {
@@ -3139,6 +3177,7 @@ function ScoringPanel(props: {
               }
               dispatch({
                 type: 'CLOSE_PLAY',
+                authored: true,
                 generation: state.generation,
                 revision: state.correctionWindow?.revision,
                 sequence: session.meta.sequence

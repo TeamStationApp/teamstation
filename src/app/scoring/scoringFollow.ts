@@ -16,7 +16,7 @@ export function authoredScoringEvent(
     case 'CELEBRATION_DONE':
       return false
     case 'CLOSE_PLAY':
-      return event.generation == null
+      return event.authored === true || event.generation == null
     case 'GESTURE':
       return event.active
     default:
