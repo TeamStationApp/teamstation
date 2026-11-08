@@ -1,7 +1,9 @@
 import type { VideoGame } from '../../common/api'
+import { viewerTimezone } from '../../common/eventTime'
 
 export function gameDate(
-  game: Pick<VideoGame, 'startAt' | 'timezone'>
+  game: Pick<VideoGame, 'startAt' | 'timezone'>,
+  timeZone = viewerTimezone()
 ): string {
   if (game.startAt === null || !Number.isFinite(Date.parse(game.startAt)))
     return 'Date to be announced'
@@ -24,17 +26,20 @@ export function gameDate(
     return `${day} at ${time}`
   }
   try {
-    return format(game.timezone)
+    return format(timeZone)
   } catch {
     return format('UTC') + ' UTC'
   }
 }
-export function monthOf(game: Pick<VideoGame, 'startAt' | 'timezone'>): string {
+export function monthOf(
+  game: Pick<VideoGame, 'startAt' | 'timezone'>,
+  timeZone = viewerTimezone()
+): string {
   if (game.startAt === null || !Number.isFinite(Date.parse(game.startAt)))
     return 'Date to be announced'
   try {
     return new Intl.DateTimeFormat('en-US', {
-      timeZone: game.timezone,
+      timeZone,
       month: 'long',
       year: 'numeric'
     }).format(new Date(game.startAt))
@@ -52,11 +57,12 @@ export function fourAcross<T>(items: T[]): T[][] {
   )
 }
 export function monthSections(
-  games: VideoGame[]
+  games: VideoGame[],
+  timeZone = viewerTimezone()
 ): Array<{ month: string; rows: VideoGame[][] }> {
   const groups: Array<{ month: string; games: VideoGame[] }> = []
   for (const game of games) {
-    const month = monthOf(game)
+    const month = monthOf(game, timeZone)
     const last = groups[groups.length - 1]
     if (last?.month === month) last.games.push(game)
     else groups.push({ month, games: [game] })

@@ -174,6 +174,45 @@ afterEach(async () => {
   failSearch = false
 })
 describe('TV browser journeys', () => {
+  it('renders UTC-stored games under their viewer-local date and month', async () => {
+    const originalGame = games[0]
+    const originalZone = Object.getOwnPropertyDescriptor(
+      Intl.DateTimeFormat.prototype,
+      'resolvedOptions'
+    )!.value as Intl.DateTimeFormat['resolvedOptions']
+    Intl.DateTimeFormat.prototype.resolvedOptions = function (
+      this: Intl.DateTimeFormat
+    ): Intl.ResolvedDateTimeFormatOptions {
+      return { ...originalZone.call(this), timeZone: 'America/Los_Angeles' }
+    }
+    games[0] = {
+      ...originalGame,
+      startAt: '2025-10-01T01:00:00Z',
+      timezone: 'UTC'
+    }
+    try {
+      await render()
+      expect(
+        document.querySelector('[data-testid="tv-hero"]')?.textContent
+      ).contains('September 30 at 6 pm')
+      expect(
+        document.querySelector('[data-testid="recent-game-0"]')?.textContent
+      ).contains('September 30 at 6 pm')
+      await click('[data-testid="team-home"]')
+      const page = [
+        ...document.querySelectorAll('[data-testid="tv-page-home"]')
+      ].at(-1)!
+      expect(
+        page.querySelector('[data-testid="tv-month-0"]')?.textContent
+      ).equals('September 2025')
+      expect(
+        page.querySelector('[data-testid="team-game-0"]')?.textContent
+      ).contains('September 30 at 6 pm')
+    } finally {
+      games[0] = originalGame
+      Intl.DateTimeFormat.prototype.resolvedOptions = originalZone
+    }
+  })
   it('provides the hero watch action on home, team and player pages with the requested scrim', async () => {
     await render()
     const stops = document.querySelectorAll(
