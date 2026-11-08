@@ -1907,10 +1907,17 @@ describe('posting and reading plays', function () {
     expect(players).deep.equals([])
     expect(await gameRow(liveAtBatId)).deep.include({ status: 'inProgress' })
     const read = await ask(`/games/${liveAtBatId}/events`)
-    const { lineupsDigest, playsDigest, namesDigest, halves, ...events } =
-      read.body
+    const {
+      lineupsDigest,
+      playsDigest,
+      namesDigest,
+      halves,
+      scoringMutation,
+      ...events
+    } = read.body
     // The reader may save both sides' lineups.
     expect(halves).length(2)
+    expect(scoringMutation).includes({ revision: 0, frontier: 0 })
     expect(withoutTagTargets(events)).deep.equals({
       plays: [],
       // Named from the batter's account.
