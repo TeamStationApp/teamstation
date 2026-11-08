@@ -1,5 +1,10 @@
 import { shortName, shortNames } from '../../common/names'
 import type { NewRosterPlayer } from '../../common/playerSettings'
+import { storedRecordOf } from '../../common/scoring/gumbo'
+import {
+  compareScoringMutations,
+  type ScoringMutation
+} from '../../common/scoring/scoringMutation'
 import { POSITIONS } from '../../common/scoring/state'
 import { namesIn, withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
@@ -237,7 +242,29 @@ export function appliedEvents(
   }
   for (const index of arrayOf(body.remove))
     if (typeof index === 'number') rows.delete(index)
-  for (const play of arrayOf(body.plays)) {
+  const mutation = body.scoringMutation as ScoringMutation | undefined
+  const prior = stored.scoringMutation as ScoringMutation | undefined
+  const base = body.scoringBase as ScoringMutation | null | undefined
+  const changed =
+    base !== undefined &&
+    (base == null
+      ? prior != null
+      : prior == null || compareScoringMutations(base, prior) !== 0)
+  if (mutation != null)
+    for (const index of rows.keys())
+      if (
+        index > mutation.frontier ||
+        (index === mutation.frontier &&
+          !(storedRecordOf(body.currentPlay)?.actions ?? []).some(
+            action =>
+              !(action.type === 'gameFlow' && action.kind === 'closePlay')
+          ))
+      )
+        rows.delete(index)
+  for (const play of [
+    ...(mutation != null && changed ? arrayOf(body.scoringHistory) : []),
+    ...arrayOf(body.plays)
+  ]) {
     const index = indexOf(play)
     if (index == null) continue
     const held = rows.get(index)
@@ -248,13 +275,18 @@ export function appliedEvents(
       gumbo: named(play)
     })
   }
+  const snapshot = { ...stored }
+  delete snapshot.superseded
   return {
-    ...stored,
+    ...snapshot,
     plays: [...rows.entries()].sort(([a], [b]) => a - b).map(([, row]) => row),
     currentPlay:
       body.currentPlay === undefined
         ? (stored.currentPlay ?? null)
         : named(body.currentPlay),
+    ...(body.scoringMutation == null
+      ? {}
+      : { scoringMutation: body.scoringMutation }),
     priorPlaysDigest: stored.playsDigest ?? null,
     playsDigest: game.plays,
     lineupsDigest: game.lineups
