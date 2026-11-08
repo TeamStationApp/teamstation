@@ -79,6 +79,7 @@ function Approval({
     working.current = false
     setBusy(false)
     setPreview(undefined)
+    setBrowserUrl(undefined)
     setScan(false)
   }
   const inspect = useCallback(
@@ -148,6 +149,7 @@ function Approval({
     const current = ++generation.current
     setBusy(true)
     setMessage('')
+    setBrowserUrl(undefined)
     try {
       await client.approveTvLogin(value)
       if (!mounted.current || current !== generation.current) return
