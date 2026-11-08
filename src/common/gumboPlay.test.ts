@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { liveEventsBody } from './api'
 import { MLB_EVENT_TYPES, STORED_EVENT_TYPES } from './gumbo/reference'
 import {
   eventTypeName,
@@ -27,6 +28,19 @@ const correction = {
 }
 
 describe('a Gumbo play', function () {
+  it('preserves missing, null and known scoring preconditions on the wire', function () {
+    for (const scoringBase of [
+      undefined,
+      null,
+      { at: 1, id: 'observed', revision: 2, frontier: 0 }
+    ]) {
+      const body = liveEventsBody({ plays: [], remove: [], scoringBase })
+      expect(asPostEventsBody(body).scoringBase).deep.equals(scoringBase)
+    }
+    expect(() =>
+      asPostEventsBody({ plays: [], scoringBase: { at: -1 } })
+    ).to.throw()
+  })
   it('rejects a play with no about.atBatIndex', function () {
     expect(() => asGumboPlay({ result: { eventType: 'single' } })).to.throw(
       'a play: Expected an object, got undefined at .about'
