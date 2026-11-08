@@ -257,10 +257,9 @@ function buildStages(w: WorkflowBuilder, app: string): void {
 /**
  * The environment that points the app at this run's server. Babel inlines
  * `TS_API_BASE_URL` into the bundle (`src/app/native/config.ts`). A master
- * build of production sets nothing and keeps the app's own default. Any
+ * build explicitly names production. Any
  * other branch, left on production, points at the standing develop server.
- * A development seat points at that seat, and its sign-in links use the
- * same host.
+ * A development seat keeps its API and shares the develop app-link host.
  */
 export function seatEnvironment(
   ctx: Pick<Stage, 'run'>
@@ -268,7 +267,11 @@ export function seatEnvironment(
   const seat = ctx.run.params?.seat ?? 'production'
   const branch = ctx.run.branch
   if (seat === 'production') {
-    if (branch == null || branch === '' || branch === 'master') return {}
+    if (branch == null || branch === '' || branch === 'master')
+      return {
+        TS_API_BASE_URL: 'https://app.teamstation.app/api/v1',
+        TS_APP_ORIGIN: 'https://app.teamstation.app'
+      }
     return {
       TS_API_BASE_URL: `${DEVELOP_ORIGIN}/api/v1`,
       TS_APP_ORIGIN: DEVELOP_ORIGIN
@@ -280,7 +283,7 @@ export function seatEnvironment(
   const origin = `https://develop${seat}.teamstation.app`
   return {
     TS_API_BASE_URL: `${origin}/api/v1`,
-    TS_APP_ORIGIN: origin
+    TS_APP_ORIGIN: DEVELOP_ORIGIN
   }
 }
 
@@ -351,8 +354,8 @@ async function install(ctx: Stage, cwd?: string): Promise<void> {
 
 /** A standalone Apple TV download; never automatically submitted to TestFlight. */
 export async function buildTv(ctx: Stage): Promise<void> {
-  const api =
-    seatEnvironment(ctx).TS_API_BASE_URL ?? 'https://app.teamstation.app/api/v1'
+  const environment = seatEnvironment(ctx)
+  const api = environment.TS_API_BASE_URL
   await install(ctx)
   await install(ctx, 'appletv')
   await ctx.sh('pod install', { cwd: 'appletv/ios' })
@@ -363,7 +366,11 @@ export async function buildTv(ctx: Stage): Promise<void> {
     version: appVersion(ctx),
     buildNumber: ctx.getBuildNumber(TV_APP),
     // Match the iOS archive's workaround for Xcode 27 Swift module failures.
-    xcargs: ['SWIFT_ENABLE_EXPLICIT_MODULES=NO', `TV_API_BASE_URL=${api}`]
+    xcargs: [
+      'SWIFT_ENABLE_EXPLICIT_MODULES=NO',
+      `TV_API_BASE_URL=${api}`,
+      `TV_APP_ORIGIN=${environment.TS_APP_ORIGIN}`
+    ]
   })
   if (archived.ipa == null) throw new Error('No tvOS IPA was exported')
   await ctx.artifacts.save('tvos-ipa', archived.ipa)
@@ -390,7 +397,11 @@ export async function buildIos(ctx: Stage): Promise<void> {
     buildNumber: build,
     // Xcode 27 treats a Swift explicit-module compile that exits 0 with no
     // output as a failed archive. Turning explicit modules off avoids it.
-    xcargs: ['SWIFT_ENABLE_EXPLICIT_MODULES=NO'],
+    xcargs: [
+      'SWIFT_ENABLE_EXPLICIT_MODULES=NO',
+      `TS_APP_LINK_HOST=${new URL(seatEnvironment(ctx).TS_APP_ORIGIN).host}`,
+      'TS_APP_ENTITLEMENTS=TeamStation/TeamStation.entitlements'
+    ],
     env: {
       CARGO_HOME: `${rustRoot}/cargo`,
       RUSTUP_HOME: `${rustRoot}/rustup`,
