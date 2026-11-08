@@ -10,7 +10,7 @@ import {
   type ChatMessage,
   TeamStationClient
 } from '../../../common/api'
-import { signPuk } from '../../../common/chatCrypto/chain'
+import { signEpoch, signPuk } from '../../../common/chatCrypto/chain'
 import {
   ChatCryptoUnavailable,
   type CoreCall
@@ -27,7 +27,12 @@ import type { ChatSocketListener } from '../../../common/gameSocket'
 import { userIdOfGumbo } from '../../../common/userId'
 import { b64, newRecord, unb64, withEpochKey } from '../keyRecord'
 import { type ChatEngineError, type EngineContext, KeyHolder } from './context'
-import { IdentityCache, openEnvelope, openEpochKeys } from './decrypt'
+import {
+  IdentityCache,
+  openEnvelope,
+  openEpochKeys,
+  takeEpochs
+} from './decrypt'
 import { ChatEngine } from './engine'
 import { fillGrants } from './grants'
 import {
@@ -1699,7 +1704,8 @@ describe('historical client grants', () => {
       history: true,
       userId: reset.userId
     })
-    expect(seen[0].canApprove).equals(undefined)
+    // This device holds the older segment's key, though not the current one.
+    expect(seen[0].canApprove).equals(true)
 
     // A device that cannot verify the membership record approves nothing.
     ctx.keys.record.logs.cnv_test.broken = true
@@ -1771,6 +1777,225 @@ describe('historical client grants', () => {
     expect(engine.approvals()[0].history).equals(undefined)
     engine.stop()
   })
+  it('offers an approval only through a key this device holds, and says so when one arrives', async () => {
+    const { ctx, state, request, identityKeys } = await grantFixture()
+    const engine = new ChatEngine({
+      client: ctx.client,
+      userId: ctx.userId,
+      device: { name: 'Unit device', platform: 'web' },
+      store: {
+        load: async () => ctx.keys.record,
+        save: async () => {},
+        exists: async () => true,
+        wipe: async () => {}
+      }
+    })
+    Object.assign(engine, { context: ctx, memory: ctx.memory })
+    engine.status = 'ready'
+    ctx.memory.recoveryProbed = true
+    ctx.memory.recoveryVersion = 1
+    const store = {
+      load: async () => ctx.keys.record,
+      save: async () => {},
+      wipe: async () => {},
+      exists: async () => true
+    }
+    const hooks = (
+      engine as unknown as {
+        contextHooks: () => Pick<EngineContext, 'approvalsMayChange'>
+      }
+    ).contextHooks()
+    ctx.approvalsMayChange = hooks.approvalsMayChange
+    ctx.keys = new KeyHolder(
+      store,
+      ctx.keys.record,
+      () => true,
+      () => {
+        hooks.approvalsMayChange?.()
+      }
+    )
+    const events: string[] = []
+    engine.subscribe(event => {
+      events.push(event.type)
+    })
+    const key = new Uint8Array(32).fill(9)
+    ctx.memory.grants = []
+    ctx.memory.historyGrants = []
+
+    // Nothing waits for approval: a saved key wakes no screen.
+    await ctx.keys.update(record => withEpochKey(record, 'cnv_test', 5, key))
+    expect(events).deep.equals([])
+
+    // A reset's request for the current segment: only its epoch key grants it.
+    const reset: ChatGrantRequest = {
+      id: 7,
+      conversationId: 'cnv_test',
+      epoch: 3,
+      userId: request.userId,
+      identityId: request.identityId,
+      identityKey: request.identityKey,
+      pukGeneration: 1,
+      pukPublicKey: request.pukPublicKey,
+      pukSignature: request.pukSignature,
+      identityReset: true,
+      canApprove: true,
+      openedAt: request.openedAt
+    }
+    ctx.memory.grants = [reset]
+    expect(engine.approvals()[0]).include({ requestId: 7, canApprove: false })
+    await ctx.keys.update(record => withEpochKey(record, 'cnv_test', 3, key))
+    expect(events).deep.equals(['approvals'])
+    expect(engine.approvals()[0]).include({ requestId: 7, canApprove: true })
+    // An update that changes nothing is not news.
+    await ctx.keys.update(record => record)
+    expect(events).length(1)
+
+    // A reset with older history: either key grants it.
+    ctx.memory.grants = [{ ...reset, epoch: 4 }]
+    ctx.memory.historyGrants = [{ ...request, requiresApproval: true }]
+    expect(engine.approvals()).length(1)
+    expect(engine.approvals()[0]).include({
+      requestId: 7,
+      history: true,
+      canApprove: true
+    })
+    await ctx.keys.update(record => ({ ...record, epochKeys: {} }))
+    expect(engine.approvals()[0]).include({ requestId: 7, canApprove: false })
+    await ctx.keys.update(record => withEpochKey(record, 'cnv_test', 4, key))
+    expect(engine.approvals()[0]).include({ requestId: 7, canApprove: true })
+
+    // A historical request alone: the older key, inside epochs that check out.
+    ctx.memory.grants = []
+    await ctx.keys.update(record =>
+      withEpochKey(record, 'cnv_test', 1, new Uint8Array(32).fill(7))
+    )
+    const first = {
+      ...state.epochs.get(1)!.record,
+      signature: b64(
+        signEpoch(
+          { conversationId: 'cnv_test', epoch: 1, previousKeyBox: null },
+          identityKeys.secretKey
+        )
+      )
+    }
+    state.epochs.delete(1)
+    expect(engine.approvals()[0]).include({
+      requestId: `history:${request.id}`,
+      canApprove: false
+    })
+    events.length = 0
+    await takeEpochs(ctx, 'cnv_test', state, [first])
+    expect(events).deep.equals(['approvals'])
+    expect(engine.approvals()[0]).include({
+      requestId: `history:${request.id}`,
+      canApprove: true
+    })
+    // An empty read takes nothing, and says nothing; nor does a key that
+    // changes nothing this device can grant.
+    await takeEpochs(ctx, 'cnv_test', state, [])
+    await ctx.keys.update(record => withEpochKey(record, 'cnv_test', 6, key))
+    await takeEpochs(ctx, 'cnv_test', state, [first])
+    expect(events).length(1)
+
+    // Epochs read with the chat, and from its historical stream, both tell
+    // when they make an approval grantable.
+    ctx.client.chatEpochs = async (_id, _after, query) => ({
+      latest: 2,
+      needsRotation: false,
+      noHolder: false,
+      epochs: [first],
+      boxes: [],
+      historyRecoveryVersion: 1,
+      freshEpochsEnabled: false,
+      ...(query == null ? {} : { nextBoxesCursor: '0', hasMoreBoxes: false })
+    })
+    for (const read of [syncEpochs, syncHistoryBoxes]) {
+      state.epochs.delete(1)
+      engine.approvals()
+      events.length = 0
+      await read(ctx, 'cnv_test')
+      expect(events).includes('approvals')
+      expect(engine.approvals()[0]).include({ canApprove: true })
+    }
+
+    // A record taken from elsewhere (enrolment, a PUK sync) tells too, when
+    // it changes what this device holds.
+    await ctx.keys.update(record => ({ ...record, epochKeys: {} }))
+    engine.approvals()
+    events.length = 0
+    const held = ctx.keys.record
+    await ctx.keys.replace(async () =>
+      withEpochKey(held, 'cnv_test', 1, new Uint8Array(32).fill(7))
+    )
+    expect(events).deep.equals(['approvals'])
+
+    // A request whose identity does not check out fails neither a key save
+    // nor an epoch read, and says nothing.
+    ctx.memory.grants = [{ ...reset, identityKey: '%%%' }]
+    expect(() => engine.approvals()).throws()
+    events.length = 0
+    await ctx.keys.update(record => withEpochKey(record, 'cnv_test', 7, key))
+    await takeEpochs(ctx, 'cnv_test', state, [first])
+    expect(events).deep.equals([])
+    ctx.memory.grants = []
+
+    // While the device links or resets, a replaced record says nothing and
+    // never fails, however many segments a reset asks for.
+    ctx.memory.historyGrants = [
+      { ...request, requiresApproval: true },
+      { ...request, id: '9007199254740995', requiresApproval: true }
+    ]
+    events.length = 0
+    for (const status of ['link', 'reset'] as const) {
+      engine.status = status
+      await ctx.keys.replace(async () => ctx.keys.record)
+      await takeEpochs(ctx, 'cnv_test', state, [first])
+    }
+    expect(events).deep.equals([])
+    engine.status = 'ready'
+    engine.stop()
+  })
+
+  it('tells of a key record only once it is saved', async () => {
+    const record = newRecord(userIdOfGumbo(1), 'cdv_test', newDeviceKeys())
+    const seen: unknown[] = []
+    const failing = new KeyHolder(
+      {
+        load: async () => record,
+        save: async () => {
+          throw new Error('disk full')
+        },
+        wipe: async () => {},
+        exists: async () => true
+      },
+      record,
+      () => true,
+      next => seen.push(next)
+    )
+    try {
+      await failing.update(start => ({ ...start, epochKeys: { cnv_x: {} } }))
+      expect.fail('saved')
+    } catch (error) {
+      expect((error as Error).message).equals('disk full')
+    }
+    await failing.update(start => start)
+    expect(seen).deep.equals([])
+    const holder = new KeyHolder(
+      {
+        load: async () => record,
+        save: async () => {},
+        wipe: async () => {},
+        exists: async () => true
+      },
+      record
+    )
+    const next = await holder.update(start => ({
+      ...start,
+      epochKeys: { cnv_x: {} }
+    }))
+    expect(holder.record).equals(next)
+  })
+
   it('shows recovering only while delivered keys open, behind its own failure', async () => {
     const { ctx, state } = await grantFixture()
     const engine = new ChatEngine({

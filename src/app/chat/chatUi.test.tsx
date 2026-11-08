@@ -1259,6 +1259,7 @@ describe('a conversation', function () {
     engine.waiting = [
       {
         requestId: 7,
+        canApprove: true,
         conversationId: 'cnv_1',
         conversationTitle: 'Hawks Members',
         userId: userIdOfGumbo(9),
@@ -1269,6 +1270,7 @@ describe('a conversation', function () {
       // The person's own reset is never put to them.
       {
         requestId: 6,
+        canApprove: true,
         conversationId: 'cnv_1',
         conversationTitle: 'Hawks Members',
         userId: userIdOfGumbo(1),
@@ -1960,6 +1962,7 @@ describe('members, approvals and safety numbers', function () {
     engine.waiting = [
       {
         requestId: 7,
+        canApprove: true,
         conversationId: 'cnv_1',
         conversationTitle: 'Hawks Members',
         userId: userIdOfGumbo(9),
@@ -1969,6 +1972,7 @@ describe('members, approvals and safety numbers', function () {
       },
       {
         requestId: 8,
+        canApprove: true,
         conversationId: 'cnv_other',
         conversationTitle: 'Elsewhere',
         userId: userIdOfGumbo(9),
@@ -1979,6 +1983,7 @@ describe('members, approvals and safety numbers', function () {
       // The person's own reset is never put to them.
       {
         requestId: 6,
+        canApprove: true,
         conversationId: 'cnv_1',
         conversationTitle: 'Hawks Members',
         userId: userIdOfGumbo(1),
@@ -2067,6 +2072,7 @@ describe('members, approvals and safety numbers', function () {
     engine.waiting = [
       {
         requestId: 99,
+        canApprove: true,
         conversationId: 'cnv_dm',
         conversationTitle: 'Pat P',
         userId: userIdOfGumbo(9),

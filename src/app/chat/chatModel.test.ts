@@ -385,6 +385,7 @@ describe('approvals', function () {
     userId: string
   ): GrantApproval => ({
     requestId,
+    canApprove: true,
     conversationId,
     conversationTitle: undefined,
     userId,
