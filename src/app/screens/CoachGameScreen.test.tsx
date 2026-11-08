@@ -1361,6 +1361,162 @@ describe('Coach Game (U25)', function () {
     expect(node('First Name')).equals(null)
   })
 
+  it('refreshes coach lineup validation when a peer finishes the pending hit', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    const store = memoryStore()
+    const context = {
+      gamePk: 'g1',
+      teams: teamsOf(held.game),
+      setup: startingSetup(held.game, roster('away'), roster('home'))
+    }
+    const writer = await ScoringSession.open(store, 'g1', context)
+    for (const action of [
+      { type: 'lineup', kind: 'roster', setup: context.setup },
+      { type: 'ballInPlay', contact: 'swing', fielder: 209 },
+      { type: 'result', eventType: 'single' }
+    ] as const)
+      expect(writer.apply(action).problems).deep.equals([])
+    await writer.flush()
+    let observer: ScoringSession | undefined
+    await coach(held, {
+      socket: changes,
+      source: {
+        open: async () => {
+          observer = await ScoringSession.open(store, 'g1', context)
+          return observer
+        }
+      }
+    })
+    await click('Lineup', 'tab')
+    expect(
+      writer.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+    ).deep.equals([])
+    await writer.flush()
+    await changes.change('playEdits')
+    await waitFor(
+      () =>
+        observer!.state.liveData.plays.currentPlay?.matchup.batter.id === 102,
+      'the coach to adopt the next batter after the remote hit'
+    )
+    expect(document.body.textContent).not.includes(
+      'Choose a next batter in the lineup who is not already on base.'
+    )
+    writer.close()
+  })
+
+  it('defers play refresh while the coach has a staged edit', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    await coach(held, { socket: changes })
+    const removed = await stageChange()
+    const reads = held.reads.events
+    await changes.change('playEdits')
+    expect(held.reads.events).equals(reads)
+    expect(node(removed)).equals(null)
+    expect(saveDisabled()).equals(false)
+    await click('Cancel')
+    await waitFor(() => held.reads.events > reads, 'pending plays after Cancel')
+    expect(node(removed)).not.equals(null)
+  })
+
+  it('does not adopt a play read that races a coach edit', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    await coach(held, { socket: changes })
+    const original = held.client.gameEvents.bind(held.client)
+    let release: (() => void) | undefined
+    held.client.gameEvents = async gameId => {
+      await new Promise<void>(resolve => {
+        release = resolve
+      })
+      return await original(gameId)
+    }
+    await changes.change('playEdits')
+    await waitFor(() => release != null, 'the delayed play read')
+    const removed = await stageChange()
+    held.client.gameEvents = original
+    await act(async () => {
+      release!()
+    })
+    await settle()
+    expect(node(removed)).equals(null)
+    expect(saveDisabled()).equals(false)
+    await click('Cancel')
+    expect(node(removed)).not.equals(null)
+  })
+
+  it('retains a play refresh when a coach edit is reversed before its read returns', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    await coach(held, { socket: changes })
+    await click('Lineup', 'tab')
+    const original = held.client.gameEvents.bind(held.client)
+    let release: (() => void) | undefined
+    let reads = 0
+    held.client.gameEvents = async gameId => {
+      if (++reads === 1)
+        await new Promise<void>(resolve => {
+          release = resolve
+        })
+      return await original(gameId)
+    }
+    await changes.change('playEdits')
+    await waitFor(() => release != null, 'the held play read')
+    const removals = document.querySelectorAll<HTMLElement>(
+      '[aria-label^="Remove "]'
+    )
+    const label = removals[removals.length - 1].getAttribute('aria-label')!
+    await click(label)
+    expect(node(label)).equals(null)
+    await click(`Add ${label.slice('Remove '.length)} to Lineup`)
+    expect(node(label)).not.equals(null)
+    await act(async () => {
+      release!()
+    })
+    await waitFor(() => reads >= 2, 'the clean editor to recover its play read')
+    expect(held.saved).has.length(0)
+  })
+
+  it('retries a failed coach play refresh without another notice', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    await coach(held, { socket: changes })
+    const original = held.client.gameEvents.bind(held.client)
+    let attempts = 0
+    held.client.gameEvents = async gameId => {
+      if (++attempts === 1) throw new Error('Temporary read failure')
+      return await original(gameId)
+    }
+    await changes.change('playEdits')
+    await waitFor(() => attempts === 2, 'the failed play read to retry')
+    expect(node('Save Rosters')).not.equals(null)
+  })
+
+  it('reads again for play notices received during a coach refresh', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    await coach(held, { socket: changes })
+    const original = held.client.gameEvents.bind(held.client)
+    let release: (() => void) | undefined
+    let reads = 0
+    held.client.gameEvents = async gameId => {
+      if (++reads === 1)
+        await new Promise<void>(resolve => {
+          release = resolve
+        })
+      return await original(gameId)
+    }
+    await changes.change('playEdits')
+    await waitFor(() => release != null, 'the first read to start')
+    await changes.change('playEdits')
+    expect(reads).equals(1)
+    await act(async () => {
+      release!()
+    })
+    await waitFor(() => reads === 2, 'the later notice to be read')
+  })
+
   it('follows another device’s lineups under a clean draft, and warns over a staged one', async function () {
     const held = server()
     const socket = new FakeChanges()
@@ -1530,6 +1686,27 @@ describe('the coach’s game plan', function () {
     await click('Plan', 'tab')
     await waitFor(() => cell(1, 1) != null, 'the plan sheet')
   }
+
+  for (const finish of ['Save Rosters', 'Cancel'])
+    it(`reads deferred peer scoring after a plan-only ${finish}`, async () => {
+      const held = accepted()
+      const changes = new FakeChanges()
+      await coach(held, { socket: changes })
+      await click('Plan', 'tab')
+      await waitFor(() => cell(1, 1) != null, 'the plan sheet')
+      await type(1, 1, ['c', 'f'])
+      const before = held.reads.events
+      await changes.change('playEdits')
+      expect(held.reads.events).equals(before)
+      expect(cell(1, 1).textContent).equals('CF')
+      await click(finish)
+      await waitFor(() => saveDisabled(), 'the clean plan')
+      await waitFor(
+        () => held.reads.events > before,
+        'deferred scoring refresh'
+      )
+      expect(held.writes).deep.equals(finish === 'Save Rosters' ? ['plan'] : [])
+    })
 
   it('puts Plan in the pill after Defense, with its Help and no instruction or Choose Next Batter list', async function () {
     const held = server({ coachSides: ['away'] })
