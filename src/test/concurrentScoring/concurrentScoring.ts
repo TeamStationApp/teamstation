@@ -138,11 +138,11 @@ export class ConcurrentScoringRig {
     if (finish) await this.tap(index, '^Finish at-bat$')
   }
 
-  async pitch(index: number, label: string): Promise<void> {
+  async pitch(index: number, label: string, completes = false): Promise<void> {
     const css = `[aria-label="${label}"]:not([aria-disabled="true"]):not(:disabled)`
     await this.clients[index].m.assertVisible({ css, timeout: 15000 })
     await this.clients[index].m.tapOn({ css, timeout: 15000 })
-    await this.converge(index, label)
+    if (!completes) await this.converge(index, label)
   }
 
   async converge(author: number, action: string): Promise<void> {
@@ -171,7 +171,7 @@ export class ConcurrentScoringRig {
   async strikeout(index: number): Promise<void> {
     for (let i = 0; i < 2; i++) await this.pitch(index, 'Called Strike')
     // The caller's boundary verifies the saved completion after animation.
-    await this.tap(index, '^Called Strike$')
+    await this.pitch(index, 'Called Strike', true)
     await this.finish(index)
   }
 

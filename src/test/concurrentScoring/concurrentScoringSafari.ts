@@ -147,13 +147,13 @@ export class ConcurrentScoringSafariRig extends ConcurrentScoringRig {
     ]
   }
 
-  override async pitch(index: number, label: string): Promise<void> {
+  override async pitch(index: number, label: string, completes = false): Promise<void> {
     await this.clients[index].m.tapOn({
       text: `^${label}$`,
       enabled: true,
       timeout: 15000
     })
-    await this.converge(index, label)
+    if (!completes) await this.converge(index, label)
   }
 
   override async finish(index: number): Promise<void> {
