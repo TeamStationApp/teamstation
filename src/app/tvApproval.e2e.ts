@@ -105,21 +105,52 @@ async function main(): Promise<void> {
     )
     const qr = await tv.startTvLogin('Google TV')
     const token = new URL(qr.qrUrl).searchParams.get('token')!
-    await m.openBrowser({ url: h.origin + '/tv-login?token=' + token })
+    await m.openBrowser({
+      url:
+        h.origin +
+        '/tv-login?token=' +
+        token +
+        '&server=' +
+        encodeURIComponent(h.origin)
+    })
     await m.assertVisible({ text: 'Log in to Google TV' })
     await writeFile(
-      path.join(artifacts, 'qr-confirm.png'),
+      path.join(artifacts, 'tv-approval-after.png'),
       await m.screenshot()
     )
     await m.tapOn({ text: 'Cancel' })
     assert.deepEqual(await tv.claimTvLogin(qr.requestId, qr.clientSecret), {
       ready: false
     })
-    await m.openBrowser({ url: h.origin + '/tv-login?token=' + token })
+    await m.openBrowser({
+      url:
+        h.origin +
+        '/tv-login?token=' +
+        token +
+        '&server=' +
+        encodeURIComponent(h.origin)
+    })
     await m.assertVisible({ text: 'Log in to Google TV' })
     await m.tapOn({ text: 'Login' })
     await m.assertVisible({ text: 'Your TV is signed in' })
     assert('token' in (await tv.claimTvLogin(qr.requestId, qr.clientSecret)))
+    const wrongSeat = await tv.startTvLogin('Apple TV')
+    const wrongToken = new URL(wrongSeat.qrUrl).searchParams.get('token')!
+    await m.openBrowser({
+      url: `${h.origin}/tv-login?token=${wrongToken}&server=https%3A%2F%2Fdevelop5.teamstation.app`
+    })
+    await m.assertVisible({
+      text: 'This TV uses a different TeamStation server. Open it in your browser to continue.'
+    })
+    await m.assertVisible({ text: 'Open in browser' })
+    assert.deepEqual(
+      await tv.claimTvLogin(wrongSeat.requestId, wrongSeat.clientSecret),
+      { ready: false }
+    )
+    await writeFile(
+      path.join(artifacts, 'tv-wrong-seat-after.png'),
+      await m.screenshot()
+    )
     console.log(
       'PASS: account entry, lowercase code approval, QR inspect, Cancel, explicit Login, and one-time TV claims'
     )

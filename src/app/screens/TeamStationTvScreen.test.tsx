@@ -19,7 +19,8 @@ const text = (): string => document.body.textContent ?? ''
 async function render(
   client: TeamStationClient,
   token?: string,
-  camera?: TeamStationTvScreenProps['camera']
+  camera?: TeamStationTvScreenProps['camera'],
+  server?: string
 ): Promise<void> {
   const host = document.createElement('div')
   document.body.append(host)
@@ -27,7 +28,12 @@ async function render(
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <TeamStationTvScreen client={client} token={token} camera={camera} />
+        <TeamStationTvScreen
+          client={client}
+          token={token}
+          camera={camera}
+          server={server}
+        />
       </ThemeProvider>
     )
     await pause()
@@ -85,6 +91,32 @@ describe('TeamStation TV approval screen', () => {
     await act(async () => root?.unmount())
     document.body.innerHTML = ''
     root = undefined
+  })
+
+  it('checks the issuer before preview and offers only a trusted browser destination', async () => {
+    const f = fixture()
+    f.client.issuer = async () => 'https://app.example.test/oauth'
+    await render(
+      f.client,
+      'a'.repeat(43),
+      undefined,
+      'https://develop5.teamstation.app'
+    )
+    expect(f.inspected).length(0)
+    expect(text()).contains('different TeamStation server')
+    expect(text()).contains('Open in browser')
+  })
+
+  it('accepts a verified API alias and does not preview an unverifiable issuer', async () => {
+    const f = fixture()
+    f.client.issuer = async () => 'https://web.example.test/oauth'
+    await render(
+      f.client,
+      'a'.repeat(43),
+      undefined,
+      'https://web.example.test'
+    )
+    expect(f.inspected).deep.equals(['a'.repeat(43)])
   })
 
   it('focuses one input, normalizes paste and submits only on the eighth letter', async () => {

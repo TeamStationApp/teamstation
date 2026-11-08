@@ -26,7 +26,8 @@ export class TvSessionController {
   constructor(
     readonly client: TeamStationClient,
     private readonly store: TvSessionStore,
-    private readonly origin: string
+    private readonly origin: string,
+    private readonly appOrigin?: string
   ) {}
 
   snapshot = (): TvSessionState => this.state
@@ -99,7 +100,7 @@ export class TvSessionController {
     const epoch = this.epoch
     this.publish({ phase: 'loading' })
     try {
-      const request = await this.client.startTvLogin('Apple TV')
+      const request = await this.client.startTvLogin('Apple TV', this.appOrigin)
       if (epoch !== this.epoch) return
       this.publish({ phase: 'login', request })
       this.schedule(epoch)

@@ -68,7 +68,8 @@ export async function startTvLogin(
   platform: TvPlatform,
   origin: string,
   ip: string | null,
-  location: string | null = null
+  location: string | null = null,
+  server?: string
 ): Promise<TvLoginRequest> {
   await charge(db, [
     { scope: 'tv.start', key: ip ?? 'unknown', limit: 20, windowSec: 600 }
@@ -107,7 +108,7 @@ export async function startTvLogin(
         requestId,
         clientSecret,
         displayCode: `${code.slice(0, 4)}–${code.slice(4)}`,
-        qrUrl: `${origin}/tv-login?token=${token}`,
+        qrUrl: `${origin}/tv-login?token=${token}${server == null ? '' : `&server=${encodeURIComponent(server)}`}`,
         expiresAt
       }
   }

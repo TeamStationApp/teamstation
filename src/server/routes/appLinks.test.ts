@@ -99,6 +99,34 @@ describe('app link hosts', function () {
     expect(answer.headers['referrer-policy']).equals('no-referrer')
   })
 
+  it('sends TV browser approval to the known issuer without spending its token', async () => {
+    const query = `/tv-login?token=${TOKEN}&server=${encodeURIComponent(SEAT)}`
+    const answer = await get('app1.example.test', query)
+    expect(answer.status).equals(302)
+    expect(answer.headers.location).equals(`${SEAT}/tv-login?token=${TOKEN}`)
+    expect(answer.headers['cache-control']).equals('no-store')
+    expect(answer.headers['referrer-policy']).equals('no-referrer')
+    expect((await get('seat.example.test', query)).status).equals(404)
+    expect((await get('unknown.example.test', query)).status).equals(400)
+    for (const suffix of [
+      '&server=https://evil.example.test',
+      `&server=${encodeURIComponent(SEAT)}&server=${encodeURIComponent(SEAT)}`,
+      `&server=${encodeURIComponent(SEAT + '/path')}`
+    ])
+      expect(
+        (await get('app1.example.test', `/tv-login?token=${TOKEN}${suffix}`))
+          .status
+      ).equals(400)
+    expect(
+      (
+        await get(
+          'app1.example.test',
+          `/tv-login?token=x&server=${encodeURIComponent(SEAT)}`
+        )
+      ).status
+    ).equals(400)
+  })
+
   describe('apple-app-site-association', function () {
     it('associates production TV links only with the companion app host', async () => {
       const companion = JSON.parse(
