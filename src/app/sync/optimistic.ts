@@ -255,6 +255,9 @@ export function appliedEvents(
       body.currentPlay === undefined
         ? (stored.currentPlay ?? null)
         : named(body.currentPlay),
+    ...(body.scoringMutation == null
+      ? {}
+      : { scoringMutation: body.scoringMutation }),
     priorPlaysDigest: stored.playsDigest ?? null,
     playsDigest: game.plays,
     lineupsDigest: game.lineups

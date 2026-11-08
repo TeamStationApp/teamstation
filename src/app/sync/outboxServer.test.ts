@@ -176,6 +176,136 @@ describe('the outbox against the server', function () {
     await f?.h.close()
   })
 
+  for (const acceptedFirst of [false, true])
+    it(`rebuilds a lost response as the current winner (${acceptedFirst ? 'original accepted' : 'original superseded'})`, async () => {
+      const ownDir = mkdtempSync(join(dir, 'lost-scoring-'))
+      const { client, transport } = phoneOn(f, ownDir)
+      const gameId = makeId('game')
+      await f.h.db
+        .insertInto('games')
+        .values({
+          id: gameId,
+          home_team_id: f.teamA,
+          away_team_id: f.teamB,
+          season_id: f.seasonA,
+          start_at: new Date()
+        })
+        .execute()
+      await client.gameEvents(gameId)
+      const at = Date.now() - 1000
+      const change = (
+        n: number
+      ): Parameters<CachingClient['saveGameEvents']>[1] => ({
+        plays: [
+          {
+            ...livePlay(0),
+            result: {
+              ...livePlay(0).result,
+              eventType: n === 1 ? 'single' : 'double'
+            }
+          }
+        ],
+        remove: [],
+        scoringMutation: {
+          at: at + n,
+          id: `lost-${n}`,
+          revision: 0,
+          frontier: 1
+        }
+      })
+      transport.held = !acceptedFirst
+      transport.dropNext = acceptedFirst
+      await client.saveGameEvents(gameId, change(1))
+      const peer = await f.h.request(
+        'POST',
+        `/games/${gameId}/events`,
+        { ...change(2), mode: 'live', source: { system: 'teamstation' } },
+        101
+      )
+      expect(peer.status).equals(200)
+      if (!acceptedFirst) {
+        transport.held = false
+        transport.dropNext = true
+        client.wakeOutbox(true)
+        await client.drainOutbox()
+      }
+      expect((await client.outboxSummary()).count).equals(1)
+      client.wakeOutbox(true)
+      await client.drainOutbox()
+      expect((await client.outboxSummary()).count).equals(0)
+      const winner = await client.gameEvents(gameId)
+      expect(winner.plays[0].result.eventType).equals('double')
+      expect(winner.scoringMutation?.id).equals('lost-2')
+      expect(new Set(transport.posts.map(post => post.key)).size).equals(1)
+      await client.sessionRefused()
+    })
+
+  it('restarts with a losing parent and keeps its newer queued scoring child', async () => {
+    const ownDir = mkdtempSync(join(dir, 'scoring-order-'))
+    const first = phoneOn(f, ownDir)
+    const gameId = makeId('game')
+    await f.h.db
+      .insertInto('games')
+      .values({
+        id: gameId,
+        home_team_id: f.teamA,
+        away_team_id: f.teamB,
+        season_id: f.seasonA,
+        start_at: new Date()
+      })
+      .execute()
+    await first.client.gameEvents(gameId)
+    const at = Date.now() - 1000
+    const change = (
+      n: number
+    ): Parameters<CachingClient['saveGameEvents']>[1] => ({
+      plays: [
+        {
+          ...livePlay(0),
+          result: {
+            ...livePlay(0).result,
+            eventType: n === 1 ? 'single' : n === 2 ? 'double' : 'home_run'
+          }
+        }
+      ],
+      remove: [],
+      scoringMutation: {
+        at: at + n,
+        id: `device-${n}`,
+        revision: 0,
+        frontier: 1
+      }
+    })
+    first.transport.held = true
+    await first.client.saveGameEvents(gameId, change(1))
+    await first.client.saveGameEvents(gameId, change(3))
+    expect((await first.client.outboxSummary()).count).equals(2)
+    const peer = await f.h.request(
+      'POST',
+      `/games/${gameId}/events`,
+      {
+        ...change(2),
+        mode: 'live',
+        source: { system: 'teamstation' }
+      },
+      101
+    )
+    expect(peer.status).equals(200)
+    await first.client.sessionRefused()
+    const restarted = phoneOn(f, ownDir)
+    restarted.client.wakeOutbox(true)
+    await restarted.client.drainOutbox()
+    expect((await restarted.client.outboxSummary()).count).equals(0)
+    const result = await restarted.client.gameEvents(gameId)
+    expect(result.plays).has.length(1)
+    expect(result.plays[0].result.eventType).equals('home_run')
+    expect(result.scoringMutation?.id).equals('device-3')
+    expect(restarted.transport.posts.map(post => post.status)).deep.equals([
+      200, 200
+    ])
+    await restarted.client.sessionRefused()
+  })
+
   it('sends a write again when its answer was lost, and the server keeps one of each (Lost response)', async function () {
     const { client, transport } = phoneOn(f, dir)
     const gameId = makeId('game')

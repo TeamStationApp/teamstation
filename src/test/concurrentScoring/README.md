@@ -52,3 +52,24 @@ saved-data oracle requires 31 completed plays, three outs in each half-inning,
 no duplicate play identities, the expected run/hit/error credits, and correct
 individual and team final statistics. This is a standalone scoring test; it does
 not install a runner, schedule tests or change the tester seat.
+
+`--scenario conflicts --surface chromium` holds an older Ball request until a
+newer Called Strike saves, then delivers the older request. The saved count and
+both screens must retain only the newer pitch. Set `TS_CONCURRENT_OLDER_AUTHOR`
+to `0` or `1` and use a fresh fixture for each direction. Original action time
+determines the winner; retries and automatic completion retain that time.
+
+`--scenario network-recovery --surface safari` measures both phones under
+500 ms one-way delay, 100 ms jitter, 2% loss and a 1 Mbit cap, then blocks one
+scorer's traffic while the other authors a newer pitch. Supply the authorized
+shaping API base URL (ending in `/v1`) as `TS_NETWORK_SHAPING_URL`, and the leased
+phones' test-network addresses as `TS_CONCURRENT_IP_A` and `TS_CONCURRENT_IP_B`.
+The driver refuses devices absent from that API's test-device inventory or
+already shaped, changes only its two addresses, and clears them in `finally`.
+After a forced process termination, clear those addresses manually through the
+same API. It records ping measurements, shaping counters, saved counts, screen
+reads and recovery bounds in `network-recovery.json`. Confirm the added delay
+and counter increases before interpreting the recovery result. Recovery reads
+are repeated to measure convergence; normal-network checks still inspect once
+after the three-second allowance. Device inspection time is included in the
+reported recovery upper bound, so it is not an exact render timestamp.
