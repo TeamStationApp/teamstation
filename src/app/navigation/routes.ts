@@ -1,4 +1,5 @@
 import { safeNext } from '../../common/signInReturn'
+import { isTvServerOrigin } from '../../common/tvLogin'
 import { asUserId, userIdOfGumbo } from '../../common/userId'
 import { chatBenchPath } from '../dev/chatBenchPath'
 
@@ -170,7 +171,7 @@ export type Route =
   | { name: 'videos'; when: When }
   | { name: 'schedule'; when: When }
   | { name: 'account' }
-  | { name: 'teamStationTv'; token?: string }
+  | { name: 'teamStationTv'; token?: string; server?: string }
   /** Create API key, from Account. */
   | { name: 'apiKeyNew' }
   | { name: 'team'; teamId: string; tab?: string }
@@ -510,12 +511,21 @@ export function parseRoute(path: string, search = ''): Route {
       return { name: 'schedule', when: whenOf(query.get('when'), 'upcoming') }
     case 'tv-login': {
       const token = query.get('token')
-      return token != null && /^[A-Za-z0-9_-]{43}$/.test(token)
-        ? { name: 'teamStationTv', token }
+      const server = query.get('server')
+      return token != null &&
+        /^[A-Za-z0-9_-]{43}$/.test(token) &&
+        query.getAll('token').length === 1 &&
+        query.getAll('server').length <= 1 &&
+        (server == null || isTvServerOrigin(server))
+        ? {
+            name: 'teamStationTv',
+            token,
+            ...(server == null ? {} : { server })
+          }
         : { name: 'teamStationTv' }
     }
     case 'account':
-      if (parts[1] === 'tv') return { name: 'teamStationTv' }
+      if (parts[1] === 'tv') return parseRoute('/tv-login', search)
       if (parts[1] === 'api-keys' && parts[2] === 'new' && parts.length === 3)
         return { name: 'apiKeyNew' }
       return { name: 'account' }
@@ -866,7 +876,7 @@ export function routePath(route: Route): string {
     case 'teamStationTv':
       return route.token == null
         ? '/account/tv'
-        : `/tv-login?token=${encodeURIComponent(route.token)}`
+        : `/tv-login?token=${encodeURIComponent(route.token)}${route.server == null ? '' : `&server=${encodeURIComponent(route.server)}`}`
     case 'account':
       return '/account'
     case 'apiKeyNew':

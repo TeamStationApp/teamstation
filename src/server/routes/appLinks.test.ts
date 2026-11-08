@@ -89,14 +89,47 @@ describe('app link hosts', function () {
     })
   }
 
-  it('lets the web shell handle TV approval with private link response headers', async () => {
+  it('redirects legacy TV links to browser approval with private response headers', async () => {
     const answer = await get(
       'app.teamstation.app',
       '/tv-login?token=' + 'a'.repeat(43)
     )
-    expect(answer.status).equals(404) // This harness intentionally has no SPA fallback.
+    expect(answer.status).equals(302)
+    expect(answer.headers.location).equals(
+      `${PUBLIC_URL}/account/tv?token=${'a'.repeat(43)}`
+    )
     expect(answer.headers['cache-control']).equals('no-store')
     expect(answer.headers['referrer-policy']).equals('no-referrer')
+  })
+
+  it('sends TV browser approval to the known issuer without spending its token', async () => {
+    const query = `/tv-login?token=${TOKEN}&server=${encodeURIComponent(SEAT)}`
+    const answer = await get('app1.example.test', query)
+    expect(answer.status).equals(302)
+    expect(answer.headers.location).equals(`${SEAT}/account/tv?token=${TOKEN}`)
+    expect(answer.headers['cache-control']).equals('no-store')
+    expect(answer.headers['referrer-policy']).equals('no-referrer')
+    expect((await get('seat.example.test', query)).headers.location).equals(
+      `${SEAT}/account/tv?token=${TOKEN}`
+    )
+    expect((await get('unknown.example.test', query)).status).equals(400)
+    for (const suffix of [
+      '&server=https://evil.example.test',
+      `&server=${encodeURIComponent(SEAT)}&server=${encodeURIComponent(SEAT)}`,
+      `&server=${encodeURIComponent(SEAT + '/path')}`
+    ])
+      expect(
+        (await get('app1.example.test', `/tv-login?token=${TOKEN}${suffix}`))
+          .status
+      ).equals(400)
+    expect(
+      (
+        await get(
+          'app1.example.test',
+          `/tv-login?token=x&server=${encodeURIComponent(SEAT)}`
+        )
+      ).status
+    ).equals(400)
   })
 
   describe('apple-app-site-association', function () {

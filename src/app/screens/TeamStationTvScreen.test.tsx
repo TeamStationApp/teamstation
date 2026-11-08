@@ -19,7 +19,8 @@ const text = (): string => document.body.textContent ?? ''
 async function render(
   client: TeamStationClient,
   token?: string,
-  camera?: TeamStationTvScreenProps['camera']
+  camera?: TeamStationTvScreenProps['camera'],
+  server?: string
 ): Promise<void> {
   const host = document.createElement('div')
   document.body.append(host)
@@ -27,7 +28,12 @@ async function render(
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <TeamStationTvScreen client={client} token={token} camera={camera} />
+        <TeamStationTvScreen
+          client={client}
+          token={token}
+          camera={camera}
+          server={server}
+        />
       </ThemeProvider>
     )
     await pause()
@@ -57,13 +63,13 @@ async function edit(value: string): Promise<void> {
     await pause()
   })
 }
-function fixture(): {
+function fixture(baseUrl = 'https://app.example.test/api/v1'): {
   client: TeamStationClient
   approvals: unknown[]
   inspected: string[]
 } {
   const client = new TeamStationClient({
-    baseUrl: 'https://app.example.test/api/v1'
+    baseUrl
   })
   const approvals: unknown[] = []
   const inspected: string[] = []
@@ -86,6 +92,48 @@ describe('TeamStation TV approval screen', () => {
     document.body.innerHTML = ''
     root = undefined
   })
+
+  it('checks the issuer before preview and offers only a trusted browser destination', async () => {
+    const f = fixture()
+    f.client.issuer = async () => 'https://app.example.test/oauth'
+    await render(
+      f.client,
+      'a'.repeat(43),
+      undefined,
+      'https://develop5.teamstation.app'
+    )
+    expect(f.inspected).length(0)
+    expect(text()).contains('different TeamStation server')
+    expect(text()).contains('Open in browser')
+  })
+
+  it('accepts a verified API alias and does not preview an unverifiable issuer', async () => {
+    const f = fixture()
+    f.client.issuer = async () => 'https://web.example.test/oauth'
+    await render(
+      f.client,
+      'a'.repeat(43),
+      undefined,
+      'https://web.example.test'
+    )
+    expect(f.inspected).deep.equals(['a'.repeat(43)])
+  })
+
+  for (const discovery of [null, undefined]) {
+    it(`keeps safe browser approval available when alias discovery is ${discovery === null ? 'disabled' : 'unavailable'}`, async () => {
+      const f = fixture('https://app.teamstation.app/api/v1')
+      f.client.issuer = async () => discovery
+      await render(
+        f.client,
+        'a'.repeat(43),
+        undefined,
+        'https://web.teamstation.app'
+      )
+      expect(f.inspected).length(0)
+      expect(f.approvals).length(0)
+      expect(text()).includes('Open in browser')
+    })
+  }
 
   it('focuses one input, normalizes paste and submits only on the eighth letter', async () => {
     const f = fixture()
@@ -213,6 +261,35 @@ describe('TeamStation TV approval screen', () => {
     await press('Login')
     expect(f.approvals).length(1)
   })
+  for (const server of [
+    'https://develop.teamstation.app',
+    'https://develop5.teamstation.app',
+    'http://192.168.1.2:9100'
+  ]) {
+    it(`scans a TV link on the configured browser server ${server}`, async () => {
+      const f = fixture(server + '/api/v1')
+      let scanner: QrScannerProps | undefined
+      const camera = {
+        supported: true,
+        View: (props: QrScannerProps) => {
+          scanner = props
+          return null
+        }
+      }
+      await render(f.client, undefined, camera)
+      await press('Scan QR code')
+      await act(async () => {
+        const host = server.startsWith('https:') ? 'develop' : 'app'
+        scanner!.onCode(
+          `https://${host}.teamstation.app/tv-login?token=${'a'.repeat(43)}&server=${encodeURIComponent(server)}`
+        )
+        await pause()
+      })
+      expect(f.inspected).length(1)
+      expect(f.approvals).length(0)
+      expect(text()).includes('Sign this TV in to your TeamStation account?')
+    })
+  }
   it('prevents duplicate approvals during a request and drops completion after unmount', async () => {
     const f = fixture()
     let done: (() => void) | undefined
