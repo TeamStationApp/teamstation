@@ -1,6 +1,64 @@
 #!/usr/bin/env bash
 set -euo pipefail
-: "${TV_SIMULATOR_UDID:?Set the task simulator UDID}"
+if [[ -n "${TV_DEVICE_UDID:-}" && -n "${TV_SIMULATOR_UDID:-}" ]]; then
+  echo "Set only one of TV_DEVICE_UDID or TV_SIMULATOR_UDID" >&2
+  exit 1
+fi
+if [[ -z "${TV_DEVICE_UDID:-}" && -z "${TV_SIMULATOR_UDID:-}" ]]; then
+  echo "Set TV_DEVICE_UDID or TV_SIMULATOR_UDID" >&2
+  exit 1
+fi
+tv_test_default_port=8081
+if [[ -n "${TV_DEVICE_UDID:-}" ]]; then tv_test_default_port=8097; fi
+tv_test_metro_port="${TV_METRO_PORT:-$tv_test_default_port}"
+if [[ ! "$tv_test_metro_port" =~ ^[0-9]{1,5}$ ]] || (( 10#$tv_test_metro_port < 1 || 10#$tv_test_metro_port > 65535 )); then
+  echo "TV_METRO_PORT must be a port from 1 to 65535" >&2
+  exit 1
+fi
+if [[ -n "${TV_SIMULATOR_UDID:-}" && "$tv_test_metro_port" != 8081 ]]; then
+  echo "Simulator XCTest hosts use the prebuilt React Native port 8081; start Metro there" >&2
+  exit 1
+fi
+tv_test_project="$(cd "$(dirname "$0")/.." && pwd -P)"
+node - "$tv_test_metro_port" "$tv_test_project" <<'NODE'
+const { realpathSync } = require('node:fs')
+const [port, project] = process.argv.slice(2)
+async function check() {
+  const response = await fetch(`http://127.0.0.1:${port}/status`, {
+    signal: AbortSignal.timeout(5000)
+  })
+  if (!response.ok || await response.text() !== 'packager-status:running') {
+    throw new Error('Metro is not ready')
+  }
+  const root = response.headers.get('X-React-Native-Project-Root')
+  if (!root || realpathSync(decodeURIComponent(root)) !== realpathSync(project)) {
+    throw new Error('Metro belongs to another checkout')
+  }
+}
+check().catch(error => {
+  console.error(`${error.message}. Start this checkout's Metro from appletv with npm start -- --port ${port}`)
+  process.exitCode = 1
+})
+NODE
+if [[ -n "${TV_DEVICE_UDID:-}" ]]; then
+  : "${TV_DEVELOPMENT_TEAM:?Set the signing team for physical-device tests}"
+  tv_test_device="$TV_DEVICE_UDID"
+  tv_test_sdk=appletvos
+  tv_test_destination="platform=tvOS,id=$tv_test_device"
+  tv_test_options=("DEVELOPMENT_TEAM=$TV_DEVELOPMENT_TEAM" "CODE_SIGN_IDENTITY=Apple Development" CODE_SIGN_STYLE=Automatic -allowProvisioningUpdates)
+else
+  : "${TV_SIMULATOR_UDID:?Set TV_DEVICE_UDID or TV_SIMULATOR_UDID}"
+  tv_test_device="$TV_SIMULATOR_UDID"
+  tv_test_sdk=appletvsimulator
+  tv_test_destination="platform=tvOS Simulator,id=$tv_test_device"
+  tv_test_options=(CODE_SIGN_IDENTITY=-)
+fi
+if [[ -n "${TV_ONLY_TESTING:-}" ]]; then
+  tv_test_options+=("-only-testing:$TV_ONLY_TESTING")
+fi
+if [[ -n "${TV_API_BASE_URL:-}" ]]; then
+  tv_test_options+=("TV_API_BASE_URL=$TV_API_BASE_URL")
+fi
 cd "$(dirname "$0")/../.."
 node appletv/scripts/test-video-seek.cjs
 mkdir -p appletv/coverage
@@ -9,12 +67,12 @@ rm -f appletv/coverage/native-snapshot.json appletv/coverage/native-counts.json
 node scripts/llvm-changed-line-counts.cjs --snapshot appletv/coverage/native-snapshot.json --root . \
   --source appletv/ios/TeamStationTV/AppDelegate.swift --source appletv/ios/TeamStationTV/TVSession.m --source appletv/ios/TeamStationTV/TVRemote.m --source appletv/ios/TeamStationTV/TVPresentation.m
 xcodebuild -workspace appletv/ios/TeamStationTV.xcworkspace -scheme TeamStationTV \
-  -configuration Debug -sdk appletvsimulator -destination "platform=tvOS Simulator,id=$TV_SIMULATOR_UDID" \
+  -configuration Debug -sdk "$tv_test_sdk" -destination "$tv_test_destination" \
   -derivedDataPath appletv/DerivedData -resultBundlePath appletv/coverage/native-tests.xcresult \
-  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test
+  CODE_SIGNING_ALLOWED=YES SWIFT_ENABLE_EXPLICIT_MODULES=NO "TV_METRO_PORT=$tv_test_metro_port" "${tv_test_options[@]}" test
 xcrun llvm-cov export -format=lcov \
-  -instr-profile="appletv/DerivedData/Build/ProfileData/$TV_SIMULATOR_UDID/Coverage.profdata" \
-  appletv/DerivedData/Build/Products/Debug-appletvsimulator/TeamStationTV.app/TeamStationTV.debug.dylib \
+  -instr-profile="appletv/DerivedData/Build/ProfileData/$tv_test_device/Coverage.profdata" \
+  "appletv/DerivedData/Build/Products/Debug-$tv_test_sdk/TeamStationTV.app/TeamStationTV.debug.dylib" \
   "$PWD/appletv/ios/TeamStationTV/AppDelegate.swift" "$PWD/appletv/ios/TeamStationTV/TVSession.m" "$PWD/appletv/ios/TeamStationTV/TVRemote.m" "$PWD/appletv/ios/TeamStationTV/TVPresentation.m" \
   > appletv/coverage/native.lcov
 node scripts/llvm-changed-line-counts.cjs --manifest appletv/coverage/native-snapshot.json \

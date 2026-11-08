@@ -4,18 +4,27 @@ The tvOS target uses React Native TV with an isolated dependency tree. Shared ap
 
 Install dependencies using the repository's approved dependency scanner in both the root and this directory, then run `pod install` in `ios`. Build with `bash appletv/scripts/build-simulator.sh` from the repository root. The simulator build uses ad-hoc signing and simulator-only Keychain entitlements. Device signing uses the normal provisioning identity; no signing team is committed.
 
-Start Metro from `appletv` with `npm start -- --port 8097`. Run native tests from the repository root:
+For simulator native tests, start Metro from `appletv` with `npm start -- --port 8081`. Run native tests from the repository root:
 
 ```sh
 TV_SIMULATOR_UDID="$TV_SIMULATOR_UDID" bash appletv/scripts/test-native.sh
 ```
 
-The script requires an explicit simulator, runs XCTest, and exports measured LLVM counters bound to the current native source files. `npm run coverage.tv` merges those counters with the shared JavaScript/component tests and enforces the changed-line gate. Set `TS_COVERAGE_BASE` to the feature branch's reviewed integration base. The companion web build must exist in `dist` for the browser approval journey.
+For a paired physical Apple TV, start Metro from `appletv` with `npm start -- --port 8097`, then supply its identifier and your local signing team instead. Unset the other target variable when switching between device and simulator:
+
+```sh
+TV_DEVICE_UDID="$TV_DEVICE_UDID" TV_DEVELOPMENT_TEAM="$TV_DEVELOPMENT_TEAM" \
+  bash appletv/scripts/test-native.sh
+```
+
+The script requires exactly one device or simulator target, runs XCTest, and exports measured LLVM counters bound to the current native source files. It checks Metro before building: physical tests default to 8097 and set the host to the same port; simulator XCTest hosts use the prebuilt React Native default, 8081. Physical tests may override `TV_METRO_PORT`; simulator tests reject other ports instead of silently connecting to 8081. The physical TV must be able to reach the build computer over the network. `TV_ONLY_TESTING` optionally selects an XCTest class or method; `TV_API_BASE_URL` selects the test host's server. Session-storage tests use a separate test-only Keychain service. Restore a standalone Release build after hardware testing if the TV should run without Metro.
+
+`npm run coverage.tv` merges the native counters with the shared JavaScript/component tests and enforces the changed-line gate. Set `TS_COVERAGE_BASE` to the feature branch's reviewed integration base. The companion web build must exist in `dist` for the browser approval journey.
 
 Use a Maestro D build with explicit tvOS simulator support. Attach the app to the task's `appleTvNative` daemon with `--platform ios --device "$TV_SIMULATOR_UDID" --app-file appletv/DerivedData/Build/Products/Debug-appletvsimulator/TeamStationTV.app`. The Apple WDA driver uses platform `ios` for both iOS and tvOS and selects the WDA target from the explicit device's runtime. Browser approval uses the separate `appleTvExperience` daemon.
 
 ```sh
-export TV_METRO_URL='http://127.0.0.1:8097/index.bundle?platform=ios&dev=true&minify=false'
+export TV_METRO_URL='http://127.0.0.1:8081/index.bundle?platform=ios&dev=true&minify=false'
 # Also set TV_ARTIFACTS and MAESTRO_D_CLIENT_ROOT to task-owned paths.
 node -r sucrase/register appletv/e2e/auth.e2e.ts
 ```
