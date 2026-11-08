@@ -777,10 +777,15 @@ describe('a decided play picked up by the screen', function () {
         { type: 'FIELDER', id: 14, point: { x: -20, z: -40 } },
         { type: 'TRAJECTORY', angle: -10 }
       ] as const)
-        active = scoringReducer(active, {
-          ...event,
-          generation: active.generation
-        })
+        active = scoringReducer(
+          active,
+          event.type === 'OUTCOME'
+            ? event
+            : {
+                ...event,
+                generation: active.generation
+              }
+        )
       const followed = resumedScoringState(
         active.session,
         active.log,

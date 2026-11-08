@@ -248,13 +248,18 @@ export function appliedEvents(
       gumbo: named(play)
     })
   }
+  const snapshot = { ...stored }
+  delete snapshot.superseded
   return {
-    ...stored,
+    ...snapshot,
     plays: [...rows.entries()].sort(([a], [b]) => a - b).map(([, row]) => row),
     currentPlay:
       body.currentPlay === undefined
         ? (stored.currentPlay ?? null)
         : named(body.currentPlay),
+    ...(body.scoringMutation == null
+      ? {}
+      : { scoringMutation: body.scoringMutation }),
     priorPlaysDigest: stored.playsDigest ?? null,
     playsDigest: game.plays,
     lineupsDigest: game.lineups
