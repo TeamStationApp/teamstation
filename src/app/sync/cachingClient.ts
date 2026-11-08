@@ -123,6 +123,18 @@ export class CachingClient extends TeamStationClient {
       read: async path => {
         await this.request('GET', path, asRaw)
       },
+      readCanonical: async gameId => ({
+        game: await super.request(
+          'GET',
+          `/games/${encodeURIComponent(gameId)}`,
+          asRaw
+        ),
+        events: await super.request(
+          'GET',
+          `/games/${encodeURIComponent(gameId)}/events`,
+          asRaw
+        )
+      }),
       ...options.outbox
     })
   }
@@ -358,6 +370,8 @@ export class CachingClient extends TeamStationClient {
       opened == null
         ? undefined
         : queuedCallOf(method, path, body, options?.deviceNames, background)
+    if (queued?.kind === 'events')
+      queued.lineupRecovery = options?.deviceLineupRecovery
     if (queued != null)
       return cleaner(
         background

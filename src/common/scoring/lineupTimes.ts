@@ -2,19 +2,13 @@ import type { ScoringAction } from './actions'
 import { applyAction } from './apply'
 import {
   copyGame,
-  type GameSetup,
   type GameState,
+  lineupSideKey,
   setupOf,
   type Side
 } from './state'
 
 const SIDES: readonly Side[] = ['away', 'home']
-
-/** What a side's lineup shows: its players, batting order and defense. */
-function shownLineup(setup: GameSetup, side: Side): string {
-  const team = setup.sides[side]
-  return JSON.stringify([team.players, team.battingOrder, team.defense])
-}
 
 /**
  * The sides each action of `log` changes the lineup of, or null for an
@@ -42,11 +36,13 @@ export function lineupSides(
       else game = applied.state
     }
     if (action.type !== 'lineup') return null
+    if (action.effectiveSides != null) return action.effectiveSides
+    if (action.kind === 'roster' && action.side != null) return [action.side]
     if (broken) return action.side != null ? [action.side] : SIDES
     const was = setupOf(before)
     const now = setupOf(game)
     return SIDES.filter(
-      side => shownLineup(was, side) !== shownLineup(now, side)
+      side => lineupSideKey(was, side) !== lineupSideKey(now, side)
     )
   })
 }

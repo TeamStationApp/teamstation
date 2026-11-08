@@ -822,6 +822,274 @@ describe('the phone outbox', function () {
     ).deep.equals([41, 43, 44, 45, 47])
   })
 
+  it('keeps an offline Undo from carrying its queued parent’s discarded tail', async () => {
+    let online = false
+    const p = phone(
+      server({ '/games/g1/events': eventsDoc('g1', 'L0') }, () =>
+        online ? { body: eventsDoc('g1', 'L0') } : 'offline'
+      )
+    )
+    online = true
+    await p.client.gameEvents('g1')
+    online = false
+    await p.client.saveGameEvents('g1', {
+      plays: [play(0), play(1)],
+      remove: [],
+      currentPlay: null,
+      scoringMutation: { at: 1, id: 'before-undo', revision: 0, frontier: 2 }
+    })
+    await p.client.saveGameEvents('g1', {
+      plays: [play(0)],
+      remove: [1],
+      currentPlay: null,
+      scoringMutation: { at: 2, id: 'undo-tail', revision: 0, frontier: 1 }
+    })
+    const child = JSON.parse(String(p.rows().at(-1)!.body)) as SaveChange
+    expect(child.plays.map(play => play.about.atBatIndex)).deep.equals([0])
+    expect(child.remove).deep.equals([1])
+  })
+
+  for (const childBase of ['L0', 'local-parent'])
+    it(`keeps a superseded parent's lineup precondition for its child (${childBase})`, async function () {
+      let online = true
+      const bases: unknown[] = []
+      const p = phone(
+        server({ '/games/g1/events': eventsDoc('g1', 'L0') }, sent => {
+          if (!online) return 'offline'
+          const body = sent.body as SaveChange
+          if (body.scoringMutation?.id === 'parent')
+            return {
+              body: {
+                ...(eventsDoc('g1', 'coach') as object),
+                superseded: true
+              }
+            }
+          bases.push(body.lineupsBase)
+          if (body.lineupsBase !== 'coach')
+            return refusal(409, 'conflict', 'The coach changed the lineup', {
+              stale: true
+            })
+          return { body: eventsDoc('g1', 'overwritten') }
+        })
+      )
+      await p.client.gameEvents('g1')
+      online = false
+      for (const [id, base, at] of [
+        ['parent', 'L0', 1],
+        ['child', childBase, 3]
+      ] as const)
+        await p.client.saveGameEvents('g1', {
+          plays: [],
+          remove: [],
+          currentPlay: null,
+          lineupsBase: base,
+          scoringMutation: { at, id, revision: 0, frontier: 0 }
+        })
+      if (childBase.startsWith('local-')) {
+        // A persisted pre-normalization alias from an earlier queue writer.
+        const child = p.rows().at(-1)!
+        const body = {
+          ...JSON.parse(String(child.body)),
+          lineupsBase: childBase
+        }
+        executors
+          .at(-1)!
+          .db.prepare('UPDATE outbox SET body = ? WHERE id = ?')
+          .run(JSON.stringify(body), String(child.id))
+      }
+      online = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      expect(bases).deep.equals(['L0'])
+      expect((await p.client.outboxSummary()).games.g1?.state).equals('parked')
+    })
+
+  it('keeps superseded on its acknowledgment, not the cached game or a later optimistic score', async function () {
+    let online = true
+    const p = phone(
+      server({ '/games/g1/events': eventsDoc('g1', 'L0') }, () =>
+        online
+          ? {
+              body: {
+                ...(eventsDoc('g1', 'L1') as Record<string, unknown>),
+                superseded: true
+              }
+            }
+          : 'offline'
+      )
+    )
+    await p.client.gameEvents('g1')
+    const change: SaveChange = {
+      plays: [],
+      remove: [],
+      currentPlay: { ...play(1), about: { atBatIndex: 1, isComplete: false } },
+      scoringMutation: { at: 1, id: 'older', revision: 0, frontier: 1 }
+    }
+    const answer = await p.client.saveGameEvents('g1', change)
+    expect(answer.superseded).equals(true)
+    expect(bodyOf(p.document(eventsKey('g1'))!)).not.has.property('superseded')
+    online = false
+    const optimistic = await p.client.saveGameEvents('g1', {
+      ...change,
+      scoringMutation: { at: 2, id: 'newer', revision: 0, frontier: 1 }
+    })
+    expect(optimistic.superseded).equals(undefined)
+    expect(optimistic.scoringMutation?.id).equals('newer')
+  })
+
+  it('answers a skipped optimistic write as superseded without poisoning its cache', async () => {
+    let online = true
+    const winner = { at: 3000, id: 'peer', revision: 1, frontier: 1 }
+    const canonical = {
+      ...(eventsDoc('g1', 'L0') as object),
+      scoringMutation: winner
+    }
+    const p = phone(
+      server({ '/games/g1/events': canonical }, () =>
+        online ? { body: canonical } : 'offline'
+      )
+    )
+    await p.client.gameEvents('g1')
+    online = false
+    const answer = await p.client.saveGameEvents('g1', {
+      plays: [play(0)],
+      remove: [],
+      currentPlay: null,
+      scoringMutation: { at: 2000, id: 'local', revision: 1, frontier: 1 }
+    })
+    expect(answer.superseded).equals(true)
+    expect(answer.scoringMutation).deep.equals(winner)
+    expect(bodyOf(p.document(eventsKey('g1'))!)).deep.equals(canonical)
+    expect(p.rows()).has.length(1)
+  })
+
+  it('keeps a known winner visible while an older queued descendant awaits delivery', function () {
+    const canonical = {
+      plays: [],
+      currentPlay: { ...play(0), count: { balls: 0, strikes: 1 } },
+      scoringMutation: { at: 3, id: 'peer', revision: 0, frontier: 0 },
+      playsDigest: 'canonical',
+      superseded: true
+    }
+    const game = {
+      gameId: 'g1',
+      plays: 'local',
+      lineups: null,
+      newPlayId: () => 'unused'
+    }
+    const queued = {
+      plays: [],
+      currentPlay: { ...play(0), count: { balls: 2, strikes: 0 } },
+      scoringMutation: { at: 2, id: 'older-child', revision: 0, frontier: 0 }
+    }
+    const held = appliedEvents(canonical, queued, game)
+    expect(held.currentPlay).deep.equals(canonical.currentPlay)
+    expect(held.scoringMutation).deep.equals(canonical.scoringMutation)
+    expect(held.playsDigest).equals('canonical')
+    expect(held).not.has.property('superseded')
+    const newer = appliedEvents(
+      canonical,
+      {
+        ...queued,
+        scoringMutation: { ...queued.scoringMutation, at: 4 }
+      },
+      game
+    )
+    expect((newer.currentPlay as GumboPlay).count).deep.equals(
+      queued.currentPlay.count
+    )
+    expect(newer.scoringMutation).deep.equals({
+      ...queued.scoringMutation,
+      at: 4
+    })
+  })
+
+  it('restores the authored ancestry over a displaced optimistic base and prunes its tail', function () {
+    const original = play(0)
+    const competing = {
+      ...play(0),
+      result: { ...play(0).result, eventType: 'double' }
+    }
+    const applied = appliedEvents(
+      {
+        plays: [competing, play(1), play(2)].map((gumbo, i) => ({
+          id: `row-${i}`,
+          gumbo
+        })),
+        scoringMutation: { at: 2, id: 'peer', revision: 0, frontier: 3 }
+      },
+      {
+        plays: [],
+        currentPlay: null,
+        scoringBase: null,
+        scoringHistory: [original],
+        scoringMutation: { at: 3, id: 'child', revision: 0, frontier: 1 }
+      },
+      {
+        gameId: 'g1',
+        plays: 'local-p',
+        lineups: null,
+        newPlayId: () => 'new-row'
+      }
+    )
+    expect(
+      (applied.plays as Array<{ id: string; gumbo: GumboPlay }>).map(row => ({
+        id: row.id,
+        event: row.gumbo.result.eventType
+      }))
+    ).deep.equals([{ id: 'row-0', event: 'single' }])
+  })
+
+  it('reconciles scoring when a guest rename is the last queued events writer', async () => {
+    let online = true
+    const p = phone(
+      server({ '/games/g1/events': namedEvents() }, sent => {
+        if (!online) return 'offline'
+        if (sent.method === 'PUT') return { body: serverEntry(901, 'George') }
+        return { body: { ...(namedEvents() as object), superseded: true } }
+      })
+    )
+    const notices: OutboxNotice[] = []
+    p.client.subscribeOutboxNotices(notice => notices.push(notice))
+    await p.client.gameEvents('g1')
+    online = false
+    await p.client.saveGameEvents('g1', {
+      plays: [play(1, 902)],
+      remove: [],
+      currentPlay: null,
+      scoringMutation: { at: 1, id: 'losing', revision: 0, frontier: 2 }
+    })
+    await p.client.renameGuestPlayer(
+      'g1',
+      userIdOfGumbo(901),
+      { firstName: 'George', lastName: 'Ruth' },
+      901
+    )
+    expect(p.rows()).has.length(2)
+    online = true
+    p.client.wakeOutbox(true)
+    await p.client.drainOutbox()
+    expect(p.rows()).has.length(0)
+    expect(p.document(eventsKey('g1'))!.pending).equals(0)
+    expect(notices.some(notice => notice.reconcileScoring === true)).equals(
+      true
+    )
+  })
+
+  it('removes old response-only status when applying an optimistic score', function () {
+    const applied = appliedEvents(
+      { superseded: true },
+      { plays: [], currentPlay: null },
+      {
+        gameId: 'g1',
+        plays: 'local-p',
+        lineups: null,
+        newPlayId: () => 'local-row'
+      }
+    )
+    expect(applied).not.has.property('superseded')
+  })
+
   it('applies a post onto a game with no plays, and a save onto lineups with no current lineup', function () {
     const applied = appliedEvents(
       {},
@@ -2779,7 +3047,7 @@ describe('the phone outbox', function () {
       await p.client.drainOutbox()
       expect(p.rows()).deep.equals([])
       // Said to the game's screens, which showed the save as made.
-      expect(notices).deep.equals([
+      expect(notices.filter(notice => !notice.reconcileScoring)).deep.equals([
         { gameId: 'g1', message: NEWER_LINEUP_MESSAGE }
       ])
       expect(await p.client.outboxSummary()).deep.equals({
@@ -3037,7 +3305,7 @@ describe('the phone outbox', function () {
       for (const call of sent)
         expect(JSON.stringify(call.body)).not.match(/Mookie|Betts/)
       expect((await p.client.outboxSummary()).games).deep.equals({})
-      expect(notices).deep.equals([
+      expect(notices.filter(notice => !notice.reconcileScoring)).deep.equals([
         { gameId: 'g1', message: STAND_IN_MESSAGE, reread: true }
       ])
     })
@@ -3123,7 +3391,7 @@ describe('the phone outbox', function () {
       for (const call of sent)
         expect(JSON.stringify(call.body)).not.match(/Mookie|Betts/)
       expect((await p.client.outboxSummary()).games).deep.equals({})
-      expect(notices).deep.equals([
+      expect(notices.filter(notice => !notice.reconcileScoring)).deep.equals([
         { gameId: 'g1', message: STAND_IN_MESSAGE, reread: true }
       ])
     })
@@ -3233,7 +3501,7 @@ describe('the phone outbox', function () {
         games: {},
         teams: {}
       })
-      expect(notices).deep.equals([
+      expect(notices.filter(notice => !notice.reconcileScoring)).deep.equals([
         {
           gameId: 'g1',
           message:
@@ -3310,7 +3578,7 @@ describe('the phone outbox', function () {
       releaseLanding!()
       await pitch
       await drained
-      expect(notices).deep.equals([
+      expect(notices.filter(notice => !notice.reconcileScoring)).deep.equals([
         { teamId: 'home', message: PENDING_APPROVAL_MESSAGE }
       ])
     })
@@ -3370,7 +3638,7 @@ describe('the phone outbox', function () {
           key
         ).deep.equals(listed.map((_, index) => userIdOfGumbo(201 + index)))
       }
-      expect(notices).deep.equals([
+      expect(notices.filter(notice => !notice.reconcileScoring)).deep.equals([
         { teamId: 'home', message: PENDING_APPROVAL_MESSAGE },
         { gameId: 'g1', message: PENDING_APPROVAL_MESSAGE }
       ])

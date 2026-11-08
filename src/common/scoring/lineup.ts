@@ -212,7 +212,9 @@ export function applyRoster(
    * the man due: whoever the save put in that slot bats. Saves after the
    * first pitch carry it (`keepSlot` on the roster action).
    */
-  keepSlot = false
+  keepSlot = false,
+  /** A deferred edit must not roll back the completed play before it. */
+  allowAwaitingBatter = false
 ):
   | {
       state: GameState
@@ -311,7 +313,11 @@ export function applyRoster(
       !(side === activeSide && state.awaitingBatter != null)
     ) {
       const slot = before.battingIndex
-      if (side === activeSide && occupied.includes(after.battingOrder[slot]))
+      if (
+        side === activeSide &&
+        occupied.includes(after.battingOrder[slot]) &&
+        !allowAwaitingBatter
+      )
         return {
           error:
             'Choose a next batter in the lineup who is not already on base.'
@@ -374,6 +380,10 @@ export function applyRoster(
     return { state: next, takers }
   }
   const batter = playerRef(next, team.battingOrder[team.battingIndex])
+  if (allowAwaitingBatter && occupied.includes(batter.id)) {
+    next.awaitingBatter = startAppearance(next)
+    return { state: next, takers }
+  }
   const play = next.liveData.plays.currentPlay
   if (play == null) startAppearance(next)
   else {
