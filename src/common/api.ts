@@ -3638,9 +3638,13 @@ export class TeamStationClient {
     }
   }
 
-  async startTvLogin(platform: TvPlatform): Promise<TvLoginRequest> {
+  async startTvLogin(
+    platform: TvPlatform,
+    appOrigin?: string
+  ): Promise<TvLoginRequest> {
     return await this.request('POST', '/auth/tv/start', asTvLoginRequest, {
-      platform
+      platform,
+      ...(appOrigin == null ? {} : { appOrigin })
     })
   }
 

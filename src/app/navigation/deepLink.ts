@@ -23,7 +23,10 @@ export function routeOfUrl(
   url: string,
   options: { appOrigin?: string } = {}
 ): Route {
-  const [address, search = ''] = stripFragment(url).split('?')
+  const clean = stripFragment(url)
+  const question = clean.indexOf('?')
+  const address = question < 0 ? clean : clean.slice(0, question)
+  const search = question < 0 ? '' : clean.slice(question + 1)
 
   const scheme = address.indexOf('://')
   let path = address
