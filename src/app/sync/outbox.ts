@@ -1582,7 +1582,10 @@ export class Outbox {
     const rewriting = later.filter(other =>
       documentsOf(callOfRow(other)).some(doc => doc.key === own)
     )
-    let document = response
+    let document = { ...response }
+    // This flag describes only the rejected request, not the canonical game
+    // or a later locally authored mutation applied on top of it.
+    if (call.kind === 'events') delete document.superseded
     for (const other of rewriting)
       document = await this.applied(
         tx,
