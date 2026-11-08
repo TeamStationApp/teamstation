@@ -602,6 +602,10 @@ export interface GameState {
     boxscore: { teams: Record<Side, GameSide> }
     plays: { allPlays: GamePlay[]; currentPlay: GamePlay | null }
   }
+  /** Accepted coach edits whose original appearance has not yet been reached. */
+  deferredLineups?: Array<Optional<ReturnType<typeof asLineupAction>>>
+  /** A previously accepted coach edit no longer fits the corrected play. */
+  lineupWarning?: string
   /** The play being resolved, or null between plays. */
   pending: Resolution | null
   /** Runners headed home whose fate is not yet decided, lead runner first. */
@@ -824,12 +828,73 @@ export const asGameSetup: Cleaner<GameSetup> = raw => {
   return setup
 }
 
+export const LINEUP_KINDS = [
+  'roster',
+  'battingOrder',
+  'position',
+  'addPlayer',
+  'substitute',
+  'pinchRunner',
+  'batterSide',
+  'runner'
+] as const
+export type LineupKind = (typeof LINEUP_KINDS)[number]
+
+export const asLineupAction = asObject({
+  type: asLiteral('lineup'),
+  kind: asLiteral(...LINEUP_KINDS),
+  side: asOptional(asLiteral('away', 'home')),
+  setup: asOptional(asGameSetup),
+  /**
+   * Sides of a roster setup left in roster order because the saver could
+   * not see that team's default. The game shows that order, and the first
+   * pitch leaves that team's default as it stands.
+   */
+  unseen: asOptional(asArray(asLiteral('away', 'home'))),
+  /**
+   * Sides of a roster setup the saver could see. The first pitch takes
+   * one as the lineup the game begins with, except a side an earlier save
+   * left unseen whose arrangement is still that roster order.
+   */
+  confirmed: asOptional(asArray(asLiteral('away', 'home'))),
+  /**
+   * The screen logged this roster because it was showing a default in
+   * place of an unseen order, ahead of a play. A rebase lets it replace
+   * only a side that is still that order. Every other side stays as the
+   * server holds it.
+   */
+  shown: asOptional(asLiteral(true)),
+  /**
+   * A roster saved after the first pitch: each side keeps its batting slot,
+   * and whoever now stands in it bats. Absent, the man due stays due.
+   */
+  keepSlot: asOptional(asLiteral(true)),
+  /** Earliest appearance where an independently saved coach edit applies. */
+  effectiveAtBat: asOptional(asNumber),
+  effectiveSides: asOptional(asArray(asLiteral('away', 'home'))),
+  nextBatter: asOptional(asSessionId),
+  order: asOptional(asArray(asSessionId)),
+  position: asOptional(asPosition),
+  player: asOptional(asSessionId),
+  replaces: asOptional(asSessionId),
+  base: asOptional(asLiteral('1B', '2B', '3B')),
+  name: asOptional(asString),
+  jersey: asOptional(asString),
+  batSide: asOptional(asLiteral('L', 'R'))
+})
+
 export function setupOf(state: GameState): GameSetup {
   return {
     players: copyState(state.gameData.players),
     sides: copyState(state.liveData.boxscore.teams),
     tagOrder: [...state.meta.tagOrder]
   }
+}
+
+/** Membership, order and defense, without the moving scoring cursor. */
+export function lineupSideKey(setup: GameSetup, side: Side): string {
+  const team = setup.sides[side]
+  return JSON.stringify([team.players, team.battingOrder, team.defense])
 }
 
 const asTeam = asObject({
@@ -925,6 +990,8 @@ export const asGameState: Cleaner<GameState> = exactly(
         currentPlay: asNullable(asGamePlay)
       })
     }),
+    deferredLineups: asOptional(asArray(asLineupAction)),
+    lineupWarning: asOptional(asString),
     pending: asEither(
       asNull,
       asObject({

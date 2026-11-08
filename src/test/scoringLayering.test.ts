@@ -57,6 +57,8 @@ describe('scoring read-only import boundary', function () {
       `import { ordinal, begun as started } from '${prefix}lineup'`,
       `import { confirmedSides, revealedSides } from '${prefix}lineupHistory'`,
       `import { namesIn, withNames } from '${prefix}storedNames'`,
+      `import { storedRecordOf } from '${prefix}gumbo'`,
+      `import { sameScoringMutation } from '${prefix}scoringMutation'`,
       `import type { BoardLine } from '${prefix}boardLineTypes'`,
       `import { type Lineup } from '${prefix}lineupHistory'`,
       `export type { Lineup } from '${prefix}lineupHistory'`,
@@ -81,6 +83,8 @@ describe('scoring read-only import boundary', function () {
       `export * from '${prefix}lineup'`,
       `export { updateDefense as ordinal } from '${prefix}lineup'`,
       `import { documentOf } from '${prefix}document'`,
+      `import { storedRecordOf, gumboOf } from '${prefix}gumbo'`,
+      `import { authoredScoringMutation } from '${prefix}scoringMutation'`,
       `import { withNames, withoutNames } from '${prefix}storedNames'`
     ]) {
       writeFileSync(file, source)

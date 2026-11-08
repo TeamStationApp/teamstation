@@ -28,6 +28,7 @@ export function fieldServer(stored: {
   stale: boolean
   /** Another device changed the lineups later: lineup saves are refused. */
   newer: boolean
+  superseded: boolean
   /** While set, a play's save waits on it before it is answered. */
   holdPlays?: Promise<void>
   /** While set, every request waits on it before it is answered. */
@@ -111,6 +112,7 @@ export function fieldServer(stored: {
     offline: false,
     stale: false,
     newer: false,
+    superseded: false,
     holdPlays: undefined as Promise<void> | undefined,
     hold: undefined as Promise<void> | undefined,
     posts: [] as Post[],
@@ -169,6 +171,8 @@ export function fieldServer(stored: {
           })
         if (path === '/games/g1/events') {
           await state.holdPlays
+          if (state.superseded)
+            return json(200, { ...(eventsBody() as object), superseded: true })
           for (const index of body.remove as number[]) plays.delete(index)
           for (const play of body.plays as GumboPlay[])
             plays.set(play.about.atBatIndex, play)
