@@ -218,9 +218,9 @@ async function scoring(
     open: async () => {
       const session = await open()
       const reload = session.reload.bind(session)
-      session.reload = async () => {
+      session.reload = async canAdopt => {
         reloads.push(session.saving)
-        const changed = await reload()
+        const changed = await reload(canAdopt)
         // The server's copy can read back with its players in another order,
         // so a read after a save finds the game changed.
         return options.readsChanged === true || changed
@@ -286,6 +286,178 @@ describe('comparing logs', function () {
 })
 
 describe('the scoring screen on the game socket', function () {
+  it('accepts a pitch immediately after its own echoed save without waiting for a read', async function () {
+    const { changes, store, other, reloads } = await scoring({ digests: true })
+    await click('Ball')
+    await settle()
+    const digest = (await store.load('g1')).playsDigest!
+    await act(async () => {
+      for (const listener of changes.listeners)
+        listener({
+          type: 'change',
+          gameId: 'g1',
+          kind: 'playEdits',
+          at: '2026-11-05T12:00:00Z',
+          data: {
+            generation: 0,
+            fromDigest: 'before',
+            namesDigest: 'names',
+            edits: [],
+            currentPlay: null,
+            digest
+          }
+        })
+      document
+        .querySelector<HTMLElement>('[aria-label="Called Strike"]')!
+        .click()
+    })
+    await settle()
+    expect(reloads).deep.equals([])
+    expect(document.body.textContent).not.includes(
+      'Check the play and try again'
+    )
+    expect((await other()).actions).deep.equals([
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'C' }
+    ])
+  })
+
+  it('keeps a local appearance editable while an older read finishes', async function () {
+    const { changes, other, store } = await scoring()
+    await click('Ball')
+    await settle()
+    const load = store.load
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let first = true
+    store.load = async id => {
+      const snapshot = await load(id)
+      if (first) {
+        first = false
+        await held
+      }
+      return snapshot
+    }
+    await changes.plays()
+    await click('Ball')
+    release()
+    await settle()
+    expect(document.body.textContent).includes('2 balls 0 strikes')
+    expect((await other()).actions).deep.equals([
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' }
+    ])
+  })
+
+  it('rejects an obsolete pitch during a peer read and accepts a fresh tap afterward', async function () {
+    const { changes, other, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    const load = store.load
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    store.load = async id => {
+      await held
+      return await load(id)
+    }
+    await changes.plays()
+    await click('Called Strike')
+    expect(document.body.textContent).includes('Check the play and try again')
+    expect(document.body.textContent).includes('0 balls 0 strikes')
+    release()
+    await settle()
+    expect(document.body.textContent).includes('1 balls 0 strikes')
+    await click('Called Strike')
+    await settle()
+    expect((await other()).actions).deep.equals([
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'C' }
+    ])
+  })
+
+  it('retries a failed remote read without waiting for another pitch', async function () {
+    const { changes, other, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    const load = store.load
+    let fail = true
+    store.load = async id => {
+      if (fail) {
+        fail = false
+        throw new Error('Temporary connection loss')
+      }
+      return await load(id)
+    }
+    await changes.plays()
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1100))
+    })
+    await settle()
+    expect(document.body.textContent).includes('1 balls 0 strikes')
+  })
+
+  it('never saves a close synthesized while displaying a remote award', async function () {
+    const { changes, other, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    await peer.flush()
+    const before = JSON.stringify(await store.load('g1'))
+    await changes.plays()
+    await settle()
+    expect(JSON.stringify(await store.load('g1'))).equals(before)
+  })
+
+  it('keeps following after adopting a peer’s unfinished single', async function () {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    expect(shown('Finish at-bat')).equals(true)
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    expect(document.body.textContent).includes('0 balls 0 strikes 0 outs')
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+    expect(session().actions).deep.equals(peer.actions)
+  })
+
+  for (const dropped of [false, true])
+    it(`follows ${dropped ? 'dropped' : 'ordinary'} third strike through the next batter`, async () => {
+      const { changes, other, session } = await scoring()
+      const peer = await other()
+      const publish = async (): Promise<void> => {
+        await peer.flush()
+        await changes.plays()
+      }
+      peer.apply({ type: 'pitch', call: 'C' })
+      peer.apply({ type: 'pitch', call: 'C' })
+      await publish()
+      if (dropped) {
+        peer.apply({ type: 'result', eventType: 'strikeout' })
+        await publish()
+        const batter = peer.state.liveData.plays.currentPlay!.matchup.batter.id
+        peer.apply({ type: 'runnerMovement', runner: batter, to: '1B' })
+      } else peer.apply({ type: 'pitch', call: 'C' })
+      await publish()
+      peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+      await publish()
+      peer.apply({ type: 'pitch', call: 'B' })
+      await publish()
+      expect(document.body.textContent).includes('1 balls 0 strikes')
+      expect(session().actions).deep.equals(peer.actions)
+    })
+
   it('reads another scorer’s plays in at rest, starting again from them', async function () {
     const { changes, other, reloads } = await scoring()
     expect(document.body.textContent).includes('0 balls 0 strikes')
@@ -778,7 +950,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
           }
         }
         const reload = session.reload.bind(session)
-        session.reload = async () => {
+        session.reload = async canAdopt => {
           reloads++
           return await reload()
         }
