@@ -644,7 +644,11 @@ async function archiveFieldApp(
 }
 
 export async function archiveDirector(ctx: Stage): Promise<void> {
-  await ctx.sh('bash mobile/apps/tsDirector/scripts/bootstrap.sh')
+  // bootstrap.sh changes directory before calling its siblings by its own
+  // relative path, so it needs an absolute one.
+  await ctx.sh(
+    `bash ${path.join(developRoot(ctx), 'mobile/apps/tsDirector/scripts/bootstrap.sh')}`
+  )
   const { ipa, build } = await archiveFieldApp(
     ctx,
     'mobile/apps/tsDirector',
