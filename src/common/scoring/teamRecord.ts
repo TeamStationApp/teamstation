@@ -1,3 +1,4 @@
+import type { ScoringAction } from './actions'
 import type { TeamStationRecord } from './gumbo'
 import type { GameSetup, GameSide, Side } from './state'
 
@@ -25,6 +26,36 @@ const SIDES: readonly Side[] = ['away', 'home']
 
 function object(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** Version 4 adds deferred lineup semantics; old readers must not replay it as v2. */
+export function recordVersion(actions: readonly ScoringAction[]): 3 | 4 {
+  return actions.some(
+    action =>
+      action.type === 'lineup' &&
+      (action.effectiveAtBat != null || action.effectiveSides != null)
+  )
+    ? 4
+    : 3
+}
+
+export const SCORING_FEATURE_HEADER = 'x-teamstation-scoring'
+export const SCORING_FEATURES = 'deferred-lineups-v1'
+
+/** Also detects records written before the version boundary was introduced. */
+export function requiresDeferredLineups(play: unknown): boolean {
+  if (!object(play) || !object(play.teamStation)) return false
+  const record = play.teamStation
+  return (
+    record.version === 4 ||
+    (Array.isArray(record.actions) &&
+      record.actions.some(
+        action =>
+          object(action) &&
+          action.type === 'lineup' &&
+          (action.effectiveAtBat != null || action.effectiveSides != null)
+      ))
+  )
 }
 
 /** The side holding this team, or undefined when neither does. */
@@ -85,18 +116,23 @@ export function actionByTeam<A extends { type: string }>(
       : movement
   }
   if (action.type !== 'lineup') return action
-  const { side, setup, confirmed, unseen, ...rest } = action as A & {
-    side?: Side
-    setup?: GameSetup
-    confirmed?: Side[]
-    unseen?: Side[]
-  }
+  const { side, setup, confirmed, unseen, effectiveSides, ...rest } =
+    action as A & {
+      side?: Side
+      setup?: GameSetup
+      confirmed?: Side[]
+      unseen?: Side[]
+      effectiveSides?: Side[]
+    }
   return {
     ...rest,
     ...(side == null ? {} : { teamId: teams[side].id }),
     ...(setup == null ? {} : { setup: setupByTeam(setup, teams) }),
     ...(confirmed == null ? {} : { confirmed: teamIdsOf(confirmed, teams) }),
-    ...(unseen == null ? {} : { unseen: teamIdsOf(unseen, teams) })
+    ...(unseen == null ? {} : { unseen: teamIdsOf(unseen, teams) }),
+    ...(effectiveSides == null
+      ? {}
+      : { effectiveSides: teamIdsOf(effectiveSides, teams) })
   }
 }
 
@@ -110,7 +146,10 @@ export function actionByTeam<A extends { type: string }>(
 export function ownTeams(raw: unknown): SideTeams {
   const setup = object(raw) ? raw.setupBefore : undefined
   const ids =
-    object(raw) && raw.version === 3 && object(setup) && object(setup.teams)
+    object(raw) &&
+    (raw.version === 3 || raw.version === 4) &&
+    object(setup) &&
+    object(setup.teams)
       ? Object.keys(setup.teams)
       : []
   return { away: { id: ids[0] ?? '' }, home: { id: ids[1] ?? '' } }
@@ -123,7 +162,7 @@ export function recordByTeam(
 ): Record<string, unknown> {
   return {
     ...record,
-    version: 3,
+    version: recordVersion(record.actions),
     setupBefore: setupByTeam(record.setupBefore, teams),
     actions: record.actions.map(action => actionByTeam(action, teams))
   }
@@ -132,7 +171,7 @@ export function recordByTeam(
 /** One stored action with its teams turned to sides, still uncleaned. */
 function actionBySide(raw: unknown, teams: SideTeams): unknown {
   if (!object(raw) || raw.type !== 'lineup') return raw
-  const { teamId, setup, confirmed, unseen, ...rest } = raw
+  const { teamId, setup, confirmed, unseen, effectiveSides, ...rest } = raw
   const side = teamId == null ? undefined : sideOf(teams, teamId)
   if (teamId != null && side == null)
     throw new Error('A lineup change names a team not in this game')
@@ -141,7 +180,18 @@ function actionBySide(raw: unknown, teams: SideTeams): unknown {
     ...(side == null ? {} : { side }),
     ...(setup == null ? {} : { setup: setupBySide(setup, teams) }),
     ...(confirmed == null ? {} : { confirmed: sidesOf(confirmed, teams) }),
-    ...(unseen == null ? {} : { unseen: sidesOf(unseen, teams) })
+    ...(unseen == null ? {} : { unseen: sidesOf(unseen, teams) }),
+    ...(effectiveSides == null
+      ? {}
+      : {
+          effectiveSides: Array.isArray(effectiveSides)
+            ? effectiveSides.flatMap(id =>
+                SIDES.includes(id as Side)
+                  ? [id]
+                  : (sidesOf([id], teams) as Side[])
+              )
+            : effectiveSides
+        })
   }
 }
 
@@ -151,7 +201,7 @@ function actionBySide(raw: unknown, teams: SideTeams): unknown {
  * setup names a team on neither side is not this game's to read.
  */
 export function recordBySide(raw: unknown, teams: SideTeams): unknown {
-  if (!object(raw) || raw.version !== 3) return raw
+  if (!object(raw) || (raw.version !== 3 && raw.version !== 4)) return raw
   const setup = raw.setupBefore
   const byTeam = object(setup) ? setup.teams : undefined
   if (
@@ -180,7 +230,7 @@ export function retargetRecord(
   fromId: string,
   toId: string
 ): unknown {
-  if (!object(raw) || raw.version !== 3) return raw
+  if (!object(raw) || (raw.version !== 3 && raw.version !== 4)) return raw
   const team = (id: unknown): unknown => (id === fromId ? toId : id)
   // Each player names his team too.
   const players = (value: unknown): unknown =>
@@ -224,7 +274,12 @@ export function retargetRecord(
                 ...(action.confirmed == null
                   ? {}
                   : { confirmed: ids(action.confirmed) }),
-                ...(action.unseen == null ? {} : { unseen: ids(action.unseen) })
+                ...(action.unseen == null
+                  ? {}
+                  : { unseen: ids(action.unseen) }),
+                ...(action.effectiveSides == null
+                  ? {}
+                  : { effectiveSides: ids(action.effectiveSides) })
               }
             : action
         )

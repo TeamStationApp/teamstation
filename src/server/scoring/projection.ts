@@ -126,7 +126,7 @@ function mapDocument<T>(document: T, resolve: (id: number) => number): T {
         const own = ownTeams(value)
         const record = recordOf({ teamStation: value }, own)
         const stored = (mapped: object): unknown =>
-          (value as { version?: unknown }).version === 3
+          [3, 4].includes((value as { version?: number }).version ?? 0)
             ? recordByTeam(mapped as TeamStationRecord, own)
             : mapped
         result[key] =
