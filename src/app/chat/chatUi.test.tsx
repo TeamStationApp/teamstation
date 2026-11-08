@@ -1252,6 +1252,43 @@ describe('a conversation', function () {
     expect(text()).contains('✓✓ Seen by 3')
   })
 
+  it('asks for approval only on a device that can grant it', async function () {
+    const onMembers: string[] = []
+    const engine = new FakeEngine()
+    engine.waiting = [
+      {
+        requestId: 7,
+        history: true,
+        canApprove: false,
+        conversationId: 'cnv_1',
+        conversationTitle: 'Hawks Members',
+        userId: userIdOfGumbo(9),
+        name: 'Drew D',
+        oldSafetyNumber: SAFETY,
+        newSafetyNumber: SAFETY
+      }
+    ]
+    await open(view({ messages: [message({ body: 'hello there' })] }), {
+      engine,
+      onMembers: () => onMembers.push('members')
+    })
+    await until('the conversation', () => text().includes('hello there'))
+    expect(text()).not.contains('reset their chat keys')
+    expect(button('Review')).equals(undefined)
+    // Keys arrive that grant it: the row appears, and Review opens the info.
+    await act(async () => {
+      engine.waiting[0].canApprove = true
+      engine.emit({ type: 'approvals' })
+    })
+    await until('the approval row', () =>
+      text().includes(
+        'Drew D reset their chat keys and asks for this chat’s history.'
+      )
+    )
+    await press('Review')
+    expect(onMembers).deep.equals(['members'])
+  })
+
   it('shows reactions, quotes, typing, notices and banners', async function () {
     const now = Date.parse('2027-04-01T17:00:00.000Z')
     const onMembers: string[] = []
@@ -2018,18 +2055,26 @@ describe('members, approvals and safety numbers', function () {
     expect(words).not.contains('Blair B reset')
     expect(words).not.contains('aboutabout')
     expect(button('Leave this conversation')).equals(undefined)
+    // A device without a key that grants it is not asked at all.
     await act(async () => {
       engine.waiting[0].canApprove = false
       engine.emit({ type: 'approvals' })
     })
-    expect(button('Approve Drew D')?.getAttribute('aria-disabled')).equals(
-      'true'
-    )
-    expect(text()).contains('This device does not have the older keys')
+    expect(button('Approve Drew D')).equals(undefined)
+    expect(text()).not.contains('reset their chat keys')
+    expect(text()).not.contains('Waiting for approval')
+    expect(text()).not.contains('older keys')
+    // The key arrives: the card appears, ready to approve.
     await act(async () => {
       engine.waiting[0].canApprove = true
       engine.emit({ type: 'approvals' })
     })
+    await until('the approval again', () =>
+      text().includes('reset their chat keys')
+    )
+    expect(button('Approve Drew D')?.getAttribute('aria-disabled')).not.equals(
+      'true'
+    )
     await press('Approve Drew D')
     await until(
       'the approval to go',

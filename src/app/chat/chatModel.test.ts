@@ -408,4 +408,14 @@ describe('approvals', function () {
     ).deep.equals([3])
     expect(approvalsIn(all, 'cnv_b', userIdOfGumbo(7))).deep.equals([])
   })
+
+  it('lists only what this device can grant', function () {
+    const all = [
+      { ...asking(1, 'cnv_a', userIdOfGumbo(7)), canApprove: false },
+      asking(2, 'cnv_a', userIdOfGumbo(8))
+    ]
+    expect(
+      approvalsIn(all, 'cnv_a', userIdOfGumbo(3)).map(one => one.requestId)
+    ).deep.equals([2])
+  })
 })
