@@ -58,6 +58,7 @@ const test = spawnSync(
           'src/app/scoring/*.test.ts',
           'src/app/field/*.test.ts',
           'src/server/scoring/*.test.ts',
+          'src/server/dev/livePitch.integration.test.ts',
           'src/common/replay/*.test.ts',
           'src/app/replay/*.test.ts',
           'src/server/routes/lineups.integration.test.ts',
