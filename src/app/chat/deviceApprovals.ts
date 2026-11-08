@@ -101,8 +101,8 @@ export class DeviceApprovals {
     this.active = true
     this.holdCancelled = false
     this.holdUntil = Date.now() + this.holdMs
-    globalThis.document?.addEventListener?.('pagehide', this.onPageHide)
-    globalThis.document?.addEventListener?.('pageshow', this.onPageShow)
+    globalThis.window?.addEventListener?.('pagehide', this.onPageHide)
+    globalThis.window?.addEventListener?.('pageshow', this.onPageShow)
     try {
       this.unsubscribe = this.socket?.onChat(event => {
         if (
@@ -127,8 +127,8 @@ export class DeviceApprovals {
   }
 
   stop(): void {
-    globalThis.document?.removeEventListener?.('pagehide', this.onPageHide)
-    globalThis.document?.removeEventListener?.('pageshow', this.onPageShow)
+    globalThis.window?.removeEventListener?.('pagehide', this.onPageHide)
+    globalThis.window?.removeEventListener?.('pageshow', this.onPageShow)
     this.cancelHold()
     this.active = false
     this.lifetime++

@@ -633,8 +633,7 @@ describe('shared chat device approvals', function () {
     const leaving = new DeviceApprovals(setup3, undefined, 5000)
     controllers.push(leaving)
     leaving.start()
-    const PageEvent = document.defaultView?.Event ?? Event
-    document.dispatchEvent(new PageEvent('pagehide'))
+    window.dispatchEvent(new window.Event('pagehide'))
     await leaving.refresh()
     await delay(20)
     expect(loads3).equals(0)
@@ -655,11 +654,10 @@ describe('shared chat device approvals', function () {
     const restored = new DeviceApprovals(setup, undefined, 5000)
     controllers.push(restored)
     restored.start()
-    const PageEvent = document.defaultView?.Event ?? Event
-    document.dispatchEvent(new PageEvent('pagehide'))
+    window.dispatchEvent(new window.Event('pagehide'))
     await restored.refresh()
     expect(loads).equals(0)
-    document.dispatchEvent(new PageEvent('pageshow'))
+    window.dispatchEvent(new window.Event('pageshow'))
     await until('the read after pageshow', () => loads > 0, 2000)
   })
 
