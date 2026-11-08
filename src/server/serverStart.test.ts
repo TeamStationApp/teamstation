@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { get as httpGet } from 'node:http'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -85,7 +86,11 @@ describe('the server process', function () {
         statsBuilder: false,
         logRequests: false,
         appLinks: {
-          apps: [{ origin: 'https://tv.example.test', tvLogin: true }]
+          apps: [
+            { origin: 'https://app.teamstation.app' },
+            { origin: 'https://tv.example.test', tvLogin: true },
+            { origin: 'https://tv2.example.test', tvLogin: true }
+          ]
         },
         mediaDir: join(home, 'media'),
         workDir: join(home, 'work'),
@@ -142,6 +147,60 @@ describe('the server process', function () {
     }
     return await exited
   }
+
+  it('registers production TV links implicitly and excludes companion-only origins', async function () {
+    const code = await start(
+      1,
+      async base => {
+        for (const [appOrigin, status] of [
+          ['https://app.teamstation.app', 200],
+          ['https://companion.example.test', 400]
+        ] as const) {
+          const response = await fetch(`${base}/api/v1/auth/tv/start`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ platform: 'Apple TV', appOrigin })
+          })
+          const link = await new Promise<{ status: number; location?: string }>(
+            (resolve, reject) => {
+              httpGet(
+                `${base}/tv-login?token=${'a'.repeat(43)}&server=https%3A%2F%2Fdevelop5.teamstation.app`,
+                {
+                  headers: { host: 'app.teamstation.app' }
+                },
+                response => {
+                  response.resume()
+                  resolve({
+                    status: response.statusCode ?? 0,
+                    location: response.headers.location
+                  })
+                }
+              ).on('error', reject)
+            }
+          )
+          expect(link.status).equals(302)
+          expect(link.location).equals(
+            `https://develop5.teamstation.app/account/tv?token=${'a'.repeat(43)}`
+          )
+          expect(response.status).equals(status)
+          if (status === 200) {
+            const login = await response.json()
+            expect(new URL(login.qrUrl).origin).equals(appOrigin)
+          }
+        }
+      },
+      {
+        appLinks: {
+          knownServers: ['https://develop5.teamstation.app'],
+          apps: [
+            { origin: 'https://app.teamstation.app' },
+            { origin: 'https://companion.example.test' }
+          ]
+        }
+      }
+    )
+    expect(code).equals(0)
+  })
 
   for (const workers of [1, 2]) {
     it(`serves the chat routes with ${workers === 1 ? 'one process' : 'a primary and two workers'}, and stops on SIGTERM`, async function () {

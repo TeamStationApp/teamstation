@@ -3738,3 +3738,34 @@ describe('chat recovery API compatibility', () => {
     expect(JSON.parse(posted.calls[0].body!)).deep.equals({ boxes: [] })
   })
 })
+
+describe('TV login phone-link request', () => {
+  for (const appOrigin of [undefined, 'https://develop.teamstation.app']) {
+    it(`serializes the ${appOrigin == null ? 'server-selected' : 'build-selected'} phone origin`, async () => {
+      const response = {
+        requestId: 'fixture-request',
+        clientSecret: 'fixture-secret',
+        displayCode: 'ABCD–EFGH',
+        qrUrl: 'https://develop.teamstation.app/tv-login?token=fixture',
+        expiresAt: 123456789
+      }
+      const stub = stubFetch(200, response)
+      const client = new TeamStationClient({
+        baseUrl: 'https://api.example.test/api/v1',
+        fetch: stub.fetch
+      })
+      expect(await client.startTvLogin('Apple TV', appOrigin)).deep.equals(
+        response
+      )
+      expect(stub.calls).length(1)
+      expect(stub.calls[0].url).equals(
+        'https://api.example.test/api/v1/auth/tv/start'
+      )
+      expect(stub.calls[0].method).equals('POST')
+      expect(JSON.parse(stub.calls[0].body!)).deep.equals({
+        platform: 'Apple TV',
+        ...(appOrigin == null ? {} : { appOrigin })
+      })
+    })
+  }
+})

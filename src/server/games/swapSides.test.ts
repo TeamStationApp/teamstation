@@ -587,7 +587,7 @@ describe('swapping a game’s home and away teams', function () {
   it('changes the lineups digest and announces the plays, game and lineups, so a stale device is refused', async function () {
     await prepared('gam_digest')
     const base = await storedLineupsDigest(db, await row('gam_digest'))
-    heard = []
+    await forgetHeard()
     await swap('gam_digest')
     expect(await storedLineupsDigest(db, await row('gam_digest'))).not.equals(
       base

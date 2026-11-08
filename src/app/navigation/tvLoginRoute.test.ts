@@ -6,6 +6,13 @@ import { parseRoute, routePath } from './routes'
 
 describe('TeamStation TV routes', () => {
   const token = 'a'.repeat(43)
+  it('rejects a malformed token without dropping its issuer query', () => {
+    expect(
+      routeOfUrl(
+        `https://app.teamstation.app/tv-login?token=${token}?&server=https%3A%2F%2Fdevelop5.teamstation.app`
+      )
+    ).deep.equals({ name: 'teamStationTv' })
+  })
   it('round trips account and validated QR routes', () => {
     for (const route of [
       { name: 'teamStationTv' } as const,

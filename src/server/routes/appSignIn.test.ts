@@ -87,6 +87,22 @@ describe('signing in from an app', function () {
     }
     const options = { sendCode, publicUrl: PUBLIC_URL, appOrigins: [APP1] }
     app.use('/api/v1', authRoutes(db, options))
+    app.use(
+      '/production',
+      authRoutes(db, {
+        sendCode,
+        publicUrl: 'https://web.teamstation.app',
+        appOrigins: ['https://app.teamstation.app']
+      })
+    )
+    app.use(
+      '/shared',
+      authRoutes(db, {
+        sendCode,
+        publicUrl: 'https://develop.teamstation.app',
+        appOrigins: ['https://develop.teamstation.app']
+      })
+    )
     app.use('/api/v1', inviteRoutes(db, options))
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')
@@ -142,6 +158,47 @@ describe('signing in from an app', function () {
     expect(mail.email).equals('alex.lee@example.com')
     expect(mail.link).match(LINK)
     expect(await appOriginOf('alex.lee@example.com')).equals(APP1)
+  })
+
+  it('keeps shared-host browser email outside the app-associated path and retains TV return', async () => {
+    const response = await fetch(
+      base.replace('/api/v1', '/shared') + '/auth/email-code',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: 'browser@example.com',
+          next: '/account/tv?token=' + 'a'.repeat(43)
+        })
+      }
+    )
+    expect(response.status).equals(202)
+    expect(sent[sent.length - 1].link).match(
+      /^https:\/\/develop\.teamstation\.app\/signin-browser\//
+    )
+    const row = await db!
+      .selectFrom('email_codes')
+      .select('next_path')
+      .where('email', '=', 'browser@example.com')
+      .executeTakeFirstOrThrow()
+    expect(row.next_path).equals('/account/tv?token=' + 'a'.repeat(43))
+  })
+
+  it('refuses production credentials through the development host', async () => {
+    const before = sent.length
+    const response = await fetch(
+      base.replace('/api/v1', '/production') + '/auth/email-code',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: 'prod@example.com',
+          appOrigin: 'https://develop.teamstation.app'
+        })
+      }
+    )
+    expect(response.status).equals(400)
+    expect(sent.length).equals(before)
   })
 
   it('refuses a host it does not sign in, and sends nothing', async function () {
