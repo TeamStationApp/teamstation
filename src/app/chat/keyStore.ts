@@ -104,7 +104,7 @@ export function webKeyStore(options: WebKeyStoreOptions = {}): ChatKeyStore {
     live = undefined
     db?.close()
   }
-  globalThis.document?.addEventListener?.('pagehide', hide)
+  globalThis.window?.addEventListener?.('pagehide', hide)
 
   function run<T>(ticket: number, op: () => Promise<T>): Promise<T> {
     const result = chain.then(async () => {

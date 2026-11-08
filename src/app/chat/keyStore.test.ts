@@ -879,8 +879,7 @@ describe('chat key store in the browser', function () {
           closes += 1
           close()
         }
-        const PageEvent = document.defaultView?.Event ?? Event
-        document.dispatchEvent(new PageEvent('pagehide'))
+        window.dispatchEvent(new window.Event('pagehide'))
       }
     })
     const record = sample()
