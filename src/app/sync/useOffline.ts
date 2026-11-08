@@ -134,6 +134,7 @@ export function useOutboxNotice(
     if (!(client instanceof CachingClient)) return
     const own = new Set(teams === '' ? [] : teams.split('\u0000'))
     return client.subscribeOutboxNotices(next => {
+      if (next.reconcileScoring === true) return
       if (
         next.gameId === gameId ||
         (next.teamId != null && own.has(next.teamId))
