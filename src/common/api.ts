@@ -110,6 +110,7 @@ import type {
   PlayerSettings
 } from './playerSettings'
 import { asStatSplit, asStatSplitBy } from './playerStatSplits'
+import type { PlayingTimeRules } from './playingTimeRules'
 import {
   asGroupDetail,
   asPublicGame,
@@ -4803,6 +4804,11 @@ export class TeamStationClient {
     fields: Partial<Omit<CreateGroup, 'kind' | 'parent' | 'idempotencyKey'>> & {
       /** Null goes back to Default. */
       playerNamePrivacy?: PlayerNamePrivacy | null
+      /**
+       * A season's or team's whole set. Null is none on a season, and on a
+       * team follows its season's again.
+       */
+      playingTimeRules?: PlayingTimeRules | null
     }
   ): Promise<PublicGroup> {
     return await this.request(

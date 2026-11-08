@@ -127,6 +127,8 @@ export interface LeaguesTable {
 
 export interface SeasonsTable {
   player_name_privacy: Generated<string | null>
+  /** Its Playing Time Rules, or null for none (113playingTimeRules). */
+  playing_time_rules: Json | null
   id: string
   timezone: Generated<string>
   picture_catalog_id: Generated<string | null>
@@ -161,6 +163,8 @@ export type TeamCreatedFrom =
 
 export interface TeamsTable {
   player_name_privacy: Generated<string | null>
+  /** Its own Playing Time Rules, or null to follow its season's. */
+  playing_time_rules: Json | null
   id: string
   league_id: Generated<string | null>
   locality: Json | null

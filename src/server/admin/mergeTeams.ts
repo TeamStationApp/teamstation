@@ -384,6 +384,13 @@ export async function mergeTeams(
     const stricter = await stricterOfTeams(trx, fromTeamId, intoTeamId)
     await mergeParents(trx, fromTeamId, intoTeamId, true)
     await keepPrivacy(trx, intoTeamId, stricter)
+    // The survivor keeps its own Playing Time Rules. With none of its own it
+    // takes the other team's override, which the games moved to it were
+    // judged by, rather than falling back to a season's.
+    await sql`update teams target set playing_time_rules = source.playing_time_rules
+      from teams source
+      where target.id = ${intoTeamId} and source.id = ${fromTeamId}
+        and target.playing_time_rules is null`.execute(trx)
     // A player add is the team's: its rejection undoes it there, and the
     // team's next add reads what became of the last.
     // Unless the other team had the person anyway, on any row of theirs, in

@@ -9,6 +9,10 @@ import {
   placeholderSuffix,
   placeholderTeamName
 } from '../../common/placeholderNames'
+import {
+  DEFAULT_PLAYING_TIME_RULES,
+  type PlayingTimeRules
+} from '../../common/playingTimeRules'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -956,6 +960,56 @@ describe('merging two rows that are one team', function () {
       .deleteFrom('schedule_preview_games')
       .where('game_key', '=', 'owls-2')
       .execute()
+  })
+
+  it('keeps the survivor’s own Playing Time Rules, and takes the other team’s when it has none', async function () {
+    if (db == null) this.skip()
+    const strict: PlayingTimeRules = {
+      ...DEFAULT_PLAYING_TIME_RULES,
+      mandatoryPlay: true
+    }
+    const loose: PlayingTimeRules = {
+      ...DEFAULT_PLAYING_TIME_RULES,
+      continuousBatting: true
+    }
+    const rulesOf = async (id: string): Promise<unknown> =>
+      (
+        await db!
+          .selectFrom('teams')
+          .select('playing_time_rules')
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      ).playing_time_rules
+    for (const [own, other, kept] of [
+      [null, strict, strict],
+      [loose, strict, loose],
+      [loose, null, loose],
+      [null, null, null]
+    ] as const) {
+      const from = makeId('team')
+      const into = makeId('team')
+      await db
+        .insertInto('teams')
+        .values([
+          {
+            id: from,
+            name: 'Copy Cubs',
+            kind: 'external',
+            playing_time_rules: other == null ? null : JSON.stringify(other)
+          },
+          {
+            id: into,
+            name: 'Cubs',
+            kind: 'full',
+            playing_time_rules: own == null ? null : JSON.stringify(own)
+          }
+        ])
+        .execute()
+      await mergeTeams(db, { fromTeamId: from, intoTeamId: into, apply: true })
+      expect(await rulesOf(into), JSON.stringify([own, other])).deep.equals(
+        kept
+      )
+    }
   })
 
   it('a drain after merge writes rows with the surviving team id', async function () {

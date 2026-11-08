@@ -17,6 +17,7 @@ import {
   asPlayerNamePrivacy,
   DEFAULT_PLAYER_NAME_PRIVACY
 } from './playerNamePrivacy'
+import { asPlayingTimeRules } from './playingTimeRules'
 import { asRole } from './roles'
 
 const nullable =
@@ -154,6 +155,24 @@ export const asGroupDetail = asObject({
       })
     ),
     () => []
+  ),
+  /**
+   * A season's or team's own Playing Time Rules, for its administrators
+   * only: null is none on a season, and on a team follows its season's.
+   */
+  playingTimeRules: asOptional(nullable(asPlayingTimeRules), null),
+  /**
+   * For a team's administrators: the rules of the managing season it
+   * follows, the latest-starting one that has rules, or null for none.
+   */
+  seasonPlayingTimeRules: asOptional(
+    nullable(
+      asObject({
+        season: asObject({ id: asString, name: asString }),
+        rules: asPlayingTimeRules
+      })
+    ),
+    null
   )
 })
 export type GroupDetail = ReturnType<typeof asGroupDetail>

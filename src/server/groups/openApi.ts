@@ -1,4 +1,18 @@
 import { PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
+import {
+  CATCHER_INFIELD_CHOICES,
+  CATCHER_INNING_CHOICES,
+  DEFAULT_PLAYING_TIME_RULES,
+  DEFENSIVE_OUTS,
+  INFIELD_POSITIONS,
+  INNING_DEADLINES,
+  PARTIAL_INNING_CHOICES,
+  PLAYING_TIME_RANGES,
+  PLAYING_TIME_RULE_KEYS,
+  ROTATE_EVERY_CHOICES,
+  SHORTENED_GAME_CHOICES,
+  SITTING_ORDER_CHOICES
+} from '../../common/playingTimeRules'
 import { userIdSchema } from '../userIdSchema'
 const ref = {
   type: 'object',
@@ -29,6 +43,50 @@ const action = {
   }
 }
 const retryKey = { type: 'string', minLength: 8, maxLength: 120 }
+/** A season's or team's Playing Time Rules, each rule with its default. */
+const playingTimeRules = (() => {
+  const choices: Record<string, readonly unknown[]> = {
+    defensiveOutsRequired: DEFENSIVE_OUTS,
+    largeRosterOuts: DEFENSIVE_OUTS,
+    applyInShortenedGames: SHORTENED_GAME_CHOICES,
+    minimumInningsBy: INNING_DEADLINES,
+    countPartialInnings: PARTIAL_INNING_CHOICES,
+    catcherCountsAsInfield: CATCHER_INFIELD_CHOICES,
+    infieldBy: INNING_DEADLINES,
+    outfieldBy: INNING_DEADLINES,
+    equalSittingOrder: SITTING_ORDER_CHOICES,
+    rotateEvery: ROTATE_EVERY_CHOICES,
+    catcherMaxInnings: CATCHER_INNING_CHOICES
+  }
+  const ranges: Record<string, { min: number; max: number }> =
+    PLAYING_TIME_RANGES
+  const integer = (key: string): Record<string, unknown> => ({
+    type: 'integer',
+    minimum: ranges[key].min,
+    maximum: ranges[key].max
+  })
+  const properties: Record<string, unknown> = {}
+  for (const key of PLAYING_TIME_RULE_KEYS) {
+    const schema =
+      key === 'infieldPositions'
+        ? { type: 'array', items: { type: 'string', enum: INFIELD_POSITIONS } }
+        : key === 'maxInningsPerPosition'
+          ? { oneOf: [integer(key), { type: 'string', enum: ['unlimited'] }] }
+          : choices[key] != null
+            ? { enum: choices[key] }
+            : ranges[key] != null
+              ? integer(key)
+              : { type: 'boolean' }
+    properties[key] = { ...schema, default: DEFAULT_PLAYING_TIME_RULES[key] }
+  }
+  return {
+    type: 'object',
+    nullable: true,
+    description:
+      'The whole set. A missing rule takes its default; a value out of range or not one of its choices is a 400 naming the rule. Null is none on a season, and on a team follows its managing season again. A team stores a full copy, so a later change to the season never reaches it. A league answers 400.',
+    properties
+  }
+})()
 /** A parent, competition, personal-role or promotion invitation. */
 const relationship = {
   type: 'object',
@@ -372,7 +430,8 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
               enum: [...PLAYER_NAME_PRIVACY, null],
               description:
                 "How the public reads this level's player names. Null is Default, which inherits from the seasons and leagues that manage it. Group detail answers the stored value, the resolved format and the levels it was inherited from."
-            }
+            },
+            playingTimeRules
           }
         }),
         responses
@@ -500,7 +559,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
           'Public minimal group profile with optional current management capability',
         parameters: [parameter('id')],
         description:
-          'Only group identity, locality, true parents, competition membership, shortened staff names, published schedule and aggregate results. No roster, statistics, private user IDs, contacts, full staff surname, events or media. `nonMemberView` is true on a team for anybody signed in who is not a member of it, following it or not, whose private team reads are the non-member view; false for members, for nobody signed in, and on every season and league. `canManagePeople` is true for its administrators, coaches and assistants, who open anybody on its people list and give or take away every role there but Admin; `canSeePeople` for its members and role holders, who read that list; `canManageRoster`, on a team only, for its administrators, coaches, assistants and scorekeepers, who add and create its players.',
+          'Only group identity, locality, true parents, competition membership, shortened staff names, published schedule and aggregate results. No roster, statistics, private user IDs, contacts, full staff surname, events or media. `nonMemberView` is true on a team for anybody signed in who is not a member of it, following it or not, whose private team reads are the non-member view; false for members, for nobody signed in, and on every season and league. `canManagePeople` is true for its administrators, coaches and assistants, who open anybody on its people list and give or take away every role there but Admin; `canSeePeople` for its members and role holders, who read that list; `canManageRoster`, on a team only, for its administrators, coaches, assistants and scorekeepers, who add and create its players. For an administrator of a season or team, `playingTimeRules` is its own Playing Time Rules or null; a team\u2019s also has `seasonPlayingTimeRules`, `{ season: { id, name }, rules }` from the latest-starting managing season with rules, or null. Nobody else is sent either field.',
         responses
       }
     }
