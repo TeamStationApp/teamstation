@@ -25,7 +25,16 @@ describe('scoring follow ownership', function () {
     expect(authoredScoringEvent({ type: 'CLOSE_PLAY', generation: 1 })).equals(
       false
     )
-    expect(authoredScoringEvent({ type: 'GESTURE', active: true })).equals(true)
+    expect(
+      authoredScoringEvent({
+        type: 'CLOSE_PLAY',
+        generation: 1,
+        authored: true
+      })
+    ).equals(true)
+    expect(authoredScoringEvent({ type: 'GESTURE', active: true })).equals(
+      false
+    )
     expect(authoredScoringEvent({ type: 'GESTURE', active: false })).equals(
       false
     )
@@ -33,5 +42,19 @@ describe('scoring follow ownership', function () {
     expect(
       authoredScoringEvent({ type: 'PRESENTATION', enabled: true })
     ).equals(false)
+  })
+
+  it('keeps observing after a canceled runner drag while invalidating a read begun before the drag', () => {
+    const follow = new ScoringFollow()
+    follow.adopt(follow.snapshot())
+    const reading = follow.snapshot()
+    expect(follow.input({ type: 'GESTURE', active: true })).equals(false)
+    expect(follow.current(reading)).equals(false)
+    expect(follow.input({ type: 'GESTURE', active: false })).equals(false)
+    expect(follow.observing).equals(true)
+    expect(follow.locallyAuthored).equals(false)
+    expect(follow.adopt(follow.snapshot())).equals(true)
+    follow.input({ type: 'PITCH', kind: 'ball' })
+    expect(follow.observing).equals(false)
   })
 })

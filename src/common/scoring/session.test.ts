@@ -1,6 +1,10 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import {
+  initialScoringState,
+  scoringReducer
+} from '../../app/scoring/scoringMachine'
 import { lineupsDigest } from '../../server/events/teamLineups'
 import { F, game, TEAMS } from '../../test/scoringGames'
 import { expectNamesRoundTrip } from '../../test/storedNamesRoundTrip'
@@ -216,6 +220,98 @@ async function open(
 }
 
 describe('a scoring session', function () {
+  it('orders later local inputs after an observed version despite downward clock calibration', async () => {
+    let now = 2000
+    const clock = new Clock()
+    clock.options.now = () => new Date(now)
+    const { session, store } = await open(new FakeStore(), clock)
+    session.apply(ball)
+    await session.flush()
+    const first = store.posts.at(-1)!.scoringMutation!
+    now = 1000
+    session.apply(strike)
+    await session.flush()
+    const second = store.posts.at(-1)!.scoringMutation!
+    expect(second.at).greaterThan(first.at)
+    const input = session.captureScoringAction()
+    expect(input.at).greaterThan(second.at)
+    expect(
+      session.sync([...session.actions, ball], [], false, input)
+    ).deep.equals([])
+    await session.flush()
+    expect(store.posts.at(-1)!.scoringMutation?.at).equals(input.at)
+  })
+
+  it('retains captured Undo authorship through delayed saved-history cuts', async () => {
+    let now = 1000
+    const clock = new Clock()
+    clock.options.now = () => new Date(now)
+    const { session, store } = await open(new FakeStore(), clock)
+    session.apply(ball)
+    session.apply(strike)
+    await session.flush()
+    now = 2000
+    const tap = session.captureScoringAction()
+    now = 4000
+    expect(session.undo(tap).problems).deep.equals([])
+    await session.flush()
+    const first = store.posts.at(-1)!.scoringMutation!
+    expect(first.at).equals(2000)
+    expect(first.id).equals(tap.id)
+    now = 5000
+    expect(session.undo(tap).problems).deep.equals([])
+    await session.flush()
+    const last = store.posts.at(-1)!.scoringMutation!
+    expect(last.at).equals(2000)
+    expect(last.id).equals(tap.id)
+    expect(last.revision).greaterThan(first.revision)
+  })
+
+  it('keeps the initiating input time through automatic defensive completion', async () => {
+    let now = 1000
+    const clock = new Clock()
+    clock.options.now = () => new Date(now)
+    const { session, store } = await open(new FakeStore(), clock)
+    let screen = initialScoringState(game(), true)
+    for (const event of [
+      { type: 'OUTCOME', outcome: 'Out at First' },
+      { type: 'FIELDER', id: F.SS, point: { x: -20, z: -40 } },
+      { type: 'TRAJECTORY', angle: -10 }
+    ] as const)
+      screen = scoringReducer(
+        screen,
+        event.type === 'OUTCOME'
+          ? event
+          : {
+              ...event,
+              generation: screen.generation
+            }
+      )
+    const authored = session.captureScoringAction()
+    now = 1500
+    expect(session.sync(screen.log, [], false, authored)).deep.equals([])
+    await session.flush()
+    const first = store.posts.at(-1)!.scoringMutation!
+    expect(first.at).equals(1000)
+    now = 2000
+    for (let i = 0; i < 10 && screen.presentation != null; i++) {
+      const { id, generation, stage } = screen.presentation
+      screen = scoringReducer(screen, {
+        type: 'PRESENTATION_DONE',
+        id,
+        generation,
+        stage
+      })
+    }
+    expect(screen.session.liveData.linescore.outs).equals(1)
+    expect(session.sync(screen.log, [], false, authored)).deep.equals([])
+    await session.flush()
+    const last = store.posts.at(-1)!.scoringMutation!
+    expect(last.at).equals(first.at)
+    expect(last.id).equals(first.id)
+    expect(last.revision).greaterThan(first.revision)
+  })
+
   it('persists tiebreaker runners and outs with each action independently undoable after reopening', async () => {
     const { session, store } = await open()
     const runners = session.state.liveData.boxscore.teams.away.battingOrder
@@ -802,6 +898,57 @@ describe('a scoring session', function () {
     await clock.tick()
     expect(clock.waiting.map(entry => entry.ms)).deep.equals([2000])
   })
+
+  for (const failure of ['read', 'post'] as const)
+    it(`recovers a superseded score after an offline ${failure} through its scheduled retry`, async function () {
+      const peerClock = new Clock()
+      peerClock.options.now = () => new Date(2000)
+      const peer = await open(new FakeStore(), peerClock)
+      peer.session.apply(strike)
+      await peer.session.flush()
+      const winner: StoredGame = {
+        ...(await peer.store.load()),
+        scoringMutation: peer.store.posts.at(-1)!.scoringMutation
+      }
+      let reads = 0
+      const posts: SaveChange[] = []
+      const clock = new Clock()
+      clock.options.now = () => new Date(1000)
+      const session = await ScoringSession.open(
+        {
+          load: async () => {
+            reads++
+            if (reads === 1) return { plays: [], currentPlay: null }
+            if (failure === 'read' && reads === 2)
+              throw new HttpError('offline', 'Winner read interrupted')
+            return winner
+          },
+          save: async (_id, change) => {
+            posts.push(change)
+            if (failure === 'post' && posts.length === 1)
+              throw new HttpError('offline', 'Score post interrupted')
+            return { ...winner, superseded: true }
+          }
+        },
+        'g1',
+        context,
+        clock.options
+      )
+      session.apply(ball)
+      await session.flush()
+      expect(session.pending).equals(1)
+      expect(session.offline).equals(true)
+      expect(session.problem).equals(null)
+      expect(clock.waiting.map(entry => entry.ms)).deep.equals([1000])
+      await clock.tick()
+      expect(session.actions).deep.equals([strike])
+      expect(session.pending).equals(0)
+      expect(session.offline).equals(false)
+      expect(session.problem).equals(null)
+      expect(clock.waiting).deep.equals([])
+      expect(posts).length(2)
+      expect(posts[1].scoringMutation).deep.equals(posts[0].scoringMutation)
+    })
 
   for (const code of ['conflict', 'forbidden'] as const)
     it(`goes read-only on ${code} and stops posting`, async function () {
@@ -1868,6 +2015,30 @@ describe('a scoring session', function () {
       expect(ours.state.liveData.boxscore.teams.away.battingOrder).deep.equals(
         setup.sides.away.battingOrder
       )
+      expect(ours.state.liveData.boxscore.teams.home.battingOrder).deep.equals(
+        theirs.state.liveData.boxscore.teams.home.battingOrder
+      )
+    })
+
+    it('keeps the independent side of a full roster when the other side loses to a newer coach edit', async function () {
+      const store = new LineupStore()
+      let at = '2026-09-25T12:00:10.000Z'
+      const ours = await openAt(store, () => at)
+      const theirs = await openAt(store, '2026-09-25T12:00:20.000Z')
+      stage(ours, setup => {
+        reverseHome(setup)
+        setup.sides.away.battingOrder.reverse()
+      })
+      const away = [...setupOf(ours.state).sides.away.battingOrder]
+      const home = stage(theirs, swapLeadoff)
+      store.moveTo = 'theirs'
+      await theirs.flush()
+      at = '2026-09-25T12:00:30.000Z'
+      await ours.flush()
+      expect(ours.rebases).equals(1)
+      const final = setupOf((await open(store)).session.state)
+      expect(final.sides.away.battingOrder).deep.equals(away)
+      expect(final.sides.home.battingOrder).deep.equals(home)
     })
 
     it('keeps our lineup change through a rebase whose read reconciles a roster mismatch', async function () {
