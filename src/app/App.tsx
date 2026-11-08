@@ -342,7 +342,7 @@ export type Pushed =
       highlightUntil?: number
     }
   | { name: 'account' }
-  | { name: 'teamStationTv'; token?: string }
+  | { name: 'teamStationTv'; token?: string; server?: string }
   /** Create API key, above Account. */
   | { name: 'apiKeyNew' }
   /** Chat devices, from the account screen or `/chat/devices`. */
@@ -3360,9 +3360,10 @@ function Shell(props: AppProps): React.ReactElement {
       )
     ) : top.name === 'teamStationTv' && session != null ? (
       <TeamStationTvScreen
-        key={`${session.user.id}:${top.token ?? ''}`}
+        key={`${session.user.id}:${top.token ?? ''}:${top.server ?? ''}`}
         client={client}
         token={top.token}
+        server={top.server}
         appOrigin={signInRequest.appOrigin}
       />
     ) : top.name === 'account' && session != null ? (
@@ -4350,7 +4351,11 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     return {
       [tab]: [
         { name: 'account' },
-        { name: 'teamStationTv', token: route.token }
+        {
+          name: 'teamStationTv',
+          token: route.token,
+          ...(route.server == null ? {} : { server: route.server })
+        }
       ]
     }
   if (route.name === 'account') return { [tab]: [{ name: 'account' }] }
@@ -4469,7 +4474,11 @@ function routeOf(
       }
     }
     if (top.name === 'teamStationTv')
-      return { name: 'teamStationTv', token: top.token }
+      return {
+        name: 'teamStationTv',
+        token: top.token,
+        ...(top.server == null ? {} : { server: top.server })
+      }
     if (top.name === 'account') return { name: 'account' }
     if (top.name === 'apiKeyNew') return { name: 'apiKeyNew' }
     if (top.name === 'chatDevices') return { name: 'chatDevices' }

@@ -697,8 +697,12 @@ function runWorker(): void {
       space: serverConfig.space,
       publicUrl,
       appOrigins,
-      tvAppOrigin: serverConfig.appLinks.apps.find(app => app.tvLogin === true)
-        ?.origin
+      tvAppOrigins: serverConfig.appLinks.apps
+        .filter(
+          app =>
+            app.tvLogin === true || app.origin === 'https://app.teamstation.app'
+        )
+        .map(app => app.origin)
     })
   )
   app.use('/api/v1', inviteRoutes(db, { sendCode, publicUrl, appOrigins }))

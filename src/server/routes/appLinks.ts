@@ -1,3 +1,4 @@
+import { isTvServerOrigin } from '../../common/tvLogin'
 import { type Request, type Response, Router } from 'express'
 
 import { badRequest } from '../../common/errors'
@@ -86,12 +87,38 @@ export function appLinkRoutes(options: AppLinkRouteOptions): Router {
     ])
   })
 
-  router.get('/tv-login', (_req, res, next) => {
+  router.get('/tv-login', (req, res, next) => {
     // The app shell renders confirmation. Link previews must neither spend
     // the credential nor forward it as a referrer or cache a private page.
     res.set('cache-control', 'no-store')
     res.set('referrer-policy', 'no-referrer')
-    next()
+    const asked = req.query.server
+    if (asked == null) {
+      next()
+      return
+    }
+    if (
+      typeof asked !== 'string' ||
+      !isTvServerOrigin(asked) ||
+      !servers.has(asked) ||
+      typeof req.query.token !== 'string' ||
+      !/^[A-Za-z0-9_-]{43}$/.test(req.query.token)
+    ) {
+      next(badRequest('That TV link is for a server this one does not know'))
+      return
+    }
+    if (new URL(asked).host === (req.headers.host ?? '').toLowerCase()) {
+      next()
+      return
+    }
+    if (appFor(req) == null) {
+      next(badRequest('That is not a TV app link host'))
+      return
+    }
+    res.redirect(
+      302,
+      `${asked}/tv-login?token=${encodeURIComponent(req.query.token)}`
+    )
   })
 
   router.get('/signin/:token', (req, res, next) => {

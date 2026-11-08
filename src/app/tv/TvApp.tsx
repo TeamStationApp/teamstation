@@ -44,9 +44,11 @@ export function TvQr({ value }: { value: string }): React.ReactElement {
 }
 export function TvApp({
   apiBaseUrl = 'https://app.teamstation.app/api/v1',
+  appOrigin,
   probeUrls
 }: {
   apiBaseUrl?: string
+  appOrigin?: string
   probeUrls?: string
 }): React.ReactElement {
   const client = useMemo(
@@ -58,9 +60,10 @@ export function TvApp({
       new TvSessionController(
         client,
         NativeModules.TVSession as TvSessionStore,
-        apiBaseUrl
+        apiBaseUrl,
+        appOrigin
       ),
-    [client, apiBaseUrl]
+    [client, apiBaseUrl, appOrigin]
   )
   const state = useSyncExternalStore(controller.subscribe, controller.snapshot)
   const [now, setNow] = useState(Date.now())

@@ -16,6 +16,7 @@ import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import type { Actor } from '../auth/sessions'
 import { hashToken, makeToken } from '../auth/tokens'
 import { requireTvHuman, tvApprovalHash } from '../auth/tvLogin'
+import { authRoutes } from './auth'
 
 describe('TV device approval', function () {
   this.timeout(60000)
@@ -73,6 +74,48 @@ describe('TV device approval', function () {
       { requestId: r.requestId, clientSecret: r.clientSecret },
       null
     )
+  it('uses a validated build host and preserves each issuing seat', async () => {
+    const isolated = await accountHarness(
+      undefined,
+      (app, { db, sendCode }) => {
+        app.use(
+          '/links',
+          authRoutes(db, {
+            sendCode,
+            publicUrl: 'https://develop5.teamstation.app',
+            tvAppOrigins: ['https://develop.teamstation.app']
+          })
+        )
+      }
+    )
+    try {
+      for (const appOrigin of [undefined, 'https://develop.teamstation.app']) {
+        const response = await fetch(`${isolated.origin}/links/auth/tv/start`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ platform: 'Apple TV', appOrigin })
+        })
+        expect(response.status).equals(200)
+        const url = new URL((await response.json()).qrUrl)
+        expect(url.origin).equals('https://develop.teamstation.app')
+        expect(url.searchParams.get('server')).equals(
+          'https://develop5.teamstation.app'
+        )
+      }
+      const response = await fetch(`${isolated.origin}/links/auth/tv/start`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          platform: 'Apple TV',
+          appOrigin: 'https://evil.example.test'
+        })
+      })
+      expect(response.status).equals(400)
+    } finally {
+      await isolated.close()
+    }
+  })
+
   it('rehearses migration rollback and reapply with populated accounts', async () => {
     await sql.raw(migration099TvLogin.down).execute(h.db)
     await sql.raw(migration099TvLogin.up).execute(h.db)

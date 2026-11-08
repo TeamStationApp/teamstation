@@ -1,6 +1,8 @@
+import { linkIsOurs } from './SignInLinkScreen'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Keyboard,
+  Linking,
   Modal,
   Pressable,
   StyleSheet,
@@ -10,7 +12,11 @@ import {
 } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
-import { type TvLoginPreview, tvTokenOfUrl } from '../../common/tvLogin'
+import {
+  type TvLoginPreview,
+  tvLinkOfUrl,
+  tvBrowserUrl
+} from '../../common/tvLogin'
 import { Button, Screen } from '../components'
 import { CancelAction } from '../components/CancelAction'
 import { QrScanner, qrScannerSupported } from '../scoring/qrScanner'
@@ -26,6 +32,7 @@ export interface TeamStationTvScreenProps {
   client: TeamStationClient
   /** A QR link is inspected on arrival; it never approves itself. */
   token?: string
+  server?: string
   appOrigin?: string
   camera?: { supported: boolean; View: React.ComponentType<QrScannerProps> }
 }
@@ -41,6 +48,7 @@ export function TeamStationTvScreen(
 function Approval({
   client,
   token,
+  server,
   appOrigin = 'https://app.teamstation.app',
   camera = defaultCamera
 }: TeamStationTvScreenProps): React.ReactElement {
@@ -51,6 +59,7 @@ function Approval({
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const [browserUrl, setBrowserUrl] = useState<string>()
   const [success, setSuccess] = useState(false)
   const [scan, setScan] = useState(false)
   const [preview, setPreview] = useState<{
@@ -70,17 +79,32 @@ function Approval({
     working.current = false
     setBusy(false)
     setPreview(undefined)
+    setBrowserUrl(undefined)
     setScan(false)
   }
   const inspect = useCallback(
-    async (value: string): Promise<void> => {
+    async (value: string, issuer?: string): Promise<void> => {
       if (working.current) return
       working.current = true
       const current = ++generation.current
       setBusy(true)
       setMessage('')
+      setBrowserUrl(undefined)
       setScan(false)
       try {
+        const ours = await linkIsOurs(client, issuer)
+        if (!mounted.current || current !== generation.current) return
+        if (ours !== true) {
+          setPreview(undefined)
+          setMessage(
+            ours === false
+              ? 'This TV uses a different TeamStation server. Open it in your browser to continue.'
+              : 'Unable to verify this TV link. Try again.'
+          )
+          if (ours === false && issuer != null)
+            setBrowserUrl(tvBrowserUrl(issuer, value))
+          return
+        }
         const device = await client.inspectTvLogin(value)
         if (!mounted.current || current !== generation.current) return
         setExpired(device.expiresAt <= Date.now())
@@ -102,8 +126,8 @@ function Approval({
     [client]
   )
   useEffect(() => {
-    if (token != null) inspect(token).catch(() => undefined)
-  }, [token, inspect])
+    if (token != null) inspect(token, server).catch(() => undefined)
+  }, [token, server, inspect])
   useEffect(() => {
     if (preview == null) return
     const timer = setTimeout(
@@ -125,6 +149,7 @@ function Approval({
     const current = ++generation.current
     setBusy(true)
     setMessage('')
+    setBrowserUrl(undefined)
     try {
       await client.approveTvLogin(value)
       if (!mounted.current || current !== generation.current) return
@@ -240,6 +265,16 @@ function Approval({
             {message}
           </Text>
         )}
+        {browserUrl != null && (
+          <Button
+            label="Open in browser"
+            onPress={() => {
+              Linking.openURL(browserUrl).catch(() =>
+                setMessage('Unable to open the browser. Try again.')
+              )
+            }}
+          />
+        )}
       </Screen>
       <Modal
         visible={scan}
@@ -252,11 +287,12 @@ function Approval({
           <camera.View
             active={scan && !busy}
             onCode={url => {
-              const scanned = tvTokenOfUrl(url, appOrigin)
+              const scanned = tvLinkOfUrl(url, appOrigin)
               if (scanned == null) {
                 setScan(false)
                 setMessage('That is not a TeamStation TV QR code.')
-              } else inspect(scanned).catch(() => undefined)
+              } else
+                inspect(scanned.token, scanned.server).catch(() => undefined)
             }}
             onStatus={status => {
               if (status !== 'ready') {
