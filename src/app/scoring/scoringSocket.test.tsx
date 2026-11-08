@@ -10,6 +10,7 @@ import { cleanAction, type ScoringAction } from '../../common/scoring/actions'
 import {} from '../../common/scoring/gumbo'
 import {
   type EventStore,
+  type SaveChange,
   ScoringSession as GameSession,
   type StoredGame
 } from '../../common/scoring/session'
@@ -430,6 +431,26 @@ describe('the scoring screen on the game socket', function () {
     await changes.plays()
     expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
     expect(session().actions).deep.equals(peer.actions)
+  })
+
+  it('authors the explicit Finish tap after following an unfinished play', async function () {
+    const { changes, other, session, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    await peer.flush()
+    await changes.plays()
+    const posts: SaveChange[] = []
+    const save = store.save.bind(store)
+    store.save = async (id, change) => {
+      posts.push(change)
+      return await save(id, change)
+    }
+    const before = Date.now()
+    await click('Finish at-bat')
+    await session().flush()
+    expect(posts).has.length(1)
+    expect(posts[0].scoringMutation?.at).within(before, Date.now())
+    expect(posts[0].plays).has.length(1)
   })
 
   for (const dropped of [false, true])
