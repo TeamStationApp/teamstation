@@ -161,6 +161,7 @@ export async function takeEpochs(
       valid: await checkEpoch(ctx, conversationId, epoch)
     })
   }
+  if (epochs.length > 0) ctx.approvalsMayChange?.()
 }
 
 /**

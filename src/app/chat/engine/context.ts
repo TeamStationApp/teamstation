@@ -92,7 +92,9 @@ export class KeyHolder {
   constructor(
     private readonly store: ChatKeyStore,
     private current: ChatKeyRecord,
-    private readonly live: () => boolean = () => true
+    private readonly live: () => boolean = () => true,
+    /** Told of each record saved or taken, once it is the current one. */
+    private readonly changed?: (record: ChatKeyRecord) => void
   ) {}
 
   get record(): ChatKeyRecord {
@@ -109,6 +111,7 @@ export class KeyHolder {
       if (!this.live()) throw new StaleChatSetupError()
       await this.store.save(next)
       this.current = next
+      this.changed?.(next)
       return next
     })
     this.queue = run.catch(() => undefined)
@@ -119,6 +122,7 @@ export class KeyHolder {
   async replace(load: () => Promise<ChatKeyRecord>): Promise<ChatKeyRecord> {
     const run = this.queue.then(async () => {
       this.current = await load()
+      this.changed?.(this.current)
       return this.current
     })
     this.queue = run.catch(() => undefined)
@@ -141,4 +145,6 @@ export interface EngineContext {
   detach?: (work: Promise<unknown>) => void
   /** False once the engine stopped: detached work ends at its next step. */
   live?: () => boolean
+  /** Newly read epochs may change which approvals this device can grant. */
+  approvalsMayChange?: () => void
 }

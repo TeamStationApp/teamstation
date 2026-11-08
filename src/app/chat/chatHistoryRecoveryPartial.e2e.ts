@@ -39,7 +39,16 @@ interface Daemon {
 
 export async function partialRecovery(
   scenario:
-    'E3' | 'E4' | 'E5' | 'E6' | 'E7' | 'E9' | 'E11' | 'E12' | 'E13' = 'E4'
+    | 'E3'
+    | 'E4'
+    | 'E5'
+    | 'E6'
+    | 'E7'
+    | 'E9'
+    | 'E11'
+    | 'E12'
+    | 'E13'
+    | 'E14' = 'E4'
 ): Promise<void> {
   const file = process.env.CHAT_RECOVERY_FIXTURE
   assert(file != null)
@@ -621,6 +630,197 @@ export async function partialRecovery(
       )
       console.log(
         'PASS E12 web: simultaneous fresh publications yield one epoch; both sends survive; concurrent history recovery preserves every message without duplicates or plaintext logs'
+      )
+      return
+    }
+
+    if (scenario === 'E14') {
+      const holderApi = await asPerson('Hs')
+      console.log('E14: resetting the recipient and breaking the chain')
+      const recipient = await attach('Ha', 'recipient-reset')
+      await recipient.assertVisible({
+        text: 'Link this device',
+        timeout: 30000
+      })
+      await recipient.tapOn({ text: 'I can’t reach my other devices' })
+      await recipient.tapOn({ text: 'Reset chat on this device' })
+      await recipient.assertVisible({
+        css: '[data-testid="chat-conversation-list"]',
+        timeout: 30000
+      })
+      await open(recipient, dm.id)
+      await send(recipient, third)
+      assert(!(await body(recipient)).includes(first))
+      const broken = await client.chatEpochs(dm.id, 0)
+      const breakEpoch = broken.epochs.at(-1)
+      assert(breakEpoch?.chainBreak === true, 'The reset must break the chain')
+      assert(
+        !(await holderApi.chatGrants()).some(
+          row =>
+            row.conversationId === dm.id &&
+            row.userId === people.Ha.userId &&
+            row.identityReset
+        ),
+        'No current-segment reset request may remain open'
+      )
+      const history = (await holderApi.chatHistoryGrants()).requests.find(
+        row => row.conversationId === dm.id && row.userId === people.Ha.userId
+      )
+      assert(history != null, 'The reset identity must request its history')
+      assert.equal(history.requiresApproval, true)
+
+      console.log('E14: adding a member who can only hold post-break keys')
+      await client.addDmMembers(dm.id, [people.Hc.userId])
+      const memberApi = await asPerson('Hc')
+      const permitted = (await memberApi.chatHistoryGrants()).requests.find(
+        row => row.id === history.id
+      )
+      assert(
+        permitted?.canApprove === true,
+        'The new member is permitted to approve'
+      )
+
+      const member = await attach('Hc', 'non-holder')
+      await open(member, dm.id)
+      const filledBy = Date.now() + 60000
+      for (;;) {
+        const keys = await memberApi.myChatKeys()
+        const epochs = await memberApi.chatEpochs(dm.id, 0)
+        if (
+          keys.identity != null &&
+          epochs.boxes.some(
+            row =>
+              row.epoch === epochs.latest &&
+              row.identityId === keys.identity?.id
+          )
+        ) {
+          assert(
+            !epochs.boxes.some(
+              row =>
+                row.identityId === keys.identity?.id &&
+                row.epoch < breakEpoch.epoch
+            ),
+            'The new member must hold no key from before the chain break'
+          )
+          break
+        }
+        assert(Date.now() < filledBy, 'The new member was never granted')
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+      await message(member, third)
+      // The API shares the page's host on its own port: only that number
+      // goes into the page's script.
+      const api = new URL(f.apiUrl)
+      assert.equal(api.hostname, new URL(f.origin).hostname)
+      assert.equal(api.pathname, '/api/v1')
+      const apiPort = Number(api.port)
+      assert(Number.isInteger(apiPort) && apiPort > 0)
+      const listed = await member.evalBrowserScript({
+        script: `return (async () => { const response = await fetch(location.protocol + '//' + location.hostname + ':' + ${apiPort} + '/api/v1/chat/grants?scope=history&cursor=0&limit=100', {credentials:'include'}); const body = await response.json(); return JSON.stringify(body.requests.map(row => row.id)) })()`
+      })
+      assert(
+        (JSON.parse(String(listed.data)) as string[]).includes(history.id),
+        "The member's own session must see the history request"
+      )
+      await open(member, dm.id)
+      await message(member, third)
+      assert(!(await body(member)).includes(first))
+
+      /** Whether any part of the approval shows on this screen. */
+      async function asked(m: Device): Promise<string[]> {
+        const read = await m.evalBrowserScript({
+          script:
+            "return JSON.stringify({text:document.body.innerText,review:[...document.querySelectorAll('[role=\"button\"]')].some(node=>node.textContent==='Review')})"
+        })
+        const state = JSON.parse(String(read.data)) as {
+          text: string
+          review: boolean
+        }
+        return [
+          ...(state.text.includes('reset their chat keys') ? ['row'] : []),
+          ...(state.review ? ['Review'] : []),
+          ...(state.text.includes('Waiting for approval') ? ['card'] : []),
+          ...(state.text.includes('older keys') ? ['older keys'] : [])
+        ]
+      }
+      async function steady(m: Device): Promise<void> {
+        const deadline = Date.now() + 15000
+        let last = ''
+        let same = 0
+        while (Date.now() < deadline) {
+          const text = await body(m)
+          same = text === last && !text.includes('Loading…') ? same + 1 : 0
+          last = text
+          if (same >= 3) return
+          await new Promise(resolve => setTimeout(resolve, 300))
+        }
+        throw new Error('The screen did not settle')
+      }
+
+      console.log('E14: the non-holder must not be asked')
+      const settleUntil = Date.now() + 10000
+      while (Date.now() < settleUntil) {
+        assert.deepEqual(
+          await asked(member),
+          [],
+          'A member without the older keys must not be asked to approve'
+        )
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+      await steady(member)
+      writeFileSync(
+        join(f.artifacts, 'non-holder-conversation-after.png'),
+        await member.screenshot()
+      )
+      await member.openLink({ link: f.origin + '/chat/' + dm.id + '/info' })
+      await member.assertVisible({
+        css: '[data-testid="chat-info-members"]',
+        timeout: 30000
+      })
+      await steady(member)
+      assert.deepEqual(await asked(member), [])
+      writeFileSync(
+        join(f.artifacts, 'non-holder-info-after.png'),
+        await member.screenshot()
+      )
+
+      console.log('E14: returning the holder of the closed segment')
+      const holder = await attach('Hs', 'first-holder')
+      await open(holder, dm.id)
+      await message(holder, first)
+      await message(holder, third)
+      await holder.tapOn({ text: 'Review', timeout: 30000 })
+      await holder.assertVisible({ text: 'OLD SAFETY WORDS', timeout: 30000 })
+      const enabled = await holder.evalBrowserScript({
+        script:
+          "const node=[...document.querySelectorAll('[role=\"button\"]')].find(node=>(node.getAttribute('aria-label')??'').startsWith('Approve '));return node==null?'missing':String(node.getAttribute('aria-disabled'))"
+      })
+      assert.notEqual(enabled.data, 'missing')
+      assert.notEqual(enabled.data, 'true', 'The holder can approve')
+      assert(!(await body(holder)).includes('older keys'))
+      await steady(holder)
+      writeFileSync(
+        join(f.artifacts, 'holder-info-after.png'),
+        await holder.screenshot()
+      )
+      await holder.tapOn({ text: 'Approve', timeout: 30000 })
+      await message(recipient, first)
+      await message(recipient, third)
+      assert(!(await body(recipient)).includes('Locked message'))
+      // The request is closed by now: this only confirms nothing new appears
+      // after recovery. The filter itself is proved by the settle above.
+      await open(member, dm.id)
+      await message(member, third)
+      assert.deepEqual(await asked(member), [])
+      await member.openLink({ link: f.origin + '/chat/' + dm.id + '/info' })
+      await member.assertVisible({
+        css: '[data-testid="chat-info-members"]',
+        timeout: 30000
+      })
+      await steady(member)
+      assert.deepEqual(await asked(member), [])
+      console.log(
+        'PASS E14 web: a member without the older keys sees no approval; the holder approves and the recipient recovers'
       )
       return
     }

@@ -199,7 +199,8 @@ export interface GrantApproval {
    * this device holds.
    */
   history?: boolean
-  canApprove?: boolean
+  /** Whether this device holds a key that grants it. */
+  canApprove: boolean
   conversationId: string
   conversationTitle: string | undefined
   userId: string
@@ -232,6 +233,13 @@ const approvalKey = (request: {
   conversationId: string
   identityId: string
 }): string => `${request.conversationId}:${request.identityId}`
+
+/** The approvals this device can grant, as one comparable string. */
+const grantable = (approvals: GrantApproval[]): string =>
+  approvals
+    .filter(approval => approval.canApprove)
+    .map(approval => String(approval.requestId))
+    .join(',')
 
 /** What a hint asks to be read again. */
 type Part = 'members' | 'epochs' | 'messages' | 'reads'
@@ -288,6 +296,8 @@ export class ChatEngine {
   private stopped = false
   private existingOnly = false
   private blockPolicyPending = false
+  /** Which approvals this device could grant when the screens last read them. */
+  private approvalsShown = ''
 
   constructor(options: ChatEngineOptions) {
     this.options = options
@@ -371,7 +381,10 @@ export class ChatEngine {
         keys: new KeyHolder(
           this.options.store,
           enrolment.record,
-          () => this.live
+          () => this.live,
+          () => {
+            this.approvalsMayChange()
+          }
         ),
         identities: this.identities,
         pageSize: this.options.pageSize ?? 100,
@@ -396,12 +409,18 @@ export class ChatEngine {
   }
 
   /** Work the engine's parts start by themselves stays the engine's own. */
-  private contextHooks(): Pick<EngineContext, 'detach' | 'live'> {
+  private contextHooks(): Pick<
+    EngineContext,
+    'detach' | 'live' | 'approvalsMayChange'
+  > {
     return {
       detach: work => {
         this.track(work)
       },
-      live: () => this.live
+      live: () => this.live,
+      approvalsMayChange: () => {
+        this.approvalsMayChange()
+      }
     }
   }
 
@@ -1411,7 +1430,7 @@ export class ChatEngine {
     if (record == null || mine == null) return []
     const card = (
       request: ChatGrantRequest | ChatHistoryRequest
-    ): Omit<GrantApproval, 'requestId'> => {
+    ): Omit<GrantApproval, 'requestId' | 'canApprove'> => {
       const state = this.memory.state(request.conversationId)
       const old = record.previousPins[request.userId]
       return {
@@ -1436,12 +1455,18 @@ export class ChatEngine {
     const legacy = this.memory.grants.filter(request => this.isReset(request))
     const reset = new Set(legacy.map(approvalKey))
     const historical = this.waitingHistory()
-    return [
-      ...legacy.map(request => ({
-        requestId: request.id,
-        ...(historical.has(approvalKey(request)) ? { history: true } : {}),
-        ...card(request)
-      })),
+    const approvals = [
+      ...legacy.map(request => {
+        const older = historical.get(approvalKey(request))
+        return {
+          requestId: request.id,
+          ...(older != null ? { history: true } : {}),
+          canApprove:
+            this.holdsRequestKey(request) ||
+            (older != null && heldHistoryEpoch(this.ctx, older) != null),
+          ...card(request)
+        }
+      }),
       ...[...historical]
         .filter(([key]) => !reset.has(key))
         .map(([, request]) => ({
@@ -1451,6 +1476,49 @@ export class ChatEngine {
           ...card(request)
         }))
     ]
+    this.approvalsShown = grantable(approvals)
+    return approvals
+  }
+
+  /** Whether this device holds the epoch key a legacy request asks for. */
+  private holdsRequestKey(request: ChatGrantRequest): boolean {
+    return (
+      epochKeyOf(this.ctx.keys.record, request.conversationId, request.epoch) !=
+      null
+    )
+  }
+
+  /**
+   * Keys or epochs arrived: when that changes which waiting approvals this
+   * device can grant, the screens read them again. Only while ready: a
+   * device that links or resets reads the requests again once it is.
+   */
+  private approvalsMayChange(): void {
+    if (this.status !== 'ready' || this.context == null) return
+    if (
+      !this.memory.grants.some(request => this.isReset(request)) &&
+      !this.memory.historyGrants.some(request => this.awaitsApproval(request))
+    )
+      return
+    const shown = this.approvalsShown
+    let changed: boolean
+    try {
+      changed = grantable(this.approvals()) !== shown
+    } catch {
+      // A request that does not check out fails only the screen reading it;
+      // the save or read that called this has already succeeded.
+      return
+    }
+    if (changed) this.memory.emit({ type: 'approvals' })
+  }
+
+  /** A historical request waiting for this person, who may approve it. */
+  private awaitsApproval(request: ChatHistoryRequest): boolean {
+    return (
+      request.requiresApproval &&
+      request.canApprove &&
+      request.userId !== this.options.userId
+    )
   }
 
   /** A reset's legacy request that someone else may approve. */
@@ -1469,12 +1537,7 @@ export class ChatEngine {
   private waitingHistory(): Map<string, ChatHistoryRequest> {
     const waiting = new Map<string, ChatHistoryRequest>()
     for (const request of this.memory.historyGrants) {
-      if (
-        !request.requiresApproval ||
-        !request.canApprove ||
-        request.userId === this.options.userId
-      )
-        continue
+      if (!this.awaitsApproval(request)) continue
       const key = approvalKey(request)
       if (!waiting.has(key) || heldHistoryEpoch(this.ctx, request) != null)
         waiting.set(key, request)

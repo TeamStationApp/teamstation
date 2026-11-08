@@ -619,8 +619,6 @@ export const enUs = {
     'New messages need the current chat key while fresh messaging is unavailable.',
   chat_keys_repair:
     'This device needs its encryption keys restored. Link it to a device that can open this chat.',
-  chat_history_approve_unavailable:
-    'This device does not have the older keys. Review this request on a device that can read the older messages.',
   chat_earlier_lost: 'Earlier messages can’t be opened',
   chat_unverified: 'Membership record could not be verified',
   chat_closed_notice: 'This chat is closed. You can read it, but not post.',

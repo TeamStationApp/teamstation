@@ -46,6 +46,7 @@ async function main(): Promise<void> {
     process.argv[2] === 'E11' ||
     process.argv[2] === 'E12' ||
     process.argv[2] === 'E13' ||
+    process.argv[2] === 'E14' ||
     process.argv[2] === 'E7'
   ) {
     await partialRecovery(process.argv[2])
