@@ -10,6 +10,7 @@ import {
 import { defaultRadarSettings } from '../../common/nodeSettings'
 import { NO_OVERRIDES } from '../../common/scoreboard'
 import type { ScoringAction } from '../../common/scoring/actions'
+import { asScoringMutation } from '../../common/scoring/scoringMutation'
 import { type EventStore, ScoringSession } from '../../common/scoring/session'
 import { playsReadAgainDuring } from '../../test/playNotices'
 import {
@@ -56,16 +57,21 @@ describe('persisted radar speeds', function () {
     })
     let time = Date.parse('2026-01-01T12:00:00Z')
     let version = 0
-    const load: EventStore['load'] = async gameId => ({
-      plays: (await readPlays(db, gameId)).map(r => r.gumbo as GumboPlay),
-      currentPlay: (
-        await db
-          .selectFrom('games')
-          .select('currentPlay')
-          .where('id', '=', gameId)
-          .executeTakeFirstOrThrow()
-      ).currentPlay as CurrentPlay
-    })
+    const load: EventStore['load'] = async gameId => {
+      const game = await db
+        .selectFrom('games')
+        .select(['currentPlay', 'scoring_mutation'])
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow()
+      return {
+        plays: (await readPlays(db, gameId)).map(r => r.gumbo as GumboPlay),
+        currentPlay: game.currentPlay as CurrentPlay,
+        scoringMutation:
+          game.scoring_mutation == null
+            ? undefined
+            : asScoringMutation(game.scoring_mutation)
+      }
+    }
     const save: EventStore['save'] = async (_, changes) => {
       await postGamePlays(
         db,

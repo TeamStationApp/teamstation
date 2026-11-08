@@ -2738,6 +2738,119 @@ describe('api client', function () {
     expect(JSON.parse(calls[2].body!)).to.have.property('fenceDistanceFt', 225)
   })
 
+  it('keeps completed scoring ancestry off ordinary pitch uploads', async () => {
+    const { fetch, calls } = stubFetch(200, { plays: [], currentPlay: null })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const scoringHistory = Array.from({ length: 72 }, (_, index) =>
+      asGumboPlay({
+        about: { atBatIndex: index },
+        result: { eventType: 'score_correction', awayScore: 0, homeScore: 0 }
+      })
+    )
+    const change = { plays: [], remove: [], currentPlay: null, scoringHistory }
+    await client.saveGameEvents('gam_1', change)
+    expect(JSON.parse(calls[0].body!)).not.has.property('scoringHistory')
+    expect(calls[0].body!.length).lessThan(200)
+    expect(change.scoringHistory).length(72)
+  })
+
+  for (const code of ['conflict', 'idempotencyKeyReused'])
+    it(`sends retained ancestry only after a definitive ${code}`, async () => {
+      const calls: Call[] = []
+      const fail = stubFetch(409, { code, message: 'Read history' }, calls)
+      const ok = stubFetch(200, { plays: [], currentPlay: null }, calls)
+      const client = new TeamStationClient({
+        baseUrl: 'http://x/api/v1',
+        fetch: (async (...args: Parameters<typeof fetch>) =>
+          await (calls.length === 0 ? fail.fetch : ok.fetch)(
+            ...args
+          )) as typeof fetch
+      })
+      const scoringHistory = [
+        asGumboPlay({
+          about: { atBatIndex: 0 },
+          result: { eventType: 'score_correction', awayScore: 0, homeScore: 0 }
+        })
+      ]
+      await client.saveGameEvents('gam_1', {
+        plays: [],
+        remove: [],
+        scoringHistory
+      })
+      expect(calls).length(2)
+      expect(JSON.parse(calls[0].body!)).not.has.property('scoringHistory')
+      expect(JSON.parse(calls[1].body!).scoringHistory).deep.equals(
+        JSON.parse(JSON.stringify(scoringHistory))
+      )
+    })
+
+  it('never retries retained scoring history as a newly signed-in user', async () => {
+    const calls: Call[] = []
+    const refused = stubFetch(
+      409,
+      { code: 'conflict', message: 'Stale lineups' },
+      calls
+    )
+    const client = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      token: 'first-session',
+      fetch: (async (...args: Parameters<typeof fetch>) => {
+        const response = await refused.fetch(...args)
+        client.token = 'second-session'
+        return response
+      }) as typeof fetch
+    })
+    try {
+      await client.saveGameEvents('gam_1', {
+        plays: [],
+        remove: [],
+        scoringHistory: []
+      })
+      expect.fail('The interrupted account must not retry')
+    } catch (error) {
+      expect(error).instanceOf(HttpError)
+    }
+    expect(calls).length(1)
+    expect(calls[0].headers.authorization).equals('Bearer first-session')
+  })
+
+  for (const status of [401, 503, 409])
+    it(`never repeatedly retries retained ancestry after status ${status}`, async () => {
+      const { fetch, calls } = stubFetch(status, {
+        code:
+          status === 409
+            ? 'conflict'
+            : status === 401
+              ? 'unauthorized'
+              : 'unavailable',
+        message: 'Refused'
+      })
+      const client = new TeamStationClient({
+        baseUrl: 'http://x/api/v1',
+        fetch
+      })
+      try {
+        await client.saveGameEvents('gam_1', {
+          plays: [],
+          remove: [],
+          scoringHistory: [
+            asGumboPlay({
+              about: { atBatIndex: 0 },
+              result: {
+                eventType: 'score_correction',
+                awayScore: 0,
+                homeScore: 0
+              }
+            })
+          ]
+        })
+        expect.fail('The refusal must propagate')
+      } catch (error) {
+        expect(error).instanceOf(HttpError)
+      }
+      expect(calls).length(status === 409 ? 2 : 1)
+    })
+
   it('names the lineups base a live save was built on, and reads the digests back', async function () {
     const { fetch, calls } = stubFetch(200, {
       plays: [],

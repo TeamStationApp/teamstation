@@ -1011,6 +1011,12 @@ function sideActions(
     held &&
     body.nextBatter == null &&
     runners.length === 0 &&
+    state.deferredLineups?.some(action =>
+      (
+        action.effectiveSides ??
+        (action.side == null ? ['away', 'home'] : [action.side])
+      ).includes(side)
+    ) !== true &&
     isDeepStrictEqual(setup, setupOf(state))
   )
     return []
@@ -1018,6 +1024,7 @@ function sideActions(
     {
       type: 'lineup',
       kind: 'roster',
+      side,
       setup,
       // After the first pitch a saved order keeps each side's batting slot.
       ...(pitchThrown(state) ? { keepSlot: true as const } : {}),

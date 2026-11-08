@@ -285,6 +285,59 @@ describe('atomic game availability', function () {
     expect(await unrosteredOf(id)).deep.equals({ away: [1], home: [] })
   })
 
+  it('changes availability after an accepted scoring mutation without losing the pitch', async () => {
+    const id = 'gam_accepted_availability'
+    await db
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: 'team-home',
+        away_team_id: 'team-away',
+        start_at: new Date()
+      })
+      .execute()
+    const pitched = score(fixture(), { type: 'pitch', call: 'B' })
+    const accepted = {
+      at: 1000,
+      id: 'accepted-pitch',
+      revision: 0,
+      frontier: 0
+    }
+    await postGamePlays(
+      db,
+      id,
+      asPostEventsBody({
+        mode: 'live',
+        source: { system: 'teamstation' },
+        plays: [],
+        currentPlay: currentDocumentOf(
+          pitched,
+          pitched.liveData.plays.currentPlay,
+          {
+            setupBefore: setupOf(fixture()),
+            actions: [{ type: 'pitch', call: 'B' }]
+          }
+        ),
+        scoringBase: null,
+        scoringMutation: accepted,
+        generation: 0
+      }),
+      undefined,
+      undefined,
+      { scoringAuthor: true }
+    )
+    expect((await row(id)).scoring_mutation).not.equals(null)
+    await toggle(id, 9, false)
+    const removed = (await open(id)).state
+    expect(removed.liveData.linescore.balls).equals(1)
+    expect(removed.liveData.boxscore.teams.away.players).not.includes(9)
+    expect(await unrosteredOf(id)).deep.equals({ away: [9], home: [] })
+    await toggle(id, 9, true)
+    const returned = (await open(id)).state
+    expect(returned.liveData.linescore.balls).equals(1)
+    expect(returned.liveData.boxscore.teams.away.players).includes(9)
+  })
+
   it('changes only this game and side, is idempotent, and does not start a new game', async () => {
     expect(await toggle('gam_empty', 1, false)).deep.equals({
       away: [1],
@@ -539,59 +592,71 @@ describe('atomic game availability', function () {
     expect((await toggle(id, 129, true)).away).deep.equals([])
     await rejected(async () => await toggle(id, 3129, false), 'badRequest')
   })
-  it('drops a player who left the team from a game not begun, and leaves a begun one', async () => {
-    const id = 'gam_leaver'
-    await db
-      .insertInto('games')
-      .values({
-        id,
-        home_team_id: 'team-home',
-        away_team_id: 'team-away',
-        start_at: new Date()
-      })
-      .execute()
-    const initial = fixture()
-    await db
-      .updateTable('games')
-      .set({
-        currentPlay: currentDocumentOf(
-          initial,
-          initial.liveData.plays.currentPlay,
-          { setupBefore: setupOf(initial), actions: [] }
-        )
-      })
-      .where('id', '=', id)
-      .execute()
-    expect(
-      (await open(id)).state.liveData.boxscore.teams.away.players
-    ).includes(2)
-    // He leaves the team: the lineup of the game not begun follows.
-    await db
-      .updateTable('memberships')
-      .set({ is_player: false })
-      .where('user_id', '=', userIdOfGumbo(2))
-      .where('team_id', '=', 'team-away')
-      .execute()
-    try {
-      await atomic(db, async trx => {
-        await reconcileUnbegunLineup(trx, id)
-      })
-      const away = (await open(id)).state.liveData.boxscore.teams.away
-      expect(away.players).not.includes(2)
-      expect(away.battingOrder).not.includes(2)
-      // A game that is not there, or over, changes nothing.
-      await atomic(db, async trx => {
-        await reconcileUnbegunLineup(trx, 'gam_nobody')
-      })
-    } finally {
+  for (const stamped of [false, true])
+    it(`drops a player who left an unbegun game (accepted identity=${stamped})`, async () => {
+      const id = `gam_leaver_${stamped}`
+      await db
+        .insertInto('games')
+        .values({
+          id,
+          home_team_id: 'team-home',
+          away_team_id: 'team-away',
+          start_at: new Date()
+        })
+        .execute()
+      const initial = fixture()
+      await db
+        .updateTable('games')
+        .set({
+          // An explicit Undo can return to pregame while retaining the accepted identity.
+          ...(stamped
+            ? {
+                scoring_mutation: {
+                  at: 2000,
+                  id: 'accepted-pregame',
+                  revision: 0,
+                  frontier: 0
+                }
+              }
+            : {}),
+          currentPlay: currentDocumentOf(
+            initial,
+            initial.liveData.plays.currentPlay,
+            { setupBefore: setupOf(initial), actions: [] }
+          )
+        })
+        .where('id', '=', id)
+        .execute()
+      expect(
+        (await open(id)).state.liveData.boxscore.teams.away.players
+      ).includes(2)
+      // He leaves the team: the lineup of the game not begun follows.
       await db
         .updateTable('memberships')
-        .set({ is_player: true })
+        .set({ is_player: false })
         .where('user_id', '=', userIdOfGumbo(2))
         .where('team_id', '=', 'team-away')
         .execute()
-    }
-  })
+      try {
+        await atomic(db, async trx => {
+          await reconcileUnbegunLineup(trx, id)
+        })
+        const away = (await open(id)).state.liveData.boxscore.teams.away
+        expect(away.players).not.includes(2)
+        expect(away.battingOrder).not.includes(2)
+        // A game that is not there, or over, changes nothing.
+        await atomic(db, async trx => {
+          await reconcileUnbegunLineup(trx, 'gam_nobody')
+        })
+      } finally {
+        await db
+          .updateTable('memberships')
+          .set({ is_player: true })
+          .where('user_id', '=', userIdOfGumbo(2))
+          .where('team_id', '=', 'team-away')
+          .execute()
+      }
+    })
   it('leaves the lineup of a game whose first at-bat has been pitched to', async function () {
     const id = 'gam_first_at_bat'
     await db
