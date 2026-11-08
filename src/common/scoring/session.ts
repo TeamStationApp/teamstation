@@ -1120,14 +1120,16 @@ export class ScoringSession {
    * Reads the game the server holds again and takes it up, so a change
    * somebody else saved arrives here. It does so only while nothing here is
    * waiting to be saved, so none of this session's changes are lost; the last
-   * one saved wins. Says whether the game changed.
+   * one saved wins. The optional guard also protects UI input not yet
+   * represented by a pending save. Says whether the game changed.
    */
-  async reload(): Promise<boolean> {
+  async reload(canAdopt: () => boolean = () => true): Promise<boolean> {
     const idle = (): boolean =>
       this.context != null &&
       this.refusal == null &&
       this.running == null &&
-      this.pending === 0
+      this.pending === 0 &&
+      canAdopt()
     if (!idle()) return false
     let fresh: ScoringSession
     for (;;) {
