@@ -12,6 +12,7 @@ import { cleanAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/apply'
 import { recordOf } from '../../common/scoring/gumbo'
 import { freshGame, newSetup } from '../../common/scoring/lineup'
+import type { ScoringMutation } from '../../common/scoring/scoringMutation'
 import {
   type EventStore,
   ScoringSession,
@@ -89,18 +90,20 @@ describe('opening scoring through account merges', function () {
       }))
     )
   })
-  const raw = async (): Promise<StoredGame> => ({
-    plays: (await readPlays(fixture.db, 'gam_demo')).map(
-      row => row.gumbo as GumboPlay
-    ),
-    currentPlay: (
-      await fixture.db
-        .selectFrom('games')
-        .select('currentPlay')
-        .where('id', '=', 'gam_demo')
-        .executeTakeFirstOrThrow()
-    ).currentPlay as CurrentPlay | null
-  })
+  const raw = async (): Promise<StoredGame> => {
+    const game = await fixture.db
+      .selectFrom('games')
+      .select(['currentPlay', 'scoring_mutation'])
+      .where('id', '=', 'gam_demo')
+      .executeTakeFirstOrThrow()
+    return {
+      plays: (await readPlays(fixture.db, 'gam_demo')).map(
+        row => row.gumbo as GumboPlay
+      ),
+      currentPlay: game.currentPlay as CurrentPlay | null,
+      scoringMutation: game.scoring_mutation as ScoringMutation | undefined
+    }
+  }
   const store: EventStore = {
     load: async () => await resolveScoringGame(fixture.db, await raw()),
     save: async (_id, change) => {
@@ -115,7 +118,8 @@ describe('opening scoring through account merges', function () {
       )
       return {
         plays: posted.plays.map(row => row.gumbo as GumboPlay),
-        currentPlay: posted.currentPlay as CurrentPlay | null
+        currentPlay: posted.currentPlay as CurrentPlay | null,
+        scoringMutation: posted.scoringMutation
       }
     }
   }
