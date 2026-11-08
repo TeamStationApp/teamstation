@@ -16,6 +16,7 @@ import {
   LEGACY_EVENT_TYPES,
   type LegacyEventType
 } from './gumboEventTypes'
+import { asScoringMutation } from './scoring/scoringMutation'
 import { asGumboId } from './userId'
 
 /** The largest `integer` Postgres stores. */
@@ -281,6 +282,7 @@ const asPostEventsShape = asObject({
    * the game's lineups have moved on since, the post is refused, so a
    * scorer's save never undoes a lineup somebody else saved meanwhile.
    */
+  scoringMutation: asOptional(asScoringMutation),
   lineupsBase: asOptional(asString),
   /**
    * On a live post: the play generation the sender opened the game on. A
