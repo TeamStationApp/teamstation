@@ -246,12 +246,18 @@ export class ConcurrentScoringRig {
   async expectLineup(index: number, expected: string[]): Promise<void> {
     const deadline = Date.now() + 3000
     let actual: string[] = []
+    const samples: Array<{ elapsed: number; lineup: string[] }> = []
     do {
       actual = await this.lineup(index)
+      samples.push({ elapsed: Date.now() - (deadline - 3000), lineup: actual })
       if (JSON.stringify(actual) === JSON.stringify(expected)) break
       await new Promise(resolve => setTimeout(resolve, 100))
     } while (Date.now() < deadline)
     const observedAt = Date.now()
+    await writeFile(
+      this.ctx.artifact(`lineup-${index}-${observedAt}.json`),
+      JSON.stringify({ expected, samples }, null, 2)
+    )
     await this.ctx.checkpoint(
       `lineup-client-${index}`,
       {
