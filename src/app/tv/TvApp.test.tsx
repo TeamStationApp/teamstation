@@ -8,7 +8,7 @@ import { AppRegistry, BackHandler, NativeModules } from 'react-native'
 
 import { asSession, asVideoGame, TeamStationClient } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
-import { TvApp } from './TvApp'
+import { TvApp, tvLoginScale } from './TvApp'
 
 require('../../../appletv/index.js')
 
@@ -101,6 +101,62 @@ afterEach(async () => {
   NativeModules.TVSession = original.store
 })
 describe('TV app presentation', () => {
+  it('fits the complete pairing panel inside smaller viewports with safe margins', () => {
+    expect(tvLoginScale(1920, 1080)).equals(1)
+    for (const [width, height] of [
+      [1280, 720],
+      [1920, 1080],
+      [3840, 2160]
+    ]) {
+      const scale = tvLoginScale(width, height)
+      expect(1600 * scale).at.most(width - 140)
+      expect(940 * scale).at.most(height - 140)
+      expect(scale).at.most(1)
+    }
+    expect(tvLoginScale(0, 0)).equals(0)
+  })
+  it('applies the smaller viewport scale to the rendered pairing panel', async () => {
+    const viewport = document.documentElement
+    const priorWidth = Object.getOwnPropertyDescriptor(viewport, 'clientWidth')
+    const priorHeight = Object.getOwnPropertyDescriptor(
+      viewport,
+      'clientHeight'
+    )
+    Object.defineProperty(viewport, 'clientWidth', {
+      configurable: true,
+      value: 1280
+    })
+    Object.defineProperty(viewport, 'clientHeight', {
+      configurable: true,
+      value: 720
+    })
+    try {
+      window.dispatchEvent(new window.Event('resize'))
+      setup()
+      await render()
+      const panel = document.querySelector<HTMLElement>(
+        '[data-testid="tv-login-panel"]'
+      )!
+      const scale = Number(/scale\(([\d.]+)\)/.exec(panel.style.transform)?.[1])
+      expect(scale).greaterThan(0)
+      expect(parseFloat(getComputedStyle(panel).width) * scale).at.most(
+        1280 - 140
+      )
+      expect(parseFloat(getComputedStyle(panel).height) * scale).at.most(
+        720 - 140
+      )
+    } finally {
+      if (priorWidth != null)
+        Object.defineProperty(viewport, 'clientWidth', priorWidth)
+      else Reflect.deleteProperty(viewport, 'clientWidth')
+      if (priorHeight != null)
+        Object.defineProperty(viewport, 'clientHeight', priorHeight)
+      else Reflect.deleteProperty(viewport, 'clientHeight')
+      await act(async () => {
+        window.dispatchEvent(new window.Event('resize'))
+      })
+    }
+  })
   it('registers the native entry point', () => {
     expect(AppRegistry.getAppKeys()).contains('TeamStationTV')
   })
@@ -108,6 +164,17 @@ describe('TV app presentation', () => {
     setup()
     await render()
     expect(document.body.textContent).contains('ABCD–EFGH')
+    const qr = document.querySelector('[aria-label="Scan to sign in"]')!
+    expect(qr.getAttribute('width')).equals('620')
+    expect(qr.getAttribute('height')).equals('620')
+    const brand = document.querySelector<HTMLElement>(
+      '[data-testid="tv-brand-screen"]'
+    )!
+    expect(brand.style.width).equals('88px')
+    expect(brand.parentElement?.style.width).equals('360px')
+    expect(brand.parentElement?.style.height).equals('260px')
+    const title = brand.parentElement?.nextElementSibling as HTMLElement
+    expect(title.style.fontSize).equals('90px')
     expect(document.querySelector('svg path')).not.equals(null)
     TeamStationClient.prototype.claimTvLogin = async () => session
     await act(async () => {

@@ -31,28 +31,49 @@ export function TvBackdrop(): React.ReactElement {
   )
 }
 export function TvBrand({
-  title = 'TeamStation TV'
+  title = 'TeamStation TV',
+  titleSize = 30,
+  iconScale = 1,
+  subtleHalo = false
 }: {
   title?: string
+  titleSize?: number
+  iconScale?: number
+  subtleHalo?: boolean
 }): React.ReactElement {
   return (
     <View style={{ alignItems: 'center', gap: 16 }}>
       <View
         style={{
-          width: 180,
-          height: 130,
+          width: 180 * iconScale,
+          height: 130 * iconScale,
           alignItems: 'center',
           justifyContent: 'center'
         }}
       >
-        <Svg width={180} height={130} style={StyleSheet.absoluteFill}>
+        <Svg
+          width={180 * iconScale}
+          height={130 * iconScale}
+          viewBox="0 0 180 130"
+          style={StyleSheet.absoluteFill}
+        >
           <Defs>
             <RadialGradient id="tvHalo">
-              <Stop offset="0" stopColor="#b46aff" stopOpacity={0.85} />
+              <Stop
+                offset="0"
+                stopColor="#b46aff"
+                stopOpacity={subtleHalo ? 0.17 : 0.85}
+              />
               <Stop offset="1" stopColor="#8033db" stopOpacity={0} />
             </RadialGradient>
           </Defs>
-          <Ellipse cx={90} cy={94} rx={90} ry={35} fill="url(#tvHalo)" />
+          <Ellipse
+            cx={90}
+            cy={subtleHalo ? 65 : 94}
+            rx={90}
+            ry={subtleHalo ? 65 : 35}
+            fill="url(#tvHalo)"
+          />
           <Rect
             x={42}
             y={20}
@@ -74,18 +95,18 @@ export function TvBrand({
           testID="tv-brand-screen"
           style={{
             position: 'absolute',
-            left: 68,
-            top: 30,
-            width: 44,
-            height: 44,
+            left: 68 * iconScale,
+            top: 30 * iconScale,
+            width: 44 * iconScale,
+            height: 44 * iconScale,
             alignItems: 'center',
             justifyContent: 'center'
           }}
         >
-          <TsMark size={2.5} />
+          <TsMark size={2.5 * iconScale} />
         </View>
       </View>
-      <Text style={{ color: '#fff', fontSize: 30, fontWeight: '700' }}>
+      <Text style={{ color: '#fff', fontSize: titleSize, fontWeight: '700' }}>
         {title}
       </Text>
     </View>
