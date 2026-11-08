@@ -803,6 +803,57 @@ describe('a scoring session', function () {
     expect(clock.waiting.map(entry => entry.ms)).deep.equals([2000])
   })
 
+  for (const failure of ['read', 'post'] as const)
+    it(`recovers a superseded score after an offline ${failure} through its scheduled retry`, async function () {
+      const peerClock = new Clock()
+      peerClock.options.now = () => new Date(2000)
+      const peer = await open(new FakeStore(), peerClock)
+      peer.session.apply(strike)
+      await peer.session.flush()
+      const winner: StoredGame = {
+        ...(await peer.store.load()),
+        scoringMutation: peer.store.posts.at(-1)!.scoringMutation
+      }
+      let reads = 0
+      const posts: SaveChange[] = []
+      const clock = new Clock()
+      clock.options.now = () => new Date(1000)
+      const session = await ScoringSession.open(
+        {
+          load: async () => {
+            reads++
+            if (reads === 1) return { plays: [], currentPlay: null }
+            if (failure === 'read' && reads === 2)
+              throw new HttpError('offline', 'Winner read interrupted')
+            return winner
+          },
+          save: async (_id, change) => {
+            posts.push(change)
+            if (failure === 'post' && posts.length === 1)
+              throw new HttpError('offline', 'Score post interrupted')
+            return { ...winner, superseded: true }
+          }
+        },
+        'g1',
+        context,
+        clock.options
+      )
+      session.apply(ball)
+      await session.flush()
+      expect(session.pending).equals(1)
+      expect(session.offline).equals(true)
+      expect(session.problem).equals(null)
+      expect(clock.waiting.map(entry => entry.ms)).deep.equals([1000])
+      await clock.tick()
+      expect(session.actions).deep.equals([strike])
+      expect(session.pending).equals(0)
+      expect(session.offline).equals(false)
+      expect(session.problem).equals(null)
+      expect(clock.waiting).deep.equals([])
+      expect(posts).length(2)
+      expect(posts[1].scoringMutation).deep.equals(posts[0].scoringMutation)
+    })
+
   for (const code of ['conflict', 'forbidden'] as const)
     it(`goes read-only on ${code} and stops posting`, async function () {
       const { session, store } = await open()
