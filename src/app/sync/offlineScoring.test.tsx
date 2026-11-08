@@ -8,7 +8,9 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
+import type { ScoringMutation } from '../../common/scoring/scoringMutation'
 import { ScoringSession } from '../../common/scoring/session'
+import { userIdOfGumbo } from '../../common/userId'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import {
   fieldServer,
@@ -742,6 +744,123 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     await settle(50)
     expect(document.body.textContent).includes(NEWER_LINEUP_MESSAGE)
   })
+  it('reconciles a mounted scorer after the rejected offline queue finally lands', async () => {
+    const { client, net, rows } = await preparedPhone()
+    await open(client)
+    net.offline = true
+    await click('Called Strike')
+    await settle(80)
+    expect(rows()).has.length.greaterThan(0)
+    expect(document.body.textContent).includes('1 balls 1 strikes')
+    // Reconnect reads can still see the optimistic document. No peer write
+    // or reload follows the rejection; the landing must wake the screen.
+    expect((await client.gameEvents('g1')).currentPlay?.count).deep.include({
+      strikes: 1
+    })
+    net.offline = false
+    net.superseded = true
+    client.wakeOutbox(true)
+    await act(async () => {
+      await client.drainOutbox()
+    })
+    await settle(100)
+    expect(rows()).has.length(0)
+    expect(document.body.textContent).includes('1 balls 0 strikes')
+  })
+
+  for (const reopen of [false, true])
+    for (const rename of [false, true])
+      it(`releases an unfinished thrower decision when its queued input loses (reopen=${reopen}, rename=${rename})`, async () => {
+        const { client, net, rows } = await preparedPhone()
+        await open(client)
+        net.offline = true
+        await click('More')
+        await click('Batter Out — Other')
+        await settle(80)
+        expect(rows()).has.length.greaterThan(0)
+        if (rename)
+          await act(async () => {
+            await client.renameGuestPlayer(
+              'g1',
+              userIdOfGumbo(1),
+              { firstName: 'Mookie', lastName: 'Betts' },
+              1
+            )
+          })
+        expect(
+          document
+            .querySelector('[aria-label="Ball"]')
+            ?.getAttribute('aria-disabled')
+        ).equals('true')
+        if (reopen) {
+          await act(async () => {
+            root!.unmount()
+          })
+          document.body.replaceChildren()
+          await open(client)
+          await settle(100)
+        }
+        net.offline = false
+        net.superseded = true
+        client.wakeOutbox(true)
+        await act(async () => {
+          await client.drainOutbox()
+        })
+        await settle(100)
+        expect(rows()).has.length(0)
+        expect(document.body.textContent).includes('1 balls 0 strikes')
+        expect(
+          document
+            .querySelector('[aria-label="Ball"]')
+            ?.getAttribute('aria-disabled')
+        ).not.equals('true')
+      })
+
+  it('keeps a newer local decision when an older rejected-input notice arrives', async () => {
+    const { client, net, rows } = await preparedPhone()
+    const listeners = new Set<(notice: OutboxNotice) => void>()
+    client.subscribeOutboxNotices = listener => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    }
+    await open(client)
+    net.offline = true
+    await click('Called Strike')
+    await settle(80)
+    const rejected = (
+      JSON.parse(rows()[0].body as string) as {
+        scoringMutation: ScoringMutation
+      }
+    ).scoringMutation
+    await click('More')
+    await click('Batter Out — Other')
+    await settle(80)
+    let reads = 0
+    const events = client.gameEvents.bind(client)
+    client.gameEvents = async (...args) => {
+      reads++
+      return await events(...args)
+    }
+    await act(async () => {
+      for (const listener of listeners)
+        listener({
+          gameId: 'g1',
+          message: '',
+          reconcileScoring: true,
+          rejectedScoring: rejected
+        })
+    })
+    await settle(100)
+    expect(reads).equals(0)
+    expect(
+      document
+        .querySelector('[aria-label="Ball"]')
+        ?.getAttribute('aria-disabled')
+    ).equals('true')
+  })
+
   it('opens the game again on the scoring screen when writes naming a player the server did not take were dropped', async function () {
     const { client } = await preparedPhone()
     let tell: ((notice: OutboxNotice) => void) | undefined

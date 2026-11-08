@@ -38,7 +38,7 @@ export function playForWire<T>(play: T, teams: SideTeams): T {
 /** A posted play or at-bat as it is stored: its record by team. */
 export function playFromWire<T>(play: T, teams: SideTeams): T {
   const raw = recordIn(play)
-  if (raw == null || raw.version === 3) return play
+  if (raw == null || raw.version === 3 || raw.version === 4) return play
   const record = recordOf(play, teams)
   if (record == null) return play
   return { ...play, teamStation: { ...raw, ...recordByTeam(record, teams) } }
@@ -52,6 +52,13 @@ export function bodyFromWire(
   return {
     ...body,
     plays: body.plays.map(play => playFromWire(play, teams)),
+    ...(body.scoringHistory == null
+      ? {}
+      : {
+          scoringHistory: body.scoringHistory.map(play =>
+            playFromWire(play, teams)
+          )
+        }),
     ...(body.currentPlay == null
       ? {}
       : { currentPlay: playFromWire(body.currentPlay, teams) })
