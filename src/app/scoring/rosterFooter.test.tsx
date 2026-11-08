@@ -78,7 +78,7 @@ describe('roster screen bottom bar and slider', function () {
     root = undefined
     host?.remove()
   })
-  it('labels the tabs Roster, Lineup and Defense, with a Box Score pill first for a coach', async function () {
+  it('labels the tabs Roster, Lineup and Defense, with a Box Score pill first and Plan last for a coach', async function () {
     expect(rosterModes('scorekeeper')).deep.equals([
       'editRoster',
       'lineup',
@@ -88,7 +88,8 @@ describe('roster screen bottom bar and slider', function () {
       'boxScore',
       'editRoster',
       'lineup',
-      'defense'
+      'defense',
+      'plan'
     ])
     // The box score is a pill of its own, not one of the tabs.
     expect(rosterPillModes('scorekeeper')).deep.equals(
@@ -97,7 +98,8 @@ describe('roster screen bottom bar and slider', function () {
     expect(rosterPillModes('coach')).deep.equals([
       'editRoster',
       'lineup',
-      'defense'
+      'defense',
+      'plan'
     ])
     expect(ROSTER_MODE_LABELS).deep.equals({
       boxScore: 'Box Score',
@@ -133,7 +135,13 @@ describe('roster screen bottom bar and slider', function () {
         onSave={() => undefined}
       />
     )
-    expect(tabs()).deep.equals(['Box Score', 'Roster', 'Lineup', 'Defense'])
+    expect(tabs()).deep.equals([
+      'Box Score',
+      'Roster',
+      'Lineup',
+      'Defense',
+      'Plan'
+    ])
     expect(testId('Box Score pill')!.getAttribute('aria-label')).equals(
       'Box Score'
     )

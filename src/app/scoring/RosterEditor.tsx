@@ -21,6 +21,7 @@ import type {
   RosterEntry,
   TeamStationClient
 } from '../../common/api'
+import type { GamePlan } from '../../common/gamePlan'
 import { playerAddToldWords } from '../../common/notifications'
 import {
   type ExistingRosterPlayer,
@@ -62,6 +63,7 @@ import type { LineupQrResult } from './lineupQrImport'
 import { LineupShareSheet } from './LineupShareSheet'
 import { addPlaceholderPlayers } from './placeholderPlayers'
 import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
+import { type PlanContext, PlanTab } from './plan/PlanTab'
 import {
   addPlayerDraft,
   addRosteredPlayer,
@@ -80,7 +82,7 @@ import {
   type RosterDictationOptions,
   useRosterDictation
 } from './rosterDictation'
-import { rosterDirty, rosterSavable } from './rosterDirty'
+import { planLineup, rosterDirty, rosterSavable } from './rosterDirty'
 import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
 import { RosterConflictBanner } from './rosterLive'
 import { byJersey } from './rosterOrder'
@@ -129,7 +131,7 @@ export const ROSTER_MODE_LABELS: Record<RosterMode, string> = {
 /** The modes an audience may be in, in order. */
 export const rosterModes = (audience: RosterAudience): RosterMode[] =>
   audience === 'coach'
-    ? ['boxScore', 'editRoster', 'lineup', 'defense']
+    ? ['boxScore', 'editRoster', 'lineup', 'defense', 'plan']
     : ['editRoster', 'lineup', 'defense']
 /** The tabs the mode slider offers: the box score is its own pill. */
 export const rosterPillModes = (audience: RosterAudience): RosterMode[] =>
@@ -252,6 +254,10 @@ export function RosterEditor({
   onCancel,
   onReload,
   bottomInset,
+  plan,
+  planContext,
+  planChanged = false,
+  onPlanChange,
   onSave
 }: {
   /** A coach's state is never read-only, so his game's own players stay editable. */
@@ -292,6 +298,16 @@ export function RosterEditor({
    * the editor (the scoring sheet's own, on a scorekeeper's) by default.
    */
   bottomInset?: number
+  /**
+   * A coach's game plan as it is being edited, which the Plan tab shows
+   * over his side's batting order, and what its warnings are judged by.
+   * Without them the tab says the plan could not be read.
+   */
+  plan?: GamePlan
+  planContext?: PlanContext
+  /** Whether the plan differs from the one saved: Save Rosters lights. */
+  planChanged?: boolean
+  onPlanChange?: (plan: GamePlan) => void
   /**
    * A coach's Cancel, after every staged change is discarded: the screen
    * reloads the game, so the draft starts again from the latest copy.
@@ -416,6 +432,7 @@ export function RosterEditor({
       : 'editRoster'
   )
   const boxScore = mode === 'boxScore'
+  const planning = mode === 'plan'
   const [scrollOffsets, setScrollOffsets] = useState(
     initialDraft?.scrollOffsets ?? {}
   )
@@ -749,6 +766,17 @@ export function RosterEditor({
   const display = (id: number): string =>
     `${names[id].jersey === '' ? '' : `#${names[id].jersey} `}${names[id].fullName}`
   const assigned = defense ? Object.values(team.defense) : team.battingOrder
+  // The plan's rows: his side's batting order, each batter by who he is.
+  const planBatters = useMemo(() => {
+    const players = planLineup(draft, side)
+    return team.battingOrder
+      .filter(id => draft.gameData.players[id] != null)
+      .map((id, at) => ({
+        id,
+        player: players[at],
+        label: `${names[id].jersey === '' ? '' : `#${names[id].jersey} `}${names[id].fullName}`
+      }))
+  }, [draft, side, team.battingOrder, names])
   const place = (id: number, index: number, boundary = false): void => {
     if (!team.players.includes(id)) return
     edit(next => {
@@ -975,11 +1003,15 @@ export function RosterEditor({
             <Text numberOfLines={defense ? 3 : undefined} style={text}>
               {defense
                 ? DEFENSE_INSTRUCTION
-                : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
+                : planning
+                  ? Platform.OS === 'web'
+                    ? lstrings.coach_plan_instruction_web
+                    : lstrings.coach_plan_instruction_phone
+                  : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
             </Text>
           )
         )}
-        {state.phase === 'awaitingBatter' && !boxScore && (
+        {state.phase === 'awaitingBatter' && !boxScore && !planning && (
           <View style={{ gap: 6 }}>
             <Text style={text}>Choose Next Batter</Text>
             {draft.liveData.boxscore.teams[battingSide(draft)].battingOrder.map(
@@ -1002,6 +1034,30 @@ export function RosterEditor({
       {boxScore && (
         <View testID="Roster box score" style={{ flex: 1, minHeight: 0 }}>
           {renderBoxScore?.()}
+        </View>
+      )}
+      {planning && (
+        <View style={{ flex: 1, minHeight: 0 }}>
+          {plan == null || planContext == null ? (
+            <ScoringError message={lstrings.coach_plan_load_failed} />
+          ) : (
+            <PlanTab
+              plan={plan}
+              batters={planBatters}
+              context={planContext}
+              onChange={next => {
+                onPlanChange?.(next)
+              }}
+              onDrop={(player, index, edge) => {
+                if (locked) replace(player, index)
+                else place(player, index + (edge === 'after' ? 1 : 0), true)
+              }}
+              onReorder={(id, delta) => {
+                place(id, team.battingOrder.indexOf(id) + delta)
+              }}
+              locked={locked}
+            />
+          )}
         </View>
       )}
       <View
@@ -1601,7 +1657,8 @@ export function RosterEditor({
               accessibilityLabel="Save Rosters"
               label="Save Rosters"
               disabled={
-                spoken.busy || !rosterSavable(dirty, unaccepted, validation)
+                spoken.busy ||
+                !rosterSavable(dirty, unaccepted, validation, planChanged)
               }
               onPress={() => {
                 const saving = onSave(

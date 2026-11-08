@@ -609,7 +609,7 @@ describe('Coach Game', function () {
     expect(await coach.page.$('[aria-label="Coach"]')).equals(null)
   })
 
-  it('C2: opens full screen with its own chevron, the team on the right, four tabs and the roster bar', async function () {
+  it('C2: opens full screen with its own chevron, the team on the right, the Box Score pill over four tabs and the roster bar', async function () {
     const fixture = lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
@@ -647,8 +647,14 @@ describe('Coach Game', function () {
         ...roster.parentElement!.querySelectorAll('[role="tab"]')
       ].map(node => String(node.getAttribute('aria-label')))
     })
-    expect(tabs).deep.equals(['Box Score', 'Roster', 'Lineup', 'Defense'])
-    // Box Score is a pill on its own row, above the other three.
+    expect(tabs).deep.equals([
+      'Box Score',
+      'Roster',
+      'Lineup',
+      'Defense',
+      'Plan'
+    ])
+    // Box Score is a pill on its own row, above the other four.
     const pill = await coach.box('[data-testid="Box Score pill"]')
     const roster = await coach.box('[aria-label="Roster"][role="tab"]')
     expect(pill.y + pill.height).lessThan(roster.y + 1)

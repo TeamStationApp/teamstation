@@ -152,6 +152,49 @@ export const enUs = {
   coach_box_score: 'Box Score',
   /** The coaching screen's tab for the per-inning game plan. */
   coach_plan_tab: 'Plan',
+  /** The Plan tab's instruction line, on the web and on a phone. */
+  coach_plan_instruction_web:
+    'Drag a player to change the batting order. Click a cell to set a position.',
+  coach_plan_instruction_phone:
+    'Drag a player to change the batting order. Tap a cell to set a position, or hold and drag onto the field.',
+  /** Shown for five seconds after a save whose plan has warnings. */
+  coach_plan_saved_warnings: 'Saved. Plan has %s.',
+  /**
+   * After a save before the first pitch whose followed plan's inning 1
+   * leaves nobody pitching, so the lineup keeps the Defense tab's defence.
+   */
+  coach_plan_saved_no_pitcher:
+    'Saved. Inning 1 plan not applied: needs a pitcher.',
+  coach_plan_saved_no_pitcher_warnings:
+    'Saved. Inning 1 plan not applied: needs a pitcher. Plan has %s.',
+  /**
+   * After a save before the first pitch whose followed plan's inning 1
+   * changed who plays a position it fills from what the Defense tab had.
+   */
+  coach_plan_saved_defense: 'Saved. Defense set from the plan\u2019s inning 1.',
+  coach_plan_saved_defense_warnings:
+    'Saved. Defense set from the plan\u2019s inning 1. Plan has %s.',
+  coach_plan_load_failed: 'Unable to load the game plan. Please try again.',
+  /** The toggle at the top of the Plan tab. */
+  plan_enable: 'Enable per-inning game plan',
+  plan_player_header: 'Player',
+  plan_add_inning: 'Add inning',
+  /** A cell's accessible name: the player, and the inning. */
+  plan_cell_label: '%1$s, inning %2$s',
+  plan_refused:
+    '%s is not a position. Use P, C, 1B, 2B, 3B, SS, LF, CF, RF, DH, EH or a dash.',
+  /** The field picker's title: who and which inning it assigns. */
+  plan_assign_title: 'Assign: %1$s (Inn %2$s)',
+  plan_bench: 'Bench',
+  plan_close_picker: 'Close the field',
+  plan_no_warnings: 'No playing-time warnings.',
+  plan_warning_red: 'Red warning: %s',
+  plan_warning_yellow: 'Yellow warning: %s',
+  plan_clear: 'Clear',
+  plan_clear_label: 'Clear the plan',
+  plan_clear_title: 'Clear the whole plan?',
+  plan_clear_detail:
+    'Every inning is emptied for every player. Nothing is saved until Save Rosters.',
   game_replay: 'Replay',
   game_live: 'Live',
   replay_exit: 'Exit',

@@ -12,6 +12,15 @@
 // logs without asserting. Never point it at a live service: the fixture
 // writes to the database the local `serverConfig.json` names.
 //
+// S1 to S3 work the coaching screen's Plan tab on one fixture game, in turn:
+// S1 taps a cell, which opens the field picker (`coach-plan-phone-picker.png`),
+// and taps LF on it, which the cell then reads. S2 holds a cell and drags
+// onto C, which it then reads, and drags again off the picture, which
+// changes nothing. S3 holds a player and drags him down two rows: his innings
+// move with him and the Lineup tab bats him there too. S2 and S3 are drags of
+// W3C touch actions through this daemon's WebDriverAgent, recorded by
+// `xcrun simctl io recordVideo` into `coach-plan-phone-drag.mp4`.
+//
 // S4: the roster footer bar lowers ten points into the 34-point bottom inset
 // of an iPhone 16 Pro, on the coaching screen (whose root pads the inset and
 // eight points more) and on the scorekeeper's Set Team Rosters sheet; and on
@@ -24,8 +33,8 @@
 //
 // The microphone is drawn only when the API dictates; no scenario presses it.
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { execFileSync, spawn } from 'node:child_process'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
@@ -68,8 +77,10 @@ interface Device {
   waitForAnimationToEnd: () => Promise<unknown>
   screenshot: () => Promise<Buffer>
   tapOnPoint: (point: { x: number; y: number }) => Promise<unknown>
+  eval: (script: string) => Promise<unknown>
 }
 interface Daemon {
+  info: { runDir: string }
   attach: (options: {
     device: string
     platform: string
@@ -141,7 +152,7 @@ async function main(): Promise<void> {
   assert((await fetch(`${api}/health`)).ok, `${api} answers`)
   const password = required('TS_LINEUP_PASSWORD')
   const artifacts = resolve(required('TEST_ARTIFACT_DIR'))
-  const only = (process.env.TEST_ONLY ?? 'S4,S5').split(',')
+  const only = (process.env.TEST_ONLY ?? 'S1,S2,S3,S4,S5').split(',')
   await mkdir(artifacts, { recursive: true })
   const requireClient = createRequire(
     join(resolve(required('MAESTRO_D_CLIENT_ROOT')), 'package.json')
@@ -244,6 +255,231 @@ async function main(): Promise<void> {
         .filter(n => n.bounds != null && label(n).startsWith('Remove '))
         .sort((a, b) => a.bounds!.y - b.bounds!.y)
         .map(label)
+
+    // W3C touch actions through this daemon's own WebDriverAgent, as
+    // rosterDrag.e2e.ts drives them. XCTest folds a pause after pointerDown
+    // into the next move, so a hold is a two-point creep.
+    let wda: { url: string; session: string } | undefined
+    const request = async (path: string, body?: unknown): Promise<unknown> => {
+      const url = wda!.url + path
+      const script =
+        body == null
+          ? `http.get(${JSON.stringify(url)})`
+          : `http.post(${JSON.stringify(url)}, {body:${JSON.stringify(body)}})`
+      const result = (await m.eval(script)) as { status: number; body: string }
+      assert.equal(result.status, 200, result.body)
+      return JSON.parse(result.body) as unknown
+    }
+    const touch = async (
+      points: Array<{ x: number; y: number; ms: number }>
+    ): Promise<void> => {
+      if (wda == null) {
+        const log = await readFile(
+          join(daemon.info.runDir, 'daemon.log'),
+          'utf8'
+        )
+        const line = log
+          .split('\n')
+          .filter(s => s.includes(`Starting WDA on device ${device} (port:`))
+          .at(-1)
+        const port = line?.match(/\(port: (\d+)\)/)?.[1]
+        assert(port != null, 'This daemon started WebDriverAgent')
+        wda = { url: `http://127.0.0.1:${port}`, session: '' }
+        const status = (await request('/status')) as { sessionId: string }
+        wda.session = status.sessionId
+      }
+      const move = (p: { x: number; y: number; ms: number }): unknown => ({
+        type: 'pointerMove',
+        duration: p.ms,
+        x: Math.round(p.x),
+        y: Math.round(p.y),
+        origin: 'viewport'
+      })
+      await request(`/session/${wda.session}/actions`, {
+        actions: [
+          {
+            type: 'pointer',
+            id: 'finger',
+            parameters: { pointerType: 'touch' },
+            actions: [
+              move({ ...points[0], ms: 0 }),
+              { type: 'pointerDown', button: 0 },
+              ...points
+                .slice(1)
+                .flatMap(p => [move(p), { type: 'pause', duration: 150 }]),
+              { type: 'pointerUp', button: 0 }
+            ]
+          }
+        ]
+      })
+      await pause(800)
+    }
+    /** Held 600 ms or more where it starts, then carried to `to`. */
+    const holdAndDrag = async (
+      from: { x: number; y: number },
+      to: { x: number; y: number }
+    ): Promise<void> => {
+      await touch([
+        { ...from, ms: 0 },
+        { x: from.x, y: from.y + 2, ms: 1000 },
+        { ...to, ms: 1500 },
+        { ...to, ms: 400 }
+      ])
+    }
+    const centre = (b: Bounds): { x: number; y: number } => ({
+      x: b.x + b.width / 2,
+      y: b.y + b.height / 2
+    })
+    const byId = async (id: string): Promise<Node> => {
+      const found = (await all()).find(n => n.id === id && n.bounds != null)
+      assert(found?.bounds != null, `${id} is on screen`)
+      return found
+    }
+    /** A plan cell's value, which its label ends with: "Ohtani, inning 2, C". */
+    const cellValue = async (row: number, inning: number): Promise<string> => {
+      const text = label(await byId(`Plan cell ${row}-${inning}`))
+      const match = new RegExp(`, inning ${inning}(?:, (.+))?$`).exec(text)
+      return match?.[1] ?? ''
+    }
+    const cellPlayer = async (row: number, inning: number): Promise<string> =>
+      label(await byId(`Plan cell ${row}-${inning}`)).replace(
+        /, inning \d+.*$/,
+        ''
+      )
+
+    if (only.some(id => ['S1', 'S2', 'S3'].includes(id))) {
+      const fixture = lineupFixture(password)
+      await coachGame(fixture)
+      await m.tapOn({ text: 'Plan', timeout: 15000 })
+      await byId('Plan cell 1-1')
+      await m.waitForAnimationToEnd()
+      await closeWarnings()
+
+      if (only.includes('S1')) {
+        await m.tapOn({ id: 'Plan cell 2-3' })
+        await pause(800)
+        const picker = (await all()).some(n => n.id === 'Plan field picker')
+        check(picker, 'S1: a tap on a cell opens the field picker')
+        await writeFile(
+          join(artifacts, 'coach-plan-phone-picker.png'),
+          await m.screenshot()
+        )
+        await m.tapOn({ id: 'Plan pick LF' })
+        await pause(800)
+        const value = await cellValue(2, 3)
+        console.log(`S1 cell 2-3: ${value}`)
+        check(value === 'LF', 'S1: a tap on LF writes LF into the cell')
+        check(
+          !(await all()).some(n => n.id === 'Plan field picker'),
+          'S1: the picker closes'
+        )
+      }
+
+      const recording =
+        only.includes('S2') || only.includes('S3')
+          ? spawn(
+              'xcrun',
+              [
+                'simctl',
+                'io',
+                device,
+                'recordVideo',
+                '--force',
+                join(artifacts, 'coach-plan-phone-drag.mp4')
+              ],
+              { stdio: 'ignore' }
+            )
+          : undefined
+      try {
+        if (recording != null) await pause(1500)
+        if (only.includes('S2')) {
+          // Where C is drawn for this cell: the picker opens at the same
+          // place for it every time.
+          await m.tapOn({ id: 'Plan cell 3-2' })
+          await pause(800)
+          const catcher = centre((await byId('Plan pick C')).bounds!)
+          const toggle = centre((await byId('Plan toggle row')).bounds!)
+          await m.tapOn({ id: 'Plan picker close' })
+          await pause(600)
+          const cell = centre((await byId('Plan cell 3-2')).bounds!)
+          await holdAndDrag(cell, catcher)
+          const value = await cellValue(3, 2)
+          console.log(`S2 cell 3-2 after the drag onto C: ${value}`)
+          check(value === 'C', 'S2: holding and dragging onto C writes C')
+          // Off the picture: the toggle row above the sheet.
+          await holdAndDrag(cell, toggle)
+          const kept = await cellValue(3, 2)
+          console.log(`S2 cell 3-2 after the drag off it: ${kept}`)
+          check(kept === 'C', 'S2: letting go off the picture changes nothing')
+          check(
+            !(await all()).some(n => n.id === 'Plan field picker'),
+            'S2: the picker closes after the drag'
+          )
+        }
+        if (only.includes('S3')) {
+          // The player column's names, "#3 Alonso", top to bottom.
+          const players = async (): Promise<string[]> => {
+            const column = (await byId('Plan player 1')).bounds!
+            return [
+              ...new Set(
+                (await all())
+                  .filter(
+                    n =>
+                      n.bounds != null &&
+                      n.bounds.x < column.x + column.width &&
+                      /^#\d+ /.test(label(n))
+                  )
+                  .sort((a, b) => a.bounds!.y - b.bounds!.y)
+                  .map(label)
+              )
+            ]
+          }
+          const before = await players()
+          console.log(`S3 order before: ${JSON.stringify(before)}`)
+          const moved = await cellPlayer(3, 2)
+          const third = (await byId('Plan player 3')).bounds!
+          const fifth = (await byId('Plan player 5')).bounds!
+          await holdAndDrag(centre(third), {
+            x: third.x + third.width / 2,
+            y: fifth.y + fifth.height * 0.75
+          })
+          await pause(800)
+          const after = await players()
+          console.log(`S3 order after: ${JSON.stringify(after)}`)
+          check(
+            JSON.stringify(after) ===
+              JSON.stringify([
+                before[0],
+                before[1],
+                before[3],
+                before[4],
+                before[2],
+                ...before.slice(5)
+              ]),
+            'S3: the third player bats fifth'
+          )
+          check(
+            (await cellPlayer(5, 2)) === moved &&
+              (await cellValue(5, 2)) === 'C',
+            'S3: his innings moved with him'
+          )
+          await m.tapOn({ text: 'Lineup', timeout: 15000 })
+          await m.assertVisible({ text: 'Remove .*', timeout: 15000 })
+          const order = await lineup()
+          console.log(`S3 lineup: ${JSON.stringify(order)}`)
+          check(
+            order[4] === `Remove ${moved}`,
+            'S3: the Lineup tab bats him fifth'
+          )
+        }
+      } finally {
+        if (recording != null) {
+          await pause(1000)
+          recording.kill('SIGINT')
+          await new Promise(resolve => recording.once('exit', resolve))
+        }
+      }
+    }
 
     if (only.includes('S4')) {
       const fixture = lineupFixture(password)
