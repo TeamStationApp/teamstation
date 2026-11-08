@@ -80,7 +80,7 @@ async function main(): Promise<void> {
     await tv.waitForAnimationToEnd({ timeout: 3000 })
     await tv.pressKey({ key: 'DPAD_UP' })
     await tv.pressKey({ key: 'DPAD_RIGHT' })
-    await tv.tapOn({ id: 'Sign out' })
+    await tv.tapOn({ id: 'tv-sign-out' })
     await tv.assertVisible({
       text: 'Your games. On the big screen.',
       timeout: 15000
@@ -110,7 +110,7 @@ async function main(): Promise<void> {
   } catch (error) {
     await captureScreenshot(tv, path.join(artifacts, 'tv-auth-failure.png'))
     await writeFile(
-      '/private/tmp/tv-auth-hierarchy.json',
+      path.join(artifacts, 'tv-auth-hierarchy.json'),
       JSON.stringify(await tv.hierarchy(), null, 2)
     )
     throw error

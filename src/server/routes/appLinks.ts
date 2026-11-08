@@ -1,6 +1,7 @@
 import { type Request, type Response, Router } from 'express'
 
 import { badRequest } from '../../common/errors'
+import { isTvServerOrigin } from '../../common/tvLogin'
 import type { AppLink, AppLinksConfig } from '../appLinks/config'
 
 export interface AppLinkRouteOptions {
@@ -33,7 +34,8 @@ export function appLinkRoutes(options: AppLinkRouteOptions): Router {
   const byHost = new Map<string, AppLink>(
     options.appLinks.apps.map(app => [new URL(app.origin).host, app])
   )
-  const servers = new Set([options.publicUrl, ...options.appLinks.knownServers])
+  const publicOrigin = new URL(options.publicUrl).origin
+  const servers = new Set([publicOrigin, ...options.appLinks.knownServers])
 
   const appFor = (req: Request): AppLink | undefined =>
     byHost.get((req.headers.host ?? '').toLowerCase())
@@ -86,12 +88,33 @@ export function appLinkRoutes(options: AppLinkRouteOptions): Router {
     ])
   })
 
-  router.get('/tv-login', (_req, res, next) => {
-    // The app shell renders confirmation. Link previews must neither spend
+  router.get('/tv-login', (req, res, next) => {
+    // Redirect to the browser-only confirmation route. Link previews must neither spend
     // the credential nor forward it as a referrer or cache a private page.
     res.set('cache-control', 'no-store')
     res.set('referrer-policy', 'no-referrer')
-    next()
+    const asked = req.query.server ?? publicOrigin
+    if (
+      typeof asked !== 'string' ||
+      !isTvServerOrigin(asked) ||
+      !servers.has(asked) ||
+      typeof req.query.token !== 'string' ||
+      !/^[A-Za-z0-9_-]{43}$/.test(req.query.token)
+    ) {
+      next(badRequest('That TV link is for a server this one does not know'))
+      return
+    }
+    if (
+      appFor(req) == null &&
+      new URL(asked).host !== (req.headers.host ?? '').toLowerCase()
+    ) {
+      next(badRequest('That is not a TV app link host'))
+      return
+    }
+    res.redirect(
+      302,
+      `${asked}/account/tv?token=${encodeURIComponent(req.query.token)}`
+    )
   })
 
   router.get('/signin/:token', (req, res, next) => {
@@ -111,7 +134,7 @@ export function appLinkRoutes(options: AppLinkRouteOptions): Router {
       next(badRequest('That is not a sign-in link'))
       return
     }
-    const server = asked ?? options.publicUrl
+    const server = asked ?? publicOrigin
     if (!servers.has(server)) {
       next(badRequest('That link is for a server this one does not know'))
       return

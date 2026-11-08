@@ -4,6 +4,18 @@ import { userIdOfGumbo } from '../../common/userId'
 import { routeOfUrl } from './deepLink'
 
 describe('routeOfUrl', function () {
+  it('keeps the TV issuer through an approved app host and discards foreign hosts', () => {
+    const token = 'a'.repeat(43)
+    const server = 'https://develop5.teamstation.app'
+    const url = `https://develop.teamstation.app/tv-login?token=${token}&server=${encodeURIComponent(server)}`
+    expect(
+      routeOfUrl(url, { appOrigin: 'https://develop.teamstation.app' })
+    ).deep.equals({ name: 'teamStationTv', token, server })
+    expect(
+      routeOfUrl(url, { appOrigin: 'https://app.teamstation.app' })
+    ).deep.equals({ name: 'teamStationTv' })
+  })
+
   it('reads the address people actually paste', function () {
     expect(
       routeOfUrl('https://app.teamstation.app/games/g1?t=734')
