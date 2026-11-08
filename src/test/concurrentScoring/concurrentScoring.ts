@@ -299,10 +299,15 @@ export class ConcurrentScoringRig {
       await new Promise(resolve => setTimeout(resolve, 100))
       actual = await this.summary(1 - author)
     }
+    const observedAt = Date.now()
     await this.ctx.checkpoint(
       `play-${plays}-scorer-state`,
       {
         readBack: async () => {
+          if (observedAt > until)
+            throw new Error(
+              `Play ${plays}: scorer agreement was not verified within three seconds`
+            )
           if (events.plays.length !== plays)
             throw new Error(
               `Expected ${plays} saved plays; got ${events.plays.length}`
