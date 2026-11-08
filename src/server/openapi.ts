@@ -10503,6 +10503,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                     platform: {
                       type: 'string',
                       enum: ['Apple TV', 'Google TV']
+                    },
+                    appOrigin: {
+                      type: 'string',
+                      format: 'uri',
+                      description:
+                        'Build-selected registered phone app origin. Omitted uses this server’s configured environment default.'
                     }
                   },
                   required: ['platform']

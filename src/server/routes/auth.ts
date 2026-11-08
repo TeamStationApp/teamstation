@@ -8,7 +8,7 @@ import { asSession } from '../../common/api'
 import { badRequest, unauthorized, unavailable } from '../../common/errors'
 import { asClientHash, rejectRawPassword } from '../../common/passwordProtocol'
 import { safeNext } from '../../common/signInReturn'
-import { asTvPlatform } from '../../common/tvLogin'
+import { asTvPlatform, defaultTvAppOrigin } from '../../common/tvLogin'
 import { allowedAppOrigin } from '../appLinks/appOrigin'
 import {
   asSignInOrigin,
@@ -130,6 +130,7 @@ export interface AuthOptions {
   /** The link hosts of the apps this server signs in (`appLinks.apps`). */
   appOrigins?: readonly string[]
   tvAppOrigin?: string
+  tvAppOrigins?: readonly string[]
   /** Optional local GeoIP lookup; never send a viewer address to a third party. */
   tvLocationLookup?: (ip: string) => Promise<string | null>
 }
@@ -316,14 +317,24 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
     tvTrafficLimit,
     withAsync(async (req, res) => {
       res.set('cache-control', 'no-store')
-      const body = cleanBody(asObject({ platform: asTvPlatform }), req.body)
+      const body = cleanBody(
+        asObject({ platform: asTvPlatform, appOrigin: asOptional(asString) }),
+        req.body
+      )
+      const fallback =
+        options.tvAppOrigin ??
+        defaultTvAppOrigin(options.publicUrl, options.tvAppOrigins)
+      const appOrigin =
+        allowedAppOrigin(body.appOrigin, options.tvAppOrigins ?? [fallback]) ??
+        fallback
       res.json(
         await startTvLogin(
           db,
           body.platform,
-          options.tvAppOrigin ?? 'https://app.teamstation.app',
+          appOrigin,
           clientIp(req),
-          await tvLocation(clientIp(req), options.tvLocationLookup)
+          await tvLocation(clientIp(req), options.tvLocationLookup),
+          options.publicUrl
         )
       )
     })

@@ -64,6 +64,43 @@ function fixture(initial: string | null = null): {
   return { controller, client, store, value: () => value, claims: () => claims }
 }
 describe('TV session lifecycle', () => {
+  it('passes its configured phone app origin to the TV request', async () => {
+    const h = fixture()
+    let actual: unknown[] = []
+    const original = h.client.startTvLogin
+    h.client.startTvLogin = async (...args) => {
+      actual = args
+      return await original(...args)
+    }
+    const controller = new TvSessionController(
+      h.client as unknown as TeamStationClient,
+      h.store,
+      'fixture-origin',
+      'https://develop.teamstation.app'
+    )
+    await controller.boot()
+    expect(actual).deep.equals(['Apple TV', 'https://develop.teamstation.app'])
+    controller.stop()
+  })
+
+  it('omits an unset native origin for API-only local builds', async () => {
+    const h = fixture()
+    let actual: unknown[] = []
+    h.client.startTvLogin = async (...args) => {
+      actual = args
+      throw new Error('stop after recording request')
+    }
+    const controller = new TvSessionController(
+      h.client as unknown as TeamStationClient,
+      h.store,
+      'custom-server',
+      ''
+    )
+    await controller.boot()
+    expect(actual).deep.equals(['Apple TV', undefined])
+    controller.stop()
+  })
+
   it('creates, polls, persists, restores, and revokes a device session', async () => {
     const h = fixture()
     let changes = 0
