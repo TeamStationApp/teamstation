@@ -152,7 +152,10 @@ const DRAFTING = [
 ]
 
 /** The step the screen is on once everything has moved. */
-export function settleRunners(state: ScoringState): void {
+export function settleRunners(
+  state: ScoringState,
+  options: { advanceAutomatically?: boolean } = {}
+): void {
   if (DRAFTING.includes(state.phase)) return
   // A replay watches the game: it asks nothing and decides nothing, so the
   // scorer's own saved actions are all that move it.
@@ -258,7 +261,7 @@ export function settleRunners(state: ScoringState): void {
     if (outcome === 'Batter Out — Other') state.phase = 'chooseThrower'
     else {
       beginDefense(state)
-      throwOutAtFirst(state)
+      if (options.advanceAutomatically !== false) throwOutAtFirst(state)
     }
     return
   }
@@ -289,7 +292,11 @@ export function settleRunners(state: ScoringState): void {
       revision: game.meta.sequence
     }
     // Nothing a scorer would correct: an award, empty bases, the third out.
-    if (state.presentation == null && closesAutomatically(game))
+    if (
+      options.advanceAutomatically !== false &&
+      state.presentation == null &&
+      closesAutomatically(game)
+    )
       Object.assign(state, closePlay(state))
     return
   }
