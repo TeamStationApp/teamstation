@@ -17,6 +17,7 @@ import { eventInfoRoutes } from '../server/routes/eventInfo'
 import { eventListRoutes } from '../server/routes/eventList'
 import { eventRoutes } from '../server/routes/events'
 import { gameApprovalRoutes } from '../server/routes/gameApprovals'
+import { gamePlanRoutes } from '../server/routes/gamePlans'
 import { graphqlRoutes } from '../server/routes/graphql'
 import { groupRoutes } from '../server/routes/groups'
 import { healthRoutes } from '../server/routes/health'
@@ -133,6 +134,7 @@ export function apiRoutes(): string[] {
     ...routesOf(teamMemberRoutes(db, media)),
     ...routesOf(eventRoutes(db)),
     ...routesOf(lineupRoutes(db)),
+    ...routesOf(gamePlanRoutes(db)),
     ...routesOf(narrationRoutes(db, null)),
     ...routesOf(adminRoutes()),
     ...routesOf(analyticsRoutes(db)),

@@ -44,7 +44,7 @@ const action = {
 }
 const retryKey = { type: 'string', minLength: 8, maxLength: 120 }
 /** A season's or team's Playing Time Rules, each rule with its default. */
-const playingTimeRules = (() => {
+export const playingTimeRulesSchema = (() => {
   const choices: Record<string, readonly unknown[]> = {
     defensiveOutsRequired: DEFENSIVE_OUTS,
     largeRosterOuts: DEFENSIVE_OUTS,
@@ -431,7 +431,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
               description:
                 "How the public reads this level's player names. Null is Default, which inherits from the seasons and leagues that manage it. Group detail answers the stored value, the resolved format and the levels it was inherited from."
             },
-            playingTimeRules
+            playingTimeRules: playingTimeRulesSchema
           }
         }),
         responses

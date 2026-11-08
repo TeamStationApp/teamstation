@@ -1,3 +1,14 @@
+import {
+  asArray,
+  asBoolean,
+  asEither,
+  asNull,
+  asNumber,
+  asObject,
+  asString,
+  type Cleaner
+} from 'cleaners'
+
 import type { LineupPlayer } from './api'
 import {
   type GamePlayer,
@@ -6,6 +17,7 @@ import {
   type Position,
   POSITIONS
 } from './scoring/state'
+import { asGumboId } from './userId'
 
 /**
  * A coach's per-inning game plan: one row per batter, in batting order, and
@@ -60,6 +72,53 @@ export function planCellOf(text: string): PlanCell | null {
   if (text.length > 2) return null
   const cell = text.trim().toUpperCase()
   return isPlanCell(cell) ? cell : null
+}
+
+const asPlanCell: Cleaner<PlanCell> = raw => {
+  if (typeof raw === 'string' && isPlanCell(raw)) return raw
+  throw new TypeError(
+    `Expected a plan cell (${PLAN_CELLS.join(', ')} or blank), got ${JSON.stringify(raw)}`
+  )
+}
+
+const asPlanShape = asObject({
+  enabled: asBoolean,
+  innings: asNumber,
+  rows: asArray(
+    asObject({
+      player: asObject({
+        gumboId: asEither(asNull, asGumboId),
+        fullName: asString,
+        jersey: asString
+      }),
+      cells: asArray(asPlanCell)
+    })
+  )
+})
+
+/**
+ * Cleans a plan as it is saved and stored: whole innings from 1 to
+ * `MAX_PLAN_INNINGS`, and in every row exactly one cell per inning, each a
+ * value of `PLAN_CELLS` as it is stored (upper case, untrimmed) or blank.
+ * Anything else is a `TypeError`, which the server answers with 400.
+ */
+export const asGamePlan: Cleaner<GamePlan> = raw => {
+  const plan = asPlanShape(raw)
+  if (
+    !Number.isInteger(plan.innings) ||
+    plan.innings < 1 ||
+    plan.innings > MAX_PLAN_INNINGS
+  )
+    throw new TypeError(
+      `Expected 1 to ${MAX_PLAN_INNINGS} innings, got ${plan.innings}`
+    )
+  plan.rows.forEach((row, at) => {
+    if (row.cells.length !== plan.innings)
+      throw new TypeError(
+        `Row ${at + 1} has ${row.cells.length} cells for ${plan.innings} innings`
+      )
+  })
+  return plan
 }
 
 /** The first letters a two-letter value starts with that are no value. */

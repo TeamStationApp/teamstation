@@ -391,8 +391,10 @@ export async function publicGamesPage(
   }
 }
 
-const storedRules = (raw: unknown): PlayingTimeRules | null =>
-  raw == null ? null : asPlayingTimeRules(raw)
+/** A stored `playing_time_rules` column: its whole set, or null for none. */
+export const storedPlayingTimeRules = (
+  raw: unknown
+): PlayingTimeRules | null => (raw == null ? null : asPlayingTimeRules(raw))
 
 type RulesFields = 'playingTimeRules' | 'seasonPlayingTimeRules'
 
@@ -401,9 +403,34 @@ export type ServedGroupDetail = Omit<GroupDetail, RulesFields> &
   Partial<Pick<GroupDetail, RulesFields>>
 
 /**
+ * The rules of the managing season a team follows: of its managing seasons
+ * with rules, the one that starts last, or null when none has any.
+ */
+export async function managingSeasonRules(
+  db: Kysely<Database>,
+  teamId: string
+): Promise<GroupDetail['seasonPlayingTimeRules']> {
+  const season = await db
+    .selectFrom('season_team_parents')
+    .innerJoin('seasons', 'seasons.id', 'season_team_parents.season_id')
+    .select(['seasons.id', 'seasons.name', 'seasons.playing_time_rules'])
+    .where('season_team_parents.team_id', '=', teamId)
+    .where('seasons.playing_time_rules', 'is not', null)
+    .orderBy('seasons.starts_on', 'desc')
+    .orderBy('seasons.id')
+    .executeTakeFirst()
+  return season == null
+    ? null
+    : {
+        season: { id: season.id, name: season.name },
+        rules: asPlayingTimeRules(season.playing_time_rules)
+      }
+}
+
+/**
  * A season's or team's own Playing Time Rules, and for a team the rules of
- * the managing season it follows: of its managing seasons with rules, the one
- * that starts last. Only its administrators read these.
+ * the managing season it follows (`managingSeasonRules`). Only its
+ * administrators read these.
  */
 async function playingTimeRulesOf(
   db: Kysely<Database>,
@@ -415,26 +442,11 @@ async function playingTimeRulesOf(
     .select('playing_time_rules')
     .where('id', '=', ref.id)
     .executeTakeFirstOrThrow()
-  if (ref.kind === 'season')
-    return { playingTimeRules: storedRules(own.playing_time_rules) }
-  const season = await db
-    .selectFrom('season_team_parents')
-    .innerJoin('seasons', 'seasons.id', 'season_team_parents.season_id')
-    .select(['seasons.id', 'seasons.name', 'seasons.playing_time_rules'])
-    .where('season_team_parents.team_id', '=', ref.id)
-    .where('seasons.playing_time_rules', 'is not', null)
-    .orderBy('seasons.starts_on', 'desc')
-    .orderBy('seasons.id')
-    .executeTakeFirst()
+  const playingTimeRules = storedPlayingTimeRules(own.playing_time_rules)
+  if (ref.kind === 'season') return { playingTimeRules }
   return {
-    playingTimeRules: storedRules(own.playing_time_rules),
-    seasonPlayingTimeRules:
-      season == null
-        ? null
-        : {
-            season: { id: season.id, name: season.name },
-            rules: asPlayingTimeRules(season.playing_time_rules)
-          }
+    playingTimeRules,
+    seasonPlayingTimeRules: await managingSeasonRules(db, ref.id)
   }
 }
 
