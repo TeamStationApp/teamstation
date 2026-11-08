@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 import { after, describe, it } from 'mocha'
-import puppeteer, { type Browser, type Page } from 'puppeteer'
+import puppeteer, { type Browser, type ElementHandle, type Page } from 'puppeteer'
 
 import { readSeedTable } from '../../test/chatSeedTable'
 
@@ -42,18 +42,42 @@ function seedPerson(): { email: string; password: string } {
 async function until(
   what: string,
   read: () => boolean | Promise<boolean>,
-  timeoutMs: number
+  timeoutMs: number,
+  detail?: () => Promise<string>
 ): Promise<void> {
   const end = Date.now() + timeoutMs
   for (;;) {
     if (await read()) return
-    if (Date.now() > end) throw new Error(`Timed out waiting for ${what}`)
+    if (Date.now() > end) {
+      const extra = detail == null ? '' : await detail()
+      throw new Error(`Timed out waiting for ${what}: ${extra.slice(0, 500)}`)
+    }
     await new Promise(resolve => setTimeout(resolve, 200))
   }
 }
 
 async function bodyText(page: Page): Promise<string> {
   return await page.evaluate(() => document.body.innerText)
+}
+
+async function pressText(page: Page, words: string): Promise<void> {
+  let found: ElementHandle | undefined
+  await until(
+    `a button saying ${words}`,
+    async () => {
+      for (const handle of await page.$$('[role="button"]')) {
+        const said = await handle.evaluate(node => node.textContent)
+        if (said != null && said.endsWith(words)) {
+          found = handle
+          return true
+        }
+      }
+      return false
+    },
+    10000
+  )
+  if (found == null) throw new Error(`No button saying ${words}`)
+  await found.click()
 }
 
 async function typeInto(
@@ -63,9 +87,14 @@ async function typeInto(
 ): Promise<void> {
   const input = await page.waitForSelector(`input[aria-label="${label}"]`)
   if (input == null) throw new Error(`No ${label} field`)
-  await input.click({ count: 3 })
-  await page.keyboard.press('Backspace')
-  await input.type(text)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await input.click({ count: 3 })
+    await page.keyboard.press('Backspace')
+    await input.type(text)
+    const held = await input.evaluate(node => node.value)
+    if (held === text) return
+  }
+  throw new Error(`The ${label} field would not take the typed text`)
 }
 
 describe('chat opens in the same second as sign-in', function () {
@@ -100,33 +129,20 @@ describe('chat opens in the same second as sign-in', function () {
         finished.push(`${method} ${url}`)
       }
     })
-    await page.goto(`${WEB}/`, { waitUntil: 'domcontentloaded' })
+    await page.goto(`${WEB}/`, { waitUntil: 'networkidle2' })
     await typeInto(page, 'E-mail address', who.email)
-    const passwordInstead = await page.evaluate(() => {
-      for (const node of document.querySelectorAll('[role="button"]')) {
-        if (node.textContent?.endsWith('Use a password instead') === true) {
-          ;(node as HTMLElement).click()
-          return true
-        }
-      }
-      return false
-    })
-    if (!passwordInstead) throw new Error('No password sign-in')
+    await pressText(page, 'Use a password instead')
     await typeInto(page, 'Password', who.password)
-    await page.evaluate(() => {
-      for (const node of document.querySelectorAll('[role="button"]')) {
-        if (node.textContent?.endsWith('Sign in') === true) {
-          ;(node as HTMLElement).click()
-          return
-        }
-      }
-      throw new Error('No Sign in button')
-    })
+    await pressText(page, 'Sign in')
     await until(
-      'the home screen',
-      async () => (await page!.$('[role="tab"][aria-label="Home"]')) != null,
+      'the sign-in to finish',
+      async () => (await page!.$('input[aria-label="E-mail address"]')) == null,
       30000
     )
+    const names = (await page.cookies()).map(cookie => cookie.name)
+    if (!names.includes('ts_session')) {
+      throw new Error(`Signed in without ts_session (${names.join(', ')})`)
+    }
     await page.goto(`${WEB}/chat`, { waitUntil: 'domcontentloaded' })
     await until(
       'chat to leave Opening chat',
@@ -136,7 +152,8 @@ describe('chat opens in the same second as sign-in', function () {
         const list = await page!.$(CHAT_LIST)
         return list != null || text.includes('Link this device')
       },
-      20000
+      20000,
+      async () => await bodyText(page!)
     )
     expect(finished.length).to.be.greaterThan(0)
     const shots = join(ARTIFACTS, 'shots')
