@@ -491,6 +491,11 @@ describe('TeamStation pipeline Masonfile', () => {
       /android\.defaultConfig\.versionName = System\.getenv\('MASON_APP_VERSION'\)/
     )
     assert.match(log, /xcargs:SWIFT_ENABLE_EXPLICIT_MODULES=NO/)
+    assert.match(log, /TS_APP_LINK_HOST=app.teamstation.app/)
+    assert.match(
+      log,
+      /TS_APP_ENTITLEMENTS=TeamStation\/TeamStation.entitlements/
+    )
     assert.match(log, /cargo:.*\.mason\/tools\/rust\/1\.98\.0\/cargo/)
     assert.match(log, /publish:ios:build\/TeamStation\.ipa/)
     assert.match(
@@ -512,8 +517,8 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.match(log, /teamstation-sign-release-apk/)
     assert.match(log, /save:ios-ipa/)
     assert.match(log, /save:android-apk/)
-    // A production build leaves the app's own server alone.
-    assert.equal(log.includes('api:'), false)
+    // Production is explicit, even without injected client configuration.
+    assert.match(log, /api:https:\/\/app.teamstation.app\/api\/v1/)
     const recorded = commands
       .filter(line => line.startsWith('info:'))
       .map(
@@ -625,16 +630,20 @@ describe('TeamStation pipeline Masonfile', () => {
     )
   })
 
-  it('names no server for production or a run with no seat, and refuses an unknown one', () => {
+  it('explicitly selects API and app-link origins and refuses unknown seats', () => {
     const seated = (
       params?: Record<string, string | number | boolean>
     ): Record<string, string> =>
       seatEnvironment({ run: { branch: 'master', params } })
-    assert.deepEqual(seated({ seat: 'production' }), {})
-    assert.deepEqual(seated(), {})
+    const production = {
+      TS_API_BASE_URL: 'https://app.teamstation.app/api/v1',
+      TS_APP_ORIGIN: 'https://app.teamstation.app'
+    }
+    assert.deepEqual(seated({ seat: 'production' }), production)
+    assert.deepEqual(seated(), production)
     assert.deepEqual(seated({ seat: '8' }), {
       TS_API_BASE_URL: 'https://develop8.teamstation.app/api/v1',
-      TS_APP_ORIGIN: 'https://develop8.teamstation.app'
+      TS_APP_ORIGIN: 'https://develop.teamstation.app'
     })
     const developServer = {
       TS_API_BASE_URL: 'https://develop.teamstation.app/api/v1',
@@ -658,7 +667,7 @@ describe('TeamStation pipeline Masonfile', () => {
       }),
       {
         TS_API_BASE_URL: 'https://develop3.teamstation.app/api/v1',
-        TS_APP_ORIGIN: 'https://develop3.teamstation.app'
+        TS_APP_ORIGIN: 'https://develop.teamstation.app'
       }
     )
     assert.throws(() => seated({ seat: '9' }), /Unknown seat 9/)
@@ -1093,7 +1102,8 @@ describe('request-only Apple TV workflow', () => {
             assert.match(options.version ?? '', /^\d+(\.\d+){0,2}$/)
             assert.deepEqual(options.xcargs, [
               'SWIFT_ENABLE_EXPLICIT_MODULES=NO',
-              `TV_API_BASE_URL=https://${host}.teamstation.app/api/v1`
+              `TV_API_BASE_URL=https://${host}.teamstation.app/api/v1`,
+              `TV_APP_ORIGIN=https://${host === 'app' ? 'app' : 'develop'}.teamstation.app`
             ])
             return { archive: 'tv.xcarchive', ipa: 'tv.ipa', dsyms: 'tv.dSYM' }
           },
