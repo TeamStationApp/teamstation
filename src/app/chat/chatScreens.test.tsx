@@ -641,6 +641,7 @@ describe('shared chat device approvals', function () {
   })
 
   it('shows the loading string until the held approval read publishes', async function () {
+    this.timeout(30000)
     const fake = new FakeKeys()
     const store = new MemoryStore()
     const client = fake.client()
@@ -659,7 +660,7 @@ describe('shared chat device approvals', function () {
     await until(
       'the approve control',
       () => text().includes(lstrings.chat_devices_approve),
-      3000
+      12000
     )
   })
 

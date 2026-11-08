@@ -60,6 +60,16 @@ async function bodyText(page: Page): Promise<string> {
   return await page.evaluate(() => document.body.innerText)
 }
 
+/** The chat screen has left the gate and the list is no longer loading. */
+async function chatSettled(page: Page): Promise<boolean> {
+  const text = await bodyText(page)
+  if (text.includes('Opening chat') || text.includes('Loading')) return false
+  if (text.includes('Link this device')) return true
+  if (text.includes('You are in no chats yet')) return true
+  const row = await page.$(`${CHAT_LIST} [role="button"]`)
+  return row != null
+}
+
 async function pressText(page: Page, words: string): Promise<void> {
   let found: ElementHandle | undefined
   await until(
@@ -122,11 +132,12 @@ describe('chat opens in the same second as sign-in', function () {
     page.on('requestfinished', request => {
       const url = request.url()
       const method = request.method()
+      const path = new URL(url).pathname
       if (
-        url.includes('/chat/me/keys') ||
-        (method === 'POST' && /\/chat\/devices$/.test(new URL(url).pathname))
+        path.endsWith('/chat/me/keys') ||
+        (method === 'POST' && path.endsWith('/chat/devices'))
       ) {
-        finished.push(`${method} ${url}`)
+        finished.push(`${method} ${path}`)
       }
     })
     await page.goto(`${WEB}/`, { waitUntil: 'networkidle2' })
@@ -145,33 +156,31 @@ describe('chat opens in the same second as sign-in', function () {
     }
     await page.goto(`${WEB}/chat`, { waitUntil: 'domcontentloaded' })
     await until(
-      'chat to leave Opening chat',
-      async () => {
-        const text = await bodyText(page!)
-        if (text.includes('Opening chat')) return false
-        const list = await page!.$(CHAT_LIST)
-        return list != null || text.includes('Link this device')
-      },
+      'chat to settle',
+      async () => await chatSettled(page!),
       20000,
       async () => await bodyText(page!)
     )
     expect(finished.length).to.be.greaterThan(0)
+    console.log(finished.join('\n'))
     const shots = join(ARTIFACTS, 'shots')
     mkdirSync(shots, { recursive: true })
+    await page.screenshot({
+      path: join(ARTIFACTS, 'opening-chat-after.png') as `${string}.png`
+    })
     await page.screenshot({
       path: join(shots, 'opening-chat-after.png') as `${string}.png`
     })
     await page.reload({ waitUntil: 'domcontentloaded' })
     await until(
-      'a reloaded chat to leave Opening chat',
-      async () => {
-        const text = await bodyText(page!)
-        if (text.includes('Opening chat')) return false
-        const list = await page!.$(CHAT_LIST)
-        return list != null || text.includes('Link this device')
-      },
-      20000
+      'a reloaded chat to settle',
+      async () => await chatSettled(page!),
+      20000,
+      async () => await bodyText(page!)
     )
+    await page.screenshot({
+      path: join(ARTIFACTS, 'opening-chat-reload-after.png') as `${string}.png`
+    })
     await page.screenshot({
       path: join(shots, 'opening-chat-reload-after.png') as `${string}.png`
     })
