@@ -952,8 +952,6 @@ function ScoringPanel(props: {
   const visibleDefaults = props.visibleDefaults
   const follow = useRef(new ScoringFollow())
   const followAllowed = useRef(false)
-  const beforeAction = useRef<() => boolean>(() => true)
-  const [followNotice, setFollowNotice] = useState<string | null>(null)
   const [model, reduceEvent] = useReducer(
     (model: ScoringScreenModel, event: ScoringEvent | SavedUndone) =>
       reduceVisible(model, event, visibleDefaults),
@@ -970,8 +968,8 @@ function ScoringPanel(props: {
   )
   const dispatch = useCallback((event: ScoringEvent | SavedUndone): void => {
     if (authoredScoringEvent(event)) {
-      if (!beforeAction.current()) return
-      setFollowNotice(null)
+      // A local tap takes ownership immediately, including while a peer read
+      // is pending. Its generation guard prevents that read from adopting.
       follow.current.authored()
     }
     reduceEvent(event)
@@ -1049,7 +1047,7 @@ function ScoringPanel(props: {
     phoneOffline,
     reconnecting
   })
-  const statusLine = shownStatus?.text ?? followNotice
+  const statusLine = shownStatus?.text
   // A phone makes room for the offline line across the top; the web's line
   // already sits above the board (`scoringOfflineFrame`).
   const topBand =
@@ -2124,34 +2122,6 @@ function ScoringPanel(props: {
   useEffect(() => {
     followStale.current()
   }, [staleCheck, settled])
-  beforeAction.current = () => {
-    // Acknowledgments of this scorer's own writes need no read or handoff.
-    if (
-      stale.current &&
-      echoes.current?.every(each =>
-        each.kind === 'plays'
-          ? props.game.holdsPlays(each.digest)
-          : props.game.holdsLineups(each.digest)
-      ) === true
-    ) {
-      stale.current = false
-      echoes.current = []
-    }
-    // Finish genuine local work normally. A passive screen must not apply an
-    // old control to a new batter while a known peer change is being read.
-    const passive =
-      follow.current.observing ||
-      ((!follow.current.locallyAuthored ||
-        state.session.liveData.plays.currentPlay == null) &&
-        (state.phase === 'ready' || state.phase === 'awaitingBatter') &&
-        atRest(state))
-    if (!passive || (!stale.current && !following.current)) return true
-    setFollowNotice(
-      'Game updated on another device. Check the play and try again.'
-    )
-    followStale.current()
-    return false
-  }
   // The microphone goes to the roster sheet on as it was here, and comes
   // back on when the sheet closes, however it closes.
   const rosterMicOn = useDictationHandover(sheet === 'rosters', dictation)

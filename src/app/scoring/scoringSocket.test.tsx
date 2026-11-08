@@ -351,7 +351,7 @@ describe('the scoring screen on the game socket', function () {
     ])
   })
 
-  it('rejects an obsolete pitch during a peer read and accepts a fresh tap afterward', async function () {
+  it('accepts the first local pitch while an older peer read is pending', async function () {
     const { changes, other, store } = await scoring()
     const peer = await other()
     peer.apply({ type: 'pitch', call: 'B' })
@@ -361,19 +361,58 @@ describe('the scoring screen on the game socket', function () {
     const held = new Promise<void>(resolve => {
       release = resolve
     })
+    let first = true
     store.load = async id => {
-      await held
-      return await load(id)
+      const snapshot = await load(id)
+      if (first) {
+        first = false
+        await held
+      }
+      return snapshot
     }
     await changes.plays()
     await click('Called Strike')
-    expect(document.body.textContent).includes('Check the play and try again')
-    expect(document.body.textContent).includes('0 balls 0 strikes')
+    expect(document.body.textContent).includes('0 balls 1 strikes')
     release()
     await settle()
+    expect(document.body.textContent).includes('0 balls 1 strikes')
+    expect((await other()).actions).deep.equals([{ type: 'pitch', call: 'C' }])
+  })
+
+  it('hands off on the first tap after displaying a peer pitch even while another read is pending', async function () {
+    const { changes, other, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
     expect(document.body.textContent).includes('1 balls 0 strikes')
+    const load = store.load
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let first = true
+    store.load = async id => {
+      const snapshot = await load(id)
+      if (first) {
+        first = false
+        await held
+      }
+      return snapshot
+    }
+    const save = store.save
+    let saves = 0
+    store.save = async (id, change) => {
+      saves++
+      return await save(id, change)
+    }
+    await changes.plays()
     await click('Called Strike')
+    expect(document.body.textContent).includes('1 balls 1 strikes')
+    release()
     await settle()
+    expect(document.body.textContent).includes('1 balls 1 strikes')
+    expect(saves).equals(1)
     expect((await other()).actions).deep.equals([
       { type: 'pitch', call: 'B' },
       { type: 'pitch', call: 'C' }
