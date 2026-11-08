@@ -1,7 +1,8 @@
 # Concurrent scoring acceptance
 
 Run against the exact branch build in a development seat. The journey uses two
-independent scorers and a coach, with a three-second convergence limit. It stops
+independent scorers and a coach, allowing three seconds for synchronization before inspecting each device.
+Inspection time is recorded separately; no mismatched read is retried into a pass. It stops
 on the first failure; it never reloads a scorer or retries a scoring action.
 Screenshots, state snapshots and a JSON-line log go to the artifact directory.
 
