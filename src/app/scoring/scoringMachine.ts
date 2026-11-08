@@ -112,11 +112,15 @@ export function initialScoringState(
     const hit = owned.liveData.plays.currentPlay?.hitData
     state.pendingPlay = {
       outcome: owned.pending.outcome,
-      fielder: owned.pending.fielder ?? hit?.fielder?.id,
-      location: hit?.coordinates,
-      angle: hit?.launchAngle,
-      contactKind: owned.pending.contactKind,
-      homeRunKind: owned.pending.homeRunKind,
+      ...(options.following === true
+        ? {
+            fielder: owned.pending.fielder ?? hit?.fielder?.id,
+            location: hit?.coordinates,
+            angle: hit?.launchAngle,
+            contactKind: owned.pending.contactKind,
+            homeRunKind: owned.pending.homeRunKind
+          }
+        : {}),
       trajectoryAccepted: true
     }
     state.phase = 'runnerMovement'
