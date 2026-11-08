@@ -79,11 +79,13 @@ import {
 } from './rules'
 import {
   BASE_KEYS,
+  copyGame,
   copyState,
   type FielderRef,
   type GamePlay,
   type GameState,
   isPosition,
+  lineupSideKey,
   lineupsOf,
   type Movement,
   type PitchData,
@@ -96,6 +98,7 @@ import {
   type RouteHop,
   type RunnerCredit,
   setupOf,
+  type Side,
   withoutUndefined
 } from './state'
 import type { Transition } from './transitions'
@@ -444,8 +447,9 @@ function closePlay(ctx: Ctx): void {
     atBatIndex: play.about.atBatIndex,
     eventType: play.result.eventType
   })
-  const lineup = state.liveData.boxscore.teams[battingSide(state)]
-  lineup.battingIndex = (lineup.battingIndex + 1) % lineup.battingOrder.length
+  const battingLineup = state.liveData.boxscore.teams[battingSide(state)]
+  battingLineup.battingIndex =
+    (battingLineup.battingIndex + 1) % battingLineup.battingOrder.length
   state.pending = null
   state.homeQueue = []
   if (line(ctx).outs >= 3) nextHalf(ctx)
@@ -457,6 +461,25 @@ function closePlay(ctx: Ctx): void {
       type: 'batterChanged',
       batter: line(ctx).offense.batter?.id ?? null
     })
+  }
+  const deferred = ctx.state.deferredLineups ?? []
+  delete ctx.state.deferredLineups
+  for (const action of deferred) {
+    const next: Ctx = {
+      ...ctx,
+      state: copyGame(ctx.state),
+      out: [],
+      charges: new Map(ctx.charges)
+    }
+    try {
+      lineup(next, action)
+      ctx.state = next.state
+      ctx.charges = next.charges
+      ctx.out.push(...next.out)
+    } catch (error) {
+      if (!(error instanceof Refused)) throw error
+      ctx.state.lineupWarning = `A coach lineup change could not follow the corrected play: ${error.problem.message}`
+    }
   }
 }
 
@@ -2175,6 +2198,22 @@ function courtesyRunner(ctx: Ctx, action: LineupAction): void {
 
 function lineup(ctx: Ctx, action: LineupAction): void {
   const state = ctx.state
+  const index =
+    state.liveData.plays.currentPlay?.about.atBatIndex ??
+    state.liveData.plays.allPlays.length
+  if (
+    action.effectiveAtBat != null &&
+    (action.effectiveAtBat > index || state.pending != null)
+  ) {
+    ;(state.deferredLineups ??= []).push({
+      ...action,
+      effectiveAtBat: Math.max(
+        action.effectiveAtBat,
+        index + (state.pending == null ? 0 : 1)
+      )
+    })
+    return
+  }
   if (state.pending != null) refuse('notNow', 'Finish the current play first')
   if (action.kind === 'runner') {
     courtesyRunner(ctx, action)
@@ -2192,7 +2231,17 @@ function lineup(ctx: Ctx, action: LineupAction): void {
     play.source.teamstation.lineupChanged = true
     return
   }
-  const setup = action.setup ?? setupOf(state)
+  let setup = action.setup ?? setupOf(state)
+  if (action.setup != null && action.effectiveSides != null) {
+    setup = setupOf(state)
+    for (const side of action.effectiveSides) {
+      setup.sides[side] = copyState(action.setup.sides[side])
+      for (const id of setup.sides[side].players) {
+        setup.players[id] = copyState(action.setup.players[id])
+        if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
+      }
+    }
+  }
   // Who took whose place in the order: a substitute bats when his man was due.
   const replaced: Record<number, number> = {}
   if (
@@ -2285,7 +2334,8 @@ function lineup(ctx: Ctx, action: LineupAction): void {
     replaced,
     ctx.replay,
     action.keepSlot === true,
-    recordReplacement
+    recordReplacement,
+    action.effectiveAtBat != null
   )
   if (applied.state == null)
     refuse('illegal', applied.error ?? 'Invalid lineup')
@@ -2552,7 +2602,9 @@ export function applyAction(
   }
   const played = state.liveData.plays.allPlays.length
   const copy = inPlace ? state : copyState(state)
+  delete copy.lineupWarning
   const ctx: Ctx = { state: copy, out: [], charges: chargeBook(copy), replay }
+  const lineupBefore = action.type === 'lineup' ? setupOf(copy) : undefined
   const mound = copy.liveData.linescore.defense.P
   errorlessOuts(copy)
   try {
@@ -2580,6 +2632,29 @@ export function applyAction(
       ctx,
       action
     )
+    if (
+      action.type === 'lineup' &&
+      action.effectiveAtBat == null &&
+      ctx.state.deferredLineups != null
+    ) {
+      const before = lineupBefore!
+      const after = setupOf(ctx.state)
+      const sides: Side[] =
+        action.side != null
+          ? [action.side]
+          : (['away', 'home'] as const).filter(
+              side => lineupSideKey(before, side) !== lineupSideKey(after, side)
+            )
+      ctx.state.deferredLineups = ctx.state.deferredLineups.flatMap(queued => {
+        const keep = (
+          queued.effectiveSides ??
+          (queued.side == null ? (['away', 'home'] as const) : [queued.side])
+        ).filter(side => !sides.includes(side))
+        return keep.length === 0 ? [] : [{ ...queued, effectiveSides: keep }]
+      })
+      if (ctx.state.deferredLineups.length === 0)
+        delete ctx.state.deferredLineups
+    }
     settle(ctx)
     keepCharges(ctx.state, ctx.charges, mound)
     const open = ctx.state.liveData.plays.currentPlay

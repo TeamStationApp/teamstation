@@ -40,6 +40,7 @@ import {
 } from './state'
 import {
   actionByTeam,
+  recordVersion,
   setupByTeam,
   type SideTeams,
   type TeamSetup
@@ -86,7 +87,7 @@ function teamStationOf(
     teamSetups.set(stamp.setupBefore, made)
   }
   return {
-    version: 3,
+    version: recordVersion(stamp.actions),
     setupBefore: made.setup,
     ...recordActions(stamp, teams),
     ...(detail === undefined ? {} : { detail })

@@ -8,6 +8,7 @@ import {
   type GumboPlay
 } from '../../common/gumboPlay'
 import { storedRecordOf } from '../../common/scoring/gumbo'
+import { asScoringMutation } from '../../common/scoring/scoringMutation'
 import { type EventStore, ScoringSession } from '../../common/scoring/session'
 import {
   addGame,
@@ -43,12 +44,16 @@ describe('action times on the server (U4)', function () {
     const load: EventStore['load'] = async id => {
       const game = await db
         .selectFrom('games')
-        .select('currentPlay')
+        .select(['currentPlay', 'scoring_mutation'])
         .where('id', '=', id)
         .executeTakeFirstOrThrow()
       return {
         plays: (await readPlays(db, id)).map(row => row.gumbo as GumboPlay),
-        currentPlay: game.currentPlay as CurrentPlay | null
+        currentPlay: game.currentPlay as CurrentPlay | null,
+        scoringMutation:
+          game.scoring_mutation == null
+            ? undefined
+            : asScoringMutation(game.scoring_mutation)
       }
     }
     const posted: unknown[] = []

@@ -122,6 +122,8 @@ export interface DueBatter {
 }
 
 export interface GameLineups {
+  /** Authored lineup edits waiting for a scoring boundary, still part of the lineup state. */
+  deferred?: GameState['deferredLineups']
   sides: Record<Side, SideLineups>
   /**
    * People on the roster who are in neither the batting order nor the
@@ -621,6 +623,9 @@ export function readLineups(
     bench: benchOf(state),
     courtesy: courtesyOf(played, players),
     due: dueOf(state, stored),
+    ...(state.deferredLineups == null || state.deferredLineups.length === 0
+      ? {}
+      : { deferred: copyState(state.deferredLineups) }),
     begun: hasBegun,
     problem: null
   }

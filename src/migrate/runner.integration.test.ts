@@ -601,6 +601,7 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '112videoSpaceSecret',
           '113chatHistoryRecovery',
           '113playingTimeRules',
+          '113scoringMutation',
           '114gamePlans'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
