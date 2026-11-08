@@ -70,9 +70,15 @@ describe('ctx.signIn', function () {
       }
     await signInWithPassword(
       {
-        assertVisible: record('see'),
+        assertVisible: async (value: { text?: string; timeout?: number }) => {
+          calls.push(['see', value])
+          if (value.text === 'TeamStation menu' && value.timeout === 2000) {
+            throw new Error('still on the form')
+          }
+        },
         tapOn: record('tap'),
-        inputText: record('type')
+        inputText: record('type'),
+        eraseText: record('erase')
       },
       { email: 'box+c@example.test', password: 'pw' }
     )
@@ -80,16 +86,78 @@ describe('ctx.signIn', function () {
       'see',
       'tap',
       'tap',
+      'erase',
       'type',
       'tap',
+      'erase',
       'type',
+      'see',
       'tap',
       'see'
     ])
-    expect(calls[3][1]).deep.equals({ text: 'box+c@example.test' })
-    expect(calls[5][1]).deep.equals({ text: 'pw' })
-    // Only a signed-in person has this, so a refused password fails.
-    expect(calls[7][1]).deep.includes({ text: 'Account, .*' })
+    expect(calls[4][1]).deep.equals({ text: 'box+c@example.test' })
+    expect(calls[7][1]).deep.equals({ text: 'pw' })
+    expect(calls[9][1]).deep.includes({ text: 'Sign in' })
+    // The home screen's mark is only there once the password was accepted.
+    expect(calls[10][1]).deep.includes({ text: 'TeamStation menu' })
+  })
+
+  it('types the password again when the phone drops a key', async function () {
+    const calls: Array<[string, unknown]> = []
+    let menuChecks = 0
+    await signInWithPassword(
+      {
+        assertVisible: async (value: { text?: string }) => {
+          calls.push(['see', value])
+          if (value.text === 'TeamStation menu' && menuChecks++ < 2) {
+            throw new Error('not signed in')
+          }
+        },
+        tapOn: async (value: unknown) => {
+          calls.push(['tap', value])
+        },
+        inputText: async (value: unknown) => {
+          calls.push(['type', value])
+        },
+        eraseText: async (value: unknown) => {
+          calls.push(['erase', value])
+        },
+        hideKeyboard: async () => {
+          calls.push(['hide', undefined])
+        }
+      },
+      { email: 'box+c@example.test', password: 'pw' }
+    )
+    const typed = calls.filter(
+      ([name, value]) =>
+        name === 'type' && (value as { text?: string }).text === 'pw'
+    )
+    expect(typed.length).equals(2)
+    expect(menuChecks).equals(4)
+  })
+
+  it('still fails when the password never signs in', async function () {
+    let menuChecks = 0
+    const device = {
+      assertVisible: async (value: { text?: string }) => {
+        if (value.text === 'TeamStation menu') {
+          menuChecks++
+          throw new Error('not signed in')
+        }
+      },
+      tapOn: async () => undefined,
+      inputText: async () => undefined,
+      eraseText: async () => undefined,
+      hideKeyboard: async () => undefined
+    }
+    const error = await rejection(async () => {
+      await signInWithPassword(device, {
+        email: 'box+c@example.test',
+        password: 'nope'
+      })
+    })
+    expect(error.message).equals('not signed in')
+    expect(menuChecks).equals(6)
   })
 
   it('takes a role from the scenario’s worlds first, then baseline', function () {

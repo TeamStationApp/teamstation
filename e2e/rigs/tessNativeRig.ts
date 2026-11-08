@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import type { TessFixture } from '../../src/test/tessFixture'
 import { eventually } from '../core/readback'
 import type { E2eContext } from '../core/spec'
+import { typeInto } from '../core/typeInto'
 
 /**
  * Tess in the phone or tablet app, on the same fixture as the browser's. The app's
@@ -272,9 +273,7 @@ export async function withTessNative(
         await tap('Use a password instead')
         await tap('Use a sign-in code')
       }
-      await tap('E-mail address')
-      await m.eraseText({ characters: 60 })
-      await m.inputText({ text: email })
+      await typeInto(m, 'E-mail address', email)
       await m.hideKeyboard()
       await native.tapIfShown('Send me a sign-in code', 2000)
       await show('.*six-digit code.*', 30000)
@@ -283,12 +282,10 @@ export async function withTessNative(
         if (code == null) await wait(1000)
       }
     }
-    await tap('Sign-in code')
-    await m.eraseText({ characters: 12 })
-    await m.inputText({ text: code })
+    await typeInto(m, 'Sign-in code', code)
     await m.hideKeyboard()
     await native.tapIfShown('Sign in', 2000)
-    await show('Notifications', 60000)
+    await show('TeamStation menu', 60000)
     await run(native)
   } finally {
     await t.close()

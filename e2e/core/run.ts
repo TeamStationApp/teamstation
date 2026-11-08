@@ -27,7 +27,7 @@ import { Budget, createMessage, haikuJudge, judgeHasAuthority } from './judge'
 import { attachDevice, connectDaemon } from './maestro'
 import { gogRunner, readMail, testAddressFor, waitForMail } from './mail'
 import { findScenario, ROOT } from './manifest'
-import { prepareApp } from './prepare'
+import { iosBuiltApp, iosIsSimulator, prepareApp } from './prepare'
 import {
   BlockedError,
   exitCodeFor,
@@ -421,9 +421,14 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
           options.settings,
           `e2e-${role}-${process.pid}`
         )
+        const physicalIos =
+          attachOptions.platform === 'ios' &&
+          attachOptions.appFile == null &&
+          !iosIsSimulator(id)
         const device = await attachDevice(daemon, runDir, {
           device: id,
-          ...attachOptions
+          ...attachOptions,
+          ...(physicalIos ? { appFile: iosBuiltApp() } : {})
         })
         attached.push(async () => {
           await device.detach()

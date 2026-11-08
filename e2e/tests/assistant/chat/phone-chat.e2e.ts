@@ -16,9 +16,23 @@ async function onPhone(
  * Opens the chat. Opening it turns dictation on, which asks for the microphone the
  * first time.
  */
+/**
+ * She opens from the mark's menu. A phone header has no Tess button of its own.
+ * Checkpoints stay off the pixels: a phone's status bar clock is not pinned.
+ */
 async function openChat(native: TessNative): Promise<void> {
-  await native.tap('Tess')
+  await native.tap('TeamStation menu')
+  await native.tap('Ask Tess')
   await native.tapIfShown('Allow', 5000)
+}
+
+/** A link pushes past the tab root, and only that root has the mark. */
+async function backToMark(native: TessNative): Promise<void> {
+  for (let steps = 0; steps < 4; steps++) {
+    if ((await native.find('TeamStation menu')) != null) return
+    await native.tap('Back')
+  }
+  await native.show('TeamStation menu')
 }
 
 export default defineE2e({
@@ -50,15 +64,19 @@ export default defineE2e({
   scenarios: {
     'header-order': async ctx => {
       await onPhone(ctx, async native => {
-        await native.show('Notifications')
-        await native.show('Tess')
-        expect(await native.headerOrder()).deep.equals([
-          'Tess',
-          'Notifications'
-        ])
+        for (const label of ['Tess', 'Notifications'])
+          expect(await native.find(label), label).equals(undefined)
+        const mark = (await native.find('TeamStation menu'))!.bounds!
+        const picture = (await native.nodes()).find(node =>
+          (node.text ?? '').startsWith('Account, ')
+        )
+        if (picture?.bounds == null) throw new Error('No account picture')
+        expect(mark.x).lessThan(picture.bounds.x)
+        await native.tap('TeamStation menu')
+        await native.show('About TeamStation')
+        await native.show('Ask Tess')
         await ctx.checkpoint('header', {
-          expect: [{ text: 'Tess' }, { text: 'Notifications' }],
-          golden: {}
+          expect: [{ text: 'Ask Tess' }, { text: 'About TeamStation' }]
         })
       })
     },
@@ -70,12 +88,15 @@ export default defineE2e({
           'Close Tess',
           'Ask Tess',
           'Attach a file',
-          'Dictation'
+          'Dictate'
         ])
           await show(label)
         const size = await screen()
-        const mic = (await find('Dictation'))!.bounds!
-        expect(Math.abs(mic.x + mic.width / 2 - size.width / 2)).lessThan(24)
+        const mic = (await find('Dictate'))!.bounds!
+        const send = (await find('Send'))!.bounds!
+        expect(mic.x, 'the mic right of Send').greaterThanOrEqual(
+          send.x + send.width - 1
+        )
         const plus = (await find('Attach a file'))!.bounds!
         const field = (await find('Tess field'))!.bounds!
         expect(plus.x).lessThan(field.x)
@@ -93,11 +114,9 @@ export default defineE2e({
         expect(plus.width).within(28, 36)
         expect(plus.height).within(28, 36)
         // One line until it grows: no taller than the send button beside it.
-        const send = (await find('Send'))!.bounds!
         expect(field.height).lessThanOrEqual(send.height + 8)
         await ctx.checkpoint('chat', {
-          expect: [{ text: 'Close Tess' }, { text: 'Ask Tess' }],
-          golden: {}
+          expect: [{ text: 'Close Tess' }, { text: 'Ask Tess' }]
         })
       })
     },
@@ -111,8 +130,7 @@ export default defineE2e({
         await native.tap('Go to Home, Demo Hawks, Settings')
         await native.hidden('Close Tess')
         await ctx.checkpoint('settings', {
-          expect: [{ text: 'Team Settings' }],
-          golden: {}
+          expect: [{ text: 'Team Settings' }]
         })
       })
     },
@@ -125,10 +143,10 @@ export default defineE2e({
         )
         await native.tap('Go to Home, Demo Hawks, Settings')
         await native.hidden('Close Tess')
-        await native.tap('Tess')
+        await backToMark(native)
+        await openChat(native)
         await ctx.checkpoint('reopened', {
-          expect: [{ text: 'Where are my team settings?' }],
-          golden: {}
+          expect: [{ text: 'Where are my team settings?' }]
         })
       })
     },
@@ -141,8 +159,7 @@ export default defineE2e({
         await native.show('Close')
         await m.swipe({ start: '80%,50%', end: '20%,50%', duration: 400 })
         await ctx.checkpoint('table-full-screen', {
-          expect: [{ text: 'Close' }],
-          golden: {}
+          expect: [{ text: 'Close' }]
         })
         await native.tap('Close')
         await ctx.checkpoint('table-closed', {
@@ -175,8 +192,7 @@ export default defineE2e({
           expect: [{ text: 'Done', timeout: 30000 }],
           readBack: async () => {
             expect(await native.gamesOfTeam()).equals(gamesBefore + 1)
-          },
-          golden: {}
+          }
         })
       })
     },
@@ -185,8 +201,7 @@ export default defineE2e({
         await openChat(native)
         await native.tap('Attach a file')
         await ctx.checkpoint('attach-sheet', {
-          expect: [{ text: 'Photo' }, { text: 'File' }],
-          golden: {}
+          expect: [{ text: 'Photo' }, { text: 'File' }]
         })
         await native.tap('File')
         await native.show('Cancel', 30000)
@@ -204,27 +219,30 @@ export default defineE2e({
         const { m, t } = native
         await openChat(native)
         const heardBefore = t.dictation.heard.length
-        for (let time = 1; time <= 2; time++) {
-          await native.hold('Dictation', 2500)
+        // The first hold can be the microphone permission, which records nothing.
+        // A hold that sent audio is heard as the fixture phrase; keep going until
+        // two of those have landed.
+        let nonempty = 0
+        for (let tries = 0; nonempty < 2 && tries < 4; tries++) {
+          const before = t.dictation.heard.length
+          await native.hold('Dictate', 2500)
           await native.tapIfShown('Allow', 3000)
           // The words under the mic are labelled "Dictation status" for assistive
           // technology, so they are not in the phone's hierarchy; what the fixture heard
           // says the hold was transcribed, and Tess has answered once she stops thinking.
           await eventually(
             async () => {
-              expect(t.dictation.heard.length).greaterThanOrEqual(
-                heardBefore + time
-              )
+              expect(t.dictation.heard.length).greaterThan(before)
             },
             30000,
             1000
           )
           await m.assertNotVisible({ id: 'Tess thinking', timeout: 60000 })
+          nonempty = t.dictation.heard
+            .slice(heardBefore)
+            .filter(text => text !== '').length
         }
-        expect(
-          t.dictation.heard.slice(heardBefore).filter(text => text !== '')
-            .length
-        ).greaterThanOrEqual(2)
+        expect(nonempty).greaterThanOrEqual(2)
         await ctx.checkpoint('messages-heard', {
           expect: [{ text: 'Close Tess' }]
         })

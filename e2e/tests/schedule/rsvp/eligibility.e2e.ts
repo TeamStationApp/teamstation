@@ -91,8 +91,7 @@ async function rosterRemoval(ctx: E2eContext): Promise<void> {
         { text: childName },
         { text: ownName },
         { text: 'Ken G', absent: true }
-      ],
-      golden: {}
+      ]
     })
     await f.h.db
       .deleteFrom('memberships')
@@ -114,7 +113,6 @@ async function rosterRemoval(ctx: E2eContext): Promise<void> {
     await m.waitForAnimationToEnd()
     await ctx.checkpoint('rsvp-after-removal', {
       expect: [{ text: ownName }, { text: childName, absent: true }],
-      golden: {},
       readBack: async () => {
         const stored = asEventInfo(
           await (

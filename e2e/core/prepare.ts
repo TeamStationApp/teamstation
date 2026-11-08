@@ -1,4 +1,7 @@
 import { execFileSync } from 'node:child_process'
+import { existsSync, readdirSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 import { BlockedError, HarnessError } from './result'
 
@@ -19,6 +22,8 @@ export interface PrepareOptions {
   packagePath?: string
   origin?: string
   metroPort?: number
+  /** A simulator takes `--udid`. A phone takes `--device`. */
+  simulator?: boolean
 }
 
 type Run = (command: string, args: string[], env?: NodeJS.ProcessEnv) => void
@@ -50,6 +55,60 @@ function installPackage(options: PrepareOptions, run: Run): void {
   }
 }
 
+/**
+ * The gitignored signing file, written into an xcconfig when it is present.
+ * A phone build has no team without it. A simulator build can go without it.
+ */
+function iosSigningArgs(): string[] {
+  const config = join(process.cwd(), 'clientConfig.json')
+  if (!existsSync(config)) return []
+  execFileSync('node', ['scripts/clientConfig.mjs', '.'], {
+    stdio: 'ignore'
+  })
+  // xcodebuild runs in ios/, so a relative path would miss the root file.
+  return [
+    '--xcconfig',
+    join(process.cwd(), 'clientConfig.xcconfig'),
+    '--extra-params',
+    '-allowProvisioningUpdates'
+  ]
+}
+
+/**
+ * The Debug app `run-ios` just installed. Clearing state on a phone needs the
+ * bundle, which the host cannot read back off the device.
+ */
+export function iosBuiltApp(
+  root = join(homedir(), 'Library/Developer/Xcode/DerivedData')
+): string {
+  const found: Array<{ path: string; mtimeMs: number }> = []
+  if (existsSync(root)) {
+    for (const name of readdirSync(root)) {
+      if (!name.startsWith('TeamStation-')) continue
+      const path = join(
+        root,
+        name,
+        'Build/Products/Debug-iphoneos/TeamStation.app'
+      )
+      if (!existsSync(path)) continue
+      found.push({ path, mtimeMs: statSync(path).mtimeMs })
+    }
+  }
+  found.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  if (found[0] == null) {
+    throw new HarnessError('No Debug-iphoneos TeamStation.app has been built')
+  }
+  return found[0].path
+}
+
+/** Whether `device` is a simulator UDID. A phone's UDID is not in this list. */
+export function iosIsSimulator(device: string): boolean {
+  const listed = execFileSync('xcrun', ['simctl', 'list', 'devices', '-j'], {
+    encoding: 'utf8'
+  })
+  return listed.includes(`"${device}"`)
+}
+
 function buildLocally(options: PrepareOptions, run: Run): void {
   const { app, device, origin } = options
   if (origin == null)
@@ -59,9 +118,18 @@ function buildLocally(options: PrepareOptions, run: Run): void {
   const port =
     options.metroPort == null ? [] : ['--port', String(options.metroPort)]
   if (app.endsWith('-ios')) {
+    const simulator = options.simulator ?? iosIsSimulator(device)
     run(
       'npx',
-      ['react-native', 'run-ios', '--udid', device, '--no-packager', ...port],
+      [
+        'react-native',
+        'run-ios',
+        simulator ? '--udid' : '--device',
+        device,
+        '--no-packager',
+        ...iosSigningArgs(),
+        ...port
+      ],
       env
     )
   } else if (app.endsWith('-android')) {

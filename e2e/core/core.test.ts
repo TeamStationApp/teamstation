@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  utimesSync,
   writeFileSync
 } from 'node:fs'
 import { createServer, request } from 'node:http'
@@ -40,7 +41,7 @@ import {
 } from './manifest'
 import { PLACES_ANSWERS, placesAnswer, startPlacesStub } from './placesStub'
 import { planScenarios } from './plan'
-import { apiBaseFor, prepareApp } from './prepare'
+import { apiBaseFor, iosBuiltApp, iosIsSimulator, prepareApp } from './prepare'
 import { BlockedError, exitCodeFor, HarnessError, type Status } from './result'
 import { runScenario } from './run'
 import { selectScenarios } from './select'
@@ -753,8 +754,22 @@ describe('prepare', function () {
 
   it('builds a simulator app with the origin in TS_API_BASE_URL', function () {
     const origin = 'http://192.0.2.1:9000'
-    const ios = runs({ app: 'teamstation-ios', device: 'd', origin })[0]
+    const ios = runs({
+      app: 'teamstation-ios',
+      device: 'd',
+      origin,
+      simulator: true
+    })[0]
     expect(ios.env?.TS_API_BASE_URL).equals(`${origin}/api/v1`)
+    expect(ios.args).includes('--udid')
+    const phone = runs({
+      app: 'teamstation-ios',
+      device: 'd',
+      origin,
+      simulator: false
+    })[0]
+    expect(phone.args).includes('--device')
+    expect(phone.args).not.includes('--udid')
     expect(
       runs({ app: 'teamstation-android', device: 'd', origin })[0].args
     ).includes('run-android')
@@ -772,6 +787,33 @@ describe('prepare', function () {
     expect(() => runs({ app: 'other', device: 'd', packagePath: 'x' })).throws(
       HarnessError
     )
+  })
+
+  it('finds the newest phone build', function () {
+    const root = tempRoot()
+    const older = join(
+      root,
+      'TeamStation-old/Build/Products/Debug-iphoneos/TeamStation.app'
+    )
+    const newer = join(
+      root,
+      'TeamStation-new/Build/Products/Debug-iphoneos/TeamStation.app'
+    )
+    mkdirSync(older, { recursive: true })
+    mkdirSync(newer, { recursive: true })
+    const later = new Date(Date.now() + 2000)
+    utimesSync(newer, later, later)
+    expect(iosBuiltApp(root)).equals(newer)
+    expect(() => iosBuiltApp(join(root, 'missing'))).throws(HarnessError)
+  })
+
+  it('tells a simulator UDID from a phone', function () {
+    expect(iosIsSimulator('not-a-device')).equals(false)
+    const listed = execFileSync('xcrun', ['simctl', 'list', 'devices', '-j'], {
+      encoding: 'utf8'
+    })
+    const udid = /"udid"\s*:\s*"([^"]+)"/.exec(listed)
+    if (udid != null) expect(iosIsSimulator(udid[1])).equals(true)
   })
 
   it('reports a failed install as blocked', function () {

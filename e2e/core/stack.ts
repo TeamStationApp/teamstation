@@ -353,12 +353,13 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       },
       webDir,
       adopt: async adopted => {
-        const { hostname } = new URL(adopted)
-        const proxy = await addProxy(adopted, hostname)
+        // The proxy listens where this stack does. A phone opens it, and the
+        // server it adopts may be only on loopback.
+        const proxy = await addProxy(adopted, host)
         origin = proxy.url
         // A native app's bundle names the front server, so with no API of its own the
         // front server sends the app to what was adopted.
-        if (!wantsApi) front.retarget(proxy.port, hostname)
+        if (!wantsApi) front.retarget(proxy.port, host)
         return proxy.url
       },
       baselineManifest: manifestPath,

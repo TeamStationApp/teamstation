@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { BlockedError, HarnessError } from './result'
 import type { LocalSettings } from './settings'
+import { typeInto } from './typeInto'
 
 /**
  * What a fixture made. A manifest holds passwords, so one for a world stays in the
@@ -124,6 +125,33 @@ export function findAccount(
   )
 }
 
+async function visible(
+  device: any,
+  text: string,
+  timeout: number
+): Promise<boolean> {
+  return await device.assertVisible({ text, timeout }).then(
+    () => true,
+    () => false
+  )
+}
+
+/**
+ * Types the address and password into fields that may still hold a previous try.
+ * A phone keyboard sometimes drops or swaps a key under the driver.
+ */
+async function typeCredentials(
+  device: any,
+  account: Pick<FixtureAccount, 'email' | 'password'>
+): Promise<void> {
+  await typeInto(device, 'E-mail address', account.email)
+  await typeInto(device, 'Password', account.password)
+  // The password field's Go key signs in on its own. The button is gone by
+  // the time a tap would reach it, and the home screen is already up.
+  if (await visible(device, 'TeamStation menu', 2000)) return
+  await device.tapOn({ text: 'Sign in' })
+}
+
 /** The real password form, on any surface. */
 export async function signInWithPassword(
   device: any,
@@ -131,13 +159,16 @@ export async function signInWithPassword(
 ): Promise<void> {
   await device.assertVisible({ text: 'Use a password instead', timeout: 30000 })
   await device.tapOn({ text: 'Use a password instead' })
-  await device.tapOn({ text: 'E-mail address' })
-  await device.inputText({ text: account.email })
-  await device.tapOn({ text: 'Password' })
-  await device.inputText({ text: account.password })
-  await device.tapOn({ text: 'Sign in' })
-  // Only a signed-in person has the account button, so a refused password fails here.
-  await device.assertVisible({ text: 'Account, .*', timeout: 20000 })
+  // The home screen's mark is only there once the password was accepted.
+  // The first two tries cover a key the phone keyboard dropped; the last one reports it.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await typeCredentials(device, account)
+    if (attempt === 3) {
+      await device.assertVisible({ text: 'TeamStation menu', timeout: 20000 })
+      return
+    }
+    if (await visible(device, 'TeamStation menu', 8000)) return
+  }
 }
 
 /** Every id a world made, so a seat's 5xx can be claimed by the scenario it names. */

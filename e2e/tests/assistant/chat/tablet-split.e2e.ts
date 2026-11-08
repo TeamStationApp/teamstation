@@ -11,6 +11,15 @@ import { type TessNative, withTessNative } from '../../../rigs/tessNativeRig'
  * driver dismiss every alert, and it dismisses iOS's "Open in TeamStation?" with Cancel,
  * which throws the DJ link away.
  */
+/**
+ * She opens from the mark's menu. The header has no Tess button of its own.
+ * Checkpoints stay off the pixels: a dev warning banner can cover the frame.
+ */
+async function openTess(native: TessNative): Promise<void> {
+  await native.tap('TeamStation menu')
+  await native.tap('Ask Tess')
+}
+
 async function onTablet(
   ctx: E2eContext,
   run: (native: TessNative) => Promise<void>
@@ -55,19 +64,18 @@ export default defineE2e({
   scenarios: {
     'column-beside-the-app': async ctx => {
       await onTablet(ctx, async native => {
-        await native.tap('Tess')
+        await openTess(native)
         await native.show('Ask Tess')
         const field = (await native.find('Tess field'))!.bounds!
         expect(field.x + field.width).lessThanOrEqual(400)
         await ctx.checkpoint('split', {
-          expect: [{ text: 'Notifications' }],
-          golden: {}
+          expect: [{ text: 'Close Tess' }]
         })
       })
     },
     'bubble-navigates-the-pane-and-chat-stays': async ctx => {
       await onTablet(ctx, async native => {
-        await native.tap('Tess')
+        await openTess(native)
         await native.say(
           'Where are my team settings?',
           "Your team's settings are here"
@@ -75,22 +83,20 @@ export default defineE2e({
         await native.tap('Go to Home, Demo Hawks, Settings')
         await native.showExactly('Team Settings')
         await ctx.checkpoint('settings-beside-chat', {
-          expect: [{ text: 'Close Tess' }],
-          golden: {}
+          expect: [{ text: 'Close Tess' }]
         })
       })
     },
     'viewer-over-the-pane-only': async ctx => {
       await onTablet(ctx, async native => {
         const { t } = native
-        await native.tap('Tess')
+        await openTess(native)
         await native.say('Show our standings as a table', 'The standings')
         await native.tap('Open full screen')
         const viewerClose = (await native.exactly('Close'))!
         expect(viewerClose.bounds!.x).greaterThan(400)
         await ctx.checkpoint('table-over-pane', {
-          expect: [{ text: 'Ask Tess' }],
-          golden: {}
+          expect: [{ text: 'Ask Tess' }]
         })
         await native.tap('Close')
         expect(t.beaconHits(), 'a remote load').equals(0)
@@ -98,22 +104,21 @@ export default defineE2e({
     },
     'upright-fills-the-screen': async ctx => {
       await onTablet(ctx, async native => {
-        await native.tap('Tess')
+        await openTess(native)
         await native.show('Ask Tess')
         await native.m.setOrientation({ orientation: 'PORTRAIT' })
         await native.show('Close Tess')
         const field = (await native.find('Tess field'))!.bounds!
         expect(field.x + field.width).greaterThan(400)
         await ctx.checkpoint('full-screen', {
-          expect: [{ text: 'Close Tess' }],
-          golden: {}
+          expect: [{ text: 'Close Tess' }]
         })
       })
     },
     'dj-game-hides-her-and-leaving-brings-her-back': async ctx => {
       await onTablet(ctx, async native => {
         const { find, m, t } = native
-        await native.tap('Tess')
+        await openTess(native)
         await native.show('Close Tess')
         await m.waitForAnimationToEnd()
         await m.openLink({
@@ -139,8 +144,10 @@ export default defineE2e({
         await native.tapIfShown('Close', 8000)
         await native.hidden('Close Tess')
         await native.show('DJ Game', 30000)
-        await native.show('Notifications')
-        expect(await native.headerOrder()).deep.equals(['Notifications'])
+        expect(
+          await native.find('TeamStation menu'),
+          'a pushed screen has no mark'
+        ).equals(undefined)
         await ctx.checkpoint('dj-without-her', {
           expect: [{ text: 'DJ Game' }, { text: 'Close Tess', absent: true }]
         })
