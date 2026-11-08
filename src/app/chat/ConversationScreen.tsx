@@ -97,6 +97,7 @@ import { EmojiPicker } from './EmojiPicker'
 import { type MessageView, reactionKey } from './engine/apply'
 import type { ConversationView, GrantApproval } from './engine/engine'
 import { findOriginal, replyExcerpt } from './engine/reply'
+import { historyStatusText, sendStatusText } from './historyStatus'
 import { MentionPicker } from './MentionPicker'
 import { MessageBubble } from './MessageBubble'
 import { MessageMenu } from './MessageMenu'
@@ -248,6 +249,52 @@ export function ConversationScreen(
   const refreshAttention = useRef<(manual?: boolean) => void>(() => {})
   const committed = useRef(0)
   const publishView = (next: ConversationView | undefined): void => {
+    const pending = new Set(
+      latestView.current?.messages
+        .filter(
+          message => message.status === 'locked' || message.status === 'lost'
+        )
+        .map(message => message.id)
+    )
+    if (
+      next?.messages.some(
+        message => message.status === 'ok' && pending.has(message.id)
+      ) === true &&
+      scrolled.current.hasPosition &&
+      !scrolled.current.followNewest &&
+      restoreAnchor.current == null &&
+      measuringJump.current == null &&
+      menuReading.current == null
+    ) {
+      // Decryption can resize every mounted row in one commit. Save the reader
+      // before that layout: its compensated offset can otherwise look like the
+      // end of the previous, shorter history before content-size catches up.
+      const physical = readMessageScrollPosition(
+        scroller.current,
+        messageRefs.current
+      )
+      const offset = physical?.offset ?? scrolled.current.offset
+      // Keep the first row the reader sees whole. A row starting under the
+      // floating header grows past it when it unlocks; holding that row would
+      // push every row the reader can actually read down by its growth.
+      const whole = [...messagePositions.current]
+        .filter(
+          ([, y]) =>
+            y - offset >= readableTop.current &&
+            y - offset < scrolled.current.height
+        )
+        .sort((a, b) => a[1] - b[1])[0]
+      const anchor =
+        whole == null
+          ? (physical?.anchor ?? scrolled.current.anchor)
+          : { id: whole[0], relativeY: whole[1] - offset }
+      if (anchor != null) {
+        restoreAnchor.current = { ...anchor }
+        restoreTarget.current = offset
+        atBottom.current = false
+        settlingAnchor.current = { id: anchor.id, checks: 0 }
+      }
+    }
     setView(
       next == null
         ? undefined
@@ -334,6 +381,7 @@ export function ConversationScreen(
   useEffect(() => {
     setSafetyAction(undefined)
   }, [conversationId, engine])
+  const [retryingHistory, setRetryingHistory] = useState(false)
   const [menu, setMenu] = useState<MessageView | undefined>(undefined)
   const [menuAnchor, setMenuAnchor] = useState<unknown>(undefined)
   const [menuSource, setMenuSource] = useState<MessageSource>()
@@ -549,6 +597,13 @@ export function ConversationScreen(
   const initialScrollChosen = useRef(false)
   const restoringAnchor = useRef(false)
   const restoreAnchorDirty = useRef(false)
+  // A phone's list keeps its first visible row in place on its own when rows
+  // resize, sometimes after a restoration has already landed. The reader
+  // restored across history recovery is checked on screen until it settles.
+  const settlingAnchor = useRef<{ id: string; checks: number } | undefined>(
+    undefined
+  )
+  const lastScrollOffset = useRef(0)
   const exhaustedPageRestorer = useRef<() => void>(() => {})
   const atBottom = useRef(
     !scrolled.current.hasPosition || scrolled.current.followNewest
@@ -1228,6 +1283,47 @@ export function ConversationScreen(
       return
     scrolled.current.anchor = next
     onDraftChange?.(currentDraft())
+  }
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  )
+  const settleRestoredAnchor = (): void => {
+    if (settleTimer.current != null) return
+    settleTimer.current = setTimeout(() => {
+      settleTimer.current = undefined
+      const settling = settlingAnchor.current
+      const anchor = restoreAnchor.current
+      if (
+        settling == null ||
+        anchor?.id !== settling.id ||
+        !mounted.current ||
+        !paneActive.current ||
+        restoringAnchor.current ||
+        measuringJump.current != null
+      )
+        return
+      const cancelled = (): boolean =>
+        !mounted.current ||
+        !paneActive.current ||
+        restoreAnchor.current !== anchor
+      measurePosition(anchor.id, cancelled, true)
+        .then(y => {
+          if (y == null || cancelled()) return
+          settling.checks += 1
+          // Where the row actually is: the list's own correction may have
+          // moved it after the restoration's scroll was acknowledged.
+          const drift = y - anchor.relativeY
+          if (Math.abs(drift) > 1) {
+            const target = rememberPosition(
+              lastScrollOffset.current + drift,
+              anchor
+            )
+            scroller.current?.scrollTo({ y: target, animated: false })
+          }
+          if (settling.checks < 3) settleRestoredAnchor()
+        })
+        .catch(() => undefined)
+    }, 150)
   }
   const restoreReadingAnchor = (): void => {
     const anchor = restoreAnchor.current
@@ -2361,6 +2457,7 @@ export function ConversationScreen(
     // Actual native drag/momentum still records its position and cancels the jump.
     if (!userOwned && measuringJump.current != null) return
     const { contentOffset, layoutMeasurement } = event.nativeEvent
+    lastScrollOffset.current = Math.max(0, contentOffset.y)
     if (
       restoreAnchor.current != null &&
       (!widthLayoutReady() || restoringAnchor.current)
@@ -2370,6 +2467,18 @@ export function ConversationScreen(
       if (!widthLayoutReady() || restoringAnchor.current) return
       const actual = Math.max(0, contentOffset.y)
       const target = reachableOffset(restoreTarget.current)
+      // The list moved the restored reader on its own, after its checks ran
+      // out: check it on screen again.
+      const settling = settlingAnchor.current
+      if (
+        Math.abs(actual - target) > 1 &&
+        !userOwned &&
+        settling != null &&
+        settling.id === restoreAnchor.current?.id
+      ) {
+        settling.checks = 0
+        settleRestoredAnchor()
+      }
       if (Math.abs(actual - target) <= 1) {
         const anchor = scrolled.current.anchor
         rememberPosition(
@@ -2385,6 +2494,8 @@ export function ConversationScreen(
                   : { readableTop: anchor.readableTop })
               }
         )
+        if (settlingAnchor.current?.id === restoreAnchor.current?.id)
+          settleRestoredAnchor()
       }
       return
     }
@@ -2525,6 +2636,7 @@ export function ConversationScreen(
   ]
   const historyHeaderVisible =
     view.historyLocked ||
+    sendStatusText(view.sendReadiness) != null ||
     approvals.length > 0 ||
     view.unverified ||
     view.hasEarlier ||
@@ -2546,7 +2658,38 @@ export function ConversationScreen(
       {view.historyLocked && (
         <View style={[shared.banner, shared.bannerWarning]}>
           <Icon name="lock" color={theme.warningColor} />
-          <Text style={shared.bannerText}>{lstrings.chat_history_locked}</Text>
+          <Text style={shared.bannerText}>
+            {view.historyRecovery == null
+              ? lstrings.chat_history_locked
+              : historyStatusText(view)}
+          </Text>
+          {view.historyRecovery === 'retryableError' && (
+            <Button
+              label={lstrings.common_retry}
+              kind="secondary"
+              compact
+              busy={retryingHistory}
+              disabled={retryingHistory}
+              onPress={() => {
+                setRetryingHistory(true)
+                engine
+                  .refresh()
+                  .catch(() => {
+                    // The history warning remains visible; sending stays independent.
+                  })
+                  .finally(() => {
+                    setRetryingHistory(false)
+                  })
+              }}
+            />
+          )}
+        </View>
+      )}
+      {sendStatusText(view.sendReadiness) != null && (
+        <View style={[shared.banner, shared.bannerWarning]}>
+          <Text style={shared.bannerText}>
+            {sendStatusText(view.sendReadiness)}
+          </Text>
         </View>
       )}
       {approvals.map(approval => (

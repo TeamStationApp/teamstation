@@ -6,6 +6,7 @@ import {
   logRowHash
 } from '../../common/chatCrypto/logHash'
 import type { Database } from '../db/database'
+import { reconcileHistoryRequests } from './historyRequests'
 
 /**
  * Writing a conversation's membership: `chat_members`, the hash-chained
@@ -168,6 +169,7 @@ export async function joinMembers(
     now
   )
   await openGrantRequests(trx, conversationId, userIds)
+  await reconcileHistoryRequests(trx, conversationId, now)
 }
 
 /**
@@ -190,6 +192,7 @@ export async function leaveMembers(
     .where('conversation_id', '=', conversationId)
     .where('user_id', 'in', userIds)
     .execute()
+  await reconcileHistoryRequests(trx, conversationId, now)
   await appendLog(
     trx,
     conversationId,

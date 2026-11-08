@@ -192,6 +192,8 @@ describe('chat epochs and grants (U7)', function () {
       expect(
         ok(await call('Hk', 'GET', `/chat/conversations/${staff}/epochs`))
       ).deep.equals({
+        historyRecoveryVersion: 1,
+        freshEpochsEnabled: false,
         latest: 0,
         needsRotation: false,
         noHolder: false,

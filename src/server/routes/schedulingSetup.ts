@@ -88,6 +88,12 @@ export function schedulingSetupRoutes(
       const seasonId = param(req.params.seasonId)
       await requireLeagueAdminOf(req, seasonId)
       const settings = clean(asScheduleSettings, req.body)
+      for (const key of [
+        'maxGamesOnWeekdays',
+        'maxGamesOnWeekend',
+        'preferGameOn'
+      ] as const)
+        if (req.body[key] === undefined) settings[key] = undefined
       res.json(await saveSeasonScheduleSettings(db, seasonId, settings))
     })
   )

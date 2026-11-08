@@ -8,12 +8,14 @@ export const TIME_OF_DAY = 2
 export const SPACING = 3
 export const WEEKDAY = 4
 export const SCARCITY = 5
-export const TERMS = 6
+export const PREFERENCE = 6
+export const TERMS = 7
 
 /** The true ranking: every term, most important first. */
 export const TRUE_ORDER: readonly number[] = [
   UNPLACED,
   DOUBLEHEADERS,
+  PREFERENCE,
   TIME_OF_DAY,
   SPACING,
   WEEKDAY,
@@ -33,7 +35,7 @@ export function compareScores(
   order: readonly number[] = TRUE_ORDER
 ): number {
   for (const term of order) {
-    const difference = a[term] - b[term]
+    const difference = (a[term] ?? 0) - (b[term] ?? 0)
     if (difference < -EPSILON) return -1
     if (difference > EPSILON) return 1
   }
@@ -252,7 +254,13 @@ export class SeasonLedger {
     let timeOfDay = 0
     let spacing = 0
     let weekday = 0
+    let nonpreferred = 0
     for (const tally of this.tallies.values()) {
+      const weekend = tally.weekdays[0] + tally.weekdays[6]
+      nonpreferred +=
+        this.season.season.settings.preferGameOn === 'weekdays'
+          ? weekend
+          : tally.games - weekend
       const terms = tally.terms(this.season.supply)
       if (counted) doubleheaders += terms[0]
       timeOfDay += terms[1]
@@ -265,7 +273,8 @@ export class SeasonLedger {
       timeOfDay,
       spacing,
       weekday,
-      this.scarcity
+      this.scarcity,
+      nonpreferred
     ]
   }
 }

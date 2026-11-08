@@ -123,7 +123,9 @@ import { migration108EventChildrenHold } from './108eventChildrenHold'
 import { migration109TeamRosterVersions } from './109teamRosterVersions'
 import { migration110DropSyncClock } from './110dropSyncClock'
 import { migration111LiveChanges } from './111liveChanges'
+import { migration111ScheduleWeekParts } from './111scheduleWeekParts'
 import { migration112VideoSpaceSecret } from './112videoSpaceSecret'
+import { migration113ChatHistoryRecovery } from './113chatHistoryRecovery'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -251,5 +253,7 @@ export const migrations: Migration[] = [
   migration109TeamRosterVersions,
   migration110DropSyncClock,
   migration111LiveChanges,
-  migration112VideoSpaceSecret
+  migration111ScheduleWeekParts,
+  migration112VideoSpaceSecret,
+  migration113ChatHistoryRecovery
 ]

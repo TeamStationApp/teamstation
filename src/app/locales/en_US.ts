@@ -604,6 +604,23 @@ export const enUs = {
   chat_no_messages: 'No messages yet',
   chat_history_locked:
     'History is locked — it unlocks when another member opens TeamStation',
+  chat_history_waiting:
+    'Older messages are unavailable on this device. They may unlock when a member with the keys returns.',
+  chat_history_approval:
+    'Older messages need approval after your safety number changed. You can still send new messages.',
+  chat_history_partial:
+    'Some older messages have been recovered. The remaining messages need keys from another device.',
+  chat_history_retry:
+    'Older messages could not be recovered yet. Try again when connected.',
+  chat_history_recovering: 'Recovering older messages…',
+  chat_history_legacy:
+    'This server requires the current chat key before you can send. Ask a member with the keys to open TeamStation.',
+  chat_fresh_disabled:
+    'New messages need the current chat key while fresh messaging is unavailable.',
+  chat_keys_repair:
+    'This device needs its encryption keys restored. Link it to a device that can open this chat.',
+  chat_history_approve_unavailable:
+    'This device does not have the older keys. Review this request on a device that can read the older messages.',
   chat_earlier_lost: 'Earlier messages can’t be opened',
   chat_unverified: 'Membership record could not be verified',
   chat_closed_notice: 'This chat is closed. You can read it, but not post.',
@@ -631,6 +648,7 @@ export const enUs = {
   chat_lost_message: 'This message can’t be opened',
   chat_invalid_message: 'This message could not be verified',
   chat_sent_before_change: 'sent before %s’s safety words changed',
+  chat_sent_before_your_change: 'sent before your safety words changed',
   chat_safety_changed: '%s’s safety words changed',
   chat_read_by: 'Read by %s',
   chat_seen_by: 'Seen by %s',

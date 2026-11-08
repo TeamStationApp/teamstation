@@ -23,6 +23,8 @@ export const LIVE_RESYNC_MS = 15_000
 export const LIVE_LOCAL_TAIL_SEC = 60
 
 export const asServerConfig = asObject({
+  /** Fresh publications only; history delivery remains enabled independently. */
+  chatHistoryRecoveryEnabled: asOptional(asBoolean, false),
   /** Separate restricted login; never substitute the application owner. */
   analyticsReaderUrl: asOptional(asString),
   logWriteToken: asOptional(asString),

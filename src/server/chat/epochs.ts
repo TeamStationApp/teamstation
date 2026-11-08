@@ -4,8 +4,10 @@ import { verifyEpoch } from '../../common/chatCrypto/chain'
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
 import type { ChatKind, Database } from '../db/database'
 import { isEligible } from './audiences'
+import { approveHistoryAccess, ensureHistoryAccess } from './historyAccess'
+import { reconcileHistoryRequests } from './historyRequests'
 import { type ChatCaller, requireHolder } from './keys'
-import { isApprover } from './listing'
+import { isApprover, moderatorsOf } from './listing'
 import { notifyChat, openGrantRequests } from './membershipLog'
 import { b64 } from './wire'
 
@@ -47,6 +49,7 @@ export interface EpochBox {
 }
 
 export interface EpochBody {
+  mode?: 'continue' | 'fresh'
   epoch: number
   previousKeyBox: Uint8Array | null
   signature: Uint8Array
@@ -81,6 +84,8 @@ export interface EpochBoxView {
 }
 
 export interface EpochsView {
+  nextBoxesCursor?: string
+  hasMoreBoxes?: boolean
   /** The latest epoch, 0 when there is none. */
   latest: number
   needsRotation: boolean
@@ -254,7 +259,8 @@ export async function epochsFor(
   db: Kysely<Database>,
   caller: ChatCaller,
   conversationId: string,
-  after: number
+  after: number,
+  delivery?: { boxesAfter: string; boxLimit: number }
 ): Promise<EpochsView> {
   const conversation = await db
     .selectFrom('chat_conversations')
@@ -269,7 +275,7 @@ export async function epochsFor(
     .where('epoch', '>', after)
     .orderBy('epoch')
     .execute()
-  const boxes = await db
+  let boxQuery = db
     .selectFrom('chat_epoch_boxes')
     .innerJoin('chat_identities', join =>
       join
@@ -281,17 +287,33 @@ export async function epochsFor(
       'chat_epoch_boxes.identity_id',
       'chat_epoch_boxes.generation',
       'chat_epoch_boxes.box',
-      'chat_epoch_boxes.granted_by_user_id'
+      'chat_epoch_boxes.granted_by_user_id',
+      sql<string>`chat_epoch_boxes.delivery_seq::text`.as('delivery_seq')
     ])
     .where('chat_epoch_boxes.conversation_id', '=', conversationId)
     .where('chat_epoch_boxes.user_id', '=', caller.userId)
     .where('chat_identities.replaced_at', 'is', null)
-    .where('chat_epoch_boxes.epoch', '>=', after)
-    .orderBy('chat_epoch_boxes.epoch')
-    .orderBy('chat_epoch_boxes.generation')
-    .execute()
+  if (delivery == null)
+    boxQuery = boxQuery
+      .where('chat_epoch_boxes.epoch', '>=', after)
+      .orderBy('chat_epoch_boxes.epoch')
+      .orderBy('chat_epoch_boxes.generation')
+  else
+    boxQuery = boxQuery
+      .where('chat_epoch_boxes.delivery_seq', '>', delivery.boxesAfter)
+      .orderBy('chat_epoch_boxes.delivery_seq')
+      .limit(delivery.boxLimit + 1)
+  const delivered = await boxQuery.execute()
+  const boxes =
+    delivery == null ? delivered : delivered.slice(0, delivery.boxLimit)
   const holders = await holdersOf(db, conversationId, latest)
   return {
+    ...(delivery == null
+      ? {}
+      : {
+          nextBoxesCursor: boxes.at(-1)?.delivery_seq ?? delivery.boxesAfter,
+          hasMoreBoxes: delivered.length > delivery.boxLimit
+        }),
     latest,
     needsRotation: conversation.needs_rotation,
     noHolder: latest > 0 && holders.size === 0,
@@ -324,7 +346,8 @@ export async function createEpoch(
   caller: ChatCaller,
   conversationId: string,
   body: EpochBody,
-  now: Date
+  now: Date,
+  freshEnabled = false
 ): Promise<{
   epoch: number
   chainBreak: boolean
@@ -353,7 +376,26 @@ export async function createEpoch(
     }
     const standings = await standingsOf(trx, conversationId)
     const holders = await holdersOf(trx, conversationId, latest)
-    const chainBreak = latest > 0 && holders.size === 0
+    const fresh = body.mode === 'fresh'
+    if (fresh) {
+      if (!freshEnabled)
+        throw conflict('Fresh chat encryption is disabled', {
+          reason: 'freshDisabled'
+        })
+      if (latest === 0 || holders.has(caller.userId))
+        throw conflict('Refresh this device’s existing keys', {
+          reason: 'repairRequired'
+        })
+      if (
+        !(await isEligible(trx, caller.userId, now)) ||
+        (conversation.kind === 'seasonAnnouncements' &&
+          !(await moderatorsOf(trx, conversation, [caller.userId])).has(
+            caller.userId
+          ))
+      )
+        throw refuse('notStaff', 'This member cannot publish new messages')
+    }
+    const chainBreak = latest > 0 && (holders.size === 0 || fresh)
     if (latest === 0) {
       if (body.previousKeyBox != null) {
         throw badRequest('The first epoch has no previous key', {
@@ -408,6 +450,7 @@ export async function createEpoch(
       )
     }
 
+    await ensureHistoryAccess(trx, conversationId)
     if (chainBreak) {
       await trx
         .updateTable('chat_grant_requests')
@@ -466,6 +509,7 @@ export async function createEpoch(
       .set({ needs_rotation: false })
       .where('id', '=', conversationId)
       .execute()
+    await reconcileHistoryRequests(trx, conversationId, now)
     await notifyChat(trx, conversationId, 'epoch')
     // Left out: those awaiting approval after a reset. Their request stays
     // (or opens) as a reset request, for an approver.
@@ -607,6 +651,7 @@ export async function postGrants(
     for (const id of ids) {
       const conversation = await lockConversation(trx, id)
       if (!(await isMember(trx, id, caller.userId))) throw notFound()
+      await ensureHistoryAccess(trx, id)
       const latest = await latestEpoch(trx, id)
       const held = await trx
         .selectFrom('chat_epoch_boxes')
@@ -696,6 +741,15 @@ export async function postGrants(
           )
         }
       }
+      if (request.identity_reset)
+        await approveHistoryAccess(
+          trx,
+          box.conversationId,
+          box.userId,
+          box.identityId,
+          caller.userId,
+          now
+        )
       await trx
         .insertInto('chat_epoch_boxes')
         .values({

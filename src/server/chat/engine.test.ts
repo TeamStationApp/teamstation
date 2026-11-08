@@ -686,7 +686,7 @@ describe('the chat engine (U12)', function () {
     expect(view.composer).equals('locked')
     expect(statuses(view)).deep.equals(['locked', 'locked'])
     expect(await engineRefusal(hk.engine.sendText(chatOf, 'x'))).equals(
-      'locked'
+      'freshStartsDisabled'
     )
     expect(
       hk.engine.conversations().find(item => item.id === chatOf)?.locked
@@ -803,7 +803,7 @@ describe('the chat engine (U12)', function () {
     const listed = hs.engine.conversations().find(item => item.id === chatOf)
     expect(listed).include({ locked: true, noHolder: true })
     let view = await hs.engine.open(chatOf)
-    expect(view.historyLocked).equals(false)
+    expect(view.historyLocked).equals(true)
     expect(view.composer).equals('enabled')
     expect(statuses(view)).deep.equals(['locked'])
 
@@ -817,13 +817,13 @@ describe('the chat engine (U12)', function () {
       { filled: false, superseded: true }
     ])
     view = hs.engine.view(chatOf)!
-    expect(view.earlierLost).equals(true)
-    expect(statuses(view)).deep.equals(['lost', 'ok'])
+    expect(view.earlierLost).equals(false)
+    expect(statuses(view)).deep.equals(['locked', 'ok'])
     expect(bodies(view)).deep.equals(['', 'still here'])
 
     view = await es.engine.open(chatOf)
-    expect(statuses(view)).deep.equals(['lost', 'ok'])
-    expect(view.earlierLost).equals(true)
+    expect(statuses(view)).deep.equals(['locked', 'ok'])
+    expect(view.earlierLost).equals(false)
 
     // Named by who is left in it, then, once Hs is alone, by who was.
     const titleOf = async (): Promise<string | undefined> =>

@@ -150,12 +150,18 @@ async function main(): Promise<void> {
     device: required('CHAT_IOS_DEVICE'),
     platform: 'ios',
     appId: APP,
+    ...(process.env.CHAT_IOS_APP_FILE == null
+      ? {}
+      : { appFile: process.env.CHAT_IOS_APP_FILE }),
     artifacts: 'on-failure'
   })
   const android = await androidDaemon.attach({
     device: required('CHAT_ANDROID_DEVICE'),
     platform: 'android',
     appId: APP,
+    ...(process.env.CHAT_ANDROID_APP_FILE == null
+      ? {}
+      : { appFile: process.env.CHAT_ANDROID_APP_FILE }),
     artifacts: 'on-failure'
   })
   try {

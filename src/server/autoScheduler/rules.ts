@@ -1,6 +1,7 @@
 import type { Availability } from '../../common/fieldAvailability'
 import { coversGame } from '../../common/fieldAvailability'
 import { gameCalendarDay } from '../../common/gameTime'
+import { gameWeekPart, weekPartMaximum } from '../../common/gameWeekPart'
 import type { Doubleheaders } from '../../common/seasonScheduling'
 import { type FieldSize, fieldSizeLabel } from '../../common/venues'
 
@@ -29,9 +30,19 @@ export interface RuleContext {
       switchMs: number
     }
   >
-  seasons: Map<string, { bufferMinutes: number; doubleheaders: Doubleheaders }>
+  seasons: Map<
+    string,
+    {
+      bufferMinutes: number
+      doubleheaders: Doubleheaders
+      maxGamesOnWeekdays?: number
+      maxGamesOnWeekend?: number
+    }
+  >
   /** Everything else holding the run's fields and teams. */
   others: Holding[]
+  /** Live season games for weekly caps while other rules use preview holdings. */
+  weeklyOthers?: Holding[]
 }
 
 type ManagerBooking = Pick<Holding, 'key' | 'start' | 'end' | 'teamIds'>
@@ -100,6 +111,10 @@ export function ruleProblem(
         : context.fields.get(holding.fieldId)?.availability.timezone) ??
         fallbackZone
     )
+  const partOf = (holding: Holding): ReturnType<typeof gameWeekPart> =>
+    gameWeekPart(Math.round(Date.parse(`${day(holding)}T00:00:00Z`) / 86400000))
+  const portion = partOf(game)
+  const counts = new Map<string, number>()
   for (const other of context.others) {
     if (other.key === game.key) continue
     if (managerConflict(game, other, context.headCoaches))
@@ -131,5 +146,19 @@ export function ruleProblem(
     )
       return 'This season has no doubleheaders, and a team already plays that day.'
   }
+  for (const other of context.weeklyOthers ?? context.others) {
+    if (
+      other.key === game.key ||
+      other.managerOnly === true ||
+      other.seasonId !== game.seasonId ||
+      partOf(other).key !== portion.key
+    )
+      continue
+    for (const team of other.teamIds.filter(id => game.teamIds.includes(id)))
+      counts.set(team, (counts.get(team) ?? 0) + 1)
+  }
+  const limit = weekPartMaximum(season ?? {}, portion.part)
+  if (game.teamIds.some(team => (counts.get(team) ?? 0) >= limit))
+    return `A team has reached this season’s maximum of ${limit} games on ${portion.part} in this week.`
   return null
 }
