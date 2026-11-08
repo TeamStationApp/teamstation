@@ -1,16 +1,22 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { appendFile, mkdir, readFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { dirname, join, resolve } from 'node:path'
+
+import type { Page } from 'puppeteer'
 
 import { ConcurrentScoringRig } from '../../test/concurrentScoring/concurrentScoring'
 import { ConcurrentScoringSafariRig } from '../../test/concurrentScoring/concurrentScoringSafari'
+import { conflictingPitches } from '../../test/concurrentScoring/conflicts'
 import type {
   E2eContext,
   FixtureManifest
 } from '../../test/concurrentScoring/context'
 import { fourInnings } from '../../test/concurrentScoring/game'
+import { networkRecovery } from '../../test/concurrentScoring/networkRecovery'
 import { browserSession, maestro } from '../../test/refinementsMaestro.e2e'
+import { stackBrowserCoverage } from '../../test/stackBrowserCoverage'
 
 const required = (name: string): string => {
   const value = process.env[name]
@@ -25,9 +31,28 @@ async function main(): Promise<void> {
   }
   const scenario = option('scenario', 'four-innings')
   const surface = option('surface', 'chromium')
-  assert(['follow', 'lineups', 'four-innings'].includes(scenario))
+  assert(
+    [
+      'follow',
+      'lineups',
+      'four-innings',
+      'conflicts',
+      'network-recovery'
+    ].includes(scenario)
+  )
   assert(['chromium', 'safari'].includes(surface))
   const origin = required('TS_CONCURRENT_ORIGIN')
+  const coverageOutput = process.env.TS_SCORING_BROWSER_COVERAGE
+  const provenance = createRequire(resolve('package.json'))(
+    './scripts/coverage-provenance.cjs'
+  )
+  const coverageBase =
+    coverageOutput == null ? undefined : required('TS_COVERAGE_BASE')
+  const source =
+    coverageOutput == null
+      ? undefined
+      : provenance.coverageSource(process.cwd(), coverageBase)
+  const pages: Page[] = []
   const artifacts = resolve(required('TS_CONCURRENT_ARTIFACTS'))
   await mkdir(artifacts, { recursive: true })
   const fixture: FixtureManifest = JSON.parse(
@@ -69,6 +94,7 @@ async function main(): Promise<void> {
         size.height,
         artifacts
       )
+      pages.push(b.page)
       cleanup.push(async () => {
         await b.browser.disconnect()
         await b.m.detach()
@@ -123,6 +149,10 @@ async function main(): Promise<void> {
       : new ConcurrentScoringRig(ctx)
   try {
     if (scenario === 'four-innings') await fourInnings(rig, ctx)
+    else if (scenario === 'network-recovery') {
+      assert.equal(surface, 'safari')
+      await networkRecovery(rig)
+    } else if (scenario === 'conflicts') await conflictingPitches(rig)
     else if (scenario === 'lineups') {
       await rig.open()
       await rig.pitch(1, 'Ball')
@@ -136,6 +166,24 @@ async function main(): Promise<void> {
       await rig.pitch(0, 'Ball')
       await rig.agree(0, '1 balls 0 strikes')
       await rig.capture('follow-after')
+    }
+    if (coverageOutput != null) {
+      assert.equal(
+        surface,
+        'chromium',
+        'Combined coverage requires the owned Chromium scoring journey'
+      )
+      const output = resolve(coverageOutput)
+      await mkdir(dirname(output), { recursive: true })
+      const files: string[] = []
+      for (const [index, page] of pages.entries()) {
+        const file = output + `.browser-${index}.json`
+        await stackBrowserCoverage(page, origin, file, 1)
+        files.push(file)
+      }
+      assert(files.length >= 2, 'Scoring coverage requires both scorer screens')
+      provenance.verifyCoverageSource(source, process.cwd(), coverageBase)
+      await writeFile(output, JSON.stringify({ source, scenario, files }))
     }
     await note({ status: 'passed', scenario, interventions: 0 })
   } catch (error) {

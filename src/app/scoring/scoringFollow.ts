@@ -16,9 +16,9 @@ export function authoredScoringEvent(
     case 'CELEBRATION_DONE':
       return false
     case 'CLOSE_PLAY':
-      return event.generation == null
+      return event.authored === true || event.generation == null
     case 'GESTURE':
-      return event.active
+      return false
     default:
       return true
   }
@@ -30,6 +30,15 @@ export class ScoringFollow {
   observing = false
   locallyAuthored = false
   mounted = true
+
+  input(event: ScoringEvent | SavedUndone): boolean {
+    // A held pointer invalidates a pending read, but a canceled drag has
+    // authored no scoring. Keep observing until a scoring action commits.
+    if (event.type === 'GESTURE' && event.active) this.generation++
+    const authored = authoredScoringEvent(event)
+    if (authored) this.authored()
+    return authored
+  }
 
   authored(): void {
     this.generation++
