@@ -1462,6 +1462,62 @@ describe("saving a side's lineup (U8)", function () {
     expect(await lineupNotifies(games.fresh)).equals(1)
   })
 
+  for (const scope of ['explicit', 'side', 'both'] as const)
+    it(`lets an unchanged coach save cancel a deferred change (${scope})`, async function () {
+      const gameId = makeId('game')
+      await db!
+        .insertInto('games')
+        .values({
+          id: gameId,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        })
+        .execute()
+      const session = await scoring(gameId)
+      expect(session.apply({ type: 'pitch', call: 'B' }).problems).deep.equals(
+        []
+      )
+      const deferred = setupOf(session.state)
+      ;[
+        deferred.sides.home.battingOrder[0],
+        deferred.sides.home.battingOrder[1]
+      ] = [
+        deferred.sides.home.battingOrder[1],
+        deferred.sides.home.battingOrder[0]
+      ]
+      expect(
+        session.apply({
+          type: 'lineup',
+          kind: 'roster',
+          setup: deferred,
+          effectiveAtBat: 1,
+          ...(scope === 'explicit'
+            ? { effectiveSides: ['home' as const] }
+            : scope === 'side'
+              ? { side: 'home' as const }
+              : {}),
+          keepSlot: true
+        }).problems
+      ).deep.equals([])
+      await session.flush()
+      const reopened = await scoring(gameId)
+      expect(reopened.state.deferredLineups).has.length(1)
+      const original = bodyOf(reopened.state, 'home')
+      const answer = await save(gameId, COACH, original)
+      expect(answer.status, JSON.stringify(answer.body)).equals(200)
+      const restored = await scoring(gameId)
+      if (scope === 'both') {
+        expect(restored.state.deferredLineups).has.length(1)
+        expect(restored.state.deferredLineups![0].effectiveSides).deep.equals([
+          'away'
+        ])
+      } else expect(restored.state.deferredLineups).equals(undefined)
+      expect(
+        restored.state.liveData.boxscore.teams.home.battingOrder
+      ).deep.equals(reopened.state.liveData.boxscore.teams.home.battingOrder)
+    })
+
   it('takes a head coach’s side as the game opens on it, unchanged, so the game holds it', async function () {
     // The lineups the route opens a game with no record on, saved as they
     // stand: the coach accepts them.
