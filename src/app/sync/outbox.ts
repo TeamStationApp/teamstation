@@ -1,9 +1,18 @@
+import { liveEventsBody, parseStoredGame } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import {
   placeholderSuffix,
   placeholderTeamName
 } from '../../common/placeholderNames'
 import type { NewRosterPlayer } from '../../common/playerSettings'
+import type { ScoringMutation } from '../../common/scoring/scoringMutation'
+import {
+  type LineupRecovery,
+  type SaveChange,
+  ScoringSession,
+  type StoredGame
+} from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import type {
   CacheTransaction,
@@ -31,6 +40,7 @@ import {
   plainEntry,
   renamedEvents,
   renamedGuestEntry,
+  skipsScoringOverlay,
   withServerIds
 } from './optimistic'
 
@@ -77,6 +87,7 @@ export type QueuedCall =
       body: unknown
       /** The names of the players its plays name, which the body holds none of. */
       names?: DeviceNames
+      lineupRecovery?: LineupRecovery
     }
   | {
       /** A game-only player's name corrected: `PUT`, on the game's chain. */
@@ -361,6 +372,10 @@ export interface OutboxNotice {
   gameId?: string
   teamId?: string
   message: string
+  /** Canonical scoring is readable after the last queued event lands. */
+  reconcileScoring?: true
+  /** The queued input definitively rejected in favor of another scorer. */
+  rejectedScoring?: ScoringMutation
   /**
    * Writes queued after it that named a player the phone gave up were
    * dropped, and the game read from the server again: a screen holding
@@ -413,6 +428,10 @@ export interface OutboxOptions {
    * reused key dropped comes back from there. Throws when it does not.
    */
   read?: (path: string) => Promise<void>
+  /** A fresh server read, bypassing pending optimistic documents. */
+  readCanonical?: (
+    gameId: string
+  ) => Promise<{ game: unknown; events: unknown }>
   now?: () => number
   random?: () => number
   setTimer?: (run: () => void, ms: number) => unknown
@@ -510,8 +529,16 @@ function callOfRow(row: OutboxRow): QueuedCall {
   const names = namesOfRow(row)
   // A kind only a screen that does not wait queues reads as one whatever
   // the row says: such a call that fell back to a direct send kept it.
-  return (queuedCallOf(row.method, row.path, body, names, row.background) ??
-    queuedCallOf(row.method, row.path, body, names, true))!
+  const call = (queuedCallOf(
+    row.method,
+    row.path,
+    body,
+    names,
+    row.background
+  ) ?? queuedCallOf(row.method, row.path, body, names, true))!
+  if (call.kind === 'events' && row.lineupRecovery != null)
+    call.lineupRecovery = JSON.parse(row.lineupRecovery) as LineupRecovery
+  return call
 }
 
 /** The gumbo id a rename names, and the name it gives him. */
@@ -562,8 +589,10 @@ function ownKey(
 }
 
 export class Outbox {
-  private readonly options: Required<Omit<OutboxOptions, 'read' | 'owns'>> &
-    Pick<OutboxOptions, 'read' | 'owns'>
+  private readonly options: Required<
+    Omit<OutboxOptions, 'read' | 'owns' | 'readCanonical'>
+  > &
+    Pick<OutboxOptions, 'read' | 'owns' | 'readCanonical'>
 
   private draining: Promise<void> | undefined
   private again = false
@@ -966,6 +995,10 @@ export class Outbox {
           path: call.path,
           body: JSON.stringify(body),
           names: namesOf(call),
+          lineupRecovery:
+            call.kind === 'events' && call.lineupRecovery != null
+              ? JSON.stringify(call.lineupRecovery)
+              : null,
           dependsOn: [],
           gameId: call.kind === 'roster' ? null : (call.gameId ?? null),
           background: backgroundOnly(call)
@@ -1104,6 +1137,41 @@ export class Outbox {
     replaces?: OutboxRow
   ): Promise<unknown> {
     if (replaces != null) await tx.remove(replaces.id)
+    if (call.kind === 'events' && sent === undefined) {
+      const body = call.body as SaveChange
+      if (body.scoringMutation != null && body.scoringHistory == null) {
+        // Optimistic acknowledgments let a child omit completed plays still
+        // queued in its ancestors. Carry that dependent suffix with the child:
+        // a superseded ancestor must not splice another scorer's history in.
+        // Modern sessions carry their observed ancestry explicitly. Queued
+        // rows may belong to a rejected branch they have since abandoned.
+        const ancestors = (await tx.outbox()).filter(
+          row => row.chain === chainOf(call) && callOfRow(row).kind === 'events'
+        )
+        const plays = new Map<number, SaveChange['plays'][number]>()
+        const remove = new Set<number>()
+        for (const change of [
+          ...ancestors.map(row => parsed(row.body) as unknown as SaveChange),
+          body
+        ]) {
+          if (change.scoringMutation != null)
+            for (const index of plays.keys())
+              if (index >= change.scoringMutation.frontier) plays.delete(index)
+          for (const index of change.remove ?? []) {
+            plays.delete(index)
+            remove.add(index)
+          }
+          for (const play of change.plays) {
+            plays.set(play.about.atBatIndex, play)
+            remove.delete(play.about.atBatIndex)
+          }
+        }
+        call = {
+          ...call,
+          body: { ...body, plays: [...plays.values()], remove: [...remove] }
+        }
+      }
+    }
     const dependsOn = await this.dependencies(tx, await tx.outbox(), call.body)
     const written = await this.optimistic(tx, call)
     if (written == null) return undefined
@@ -1115,6 +1183,10 @@ export class Outbox {
       path: call.path,
       body: JSON.stringify(sent === undefined ? call.body : sent),
       names: namesOf(call),
+      lineupRecovery:
+        call.kind === 'events' && call.lineupRecovery != null
+          ? JSON.stringify(call.lineupRecovery)
+          : null,
       dependsOn,
       gameId: call.kind === 'roster' ? null : (call.gameId ?? null),
       background: background || backgroundOnly(call),
@@ -1175,13 +1247,18 @@ export class Outbox {
     const key = ownKey(call)
     const held = await tx.read(key)
     if (held == null) return undefined
-    const next = await this.applied(tx, call, parsed(held.body), call.body)
+    const previous = parsed(held.body)
+    const skipped =
+      call.kind === 'events' && skipsScoringOverlay(previous, call.body)
+    const next = await this.applied(tx, call, previous, call.body)
     await tx.write(key, {
       ...held,
       body: JSON.stringify(next),
       pending: true
     })
-    return { answer: next }
+    // Rebase the caller onto the winning picture before it advances its
+    // saved history. Rejection belongs to this answer, never the cache.
+    return { answer: skipped ? { ...next, superseded: true } : next }
   }
 
   /**
@@ -1545,7 +1622,7 @@ export class Outbox {
       return
     }
     if (call.kind === 'guestRename') {
-      await this.landedRename(tx, call)
+      await this.landedRename(tx, call, landing)
       return
     }
     if (call.kind === 'unroster') {
@@ -1574,7 +1651,14 @@ export class Outbox {
       const base = body[otherField]
       if (typeof base !== 'string') continue
       if (!isLocal(base) && !bases.has(base)) continue
-      body[otherField] = serverDigest
+      // A rejected parent did not reconcile its descendants' lineup bodies.
+      // Preserve their original server precondition instead of authorizing
+      // old lineups with the winner's digest. Resolve local aliases here so
+      // prepared() cannot later replace them with that unrelated winner.
+      if (response.superseded === true) {
+        if (!isLocal(base)) continue
+        body[otherField] = (sent as Json)?.[field] ?? ''
+      } else body[otherField] = serverDigest
       other.body = JSON.stringify(body)
       await tx.update(other.id, { body: other.body })
     }
@@ -1582,7 +1666,10 @@ export class Outbox {
     const rewriting = later.filter(other =>
       documentsOf(callOfRow(other)).some(doc => doc.key === own)
     )
-    let document = response
+    let document = { ...response }
+    // This flag describes only the rejected request, not the canonical game
+    // or a later locally authored mutation applied on top of it.
+    if (call.kind === 'events') delete document.superseded
     for (const other of rewriting)
       document = await this.applied(
         tx,
@@ -1600,6 +1687,20 @@ export class Outbox {
       serverDigest,
       pending: rewriting.length > 0
     })
+    if (
+      call.kind === 'events' &&
+      row != null &&
+      !this.direct.has(row.id) &&
+      rewriting.length === 0
+    )
+      landing.notices.push({
+        gameId: call.gameId,
+        message: '',
+        reconcileScoring: true,
+        ...(response.superseded === true
+          ? { rejectedScoring: (sent as SaveChange).scoringMutation }
+          : {})
+      })
     // The game's other document carries the same lineups digest: as its
     // server digest, and in its body too unless a queued write holds it,
     // so the next answer the phone makes from it names the server's.
@@ -1624,15 +1725,22 @@ export class Outbox {
    */
   private async landedRename(
     tx: CacheTransaction,
-    call: Extract<QueuedCall, { kind: 'guestRename' }>
+    call: Extract<QueuedCall, { kind: 'guestRename' }>,
+    landing: Landing
   ): Promise<void> {
     const key = eventsKey(call.gameId)
     const writing = (await tx.outbox()).some(other =>
       documentsOf(callOfRow(other)).some(doc => doc.key === key)
     )
     const held = await tx.read(key)
-    if (held != null && !writing && held.pending)
+    if (held != null && !writing && held.pending) {
       await tx.write(key, { ...held, pending: false })
+      landing.notices.push({
+        gameId: call.gameId,
+        message: '',
+        reconcileScoring: true
+      })
+    }
   }
 
   /**
@@ -2204,6 +2312,113 @@ export class Outbox {
     return true
   }
 
+  /** Rebuild a definitively refused lineup write from its durable observed base. */
+  private async recoverLineup(
+    store: DocumentStore,
+    row: OutboxRow,
+    call: QueuedCall,
+    sent: unknown
+  ): Promise<boolean> {
+    if (
+      call.kind !== 'events' ||
+      call.lineupRecovery == null ||
+      (sent as SaveChange).scoringMutation != null ||
+      (call.lineupRecovery.attempts ?? 0) >= 4 ||
+      this.options.readCanonical == null
+    )
+      return false
+    const read = await this.options.readCanonical(call.gameId)
+    if (
+      (await this.options.store()) !== store ||
+      this.options.owns?.() === false
+    )
+      return false
+    const winner = parseStoredGame(read.events)
+    const game = read.game as Json
+    return await store.atomically(async tx => {
+      const recovery = withServerIds(
+        call.lineupRecovery,
+        await this.landedIds(tx)
+      ) as LineupRecovery
+      if (
+        recovery.baseline.generation !== winner.generation ||
+        recovery.context.teams.home.id !== game.homeTeamId ||
+        recovery.context.teams.away.id !== game.awayTeamId ||
+        typeof game.fenceDistanceFt !== 'number'
+      )
+        return false
+      const context = {
+        ...recovery.context,
+        fenceDistanceFt: game.fenceDistanceFt
+      }
+      const desired = appliedEvents(
+        {
+          ...recovery.baseline,
+          plays: recovery.baseline.plays.map(gumbo => ({ gumbo }))
+        },
+        sent,
+        {
+          gameId: call.gameId,
+          plays: 'local-replay',
+          lineups: recovery.baseline.lineupsDigest ?? null,
+          newPlayId: () => this.makeId(),
+          names: call.names
+        }
+      )
+      const child: StoredGame = {
+        ...recovery.baseline,
+        plays: (desired.plays as Array<{ gumbo: GumboPlay }>).map(
+          row => row.gumbo
+        ),
+        currentPlay: desired.currentPlay as CurrentPlay | null
+      }
+      const reconciled = await ScoringSession.rebaseQueuedLineups(
+        call.gameId,
+        recovery.baseline,
+        child,
+        winner,
+        context
+      )
+      if (reconciled == null) return false
+      // The server definitively rejected this body. The rebuilt request is
+      // a different operation, with its own key; ambiguous retries never
+      // pass through this path.
+      await tx.update(row.id, {
+        body: JSON.stringify({
+          ...(sent as Json),
+          ...liveEventsBody(reconciled)
+        }),
+        idempotencyKey: this.makeId(),
+        state: 'pending',
+        leaseUntil: null,
+        lineupRecovery: JSON.stringify({
+          baseline: winner,
+          context,
+          attempts: (recovery.attempts ?? 0) + 1
+        })
+      })
+      let document = read.events as Json
+      const pending = (await tx.outbox()).filter(
+        other => other.chain === row.chain && callOfRow(other).kind === 'events'
+      )
+      for (const other of pending)
+        document = appliedEvents(document, parsed(other.body), {
+          gameId: call.gameId,
+          plays: `local-${other.id}`,
+          lineups: winner.lineupsDigest ?? null,
+          newPlayId: () => this.makeId(),
+          names: namesOfRow(other)
+        })
+      await tx.write(eventsKey(call.gameId), {
+        body: JSON.stringify(document),
+        revision: '0',
+        serverDigest: winner.lineupsDigest ?? null,
+        pending: true
+      })
+      return true
+    })
+  }
+
   /** Records what a send came to. Whether the drain goes on. */
   private async settle(
     store: DocumentStore,
@@ -2249,6 +2464,13 @@ export class Outbox {
         return false
       case 'park':
         if (call.kind === 'guestRename') return await this.dropAlone(store, row)
+        try {
+          if (await this.recoverLineup(store, row, call, sent)) return true
+        } catch (error) {
+          const failed = outcomeOf(error, call)
+          if (failed.kind === 'retry' || failed.kind === 'auth')
+            return await this.settle(store, row, call, sent, failed)
+        }
         await store.atomically(async tx => {
           await this.park(tx, await tx.outbox(), row, outcome.message)
         })
