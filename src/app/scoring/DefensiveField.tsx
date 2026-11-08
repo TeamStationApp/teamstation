@@ -1,22 +1,131 @@
 import React, { useState } from 'react'
-import { Text, View } from 'react-native'
+import { Platform, Text, type TextStyle, View } from 'react-native'
 
+import { useFittedText } from '../components/fittedText'
 import { DefensiveFieldArt } from './DefensiveFieldArt'
 import { RosterDrag } from './RosterDrag'
 import { useScoringSheetTheme } from './scoringSheetTheme'
 import { type Position, POSITIONS } from './scoringTypes'
 
-/** Position centres as percentages of the top-down field. */
+/**
+ * Position centres as percentages of the top-down field, on six rows (CF;
+ * LF RF; SS 2B; 3B 1B; P; C) 16 apart, so no row ever holds three cards.
+ */
 export const DEFENSE_LOCATIONS: Record<Position, readonly [number, number]> = {
-  LF: [17, 15],
-  CF: [50, 10],
-  RF: [83, 15],
-  SS: [33, 39],
-  '2B': [67, 39],
-  '3B': [17, 61],
-  P: [50, 60],
-  '1B': [83, 61],
-  C: [50, 86]
+  CF: [50, 8],
+  LF: [17, 24],
+  RF: [83, 24],
+  SS: [31, 40],
+  '2B': [69, 40],
+  '3B': [17, 56],
+  '1B': [83, 56],
+  P: [50, 73],
+  C: [50, 90]
+}
+
+/** How far above its centre a card's top sits, in percent of the field. */
+const CARD_TOP_OFFSET = 7
+/** A card is this share of the field's height, at most `MAX_CARD_HEIGHT`. */
+const CARD_HEIGHT_RATIO = 0.14
+const MAX_CARD_HEIGHT = 46
+/** Field names are 25% larger than the scoring sheet's 11- and 10-point text. */
+export const FIELD_NAME_SCALE = 1.25
+const TWO_LINE_FONT = 11 * FIELD_NAME_SCALE
+const SINGLE_LINE_FONT = 10 * FIELD_NAME_SCALE
+/**
+ * The smallest share of its size a one-line card's "P · Name" shrinks to,
+ * so a narrow field draws it whole rather than cut.
+ */
+export const SINGLE_LINE_FIT = 0.75
+const CARD_PADDING = 2
+const CARD_BORDER = 1
+const lineHeightOf = (fontSize: number): number => Math.round(fontSize * 1.2)
+/** Two lines, their padding and the border. */
+const TWO_LINE_CARD =
+  2 * lineHeightOf(TWO_LINE_FONT) + 2 * CARD_PADDING + 2 * CARD_BORDER
+/** One line, its padding and the border. */
+const SINGLE_LINE_CARD =
+  lineHeightOf(SINGLE_LINE_FONT) + 2 * CARD_PADDING + 2 * CARD_BORDER
+
+export interface FieldCardMetrics {
+  cardHeight: number
+  /**
+   * "P · Name" on one line, rather than the position above the name, shrunk
+   * to fit the card's width down to `fit` of `fontSize`.
+   */
+  singleLine: boolean
+  /** Too short for a name: the position alone, with no vertical padding. */
+  positionOnly: boolean
+  fontSize: number
+  lineHeight: number
+  /** What the card's text, padding and border need, never above `cardHeight`. */
+  contentHeight: number
+  /** The smallest share of `fontSize` a one-line name shrinks to. */
+  fit?: number
+}
+
+/** A position card's size and text for a field viewport of this height. */
+export function fieldCardMetrics(
+  viewportHeight: number,
+  compact: boolean
+): FieldCardMetrics {
+  const cardHeight =
+    viewportHeight > 0
+      ? Math.min(MAX_CARD_HEIGHT, viewportHeight * CARD_HEIGHT_RATIO)
+      : MAX_CARD_HEIGHT
+  if (cardHeight < SINGLE_LINE_CARD) {
+    const lineHeight = Math.max(5, cardHeight - 2 * CARD_BORDER)
+    return {
+      cardHeight,
+      singleLine: true,
+      positionOnly: true,
+      fontSize: lineHeight,
+      lineHeight,
+      contentHeight: lineHeight + 2 * CARD_BORDER
+    }
+  }
+  if (compact || cardHeight < TWO_LINE_CARD)
+    return {
+      cardHeight,
+      singleLine: true,
+      positionOnly: false,
+      fontSize: SINGLE_LINE_FONT,
+      lineHeight: lineHeightOf(SINGLE_LINE_FONT),
+      contentHeight: SINGLE_LINE_CARD,
+      fit: SINGLE_LINE_FIT
+    }
+  return {
+    cardHeight,
+    singleLine: false,
+    positionOnly: false,
+    fontSize: TWO_LINE_FONT,
+    lineHeight: lineHeightOf(TWO_LINE_FONT),
+    contentHeight: TWO_LINE_CARD
+  }
+}
+
+/**
+ * The cards whose vertical extents overlap, grouped top to bottom and each
+ * group left to right, for a card `cardHeightPercent` of the field tall.
+ */
+export function fieldRows(
+  locations: Record<Position, readonly [number, number]>,
+  cardHeightPercent: number
+): Position[][] {
+  const cards = POSITIONS.map(position => {
+    const [x, y] = locations[position]
+    const top = y - CARD_TOP_OFFSET
+    return { position, x, top, bottom: top + cardHeightPercent }
+  }).sort((a, b) => (a.top === b.top ? a.x - b.x : a.top - b.top))
+  const rows: Array<{ bottom: number; positions: Position[] }> = []
+  for (const card of cards) {
+    const row = rows[rows.length - 1]
+    if (row != null && card.top < row.bottom) {
+      row.positions.push(card.position)
+      row.bottom = Math.max(row.bottom, card.bottom)
+    } else rows.push({ bottom: card.bottom, positions: [card.position] })
+  }
+  return rows.map(row => row.positions)
 }
 
 /**
@@ -39,13 +148,12 @@ export function DefensiveField({
 }): React.ReactElement {
   const { scoringSurface: surface } = useScoringSheetTheme()
   const [viewportHeight, setViewportHeight] = useState(0)
-  const singleLine = compact || (viewportHeight > 0 && viewportHeight < 180)
-  const cardHeight =
-    viewportHeight > 0 ? Math.max(12, Math.min(36, viewportHeight * 0.18)) : 36
+  const { cardHeight, singleLine, positionOnly, fontSize, lineHeight, fit } =
+    fieldCardMetrics(viewportHeight, compact)
   return (
     <View
       testID="Defensive field viewport"
-      style={{ flexBasis: 240, flexGrow: 0, flexShrink: 1, minHeight: 60 }}
+      style={{ flexBasis: 330, flexGrow: 0, flexShrink: 1, minHeight: 60 }}
       onLayout={event => {
         setViewportHeight(event.nativeEvent.layout.height)
       }}
@@ -64,6 +172,7 @@ export function DefensiveField({
           const id = defense[position]
           const [x, y] = DEFENSE_LOCATIONS[position]
           const assigned = id != null
+          const name = assigned ? display(id) : 'Unassigned'
           const textColor = assigned
             ? surface.activeText
             : surface.badges.red.text
@@ -74,7 +183,7 @@ export function DefensiveField({
                 position: 'absolute',
                 width: '30%',
                 left: `${x - 15}%`,
-                top: `${y - 9}%`
+                top: `${y - CARD_TOP_OFFSET}%`
               }}
             >
               <RosterDrag
@@ -100,8 +209,8 @@ export function DefensiveField({
                   style={{
                     height: cardHeight,
                     paddingHorizontal: singleLine ? 1 : 3,
-                    paddingVertical: singleLine ? 0 : 3,
-                    borderWidth: 1,
+                    paddingVertical: positionOnly ? 0 : CARD_PADDING,
+                    borderWidth: CARD_BORDER,
                     borderStyle: assigned ? 'solid' : 'dashed',
                     borderColor: assigned
                       ? surface.accent
@@ -114,25 +223,34 @@ export function DefensiveField({
                     justifyContent: 'center'
                   }}
                 >
-                  {singleLine ? (
+                  {positionOnly ? (
                     <Text
                       numberOfLines={1}
+                      accessibilityLabel={`${position} · ${name}`}
                       style={{
                         color: textColor,
-                        fontSize: 10,
-                        lineHeight: 10,
+                        fontSize,
+                        lineHeight,
+                        fontWeight: '700',
                         width: '100%',
                         textAlign: 'center'
                       }}
                     >
-                      {position} · {assigned ? display(id) : 'Unassigned'}
+                      {position}
                     </Text>
+                  ) : singleLine ? (
+                    <FittedLine
+                      text={`${position} · ${name}`}
+                      fit={fit}
+                      style={{ color: textColor, fontSize, lineHeight }}
+                    />
                   ) : (
                     <>
                       <Text
                         style={{
                           color: textColor,
-                          fontSize: 11,
+                          fontSize,
+                          lineHeight,
                           fontWeight: '700'
                         }}
                       >
@@ -144,12 +262,13 @@ export function DefensiveField({
                         minimumFontScale={0.91}
                         style={{
                           color: textColor,
-                          fontSize: 11,
+                          fontSize,
+                          lineHeight,
                           width: '100%',
                           textAlign: 'center'
                         }}
                       >
-                        {assigned ? display(id) : 'Unassigned'}
+                        {name}
                       </Text>
                     </>
                   )}
@@ -159,6 +278,46 @@ export function DefensiveField({
           )
         })}
       </View>
+    </View>
+  )
+}
+
+/**
+ * One line across the card, shrunk to fit it whole down to `fit` of its
+ * size; past that the end of the name is cut and the position stays.
+ */
+function FittedLine({
+  text,
+  fit,
+  style
+}: {
+  text: string
+  fit: number | undefined
+  style: TextStyle & { fontSize: number }
+}): React.ReactElement {
+  const fitted = useFittedText(fit, text)
+  return (
+    <View
+      ref={fitted.box}
+      onLayout={fitted.handleLayout}
+      style={{ alignSelf: 'stretch', alignItems: 'center' }}
+    >
+      <Text
+        ref={fitted.text}
+        numberOfLines={1}
+        {...fitted.textProps}
+        style={[
+          style,
+          // The web measures the line at its own width; a phone fits the
+          // card's.
+          Platform.OS === 'web'
+            ? { maxWidth: '100%' }
+            : { width: '100%', textAlign: 'center' },
+          fitted.scale < 1 && { fontSize: style.fontSize * fitted.scale }
+        ]}
+      >
+        {text}
+      </Text>
     </View>
   )
 }
