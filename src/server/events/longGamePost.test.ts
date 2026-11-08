@@ -293,6 +293,7 @@ describe('a post in a long game', function () {
     system: 'teamstation' | 'manual',
     fields: Partial<PostEventsBody>
   ): PostEventsBody => ({
+    scoringMutation: undefined,
     mode: 'live',
     source: { system },
     plays: [],

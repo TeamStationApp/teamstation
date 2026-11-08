@@ -16,6 +16,10 @@ import {
 } from '../../common/gumboPlay'
 import { halfOutcomes } from '../../common/scoring/linescore'
 import type { SwapEffect } from '../../common/scoring/playsLost'
+import {
+  compareScoringMutations,
+  type ScoringMutation
+} from '../../common/scoring/scoringMutation'
 import { teamsOfRow } from '../../common/teamLists'
 import { canScore, lineupTeams, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
@@ -268,6 +272,7 @@ export function eventRoutes(
               ? undefined
               : async (trx, posted) => {
                   const kept: LivePostDigests = {
+                    superseded: posted.superseded,
                     priorPlaysDigest: posted.priorPlaysDigest,
                     lineupsDigest: posted.lineupsDigest
                   }
@@ -277,6 +282,7 @@ export function eventRoutes(
                   })
                 },
             {
+              scoringAuthor: true,
               expectedGeneration: body.generation,
               halves: async (trx, game) =>
                 lineupTeams(
@@ -287,7 +293,7 @@ export function eventRoutes(
               cache: options.cache
             }
           )
-          wrote = true
+          wrote = response.superseded !== true
           return { status: 200, body: response }
         },
         keepsAnswer: false,
@@ -318,6 +324,23 @@ export function eventRoutes(
                   )
               )
           )
+          const superseded =
+            kept.superseded === true ||
+            (body.scoringMutation != null &&
+              current.scoringMutation != null &&
+              compareScoringMutations(
+                body.scoringMutation,
+                current.scoringMutation
+              ) < 0)
+          if (superseded)
+            return {
+              status: 200,
+              body: {
+                ...current,
+                priorPlaysDigest: current.playsDigest,
+                superseded: true
+              }
+            }
           if (!edits) return { status: 200, body: { ...current, ...kept } }
           const { plays, currentPlay, ...digests } = current
           return {
@@ -501,12 +524,14 @@ function postAnswerOf(raw: unknown): 'edits' | undefined {
 
 /** What a live post's key keeps of its answer: the rest is read again. */
 interface LivePostDigests {
+  superseded?: boolean
   priorPlaysDigest: string | null
   lineupsDigest: string | null
 }
 
 /** A game's plays as `GET /games/:gameId/events` answers them. */
 interface StoredGameAnswer {
+  scoringMutation?: ScoringMutation
   plays: unknown[]
   currentPlay: unknown
   playsDigest: string
@@ -550,6 +575,7 @@ async function storedGameRead(
       'pregame',
       'lineups_digest',
       'play_generation',
+      'scoring_mutation',
       'status',
       'cancellation_reason'
     ])
@@ -578,6 +604,11 @@ async function storedGameRead(
       id: gameId,
       ...game
     }),
+    ...(game.scoring_mutation == null
+      ? {}
+      : {
+          scoringMutation: game.scoring_mutation as unknown as ScoringMutation
+        }),
     generation: game.play_generation,
     // What swapping home and away would do, as the swap route decides it.
     swap: gameSwapEffect(

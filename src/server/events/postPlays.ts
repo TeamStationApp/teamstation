@@ -14,13 +14,23 @@ import type {
   GumboPlay,
   PostEventsBody
 } from '../../common/gumboPlay'
-import { recordOf, storedRecordOf } from '../../common/scoring/gumbo'
+import {
+  FINAL_INDEX,
+  recordOf,
+  storedRecordOf
+} from '../../common/scoring/gumbo'
 import {
   halfOutcomes,
   lineScore,
   withHalfOuts
 } from '../../common/scoring/linescore'
 import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
+import {
+  asScoringMutation,
+  compareScoringMutations,
+  scoringFingerprintInput,
+  type ScoringMutation
+} from '../../common/scoring/scoringMutation'
 import type { StoredGame } from '../../common/scoring/session'
 import { pregameRecord } from '../../common/scoring/sideSwap'
 import { withoutNames } from '../../common/scoring/storedNames'
@@ -88,6 +98,8 @@ export type PostAnswer = 'edits' | 'all'
 
 /** What every post's answer says of the game it leaves. */
 export interface PostedDigests {
+  scoringMutation?: ScoringMutation
+  superseded?: boolean
   /**
    * The digest the game keeps of its lineups once this post is written, read
    * in its transaction: the base a sender's next live post names. Null only
@@ -156,6 +168,8 @@ export type PostedAnswer<A extends PostAnswer> = A extends 'all'
 
 /** What a client's post says about the game it was made against. */
 export interface PostOptions {
+  /** Direct scoring routes author legacy writes; internal lineup/projection writes do not. */
+  scoringAuthor?: boolean
   /**
    * The play generation the sender opened the game on. A client route
    * passes it; the server's own writes pass none and are not checked.
@@ -260,6 +274,7 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         'lineup_started_at',
         'lineups_digest',
         'play_generation',
+        'scoring_mutation',
         // The rest of what a list shows of the game (`listFieldsChanged`).
         'linescore',
         'start_at',
@@ -326,6 +341,127 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
           () => null
         )
       : null
+    const mutation = body.scoringMutation
+    if (mutation != null && (!live || system !== 'teamstation'))
+      throw badRequest('Scoring mutation requires a live TeamStation write')
+    if (mutation != null && mutation.at > Date.now() + 5000)
+      throw badRequest('Scoring action clock is more than five seconds ahead')
+    const priorMutation =
+      game.scoring_mutation == null
+        ? undefined
+        : asScoringMutation(game.scoring_mutation)
+    const fingerprint = createHash('sha256')
+      .update(scoringFingerprintInput(sentBody))
+      .digest('hex')
+    if (
+      mutation != null &&
+      priorMutation != null &&
+      compareScoringMutations(mutation, priorMutation) <= 0
+    ) {
+      const equal = compareScoringMutations(mutation, priorMutation) === 0
+      if (
+        equal &&
+        (game.scoring_mutation as { fingerprint?: string }).fingerprint !==
+          fingerprint
+      )
+        throw conflict(
+          'Scoring mutation identity was reused for different content'
+        )
+      const sides = teamsOfRow(game)
+      const resolved = await resolveScoringPlays(
+        trx,
+        {
+          plays: priorRows.map(row => row.gumbo as GumboPlay),
+          currentPlay: atBatOf(game, priorRows.length > 0) as CurrentPlay | null
+        },
+        { gameId, halves: (await options.halves?.(trx, game)) ?? [] }
+      )
+      const answer: PostedPlays = {
+        plays: priorRows.map((row, index) => ({
+          ...playJson(row),
+          gumbo: playForWire(resolved.plays[index], sides)
+        })),
+        currentPlay: playForWire(resolved.currentPlay, sides),
+        playsDigest: prior!,
+        priorPlaysDigest: prior,
+        lineupsDigest: lineupsBefore,
+        generation: game.play_generation,
+        scoringMutation: priorMutation,
+        superseded: !equal
+      }
+      if (written != null) await written(trx, answer)
+      folding = { fold: await pregameFold(trx, gameId, game, resolved), sides }
+      return answer
+    }
+    if (mutation != null) {
+      const cursor = body.currentPlay?.about.atBatIndex
+      if (
+        (cursor != null && cursor !== mutation.frontier) ||
+        body.plays.some(
+          play =>
+            play.about.atBatIndex !== FINAL_INDEX &&
+            play.about.atBatIndex >= mutation.frontier
+        ) ||
+        (cursor == null &&
+          mutation.frontier > 0 &&
+          !body.plays.some(
+            play => play.about.atBatIndex === mutation.frontier - 1
+          ) &&
+          !priorRows.some(row => row.atBatIndex === mutation.frontier - 1))
+      )
+        throw badRequest('Scoring mutation frontier does not match its plays')
+      body.remove = [
+        ...new Set([
+          ...(body.remove ?? []),
+          ...priorRows
+            .filter(row => row.atBatIndex >= mutation.frontier)
+            .map(row => row.atBatIndex)
+        ])
+      ]
+    }
+    const history = new Map<number, unknown>(
+      priorRows.map(row => [row.atBatIndex, row.gumbo])
+    )
+    const oldCurrent = atBatOf(game, priorRows.length > 0) as CurrentPlay | null
+    const oldIndex = oldCurrent?.about?.atBatIndex
+    if (oldIndex != null) history.set(oldIndex, oldCurrent)
+    const scoring = (rows: Map<number, unknown>): string =>
+      scoringFingerprintInput(
+        [...rows]
+          .sort(([a], [b]) => a - b)
+          .flatMap(
+            ([, play]) =>
+              storedRecordOf(play)?.actions.filter(
+                action => action.type !== 'lineup'
+              ) ?? [play]
+          )
+      )
+    const priorScoring = scoring(history)
+    for (const index of body.remove ?? []) history.delete(index)
+    for (const play of body.plays) history.set(play.about.atBatIndex, play)
+    if (body.currentPlay !== undefined) {
+      if (
+        oldIndex != null &&
+        !body.plays.some(play => play.about.atBatIndex === oldIndex)
+      )
+        history.delete(oldIndex)
+      if (body.currentPlay != null)
+        history.set(body.currentPlay.about.atBatIndex, body.currentPlay)
+    }
+    const authorsScoring =
+      options.scoringAuthor === true && scoring(history) !== priorScoring
+    const acceptedMutation =
+      mutation ??
+      (authorsScoring
+        ? {
+            at: Date.now(),
+            id: `legacy-${fingerprint.slice(0, 24)}`,
+            revision: 0,
+            frontier:
+              body.currentPlay?.about.atBatIndex ??
+              Math.max(-1, ...body.plays.map(play => play.about.atBatIndex)) + 1
+          }
+        : priorMutation)
     if (
       live &&
       body.lineupsBase !== undefined &&
@@ -564,6 +700,18 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
     await trx
       .updateTable('games')
       .set({
+        ...(acceptedMutation == null
+          ? {}
+          : {
+              scoring_mutation: {
+                ...acceptedMutation,
+                fingerprint:
+                  mutation != null || authorsScoring
+                    ? fingerprint
+                    : (game.scoring_mutation as { fingerprint?: string })
+                        ?.fingerprint
+              }
+            }),
         away_score: posted.away,
         home_score: posted.home,
         linescore: lineScore(documents, halves, posted.away, posted.home),
@@ -651,6 +799,9 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
     const editsOf = (named: NamedPlays): PlayEdit[] =>
       playEditsOf(taggedStored, named, removed, sides)
     const digests: PostedDigests = {
+      ...(acceptedMutation == null
+        ? {}
+        : { scoringMutation: acceptedMutation }),
       lineupsDigest: lineups.lineups_digest ?? game.lineups_digest,
       playsDigest: playsDigest(taggedStored, taggedCurrent),
       priorPlaysDigest: prior,
