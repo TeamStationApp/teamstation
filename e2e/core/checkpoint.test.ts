@@ -16,6 +16,7 @@ import {
   type CheckpointRecord,
   Checkpoints,
   type CheckpointTarget,
+  goldenOn,
   statusFromCheckpoints
 } from './checkpoint'
 import {
@@ -601,6 +602,15 @@ describe('visual', function () {
     expect(calls[0].captureOut).equals(join(runDir, 'captures', 'screen.png'))
     expect(calls[0].thresholdPercentage).closeTo(99.9, 0.0001)
     expect(git(store, 'status', '--porcelain')).equals('')
+  })
+
+  it('gives a browser mask the state filter its driver needs for bounds', function () {
+    const golden = { mask: [{ id: 'clock' }] }
+    expect(goldenOn('web-chromium', golden).mask).deep.equals([
+      { enabled: true, id: 'clock' }
+    ])
+    expect(goldenOn('ios-app', golden)).equals(golden)
+    expect(goldenOn('web-chromium', {})).deep.equals({})
   })
 
   it('finds a golden on a dated branch', async function () {

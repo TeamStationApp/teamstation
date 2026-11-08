@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { goldenKey, readGoldenManifest } from './goldens'
 import {
@@ -11,6 +12,21 @@ import type { Budget, Judge, MismatchNote } from './judge'
 import type { LocalSettings } from './settings'
 import type { Surface } from './spec'
 import { compareGolden, type GoldenOptions, type VisualVerdict } from './visual'
+
+/**
+ * maestro-d's browser driver reports an element's bounds, which a mask needs, only for
+ * a selector with a state filter. Without one every mask there fails as not found.
+ */
+export function goldenOn(
+  surface: Surface,
+  golden: GoldenOptions
+): GoldenOptions {
+  if (surface !== 'web-chromium' || golden.mask == null) return golden
+  return {
+    ...golden,
+    mask: golden.mask.map(selector => ({ enabled: true, ...selector }))
+  }
+}
 
 /** One thing that must be on the screen, by maestro-d selector. */
 export interface ExpectItem {
@@ -163,7 +179,7 @@ export class Checkpoints {
         runDir: env.runDir,
         checkpoint: id,
         key: goldenKey(env.scenarioId, id, env.surface, target.deviceClass),
-        golden: spec.golden,
+        golden: goldenOn(env.surface, spec.golden),
         manifest: readGoldenManifest(env.root),
         store: env.settings.goldenStore
       })
@@ -177,6 +193,12 @@ export class Checkpoints {
       record.ask = await this.askJudge(spec.ask, outcome.frame)
       if (record.ask.verdict === 'fail') {
         record.failure ??= record.ask.detail
+      }
+      // Whoever reviews this needs the screen the judge could not settle.
+      if (record.ask.verdict === 'needs-review' && record.visual == null) {
+        const captures = join(env.runDir, 'captures')
+        mkdirSync(captures, { recursive: true })
+        writeFileSync(join(captures, `${id}.png`), outcome.frame)
       }
     }
   }

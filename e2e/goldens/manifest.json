@@ -39,6 +39,221 @@
       "sha256": "6211aa37eac14489b6e8d10afc2b3b964d4915f87546fd1ce0cb32cce33ed71f",
       "size": 230366,
       "masks": []
+    },
+    "assistant/chat/attachments#dropped-and-chosen-files-reach-the-model/attach-panel/web-chromium@chromium-1280x900-128": {
+      "sha256": "38eba31db34fb68cc9c0e8d7a2d258a059d5474a03dcc1692b2b8d5700ac5279",
+      "size": 83057,
+      "masks": []
+    },
+    "assistant/chat/attachments#dropped-and-chosen-files-reach-the-model/files-sent/web-chromium@chromium-1280x900-128": {
+      "sha256": "78523a6384d5632de6502617632164b6db68636d649e51e2cd82cec399afc215",
+      "size": 81523,
+      "masks": []
+    },
+    "assistant/chat/column-divider#drag-resizes-and-reload-keeps/column-wider/web-chromium@chromium-1280x900-128": {
+      "sha256": "952168309d178f42e88caf6d5e43352f4192c28d4b94cc93325870d8f9f1d5b1",
+      "size": 56401,
+      "masks": []
+    },
+    "assistant/chat/column-divider#drag-resizes-and-reload-keeps/width-after-reload/web-chromium@chromium-1280x900-128": {
+      "sha256": "04e16fb38352aaf96c5e3992a2d097e55bd58e9a08b36d10e7bd248f2570ec12",
+      "size": 56403,
+      "masks": []
+    },
+    "assistant/chat/column-divider#keyboard-moves-it-16-points-a-press/column-moved-by-keys/web-chromium@chromium-1280x900-128": {
+      "sha256": "1dfb292eb522db942dadde49b6cf66974b5f3d0bb5bdf9e1a321f333738b2c6f",
+      "size": 57019,
+      "masks": []
+    },
+    "assistant/chat/composer#shift-enter-is-a-new-line/two-lines/web-chromium@chromium-1280x900-128": {
+      "sha256": "9d36cded363f49812e24235b18ac013f128bcbd92f0070bc72b047f202b97dc0",
+      "size": 75015,
+      "masks": []
+    },
+    "assistant/chat/composer#title-and-plain-plus/header-and-composer/web-chromium@chromium-1280x900-128": {
+      "sha256": "83f46a7082376a6a8a7c69dc12d1106216d684a4101e4ca546dcd483938ff071",
+      "size": 75660,
+      "masks": []
+    },
+    "assistant/chat/confirm-hold#card-shows-the-change/change-card/web-chromium@chromium-1280x900-128": {
+      "sha256": "f588313767c7311a96dde4a20219e3429b6ec6fc4e12a69c31cdbd6f99b0db13",
+      "size": 119142,
+      "masks": [
+        {
+          "id": "Tess change request"
+        },
+        {
+          "id": "Tess change body"
+        }
+      ]
+    },
+    "assistant/chat/confirm-hold#full-hold-makes-the-change/change-done/web-chromium@chromium-1280x900-128": {
+      "sha256": "dff561e5982813f6700fcbad55e72963017af69875b8274dcd60705c4ee6311c",
+      "size": 126541,
+      "masks": [
+        {
+          "id": "Tess change request"
+        },
+        {
+          "id": "Tess change body"
+        },
+        {
+          "css": "[data-testid=\"Tess thought\"]"
+        }
+      ]
+    },
+    "assistant/chat/header-button#absent-without-tess/header-without-tess/web-chromium@chromium-1280x900-128": {
+      "sha256": "8ce19102efcad4b4f96f68b0e8e6776c181a1a4e230e5d1e7c04b72ec6a40ed9",
+      "size": 55440,
+      "masks": []
+    },
+    "assistant/chat/header-button#before-notifications/header-member/web-chromium@chromium-1280x900-128": {
+      "sha256": "e5bb441e6d8bcf49f95e9dada5a032831b7dfcee7ad980d4a3db11ae2dee9cee",
+      "size": 41793,
+      "masks": []
+    },
+    "assistant/chat/header-button#before-notifications/header-umpire/web-chromium@chromium-1280x900-128": {
+      "sha256": "5cf638ec3e178eff03e1fbd66099038e67932ccd087bbfb6c57f4061395c1929",
+      "size": 56134,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#bubble-closes-an-open-chart/settings-after-chart/web-chromium@chromium-1280x900-128": {
+      "sha256": "750b39d1d29b5f8b2d173d555dd4429e5201737022274671c07d85e5694094b2",
+      "size": 94416,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#chart-opens-over-the-angle-view/chart-over-angle/web-chromium@chromium-1280x900-153": {
+      "sha256": "31108e4126852d2cd7e5d40b0b81b8c1bc362b477ca83489e47f3917ee6595de",
+      "size": 48641,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#hidden-player-is-not-shown/back-at-home/web-chromium@chromium-1280x900-128": {
+      "sha256": "183b714e8f8c011ed8d775bb396bcfb0f9a0a80cb1f33288b5efed6c7efc476d",
+      "size": 75901,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#hidden-player-is-not-shown/player-denied/web-chromium@chromium-1280x900-128": {
+      "sha256": "0e769bb1e0802ea72b0d58565b79a754880ccf3db0f060e0d5b8b8578dd39242",
+      "size": 44766,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#player-name-links-to-the-profile/player-link/web-chromium@chromium-1280x900-128": {
+      "sha256": "a8942079e705d7d63b690577c103b1c6628a59274fdf3d48c75480db245f2404",
+      "size": 81990,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#player-name-links-to-the-profile/player-profile/web-chromium@chromium-1280x900-128": {
+      "sha256": "1afa59b6174a98dec458425841a45de570cdc43c937312f301be6bd726abc739",
+      "size": 55765,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#way-bubble-opens-team-settings/settings-beside-chat/web-chromium@chromium-1280x900-128": {
+      "sha256": "627efb8955bb7c77288357979fec0e863c818cae996a27040838f558336baa43",
+      "size": 83186,
+      "masks": []
+    },
+    "assistant/chat/links-in-pane#way-bubble-opens-team-settings/way-bubble/web-chromium@chromium-1280x900-128": {
+      "sha256": "ac4ce866a26e56b1401878754de0dfbb03b6258e33ea736ff92683ba8c3ea173",
+      "size": 82326,
+      "masks": []
+    },
+    "assistant/chat/push-to-talk#each-hold-becomes-a-message/two-messages-heard/web-chromium@chromium-1280x900-128": {
+      "sha256": "adaeebe6a8a096bf5f509ea52b2dac33c190f6f85416e66e10cfdb48f4bac91a",
+      "size": 96775,
+      "masks": []
+    },
+    "assistant/chat/refusals#off-topic-declined-with-no-tool/declined/web-chromium@chromium-1280x900-128": {
+      "sha256": "00418b6d78b68580e18cd4c3cc666b3cf74456b36ae03542b9d0591b06bbf90e",
+      "size": 79285,
+      "masks": []
+    },
+    "assistant/chat/refusals#scoring-write-refused-before-any-card/refused/web-chromium@chromium-1280x900-128": {
+      "sha256": "aaa36c26b44ff916391083dd73f30ef8c7d4f1f05745859a2259ef6cb2c875d6",
+      "size": 82678,
+      "masks": []
+    },
+    "assistant/chat/rich-content#chart-over-the-pane-loads-nothing-remote/chart-card/web-chromium@chromium-1280x900-128": {
+      "sha256": "ff70a20befb5b407ed3992c10c9488e8ed9cd5b542bb30fb8de454ef160f04e6",
+      "size": 79365,
+      "masks": []
+    },
+    "assistant/chat/rich-content#chart-over-the-pane-loads-nothing-remote/chart-over-pane/web-chromium@chromium-1280x900-128": {
+      "sha256": "9acfb1ebd619b923ae6600025109a76e9e24b25bd00b0c80d42cad3e09b5f4f0",
+      "size": 35069,
+      "masks": []
+    },
+    "assistant/chat/space-hold#held-in-the-field-listens/heard-as-a-message/web-chromium@chromium-1280x900-128": {
+      "sha256": "282e4f3bb10bea9a3feea4d7deb61b4ab3ef7a15b4649d03879751aa5d858499",
+      "size": 99747,
+      "masks": []
+    },
+    "assistant/chat/space-hold#held-on-the-page-listens/heard-from-the-page/web-chromium@chromium-1280x900-128": {
+      "sha256": "282e4f3bb10bea9a3feea4d7deb61b4ab3ef7a15b4649d03879751aa5d858499",
+      "size": 99747,
+      "masks": []
+    },
+    "assistant/chat/space-hold#quick-press-activates-a-focused-tab/team-tab-selected/web-chromium@chromium-1280x900-128": {
+      "sha256": "2f7a3cf3634f2c32c999cb4d54eb77fc5be5a6818cbbcd819eddb0e0384cce89",
+      "size": 60579,
+      "masks": []
+    },
+    "assistant/chat/space-hold#quick-press-types-a-space/field-holds-a-space/web-chromium@chromium-1280x900-128": {
+      "sha256": "6fe94812d82f3ea4ab1e0fcddf99dc253e748456a1c473b4a45ae3fef9307a9a",
+      "size": 91961,
+      "masks": []
+    },
+    "assistant/chat/space-hold#rolled-press-keeps-the-order/field-in-order/web-chromium@chromium-1280x900-128": {
+      "sha256": "9dacf67fc266b60a00cde72a6027221b5c1d776d6f2d5e1a06be6bec53ec1515",
+      "size": 92999,
+      "masks": []
+    },
+    "assistant/chat/split-view#back-closes-her-and-keeps-the-address/team-after-back/web-chromium@chromium-1024x900-128": {
+      "sha256": "0d35cc60a8ae8c7f68a627d789847b562c24b4d1b59d834e7681ec32d4747b9a",
+      "size": 36296,
+      "masks": []
+    },
+    "assistant/chat/split-view#column-beside-pane/split/web-chromium@chromium-1280x900-128": {
+      "sha256": "83f46a7082376a6a8a7c69dc12d1106216d684a4101e4ca546dcd483938ff071",
+      "size": 75660,
+      "masks": []
+    },
+    "assistant/chat/split-view#dj-screen-keeps-her/dj-beside-tess/web-chromium@chromium-1280x900-128": {
+      "sha256": "ed601c0ae6e670a58fdb5879ada0a7b63b24dbb33ed8bef3b7640981a6897379",
+      "size": 65536,
+      "masks": []
+    },
+    "assistant/chat/split-view#fills-window-when-narrow/closed-at-narrow-width/web-chromium@chromium-1024x900-128": {
+      "sha256": "bc1651e5ce80afed7f39502647ecaf01df03c0eeab914653ae4b8f4201cd081c",
+      "size": 54958,
+      "masks": []
+    },
+    "assistant/chat/split-view#fills-window-when-narrow/full-window/web-chromium@chromium-1024x900-128": {
+      "sha256": "348bbfdfafdd21bcc07cea50e2c54c310fae2bcad786691b97f4c673d7717c3d",
+      "size": 31090,
+      "masks": []
+    },
+    "assistant/chat/split-view#team-screen-narrows-beside-her/team-beside-tess/web-chromium@chromium-1280x900-128": {
+      "sha256": "092048711741bc23e7c726bf1163e4abfefb41f9f091280a69db3c4e559b33de",
+      "size": 56556,
+      "masks": []
+    },
+    "assistant/chat/streaming-reply#thinking-steps-and-text-arrive-in-order/thought-collapsed/web-chromium@chromium-1280x900-128": {
+      "sha256": "15e46bc8dd421fbac3c6c28853abba232453c056fbafe0dafad6c49b805608dd",
+      "size": 91531,
+      "masks": [
+        {
+          "css": "[data-testid=\"Tess thought\"] [role=\"button\"]"
+        }
+      ]
+    },
+    "assistant/chat/streaming-reply#thinking-steps-and-text-arrive-in-order/thought-expanded/web-chromium@chromium-1280x900-128": {
+      "sha256": "ea0d779244d75d066dfba0adc736a4c1b5b1e016c32fd60d3a19f1d5ffe7d92a",
+      "size": 129642,
+      "masks": [
+        {
+          "css": "[data-testid=\"Tess thought\"] [role=\"button\"]"
+        }
+      ]
     }
   }
 }

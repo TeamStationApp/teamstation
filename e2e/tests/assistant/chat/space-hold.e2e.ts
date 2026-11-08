@@ -1,0 +1,332 @@
+/* eslint-disable @typescript-eslint/prefer-optional-chain, @typescript-eslint/prefer-nullish-coalescing, @typescript-eslint/strict-boolean-expressions -- Serialized browser callbacks cannot capture Sucrase's generated helper functions. */
+import { expect } from 'chai'
+
+import { eventually } from '../../../core/readback'
+import { defineE2e, type E2eContext } from '../../../core/spec'
+import {
+  FIELD,
+  MIC,
+  pause,
+  TESS_WEB_SPEC,
+  type TessWeb,
+  THINKING,
+  withTess
+} from '../../../rigs/tessWeb'
+
+/**
+ * Space held to talk to Tess. maestro-d's `pressKey` is a whole press with the real
+ * key, which is what a quick Space is. It has no key held down, so a hold is the same
+ * key events sent through the page; the app treats them alike, and holds back the key's
+ * default either way, so nothing here depends on the browser's own Space but the
+ * scroll with push-to-talk off, which uses `pressKey`.
+ */
+
+/** Sends one Space event to what has the focus. */
+async function space(web: TessWeb, type: 'keydown' | 'keyup'): Promise<void> {
+  await web.m.evalBrowserScript({
+    script: `(document.activeElement || document.body).dispatchEvent(
+      new KeyboardEvent(${JSON.stringify(type)}, { key: ' ', code: 'Space', bubbles: true, cancelable: true })
+    )`
+  })
+}
+
+/** The pane's Team or Schedule tab. */
+function paneTab(name: string): string {
+  return `[role="tab"][aria-label="${name}"]`
+}
+
+/** The tallest scroller right of her column with room to scroll. */
+const findScroller = `Array.from(document.querySelectorAll('*'))
+  .filter(candidate => {
+    const style = getComputedStyle(candidate)
+    return (
+      ['auto', 'scroll'].includes(style.overflowY) &&
+      candidate.scrollHeight > candidate.clientHeight + 200 &&
+      candidate.getBoundingClientRect().x >= 400
+    )
+  })
+  .sort((a, b) => b.clientHeight - a.clientHeight)[0]`
+
+/** Puts the pane's scroller at the top and marks it for the reads after. */
+async function scrollPaneToTop(web: TessWeb): Promise<void> {
+  await eventually(async () => {
+    await web.m.evalBrowserScript({
+      script: `document.querySelector('[data-space-scroller]')?.removeAttribute('data-space-scroller')
+        const node = ${findScroller}
+        if (node != null) { node.setAttribute('data-space-scroller', ''); node.scrollTop = 0 }`
+    })
+    expect(await paneScrollTop(web), 'the pane can scroll').equals(0)
+    // The list scrolls itself to its next game once it has settled.
+    await pause(1500)
+    expect(await paneScrollTop(web), 'the pane stayed put').equals(0)
+  }, 20000)
+}
+
+async function paneScrollTop(web: TessWeb): Promise<number> {
+  return await web.page.evaluate(() => {
+    const node = document.querySelector('[data-space-scroller]')
+    return node == null || !node.isConnected ? -1 : node.scrollTop
+  })
+}
+
+/** The team's Schedule tab, long enough to scroll, beside her microphone. */
+async function schedule(web: TessWeb): Promise<void> {
+  await web.open(`/teams/${web.t.f.teamA}`)
+  await web.tap(paneTab('Schedule'))
+  await web.openChat()
+  await scrollPaneToTop(web)
+}
+
+/**
+ * Space held 800 ms while the microphone hears a sentence: not listening at 300 ms,
+ * listening from 500, and what was heard sent as a message. Returns when it began
+ * listening.
+ */
+async function holdAndHear(web: TessWeb): Promise<number> {
+  const { HEARD } = await import('../../../../src/test/tessFixture')
+  const heardBefore = await web.userBubbles(HEARD)
+  const down = Date.now()
+  await space(web, 'keydown')
+  const playing = web.page.evaluate(async () => {
+    await (window as any).__playClip()
+  })
+  await pause(300)
+  expect(await web.dictationStatus(), 'not yet at 300 ms').equals('Off')
+  await web.waitForStatus('Recording', 2000)
+  const listening = Date.now() - down
+  expect(listening, 'listening from 500 ms').greaterThanOrEqual(500)
+  await pause(Math.max(0, 800 - (Date.now() - down)))
+  await space(web, 'keyup')
+  await playing
+  await eventually(async () => {
+    expect(await web.userBubbles(HEARD)).greaterThan(heardBefore)
+  }, 30000)
+  await web.gone(THINKING)
+  return listening
+}
+
+/**
+ * The focus on the pane's page itself: a press on text in the pane's scroller that
+ * nothing focusable holds, then nothing focused.
+ */
+async function focusPage(web: TessWeb): Promise<void> {
+  const point = await web.page.evaluate(() => {
+    const scroller = document.querySelector('[data-space-scroller]')
+    if (scroller == null) return null
+    const focusable =
+      'a, button, input, textarea, select, [tabindex], [role="button"], [role="tab"], [role="link"]'
+    // The tabs lie side by side, so only what is inside the scroller's own box is
+    // on the screen.
+    const pane = scroller.getBoundingClientRect()
+    const text = Array.from(scroller.querySelectorAll('div, span')).find(
+      node => {
+        const box = node.getBoundingClientRect()
+        return (
+          node.children.length === 0 &&
+          (node.textContent || '').trim() !== '' &&
+          node.closest(focusable) == null &&
+          box.width > 0 &&
+          box.x >= pane.x &&
+          box.x + box.width <= pane.x + pane.width &&
+          box.y > 120 &&
+          box.y < 600
+        )
+      }
+    )
+    if (text == null) return null
+    const box = text.getBoundingClientRect()
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  })
+  expect(point, 'text on the pane to press').not.equals(null)
+  await web.m.tapOnPoint({ x: Math.round(point!.x), y: Math.round(point!.y) })
+  await web.m.evalBrowserScript({
+    script: `const active = document.activeElement
+      if (active instanceof HTMLElement && active !== document.body) active.blur()`
+  })
+  expect(
+    await web.page.evaluate(() => document.activeElement === document.body)
+  ).equals(true)
+}
+
+/** Runs a scenario beside a long Schedule, with the fake microphone. */
+async function beside(
+  ctx: E2eContext,
+  run: (web: TessWeb) => Promise<void>
+): Promise<void> {
+  await withTess(
+    ctx,
+    async web => {
+      await schedule(web)
+      await run(web)
+    },
+    { liveClock: true }
+  )
+}
+
+export default defineE2e({
+  ...TESS_WEB_SPEC,
+  id: 'assistant/chat/space-hold',
+  title:
+    "Space held half a second talks to Tess; a quick press stays the page's, and with push-to-talk off so does a hold",
+  covers: [
+    'src/app/tess/TessPanel.tsx',
+    'src/app/scoring/spaceToTalk.ts',
+    'src/app/scoring/dictationControls.tsx',
+    'src/server/dictation/**'
+  ],
+  minutes: 2,
+  faults: ['socket-drop', 'hidden-element'],
+  scenarios: {
+    'quick-press-types-a-space': async ctx => {
+      await beside(ctx, async web => {
+        const { m, t } = web
+        const { begun } = t.dictation
+        await m.tapOn({ css: FIELD })
+        await web.type('a')
+        await m.pressKey({ key: 'Space' })
+        await web.type('b')
+        await eventually(async () => {
+          expect(await web.fieldValue()).equals('a b')
+        }, 5000)
+        await pause(600)
+        expect(await web.dictationStatus()).equals('Off')
+        expect(t.dictation.begun, 'no utterance started').equals(begun)
+        await ctx.checkpoint('field-holds-a-space', {
+          expect: [{ id: 'Dictate' }],
+          golden: {}
+        })
+      })
+    },
+    'rolled-press-keeps-the-order': async ctx => {
+      await beside(ctx, async web => {
+        const { m, t } = web
+        const { begun } = t.dictation
+        await m.tapOn({ css: FIELD })
+        await web.type('hello')
+        // Typed fast, Space rolled into the next letter: the letter goes down while
+        // Space is still down.
+        await space(web, 'keydown')
+        await pause(40)
+        await web.type('w')
+        await space(web, 'keyup')
+        await web.type('orld')
+        await eventually(async () => {
+          expect(await web.fieldValue()).equals('hello world')
+        }, 5000)
+        await pause(600)
+        expect(await web.dictationStatus()).equals('Off')
+        expect(t.dictation.begun, 'no utterance started').equals(begun)
+        await ctx.checkpoint('field-in-order', { golden: {} })
+      })
+    },
+    'held-in-the-field-listens': async ctx => {
+      await beside(ctx, async web => {
+        const { m, t } = web
+        const { begun } = t.dictation
+        await m.tapOn({ css: FIELD })
+        await holdAndHear(web)
+        expect(t.dictation.begun).equals(begun + 1)
+        expect(await web.fieldValue()).equals('')
+        await ctx.checkpoint('heard-as-a-message', {
+          expect: [{ text: "Your team's settings are here" }],
+          golden: {}
+        })
+      })
+    },
+    'quick-press-activates-a-focused-tab': async ctx => {
+      await beside(ctx, async web => {
+        const { m, page, t } = web
+        const { begun } = t.dictation
+        await m.evalBrowserScript({
+          script: `const seen = { prevented: [] }
+            window.__space = seen
+            // Whether Space's default survived, read once the key has gone through:
+            // the talk key stops it before it bubbles back up.
+            window.addEventListener('keydown', event => {
+              if (event.code === 'Space')
+                setTimeout(() => seen.prevented.push(event.defaultPrevented), 0)
+            }, true)`
+        })
+        let focused = false
+        for (let press = 0; press < 80 && !focused; press++) {
+          await m.pressKey({ key: 'Tab' })
+          focused = await page.evaluate(() => {
+            const active = document.activeElement
+            return (
+              active != null &&
+              active.getAttribute('role') === 'tab' &&
+              active.getAttribute('aria-label') === 'Team' &&
+              active.getBoundingClientRect().x >= 400
+            )
+          })
+        }
+        expect(focused, "Tab reached the pane's Team pill").equals(true)
+        const topBefore = await paneScrollTop(web)
+        await m.pressKey({ key: 'Space' })
+        await eventually(async () => {
+          expect(
+            await page.evaluate(selector => {
+              const tab = document.querySelector(selector)
+              return tab == null ? null : tab.getAttribute('aria-selected')
+            }, paneTab('Team'))
+          ).equals('true')
+        }, 10000)
+        await pause(800)
+        const top = await paneScrollTop(web)
+        // The Schedule list may have gone with its tab; if it stayed, it did not move.
+        if (top !== -1) expect(top, 'Space scrolled nothing').equals(topBefore)
+        expect(
+          await page.evaluate(() => (window as any).__space.prevented)
+        ).deep.equals([true])
+        expect(await web.dictationStatus()).equals('Off')
+        expect(t.dictation.begun, 'no utterance started').equals(begun)
+        await ctx.checkpoint('team-tab-selected', {
+          expect: [{ id: 'Dictate' }],
+          golden: {}
+        })
+      })
+    },
+    'held-on-the-page-listens': async ctx => {
+      await beside(ctx, async web => {
+        const { HEARD } = await import('../../../../src/test/tessFixture')
+        const { t } = web
+        const { begun } = t.dictation
+        await focusPage(web)
+        await holdAndHear(web)
+        expect(t.dictation.begun).equals(begun + 1)
+        expect(t.dictation.heard.at(-1)).equals(HEARD)
+        expect(await paneScrollTop(web), 'the hold scrolled nothing').equals(0)
+        await ctx.checkpoint('heard-from-the-page', {
+          expect: [{ text: HEARD }],
+          golden: {}
+        })
+      })
+    },
+    'push-to-talk-off-leaves-space-to-the-page': async ctx => {
+      await beside(ctx, async web => {
+        const { m, t } = web
+        const { begun } = t.dictation
+        await m.tapOn({ css: MIC })
+        await web.waitForStatus(null)
+        await focusPage(web)
+        await space(web, 'keydown')
+        await pause(800)
+        await space(web, 'keyup')
+        await pause(300)
+        expect(t.dictation.begun, 'no utterance started').equals(begun)
+        await m.pressKey({ key: 'Space' })
+        await eventually(async () => {
+          expect(
+            await paneScrollTop(web),
+            'Space scrolled the pane'
+          ).greaterThan(0)
+        }, 5000)
+        expect(t.dictation.begun, 'no utterance started').equals(begun)
+        expect(await web.dictationStatus()).equals(null)
+        await ctx.checkpoint('pane-scrolled', {
+          expect: [{ id: 'Dictate', absent: true }]
+        })
+      })
+    }
+  }
+})

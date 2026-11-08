@@ -28,6 +28,7 @@ the shape. `legacy.json` lists tests not yet moved here.
 - Importing a spec has no side effects: load server code inside the scenario.
 - A scenario sets up its own state and depends on no other scenario.
 - Drive the UI through maestro-d. `ctx.browser`'s `page` is for reading, never acting.
+- `ctx.browser(size, emulation)` also takes `beforeLoad`, a script standing in for hardware such as a microphone, and `h264` for real video, which only Chrome plays. Its `resize` emulates another window size on the same page, for reading: maestro-d captures at the window's own size, so check a screen's look by opening the browser at that size.
 
 ## Checkpoints and goldens
 
@@ -91,3 +92,12 @@ The script refuses unless `serverConfig.testSettings` is true, which production 
 - `ctx.mail(address, from)` waits up to three minutes for what the app really sent, with one targeted, time-bounded search at a time. Nothing it reads goes to the run directory.
 
 `test.rateLimitScale` in `system_settings` multiplies every rate limit except a paid provider's, read only where `testSettings` is true. `baseline` sets it to 100, so ordinary scenarios never hit a limit.
+
+## Coverage
+
+A category's coverage script reads what its scenarios executed:
+
+```sh
+NODE_V8_COVERAGE=coverage/server npm run e2e -- run <id> --surface web-chromium --browser-coverage coverage/browser
+npm run e2e -- coverage-merge coverage/browser --out coverage/browser.json
+```

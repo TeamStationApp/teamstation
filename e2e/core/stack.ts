@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer as createNetServer } from 'node:net'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -48,6 +48,42 @@ export function lanAddress(interfaces = networkInterfaces()): string {
     }
   }
   throw new HarnessError('This machine has no LAN address')
+}
+
+/** The port a debug iOS build probes for Metro after its saved location is cleared. */
+const PACKAGER_PORT = 8081
+
+async function waitForPackager(port: number): Promise<void> {
+  const deadline = Date.now() + 120000
+  while (Date.now() < deadline) {
+    try {
+      const reply = await fetch(`http://127.0.0.1:${port}/status`)
+      if ((await reply.text()).includes('packager-status:running')) return
+    } catch {
+      // Metro is still coming up.
+    }
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  throw new BlockedError('Metro did not start')
+}
+
+export async function packagerPort(host = '127.0.0.1'): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    const probe = createNetServer()
+    probe.once('error', () => {
+      reject(
+        new BlockedError(
+          `Metro needs port ${PACKAGER_PORT} so a cleared iOS launch can find the packager`
+        )
+      )
+    })
+    probe.listen(PACKAGER_PORT, host, () => {
+      probe.close(() => {
+        resolve()
+      })
+    })
+  })
+  return PACKAGER_PORT
 }
 
 export async function freePort(host = '127.0.0.1'): Promise<number> {
@@ -265,7 +301,13 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
     if (options.native === true) {
       // The API's address is inlined by Babel and cached by Metro, so an old one stays
       // baked in without a reset.
-      metroPort = await freePort()
+      // The iOS binary looks the packager up on 8081. A cleared launch drops any
+      // other address, so Metro has to be on that port or the app has no script.
+      metroPort = await packagerPort()
+      // A spec fixture has no app. Metro bundles the checkout that does.
+      const appRoot = existsSync(join(root, 'node_modules/.bin/react-native'))
+        ? root
+        : ROOT
       const metro = spawn(
         process.execPath,
         [
@@ -277,7 +319,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
           '--reset-cache'
         ],
         {
-          cwd: root,
+          cwd: appRoot,
           env: { ...process.env, TS_API_BASE_URL: `${front.url}/api/v1` },
           stdio: 'ignore'
         }
@@ -285,6 +327,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       stops.push(() => {
         metro.kill('SIGTERM')
       })
+      await waitForPackager(metroPort)
     }
 
     // Waiting for the API to come up answers 502s that are nobody's failure.
@@ -310,8 +353,12 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       },
       webDir,
       adopt: async adopted => {
-        const proxy = await addProxy(adopted, new URL(adopted).hostname)
+        const { hostname } = new URL(adopted)
+        const proxy = await addProxy(adopted, hostname)
         origin = proxy.url
+        // A native app's bundle names the front server, so with no API of its own the
+        // front server sends the app to what was adopted.
+        if (!wantsApi) front.retarget(proxy.port, hostname)
         return proxy.url
       },
       baselineManifest: manifestPath,

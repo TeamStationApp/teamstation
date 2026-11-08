@@ -333,6 +333,24 @@ describe('an AI ask in a checkpoint', function () {
     expect(statusFromCheckpoints(run.records).status).equals('needs-review')
   })
 
+  it('keeps the frame for whoever reviews what the judge could not settle', async function () {
+    const runDir = mkdtempSync(join(tmpdir(), 'ask-run-'))
+    const run = new Checkpoints({
+      scenarioId: 'a/b/c#d',
+      surface: 'web-chromium',
+      runDir,
+      root: mkdtempSync(join(tmpdir(), 'ask-root-')),
+      settings: {},
+      serverErrors: async () => [],
+      alone: true,
+      worldIds: () => []
+    })
+    await run.check('screen', { ask: 'Q' }, target())
+    expect(
+      readFileSync(join(runDir, 'captures', 'screen.png')).equals(png())
+    ).equals(true)
+  })
+
   it('never turns a golden failure green, whatever its annotation says', async function () {
     const run = checkpoints({
       judge: fakeJudge({ verdict: 'pass' }),

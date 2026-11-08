@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import puppeteer, { type Browser, type Page } from 'puppeteer'
+
+import { BlockedError } from './result'
 
 export type BrowserPage = Page
 
@@ -26,6 +28,26 @@ export interface Emulation {
   timeZone?: string
   reducedMotion?: boolean
   touch?: { width: number; height: number }
+  /** A script that stands in for hardware the browser lacks, before any page script. */
+  beforeLoad?: string
+  /** Opens a browser that plays H.264, which maestro-d's own Chromium cannot. */
+  h264?: boolean
+}
+
+/** The browser maestro-d starts: its own Chromium, or Chrome for real video. */
+export async function browserFor(
+  emulation: Emulation,
+  chrome: () => string | Promise<string> = async () =>
+    await puppeteer.executablePath()
+): Promise<string> {
+  if (emulation.h264 !== true) return 'chromium'
+  const path = await chrome()
+  if (!existsSync(path)) {
+    throw new BlockedError(
+      `no browser with H.264 at ${path}: run \`npx puppeteer browsers install chrome\``
+    )
+  }
+  return path
 }
 
 export function clockScript(instant: string): string {
@@ -48,6 +70,9 @@ export async function applyEmulation(
 ): Promise<void> {
   if (emulation.clock != null) {
     await page.evaluateOnNewDocument(clockScript(emulation.clock))
+  }
+  if (emulation.beforeLoad != null) {
+    await page.evaluateOnNewDocument(emulation.beforeLoad)
   }
   if (emulation.timeZone != null) await page.emulateTimezone(emulation.timeZone)
   if (emulation.reducedMotion === true) {

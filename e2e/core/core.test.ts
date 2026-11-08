@@ -17,8 +17,10 @@ import { ESLint } from 'eslint'
 import { describe, it } from 'mocha'
 
 import { e2eErrors } from '../../scripts/typecheckE2e.mjs'
-import { applyEmulation, clockScript } from './browserCdp'
+import type { BrowserPage } from './browserCdp'
+import { applyEmulation, browserFor, clockScript } from './browserCdp'
 import { main } from './cli'
+import { coverageFile, mergeCoverage, startCoverage } from './coverage'
 import { goesToApi, startFront } from './front'
 import { globToRegExp, matchesAny } from './glob'
 import { legacyReport, readLegacy } from './legacy'
@@ -635,7 +637,7 @@ describe('run', function () {
   })
 
   it('builds a native app for a stack it starts, against that stack', async function () {
-    this.timeout(120000)
+    this.timeout(180000)
     const built: Array<Record<string, unknown>> = []
     const passed = await outcome(
       'return',
@@ -798,12 +800,14 @@ describe('browser emulation', function () {
     }
     await applyEmulation(page, {
       clock: new Date(1600000000000).toISOString(),
+      beforeLoad: 'window.microphone = true',
       timeZone: 'America/Los_Angeles',
       reducedMotion: true,
       touch: { width: 400, height: 800 }
     })
     expect(calls).deep.equals([
       'clock true',
+      'clock false',
       'America/Los_Angeles',
       'prefers-reduced-motion',
       'touch true'
@@ -812,6 +816,19 @@ describe('browser emulation', function () {
     await applyEmulation(page, {})
     expect(calls).deep.equals([])
     expect(clockScript('2026-01-01T00:00:00Z')).includes('Pinned')
+  })
+
+  it('opens Chrome only for H.264, and blocks when it is not installed', async function () {
+    const chrome = (): string => __filename
+    expect(await browserFor({}, chrome)).equals('chromium')
+    expect(await browserFor({ h264: true }, chrome)).equals(__filename)
+    let blocked = false
+    await browserFor({ h264: true }, () => '/absent/chrome').catch(
+      (error: unknown) => {
+        blocked = error instanceof BlockedError
+      }
+    )
+    expect(blocked).equals(true)
   })
 })
 
@@ -987,6 +1004,19 @@ describe('the isolated stack', function () {
         })
       })
       expect(refused).equals(true)
+      // An adopted server takes over the API's paths from the front server.
+      const adopted = createServer((_req, res) => {
+        res.end('adopted')
+      })
+      await new Promise<void>(resolve =>
+        adopted.listen(0, '127.0.0.1', resolve)
+      )
+      front.retarget((adopted.address() as { port: number }).port, '127.0.0.1')
+      expect(await (await fetch(`${front.url}/api/v1/health`)).text()).equals(
+        'adopted'
+      )
+      adopted.close()
+      adopted.closeAllConnections()
     } finally {
       front.server.close()
       front.server.closeAllConnections()
@@ -1039,6 +1069,28 @@ describe('the isolated stack', function () {
     }
   })
 
+  it('sends a stack with no API of its own to the server it adopts', async function () {
+    this.timeout(180000)
+    const stack = await startStack({ services: ['web'] })
+    const adopted = createServer((_req, res) => {
+      res.end('adopted')
+    })
+    await new Promise<void>(resolve => adopted.listen(0, '127.0.0.1', resolve))
+    try {
+      const front = stack.origin
+      const { port } = adopted.address() as { port: number }
+      await stack.adopt(`http://127.0.0.1:${port}`)
+      expect(stack.origin).not.equals(front)
+      expect(await (await fetch(`${front}/api/v1/health`)).text()).equals(
+        'adopted'
+      )
+    } finally {
+      adopted.close()
+      adopted.closeAllConnections()
+      await stack.stop()
+    }
+  })
+
   it('starts a real API behind the front, with its store and catalog', async function () {
     this.timeout(180000)
     const stack = await startStack({ services: ['web', 'api'] })
@@ -1069,6 +1121,52 @@ describe('the isolated stack', function () {
     }
     expect(failed).equals(true)
     expect(request).to.be.a('function')
+  })
+})
+
+describe('browser coverage', function () {
+  const map = (hits: number): object => ({
+    'src/app/a.ts': {
+      path: 'src/app/a.ts',
+      statementMap: {
+        0: { start: { line: 1, column: 0 }, end: { line: 1, column: 1 } }
+      },
+      fnMap: {},
+      branchMap: {},
+      s: { 0: hits },
+      f: {},
+      b: {}
+    }
+  })
+
+  it('names one file per scenario and session, safe on disk', function () {
+    expect(coverageFile('/c', 'a/b/c#d-e', 2)).equals('/c/a_b_c_d-e-2.json')
+  })
+
+  it('adds up scenarios run apart, and counts only maps', function () {
+    const dir = join(tempRoot(), 'c')
+    mkdirSync(dir)
+    writeFileSync(join(dir, 'one.json'), JSON.stringify(map(1)))
+    writeFileSync(join(dir, 'two.json'), JSON.stringify(map(2)))
+    writeFileSync(join(dir, 'notes.txt'), 'no')
+    const out = join(dir, 'nested', 'merged.out')
+    expect(mergeCoverage(dir, out)).equals(2)
+    expect(JSON.parse(readFileSync(out, 'utf8'))['src/app/a.ts'].s[0]).equals(3)
+  })
+
+  it('starts counting raw ranges across navigations', async function () {
+    const seen: unknown[] = []
+    const page = {
+      coverage: {
+        startJSCoverage: async (options: unknown) => {
+          seen.push(options)
+        }
+      }
+    }
+    await startCoverage(page as unknown as BrowserPage)
+    expect(seen).deep.equals([
+      { includeRawScriptCoverage: true, resetOnNavigation: false }
+    ])
   })
 })
 

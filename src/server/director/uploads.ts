@@ -307,16 +307,32 @@ export async function assembleParts(options: {
   // fix: the listeners are wanted, there are simply many of them.
   const ceiling = out.getMaxListeners()
   out.setMaxListeners(total + 10)
+  let assemblyError: unknown
   try {
     for (let index = 0; index < total; index++) {
       await pipeline(createReadStream(join(dir, partName(index))), out, {
         end: false
       })
     }
+  } catch (error) {
+    assemblyError = error
   } finally {
     out.setMaxListeners(ceiling)
-    out.end()
+    // `end` opens the file on the next turn. Reading it before that finishes
+    // is a stat of a path that is not there yet.
+    try {
+      await new Promise<void>((resolve, reject) => {
+        out.once('error', reject)
+        out.end(() => {
+          resolve()
+        })
+      })
+    } catch (error) {
+      assemblyError ??= error
+    }
   }
+  if (assemblyError instanceof Error) throw assemblyError
+  if (assemblyError != null) throw new Error('assembling the upload failed')
   return (await stat(into)).size
 }
 

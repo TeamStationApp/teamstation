@@ -115,6 +115,8 @@ export interface WebSession {
   /** For reading what maestro-d cannot, never for acting on the UI. */
   page: BrowserPage
   deviceClass: string
+  /** Emulates another window size, keeping the page and what it holds. */
+  resize: (size: { width: number; height: number }) => Promise<void>
   close: () => Promise<void>
 }
 

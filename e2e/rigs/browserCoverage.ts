@@ -34,7 +34,10 @@ export async function recordBrowserCoverage(
         script.rawScriptCoverage == null
       )
         continue
-      const generated = resolve('dist', basename(new URL(script.url).pathname))
+      const generated = resolve(
+        sourceMapRoot,
+        basename(new URL(script.url).pathname)
+      )
       const converter = convert(generated, 0, {
         source: script.text,
         sourceMap: {

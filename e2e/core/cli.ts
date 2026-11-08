@@ -14,6 +14,7 @@ import {
   scoreJudge,
   screenItems
 } from './corpus'
+import { mergeCoverage } from './coverage'
 import { detectFault } from './detect'
 import {
   acceptGolden,
@@ -129,6 +130,8 @@ const OPTIONS = {
   'run-dir': { type: 'string' },
   checkpoint: { type: 'string' },
   judge: { type: 'string' },
+  'browser-coverage': { type: 'string' },
+  out: { type: 'string' },
   fault: { type: 'string' },
   question: { type: 'string' },
   'false-question': { type: 'string' },
@@ -332,6 +335,7 @@ export async function main(argv: string[]): Promise<number> {
         runDir: values['run-dir'],
         retries: values.retries == null ? 0 : Number(values.retries),
         concurrent: values.concurrent,
+        browserCoverage: values['browser-coverage'],
         budgetUsd:
           values['budget-usd'] == null
             ? settings.judgeBudgetUsd
@@ -340,6 +344,15 @@ export async function main(argv: string[]): Promise<number> {
       })
       print({ ...outcome.result, runDir: outcome.runDir })
       return outcome.exitCode
+    }
+
+    case 'coverage-merge': {
+      const dir = subcommand
+      if (dir == null || values.out == null) {
+        throw new Error('coverage-merge wants <dir> --out <file>')
+      }
+      print({ merged: mergeCoverage(dir, values.out), out: values.out })
+      return 0
     }
 
     case 'detect': {

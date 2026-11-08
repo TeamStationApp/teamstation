@@ -10,6 +10,7 @@ import {
   type JudgeRuntime,
   statusFromCheckpoints
 } from './checkpoint'
+import { coverageFile, startCoverage, writeCoverage } from './coverage'
 import {
   baselineManifestPath,
   findAccount,
@@ -61,6 +62,8 @@ export interface RunOptions {
   concurrent?: boolean
   /** The fault this run proves. Only an isolated stack can carry one. */
   fault?: string
+  /** Records what the browser executed into this directory. */
+  browserCoverage?: string
   /** Stands in for building and installing an app, in tests. */
   prepare?: typeof prepareApp
   /** Stands in for the configured judge, in tests. */
@@ -362,6 +365,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
           size,
           emulation
         )
+        if (options.browserCoverage != null) await startCoverage(session.page)
         sessions.push(session)
         watch(session.m, { deviceClass: session.deviceClass })
         return session
@@ -469,6 +473,16 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       await keepEvidence(targets, runDir)
       failureKind = isAssertion(failure) ? 'assertion' : 'crash'
       serverErrors = (await handle.serverErrors(started)) ?? []
+    }
+    if (options.browserCoverage != null && handle.webDir != null) {
+      for (const [index, session] of sessions.entries()) {
+        await writeCoverage(
+          [session.page],
+          handle.webDir,
+          handle.origin,
+          coverageFile(options.browserCoverage, options.id, index)
+        )
+      }
     }
     for (const session of sessions) await session.close().catch(() => undefined)
     for (const close of attached) await close().catch(() => undefined)

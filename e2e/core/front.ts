@@ -46,8 +46,16 @@ export async function startFront(options: {
   apiPort: number
   host: string
   port: number
-}): Promise<{ server: Server; url: string; errors: ServerError[] }> {
-  const { webDir, apiPort, host, port } = options
+}): Promise<{
+  server: Server
+  url: string
+  errors: ServerError[]
+  /** Sends the API's paths somewhere else from now on, for an adopted server. */
+  retarget: (port: number, host: string) => void
+}> {
+  const { webDir, host, port } = options
+  let { apiPort } = options
+  let apiHost = '127.0.0.1'
   const errors: ServerError[] = []
   const record = (req: IncomingMessage, status: number): void => {
     errors.push({
@@ -62,7 +70,7 @@ export async function startFront(options: {
     if (goesToApi(path)) {
       const upstream = httpRequest(
         {
-          host: '127.0.0.1',
+          host: apiHost,
           port: apiPort,
           method: req.method,
           path: req.url,
@@ -109,7 +117,7 @@ export async function startFront(options: {
       socket.destroy()
       return
     }
-    const upstream = connect(apiPort, '127.0.0.1', () => {
+    const upstream = connect(apiPort, apiHost, () => {
       const headers = Object.entries(req.headers)
         .map(([name, value]) => `${name}: ${String(value)}`)
         .join('\r\n')
@@ -129,5 +137,13 @@ export async function startFront(options: {
     server.listen(port, host, resolve)
   })
   const address = server.address() as { port: number }
-  return { server, url: `http://${host}:${address.port}`, errors }
+  return {
+    server,
+    url: `http://${host}:${address.port}`,
+    errors,
+    retarget: (nextPort, nextHost) => {
+      apiPort = nextPort
+      apiHost = nextHost
+    }
+  }
 }

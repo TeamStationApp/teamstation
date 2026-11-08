@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import {
   applyEmulation,
+  browserFor,
   connectToMaestroChromium,
   type Emulation
 } from './browserCdp'
@@ -33,7 +34,7 @@ export async function openWebSession(
     url: blank,
     appId: blank,
     extra: {
-      browser: 'chromium',
+      browser: await browserFor(emulation),
       windowSize: `${size.width}x${size.height}`,
       headed: false,
       userDataDir: profile
@@ -45,6 +46,9 @@ export async function openWebSession(
     m,
     page,
     deviceClass: browserClassOf(await browser.version(), size),
+    resize: async next => {
+      await page.setViewport(next)
+    },
     close: async () => {
       await browser.disconnect()
       await m.detach()
