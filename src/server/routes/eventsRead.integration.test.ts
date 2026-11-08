@@ -9,6 +9,7 @@ import { Pool } from 'pg'
 import type { TagDocument } from '../../common/eventTags'
 import { tagTargets } from '../../common/eventTags'
 import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
+import type { ScoringMutation } from '../../common/scoring/scoringMutation'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -56,6 +57,7 @@ function play(atBatIndex: number): Record<string, unknown> {
 }
 
 interface Read {
+  scoringMutation?: ScoringMutation
   status: number
   plays: Array<{ id: string; gumbo: TagDocument }>
   playsDigest: string
@@ -182,6 +184,7 @@ describe('reading a game without taking its row', function () {
       body: JSON.stringify({
         mode: 'live',
         source: { system: 'teamstation' },
+        scoringBase: (await read(id)).scoringMutation ?? null,
         plays
       })
     })
@@ -340,6 +343,7 @@ describe('reading a game without taking its row', function () {
         body: JSON.stringify({
           mode: 'live',
           source: { system: 'teamstation' },
+          scoringBase: (await read(id)).scoringMutation ?? null,
           plays: [],
           currentPlay: {
             ...current,

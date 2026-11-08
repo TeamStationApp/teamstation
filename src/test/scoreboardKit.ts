@@ -17,6 +17,7 @@ import {
   type ScoringAction
 } from '../common/scoring/actions'
 import { newSetup } from '../common/scoring/lineup'
+import { asScoringMutation } from '../common/scoring/scoringMutation'
 import {
   type EventStore,
   ScoringSession,
@@ -313,12 +314,16 @@ export async function scoreDirectly(
   const load = async (id: string): ReturnType<EventStore['load']> => {
     const game = await db
       .selectFrom('games')
-      .select('currentPlay')
+      .select(['currentPlay', 'scoring_mutation'])
       .where('id', '=', id)
       .executeTakeFirstOrThrow()
     return {
       plays: (await readPlays(db, id)).map(row => row.gumbo as GumboPlay),
-      currentPlay: game.currentPlay as CurrentPlay | null
+      currentPlay: game.currentPlay as CurrentPlay | null,
+      scoringMutation:
+        game.scoring_mutation == null
+          ? undefined
+          : asScoringMutation(game.scoring_mutation)
     }
   }
   const store: EventStore = {

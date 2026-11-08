@@ -785,6 +785,39 @@ describe('a roster saved around the first pitch (U30)', function () {
 })
 
 describe('a decided play picked up by the screen', function () {
+  for (const animations of [true, false])
+    it(`does not retire a batter merely by following a pending ground out (${animations})`, function () {
+      let active = scoringReducer(initial(), {
+        type: 'PRESENTATION',
+        enabled: true
+      })
+      for (const event of [
+        { type: 'OUTCOME', outcome: 'Out at First' },
+        { type: 'FIELDER', id: 14, point: { x: -20, z: -40 } },
+        { type: 'TRAJECTORY', angle: -10 }
+      ] as const)
+        active = scoringReducer(
+          active,
+          event.type === 'OUTCOME'
+            ? event
+            : {
+                ...event,
+                generation: active.generation
+              }
+        )
+      const followed = resumedScoringState(
+        active.session,
+        active.log,
+        animations,
+        { following: true }
+      )
+      expect(followed.session.pending?.outcome).equals('Out at First')
+      expect(followed.presentation).equals(null)
+      expect(followed.log).deep.equals(active.log)
+      expect(followed.session.liveData.linescore.outs).equals(0)
+      expect(followed.runnerAction?.purpose).equals('batterRetirement')
+    })
+
   function decided(): ScoringState {
     let session = createDevelopmentSession(
       gameFixture,
