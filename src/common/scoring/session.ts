@@ -32,6 +32,11 @@ import {
 import type { SwapEffect } from './playsLost'
 import { awaitingResult, nextDecision } from './rules'
 import {
+  authoredScoringMutation,
+  compareScoringMutations,
+  type ScoringMutation
+} from './scoringMutation'
+import {
   copyGame,
   copyState,
   type GamePlay,
@@ -90,6 +95,8 @@ export function upcoming(session: GameState): {
 }
 
 export interface StoredGame {
+  scoringMutation?: ScoringMutation
+  superseded?: boolean
   plays: GumboPlay[]
   currentPlay: CurrentPlay | null
   /**
@@ -138,6 +145,13 @@ export interface StoredGame {
   context?: SessionContext
 }
 export interface SaveChange {
+  /** Device-only replay baseline for a queued lineup edit; never sent. */
+  deviceLineupRecovery?: LineupRecovery
+  scoringMutation?: ScoringMutation
+  /** Completed editable ancestry to restore if a competing branch replaced it. */
+  scoringHistory?: GumboPlay[]
+  /** The scoring version this delta builds on; null before any scoring. */
+  scoringBase?: ScoringMutation | null
   /**
    * The plays that changed. A session saves them in their stored form
    * (`withoutNames`): nobody's name travels with a play, and the server
@@ -194,6 +208,12 @@ export interface SessionContext {
    * ball. `DEFAULT_FENCE_DISTANCE_FT` when not given.
    */
   fenceDistanceFt?: number
+}
+export interface LineupRecovery {
+  baseline: StoredGame
+  context: SessionContext
+  /** Bounds repeated conflicts without changing an ambiguously sent request. */
+  attempts?: number
 }
 export interface SessionOptions {
   /** Live availability is staged on read and written with the next scoring change. */
@@ -316,13 +336,24 @@ function writtenCurrent(current: CurrentPlay | null | undefined): string {
  */
 export function storedChange(change: SaveChange): SaveChange {
   const names: Record<string, string> = { ...change.names }
-  for (const play of [...change.plays, change.currentPlay])
+  for (const play of [
+    ...change.plays,
+    ...(change.scoringHistory ?? []),
+    change.currentPlay
+  ])
     if (play != null)
       for (const [id, name] of namesIn(play))
         if (!(String(id) in names)) names[String(id)] = name
   return {
     ...change,
     plays: change.plays.map(play => storedPlay(play).stored),
+    ...(change.scoringHistory == null
+      ? {}
+      : {
+          scoringHistory: change.scoringHistory.map(
+            play => storedPlay(play).stored
+          )
+        }),
     ...(change.currentPlay === undefined
       ? {}
       : {
@@ -334,6 +365,34 @@ export function storedChange(change: SaveChange): SaveChange {
 }
 
 export class ScoringSession {
+  private mutationPending = false
+  private knownMutation: ScoringMutation | undefined
+  private authoredMutation: ScoringMutation | undefined
+  private lastAuthoredAt = -1
+
+  /** Capture the calibrated time of input before rendering or animation runs. */
+  captureScoringAction(at = this.now().getTime()): ScoringMutation {
+    // Calibration may move wall time backwards. An action that observed a
+    // version must still sort after it; unrelated devices keep wall ordering.
+    this.lastAuthoredAt = Math.max(
+      at,
+      this.lastAuthoredAt + 1,
+      (this.knownMutation?.at ?? -1) + 1,
+      (this.authoredMutation?.at ?? -1) + 1
+    )
+    return authoredScoringMutation(this.lastAuthoredAt)
+  }
+
+  private authorMutation(automatic = false, at?: number): void {
+    this.mutationPending = !automatic || this.authoredMutation != null
+    if (automatic && this.authoredMutation != null)
+      this.authoredMutation = {
+        ...this.authoredMutation,
+        revision: this.authoredMutation.revision + 1
+      }
+    else if (!automatic) this.authoredMutation = this.captureScoringAction(at)
+  }
+
   private log: ScoringAction[] = []
   /**
    * When each action of `log` was taken, on the session's clock, in the same
@@ -435,6 +494,7 @@ export class ScoringSession {
   private isReplaced = false
   /** Counts each time a save took the server's copy up under its own changes. */
   private rebaseCount = 0
+  private rebasedPeer = false
   /** What a rebase could not keep of this session's own changes, and why. */
   private dropped: string | null = null
 
@@ -470,6 +530,105 @@ export class ScoringSession {
     return session
   }
 
+  /** Replay only a queued child's lineup edits after its scoring parent loses. */
+  static async rebaseQueuedLineups(
+    gameId: string,
+    parent: StoredGame,
+    child: StoredGame,
+    winner: StoredGame,
+    context: SessionContext
+  ): Promise<SaveChange | undefined> {
+    const options = { setTimer: () => null, clearTimer: () => undefined }
+    let held = parent
+    const store: EventStore = {
+      load: async () => held,
+      save: async () => {
+        throw new Error('Queued reconciliation must not send')
+      }
+    }
+    const session = await ScoringSession.open(store, gameId, context, options)
+    const desired = await ScoringSession.open(
+      { ...store, load: async () => child },
+      gameId,
+      context,
+      options
+    )
+    try {
+      if (session.problem != null || desired.problem != null) return undefined
+      const scoring = (actions: readonly ScoringAction[]): ScoringAction[] =>
+        actions.filter(action => action.type !== 'lineup')
+      const before = scoring(session.log)
+      const after = scoring(desired.log)
+      if (
+        before.length !== after.length ||
+        before.some((action, index) => !sameAction(action, after[index]))
+      )
+        return undefined
+      const desiredLineups = desired.log.flatMap((action, index) =>
+        action.type === 'lineup'
+          ? [{ action, time: desired.actionTimes[index] }]
+          : []
+      )
+      const removedLineups = session.log.flatMap((action, index) => {
+        if (action.type !== 'lineup') return []
+        const time = session.actionTimes[index]
+        const match = desiredLineups.findIndex(
+          entry => entry.time === time && sameAction(entry.action, action)
+        )
+        if (match >= 0) {
+          desiredLineups.splice(match, 1)
+          return []
+        }
+        return [{ action, time }]
+      })
+      if (removedLineups.some(entry => entry.time == null)) return undefined
+      if (session.sync(desired.log, [], true).length > 0) return undefined
+      // Replaying the queued lineup uses the time it was authored, so an
+      // independently newer coach edit remains newer during normal rebase.
+      session.actionTimes = [...desired.actionTimes]
+      session.playbackTimes = [...desired.playbackTimes]
+      session.revision++
+      held = winner
+      await session.rebase()
+      if (session.refusal != null || session.failure != null) return undefined
+      if (removedLineups.length > 0) {
+        const keptTimes: Array<string | undefined> = []
+        const keptPlayback: Array<string | undefined> = []
+        const target = session.log.filter((action, index) => {
+          const removed = removedLineups.findIndex(
+            entry =>
+              entry.time === session.actionTimes[index] &&
+              sameAction(entry.action, action)
+          )
+          if (removed >= 0) {
+            removedLineups.splice(removed, 1)
+            return false
+          }
+          keptTimes.push(session.actionTimes[index])
+          keptPlayback.push(session.playbackTimes[index])
+          return true
+        })
+        if (session.sync(target, [], true).length > 0) return undefined
+        session.actionTimes = keptTimes
+        session.playbackTimes = keptPlayback
+        session.revision++
+      }
+      return {
+        ...storedChange({
+          ...session.change(),
+          currentPlay: session.picture().current
+        }),
+        scoringBase: session.knownMutation ?? null,
+        ...(session.lineupsBase === undefined
+          ? {}
+          : { lineupsBase: session.lineupsBase })
+      }
+    } finally {
+      session.close()
+      desired.close()
+    }
+  }
+
   /** Reads the game back from the store and picks it up where it was left. */
   static async open(
     store: EventStore,
@@ -490,6 +649,7 @@ export class ScoringSession {
           },
       options
     )
+    session.knownMutation = loaded.scoringMutation
     session.context = loaded.context ?? context
     session.lineupsBase = loaded.lineupsDigest
     session.openedGeneration = loaded.generation
@@ -778,6 +938,11 @@ export class ScoringSession {
     return this.rebaseCount
   }
 
+  /** The last rebase adopted another scorer instead of replaying our scoring. */
+  get rebaseFollowsPeer(): boolean {
+    return this.rebasedPeer
+  }
+
   /** Changes of this session's a rebase dropped because home and away were swapped. */
   get lostToSwap(): number {
     return this.swapLost
@@ -909,7 +1074,14 @@ export class ScoringSession {
     if (!this.holding) this.align()
     this.blocked = false
     this.dropped = null
-    if (save) this.changed()
+    if (save) {
+      if (action.type !== 'lineup')
+        this.authorMutation(
+          action.type === 'gameFlow' && action.kind === 'closePlay',
+          Date.parse(time ?? now)
+        )
+      this.changed()
+    }
     return applied
   }
 
@@ -923,7 +1095,7 @@ export class ScoringSession {
       this.readActions.add(action)
   }
 
-  undo(): Applied {
+  undo(authorship?: ScoringMutation): Applied {
     const unchanged = (problem: Problem): Applied => ({
       state: this.game,
       transitions: [],
@@ -938,6 +1110,12 @@ export class ScoringSession {
       return unchanged({ code: 'notNow', message: 'Nothing to undo' })
     // An Undo puts nothing back, so what it took off within the minute is let
     // go at once (`settle`).
+    if (this.log.slice(length - 1).some(action => action.type !== 'lineup')) {
+      if (authorship != null && authorship.id !== this.authoredMutation?.id) {
+        this.authoredMutation = { ...authorship }
+        this.mutationPending = true
+      } else this.authorMutation(authorship != null)
+    }
     this.settle(this.cut(length - 1))
     this.rebuild()
     this.reconcileCurrent()
@@ -964,7 +1142,8 @@ export class ScoringSession {
       before: number
       after: number
     }> = [],
-    preserveHistory = false
+    preserveHistory = false,
+    authorship?: ScoringMutation | null
   ): Problem[] {
     if (this.refusal != null) return [{ code: 'notNow', message: this.refusal }]
     // Corrections may retain actions from older scoring versions. Only exact
@@ -1003,6 +1182,22 @@ export class ScoringSession {
       this.log[same] = target[same]
       same++
     }
+    const oldScoring = this.log
+      .slice(same)
+      .filter(action => action.type !== 'lineup')
+    const newScoring = target
+      .slice(same)
+      .filter(action => action.type !== 'lineup')
+    const authored =
+      oldScoring.length !== newScoring.length ||
+      oldScoring.some((action, index) => !sameAction(action, newScoring[index]))
+    const automatic =
+      same === this.log.length &&
+      target
+        .slice(same)
+        .every(
+          action => action.type === 'gameFlow' && action.kind === 'closePlay'
+        )
     let cut: Displaced | null = null
     let changed = false
     // The run is matched against what the cut displaced once, at its end:
@@ -1111,6 +1306,16 @@ export class ScoringSession {
           }
         }
         this.picture()
+        if (authored) {
+          if (
+            authorship != null &&
+            authorship.id !== this.authoredMutation?.id
+          ) {
+            this.authoredMutation = { ...authorship }
+            this.mutationPending = true
+          } else
+            this.authorMutation(authorship === undefined ? automatic : true)
+        }
         this.changed()
       }
     }
@@ -1144,6 +1349,7 @@ export class ScoringSession {
       // An acknowledgment or competing reload can land during the read.
       if (snapshot === this.tagSnapshot) break
     }
+    this.knownMutation = fresh.knownMutation
     this.lineupsBase = fresh.lineupsBase
     this.heldPlays = fresh.heldPlays
     this.heldLineups = fresh.heldLineups
@@ -1167,6 +1373,9 @@ export class ScoringSession {
 
   /** Takes up everything `fresh`, a new read of the same game, holds. */
   private adopt(fresh: ScoringSession): void {
+    this.knownMutation = fresh.knownMutation
+    this.authoredMutation = undefined
+    this.mutationPending = false
     this.context = fresh.context
     this.readSwap = fresh.readSwap
     this.readActions = fresh.readActions
@@ -1245,8 +1454,13 @@ export class ScoringSession {
         count++
       return count
     }
-    const same = agree(this.savedLog, this.log)
-    const kept = agree(this.savedLog, fresh.log)
+    const ownMutation = this.mutationPending ? this.authoredMutation : undefined
+    const ordered = ownMutation != null && fresh.knownMutation != null
+    const oursWins =
+      ordered && compareScoringMutations(ownMutation, fresh.knownMutation!) > 0
+    const fork = agree(this.log, fresh.log)
+    const same = oursWins ? fork : agree(this.savedLog, this.log)
+    const kept = oursWins ? fork : agree(this.savedLog, fresh.log)
     const ours = this.log.slice(same)
     const theirs = fresh.log.slice(kept)
     // The latest creation time wins a lineup: each side's latest change of
@@ -1287,17 +1501,45 @@ export class ScoringSession {
       ourPlaybackTimes.length = 0
     }
     this.adopt(fresh)
+    if (oursWins) {
+      this.log = this.log.slice(0, fork)
+      this.actionTimes = this.actionTimes.slice(0, fork)
+      this.playbackTimes = this.playbackTimes.slice(0, fork)
+      this.rebuild()
+    }
     // An action of this session's undone before the server's came after it.
-    const replay = same < kept ? [...theirs, ...ours] : ours
+    const independent = oursWins
+      ? theirs.flatMap((action, index) =>
+          action.type === 'lineup' ? [index] : []
+        )
+      : []
+    const prefix = independent.map(index => theirs[index])
+    const replay = oursWins
+      ? [...prefix, ...ours]
+      : !ordered && same < kept
+        ? [...theirs, ...ours]
+        : ours
     // The server's actions are stored records, and apply as they were saved;
     // only this session's own are newly authored.
-    const stored = same < kept ? theirs.length : 0
-    const replayTimes = same < kept ? [...theirTimes, ...ourTimes] : ourTimes
-    const replayPlaybackTimes =
-      same < kept
+    const stored = oursWins
+      ? prefix.length
+      : !ordered && same < kept
+        ? theirs.length
+        : 0
+    const replayTimes = oursWins
+      ? [...independent.map(index => theirTimes[index]), ...ourTimes]
+      : !ordered && same < kept
+        ? [...theirTimes, ...ourTimes]
+        : ourTimes
+    const replayPlaybackTimes = oursWins
+      ? [
+          ...independent.map(index => theirPlaybackTimes[index]),
+          ...ourPlaybackTimes
+        ]
+      : !ordered && same < kept
         ? [...theirPlaybackTimes, ...ourPlaybackTimes]
         : ourPlaybackTimes
-    if (same < kept) {
+    if (!ordered && same < kept) {
       this.log = this.log.slice(0, same)
       this.rebuild()
     }
@@ -1305,12 +1547,53 @@ export class ScoringSession {
     for (const [index, time] of times)
       if (!this.times.has(index)) this.times.set(index, time)
     const refused: string[] = []
-    const oursFrom = same < kept ? theirs.length : 0
-    for (const [index, action] of replay.entries()) {
+    const oursFrom = stored
+    let replayedOwnScoring = false
+    for (const [index, original] of replay.entries()) {
+      let action = original
+      if (ordered && !oursWins && action.type !== 'lineup') continue
       // Our lineup change of a side another device changed later is
       // dropped: theirs stands.
       const sides = index >= oursFrom ? ourSides[index - oursFrom] : null
-      if (sides != null && olderThan(sides, replayTimes[index], theirLatest)) {
+      if (
+        sides != null &&
+        action.type === 'lineup' &&
+        action.kind === 'roster' &&
+        action.setup != null &&
+        action.shown !== true
+      ) {
+        const keep = sides.filter(
+          side => !olderThan([side], replayTimes[index], theirLatest)
+        )
+        if (keep.length < sides.length)
+          refused.push('another device changed that lineup later')
+        if (sides.length > 0 && keep.length === 0) continue
+        // A roster editor submits both sides. Replay only the sides it
+        // actually changed, leaving independent coach work in place.
+        const setup = setupOf(this.game)
+        for (const side of keep) {
+          setup.sides[side] = copyState(action.setup.sides[side])
+          for (const id of setup.sides[side].players) {
+            if (action.setup.players[id] != null)
+              setup.players[id] = copyState(action.setup.players[id])
+            if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
+          }
+        }
+        action = {
+          ...action,
+          setup,
+          ...(action.confirmed == null
+            ? {}
+            : {
+                confirmed: action.confirmed.filter(
+                  side => !olderThan([side], replayTimes[index], theirLatest)
+                )
+              })
+        }
+      } else if (
+        sides != null &&
+        olderThan(sides, replayTimes[index], theirLatest)
+      ) {
         refused.push('another device changed that lineup later')
         continue
       }
@@ -1336,6 +1619,8 @@ export class ScoringSession {
       // An action that had no time, scored by an app before actions carried
       // them, stays without one; its play keeps only its own times.
       const time = replayTimes[index]
+      if (index >= oursFrom && roster.type !== 'lineup')
+        replayedOwnScoring = true
       if (historical) this.retainedHistory.add(roster)
       this.log.push(roster)
       this.actionTimes.push(time)
@@ -1348,7 +1633,18 @@ export class ScoringSession {
         : refused.length === 0
           ? null
           : `${refused.length === 1 ? 'A change' : `${refused.length} changes`} could not follow another device's lineup change: ${refused[0]}`
+    this.authoredMutation =
+      !swapped && ownMutation != null && (!ordered || oursWins)
+        ? { ...ownMutation, revision: ownMutation.revision + 1 }
+        : undefined
+    this.mutationPending = this.authoredMutation != null
+    this.rebasedPeer =
+      swapped ||
+      (ordered && !oursWins) ||
+      (ownMutation == null && !replayedOwnScoring)
     this.rebaseCount++
+    this.isOffline = false
+    this.retryMs = FIRST_RETRY_MS
     this.notify()
   }
 
@@ -1754,6 +2050,50 @@ export class ScoringSession {
         change.currentPlay === undefined
       )
         return
+      const mutation = this.mutationPending ? this.authoredMutation : undefined
+      if (mutation != null) {
+        const picture = this.picture()
+        // A newer branch can win after an acknowledged ancestor was replaced
+        // or undone elsewhere. Include its completed ancestry, even when the
+        // phone's optimistic queue has already drained that ancestor.
+        change.scoringHistory = [...picture.plays.values()]
+        change.scoringBase = this.knownMutation ?? null
+        // A stamped snapshot can rewind a competing tail. Always state its
+        // current play explicitly; omission means unchanged for legacy writes.
+        change.currentPlay = picture.current
+        change.scoringMutation = {
+          ...mutation,
+          frontier:
+            picture.current?.about.atBatIndex ??
+            Math.max(
+              -1,
+              ...[...picture.plays.keys()].filter(
+                index => index !== FINAL_INDEX
+              )
+            ) + 1
+        }
+      } else {
+        change.scoringBase = this.knownMutation ?? null
+        if (this.context != null)
+          change.deviceLineupRecovery = {
+            baseline: {
+              plays: [
+                ...this.importedDocuments.values(),
+                ...[...this.posted.values()].map(
+                  text => JSON.parse(text) as GumboPlay
+                )
+              ],
+              currentPlay:
+                this.postedCurrent == null
+                  ? null
+                  : (JSON.parse(this.postedCurrent) as CurrentPlay | null),
+              scoringMutation: this.knownMutation,
+              lineupsDigest: this.lineupsBase,
+              generation: this.openedGeneration
+            },
+            context: { ...this.context, fenceDistanceFt: fenceOf(this.game) }
+          }
+      }
       let answer: PostedEdits | StoredGame | undefined
       try {
         answer = await this.store.save(this.gameId, {
@@ -1789,6 +2129,18 @@ export class ScoringSession {
         this.failed(error)
         return
       }
+      if (answer?.superseded === true && this.context != null) {
+        try {
+          await this.rebase()
+        } catch (reading) {
+          this.failed(reading)
+          return
+        }
+        continue
+      }
+      if (this.authoredMutation === mutation) this.mutationPending = false
+      if (answer?.scoringMutation != null)
+        this.knownMutation = answer.scoringMutation
       if (answer?.lineupsDigest !== undefined) {
         this.lineupsBase = answer.lineupsDigest
         this.heldLineups = held(this.heldLineups, answer.lineupsDigest)
