@@ -1,6 +1,10 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import {
+  initialScoringState,
+  scoringReducer
+} from '../../app/scoring/scoringMachine'
 import { lineupsDigest } from '../../server/events/teamLineups'
 import { F, game, TEAMS } from '../../test/scoringGames'
 import { expectNamesRoundTrip } from '../../test/storedNamesRoundTrip'
@@ -216,6 +220,51 @@ async function open(
 }
 
 describe('a scoring session', function () {
+  it('keeps the initiating input time through automatic defensive completion', async () => {
+    let now = 1000
+    const clock = new Clock()
+    clock.options.now = () => new Date(now)
+    const { session, store } = await open(new FakeStore(), clock)
+    let screen = initialScoringState(game(), true)
+    for (const event of [
+      { type: 'OUTCOME', outcome: 'Out at First' },
+      { type: 'FIELDER', id: F.SS, point: { x: -20, z: -40 } },
+      { type: 'TRAJECTORY', angle: -10 }
+    ] as const)
+      screen = scoringReducer(
+        screen,
+        event.type === 'OUTCOME'
+          ? event
+          : {
+              ...event,
+              generation: screen.generation
+            }
+      )
+    const authored = session.captureScoringAction()
+    now = 1500
+    expect(session.sync(screen.log, [], false, authored)).deep.equals([])
+    await session.flush()
+    const first = store.posts.at(-1)!.scoringMutation!
+    expect(first.at).equals(1000)
+    now = 2000
+    for (let i = 0; i < 10 && screen.presentation != null; i++) {
+      const { id, generation, stage } = screen.presentation
+      screen = scoringReducer(screen, {
+        type: 'PRESENTATION_DONE',
+        id,
+        generation,
+        stage
+      })
+    }
+    expect(screen.session.liveData.linescore.outs).equals(1)
+    expect(session.sync(screen.log, [], false, authored)).deep.equals([])
+    await session.flush()
+    const last = store.posts.at(-1)!.scoringMutation!
+    expect(last.at).equals(first.at)
+    expect(last.id).equals(first.id)
+    expect(last.revision).greaterThan(first.revision)
+  })
+
   it('persists tiebreaker runners and outs with each action independently undoable after reopening', async () => {
     const { session, store } = await open()
     const runners = session.state.liveData.boxscore.teams.away.battingOrder
@@ -802,6 +851,57 @@ describe('a scoring session', function () {
     await clock.tick()
     expect(clock.waiting.map(entry => entry.ms)).deep.equals([2000])
   })
+
+  for (const failure of ['read', 'post'] as const)
+    it(`recovers a superseded score after an offline ${failure} through its scheduled retry`, async function () {
+      const peerClock = new Clock()
+      peerClock.options.now = () => new Date(2000)
+      const peer = await open(new FakeStore(), peerClock)
+      peer.session.apply(strike)
+      await peer.session.flush()
+      const winner: StoredGame = {
+        ...(await peer.store.load()),
+        scoringMutation: peer.store.posts.at(-1)!.scoringMutation
+      }
+      let reads = 0
+      const posts: SaveChange[] = []
+      const clock = new Clock()
+      clock.options.now = () => new Date(1000)
+      const session = await ScoringSession.open(
+        {
+          load: async () => {
+            reads++
+            if (reads === 1) return { plays: [], currentPlay: null }
+            if (failure === 'read' && reads === 2)
+              throw new HttpError('offline', 'Winner read interrupted')
+            return winner
+          },
+          save: async (_id, change) => {
+            posts.push(change)
+            if (failure === 'post' && posts.length === 1)
+              throw new HttpError('offline', 'Score post interrupted')
+            return { ...winner, superseded: true }
+          }
+        },
+        'g1',
+        context,
+        clock.options
+      )
+      session.apply(ball)
+      await session.flush()
+      expect(session.pending).equals(1)
+      expect(session.offline).equals(true)
+      expect(session.problem).equals(null)
+      expect(clock.waiting.map(entry => entry.ms)).deep.equals([1000])
+      await clock.tick()
+      expect(session.actions).deep.equals([strike])
+      expect(session.pending).equals(0)
+      expect(session.offline).equals(false)
+      expect(session.problem).equals(null)
+      expect(clock.waiting).deep.equals([])
+      expect(posts).length(2)
+      expect(posts[1].scoringMutation).deep.equals(posts[0].scoringMutation)
+    })
 
   for (const code of ['conflict', 'forbidden'] as const)
     it(`goes read-only on ${code} and stops posting`, async function () {

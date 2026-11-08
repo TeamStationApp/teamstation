@@ -5,11 +5,13 @@ import { join, resolve } from 'node:path'
 
 import { ConcurrentScoringRig } from '../../test/concurrentScoring/concurrentScoring'
 import { ConcurrentScoringSafariRig } from '../../test/concurrentScoring/concurrentScoringSafari'
+import { conflictingPitches } from '../../test/concurrentScoring/conflicts'
 import type {
   E2eContext,
   FixtureManifest
 } from '../../test/concurrentScoring/context'
 import { fourInnings } from '../../test/concurrentScoring/game'
+import { networkRecovery } from '../../test/concurrentScoring/networkRecovery'
 import { browserSession, maestro } from '../../test/refinementsMaestro.e2e'
 
 const required = (name: string): string => {
@@ -25,7 +27,15 @@ async function main(): Promise<void> {
   }
   const scenario = option('scenario', 'four-innings')
   const surface = option('surface', 'chromium')
-  assert(['follow', 'lineups', 'four-innings'].includes(scenario))
+  assert(
+    [
+      'follow',
+      'lineups',
+      'four-innings',
+      'conflicts',
+      'network-recovery'
+    ].includes(scenario)
+  )
   assert(['chromium', 'safari'].includes(surface))
   const origin = required('TS_CONCURRENT_ORIGIN')
   const artifacts = resolve(required('TS_CONCURRENT_ARTIFACTS'))
@@ -123,6 +133,10 @@ async function main(): Promise<void> {
       : new ConcurrentScoringRig(ctx)
   try {
     if (scenario === 'four-innings') await fourInnings(rig, ctx)
+    else if (scenario === 'network-recovery') {
+      assert.equal(surface, 'safari')
+      await networkRecovery(rig)
+    } else if (scenario === 'conflicts') await conflictingPitches(rig)
     else if (scenario === 'lineups') {
       await rig.open()
       await rig.pitch(1, 'Ball')

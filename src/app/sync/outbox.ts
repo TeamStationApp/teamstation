@@ -4,6 +4,7 @@ import {
   placeholderTeamName
 } from '../../common/placeholderNames'
 import type { NewRosterPlayer } from '../../common/playerSettings'
+import type { SaveChange } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import type {
   CacheTransaction,
@@ -1104,6 +1105,39 @@ export class Outbox {
     replaces?: OutboxRow
   ): Promise<unknown> {
     if (replaces != null) await tx.remove(replaces.id)
+    if (call.kind === 'events' && sent === undefined) {
+      const body = call.body as SaveChange
+      if (body.scoringMutation != null) {
+        // Optimistic acknowledgments let a child omit completed plays still
+        // queued in its ancestors. Carry that dependent suffix with the child:
+        // a superseded ancestor must not splice another scorer's history in.
+        const ancestors = (await tx.outbox()).filter(
+          row => row.chain === chainOf(call) && callOfRow(row).kind === 'events'
+        )
+        const plays = new Map<number, SaveChange['plays'][number]>()
+        const remove = new Set<number>()
+        for (const change of [
+          ...ancestors.map(row => parsed(row.body) as unknown as SaveChange),
+          body
+        ]) {
+          if (change.scoringMutation != null)
+            for (const index of plays.keys())
+              if (index >= change.scoringMutation.frontier) plays.delete(index)
+          for (const index of change.remove ?? []) {
+            plays.delete(index)
+            remove.add(index)
+          }
+          for (const play of change.plays) {
+            plays.set(play.about.atBatIndex, play)
+            remove.delete(play.about.atBatIndex)
+          }
+        }
+        call = {
+          ...call,
+          body: { ...body, plays: [...plays.values()], remove: [...remove] }
+        }
+      }
+    }
     const dependsOn = await this.dependencies(tx, await tx.outbox(), call.body)
     const written = await this.optimistic(tx, call)
     if (written == null) return undefined
@@ -1582,7 +1616,10 @@ export class Outbox {
     const rewriting = later.filter(other =>
       documentsOf(callOfRow(other)).some(doc => doc.key === own)
     )
-    let document = response
+    let document = { ...response }
+    // This flag describes only the rejected request, not the canonical game
+    // or a later locally authored mutation applied on top of it.
+    if (call.kind === 'events') delete document.superseded
     for (const other of rewriting)
       document = await this.applied(
         tx,
