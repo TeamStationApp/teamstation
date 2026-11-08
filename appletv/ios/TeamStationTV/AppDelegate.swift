@@ -30,10 +30,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     let window = UIWindow(windowScene: windowScene)
     self.window = window
     var properties: [String: Any] = [
+      "appOrigin": Bundle.main.object(forInfoDictionaryKey: "TVAppOrigin") as! String,
       "apiBaseUrl": Bundle.main.object(forInfoDictionaryKey: "TVApiBaseUrl") as! String
     ]
 #if DEBUG
     properties["apiBaseUrl"] = ProcessInfo.processInfo.environment["TV_API_BASE_URL"] ?? properties["apiBaseUrl"]
+    properties["appOrigin"] = ProcessInfo.processInfo.environment["TV_APP_ORIGIN"] ?? properties["appOrigin"]
     properties["probeUrls"] = ProcessInfo.processInfo.environment["TV_PROBE_URLS"] ?? ""
 #endif
     factory.startReactNative(withModuleName: "TeamStationTV", in: window,
