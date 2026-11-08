@@ -146,6 +146,10 @@ import {
   asSaidRosterCommand,
   type SaidRosterCommand
 } from './scoring/rosterCommands'
+import {
+  asScoringMutation,
+  type ScoringMutation
+} from './scoring/scoringMutation'
 import type { SaveChange, StoredGame } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
 import {
@@ -1431,6 +1435,7 @@ export type RosterEntry = Omit<
 export const asRosterEntry: (raw: unknown) => RosterEntry = cleanRosterEntry
 
 const asStoredGame = asObject({
+  scoringMutation: asOptional(asNullable(asScoringMutation)),
   plays: asArray(
     asObject({ id: asString, gameId: asString, gumbo: asGumboPlay })
   ),
@@ -1448,6 +1453,9 @@ const asStoredGame = asObject({
 /** A game's plays as a session reads them, with the digests that were sent. */
 function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
   return {
+    ...(stored.scoringMutation == null
+      ? {}
+      : { scoringMutation: stored.scoringMutation }),
     plays: stored.plays.map(row => row.gumbo),
     currentPlay: stored.currentPlay,
     ...(stored.playsDigest == null ? {} : { playsDigest: stored.playsDigest }),
@@ -1472,6 +1480,8 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
  * the game was left with, each only when the answer has it.
  */
 export interface PostedEdits {
+  scoringMutation?: ScoringMutation
+  superseded?: boolean
   playsDigest?: string
   priorPlaysDigest?: string
   lineupsDigest?: string
@@ -1479,6 +1489,8 @@ export interface PostedEdits {
 }
 
 const asPostedFields = asObject({
+  scoringMutation: asOptional(asNullable(asScoringMutation)),
+  superseded: asOptional(asBoolean),
   playsDigest: asOptional(asNullable(asString)),
   priorPlaysDigest: asOptional(asNullable(asString)),
   lineupsDigest: asOptional(asNullable(asString)),
@@ -1498,6 +1510,12 @@ const asPostedFields = asObject({
 export function asPostedEdits(raw: unknown): PostedEdits {
   const posted = asPostedFields(raw)
   return {
+    ...(posted.scoringMutation == null
+      ? {}
+      : { scoringMutation: posted.scoringMutation }),
+    ...(posted.superseded === undefined
+      ? {}
+      : { superseded: posted.superseded }),
     ...(posted.playsDigest == null ? {} : { playsDigest: posted.playsDigest }),
     ...(posted.priorPlaysDigest == null
       ? {}
@@ -1516,6 +1534,9 @@ export function asPostedEdits(raw: unknown): PostedEdits {
 export function liveEventsBody(change: SaveChange): Record<string, unknown> {
   return {
     mode: 'live',
+    ...(change.scoringMutation == null
+      ? {}
+      : { scoringMutation: change.scoringMutation }),
     source: { system: 'teamstation' },
     plays: change.plays,
     remove: change.remove,
