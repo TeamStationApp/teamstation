@@ -12,6 +12,8 @@ export interface LegacyList {
   parked: string[]
   /** Categories still holding unconverted tests, so the fault rule waits for them. */
   pendingCategories?: string[]
+  /** Runnable `tests` paths, other than `tsconfig.e2e.json`, each mapped to a module. */
+  modules?: Record<string, string>
 }
 
 export function readLegacy(root: string): LegacyList {

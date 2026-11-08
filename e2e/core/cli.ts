@@ -32,6 +32,7 @@ import {
   writeJudgeBar
 } from './judge'
 import { type DetectRow, ledgerPath, readLedger } from './ledger'
+import { readLegacy } from './legacy'
 import { buildManifest, readManifest, ROOT, writeManifest } from './manifest'
 import { type PlanResource, planScenarios } from './plan'
 import { prepareApp } from './prepare'
@@ -167,6 +168,12 @@ export async function main(argv: string[]): Promise<number> {
       } else {
         for (const row of rows) {
           console.log(`${row.id}  ${row.title}`)
+        }
+        const modules = readLegacy(ROOT).modules ?? {}
+        for (const file of Object.keys(modules).sort()) {
+          if (values.category == null || modules[file] === values.category) {
+            console.log(`legacy ${file}`)
+          }
         }
       }
       return 0

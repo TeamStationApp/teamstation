@@ -13,6 +13,7 @@ import {
   ROOT,
   testFiles
 } from './manifest'
+import { moduleOf, moduleProblems } from './modules'
 import { specProblems } from './spec'
 
 export interface ValidationReport extends LegacyReport {
@@ -96,6 +97,15 @@ export function validate(
     ...faultProblems(namedFaults(root), legacyList.pendingCategories ?? [])
   )
   const report = legacyReport(legacyList, tracked)
+  problems.push(...moduleProblems(legacyList, root))
+  if (legacyList.modules != null) {
+    for (const file of report.additions) {
+      const found = moduleOf(file, root)
+      if (found != null && legacyList.modules[file] == null) {
+        problems.push(`${file}: a non-helper addition has no module`)
+      }
+    }
+  }
   if (strict) {
     for (const file of [...report.legacy, ...report.additions]) {
       problems.push(`${file}: tests belong under e2e/`)
