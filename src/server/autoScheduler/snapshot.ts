@@ -354,18 +354,38 @@ export async function snapshot(
     ? await headCoachesOf(db, teamIds)
     : {}
   const busyTeams = new Set([...teamIds, ...Object.keys(headCoaches)])
-  const bookings: EngineBooking[] = (
-    await occupancy(
-      db,
-      {
-        fieldIds,
-        teamIds: [...busyTeams],
-        from: now,
-        keepScheduledFor: Object.keys(headCoaches)
-      },
-      clock
-    )
+  const liveBookings = await occupancy(
+    db,
+    {
+      fieldIds,
+      teamIds: [...busyTeams],
+      from: new Date(now.getTime() - 8 * 86400000),
+      keepScheduledFor: Object.keys(headCoaches)
+    },
+    clock
   )
+  const weeklyGames = [
+    ...liveBookings
+      .filter(
+        booking =>
+          booking.managerOnly !== true &&
+          booking.seasonId != null &&
+          !replaceGameIds.includes(booking.key)
+      )
+      .map(booking => ({
+        seasonId: booking.seasonId!,
+        fieldId: booking.fieldId,
+        teamIds: [booking.homeTeamId, booking.awayTeamId],
+        start: booking.start
+      })),
+    ...(request.keep ?? []).map(game => ({
+      seasonId: game.seasonId,
+      fieldId: game.fieldId,
+      teamIds: [game.homeTeamId, game.awayTeamId],
+      start: Date.parse(game.startAt)
+    }))
+  ]
+  const bookings: EngineBooking[] = liveBookings
     // A pending change to a counted game holds the time it proposes as
     // well as the game's own; the game itself is already counted.
     .filter(
@@ -451,6 +471,7 @@ export async function snapshot(
       })),
       bookings,
       fixed,
+      weeklyGames,
       teamNames: Object.fromEntries(teams.map(team => [team.id, team.name])),
       ...(request.teamIds == null ? {} : { teamIds: request.teamIds }),
       ...(required == null ? {} : { required }),
@@ -506,7 +527,9 @@ export function ruleContext(
         season.id,
         {
           bufferMinutes: season.settings.bufferMinutes,
-          doubleheaders: season.settings.doubleheaders
+          doubleheaders: season.settings.doubleheaders,
+          maxGamesOnWeekdays: season.settings.maxGamesOnWeekdays,
+          maxGamesOnWeekend: season.settings.maxGamesOnWeekend
         }
       ])
     ),

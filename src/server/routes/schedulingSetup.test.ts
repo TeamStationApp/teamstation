@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import type {
@@ -7,6 +8,7 @@ import type {
   SeasonScheduleSettings
 } from '../../common/seasonScheduling'
 import { userIdOfGumbo } from '../../common/userId'
+import { migration111ScheduleWeekParts } from '../../migrate/migrations/111scheduleWeekParts'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { chosenSeasonIds, scheduleSetup } from '../scheduler/setup'
 import { CLAIM_WAIT_MS } from '../venues/ownership'
@@ -18,6 +20,9 @@ const SETTINGS: ScheduleSettings = {
   regularGames: 4,
   exhibitionGames: 1,
   doubleheaders: 'never',
+  maxGamesOnWeekdays: 1,
+  maxGamesOnWeekend: 1,
+  preferGameOn: 'weekend',
   startsOn: '2027-03-01',
   endsOn: '2027-05-31',
   blackouts: ['2027-04-04'],
@@ -116,6 +121,86 @@ describe('scheduling setup routes', function () {
     await f?.h.close()
   })
 
+  it('saves weekly portion caps, preserves omitted fields, and validates new values', async () => {
+    const path = `/seasons/${f.seasonA}/schedule-settings`
+    const initial = await json<SeasonScheduleSettings>(
+      await f.h.request('GET', path, undefined, 101)
+    )
+    expect(initial.settings).includes({
+      maxGamesOnWeekdays: 1,
+      maxGamesOnWeekend: 1,
+      preferGameOn: 'weekend'
+    })
+    const settings = {
+      ...initial.settings,
+      maxGamesOnWeekdays: 2,
+      maxGamesOnWeekend: 0,
+      preferGameOn: 'weekdays'
+    }
+    await json(await f.h.request('PUT', path, settings, 101))
+    const { maxGamesOnWeekdays, maxGamesOnWeekend, preferGameOn, ...legacy } =
+      settings
+    const saved = await json<SeasonScheduleSettings>(
+      await f.h.request('PUT', path, { ...legacy, gameMinutes: 90 }, 101)
+    )
+    expect(saved.settings).includes({
+      maxGamesOnWeekdays,
+      maxGamesOnWeekend,
+      preferGameOn,
+      gameMinutes: 90
+    })
+    for (const [key, value] of [
+      ['maxGamesOnWeekdays', -1],
+      ['maxGamesOnWeekend', 0.5],
+      ['maxGamesOnWeekend', 201],
+      ['preferGameOn', 'daily'],
+      ['maxGamesOnWeekend', null]
+    ])
+      expect(
+        (
+          await f.h.request(
+            'PUT',
+            path,
+            { ...settings, [key as string]: value },
+            101
+          )
+        ).status
+      ).equals(400)
+    expect((await f.h.request('PUT', path, settings, 102)).status).equals(403)
+  })
+
+  it('migrates populated season settings to checked defaults and reverses the columns', async () => {
+    const path = `/seasons/${f.seasonA}/schedule-settings`
+    const initial = await json<SeasonScheduleSettings>(
+      await f.h.request('GET', path, undefined, 101)
+    )
+    await json(await f.h.request('PUT', path, initial.settings, 101))
+    await sql.raw(migration111ScheduleWeekParts.down).execute(f.h.db)
+    await sql.raw(migration111ScheduleWeekParts.up).execute(f.h.db)
+    const saved = await json<SeasonScheduleSettings>(
+      await f.h.request('GET', path, undefined, 101)
+    )
+    expect(saved.settings).includes({
+      maxGamesOnWeekdays: 1,
+      maxGamesOnWeekend: 1,
+      preferGameOn: 'weekend'
+    })
+    for (const assignment of [
+      'max_games_on_weekdays = -1',
+      'max_games_on_weekend = 201',
+      "prefer_game_on = 'daily'"
+    ]) {
+      let rejected = false
+      await sql
+        .raw(`update season_schedule_settings set ${assignment}`)
+        .execute(f.h.db)
+        .catch(() => {
+          rejected = true
+        })
+      expect(rejected).equals(true)
+    }
+  })
+
   it('flags exhibition teams for a season admin, parent-managed or active, and lists them as exhibition teams', async () => {
     await activeTeam('tem_active', f.seasonA)
     expect((await flag(f.seasonA, f.teamA, true, 102)).status).equals(403)
@@ -155,6 +240,9 @@ describe('scheduling setup routes', function () {
         regularGames: 0,
         exhibitionGames: 0,
         doubleheaders: 'ifNecessary',
+        maxGamesOnWeekdays: 1,
+        maxGamesOnWeekend: 1,
+        preferGameOn: 'weekend',
         startsOn: '2027-03-01',
         endsOn: '2027-05-31',
         blackouts: [],

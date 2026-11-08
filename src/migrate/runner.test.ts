@@ -597,6 +597,7 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '109teamRosterVersions',
           '110dropSyncClock',
           '111liveChanges',
+          '111scheduleWeekParts',
           '112videoSpaceSecret'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)

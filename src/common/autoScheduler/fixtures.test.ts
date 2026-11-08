@@ -86,6 +86,9 @@ export function season(
       regularGames: 4,
       exhibitionGames: 1,
       doubleheaders: 'ifNecessary',
+      // These legacy scenarios isolate field capacity and daily rules.
+      maxGamesOnWeekdays: 200,
+      maxGamesOnWeekend: 200,
       startsOn: '2027-03-01',
       endsOn: '2027-07-31',
       blackouts: [],

@@ -1,5 +1,11 @@
+import { gameWeekPart, weekPartMaximum } from '../gameWeekPart'
 import { fieldSizeLabel } from '../venues'
-import { openSlots, type RunContext, type SeasonContext } from './context'
+import {
+  buildContext,
+  openSlots,
+  type RunContext,
+  type SeasonContext
+} from './context'
 import { Occupancy, TeamAvailability } from './feasibility'
 import {
   buildMatchups,
@@ -109,6 +115,13 @@ export function teamCapacity(
   const free = season.teamFree.get(team)
   const perDay = season.season.settings.doubleheaders === 'never' ? 1 : Infinity
   let games = 0
+  const portions = new Map<string, number>()
+  if (ownTime)
+    for (const { teamIds, point } of season.weeklyGames) {
+      if (!teamIds.includes(team)) continue
+      const { key } = gameWeekPart(point.day)
+      portions.set(key, (portions.get(key) ?? 0) + 1)
+    }
   let date = ''
   let today = 0
   let busyUntil = -Infinity
@@ -129,7 +142,14 @@ export function teamCapacity(
         today = 0
         busyUntil = -Infinity
       }
-      if (today < perDay && slot.start >= busyUntil) {
+      const { key, part } = gameWeekPart(slot.day)
+      const used = portions.get(key) ?? 0
+      if (
+        today < perDay &&
+        slot.start >= busyUntil &&
+        used < weekPartMaximum(season.season.settings, part)
+      ) {
+        portions.set(key, used + 1)
         today++
         games++
         busyUntil = slot.end
@@ -203,6 +223,42 @@ export function managerCauseOfOption(
   }
 }
 
+/** Explain a binding weekly maximum without confusing it with field supply. */
+function weekPartCause(
+  context: RunContext,
+  season: SeasonContext,
+  matchups: readonly Matchup[]
+): string | null {
+  const needed = new Map<string, number>()
+  for (const game of matchups)
+    for (const team of [game.homeTeamId, game.awayTeamId])
+      needed.set(team, (needed.get(team) ?? 0) + 1)
+  let withoutLimits: SeasonContext | undefined
+  for (const [team, count] of needed) {
+    const capped = teamCapacity(season, team, true)
+    if (capped >= count) continue
+    // Rebuild availability too: zero or already-full caps make teamFree busy.
+    withoutLimits ??= buildContext({
+      ...context.input,
+      seasons: context.input.seasons.map(each =>
+        each.id === season.season.id
+          ? {
+              ...each,
+              settings: {
+                ...each.settings,
+                maxGamesOnWeekdays: Number.MAX_SAFE_INTEGER,
+                maxGamesOnWeekend: Number.MAX_SAFE_INTEGER
+              }
+            }
+          : each
+      )
+    }).seasonById.get(season.season.id)!
+    if (capped < teamCapacity(withoutLimits, team, true))
+      return 'this season’s weekday/weekend game maximums leave too few available games'
+  }
+  return null
+}
+
 /**
  * Why a season can't have the count it asked for, phrased against that
  * count: not enough field time of its size, or a team whose own games
@@ -222,6 +278,8 @@ export function capacityCause(
   const manager = blockedByManager(context, season, matchups)
   if (manager != null) return manager
   if (matchups.length > fieldCapacity(context, season)) return fieldTime
+  const weekly = weekPartCause(context, season, matchups)
+  if (weekly != null) return weekly
 
   const own = context.input.fixed.filter(
     game => game.seasonId === season.season.id
@@ -304,6 +362,12 @@ export function requiredCause(
   const manager = blockedByManager(context, season, unplaced)
   if (manager != null) return manager
   if (required > fieldCapacity(context, season)) return fieldTime
+  const weekly = weekPartCause(
+    context,
+    season,
+    (context.required ?? []).filter(game => game.seasonId === season.season.id)
+  )
+  if (weekly != null) return weekly
   const fieldOpen = season.fieldFree.reduce((sum, free) => sum + free, 0)
   for (const matchup of unplaced) {
     if (

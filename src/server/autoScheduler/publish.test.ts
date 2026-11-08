@@ -53,6 +53,93 @@ describe('publishing a schedule preview', function () {
     await w?.close()
   })
 
+  for (const moving of [false, true]) {
+    it(`builds publishable options around external pending proposals (change=${moving})`, async () => {
+      const { f, teams } = w.fx
+      await f.h.db
+        .updateTable('games')
+        .set({ status: 'cancelled' })
+        .where('season_id', '=', f.seasonA)
+        .execute()
+      await w.call(101, 'PUT', `/seasons/${f.seasonA}/schedule-settings`, {
+        ...SEASON_A_SETTINGS,
+        startsOn: '2027-03-13',
+        endsOn: '2027-03-14',
+        regularGames: moving ? 2 : 1,
+        exhibitionGames: 0,
+        maxGamesOnWeekdays: 1,
+        maxGamesOnWeekend: moving ? 2 : 1
+      })
+      const id = 'external_pending_game'
+      if (moving)
+        await f.h.db
+          .insertInto('games')
+          .values({
+            id,
+            season_id: f.seasonA,
+            home_team_id: teams.Hawks,
+            away_team_id: teams.Owls,
+            field_id: w.fieldId,
+            field_size: '50/70',
+            status: 'scheduled',
+            start_at: new Date('2027-03-13T13:00:00Z'),
+            end_at: new Date('2027-03-13T14:30:00Z')
+          })
+          .execute()
+      await f.h.db
+        .insertInto('group_requests')
+        .values({
+          id: 'external_pending_request',
+          sender_scope_id: f.seasonA,
+          sender_scope_type: 'season',
+          sender_id: userIdOfGumbo(101),
+          kind: 'game',
+          sent_at: f.clock.now(),
+          expires_at: new Date('2030-01-01'),
+          ...(moving ? { game_id: id } : {}),
+          terms: {
+            ...(moving ? { gameId: id } : { proposedGameId: id }),
+            game: {
+              homeTeamId: teams.Hawks,
+              awayTeamId: teams.Owls,
+              seasonId: f.seasonA,
+              fieldId: w.fieldId,
+              fieldSize: '50/70',
+              status: 'scheduled',
+              startAt: '2027-03-14T14:00:00Z',
+              endAt: '2027-03-14T15:30:00Z'
+            }
+          }
+        })
+        .execute()
+      const result = await build({ mode: 'full', existing: 'workAround' })
+      expect(result.status).equals(201)
+      expect(result.body.options.length).greaterThan(0)
+      const stored = await f.h.db
+        .selectFrom('schedule_previews')
+        .select('input')
+        .where('id', '=', result.body.id)
+        .executeTakeFirstOrThrow()
+      const input = stored.input as {
+        engine: { weeklyGames: Array<{ teamIds: string[]; start: number }> }
+      }
+      const holdings = input.engine.weeklyGames.filter(game =>
+        game.teamIds.includes(teams.Hawks)
+      )
+      expect(holdings).length(1)
+      expect(holdings[0].start).equals(Date.parse('2027-03-14T14:00:00Z'))
+      if (!moving)
+        expect(
+          result.body.options[0].games.some(game =>
+            [game.homeTeamId, game.awayTeamId].some(team =>
+              [teams.Hawks, teams.Owls].includes(team)
+            )
+          )
+        ).equals(false)
+      expect((await publish(result.body.id)).status).equals(200)
+    })
+  }
+
   for (const editPublished of [false, true]) {
     it(`refuses a revoked administrator after acquiring the schedule lock (published edit=${editPublished})`, async () => {
       const { f } = w.fx

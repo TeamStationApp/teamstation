@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { ActivityIndicator, Text, View } from 'react-native'
+import { ActivityIndicator, Text, TextInput, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { monthDay } from '../../common/calendarDates'
@@ -8,6 +8,7 @@ import {
   addWindowPeriod,
   asWindowPeriods,
   copyWindowPeriods,
+  MAX_GAMES,
   type ScheduleSettings,
   type SetupSeason
 } from '../../common/seasonScheduling'
@@ -22,6 +23,7 @@ import { ChoiceSheet } from '../components/ChoiceSheet'
 import { DangerText } from '../components/DangerText'
 import { CalendarPicker } from '../components/EventScheduleFields'
 import { PickerDialog } from '../components/PickerDialog'
+import { SegmentedPill } from '../components/SegmentedPill'
 import {
   WeeklyHoursEditor,
   WINDOW_OPEN_DEFAULT
@@ -61,6 +63,7 @@ export function ScheduleSeasonScreen({
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
+  const [maximumDrafts, setMaximumDrafts] = useState<Record<string, string>>({})
   const [revision, setRevision] = useState(0)
   const [choosing, setChoosing] = useState<Choosing>(null)
   // The league's other seasons with game windows, newest first.
@@ -99,6 +102,7 @@ export function ScheduleSeasonScreen({
       setNotice('')
       try {
         await work()
+        setMaximumDrafts({})
         setNotice(done)
       } catch (failure) {
         setError(
@@ -193,6 +197,77 @@ export function ScheduleSeasonScreen({
             {notice}
           </Text>
         )}
+        <ActionList bounded>
+          {(
+            [
+              ['maxGamesOnWeekdays', 'Max games on weekdays'],
+              ['maxGamesOnWeekend', 'Max games on weekend']
+            ] as const
+          ).map(([key, label]) => (
+            <ActionRow
+              key={key}
+              title={label}
+              end={
+                <TextInput
+                  key={`${season.id}:${settings[key] ?? 1}`}
+                  accessibilityLabel={label}
+                  value={
+                    maximumDrafts[`${season.id}:${key}`] ??
+                    String(settings[key] ?? 1)
+                  }
+                  editable={!busy}
+                  keyboardType="number-pad"
+                  returnKeyType="done"
+                  selectTextOnFocus
+                  style={styles.maximum}
+                  onChangeText={value => {
+                    setMaximumDrafts(drafts => ({
+                      ...drafts,
+                      [`${season.id}:${key}`]: value
+                    }))
+                  }}
+                  onBlur={() => {
+                    const value = (
+                      maximumDrafts[`${season.id}:${key}`] ??
+                      String(settings[key] ?? 1)
+                    ).trim()
+                    if (!/^\d+$/.test(value) || Number(value) > MAX_GAMES) {
+                      setNotice('')
+                      setError(`Choose a maximum from 0 to ${MAX_GAMES}.`)
+                    } else {
+                      setError('')
+                      if (Number(value) !== (settings[key] ?? 1))
+                        save({ [key]: Number(value) }, 'Game maximum saved.')
+                    }
+                  }}
+                />
+              }
+            />
+          ))}
+          <ActionRow
+            title="Prefer game on:"
+            end={
+              <View style={styles.preference}>
+                <SegmentedPill
+                  accessibilityLabel="Prefer game on"
+                  options={[
+                    { id: 'weekend', label: 'weekend' },
+                    { id: 'weekdays', label: 'weekdays' }
+                  ]}
+                  selected={settings.preferGameOn ?? 'weekend'}
+                  disabled={busy}
+                  onSelect={preferGameOn => {
+                    save({ preferGameOn }, 'Game preference saved.')
+                  }}
+                />
+              </View>
+            }
+          />
+        </ActionList>
+        <Text style={styles.meta}>
+          Maximums per team each week: Monday–Friday and Saturday–Sunday. Fewer
+          games may be scheduled.
+        </Text>
         <SectionHeader
           title="Game windows"
           note={String(settings.windows.length)}
@@ -474,6 +549,14 @@ export function ScheduleSeasonScreen({
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  maximum: {
+    width: 56,
+    minHeight: 48,
+    textAlign: 'right',
+    color: theme.primaryTextColor,
+    fontSize: 16
+  },
+  preference: { width: 212 },
   page: { gap: theme.rem(1), paddingBottom: theme.rem(6) },
   title: {
     fontFamily: theme.primaryTextFont,

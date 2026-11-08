@@ -5,6 +5,7 @@ import {
   DOUBLEHEADERS,
   firstNonZero,
   mixDeviation,
+  PREFERENCE,
   SCARCITY,
   SPACING,
   type TeamTally,
@@ -23,8 +24,16 @@ import type { FairnessRow, PlannedGame } from './types'
  */
 export const WEIGHTINGS: ReadonlyArray<readonly number[]> = [
   TRUE_ORDER,
-  [UNPLACED, DOUBLEHEADERS, TIME_OF_DAY, SPACING, SCARCITY, WEEKDAY],
-  [UNPLACED, DOUBLEHEADERS, SPACING, WEEKDAY, SCARCITY, TIME_OF_DAY]
+  [
+    UNPLACED,
+    DOUBLEHEADERS,
+    PREFERENCE,
+    TIME_OF_DAY,
+    SPACING,
+    SCARCITY,
+    WEEKDAY
+  ],
+  [UNPLACED, DOUBLEHEADERS, PREFERENCE, SPACING, WEEKDAY, SCARCITY, TIME_OF_DAY]
 ]
 
 /** The seeds each weighting runs from. */
@@ -201,7 +210,7 @@ export function optionReasons(
   const bestViews = teamViews(context, best)
   const reasons: string[] = []
   for (const term of TRUE_ORDER) {
-    if (option.score[term] - best.score[term] <= 1e-9) continue
+    if ((option.score[term] ?? 0) - (best.score[term] ?? 0) <= 1e-9) continue
     let reason: string | null = null
     if (term === UNPLACED) {
       const more = option.score[term] - best.score[term]
@@ -209,6 +218,8 @@ export function optionReasons(
     } else if (term === DOUBLEHEADERS) {
       const more = Math.round(option.score[term] - best.score[term])
       reason = plural(more, 'more doubleheader')
+    } else if (term === PREFERENCE) {
+      reason = 'More games fall outside the preferred part of the week'
     } else if (term === TIME_OF_DAY)
       reason = mixReason(
         views,

@@ -391,7 +391,8 @@ export function requireKeepsRules(
   game: PlannedGame,
   others: Holding[],
   now: Date,
-  headCoaches?: Record<string, string>
+  headCoaches?: Record<string, string>,
+  weeklyOthers?: Holding[]
 ): void {
   const season = snap.engine.seasons.find(each => each.id === game.seasonId)
   if (season == null) throw badRequest('Choose a season of this run')
@@ -418,7 +419,7 @@ export function requireKeepsRules(
       size: game.size,
       seasonId: game.seasonId
     },
-    ruleContext(snap, others, headCoaches)
+    { ...ruleContext(snap, others, headCoaches), weeklyOthers }
   )
   if (problem != null) throw badRequest(problem)
 }
@@ -430,6 +431,23 @@ export async function currentHoldings(
   clock: Clock,
   leaveOut: string[]
 ): Promise<{ holdings: Holding[]; headCoaches: Record<string, string> }> {
+  const settings = await db
+    .selectFrom('season_schedule_settings')
+    .select(['season_id', 'max_games_on_weekdays', 'max_games_on_weekend'])
+    .where(
+      'season_id',
+      'in',
+      snap.engine.seasons.map(season => season.id)
+    )
+    .execute()
+  for (const season of snap.engine.seasons) {
+    const current = settings.find(row => row.season_id === season.id)
+    season.settings = {
+      ...season.settings,
+      maxGamesOnWeekdays: current?.max_games_on_weekdays ?? 1,
+      maxGamesOnWeekend: current?.max_games_on_weekend ?? 1
+    }
+  }
   const teamIds = [
     ...new Set([
       ...snap.engine.seasons.flatMap(season => [
@@ -454,7 +472,7 @@ export async function currentHoldings(
         fieldIds: snap.engine.fields.map(field => field.id),
         teamIds: [...new Set([...teamIds, ...Object.keys(headCoaches)])],
         keepScheduledFor: Object.keys(headCoaches),
-        from: clock.now()
+        from: new Date(clock.now().getTime() - 8 * 86400000)
       },
       clock
     )
@@ -518,7 +536,7 @@ export async function editPreview(
         ...added
       ]
       const live =
-        body.addedGames.length === 0 || snap.avoidHeadCoachConflicts === false
+        body.addedGames.length === 0
           ? undefined
           : await currentHoldings(trx, snap, clock, snap.replaceGameIds)
       for (const game of body.addedGames) {
@@ -565,7 +583,9 @@ export async function editPreview(
               })),
             ...optionHoldings
           ],
-          clock.now()
+          clock.now(),
+          undefined,
+          [...(live?.holdings ?? []), ...optionHoldings]
         )
         added = [...added, next]
       }
