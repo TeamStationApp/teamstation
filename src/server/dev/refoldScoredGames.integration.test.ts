@@ -14,6 +14,7 @@ import type { ScoringAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/apply'
 import { freshGame, newSetup } from '../../common/scoring/lineup'
 import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
+import { asScoringMutation } from '../../common/scoring/scoringMutation'
 import {
   type EventStore,
   ScoringSession,
@@ -129,12 +130,16 @@ describe('refolding the stored plays (U11)', function () {
     load: async gameId => {
       const game = await db
         .selectFrom('games')
-        .select('currentPlay')
+        .select(['currentPlay', 'scoring_mutation'])
         .where('id', '=', gameId)
         .executeTakeFirstOrThrow()
       return {
         plays: (await readPlays(db, gameId)).map(row => row.gumbo as GumboPlay),
-        currentPlay: game.currentPlay as CurrentPlay | null
+        currentPlay: game.currentPlay as CurrentPlay | null,
+        scoringMutation:
+          game.scoring_mutation == null
+            ? undefined
+            : asScoringMutation(game.scoring_mutation)
       }
     },
     save: async (gameId, change) => {
