@@ -16,6 +16,10 @@ import {
 import { TEST_AMOUNTS } from '../../../tools/dbLoad/testAmounts'
 import { openScratch, type Scratch } from '../../../tools/dbLoad/testSupport'
 import type { GameState } from '../../common/scoring/state'
+import {
+  SCORING_FEATURE_HEADER,
+  SCORING_FEATURES
+} from '../../common/scoring/teamRecord'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
@@ -87,15 +91,24 @@ describe('live-pitch', function () {
   it('scores one pitch and prints the answer’s keys and edits', async function () {
     const game = tokens.games[0]
     const lines: string[] = []
+    let writeFeatures: string | null | undefined
     const answer = await livePitch({
       api: `${api}/`,
       gameId: game.id,
       token: scorer(0).token,
+      fetch: async (url, init) => {
+        if (init?.method === 'POST')
+          writeFeatures = new Headers(init.headers).get(SCORING_FEATURE_HEADER)
+        return await fetch(url, init)
+      },
       print: line => lines.push(line)
     })
+    expect(writeFeatures).equals(SCORING_FEATURES)
     expect(answer.keys).deep.equals([
       'edits',
       'currentPlay',
+      'scoringUpdates',
+      'scoringMutation',
       'lineupsDigest',
       'playsDigest',
       'priorPlaysDigest',
@@ -112,7 +125,10 @@ describe('live-pitch', function () {
       `edits: ${answer.edits!.puts} (${answer.edits!.puts} put, 0 remove)`
     )
     expect(lines[4]).equals(`bytes: ${answer.bytes}`)
-    expect(lines[5]).matches(/^read as: \{"playsDigest":/)
+    expect(lines[5]).matches(/^read as: /)
+    expect(JSON.parse(lines[5].slice('read as: '.length)).playsDigest).equals(
+      answer.posted.playsDigest
+    )
   })
 
   it('reads an answer of every play, as a server from before edits gives', async function () {

@@ -28,6 +28,8 @@ export function fieldServer(stored: {
   stale: boolean
   /** Another device changed the lineups later: lineup saves are refused. */
   newer: boolean
+  superseded: boolean
+  refuseRenames: boolean
   /** While set, a play's save waits on it before it is answered. */
   holdPlays?: Promise<void>
   /** While set, every request waits on it before it is answered. */
@@ -111,6 +113,8 @@ export function fieldServer(stored: {
     offline: false,
     stale: false,
     newer: false,
+    superseded: false,
+    refuseRenames: false,
     holdPlays: undefined as Promise<void> | undefined,
     hold: undefined as Promise<void> | undefined,
     posts: [] as Post[],
@@ -123,6 +127,15 @@ export function fieldServer(stored: {
         init?.method === 'POST' ? target.split('?') : [target]
       const json = (status: number, body: unknown): Response =>
         new Response(JSON.stringify(body), { status })
+      if (
+        init?.method === 'PUT' &&
+        path.startsWith('/games/g1/guest-players/')
+      ) {
+        if (state.refuseRenames)
+          return json(400, { code: 'badRequest', message: 'Rename refused' })
+        const names = JSON.parse(init.body as string) as Record<string, string>
+        return json(200, { ...scoringRoster(1)[0], nameDetails: names })
+      }
       if (init?.method === 'POST') {
         const body = JSON.parse(init.body as string) as Record<string, unknown>
         state.posts.push({ path, query, body })
@@ -169,6 +182,8 @@ export function fieldServer(stored: {
           })
         if (path === '/games/g1/events') {
           await state.holdPlays
+          if (state.superseded)
+            return json(200, { ...(eventsBody() as object), superseded: true })
           for (const index of body.remove as number[]) plays.delete(index)
           for (const play of body.plays as GumboPlay[])
             plays.set(play.about.atBatIndex, play)

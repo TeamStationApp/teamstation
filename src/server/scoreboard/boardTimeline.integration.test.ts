@@ -24,6 +24,7 @@ import type { ScoringAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/apply'
 import { freshGame, newSetup } from '../../common/scoring/lineup'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
+import { asScoringMutation } from '../../common/scoring/scoringMutation'
 import {
   type EventStore,
   type SaveChange,
@@ -224,12 +225,16 @@ describe('the board timeline', function () {
   const load = async (gameId: string): ReturnType<EventStore['load']> => {
     const game = await db
       .selectFrom('games')
-      .select('currentPlay')
+      .select(['currentPlay', 'scoring_mutation'])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
     return {
       plays: (await readPlays(db, gameId)).map(row => row.gumbo as GumboPlay),
-      currentPlay: game.currentPlay as CurrentPlay | null
+      currentPlay: game.currentPlay as CurrentPlay | null,
+      scoringMutation:
+        game.scoring_mutation == null
+          ? undefined
+          : asScoringMutation(game.scoring_mutation)
     }
   }
   const body = (change: SaveChange): unknown => ({
@@ -283,6 +288,7 @@ describe('the board timeline', function () {
         JSON.stringify(action)
       ).deep.equals([])
       await session.flush()
+      expect(session.problem).equals(null)
     }
   }
 
@@ -412,7 +418,7 @@ describe('the board timeline', function () {
       const score = await scorer(gameId, direct)
       const times: number[] = []
       for (const action of actions) {
-        clock += 1000
+        clock += 100
         times.push(clock)
         await score(action)
       }
@@ -518,7 +524,7 @@ describe('the board timeline', function () {
       const actions = situationActions(setup).slice(0, 8)
       const score = await scorer(gameId, direct)
       for (const action of actions) {
-        clock += 1000
+        clock += 100
         await score(action)
       }
       await sql`update events set gumbo = gumbo #- '{teamStation,actionTimes}' where "gameId" = ${gameId}`.execute(
@@ -626,7 +632,7 @@ describe('the board timeline', function () {
         name: string,
         write: () => Promise<void> | void
       ): Promise<void> {
-        clock += 1000
+        clock += 100
         at[name] = clock
         const writing = write()
         await messages(viewer, ++expected)

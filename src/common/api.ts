@@ -157,8 +157,18 @@ import {
   asSaidRosterCommand,
   type SaidRosterCommand
 } from './scoring/rosterCommands'
-import type { SaveChange, SessionLog, StoredGame } from './scoring/session'
+import {
+  asScoringMutation,
+  type ScoringMutation
+} from './scoring/scoringMutation'
+import type {
+  LineupRecovery,
+  SaveChange,
+  SessionLog,
+  StoredGame
+} from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
+import { SCORING_FEATURE_HEADER, SCORING_FEATURES } from './scoring/teamRecord'
 import {
   asScheduleSetup,
   asSeasonScheduleSettings,
@@ -1547,6 +1557,7 @@ export type RosterEntry = Omit<
 export const asRosterEntry: (raw: unknown) => RosterEntry = cleanRosterEntry
 
 const asStoredGame = asObject({
+  scoringMutation: asOptional(asNullable(asScoringMutation)),
   plays: asArray(
     asObject({ id: asString, gameId: asString, gumbo: asGumboPlay })
   ),
@@ -1577,6 +1588,9 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
     stored.readerNames
   )
   return {
+    ...(stored.scoringMutation == null
+      ? {}
+      : { scoringMutation: stored.scoringMutation }),
     plays,
     currentPlay,
     ...(stored.playsDigest == null ? {} : { playsDigest: stored.playsDigest }),
@@ -1602,6 +1616,8 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
  * the game was left with, each only when the answer has it.
  */
 export interface PostedEdits {
+  scoringMutation?: ScoringMutation
+  superseded?: boolean
   playsDigest?: string
   priorPlaysDigest?: string
   lineupsDigest?: string
@@ -1609,6 +1625,8 @@ export interface PostedEdits {
 }
 
 const asPostedFields = asObject({
+  scoringMutation: asOptional(asNullable(asScoringMutation)),
+  superseded: asOptional(asBoolean),
   playsDigest: asOptional(asNullable(asString)),
   priorPlaysDigest: asOptional(asNullable(asString)),
   lineupsDigest: asOptional(asNullable(asString)),
@@ -1628,6 +1646,12 @@ const asPostedFields = asObject({
 export function asPostedEdits(raw: unknown): PostedEdits {
   const posted = asPostedFields(raw)
   return {
+    ...(posted.scoringMutation == null
+      ? {}
+      : { scoringMutation: posted.scoringMutation }),
+    ...(posted.superseded === undefined
+      ? {}
+      : { superseded: posted.superseded }),
     ...(posted.playsDigest == null ? {} : { playsDigest: posted.playsDigest }),
     ...(posted.priorPlaysDigest == null
       ? {}
@@ -1646,6 +1670,15 @@ export function asPostedEdits(raw: unknown): PostedEdits {
 export function liveEventsBody(change: SaveChange): Record<string, unknown> {
   return {
     mode: 'live',
+    ...(change.scoringHistory == null
+      ? {}
+      : { scoringHistory: change.scoringHistory }),
+    ...(change.scoringBase === undefined
+      ? {}
+      : { scoringBase: change.scoringBase }),
+    ...(change.scoringMutation == null
+      ? {}
+      : { scoringMutation: change.scoringMutation }),
     source: { system: 'teamstation' },
     plays: change.plays,
     remove: change.remove,
@@ -3344,6 +3377,8 @@ export interface RequestOptions {
    * of the game reads named before the server answers.
    */
   deviceNames?: Record<string, string>
+  /** Original lineup baseline kept only in the device outbox. */
+  deviceLineupRecovery?: LineupRecovery
   /**
    * A live post's session log (`SaveChange.log`): never sent, but kept on the
    * device beside a queued post, for a newer build to play again.
@@ -6140,12 +6175,11 @@ export class TeamStationClient {
       `/games/${encodeURIComponent(gameId)}/events?answer=edits`,
       asPostedEdits,
       liveEventsBody(change),
-      change.names == null && change.log == null
-        ? undefined
-        : {
-            ...(change.names == null ? {} : { deviceNames: change.names }),
-            ...(change.log == null ? {} : { deviceLog: change.log })
-          }
+      {
+        deviceNames: change.names,
+        deviceLineupRecovery: change.deviceLineupRecovery,
+        deviceLog: change.log
+      }
     )
   }
 
@@ -7442,8 +7476,43 @@ export class TeamStationClient {
     return await observeApi(
       method,
       path,
-      async () =>
-        await this.requestUnobserved(method, path, cleaner, body, options),
+      async () => {
+        // Keep recovery ancestry in the durable request, but upload only the
+        // delta normally. A definitive refusal may need the original history
+        // to distinguish scoring-derived lineup changes from a coach's edits.
+        // Retrying that original body also recovers a pre-upgrade request whose
+        // full body already owns its key after a lost acknowledgment.
+        if (
+          method === 'POST' &&
+          /^\/games\/[^/]+\/events(?:\?|$)/.test(path) &&
+          Array.isArray((body as SaveChange | undefined)?.scoringHistory)
+        ) {
+          const { scoringHistory: _history, ...delta } = body as SaveChange
+          try {
+            return await this.requestUnobserved(
+              method,
+              path,
+              cleaner,
+              delta,
+              options
+            )
+          } catch (error) {
+            if (
+              !(error instanceof HttpError) ||
+              (error.code !== 'conflict' &&
+                error.code !== 'idempotencyKeyReused')
+            )
+              throw error
+          }
+        }
+        return await this.requestUnobserved(
+          method,
+          path,
+          cleaner,
+          body,
+          options
+        )
+      },
       this.captureAnalytics
     )
   }
@@ -7607,7 +7676,8 @@ export class TeamStationClient {
   ): Promise<T> {
     const headers: Record<string, string> = {
       ...options.headers,
-      accept: 'application/json'
+      accept: 'application/json',
+      [SCORING_FEATURE_HEADER]: SCORING_FEATURES
     }
     // Bytes (an attachment's part) go as they are; anything else as JSON.
     const bytes = body instanceof Uint8Array ? body : undefined
