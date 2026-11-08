@@ -161,7 +161,7 @@ function Approval({
     <View style={styles.scene}>
       <TvBackdrop />
       <Screen centreContent contentStyle={styles.content}>
-        <TvBrand />
+        <TvBrand subtleHalo />
         <Text style={styles.copy}>
           Use TeamStation on Apple TV and Google TV from your TV’s app store.
         </Text>
