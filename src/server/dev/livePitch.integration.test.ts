@@ -96,6 +96,8 @@ describe('live-pitch', function () {
     expect(answer.keys).deep.equals([
       'edits',
       'currentPlay',
+      'scoringUpdates',
+      'scoringMutation',
       'lineupsDigest',
       'playsDigest',
       'priorPlaysDigest',
@@ -112,7 +114,10 @@ describe('live-pitch', function () {
       `edits: ${answer.edits!.puts} (${answer.edits!.puts} put, 0 remove)`
     )
     expect(lines[4]).equals(`bytes: ${answer.bytes}`)
-    expect(lines[5]).matches(/^read as: \{"playsDigest":/)
+    expect(lines[5]).matches(/^read as: /)
+    expect(JSON.parse(lines[5].slice('read as: '.length)).playsDigest).equals(
+      answer.posted.playsDigest
+    )
   })
 
   it('reads an answer of every play, as a server from before edits gives', async function () {

@@ -4,7 +4,6 @@ import {
   asNumber,
   asObject,
   asOptional,
-  asString,
   type Cleaner
 } from 'cleaners'
 
@@ -15,11 +14,12 @@ import { PITCH_DATA_CLEANERS, PITCH_DATA_TOOL_FIELDS } from './pitchLocation'
 import { idOfWrittenTag, positionSaid, tagOf, writtenTag } from './playerTags'
 import {
   asFielderRef,
-  asGameSetup,
+  asLineupAction,
   asSessionId,
   type FielderRef,
   type GameState,
   isPosition,
+  LINEUP_KINDS,
   type Optional,
   type PlayerRef,
   type Position,
@@ -179,17 +179,7 @@ export type BatteryKind = (typeof BATTERY_KINDS)[number]
 export const ERROR_KINDS = ['fielding', 'throwing'] as const
 export type ErrorKind = (typeof ERROR_KINDS)[number]
 
-export const LINEUP_KINDS = [
-  'roster',
-  'battingOrder',
-  'position',
-  'addPlayer',
-  'substitute',
-  'pinchRunner',
-  'batterSide',
-  'runner'
-] as const
-export type LineupKind = (typeof LINEUP_KINDS)[number]
+export { LINEUP_KINDS, type LineupKind } from './state'
 
 export const GAME_FLOW_KINDS = [
   'closePlay',
@@ -265,8 +255,6 @@ export const ACTION_TYPES = [
 export type ActionType = (typeof ACTION_TYPES)[number]
 
 const asPoint = asObject({ x: asNumber, z: asNumber })
-const asSideName = asLiteral('away', 'home')
-const asPosition = asLiteral(...POSITIONS)
 const asOneOf = <T extends string>(values: readonly T[]): Cleaner<T> =>
   asLiteral(...values)
 
@@ -347,45 +335,7 @@ const actionCleaners = {
       asArray(asObject({ runner: asSessionId, to: asOneOf(DESTINATIONS) }))
     )
   }),
-  lineup: asObject({
-    type: asLiteral('lineup'),
-    kind: asOneOf(LINEUP_KINDS),
-    side: asOptional(asSideName),
-    setup: asOptional(asGameSetup),
-    /**
-     * Sides of a roster setup left in roster order because the saver could
-     * not see that team's default. The game shows that order, and the first
-     * pitch leaves that team's default as it stands.
-     */
-    unseen: asOptional(asArray(asSideName)),
-    /**
-     * Sides of a roster setup the saver could see. The first pitch takes
-     * one as the lineup the game begins with, except a side an earlier save
-     * left unseen whose arrangement is still that roster order.
-     */
-    confirmed: asOptional(asArray(asSideName)),
-    /**
-     * The screen logged this roster because it was showing a default in
-     * place of an unseen order, ahead of a play. A rebase lets it replace
-     * only a side that is still that order. Every other side stays as the
-     * server holds it.
-     */
-    shown: asOptional(asLiteral(true)),
-    /**
-     * A roster saved after the first pitch: each side keeps its batting slot,
-     * and whoever now stands in it bats. Absent, the man due stays due.
-     */
-    keepSlot: asOptional(asLiteral(true)),
-    nextBatter: asOptional(asSessionId),
-    order: asOptional(asArray(asSessionId)),
-    position: asOptional(asPosition),
-    player: asOptional(asSessionId),
-    replaces: asOptional(asSessionId),
-    base: asOptional(asOneOf(BASES)),
-    name: asOptional(asString),
-    jersey: asOptional(asString),
-    batSide: asOptional(asLiteral('L', 'R'))
-  }),
+  lineup: asLineupAction,
   gameFlow: asObject({
     type: asLiteral('gameFlow'),
     kind: asOneOf(GAME_FLOW_KINDS),
