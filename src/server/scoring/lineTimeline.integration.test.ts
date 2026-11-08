@@ -42,7 +42,7 @@ describe('the line timeline (U2)', function () {
   let db: Kysely<Database>
   let drop: () => Promise<void>
   let context: Pick<SessionContext, 'teams' | 'setup'>
-  let clock = Date.now()
+  let clock = Date.now() - 60_000
 
   const swing: ScoringAction = { type: 'ballInPlay', contact: 'swing' }
   const strike: ScoringAction = { type: 'pitch', call: 'C' }
@@ -142,7 +142,7 @@ describe('the line timeline (U2)', function () {
   })
 
   beforeEach(function () {
-    clock = Date.now()
+    clock = Date.now() - 60_000
   })
 
   after(async function () {

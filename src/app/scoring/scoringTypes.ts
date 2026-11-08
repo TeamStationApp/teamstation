@@ -402,6 +402,8 @@ export type ScoringEvent =
   | { type: 'UNDO' }
   | {
       type: 'CLOSE_PLAY'
+      /** Explicit Finish input, even when guarded by a generation. */
+      authored?: boolean
       generation?: number
       revision?: number
       sequence?: number
@@ -411,6 +413,8 @@ export type ScoringEvent =
   | { type: 'PRESENTATION'; enabled: boolean }
   | {
       type: 'RESET'
+      /** Display a peer's progress without automatically closing their play. */
+      following?: boolean
       session: ScoringSessionState
       log: ScoringAction[]
       readOnly?: boolean
