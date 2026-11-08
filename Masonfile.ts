@@ -636,7 +636,12 @@ async function archiveFieldApp(
     buildNumber: build,
     xcargs: [
       ...fieldLinkSettings(ctx.run.branch),
-      `TS_APP_ENTITLEMENTS=${entitlements}`
+      `TS_APP_ENTITLEMENTS=${entitlements}`,
+      // Swift aborts optimising CameramanControlUI against CameramanCore with
+      // cross-module optimisation on; see tsDirector/scripts/build-device.sh.
+      ...(appDir.endsWith('tsDirector')
+        ? ['OTHER_SWIFT_FLAGS=$(inherited) -disable-cmo']
+        : [])
     ]
   })
   if (archived.ipa == null) throw new Error('No IPA was exported')
