@@ -27,7 +27,8 @@ import {
   type ChatKeyStore,
   epochKeyOf,
   recordFromJson,
-  recordToJson
+  recordToJson,
+  withEpochKey
 } from '../../app/chat/keyRecord'
 import {
   type ChatAttachment,
@@ -2389,9 +2390,16 @@ describe('the chat engine (U12)', function () {
     } catch (error) {
       expect((error as HttpError).message).equals('other')
     }
+    // Each says whether this device holds the key it asks for: not 9002's.
     expect(
-      doubter.engine.approvals().map(approval => approval.requestId)
-    ).deep.equals([9001, 9002, 9003])
+      doubter.engine
+        .approvals()
+        .map(approval => [approval.requestId, approval.canApprove])
+    ).deep.equals([
+      [9001, true],
+      [9002, false],
+      [9003, true]
+    ])
     expect(doubter.engine.approvals()[0].oldSafetyNumber).equals(undefined)
     expect(await engineRefusal(doubter.engine.approve(9001))).equals('badKeys')
     expect(await engineRefusal(doubter.engine.approve(9002))).equals('locked')
@@ -2399,6 +2407,44 @@ describe('the chat engine (U12)', function () {
       'unverifiedMember'
     )
     expect(await engineRefusal(doubter.engine.approve(9009))).equals('target')
+    // A key that arrives through the engine's own record, and epochs read
+    // through its own context, tell the screens to look again.
+    const told: string[] = []
+    const untell = doubter.engine.subscribe(event => {
+      told.push(event.type)
+    })
+    const context = (
+      doubter.engine as unknown as {
+        context: {
+          keys: {
+            record: ChatKeyRecord
+            update: (
+              change: (record: ChatKeyRecord) => ChatKeyRecord
+            ) => Promise<ChatKeyRecord>
+          }
+          approvalsMayChange?: () => void
+        }
+      }
+    ).context
+    await context.keys.update(record =>
+      withEpochKey(record, members, latest + 90, new Uint8Array(32).fill(5))
+    )
+    expect(told).includes('approvals')
+    expect(
+      doubter.engine.approvals().find(approval => approval.requestId === 9002)
+        ?.canApprove
+    ).equals(true)
+    // The hook epoch reads call is the engine's: when what it can grant has
+    // changed since the screens looked, it tells them.
+    told.length = 0
+    const { [String(latest + 90)]: _dropped, ...kept } =
+      context.keys.record.epochKeys[members]
+    context.keys.record.epochKeys[members] = kept
+    context.approvalsMayChange?.()
+    expect(told).deep.equals(['approvals'])
+    context.approvalsMayChange?.()
+    expect(told).length(1)
+    untell()
     doubter.engine.stop()
 
     // Where the membership record is broken, nothing is approved.

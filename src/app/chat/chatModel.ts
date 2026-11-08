@@ -297,9 +297,9 @@ export function swipeReplies(translationX: number): boolean {
 }
 
 /**
- * The reset identities waiting for this person's approval in one chat.
- * Never the person's own: a reset identity holds no key, so only another
- * member can open its history.
+ * The reset identities waiting for this person's approval in one chat, that
+ * this device holds a key to grant. Never the person's own: a reset identity
+ * holds no key, so only another member can open its history.
  */
 export function approvalsIn(
   approvals: GrantApproval[],
@@ -308,6 +308,8 @@ export function approvalsIn(
 ): GrantApproval[] {
   return approvals.filter(
     approval =>
-      approval.conversationId === conversationId && approval.userId !== userId
+      approval.conversationId === conversationId &&
+      approval.userId !== userId &&
+      approval.canApprove
   )
 }

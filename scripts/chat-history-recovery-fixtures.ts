@@ -199,6 +199,7 @@ export async function prepareRecoveryFixture(args: string[]): Promise<string> {
             'E11',
             'E12',
             'E13',
+            'E14',
             'locked',
             'phones',
             'phones-android'
