@@ -23,6 +23,16 @@ import {
 import { usesOverrideSlots } from '../../common/scoring/actions'
 import { halfOutcomes } from '../../common/scoring/linescore'
 import type { SwapEffect } from '../../common/scoring/playsLost'
+import {
+  asScoringMutation,
+  sameScoringMutation,
+  type ScoringMutation
+} from '../../common/scoring/scoringMutation'
+import {
+  requiresDeferredLineups,
+  SCORING_FEATURE_HEADER,
+  SCORING_FEATURES
+} from '../../common/scoring/teamRecord'
 import { teamsOfRow } from '../../common/teamLists'
 import { canScore, lineupTeams, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
@@ -308,6 +318,27 @@ export function eventRoutes(
             gameId,
             body,
             async (trx, game) => {
+              if (req.get(SCORING_FEATURE_HEADER) !== SCORING_FEATURES) {
+                // This callback runs with the game row locked, before writes.
+                const held = await trx
+                  .selectFrom('games')
+                  .select(['currentPlay', 'pregame'])
+                  .where('id', '=', gameId)
+                  .executeTakeFirstOrThrow()
+                const plays = await readPlays(trx, gameId)
+                if (
+                  [
+                    held.currentPlay,
+                    held.pregame,
+                    ...plays.map(play => play.gumbo),
+                    body.currentPlay,
+                    ...body.plays
+                  ].some(requiresDeferredLineups)
+                )
+                  throw conflict(
+                    'Update TeamStation to score this game; its lineup changes require a newer app.'
+                  )
+              }
               // A scorekeeper of either team, which an administrator of it is.
               const scorers = await roleScopes(trx, actor.userId, actor.isAdmin)
               if (
@@ -325,6 +356,7 @@ export function eventRoutes(
               ? undefined
               : async (trx, posted) => {
                   const kept: LivePostDigests = {
+                    superseded: posted.superseded,
                     priorPlaysDigest: posted.priorPlaysDigest,
                     lineupsDigest: posted.lineupsDigest
                   }
@@ -334,6 +366,7 @@ export function eventRoutes(
                   })
                 },
             {
+              scoringAuthor: true,
               expectedGeneration: body.generation,
               halves: async (trx, game) =>
                 lineupTeams(
@@ -345,7 +378,7 @@ export function eventRoutes(
               cache: options.cache
             }
           )
-          wrote = true
+          wrote = response.superseded !== true
           return { status: 200, body: response }
         },
         keepsAnswer: false,
@@ -381,6 +414,22 @@ export function eventRoutes(
                   )
               )
           )
+          const superseded =
+            kept.superseded === true ||
+            (body.scoringMutation != null &&
+              !sameScoringMutation(
+                body.scoringMutation,
+                current.scoringMutation
+              ))
+          if (superseded)
+            return {
+              status: 200,
+              body: {
+                ...current,
+                priorPlaysDigest: current.playsDigest,
+                superseded: true
+              }
+            }
           if (!edits) return { status: 200, body: { ...current, ...kept } }
           const {
             plays,
@@ -432,6 +481,16 @@ export function eventRoutes(
             plays
           )
       )
+      if (
+        req.get(SCORING_FEATURE_HEADER) !== SCORING_FEATURES &&
+        [
+          result.answer.currentPlay,
+          ...result.answer.plays.map(play => (play as { gumbo: unknown }).gumbo)
+        ].some(requiresDeferredLineups)
+      )
+        throw conflict(
+          'Update TeamStation to open scoring for this game; its lineup changes require a newer app.'
+        )
       // A game with nothing stored has no setup to hold anyone's halves, and
       // whoever may dictate still needs their first names.
       // Dictation's, so nothing Tess, who does not dictate, is told.
@@ -591,12 +650,14 @@ function postAnswerOf(raw: unknown): 'edits' | undefined {
 
 /** What a live post's key keeps of its answer: the rest is read again. */
 interface LivePostDigests {
+  superseded?: boolean
   priorPlaysDigest: string | null
   lineupsDigest: string | null
 }
 
 /** A game's plays as `GET /games/:gameId/events` answers them. */
 interface StoredGameAnswer {
+  scoringMutation?: ScoringMutation
   plays: unknown[]
   currentPlay: unknown
   playsDigest: string
@@ -647,6 +708,7 @@ async function storedGameRead(
       'pregame',
       'lineups_digest',
       'play_generation',
+      'scoring_mutation',
       'status',
       'cancellation_reason'
     ])
@@ -679,6 +741,11 @@ async function storedGameRead(
       id: gameId,
       ...game
     }),
+    ...(game.scoring_mutation == null
+      ? {}
+      : {
+          scoringMutation: asScoringMutation(game.scoring_mutation)
+        }),
     generation: game.play_generation,
     // What swapping home and away would do, as the swap route decides it.
     swap: gameSwapEffect(

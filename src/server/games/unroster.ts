@@ -21,6 +21,7 @@ import {
   reconcileRoster
 } from '../../common/scoring/rosterAvailability'
 import { awaitingResult } from '../../common/scoring/rules'
+import { asScoringMutation } from '../../common/scoring/scoringMutation'
 import { ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import { listsByTeam, teamsOfRow } from '../../common/teamLists'
@@ -107,6 +108,12 @@ export async function setRostered(
     const stored = await resolveScoringGame(
       trx,
       {
+        generation: game.play_generation,
+        ...(game.scoring_mutation == null
+          ? {}
+          : {
+              scoringMutation: asScoringMutation(game.scoring_mutation)
+            }),
         plays: rows.map(row => row.gumbo as GumboPlay),
         currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
       },
@@ -184,6 +191,8 @@ async function applyAvailability(
             { answer: 'all', cache }
           )
           return {
+            scoringMutation: posted.scoringMutation,
+            generation: posted.generation,
             plays: posted.plays.map(row => row.gumbo as GumboPlay),
             currentPlay: posted.currentPlay as CurrentPlay | null
           }
@@ -246,6 +255,12 @@ export async function reconcileUnbegunLineup(
   if (begun || rows.some(row => isRealPlay(row.gumbo))) return
   try {
     const stored = await resolveScoringGame(trx, {
+      generation: game.play_generation,
+      ...(game.scoring_mutation == null
+        ? {}
+        : {
+            scoringMutation: asScoringMutation(game.scoring_mutation)
+          }),
       plays: rows.map(row => row.gumbo as GumboPlay),
       currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
     })
