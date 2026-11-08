@@ -11,6 +11,15 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 - (void)save:(NSString *)value resolve:(TVResolve)resolve reject:(TVReject)reject;
 - (void)clear:(TVResolve)resolve reject:(TVReject)reject;
 @end
+@interface IsolatedTVSession : TVSession
+@end
+@implementation IsolatedTVSession
+- (NSMutableDictionary *)query {
+  NSMutableDictionary *query = [super query];
+  query[(__bridge id)kSecAttrService] = @"app.teamstation.tv.tests.session";
+  return query;
+}
+@end
 @interface InvalidTVSession : TVSession
 @end
 @implementation InvalidTVSession
@@ -45,7 +54,8 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
   if (previous) setenv("TV_METRO_URL", previous.UTF8String, 1);
 }
 - (void)testPersistentSessionLifecycle {
-  TVSession *store = [TVSession new];
+  TVSession *store = [IsolatedTVSession new];
+  XCTAssertNotEqualObjects([store query][(__bridge id)kSecAttrService], [[TVSession new] query][(__bridge id)kSecAttrService]);
   TVReject reject = ^(NSString *code, NSString *message, NSError *error) {XCTFail(@"%@ %@", code, message);};
   XCTAssertFalse([TVSession requiresMainQueueSetup]);
   [store clear:^(id value) {} reject:reject];
@@ -53,7 +63,7 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
   [store save:@"fixture-first" resolve:^(id value) {} reject:reject];
   [store load:^(id value) {XCTAssertEqualObjects(value, @"fixture-first");} reject:reject];
   [store save:@"fixture-updated" resolve:^(id value) {} reject:reject];
-  [[TVSession new] load:^(id value) {XCTAssertEqualObjects(value, @"fixture-updated");} reject:reject];
+  [[IsolatedTVSession new] load:^(id value) {XCTAssertEqualObjects(value, @"fixture-updated");} reject:reject];
   [store clear:^(id value) {} reject:reject];
   [store clear:^(id value) {} reject:reject];
   [store load:^(id value) {XCTAssertNil(value);} reject:reject];
@@ -403,6 +413,61 @@ typedef void (^TVReject)(NSString *, NSString *, NSError *);
 @end
 @interface TVPresentationTests : XCTestCase @end
 @implementation TVPresentationTests
+- (unsigned char)alphaOfImage:(UIImage *)image x:(size_t)x y:(size_t)y {
+  size_t width = (size_t)image.size.width, height = (size_t)image.size.height;
+  CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+  CGContextRef context = CGBitmapContextCreate(NULL,width,height,8,width*4,space,kCGImageAlphaPremultipliedLast);
+  CGContextDrawImage(context,CGRectMake(0,0,width,height),image.CGImage);
+  unsigned char alpha = ((unsigned char *)CGBitmapContextGetData(context))[(y*width+x)*4+3];
+  CGContextRelease(context); CGColorSpaceRelease(space);
+  return alpha;
+}
+- (void)testPosterRoundsArtworkWithoutClippingNativeFocus {
+  UIImage *source = [[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(60,120)] imageWithActions:^(UIGraphicsImageRendererContext *context) {
+    [UIColor.greenColor setFill]; [context fillRect:CGRectMake(0,0,60,120)];
+  }];
+  TVPosterView *poster = [[TVPosterView alloc] initWithFrame:CGRectMake(0,0,160,90)];
+  poster.image = source;
+  XCTAssertFalse(poster.clipsToBounds);
+  XCTAssertTrue(poster.masksFocusEffectToContents);
+  XCTAssertTrue(CGSizeEqualToSize(poster.image.size,poster.bounds.size));
+  for (NSNumber *x in @[@0,@159]) for (NSNumber *y in @[@0,@89])
+    XCTAssertEqual([self alphaOfImage:poster.image x:x.unsignedIntegerValue y:y.unsignedIntegerValue],0);
+  XCTAssertEqual([self alphaOfImage:poster.image x:80 y:45],255);
+  XCTAssertEqual([self alphaOfImage:poster.image x:1 y:45],255);
+  UIImage *cached = poster.image;
+  [poster layoutSubviews]; [poster updateMotion]; poster.previewFocused = YES;
+  XCTAssertEqual(poster.image,cached);
+  XCTAssertEqual(poster.adjustsImageWhenAncestorFocused,!UIAccessibilityIsReduceMotionEnabled());
+  XCTAssertTrue(poster.previewSurface.clipsToBounds);
+  XCTAssertEqual(poster.previewSurface.layer.cornerRadius,12);
+  poster.contentMode = UIViewContentModeScaleAspectFit;
+  XCTAssertNotEqual(poster.image,cached);
+  XCTAssertEqual([self alphaOfImage:poster.image x:1 y:45],0);
+  XCTAssertEqual([self alphaOfImage:poster.image x:80 y:45],255);
+  poster.bounds = CGRectMake(0,0,120,240); [poster layoutSubviews];
+  XCTAssertTrue(CGSizeEqualToSize(poster.image.size,poster.bounds.size));
+  XCTAssertEqual([self alphaOfImage:poster.image x:0 y:0],0);
+  XCTAssertEqual([self alphaOfImage:poster.image x:60 y:120],255);
+  poster.bounds = CGRectZero; [poster layoutSubviews]; XCTAssertNil(poster.image);
+  poster.bounds = CGRectMake(0,0,160,90); [poster layoutSubviews]; XCTAssertNotNil(poster.image);
+  poster.image = nil; [poster layoutSubviews]; XCTAssertNil(poster.image);
+  poster.image = [UIImage new]; XCTAssertNil(poster.image);
+  poster.image = source; XCTAssertNotNil(poster.image);
+  poster.uri = @"file:///invalid"; XCTAssertNil(poster.image);
+}
+- (void)testRoundedSearchSymbolsRetainTemplateTint {
+  TVPosterView *poster = [[TVPosterView alloc] initWithFrame:CGRectMake(0,0,80,134)];
+  poster.contentMode = UIViewContentModeScaleAspectFit;
+  poster.tintColor = UIColor.whiteColor;
+  for (NSString *name in @[@"person.crop.square",@"sportscourt"]) {
+    UIImage *symbol = [UIImage systemImageNamed:name];
+    poster.image = symbol;
+    XCTAssertEqual(poster.image.renderingMode,UIImageRenderingModeAlwaysTemplate);
+    poster.image = [symbol imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+    XCTAssertEqual(poster.image.renderingMode,UIImageRenderingModeAlwaysOriginal);
+  }
+}
 - (void)testSystemSearchDismissalNotifiesReactOnce {
   TVSearchView *view = [TVSearchView new];
   __block NSInteger count = 0;
