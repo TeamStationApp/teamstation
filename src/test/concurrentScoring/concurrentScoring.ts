@@ -426,6 +426,19 @@ export class ConcurrentScoringRig {
     await this.tap(2, '^Lineup$')
     const before = await this.lineup(2)
     await this.reorder(2, 3, 5)
+    // Pointer release completes before the drag engine's asynchronous drop
+    // and React render. Observe that local edit before pressing Save; this
+    // does not extend the peer synchronization allowance after its response.
+    await this.clients[2].page!.waitForFunction(
+      previous =>
+        JSON.stringify(
+          [...document.querySelectorAll('[aria-label^="Reorder "]')].map(node =>
+            node.getAttribute('aria-label')
+          )
+        ) !== previous,
+      { timeout: 3000 },
+      JSON.stringify(before)
+    )
     const changed = await this.lineup(2)
     if (JSON.stringify(before) === JSON.stringify(changed))
       throw new Error('Coach reorder made no change')
