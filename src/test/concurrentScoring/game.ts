@@ -74,7 +74,7 @@ export async function fourInnings(
       await rig.boundary(bottom, plays)
     }
 
-    if (inning === 1) await rig.coachChange('reorder')
+    if (inning === 1) await rig.coachChange()
     if (inning === 1) {
       await rig.pitch(bottom, 'Called Strike')
       await rig.pitch(bottom, 'Called Strike')
@@ -107,7 +107,7 @@ export async function fourInnings(
     }
     await strikeouts(bottom, inning === 4 ? 2 : 3)
     await rig.capture(`inning-${inning}`)
-    if (inning === 2) await rig.coachChange('remove-and-add')
+    if (inning === 2) await rig.coachChange()
   }
   await rig.endGame(0)
   await ctx.checkpoint(

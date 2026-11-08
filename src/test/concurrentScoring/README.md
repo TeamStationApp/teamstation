@@ -21,7 +21,7 @@ remove the disposable development database through the normal seat cleanup when
 the investigation is complete. Never run this seed on production or delete
 unrelated games/accounts.
 
-For the nightly runner, provision a fresh fixture and set:
+Provision a fresh fixture for the scoring test and set:
 
 - `TS_CONCURRENT_ORIGIN`: development seat URL.
 - `TS_CONCURRENT_FIXTURE`: private JSON file created above.
@@ -49,5 +49,5 @@ at-bat Undo/re-entry, foul Undo, hit by pitch, intentional walk, cross-device
 third-out Undo, bunt ground out, and two coach lineup changes. Its independent
 saved-data oracle requires 31 completed plays, three outs in each half-inning,
 no duplicate play identities, the expected run/hit/error credits, and correct
-individual and team final statistics. Run this entry point from the existing
-nightly sweep; it does not create a separate scheduler or change the tester seat.
+individual and team final statistics. This is a standalone scoring test; it does
+not install a runner, schedule tests or change the tester seat.

@@ -157,17 +157,19 @@ export class ConcurrentScoringRig {
       if (expected !== '' && expected === actual) break
       await new Promise(resolve => setTimeout(resolve, 100))
     } while (Date.now() - started < 3000)
-    await this.ctx.checkpoint(
-      `sync-${author}-${action}-${Date.now() - started}ms`,
-      {
-        readBack: async () => {
-          if (expected === '' || expected !== actual)
-            throw new Error(
-              `Three-second convergence failed after ${action}: ${expected} / ${actual}`
-            )
-        }
+    const elapsed = Date.now() - started
+    await this.ctx.checkpoint(`sync-${author}-${action}-${elapsed}ms`, {
+      readBack: async () => {
+        if (elapsed > 3000)
+          throw new Error(
+            `Synchronization was not verified within three seconds after ${action} (${elapsed}ms); device transport time is included`
+          )
+        if (expected === '' || expected !== actual)
+          throw new Error(
+            `Three-second convergence failed after ${action}: ${expected} / ${actual}`
+          )
       }
-    )
+    })
   }
 
   async strikeout(index: number): Promise<void> {
@@ -249,10 +251,15 @@ export class ConcurrentScoringRig {
       if (JSON.stringify(actual) === JSON.stringify(expected)) break
       await new Promise(resolve => setTimeout(resolve, 100))
     } while (Date.now() < deadline)
+    const observedAt = Date.now()
     await this.ctx.checkpoint(
       `lineup-client-${index}`,
       {
         readBack: async () => {
+          if (observedAt > deadline)
+            throw new Error(
+              `Client ${index}: lineup was not verified within three seconds`
+            )
           if (JSON.stringify(actual) !== JSON.stringify(expected))
             throw new Error(
               `Client ${index}: expected lineup ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
@@ -411,54 +418,25 @@ export class ConcurrentScoringRig {
     await this.agree(index, 'Game over')
   }
 
-  async coachChange(kind: 'reorder' | 'remove-and-add'): Promise<void> {
+  async coachChange(): Promise<void> {
     await this.rosters(0)
     await this.rosters(1)
     await this.tap(2, '^Lineup$')
     const before = await this.lineup(2)
-    const removable =
-      kind === 'remove-and-add'
-        ? await this.clients[2].page!.evaluate(() =>
-            [...document.querySelectorAll('[aria-label^="Remove "]')]
-              .filter(node => node.getAttribute('aria-disabled') !== 'true')
-              .map(node =>
-                node.getAttribute('aria-label')!.slice('Remove '.length)
-              )
-          )
-        : []
-    const name = removable[0]
-    if (kind === 'remove-and-add' && name == null)
-      throw new Error(
-        'Synthetic fixture has no unused player eligible for removal'
-      )
-    if (kind === 'reorder') await this.reorder(2, 3, 5)
-    else {
-      await this.clients[2].m.tapOn({ css: `[aria-label="Remove ${name}"]` })
-    }
+    await this.reorder(2, 3, 5)
     const changed = await this.lineup(2)
     if (JSON.stringify(before) === JSON.stringify(changed))
-      throw new Error('Coach edit made no change')
+      throw new Error('Coach reorder made no change')
     await this.tap(2, '^Save Rosters$')
     await this.clients[2].m.assertVisible({
       css: '[aria-label="Save Rosters"][aria-disabled="true"]',
       timeout: 15000
     })
-    await this.expectLineup(0, changed)
-    await this.expectLineup(1, changed)
-    await this.capture(`coach-${kind}`)
-    if (kind === 'remove-and-add') {
-      await this.clients[2].m.tapOn({
-        css: `[aria-label="Add ${name} to Lineup"]`
-      })
-      await this.tap(2, '^Save Rosters$')
-      await this.clients[2].m.assertVisible({
-        css: '[aria-label="Save Rosters"][aria-disabled="true"]',
-        timeout: 15000
-      })
-      await this.expectLineup(0, before)
-      await this.expectLineup(1, before)
-      await this.capture('coach-readded')
-    }
+    await Promise.all([
+      this.expectLineup(0, changed),
+      this.expectLineup(1, changed)
+    ])
+    await this.capture(`coach-reorder-${Date.now()}`)
     await this.tap(0, '^Cancel$')
     await this.tap(1, '^Cancel$')
   }

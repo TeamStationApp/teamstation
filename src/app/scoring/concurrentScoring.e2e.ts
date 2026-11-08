@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   }
   const scenario = option('scenario', 'four-innings')
   const surface = option('surface', 'chromium')
-  assert(['follow', 'four-innings'].includes(scenario))
+  assert(['follow', 'lineups', 'four-innings'].includes(scenario))
   assert(['chromium', 'safari'].includes(surface))
   const origin = required('TS_CONCURRENT_ORIGIN')
   const artifacts = resolve(required('TS_CONCURRENT_ARTIFACTS'))
@@ -123,7 +123,12 @@ async function main(): Promise<void> {
       : new ConcurrentScoringRig(ctx)
   try {
     if (scenario === 'four-innings') await fourInnings(rig, ctx)
-    else {
+    else if (scenario === 'lineups') {
+      await rig.open()
+      await rig.pitch(1, 'Ball')
+      await rig.coachChange()
+      await rig.converge(1, 'coach reorder after scoring starts')
+    } else {
       await rig.open()
       await rig.hit(1, 'Single')
       await rig.finish(1)
