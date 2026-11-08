@@ -341,6 +341,32 @@ describe('a scoring session', function () {
     expect(completedPlayTag(play)).equals('tough batter')
   })
 
+  it('declines a remote read when local input claims the screen before adoption', async () => {
+    const { session, store } = await open()
+    const { session: peer } = await open(store)
+    peer.apply(ball)
+    await peer.flush()
+    const load = store.load.bind(store)
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    store.load = async () => {
+      const snapshot = await load()
+      await held
+      return snapshot
+    }
+    let allowed = true
+    const reading = session.reload(() => allowed)
+    allowed = false
+    release()
+    expect(await reading).equals(false)
+    expect(session.actions).deep.equals([])
+    allowed = true
+    expect(await session.reload(() => allowed)).equals(true)
+    expect(session.actions).deep.equals([ball])
+  })
+
   it("takes up the server's word on what a swap does from every read, the plays unchanged or not", async () => {
     class SwapStore extends FakeStore {
       swap: StoredGame['swap'] = 'swap'
