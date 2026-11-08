@@ -7,6 +7,7 @@ import express from 'express'
 import { rateLimit } from 'express-rate-limit'
 
 import { TeamStationClient } from '../common/api'
+import { asAppLinksConfig } from '../server/appLinks/config'
 import { apiKeyRoutes } from '../server/routes/apiKeys'
 import { appLinkRoutes } from '../server/routes/appLinks'
 import { authRoutes } from '../server/routes/auth'
@@ -59,7 +60,10 @@ async function main(): Promise<void> {
         }
         appLinkRoutes({
           publicUrl: fixtureOrigin,
-          appLinks: { apps: [{ origin: fixtureOrigin }], knownServers: [] }
+          appLinks: asAppLinksConfig({
+            apps: [{ origin: fixtureOrigin }],
+            knownServers: []
+          })
         })(req, res, next)
       })
       if (baseline !== undefined) {

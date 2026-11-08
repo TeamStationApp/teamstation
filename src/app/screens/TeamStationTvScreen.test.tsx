@@ -116,7 +116,7 @@ describe('TeamStation TV approval screen', () => {
         server === 'https://develop5.teamstation.app'
       )
     }
-    const original = Linking.openURL
+    const original = Linking.openURL.bind(Linking)
     let opened = ''
     Linking.openURL = async url => {
       opened = url
