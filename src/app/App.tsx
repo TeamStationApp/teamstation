@@ -208,7 +208,10 @@ import { SeasonScreen } from './screens/SeasonScreen'
 import { SeasonTimeFrameScreen } from './screens/SeasonTimeFrameScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
 import { TeamPage } from './screens/TeamPage'
-import { TeamStationTvScreen } from './screens/TeamStationTvScreen'
+import {
+  TeamStationTvScreen,
+  TvBrowserHandoff
+} from './screens/TeamStationTvScreen'
 import { VenueScreen } from './screens/VenueScreen'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
@@ -2438,21 +2441,27 @@ function Shell(props: AppProps): React.ReactElement {
             }}
           />
         ) : (
-          <LoginScreen
-            next={
-              route.name === 'teamStationTv'
-                ? routePath(route)
-                : route.name === 'signIn'
-                  ? route.next
-                  : undefined
-            }
-            client={client}
-            onSignedIn={signedIn}
-            onDiscover={() => {
-              goToRoute({ name: 'discover' })
-              showRoute({ name: 'discover' })
-            }}
-          />
+          <>
+            {route.name === 'teamStationTv' &&
+              signInRequest.appOrigin != null && (
+                <TvBrowserHandoff server={route.server} token={route.token} />
+              )}
+            <LoginScreen
+              next={
+                route.name === 'teamStationTv'
+                  ? routePath(route)
+                  : route.name === 'signIn'
+                    ? route.next
+                    : undefined
+              }
+              client={client}
+              onSignedIn={signedIn}
+              onDiscover={() => {
+                goToRoute({ name: 'discover' })
+                showRoute({ name: 'discover' })
+              }}
+            />
+          </>
         )}
         {!isWide && (
           <AppNav mode="floating" selected={tab} onSelect={selectTab} />

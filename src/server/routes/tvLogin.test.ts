@@ -82,7 +82,7 @@ describe('TV device approval', function () {
           '/links',
           authRoutes(db, {
             sendCode,
-            publicUrl: 'https://develop5.teamstation.app',
+            publicUrl: 'https://Develop5.teamstation.app:443/',
             tvAppOrigins: ['https://develop.teamstation.app']
           })
         )

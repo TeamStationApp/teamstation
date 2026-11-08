@@ -56,7 +56,9 @@ describe('app link hosts', function () {
 
   before(async function () {
     const app = express()
-    app.use(appLinkRoutes({ appLinks, publicUrl: PUBLIC_URL }))
+    app.use(
+      appLinkRoutes({ appLinks, publicUrl: 'https://GS.example.test:443/' })
+    )
     app.use(notFoundHandler)
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')

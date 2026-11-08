@@ -87,6 +87,7 @@ describe('the server process', function () {
         logRequests: false,
         appLinks: {
           apps: [
+            { origin: 'https://app.teamstation.app' },
             { origin: 'https://tv.example.test', tvLogin: true },
             { origin: 'https://tv2.example.test', tvLogin: true }
           ]

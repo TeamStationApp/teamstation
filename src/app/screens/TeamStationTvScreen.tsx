@@ -29,6 +29,26 @@ import { linkIsOurs } from './SignInLinkScreen'
 const defaultCamera = { supported: qrScannerSupported, View: QrScanner }
 const tvTheme = { ...tsDark, backgroundColor: 'transparent' }
 
+/** Safe before sign-in: never inspect or spend the TV credential here. */
+export function TvBrowserHandoff({
+  server,
+  token
+}: {
+  server?: string
+  token?: string
+}): React.ReactElement | null {
+  const url =
+    server == null || token == null ? undefined : tvBrowserUrl(server, token)
+  return url == null ? null : (
+    <Button
+      label="Open TV login in browser"
+      onPress={() => {
+        Linking.openURL(url).catch(() => undefined)
+      }}
+    />
+  )
+}
+
 export interface TeamStationTvScreenProps {
   client: TeamStationClient
   /** A QR link is inspected on arrival; it never approves itself. */

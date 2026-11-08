@@ -127,10 +127,12 @@ export async function createEmailCode(
 export function signInLink(
   publicUrl: string | undefined,
   token: string,
-  appOrigin: string | null = null
+  appOrigin: string | null = null,
+  browserOnly = false
 ): string {
   const base = (publicUrl ?? '').replace(/\/$/, '')
-  if (appOrigin == null) return `${base}/signin/${token}`
+  if (appOrigin == null)
+    return `${base}/${browserOnly ? 'signin-browser' : 'signin'}/${token}`
   return `${appOrigin}/signin/${token}?server=${encodeURIComponent(base)}`
 }
 

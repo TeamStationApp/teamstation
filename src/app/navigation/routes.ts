@@ -541,6 +541,7 @@ export function parseRoute(path: string, search = ''): Route {
       // address is enough to hand out.
       if (parts[1] !== 'invite' || parts[2] == null) return { name: 'home' }
       return { name: 'join', code: parts[2] }
+    case 'signin-browser':
     case 'signin':
       if (id == null) return { name: 'signIn' }
       return signInLinkRoute(id, query.get('server'))

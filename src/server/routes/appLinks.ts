@@ -34,7 +34,8 @@ export function appLinkRoutes(options: AppLinkRouteOptions): Router {
   const byHost = new Map<string, AppLink>(
     options.appLinks.apps.map(app => [new URL(app.origin).host, app])
   )
-  const servers = new Set([options.publicUrl, ...options.appLinks.knownServers])
+  const publicOrigin = new URL(options.publicUrl).origin
+  const servers = new Set([publicOrigin, ...options.appLinks.knownServers])
 
   const appFor = (req: Request): AppLink | undefined =>
     byHost.get((req.headers.host ?? '').toLowerCase())
@@ -92,7 +93,7 @@ export function appLinkRoutes(options: AppLinkRouteOptions): Router {
     // the credential nor forward it as a referrer or cache a private page.
     res.set('cache-control', 'no-store')
     res.set('referrer-policy', 'no-referrer')
-    const asked = req.query.server ?? options.publicUrl
+    const asked = req.query.server ?? publicOrigin
     if (
       typeof asked !== 'string' ||
       !isTvServerOrigin(asked) ||
@@ -133,7 +134,7 @@ export function appLinkRoutes(options: AppLinkRouteOptions): Router {
       next(badRequest('That is not a sign-in link'))
       return
     }
-    const server = asked ?? options.publicUrl
+    const server = asked ?? publicOrigin
     if (!servers.has(server)) {
       next(badRequest('That link is for a server this one does not know'))
       return

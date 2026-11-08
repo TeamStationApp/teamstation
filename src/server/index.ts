@@ -8,6 +8,7 @@ import path from 'node:path'
 
 import express from 'express'
 
+import { defaultTvAppOrigin } from '../common/tvLogin'
 import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { type BackgroundJobs, startBackgroundJobs } from './backgroundJobs'
@@ -697,6 +698,12 @@ function runWorker(): void {
       space: serverConfig.space,
       publicUrl,
       appOrigins,
+      tvAppOrigin: defaultTvAppOrigin(
+        publicUrl,
+        serverConfig.appLinks.apps
+          .filter(app => app.tvLogin === true)
+          .map(app => app.origin)
+      ),
       tvAppOrigins: serverConfig.appLinks.apps
         .filter(
           app =>

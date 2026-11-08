@@ -334,7 +334,9 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           appOrigin,
           clientIp(req),
           await tvLocation(clientIp(req), options.tvLocationLookup),
-          options.publicUrl
+          options.publicUrl == null
+            ? undefined
+            : new URL(options.publicUrl).origin
         )
       )
     })
@@ -530,7 +532,12 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         await options.sendCode(
           email,
           request.code,
-          signInLink(options.publicUrl, request.token, appOrigin)
+          signInLink(
+            options.publicUrl,
+            request.token,
+            appOrigin,
+            options.appOrigins?.includes(options.publicUrl ?? '') === true
+          )
         )
       } catch {
         await db

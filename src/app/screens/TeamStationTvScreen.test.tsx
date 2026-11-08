@@ -2,13 +2,15 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Linking } from 'react-native'
 
 import { TeamStationClient } from '../../common/api'
 import type { QrScannerProps } from '../scoring/qrScannerProps'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
   TeamStationTvScreen,
-  type TeamStationTvScreenProps
+  type TeamStationTvScreenProps,
+  TvBrowserHandoff
 } from './TeamStationTvScreen'
 
 let root: Root | undefined
@@ -91,6 +93,42 @@ describe('TeamStation TV approval screen', () => {
     await act(async () => root?.unmount())
     document.body.innerHTML = ''
     root = undefined
+  })
+
+  it('offers a browser escape before local sign-in without spending credentials', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    for (const server of [
+      undefined,
+      'https://evil.example.test',
+      'https://develop5.teamstation.app'
+    ]) {
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <TvBrowserHandoff server={server} token={'a'.repeat(43)} />
+          </ThemeProvider>
+        )
+        await pause()
+      })
+      expect(text().includes('Open TV login in browser')).equals(
+        server === 'https://develop5.teamstation.app'
+      )
+    }
+    const original = Linking.openURL
+    let opened = ''
+    Linking.openURL = async url => {
+      opened = url
+    }
+    try {
+      await press('Open TV login in browser')
+    } finally {
+      Linking.openURL = original
+    }
+    expect(opened).equals(
+      'https://develop5.teamstation.app/account/tv?token=' + 'a'.repeat(43)
+    )
   })
 
   it('checks the issuer before preview and offers only a trusted browser destination', async () => {

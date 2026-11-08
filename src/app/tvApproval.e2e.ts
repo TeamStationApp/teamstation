@@ -43,6 +43,9 @@ async function main(): Promise<void> {
           get tvAppOrigin() {
             return fixtureOrigin
           },
+          get appOrigins() {
+            return [fixtureOrigin]
+          },
           get tvAppOrigins() {
             return [fixtureOrigin]
           }
@@ -197,6 +200,10 @@ async function main(): Promise<void> {
     await m.tapOn({ text: 'Send me a sign-in code' })
     await m.assertVisible({ text: 'Sign-in code', timeout: 15000 })
     const mail = h.links.get('alex@example.com')
+    assert(
+      mail?.includes('/signin-browser/') === true,
+      'browser email must avoid app-associated path'
+    )
     assert(mail != null)
     await m.openBrowser({ url: h.origin + new URL(mail).pathname })
     await m.assertVisible({ text: 'Log in to Apple TV', timeout: 15000 })
