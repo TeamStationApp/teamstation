@@ -967,14 +967,14 @@ function ScoringPanel(props: {
       )
     }
   )
-  const dispatch = (event: ScoringEvent | SavedUndone): void => {
+  const dispatch = useCallback((event: ScoringEvent | SavedUndone): void => {
     if (authoredScoringEvent(event)) {
       if (!beforeAction.current()) return
       setFollowNotice(null)
       follow.current.authored()
     }
     reduceEvent(event)
-  }
+  }, [])
   useEffect(() => {
     const owner = follow.current
     owner.mounted = true
@@ -1144,7 +1144,7 @@ function ScoringPanel(props: {
       unsubscribe()
       if (reading != null) clearTimeout(reading)
     }
-  }, [props.game])
+  }, [props.game, dispatch])
   // The screen's log is the game: the session saves whatever it says.
   useEffect(() => {
     if (
@@ -1182,7 +1182,7 @@ function ScoringPanel(props: {
           }
         : {})
     })
-  }, [props.game, model.savedUndos, model.savedUndone, state.log])
+  }, [props.game, model.savedUndos, model.savedUndone, state.log, dispatch])
   const [sound, setSound] = useState(true)
   // Once the scorer has tapped the speaker, the stored setting read as the
   // screen opened no longer decides it.
@@ -1215,7 +1215,7 @@ function ScoringPanel(props: {
       live = false
       scoringAudio.stop()
     }
-  }, [props.userId])
+  }, [props.userId, dispatch])
   useEffect(() => {
     scoringAudio.setEnabled(sound)
   }, [sound])
@@ -1510,7 +1510,7 @@ function ScoringPanel(props: {
       setGestureActive(active)
       dispatch({ type: 'GESTURE', active })
     },
-    [pauseClock]
+    [pauseClock, dispatch]
   )
   const canEditDefense =
     props.active &&
