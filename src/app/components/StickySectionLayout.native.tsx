@@ -30,7 +30,7 @@ export function StickySectionLayout({
   pagedList
 }: StickySectionLayoutProps): React.ReactElement {
   const theme = useTheme()
-  const { headerHeight } = useHeaderSlot()
+  const { headerHeight, bannerHeight = 0 } = useHeaderSlot()
   const breakpoint = useBreakpoint()
   const insets = useInsets()
   const scrollY = useSharedValue(0)
@@ -48,8 +48,10 @@ export function StickySectionLayout({
           Platform.OS,
           theme.rem(NAV_CLEARANCE_REM),
           theme.rem(FLOATING_BOTTOM_REM)
-        ) + insets.bottom
-      : theme.rem(theme.spaceLgRem)
+        ) +
+        insets.bottom +
+        bannerHeight
+      : theme.rem(theme.spaceLgRem) + bannerHeight
   const handleScroll = useAnimatedScrollHandler(event => {
     scrollY.value = event.contentOffset.y
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- same handoff bridge as GameWatchLayout
