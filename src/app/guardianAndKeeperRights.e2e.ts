@@ -27,7 +27,7 @@ import { expect } from 'chai'
 
 import type { BrowserSession } from '../../e2e/rigs/refinementsMaestro'
 import { makeId } from '../common/ids'
-import { userIdOfGumbo } from '../common/userId'
+import { gumboOfUserId, userIdOfGumbo } from '../common/userId'
 import { createSession } from '../server/auth/sessions'
 import { posterSecond } from '../server/media/posters'
 import { stillKey } from '../server/media/stills'
@@ -100,7 +100,7 @@ async function apiRoles(run: Run): Promise<void> {
 
   const settings = await api(
     'PUT',
-    `/teams/${f.teamA}/players/${avery.id}/settings`,
+    `/teams/${f.teamA}/players/${userIdOfGumbo(avery.id)}/settings`,
     people.assistant,
     { jersey: '8', positions: ['SS', 'CF'] }
   )
@@ -109,7 +109,7 @@ async function apiRoles(run: Run): Promise<void> {
 
   const song = await api(
     'PUT',
-    `/teams/${f.teamA}/players/${ben.id}/walk-up-song`,
+    `/teams/${f.teamA}/players/${userIdOfGumbo(ben.id)}/walk-up-song`,
     people.scorekeeper,
     {
       provider: 'appleMusic',
@@ -127,10 +127,18 @@ async function apiRoles(run: Run): Promise<void> {
   expect(song.status).equals(200)
   expect(song.body).deep.include({ title: 'Demo Walk-up' })
 
-  const hidden = await api('GET', `/players/${avery.id}/name`, people.follower)
+  const hidden = await api(
+    'GET',
+    `/players/${userIdOfGumbo(avery.id)}/name`,
+    people.follower
+  )
   expect(hidden.status).equals(404)
   for (const reader of [people.scorekeeper, people.assistant]) {
-    const shown = await api('GET', `/players/${avery.id}/name`, reader)
+    const shown = await api(
+      'GET',
+      `/players/${userIdOfGumbo(avery.id)}/name`,
+      reader
+    )
     expect(shown.status).equals(200)
     expect(shown.body).deep.include({
       firstName: 'Alfonso',
@@ -205,9 +213,11 @@ async function api(run: Run): Promise<void> {
     [routes[3]]: [403, 403, 401, 200],
     [routes[4]]: [403, 403, 401, 200],
     [routes[5]]: [200, 200, 401, 200],
-    [routes[6]]: [200, 200, 401, 200],
+    // Games are public: anybody signed out gets the non-member view.
+    [routes[6]]: [200, 200, 200, 200],
     [routes[7]]: [403, 403, 401, 200],
-    [routes[8]]: [200, 200, 401, 200],
+    // Anybody reads a game's highlights, as anybody reads the game.
+    [routes[8]]: [200, 200, 200, 200],
     [routes[9]]: [403, 403, 401, 200],
     [routes[10]]: [403, 403, 401, 200]
   }
@@ -225,13 +235,14 @@ async function api(run: Run): Promise<void> {
       const outside = at < 2
       if (route === routes[0]) expect(answer.body.nonMemberView).equals(outside)
       if (route === routes[6] && answer.status === 200) {
-        expect(answer.body.nonMemberView).equals(outside)
-        expect(answer.body.linescore.home.h).equals(outside ? null : 9)
+        const nonMember = user !== people.teamCoach
+        expect(answer.body.nonMemberView).equals(nonMember)
+        expect(answer.body.linescore.home.h).equals(nonMember ? null : 9)
       }
       if (route === routes[1] && answer.status === 200) {
         const avery = (
-          answer.body as Array<{ userId: number; avatarUrl: string | null }>
-        ).find(row => row.userId === f.players[0].id)
+          answer.body as Array<{ userId: string; avatarUrl: string | null }>
+        ).find(row => row.userId === userIdOfGumbo(f.players[0].id))
         expect(avery?.avatarUrl == null).equals(outside)
       }
     }
@@ -523,7 +534,7 @@ async function roster(run: Run): Promise<void> {
   await admin.m.tapOn({ text: 'Ichiro', timeout: 15000 })
   await contains(admin.page, 'Team · Demo Hawks')
   expect(new URL(admin.page.url()).pathname).equals(
-    `/teams/${f.teamA}/people/${people.teamCoach}`
+    `/teams/${f.teamA}/people/${userIdOfGumbo(people.teamCoach)}`
   )
   expect(await heldRows(admin, 'team')).deep.include({
     coach: 'On',
@@ -627,7 +638,7 @@ async function people(run: Run): Promise<void> {
   // The admin adds Grant as Coach from his profile, and takes it away.
   const admin = await run.signIn('people-admin', people.admin)
   await admin.m.openBrowser({
-    url: `${f.h.origin}/teams/${f.teamA}/people/${people.follower}`
+    url: `${f.h.origin}/teams/${f.teamA}/people/${userIdOfGumbo(people.follower)}`
   })
   await contains(admin.page, 'Grant Hartwig')
   await contains(admin.page, 'Team · Demo Hawks')
@@ -654,13 +665,16 @@ async function people(run: Run): Promise<void> {
     member: 'On'
   })
   await pressRole(admin, 'team', 'coach')
+  // Taking a role away asks first; the other memberships stay.
+  await contains(admin.page, 'Remove Coach from Grant Hartwig?')
+  await admin.m.tapOn({ text: 'Remove', timeout: 15000 })
   await until(async () => (await roleRows(people.follower)).length === 0)
 
   // Ichiro, the team's coach, opens Tim Raines: Alfonso under Parent/Guardian
   // of, his roles here changeable, Admin not.
   const coach = await run.signIn('people-coach', people.teamCoach)
   await coach.m.openBrowser({
-    url: `${f.h.origin}/teams/${f.teamA}/people/${people.guardian}`
+    url: `${f.h.origin}/teams/${f.teamA}/people/${userIdOfGumbo(people.guardian)}`
   })
   await contains(coach.page, 'Tim Raines')
   await contains(coach.page, 'PARENT/GUARDIAN OF')
@@ -686,7 +700,7 @@ async function people(run: Run): Promise<void> {
 
   // The same person from the season: its roles change, the league's don't.
   await admin.m.openBrowser({
-    url: `${f.h.origin}/seasons/${f.seasonA}/people/${people.guardian}`
+    url: `${f.h.origin}/seasons/${f.seasonA}/people/${userIdOfGumbo(people.guardian)}`
   })
   await contains(admin.page, 'Season · Demo Regular')
   await contains(admin.page, 'Alfonso S')
@@ -701,7 +715,7 @@ async function people(run: Run): Promise<void> {
 
   // A player who can sign in has Team roles at the bottom of Settings.
   await admin.m.openBrowser({
-    url: `${f.h.origin}/players/${ben.id}?tab=settings&onTeam=${f.teamA}`
+    url: `${f.h.origin}/players/${userIdOfGumbo(ben.id)}?tab=settings&onTeam=${f.teamA}`
   })
   await contains(admin.page, 'TEAM ROLES')
   await scrollTo(admin, '[data-testid="playerTeamRoles"]')
@@ -720,7 +734,7 @@ async function people(run: Run): Promise<void> {
   await run.shot(admin, 'player-roles-settings.png', { fit: true })
   // One who cannot sign in has none.
   await admin.m.openBrowser({
-    url: `${f.h.origin}/players/${cody.id}?tab=settings&onTeam=${f.teamA}`
+    url: `${f.h.origin}/players/${userIdOfGumbo(cody.id)}?tab=settings&onTeam=${f.teamA}`
   })
   await contains(admin.page, 'JERSEY NUMBER')
   await settle(admin)
@@ -732,7 +746,7 @@ async function people(run: Run): Promise<void> {
   // Hawks from the very bottom of his Settings: after the sheet, the roster,
   // without him, and every team role gone with him.
   await admin.m.openBrowser({
-    url: `${f.h.origin}/players/${ben.id}?tab=settings&onTeam=${f.teamA}`
+    url: `${f.h.origin}/players/${userIdOfGumbo(ben.id)}?tab=settings&onTeam=${f.teamA}`
   })
   await contains(admin.page, 'TEAM ROLES')
   await settle(admin)
@@ -828,14 +842,14 @@ async function people(run: Run): Promise<void> {
   )
   const refused = await api(
     'PUT',
-    `/manage/team/${f.teamA}/people/${people.follower}/roles/admin`,
+    `/manage/team/${f.teamA}/people/${userIdOfGumbo(people.follower)}/roles/admin`,
     people.teamCoach,
     {}
   )
   expect(refused.status).equals(403)
   const given = await api(
     'PUT',
-    `/manage/team/${f.teamA}/people/${people.follower}/roles/videographer`,
+    `/manage/team/${f.teamA}/people/${userIdOfGumbo(people.follower)}/roles/videographer`,
     people.teamCoach,
     {}
   )
@@ -1019,11 +1033,15 @@ async function player(run: Run): Promise<void> {
   /** The Teams tab's rows, top to bottom, as their text reads. */
   const teamRows = async (session: BrowserSession): Promise<string[]> =>
     (
-      await session.page.evaluate(() =>
-        [...document.querySelectorAll('[role="button"]')]
+      await session.page.evaluate(() => {
+        // The screen on top: a covered one keeps its team cards in the DOM.
+        const top = document.querySelector('[data-scene-role="top"]')
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Sucrase would compile `??` to a helper the browser does not have.
+        const root = top === null ? document : top
+        return [...root.querySelectorAll('[role="button"]')]
           .map(node => node.textContent)
           .filter(text => text !== null && /^D(H|C)Demo /.test(text))
-      )
+      })
     ).map(text => text ?? '')
   const pill = async (session: BrowserSession): Promise<string> =>
     (await session.page.evaluate(() => {
@@ -1041,7 +1059,7 @@ async function player(run: Run): Promise<void> {
   })
   await contains(coach.page, 'Home run')
   const opened = new URL(coach.page.url())
-  expect(opened.pathname).equals(`/players/${avery.id}`)
+  expect(opened.pathname).equals(`/players/${userIdOfGumbo(avery.id)}`)
   expect(opened.search).equals(`?onTeam=${f.teamA}`)
   expect(await tabNames(coach)).deep.equals(['Videos', 'Stats', 'Teams'])
   // Narrowed to the Hawks: the pill says so, and every row is a Hawks play,
@@ -1114,24 +1132,40 @@ async function player(run: Run): Promise<void> {
     jersey: document.querySelector<HTMLInputElement>(
       'input[aria-label="Jersey number"]'
     )!.value,
-    on: [...document.querySelectorAll('[role="checkbox"]')]
-      .filter(node => node.getAttribute('aria-checked') === 'true')
-      .map(node => node.getAttribute('aria-label')),
-    hands: document.querySelectorAll('[role="radio"]').length,
+    // The positions are spots on a field, each a button that says whether
+    // it is selected.
+    on: [
+      ...document.querySelectorAll(
+        '[role="button"][aria-selected="true"][aria-label^="Player position "]'
+      )
+    ]
+      .map(node =>
+        String(node.getAttribute('aria-label')).replace('Player position ', '')
+      )
+      .sort(),
+    hands: [...document.querySelectorAll('[role="radio"]')].map(node =>
+      String(node.getAttribute('aria-label'))
+    ),
     text: document.body.textContent
   }))
   expect(form.name).deep.equals(['Alfonso', 'Soriano'])
   expect(form.jersey).equals('7')
   expect(form.on).deep.equals(['2B', 'SS'])
-  expect(form.hands).equals(0)
-  expect(form.text).not.includes('BATS')
-  expect(form.text).not.includes('THROWS')
+  // Opened for a team, Settings holds the hands beside the jersey and
+  // positions (576828f3a).
+  expect(form.hands).deep.equals([
+    'Throws Left',
+    'Throws Right',
+    'Bats Left',
+    'Bats Switch',
+    'Bats Right'
+  ])
   await run.shot(coach, 'player-settings-team-after.png')
 
   // The guardian sees every team Alfonso plays on, newest season first.
   const guardian = await run.signIn('player-guardian', people.guardian)
   await guardian.m.openBrowser({
-    url: `${f.h.origin}/players/${avery.id}?tab=teams&onTeam=${f.teamA}`
+    url: `${f.h.origin}/players/${userIdOfGumbo(avery.id)}?tab=teams&onTeam=${f.teamA}`
   })
   await contains(guardian.page, 'Demo Comets')
   expect(await tabNames(guardian)).deep.equals([
@@ -1172,7 +1206,7 @@ async function guardian(run: Run): Promise<void> {
       return (body as any[]).map(team => ({ id: team.id, name: team.name }))
     if (route.endsWith('/roster'))
       return (body as any[])
-        .filter(row => row.userId === avery.id)
+        .filter(row => row.userId === userIdOfGumbo(avery.id))
         .map(row => ({
           shortName: row.shortName,
           jersey: row.jersey,
@@ -1277,12 +1311,15 @@ async function guardian(run: Run): Promise<void> {
         .where('kind', '=', 'guardian')
         .orderBy('user_id')
         .execute()
-    ).map(row => Number(row.user_id))
+    )
+      // Each guardian's fixture number, from the canonical id it is stored as.
+      .map(row => Number(gumboOfUserId(row.user_id)))
+      .sort((a, b) => a - b)
   /** Guardian requests a user sent for themselves, by status. */
   const requestsBy = async (
     sender: number,
     status: 'pending' | 'declined'
-  ): Promise<Array<{ id: string; player: number }>> =>
+  ): Promise<Array<{ id: string; player: string }>> =>
     (
       await db
         .selectFrom('group_requests')
@@ -1294,7 +1331,7 @@ async function guardian(run: Run): Promise<void> {
         .execute()
     ).map(row => ({
       id: row.id,
-      player: Number((row.terms as { playerUserId: number }).playerUserId)
+      player: (row.terms as { playerUserId: string }).playerUserId
     }))
   /** Opens a player of the Hawks from the team's roster. */
   const openFromRoster = async (
@@ -1318,7 +1355,7 @@ async function guardian(run: Run): Promise<void> {
     await session.page.waitForFunction(
       path => location.pathname === path,
       { timeout: 20000 },
-      `/players/${playerId}`
+      `/players/${userIdOfGumbo(playerId)}`
     )
     await settle(session)
   }
@@ -1345,7 +1382,7 @@ async function guardian(run: Run): Promise<void> {
     playerId: number
   ): Promise<void> => {
     await session.m.openBrowser({
-      url: `${f.h.origin}/players/${playerId}?tab=settings&onTeam=${f.teamA}`
+      url: `${f.h.origin}/players/${userIdOfGumbo(playerId)}?tab=settings&onTeam=${f.teamA}`
     })
     await session.page.waitForSelector('input[aria-label="Jersey number"]', {
       timeout: 20000
@@ -1367,7 +1404,7 @@ async function guardian(run: Run): Promise<void> {
     'An invitation is on its way to first@example.com.'
   )
   const invited = await requestsBy(people.teamCoach, 'pending')
-  expect(invited.map(row => row.player)).deep.equals([cody.id])
+  expect(invited.map(row => row.player)).deep.equals([userIdOfGumbo(cody.id)])
   expect(f.h.invitations.get('first@example.com')).deep.include({
     playerName: 'Cody D',
     teamName: 'Demo Hawks'
@@ -1420,7 +1457,7 @@ async function guardian(run: Run): Promise<void> {
     'An invitation is on its way to invitee@example.com.'
   )
   const byTim = await requestsBy(people.guardian, 'pending')
-  expect(byTim.map(row => row.player)).deep.equals([avery.id])
+  expect(byTim.map(row => row.player)).deep.equals([userIdOfGumbo(avery.id)])
   const mailed = f.h.invitations.get('invitee@example.com')
   expect(mailed).deep.include({
     playerName: 'Alfonso S',
@@ -1457,7 +1494,7 @@ async function guardian(run: Run): Promise<void> {
     status: 'accepted'
   })
   const roles = await api('GET', '/me/roles', invitee)
-  expect(roles.body.guardianOf).deep.equals([avery.id])
+  expect(roles.body.guardianOf).deep.equals([userIdOfGumbo(avery.id)])
   const teams = await api('GET', '/teams', invitee)
   expect(teams.body.map((team: any) => team.id).sort()).deep.equals(
     [f.teamA, f.secondTeam].sort()
@@ -1477,11 +1514,11 @@ async function guardian(run: Run): Promise<void> {
   expect(await bodyText(faye)).includes('Invite a guardian')
   await fill(faye.m, 'Jersey number', '17')
   await faye.m.tapOn({
-    css: '[role="checkbox"][aria-label="2B"]',
+    css: '[role="button"][aria-label="Player position 2B"]',
     timeout: 15000
   })
   await faye.m.tapOn({
-    css: '[role="checkbox"][aria-label="CF"]',
+    css: '[role="button"][aria-label="Player position CF"]',
     timeout: 15000
   })
   await scrollTap(faye, 'Save')
@@ -1495,7 +1532,9 @@ async function guardian(run: Run): Promise<void> {
   expect(saved).deep.equals({ jersey: '17', positions: ['SS', 'CF'] })
   await run.shot(faye, 'guardian-settings-team.png')
   const roster = await api('GET', `/teams/${f.teamA}/roster`, invitee)
-  expect(roster.body.find((row: any) => row.userId === avery.id)).deep.include({
+  expect(
+    roster.body.find((row: any) => row.userId === userIdOfGumbo(avery.id))
+  ).deep.include({
     jersey: '17',
     positions: ['SS', 'CF']
   })
@@ -1504,7 +1543,7 @@ async function guardian(run: Run): Promise<void> {
   // Freddie; the Walk-up tab then shows it.
   const song = await api(
     'PUT',
-    `/teams/${f.teamA}/players/${avery.id}/walk-up-song`,
+    `/teams/${f.teamA}/players/${userIdOfGumbo(avery.id)}/walk-up-song`,
     invitee,
     {
       provider: 'appleMusic',
@@ -1566,7 +1605,7 @@ async function guardian(run: Run): Promise<void> {
   ).equals('true')
   await run.shot(hank, 'guardian-request.png')
   const hanks = await requestsBy(people.oneTeam, 'pending')
-  expect(hanks.map(row => row.player)).deep.equals([ben.id])
+  expect(hanks.map(row => row.player)).deep.equals([userIdOfGumbo(ben.id)])
 
   // Ben signs in and approves.
   const benSession = await run.signIn('guardian-player', ben.id)
@@ -1585,7 +1624,7 @@ async function guardian(run: Run): Promise<void> {
   await contains(benSession.page, 'Accepted')
   expect(await guardiansOf(ben.id)).deep.equals([people.oneTeam])
   const hankRoles = await api('GET', '/me/roles', people.oneTeam)
-  expect(hankRoles.body.guardianOf).deep.equals([ben.id])
+  expect(hankRoles.body.guardianOf).deep.equals([userIdOfGumbo(ben.id)])
 
   // Gil has five requests waiting; the sixth, in the app, is refused.
   const limit =
@@ -1672,7 +1711,7 @@ async function guardian(run: Run): Promise<void> {
   )
   expect(
     (await requestsBy(declined, 'pending')).map(row => row.player)
-  ).deep.equals([eli.id])
+  ).deep.equals([userIdOfGumbo(eli.id)])
   const ivySent = await api('GET', '/me/notifications?sent=1', declined)
   expect(ivySent.body.items).deep.equals([
     {
@@ -1700,7 +1739,9 @@ async function follower(run: Run): Promise<void> {
   const [game] = f.games
   const { contains, fill, tap } =
     await import('../../e2e/rigs/refinementsMaestro')
-  const membersOnly = 'You need to be a member of one of the teams to see this.'
+  // What the team's Stats tab says in place of the players' figures.
+  const statsMembersOnly =
+    'You need to be a member of this team to see individual player stats.'
   const videosMembersOnly =
     "You need to be a member of one of the teams to watch this game's videos."
   const boxMembersOnly =
@@ -1736,8 +1777,13 @@ async function follower(run: Run): Promise<void> {
       new URL(request.url()).pathname + new URL(request.url()).search
     )
   })
+  // The screen on top: a covered one, such as Home, keeps its text in the DOM.
   const text = async (): Promise<string> =>
-    (await grace.page.evaluate(() => document.body.textContent)) ?? ''
+    (await grace.page.evaluate(() => {
+      const top = document.querySelector('[data-scene-role="top"]')
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Sucrase would compile `??` to a helper the browser does not have.
+      return (top === null ? document.body : top).textContent
+    })) ?? ''
   const tab = async (name: string): Promise<void> => {
     await grace.m.tapOn({ text: name, role: 'tab', timeout: 15000 })
     await settle(grace)
@@ -1852,22 +1898,22 @@ async function follower(run: Run): Promise<void> {
   // Stats: the season's performance, and the players' figures kept back.
   await tab('Stats')
   await contains(grace.page, 'SEASON PERFORMANCE')
-  await contains(grace.page, membersOnly)
-  await readable(grace, membersOnly)
+  await contains(grace.page, statsMembersOnly)
+  await readable(grace, statsMembersOnly)
   const stats = await text()
   expect(stats).includes('2–0')
   expect(stats).not.includes('BATTING')
   expect(stats).not.includes('PITCHING')
 
-  // Videos: the library is kept for members.
+  // Videos: the library lists the team's games with a video for anybody
+  // (0bb040531); playing one is for members, as the api stage checks.
   await tab('Videos')
-  await contains(grace.page, membersOnly)
-  await readable(grace, membersOnly)
-  expect(await text()).not.includes('GAME VIDEO LIBRARY')
+  await contains(grace.page, 'GAME VIDEO LIBRARY')
 
   // Schedule: each game with its count and its thumbnail.
   await tab('Schedule')
-  const card = `[role="button"][aria-label^="Demo Hawks vs Demo Visitors"]`
+  // The Schedule on top: the Videos tab beside it holds the same game.
+  const card = `[data-scene-role="top"] [role="button"][aria-label^="Demo Hawks vs Demo Visitors"]`
   await grace.page.waitForSelector(card, { timeout: 20000 })
   const schedule = await grace.page.evaluate(() =>
     [...document.querySelectorAll('[role="button"][aria-label]')]
@@ -2077,8 +2123,8 @@ async function follower(run: Run): Promise<void> {
   await run.shot(hank, 'discover-team.png', { fit: true })
   await hank.m.tapOn({ text: 'Stats', role: 'tab', timeout: 15000 })
   await contains(hank.page, 'SEASON PERFORMANCE')
-  await contains(hank.page, membersOnly)
-  await readable(hank, membersOnly)
+  await contains(hank.page, statsMembersOnly)
+  await readable(hank, statsMembersOnly)
 
   // A game nothing was recorded of: "No videos", and no player box. Added
   // last, so the team's record on every page above is the two games'.
@@ -2280,7 +2326,8 @@ async function home(run: Run): Promise<void> {
   const form = await guardian.page.evaluate(() => ({
     jersey: document.querySelectorAll('input[aria-label="Jersey number"]')
       .length,
-    positions: document.querySelectorAll('[role="checkbox"]').length,
+    positions: document.querySelectorAll('[aria-label^="Player position "]')
+      .length,
     radios: [...document.querySelectorAll('[role="radio"]')].map(node =>
       node.getAttribute('aria-label')
     )
@@ -2615,18 +2662,30 @@ async function cardColumn(
   await settle(session)
   // No `??` or `?.` in here: see `roster`.
   return await session.page.evaluate(() => {
-    const end = document.querySelector('[data-testid="team-card-end"]')
+    // The card on top: a covered screen keeps its own card in the DOM. The
+    // name sits beside the column, or below it on a narrow card.
+    const top = document.querySelector('[data-scene-role="top"]')
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Sucrase would compile `??` to a helper the browser does not have.
+    const scene = top === null ? document : top
+    const end = scene.querySelector('[data-testid="team-card-end"]')
     if (end === null) throw new Error('No team card column')
-    const name = [...document.querySelectorAll('div')].find(
-      node =>
-        node.children.length === 0 &&
-        node.textContent === 'Demo Hawks' &&
-        node.getBoundingClientRect().top < end.getBoundingClientRect().bottom
+    const words = scene.querySelector('[data-testid="team-hero-words"]')
+    const name = [
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Sucrase would compile `??` to a helper the browser does not have.
+      ...(words === null ? scene : words).querySelectorAll('div')
+    ].find(
+      node => node.children.length === 0 && node.textContent === 'Demo Hawks'
     )
     if (name === undefined) throw new Error('No team name')
+    // A manager's place badge sits just before the column, beside the gear.
+    const before = end.previousElementSibling
+    const badge =
+      before !== null && String(before.textContent).endsWith(' Place')
+        ? [before]
+        : []
     const boxes = [
       { label: 'name', rect: name.getBoundingClientRect() },
-      ...[...end.children].map(child => ({
+      ...[...badge, ...end.children].map(child => ({
         // An element's text is never null; only a document's is.
         label: String(child.textContent),
         rect: child.getBoundingClientRect()

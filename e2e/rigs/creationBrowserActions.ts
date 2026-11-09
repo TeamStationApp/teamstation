@@ -32,7 +32,11 @@ export async function press(
 ): Promise<void> {
   await page
     .waitForFunction(
+      // A press during a push or a pop can land on the screen that is going.
       (label, role) =>
+        document.querySelector(
+          '[data-scene-role="incoming"], [data-scene-role="outgoing"]'
+        ) == null &&
         [...document.querySelectorAll<HTMLElement>(`[role="${role}"]`)].some(
           node =>
             (node.hasAttribute('aria-label')
@@ -45,6 +49,14 @@ export async function press(
       role
     )
     .catch(async (error: unknown) => {
+      const shots = process.env.TS_CREATION_ARTIFACTS
+      if (shots != null && shots !== '') {
+        await page
+          .screenshot({
+            path: `${shots}/unavailable-${label.replace(/[^\w-]+/g, '_')}.png`
+          })
+          .catch(() => undefined)
+      }
       console.error(
         'Unavailable browser action:',
         label,
@@ -62,16 +74,20 @@ export async function press(
     })
   await page.evaluate(
     (label, role) => {
-      const button = [
+      const matches = [
         ...document.querySelectorAll<HTMLElement>(`[role="${role}"]`)
-      ]
-        .filter(
-          node =>
-            (node.hasAttribute('aria-label')
-              ? node.getAttribute('aria-label')
-              : node.textContent) === label
-        )
-        .at(-1)
+      ].filter(
+        node =>
+          (node.hasAttribute('aria-label')
+            ? node.getAttribute('aria-label')
+            : node.textContent) === label
+      )
+      // The top scene's own control, when the app's navigation outside the
+      // scenes carries one of the same name.
+      const onTop = matches.filter(
+        node => node.closest('[data-scene-role="top"]') != null
+      )
+      const button = (onTop.length > 0 ? onTop : matches).at(-1)
       if (button == null) throw new Error('Missing requested action')
       button.click()
     },

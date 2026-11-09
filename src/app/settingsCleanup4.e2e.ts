@@ -460,7 +460,7 @@ async function main(): Promise<void> {
         'E7 PASS: selected invitation confirmation, Cancel/no write, withdraw keeps other invitation'
       )
     }
-    await go(`/teams/${f.teamA}/people/106`, 'Tim Raines')
+    await go(`/teams/${f.teamA}/people/${userIdOfGumbo(106)}`, 'Tim Raines')
     await show('Coach')
     if (!before) {
       await m.tapOn({ text: 'Coach', role: 'switch' })
@@ -503,7 +503,7 @@ async function main(): Promise<void> {
           is_player: false
         })
         .execute()
-      await go(`/teams/${f.teamA}/people/108`, 'Willie Mays')
+      await go(`/teams/${f.teamA}/people/${userIdOfGumbo(108)}`, 'Willie Mays')
       await show('Member')
       await m.tapOn({ text: 'Member', role: 'switch' })
       await tap('Confirm removal')

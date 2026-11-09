@@ -3,6 +3,8 @@
  * this suite's daemon and devices.
  */
 
+import { homedir } from 'node:os'
+
 export interface LegacySettings {
   maestroClientRoot?: string
   maestroBin?: string
@@ -67,29 +69,52 @@ function logicalLines(text: string): string[] {
 
 function tokenize(line: string): string[] {
   const tokens: string[] = []
-  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g
+  // A `<placeholder with spaces>` stays one token.
+  const pattern = /"([^"]*)"|'([^']*)'|((?:[^\s<"']|<[^>]*>)+)/g
   for (const match of line.matchAll(pattern)) {
     tokens.push(match[1] ?? match[2] ?? match[3])
   }
   return tokens
 }
 
+function isCommand(token: string): boolean {
+  return (
+    token === 'node' ||
+    token === 'npx' ||
+    token === 'npm' ||
+    token === 'mocha' ||
+    token.endsWith('/mocha')
+  )
+}
+
+/** Drops `[...]` groups: the header's optional parts. */
+function withoutOptional(tokens: string[]): string[] {
+  const kept: string[] = []
+  let depth = 0
+  for (const token of tokens) {
+    const opens = token.startsWith('[') ? 1 : 0
+    const closes = token.endsWith(']') ? 1 : 0
+    if (depth === 0 && opens === 0) kept.push(token)
+    depth = Math.max(0, depth + opens - closes)
+  }
+  return kept
+}
+
 function splitEnv(tokens: string[]): {
   env: Record<string, string>
   argv: string[]
 } {
+  const commandAt = tokens.findIndex(isCommand)
+  if (commandAt < 0) return { env: {}, argv: tokens }
   const env: Record<string, string> = {}
-  let index = 0
-  while (
-    index < tokens.length &&
-    /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index])
-  ) {
-    const token = tokens[index]
+  for (const token of tokens.slice(0, commandAt)) {
     const eq = token.indexOf('=')
-    env[token.slice(0, eq)] = token.slice(eq + 1)
-    index++
+    if (eq <= 0) continue
+    const key = token.slice(0, eq)
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue
+    env[key] = token.slice(eq + 1)
   }
-  return { env, argv: tokens.slice(index) }
+  return { env, argv: tokens.slice(commandAt) }
 }
 
 function namesFile(argv: string[], file: string): boolean {
@@ -97,6 +122,38 @@ function namesFile(argv: string[], file: string): boolean {
   return argv.some(
     arg => arg === file || arg.endsWith(`/${base}`) || arg === base
   )
+}
+
+/** Replaces values this suite knows and reports any placeholder still left. */
+export function concreteEnv(
+  env: Record<string, string>,
+  known: Record<string, string> = {}
+): { env: Record<string, string>; blocked?: string } {
+  const next: Record<string, string> = { ...env }
+  for (const [key, value] of Object.entries(known)) {
+    if (value !== '' && key in next) next[key] = value
+  }
+  for (const [key, value] of Object.entries(next)) {
+    if (value.startsWith('$HOME')) {
+      next[key] = homedir() + value.slice('$HOME'.length)
+    }
+  }
+  const left = Object.keys(next).filter(key => /[<>…[\]]/.test(next[key]))
+  if (left.length > 0) {
+    return { env: next, blocked: `placeholder env: ${left.join(', ')}` }
+  }
+  return { env: next }
+}
+
+/** Environment names the header mentions, so a runner can fill the ones it knows. */
+export function headerNames(source: string): string[] {
+  return [
+    ...new Set(
+      [...commentText(source).matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)].map(
+        match => match[1]
+      )
+    )
+  ]
 }
 
 function rewrite(env: Record<string, string>, settings: LegacySettings): void {
@@ -169,12 +226,15 @@ export function legacyCommand(
   const setup: LegacySetup[] = []
   let chosen: { env: Record<string, string>; argv: string[] } | undefined
   for (const line of lines) {
-    const parsed = splitEnv(tokenize(line))
+    const parsed = splitEnv(withoutOptional(tokenize(line)))
     if (parsed.argv.length === 0) continue
     if (namesFile(parsed.argv, file)) {
-      chosen = parsed
+      // The first command is the plain one; later ones are variants.
+      chosen ??= parsed
       continue
     }
+    // A setup line with a placeholder is the runner's to fill, not to run.
+    if (parsed.argv.some(token => /[<>…]/.test(token))) continue
     const rendered = parsed.argv.join(' ')
     if (
       rendered === 'npm start' ||
@@ -193,5 +253,6 @@ export function legacyCommand(
   if (chosen == null) return fallback(source, file)
   rewrite(chosen.env, settings)
   if (!('MAESTRO_D' in chosen.env)) chosen.env.MAESTRO_D = 'e2eSuite'
+  chosen.argv = chosen.argv.filter(token => !/[<>[\]]/.test(token))
   return { argv: chosen.argv, env: chosen.env, setup }
 }

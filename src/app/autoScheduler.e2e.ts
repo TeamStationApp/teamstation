@@ -374,12 +374,15 @@ async function e2(run: Run): Promise<void> {
   await contains(admin.page, '5:00 PM – 9:00 PM')
   // The year's dates, October to September.
   await tapLabel(admin, 'Dates: Open all year')
-  for (let month = 0; month < 24; month++) {
+  // The calendar opens on this month, which can be after October 2026.
+  const opening = new Date().getFullYear() * 12 + new Date().getMonth()
+  const toOctober = 2026 * 12 + 9 - opening
+  for (let month = 0; month < Math.abs(toOctober); month++) {
     const shown = await admin.page.evaluate(
       () => document.querySelector('[aria-label="2026-10-01"]') != null
     )
     if (shown) break
-    await tapLabel(admin, 'Next month')
+    await tapLabel(admin, toOctober < 0 ? 'Previous month' : 'Next month')
   }
   await tapLabel(admin, '2026-10-01')
   for (let month = 0; month < 12; month++) {

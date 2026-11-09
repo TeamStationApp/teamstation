@@ -483,7 +483,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'PUT',
-          `/manage/season/${f.seasonB}/people/205/roles`,
+          `/manage/season/${f.seasonB}/people/${userIdOfGumbo(205)}/roles`,
           { admin: false, flags: [] },
           105
         )

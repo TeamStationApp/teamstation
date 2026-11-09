@@ -102,12 +102,23 @@ export async function fill(
   label: string,
   value: string
 ): Promise<void> {
+  const page = browserPages.get(m)
+  const bare = `[aria-label="${label}"]:is(input, textarea)`
+  const top = `[data-scene-role="top"] ${bare}`
+  // A covered screen keeps its fields in the DOM with pointer-events: none.
+  // The top scene is the one the tap can reach; a screen still pushing in is
+  // `incoming` until its transition ends.
+  const onTop =
+    page != null &&
+    (await page
+      .waitForSelector(top, { timeout: 10000 })
+      .then(() => true)
+      .catch(() => false))
+  const selector = onTop ? top : bare
   await m.tapOn({
-    css: `[aria-label="${label}"]:is(input, textarea)`,
+    css: selector,
     timeout: 10000
   })
-  const selector = `[aria-label="${label}"]:is(input, textarea)`
-  const page = browserPages.get(m)
   if (page != null) {
     const current = await page.$eval(
       selector,

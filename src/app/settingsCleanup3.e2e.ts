@@ -439,10 +439,14 @@ async function main(): Promise<void> {
           '/games/gam_settings3_final?tab=info',
           'Demo Field'
         ],
-        ['player-gear', `/players/104?onTeam=${f.teamA}`, 'Ichiro'],
+        [
+          'player-gear',
+          `/players/${userIdOfGumbo(104)}?onTeam=${f.teamA}`,
+          'Ichiro'
+        ],
         [
           'player-team-tiles',
-          `/players/104?onTeam=${f.teamA}&tab=teams`,
+          `/players/${userIdOfGumbo(104)}?onTeam=${f.teamA}&tab=teams`,
           'Winter Wolves'
         ],
         ['home-team-tiles', '/', 'Winter Wolves'],
@@ -976,7 +980,7 @@ async function main(): Promise<void> {
       await shot('cancel-manage-player')
       await tap(m, 'Cancel')
       await go(
-        `/players/104?onTeam=${f.teamA}&tab=settings`,
+        `/players/${userIdOfGumbo(104)}?onTeam=${f.teamA}&tab=settings`,
         'Remove from Winter Wolves'
       )
       await show('Remove from Winter Wolves')

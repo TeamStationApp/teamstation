@@ -11,6 +11,7 @@ import {
   press,
   text
 } from '../../e2e/rigs/creationBrowserActions'
+import { userIdOfGumbo } from '../common/userId'
 import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
@@ -70,7 +71,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'DELETE',
-          `/manage/team/${f.teamA}/people/101`,
+          `/manage/team/${f.teamA}/people/${userIdOfGumbo(101)}`,
           undefined,
           101
         )
@@ -99,7 +100,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'DELETE',
-          `/manage/team/${f.teamA}/people/101`,
+          `/manage/team/${f.teamA}/people/${userIdOfGumbo(101)}`,
           undefined,
           101
         )
@@ -124,7 +125,7 @@ async function main(): Promise<void> {
     // Suspension remains an API action; this screen manages node access.
     const protectedAccount = await f.h.request(
       'PATCH',
-      '/users/106/administration',
+      `/users/${userIdOfGumbo(106)}/administration`,
       { suspended: true },
       105
     )
@@ -145,7 +146,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'PATCH',
-          '/users/106/administration',
+          `/users/${userIdOfGumbo(106)}/administration`,
           { suspended: true },
           105
         )
@@ -158,7 +159,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'PATCH',
-          '/users/106/administration',
+          `/users/${userIdOfGumbo(106)}/administration`,
           { suspended: false },
           105
         )

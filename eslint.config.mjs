@@ -92,6 +92,8 @@ export default [
     ignores: [
       '**/lib/**',
       '**/dist/**',
+      // Coverage reports, and the web builds browser scripts keep beside them.
+      'coverage/**',
       '.cursor/**',
       '.test-tools/**',
       'tools/**',

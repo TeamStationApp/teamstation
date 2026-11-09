@@ -150,7 +150,10 @@ async function main(): Promise<void> {
     }))
     const results: State[] = []
     registry.push(
-      { key: 'player-teams', path: `/players/103?onTeam=${f.teamA}&tab=teams` },
+      {
+        key: 'player-teams',
+        path: `/players/${userIdOfGumbo(103)}?onTeam=${f.teamA}&tab=teams`
+      },
       {
         key: 'game-box-score',
         path: '/games/gam_settings_fixture_0?tab=boxScore'
