@@ -281,6 +281,11 @@ describe('a team’s people by external id', function () {
         res.end(held)
         return
       }
+      if (req.method === 'DELETE') {
+        res.statusCode = objects.delete(path) ? 204 : 404
+        res.end()
+        return
+      }
       if (req.method !== 'PUT') {
         res.statusCode = 405
         res.end()
@@ -2437,9 +2442,7 @@ describe('a team’s people by external id', function () {
         .select(['logo_path', 'logo_sha256', 'logo_source', 'logo_updated_at'])
         .where('id', '=', teamId)
         .executeTakeFirstOrThrow()
-      expect(row.logo_path).matches(
-        new RegExp(`^images/team/${teamId}/[0-9a-f]{8}$`)
-      )
+      expect(row.logo_path).matches(/^images\/team\/[0-9a-f]{32}$/)
       expect(row.logo_sha256).matches(/^[0-9a-f]{64}$/)
       expect(row.logo_source).equals('import')
       expect(row.logo_updated_at).not.equals(null)
@@ -2450,9 +2453,9 @@ describe('a team’s people by external id', function () {
         ]
       )
 
-      // The URL is the signed 192 px rendition, and it is one.
+      // The URL is the public 192 px rendition, unsigned, and it is one.
       expect(answer.body.url).includes(`${row.logo_path}-192.png`)
-      expect(answer.body.url).includes('X-Amz-Signature=')
+      expect(new URL(answer.body.url).search).equals('')
       const drawn = await fetch(answer.body.url)
       expect(drawn.status).equals(200)
       expect(pngSize(Buffer.from(await drawn.arrayBuffer()))).deep.equals({
@@ -2484,9 +2487,7 @@ describe('a team’s people by external id', function () {
         ])
         .where('id', '=', fixtureUserId(userId))
         .executeTakeFirstOrThrow()
-      expect(row.avatar_path).matches(
-        new RegExp(`^images/user/${userId}/[0-9a-f]{8}$`)
-      )
+      expect(row.avatar_path).matches(/^images\/user\/[0-9a-f]{32}$/)
       expect(row.avatar_sha256).matches(/^[0-9a-f]{64}$/)
       expect(row.avatar_source).equals('import')
       expect(row.avatar_updated_at).not.equals(null)
@@ -2497,6 +2498,49 @@ describe('a team’s people by external id', function () {
           (entry: { userId: string }) => entry.userId === fixtureUserId(userId)
         ).avatarUrl
       ).to.be.a('string')
+    })
+
+    it('deletes the picture a new logo or headshot replaces, and keeps one another row names', async function () {
+      const { teamId, userId } = await teamWithPlayer('Replaced')
+      const held = (prefix: string | null): boolean[] =>
+        [96, 192].map(size => objects.has(`/${BUCKET}/${prefix}-${size}.png`))
+      const logoPath = async (): Promise<string | null> =>
+        (
+          await database()
+            .selectFrom('teams')
+            .select('logo_path')
+            .where('id', '=', teamId)
+            .executeTakeFirstOrThrow()
+        ).logo_path
+      const avatarPath = async (): Promise<string | null> =>
+        (
+          await database()
+            .selectFrom('users')
+            .select('avatar_path')
+            .where('id', '=', fixtureUserId(userId))
+            .executeTakeFirstOrThrow()
+        ).avatar_path
+
+      await logo(teamId, body(red, 'upload'))
+      const first = await logoPath()
+      await logo(teamId, body(blue, 'upload'))
+      const second = await logoPath()
+      expect(second).not.equals(first)
+      expect(held(first)).deep.equals([false, false])
+      expect(held(second)).deep.equals([true, true])
+
+      await avatar(teamId, userId, body(red, 'upload'))
+      const face = await avatarPath()
+      // Another team names the same picture, so it outlives the replacement.
+      const other = await newTeam('Sharing')
+      await database()
+        .updateTable('teams')
+        .set({ logo_path: face })
+        .where('id', '=', other)
+        .execute()
+      await avatar(teamId, userId, body(blue, 'upload'))
+      expect(await avatarPath()).not.equals(face)
+      expect(held(face)).deep.equals([true, true])
     })
 
     it('uploads nothing for the picture it already holds', async function () {
