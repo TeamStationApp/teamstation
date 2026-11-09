@@ -545,7 +545,10 @@ export function eventRoutes(
    * TeamStation. The body names the sides the scorer read: a call sent
    * again after its answer was lost finds them already exchanged and
    * changes nothing, rather than swapping them back. The answer is the new
-   * sides, the game's generation, and what the reset deleted.
+   * sides, the game's generation, what the reset deleted, and the lineups
+   * digest the sides have as the swap commits: a save built on the swapped
+   * lineups names it as its base, so a lineup another device saved after
+   * the swap is refused as stale rather than overwritten.
    */
   router.post(
     '/games/:gameId/swap-sides',
@@ -561,7 +564,15 @@ export function eventRoutes(
         await lockPlayerEdits(trx)
         const game = await trx
           .selectFrom('games')
-          .select(['id', 'home_team_id', 'away_team_id', 'play_generation'])
+          .select([
+            'id',
+            'home_team_id',
+            'away_team_id',
+            'currentPlay',
+            'pregame',
+            'lineups_digest',
+            'play_generation'
+          ])
           .where('id', '=', gameId)
           .forUpdate()
           .executeTakeFirst()
@@ -581,6 +592,7 @@ export function eventRoutes(
             ...read.swapped,
             generation: game.play_generation,
             reset: unchanged,
+            lineupsDigest: await storedLineupsDigest(trx, game),
             swapped: false
           }
         if (
@@ -593,6 +605,7 @@ export function eventRoutes(
           ...read.swapped,
           generation: game.play_generation + (done.reset ? 1 : 0),
           reset: done.lost,
+          lineupsDigest: done.lineupsDigest,
           swapped: true
         }
       })
@@ -601,7 +614,8 @@ export function eventRoutes(
         homeTeamId: done.homeTeamId,
         awayTeamId: done.awayTeamId,
         generation: done.generation,
-        reset: done.reset
+        reset: done.reset,
+        lineupsDigest: done.lineupsDigest
       })
     })
   )

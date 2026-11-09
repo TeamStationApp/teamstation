@@ -1884,6 +1884,11 @@ describe('a game swapped under the scoring screen on the socket', function () {
               discardGame: async (gameId: string) => {
                 discarded.push(gameId)
                 return true
+              },
+              giveUpGame: async (gameId: string) => {
+                const count = queued[`game:${gameId}`] ?? 0
+                if (count > 0) discarded.push(gameId)
+                return count
               }
             }
           )
@@ -2043,6 +2048,17 @@ describe('a game swapped under the scoring screen on the socket', function () {
     expect(document.body.textContent).includes(
       'changes not yet saved before the swap were not kept'
     )
+  })
+
+  it('on a phone with nothing queued, gives up nothing on another device’s swap', async function () {
+    const screen = await swappable({ phone: {} })
+    screen.swap()
+    await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+    await settle()
+    expect(screen.discarded).deep.equals([])
+    expect(screen.opens()).equals(2)
+    expect(document.body.textContent).includes('Home and away were swapped.')
+    expect(document.body.textContent).not.includes('were not kept')
   })
 
   it('stops waiting for a save on its way when the screen goes', async function () {

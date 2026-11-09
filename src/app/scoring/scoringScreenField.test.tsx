@@ -24,6 +24,7 @@ import { F } from '../../test/scoringGames'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
 import type { BaseballScreen } from '../field/BaseballScreen'
 import type { FieldPlacement } from '../field/fieldTypes'
+import { localTagRevision } from '../sync/tagRevisions'
 import { ThemeProvider } from '../theme/ThemeContext'
 import webMusic from '../walkup/walkUpMusic'
 import type { WalkUpMusic } from '../walkup/walkUpMusicTypes'
@@ -1648,7 +1649,7 @@ describe('scoring screen field wiring', function () {
   })
 
   for (const change of ['close', 'reselect', 'account', 'unmount'] as const)
-    it(`does not issue a tag request after ${change} while scoring flush is pending`, async () => {
+    it(`${change === 'account' ? 'issues no tag request' : 'still saves the tag'} after ${change} while scoring flush is pending`, async () => {
       const source = new DevelopmentScoringSource()
       await mount(source)
       await step(() => {
@@ -1664,11 +1665,12 @@ describe('scoring screen field wiring', function () {
       const editor =
         componentProps<Parameters<typeof EventTagEditor>[0]>('EventTagEditor')
       const panel = componentProps<{
-        game: { flush: () => Promise<void> }
+        game: { handedOff: () => Promise<void> }
         client: TeamStationClient
       }>('ScoringPanel')
       let release!: () => void
-      panel.game.flush = async () => {
+      // The play's save not yet in its store's hands: the tag waits on that.
+      panel.game.handedOff = async () => {
         await new Promise<void>(resolve => {
           release = resolve
         })
@@ -1699,9 +1701,9 @@ describe('scoring screen field wiring', function () {
       }
       release()
       const result = await saving
-      expect(result).instanceOf(Error)
-      expect((result as Error).message).includes('tag selection changed')
-      expect(calls).equals(0)
+      // The editor closes as the save starts: only another account stops it.
+      expect(result).equals(undefined)
+      expect(calls).equals(change === 'account' ? 0 : 1)
     })
 
   it('keeps a pitch description when a deferred batting-team roster change is the newest Undo action', async () => {
@@ -1776,6 +1778,40 @@ describe('scoring screen field wiring', function () {
     const stored = tagTargets(source.store.games.get('g1')!.currentPlay!)
     expect(stored[0]).deep.includes({ id: targets[0].id, tag: 'correct pitch' })
     expect(stored[1].tag).equals(null)
+  })
+
+  it('takes a tag sent to the server after one the phone queued, whose revision is its own', async () => {
+    const source = new DevelopmentScoringSource()
+    await mount(source)
+    await step(() => {
+      props().onPitch?.('ball')
+    })
+    await settle()
+    const target = tagTargets(source.store.games.get('g1')!.currentPlay!)[0]
+    const answers = [
+      // Queued: the phone's revision, far longer than the server's.
+      { tag: 'queued tag', revision: localTagRevision(Date.now(), 0) },
+      // Sent directly afterwards: the server's own short revision.
+      { tag: 'sent tag', revision: '8' }
+    ]
+    source.saveTag = async (_game, targetId) => ({
+      targetId,
+      ...answers.shift()!
+    })
+    for (const tag of ['queued tag', 'sent tag']) {
+      await step(() => {
+        props().onTagSelect?.(target)
+      })
+      await act(async () => {
+        await componentProps<Parameters<typeof EventTagEditor>[0]>(
+          'EventTagEditor'
+        ).saveTag(tag)
+      })
+    }
+    await step(() => {
+      props().onHistoryOpen?.()
+    })
+    expect(props().historyRows![0].tag).equals('sent tag')
   })
 
   for (const opening of ['before', 'after'] as const)
