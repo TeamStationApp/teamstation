@@ -595,7 +595,7 @@ describe('CachingClient', function () {
     expect(page.items.map(game => game.id)).deep.equals(['g1'])
   })
 
-  it('answers each list’s stored first page offline, and a page never stored with no games (First page)', async function () {
+  it('answers each list’s stored first page offline, and fails a later page never stored as offline (First page)', async function () {
     const games = [upcomingGame('g1', 'tem_hawks', 'tem_owls')]
     const lists: Array<[string, Parameters<CachingClient['gamesPage']>[0]]> = [
       ['/events?paged=1&when=upcoming', { when: 'upcoming' }],
@@ -612,9 +612,9 @@ describe('CachingClient', function () {
     net.offline = true
     for (const [, query] of lists)
       expect((await client.gamesPage(query)).items).length(1)
-    // A page never stored is no games, and no error.
+    // A first page never stored is no games, and no error.
     expect(
-      await client.gamesPage({ when: 'past', cursor: 'next:50' })
+      await client.gamesPage({ when: 'upcoming', order: 'asc' })
     ).deep.equals({
       items: [],
       nextCursor: null,
@@ -622,6 +622,15 @@ describe('CachingClient', function () {
       anchorId: null,
       counts: null
     })
+    // A later page never stored is the offline error: the list's Could not
+    // load more, and its Retry.
+    let failed: unknown
+    try {
+      await client.gamesPage({ when: 'past', cursor: 'next:50' })
+    } catch (error) {
+      failed = error
+    }
+    expect(failed).property('code', 'offline')
   })
 
   it('reads ahead from the stored upcoming list when it will not load', async function () {

@@ -752,8 +752,9 @@ export class CachingClient extends TeamStationClient {
   /**
    * A schedule read: to the server as before, its answer kept as one row per
    * game and the page it returned. With no signal, a first page answers
-   * what `scheduleGames` paints, another page the stored page of that
-   * cursor, and a page never stored an empty page, not an error.
+   * what `scheduleGames` paints (an empty page, not an error, when nothing
+   * was stored), another page the stored page of that cursor, and a later
+   * page never stored the offline error, for the list's Retry.
    */
   private async scheduleRequest<T>(
     opened: Opened,
@@ -1053,8 +1054,9 @@ async function chainOf(
 
 /**
  * What a schedule read answers with no signal: a first page as the screen
- * paints it, another page as stored or empty, a whole list as stored or
- * none.
+ * paints it, empty when nothing was stored; another page as stored, or none,
+ * so that a list read past its last stored page fails as offline and offers
+ * its Retry; a whole list as stored or none.
  */
 async function storedAnswer(
   tx: CacheTransaction,
@@ -1066,7 +1068,7 @@ async function storedAnswer(
   const page = (await tx.schedulePages(read.scope, [window])).find(
     stored => stored.cursor === read.cursor
   )
-  if (!read.paged)
-    return page == null ? undefined : (await pageOf(tx, read.shape, page)).items
-  return page == null ? emptyPage() : await pageOf(tx, read.shape, page)
+  if (page == null) return undefined
+  const stored = await pageOf(tx, read.shape, page)
+  return read.paged ? stored : stored.items
 }
