@@ -145,7 +145,7 @@ export async function networkRecovery(
     await waitFor(async () => {
       const current = await count()
       return current.balls === 1 && current.strikes === 1
-    }, 'the newer strike to save before releasing the older ball')
+    }, 'the first accepted strike to save before releasing the held ball')
     await record({ statsBeforeRecovery: await api('stats') })
     await clear()
     const restored = Date.now()
@@ -153,7 +153,7 @@ export async function networkRecovery(
     await synced(1, 1, restored)
     await rig.converge(
       newer,
-      'newer physical pitch after delayed older delivery'
+      'first accepted physical pitch after delayed conflicting delivery'
     )
     await rig.capture('network-recovered')
     await record({ status: 'passed' })
