@@ -176,6 +176,14 @@ describe('TeamStation TV approval screen', () => {
   it('focuses one input, normalizes paste and submits only on the eighth letter', async () => {
     const f = fixture()
     await render(f.client)
+    const brand = document.querySelector<HTMLElement>(
+      '[data-testid="tv-brand-screen"]'
+    )!
+    expect(brand.style.width).equals('44px')
+    expect(brand.parentElement?.style.width).equals('180px')
+    expect(brand.parentElement?.style.height).equals('130px')
+    const title = brand.parentElement?.nextElementSibling as HTMLElement
+    expect(title.style.fontSize).equals('30px')
     await press('Enter TV code')
     expect(document.activeElement?.getAttribute('aria-label')).equals(
       'Eight-letter TV login code'

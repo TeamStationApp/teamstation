@@ -13,15 +13,37 @@ import {
 } from './browseLayout'
 
 describe('TV browsing layout', () => {
-  it('uses the event timezone and handles unknown dates and invalid zones', () => {
-    const game = {
-      startAt: '2026-10-01T01:00:00Z',
-      timezone: 'America/Los_Angeles'
+  it('uses the viewer timezone for UTC-stored games and month boundaries', () => {
+    const original = Object.getOwnPropertyDescriptor(
+      Intl.DateTimeFormat.prototype,
+      'resolvedOptions'
+    )!.value as Intl.DateTimeFormat['resolvedOptions']
+    let zone = 'America/Los_Angeles'
+    Intl.DateTimeFormat.prototype.resolvedOptions = function (
+      this: Intl.DateTimeFormat
+    ): Intl.ResolvedDateTimeFormatOptions {
+      return { ...original.call(this), timeZone: zone }
     }
-    expect(monthOf(game)).equals('September 2026')
-    expect(gameDate(game)).equals('September 30 at 6 pm')
-    expect(gameDate({ ...game, timezone: 'unknown' })).contains('UTC')
-    expect(monthOf({ ...game, timezone: 'unknown' })).equals('October 2026')
+    try {
+      const game = { startAt: '2025-12-10T20:00:00Z', timezone: 'UTC' }
+      expect(gameDate(game)).equals('December 10 at 12 pm')
+      expect(gameDate({ ...game, startAt: '2025-07-10T20:00:00Z' })).equals(
+        'July 10 at 1 pm'
+      )
+      const boundary = { ...game, startAt: '2025-10-01T01:00:00Z' }
+      expect(gameDate(boundary)).equals('September 30 at 6 pm')
+      expect(monthOf(boundary)).equals('September 2025')
+      zone = 'Asia/Tokyo'
+      expect(gameDate(game)).equals('December 11 at 5 am')
+      expect(monthOf(boundary)).equals('October 2025')
+    } finally {
+      Intl.DateTimeFormat.prototype.resolvedOptions = original
+    }
+  })
+  it('handles unknown dates and invalid viewer zones', () => {
+    const game = { startAt: '2025-10-01T01:00:00Z', timezone: 'UTC' }
+    expect(gameDate(game, 'unknown')).equals('October 1 at 1 am UTC')
+    expect(monthOf(game, 'unknown')).equals('October 2025')
     for (const startAt of [null, 'invalid']) {
       expect(gameDate({ ...game, startAt })).equals('Date to be announced')
       expect(monthOf({ ...game, startAt })).equals('Date to be announced')
@@ -50,7 +72,7 @@ describe('TV browsing layout', () => {
         latestVideoAt: '2026-10-01T00:00:00Z'
       })
     )
-    const sections = monthSections(games)
+    const sections = monthSections(games, 'UTC')
     expect(sections.map(s => s.month)).deep.equals([
       'October 2026',
       'September 2026'
