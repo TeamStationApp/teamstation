@@ -14,9 +14,12 @@ export interface SuccessNotice {
 
 /** Shell-level confirmation survives the screen that submitted the change. */
 export function SuccessToast({
-  notice
+  notice,
+  bannerHeight = 0
 }: {
   notice?: SuccessNotice
+  /** The offline banner's height while it shows: the toast rides above it. */
+  bannerHeight?: number
 }): React.ReactElement | null {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -53,7 +56,10 @@ export function SuccessToast({
         styles.position,
         {
           opacity,
-          bottom: insets.bottom + theme.rem(phone ? NAV_CLEARANCE_REM - 1 : 2)
+          bottom:
+            insets.bottom +
+            bannerHeight +
+            theme.rem(phone ? NAV_CLEARANCE_REM - 1 : 2)
         }
       ]}
     >

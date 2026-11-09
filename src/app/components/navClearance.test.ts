@@ -26,4 +26,14 @@ describe('the floating nav and the unsafe area', function () {
     expect(floatingNavBottom('web', margin, 0)).equals(margin)
     expect(navClearanceAboveInset('web', clearance, margin)).equals(clearance)
   })
+
+  it('sits the capsule on the offline banner, which sits on the inset', function () {
+    for (const platform of ['ios', 'android', 'web'])
+      expect(floatingNavBottom(platform, margin, inset, 40), platform).equals(
+        inset + 40
+      )
+    expect(floatingNavBottom('android', margin, inset, 0)).equals(
+      margin + inset
+    )
+  })
 })
