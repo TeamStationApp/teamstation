@@ -6,16 +6,17 @@ import {
   View
 } from 'react-native'
 
-import type {
-  BattingRow,
-  GamesPageQuery,
-  GameSummary,
-  PitchingRow,
-  RosterEntry,
-  StaffEntry,
-  StandingsRow,
-  TeamStationClient,
-  TeamSummary
+import {
+  asGameSummary,
+  type BattingRow,
+  type GamesPageQuery,
+  type GameSummary,
+  type PitchingRow,
+  type RosterEntry,
+  type StaffEntry,
+  type StandingsRow,
+  type TeamStationClient,
+  type TeamSummary
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { eventName, type PlayerRsvpCounts } from '../../common/eventInfo'
@@ -68,6 +69,7 @@ import { ActiveView, TabPages } from '../components/TabPages'
 import { EMPTY_PAGE, type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useStableCallback } from '../hooks/useStableCallback'
 import { videoCountLabel } from '../locales/strings'
+import { storedSchedule, teamScope } from '../sync/scheduleReads'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
@@ -273,8 +275,12 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         cursor == null ? VIDEOS_OPEN : { ...VIDEOS_OPEN, cursor }
       )
   })
-  const { apply: applySchedule, fail: failSchedule } = schedule
-  const { apply: applyVideos, fail: failVideos } = videos
+  const {
+    apply: applySchedule,
+    fail: failSchedule,
+    paint: paintSchedule
+  } = schedule
+  const { apply: applyVideos, fail: failVideos, paint: paintVideos } = videos
   const [roster, setRoster] = useState<RosterEntry[]>([])
   const [batting, setBatting] = useState<BattingRow[]>([])
   const [pitching, setPitching] = useState<PitchingRow[]>([])
@@ -306,6 +312,15 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     }
     setError(undefined)
     const load = async (): Promise<void> => {
+      // What the phone stored of both lists, until their reads return.
+      const scope = teamScope(team.id)
+      const [storedGames, storedVideos] = await Promise.all([
+        storedSchedule(client, scope, SCHEDULE_OPENS, asGameSummary),
+        storedSchedule(client, scope, VIDEOS_OPEN, asGameSummary)
+      ])
+      if (cancelled) return
+      if (storedGames != null) paintSchedule(storedGames)
+      if (storedVideos != null) paintVideos(storedVideos)
       const [firstGames, firstVideos] = await Promise.all([
         client.teamGamesPage(team.id, SCHEDULE_OPENS),
         client.teamGamesPage(team.id, VIDEOS_OPEN)
@@ -384,6 +399,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     client,
     failSchedule,
     failVideos,
+    paintSchedule,
+    paintVideos,
     team.id,
     publicDetail,
     nonMemberView,

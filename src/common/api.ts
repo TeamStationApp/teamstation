@@ -7255,6 +7255,26 @@ export class TeamStationClient {
   }
 
   /**
+   * The games this client keeps on the device for one schedule's window
+   * (`scope` such as `me` or `team:<id>`), as the page its screen paints
+   * before its read returns. The web keeps none: an empty page, which a
+   * screen does not paint.
+   */
+  async scheduleGames<T>(
+    _scope: string,
+    _window: string,
+    _cleaner: Cleaner<T>
+  ): Promise<Page<T>> {
+    return {
+      items: [],
+      nextCursor: null,
+      prevCursor: null,
+      anchorId: null,
+      counts: null
+    }
+  }
+
+  /**
    * Every call to the API. `headers` are sent beside the usual ones: a
    * queued write's `Idempotency-Key`.
    */

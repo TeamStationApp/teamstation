@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
@@ -11,6 +15,7 @@ import type {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import {
   listProps,
   reachEnd,
@@ -30,6 +35,8 @@ import {
 } from '../../test/teamScheduleFixture'
 import { Screen } from '../components/Screen'
 import { type PagedRows, usePagedList } from '../hooks/usePagedList'
+import { cacheFileName, openCacheStore } from '../sync/cacheStore'
+import { CachingClient } from '../sync/cachingClient'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { rowsKeptDrawn, ScheduleRows, TeamScreen } from './TeamScreen'
 
@@ -1007,5 +1014,62 @@ describe('TeamScreen’s lists, a page at a time', function () {
       }
     ).data.find(row => row.id === game.id)!
     expect(after.playerRsvps).deep.equals({ yes: 1, unknown: 0, no: 0 })
+  })
+})
+
+describe('a team’s schedule with no signal', function () {
+  let dir: string
+  let executors: Array<ReturnType<typeof nodeSqliteExecutor>>
+
+  beforeEach(function () {
+    dir = mkdtempSync(join(tmpdir(), 'teamstation-team-'))
+    executors = []
+  })
+  afterEach(async function () {
+    for (const executor of executors) await executor.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('is the team’s stored schedule and roster when those requests fail offline', async function () {
+    const net = { offline: false, calls: [] as string[] }
+    const client = new CachingClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: async (url: unknown) => {
+        const path = String(url).replace('http://x/api/v1', '')
+        net.calls.push(path)
+        if (net.offline) throw new TypeError('Load failed')
+        const answer = teamScheduleAnswer('GET', `/api/v1${path}`, NOW)
+        return new Response(JSON.stringify(answer.body), {
+          status: answer.status
+        })
+      },
+      openCache: async userId => {
+        const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+        executors.push(executor)
+        return await openCacheStore(executor)
+      }
+    })
+    client.openFor('usr_1')
+    await mount('normal', 'schedule', client)
+    const online = rows().map(linesOf)
+    expect(online.length).greaterThan(0)
+    expect(
+      net.calls.some(path => path.startsWith(`/teams/${TEAM_ID}/roster`))
+    ).equals(true)
+    await act(async () => {
+      root?.unmount()
+    })
+    host?.remove()
+
+    net.offline = true
+    net.calls.length = 0
+    await mount('normal', 'schedule', client)
+    expect(client.offline).equals(true)
+    expect(rows().map(linesOf)).deep.equals(online)
+    // The schedule did not throw the roster away: it was asked for too.
+    expect(
+      net.calls.some(path => path.startsWith(`/teams/${TEAM_ID}/roster`))
+    ).equals(true)
+    expect(document.body.textContent).not.includes('Retry')
   })
 })

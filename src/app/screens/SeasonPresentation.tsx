@@ -8,21 +8,26 @@ import React, {
 } from 'react'
 import { Text, View } from 'react-native'
 
-import type {
-  BattingRow,
-  GamesPageQuery,
-  ListCounts,
-  Page,
-  PitchingRow,
-  SeasonGame,
-  SeasonSummary,
-  StandingsRow,
-  TeamStationClient,
-  TeamSummary
+import {
+  asSeasonGame,
+  type BattingRow,
+  type GamesPageQuery,
+  type ListCounts,
+  type Page,
+  type PitchingRow,
+  type SeasonGame,
+  type SeasonSummary,
+  type StandingsRow,
+  type TeamStationClient,
+  type TeamSummary
 } from '../../common/api'
 import type { GroupRef } from '../../common/groupCreation'
 import { localityLabel } from '../../common/locality'
-import type { GroupDetail, PublicGame } from '../../common/publicGroups'
+import {
+  asPublicGame,
+  type GroupDetail,
+  type PublicGame
+} from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { type TabCorrection, useChatsTabGate } from '../chat/ChatAgeGate'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
@@ -59,6 +64,7 @@ import { type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useStableCallback } from '../hooks/useStableCallback'
 import { columnsForWidth } from '../layout/grid'
 import { gameCountLabel, videoCountLabel } from '../locales/strings'
+import { groupScope, seasonScope, storedSchedule } from '../sync/scheduleReads'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { clock, matchupLines, shortDate, shortTime } from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
@@ -303,6 +309,29 @@ export function SeasonPresentation(
   const listId: ListId = mayView && tab === 'videos' ? 'videos' : when
   const shownList = mayView ? memberLists[listId] : publicLists[listId]
   const { refresh: readList } = shownList
+  const paintMember = memberLists[listId].paint
+  const paintPublic = publicLists[listId].paint
+  /** The list's games as the phone last stored them, until the read returns. */
+  const paintList = useCallback(async (): Promise<void> => {
+    const query = LIST_QUERY[listId]
+    if (mayView) {
+      const stored = await storedSchedule(
+        client,
+        seasonScope(season.id),
+        query,
+        asSeasonGame
+      )
+      if (stored != null) paintMember(stored)
+    } else {
+      const stored = await storedSchedule(
+        client,
+        groupScope(season.id),
+        query,
+        asPublicGame
+      )
+      if (stored != null) paintPublic(stored)
+    }
+  }, [client, listId, mayView, paintMember, paintPublic, season.id])
   const readTurn = useMemo(
     () => ({
       client,
@@ -318,8 +347,11 @@ export function SeasonPresentation(
   useEffect(() => {
     if (read.current.get(listId) === readTurn) return
     read.current.set(listId, readTurn)
+    // The stored paint starts first; the read it stands in for goes at
+    // once, and its answer replaces the paint whenever it lands.
+    paintList().catch(() => undefined)
     readList().catch(() => undefined)
-  }, [listId, readList, readTurn])
+  }, [listId, paintList, readList, readTurn])
 
   useEffect(() => {
     let active = true
