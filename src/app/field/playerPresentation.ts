@@ -175,3 +175,23 @@ export function nameplateContains(
     x >= left && x <= left + plate.width && y >= top && y <= top + plate.height
   )
 }
+
+/**
+ * The key each player's figure is drawn under, in order: a fielder's
+ * position (`defense:C`), so whoever fields there next takes that figure in
+ * place, and anyone else's id. A swap of home and away changes every
+ * fielder; made again, their figures, meshes and numbers took most of a
+ * quarter of a second on a phone before the new side was drawn. A figure
+ * keeps nothing of its own player: where he stands and how he moves are on
+ * the player.
+ */
+export function figureKeys(players: readonly FieldPlayer[]): string[] {
+  const taken = new Set<string>()
+  return players.map(player => {
+    const slot = `defense:${player.label}`
+    if (player.team !== 'defense' || player.label === '' || taken.has(slot))
+      return player.id
+    taken.add(slot)
+    return slot
+  })
+}

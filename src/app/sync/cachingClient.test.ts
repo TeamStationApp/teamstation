@@ -366,6 +366,91 @@ describe('CachingClient', function () {
     ).equals(1)
   })
 
+  it('answers a stored-first read from the phone before its held request settles, and tells the game once when the answer differs', async function () {
+    const roles = (team: string): Answer => ({
+      body: { teams: { [team]: ['scorekeeper'] }, guardianOf: [] }
+    })
+    const routes: Record<string, Answer | undefined> = {
+      '/me/roles': roles('tem_a')
+    }
+    const net = server(routes)
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    // Nothing stored yet: a stored-first read goes to the server.
+    await client.myRoles({ storedFirst: true })
+    expect(net.calls).deep.equals(['/me/roles'])
+    let release: () => void = () => undefined
+    net.gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const told: string[] = []
+    const stop = client.onStoredChanged('g1', () => told.push('g1'))
+    const other = client.onStoredChanged('g2', () => told.push('g2'))
+    // Another device gave this person another team since.
+    routes['/me/roles'] = roles('tem_c')
+    const shown = await client.myRoles({ storedFirst: true })
+    expect(shown.teams).deep.equals({ tem_a: ['scorekeeper'] })
+    expect(net.calls).deep.equals(['/me/roles', '/me/roles'])
+    expect(told).deep.equals([])
+    release()
+    net.gate = undefined
+    for (let i = 0; i < 20 && told.length < 2; i++)
+      await new Promise(resolve => setTimeout(resolve, 2))
+    // A person's roles are no one game's: every open game hears it, once.
+    expect(told.sort()).deep.equals(['g1', 'g2'])
+    expect((await client.myRoles({ storedFirst: true })).teams).deep.equals({
+      tem_c: ['scorekeeper']
+    })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    // The same answer again changes nothing.
+    expect(told).length(2)
+    other()
+    // A read without the option is the server's, with a row stored.
+    routes['/me/roles'] = roles('tem_d')
+    expect((await client.myRoles()).teams).deep.equals({
+      tem_d: ['scorekeeper']
+    })
+    stop()
+  })
+
+  it('tells only the game a stored-first read of it changed, and none for tag choices or a read that fails', async function () {
+    const routes: Record<string, Answer | undefined> = {
+      '/games/g1/events': { body: { plays: [], currentPlay: null } },
+      '/tags': { body: { recent: ['a'], popular: [] } }
+    }
+    const net = server(routes)
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.gameEvents('g1')
+    await client.tagChoices()
+    const told: string[] = []
+    client.onStoredChanged('g1', () => told.push('g1'))
+    client.onStoredChanged('g2', () => told.push('g2'))
+    routes['/games/g1/events'] = {
+      body: { plays: [], currentPlay: null, playsDigest: 'P2' }
+    }
+    routes['/tags'] = { body: { recent: ['b'], popular: [] } }
+    expect(
+      (await client.gameEvents('g1', { storedFirst: true })).playsDigest
+    ).equals(undefined)
+    expect((await client.tagChoices({ storedFirst: true })).recent).deep.equals(
+      ['a']
+    )
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(told).deep.equals(['g1'])
+    // With no signal the phone keeps showing what it has, and says nothing.
+    net.offline = true
+    expect(
+      (await client.gameEvents('g1', { storedFirst: true })).playsDigest
+    ).equals('P2')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(told).deep.equals(['g1'])
+    // The web stores nothing: its subscription never tells.
+    const web = new TeamStationClient({ baseUrl: 'http://x/api/v1' })
+    const stop = web.onStoredChanged('g1', () => told.push('web'))
+    stop()
+  })
+
   it('throws the offline error for a document never stored (Cache miss)', async function () {
     const net = server({})
     net.offline = true
