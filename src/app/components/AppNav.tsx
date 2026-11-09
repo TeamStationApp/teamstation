@@ -127,6 +127,11 @@ export interface AppNavProps {
   /** Tabs with something unread, which carry a dot. */
   dots?: Partial<Record<NavTabId, boolean>>
   onHeight?: (height: number) => void
+  /**
+   * The offline banner's height while it shows. It sits on the bottom inset,
+   * and the capsule sits on it.
+   */
+  bannerHeight?: number
 }
 
 /**
@@ -158,7 +163,8 @@ export function AppNav(props: AppNavProps): React.ReactElement {
   const floatingBottom = floatingNavBottom(
     Platform.OS,
     theme.rem(FLOATING_BOTTOM_REM),
-    insets.bottom
+    insets.bottom,
+    props.bannerHeight
   )
 
   const capsule = theme.rem(2.5)
