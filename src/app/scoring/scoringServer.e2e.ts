@@ -26,6 +26,9 @@ import type {
   GameSetup,
   GameState
 } from '../../common/scoring/state'
+import { makeDatabase } from '../../server/db/database'
+import { serverConfig } from '../../server/serverConfig'
+import { ensureGumboId } from '../../server/users/insertUser'
 import { signInTestAccount } from '../../test/passwordFixtures'
 import { browserCoverageCollector } from '../browserCoverage.e2e'
 import { createDevelopmentSession, teamsOf } from './developmentSession'
@@ -71,7 +74,7 @@ interface Fixture {
   away: number[]
   home: number[]
 }
-function scoringGame(games = 1): Fixture {
+async function scoringGame(games = 1): Promise<Fixture> {
   const out = execFileSync(
     'npm',
     [
@@ -102,10 +105,25 @@ function scoringGame(games = 1): Fixture {
        WHERE g.id = '${game}' AND e.email = '${SCORER.email.toLowerCase()}'
        ON CONFLICT DO NOTHING`
     )
-  return {
-    games: made,
-    away: value('AWAY')[0].split(',').map(Number),
-    home: value('HOME')[0].split(',').map(Number)
+  // Fixture accounts now have opaque user IDs. Stored Gumbo credits use
+  // their allocated numeric identities, never Number(userId).
+  const db = makeDatabase(serverConfig.databaseUrl)
+  try {
+    return {
+      games: made,
+      away: await Promise.all(
+        value('AWAY')[0]
+          .split(',')
+          .map(async id => await ensureGumboId(db, id))
+      ),
+      home: await Promise.all(
+        value('HOME')[0]
+          .split(',')
+          .map(async id => await ensureGumboId(db, id))
+      )
+    }
+  } finally {
+    await db.destroy()
   }
 }
 function sql(query: string): string {
@@ -389,7 +407,7 @@ describe('scoring into the server', function () {
     if (SCORER.password === '' || VIEWER.password === '')
       throw new Error('Set TS_SCORER_PASSWORD and TS_VIEWER_PASSWORD')
     scorer = await signIn(SCORER)
-    scoringGame()
+    await scoringGame()
     viewer = await signIn(VIEWER)
     browser = await puppeteer.launch({
       headless: true,
@@ -409,7 +427,7 @@ describe('scoring into the server', function () {
   })
 
   it('scenario 1: scores a double play in the browser and saves it with user ids', async function () {
-    const fixture = scoringGame()
+    const fixture = await scoringGame()
     const gameId = fixture.games[0]
     const page = await openAs(scorer, `/games/${gameId}`)
     try {
@@ -505,7 +523,7 @@ describe('scoring into the server', function () {
   })
 
   it('scenario 2: the same play with and without animation makes the same game', async function () {
-    const fixture = scoringGame(2)
+    const fixture = await scoringGame(2)
     const reads: Stored[] = []
     for (const [index, gameId] of fixture.games.entries()) {
       const context = await browser.createBrowserContext()
@@ -562,7 +580,7 @@ describe('scoring into the server', function () {
   })
 
   it('scenario 3: a dictated half inning and the same one tapped make the same game', async function () {
-    const fixture = scoringGame()
+    const fixture = await scoringGame()
     const gameId = fixture.games[0]
     const page = await openAs(scorer, `/games/${gameId}`)
     try {
@@ -737,7 +755,7 @@ describe('scoring into the server', function () {
   })
 
   it('scenario 4: the game survives a reload in the middle of an at-bat', async function () {
-    const fixture = scoringGame()
+    const fixture = await scoringGame()
     const gameId = fixture.games[0]
     let page = await openAs(scorer, `/games/${gameId}`)
     try {
@@ -801,7 +819,7 @@ describe('scoring into the server', function () {
   })
 
   it('scenario 5: offline scoring, a refused scorer, and ending and correcting the game', async function () {
-    const fixture = scoringGame()
+    const fixture = await scoringGame()
     const gameId = fixture.games[0]
     let page = await openAs(scorer, `/games/${gameId}`)
     const context = await browser.createBrowserContext()
@@ -979,7 +997,7 @@ describe('scoring into the server', function () {
   })
 
   it('scenario 6: a half scored in the browser builds stat lines from Gumbo runners', async function () {
-    const fixture = scoringGame()
+    const fixture = await scoringGame()
     const gameId = fixture.games[0]
     const [b1, b2, b3, b4, b5] = fixture.away
     const pitcher = fixture.home[0]
@@ -1094,7 +1112,7 @@ describe('scoring into the server', function () {
   })
 
   it('scenario 7: pitches and actions are stored in Gumbo shape, and undone to what was stored', async function () {
-    const fixture = scoringGame()
+    const fixture = await scoringGame()
     const gameId = fixture.games[0]
     const page = await openAs(scorer, `/games/${gameId}`)
     let before: Stored | null = null
@@ -1238,7 +1256,7 @@ describe('scoring into the server', function () {
   })
 
   it('scenario 8: substitutions are stored as feed actions, and do not hold the game open', async function () {
-    const fixture = scoringGame()
+    const fixture = await scoringGame()
     const gameId = fixture.games[0]
     const page = await openAs(scorer, `/games/${gameId}`)
     /** A persisted team player created on the side the roster sheet shows. */
