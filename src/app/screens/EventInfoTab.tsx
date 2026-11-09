@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 
-import type { TeamStationClient } from '../../common/api'
+import { eventInfoPath, type TeamStationClient } from '../../common/api'
 import {
+  asEventInfo,
   type EventInfo,
   type EventLocation,
   playerRsvpCounts,
@@ -28,6 +29,7 @@ import {
   openEventDirections,
   openPointDirections
 } from '../platform/eventDirections'
+import { documentKeyOf } from '../sync/documentKeys'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { GameUmpires } from '../umpires/GameUmpires'
 import { attendanceSections, attendanceSubtitle } from './eventAttendance'
@@ -85,11 +87,33 @@ export function EventInfoTab({
       generation.current++
     }
   }, [])
+  /** The read whose answer `info` holds, stored or the server's. */
+  const shownRead = useRef<string | undefined>(undefined)
   const refresh = useCallback(async (): Promise<void> => {
     const request = ++generation.current
+    const current = (): boolean =>
+      live.current && request === generation.current
+    // What the phone stored for this read paints at once, as the game above
+    // it does: with no signal the read answers the same, but only once its
+    // deadline has passed. An answer already shown for it is not painted
+    // over.
+    const path = eventInfoPath(eventId, selectedTeam)
+    const key = documentKeyOf(path)
+    let answered = false
+    if (key != null && shownRead.current !== path)
+      client.cached(key, asEventInfo).then(
+        stored => {
+          if (stored == null || answered || !current()) return
+          shownRead.current = path
+          setInfo(stored)
+        },
+        () => undefined
+      )
     try {
       const found = await client.eventInfo(eventId, selectedTeam)
-      if (live.current && request === generation.current) {
+      answered = true
+      if (current()) {
+        shownRead.current = path
         setInfo(found)
         onLoaded?.(found)
         setError('')

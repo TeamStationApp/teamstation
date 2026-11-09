@@ -581,8 +581,8 @@ describe('the games feed', function () {
     }
     const store = game('gam_stored', { venue: 'Stored field' })
     await mount('schedule', [], 'upcoming', undefined, load, undefined, {
-      cached: async (key: string) =>
-        key.includes('past') ? pageOf([store], {}) : null
+      scheduleGames: async (_scope: string, window: string) =>
+        pageOf(window === 'past' ? [store] : [], {})
     })
     const pill = (label: string): HTMLElement =>
       host!.querySelector<HTMLElement>(`[role="tab"][aria-label="${label}"]`)!
@@ -828,9 +828,14 @@ describe('the games feed’s screen scope', function () {
         asked.push(query)
         return pageOf([game('gam_final', { startAt: START })])
       },
-      cached: async (key: string, cleaner: (raw: unknown) => unknown) => {
-        keys.push(key)
-        return cleaner(pageOf([game('gam_stored', { startAt: START })]))
+      scheduleGames: async (
+        scope: string,
+        window: string,
+        cleaner: (raw: unknown) => unknown
+      ) => {
+        keys.push(`${scope} ${window}`)
+        const page = pageOf([game('gam_stored', { startAt: START })])
+        return { ...page, items: page.items.map(cleaner) }
       }
     } as unknown as TeamStationClient
     host = document.createElement('div')
@@ -851,7 +856,7 @@ describe('the games feed’s screen scope', function () {
       await delay(20)
     })
     expect(asked).deep.equals([])
-    expect(keys).deep.equals(['games.upcoming.page'])
+    expect(keys).deep.equals(['me upcoming'])
     expect(spinning()).equals(false)
     expect(text()).includes('Badgers')
     await act(async () => {
@@ -862,14 +867,14 @@ describe('the games feed’s screen scope', function () {
     expect(spinning()).equals(false)
   })
 
-  it('paints the stored videos under their own key', async function () {
+  it('paints the stored videos as their own window', async function () {
     timers = heldTimers(ACK_GIVE_UP_MS)
     const keys: string[] = []
     const client = {
       gamesPage: async () => pageOf([game('gam_final')]),
-      cached: async (key: string, cleaner: (raw: unknown) => unknown) => {
-        keys.push(key)
-        return cleaner(pageOf([]))
+      scheduleGames: async (scope: string, window: string) => {
+        keys.push(`${scope} ${window}`)
+        return pageOf([])
       }
     } as unknown as TeamStationClient
     host = document.createElement('div')
@@ -887,7 +892,7 @@ describe('the games feed’s screen scope', function () {
       )
       await delay(20)
     })
-    expect(keys).deep.equals(['games.videos.page'])
+    expect(keys).deep.equals(['me all+videos'])
   })
 
   it('leaves what the server answered under a slower stored copy', async function () {
@@ -895,12 +900,10 @@ describe('the games feed’s screen scope', function () {
     let stored!: (raw: unknown) => void
     const client = {
       gamesPage: async () => pageOf([game('gam_new', { venue: 'New field' })]),
-      cached: async (_key: string, cleaner: (raw: unknown) => unknown) =>
-        cleaner(
-          await new Promise(resolve => {
-            stored = resolve
-          })
-        )
+      scheduleGames: async () =>
+        await new Promise(resolve => {
+          stored = resolve
+        })
     } as unknown as TeamStationClient
     host = document.createElement('div')
     document.body.appendChild(host)

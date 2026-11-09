@@ -50,7 +50,10 @@ interface Post {
  * Hawks (home), scored by a scorekeeper of both: its game, rosters, lineups
  * and the plays already stored, and the two writes scoring makes.
  */
-function fieldServer(stored: { plays: GumboPlay[]; currentPlay: unknown }): {
+export function fieldServer(stored: {
+  plays: GumboPlay[]
+  currentPlay: unknown
+}): {
   fetch: typeof globalThis.fetch
   offline: boolean
   /** Another device saved the lineups: live posts are stale. */
@@ -215,7 +218,7 @@ function fieldServer(stored: { plays: GumboPlay[]; currentPlay: unknown }): {
   return state
 }
 
-function memoryStorage(): PreferenceStorage {
+export function memoryStorage(): PreferenceStorage {
   const held = new Map<string, string>()
   return {
     getItem: async key => held.get(key) ?? null,
