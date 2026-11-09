@@ -16,6 +16,7 @@ import type {
   UserMatch,
   VideoGame
 } from '../../common/api'
+import { CachedPicture } from '../components/CachedPicture'
 import { TsMark } from '../components/TsMark'
 import { useMotionPreference } from '../components/useMotionPreference'
 import {
@@ -643,7 +644,7 @@ function SearchRow({
     >
       <View style={styles.identity}>
         {image !== null && (
-          <Image source={{ uri: image }} style={styles.identity} />
+          <CachedPicture uri={image} style={styles.identity} />
         )}
       </View>
       <View style={{ flex: 1 }}>
@@ -864,10 +865,7 @@ function BrowsePage({
           {page.kind === 'team' ? (
             <View style={styles.entityTitle}>
               {page.team.logoUrl !== null && (
-                <Image
-                  source={{ uri: page.team.logoUrl }}
-                  style={styles.logo}
-                />
+                <CachedPicture uri={page.team.logoUrl} style={styles.logo} />
               )}
               <Text numberOfLines={2} style={styles.title}>
                 {page.team.name}
@@ -882,10 +880,7 @@ function BrowsePage({
               <View style={styles.matchup}>
                 <View style={styles.homeName}>
                   {hero.homeLogoUrl !== null && (
-                    <Image
-                      source={{ uri: hero.homeLogoUrl }}
-                      style={styles.logo}
-                    />
+                    <CachedPicture uri={hero.homeLogoUrl} style={styles.logo} />
                   )}
                   <Text numberOfLines={2} style={styles.title}>
                     {hero.homeTeamName}
@@ -894,10 +889,7 @@ function BrowsePage({
                 <Text style={styles.versus}>vs.</Text>
                 <View style={styles.homeName}>
                   {hero.awayLogoUrl !== null && (
-                    <Image
-                      source={{ uri: hero.awayLogoUrl }}
-                      style={styles.logo}
-                    />
+                    <CachedPicture uri={hero.awayLogoUrl} style={styles.logo} />
                   )}
                   <Text numberOfLines={2} style={styles.title}>
                     {hero.awayTeamName}
@@ -1096,8 +1088,8 @@ function BrowsePage({
       >
         {collection?.hero?.isLive === true &&
           collection.hero.posterUrl != null && (
-            <Image
-              source={{ uri: collection.hero.posterUrl }}
+            <CachedPicture
+              uri={collection.hero.posterUrl}
               style={StyleSheet.absoluteFill}
               resizeMode="cover"
             />

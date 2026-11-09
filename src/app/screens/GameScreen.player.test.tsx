@@ -11,6 +11,7 @@ import {
   type Playback,
   TeamStationClient
 } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import { wallTimelineOf } from '../../test/overlayFixtures'
 import { listProps } from '../../test/PagedListStandIn'
 import { SceneShownProvider } from '../components/sceneShown'
@@ -825,6 +826,32 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     })
     await waitToLand()
     expect(video.currentTime).closeTo(25, 0.001)
+  })
+
+  it('draws the poster, with no spinner, when the playback cannot be read (offline)', async function () {
+    const poster = 'https://example.test/poster.png'
+    let refuse: (error: Error) => void = () => undefined
+    await page(
+      [asVideoSummary({ ...videoOf('v1', START), posterUrl: poster })],
+      {},
+      {
+        playback: async () =>
+          await new Promise<Playback>((_resolve, reject) => {
+            refuse = reject
+          })
+      }
+    )
+    const spinning = (): boolean =>
+      document.querySelector('[role="progressbar"]') != null
+    // Asking: the spinner, as before.
+    expect(spinning()).equals(true)
+    await act(async () => {
+      refuse(new HttpError('offline', 'No connection'))
+      await new Promise(resolve => setTimeout(resolve, 30))
+    })
+    expect(spinning()).equals(false)
+    expect(document.body.innerHTML).includes(poster)
+    expect(document.querySelector('video')).equals(null)
   })
 
   it('keeps a non-member to the poster and the warning', async function () {
