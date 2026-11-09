@@ -237,6 +237,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/media/pictureCatalog.js',
   'server/media/posters.js',
   'server/media/presign.js',
+  'server/media/republishImages.js',
   'server/media/secretPaths.e2e.js',
   'server/media/spaceFrames.js',
   'server/media/spacesHls.js',
