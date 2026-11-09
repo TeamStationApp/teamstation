@@ -399,9 +399,10 @@ describe('scoring roster HTTP contract', function () {
     expect(detail.scoringOwner).equals(null)
     expect(detail.videos[0]).includes({ id: video, status: 'unavailable' })
     const box = asBoxScore(await get(`/games/${game}/box-score`))
+    // The coach reads his player in full, as on the roster.
     expect(box.batting[0]).includes({
       userId: userIdOfGumbo(child),
-      shortName: 'Jordan P',
+      shortName: 'Jordan Pacheco',
       h: 1,
       ab: 2,
       seasonAvg: 0.5

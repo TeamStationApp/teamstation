@@ -194,7 +194,8 @@ async function main(): Promise<void> {
       )
     }
 
-    // Signed in as the seed's reader, on this surface's own token.
+    // Signed in as the seed's reader, on this surface's own token: a site
+    // administrator, who reads every player's name in full.
     if (native) {
       await m.stopApp({ appId })
       await m.launchApp({ appId })
@@ -217,7 +218,7 @@ async function main(): Promise<void> {
 
     if (run('team')) {
       await open(`/teams/${PINES}?tab=stats`, 'Batting')
-      await sideways('Open Mookie B', 'PIK')
+      await sideways('Open Mookie Betts', 'PIK')
       await shot('team-batting-scrolled')
       // He bats as well: on a short phone his batting row is on screen here.
       await reach('IP')
@@ -229,9 +230,9 @@ async function main(): Promise<void> {
         endY: 220,
         duration: 450
       })
-      await sideways('Open Tyler G', 'BAA', true)
+      await sideways('Open Tyler Glasnow', 'BAA', true)
       // A name opens the player.
-      const name = await reach('Open Tyler G', true)
+      const name = await reach('Open Tyler Glasnow', true)
       await m.tapOn({ text: name.text! })
       if (!captureOnly)
         await m.assertVisible({ text: '.*Filter.*', timeout: 10000 })
@@ -240,7 +241,7 @@ async function main(): Promise<void> {
 
     if (run('season')) {
       await open(`/seasons/${REPLAY_SEASON}?tab=stats`, '.*BATTING.*')
-      await sideways('Open Juan S', 'PIK')
+      await sideways('Open Juan Soto', 'PIK')
       await shot('season-batting-scrolled')
       console.log(`${surface}: season tables passed`)
     }
@@ -248,7 +249,7 @@ async function main(): Promise<void> {
     if (run('box')) {
       await open(`/games/${seed.boxScoreGame}?tab=boxScore`, '.*Batting.*')
       await shot('box-score')
-      await sideways('Juan S', 'AVG')
+      await sideways('Juan Soto', 'AVG')
       await shot('box-score-scrolled')
       const totals = (await nodes()).filter(n => n.text === 'Totals')
       check(totals.length >= 2, 'Totals rows under batting and pitching')
@@ -300,7 +301,7 @@ async function main(): Promise<void> {
         `Each table's Totals on screen: ${[...captured].join(', ')}`
       )
       // Its own frozen name opens the player, clear of the pinned pills.
-      const name = await reach('Mookie B')
+      const name = await reach('Mookie Betts')
       if (name.bounds!.y < 240)
         await m.swipe({
           startX: Math.round(width * 0.1),
@@ -311,7 +312,7 @@ async function main(): Promise<void> {
           duration: native ? 900 : 400
         })
       await new Promise(resolve => setTimeout(resolve, 900))
-      await m.tapOn({ text: 'Mookie B' })
+      await m.tapOn({ text: 'Mookie Betts' })
       if (!captureOnly)
         await m.assertVisible({ text: '.*Filter.*', timeout: 10000 })
       console.log(`${surface}: box score passed`)
@@ -324,7 +325,7 @@ async function main(): Promise<void> {
       )
       await m.tapOn({ text: 'Box' })
       await m.assertVisible({ text: '.*Batting.*', timeout: 20000 })
-      await sideways('Mookie B', 'AVG')
+      await sideways('Mookie Betts', 'AVG')
       await shot('coach-box-score-scrolled')
       console.log(`${surface}: coach game passed`)
     }
@@ -387,8 +388,8 @@ async function main(): Promise<void> {
       await shot('replay-batting-totals')
       for (; steps > 0; steps--) await deckSwipe(false)
       // A name in the deck opens the player.
-      await reach('Open Juan S')
-      await m.tapOn({ text: 'Open Juan S' })
+      await reach('Open Juan Soto')
+      await m.tapOn({ text: 'Open Juan Soto' })
       if (!captureOnly)
         await m.assertVisible({ text: '.*Filter.*', timeout: 10000 })
       console.log(`${surface}: replay line score passed`)

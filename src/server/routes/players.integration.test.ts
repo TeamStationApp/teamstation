@@ -1549,28 +1549,29 @@ describe('a player, and who may change their name', function () {
       .where('id', '=', userIdOfGumbo(childId))
       .executeTakeFirstOrThrow()
     try {
+      // The site administrator reads the player in full.
       await rename('Jose', 'Altuve')
       expect(await read()).deep.equals({
         player: {
-          title: 'Ground out: Jose A (SS) to Kyle Tucker (1B)',
+          title: 'Ground out: Jose Altuve (SS) to Kyle Tucker (1B)',
           outcome: 'Ground out'
         },
         video: {
-          title: 'Ground out: Jose A (SS) to Kyle Tucker (1B)',
+          title: 'Ground out: Jose Altuve (SS) to Kyle Tucker (1B)',
           description:
-            'Top 2nd: Ground out, Jose A (SS) to Kyle Tucker (1B). 0–0'
+            'Top 2nd: Ground out, Jose Altuve (SS) to Kyle Tucker (1B). 0–0'
         }
       })
       await rename('Mookie', 'Betts')
       expect(await read()).deep.equals({
         player: {
-          title: 'Ground out: Mookie B (SS) to Kyle Tucker (1B)',
+          title: 'Ground out: Mookie Betts (SS) to Kyle Tucker (1B)',
           outcome: 'Ground out'
         },
         video: {
-          title: 'Ground out: Mookie B (SS) to Kyle Tucker (1B)',
+          title: 'Ground out: Mookie Betts (SS) to Kyle Tucker (1B)',
           description:
-            'Top 2nd: Ground out, Mookie B (SS) to Kyle Tucker (1B). 0–0'
+            'Top 2nd: Ground out, Mookie Betts (SS) to Kyle Tucker (1B). 0–0'
         }
       })
     } finally {

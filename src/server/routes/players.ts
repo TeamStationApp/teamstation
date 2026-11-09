@@ -202,7 +202,8 @@ export function playerRoutes(
                 )
               }
             ],
-            { reader: readerOf(actor) }
+            // Whether the actor reads this name in full is `mayEdit`.
+            { reader: readerOf(actor), readsFull: mayEdit ? [userId] : [] }
           )
         ).get(userId),
         /** Whether to offer this person the name field at all. */
@@ -514,7 +515,8 @@ export function playerRoutes(
         // its own players, as the game's own highlights name them.
         const books = await gameNames(
           db,
-          usable.map(row => row.gameId)
+          usable.map(row => row.gameId),
+          { reader: readerOf(actor) }
         )
         const names = await teamNames(
           db,

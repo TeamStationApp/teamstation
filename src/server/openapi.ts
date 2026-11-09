@@ -5452,7 +5452,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'again and names none): a player can be named otherwise with ' +
                 'nothing written, as when an add holding them on another team ' +
                 'lapses, so a change naming another digest is not applied to ' +
-                'this read, and the game is read again',
+                'this read, and the game is read again. The plays name every ' +
+                'player as the public reads them; `readerNames`, present only ' +
+                'when not empty, gives by gumbo id the full name of each of ' +
+                "the game's players the reader may read in full, and a post's " +
+                'answer of every play carries it too',
               content: {
                 'application/json': {
                   schema: {
@@ -5490,7 +5494,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                         type: 'string',
                         enum: ['swap', 'reset', 'scoredElsewhere', 'withdrawn']
                       },
-                      halves: { type: 'array', items: { type: 'string' } }
+                      halves: { type: 'array', items: { type: 'string' } },
+                      readerNames: {
+                        type: 'object',
+                        additionalProperties: { type: 'string' }
+                      }
                     }
                   }
                 }

@@ -36,6 +36,7 @@ import { radarSettings } from '../nodeSettings'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
 import {
   type NamedPlays,
+  type ReaderNames,
   resolveScoringGame,
   resolveScoringPlays,
   scoringIdsIn
@@ -50,6 +51,7 @@ import {
 } from '../socket/gameChanges'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
 import { type GamePlayerRow, gamePlayers } from '../users/nameBook'
+import type { Reader } from '../users/readerNames'
 import { atBatOf, postedAtBat, PREGAME_ABOUT } from './atBatInProgress'
 import { pregameFold } from './currentPlay'
 import { repairEventTags } from './eventTags'
@@ -113,6 +115,8 @@ export interface PostedDigests {
 export interface PostedPlays extends PostedDigests {
   plays: WirePlayRow[]
   currentPlay: unknown
+  /** Whom `PostOptions.listFullNamesFor` reads in full (`namedScoringGame`). */
+  readerNames?: ReaderNames
 }
 
 /**
@@ -173,6 +177,12 @@ export interface PostOptions {
    * inside the server reads `plays` whole.
    */
   answer?: PostAnswer
+  /**
+   * Whom an answer of every play says, by gumbo id, which of the game's
+   * players it reads in full (`readerNames`): its plays stay named as the
+   * public reads them. None for an edits answer.
+   */
+  listFullNamesFor?: Reader
   /**
    * Where a live post leaves the game socket's frame of what it wrote, named
    * as the public reads it (`playEditsKey`). Without one, each worker
@@ -679,7 +689,8 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       ...(edits ? { only: edited } : {}),
       publicOnly: told ? edited : [],
       halves: senderHalves,
-      gameId
+      gameId,
+      ...(edits ? {} : { listFullNamesFor: options.listFullNamesFor })
     })
     const answer: PostedPlays | PostedEdits = edits
       ? {
@@ -693,7 +704,10 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
             gumbo: playForWire(resolved.plays[index], sides)
           })),
           currentPlay: playForWire(resolved.currentPlay, sides),
-          ...digests
+          ...digests,
+          ...(resolved.readerNames == null
+            ? {}
+            : { readerNames: resolved.readerNames })
         }
     const everyone = resolved.public
     const shared: PublicPlayEdits | undefined = told

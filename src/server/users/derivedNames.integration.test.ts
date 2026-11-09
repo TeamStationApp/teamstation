@@ -374,17 +374,22 @@ describe('names derived from accounts', function () {
     const titles = (
       first.highlights as { highlights: Array<{ title: string }> }
     ).highlights.map(h => h.title)
+    // His team's administrator reads its players in full on every surface
+    // but the game's plays, the record every viewer shares; the other team's
+    // players stay short.
     expect(titles.slice(0, 3)).deep.equals([
-      'Walk: Juan S',
+      'Walk: Juan Soto',
       'Strikeout: Tyler G',
-      'Single: Anthony R · Stolen base: Juan S'
+      'Single: Anthony Rizzo · Stolen base: Juan Soto'
     ])
-    // His team's administrator reads his own page in full.
+    expect(
+      (first.events as { readerNames: Record<string, string> }).readerNames
+    ).include({ [String(soto().gumboId)]: 'Juan Soto' })
     expect((first.sotoPage as { name: string }).name).equals('Juan Soto')
     expect(
       (first.dj as { away: { batters: Array<{ name: string }> } }).away
         .batters[0].name
-    ).equals('Juan S')
+    ).equals('Juan Soto')
     expect(
       (
         first.defaultLineup as {
@@ -393,7 +398,7 @@ describe('names derived from accounts', function () {
       ).lineup.batters
         .slice(0, 3)
         .map(b => b.name)
-    ).deep.equals(['Juan S', 'Aaron J', 'Anthony R'])
+    ).deep.equals(['Juan Soto', 'Aaron Judge', 'Anthony Rizzo'])
     expect(
       (first.timeline as Array<{ state: { batterName: string } }>).some(
         step => step.state.batterName === 'Ichiro S'
@@ -507,7 +512,10 @@ describe('names derived from accounts', function () {
     }
 
     expect(await surfaces()).deep.equals(
-      renamed(second, [['Anthony R', DELETED_NAME]])
+      renamed(second, [
+        ['Anthony Rizzo', DELETED_NAME],
+        ['Anthony R', DELETED_NAME]
+      ])
     )
     expect(await timelineVersion()).not.equals(version)
     // The request ended with its sender's account, and still reads.

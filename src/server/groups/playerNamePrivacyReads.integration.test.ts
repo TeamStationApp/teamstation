@@ -422,6 +422,68 @@ describe('a game named in player name privacy', function () {
     expect(board.state.balls).equals(1)
   })
 
+  it("keeps the board and narration public after the scorekeeper's play", async function () {
+    // The scorekeeper of Alex's team reads him in full, a teammate does not,
+    // and the plays' labels read the same for both: only the scorekeeper's
+    // halves set them apart.
+    const labels = (read: Record<string, unknown>): string =>
+      JSON.stringify(read.currentPlay, (key, value: unknown) =>
+        key === 'firstName' || key === 'lastName' ? undefined : value
+      )
+    const scorer = await events(SCORER)
+    expect(scorer.readerNames).property(String(ALEX), 'Alex Lee')
+    const teammate = await events(TEAMMATE)
+    expect(teammate).not.have.nested.property(`readerNames.${ALEX}`)
+    expect(scorer.namesDigest).equals(teammate.namesDigest)
+    expect(labels(scorer)).equals(labels(teammate))
+    expect(labels(scorer)).not.include('Alex Lee')
+    // A play he posts goes to the live board in the public format.
+    const scored = await addGame(f.h.db, {
+      homeTeamId: f.teamA,
+      awayTeamId: f.teamB,
+      startAt: new Date(),
+      status: 'inProgress'
+    })
+    const storeOf: EventStore = {
+      load: async () => ({ plays: [], currentPlay: null }),
+      save: async (id, change) => {
+        const answer = await f.h.request(
+          'POST',
+          `/games/${id}/events`,
+          { ...change, mode: 'live', source: { system: 'teamstation' } },
+          SCORER
+        )
+        if (!answer.ok) throw new Error(await answer.text())
+        const posted = (await answer.json()) as Record<string, unknown>
+        expect(posted.readerNames).property(String(ALEX), 'Alex Lee')
+        return { plays: [], currentPlay: null }
+      }
+    }
+    const session = await ScoringSession.open(storeOf, scored, {
+      ...context,
+      gamePk: scored
+    })
+    session.apply({ type: 'pitch', call: 'B' })
+    await session.flush()
+    await until('the board to show the pitch', async () => {
+      const board = (await (
+        await f.h.request('GET', `/scoreboard/${scored}`)
+      ).json()) as { state?: { balls: number } }
+      return board.state?.balls === 1
+    })
+    const board = JSON.stringify(
+      await (await f.h.request('GET', `/scoreboard/${scored}`)).json()
+    )
+    expect(board).include('Alex L')
+    expect(board).not.include('Lee')
+    expect(
+      JSON.stringify(await scoreboardFromGame(f.h.db, scored, quiet))
+    ).not.include('Lee')
+    expect(
+      JSON.stringify([...(await narrationsFor(f.h.db, scored)).values()])
+    ).not.include('Lee')
+  })
+
   it('blanks the dashboard for a model too', async function () {
     await privacy(f.teamA, 'full')
     const board = JSON.stringify(
@@ -642,13 +704,30 @@ describe('a game named in player name privacy', function () {
         .set({ season_id: f.seasonA })
         .where('id', '=', gameId)
         .execute()
-      expect(await name(`/games/${gameId}/box-score`, SCORER)).include(
+      expect(await name(`/games/${gameId}/box-score`, TEAMMATE)).include(
         '"shortName":"A Lee"'
       )
       expect(await name(`/teams/${f.teamA}/stats`, TEAMMATE)).include(
         '"shortName":"A Lee"'
       )
-      // The scorekeeper and the league's admin read the stats in full.
+      // The scorekeeper and the league's admin read the box score and the
+      // stats in full.
+      expect(await name(`/games/${gameId}/box-score`, SCORER)).include(
+        '"shortName":"Alex Lee"'
+      )
+      // So is its playback; its board, the public timeline, is not.
+      expect(
+        await name(`/games/${gameId}/box-score?view=playback`, SCORER)
+      ).include('"fullName":"Alex Lee"')
+      expect(
+        await name(`/games/${gameId}/box-score?view=playback`, TEAMMATE)
+      ).not.include('Alex Lee')
+      const board = await name(`/games/${gameId}/box-score?view=board`, SCORER)
+      expect(board).include('A Lee')
+      expect(board).not.include('Alex Lee')
+      expect(
+        await name(`/games/${gameId}/box-score?view=line`, SCORER)
+      ).not.include('Alex Lee')
       expect(await name(`/teams/${f.teamA}/stats`, SCORER)).include(
         '"shortName":"Alex Lee"'
       )
@@ -915,7 +994,11 @@ describe('a game named in player name privacy', function () {
 
     it('writes a player in a DJ roster', async function () {
       await privacy(f.teamA, 'initials')
-      expect(await name(`/games/${gameId}/dj`, SCORER)).not.include('Alex')
+      expect(await name(`/games/${gameId}/dj`, TEAMMATE)).not.include('Alex')
+      // The team's scorekeeper reads the batter in full.
+      expect(await name(`/games/${gameId}/dj`, SCORER)).include(
+        '"name":"Alex Lee"'
+      )
     })
 
     it('takes the stricter team of a player on both sides of an event', async function () {

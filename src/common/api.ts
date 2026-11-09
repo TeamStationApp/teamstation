@@ -1554,7 +1554,8 @@ const asStoredGame = asObject({
   generation: asOptional(asNullable(asNumber), null),
   swap: asSwapEffect,
   modelNames: asOptional(asObject(asString)),
-  halves: asOptional(asArray(asString))
+  halves: asOptional(asArray(asString)),
+  readerNames: asOptional(asObject(asString))
 })
 
 /** A game's plays as a session reads them, with the digests that were sent. */
@@ -1579,7 +1580,8 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
     ...(stored.modelNames == null ? {} : { modelNames: stored.modelNames }),
     ...(stored.halves == null || stored.halves.length === 0
       ? {}
-      : { halves: stored.halves })
+      : { halves: stored.halves }),
+    ...(stored.readerNames == null ? {} : { readerNames: stored.readerNames })
   }
 }
 

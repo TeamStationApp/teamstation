@@ -39,7 +39,14 @@ const specs = [
   'src/server/routes/users.test.ts',
   'src/server/routes/videoCollections.test.ts',
   'src/server/users/rosterCandidates.test.ts',
-  'src/server/umpires/admin.test.ts'
+  'src/server/umpires/admin.test.ts',
+  'src/server/routes/events.test.ts',
+  'src/server/scoring/gameStatistics.integration.test.ts',
+  'src/server/routes/lineups.test.ts',
+  'src/server/routes/publicGameAccess.test.ts',
+  'src/server/routes/highlightRoutes.test.ts',
+  'src/server/users/derivedNames.test.ts',
+  'src/common/api.test.ts'
 ]
 // `.tsx` specs run from one bundle, with the web's `react-native`.
 const screens = []

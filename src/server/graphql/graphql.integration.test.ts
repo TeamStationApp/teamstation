@@ -280,14 +280,16 @@ describe('the GraphQL API', function () {
         arrivalTimeDelta: 45
       })
       expect(game.lineScore.home.h).equals(8)
+      // The Hawks' coach reads his players in full, as the box score names
+      // them to him.
       expect(game.boxScore.batting).deep.include({
-        player: { name: 'Alfonso S' },
+        player: { name: 'Alfonso Soriano' },
         ab: 4,
         h: 3,
         avg: 0.75
       })
       expect(game.boxScore.pitching).deep.equals([
-        { player: { name: 'Ben C' }, ip: '6.0', era: 2 }
+        { player: { name: 'Ben Chapman' }, ip: '6.0', era: 2 }
       ])
     })
 

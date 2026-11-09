@@ -47,6 +47,11 @@ export interface NameBook {
   /** The format this player was written in, or undefined outside the book. */
   formatOf: (id: number) => PlayerNamePrivacy | undefined
   /**
+   * The account the book names this player from, its survivor's when
+   * merged, or undefined outside the book or for a placeholder.
+   */
+  personOf: (id: number) => Readonly<Person> | undefined
+  /**
    * A digest of every account the book can name: each account, its display,
    * first and last names and its format, whichever of its ids the scope
    * holds. It moves on any rename, deletion or merge of somebody the book can
@@ -76,7 +81,7 @@ const scopeOfIds = (ids: Iterable<number>): GameScope => ({
 type Db = Kysely<Database>
 
 /** An account as a name book reads it. */
-interface Person {
+export interface Person {
   userId: string
   displayName: string
   firstName: string | null
@@ -191,6 +196,7 @@ function bookOf(
       inScope.has(id) ? labels.get(people.get(id)!.userId) : undefined,
     formatOf: id =>
       inScope.has(id) ? formats.get(people.get(id)!.userId) : undefined,
+    personOf: id => (inScope.has(id) ? people.get(id) : undefined),
     digest: createHash('md5')
       .update(
         JSON.stringify(
@@ -259,6 +265,7 @@ function labelled(
     nameOf: id => labels.get(id) ?? book.nameOf(id),
     // A placeholder is no name to format.
     formatOf: id => (labels.has(id) ? undefined : book.formatOf(id)),
+    personOf: id => (labels.has(id) ? undefined : book.personOf(id)),
     digest: createHash('md5')
       .update(book.digest)
       .update(JSON.stringify([...labels].sort(([a], [b]) => a - b)))

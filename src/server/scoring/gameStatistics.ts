@@ -17,15 +17,21 @@ import {
   boardTimeline,
   computeBoardTimeline
 } from '../scoreboard/boardTimeline'
+import type { Reader } from '../users/readerNames'
 import { historicalStatistics } from './historicalStatistics'
 import { computeLineTimeline, lineTimeline } from './lineTimeline'
 import { resolveScoringGame } from './openRow'
 
-/** Playback readers share one resource, snapshot, naming policy and timeline. */
+/**
+ * Playback readers share one resource, snapshot, naming policy and timeline.
+ * `source` and the boxes made from it name in full everyone `options.reader`
+ * may read in full; `board` and `line` are the public timelines.
+ */
 export async function gameStatistics(
   db: Kysely<Database>,
   gameId: string,
-  query: StatisticsQuery = {}
+  query: StatisticsQuery = {},
+  options: { reader?: Reader } = {}
 ): Promise<GameStatistics> {
   return await readSnapshot(db, async trx => {
     const game = await trx
@@ -58,7 +64,7 @@ export async function gameStatistics(
         plays: rows.map(row => row.gumbo as GumboPlay),
         currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
       },
-      { gameId }
+      { gameId, reader: options.reader }
     )
     const fold = await pregameFold(trx, gameId, game, resolved)
     const teams = teamsOfRow(game)

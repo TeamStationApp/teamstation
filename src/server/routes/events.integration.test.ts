@@ -61,9 +61,9 @@ import {
 } from '../events/teamLineups'
 import { createGuestPlayer } from '../games/guestPlayers'
 import { jsonBody } from '../jsonBody'
-import { withActor } from '../middleware/withAuth'
+import { TESS_HEADER, withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
-import { resolveScoringGame } from '../scoring/openRow'
+import { resolveScoringGame, resolveScoringPlays } from '../scoring/openRow'
 import { GAME_CHANGES_CHANNEL } from '../socket/gameChanges'
 import { gameNamesDigest } from '../users/nameBook'
 import {
@@ -2009,6 +2009,145 @@ describe('posting and reading plays', function () {
     expect(ownerless.status).equals(409)
   })
 
+  it("names the game's players in full to whoever may read them, outside its plays", async function () {
+    const id = makeId('game')
+    const now = new Date()
+    await db!
+      .insertInto('games')
+      .values({ id, home_team_id: home, away_team_id: away, start_at: now })
+      .execute()
+    const taken = new Set(
+      [admin, stranger, member, manager, ...FLAGS.map(flagUser)].map(
+        user => user.userId
+      )
+    )
+    const mookie = mintUserId(n => taken.has(n))
+    await insertFixtureUsers(db!, [
+      {
+        id: mookie.userId,
+        legacyId: mookie.legacyId,
+        display_name: 'Mookie Betts',
+        first_name: 'Mookie',
+        last_name: 'Betts',
+        created_at: now,
+        updated_at: now
+      }
+    ])
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: userIdOfGumbo(mookie.userId),
+        team_id: home,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    const atBat = {
+      ...current(0),
+      matchup: { batter: { id: mookie.userId, fullName: 'Mookie Betts' } }
+    }
+    const scorekeeper = flagUser('scorekeeper')
+    const send = async (
+      token: string,
+      init: { body?: unknown; headers?: Record<string, string>; query?: string }
+    ): Promise<Record<string, unknown>> => {
+      const response = await fetch(
+        `${base}/games/${id}/events${init.query ?? ''}`,
+        {
+          method: init.body === undefined ? 'GET' : 'POST',
+          headers: {
+            'content-type': 'application/json',
+            [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
+            authorization: `Bearer ${token}`,
+            ...init.headers
+          },
+          body: init.body === undefined ? undefined : JSON.stringify(init.body)
+        }
+      )
+      expect(response.status).equals(200)
+      return (await response.json()) as Record<string, unknown>
+    }
+    const body = {
+      mode: 'live',
+      source: { system: 'teamstation' },
+      plays: [],
+      currentPlay: atBat
+    }
+    const full = { [mookie.userId]: 'Mookie Betts' }
+    // The scorekeeper of his team reads him in full: the answer of every play,
+    // which a phone's queue writes over the game it holds, says so.
+    const posted = await send(scorekeeper.token, {
+      body,
+      headers: { 'idempotency-key': `names-${id}` }
+    })
+    expect(posted.readerNames).deep.equals(full)
+    // Sent again under its key, the answer is read again, and says so too.
+    const again = await send(scorekeeper.token, {
+      body,
+      headers: { 'idempotency-key': `names-${id}` }
+    })
+    expect(again.readerNames).deep.equals(full)
+    // An answer of only the post's edits names nobody apart.
+    const edits = await send(scorekeeper.token, {
+      body,
+      query: '?answer=edits'
+    })
+    expect(edits).not.have.property('readerNames')
+    const keyed = { 'idempotency-key': `edits-${id}` }
+    await send(scorekeeper.token, {
+      body,
+      headers: keyed,
+      query: '?answer=edits'
+    })
+    expect(
+      await send(scorekeeper.token, {
+        body,
+        headers: keyed,
+        query: '?answer=edits'
+      })
+    ).not.have.property('readerNames')
+    const scorer = await send(scorekeeper.token, {})
+    expect(scorer.readerNames).deep.equals(full)
+    // The plays themselves are the public's, for every reader.
+    const batter = (read: Record<string, unknown>): unknown =>
+      (read.currentPlay as { matchup: { batter: { fullName: string } } })
+        .matchup.batter.fullName
+    expect(batter(scorer)).equals('Mookie B')
+    // A teammate reads nobody in full; nor does Tess, for the scorekeeper.
+    const teammate = await send(MEMBER, {})
+    expect(teammate).not.have.property('readerNames')
+    expect(batter(teammate)).equals('Mookie B')
+    expect(teammate.namesDigest).equals(scorer.namesDigest)
+    expect(teammate.namesDigest).equals(await gameNamesDigest(db!, id))
+    const spoken = await send(scorekeeper.token, {
+      headers: { [TESS_HEADER]: '1' }
+    })
+    expect(spoken).not.have.property('readerNames')
+    // What the game socket is sent is the same whoever's names are told apart.
+    const stored = {
+      plays: [],
+      currentPlay: (await gameRow(id)).currentPlay as CurrentPlay | null
+    }
+    const forScorer = await resolveScoringPlays(db!, stored, {
+      gameId: id,
+      listFullNamesFor: {
+        userId: userIdOfGumbo(scorekeeper.userId),
+        isAdmin: false
+      }
+    })
+    const forNobody = await resolveScoringPlays(db!, stored, { gameId: id })
+    expect(forScorer.readerNames).deep.equals(full)
+    expect(forNobody).not.have.property('readerNames')
+    expect(forScorer.public).deep.equals(forNobody.public)
+    expect(forScorer.namesDigest).equals(forNobody.namesDigest)
+    // The tests that follow read the home team's players without him.
+    await db!
+      .deleteFrom('memberships')
+      .where('user_id', '=', userIdOfGumbo(mookie.userId))
+      .execute()
+  })
+
   it('keeps the at-bat in progress on the game, never as a row', async function () {
     const posted = await live(liveAtBatId, { currentPlay: current(0) })
     expect(posted.status).equals(200)
@@ -2033,7 +2172,9 @@ describe('posting and reading plays', function () {
       currentPlay: withNames(current(0), new Map([[member.userId, 'Cam B']])),
       generation: 0,
       // An at-bat with no TeamStation record.
-      swap: 'scoredElsewhere'
+      swap: 'scoredElsewhere',
+      // The site administrator reads the batter in full; the plays do not.
+      readerNames: { [member.userId]: 'Cam Bedrosian' }
     })
     expect(lineupsDigest).equals(posted.body.lineupsDigest)
     expect(playsDigest).equals(posted.body.playsDigest)

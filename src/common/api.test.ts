@@ -2516,6 +2516,14 @@ describe('api client', function () {
     expect((await dictating.gameEvents('g')).modelNames).deep.equals({
       7: 'Alex L.'
     })
+    // The players its reader reads in full, beside plays named for everyone.
+    const reading = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { plays: [], readerNames: { 7: 'Alex Lee' } }).fetch
+    })
+    expect((await reading.gameEvents('g')).readerNames).deep.equals({
+      7: 'Alex Lee'
+    })
     const none = stubFetch(200, { plays: [] })
     const bare = new TeamStationClient({
       baseUrl: 'http://x/api/v1',

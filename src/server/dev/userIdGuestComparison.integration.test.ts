@@ -309,7 +309,27 @@ describe('historical guest comparison against migration and HTTP', function () {
         headers: { authorization: 'Bearer ' + token }
       })
       expect(response.status).equals(200)
-      const actual = await response.json()
+      const read = await response.json()
+      // The site administrator reads the guests in full, beside the label
+      // everybody else reads, which is what the migration kept.
+      const actual = {
+        ...read,
+        guestPlayers: Object.fromEntries(
+          Object.entries(read.guestPlayers as Record<string, JsonObject[]>).map(
+            ([side, rows]) => [
+              side,
+              rows.map(row => {
+                const { compactName, nameFormat: _format, ...rest } = row
+                return compactName == null
+                  ? row
+                  : { ...rest, shortName: compactName }
+              })
+            ]
+          )
+        )
+      }
+      const full = (read.guestPlayers as Record<string, JsonObject[]>).away
+      if (kind !== 'inplace') expect(full[0].shortName).equals('Hank Aaron')
       const game = expected.api['/games/gam_' + kind] as JsonObject
       const players = game.guestPlayers as Record<string, JsonObject[]>
       for (const side of ['away', 'home']) {
