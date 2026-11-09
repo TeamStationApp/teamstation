@@ -53,11 +53,16 @@ no duplicate play identities, the expected run/hit/error credits, and correct
 individual and team final statistics. This is a standalone scoring test; it does
 not install a runner, schedule tests or change the tester seat.
 
-`--scenario conflicts --surface chromium` holds an older Ball request until a
-newer Called Strike saves, then delivers the older request. The saved count and
-both screens must retain only the newer pitch. Set `TS_CONCURRENT_OLDER_AUTHOR`
-to `0` or `1` and use a fresh fixture for each direction. Original action time
-determines the winner; retries and automatic completion retain that time.
+`--scenario conflicts --surface chromium` holds both a Ball and a Called Strike
+from the same starting version, then releases either request first. The first
+server-accepted pitch must remain on both screens, irrespective of action time.
+Set `TS_CONCURRENT_OLDER_AUTHOR` and `TS_CONCURRENT_FIRST_AUTHOR` to 0 or 1;
+run all four combinations. The rejected scorer then authors a new accepted pitch.
+
+`--scenario stale-tail --surface chromium` isolates one scorer while the other
+completes two innings. A later stale pitch cannot remove those innings. After
+recovery, deliberate current-version Undo can remove several at-bats and rescore.
+A second isolation verifies that stale scoring cannot reopen the finalized game.
 
 `--scenario network-recovery --surface safari` measures both phones under
 500 ms one-way delay, 100 ms jitter, 2% loss and a 1 Mbit cap, then blocks one
