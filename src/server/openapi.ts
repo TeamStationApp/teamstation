@@ -6220,9 +6220,11 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description:
-                'The game’s teams after the swap, its play generation, and ' +
+                'The game’s teams after the swap, its play generation, ' +
                 'the at-bats and innings a reset deleted (none for a swap ' +
-                'before the first pitch, or one already made)',
+                'before the first pitch, or one already made), and the ' +
+                '`lineupsDigest` the new sides have as the swap commits: the ' +
+                '`lineupsBase` of the first post built on the swapped lineups',
               content: {
                 'application/json': {
                   schema: {
@@ -6231,12 +6233,14 @@ export function openApiDocument(version: string): OpenApiDocument {
                       'homeTeamId',
                       'awayTeamId',
                       'generation',
-                      'reset'
+                      'reset',
+                      'lineupsDigest'
                     ],
                     properties: {
                       homeTeamId: { type: 'string' },
                       awayTeamId: { type: 'string' },
                       generation: { type: 'integer' },
+                      lineupsDigest: { type: 'string' },
                       reset: {
                         type: 'object',
                         required: ['atBats', 'innings'],
