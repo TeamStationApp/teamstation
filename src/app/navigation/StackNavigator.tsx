@@ -98,6 +98,8 @@ export interface StackNavigatorProps {
   headerHeight: number
   /** The floating navbar's height, for every scene's screen. */
   navigationHeight?: number
+  /** The offline banner's height while it shows, at the bottom of the window. */
+  bannerHeight?: number
   onHandoff: (node: React.ReactNode) => void
   onHandoffHeight?: (height: number) => void
   onBackOverride: (handler: (() => void) | null) => void
@@ -778,6 +780,7 @@ export function StackNavigator(props: StackNavigatorProps): React.ReactElement {
             role={role}
             headerHeight={scene.immersive ? 0 : headerHeight}
             navigationHeight={scene.immersive ? 0 : props.navigationHeight}
+            bannerHeight={scene.immersive ? 0 : props.bannerHeight}
             onHandoff={onHandoff}
             onHandoffHeight={props.onHandoffHeight}
             holdsHandoff={coverRising ? role === 'outgoing' : role === 'top'}
