@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import type { Cleaner } from 'cleaners'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -175,6 +176,39 @@ describe('event Info location and family controls', () => {
     expect(
       document.querySelector('[data-testid="event-replies-open"]')
     ).not.equals(null)
+  })
+  it('paints the Info the phone stored while the read waits out its deadline, then the server’s answer', async () => {
+    const client = clientFor()
+    const keys: string[] = []
+    let answer: (info: EventInfo) => void = () => undefined
+    client.cached = async <T,>(key: string, cleaner: Cleaner<T>) => {
+      keys.push(key)
+      return key === '/events/g1/info' ? cleaner(initial()) : undefined
+    }
+    client.eventInfo = async () =>
+      await new Promise<EventInfo>(resolve => {
+        answer = resolve
+      })
+    await render(client)
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    expect(keys).deep.equals(['/events/g1/info'])
+    expect(
+      document.querySelector('[aria-label="Loading event information"]')
+    ).equals(null)
+    expect(document.body.textContent).contains('Babe R')
+    await act(async () => {
+      answer({
+        ...initial(),
+        attendees: initial().attendees.map(row => ({
+          ...row,
+          name: row.name === 'Babe R' ? 'Babe Ruth' : row.name
+        }))
+      })
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    expect(document.body.textContent).contains('Babe Ruth')
   })
   it('uses the displayed map coordinates for venue-only directions after lookup', async () => {
     const client = clientFor({ ...initial(), venue: 'Demo Park' })

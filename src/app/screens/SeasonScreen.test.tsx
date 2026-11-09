@@ -1111,6 +1111,27 @@ describe('the season screen', function () {
     expect(text()).includes('1 game')
   })
 
+  it('paints the stored schedule while the season’s teams and games are still on their way', async function () {
+    const windows: string[] = []
+    await mount({
+      // No signal: neither read answers before its deadline.
+      games: async () => await new Promise<SeasonGame[]>(() => undefined),
+      teams: async () => await new Promise<TeamSummary[]>(() => undefined),
+      patch: {
+        scheduleGames: async (scope: string, window: string) => {
+          windows.push(`${scope} ${window}`)
+          return window === 'past+desc'
+            ? pageOfGames([PLAYED], {})
+            : pageOfGames([], {})
+        }
+      }
+    })
+    expect(windows).includes('season:sea_spring past+desc')
+    expect(text()).not.includes('Loading…')
+    expect(gameRows()).has.lengthOf(1)
+    expect(gameRows()[0]).includes('Alta Hawks @ Bay Stars')
+  })
+
   it('draws nothing from an answer that arrives after it has gone', async function () {
     let finish: (games: SeasonGame[]) => void = () => undefined
     let fail: (error: Error) => void = () => undefined

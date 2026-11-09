@@ -37,6 +37,16 @@ function memoryCaches(): (userId: string) => Promise<DocumentStore> {
         file.set(key, stored)
         return stored
       },
+      storeServer: async (key, document) => {
+        const held = file.get(key)
+        const stored = {
+          ...(held?.pending === true ? held : { ...document, pending: false }),
+          serverDigest: document.serverDigest,
+          serverBody: document.body
+        }
+        file.set(key, stored)
+        return stored
+      },
       close: async () => undefined,
       destroy: async () => {
         files.delete(userId)
