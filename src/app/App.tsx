@@ -155,6 +155,7 @@ import {
   useAnalytics
 } from './observability/AnalyticsContext'
 import { passwordKdf } from './platform/passwordKdf'
+import { useInsets } from './platform/safeArea'
 import { signInRequest } from './platform/signInRequest'
 import {
   sessionUserOf,
@@ -475,6 +476,7 @@ function Shell(props: AppProps): React.ReactElement {
   // destinations float over the content, above it they sit in the header and
   // there is no sidebar at all.
   const isWide = useBreakpoint() !== 'phone'
+  const insets = useInsets()
   // Measured rather than repeated. The content's top padding and the pegged
   // player both have to clear the header, and a second copy of its height is a
   // second thing to forget.
@@ -3999,16 +4001,14 @@ function Shell(props: AppProps): React.ReactElement {
   )
   const bannerShown =
     bannerText != null || createRefused || heldTeams.length > 0
+  const bottomBanner = bannerShown ? bannerHeight : 0
+  // The offline banner is the last chrome: the bottom strip, on the safe-area
+  // inset, under the floating capsule, which sits on top of it. A wide window
+  // has no capsule, and the banner still sits on the inset.
   const chrome = (
     <>
       <View key="header" style={styles.headerLayer}>
         {header}
-        <OfflineBanner
-          text={bannerText}
-          refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
-          held={heldTeams}
-          onLayout={setBannerHeight}
-        />
       </View>
       {!isWide && !tessLayer && (
         <AppNav
@@ -4019,8 +4019,17 @@ function Shell(props: AppProps): React.ReactElement {
           chatActive={top?.name === 'conversation' || tab === 'chat'}
           onSelect={selectTab}
           dots={{ chat: chatOn && hasUnread(chatList) }}
+          bannerHeight={bottomBanner}
         />
       )}
+      <OfflineBanner
+        key="banner"
+        style={[styles.bannerLayer, { bottom: insets.bottom }]}
+        text={bannerText}
+        refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
+        held={heldTeams}
+        onLayout={setBannerHeight}
+      />
     </>
   )
   /** A scene's node, told which scene it is (see `useChatAgeAsk`). */
@@ -4101,10 +4110,9 @@ function Shell(props: AppProps): React.ReactElement {
                       }
                       predictiveBackNow={predictiveBackNow}
                       popPending={popPending}
-                      headerHeight={
-                        headerHeight + (bannerShown ? bannerHeight : 0)
-                      }
+                      headerHeight={headerHeight}
                       navigationHeight={isWide ? 0 : navigationHeight}
+                      bannerHeight={bottomBanner}
                       onHandoff={setHandoff}
                       onHandoffHeight={setHandoffHeight}
                       onBackOverride={setBack}
@@ -4113,7 +4121,10 @@ function Shell(props: AppProps): React.ReactElement {
                   <TessOverlayHost />
                 </PaneBesideTess>
               </View>
-              <SuccessToast notice={successNotice} />
+              <SuccessToast
+                notice={successNotice}
+                bannerHeight={bottomBanner}
+              />
               {chatOn && <DeviceApprovalPrompt />}
               <ChatAgeHost
                 state={chatAge}
@@ -4819,6 +4830,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
     left: 0,
     right: 0,
     zIndex: 4
+  },
+  // The bottom strip, across the window; its `bottom` is the safe-area inset.
+  bannerLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 5
   }
 }))
 
