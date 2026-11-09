@@ -207,12 +207,16 @@ describe('remaining scoring on game detail and schedules', function () {
       [{ plays: [complete], currentPlay: setup }, true],
       [{ plays: [roster], currentPlay: setup }, false]
     ] as const) {
+      const observed = await (
+        await f.h.request('GET', `/games/${id}/events`, undefined, 101)
+      ).json()
       const response = await f.h.request(
         'POST',
         `/games/${id}/events`,
         {
           mode: 'live',
           source: { system: 'teamstation' },
+          scoringBase: observed.scoringMutation ?? null,
           plays: [],
           ...change
         },

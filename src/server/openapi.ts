@@ -896,7 +896,7 @@ const postedDigests = {
   superseded: {
     type: 'boolean',
     description:
-      'True when an older scoring mutation was ignored. The response contains the canonical game; the client must adopt it instead of marking the older snapshot saved.'
+      'True when a scoring mutation based on a displaced version was ignored. The response contains the canonical game; the client must adopt it instead of replaying the rejected scoring.'
   },
   currentPlay: {
     oneOf: [{ $ref: '#/components/schemas/GumboCurrentPlay' }, { type: 'null' }]
@@ -5277,12 +5277,14 @@ export function openApiDocument(version: string): OpenApiDocument {
             'generation }`: the sender opens the game again. A post answers ' +
             'every stored play, unless it is a live post and `answer=edits` ' +
             'asks for only what it wrote (`edits`). With `scoringMutation`, ' +
-            'the request must include currentPlay (null when none). Conflicting ' +
-            'scoring writes are ordered by original action time, ' +
-            'then id and revision. Older writes return the canonical game with ' +
+            'the request must include currentPlay (null when none). Live ' +
+            'TeamStation scoring requires scoringBase, the observed scoring version. ' +
+            'The first accepted write advances that version. Conflicting writes ' +
+            'based on a displaced version return the canonical game with ' +
             '`superseded: true`, without changing it, even with `answer=edits`. ' +
             'Retries retain the original identity; reuse with different content ' +
-            'is 409. Generation and team checks still precede this ordering.',
+            'is 409. Missing scoringBase is 400. Generation and team checks ' +
+            'still precede acceptance. A current-version deliberate Undo remains valid.',
           security: [{ bearer: [] }],
           parameters: [
             gameIdParam,
@@ -5361,12 +5363,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                       type: 'array',
                       items: { $ref: '#/components/schemas/GumboPlay' },
                       description:
-                        'Completed editable scoring ancestry for a stamped delta. Requires scoringBase; if that base was replaced, the server restores this history before applying the winning delta. Imported read-only plays are excluded.'
+                        'Completed editable scoring ancestry for a stamped delta. Requires scoringBase. History never authorizes replacement of a displaced base. Imported read-only plays are excluded.'
                     },
                     scoringBase: {
                       anyOf: [scoringMutationSchema, { type: 'null' }],
                       description:
-                        'The last observed scoring mutation, or null before any scoring. A changed scoring version returns stale 409 unless the stamped delta includes scoringHistory for reconciliation. Omission retains legacy behavior.'
+                        'Required for live TeamStation scoring. The last observed scoring mutation, or null before any scoring. A changed version returns the canonical game with superseded:true for stamped scoring, or stale 409 for lineup-only reconciliation. Device timestamps do not choose a conflicting winner.'
                     },
                     lineupsBase: {
                       type: 'string',

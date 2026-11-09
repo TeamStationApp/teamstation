@@ -55,6 +55,7 @@ describe('scoring mutation ordering', function () {
         const later = await open()
         apply(older, { type: 'pitch', call: 'B' })
         await older.flush()
+        await later.reload()
         const coach = await open()
         const setup = setupOf(coach.state)
         if (side === 'home')
@@ -135,6 +136,7 @@ describe('scoring mutation ordering', function () {
     const runner = later.state.liveData.plays.currentPlay!.matchup.batter.id
     apply(older, { type: 'pitch', call: 'B' })
     await older.flush()
+    await later.reload()
     const coach = await open()
     const home = setupOf(coach.state)
     ;[home.sides.home.defense.C, home.sides.home.defense['1B']] = [
@@ -184,6 +186,7 @@ describe('scoring mutation ordering', function () {
     const fielder = setupOf(later.state).sides.home.defense.SS!
     apply(older, { type: 'pitch', call: 'B' })
     await older.flush()
+    await later.reload()
     const coach = await open()
     const home = setupOf(coach.state)
     ;[home.sides.home.defense.SS, home.sides.home.defense['2B']] = [
@@ -287,7 +290,7 @@ describe('scoring mutation ordering', function () {
       )
     })
 
-  it('retains deferred coach edit across a later stale winning scorer', async () => {
+  it('retains deferred coach edit across an accepted correction and stale scorer', async () => {
     const { open, load } = await sessions(true)
     const seed = await open()
     apply(seed, { type: 'pitch', call: 'C' })
@@ -300,6 +303,10 @@ describe('scoring mutation ordering', function () {
     apply(older, { type: 'pitch', call: 'C' })
     apply(older, { type: 'gameFlow', kind: 'closePlay' })
     await older.flush()
+    // A deliberate correction starts from the accepted version.
+    await later.reload()
+    expect(later.undo().problems).deep.equals([])
+    expect(later.undo().problems).deep.equals([])
     const coach = await open()
     const home = setupOf(coach.state)
     ;[home.sides.home.battingOrder[4], home.sides.home.battingOrder[5]] = [
@@ -380,6 +387,7 @@ describe('scoring mutation ordering', function () {
     const original = later.state.liveData.plays.currentPlay!.matchup.pitcher.id
     apply(older, { type: 'pitch', call: 'B' })
     await older.flush()
+    await later.reload()
     const coach = await open()
     const home = setupOf(coach.state)
     ;[home.sides.home.defense.P, home.sides.home.defense.C] = [
@@ -477,6 +485,7 @@ describe('scoring mutation ordering', function () {
     const original = setupOf(later.state).sides.away.battingOrder[1]
     apply(older, { type: 'pitch', call: 'B' })
     await older.flush()
+    await later.reload()
     const coach = await open()
     const setup = setupOf(coach.state)
     ;[setup.sides.away.battingOrder[1], setup.sides.away.battingOrder[2]] = [
@@ -514,6 +523,7 @@ describe('scoring mutation ordering', function () {
         later.state.liveData.plays.currentPlay!.matchup.pitcher.id
       apply(older, { type: 'pitch', call: 'B' })
       await older.flush()
+      await later.reload()
       const coach = await open()
       const setup = setupOf(coach.state)
       ;[setup.sides.home.defense.P, setup.sides.home.defense.C] = [
@@ -568,6 +578,10 @@ describe('scoring mutation ordering', function () {
       apply(older, { type: 'pitch', call: 'C' })
       apply(older, { type: 'gameFlow', kind: 'closePlay' })
       await older.flush()
+      // A deliberate correction starts from the accepted version.
+      await later.reload()
+      expect(later.undo().problems).deep.equals([])
+      expect(later.undo().problems).deep.equals([])
       apply(later, { type: 'pitch', call: 'B' })
       const coach = await open()
       const setup = setupOf(coach.state)
@@ -630,6 +644,10 @@ describe('scoring mutation ordering', function () {
     apply(older, { type: 'pitch', call: 'C' })
     apply(older, { type: 'gameFlow', kind: 'closePlay' })
     await older.flush()
+    // A deliberate correction starts from the accepted version.
+    await later.reload()
+    expect(later.undo().problems).deep.equals([])
+    expect(later.undo().problems).deep.equals([])
     apply(later, { type: 'pitch', call: 'B' })
     const coach = await open()
     const setup = setupOf(coach.state)
@@ -683,6 +701,10 @@ describe('scoring mutation ordering', function () {
     apply(older, { type: 'result', eventType: 'hit_by_pitch' })
     apply(older, { type: 'gameFlow', kind: 'closePlay' })
     await older.flush()
+    // A deliberate correction starts from the accepted version.
+    await later.reload()
+    expect(later.undo().problems).deep.equals([])
+    expect(later.undo().problems).deep.equals([])
     apply(later, { type: 'pitch', call: 'B' })
     const coach = await open()
     apply(coach, {
@@ -715,65 +737,68 @@ describe('scoring mutation ordering', function () {
     )
   })
 
-  for (const reverse of [false, true]) {
-    it(`keeps the later strike with ${reverse ? 'reversed' : 'ordinary'} delivery`, async () => {
-      const context = await addScorableTeams(db, {
-        home: 'Hawks',
-        away: 'Gulls'
-      })
-      const gameId = await addGame(db, {
-        homeTeamId: context.teams.home.id,
-        awayTeamId: context.teams.away.id,
-        startAt: new Date()
-      })
-      const changes: SaveChange[] = []
-      for (const call of ['B', 'C'] as const) {
-        const session = await ScoringSession.open(
-          {
-            load: async () => ({ plays: [], currentPlay: null }),
-            save: async (_id, change) => {
-              changes.push(change)
-              return {}
-            }
-          },
-          gameId,
-          { gamePk: gameId, ...context },
-          {
-            setTimer: () => null,
-            clearTimer: () => undefined
-          }
-        )
-        expect(session.apply({ type: 'pitch', call }).problems).deep.equals([])
-        await session.flush()
-      }
-      const at = Date.now() - 1000
-      const requests = changes.map((change, i) =>
-        asPostEventsBody({
-          ...change,
-          mode: 'live',
-          source: { system: 'teamstation' },
-          scoringMutation: {
-            at: at + i,
-            id: `author-${i}`,
-            revision: 0,
-            frontier: 0
-          }
+  for (const clockDelta of [-100, 0, 100])
+    for (const reverse of [false, true]) {
+      it(`keeps the first accepted pitch with ${reverse ? 'reversed' : 'ordinary'} delivery and clock delta ${clockDelta}`, async () => {
+        const context = await addScorableTeams(db, {
+          home: 'Hawks',
+          away: 'Gulls'
         })
-      )
-      for (const i of reverse ? [1, 0] : [0, 1])
-        await postGamePlays(db, gameId, requests[i])
-      const game = await db
-        .selectFrom('games')
-        .select('currentPlay')
-        .where('id', '=', gameId)
-        .executeTakeFirstOrThrow()
-      expect((game.currentPlay as { count: unknown }).count).deep.equals({
-        balls: 0,
-        strikes: 1,
-        outs: 0
+        const gameId = await addGame(db, {
+          homeTeamId: context.teams.home.id,
+          awayTeamId: context.teams.away.id,
+          startAt: new Date()
+        })
+        const changes: SaveChange[] = []
+        for (const call of ['B', 'C'] as const) {
+          const session = await ScoringSession.open(
+            {
+              load: async () => ({ plays: [], currentPlay: null }),
+              save: async (_id, change) => {
+                changes.push(change)
+                return {}
+              }
+            },
+            gameId,
+            { gamePk: gameId, ...context },
+            {
+              setTimer: () => null,
+              clearTimer: () => undefined
+            }
+          )
+          expect(session.apply({ type: 'pitch', call }).problems).deep.equals(
+            []
+          )
+          await session.flush()
+        }
+        const at = Date.now() - 1000
+        const requests = changes.map((change, i) =>
+          asPostEventsBody({
+            ...change,
+            mode: 'live',
+            source: { system: 'teamstation' },
+            scoringMutation: {
+              at: at + i * clockDelta,
+              id: `author-${i}`,
+              revision: 0,
+              frontier: 0
+            }
+          })
+        )
+        for (const i of reverse ? [1, 0] : [0, 1])
+          await postGamePlays(db, gameId, requests[i])
+        const game = await db
+          .selectFrom('games')
+          .select('currentPlay')
+          .where('id', '=', gameId)
+          .executeTakeFirstOrThrow()
+        expect((game.currentPlay as { count: unknown }).count).deep.equals({
+          balls: reverse ? 0 : 1,
+          strikes: reverse ? 1 : 0,
+          outs: 0
+        })
       })
-    })
-  }
+    }
   async function sessions(resolveNames = false): Promise<{
     open: () => Promise<ScoringSession>
     load: () => Promise<StoredGame>
@@ -871,6 +896,10 @@ describe('scoring mutation ordering', function () {
       apply(older, { type: 'pitch', call: 'C' })
       apply(older, { type: 'gameFlow', kind: 'closePlay' })
       await older.flush()
+      // A deliberate correction starts from the accepted version.
+      await later.reload()
+      expect(later.undo().problems).deep.equals([])
+      expect(later.undo().problems).deep.equals([])
       apply(later, { type: 'pitch', call: 'B' })
       const coach = await open()
       const setup = setupOf(coach.state)
@@ -944,6 +973,7 @@ describe('scoring mutation ordering', function () {
     const original = later.state.liveData.linescore.defense.P!.id
     apply(older, { type: 'pitch', call: 'B' })
     await older.flush()
+    await later.reload()
     apply(later, { type: 'result', eventType: 'home_run' })
     apply(later, { type: 'gameFlow', kind: 'closePlay' })
     const coach = await open()
@@ -969,6 +999,7 @@ describe('scoring mutation ordering', function () {
     const original = later.state.liveData.linescore.defense.P!.id
     apply(older, { type: 'pitch', call: 'B' })
     await older.flush()
+    await later.reload()
     const coach = await open()
     const setup = setupOf(coach.state)
     ;[setup.sides.home.defense.P, setup.sides.home.defense.C] = [
@@ -993,6 +1024,7 @@ describe('scoring mutation ordering', function () {
     const later = await open()
     strikeout(older)
     await older.flush()
+    await later.reload()
     apply(later, { type: 'result', eventType: 'other_out' })
     const coach = await open()
     const order = [...setupOf(coach.state).sides.away.battingOrder]
@@ -1028,20 +1060,20 @@ describe('scoring mutation ordering', function () {
       b.apply({ type: 'pitch', call: 'C' })
       for (const session of reverse ? [b, a] : [a, b]) await session.flush()
       expect((await load()).currentPlay?.count).deep.equals({
-        balls: 0,
-        strikes: 1,
+        balls: reverse ? 0 : 1,
+        strikes: reverse ? 1 : 0,
         outs: 0
       })
       await a.reload()
       await b.reload()
       expect(a.state.liveData.plays.currentPlay?.count).deep.equals({
-        balls: 0,
-        strikes: 1,
+        balls: reverse ? 0 : 1,
+        strikes: reverse ? 1 : 0,
         outs: 0
       })
       expect(b.state.liveData.plays.currentPlay?.count).deep.equals({
-        balls: 0,
-        strikes: 1,
+        balls: reverse ? 0 : 1,
+        strikes: reverse ? 1 : 0,
         outs: 0
       })
     })
@@ -1090,7 +1122,7 @@ describe('scoring mutation ordering', function () {
           setupOf((await open()).state).sides.away.battingOrder
         ).deep.equals(original)
       })
-  it('keeps a newer empty-game undo over an older scored pitch', async () => {
+  it('keeps an accepted pitch over a competing empty-game undo', async () => {
     const { open, load } = await sessions()
     const a = await open()
     a.apply({ type: 'pitch', call: 'B' })
@@ -1103,13 +1135,13 @@ describe('scoring mutation ordering', function () {
     const stored = await load()
     expect(stored.plays).has.length(0)
     expect(stored.currentPlay?.count).deep.equals({
-      balls: 0,
-      strikes: 0,
+      balls: 1,
+      strikes: 1,
       outs: 0
     })
     expect((await open()).state.liveData.plays.currentPlay?.count).deep.equals({
-      balls: 0,
-      strikes: 0,
+      balls: 1,
+      strikes: 1,
       outs: 0
     })
   })
@@ -1165,7 +1197,8 @@ describe('scoring mutation ordering', function () {
             ...original,
             mode: 'live',
             source: { system: 'teamstation' },
-            scoringMutation: mutation
+            scoringMutation: mutation,
+            scoringBase: (await load()).scoringMutation
           })
         )
       } catch {
@@ -1197,6 +1230,7 @@ describe('scoring mutation ordering', function () {
           source: { system: 'teamstation' },
           plays: [],
           remove: [],
+          scoringBase: before.scoringMutation,
           scoringMutation: {
             at: Date.now(),
             id: 'missing-current-state',
@@ -1245,57 +1279,59 @@ describe('scoring mutation ordering', function () {
     ).deep.equals(before)
   })
 
-  for (const ahead of [0, 3000])
-    it(`orders a legacy direct score after a modern clock ${ahead}ms ahead`, async () => {
+  for (const stamped of [false, true])
+    it(`refuses a live scoring write without an observed base (stamped ${stamped})`, async () => {
       const { open, gameId, requests, load } = await sessions()
-      const a = await open()
-      a.apply({ type: 'pitch', call: 'B' })
-      await a.flush()
-      a.apply({ type: 'pitch', call: 'C' })
-      await a.flush()
-      const modern = asPostEventsBody({
-        ...requests[1],
-        mode: 'live',
-        source: { system: 'teamstation' },
-        scoringMutation: {
-          ...requests[1].scoringMutation!,
-          at: Date.now() + ahead,
-          id: 'future-modern'
-        }
-      })
-      await postGamePlays(db, gameId, modern)
-      const {
-        scoringMutation: _ignored,
-        scoringHistory: _history,
-        scoringBase: _scoringBase,
-        lineupsBase: _base,
-        ...old
-      } = requests[0]
-      const arrived = Date.now()
-      await postGamePlays(
-        db,
-        gameId,
-        asPostEventsBody({
-          ...old,
-          mode: 'live',
-          source: { system: 'teamstation' }
-        }),
-        undefined,
-        undefined,
-        { scoringAuthor: true }
-      )
-      expect((await load()).scoringMutation!.at).at.least(arrived)
-      expect((await load()).scoringMutation!.at).greaterThan(
-        modern.scoringMutation!.at
-      )
-      const reply = await postGamePlays(db, gameId, modern)
-      expect(reply.superseded).equals(true)
-      expect((await load()).currentPlay?.count).deep.equals({
-        balls: 1,
-        strikes: 0,
-        outs: 0
-      })
+      const scorer = await open()
+      apply(scorer, { type: 'pitch', call: 'B' })
+      await scorer.flush()
+      const before = await load()
+      const { scoringBase: _base, scoringMutation, ...body } = requests[0]
+      let refused: unknown
+      try {
+        await postGamePlays(
+          db,
+          gameId,
+          asPostEventsBody({
+            ...body,
+            ...(stamped ? { scoringMutation } : {}),
+            mode: 'live',
+            source: { system: 'teamstation' }
+          }),
+          undefined,
+          undefined,
+          { scoringAuthor: true }
+        )
+      } catch (error) {
+        refused = error
+      }
+      expect(String(refused)).contains('observed scoring base')
+      expect(await load()).deep.equals(before)
     })
+  it('accepts sequential scoring even when the next author clock is earlier', async () => {
+    const { open, load, requests, gameId } = await sessions()
+    const scorer = await open()
+    apply(scorer, { type: 'pitch', call: 'B' })
+    await scorer.flush()
+    const base = (await load()).scoringMutation!
+    apply(scorer, { type: 'pitch', call: 'C' })
+    await scorer.flush()
+    const next = asPostEventsBody({
+      ...requests[1],
+      mode: 'live',
+      source: { system: 'teamstation' },
+      scoringBase: (await load()).scoringMutation,
+      scoringMutation: { ...base, id: 'earlier-clock', at: base.at - 100 }
+    })
+    const answer = await postGamePlays(db, gameId, next)
+    expect(answer.superseded).not.equals(true)
+    expect((await load()).scoringMutation?.id).equals('earlier-clock')
+    expect((await load()).currentPlay?.count).deep.includes({
+      balls: 1,
+      strikes: 1
+    })
+  })
+
   it('orders resumed scoring without treating an imported prefix as a coach edit', async () => {
     const { open, gameId, load, requests } = await sessions()
     await postGamePlays(
@@ -1331,12 +1367,12 @@ describe('scoring mutation ordering', function () {
     await b.flush()
     expect(a.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
     await a.flush()
-    expect(a.rebases).equals(0)
+    expect(a.rebases).equals(1)
     expect(a.problem).equals(null)
     expect(requests).length(2)
     expect((await load()).currentPlay?.count).deep.includes({
-      balls: 1,
-      strikes: 0
+      balls: 0,
+      strikes: 1
     })
     expect((await readPlays(db, gameId))[0]).deep.equals(original)
   })
@@ -1396,7 +1432,8 @@ describe('scoring mutation ordering', function () {
             at: Date.now(),
             id: 'invalid-imported-frontier',
             frontier: 0
-          }
+          },
+          scoringBase: (await load()).scoringMutation
         })
       )
     } catch (error) {
@@ -1458,8 +1495,49 @@ describe('scoring mutation ordering', function () {
     for (let n = 0; n < 3; n++) apply(session, { type: 'pitch', call: 'C' })
     apply(session, { type: 'gameFlow', kind: 'closePlay' })
   }
+  for (const final of [false, true])
+    it(`preserves accepted innings against one stale later pitch (final ${final})`, async () => {
+      const { open, load, gameId } = await sessions()
+      const stale = await open()
+      const accepted = await open()
+      for (let n = 0; n < 12; n++) strikeout(accepted)
+      if (final) apply(accepted, { type: 'gameFlow', kind: 'endGame' })
+      await accepted.flush()
+      const before = await load()
+      apply(stale, { type: 'pitch', call: 'B' })
+      await stale.flush()
+      expect(stale.problem).equals(null)
+      expect(await load()).deep.equals(before)
+      expect(stale.state.final).equals(final)
+      const stored = await db
+        .selectFrom('games')
+        .select('status')
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow()
+      expect(stored.status).equals(final ? 'final' : 'inProgress')
+      if (!final) {
+        apply(stale, { type: 'pitch', call: 'B' })
+        await stale.flush()
+        expect((await load()).currentPlay?.count).deep.includes({ balls: 1 })
+        expect((await load()).plays).has.length(12)
+      }
+    })
+  it('allows an observed current timeline to undo several plays and rescore', async () => {
+    const { open, load } = await sessions()
+    const scorer = await open()
+    for (let n = 0; n < 6; n++) strikeout(scorer)
+    await scorer.flush()
+    const current = await open()
+    for (let n = 0; n < 12; n++) expect(current.undo().problems).deep.equals([])
+    apply(current, { type: 'pitch', call: 'B' })
+    await current.flush()
+    const reopened = await open()
+    expect(reopened.actions).deep.equals(current.actions)
+    expect(reopened.state.liveData.plays.allPlays.length).lessThan(6)
+    expect((await load()).currentPlay?.count).deep.includes({ balls: 1 })
+  })
   for (const reverse of [false, true])
-    it(`keeps a newer home run over a third out (${reverse ? 'reverse' : 'ordinary'} arrival)`, async () => {
+    it(`keeps the first accepted result against a home run or third out (${reverse ? 'reverse' : 'ordinary'} arrival)`, async () => {
       const { open, load } = await sessions()
       const initial = await open()
       strikeout(initial)
@@ -1475,12 +1553,14 @@ describe('scoring mutation ordering', function () {
       expect(saved.plays.map(play => play.result.eventType)).deep.equals([
         'strikeout',
         'strikeout',
-        'home_run'
+        reverse ? 'home_run' : 'strikeout'
       ])
       const final = await open()
-      expect(final.state.liveData.linescore.outs).equals(2)
+      expect(final.state.liveData.linescore.outs).equals(reverse ? 2 : 0)
       expect(final.state.liveData.linescore.currentInning).equals(1)
-      expect(final.state.liveData.linescore.teams.away.runs).equals(1)
+      expect(final.state.liveData.linescore.teams.away.runs).equals(
+        reverse ? 1 : 0
+      )
     })
   it('rewinds across an inning without retaining a peer’s superseded tail', async () => {
     const { open, load } = await sessions()
@@ -1493,8 +1573,8 @@ describe('scoring mutation ordering', function () {
     apply(b, { type: 'pitch', call: 'B' })
     expect(a.undo().problems).deep.equals([])
     expect(a.undo().problems).deep.equals([])
-    await b.flush()
     await a.flush()
+    await b.flush()
     // The reopened event retains its identity, but is not a completed play.
     expect((await load()).plays).has.length(3)
     const final = await open()
@@ -1507,7 +1587,7 @@ describe('scoring mutation ordering', function () {
     })
   })
   for (const reverse of [false, true])
-    it(`removes a competing home run from every score projection (reverse ${reverse})`, async () => {
+    it(`keeps the first accepted result in every score projection (reverse ${reverse})`, async () => {
       const { open, load, gameId } = await sessions()
       const a = await open()
       const b = await open()
@@ -1526,9 +1606,11 @@ describe('scoring mutation ordering', function () {
         .select(['away_score', 'home_score', 'linescore'])
         .where('id', '=', gameId)
         .executeTakeFirstOrThrow()
-      expect(row.away_score).equals(null)
-      expect(row.home_score).equals(null)
-      expect(JSON.stringify(row.linescore)).not.includes('"runs":1')
+      expect(row.away_score).equals(reverse ? null : 1)
+      expect(row.home_score).equals(reverse ? null : 0)
+      expect(JSON.stringify(row.linescore).includes('"runs":1')).equals(
+        !reverse
+      )
       const stats = await db
         .selectFrom('game_player_stats')
         .select(['hr', 'r', 'rbi'])
@@ -1538,12 +1620,12 @@ describe('scoring mutation ordering', function () {
         expect(
           stats.reduce((sum, player) => sum + Number(player[field]), 0),
           field
-        ).equals(0)
+        ).equals(reverse ? 0 : 1)
       const session = await open()
-      expect(session.state.liveData.plays.allPlays).length(0)
+      expect(session.state.liveData.plays.allPlays).length(reverse ? 0 : 1)
       expect((await load()).currentPlay?.count).deep.includes({
         balls: 0,
-        strikes: 1
+        strikes: reverse ? 1 : 0
       })
     })
 
@@ -1663,6 +1745,8 @@ describe('scoring mutation ordering', function () {
       const original = setupOf(later.state).sides.away.battingOrder[0]
       strikeout(older)
       await older.flush()
+      await later.reload()
+      for (let n = 0; n < 4; n++) expect(later.undo().problems).deep.equals([])
       apply(later, { type: 'result', eventType: 'home_run' })
       apply(later, { type: 'gameFlow', kind: 'closePlay' })
       if (nextPitch) apply(later, { type: 'pitch', call: 'B' })
@@ -1744,7 +1828,7 @@ describe('scoring mutation ordering', function () {
     expect(after).includes({ id: before.id, ...metadata })
   })
   for (const reversed of [false, true])
-    it(`restores completed ancestry over a competing Undo (reverse ${reversed})`, async () => {
+    it(`keeps the first accepted timeline against a competing Undo (reverse ${reversed})`, async () => {
       const { open, load } = await sessions(true)
       const seed = await open()
       apply(seed, { type: 'result', eventType: 'hit_by_pitch' })
@@ -1758,11 +1842,15 @@ describe('scoring mutation ordering', function () {
       for (const scorer of reversed ? [a, b] : [b, a]) await scorer.flush()
       expect(
         (await load()).plays.map(play => play.result.eventType)
-      ).deep.equals(['hit_by_pitch'])
-      expect((await load()).currentPlay?.count).deep.include({ balls: 1 })
-      expect((await open()).state.liveData.plays.allPlays).has.length(1)
+      ).deep.equals(reversed ? ['hit_by_pitch'] : [])
+      expect((await load()).currentPlay?.count).deep.include({
+        balls: reversed ? 1 : 0
+      })
+      expect((await open()).state.liveData.plays.allPlays).has.length(
+        reversed ? 1 : 0
+      )
     })
-  it('includes restored ancestors in both the response and socket edit stream', async () => {
+  it('includes deliberate restored ancestors in both the response and socket edit stream', async () => {
     const { open, load, requests, gameId } = await sessions(true)
     const seed = await open()
     apply(seed, { type: 'result', eventType: 'hit_by_pitch' })
@@ -1775,7 +1863,7 @@ describe('scoring mutation ordering', function () {
     apply(a, { type: 'pitch', call: 'B' })
     await a.flush()
     const child = requests.at(-1)!
-    // Recreate reversed delivery: rewind first, then deliver the winning child.
+    // Deliberately rewind the current version, then explicitly restore it.
     await b.flush()
     const undo = requests.at(-1)!
     const rewound = await postGamePlays(
@@ -1783,6 +1871,7 @@ describe('scoring mutation ordering', function () {
       gameId,
       asPostEventsBody({
         ...undo,
+        scoringBase: (await load()).scoringMutation,
         mode: 'live',
         source: { system: 'teamstation' },
         scoringMutation: {
@@ -1798,6 +1887,8 @@ describe('scoring mutation ordering', function () {
       gameId,
       asPostEventsBody({
         ...child,
+        plays: child.scoringHistory,
+        scoringBase: (await load()).scoringMutation,
         mode: 'live',
         source: { system: 'teamstation' },
         scoringMutation: {
@@ -1912,7 +2003,7 @@ describe('scoring mutation ordering', function () {
     )
   })
 
-  it('retains newer local input authored while a losing save reads the winner', async () => {
+  it('discards input from the rejected branch while reading the accepted winner', async () => {
     const { open, load, hooks } = await sessions()
     const a = await open()
     const b = await open()
@@ -1937,11 +2028,44 @@ describe('scoring mutation ordering', function () {
     release()
     await saving
     expect((await load()).currentPlay?.count).deep.equals({
-      balls: 2,
-      strikes: 0,
+      balls: 0,
+      strikes: 1,
       outs: 0
     })
   })
+  it('normalizes an acknowledged pitch after reload without reusing its identity body', async () => {
+    const { open, load } = await sessions()
+    const scorer = await open()
+    apply(scorer, { type: 'pitch', call: 'C' })
+    apply(scorer, { type: 'pitch', call: 'C' })
+    await scorer.flush()
+    const authored = scorer.captureScoringAction()
+    expect(
+      scorer.sync(
+        [...scorer.actions, { type: 'pitch', call: 'C' }],
+        [],
+        false,
+        authored
+      )
+    ).deep.equals([])
+    await scorer.flush()
+    await scorer.reload()
+    expect(
+      scorer.sync(
+        [...scorer.actions, { type: 'gameFlow', kind: 'closePlay' }],
+        [],
+        false,
+        authored
+      )
+    ).deep.equals([])
+    await scorer.flush()
+    expect(scorer.problem).equals(null)
+    expect(scorer.readOnly).equals(false)
+    expect((await load()).plays.map(play => play.result.eventType)).deep.equals(
+      ['strikeout']
+    )
+  })
+
   it('does not let automatic completion become newer authorship than a peer’s hit', async () => {
     const { open, load } = await sessions()
     const a = await open()

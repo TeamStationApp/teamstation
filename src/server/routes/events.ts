@@ -19,7 +19,7 @@ import {
 import { halfOutcomes } from '../../common/scoring/linescore'
 import type { SwapEffect } from '../../common/scoring/playsLost'
 import {
-  compareScoringMutations,
+  sameScoringMutation,
   type ScoringMutation
 } from '../../common/scoring/scoringMutation'
 import {
@@ -411,11 +411,10 @@ export function eventRoutes(
           const superseded =
             kept.superseded === true ||
             (body.scoringMutation != null &&
-              current.scoringMutation != null &&
-              compareScoringMutations(
+              !sameScoringMutation(
                 body.scoringMutation,
                 current.scoringMutation
-              ) < 0)
+              ))
           if (superseded)
             return {
               status: 200,

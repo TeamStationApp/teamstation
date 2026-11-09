@@ -61,7 +61,12 @@ interface Transport {
   /** The next request reaches the server, and its answer is lost. */
   dropNext: boolean
   /** Every POST sent, with its key. */
-  posts: Array<{ path: string; key: string | undefined; status: number }>
+  posts: Array<{
+    path: string
+    key: string | undefined
+    status: number
+    body: Record<string, unknown>
+  }>
   dropRecovered?: 'waiting' | 'armed'
   holdAfterNextPost?: boolean
   dropRecoveryRead?: 'waiting' | 'armed'
@@ -98,7 +103,8 @@ function phoneOn(
       transport.posts.push({
         path: url.replace(`${f.h.origin}/api/v1`, ''),
         key: (init.headers as Record<string, string>)['idempotency-key'],
-        status: response.status
+        status: response.status,
+        body: (await response.clone().json()) as Record<string, unknown>
       })
     if (
       init.method === 'POST' &&
@@ -305,7 +311,7 @@ describe('the outbox against the server', function () {
     await b.client.sessionRefused()
   })
 
-  it('restores a mounted session’s ancestry when its next at-bat is authored after its rejected parent drained', async () => {
+  it('rejects a mounted session’s late child after its rejected parent drained', async () => {
     const context = await addScorableTeams(f.h.db, {
       home: 'Falcons',
       away: 'Terns'
@@ -366,14 +372,14 @@ describe('the outbox against the server', function () {
       (await a.client.gameEvents(gameId)).plays.map(
         play => play.result.eventType
       )
-    ).deep.equals(['single', 'home_run'])
+    ).deep.equals(['double'])
     await a.client.sessionRefused()
     const restarted = phoneOn(f, ownDir)
     restarted.transport.held = true
     const resumed = await open(restarted.client)
     expect(
       resumed.state.liveData.plays.allPlays.map(play => play.result.eventType)
-    ).deep.equals(['single', 'home_run'])
+    ).deep.equals(['double'])
     at += 100
     expect(resumed.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
     await resumed.flush()
@@ -389,7 +395,7 @@ describe('the outbox against the server', function () {
       .execute()
     expect(
       raw.map(row => (row.gumbo as GumboPlay).result.eventType)
-    ).deep.equals(['single', 'home_run'])
+    ).deep.equals(['double'])
     expect(
       (await restarted.client.gameEvents(gameId)).currentPlay?.count
     ).deep.includes({ balls: 1 })
@@ -1055,8 +1061,14 @@ describe('the outbox against the server', function () {
       await b.client.sessionRefused()
     })
 
-  for (const acceptedFirst of [false, true])
-    it(`rebuilds a lost response as the current winner (${acceptedFirst ? 'original accepted' : 'original superseded'})`, async () => {
+  for (const scenario of [
+    'superseded',
+    'accepted',
+    'advanced-earlier'
+  ] as const)
+    it(`rebuilds a lost response as the current winner (${scenario})`, async () => {
+      const acceptedFirst = scenario !== 'superseded'
+      const advanced = scenario === 'advanced-earlier'
       const ownDir = mkdtempSync(join(dir, 'lost-scoring-'))
       const { client, transport } = phoneOn(f, ownDir)
       const gameId = makeId('game')
@@ -1086,8 +1098,9 @@ describe('the outbox against the server', function () {
         ],
         remove: [],
         currentPlay: null,
+        scoringBase: null,
         scoringMutation: {
-          at: at + n,
+          at: advanced && n === 2 ? at - 100 : at + n,
           id: `lost-${n}`,
           revision: 0,
           frontier: 1
@@ -1099,7 +1112,12 @@ describe('the outbox against the server', function () {
       const peer = await f.h.request(
         'POST',
         `/games/${gameId}/events`,
-        { ...change(2), mode: 'live', source: { system: 'teamstation' } },
+        {
+          ...change(2),
+          scoringBase: advanced ? change(1).scoringMutation : null,
+          mode: 'live',
+          source: { system: 'teamstation' }
+        },
         101
       )
       expect(peer.status).equals(200)
@@ -1113,15 +1131,22 @@ describe('the outbox against the server', function () {
       client.wakeOutbox(true)
       await client.drainOutbox()
       expect((await client.outboxSummary()).count).equals(0)
+      expect(transport.posts.at(-1)?.body.superseded === true).equals(
+        !acceptedFirst || advanced
+      )
       const winner = await client.gameEvents(gameId)
-      expect(winner.plays[0].result.eventType).equals('double')
-      expect(winner.scoringMutation?.id).equals('lost-2')
+      expect(winner.plays[0].result.eventType).equals(
+        acceptedFirst && !advanced ? 'single' : 'double'
+      )
+      expect(winner.scoringMutation?.id).equals(
+        acceptedFirst && !advanced ? 'lost-1' : 'lost-2'
+      )
       expect(new Set(transport.posts.map(post => post.key)).size).equals(1)
       await client.sessionRefused()
     })
 
   for (const nextAtBat of [false, true])
-    it(`restarts with a losing parent and keeps its newer queued scoring child (${nextAtBat})`, async () => {
+    it(`restarts with a rejected parent and rejects its newer queued scoring child (${nextAtBat})`, async () => {
       const ownDir = mkdtempSync(join(dir, 'scoring-order-'))
       const first = phoneOn(f, ownDir)
       const gameId = makeId('game')
@@ -1151,6 +1176,7 @@ describe('the outbox against the server', function () {
         ],
         remove: [],
         currentPlay: null,
+        scoringBase: null,
         scoringMutation: {
           at: at + n,
           id: `device-${n}`,
@@ -1160,7 +1186,10 @@ describe('the outbox against the server', function () {
       })
       first.transport.held = true
       await first.client.saveGameEvents(gameId, change(1))
-      await first.client.saveGameEvents(gameId, change(3))
+      await first.client.saveGameEvents(gameId, {
+        ...change(3),
+        scoringBase: change(1).scoringMutation
+      })
       expect((await first.client.outboxSummary()).count).equals(2)
       const peer = await f.h.request(
         'POST',
@@ -1179,10 +1208,10 @@ describe('the outbox against the server', function () {
       await restarted.client.drainOutbox()
       expect((await restarted.client.outboxSummary()).count).equals(0)
       const result = await restarted.client.gameEvents(gameId)
-      expect(result.plays.map(play => play.result.eventType)).deep.equals(
-        nextAtBat ? ['single', 'home_run'] : ['home_run']
-      )
-      expect(result.scoringMutation?.id).equals('device-3')
+      expect(result.plays.map(play => play.result.eventType)).deep.equals([
+        'double'
+      ])
+      expect(result.scoringMutation?.id).equals('device-2')
       expect(restarted.transport.posts.map(post => post.status)).deep.equals([
         200, 200
       ])
@@ -1211,6 +1240,7 @@ describe('the outbox against the server', function () {
     transport.dropNext = true
     const queued = await client.saveGameEvents(gameId, {
       plays: [livePlay(0)],
+      scoringBase: null,
       remove: []
     })
     expect(queued.playsDigest).match(/^local-/)
@@ -1310,6 +1340,7 @@ describe('S8: a stale game parks, and the other chain still lands', function () 
     transport.held = true
     note('transport held: nothing leaves the phone')
     await client.saveGameEvents(gameId, {
+      scoringBase: null,
       plays: [livePlay(0)],
       remove: [],
       lineupsBase: read.lineupsDigest

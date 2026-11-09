@@ -975,6 +975,7 @@ describe('the phone outbox', function () {
       plays: [play(0)],
       remove: [],
       currentPlay: null,
+      scoringBase: null,
       scoringMutation: { at: 2000, id: 'local', revision: 1, frontier: 1 }
     })
     expect(answer.superseded).equals(true)
@@ -983,7 +984,7 @@ describe('the phone outbox', function () {
     expect(p.rows()).has.length(1)
   })
 
-  it('keeps a known winner visible while an older queued descendant awaits delivery', function () {
+  it('keeps a known winner visible for stale descendants regardless of their clocks', function () {
     const canonical = {
       plays: [],
       currentPlay: { ...play(0), count: { balls: 0, strikes: 1 } },
@@ -1000,6 +1001,7 @@ describe('the phone outbox', function () {
     const queued = {
       plays: [],
       currentPlay: { ...play(0), count: { balls: 2, strikes: 0 } },
+      scoringBase: { at: 1, id: 'rejected-parent', revision: 0, frontier: 0 },
       scoringMutation: { at: 2, id: 'older-child', revision: 0, frontier: 0 }
     }
     const held = appliedEvents(canonical, queued, game)
@@ -1016,15 +1018,21 @@ describe('the phone outbox', function () {
       game
     )
     expect((newer.currentPlay as GumboPlay).count).deep.equals(
+      canonical.currentPlay.count
+    )
+    expect(newer.scoringMutation).deep.equals(canonical.scoringMutation)
+    const sequential = appliedEvents(
+      canonical,
+      { ...queued, scoringBase: canonical.scoringMutation },
+      game
+    )
+    expect((sequential.currentPlay as GumboPlay).count).deep.equals(
       queued.currentPlay.count
     )
-    expect(newer.scoringMutation).deep.equals({
-      ...queued.scoringMutation,
-      at: 4
-    })
+    expect(sequential.scoringMutation).deep.equals(queued.scoringMutation)
   })
 
-  it('restores the authored ancestry over a displaced optimistic base and prunes its tail', function () {
+  it('preserves accepted ancestry and its tail against a displaced optimistic base', function () {
     const original = play(0)
     const competing = {
       ...play(0),
@@ -1057,7 +1065,11 @@ describe('the phone outbox', function () {
         id: row.id,
         event: row.gumbo.result.eventType
       }))
-    ).deep.equals([{ id: 'row-0', event: 'single' }])
+    ).deep.equals([
+      { id: 'row-0', event: 'double' },
+      { id: 'row-1', event: 'single' },
+      { id: 'row-2', event: 'single' }
+    ])
   })
 
   it('reconciles scoring when a guest rename is the last queued events writer', async () => {
