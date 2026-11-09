@@ -27,6 +27,7 @@ import {
   confirmPasswordReset,
   requestPasswordReset
 } from '../account/passwordReset'
+import { onePerson } from '../admin/people'
 import {
   createPasswordRecord,
   passwordMatches,
@@ -38,6 +39,12 @@ import { isMachine } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { applyWaitingInvitations } from '../invites/personRequests'
 import { cleanBody } from '../jsonBody'
+import {
+  deleteObject,
+  imageKey,
+  isPublicImagePrefix,
+  sizesFor
+} from '../media/images'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import { spaceConfigured } from '../media/spacesHls'
 import { deleteSpacePrefix } from '../media/spacesVideo'
@@ -194,6 +201,9 @@ export function accountRoutes(
     '/me/account',
     withAsync(async (req, res) => {
       const userId = accountId(req)
+      // Read before the rows are emptied: a public picture's name does not
+      // say whose it is.
+      const pictures = await ownPictures(db, userId)
       const emptied = await deleteAccount(db, userId)
       setAudit(res.locals, { entityType: 'user', entityId: userId })
       clearSessionCookie(res, secureCookieFor(options.publicUrl))
@@ -202,7 +212,7 @@ export function accountRoutes(
       // After the answer, which does not wait on storage: the account is gone
       // whatever storage says, and a slow Space must not make it look kept.
       if (spaceConfigured(options.space))
-        removePictures(options.space, emptied).catch(() => undefined)
+        removePictures(options.space, emptied, pictures).catch(() => undefined)
     })
   )
   router.put(
@@ -464,11 +474,39 @@ export function accountRoutes(
   return router
 }
 
-/** Each account's own uploads, one at a time, saying which could not go. */
+/** The public picture prefixes the person's rows hold, merged ones too. */
+async function ownPictures(
+  db: Kysely<Database>,
+  userId: string
+): Promise<string[]> {
+  const { userIds } = await onePerson(db, userId)
+  const rows = await db
+    .selectFrom('users')
+    .select('avatar_path')
+    .where('id', 'in', userIds)
+    .execute()
+  return rows
+    .map(row => row.avatar_path ?? '')
+    .filter(prefix => isPublicImagePrefix(prefix))
+}
+
+/**
+ * Each account's own uploads, one at a time, saying which could not go: the
+ * picture each row held under a public name, and everything under the
+ * account's own prefix, where pictures were stored before names were random.
+ */
 async function removePictures(
   space: AccountOptions['space'],
-  userIds: readonly string[]
+  userIds: readonly string[],
+  prefixes: readonly string[]
 ): Promise<void> {
+  for (const prefix of prefixes)
+    for (const size of sizesFor('user'))
+      await deleteObject({ space, key: imageKey(prefix, size) }).catch(
+        (error: unknown) => {
+          console.error(`deleting picture ${prefix}: ${String(error)}`)
+        }
+      )
   for (const id of userIds)
     await deleteSpacePrefix(space, `images/user/${id}/`).catch(
       (error: unknown) => {

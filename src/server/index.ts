@@ -43,6 +43,7 @@ import { livingWorkers } from './livingWorkers'
 import { eventGeocoder } from './location/eventGeocoder'
 import { googlePlaces } from './location/googlePlaces'
 import { FeedHolder, type MediaContext } from './media/mediaContext'
+import { republishOwnedImages } from './media/republishImages'
 import { spaceConfigured } from './media/spacesHls'
 import { withApiKeyCeiling } from './middleware/apiKeyCeiling'
 import { withAudit } from './middleware/withAudit'
@@ -1039,5 +1040,42 @@ if (cluster.isPrimary && eventControlProblem != null) {
   )
 }
 
-if (cluster.isPrimary && workerCount > 1) runPrimary(workerCount)
-else runWorker()
+/**
+ * Moves the pictures stored before names were random to public ones. Once, by
+ * the process that starts the rest, before it forks or listens: no two
+ * processes copy one picture, and no request reads a row mid-move. A failure
+ * is logged and the server starts anyway, serving those pictures signed.
+ */
+async function republishBeforeStart(): Promise<void> {
+  if (!spaceConfigured(serverConfig.space)) return
+  const db = makeDatabase(requestDatabaseUrl(serverConfig), {
+    role: 'primary'
+  })
+  try {
+    const { moved, skipped, failed } = await republishOwnedImages(
+      db,
+      serverConfig.space,
+      message => {
+        console.error(`pictures: ${message}`)
+      }
+    )
+    if (moved > 0 || failed > 0)
+      console.log(
+        `pictures: ${moved} made public, ${failed} failed, ${skipped} left alone`
+      )
+  } finally {
+    await db.destroy()
+  }
+}
+
+function start(): void {
+  if (cluster.isPrimary && workerCount > 1) runPrimary(workerCount)
+  else runWorker()
+}
+
+if (cluster.isPrimary)
+  republishBeforeStart().then(start, (error: unknown) => {
+    console.error('pictures: republishing failed', error)
+    start()
+  })
+else start()

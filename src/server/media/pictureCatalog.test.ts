@@ -7,7 +7,11 @@ import { resolve } from 'node:path'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
-import { asCatalogId, pictureCatalog } from '../../common/pictureCatalog'
+import {
+  asCatalogId,
+  catalogPicture,
+  pictureCatalog
+} from '../../common/pictureCatalog'
 import { userIdOfGumbo } from '../../common/userId'
 import {
   type AccountHarness,
@@ -16,11 +20,13 @@ import {
 } from '../../test/accountHarness'
 import { asPictureBody, storePlayerAvatar } from '../teams/storeTeamPictures'
 import { sha256Of } from './images'
+import { imageUrl } from './imageUrls'
 import {
   availablePictures,
   publishPictureCatalog,
   selectAccountCatalogPicture
 } from './pictureCatalog'
+import { republishOwnedImages } from './republishImages'
 import type { SpaceSettings } from './spacesHls'
 
 describe('shared sports picture catalog', function () {
@@ -98,6 +104,33 @@ describe('shared sports picture catalog', function () {
     ).instanceOf(Error)
     await publishPictureCatalog(h.space, resolve('src/app/assets/sports'))
     expect((await availablePictures(h.space)).entries).length(31)
+  })
+  it('keeps a catalog picture on its catalog prefix, signed, through republish', async () => {
+    await selectAccountCatalogPicture(h.db, userIdOfGumbo(101), 'baseball')
+    await selectAccountCatalogPicture(h.db, userIdOfGumbo(102), 'baseball')
+    const keys = [...h.objects.keys()].sort()
+    expect(await republishOwnedImages(h.db, h.space)).includes({ moved: 0 })
+    const prefix = catalogPicture(asCatalogId('baseball'))!.prefix
+    for (const id of [101, 102]) {
+      const { avatar_path: held } = await h.db
+        .selectFrom('users')
+        .select('avatar_path')
+        .where('id', '=', userIdOfGumbo(id))
+        .executeTakeFirstOrThrow()
+      expect(held).equals(prefix)
+      expect(
+        new URL(imageUrl(h.space, held) ?? '').searchParams.has(
+          'X-Amz-Signature'
+        )
+      ).equals(true)
+    }
+    expect([...h.objects.keys()].sort()).deep.equals(keys)
+    const available = await availablePictures(h.space)
+    expect(available.entries).length(31)
+    for (const entry of available.entries)
+      expect(new URL(entry.url).searchParams.has('X-Amz-Signature')).equals(
+        true
+      )
   })
   it('reads a signature-enforcing private catalog with GET and recovers when a rendition is missing', async () => {
     const fixtureSecret = 'synthetic-catalog-signature-secret'

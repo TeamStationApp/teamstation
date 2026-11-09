@@ -33,7 +33,6 @@ export async function storeGroupPhoto(
       ffmpegPath: media.ffmpegPath,
       space: media.space,
       kind: 'league',
-      entityId: ref.id,
       source: picture.bytes
     })
     if (stored == null) throw unavailable('The picture could not be saved')
