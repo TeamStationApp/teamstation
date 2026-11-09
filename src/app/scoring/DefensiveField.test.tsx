@@ -8,7 +8,11 @@ import { changeTheme, getTheme, ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
 import {
+  CARD_TOP_OFFSET,
+  DEFENSE_CONTROL_HEIGHT,
+  DEFENSE_CONTROL_INSET,
   DEFENSE_LOCATIONS,
+  defenseControlsPlacement,
   DefensiveField,
   FIELD_NAME_SCALE,
   fieldCardMetrics,
@@ -19,6 +23,7 @@ import { DefensiveFieldArt as NativeDefensiveFieldArt } from './DefensiveFieldAr
 import { gameFixture } from './isUnscoredGame.test'
 import { RosterDragGroup } from './RosterDrag'
 import { defenseRosterMinimum, RosterEditor } from './RosterEditor'
+import { ROSTER_CARD_GAP, rosterGridColumns } from './rosterLayout'
 import { initialScoringState } from './scoringMachine'
 import { ScoringSheetHeight } from './ScoringSheet'
 import { POSITIONS } from './scoringTypes'
@@ -509,5 +514,187 @@ describe('compact defensive field', function () {
       })
       host.remove()
     }
+  })
+  it('puts Help and Clear in the field’s top corners from 160 points, clear of every card', function () {
+    expect(defenseControlsPlacement(160)).equals('corners')
+    expect(defenseControlsPlacement(400)).equals('corners')
+    expect(defenseControlsPlacement(159.5)).equals('row')
+    expect(defenseControlsPlacement(60)).equals('row')
+    // The widest a control's word draws, and the narrowest field (a
+    // 320-point screen less its margins).
+    const controlWidth = 60
+    for (let height = 160; height <= 400; height += 5)
+      for (const width of [288, 370, 600]) {
+        const { cardHeight } = fieldCardMetrics(height, false)
+        const controls = [
+          {
+            left: DEFENSE_CONTROL_INSET,
+            right: DEFENSE_CONTROL_INSET + controlWidth
+          },
+          {
+            left: width - DEFENSE_CONTROL_INSET - controlWidth,
+            right: width - DEFENSE_CONTROL_INSET
+          }
+        ].map(box => ({
+          ...box,
+          top: DEFENSE_CONTROL_INSET,
+          bottom: DEFENSE_CONTROL_INSET + DEFENSE_CONTROL_HEIGHT
+        }))
+        for (const position of POSITIONS) {
+          const [x, y] = DEFENSE_LOCATIONS[position]
+          const card = {
+            left: ((x - 15) / 100) * width,
+            right: ((x + 15) / 100) * width,
+            top: ((y - CARD_TOP_OFFSET) / 100) * height,
+            bottom: ((y - CARD_TOP_OFFSET) / 100) * height + cardHeight
+          }
+          for (const control of controls)
+            expect(
+              control.right <= card.left ||
+                control.left >= card.right ||
+                control.bottom <= card.top ||
+                control.top >= card.bottom,
+              `${position} at ${width}×${height}`
+            ).equals(true)
+        }
+      }
+  })
+  it('draws Help and Clear on the field’s corners, or in a row above a field under 160 points, and Clear clears', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    let cleared = 0
+    let helped = 0
+    const layout = async (height: number): Promise<void> => {
+      const node = host.querySelector(
+        '[data-testid="Defensive field viewport"]'
+      ) as unknown as { __reactLayoutHandler: (event: object) => void }
+      await act(async () => {
+        node.__reactLayoutHandler({
+          nativeEvent: { layout: { x: 0, y: 0, width: 360, height } }
+        })
+      })
+    }
+    const control = (label: string): HTMLElement =>
+      host.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+    const rgb = (hex: string): string => {
+      const probe = document.createElement('div')
+      probe.style.color = hex
+      return probe.style.color
+    }
+    try {
+      await act(async () => {
+        root.render(
+          <ThemeProvider>
+            <RosterDragGroup>
+              <DefensiveField
+                defense={{ P: 1 }}
+                display={() => '#7 Mookie Betts'}
+                onPlace={() => undefined}
+                onClear={() => undefined}
+                onHelp={() => {
+                  helped++
+                }}
+                onClearAll={() => {
+                  cleared++
+                }}
+              />
+            </RosterDragGroup>
+          </ThemeProvider>
+        )
+      })
+      const field = host.querySelector('[data-testid="Defensive field"]')!
+      for (const height of [0, 330, 160]) {
+        if (height > 0) await layout(height)
+        const help = control('Defense help')
+        const clear = control('Clear Defense')
+        expect(field.contains(help), `${height}`).equals(true)
+        expect(field.contains(clear)).equals(true)
+        expect(help.style.position).equals('absolute')
+        expect([help.style.top, help.style.left]).deep.equals(['4px', '4px'])
+        expect(clear.style.position).equals('absolute')
+        expect([clear.style.top, clear.style.right]).deep.equals(['4px', '4px'])
+        expect(
+          host.querySelector('[data-testid="Defense controls row"]')
+        ).equals(null)
+      }
+      expect(
+        getComputedStyle(control('Defense help').firstElementChild!).color
+      ).equals(rgb(getTheme().linkTextColor))
+      expect(
+        getComputedStyle(control('Clear Defense').firstElementChild!).color
+      ).equals(rgb(getTheme().scoringOutColor))
+      await act(async () => {
+        control('Clear Defense').click()
+      })
+      await act(async () => {
+        control('Defense help').click()
+      })
+      expect([cleared, helped]).deep.equals([1, 1])
+      // A squeezed field: a row of their own above it, Help on the left.
+      await layout(120)
+      const row = host.querySelector<HTMLElement>(
+        '[data-testid="Defense controls row"]'
+      )!
+      expect(row.style.height).equals('24px')
+      expect(row.style.justifyContent).equals('space-between')
+      expect(field.contains(control('Clear Defense'))).equals(false)
+      expect([...row.children]).deep.equals([
+        control('Defense help'),
+        control('Clear Defense')
+      ])
+      expect(control('Clear Defense').style.position).not.equals('absolute')
+      expect(
+        row.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).not.equals(0)
+      await act(async () => {
+        control('Clear Defense').click()
+      })
+      expect(cleared).equals(2)
+      // Without them, neither is drawn.
+      await act(async () => {
+        root.render(
+          <ThemeProvider>
+            <RosterDragGroup>
+              <DefensiveField
+                defense={{}}
+                display={() => ''}
+                onPlace={() => undefined}
+                onClear={() => undefined}
+              />
+            </RosterDragGroup>
+          </ThemeProvider>
+        )
+      })
+      expect(host.querySelector('[aria-label="Clear Defense"]')).equals(null)
+      expect(host.querySelector('[aria-label="Defense help"]')).equals(null)
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+    }
+  })
+  it('runs the Defense roster’s two columns from margin to margin', function () {
+    expect(rosterGridColumns(370, 0, ROSTER_CARD_GAP)).deep.equals([
+      { left: 0, width: 177 },
+      { left: 193, width: 177 }
+    ])
+    for (const [width, margin] of [
+      [288, 0],
+      [370, 8],
+      [600, 16]
+    ]) {
+      const [left, right] = rosterGridColumns(width, margin, ROSTER_CARD_GAP)
+      expect(left.left).equals(margin)
+      expect(right.left + right.width).closeTo(width - margin, 1e-9)
+      expect(right.left - (left.left + left.width)).closeTo(
+        ROSTER_CARD_GAP,
+        1e-9
+      )
+      expect(left.width).equals(right.width)
+    }
+    // Nothing measured yet.
+    expect(rosterGridColumns(0, 0, ROSTER_CARD_GAP)[0].width).equals(0)
   })
 })

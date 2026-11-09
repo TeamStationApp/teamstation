@@ -175,6 +175,17 @@ export const enUs = {
   coach_plan_saved_defense_warnings:
     'Saved. Defense set from the plan\u2019s inning 1. Plan has %s.',
   coach_plan_load_failed: 'Unable to load the game plan. Please try again.',
+  /**
+   * The roster screen's Help and Clear, at the Defense field's top corners,
+   * and the sheet Help slides up.
+   */
+  roster_help: 'Help',
+  roster_clear: 'Clear',
+  roster_defense_help_label: 'Defense help',
+  roster_clear_defense: 'Clear Defense',
+  roster_defense_help: 'Tap and drag players into positions.',
+  /** The roster screen's Cancel, a red button left of the microphone. */
+  roster_cancel: 'Cancel',
   /** The toggle at the top of the Plan tab. */
   plan_enable: 'Enable per-inning game plan',
   plan_player_header: 'Player',
@@ -1227,6 +1238,7 @@ export const enUs = {
   dictation_left_out: 'Left out: %s',
   dictation_mic_unavailable: 'The microphone is not available: %s',
   dictation_chat: 'Dictation chat',
+  dictation_chat_close: 'Close dictation',
   dictation_changes_discarded: 'Changes discarded',
   dictation_roster_play: 'That is a play — score it on the scoring screen',
   dictation_roster_other_team: 'Only the %s roster changes here',

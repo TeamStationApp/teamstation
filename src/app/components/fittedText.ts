@@ -1,6 +1,12 @@
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Platform, type Text, type TextProps, type View } from 'react-native'
+import {
+  type LayoutChangeEvent,
+  Platform,
+  type Text,
+  type TextProps,
+  type View
+} from 'react-native'
 
 type ViewNode = React.ComponentRef<typeof View>
 type TextNode = React.ComponentRef<typeof Text>
@@ -89,5 +95,46 @@ export function useFittedText(
       minimum != null && !onWeb
         ? { adjustsFontSizeToFit: true, minimumFontScale: minimum }
         : {}
+  }
+}
+
+export interface SharedFit {
+  /** The share of their size every label is drawn at. */
+  scale: number
+  /** The layout handler of one of the boxes, which are all as wide. */
+  handleRoom: (event: LayoutChangeEvent) => void
+  /** The layout handler of the `at`th label, drawn unbounded and unseen. */
+  handleNatural: (at: number) => (event: LayoutChangeEvent) => void
+}
+
+/**
+ * One size for labels in boxes of one width, as buttons side by side: the
+ * largest that fits the widest label whole, never below `minimum`, so the
+ * labels are drawn alike rather than each shrunk on its own. Each label's
+ * full width is read from an unseen copy laid out with no bound, and the
+ * room is a box's width less its `inset`, on the phone and the web alike.
+ */
+export function useSharedFit(minimum: number, inset: number): SharedFit {
+  const [room, setRoom] = useState(0)
+  const [natural, setNatural] = useState<number[]>([])
+  return {
+    // A label not yet measured is a hole, which `reduce` passes over.
+    scale: fittedTextScale(
+      natural.reduce((widest, width) => Math.max(widest, width), 0),
+      room - inset,
+      minimum
+    ),
+    handleRoom: event => {
+      setRoom(event.nativeEvent.layout.width)
+    },
+    handleNatural: at => event => {
+      const { width } = event.nativeEvent.layout
+      setNatural(all => {
+        if (all[at] === width) return all
+        const next = [...all]
+        next[at] = width
+        return next
+      })
+    }
   }
 }

@@ -174,10 +174,13 @@ export function RosterDragGroup({
 export function RosterScrollArea({
   name,
   height,
+  inset = 8,
   children
 }: {
   name: string
   height?: number
+  /** The space either side of the cards. */
+  inset?: number
   children: React.ReactNode
 }): React.ReactElement {
   const engine = useRosterGesture()
@@ -235,7 +238,7 @@ export function RosterScrollArea({
           }}
           scrollEventThrottle={16}
           contentContainerStyle={{
-            paddingHorizontal: 8,
+            paddingHorizontal: inset,
             paddingVertical: 8,
             gap: ROSTER_CARD_GAP
           }}

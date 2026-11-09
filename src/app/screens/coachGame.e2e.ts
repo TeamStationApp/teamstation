@@ -659,7 +659,8 @@ describe('Coach Game', function () {
     const roster = await coach.box('[aria-label="Roster"][role="tab"]')
     expect(pill.y + pill.height).lessThan(roster.y + 1)
     // The bar, as the scorekeeper's: the round mic in the middle and taller
-    // than Save, and Cancel left of it on Save's row.
+    // than Save, and Cancel, a red button as large as Save, left of it on
+    // Save's row.
     const bar = await coach.box('[data-testid="Roster footer bar"]')
     const add = await coach.box('[aria-label="Create Player"]')
     const mic = await coach.box('[data-testid="Roster mic"]')
@@ -672,6 +673,8 @@ describe('Coach Game', function () {
     expect(mic.height).closeTo(save.height + 12, 0.5)
     expect(cancel.x + cancel.width).lessThan(mic.x + 1)
     expect(cancel.y + cancel.height / 2).closeTo(save.y + save.height / 2, 4)
+    expect(cancel.width).closeTo(save.width, 1)
+    expect(cancel.height).closeTo(save.height, 1)
     expect(bar.y + bar.height).lessThan(HEIGHT + 1)
   })
 

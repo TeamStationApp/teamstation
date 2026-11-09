@@ -220,22 +220,36 @@ async function main(): Promise<void> {
       !(await bodyText()).includes('Share Lineup'),
       'Share Lineup has left the footer'
     )
-    // Cancel's word, in the footer bar, on Save's row and left of the bar's
-    // middle, where the microphone sits (this fixture's server does not
-    // dictate, so the bar draws none).
+    // Cancel, a red button as large as Save Rosters, in the footer bar, on
+    // Save's row and left of the bar's middle, where the microphone sits
+    // (this fixture's server does not dictate, so the bar draws none).
     const bar = await page.$eval('[data-testid="Roster footer bar"]', node => {
       const r = node.getBoundingClientRect()
       return { x: r.x, width: r.width }
     })
     const word = await page.$eval('[data-testid="Roster cancel"]', node => {
-      const label = node.querySelector('[dir="auto"]')
-      // No `??` here: the page has no sucrase helpers.
-      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-      const r = (label == null ? node : label).getBoundingClientRect()
+      const r = node.getBoundingClientRect()
       const inBar = node.closest('[data-testid="Roster footer bar"]') != null
-      return { x: r.x, y: r.y, width: r.width, height: r.height, inBar }
+      const label = node.querySelector('[dir="auto"]')
+      return {
+        x: r.x,
+        y: r.y,
+        width: r.width,
+        height: r.height,
+        inBar,
+        fill: getComputedStyle(node).backgroundColor,
+        // No `?.` here: the page has no sucrase helpers.
+        text: label == null ? '' : getComputedStyle(label).color
+      }
     })
     assert(word.inBar, 'Cancel is in the footer bar')
+    assert(
+      Math.abs(word.width - save.width) < 1 &&
+        Math.abs(word.height - save.height) < 1,
+      `Cancel is as large as Save Rosters (${word.width}×${word.height}, ${save.width}×${save.height})`
+    )
+    assert.equal(word.fill, 'rgb(168, 53, 53)', 'Cancel is filled red')
+    assert.equal(word.text, 'rgb(255, 255, 255)', 'Cancel’s word is white')
     assert(
       Math.abs(word.y + word.height / 2 - (save.y + save.height / 2)) < 4,
       'Cancel is on Save Rosters’ row'

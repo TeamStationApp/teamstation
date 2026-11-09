@@ -47,6 +47,7 @@ import { setupOf } from '../../common/scoring/state'
 import type { Unrostered } from '../../common/unroster'
 import { userIdOfGumbo } from '../../common/userId'
 import { Button } from '../components/Button'
+import { useSharedFit } from '../components/fittedText'
 import { Icon } from '../components/Icon'
 import { forgetFound } from '../hooks/useRosterCandidates'
 import { lstrings, plural, sprintf } from '../locales/strings'
@@ -59,6 +60,7 @@ import { DefensiveField } from './DefensiveField'
 import { EditRosterList } from './EditRosterList'
 import { ExistingPlayerSheet } from './ExistingPlayerSheet'
 import { GameRosterHeader } from './GameRosterHeader'
+import { HelpSheet } from './HelpSheet'
 import type { LineupQrResult } from './lineupQrImport'
 import { LineupShareSheet } from './LineupShareSheet'
 import { addPlaceholderPlayers } from './placeholderPlayers'
@@ -84,6 +86,7 @@ import {
 } from './rosterDictation'
 import { planLineup, rosterDirty, rosterSavable } from './rosterDirty'
 import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
+import { ROSTER_CARD_GAP, rosterGridColumns } from './rosterLayout'
 import { RosterConflictBanner } from './rosterLive'
 import { byJersey } from './rosterOrder'
 import { RosterRemoveButton } from './RosterRemoveButton'
@@ -113,13 +116,6 @@ export type RosterMode = 'boxScore' | RosterTab | 'plan'
  * team's, saves without leaving, and leaves by the screen's back chevron.
  */
 export type RosterAudience = 'scorekeeper' | 'coach'
-/**
- * The Defense tab's instruction. A fielder on the field drags on his first
- * move and clears on a tap; a roster card still takes a brief hold on touch,
- * so the list scrolls.
- */
-const DEFENSE_INSTRUCTION =
-  'Drag a player into position (on touch, hold a roster card briefly first). Drag a fielder to move or swap him; tap him to clear.'
 /** Each tab's label, which is also its accessible name. */
 export const ROSTER_MODE_LABELS: Record<RosterMode, string> = {
   boxScore: lstrings.coach_box_score,
@@ -148,10 +144,13 @@ export function rosterFooterSizes(
   return { save, mic: save + 12 }
 }
 /**
- * The smallest share of Save Rosters' 14-point label it shrinks to on a
- * narrow screen: 10.5 points. A 320-point screen fits it whole at about 11.5.
+ * The smallest share of Cancel's and Save Rosters' 14-point labels they
+ * shrink to, together, on a narrow screen: 10.5 points. A 320-point screen
+ * fits Save Rosters whole at about 11.5.
  */
 export const ROSTER_SAVE_FIT = 0.75
+/** The compact buttons' padding, both sides: half their 36-point shell. */
+const ROSTER_FOOTER_INSET = 36
 /**
  * How far the bottom bar lowers into the bottom safe area: ten points, or
  * the whole inset when it is smaller, so nothing moves on the web.
@@ -441,6 +440,10 @@ export function RosterEditor({
   const narrowDefense = dense && defense && width < 600
   const inlineValidation = dense && defense && !narrowDefense
   const [areaHeight, setAreaHeight] = useState(0)
+  const [gridWidth, setGridWidth] = useState(0)
+  const [helping, setHelping] = useState(false)
+  /** The footer's height, which the dictation chat's overlay stays above. */
+  const [footerHeight, setFooterHeight] = useState(0)
   const rosterMinimum = defense ? defenseRosterMinimum(areaHeight, dense) : 0
   const [adding, setAdding] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -848,6 +851,15 @@ export function RosterEditor({
     onDirtyChange?.(dirty)
   }, [dirty, onDirtyChange])
   const sizes = rosterFooterSizes(dense, defense)
+  /** Cancel's and Save Rosters' shell, which a crowded Defense tab shrinks. */
+  const footerButton = {
+    height: sizes.save,
+    minHeight: sizes.save,
+    borderRadius: sizes.save / 2
+  }
+  // Cancel's label is drawn at Save Rosters' size, not left larger.
+  const footerFit = useSharedFit(ROSTER_SAVE_FIT, ROSTER_FOOTER_INSET)
+  const footerLabel = { fontSize: 14 * footerFit.scale }
   // A dictated sentence is staged whole: the draft, its runners and next
   // batter, and the tab, and for a scorekeeper the team, that show it.
   const spoken = useRosterDictation({
@@ -932,17 +944,13 @@ export function RosterEditor({
     importNote?.draft === draft && importNote.side === side
       ? importNote.text
       : undefined
+  const gap = dense && defense ? 2 : dense ? 4 : 8
   return (
     <View
       pointerEvents={spoken.busy ? 'none' : 'auto'}
-      style={{
-        flex: 1,
-        minHeight: 0,
-        gap: dense && defense ? 2 : dense ? 4 : 8
-      }}
+      style={{ flex: 1, minHeight: 0, gap }}
     >
       {conflict && dirty && <RosterConflictBanner />}
-      {shown?.chat}
       <ScrollView
         testID="Roster editor top"
         // Browser chrome can leave much less room than the screen height.
@@ -999,15 +1007,15 @@ export function RosterEditor({
         {mode === 'editRoster' ? (
           <GameRosterHeader information={coach} />
         ) : (
-          !boxScore && (
-            <Text numberOfLines={defense ? 3 : undefined} style={text}>
-              {defense
-                ? DEFENSE_INSTRUCTION
-                : planning
-                  ? Platform.OS === 'web'
-                    ? lstrings.coach_plan_instruction_web
-                    : lstrings.coach_plan_instruction_phone
-                  : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
+          // Defense has a Help button on its field instead.
+          !boxScore &&
+          !defense && (
+            <Text style={text}>
+              {planning
+                ? Platform.OS === 'web'
+                  ? lstrings.coach_plan_instruction_web
+                  : lstrings.coach_plan_instruction_phone
+                : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
             </Text>
           )
         )}
@@ -1182,6 +1190,10 @@ export function RosterEditor({
                     next.liveData.boxscore.teams[side].defense[position] = null
                   })
                 }}
+                onHelp={() => {
+                  setHelping(true)
+                }}
+                onClearAll={clearDefense}
               />
             )}
             <View
@@ -1191,40 +1203,8 @@ export function RosterEditor({
                 gap: 6
               }}
             >
-              {defense ? (
-                <View
-                  testID="Defense roster header"
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    height: dense ? 18 : 22
-                  }}
-                >
-                  <Text style={{ ...text, fontWeight: '700', flexShrink: 0 }}>
-                    Roster
-                  </Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Clear Defense"
-                    hitSlop={8}
-                    onPress={clearDefense}
-                  >
-                    <Text
-                      selectable={false}
-                      style={{
-                        ...text,
-                        fontWeight: '700',
-                        flexShrink: 0,
-                        color: theme.scoringOutColor
-                      }}
-                    >
-                      Clear
-                    </Text>
-                  </Pressable>
-                </View>
-              ) : (
+              {/* Defense's list needs no title: its Clear is on the field. */}
+              {!defense && (
                 <Text
                   style={{
                     ...text,
@@ -1236,16 +1216,32 @@ export function RosterEditor({
                   Roster
                 </Text>
               )}
-              <RosterScrollArea name="Roster players">
+              <RosterScrollArea
+                name="Roster players"
+                // Defense's two columns run from margin to margin.
+                inset={defense ? 0 : undefined}
+              >
                 <RosterDrag
                   targetId="roster"
                   onDropPlayer={defense || locked ? undefined : remove}
                 >
                   <View
                     testID={defense ? 'Defense roster grid' : undefined}
+                    onLayout={
+                      defense
+                        ? event => {
+                            setGridWidth(event.nativeEvent.layout.width)
+                          }
+                        : undefined
+                    }
                     style={
                       defense
-                        ? { flexDirection: 'row', flexWrap: 'wrap', gap: 16 }
+                        ? {
+                            flexDirection: 'row',
+                            flexWrap: 'wrap',
+                            columnGap: ROSTER_CARD_GAP,
+                            rowGap: 16
+                          }
                         : { gap: 16 }
                     }
                   >
@@ -1282,7 +1278,21 @@ export function RosterEditor({
                           </RosterDrag>
                         )
                         return defense ? (
-                          <View key={id} style={{ width: '47%' }}>
+                          <View
+                            key={id}
+                            style={{
+                              // Two columns of the grid's measured width;
+                              // nearly half until it is measured.
+                              width:
+                                gridWidth > 0
+                                  ? rosterGridColumns(
+                                      gridWidth,
+                                      0,
+                                      ROSTER_CARD_GAP
+                                    )[0].width
+                                  : '47%'
+                            }}
+                          >
                             {card}
                           </View>
                         ) : (
@@ -1547,7 +1557,21 @@ export function RosterEditor({
           }}
         />
       )}
-      <View testID="Roster footer" style={{ gap: dense && defense ? 2 : 6 }}>
+      {helping && (
+        <HelpSheet
+          text={lstrings.roster_defense_help}
+          onClose={() => {
+            setHelping(false)
+          }}
+        />
+      )}
+      <View
+        testID="Roster footer"
+        onLayout={event => {
+          setFooterHeight(event.nativeEvent.layout.height)
+        }}
+        style={{ gap: dense && defense ? 2 : 6 }}
+      >
         {!inlineValidation && <ScoringError message={validation} />}
         {note != null && (
           <Text
@@ -1562,6 +1586,20 @@ export function RosterEditor({
             {note}
           </Text>
         )}
+        {/* A crowded Defense tab's problem, on one line of its own: the bar
+            has no room for it beside two buttons and the microphone. */}
+        {inlineValidation && validation != null && (
+          <Text
+            testID="Roster footer problem"
+            accessibilityRole="alert"
+            accessibilityLabel={validation}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            style={{ color: theme.dangerColor, fontSize: 11 }}
+          >
+            {validation}
+          </Text>
+        )}
         <View
           testID="Roster footer bar"
           style={{
@@ -1572,21 +1610,25 @@ export function RosterEditor({
             paddingBottom: footerGap
           }}
         >
-          {/* Cancel and a crowded Defense tab's problem share this half,
-              which keeps the microphone in the middle of the bar. */}
+          {/* Cancel and Save Rosters, red and green, as wide as each other
+              either side of the microphone. */}
           <View
-            style={{
-              flex: 1,
-              minWidth: 0,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 8
-            }}
+            testID="Roster cancel box"
+            style={{ flex: 1, minWidth: 0 }}
+            onLayout={footerFit.handleRoom}
           >
-            <Pressable
+            <Button
               testID="Roster cancel"
-              accessibilityRole="button"
-              accessibilityLabel="Cancel"
+              textColor={theme.scoringMenuActiveText}
+              compact
+              labelStyle={footerLabel}
+              // Red when pressed too, not the primary's pressed green.
+              style={{
+                ...footerButton,
+                backgroundColor: theme.scoringOutColor
+              }}
+              accessibilityLabel={lstrings.roster_cancel}
+              label={lstrings.roster_cancel}
               onPress={() => {
                 if (!coach) {
                   onCancel?.()
@@ -1600,34 +1642,7 @@ export function RosterEditor({
                 spoken.note(lstrings.dictation_changes_discarded)
                 onReload?.()
               }}
-              style={{
-                minHeight: dense ? (defense ? 28 : 36) : 44,
-                justifyContent: 'center'
-              }}
-            >
-              <Text
-                style={{
-                  ...text,
-                  color: theme.dangerColor,
-                  fontFamily: theme.semiBoldTextFont
-                }}
-              >
-                Cancel
-              </Text>
-            </Pressable>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              {inlineValidation && validation != null && (
-                <Text
-                  accessibilityRole="alert"
-                  accessibilityLabel={validation}
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                  style={{ color: theme.dangerColor, fontSize: 11 }}
-                >
-                  {validation}
-                </Text>
-              )}
-            </View>
+            />
           </View>
           {shown != null ? (
             <View
@@ -1645,15 +1660,15 @@ export function RosterEditor({
           ) : (
             dictationAvailable && <RosterMicGlyph size={sizes.mic} />
           )}
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
             <Button
               color={theme.scoringMenuActiveBackground}
               textColor={theme.scoringMenuActiveText}
               compact
               // Beside Cancel and the microphone on a 320-point screen the
               // label gets smaller type rather than an ellipsis.
-              fit={ROSTER_SAVE_FIT}
-              style={dense && defense ? { minHeight: sizes.save } : undefined}
+              labelStyle={footerLabel}
+              style={footerButton}
               accessibilityLabel="Save Rosters"
               label="Save Rosters"
               disabled={
@@ -1684,6 +1699,63 @@ export function RosterEditor({
           </View>
         </View>
       </View>
+      {/* The dictation chat, over the top of the screen rather than pushing
+          it down, and never over the footer. */}
+      {shown?.chat != null && (
+        <View
+          testID="Roster chat overlay"
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: footerHeight + gap,
+            zIndex: 1
+          }}
+        >
+          {shown.chat}
+        </View>
+      )}
+      {/* Cancel's and Save Rosters' labels at full size, unseen and
+          unbounded, for the size the footer draws both at. */}
+      <View
+        pointerEvents="none"
+        aria-hidden
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={{
+          position: 'absolute',
+          width: 0,
+          height: 0,
+          overflow: 'hidden'
+        }}
+      >
+        {/* Wide enough that neither wraps; one line of text is bounded by
+            nothing here, as `numberOfLines` would bound it on the web. */}
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'flex-start',
+            width: 1000
+          }}
+        >
+          {[lstrings.roster_cancel, 'Save Rosters'].map((label, at) => (
+            <Text
+              key={label}
+              testID={`Roster footer label ${at}`}
+              onLayout={footerFit.handleNatural(at)}
+              style={{
+                fontFamily: theme.semiBoldTextFont,
+                fontWeight: '600',
+                fontSize: 14
+              }}
+            >
+              {label}
+            </Text>
+          ))}
+        </View>
+      </View>
     </View>
   )
 }
@@ -1704,7 +1776,9 @@ function BoxScorePill({
   const theme = useTheme()
   const height = compact ? 40 : 36
   return (
-    <View style={{ alignSelf: 'center', paddingTop: compact ? 0 : 6 }}>
+    // Straight under the screen's header, whose gap above it is seven
+    // points: half the fourteen it had.
+    <View style={{ alignSelf: 'center' }}>
       <Pressable
         testID="Box Score pill"
         accessibilityRole="tab"

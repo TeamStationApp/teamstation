@@ -604,8 +604,12 @@ describe('scoring slide-up sheets', function () {
     // One row: Cancel on the left, Save Rosters on the right.
     expect(footer.textContent).matches(/^Cancel.*Save Rosters$/)
     await click('Defense')
-    expect(document.body.textContent).includes(
-      'Drag a player into position (on touch, hold a roster card briefly first). Drag a fielder to move or swap him; tap him to clear.'
+    // Help on the field, rather than an instruction line.
+    expect(document.body.textContent).not.includes(
+      'Drag a player into position'
+    )
+    expect(document.querySelector('[aria-label="Defense help"]')).not.equals(
+      null
     )
     expect(
       document.querySelector('[aria-label="Top-down baseball field"]')
@@ -706,20 +710,22 @@ describe('scoring slide-up sheets', function () {
     expect(fielder('C')).equals(first)
     await click('Cancel')
   })
-  it('clears every position, the pitcher too, from the red Clear level with Roster (U34)', async function () {
+  it('clears every position, the pitcher too, from the red Clear at the field’s top right (U34)', async function () {
     this.timeout(10000)
     await mount()
     await menu('Set Team Rosters')
     await click('Defense')
-    const header = document.querySelector<HTMLElement>(
-      '[data-testid="Defense roster header"]'
-    )!
-    expect(header.textContent).equals('RosterClear')
-    expect(header.style.flexDirection).equals('row')
-    expect(header.style.justifyContent).equals('space-between')
-    const label = header.querySelector<HTMLElement>(
+    expect(
+      document.querySelector('[data-testid="Defense roster header"]')
+    ).equals(null)
+    const clear = document.querySelector<HTMLElement>(
       '[aria-label="Clear Defense"]'
-    )!.firstElementChild as HTMLElement
+    )!
+    expect(
+      document.querySelector('[data-testid="Defensive field"]')!.contains(clear)
+    ).equals(true)
+    expect(clear.style.right).equals('4px')
+    const label = clear.firstElementChild as HTMLElement
     const red = document.createElement('div')
     red.style.color = getTheme().scoringOutColor
     expect(window.getComputedStyle(label).color).equals(red.style.color)

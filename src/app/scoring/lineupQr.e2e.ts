@@ -279,8 +279,8 @@ async function main(): Promise<void> {
         : `roster-footer-scorekeeper-${phase}`
     )
     if (phase === 'after') {
-      // The share row leads the Roster tab; the footer is one row: Cancel,
-      // the microphone's place in the middle, and Save Rosters.
+      // The share row leads the Roster tab; the footer is one row: a red
+      // Cancel, the microphone's place in the middle, and Save Rosters.
       await tapRosterTab()
       await shown(SHARE)
       const save = (await shown('Save Rosters')).bounds!
@@ -304,6 +304,12 @@ async function main(): Promise<void> {
         'Cancel is left of the middle'
       )
       assert(save.x + save.width / 2 > middle + 20, 'Save is right of it')
+      // Cancel is a button as large as Save Rosters, not a word.
+      assert(
+        Math.abs(cancel.width - save.width) < 2 &&
+          Math.abs(cancel.height - save.height) < 2,
+        `Cancel is as large as Save Rosters (${cancel.width}×${cancel.height}, ${save.width}×${save.height})`
+      )
       await capture(`share-row-${surface}`)
       console.log('PASS W1 footer')
     }

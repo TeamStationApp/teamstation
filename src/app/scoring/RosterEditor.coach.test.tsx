@@ -487,14 +487,22 @@ describe('the roster screen for a coach', function () {
     })
   })
 
-  it('clears his whole defense, the pitcher too, from the red Clear level with Roster (U34)', async function () {
+  it('clears his whole defense, the pitcher too, from the red Clear at the field’s top right (U34)', async function () {
     await mount()
     await click('Defense')
-    const header = host.querySelector<HTMLElement>(
-      '[data-testid="Defense roster header"]'
-    )!
-    expect(header.textContent).equals('RosterClear')
-    expect(header.style.justifyContent).equals('space-between')
+    // No title over the roster cards, and no instruction line: the tab pill
+    // still reads Roster, so the old row is looked for by its testID.
+    expect(host.querySelector('[data-testid="Defense roster header"]')).equals(
+      null
+    )
+    expect(host.textContent).not.includes('Drag a player into position')
+    const field = host.querySelector('[data-testid="Defensive field"]')!
+    const clear = node('Clear Defense')!
+    expect(field.contains(clear)).equals(true)
+    expect(clear.style.position).equals('absolute')
+    expect(clear.style.top).equals('4px')
+    expect(clear.style.right).equals('4px')
+    expect(clear.textContent).equals('Clear')
     expect(
       host
         .querySelector('[data-roster-target="defense-P"]')!
@@ -510,5 +518,63 @@ describe('the roster screen for a coach', function () {
       )
     ).lengthOf(0)
     expect(saveDisabled()).equals(null)
+  })
+
+  it('opens the Defense help from the blue Help at the field’s top left, and a tap outside closes it', async function () {
+    await mount()
+    await click('Defense')
+    const help = node('Defense help')!
+    expect(
+      host.querySelector('[data-testid="Defensive field"]')!.contains(help)
+    ).equals(true)
+    expect(help.style.position).equals('absolute')
+    expect(help.style.top).equals('4px')
+    expect(help.style.left).equals('4px')
+    expect(help.textContent).equals('Help')
+    const sheetText = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[data-testid="Help sheet text"]')
+    expect(sheetText()).equals(null)
+    await click('Defense help')
+    expect(sheetText()!.textContent).equals(
+      'Tap and drag players into positions.'
+    )
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Dismiss sheet"]')!
+        .click()
+    })
+    expect(sheetText()).equals(null)
+    // Done closes it too.
+    await click('Defense help')
+    await act(async () => {
+      document.querySelector<HTMLElement>('[aria-label="Done"]')!.click()
+    })
+    expect(sheetText()).equals(null)
+  })
+
+  it('runs the Defense roster cards from margin to margin, in two columns', async function () {
+    await mount()
+    await click('Defense')
+    await click('Clear Defense')
+    const grid = host.querySelector<HTMLElement>(
+      '[data-testid="Defense roster grid"]'
+    )!
+    // No inset either side of the cards.
+    const content = grid.closest(
+      '[data-roster-target="roster"]'
+    )!.parentElement!
+    expect(content.style.paddingLeft).equals('0px')
+    expect(content.style.paddingRight).equals('0px')
+    await act(async () => {
+      ;(
+        grid as unknown as { __reactLayoutHandler: (event: object) => void }
+      ).__reactLayoutHandler({
+        nativeEvent: { layout: { x: 0, y: 0, width: 370, height: 200 } }
+      })
+    })
+    const cards = [...grid.children] as HTMLElement[]
+    expect(cards.length).greaterThan(1)
+    for (const card of cards) expect(card.style.width).equals('177px')
+    expect(grid.style.columnGap).equals('16px')
   })
 })

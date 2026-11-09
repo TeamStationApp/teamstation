@@ -8062,45 +8062,79 @@ describe('fielder drag', function () {
     return lifted
   }
 
-  it('drags fielders with no hold, swaps on an occupied position, and clears the defense from the red Clear level with Roster', async function () {
+  it('drags fielders with no hold, swaps on an occupied position, and clears the defense from the red Clear at the field’s top right', async function () {
     const page = await openPhone()
     try {
       await defenseTab(page)
       await picture(page, 'defense-header')
       if (!capturing) {
-        const header = await page.$eval(
-          '[data-testid="Defense roster header"]',
-          node => {
-            const words = Array.from(node.querySelectorAll('*'))
-              .filter(
-                each =>
-                  each.children.length === 0 &&
-                  ['Roster', 'Clear'].includes(String(each.textContent))
-              )
-              .map(each => {
-                const r = each.getBoundingClientRect()
-                return {
-                  text: String(each.textContent),
-                  left: r.left,
-                  right: r.right,
-                  top: r.top,
-                  color: window.getComputedStyle(each).color,
-                  clipped: each.scrollWidth > each.clientWidth + 1
-                }
-              })
-            return { words, right: node.getBoundingClientRect().right }
+        // No Roster title over the cards: blue Help and red Clear sit in the
+        // field's top corners, clear of every position card.
+        expect(await page.$('[data-testid="Defense roster header"]')).equals(
+          null
+        )
+        const corners = await page.$eval(
+          '[data-testid="Defensive field"]',
+          field => {
+            const box = (node: Element): DOMRect => node.getBoundingClientRect()
+            const word = (
+              label: string
+            ): {
+              left: number
+              right: number
+              top: number
+              bottom: number
+              color: string
+            } | null => {
+              const node = field.querySelector(`[aria-label="${label}"]`)
+              if (node == null) return null
+              const r = box(node)
+              const text = node.querySelector('[dir="auto"]')
+              return {
+                left: r.left,
+                right: r.right,
+                top: r.top,
+                bottom: r.bottom,
+                color: text == null ? '' : window.getComputedStyle(text).color
+              }
+            }
+            const cards = Array.from(
+              field.querySelectorAll('[data-testid$=" card"]')
+            ).map(card => {
+              const r = box(card)
+              return {
+                left: r.left,
+                right: r.right,
+                top: r.top,
+                bottom: r.bottom
+              }
+            })
+            const r = box(field)
+            return {
+              field: { left: r.left, right: r.right, top: r.top },
+              help: word('Defense help'),
+              clear: word('Clear Defense'),
+              cards
+            }
           }
         )
-        const roster = header.words.find(word => word.text === 'Roster')!
-        const clear = header.words.find(word => word.text === 'Clear')!
-        expect(roster, 'Roster').not.equals(undefined)
-        expect(clear, 'Clear').not.equals(undefined)
-        // One row: Roster on the left, a red Clear right-justified.
-        expect(clear.left).greaterThan(roster.right)
-        expect(Math.abs(clear.right - header.right)).lessThan(2)
-        expect(Math.abs(clear.top - roster.top)).lessThan(4)
-        expect(clear.clipped || roster.clipped).equals(false)
-        expect(clear.color).equals('rgb(168, 53, 53)')
+        const { field, help, clear, cards } = corners
+        expect(help, 'Help').not.equals(null)
+        expect(clear, 'Clear').not.equals(null)
+        expect(help!.left - field.left).closeTo(4, 1)
+        expect(field.right - clear!.right).closeTo(4, 1)
+        expect(help!.top - field.top).closeTo(4, 1)
+        expect(clear!.top - field.top).closeTo(4, 1)
+        expect(clear!.color).equals('rgb(168, 53, 53)')
+        expect(cards).has.length(9)
+        for (const control of [help!, clear!])
+          for (const card of cards)
+            expect(
+              control.right <= card.left ||
+                control.left >= card.right ||
+                control.bottom <= card.top ||
+                control.top >= card.bottom
+            ).equals(true)
       }
       // Swap: first base's man dropped on short trades places with him.
       const first = await fielder(page, '1B')

@@ -952,7 +952,13 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     >
       <View
         testID="Coach header"
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}
+        // Seven points over the Box Score pill, half the fourteen it had.
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: -1
+        }}
       >
         <Pressable
           accessibilityRole="button"

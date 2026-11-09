@@ -1,7 +1,9 @@
 import React, { useState } from 'react'
-import { Platform, Text, type TextStyle, View } from 'react-native'
+import { Platform, Pressable, Text, type TextStyle, View } from 'react-native'
 
 import { useFittedText } from '../components/fittedText'
+import { lstrings } from '../locales/strings'
+import { useTheme } from '../theme/ThemeContext'
 import { DefensiveFieldArt } from './DefensiveFieldArt'
 import { RosterDrag } from './RosterDrag'
 import { useScoringSheetTheme } from './scoringSheetTheme'
@@ -24,7 +26,7 @@ export const DEFENSE_LOCATIONS: Record<Position, readonly [number, number]> = {
 }
 
 /** How far above its centre a card's top sits, in percent of the field. */
-const CARD_TOP_OFFSET = 7
+export const CARD_TOP_OFFSET = 7
 /** A card is this share of the field's height, at most `MAX_CARD_HEIGHT`. */
 const CARD_HEIGHT_RATIO = 0.14
 const MAX_CARD_HEIGHT = 46
@@ -128,6 +130,26 @@ export function fieldRows(
   return rows.map(row => row.positions)
 }
 
+/** Help's and Clear's height, and their inset from the field's corners. */
+export const DEFENSE_CONTROL_HEIGHT = 22
+export const DEFENSE_CONTROL_INSET = 4
+/** The row Help and Clear take above a field too short for its corners. */
+export const DEFENSE_CONTROL_ROW = 24
+/**
+ * The shortest field whose top corners hold Help and Clear: LF's and RF's
+ * tops sit 17% down, 27 points here, clear of a 22-point control inset by 4.
+ */
+export const DEFENSE_CORNERS_MINIMUM = 160
+/**
+ * Where Help and Clear go: the field's top corners, over the outfield beside
+ * CF, or a row of their own above a shorter field.
+ */
+export function defenseControlsPlacement(
+  viewportHeight: number
+): 'corners' | 'row' {
+  return viewportHeight >= DEFENSE_CORNERS_MINIMUM ? 'corners' : 'row'
+}
+
 /**
  * Every position remains visible while only the roster scrolls. An assigned
  * card drags with no hold, so its player moves to an empty position or swaps
@@ -138,147 +160,248 @@ export function DefensiveField({
   compact = false,
   display,
   onPlace,
-  onClear
+  onClear,
+  onHelp,
+  onClearAll
 }: {
   defense: Partial<Record<Position, number | null>>
   compact?: boolean
   display: (id: number) => string
   onPlace: (id: number, position: Position) => void
   onClear: (position: Position) => void
+  /** Help, at the field's top left, which opens the tab's help. */
+  onHelp?: () => void
+  /** Clear, at the field's top right, which empties every position. */
+  onClearAll?: () => void
 }): React.ReactElement {
   const { scoringSurface: surface } = useScoringSheetTheme()
   const [viewportHeight, setViewportHeight] = useState(0)
   const { cardHeight, singleLine, positionOnly, fontSize, lineHeight, fit } =
     fieldCardMetrics(viewportHeight, compact)
+  // Unmeasured, the field is taken to be tall enough for its corners.
+  const corners =
+    viewportHeight === 0 ||
+    defenseControlsPlacement(viewportHeight) === 'corners'
+  const controls = (
+    <>
+      {onHelp != null && (
+        <FieldControl
+          label={lstrings.roster_help}
+          accessibilityLabel={lstrings.roster_defense_help_label}
+          side="left"
+          corner={corners}
+          onPress={onHelp}
+        />
+      )}
+      {onClearAll != null && (
+        <FieldControl
+          label={lstrings.roster_clear}
+          accessibilityLabel={lstrings.roster_clear_defense}
+          side="right"
+          corner={corners}
+          onPress={onClearAll}
+        />
+      )}
+    </>
+  )
   return (
-    <View
-      testID="Defensive field viewport"
-      style={{ flexBasis: 330, flexGrow: 0, flexShrink: 1, minHeight: 60 }}
-      onLayout={event => {
-        setViewportHeight(event.nativeEvent.layout.height)
-      }}
-    >
+    <>
+      {!corners && (
+        <View
+          testID="Defense controls row"
+          style={{
+            height: DEFENSE_CONTROL_ROW,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}
+        >
+          {controls}
+        </View>
+      )}
       <View
-        testID="Defensive field"
-        style={{
-          flex: 1,
-          minHeight: 0,
-          backgroundColor: surface.canvas,
-          borderRadius: 8
+        testID="Defensive field viewport"
+        style={{ flexBasis: 330, flexGrow: 0, flexShrink: 1, minHeight: 60 }}
+        onLayout={event => {
+          setViewportHeight(event.nativeEvent.layout.height)
         }}
       >
-        <DefensiveFieldArt />
-        {POSITIONS.map(position => {
-          const id = defense[position]
-          const [x, y] = DEFENSE_LOCATIONS[position]
-          const assigned = id != null
-          const name = assigned ? display(id) : 'Unassigned'
-          const textColor = assigned
-            ? surface.activeText
-            : surface.badges.red.text
-          return (
-            <View
-              key={position}
-              style={{
-                position: 'absolute',
-                width: '30%',
-                left: `${x - 15}%`,
-                top: `${y - CARD_TOP_OFFSET}%`
-              }}
-            >
-              <RosterDrag
-                targetId={`defense-${position}`}
-                playerId={assigned ? id : undefined}
-                immediate
-                fixed
-                value={assigned ? display(id) : undefined}
-                label={assigned ? `Clear ${position}` : `Assign ${position}`}
-                onTap={
-                  assigned
-                    ? () => {
-                        onClear(position)
-                      }
-                    : undefined
-                }
-                onDropPlayer={player => {
-                  onPlace(player, position)
+        <View
+          testID="Defensive field"
+          style={{
+            flex: 1,
+            minHeight: 0,
+            backgroundColor: surface.canvas,
+            borderRadius: 8
+          }}
+        >
+          <DefensiveFieldArt />
+          {POSITIONS.map(position => {
+            const id = defense[position]
+            const [x, y] = DEFENSE_LOCATIONS[position]
+            const assigned = id != null
+            const name = assigned ? display(id) : 'Unassigned'
+            const textColor = assigned
+              ? surface.activeText
+              : surface.badges.red.text
+            return (
+              <View
+                key={position}
+                style={{
+                  position: 'absolute',
+                  width: '30%',
+                  left: `${x - 15}%`,
+                  top: `${y - CARD_TOP_OFFSET}%`
                 }}
               >
-                <View
-                  testID={`Defense ${position} card`}
-                  style={{
-                    height: cardHeight,
-                    paddingHorizontal: singleLine ? 1 : 3,
-                    paddingVertical: positionOnly ? 0 : CARD_PADDING,
-                    borderWidth: CARD_BORDER,
-                    borderStyle: assigned ? 'solid' : 'dashed',
-                    borderColor: assigned
-                      ? surface.accent
-                      : surface.badges.red.border,
-                    borderRadius: 5,
-                    backgroundColor: assigned
-                      ? surface.active
-                      : surface.badges.red.background,
-                    alignItems: 'center',
-                    justifyContent: 'center'
+                <RosterDrag
+                  targetId={`defense-${position}`}
+                  playerId={assigned ? id : undefined}
+                  immediate
+                  fixed
+                  value={assigned ? display(id) : undefined}
+                  label={assigned ? `Clear ${position}` : `Assign ${position}`}
+                  onTap={
+                    assigned
+                      ? () => {
+                          onClear(position)
+                        }
+                      : undefined
+                  }
+                  onDropPlayer={player => {
+                    onPlace(player, position)
                   }}
                 >
-                  {positionOnly ? (
-                    <Text
-                      numberOfLines={1}
-                      accessibilityLabel={`${position} · ${name}`}
-                      style={{
-                        color: textColor,
-                        fontSize,
-                        lineHeight,
-                        fontWeight: '700',
-                        width: '100%',
-                        textAlign: 'center'
-                      }}
-                    >
-                      {position}
-                    </Text>
-                  ) : singleLine ? (
-                    <FittedLine
-                      text={`${position} · ${name}`}
-                      fit={fit}
-                      style={{ color: textColor, fontSize, lineHeight }}
-                    />
-                  ) : (
-                    <>
-                      <Text
-                        style={{
-                          color: textColor,
-                          fontSize,
-                          lineHeight,
-                          fontWeight: '700'
-                        }}
-                      >
-                        {position}
-                      </Text>
+                  <View
+                    testID={`Defense ${position} card`}
+                    style={{
+                      height: cardHeight,
+                      paddingHorizontal: singleLine ? 1 : 3,
+                      paddingVertical: positionOnly ? 0 : CARD_PADDING,
+                      borderWidth: CARD_BORDER,
+                      borderStyle: assigned ? 'solid' : 'dashed',
+                      borderColor: assigned
+                        ? surface.accent
+                        : surface.badges.red.border,
+                      borderRadius: 5,
+                      backgroundColor: assigned
+                        ? surface.active
+                        : surface.badges.red.background,
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    {positionOnly ? (
                       <Text
                         numberOfLines={1}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.91}
+                        accessibilityLabel={`${position} · ${name}`}
                         style={{
                           color: textColor,
                           fontSize,
                           lineHeight,
+                          fontWeight: '700',
                           width: '100%',
                           textAlign: 'center'
                         }}
                       >
-                        {name}
+                        {position}
                       </Text>
-                    </>
-                  )}
-                </View>
-              </RosterDrag>
-            </View>
-          )
-        })}
+                    ) : singleLine ? (
+                      <FittedLine
+                        text={`${position} · ${name}`}
+                        fit={fit}
+                        style={{ color: textColor, fontSize, lineHeight }}
+                      />
+                    ) : (
+                      <>
+                        <Text
+                          style={{
+                            color: textColor,
+                            fontSize,
+                            lineHeight,
+                            fontWeight: '700'
+                          }}
+                        >
+                          {position}
+                        </Text>
+                        <Text
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                          minimumFontScale={0.91}
+                          style={{
+                            color: textColor,
+                            fontSize,
+                            lineHeight,
+                            width: '100%',
+                            textAlign: 'center'
+                          }}
+                        >
+                          {name}
+                        </Text>
+                      </>
+                    )}
+                  </View>
+                </RosterDrag>
+              </View>
+            )
+          })}
+          {corners && controls}
+        </View>
       </View>
-    </View>
+    </>
+  )
+}
+
+/**
+ * Help (blue) or Clear (red), as words: at one of the field's top corners,
+ * over the outfield, or at one end of the row above a short field.
+ */
+function FieldControl({
+  label,
+  accessibilityLabel,
+  side,
+  corner,
+  onPress
+}: {
+  label: string
+  accessibilityLabel: string
+  side: 'left' | 'right'
+  corner: boolean
+  onPress: () => void
+}): React.ReactElement {
+  const theme = useTheme()
+  return (
+    <Pressable
+      testID={`${accessibilityLabel} control`}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      hitSlop={8}
+      onPress={onPress}
+      style={{
+        height: DEFENSE_CONTROL_HEIGHT,
+        paddingHorizontal: 4,
+        justifyContent: 'center',
+        ...(corner
+          ? {
+              position: 'absolute',
+              top: DEFENSE_CONTROL_INSET,
+              [side]: DEFENSE_CONTROL_INSET
+            }
+          : {})
+      }}
+    >
+      <Text
+        selectable={false}
+        style={{
+          fontFamily: theme.regularTextFont,
+          fontSize: 14,
+          fontWeight: '700',
+          color: side === 'left' ? theme.linkTextColor : theme.scoringOutColor
+        }}
+      >
+        {label}
+      </Text>
+    </Pressable>
   )
 }
 

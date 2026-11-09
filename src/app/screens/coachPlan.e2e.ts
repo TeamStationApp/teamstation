@@ -1,11 +1,12 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 // The functions puppeteer runs in the page are transpiled by sucrase, which
 // turns ?. and ?? into helpers the page does not have: they use neither.
 import { expect } from 'chai'
+import { build } from 'esbuild'
 import { after, before, describe, it } from 'mocha'
 import type { Page } from 'puppeteer'
 
@@ -19,6 +20,7 @@ import { POSITIONS } from '../../common/scoring/state'
 import { makeDatabase } from '../../server/db/database'
 import type { LineupFixture } from '../../server/dev/lineupFixture'
 import { serverConfig } from '../../server/serverConfig'
+import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import { signInTestAccount } from '../../test/passwordFixtures'
 import {
   type BrowserSession,
@@ -42,17 +44,33 @@ import {
  *     node_modules/.bin/mocha -r sucrase/register --extension ts \
  *     --timeout 180000 src/app/screens/coachPlan.e2e.ts
  *
- * `TS_CAPTURE_ONLY=1` runs only the capture block, which saves
- * `coach-box-<phase>.png`, `coach-defense-<phase>.png` and
- * `scorekeeper-roster-<phase>.png` into `TS_LINEUP_ARTIFACTS`, where the
- * phase is `TS_ARTIFACT_PHASE` (`after` by default). It reads only what both
- * the old and the new screens have: the `Coach` pill, a tab named `Box` or
- * `Box Score`, the `Defense` tab, and the scorekeeper's `Open scoring menu`
- * → `Set Team Rosters` → `Defense`.
+ * `TS_CAPTURE_ONLY=1` runs only the capture blocks, which save
+ * `coach-box-<phase>.png`, `defense-coach-<phase>.png`,
+ * `defense-scorekeeper-<phase>.png`, `plan-tab-<phase>.png`,
+ * `plan-picker-<phase>.png` and `dictation-overlay-<phase>.png` (and, once
+ * the Defense tab has its Help, `defense-help-sheet.png`) into
+ * `TS_LINEUP_ARTIFACTS`, where the phase is `TS_ARTIFACT_PHASE` (`after` by
+ * default). They read only what both the old and the new screens have: the
+ * `Coach` pill, a tab named `Box` or `Box Score`, the `Defense` and `Plan`
+ * tabs, the scorekeeper's `Open scoring menu` → `Set Team Rosters` →
+ * `Defense`, and the Plan tab's `Plan cell 1-1`. The Plan tab holds P8's
+ * plan, and is captured at its whole content height. The dictation overlay
+ * is `rosterChatOverlay.fixture.tsx`, the real roster editor with its chat
+ * open, which the block bundles into `dist/` (after `npm run build.web`) and
+ * serves from there with a harness of its own.
  *
- * Otherwise the scenarios run: P1 finds Box Score a pill of its own above
- * Roster, Lineup, Defense and Plan; P2 finds Cancel left of the microphone
- * on Save Rosters' row; P3 reads the coach's Defense field, whose nine cards
+ * Otherwise the scenarios run: D1 reads the Defense tab for the coach and
+ * the scorekeeper: Help and Clear in the field's top corners and clear of
+ * its cards, no instruction line or Roster header, the roster cards from
+ * margin to margin and a row higher than the base drew them, the Help
+ * sheet's words and its backdrop closing it, the coach's Box Score pill
+ * seven points under his header, and a red Cancel as large as Save Rosters.
+ * D2 opens the roster chat fixture and finds the chat over the roster,
+ * which does not move when it closes, its question answered by an option,
+ * and the chat closed by its X and by a tap on its words. P1 finds Box
+ * Score a pill of its own above Roster, Lineup, Defense and Plan; P2 finds
+ * Cancel, a red button as large as Save Rosters, left of the microphone on
+ * Save Rosters' row; P3 reads the coach's Defense field, whose nine cards
  * sit on six rows with names at 13.75 points; P4 to P9 work the Plan tab:
  * its grid (P4), typing and pasting into a cell (P5), the field picker (P6),
  * moving a player's row (P7), the live playing-time warnings and the save's
@@ -107,6 +125,11 @@ interface Footer {
   mic: Box
   save: Box
   cancelInBar: boolean
+  /** The two buttons themselves, and Cancel's fill and word colours. */
+  cancelButton: Box
+  saveButton: Box
+  cancelFill: string
+  cancelText: string
 }
 
 /** The positions whose cards share a vertical band, top to bottom. */
@@ -211,6 +234,51 @@ async function teamRules(
   } finally {
     await db.destroy()
   }
+}
+
+/** P8's Playing Time Rules, which the Plan tab's capture shows too. */
+const P8_RULES: Partial<PlayingTimeRules> = {
+  mandatoryPlay: true,
+  enforceSittingLimits: true,
+  rotateLeadoff: true
+}
+
+/**
+ * D2's fixture page: `rosterChatOverlay.fixture.tsx` bundled into `dist/`
+ * beside a fresh web build, whose page it borrows for its fonts and icons,
+ * and served from there by a harness of its own at
+ * `/roster-chat-overlay-fixture.html`.
+ */
+async function rosterChatHarness(): Promise<AccountHarness> {
+  execFileSync('npm', ['run', '--silent', 'build.web'], { stdio: 'ignore' })
+  const { webSettings } = await import(
+    resolve('scripts/web-build-settings.mjs')
+  )
+  await build({
+    ...webSettings,
+    entryPoints: ['src/test/rosterChatOverlay.fixture.tsx'],
+    bundle: true,
+    platform: 'browser',
+    format: 'iife',
+    jsx: 'automatic',
+    outfile: 'dist/roster-chat-overlay-fixture.js',
+    define: {
+      __DEV__: 'true',
+      global: 'globalThis',
+      'process.env': '{}',
+      'process.env.NODE_ENV': '"development"'
+    },
+    loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
+  })
+  // The app's own page, its fonts and icons, with the fixture for the app.
+  const page = (await readFile('dist/index.html', 'utf8')).replace(
+    /<script src="\/app-[^"]*"[^>]*><\/script>/,
+    '<script src="/roster-chat-overlay-fixture.js"></script>'
+  )
+  if (!page.includes('roster-chat-overlay-fixture.js'))
+    throw new Error('dist/index.html loads no app script to replace')
+  await writeFile('dist/roster-chat-overlay-fixture.html', page)
+  return await accountHarness(resolve('dist'))
 }
 
 /**
@@ -432,6 +500,81 @@ class Browser {
     })
   }
 
+  /** Defense's Help pressed, and its sheet up. */
+  async helpSheet(): Promise<string> {
+    await this.tap('Defense help')
+    const text = await this.page.waitForSelector(
+      '[data-testid="Help sheet text"]',
+      { visible: true, timeout: 15000 }
+    )
+    await this.session.m.waitForAnimationToEnd()
+    return await text!.evaluate(node => String(node.textContent))
+  }
+
+  /** The help sheet closed by a tap on the backdrop above it. */
+  async closeHelpSheet(): Promise<void> {
+    const sheet = await this.box('[data-testid="Scoring sheet"]')
+    await this.page.mouse.click(WIDTH / 2, sheet.y / 2)
+    await this.page.waitForSelector('[data-testid="Help sheet text"]', {
+      hidden: true,
+      timeout: 15000
+    })
+  }
+
+  /** An element's box, as the page lays it out. */
+  async box(css: string): Promise<Box> {
+    return await this.page.$eval(css, node => {
+      const r = node.getBoundingClientRect()
+      return { x: r.x, y: r.y, width: r.width, height: r.height }
+    })
+  }
+
+  /**
+   * The Defense tab's layout: Help and Clear, the position cards, the
+   * roster cards, the footer bar's edges, and whether the old instruction
+   * line and Roster header are drawn.
+   */
+  async defenseLayout(): Promise<{
+    field: Box
+    help: Box
+    clear: Box
+    cards: Box[]
+    roster: Box[]
+    bar: Box
+    instruction: boolean
+    header: boolean
+  }> {
+    return await this.page.evaluate(() => {
+      const box = (node: Element): Box => {
+        const r = node.getBoundingClientRect()
+        return { x: r.x, y: r.y, width: r.width, height: r.height }
+      }
+      const field = document.querySelector('[data-testid="Defensive field"]')!
+      return {
+        field: box(field),
+        help: box(document.querySelector('[aria-label="Defense help"]')!),
+        clear: box(document.querySelector('[aria-label="Clear Defense"]')!),
+        cards: Array.from(
+          field.querySelectorAll(
+            '[data-testid^="Defense "][data-testid$=" card"]'
+          )
+        ).map(box),
+        roster: Array.from(
+          document.querySelectorAll(
+            '[data-testid="Defense roster grid"] [data-roster-player]'
+          )
+        ).map(box),
+        bar: box(document.querySelector('[data-testid="Roster footer bar"]')!),
+        instruction: String(document.body.textContent).includes(
+          'Drag a player into position'
+        ),
+        header:
+          document.querySelector('[data-testid="Defense roster header"]') !=
+          null
+      }
+    })
+  }
+
   /** Each position card's vertical extent and its name's font size. */
   async fieldCards(): Promise<Record<string, FieldCard>> {
     return await this.page.$$eval('[data-testid^="Defense "]', nodes => {
@@ -485,12 +628,19 @@ class Browser {
       }
       const bar = document.querySelector('[data-testid="Roster footer bar"]')!
       const cancel = document.querySelector('[data-testid="Roster cancel"]')!
+      const save = bar.querySelector('[aria-label="Save Rosters"]')!
+      const label = cancel.querySelector('[dir="auto"]')
       return {
         bar: box(bar),
         cancel: word(cancel),
         mic: box(bar.querySelector('[data-testid="Roster mic"]')!),
-        save: word(bar.querySelector('[aria-label="Save Rosters"]')!),
-        cancelInBar: bar.contains(cancel)
+        save: word(save),
+        cancelInBar: bar.contains(cancel),
+        cancelButton: box(cancel),
+        saveButton: box(save),
+        cancelFill: getComputedStyle(cancel).backgroundColor,
+        // No `?.` here: the page has no sucrase helpers.
+        cancelText: label == null ? '' : getComputedStyle(label).color
       }
     })
   }
@@ -574,12 +724,13 @@ class Browser {
   async tallShot(name: string, scroller: string): Promise<void> {
     if (ARTIFACTS == null) return
     const cdp = await this.page.createCDPSession()
+    const scale = await this.page.evaluate(() => devicePixelRatio)
     try {
       let height = HEIGHT
       for (let pass = 0; pass < 3; pass++) {
-        const [extra, scale] = await this.page.$eval(scroller, node => {
+        const extra = await this.page.$eval(scroller, node => {
           node.scrollTop = 0
-          return [node.scrollHeight - node.clientHeight, devicePixelRatio]
+          return node.scrollHeight - node.clientHeight
         })
         if (extra <= 0) break
         height += extra
@@ -594,7 +745,15 @@ class Browser {
       await this.session.m.waitForAnimationToEnd()
       await writeFile(join(ARTIFACTS, name), await this.page.screenshot())
     } finally {
-      await cdp.send('Emulation.clearDeviceMetricsOverride')
+      // Back to the phone's frame. Clearing the override instead would drop
+      // maestro-d's too, leaving the headless window's own, wider size for
+      // whatever comes next.
+      await cdp.send('Emulation.setDeviceMetricsOverride', {
+        width: WIDTH,
+        height: HEIGHT,
+        deviceScaleFactor: scale,
+        mobile: false
+      })
       await cdp.detach()
       await new Promise(resolve => setTimeout(resolve, 600))
     }
@@ -605,6 +764,12 @@ class Browser {
 function expectFooterRow(footer: Footer, height = HEIGHT): void {
   const { bar, cancel, mic, save } = footer
   expect(footer.cancelInBar).equals(true)
+  // Cancel is a red button with a white word, Save Rosters' size.
+  expect(footer.cancelFill).equals('rgb(168, 53, 53)')
+  expect(footer.cancelText).equals('rgb(255, 255, 255)')
+  expect(footer.cancelButton.width).closeTo(footer.saveButton.width, 1)
+  expect(footer.cancelButton.height).closeTo(footer.saveButton.height, 1)
+  expect(footer.cancelButton.x + footer.cancelButton.width).lessThan(mic.x)
   expect(cancel.x + cancel.width).lessThan(mic.x)
   expect(mic.x + mic.width).lessThan(save.x + 1)
   expect(Math.abs(cancel.y - save.y)).lessThan(4)
@@ -670,7 +835,13 @@ describe('Coach Plan', function () {
     await coach.shot(`coach-box-${PHASE}.png`)
 
     await coach.defense()
-    await coach.shot(`coach-defense-${PHASE}.png`)
+    await coach.shot(`defense-coach-${PHASE}.png`)
+    // The Defense help sheet, which the base has not got.
+    if ((await coach.page.$('[aria-label="Defense help"]')) != null) {
+      await coach.helpSheet()
+      await coach.shot('defense-help-sheet.png')
+      await coach.closeHelpSheet()
+    }
 
     await coach.as(fixture, 'scorekeeper')
     await coach.scoreGame(fixture.gameId)
@@ -682,7 +853,176 @@ describe('Coach Plan', function () {
     if ((await coach.page.$('[aria-label="Home Team"][role="tab"]')) != null)
       await coach.tap('Home Team', 'tab')
     await coach.defense()
-    await coach.shot(`scorekeeper-roster-${PHASE}.png`)
+    await coach.shot(`defense-scorekeeper-${PHASE}.png`)
+  })
+
+  it('captures the coach Plan tab, holding P8’s plan, and its picker', async function () {
+    if (!CAPTURING && ARTIFACTS == null) this.skip()
+    const fixture = lineupFixture()
+    await teamRules(fixture, P8_RULES)
+    await savePlan(fixture, HOME_PLAN)
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    await coach.tallShot(`plan-tab-${PHASE}.png`, '[data-testid="Plan scroll"]')
+    await coach.click('[data-testid="Plan cell 1-1"]')
+    await coach.page.waitForSelector('[data-testid="Plan field picker"]', {
+      visible: true
+    })
+    await coach.shot(`plan-picker-${PHASE}.png`)
+  })
+
+  it('captures the roster chat on the Defense tab, on its fixture page', async function () {
+    if (!CAPTURING && ARTIFACTS == null) this.skip()
+    const harness = await rosterChatHarness()
+    try {
+      await coach.page.goto(
+        `${harness.origin}/roster-chat-overlay-fixture.html`,
+        { waitUntil: 'domcontentloaded' }
+      )
+      await coach.page.waitForSelector('[data-testid="Roster chat"]', {
+        visible: true,
+        timeout: 60000
+      })
+      await coach.page.waitForSelector('[aria-label="Hawks #3"]', {
+        visible: true
+      })
+      await coach.page.waitForSelector('[data-roster-target="defense-CF"]', {
+        visible: true
+      })
+      await coach.shot(`dictation-overlay-${PHASE}.png`)
+    } finally {
+      // The browser keeps its connections open, which would hold the close.
+      harness.server.closeAllConnections()
+      await harness.close()
+    }
+  })
+
+  it('D1 puts Help and Clear in the field’s top corners, drops the instruction and Roster header, runs the roster cards edge to edge, and halves the Box Score gap', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = lineupFixture()
+    /** The Defense tab as D1 reads it, for the coach or the scorekeeper. */
+    const check = async (who: string, baseRosterTop: number): Promise<void> => {
+      const layout = await coach.defenseLayout()
+      console.log(`    D1 ${who}: ${JSON.stringify(layout)}`)
+      const { field, help, clear, cards, roster, bar } = layout
+      expect(layout.instruction, who).equals(false)
+      expect(layout.header, who).equals(false)
+      expect(help.x - field.x, who).closeTo(4, 1)
+      expect(help.y - field.y, who).closeTo(4, 1)
+      expect(field.x + field.width - (clear.x + clear.width), who).closeTo(4, 1)
+      expect(clear.y - field.y, who).closeTo(4, 1)
+      expect(cards).has.length(9)
+      for (const control of [help, clear])
+        for (const card of cards)
+          expect(
+            control.x + control.width <= card.x ||
+              control.x >= card.x + card.width ||
+              control.y + control.height <= card.y ||
+              control.y >= card.y + card.height,
+            `${who}: a control over a card`
+          ).equals(true)
+      // The four bench players, two to a row, from margin to margin: the
+      // footer bar spans the same content.
+      expect(roster).has.length(4)
+      const left = Math.min(...roster.map(card => card.x))
+      const right = Math.max(...roster.map(card => card.x + card.width))
+      expect(left, who).closeTo(bar.x, 1)
+      expect(right, who).closeTo(bar.x + bar.width, 1)
+      // The list starts at least a row higher than at the base's capture.
+      const top = Math.min(...roster.map(card => card.y))
+      expect(top, who).lessThan(baseRosterTop - 28)
+      expect(await coach.helpSheet()).equals(
+        'Tap and drag players into positions.'
+      )
+      await coach.closeHelpSheet()
+      expectFooterRow(await coach.footer())
+    }
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.defense()
+    // The base's coach Defense capture drew the first roster card's top at
+    // 586 points, the scorekeeper's at 577; its Box Score pill 14 points
+    // under the header.
+    await check('coach', 586)
+    const header = await coach.box('[data-testid="Coach header"]')
+    const pill = await coach.box('[data-testid="Box Score pill"]')
+    const gap = pill.y - (header.y + header.height)
+    console.log(`    D1 Box Score gap: ${gap}`)
+    expect(gap).closeTo(7, 1)
+
+    await coach.as(fixture, 'scorekeeper')
+    await coach.scoreGame(fixture.gameId)
+    await coach.tap('Open scoring menu')
+    await coach.tap('Set Team Rosters')
+    await coach.page.waitForSelector('[aria-label="Save Rosters"]', {
+      timeout: 30000
+    })
+    if ((await coach.page.$('[aria-label="Home Team"][role="tab"]')) != null)
+      await coach.tap('Home Team', 'tab')
+    await coach.defense()
+    await check('scorekeeper', 577)
+  })
+
+  it('D2 overlays the roster chat, which its X or a tap closes, and whose question still answers', async function () {
+    if (CAPTURING) this.skip()
+    const harness = await rosterChatHarness()
+    /** The fixture opened afresh, its chat and question up. */
+    const open = async (): Promise<void> => {
+      await coach.page.goto(
+        `${harness.origin}/roster-chat-overlay-fixture.html`,
+        { waitUntil: 'domcontentloaded' }
+      )
+      await coach.page.waitForSelector('[data-testid="Roster chat"]', {
+        visible: true,
+        timeout: 60000
+      })
+      await coach.page.waitForSelector('[aria-label="Hawks #3"]', {
+        visible: true
+      })
+      await coach.session.m.waitForAnimationToEnd()
+    }
+    const firstCard = async (): Promise<number> =>
+      await coach.page.$eval(
+        '[data-testid="Defense roster grid"] [data-roster-player]',
+        node => node.getBoundingClientRect().y
+      )
+    const closed = async (): Promise<void> => {
+      await coach.page.waitForSelector('[data-testid="Roster chat"]', {
+        hidden: true,
+        timeout: 15000
+      })
+    }
+    try {
+      // (1) The question's option answers it, and the chat stays.
+      await open()
+      const shown = await firstCard()
+      const overlay = await coach.page.$eval(
+        '[data-testid="Roster chat overlay"]',
+        node => getComputedStyle(node).position
+      )
+      expect(overlay).equals('absolute')
+      await coach.tap('Hawks #3')
+      await coach.page.waitForSelector('[aria-label="Dictation question"]', {
+        hidden: true,
+        timeout: 15000
+      })
+      expect(await coach.page.$('[data-testid="Roster chat"]')).not.equals(null)
+      // (2) The X closes it, and the roster has not moved.
+      await open()
+      await coach.tap('Close dictation')
+      await closed()
+      const hidden = await firstCard()
+      console.log(`    D2 first roster card: ${shown} shown, ${hidden} hidden`)
+      expect(hidden).closeTo(shown, 0.5)
+      // (3) A tap on a turn's words closes it.
+      await open()
+      await coach.tapCss('[data-testid="Roster chat said"]')
+      await closed()
+    } finally {
+      harness.server.closeAllConnections()
+      await harness.close()
+    }
   })
 
   it('P1 puts Box Score in a pill of its own above Roster, Lineup, Defense and Plan, none of them chosen', async function () {
@@ -1092,11 +1432,7 @@ describe('Coach Plan', function () {
   it('P8 warns as the plan breaks the rules, before Save, follows a moved row, and summarises the save', async function () {
     if (CAPTURING) this.skip()
     const fixture = lineupFixture()
-    await teamRules(fixture, {
-      mandatoryPlay: true,
-      enforceSittingLimits: true,
-      rotateLeadoff: true
-    })
+    await teamRules(fixture, P8_RULES)
     await savePlan(fixture, HOME_PLAN)
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
@@ -1326,7 +1662,7 @@ describe('Coach Plan', function () {
     expect(Math.max(...cardRows(cards).map(row => row.length))).lessThan(3)
   })
 
-  it('P12 fits Save Rosters’ whole label, and Cancel, on a 320-point screen, for the coach’s Plan tab and the scorekeeper’s Defense tab', async function () {
+  it('P12 fits Save Rosters’ whole label, and Cancel at the same size, on a 320-point screen, for the coach’s Plan tab and the scorekeeper’s Defense tab', async function () {
     if (CAPTURING) this.skip()
     const [width, height] = [320, 568]
     const session = await browserSession(
@@ -1364,6 +1700,8 @@ describe('Coach Plan', function () {
       console.log(`    ${where} at ${width} wide: ${JSON.stringify(labels)}`)
       for (const label of labels)
         expect(label.scroll, `${where}: ${label.text}`).at.most(label.client)
+      // Cancel is drawn at Save Rosters' size, not left larger.
+      expect(labels[0].size, `${where}: Cancel's size`).equals(labels[1].size)
     }
     try {
       const fixture = lineupFixture()
