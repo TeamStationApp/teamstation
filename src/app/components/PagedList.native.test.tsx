@@ -12,6 +12,7 @@ import {
   PageScrollContext,
   type PageScrollPublisher,
   REST_MS,
+  STILL_MS,
   usePageScrollSource
 } from './pageScroll'
 import { TabPages } from './TabPages'
@@ -669,18 +670,37 @@ describe('PagedList on a phone', function () {
     })
 
     it('moves nothing in motion, and puts right at rest what rows landing then moved', async function () {
+      // This test explicitly releases the gesture. Suppress only the lost-
+      // finger watchdog so wall-clock pauses cannot synthesize that release.
+      const schedule = globalThis.setTimeout
+      globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+        const timer = schedule(...args)
+        if (args[1] === STILL_MS) clearTimeout(timer)
+        return timer
+      }) as typeof setTimeout
+      unstand.push(() => {
+        globalThis.setTimeout = schedule
+      })
       await render(
         <Scroller>
           <Keeper />
         </Scroller>
       )
-      await drag(3000)
+      // Keep the gesture active until the assertion; CI load must not turn
+      // this motion scenario into an idle-timer scenario between renders.
+      await act(async () => {
+        source.beganDrag()
+        source.scrolled(3000, VIEWPORT)
+      })
       await act(async () => {
         prepend(10)
       })
       await wait()
       await scroll(3100)
       expect(moves).deep.equals([])
+      await act(async () => {
+        source.endedDrag()
+      })
       await rest()
       await wait()
       expect(moves).deep.equals([3100 + 10 * ROW])

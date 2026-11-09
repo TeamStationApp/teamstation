@@ -1,9 +1,10 @@
 import DistributorAPI
 import Foundation
 import LoopbackHTTP
+import MacState
 
-/// TS Distributor's REST API, on 127.0.0.1 only, from launch until quit. `-apiPort <n>` moves it,
-/// for tests; `GET /api/v1` lists the routes.
+/// TS Distributor's REST API, on 127.0.0.1 only, from launch until quit: on 8771, or 8772 for the
+/// develop app. `-apiPort <n>` moves it, for tests; `GET /api/v1` lists the routes.
 @MainActor
 final class APIServer {
   let adapter: APIAdapter
@@ -20,7 +21,7 @@ final class APIServer {
     let arguments = ProcessInfo.processInfo.arguments
     guard let flag = arguments.firstIndex(of: "-apiPort"), arguments.indices.contains(flag + 1),
           let port = UInt16(arguments[flag + 1])
-    else { return DistributorAPI.port }
+    else { return DistributorAPI.port(production: MacState.isProduction(bundleID: Bundle.main.bundleIdentifier)) }
     return port
   }
 

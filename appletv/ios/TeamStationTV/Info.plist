@@ -37,6 +37,8 @@
 	</dict>
 	<key>RCTNewArchEnabled</key>
 	<true/>
+	<key>TVAppOrigin</key>
+	<string>$(TV_APP_ORIGIN)</string>
 	<key>TVApiBaseUrl</key>
 	<string>$(TV_API_BASE_URL)</string>
 	<key>TVMetroPort</key>

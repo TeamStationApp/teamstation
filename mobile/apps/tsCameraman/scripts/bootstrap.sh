@@ -11,6 +11,7 @@ cd "$CAMERAMAN_ROOT"
 xcodegen generate
 
 log "Resolving packages"
+mkdir -p "$CAMERAMAN_DERIVED_DATA"
 xcodebuild -resolvePackageDependencies \
   -project "$CAMERAMAN_PROJECT" \
   -scheme "$CAMERAMAN_SCHEME" \

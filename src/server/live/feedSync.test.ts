@@ -516,7 +516,9 @@ describe('the live controller on the change feed', function () {
       .where('id', '=', moved.gameId)
       .execute()
     stopped = await until(
-      () => !liveKeys().includes(moved.key),
+      async () =>
+        !liveKeys().includes(moved.key) &&
+        (await fixture!.stateOf(moved.id)) === 'revoked',
       'the retargeted camera let go'
     )
     expect(stopped - at).lessThan(200)

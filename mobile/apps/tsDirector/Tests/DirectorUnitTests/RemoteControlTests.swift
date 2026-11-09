@@ -264,6 +264,13 @@ struct ControlChannelSourceTests {
     #expect(tile == .selectProgram(source: 1))
   }
 
+  @Test("A develop build's scheme is accepted beside the master one, and no other")
+  func developScheme() {
+    #expect(ControlChannel.command(from: URL(string: "tsdirector-develop://test/dump-state")!) == .dumpState)
+    #expect(ControlChannel.command(from: URL(string: "tsdirector://test/dump-state")!) == .dumpState)
+    #expect(ControlChannel.command(from: URL(string: "tscameraman://test/dump-state")!) == nil)
+  }
+
   @Test("The probe routes read their query and fall back to their defaults")
   func probeRoutes() {
     #expect(ControlChannel.command(from: URL(string: "tsdirector://test/probe-encoders")!)

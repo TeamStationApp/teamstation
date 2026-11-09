@@ -76,9 +76,7 @@ describe('sign-in link', function () {
     ).equals(
       'https://app1.example.test/signin/tok123?server=https%3A%2F%2Fgs.example'
     )
-    expect(routes).contains(
-      'signInLink(options.publicUrl, request.token, appOrigin)'
-    )
+    expect(routes).contains('signInLink(')
     expect(invites).contains(
       'signInLink(options.publicUrl, request.token, appOrigin)'
     )
@@ -87,6 +85,20 @@ describe('sign-in link', function () {
     expect(ask.indexOf('allowedAppOrigin(')).lessThan(
       ask.indexOf('checkLimits(')
     )
+  })
+
+  it('keeps browser email on an unassociated path when its host also opens apps', () => {
+    expect(
+      signInLink('https://develop.teamstation.app', 'tok123', null, true)
+    ).equals('https://develop.teamstation.app/signin-browser/tok123')
+    expect(
+      signInLink(
+        'https://develop.teamstation.app',
+        'tok123',
+        'https://develop.teamstation.app',
+        true
+      )
+    ).contains('/signin/tok123?server=')
   })
 
   it('prints the address as text beside the button', function () {

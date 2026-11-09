@@ -17,8 +17,14 @@ import {
   applyDevelopIdentity,
   buildIos,
   buildTv,
+  CAMERAMAN_APP,
+  CAMERAMAN_DEVELOP_APP,
   compileAndroid,
   DEVELOP_APP,
+  DIRECTOR_APP,
+  DIRECTOR_DEVELOP_APP,
+  DISTRIBUTOR_APP,
+  DISTRIBUTOR_DEVELOP_APP,
   provenanceEnvironment,
   releaseIos,
   seatEnvironment,
@@ -308,7 +314,18 @@ describe('TeamStation pipeline Masonfile', () => {
         assert.equal(version, 1)
       },
       buildNumber(key, options) {
-        assert.ok([STABLE_APP, TV_APP].includes(key))
+        assert.ok(
+          [
+            STABLE_APP,
+            TV_APP,
+            DIRECTOR_APP,
+            DIRECTOR_DEVELOP_APP,
+            CAMERAMAN_APP,
+            CAMERAMAN_DEVELOP_APP,
+            DISTRIBUTOR_APP,
+            DISTRIBUTOR_DEVELOP_APP
+          ].includes(key)
+        )
         assert.equal(options?.format, 'YYMMDDCC')
         assert.equal(options?.timeZone, 'America/Los_Angeles')
       },
@@ -317,16 +334,18 @@ describe('TeamStation pipeline Masonfile', () => {
       },
       workflow(name, options, declare) {
         const recorded: Record<string, unknown> = { options }
-        declare({
-          stage(stageName, stageOptions) {
-            recorded[stageName] = stageOptions
-          },
-          parallel(groupName, members, groupOptions) {
-            assert.equal(groupName, 'build')
-            assert.equal(groupOptions?.failFast, false)
-            Object.assign(stages, members)
-          }
-        })
+        if (name === 'build') {
+          declare({
+            stage(stageName, stageOptions) {
+              recorded[stageName] = stageOptions
+            },
+            parallel(groupName, members, groupOptions) {
+              assert.equal(groupName, 'build')
+              assert.equal(groupOptions?.failFast, false)
+              Object.assign(stages, members)
+            }
+          })
+        }
         workflows[name] = recorded
       }
     })
@@ -365,7 +384,13 @@ describe('TeamStation pipeline Masonfile', () => {
       branch: ['master'],
       params: { seat: 'production' }
     })
-    assert.deepEqual(Object.keys(workflows), ['build', 'tvos'])
+    assert.deepEqual(Object.keys(workflows), [
+      'build',
+      'tvos',
+      'director',
+      'cameraman',
+      'distributor'
+    ])
     assert.deepEqual(workflows.build?.options, {
       params: {
         seat: {
@@ -491,6 +516,11 @@ describe('TeamStation pipeline Masonfile', () => {
       /android\.defaultConfig\.versionName = System\.getenv\('MASON_APP_VERSION'\)/
     )
     assert.match(log, /xcargs:SWIFT_ENABLE_EXPLICIT_MODULES=NO/)
+    assert.match(log, /TS_APP_LINK_HOST=app.teamstation.app/)
+    assert.match(
+      log,
+      /TS_APP_ENTITLEMENTS=TeamStation\/TeamStation.entitlements/
+    )
     assert.match(log, /cargo:.*\.mason\/tools\/rust\/1\.98\.0\/cargo/)
     assert.match(log, /publish:ios:build\/TeamStation\.ipa/)
     assert.match(
@@ -512,8 +542,8 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.match(log, /teamstation-sign-release-apk/)
     assert.match(log, /save:ios-ipa/)
     assert.match(log, /save:android-apk/)
-    // A production build leaves the app's own server alone.
-    assert.equal(log.includes('api:'), false)
+    // Production is explicit, even without injected client configuration.
+    assert.match(log, /api:https:\/\/app.teamstation.app\/api\/v1/)
     const recorded = commands
       .filter(line => line.startsWith('info:'))
       .map(
@@ -625,16 +655,20 @@ describe('TeamStation pipeline Masonfile', () => {
     )
   })
 
-  it('names no server for production or a run with no seat, and refuses an unknown one', () => {
+  it('explicitly selects API and app-link origins and refuses unknown seats', () => {
     const seated = (
       params?: Record<string, string | number | boolean>
     ): Record<string, string> =>
       seatEnvironment({ run: { branch: 'master', params } })
-    assert.deepEqual(seated({ seat: 'production' }), {})
-    assert.deepEqual(seated(), {})
+    const production = {
+      TS_API_BASE_URL: 'https://app.teamstation.app/api/v1',
+      TS_APP_ORIGIN: 'https://app.teamstation.app'
+    }
+    assert.deepEqual(seated({ seat: 'production' }), production)
+    assert.deepEqual(seated(), production)
     assert.deepEqual(seated({ seat: '8' }), {
       TS_API_BASE_URL: 'https://develop8.teamstation.app/api/v1',
-      TS_APP_ORIGIN: 'https://develop8.teamstation.app'
+      TS_APP_ORIGIN: 'https://develop.teamstation.app'
     })
     const developServer = {
       TS_API_BASE_URL: 'https://develop.teamstation.app/api/v1',
@@ -658,7 +692,7 @@ describe('TeamStation pipeline Masonfile', () => {
       }),
       {
         TS_API_BASE_URL: 'https://develop3.teamstation.app/api/v1',
-        TS_APP_ORIGIN: 'https://develop3.teamstation.app'
+        TS_APP_ORIGIN: 'https://develop.teamstation.app'
       }
     )
     assert.throws(() => seated({ seat: '9' }), /Unknown seat 9/)
@@ -692,7 +726,14 @@ describe('TeamStation pipeline Masonfile', () => {
       parallel() {
         assert.fail('the build stages belong to the build workflow')
       },
-      workflow(_name, _options, declare) {
+      workflow(name, _options, declare) {
+        if (name !== 'build') {
+          declare({
+            stage() {},
+            parallel() {}
+          })
+          return
+        }
         declare({
           stage() {},
           parallel(_group, members) {
@@ -718,7 +759,10 @@ describe('TeamStation pipeline Masonfile', () => {
       DEVELOP_APP,
       DEVELOP_APP,
       STABLE_APP,
-      TV_APP
+      TV_APP,
+      DIRECTOR_DEVELOP_APP,
+      CAMERAMAN_DEVELOP_APP,
+      DISTRIBUTOR_DEVELOP_APP
     ])
   })
 
@@ -1021,6 +1065,14 @@ describe('request-only Apple TV workflow', () => {
             assert.equal(options.triggers, undefined)
             return
           }
+          if (
+            name === 'director' ||
+            name === 'cameraman' ||
+            name === 'distributor'
+          ) {
+            assert.deepEqual(options.triggers, [{ request: true }])
+            return
+          }
           assert.equal(name, 'tvos')
           assert.deepEqual(options.triggers, [{ request: true }])
           assert.equal(options.params?.seat.default, 'production')
@@ -1093,7 +1145,8 @@ describe('request-only Apple TV workflow', () => {
             assert.match(options.version ?? '', /^\d+(\.\d+){0,2}$/)
             assert.deepEqual(options.xcargs, [
               'SWIFT_ENABLE_EXPLICIT_MODULES=NO',
-              `TV_API_BASE_URL=https://${host}.teamstation.app/api/v1`
+              `TV_API_BASE_URL=https://${host}.teamstation.app/api/v1`,
+              `TV_APP_ORIGIN=https://${host === 'app' ? 'app' : 'develop'}.teamstation.app`
             ])
             return { archive: 'tv.xcarchive', ipa: 'tv.ipa', dsyms: 'tv.dSYM' }
           },

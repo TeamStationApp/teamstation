@@ -73,6 +73,9 @@ sealed interface ControlCommand {
 object ControlChannel {
     const val scheme = "tscameraman"
 
+    /** What a develop build claims instead, so it and a master build on one phone each get their own commands. */
+    const val developScheme = "tscameraman-develop"
+
     /**
      * Parses `tscameraman://test/<command>?<query>`.
      *
@@ -85,7 +88,8 @@ object ControlChannel {
      */
     fun command(url: String): ControlCommand? {
         val uri = runCatching { URI(url) }.getOrNull() ?: return null
-        if (uri.scheme?.lowercase() != scheme) return null
+        val given = uri.scheme?.lowercase()
+        if (given != scheme && given != developScheme) return null
 
         val action = (uri.path ?: "").trim('/').lowercase()
         val query = parseQuery(uri.rawQuery)

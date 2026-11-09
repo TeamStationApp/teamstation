@@ -29,6 +29,14 @@ public protocol DistributorActions: AnyObject, Sendable {
 /// `GET /api/v1` lists every route with what it does.
 public enum DistributorAPI {
   public static let port: UInt16 = 8771
+  /// The develop app's port, so it can run beside TS Distributor.
+  public static let developPort: UInt16 = 8772
+
+  /// The port a build listens on by default: `port` for TS Distributor, `developPort` for any
+  /// other bundle id.
+  public static func port(production: Bool) -> UInt16 {
+    production ? port : developPort
+  }
 
   public static let about = """
     TS Distributor exports TS Director's recordings from an iPad on the USB-C cable into this Mac's \

@@ -10,6 +10,16 @@ struct MacStateTests {
     FileManager.default.temporaryDirectory.appendingPathComponent("ts-macstate-\(UUID().uuidString)", isDirectory: true)
   }
 
+  @Test("TS Distributor keeps its folder and Keychain names; another bundle id gets its own")
+  func perBuildNames() {
+    #expect(MacState.folderName(bundleID: "app.teamstation.distributor") == "TS Distributor")
+    #expect(MacState.folderName(bundleID: nil) == "TS Distributor")
+    #expect(MacState.folderName(bundleID: "app.teamstation.distributor-develop") == "app.teamstation.distributor-develop")
+    #expect(MacState.keychainPrefix(bundleID: "app.teamstation.distributor") == "app.teamstation.distributor")
+    #expect(MacState.keychainPrefix(bundleID: nil) == "app.teamstation.distributor")
+    #expect(MacState.keychainPrefix(bundleID: "app.teamstation.distributor-develop") == "app.teamstation.distributor-develop")
+  }
+
   @Test("Settings start at their defaults, and what is saved is what comes back")
   func settingsRoundTrip() throws {
     let folder = Self.folder()
